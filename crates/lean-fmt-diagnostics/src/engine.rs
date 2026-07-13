@@ -5,13 +5,14 @@
 //! have an implementation, collecting their [`Diagnostic`]s. Rules with no implementation
 //! yet (most of the registry) are simply skipped, so the engine grows one rule at a time.
 
-use lean_fmt_edit::{DeclHeaderRecord, Diagnostic, ImportRecord, SyntaxRegion, TextRange};
+use lean_fmt_edit::{DeclHeaderRecord, Diagnostic, ImportRecord, SyntaxRegion, TacticBlockRecord, TextRange};
 
 use crate::declaration;
 use crate::imports;
 use crate::layout;
 use crate::rules::registry;
 use crate::selection::RuleSelection;
+use crate::tactic;
 use crate::text;
 
 /// The input one rule checks.
@@ -39,6 +40,10 @@ pub struct RuleContext<'a> {
     /// parse order. The `declaration/header-spacing` rule keys on these so it normalizes
     /// only the gaps around known header delimiters. Empty without a parsed body.
     pub decls: &'a [DeclHeaderRecord],
+    /// Per-`by`-block tactic anchor spans (`by`/seq/first-step/bullets), in parse order.
+    /// The `tactic/block-indent` rule keys on these to normalize intra-line spacing around
+    /// the `by` and its step markers, never reindenting. Empty without a parsed body.
+    pub tactics: &'a [TacticBlockRecord],
 }
 
 impl<'a> RuleContext<'a> {
@@ -53,6 +58,7 @@ impl<'a> RuleContext<'a> {
             imports: &[],
             regions: &[],
             decls: &[],
+            tactics: &[],
         }
     }
 
@@ -74,6 +80,13 @@ impl<'a> RuleContext<'a> {
     #[must_use]
     pub fn with_decls(mut self, decls: &'a [DeclHeaderRecord]) -> Self {
         self.decls = decls;
+        self
+    }
+
+    /// Attach the parsed per-`by`-block tactic anchor spans, for the tactic-spacing rule.
+    #[must_use]
+    pub fn with_tactics(mut self, tactics: &'a [TacticBlockRecord]) -> Self {
+        self.tactics = tactics;
         self
     }
 
@@ -99,6 +112,7 @@ fn rule_impl(id: &str) -> Option<RuleFn> {
         "layout/blank-lines" => Some(layout::blank_lines),
         "layout/end-name" => Some(layout::end_name),
         "declaration/header-spacing" => Some(declaration::header_spacing),
+        "tactic/block-indent" => Some(tactic::block_spacing),
         _ => None,
     }
 }

@@ -26,41 +26,10 @@ use std::collections::BTreeMap;
 use lean_fmt_edit::{Applicability, Diagnostic, EditSet, RuleId, TextEdit, TextRange};
 
 use crate::engine::RuleContext;
+use crate::spacing::{is_newline, scan_ws_left, scan_ws_right};
 
 /// The stable id of this rule.
 const RULE_ID: &str = "declaration/header-spacing";
-
-/// The first byte of the maximal run of ASCII spaces/tabs ending at `pos` (scanning
-/// left). A run that reaches a newline or a non-whitespace byte stops there.
-fn scan_ws_left(bytes: &[u8], pos: usize) -> usize {
-    let mut a = pos;
-    while a > 0 {
-        match bytes.get(a.saturating_sub(1)) {
-            Some(b' ' | b'\t') => a = a.saturating_sub(1),
-            _ => break,
-        }
-    }
-    a
-}
-
-/// The byte just past the maximal run of ASCII spaces/tabs starting at `pos` (scanning
-/// right).
-fn scan_ws_right(bytes: &[u8], pos: usize) -> usize {
-    let mut b = pos;
-    while let Some(&c) = bytes.get(b) {
-        if c == b' ' || c == b'\t' {
-            b = b.saturating_add(1);
-        } else {
-            break;
-        }
-    }
-    b
-}
-
-/// Whether `byte` begins a new line (so a gap touching it must be left alone).
-const fn is_newline(byte: u8) -> bool {
-    byte == b'\n' || byte == b'\r'
-}
 
 /// Collect the whitespace-run normalizations for the rule, deduplicated by run so a gap
 /// shared by two delimiters yields a single edit. Keyed by `(start, end)` of the run.
