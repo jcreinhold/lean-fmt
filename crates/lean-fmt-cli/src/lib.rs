@@ -5,6 +5,8 @@
 //! Actual formatting/linting behavior is added in later prompts; today the modes report
 //! the resolved file set and an honest "no rules implemented yet" note.
 
+mod install_worker;
+
 use std::path::PathBuf;
 
 use clap::{Parser, Subcommand, ValueEnum};
@@ -72,6 +74,40 @@ pub enum CliCommand {
         #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
         format: OutputFormat,
     },
+    /// Build and install the Lean-linked worker for a toolchain (needed before any
+    /// mode that parses Lean; the CLI itself stays Lean-free).
+    InstallWorker(InstallWorkerArgs),
+}
+
+/// Options for `lean-fmt install-worker`.
+#[derive(Debug, Clone, clap::Args)]
+pub struct InstallWorkerArgs {
+    /// Toolchain to build for (`leanprover/lean4:v4.32.0-rc1` or the bare `v4.32.0-rc1`).
+    /// Defaults to the current directory's `lean-toolchain`, else the pinned default.
+    #[arg(long, value_name = "TOOLCHAIN")]
+    pub toolchain: Option<String>,
+
+    /// Explicit Lean sysroot to build and link against. Defaults to the elan directory
+    /// for the resolved toolchain.
+    #[arg(long, value_name = "DIR")]
+    pub sysroot: Option<PathBuf>,
+
+    /// Install directly into this directory instead of the per-toolchain path under the
+    /// user data dir (dev/CI redirect; also honored via `LEAN_FMT_WORKERS_DIR`).
+    #[arg(long, value_name = "DIR")]
+    pub install_dir: Option<PathBuf>,
+
+    /// Use this prebuilt `lean-fmt-worker-child` binary instead of building one with cargo.
+    #[arg(long, value_name = "FILE")]
+    pub worker_child: Option<PathBuf>,
+
+    /// Checkout to build `lean-fmt-worker-child` from when `--worker-child` is not given.
+    #[arg(long, value_name = "DIR")]
+    pub source_dir: Option<PathBuf>,
+
+    /// Rebuild even if a current, smoke-passing install already exists.
+    #[arg(long)]
+    pub force: bool,
 }
 
 impl CliCommand {
@@ -84,6 +120,7 @@ impl CliCommand {
             Self::Fix(_) => "fix",
             Self::Diff(_) => "diff",
             Self::Rules { .. } => "rules",
+            Self::InstallWorker(_) => "install-worker",
         }
     }
 }
@@ -98,6 +135,10 @@ pub enum Error {
     /// A JSON rendering error.
     #[error("could not render JSON output: {0}")]
     Json(#[from] serde_json::Error),
+
+    /// `install-worker` is effectful and is dispatched directly by [`run`], not planned.
+    #[error("install-worker does not produce a report; it is dispatched directly")]
+    NotReportable,
 }
 
 /// Convenience alias for CLI results.
@@ -132,6 +173,7 @@ pub fn plan(command: &CliCommand) -> Result<Report> {
         CliCommand::Check(args) | CliCommand::Format(args) | CliCommand::Fix(args) | CliCommand::Diff(args) => {
             plan_files(command.mode(), args)
         }
+        CliCommand::InstallWorker(_) => Err(Error::NotReportable),
     }
 }
 
@@ -190,6 +232,20 @@ fn render_text(report: &Report) -> String {
     out
 }
 
+/// Programmatic `install-worker` entrypoint, returning the install directory.
+///
+/// Builds the capability, installs the worker child, writes provenance, and smoke-tests
+/// the installed worker. Used by [`run`] and by integration tests that drive install
+/// without argv.
+///
+/// # Errors
+///
+/// Returns a human-readable error string if toolchain resolution, the capability build,
+/// worker-child placement, sidecar writing, or the smoke test fails.
+pub fn install_worker_command(args: &InstallWorkerArgs) -> std::result::Result<PathBuf, String> {
+    install_worker::install(args)
+}
+
 /// The output format selected by a command.
 #[must_use]
 pub fn command_format(command: &CliCommand) -> OutputFormat {
@@ -198,6 +254,7 @@ pub fn command_format(command: &CliCommand) -> OutputFormat {
             args.format
         }
         CliCommand::Rules { format } => *format,
+        CliCommand::InstallWorker(_) => OutputFormat::Text,
     }
 }
 
@@ -206,6 +263,11 @@ pub fn command_format(command: &CliCommand) -> OutputFormat {
 #[must_use]
 pub fn run() -> std::process::ExitCode {
     let cli = Cli::parse();
+    // install-worker is effectful (builds + installs + smoke-tests); it is dispatched
+    // directly rather than through the pure plan/render report path.
+    if let CliCommand::InstallWorker(args) = &cli.command {
+        return install_worker::run(args);
+    }
     let format = command_format(&cli.command);
     match plan(&cli.command).and_then(|report| render(&report, format)) {
         Ok(rendered) => {

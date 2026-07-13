@@ -11,6 +11,8 @@
 //! linked into this library or the parent CLI. (The child binary lives in the separate
 //! `lean-fmt-worker-child` crate, whose `build.rs` is the workspace's only Lean link step.)
 
+pub mod toolchain;
+
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -23,6 +25,8 @@ use lean_toolchain::LeanBuiltCapability;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+
+use crate::toolchain::InstalledWorker;
 
 /// Default per-request timeout for a worker command. Loading and answering a static
 /// identity command is fast; this leaves generous headroom for a cold capability load.
@@ -89,11 +93,7 @@ impl FormatterWorker {
     /// Construct a worker over an already-built capability, the child binary, and the
     /// Lean sysroot the child loads `libleanshared` from.
     #[must_use]
-    pub fn new(
-        built: LeanBuiltCapability,
-        child_binary: impl Into<PathBuf>,
-        lean_sysroot: impl Into<PathBuf>,
-    ) -> Self {
+    pub fn new(built: LeanBuiltCapability, child_binary: impl Into<PathBuf>, lean_sysroot: impl Into<PathBuf>) -> Self {
         Self {
             pool: LeanWorkerPool::new(LeanWorkerPoolConfig::new(1)),
             built,
@@ -101,6 +101,18 @@ impl FormatterWorker {
             lean_sysroot: lean_sysroot.into(),
             request_timeout: DEFAULT_REQUEST_TIMEOUT,
         }
+    }
+
+    /// Construct a worker from a resolved on-disk install (see
+    /// [`toolchain::resolve_installed_worker`]). The capability is reloaded from the
+    /// installed manifest; the installed child binary and its sysroot drive the spawn.
+    #[must_use]
+    pub fn from_installed(installed: &InstalledWorker) -> Self {
+        Self::new(
+            LeanBuiltCapability::manifest_path(installed.capability_manifest.clone()),
+            installed.worker_child.clone(),
+            installed.lean_sysroot.clone(),
+        )
     }
 
     /// Override the per-request timeout.

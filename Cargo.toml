@@ -39,8 +39,10 @@ lean-rs-worker-parent = "0.3"
 lean-rs-worker-child = "0.3"
 fs4 = "1.1"
 sha2 = "0.11"
+dirs = "6"
 
 # Internal crates.
+lean-fmt-cli = { path = "crates/lean-fmt-cli" }
 lean-fmt-project = { path = "crates/lean-fmt-project" }
 lean-fmt-worker = { path = "crates/lean-fmt-worker" }
 lean-fmt-worker-child = { path = "crates/lean-fmt-worker-child" }
