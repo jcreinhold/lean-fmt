@@ -11,8 +11,15 @@
 //! would report. The versioned edit protocol and patch application land in the
 //! edit-protocol prompt; this module is the substrate they build on.
 //!
+//! On top of the coordinate model sits the **trivia model**: the Lean frontend reports
+//! the byte ranges *between* tokens (`source_model.trivia_runs`), and [`classify_trivia`]
+//! turns each run into typed [`Trivia`] pieces — line/block comments, blank-line
+//! clusters, and whitespace — tiling every run losslessly ([`trivia_tiles_runs`]).
+//!
 //! [`FileMap`]: https://leanprover.github.io/theorem_proving_in_lean4/
 
 mod source;
+mod trivia;
 
 pub use source::{LineColumn, LineColumnRange, SourceMap, SyntaxRegion, TextRange};
+pub use trivia::{Trivia, TriviaKind, classify_trivia, trivia_tiles_runs};

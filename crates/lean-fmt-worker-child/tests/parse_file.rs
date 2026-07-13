@@ -21,7 +21,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use lean_fmt_cli::{InstallWorkerArgs, install_worker_command};
-use lean_fmt_edit::SourceMap;
+use lean_fmt_edit::{SourceMap, TriviaKind, classify_trivia, trivia_tiles_runs};
 use lean_fmt_worker::toolchain::{ToolchainId, resolve_in};
 use lean_fmt_worker::{FormatterWorker, ParseStatus};
 
@@ -156,6 +156,57 @@ fn parse_file_round_trip_through_installed_worker() -> Result<(), String> {
         "missing notation module degrades: {off_path:?}"
     );
     assert!(!off_path.diagnostics.is_empty(), "degrade reports diagnostics");
+
+    // 5. Source model: comments and blank lines survive as trivia runs, docstrings as
+    //    nodes, and Rust's classification tiles every run losslessly — the cross-side
+    //    "no comment disappears" check against the real frontend.
+    let trivia_src = concat!(
+        "-- leading comment\n",
+        "import Init\n",
+        "\n",
+        "/-- a docstring -/\n",
+        "def foo := 1 -- trailing\n",
+        "\n",
+        "/- block\n",
+        "   comment -/\n",
+        "def bar := 2\n",
+    );
+    let modeled = worker
+        .parse_file("Trivia.lean", trivia_src, &[])
+        .map_err(|error| error.to_string())?;
+    assert_eq!(modeled.status, ParseStatus::Ok, "commented snapshot parses ok: {modeled:?}");
+    let sm = &modeled.source_model;
+
+    // Every comment/docstring marker in the source lands inside a reported region: line
+    // comments and block comments in a trivia run, docstrings in a docstring node.
+    let in_trivia = |off: usize| sm.trivia_runs.iter().any(|r| r.contains(off));
+    let in_docstring = |off: usize| sm.docstrings.iter().any(|r| r.contains(off));
+    for marker in ["-- leading comment", "-- trailing"] {
+        let off = trivia_src.find(marker).expect("line comment present");
+        assert!(in_trivia(off), "line-comment marker {marker:?} at {off} is inside a trivia run");
+    }
+    let block_at = trivia_src.find("/- block").expect("block comment present");
+    assert!(in_trivia(block_at), "block comment at {block_at} is inside a trivia run");
+    let doc_at = trivia_src.find("/-- a docstring").expect("docstring present");
+    assert!(in_docstring(doc_at), "docstring at {doc_at} is a docstring node, not trivia");
+    assert!(!in_trivia(doc_at), "docstring bytes are not double-counted as trivia");
+
+    // The classification tiles every run losslessly, and the run holding the block
+    // comment classifies it as a `BlockComment` (nested `-/` handling on real output).
+    let trivia = classify_trivia(trivia_src, &sm.trivia_runs);
+    assert!(
+        trivia_tiles_runs(&sm.trivia_runs, &trivia),
+        "classification tiles every frontend-reported run: {trivia:?}"
+    );
+    assert!(
+        trivia.iter().any(|t| t.kind == TriviaKind::BlockComment
+            && trivia_src.get(t.range.start..t.range.end) == Some("/- block\n   comment -/")),
+        "the block comment is recovered as a single BlockComment piece: {trivia:?}"
+    );
+    assert!(
+        trivia.iter().any(|t| t.kind == TriviaKind::BlankLines),
+        "a blank-line cluster is classified: {trivia:?}"
+    );
 
     Ok(())
 }

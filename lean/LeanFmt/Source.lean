@@ -66,4 +66,66 @@ def commandRegion (fileMap : FileMap) (stx : Syntax) : Option Json :=
       , ("line_column", lineColumnRangeJson fileMap r) ]
   | none => none
 
+/-!
+## Trivia model
+
+Comments and blank lines survive parsing as `SourceInfo` trivia (the `leading`/
+`trailing` substrings of `SourceInfo.original`), not as syntax nodes, and every source
+byte is either inside a parsed **token** (an atom/ident with `original` info) or inside
+that inter-token trivia. Rather than ship every token, this module ships the **trivia
+runs** — the maximal byte ranges *between* tokens — which are exactly the complement of
+the token spans. The `lean-fmt-edit` crate then classifies each run's text into line
+comments, block comments, blank-line clusters, and whitespace, and checks that the
+classification tiles the run losslessly. Because a run is the gap between two tokens, a
+run attaches to the token ending at its start (Lean's trailing-trivia convention).
+
+Docstrings are the exception: `/-- … -/` and `/-! … -/` parse to `docComment` **nodes**
+(their bytes are token spans, not trivia), so they are reported separately.
+-/
+
+/-- Collect the byte spans `(startByte, endByte)` of every parsed token (atom/ident
+    carrying `original` source info) under `stx`, in no particular order. Synthetic
+    tokens contribute nothing (they occupy no source bytes). -/
+partial def tokenSpans (stx : Syntax) (acc : Array (Nat × Nat) := #[]) : Array (Nat × Nat) :=
+  let push (info : SourceInfo) (a : Array (Nat × Nat)) : Array (Nat × Nat) :=
+    match info with
+    | .original _ pos _ endPos => a.push (pos.byteIdx, endPos.byteIdx)
+    | _ => a
+  match stx with
+  | .atom info _ => push info acc
+  | .ident info .. => push info acc
+  | .node _ _ args => args.foldl (fun a s => tokenSpans s a) acc
+  | .missing => acc
+
+/-- The trivia runs: maximal `[start, end)` byte ranges that lie *between* tokens (the
+    complement of `spans` within `[0, byteSize)`), emitted as `{ "start", "end" }`
+    objects in source order. Overlapping/adjacent tokens are absorbed, so the result is
+    always disjoint and ordered. -/
+def triviaRunsJson (byteSize : Nat) (spans : Array (Nat × Nat)) : Array Json := Id.run do
+  let sorted := spans.qsort (fun a b => a.1 < b.1)
+  let mut runs : Array Json := #[]
+  let mut cursor : Nat := 0
+  for (s, e) in sorted do
+    if s > cursor then
+      runs := runs.push (Json.mkObj [("start", toJson cursor), ("end", toJson s)])
+    cursor := max cursor e
+  if cursor < byteSize then
+    runs := runs.push (Json.mkObj [("start", toJson cursor), ("end", toJson byteSize)])
+  return runs
+
+/-- Collect the byte ranges of `docComment` nodes (`/-- … -/`, `/-! … -/`) under `stx`
+    as `{ "start", "end" }` objects. These are syntax, not trivia; they are reported so
+    a downstream formatter can treat docstrings distinctly from ordinary comments. -/
+partial def docCommentSpans (stx : Syntax) (acc : Array Json := #[]) : Array Json :=
+  match stx with
+  | .node _ kind args =>
+    let acc :=
+      if kind == ``Lean.Parser.Command.docComment then
+        match stx.getRange? with
+        | some r => acc.push (textRangeJson r)
+        | none => acc
+      else acc
+    args.foldl (fun a s => docCommentSpans s a) acc
+  | _ => acc
+
 end LeanFmt.Source

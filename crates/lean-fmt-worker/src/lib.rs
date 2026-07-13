@@ -16,7 +16,7 @@ pub mod toolchain;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use lean_fmt_edit::SyntaxRegion;
+use lean_fmt_edit::{SyntaxRegion, TextRange};
 use lean_fmt_runtime::exports;
 use lean_rs_worker_parent::{
     LeanWorkerCapabilityBuilder, LeanWorkerChild, LeanWorkerError, LeanWorkerJsonCommand, LeanWorkerPool,
@@ -155,6 +155,23 @@ pub struct SyntaxSummary {
     pub command_regions: Vec<SyntaxRegion>,
 }
 
+/// The source model of a parsed snapshot: trivia runs plus docstring node ranges.
+///
+/// The inter-token trivia runs hold every comment and blank line; classification of a
+/// run's text into typed [`lean_fmt_edit::Trivia`] pieces is done with
+/// [`lean_fmt_edit::classify_trivia`]. Docstrings arrive as separate node ranges.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Default)]
+pub struct SourceModel {
+    /// Maximal byte ranges between parsed tokens, in source order. Their union with the
+    /// token spans is `[0, source_len)`, so all comments and whitespace live here.
+    #[serde(default)]
+    pub trivia_runs: Vec<TextRange>,
+    /// Byte ranges of `docComment` nodes (`/-- … -/`, `/-! … -/`). These are syntax, not
+    /// trivia, and never overlap a trivia run.
+    #[serde(default)]
+    pub docstrings: Vec<TextRange>,
+}
+
 /// Response from the `lean_fmt_parse_file` command.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
 pub struct ParseFileResponse {
@@ -168,6 +185,9 @@ pub struct ParseFileResponse {
     pub module_header: ModuleHeader,
     /// The lightweight syntax summary.
     pub syntax_summary: SyntaxSummary,
+    /// The trivia/docstring source model (empty for header-error responses).
+    #[serde(default)]
+    pub source_model: SourceModel,
 }
 
 /// Worker boundary errors.
@@ -329,7 +349,16 @@ mod tests {
     // The exact compact envelopes emitted by `lean/LeanFmt/Frontend.lean`'s
     // `parseFileCommand` (captured from a real run against v4.32.0-rc1). Object keys
     // are alphabetically sorted by `Json.compress`.
-    const PARSE_OK_JSON: &str = r#"{"diagnostics":[],"diagnostics_truncated":false,"module_header":{"imports":["Init"],"is_module":false},"status":"ok","syntax_summary":{"command_count":2,"command_kinds":[{"count":2,"kind":"Lean.Parser.Command.declaration"}],"command_regions":[{"kind":"Lean.Parser.Command.declaration","line_column":{"end":{"column":18,"line":3},"start":{"column":0,"line":3}},"range":{"end":32,"start":13}},{"kind":"Lean.Parser.Command.declaration","line_column":{"end":{"column":28,"line":4},"start":{"column":0,"line":4}},"range":{"end":62,"start":33}}]}}"#;
+    // Captured from a real `parseFileCommand` run against this source (v4.32.0-rc1):
+    //   import Init
+    //   <blank>
+    //   /-- doc -/
+    //   def foo := 1 -- t
+    //   <blank>
+    //   def bar := 2
+    // The docstring is a node (`docstrings`), and the run at bytes 36..43 (" -- t\n\n")
+    // holds whitespace + a line comment + a blank-line cluster.
+    const PARSE_OK_JSON: &str = r#"{"diagnostics":[],"diagnostics_truncated":false,"module_header":{"imports":["Init"],"is_module":false},"source_model":{"docstrings":[{"end":23,"start":13}],"trivia_runs":[{"end":7,"start":6},{"end":13,"start":11},{"end":17,"start":16},{"end":24,"start":23},{"end":28,"start":27},{"end":32,"start":31},{"end":35,"start":34},{"end":43,"start":36},{"end":47,"start":46},{"end":51,"start":50},{"end":54,"start":53},{"end":56,"start":55}]},"status":"ok","syntax_summary":{"command_count":2,"command_kinds":[{"count":2,"kind":"Lean.Parser.Command.declaration"}],"command_regions":[{"kind":"Lean.Parser.Command.declaration","line_column":{"end":{"column":12,"line":4},"start":{"column":0,"line":3}},"range":{"end":36,"start":13}},{"kind":"Lean.Parser.Command.declaration","line_column":{"end":{"column":12,"line":6},"start":{"column":0,"line":6}},"range":{"end":55,"start":43}}]}}"#;
     const PARSE_DEGRADED_JSON: &str = r#"{"diagnostics":[{"column":0,"file":"A.lean","line":4,"message":"unexpected end of input","severity":"error"}],"diagnostics_truncated":false,"module_header":{"imports":["Init"],"is_module":false},"status":"degraded","syntax_summary":{"command_count":1,"command_kinds":[{"count":1,"kind":"Lean.Parser.Command.declaration"}]}}"#;
     const PARSE_ERROR_JSON: &str = r#"{"diagnostics":[{"column":0,"file":"<snapshot>","line":0,"message":"invalid parse_file request","severity":"error"}],"diagnostics_truncated":false,"module_header":{"imports":[],"is_module":false},"status":"error","syntax_summary":{"command_count":0,"command_kinds":[]}}"#;
 
@@ -367,10 +396,32 @@ mod tests {
         let regions = &resp.syntax_summary.command_regions;
         assert_eq!(regions.len(), 2, "two command regions");
         assert_eq!(regions[0].kind, "Lean.Parser.Command.declaration");
-        assert_eq!(regions[0].range, lean_fmt_edit::TextRange::new(13, 32));
+        assert_eq!(regions[0].range, lean_fmt_edit::TextRange::new(13, 36));
         assert_eq!(regions[0].line_column.start, lean_fmt_edit::LineColumn::new(3, 0));
-        assert_eq!(regions[0].line_column.end, lean_fmt_edit::LineColumn::new(3, 18));
-        assert_eq!(regions[1].range, lean_fmt_edit::TextRange::new(33, 62));
+        assert_eq!(regions[0].line_column.end, lean_fmt_edit::LineColumn::new(4, 12));
+        assert_eq!(regions[1].range, lean_fmt_edit::TextRange::new(43, 55));
+
+        // The source model decodes and classifies. The docstring is a node, not trivia.
+        let sm = &resp.source_model;
+        assert_eq!(sm.docstrings, vec![lean_fmt_edit::TextRange::new(13, 23)]);
+        assert_eq!(sm.trivia_runs.len(), 12, "twelve inter-token trivia runs");
+        // The mixed run at 36..43 (" -- t\n\n") classifies as whitespace + line comment
+        // + blank lines, and every run tiles losslessly.
+        let src = "import Init\n\n/-- doc -/\ndef foo := 1 -- t\n\ndef bar := 2\n";
+        let trivia = lean_fmt_edit::classify_trivia(src, &sm.trivia_runs);
+        assert!(
+            lean_fmt_edit::trivia_tiles_runs(&sm.trivia_runs, &trivia),
+            "classification tiles every reported run"
+        );
+        let mixed: Vec<_> = trivia.iter().filter(|t| t.run_start == 36).map(|t| t.kind).collect();
+        assert_eq!(
+            mixed,
+            [
+                lean_fmt_edit::TriviaKind::Whitespace,
+                lean_fmt_edit::TriviaKind::LineComment,
+                lean_fmt_edit::TriviaKind::BlankLines,
+            ]
+        );
     }
 
     #[test]
