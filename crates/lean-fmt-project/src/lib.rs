@@ -10,6 +10,7 @@ mod cache;
 mod config;
 mod error;
 mod run;
+mod server;
 mod validate;
 mod workspace;
 
@@ -18,5 +19,6 @@ pub use cache::{CacheKey, CacheLookup, CacheMiss, FormatCache, InvalidationReaso
 pub use config::{CONFIG_FILE_NAME, FormatterConfig};
 pub use error::{Error, Result};
 pub use run::{CacheKeyBuilder, FileReport, ProjectRun, RunMode, RunSummary, run_project};
+pub use server::{FormatService, ParseFinding, ServiceRequest, ServiceResponse, ServiceSettings};
 pub use validate::{SafeApplyError, ValidationLevel, ValidationOutcome, safe_apply};
 pub use workspace::{ProjectRoot, ResolvedWorkspace, SourceFile, resolve, resolve_files};

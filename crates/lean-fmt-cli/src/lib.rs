@@ -6,6 +6,7 @@
 //! the resolved file set and an honest "no rules implemented yet" note.
 
 mod install_worker;
+mod serve;
 
 use std::path::{Path, PathBuf};
 
@@ -132,6 +133,41 @@ pub enum CliCommand {
     /// Build and install the Lean-linked worker for a toolchain (needed before any
     /// mode that parses Lean; the CLI itself stays Lean-free).
     InstallWorker(InstallWorkerArgs),
+    /// Run a long-lived format server for editor integration (stdio, line-delimited JSON).
+    Serve(ServeArgs),
+}
+
+/// Options for `lean-fmt serve`.
+#[derive(Debug, Clone, clap::Args)]
+pub struct ServeArgs {
+    /// The Lake project root to serve (determines the worker, cache, and import search path).
+    #[arg(long, default_value = ".", value_name = "DIR")]
+    pub root: PathBuf,
+
+    /// Restrict discovery to a single module root.
+    #[arg(long, value_name = "MODULE")]
+    pub module_root: Option<String>,
+
+    /// Explicit config file path (defaults to `lean-fmt.toml` at the root).
+    #[arg(long, value_name = "FILE")]
+    pub config: Option<PathBuf>,
+
+    /// Activate a rule, category, or `all` (repeatable). Overrides config selection.
+    #[arg(long, value_name = "SELECTOR")]
+    pub select: Vec<String>,
+
+    /// Deactivate a rule, category, or `all` (repeatable). Beats a matching `--select`.
+    #[arg(long, value_name = "SELECTOR")]
+    pub ignore: Vec<String>,
+
+    /// Re-parse *and elaborate* each edited file before returning formatted text (stricter and
+    /// slower than the default syntax-only safe-write gate).
+    #[arg(long)]
+    pub check_elab: bool,
+
+    /// Ignore the incremental result cache: never reuse or write a cached result.
+    #[arg(long)]
+    pub no_cache: bool,
 }
 
 /// Options for `lean-fmt install-worker`.
@@ -176,6 +212,7 @@ impl CliCommand {
             Self::Diff(_) => "diff",
             Self::Rules { .. } => "rules",
             Self::InstallWorker(_) => "install-worker",
+            Self::Serve(_) => "serve",
         }
     }
 }
@@ -227,7 +264,7 @@ pub fn plan(command: &CliCommand) -> Result<Report> {
     match command {
         CliCommand::Check(args) | CliCommand::Format(args) | CliCommand::Diff(args) => plan_files(command.mode(), args),
         CliCommand::Fix(args) => plan_files(command.mode(), &args.common),
-        CliCommand::Rules { .. } | CliCommand::InstallWorker(_) => Err(Error::NotReportable),
+        CliCommand::Rules { .. } | CliCommand::InstallWorker(_) | CliCommand::Serve(_) => Err(Error::NotReportable),
     }
 }
 
@@ -403,7 +440,7 @@ pub fn command_format(command: &CliCommand) -> OutputFormat {
         CliCommand::Check(args) | CliCommand::Format(args) | CliCommand::Diff(args) => args.format,
         CliCommand::Fix(args) => args.common.format,
         CliCommand::Rules { format } => *format,
-        CliCommand::InstallWorker(_) => OutputFormat::Text,
+        CliCommand::InstallWorker(_) | CliCommand::Serve(_) => OutputFormat::Text,
     }
 }
 
@@ -415,7 +452,7 @@ fn run_mode(command: &CliCommand) -> Option<(&'static str, RunMode, &CommonArgs,
         CliCommand::Format(args) => Some(("format", RunMode::Check, args, ValidationLevel::Syntax)),
         CliCommand::Diff(args) => Some(("diff", RunMode::Diff, args, ValidationLevel::Syntax)),
         CliCommand::Fix(args) => Some(("fix", RunMode::Fix, &args.common, validation_level(args))),
-        CliCommand::Rules { .. } | CliCommand::InstallWorker(_) => None,
+        CliCommand::Rules { .. } | CliCommand::InstallWorker(_) | CliCommand::Serve(_) => None,
     }
 }
 
@@ -487,6 +524,16 @@ pub fn run() -> std::process::ExitCode {
     // directly rather than through the report path.
     if let CliCommand::InstallWorker(args) = &cli.command {
         return install_worker::run(args);
+    }
+    // serve is a long-lived loop, not a report; it is dispatched directly.
+    if let CliCommand::Serve(args) = &cli.command {
+        return match serve::serve(args) {
+            Ok(()) => std::process::ExitCode::SUCCESS,
+            Err(error) => {
+                eprintln!("lean-fmt: {error}");
+                std::process::ExitCode::FAILURE
+            }
+        };
     }
     if let CliCommand::Rules { format } = &cli.command {
         return match render_rules(&plan_rules(), *format) {
