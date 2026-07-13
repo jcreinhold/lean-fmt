@@ -34,8 +34,21 @@ The Lean capability package lives under `lean/` (root module `LeanFmt`).
 
 ## Status
 
-Early scaffold. The crates compile and the CLI reports its version; formatter behavior is built up prompt-by-prompt. See
-the `lean-formatter` prompt stack for the roadmap.
+Functional: `install-worker`, `check`, `format`, `fix`, `diff`, `rules`, and `serve` work end-to-end on Lean Lake
+projects, with a conservative rule set, a sound incremental cache, safe-write validation, and an editor server. See
+[`docs/usage.md`](docs/usage.md) for the full command, config, cache, exit-code, and editor-integration reference, and
+`scripts/release-smoke.sh` for an end-to-end install-and-format check.
+
+## Getting started
+
+```sh
+cargo build -p lean-fmt-cli --bin lean-fmt
+cd my-lake-project
+lean-fmt install-worker      # build + install a Lean worker for this toolchain (once)
+lake build                   # so project-internal imports resolve
+lean-fmt check               # report findings (exit 1 if anything would change)
+lean-fmt fix                 # apply safe fixes (each edited file is re-parsed before writing)
+```
 
 ## Development
 
@@ -46,7 +59,8 @@ scripts/test.sh   # cargo test --workspace
 scripts/lean.sh   # lake -d lean build
 ```
 
-Topic docs: [`docs/testing.md`](docs/testing.md) (property and worker-driven fuzz suites),
+Topic docs: [`docs/usage.md`](docs/usage.md) (commands, config, cache, exit codes, editor integration),
+[`docs/testing.md`](docs/testing.md) (property and worker-driven fuzz suites),
 [`docs/performance.md`](docs/performance.md) (perf probe, benchmarks, budgets).
 
 ## License

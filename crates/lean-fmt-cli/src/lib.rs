@@ -1,9 +1,16 @@
 //! `lean-fmt` command-line surface and dispatch.
 //!
-//! This crate is the Lean-free parent: it parses arguments, discovers the Lake
-//! workspace and config, and produces a [`Report`] describing what each mode would do.
-//! Actual formatting/linting behavior is added in later prompts; today the modes report
-//! the resolved file set and an honest "no rules implemented yet" note.
+//! This crate is the Lean-free parent: it parses arguments, discovers the Lake workspace and
+//! config, resolves the installed Lean worker for the project's toolchain, and drives
+//! [`run_project`] across every file through one warm worker session — reporting findings
+//! ([`CliCommand::Check`]), previewing changes ([`CliCommand::Format`]/[`CliCommand::Diff`]), or
+//! applying safe, re-validated fixes ([`CliCommand::Fix`]). It never links `libleanshared`; it
+//! reaches the Lean frontend
+//! only by spawning the worker child as a subprocess. See `docs/usage.md` for the user-facing
+//! command, config, cache, and exit-code reference.
+//!
+//! ([`plan`] and [`Report`] are the lighter pre-analysis path — they resolve the file set and
+//! active-rule count without running the worker, used for dry-run reporting and tests.)
 
 mod install_worker;
 mod serve;
@@ -259,7 +266,7 @@ pub struct Report {
 /// # Errors
 /// Returns an error if workspace discovery, config loading, or file resolution fails.
 /// Returns [`Error::NotReportable`] for `rules` and `install-worker`, which are
-/// dispatched through their own paths ([`plan_rules`] and [`install_worker`]).
+/// dispatched through their own paths ([`plan_rules`] and the private `install_worker` module).
 pub fn plan(command: &CliCommand) -> Result<Report> {
     match command {
         CliCommand::Check(args) | CliCommand::Format(args) | CliCommand::Diff(args) => plan_files(command.mode(), args),
