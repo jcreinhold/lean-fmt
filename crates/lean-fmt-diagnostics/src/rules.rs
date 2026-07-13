@@ -168,6 +168,13 @@ pub fn registry() -> &'static [Rule] {
             default_enabled: true,
         },
         Rule {
+            id: "text/final-newline",
+            category: RuleCategory::Text,
+            summary: "File ends with exactly one trailing newline.",
+            default_severity: Severity::Warning,
+            default_enabled: true,
+        },
+        Rule {
             id: "imports/sorted",
             category: RuleCategory::Imports,
             summary: "Import statements are sorted and deduplicated.",
@@ -282,7 +289,7 @@ mod tests {
     /// Captured verbatim from `LeanFmt.Rules.allRuleIdsJson` (see prompt 13). The Lean
     /// side tags diagnostics with these ids; they must equal the Rust registry ids in
     /// order, or selection and reporting disagree across the worker boundary.
-    const LEAN_RULE_IDS_JSON: &str = r#"["text/trailing-whitespace","imports/sorted","layout/blank-lines","declaration/header-spacing","tactic/block-indent","safety/preserve-comments","performance/large-file"]"#;
+    const LEAN_RULE_IDS_JSON: &str = r#"["text/trailing-whitespace","text/final-newline","imports/sorted","layout/blank-lines","declaration/header-spacing","tactic/block-indent","safety/preserve-comments","performance/large-file"]"#;
 
     #[test]
     fn rust_and_lean_rule_ids_agree() {

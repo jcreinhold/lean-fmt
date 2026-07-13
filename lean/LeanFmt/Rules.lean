@@ -22,6 +22,9 @@ open Lean
 /-- Trailing whitespace at end of line. -/
 def textTrailingWhitespace : String := "text/trailing-whitespace"
 
+/-- File ends with exactly one trailing newline. -/
+def textFinalNewline : String := "text/final-newline"
+
 /-- Import statements are sorted and deduplicated. -/
 def importsSorted : String := "imports/sorted"
 
@@ -43,6 +46,7 @@ def performanceLargeFile : String := "performance/large-file"
 /-- Every rule id, in the same order as the Rust registry. -/
 def allRuleIds : List String :=
   [ textTrailingWhitespace
+  , textFinalNewline
   , importsSorted
   , layoutBlankLines
   , declarationHeaderSpacing
