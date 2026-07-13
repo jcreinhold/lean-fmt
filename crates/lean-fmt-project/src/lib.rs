@@ -5,11 +5,13 @@
 //! serialized worker controller, mirroring the `lean-host-mcp` host policy. Discovery
 //! never scans `.lake` source and does not assume a single module root.
 
+mod cache;
 mod config;
 mod error;
 mod validate;
 mod workspace;
 
+pub use cache::{CacheKey, CacheLookup, CacheMiss, FormatCache, InvalidationReason, config_fingerprint, source_digest};
 pub use config::{CONFIG_FILE_NAME, FormatterConfig};
 pub use error::{Error, Result};
 pub use validate::{SafeApplyError, ValidationLevel, ValidationOutcome, safe_apply};

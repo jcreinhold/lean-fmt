@@ -320,6 +320,8 @@ dependencies = [
  "lean-fmt-edit",
  "lean-fmt-worker",
  "serde",
+ "serde_json",
+ "sha2",
  "tempfile",
  "thiserror",
  "toml 0.8.23",

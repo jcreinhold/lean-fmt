@@ -14,7 +14,7 @@ use serde::Serialize;
 use thiserror::Error;
 
 use lean_fmt_diagnostics::{RuleInfo, RuleSelection, registry};
-use lean_fmt_project::{FormatterConfig, SourceFile, ValidationLevel};
+use lean_fmt_project::{FormatCache, FormatterConfig, SourceFile, ValidationLevel};
 
 /// Top-level CLI parser.
 #[derive(Debug, Parser)]
@@ -64,6 +64,13 @@ pub struct CommonArgs {
     /// Deactivate a rule, category, or `all` (repeatable). Beats a matching `--select`.
     #[arg(long, value_name = "SELECTOR")]
     pub ignore: Vec<String>,
+
+    /// Ignore the incremental result cache: never reuse a cached result and never write
+    /// one. Every file is analyzed from scratch. The cache is otherwise keyed by semantic
+    /// inputs (config, toolchain, source, imports, runtime digest, validation mode), so it
+    /// is already sound; this is a diagnostic escape hatch.
+    #[arg(long)]
+    pub no_cache: bool,
 }
 
 /// Options for `lean-fmt fix`: the shared file options plus write-validation control.
@@ -225,6 +232,22 @@ pub fn validation_level(args: &FixArgs) -> ValidationLevel {
         ValidationLevel::Elab
     } else {
         ValidationLevel::Syntax
+    }
+}
+
+/// Build the incremental result cache for a file-processing command, honoring `--no-cache`.
+///
+/// Rooted at `cache_root`; `--no-cache` yields a [`FormatCache::disabled`] cache whose
+/// lookups always miss and whose stores are no-ops, so the pipeline (wired in
+/// `LFMT-PROJECT-MODES`) runs exactly as if no cache existed. The cache is otherwise sound
+/// by construction — it is keyed on every semantic input — so this flag is a diagnostic
+/// escape hatch, not a correctness control.
+#[must_use]
+pub fn cache_for(args: &CommonArgs, cache_root: PathBuf) -> FormatCache {
+    if args.no_cache {
+        FormatCache::disabled(cache_root)
+    } else {
+        FormatCache::new(cache_root)
     }
 }
 
@@ -428,6 +451,7 @@ mod tests {
             format: OutputFormat::Text,
             select: Vec::new(),
             ignore: Vec::new(),
+            no_cache: false,
         }
     }
 
@@ -542,6 +566,29 @@ mod tests {
             fix_level(&["lean-fmt", "fix", "--unsafe-no-validate", "Pkg/A.lean"]),
             ValidationLevel::None
         );
+    }
+
+    #[test]
+    fn no_cache_flag_disables_the_cache() {
+        use super::cache_for;
+        let temp = TempDir::new().unwrap();
+        let cache_root = temp.path().join("cache");
+
+        // Default: caching is enabled.
+        let cli = Cli::try_parse_from(["lean-fmt", "check", "Pkg/A.lean"]).unwrap();
+        let CliCommand::Check(args) = &cli.command else {
+            panic!("expected check");
+        };
+        assert!(!args.no_cache);
+        assert!(cache_for(args, cache_root.clone()).is_enabled());
+
+        // `--no-cache` disables it.
+        let cli = Cli::try_parse_from(["lean-fmt", "check", "--no-cache", "Pkg/A.lean"]).unwrap();
+        let CliCommand::Check(args) = &cli.command else {
+            panic!("expected check");
+        };
+        assert!(args.no_cache);
+        assert!(!cache_for(args, cache_root).is_enabled());
     }
 
     #[test]

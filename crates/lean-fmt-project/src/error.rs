@@ -61,6 +61,15 @@ pub enum Error {
         /// The underlying I/O error.
         source: std::io::Error,
     },
+
+    /// A cache entry could not be serialized (or otherwise processed) before write.
+    #[error("{message}: {source}")]
+    Cache {
+        /// Human-readable context for the failing operation.
+        message: &'static str,
+        /// The underlying serialization error (boxed to keep the enum small).
+        source: Box<serde_json::Error>,
+    },
 }
 
 /// Convenience alias for results in this crate.
