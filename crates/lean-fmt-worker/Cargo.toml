@@ -6,6 +6,9 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
 description = "Worker-boundary runtime for lean-fmt: locates and loads the installed LeanFmt capability per toolchain."
 
 [lints]

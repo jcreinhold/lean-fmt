@@ -6,16 +6,28 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
 description = "Command-line interface for the lean-fmt Lean 4 formatter/linter (Lean-free parent binary)."
 
 [[bin]]
 name = "lean-fmt"
 path = "src/main.rs"
 
+[lib]
+name = "lean_fmt_cli"
+path = "src/lib.rs"
+
 [lints]
 workspace = true
 
 [dependencies]
 clap = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
 lean-fmt-project = { workspace = true }
-lean-fmt-diagnostics = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

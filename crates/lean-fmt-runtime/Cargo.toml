@@ -6,6 +6,9 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
 description = "Package-owned Lean runtime payload, source digest, and capability build/install for lean-fmt."
 
 [lints]

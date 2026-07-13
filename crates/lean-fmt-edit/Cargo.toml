@@ -6,6 +6,9 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
 description = "Conservative, source-ranged text-edit and patch engine for lean-fmt (conflict-checked, reversible)."
 
 [lints]

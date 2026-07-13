@@ -17,6 +17,9 @@ rust-version = "1.91"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/jcreinhold/lean-fmt"
 authors = ["Jacob Reinhold <jcreinhold@gmail.com>"]
+readme = "README.md"
+keywords = ["lean", "lean4", "formatter", "linter"]
+categories = ["development-tools"]
 
 [workspace.dependencies]
 # External dependencies (names/versions confirmed in prompt 02 audit).

@@ -6,6 +6,9 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
 description = "Lake project discovery, file walking, and check/fix/diff orchestration for lean-fmt."
 
 [lints]
@@ -13,3 +16,10 @@ workspace = true
 
 [dependencies]
 lean-fmt-diagnostics = { workspace = true }
+serde = { workspace = true }
+toml = { workspace = true }
+walkdir = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

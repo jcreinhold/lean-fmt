@@ -6,6 +6,9 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
 description = "Diagnostic and rule-report model for lean-fmt (severity, codes, source-ranged findings)."
 
 [lints]
