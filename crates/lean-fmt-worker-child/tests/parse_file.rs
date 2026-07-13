@@ -21,6 +21,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use lean_fmt_cli::{InstallWorkerArgs, install_worker_command};
+use lean_fmt_edit::SourceMap;
 use lean_fmt_worker::toolchain::{ToolchainId, resolve_in};
 use lean_fmt_worker::{FormatterWorker, ParseStatus};
 
@@ -86,17 +87,34 @@ fn parse_file_round_trip_through_installed_worker() -> Result<(), String> {
     let mut worker = FormatterWorker::from_installed(&installed);
 
     // 1. A simple self-contained snapshot parses cleanly.
+    let simple_src = "import Init\n\ndef foo : Nat := 1\ntheorem bar : foo = 1 := rfl\n";
     let simple = worker
-        .parse_file(
-            "Simple.lean",
-            "import Init\n\ndef foo : Nat := 1\ntheorem bar : foo = 1 := rfl\n",
-            &[],
-        )
+        .parse_file("Simple.lean", simple_src, &[])
         .map_err(|error| error.to_string())?;
     assert_eq!(simple.status, ParseStatus::Ok, "simple snapshot parses ok: {simple:?}");
     assert!(simple.diagnostics.is_empty(), "no diagnostics for a clean snapshot");
     assert_eq!(simple.syntax_summary.command_count, 2, "two top-level commands");
     assert_eq!(simple.module_header.imports, vec!["Init".to_owned()]);
+
+    // Every command carries a byte-anchored region, and the line/column Lean reported
+    // must match a Rust `SourceMap` over the same source — the cross-side faithfulness
+    // check that our codepoint-based column counting agrees with Lean's `FileMap`.
+    let regions = &simple.syntax_summary.command_regions;
+    assert_eq!(regions.len(), 2, "one region per top-level command: {regions:?}");
+    let map = SourceMap::new(simple_src);
+    for region in regions {
+        assert!(
+            region.range.is_well_formed(simple_src.len()),
+            "region byte range within source bounds: {region:?}"
+        );
+        assert_eq!(
+            map.line_column_range(region.range),
+            region.line_column,
+            "Rust SourceMap must reproduce Lean's line/column for {region:?}"
+        );
+        // The byte slice for the region is the command's source text.
+        assert!(map.slice(region.range).is_some(), "region slice is in-bounds");
+    }
 
     // 2. A syntactically broken snapshot degrades with structured diagnostics, no crash.
     let broken = worker

@@ -28,6 +28,7 @@ lean-toolchain = { workspace = true }
 # The metadata + install round-trips live here because `CARGO_BIN_EXE_lean-fmt-worker-child`
 # (the freshly built child binary) is only exposed to this package's own tests.
 [dev-dependencies]
+lean-fmt-edit = { workspace = true }
 lean-fmt-worker = { workspace = true }
 lean-fmt-runtime = { workspace = true }
 lean-fmt-cli = { workspace = true }

@@ -1,4 +1,5 @@
 import Lean
+import LeanFmt.Source
 
 /-!
 # LeanFmt.Frontend
@@ -101,14 +102,16 @@ private def renderDiagnostics (msgs : MessageLog) (fallbackLabel : String) :
   pure (out, truncated)
 
 /-- The parse-only command loop: fold `parseCommand` over the body, collecting the
-    per-kind command counts and the accumulated parse message log. -/
+    per-kind command counts, the per-command byte-anchored `SyntaxRegion`s (via
+    `LeanFmt.Source`), and the accumulated parse message log. -/
 private def parseCommands (inputCtx : Parser.InputContext) (env : Environment)
     (startState : Parser.ModuleParserState) (initialMessages : MessageLog) :
-    (Array (Name × Nat) × MessageLog) := Id.run do
+    (Array (Name × Nat) × Array Json × MessageLog) := Id.run do
   let mctx : Parser.ParserModuleContext := { env, options := {} }
   let mut state := startState
   let mut messages := initialMessages
   let mut kinds : Array (Name × Nat) := #[]
+  let mut regions : Array Json := #[]
   repeat
     let (stx, state', messages') := Parser.parseCommand inputCtx mctx state messages
     state := state'
@@ -123,15 +126,19 @@ private def parseCommands (inputCtx : Parser.InputContext) (env : Environment)
         | some (_, n) => kinds.set! idx (kind, n + 1)
         | none => kinds
       | none => kinds.push (kind, 1)
-  pure (kinds, messages)
+    if let some region := LeanFmt.Source.commandRegion inputCtx.fileMap stx then
+      regions := regions.push region
+  pure (kinds, regions, messages)
 
-/-- Build the `syntax_summary` JSON object from per-kind command counts. -/
-private def syntaxSummary (kinds : Array (Name × Nat)) : Json :=
+/-- Build the `syntax_summary` JSON object from per-kind command counts and the
+    per-command byte-anchored `SyntaxRegion`s. -/
+private def syntaxSummary (kinds : Array (Name × Nat)) (regions : Array Json) : Json :=
   let total : Nat := kinds.foldl (fun acc (_, n) => acc + n) 0
   let kindObjs := kinds.map fun (k, n) => Json.mkObj [("kind", Json.str k.toString), ("count", toJson n)]
   Json.mkObj
     [ ("command_count", toJson total)
-    , ("command_kinds", Json.arr kindObjs) ]
+    , ("command_kinds", Json.arr kindObjs)
+    , ("command_regions", Json.arr regions) ]
 
 /-- Assemble the response envelope. -/
 private def mkResponse (status : String) (diagnostics : Array Json) (truncated : Bool)
@@ -161,7 +168,7 @@ private def runParse (req : ParseRequest) : IO String := do
   -- import set or body boundary to proceed from.
   if headerMessages.hasErrors then
     let (diags, trunc) ← renderDiagnostics headerMessages req.file
-    return mkResponse "error" diags trunc imports isModule (syntaxSummary #[])
+    return mkResponse "error" diags trunc imports isModule (syntaxSummary #[] #[])
   -- Build the command environment. `processHeader` reports unresolved imports as
   -- error messages (occasionally as a throw); either way we degrade rather than crash.
   let processed : Except MessageLog (Environment × MessageLog) ←
@@ -177,14 +184,14 @@ private def runParse (req : ParseRequest) : IO String := do
   match processed with
   | .error log =>
     let (diags, trunc) ← renderDiagnostics log req.file
-    return mkResponse "degraded" diags trunc imports isModule (syntaxSummary #[])
+    return mkResponse "degraded" diags trunc imports isModule (syntaxSummary #[] #[])
   | .ok (env, importMessages) =>
-    let (kinds, finalMessages) := parseCommands inputCtx env parserState importMessages
+    let (kinds, regions, finalMessages) := parseCommands inputCtx env parserState importMessages
     let (diags, trunc) ← renderDiagnostics finalMessages req.file
     -- `degraded` when imports or body carried errors (e.g. a missing module's parser
     -- extensions were absent, so notation failed to parse); `ok` otherwise.
     let status := if finalMessages.hasErrors then "degraded" else "ok"
-    return mkResponse status diags trunc imports isModule (syntaxSummary kinds)
+    return mkResponse status diags trunc imports isModule (syntaxSummary kinds regions)
 
 /--
 Request/response export: parse an in-memory Lean source snapshot with the imports
@@ -192,7 +199,9 @@ declared in its header and return parse diagnostics plus a lightweight syntax su
 
 Request: `{"file"?, "source", "imports"?, "options"?: {"sysroot"?, "search_path"?}}`.
 Response: `{"status", "diagnostics", "diagnostics_truncated", "module_header":
-{"imports", "is_module"}, "syntax_summary": {"command_count", "command_kinds"}}`.
+{"imports", "is_module"}, "syntax_summary": {"command_count", "command_kinds",
+"command_regions"}}`, where each `command_regions` entry is a byte-anchored
+`SyntaxRegion` (`{"kind", "range": {"start", "end"}, "line_column": …}`).
 A malformed request envelope yields a single `error` diagnostic rather than a throw.
 -/
 @[export lean_fmt_parse_file]
@@ -205,7 +214,7 @@ def parseFileCommand (requestJson : String) : IO String := do
       , ("file", Json.str defaultFileLabel)
       , ("line", toJson (0 : Nat))
       , ("column", toJson (0 : Nat)) ]
-    pure <| mkResponse "error" #[diag] false [] false (syntaxSummary #[])
+    pure <| mkResponse "error" #[diag] false [] false (syntaxSummary #[] #[])
   | .ok req => runParse req
 
 end LeanFmt.Frontend

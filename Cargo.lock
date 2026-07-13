@@ -299,6 +299,10 @@ version = "0.1.0"
 [[package]]
 name = "lean-fmt-edit"
 version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
 
 [[package]]
 name = "lean-fmt-project"
@@ -332,6 +336,7 @@ name = "lean-fmt-worker"
 version = "0.1.0"
 dependencies = [
  "dirs",
+ "lean-fmt-edit",
  "lean-fmt-runtime",
  "lean-rs-worker-parent",
  "lean-toolchain",
@@ -347,6 +352,7 @@ name = "lean-fmt-worker-child"
 version = "0.1.0"
 dependencies = [
  "lean-fmt-cli",
+ "lean-fmt-edit",
  "lean-fmt-runtime",
  "lean-fmt-worker",
  "lean-rs-worker-child",

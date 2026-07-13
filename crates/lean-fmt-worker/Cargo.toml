@@ -15,6 +15,7 @@ description = "Worker-boundary runtime for lean-fmt: locates and loads the insta
 workspace = true
 
 [dependencies]
+lean-fmt-edit = { workspace = true }
 lean-fmt-runtime = { workspace = true }
 lean-rs-worker-parent = { workspace = true }
 lean-toolchain = { workspace = true }

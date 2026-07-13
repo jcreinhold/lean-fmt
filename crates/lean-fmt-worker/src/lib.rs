@@ -16,6 +16,7 @@ pub mod toolchain;
 use std::path::PathBuf;
 use std::time::Duration;
 
+use lean_fmt_edit::SyntaxRegion;
 use lean_fmt_runtime::exports;
 use lean_rs_worker_parent::{
     LeanWorkerCapabilityBuilder, LeanWorkerChild, LeanWorkerError, LeanWorkerJsonCommand, LeanWorkerPool,
@@ -148,6 +149,10 @@ pub struct SyntaxSummary {
     pub command_count: usize,
     /// Per-kind command counts.
     pub command_kinds: Vec<CommandKind>,
+    /// Per-command byte-anchored source regions (kind + byte range + line/column),
+    /// in parse order. Empty for header-error / degraded-before-parse responses.
+    #[serde(default)]
+    pub command_regions: Vec<SyntaxRegion>,
 }
 
 /// Response from the `lean_fmt_parse_file` command.
@@ -324,7 +329,7 @@ mod tests {
     // The exact compact envelopes emitted by `lean/LeanFmt/Frontend.lean`'s
     // `parseFileCommand` (captured from a real run against v4.32.0-rc1). Object keys
     // are alphabetically sorted by `Json.compress`.
-    const PARSE_OK_JSON: &str = r#"{"diagnostics":[],"diagnostics_truncated":false,"module_header":{"imports":["Init"],"is_module":false},"status":"ok","syntax_summary":{"command_count":2,"command_kinds":[{"count":2,"kind":"Lean.Parser.Command.declaration"}]}}"#;
+    const PARSE_OK_JSON: &str = r#"{"diagnostics":[],"diagnostics_truncated":false,"module_header":{"imports":["Init"],"is_module":false},"status":"ok","syntax_summary":{"command_count":2,"command_kinds":[{"count":2,"kind":"Lean.Parser.Command.declaration"}],"command_regions":[{"kind":"Lean.Parser.Command.declaration","line_column":{"end":{"column":18,"line":3},"start":{"column":0,"line":3}},"range":{"end":32,"start":13}},{"kind":"Lean.Parser.Command.declaration","line_column":{"end":{"column":28,"line":4},"start":{"column":0,"line":4}},"range":{"end":62,"start":33}}]}}"#;
     const PARSE_DEGRADED_JSON: &str = r#"{"diagnostics":[{"column":0,"file":"A.lean","line":4,"message":"unexpected end of input","severity":"error"}],"diagnostics_truncated":false,"module_header":{"imports":["Init"],"is_module":false},"status":"degraded","syntax_summary":{"command_count":1,"command_kinds":[{"count":1,"kind":"Lean.Parser.Command.declaration"}]}}"#;
     const PARSE_ERROR_JSON: &str = r#"{"diagnostics":[{"column":0,"file":"<snapshot>","line":0,"message":"invalid parse_file request","severity":"error"}],"diagnostics_truncated":false,"module_header":{"imports":[],"is_module":false},"status":"error","syntax_summary":{"command_count":0,"command_kinds":[]}}"#;
 
@@ -358,6 +363,14 @@ mod tests {
             "Lean.Parser.Command.declaration"
         );
         assert_eq!(resp.syntax_summary.command_kinds[0].count, 2);
+        // Per-command byte-anchored regions decode through `lean-fmt-edit`.
+        let regions = &resp.syntax_summary.command_regions;
+        assert_eq!(regions.len(), 2, "two command regions");
+        assert_eq!(regions[0].kind, "Lean.Parser.Command.declaration");
+        assert_eq!(regions[0].range, lean_fmt_edit::TextRange::new(13, 32));
+        assert_eq!(regions[0].line_column.start, lean_fmt_edit::LineColumn::new(3, 0));
+        assert_eq!(regions[0].line_column.end, lean_fmt_edit::LineColumn::new(3, 18));
+        assert_eq!(regions[1].range, lean_fmt_edit::TextRange::new(33, 62));
     }
 
     #[test]
