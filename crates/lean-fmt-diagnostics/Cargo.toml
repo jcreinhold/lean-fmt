@@ -15,3 +15,8 @@ description = "Diagnostic and rule-report model for lean-fmt (severity, codes, s
 workspace = true
 
 [dependencies]
+serde = { workspace = true }
+lean-fmt-edit = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }

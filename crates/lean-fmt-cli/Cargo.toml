@@ -28,6 +28,7 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 lean-fmt-project = { workspace = true }
+lean-fmt-diagnostics = { workspace = true }
 # Lean-free crates: the runtime shells out to Lake with an explicit sysroot; the worker
 # spawns the child binary as a subprocess. Neither links libleanshared into this parent.
 lean-fmt-runtime = { workspace = true }

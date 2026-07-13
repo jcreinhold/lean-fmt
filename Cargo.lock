@@ -283,6 +283,7 @@ name = "lean-fmt-cli"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "lean-fmt-diagnostics",
  "lean-fmt-project",
  "lean-fmt-runtime",
  "lean-fmt-worker",
@@ -295,6 +296,11 @@ dependencies = [
 [[package]]
 name = "lean-fmt-diagnostics"
 version = "0.1.0"
+dependencies = [
+ "lean-fmt-edit",
+ "serde",
+ "serde_json",
+]
 
 [[package]]
 name = "lean-fmt-edit"

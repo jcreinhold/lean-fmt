@@ -13,6 +13,7 @@ use clap::{Parser, Subcommand, ValueEnum};
 use serde::Serialize;
 use thiserror::Error;
 
+use lean_fmt_diagnostics::{RuleInfo, RuleSelection, registry};
 use lean_fmt_project::{FormatterConfig, SourceFile};
 
 /// Top-level CLI parser.
@@ -55,6 +56,14 @@ pub struct CommonArgs {
     /// Output format.
     #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
     pub format: OutputFormat,
+
+    /// Activate a rule, category, or `all` (repeatable). Overrides config selection.
+    #[arg(long, value_name = "SELECTOR")]
+    pub select: Vec<String>,
+
+    /// Deactivate a rule, category, or `all` (repeatable). Beats a matching `--select`.
+    #[arg(long, value_name = "SELECTOR")]
+    pub ignore: Vec<String>,
 }
 
 /// The formatter subcommands.
@@ -162,29 +171,45 @@ pub struct Report {
 ///
 /// # Errors
 /// Returns an error if workspace discovery, config loading, or file resolution fails.
+/// Returns [`Error::NotReportable`] for `rules` and `install-worker`, which are
+/// dispatched through their own paths ([`plan_rules`] and [`install_worker`]).
 pub fn plan(command: &CliCommand) -> Result<Report> {
     match command {
-        CliCommand::Rules { .. } => Ok(Report {
-            mode: command.mode(),
-            root: None,
-            files: Vec::new(),
-            note: "no rules registered yet (rule registry lands in a later prompt)".to_owned(),
-        }),
         CliCommand::Check(args) | CliCommand::Format(args) | CliCommand::Fix(args) | CliCommand::Diff(args) => {
             plan_files(command.mode(), args)
         }
-        CliCommand::InstallWorker(_) => Err(Error::NotReportable),
+        CliCommand::Rules { .. } | CliCommand::InstallWorker(_) => Err(Error::NotReportable),
     }
 }
 
+/// Resolve config for a file-processing command, honoring an explicit `--config`.
+fn load_config(args: &CommonArgs) -> Result<FormatterConfig> {
+    match &args.config {
+        Some(path) => Ok(FormatterConfig::load_from(path)?),
+        None => Ok(FormatterConfig::discover(&args.root)?),
+    }
+}
+
+/// Build the rule selection from CLI flags (highest precedence) and config.
+fn selection_for(args: &CommonArgs, config: &FormatterConfig) -> RuleSelection {
+    RuleSelection::new(
+        args.select.clone(),
+        args.ignore.clone(),
+        config.select.clone(),
+        config.ignore.clone(),
+        config.per_file_ignores.clone(),
+    )
+}
+
 fn plan_files(mode: &'static str, args: &CommonArgs) -> Result<Report> {
+    let config = load_config(args)?;
+    let selection = selection_for(args, &config);
+    // Project-level active rule count: per-file ignores keyed by real prefixes do not
+    // apply to the empty path, so this is the baseline the selection would use.
+    let active = selection.active_rule_ids("").len();
     if args.paths.is_empty() {
-        let config = match &args.config {
-            Some(path) => FormatterConfig::load_from(path)?,
-            None => FormatterConfig::discover(&args.root)?,
-        };
         let workspace = lean_fmt_project::resolve(&args.root, args.module_root.as_deref(), &config)?;
-        let note = mode_note(mode, workspace.source_files.len());
+        let note = mode_note(mode, workspace.source_files.len(), active);
         Ok(Report {
             mode,
             root: Some(workspace.root),
@@ -193,7 +218,7 @@ fn plan_files(mode: &'static str, args: &CommonArgs) -> Result<Report> {
         })
     } else {
         let files = lean_fmt_project::resolve_files(&args.paths)?;
-        let note = mode_note(mode, files.len());
+        let note = mode_note(mode, files.len(), active);
         Ok(Report {
             mode,
             root: None,
@@ -203,8 +228,48 @@ fn plan_files(mode: &'static str, args: &CommonArgs) -> Result<Report> {
     }
 }
 
-fn mode_note(mode: &str, count: usize) -> String {
-    format!("resolved {count} file(s); {mode} found no changes (no rules implemented yet)")
+fn mode_note(mode: &str, count: usize, active_rules: usize) -> String {
+    format!(
+        "resolved {count} file(s); {active_rules} rule(s) active; {mode} found no changes (no rules implemented yet)"
+    )
+}
+
+/// A machine-readable listing of the rule registry, filtered by an optional selection.
+#[derive(Debug, Serialize)]
+pub struct RulesReport {
+    /// Every registry rule with its metadata.
+    pub rules: Vec<RuleInfo>,
+}
+
+/// Build the rule registry listing for `lean-fmt rules`.
+#[must_use]
+pub fn plan_rules() -> RulesReport {
+    RulesReport {
+        rules: registry().iter().map(RuleInfo::from).collect(),
+    }
+}
+
+/// Render a rules listing as text or JSON.
+///
+/// # Errors
+/// Returns [`Error::Json`] if JSON serialization fails.
+pub fn render_rules(report: &RulesReport, format: OutputFormat) -> Result<String> {
+    match format {
+        OutputFormat::Json => Ok(serde_json::to_string_pretty(report)?),
+        OutputFormat::Text => Ok(render_rules_text(report)),
+    }
+}
+
+fn render_rules_text(report: &RulesReport) -> String {
+    let mut lines = Vec::with_capacity(report.rules.len().strict_add(1));
+    for rule in &report.rules {
+        let state = if rule.default_enabled { "on" } else { "off" };
+        lines.push(format!("{}\t[{state}]\t{}", rule.id, rule.summary));
+    }
+    lines.push(format!("{} rule(s)", report.rules.len()));
+    let mut out = lines.join("\n");
+    out.push('\n');
+    out
 }
 
 /// Render a report in the requested format.
@@ -269,6 +334,18 @@ pub fn run() -> std::process::ExitCode {
         return install_worker::run(args);
     }
     let format = command_format(&cli.command);
+    if let CliCommand::Rules { .. } = &cli.command {
+        return match render_rules(&plan_rules(), format) {
+            Ok(rendered) => {
+                print!("{rendered}");
+                std::process::ExitCode::SUCCESS
+            }
+            Err(error) => {
+                eprintln!("lean-fmt: {error}");
+                std::process::ExitCode::FAILURE
+            }
+        };
+    }
     match plan(&cli.command).and_then(|report| render(&report, format)) {
         Ok(rendered) => {
             print!("{rendered}");
@@ -289,7 +366,7 @@ mod tests {
 
     use tempfile::TempDir;
 
-    use super::{CliCommand, CommonArgs, OutputFormat, plan, render};
+    use super::{CliCommand, CommonArgs, OutputFormat, plan, plan_rules, render, render_rules};
 
     fn common(root: &std::path::Path) -> CommonArgs {
         CommonArgs {
@@ -298,6 +375,8 @@ mod tests {
             module_root: None,
             config: None,
             format: OutputFormat::Text,
+            select: Vec::new(),
+            ignore: Vec::new(),
         }
     }
 
@@ -321,14 +400,37 @@ mod tests {
     }
 
     #[test]
-    fn rules_mode_lists_no_rules_yet() {
-        let report = plan(&CliCommand::Rules {
-            format: OutputFormat::Text,
-        })
-        .unwrap();
-        assert_eq!(report.mode, "rules");
-        assert!(report.files.is_empty());
-        assert!(report.note.contains("no rules"));
+    fn rules_mode_lists_the_registry() {
+        let report = plan_rules();
+        assert_eq!(report.rules.len(), lean_fmt_diagnostics::registry().len());
+        // Every rule id is category-prefixed and appears in the text rendering.
+        let text = render_rules(&report, OutputFormat::Text).unwrap();
+        assert!(text.contains("imports/sorted"));
+        assert!(text.contains("performance/large-file\t[off]"));
+        // JSON is machine-readable and lists the same count.
+        let json = render_rules(&report, OutputFormat::Json).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(
+            parsed["rules"].as_array().unwrap().len(),
+            lean_fmt_diagnostics::registry().len()
+        );
+    }
+
+    #[test]
+    fn selection_flags_change_active_rule_count() {
+        let temp = TempDir::new().unwrap();
+        write(temp.path(), "lakefile.toml", "[[lean_lib]]\nname = \"Pkg\"\n");
+        write(temp.path(), "Pkg/A.lean", "def a := 1\n");
+
+        let baseline = plan(&CliCommand::Check(common(temp.path()))).unwrap();
+
+        let mut args = common(temp.path());
+        args.ignore = vec!["all".to_owned()];
+        let none_active = plan(&CliCommand::Check(args)).unwrap();
+
+        assert!(baseline.note.contains("rule(s) active"));
+        assert!(none_active.note.contains("0 rule(s) active"));
+        assert_ne!(baseline.note, none_active.note);
     }
 
     #[test]

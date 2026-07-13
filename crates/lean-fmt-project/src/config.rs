@@ -4,6 +4,7 @@
 //! path passed on the command line). Every field has a default, so a project with no
 //! config file resolves to [`FormatterConfig::default`].
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
@@ -46,6 +47,22 @@ pub struct FormatterConfig {
     /// skipped. `.lake` is always excluded in addition to these.
     #[serde(default = "default_exclude")]
     pub exclude: Vec<String>,
+
+    /// Rule selectors turned on for the project (rule id, category, or `all`). Empty
+    /// means "use each rule's built-in default". Resolved against the registry by the
+    /// diagnostics selector; command-line `--select` overrides this.
+    #[serde(default)]
+    pub select: Vec<String>,
+
+    /// Rule selectors turned off for the project. An ignore beats a select in the same
+    /// layer, so a broad `select` plus a narrow `ignore` works as expected.
+    #[serde(default)]
+    pub ignore: Vec<String>,
+
+    /// Per-path-prefix ignore lists: files under the key prefix additionally ignore the
+    /// listed selectors. A per-file ignore wins over both config and CLI selects.
+    #[serde(default)]
+    pub per_file_ignores: BTreeMap<String, Vec<String>>,
 }
 
 impl Default for FormatterConfig {
@@ -54,6 +71,9 @@ impl Default for FormatterConfig {
             line_width: default_line_width(),
             include: Vec::new(),
             exclude: default_exclude(),
+            select: Vec::new(),
+            ignore: Vec::new(),
+            per_file_ignores: BTreeMap::new(),
         }
     }
 }
@@ -183,5 +203,19 @@ mod tests {
     #[test]
     fn rejects_unknown_fields() {
         assert!(toml::from_str::<FormatterConfig>("bogus = 1\n").is_err());
+    }
+
+    #[test]
+    fn parses_rule_selection_fields() {
+        let config: FormatterConfig = toml::from_str(concat!(
+            "select = [\"imports\"]\n",
+            "ignore = [\"performance/large-file\"]\n",
+            "[per_file_ignores]\n",
+            "Vendor = [\"all\"]\n",
+        ))
+        .unwrap();
+        assert_eq!(config.select, vec!["imports".to_owned()]);
+        assert_eq!(config.ignore, vec!["performance/large-file".to_owned()]);
+        assert_eq!(config.per_file_ignores.get("Vendor"), Some(&vec!["all".to_owned()]));
     }
 }
