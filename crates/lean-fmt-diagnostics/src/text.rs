@@ -69,7 +69,7 @@ fn emit_trailing(ctx: &RuleContext<'_>, content_start: usize, content_end: usize
 }
 
 /// Detect the dominant line ending: `\r\n` if the source uses it, else `\n`.
-fn detect_eol(source: &str) -> &'static str {
+pub(crate) fn detect_eol(source: &str) -> &'static str {
     if source.contains("\r\n") { "\r\n" } else { "\n" }
 }
 

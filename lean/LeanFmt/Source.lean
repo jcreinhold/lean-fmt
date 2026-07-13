@@ -113,6 +113,27 @@ def triviaRunsJson (byteSize : Nat) (spans : Array (Nat × Nat)) : Array Json :=
     runs := runs.push (Json.mkObj [("start", toJson cursor), ("end", toJson byteSize)])
   return runs
 
+/-- Collect one record per `import` statement under `stx`: its `module` name and the
+    byte `range` of the whole statement — the `import` keyword through the module ident,
+    including any `meta`/`runtime`/`public` modifiers (they are children of the node, so
+    the node range spans them). The leading comment/blank-line trivia *before* an import
+    is deliberately excluded from the range; the Rust import rule recovers comment
+    attachment from the source text and the trivia runs. Emitted in source order. -/
+partial def importSpans (stx : Syntax) (acc : Array Json := #[]) : Array Json :=
+  match stx with
+  | .node _ kind args =>
+    let acc :=
+      if kind == ``Lean.Parser.Module.import then
+        match stx.getRange? with
+        | some r =>
+          let moduleName :=
+            (args.findSome? fun a => if a.isIdent then some a.getId.toString else none).getD ""
+          acc.push (Json.mkObj [("module", Json.str moduleName), ("range", textRangeJson r)])
+        | none => acc
+      else acc
+    args.foldl (fun a s => importSpans s a) acc
+  | _ => acc
+
 /-- Collect the byte ranges of `docComment` nodes (`/-- … -/`, `/-! … -/`) under `stx`
     as `{ "start", "end" }` objects. These are syntax, not trivia; they are reported so
     a downstream formatter can treat docstrings distinctly from ordinary comments. -/

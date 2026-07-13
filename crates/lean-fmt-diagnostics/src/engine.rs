@@ -5,8 +5,9 @@
 //! have an implementation, collecting their [`Diagnostic`]s. Rules with no implementation
 //! yet (most of the registry) are simply skipped, so the engine grows one rule at a time.
 
-use lean_fmt_edit::{Diagnostic, TextRange};
+use lean_fmt_edit::{Diagnostic, ImportRecord, TextRange};
 
+use crate::imports;
 use crate::rules::registry;
 use crate::selection::RuleSelection;
 use crate::text;
@@ -24,17 +25,30 @@ pub struct RuleContext<'a> {
     pub path: &'a str,
     /// Non-token byte spans (whitespace/comment runs), sorted and disjoint.
     pub trivia_runs: &'a [TextRange],
+    /// Per-`import` records (module name + statement byte range), in source order.
+    /// Syntax-aware rules (e.g. `imports/sorted`) read these; pure-text rules ignore
+    /// them. Defaults to empty for contexts built without a parsed header.
+    pub imports: &'a [ImportRecord],
 }
 
 impl<'a> RuleContext<'a> {
     /// Construct a context from source text, its path, and the parsed trivia runs.
+    /// The import records default to empty; attach them with [`Self::with_imports`].
     #[must_use]
     pub const fn new(source: &'a str, path: &'a str, trivia_runs: &'a [TextRange]) -> Self {
         Self {
             source,
             path,
             trivia_runs,
+            imports: &[],
         }
+    }
+
+    /// Attach the parsed per-`import` records, for syntax-aware import rules.
+    #[must_use]
+    pub fn with_imports(mut self, imports: &'a [ImportRecord]) -> Self {
+        self.imports = imports;
+        self
     }
 
     /// Whether `range` lies entirely within a single trivia run — i.e. editing it cannot
@@ -55,6 +69,7 @@ fn rule_impl(id: &str) -> Option<RuleFn> {
     match id {
         "text/trailing-whitespace" => Some(text::trailing_whitespace),
         "text/final-newline" => Some(text::final_newline),
+        "imports/sorted" => Some(imports::sorted),
         _ => None,
     }
 }

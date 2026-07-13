@@ -16,7 +16,7 @@ pub mod toolchain;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use lean_fmt_edit::{Diagnostic, SyntaxRegion, TextRange};
+use lean_fmt_edit::{Diagnostic, ImportRecord, SyntaxRegion, TextRange};
 use lean_fmt_runtime::exports;
 use lean_rs_worker_parent::{
     LeanWorkerCapabilityBuilder, LeanWorkerChild, LeanWorkerError, LeanWorkerJsonCommand, LeanWorkerPool,
@@ -131,6 +131,12 @@ pub struct ModuleHeader {
     pub imports: Vec<String>,
     /// Whether the header is a `module` header.
     pub is_module: bool,
+    /// Byte-anchored per-`import` records (module name + statement range), in source
+    /// order. Empty for header-error responses. Unlike `imports`, these are *not*
+    /// deduplicated — a repeated `import X` appears once per statement, so the import
+    /// rule can flag and remove the duplicate.
+    #[serde(default)]
+    pub import_spans: Vec<ImportRecord>,
 }
 
 /// One top-level command kind and its occurrence count.
@@ -375,6 +381,16 @@ mod tests {
     const PARSE_OK_JSON: &str = r#"{"diagnostics":[],"diagnostics_truncated":false,"module_header":{"imports":["Init"],"is_module":false},"source_model":{"docstrings":[{"end":23,"start":13}],"trivia_runs":[{"end":7,"start":6},{"end":13,"start":11},{"end":17,"start":16},{"end":24,"start":23},{"end":28,"start":27},{"end":32,"start":31},{"end":35,"start":34},{"end":43,"start":36},{"end":47,"start":46},{"end":51,"start":50},{"end":54,"start":53},{"end":56,"start":55}]},"status":"ok","syntax_summary":{"command_count":2,"command_kinds":[{"count":2,"kind":"Lean.Parser.Command.declaration"}],"command_regions":[{"kind":"Lean.Parser.Command.declaration","line_column":{"end":{"column":12,"line":4},"start":{"column":0,"line":3}},"range":{"end":36,"start":13}},{"kind":"Lean.Parser.Command.declaration","line_column":{"end":{"column":12,"line":6},"start":{"column":0,"line":6}},"range":{"end":55,"start":43}}]}}"#;
     const PARSE_DEGRADED_JSON: &str = r#"{"diagnostics":[{"column":0,"file":"A.lean","line":4,"message":"unexpected end of input","severity":"error"}],"diagnostics_truncated":false,"module_header":{"imports":["Init"],"is_module":false},"status":"degraded","syntax_summary":{"command_count":1,"command_kinds":[{"count":1,"kind":"Lean.Parser.Command.declaration"}]}}"#;
     const PARSE_ERROR_JSON: &str = r#"{"diagnostics":[{"column":0,"file":"<snapshot>","line":0,"message":"invalid parse_file request","severity":"error"}],"diagnostics_truncated":false,"module_header":{"imports":[],"is_module":false},"status":"error","syntax_summary":{"command_count":0,"command_kinds":[]}}"#;
+    // Captured from a real `parseFileCommand` run against this source (v4.32.0-rc1):
+    //   import Init
+    //   -- about A
+    //   import Init
+    //   <blank>
+    //   def f := 1
+    // A duplicate `import Init` with a comment between the two statements. `import_spans`
+    // keeps BOTH occurrences (unlike the deduplicated `imports`), each with its own byte
+    // range, and the comment at bytes 11..23 is trivia — outside every import range.
+    const PARSE_IMPORT_SPANS_JSON: &str = r#"{"diagnostics":[],"diagnostics_truncated":false,"module_header":{"import_spans":[{"module":"Init","range":{"end":11,"start":0}},{"module":"Init","range":{"end":34,"start":23}}],"imports":["Init"],"is_module":false},"source_model":{"docstrings":[],"trivia_runs":[{"end":7,"start":6},{"end":23,"start":11},{"end":30,"start":29},{"end":36,"start":34},{"end":40,"start":39},{"end":42,"start":41},{"end":45,"start":44},{"end":47,"start":46}]},"status":"ok","syntax_summary":{"command_count":1,"command_kinds":[{"count":1,"kind":"Lean.Parser.Command.declaration"}],"command_regions":[{"kind":"Lean.Parser.Command.declaration","line_column":{"end":{"column":10,"line":5},"start":{"column":0,"line":5}},"range":{"end":46,"start":36}}]}}"#;
 
     #[test]
     fn metadata_decodes_lean_side_envelope() {
@@ -446,6 +462,37 @@ mod tests {
         assert_eq!(resp.diagnostics[0].severity, "error");
         assert_eq!(resp.diagnostics[0].line, 4);
         assert_eq!(resp.syntax_summary.command_count, 1);
+    }
+
+    #[test]
+    fn parse_import_spans_decode_keeps_duplicates() {
+        let resp: ParseFileResponse = serde_json::from_str(PARSE_IMPORT_SPANS_JSON).unwrap();
+        assert_eq!(resp.status, ParseStatus::Ok);
+        // `imports` is deduplicated; `import_spans` records every statement.
+        assert_eq!(resp.module_header.imports, vec!["Init".to_owned()]);
+        let spans = &resp.module_header.import_spans;
+        assert_eq!(spans.len(), 2, "both `import Init` statements are recorded");
+        assert_eq!(
+            spans[0],
+            lean_fmt_edit::ImportRecord {
+                module: "Init".to_owned(),
+                range: lean_fmt_edit::TextRange::new(0, 11),
+            }
+        );
+        assert_eq!(
+            spans[1],
+            lean_fmt_edit::ImportRecord {
+                module: "Init".to_owned(),
+                range: lean_fmt_edit::TextRange::new(23, 34),
+            }
+        );
+        // The comment between the imports (bytes 11..23) is outside every import range.
+        for span in spans {
+            assert!(
+                !span.range.contains(15),
+                "the comment byte is not part of any import statement"
+            );
+        }
     }
 
     #[test]

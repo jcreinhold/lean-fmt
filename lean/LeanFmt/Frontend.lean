@@ -164,16 +164,19 @@ private def sourceModel (triviaRuns : Array Json) (docstrings : Array Json) : Js
     [ ("trivia_runs", Json.arr triviaRuns)
     , ("docstrings", Json.arr docstrings) ]
 
-/-- Assemble the response envelope. -/
+/-- Assemble the response envelope. `importSpans` carries one `{module, range}` record
+    per `import` statement (byte-anchored), empty when the header never parsed cleanly. -/
 private def mkResponse (status : String) (diagnostics : Array Json) (truncated : Bool)
-    (imports : List String) (isModule : Bool) (summary : Json) (srcModel : Json) : String :=
+    (imports : List String) (isModule : Bool) (importSpans : Array Json)
+    (summary : Json) (srcModel : Json) : String :=
   Json.mkObj
     [ ("status", Json.str status)
     , ("diagnostics", Json.arr diagnostics)
     , ("diagnostics_truncated", Json.bool truncated)
     , ("module_header", Json.mkObj
         [ ("imports", Json.arr ((imports.map Json.str).toArray))
-        , ("is_module", Json.bool isModule) ])
+        , ("is_module", Json.bool isModule)
+        , ("import_spans", Json.arr importSpans) ])
     , ("syntax_summary", summary)
     , ("source_model", srcModel) ]
     |>.compress
@@ -189,11 +192,14 @@ private def runParse (req : ParseRequest) : IO String := do
   let (header, parserState, headerMessages) ← Parser.parseHeader inputCtx
   let imports := ((Elab.headerToImports header).map (·.module.toString)).toList.eraseDups
   let isModule := Elab.HeaderSyntax.isModule header
+  -- Byte-anchored per-import records, recovered from the parsed header. Reliable only
+  -- once the header parses without error; the error branch below reports `#[]`.
+  let importSpans := LeanFmt.Source.importSpans header.raw
   -- A header that itself fails to parse is a hard `error`: there is no reliable
   -- import set or body boundary to proceed from.
   if headerMessages.hasErrors then
     let (diags, trunc) ← renderDiagnostics headerMessages req.file
-    return mkResponse "error" diags trunc imports isModule (syntaxSummary #[] #[]) (sourceModel #[] #[])
+    return mkResponse "error" diags trunc imports isModule #[] (syntaxSummary #[] #[]) (sourceModel #[] #[])
   -- Build the command environment. `processHeader` reports unresolved imports as
   -- error messages (occasionally as a throw); either way we degrade rather than crash.
   let processed : Except MessageLog (Environment × MessageLog) ←
@@ -209,7 +215,7 @@ private def runParse (req : ParseRequest) : IO String := do
   match processed with
   | .error log =>
     let (diags, trunc) ← renderDiagnostics log req.file
-    return mkResponse "degraded" diags trunc imports isModule (syntaxSummary #[] #[]) (sourceModel #[] #[])
+    return mkResponse "degraded" diags trunc imports isModule importSpans (syntaxSummary #[] #[]) (sourceModel #[] #[])
   | .ok (env, importMessages) =>
     let body := parseCommands inputCtx env parserState importMessages
     let (diags, trunc) ← renderDiagnostics body.messages req.file
@@ -223,7 +229,7 @@ private def runParse (req : ParseRequest) : IO String := do
     -- `degraded` when imports or body carried errors (e.g. a missing module's parser
     -- extensions were absent, so notation failed to parse); `ok` otherwise.
     let status := if body.messages.hasErrors then "degraded" else "ok"
-    return mkResponse status diags trunc imports isModule (syntaxSummary body.kinds body.regions) srcModel
+    return mkResponse status diags trunc imports isModule importSpans (syntaxSummary body.kinds body.regions) srcModel
 
 /--
 Request/response export: parse an in-memory Lean source snapshot with the imports
@@ -231,8 +237,9 @@ declared in its header and return parse diagnostics plus a lightweight syntax su
 
 Request: `{"file"?, "source", "imports"?, "options"?: {"sysroot"?, "search_path"?}}`.
 Response: `{"status", "diagnostics", "diagnostics_truncated", "module_header":
-{"imports", "is_module"}, "syntax_summary": {"command_count", "command_kinds",
-"command_regions"}, "source_model": {"trivia_runs", "docstrings"}}`, where each
+{"imports", "is_module", "import_spans"}, "syntax_summary": {"command_count",
+"command_kinds", "command_regions"}, "source_model": {"trivia_runs", "docstrings"}}`,
+where `import_spans` are per-`import` `{module, range: {start, end}}` records, each
 `command_regions` entry is a byte-anchored `SyntaxRegion`
 (`{"kind", "range": {"start", "end"}, "line_column": …}`), `trivia_runs` are the
 inter-token byte ranges (`{"start", "end"}`) that hold all comments and blank lines,
@@ -249,7 +256,7 @@ def parseFileCommand (requestJson : String) : IO String := do
       , ("file", Json.str defaultFileLabel)
       , ("line", toJson (0 : Nat))
       , ("column", toJson (0 : Nat)) ]
-    pure <| mkResponse "error" #[diag] false [] false (syntaxSummary #[] #[]) (sourceModel #[] #[])
+    pure <| mkResponse "error" #[diag] false [] false #[] (syntaxSummary #[] #[]) (sourceModel #[] #[])
   | .ok req => runParse req
 
 end LeanFmt.Frontend

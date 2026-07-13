@@ -96,6 +96,21 @@ pub struct SyntaxRegion {
     pub line_column: LineColumnRange,
 }
 
+/// One `import` statement: its module name and the byte range of the whole statement.
+///
+/// This is the decoded form of one `module_header.import_spans` entry returned by the
+/// Lean `lean_fmt_parse_file` command. The `range` spans the `import` keyword through
+/// the module ident (including any modifiers), but excludes the leading comment/blank
+/// trivia before the statement — that attachment is recovered from the source text by
+/// the import-sort rule, not from this record.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ImportRecord {
+    /// The imported module name (e.g. `Mathlib.Data.Nat.Basic`).
+    pub module: String,
+    /// The byte range of the whole `import` statement.
+    pub range: TextRange,
+}
+
 /// A byte↔line/column map over UTF-8 source.
 ///
 /// Reproduces Lean's `FileMap` codepoint-based column counting so a `TextRange`

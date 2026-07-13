@@ -27,5 +27,5 @@ mod source;
 mod trivia;
 
 pub use edit::{Applicability, Diagnostic, EditSet, PatchError, PatchOutcome, RuleId, SCHEMA, TextEdit, unified_diff};
-pub use source::{LineColumn, LineColumnRange, SourceMap, SyntaxRegion, TextRange};
+pub use source::{ImportRecord, LineColumn, LineColumnRange, SourceMap, SyntaxRegion, TextRange};
 pub use trivia::{Trivia, TriviaKind, classify_trivia, trivia_tiles_runs};
