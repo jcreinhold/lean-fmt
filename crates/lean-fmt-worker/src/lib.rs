@@ -61,6 +61,110 @@ pub struct CapabilityDoctor {
     pub metadata_valid: bool,
 }
 
+/// Request for the `lean_fmt_parse_file` command.
+///
+/// `imports` is an optional caller hint; the Lean side derives the authoritative
+/// import set from the snapshot's own header. `options` seeds `initSearchPath` so the
+/// header's imports (and their notation/parser extensions) resolve.
+#[derive(Clone, Debug, Serialize)]
+pub struct ParseFileRequest {
+    /// File label used in diagnostics (the snapshot is not read from disk).
+    pub file: String,
+    /// The in-memory Lean source to parse.
+    pub source: String,
+    /// Optional caller-supplied import hint; omitted from the wire when empty.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub imports: Vec<String>,
+    /// Search-path options for resolving the header's imports.
+    pub options: ParseFileOptions,
+}
+
+/// Search-path options for [`ParseFileRequest`].
+#[derive(Clone, Debug, Serialize)]
+pub struct ParseFileOptions {
+    /// Lean sysroot whose core `.olean`s seed the module search path.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sysroot: Option<String>,
+    /// Extra module build directories (e.g. the target project's build output).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub search_path: Vec<String>,
+}
+
+/// Outcome tag for a parse (`lean_fmt_parse_file`).
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum ParseStatus {
+    /// Header, imports, and body all parsed without error.
+    Ok,
+    /// A best-effort parse: an import was unresolved or the body carried parse errors.
+    Degraded,
+    /// The header itself failed to parse, or the request envelope was malformed.
+    Error,
+}
+
+/// A single parse diagnostic, mirroring `LeanFmt.Frontend`'s rendering.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+pub struct ParseDiagnostic {
+    /// Severity tag (`info`/`warning`/`error`).
+    pub severity: String,
+    /// Human-readable message body.
+    pub message: String,
+    /// File label the diagnostic is attributed to.
+    pub file: String,
+    /// 1-based line of the diagnostic start.
+    pub line: u32,
+    /// 0-based column of the diagnostic start.
+    pub column: u32,
+    /// Optional end line.
+    #[serde(default)]
+    pub end_line: Option<u32>,
+    /// Optional end column.
+    #[serde(default)]
+    pub end_column: Option<u32>,
+}
+
+/// The parsed module header summary.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+pub struct ModuleHeader {
+    /// Deduplicated import module names derived from the snapshot header.
+    pub imports: Vec<String>,
+    /// Whether the header is a `module` header.
+    pub is_module: bool,
+}
+
+/// One top-level command kind and its occurrence count.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+pub struct CommandKind {
+    /// Syntax node kind (e.g. `Lean.Parser.Command.declaration`).
+    pub kind: String,
+    /// Number of top-level commands of this kind.
+    pub count: usize,
+}
+
+/// The lightweight syntax summary of a parsed snapshot.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+pub struct SyntaxSummary {
+    /// Total top-level commands parsed.
+    pub command_count: usize,
+    /// Per-kind command counts.
+    pub command_kinds: Vec<CommandKind>,
+}
+
+/// Response from the `lean_fmt_parse_file` command.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+pub struct ParseFileResponse {
+    /// Parse outcome tag.
+    pub status: ParseStatus,
+    /// Parse diagnostics rendered from the Lean message log.
+    pub diagnostics: Vec<ParseDiagnostic>,
+    /// Whether the diagnostics list was byte-bounded and truncated.
+    pub diagnostics_truncated: bool,
+    /// The parsed module header.
+    pub module_header: ModuleHeader,
+    /// The lightweight syntax summary.
+    pub syntax_summary: SyntaxSummary,
+}
+
 /// Worker boundary errors.
 #[derive(Debug, thiserror::Error)]
 pub enum WorkerError {
@@ -133,6 +237,7 @@ impl FormatterWorker {
             ))
             .json_command_export(exports::METADATA_EXPORT)
             .json_command_export(exports::DOCTOR_EXPORT)
+            .json_command_export(exports::PARSE_FILE_EXPORT)
             .request_timeout(self.request_timeout))
     }
 
@@ -172,18 +277,56 @@ impl FormatterWorker {
     pub fn doctor(&mut self) -> Result<CapabilityDoctor, WorkerError> {
         self.dispatch_json(exports::DOCTOR_EXPORT, &json!({}))
     }
+
+    /// Parse an in-memory Lean source snapshot (`lean_fmt_parse_file`), resolving the
+    /// header's imports against this worker's sysroot plus `search_path`.
+    ///
+    /// `search_path` should contain the target project's module build directories so
+    /// import-dependent syntax (custom notation from another module) parses; when a
+    /// module is unresolved the worker returns [`ParseStatus::Degraded`] rather than
+    /// failing. A syntactically broken snapshot returns structured diagnostics, not an
+    /// error.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WorkerError`] if capability load, child spawn, or dispatch fails (a
+    /// parse failure is reported *in* the response, not as an error).
+    pub fn parse_file(
+        &mut self,
+        file: impl Into<String>,
+        source: impl Into<String>,
+        search_path: &[PathBuf],
+    ) -> Result<ParseFileResponse, WorkerError> {
+        let request = ParseFileRequest {
+            file: file.into(),
+            source: source.into(),
+            imports: Vec::new(),
+            options: ParseFileOptions {
+                sysroot: Some(self.lean_sysroot.display().to_string()),
+                search_path: search_path.iter().map(|path| path.display().to_string()).collect(),
+            },
+        };
+        self.dispatch_json(exports::PARSE_FILE_EXPORT, &request)
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing, clippy::panic)]
 
-    use super::{CapabilityDoctor, CapabilityMetadata};
+    use super::{CapabilityDoctor, CapabilityMetadata, ParseFileResponse, ParseStatus};
 
     // The exact compact envelopes emitted by `lean/LeanFmt/Capability.lean`. These
     // guard the parent DTOs against Lean-side drift without needing a live worker.
     const METADATA_JSON: &str = r#"{"capability":"lean-fmt","schema":"lean-fmt.capability.v1","version":"0.1.0"}"#;
     const DOCTOR_JSON: &str = r#"{"capability":"lean-fmt","schema":"lean-fmt.capability.v1","version":"0.1.0","ok":true,"metadata_valid":true}"#;
+
+    // The exact compact envelopes emitted by `lean/LeanFmt/Frontend.lean`'s
+    // `parseFileCommand` (captured from a real run against v4.32.0-rc1). Object keys
+    // are alphabetically sorted by `Json.compress`.
+    const PARSE_OK_JSON: &str = r#"{"diagnostics":[],"diagnostics_truncated":false,"module_header":{"imports":["Init"],"is_module":false},"status":"ok","syntax_summary":{"command_count":2,"command_kinds":[{"count":2,"kind":"Lean.Parser.Command.declaration"}]}}"#;
+    const PARSE_DEGRADED_JSON: &str = r#"{"diagnostics":[{"column":0,"file":"A.lean","line":4,"message":"unexpected end of input","severity":"error"}],"diagnostics_truncated":false,"module_header":{"imports":["Init"],"is_module":false},"status":"degraded","syntax_summary":{"command_count":1,"command_kinds":[{"count":1,"kind":"Lean.Parser.Command.declaration"}]}}"#;
+    const PARSE_ERROR_JSON: &str = r#"{"diagnostics":[{"column":0,"file":"<snapshot>","line":0,"message":"invalid parse_file request","severity":"error"}],"diagnostics_truncated":false,"module_header":{"imports":[],"is_module":false},"status":"error","syntax_summary":{"command_count":0,"command_kinds":[]}}"#;
 
     #[test]
     fn metadata_decodes_lean_side_envelope() {
@@ -199,5 +342,39 @@ mod tests {
         assert_eq!(doctor.capability, "lean-fmt");
         assert!(doctor.ok);
         assert!(doctor.metadata_valid);
+    }
+
+    #[test]
+    fn parse_ok_decodes_lean_side_envelope() {
+        let resp: ParseFileResponse = serde_json::from_str(PARSE_OK_JSON).unwrap();
+        assert_eq!(resp.status, ParseStatus::Ok);
+        assert!(resp.diagnostics.is_empty());
+        assert!(!resp.diagnostics_truncated);
+        assert_eq!(resp.module_header.imports, vec!["Init".to_owned()]);
+        assert!(!resp.module_header.is_module);
+        assert_eq!(resp.syntax_summary.command_count, 2);
+        assert_eq!(
+            resp.syntax_summary.command_kinds[0].kind,
+            "Lean.Parser.Command.declaration"
+        );
+        assert_eq!(resp.syntax_summary.command_kinds[0].count, 2);
+    }
+
+    #[test]
+    fn parse_degraded_decodes_with_diagnostics() {
+        let resp: ParseFileResponse = serde_json::from_str(PARSE_DEGRADED_JSON).unwrap();
+        assert_eq!(resp.status, ParseStatus::Degraded);
+        assert_eq!(resp.diagnostics.len(), 1);
+        assert_eq!(resp.diagnostics[0].severity, "error");
+        assert_eq!(resp.diagnostics[0].line, 4);
+        assert_eq!(resp.syntax_summary.command_count, 1);
+    }
+
+    #[test]
+    fn parse_error_decodes_malformed_request() {
+        let resp: ParseFileResponse = serde_json::from_str(PARSE_ERROR_JSON).unwrap();
+        assert_eq!(resp.status, ParseStatus::Error);
+        assert!(resp.module_header.imports.is_empty());
+        assert_eq!(resp.syntax_summary.command_count, 0);
     }
 }

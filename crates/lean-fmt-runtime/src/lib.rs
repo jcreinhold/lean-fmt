@@ -14,7 +14,7 @@
 use std::fs::{self, File, OpenOptions};
 use std::path::{Path, PathBuf};
 
-use lean_rs_worker_protocol::worker_exports::{doctor_signature, metadata_signature};
+use lean_rs_worker_protocol::worker_exports::{doctor_signature, json_command_signature, metadata_signature};
 use lean_toolchain::{
     CargoLeanCapability, GeneratedSourceFile, LeanBuiltCapability, LeanBuiltCapabilityError, LeanExportSignature,
     LinkDiagnostics, SourcePackageError, SourcePackageManifestPolicy, SourcePackageMaterializationRequest,
@@ -50,6 +50,9 @@ pub mod exports {
     pub const METADATA_EXPORT: &str = "lean_fmt_metadata";
     /// `@[export lean_fmt_doctor]` — capability self-check command.
     pub const DOCTOR_EXPORT: &str = "lean_fmt_doctor";
+    /// `@[export lean_fmt_parse_file]` — source-snapshot parse command
+    /// (`lean/LeanFmt/Frontend.lean`).
+    pub const PARSE_FILE_EXPORT: &str = "lean_fmt_parse_file";
 }
 
 /// Request to build the packaged runtime for one Lean toolchain.
@@ -246,10 +249,11 @@ pub fn compute_runtime_source_digest() -> Result<String, Error> {
     compute_runtime_source_digest_from(Path::new(RUNTIME_SOURCE_ROOT))
 }
 
-fn export_signatures() -> [LeanExportSignature; 2] {
+fn export_signatures() -> [LeanExportSignature; 3] {
     [
         metadata_signature(exports::METADATA_EXPORT),
         doctor_signature(exports::DOCTOR_EXPORT),
+        json_command_signature(exports::PARSE_FILE_EXPORT),
     ]
 }
 
