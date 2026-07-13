@@ -7,14 +7,19 @@
 
 mod install_worker;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use clap::{Parser, Subcommand, ValueEnum};
 use serde::Serialize;
 use thiserror::Error;
 
 use lean_fmt_diagnostics::{RuleInfo, RuleSelection, registry};
-use lean_fmt_project::{FormatCache, FormatterConfig, SourceFile, ValidationLevel};
+use lean_fmt_project::{
+    AnalysisOutcome, CacheKeyBuilder, FileReport, FormatCache, FormatterConfig, ProjectRun, RunMode, RunSummary,
+    SourceFile, ValidationLevel, run_project,
+};
+use lean_fmt_worker::FormatterWorker;
+use lean_fmt_worker::toolchain::resolve_installed_worker;
 
 /// Top-level CLI parser.
 #[derive(Debug, Parser)]
@@ -71,6 +76,11 @@ pub struct CommonArgs {
     /// is already sound; this is a diagnostic escape hatch.
     #[arg(long)]
     pub no_cache: bool,
+
+    /// Print run statistics (per-mode counts, cache hits, files written) to stderr after
+    /// the report. Kept off stdout so a `--format json` run stays a single clean object.
+    #[arg(long)]
+    pub statistics: bool,
 }
 
 /// Options for `lean-fmt fix`: the shared file options plus write-validation control.
@@ -181,6 +191,10 @@ pub enum Error {
     #[error("could not render JSON output: {0}")]
     Json(#[from] serde_json::Error),
 
+    /// No usable Lean-linked worker could be resolved for the workspace's toolchain.
+    #[error("{0}")]
+    Worker(String),
+
     /// `install-worker` is effectful and is dispatched directly by [`run`], not planned.
     #[error("install-worker does not produce a report; it is dispatched directly")]
     NotReportable,
@@ -270,37 +284,39 @@ fn selection_for(args: &CommonArgs, config: &FormatterConfig) -> RuleSelection {
     )
 }
 
+/// Resolve the files a file-processing command will operate on, plus the discovered Lake
+/// root (when discovery ran). Explicit `paths` skip discovery and yield no root.
+///
+/// # Errors
+/// Returns an error if workspace discovery or file resolution fails.
+fn resolve_targets(args: &CommonArgs, config: &FormatterConfig) -> Result<(Option<PathBuf>, Vec<SourceFile>)> {
+    if args.paths.is_empty() {
+        let workspace = lean_fmt_project::resolve(&args.root, args.module_root.as_deref(), config)?;
+        Ok((Some(workspace.root), workspace.source_files))
+    } else {
+        let files = lean_fmt_project::resolve_files(&args.paths)?;
+        Ok((None, files))
+    }
+}
+
 fn plan_files(mode: &'static str, args: &CommonArgs) -> Result<Report> {
     let config = load_config(args)?;
     let selection = selection_for(args, &config);
     // Project-level active rule count: per-file ignores keyed by real prefixes do not
     // apply to the empty path, so this is the baseline the selection would use.
     let active = selection.active_rule_ids("").len();
-    if args.paths.is_empty() {
-        let workspace = lean_fmt_project::resolve(&args.root, args.module_root.as_deref(), &config)?;
-        let note = mode_note(mode, workspace.source_files.len(), active);
-        Ok(Report {
-            mode,
-            root: Some(workspace.root),
-            files: workspace.source_files,
-            note,
-        })
-    } else {
-        let files = lean_fmt_project::resolve_files(&args.paths)?;
-        let note = mode_note(mode, files.len(), active);
-        Ok(Report {
-            mode,
-            root: None,
-            files,
-            note,
-        })
-    }
+    let (root, files) = resolve_targets(args, &config)?;
+    let note = mode_note(mode, files.len(), active);
+    Ok(Report {
+        mode,
+        root,
+        files,
+        note,
+    })
 }
 
 fn mode_note(mode: &str, count: usize, active_rules: usize) -> String {
-    format!(
-        "resolved {count} file(s); {active_rules} rule(s) active; {mode} found no changes (no rules implemented yet)"
-    )
+    format!("resolved {count} file(s); {active_rules} rule(s) active; ready to {mode}")
 }
 
 /// A machine-readable listing of the rule registry, filtered by an optional selection.
@@ -391,19 +407,89 @@ pub fn command_format(command: &CliCommand) -> OutputFormat {
     }
 }
 
-/// Parse arguments, run the planning phase, and print the report. Returns a process
-/// exit code: success, or failure with the error written to stderr.
+/// The mode string and [`RunMode`] a file-processing command runs as. `format` reports what
+/// would change like `check` (no writes); `diff` shows the diffs; `fix` writes.
+fn run_mode(command: &CliCommand) -> Option<(&'static str, RunMode, &CommonArgs, ValidationLevel)> {
+    match command {
+        CliCommand::Check(args) => Some(("check", RunMode::Check, args, ValidationLevel::Syntax)),
+        CliCommand::Format(args) => Some(("format", RunMode::Check, args, ValidationLevel::Syntax)),
+        CliCommand::Diff(args) => Some(("diff", RunMode::Diff, args, ValidationLevel::Syntax)),
+        CliCommand::Fix(args) => Some(("fix", RunMode::Fix, &args.common, validation_level(args))),
+        CliCommand::Rules { .. } | CliCommand::InstallWorker(_) => None,
+    }
+}
+
+/// The per-project cache root: a hidden directory beside the workspace (like `.ruff_cache`).
+fn cache_root_for(root: &Path) -> PathBuf {
+    root.join(".lean-fmt-cache")
+}
+
+/// The import search path handed to the worker: the project's built module directory, when
+/// it exists. Absent when the project is unbuilt (project-internal imports then Degrade to a
+/// reported broken file rather than being silently formatted against a stale model).
+fn project_search_path(root: &Path) -> Vec<PathBuf> {
+    let lib = root.join(".lake").join("build").join("lib");
+    if lib.is_dir() { vec![lib] } else { Vec::new() }
+}
+
+/// Resolve the workspace and worker, drive [`run_project`] across every file through one warm
+/// session, print the report to stdout and statistics to stderr, and return the exit code.
+///
+/// # Errors
+/// Returns an error if config/discovery fails, no usable worker is installed, or rendering
+/// fails. A per-file failure is *not* an error here — it is reported and reflected in the
+/// exit code, not propagated.
+fn execute(mode_label: &'static str, mode: RunMode, args: &CommonArgs, level: ValidationLevel) -> Result<u8> {
+    let config = load_config(args)?;
+    let selection = selection_for(args, &config);
+    let (root, files) = resolve_targets(args, &config)?;
+
+    // One warm worker per workspace, resolved for the pinned toolchain.
+    let worker_root = root.clone().unwrap_or_else(|| args.root.clone());
+    let installed = resolve_installed_worker(&worker_root).map_err(|error| Error::Worker(error.to_string()))?;
+    let mut worker = FormatterWorker::from_installed(&installed);
+
+    let keys = CacheKeyBuilder::new(
+        &config,
+        env!("CARGO_PKG_VERSION"),
+        installed.toolchain_label.as_str(),
+        installed.runtime_source_digest.as_str(),
+        level,
+    );
+    let cache = cache_for(args, cache_root_for(&worker_root));
+    let search_path = project_search_path(&worker_root);
+
+    // Progress goes to stderr so stdout carries only the report (clean JSON when requested).
+    let run = run_project(
+        &mut worker,
+        mode,
+        &files,
+        &selection,
+        &keys,
+        level,
+        &search_path,
+        &cache,
+        |message| eprintln!("{message}"),
+    );
+
+    print!("{}", render_run(&run, mode_label, root.as_deref(), args.format)?);
+    if args.statistics {
+        eprint!("{}", render_statistics(&run));
+    }
+    Ok(run.exit_code())
+}
+
+/// Parse arguments, dispatch the command, and return a process exit code.
 #[must_use]
 pub fn run() -> std::process::ExitCode {
     let cli = Cli::parse();
     // install-worker is effectful (builds + installs + smoke-tests); it is dispatched
-    // directly rather than through the pure plan/render report path.
+    // directly rather than through the report path.
     if let CliCommand::InstallWorker(args) = &cli.command {
         return install_worker::run(args);
     }
-    let format = command_format(&cli.command);
-    if let CliCommand::Rules { .. } = &cli.command {
-        return match render_rules(&plan_rules(), format) {
+    if let CliCommand::Rules { format } = &cli.command {
+        return match render_rules(&plan_rules(), *format) {
             Ok(rendered) => {
                 print!("{rendered}");
                 std::process::ExitCode::SUCCESS
@@ -414,16 +500,205 @@ pub fn run() -> std::process::ExitCode {
             }
         };
     }
-    match plan(&cli.command).and_then(|report| render(&report, format)) {
-        Ok(rendered) => {
-            print!("{rendered}");
-            std::process::ExitCode::SUCCESS
-        }
+    let Some((mode_label, mode, args, level)) = run_mode(&cli.command) else {
+        eprintln!("lean-fmt: {}", Error::NotReportable);
+        return std::process::ExitCode::FAILURE;
+    };
+    match execute(mode_label, mode, args, level) {
+        Ok(code) => std::process::ExitCode::from(code),
         Err(error) => {
             eprintln!("lean-fmt: {error}");
             std::process::ExitCode::FAILURE
         }
     }
+}
+
+/// Render a [`ProjectRun`] as the stdout report — text, or a single clean JSON object.
+///
+/// # Errors
+/// Returns [`Error::Json`] if JSON serialization fails.
+pub fn render_run(run: &ProjectRun, mode_label: &str, root: Option<&Path>, format: OutputFormat) -> Result<String> {
+    match format {
+        OutputFormat::Json => render_run_json(run, mode_label, root),
+        OutputFormat::Text => Ok(render_run_text(run, mode_label, root)),
+    }
+}
+
+/// The path shown for a report: relative to the discovered root when possible, else as-is.
+fn display_path(path: &str, root: Option<&Path>) -> String {
+    if let Some(root) = root
+        && let Ok(relative) = Path::new(path).strip_prefix(root)
+    {
+        return relative.display().to_string();
+    }
+    path.to_owned()
+}
+
+/// The stable per-file status word.
+fn status_of(report: &FileReport) -> &'static str {
+    match report {
+        FileReport::Failed { .. } => "failed",
+        FileReport::Analyzed { analysis, wrote } => match &analysis.outcome {
+            AnalysisOutcome::Broken { .. } => "broken",
+            AnalysisOutcome::Analyzed { formatted, .. } => {
+                if formatted.is_none() {
+                    "clean"
+                } else if *wrote {
+                    "reformatted"
+                } else {
+                    "would-reformat"
+                }
+            }
+        },
+    }
+}
+
+/// The number of findings on a report, if it was analyzed at all.
+fn findings_of(report: &FileReport) -> Option<usize> {
+    match report {
+        FileReport::Failed { .. } => None,
+        FileReport::Analyzed { analysis, .. } => match &analysis.outcome {
+            AnalysisOutcome::Analyzed { diagnostics, .. } => Some(diagnostics.len()),
+            AnalysisOutcome::Broken { diagnostics, .. } => Some(diagnostics.len()),
+        },
+    }
+}
+
+/// The unified diff for a report, if one was produced.
+fn diff_of(report: &FileReport) -> Option<&str> {
+    match report {
+        FileReport::Failed { .. } => None,
+        FileReport::Analyzed { analysis, .. } => match &analysis.outcome {
+            AnalysisOutcome::Analyzed { diff, .. } => diff.as_deref(),
+            AnalysisOutcome::Broken { .. } => None,
+        },
+    }
+}
+
+/// The failure message on a failed report.
+fn message_of(report: &FileReport) -> Option<&str> {
+    match report {
+        FileReport::Failed { message, .. } => Some(message),
+        FileReport::Analyzed { .. } => None,
+    }
+}
+
+/// One JSON object per file in a run.
+#[derive(Serialize)]
+struct FileJson {
+    path: String,
+    status: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    findings: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    diff: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    message: Option<String>,
+}
+
+/// The JSON summary block.
+#[derive(Serialize)]
+struct SummaryJson {
+    total: usize,
+    clean: usize,
+    changed: usize,
+    broken: usize,
+    failed: usize,
+    from_cache: usize,
+    wrote: usize,
+}
+
+impl From<RunSummary> for SummaryJson {
+    fn from(summary: RunSummary) -> Self {
+        Self {
+            total: summary.total,
+            clean: summary.clean,
+            changed: summary.changed,
+            broken: summary.broken,
+            failed: summary.failed,
+            from_cache: summary.from_cache,
+            wrote: summary.wrote,
+        }
+    }
+}
+
+/// The whole-run JSON object printed to stdout in `--format json`.
+#[derive(Serialize)]
+struct RunJson {
+    mode: String,
+    files: Vec<FileJson>,
+    summary: SummaryJson,
+}
+
+fn render_run_json(run: &ProjectRun, mode_label: &str, root: Option<&Path>) -> Result<String> {
+    let files = run
+        .reports
+        .iter()
+        .map(|report| FileJson {
+            path: display_path(report.path(), root),
+            status: status_of(report),
+            findings: findings_of(report),
+            diff: diff_of(report).map(ToOwned::to_owned),
+            message: message_of(report).map(ToOwned::to_owned),
+        })
+        .collect();
+    let json = RunJson {
+        mode: mode_label.to_owned(),
+        files,
+        summary: SummaryJson::from(run.summary()),
+    };
+    Ok(serde_json::to_string_pretty(&json)?)
+}
+
+fn render_run_text(run: &ProjectRun, mode_label: &str, root: Option<&Path>) -> String {
+    let mut lines = Vec::new();
+    for report in &run.reports {
+        let path = display_path(report.path(), root);
+        let status = status_of(report);
+        if mode_label == "diff" {
+            match diff_of(report) {
+                Some(diff) => lines.push(diff.to_owned()),
+                None => {
+                    if status != "clean" {
+                        lines.push(format!("{path}: {status}"));
+                    }
+                }
+            }
+            continue;
+        }
+        match status {
+            // Clean files are not listed in text mode; the summary counts them.
+            "clean" => {}
+            "failed" => lines.push(format!("{path}: {}", message_of(report).unwrap_or("failed"))),
+            other => lines.push(format!("{path}: {other}")),
+        }
+    }
+    lines.push(summary_line(mode_label, &run.summary()));
+    let mut out = lines.join("\n");
+    out.push('\n');
+    out
+}
+
+fn summary_line(mode_label: &str, summary: &RunSummary) -> String {
+    format!(
+        "{mode_label}: {} file(s); {} clean, {} to change, {} broken, {} failed",
+        summary.total, summary.clean, summary.changed, summary.broken, summary.failed
+    )
+}
+
+/// The `--statistics` block (stderr): the full per-mode counts including cache hits and writes.
+fn render_statistics(run: &ProjectRun) -> String {
+    let summary = run.summary();
+    format!(
+        "statistics: total={} clean={} changed={} broken={} failed={} from_cache={} wrote={}\n",
+        summary.total,
+        summary.clean,
+        summary.changed,
+        summary.broken,
+        summary.failed,
+        summary.from_cache,
+        summary.wrote,
+    )
 }
 
 #[cfg(test)]
@@ -452,6 +727,7 @@ mod tests {
             select: Vec::new(),
             ignore: Vec::new(),
             no_cache: false,
+            statistics: false,
         }
     }
 
@@ -589,6 +865,101 @@ mod tests {
         };
         assert!(args.no_cache);
         assert!(!cache_for(args, cache_root).is_enabled());
+    }
+
+    fn mixed_reports() -> Vec<lean_fmt_project::FileReport> {
+        use lean_fmt_project::{AnalysisOutcome, FileAnalysis, FileReport};
+        use lean_fmt_worker::ParseStatus;
+        vec![
+            FileReport::Analyzed {
+                analysis: FileAnalysis {
+                    path: "/w/A.lean".to_owned(),
+                    outcome: AnalysisOutcome::Analyzed {
+                        diagnostics: Vec::new(),
+                        formatted: None,
+                        diff: None,
+                    },
+                    from_cache: false,
+                },
+                wrote: false,
+            },
+            FileReport::Analyzed {
+                analysis: FileAnalysis {
+                    path: "/w/B.lean".to_owned(),
+                    outcome: AnalysisOutcome::Analyzed {
+                        diagnostics: Vec::new(),
+                        formatted: Some("def b := 1\n".to_owned()),
+                        diff: Some("--- a/B.lean\n+++ b/B.lean\n".to_owned()),
+                    },
+                    from_cache: false,
+                },
+                wrote: false,
+            },
+            FileReport::Analyzed {
+                analysis: FileAnalysis {
+                    path: "/w/C.lean".to_owned(),
+                    outcome: AnalysisOutcome::Broken {
+                        status: ParseStatus::Error,
+                        diagnostics: Vec::new(),
+                    },
+                    from_cache: false,
+                },
+                wrote: false,
+            },
+            FileReport::Failed {
+                path: "/w/D.lean".to_owned(),
+                message: "could not read file".to_owned(),
+            },
+        ]
+    }
+
+    #[test]
+    fn render_run_json_is_a_single_clean_object() {
+        use lean_fmt_project::{ProjectRun, RunMode};
+        use std::path::Path;
+
+        let run = ProjectRun {
+            mode: RunMode::Check,
+            reports: mixed_reports(),
+        };
+        let json = super::render_run(&run, "check", Some(Path::new("/w")), OutputFormat::Json).unwrap();
+
+        // Stdout is a single JSON object — no leaked progress text.
+        assert!(json.trim_start().starts_with('{'), "stdout JSON starts clean: {json}");
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed["mode"], "check");
+        let files = parsed["files"].as_array().unwrap();
+        assert_eq!(files.len(), 4);
+        // Paths are relativized against the root.
+        assert_eq!(files[0]["path"], "A.lean");
+        assert_eq!(files[0]["status"], "clean");
+        assert_eq!(files[1]["status"], "would-reformat");
+        assert_eq!(files[2]["status"], "broken");
+        assert_eq!(files[3]["status"], "failed");
+        assert_eq!(parsed["summary"]["total"], 4);
+        assert_eq!(parsed["summary"]["broken"], 1);
+        assert_eq!(parsed["summary"]["failed"], 1);
+        assert_eq!(parsed["summary"]["changed"], 1);
+        // A per-file failure makes the run a nonzero (error) exit.
+        assert_eq!(run.exit_code(), 2);
+    }
+
+    #[test]
+    fn diff_mode_text_prints_the_diff_and_summary() {
+        use lean_fmt_project::{ProjectRun, RunMode};
+        use std::path::Path;
+
+        let run = ProjectRun {
+            mode: RunMode::Diff,
+            reports: mixed_reports(),
+        };
+        let text = super::render_run(&run, "diff", Some(Path::new("/w")), OutputFormat::Text).unwrap();
+        assert!(text.contains("--- a/B.lean"), "the diff is printed: {text}");
+        assert!(text.contains("C.lean: broken"), "a broken file is noted");
+        assert!(
+            text.contains("diff: 4 file(s); 1 clean, 1 to change, 1 broken, 1 failed"),
+            "the summary line is present: {text}"
+        );
     }
 
     #[test]

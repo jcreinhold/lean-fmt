@@ -157,6 +157,12 @@ pub struct InstalledWorker {
     pub capability_manifest: PathBuf,
     /// The Lean sysroot the child is spawned with (`LEAN_SYSROOT`).
     pub lean_sysroot: PathBuf,
+    /// The elan-style toolchain label (`leanprover/lean4:<id>`). A cache-key ingredient:
+    /// a result cached under one toolchain never satisfies a request under another.
+    pub toolchain_label: String,
+    /// The runtime source digest the capability was built from (from the sidecar). A
+    /// cache-key ingredient: rebuilding the in-repo Lean runtime invalidates cached results.
+    pub runtime_source_digest: String,
 }
 
 /// Resolve the installed worker for the toolchain `workspace_root` pins.
@@ -215,6 +221,8 @@ pub fn resolve_in(install_dir: &Path, id: &ToolchainId) -> Result<InstalledWorke
         worker_child,
         capability_manifest: PathBuf::from(&sidecar.capability_manifest),
         lean_sysroot,
+        toolchain_label: id.elan_label(),
+        runtime_source_digest: sidecar.runtime_source_digest().to_owned(),
     })
 }
 
