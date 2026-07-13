@@ -5,9 +5,10 @@
 //! have an implementation, collecting their [`Diagnostic`]s. Rules with no implementation
 //! yet (most of the registry) are simply skipped, so the engine grows one rule at a time.
 
-use lean_fmt_edit::{Diagnostic, ImportRecord, TextRange};
+use lean_fmt_edit::{Diagnostic, ImportRecord, SyntaxRegion, TextRange};
 
 use crate::imports;
+use crate::layout;
 use crate::rules::registry;
 use crate::selection::RuleSelection;
 use crate::text;
@@ -29,6 +30,10 @@ pub struct RuleContext<'a> {
     /// Syntax-aware rules (e.g. `imports/sorted`) read these; pure-text rules ignore
     /// them. Defaults to empty for contexts built without a parsed header.
     pub imports: &'a [ImportRecord],
+    /// Per top-level command regions (byte range + kind), in parse order. Layout rules
+    /// (e.g. `layout/blank-lines`) key on these boundaries so they only ever edit trivia
+    /// *between* commands. Defaults to empty for contexts built without a parsed body.
+    pub regions: &'a [SyntaxRegion],
 }
 
 impl<'a> RuleContext<'a> {
@@ -41,6 +46,7 @@ impl<'a> RuleContext<'a> {
             path,
             trivia_runs,
             imports: &[],
+            regions: &[],
         }
     }
 
@@ -48,6 +54,13 @@ impl<'a> RuleContext<'a> {
     #[must_use]
     pub fn with_imports(mut self, imports: &'a [ImportRecord]) -> Self {
         self.imports = imports;
+        self
+    }
+
+    /// Attach the parsed top-level command regions, for layout rules.
+    #[must_use]
+    pub fn with_regions(mut self, regions: &'a [SyntaxRegion]) -> Self {
+        self.regions = regions;
         self
     }
 
@@ -70,6 +83,7 @@ fn rule_impl(id: &str) -> Option<RuleFn> {
         "text/trailing-whitespace" => Some(text::trailing_whitespace),
         "text/final-newline" => Some(text::final_newline),
         "imports/sorted" => Some(imports::sorted),
+        "layout/blank-lines" => Some(layout::blank_lines),
         _ => None,
     }
 }
