@@ -107,6 +107,8 @@ private structure BodyParse where
   kinds : Array (Name × Nat)
   /-- Per-command byte-anchored `SyntaxRegion`s. -/
   regions : Array Json
+  /-- Per-declaration header role spans (keyword/name/binders/sig-colon/`:=`/`where`). -/
+  declHeaders : Array Json
   /-- Byte spans of every parsed token in the body (for the trivia complement). -/
   tokenSpans : Array (Nat × Nat)
   /-- Byte ranges of `docComment` nodes in the body. -/
@@ -125,6 +127,7 @@ private def parseCommands (inputCtx : Parser.InputContext) (env : Environment)
   let mut messages := initialMessages
   let mut kinds : Array (Name × Nat) := #[]
   let mut regions : Array Json := #[]
+  let mut declHeaders : Array Json := #[]
   let mut tokenSpans : Array (Nat × Nat) := #[]
   let mut docstrings : Array Json := #[]
   repeat
@@ -143,19 +146,22 @@ private def parseCommands (inputCtx : Parser.InputContext) (env : Environment)
       | none => kinds.push (kind, 1)
     if let some region := LeanFmt.Source.commandRegion inputCtx.fileMap stx then
       regions := regions.push region
+    declHeaders := LeanFmt.Source.declHeaderSpans stx declHeaders
     tokenSpans := LeanFmt.Source.tokenSpans stx tokenSpans
     docstrings := LeanFmt.Source.docCommentSpans stx docstrings
-  pure { kinds, regions, tokenSpans, docstrings, messages }
+  pure { kinds, regions, declHeaders, tokenSpans, docstrings, messages }
 
-/-- Build the `syntax_summary` JSON object from per-kind command counts and the
-    per-command byte-anchored `SyntaxRegion`s. -/
-private def syntaxSummary (kinds : Array (Name × Nat)) (regions : Array Json) : Json :=
+/-- Build the `syntax_summary` JSON object from per-kind command counts, the
+    per-command byte-anchored `SyntaxRegion`s, and the per-declaration header spans. -/
+private def syntaxSummary (kinds : Array (Name × Nat)) (regions : Array Json)
+    (declHeaders : Array Json) : Json :=
   let total : Nat := kinds.foldl (fun acc (_, n) => acc + n) 0
   let kindObjs := kinds.map fun (k, n) => Json.mkObj [("kind", Json.str k.toString), ("count", toJson n)]
   Json.mkObj
     [ ("command_count", toJson total)
     , ("command_kinds", Json.arr kindObjs)
-    , ("command_regions", Json.arr regions) ]
+    , ("command_regions", Json.arr regions)
+    , ("declaration_headers", Json.arr declHeaders) ]
 
 /-- The `source_model` object: trivia runs (inter-token byte ranges) and docstring
     spans. Empty when the parse never reached the body (header error / degrade). -/
@@ -199,7 +205,7 @@ private def runParse (req : ParseRequest) : IO String := do
   -- import set or body boundary to proceed from.
   if headerMessages.hasErrors then
     let (diags, trunc) ← renderDiagnostics headerMessages req.file
-    return mkResponse "error" diags trunc imports isModule #[] (syntaxSummary #[] #[]) (sourceModel #[] #[])
+    return mkResponse "error" diags trunc imports isModule #[] (syntaxSummary #[] #[] #[]) (sourceModel #[] #[])
   -- Build the command environment. `processHeader` reports unresolved imports as
   -- error messages (occasionally as a throw); either way we degrade rather than crash.
   let processed : Except MessageLog (Environment × MessageLog) ←
@@ -215,7 +221,7 @@ private def runParse (req : ParseRequest) : IO String := do
   match processed with
   | .error log =>
     let (diags, trunc) ← renderDiagnostics log req.file
-    return mkResponse "degraded" diags trunc imports isModule importSpans (syntaxSummary #[] #[]) (sourceModel #[] #[])
+    return mkResponse "degraded" diags trunc imports isModule importSpans (syntaxSummary #[] #[] #[]) (sourceModel #[] #[])
   | .ok (env, importMessages) =>
     let body := parseCommands inputCtx env parserState importMessages
     let (diags, trunc) ← renderDiagnostics body.messages req.file
@@ -229,7 +235,7 @@ private def runParse (req : ParseRequest) : IO String := do
     -- `degraded` when imports or body carried errors (e.g. a missing module's parser
     -- extensions were absent, so notation failed to parse); `ok` otherwise.
     let status := if body.messages.hasErrors then "degraded" else "ok"
-    return mkResponse status diags trunc imports isModule importSpans (syntaxSummary body.kinds body.regions) srcModel
+    return mkResponse status diags trunc imports isModule importSpans (syntaxSummary body.kinds body.regions body.declHeaders) srcModel
 
 /--
 Request/response export: parse an in-memory Lean source snapshot with the imports
@@ -238,12 +244,15 @@ declared in its header and return parse diagnostics plus a lightweight syntax su
 Request: `{"file"?, "source", "imports"?, "options"?: {"sysroot"?, "search_path"?}}`.
 Response: `{"status", "diagnostics", "diagnostics_truncated", "module_header":
 {"imports", "is_module", "import_spans"}, "syntax_summary": {"command_count",
-"command_kinds", "command_regions"}, "source_model": {"trivia_runs", "docstrings"}}`,
-where `import_spans` are per-`import` `{module, range: {start, end}}` records, each
-`command_regions` entry is a byte-anchored `SyntaxRegion`
-(`{"kind", "range": {"start", "end"}, "line_column": …}`), `trivia_runs` are the
-inter-token byte ranges (`{"start", "end"}`) that hold all comments and blank lines,
-and `docstrings` are `docComment` node byte ranges.
+"command_kinds", "command_regions", "declaration_headers"}, "source_model":
+{"trivia_runs", "docstrings"}}`, where `import_spans` are per-`import` `{module, range:
+{start, end}}` records, each `command_regions` entry is a byte-anchored `SyntaxRegion`
+(`{"kind", "range": {"start", "end"}, "line_column": …}`), each `declaration_headers`
+entry names the byte ranges of one declaration's header roles (`{"kind", "range",
+"keyword", "name"?, "binders": [{"range", "open"?, "close"?, "colon"?}], "sig_colon"?,
+"assign"?, "where"?}`), `trivia_runs` are the inter-token byte ranges (`{"start",
+"end"}`) that hold all comments and blank lines, and `docstrings` are `docComment` node
+byte ranges.
 A malformed request envelope yields a single `error` diagnostic rather than a throw.
 -/
 @[export lean_fmt_parse_file]
@@ -256,7 +265,7 @@ def parseFileCommand (requestJson : String) : IO String := do
       , ("file", Json.str defaultFileLabel)
       , ("line", toJson (0 : Nat))
       , ("column", toJson (0 : Nat)) ]
-    pure <| mkResponse "error" #[diag] false [] false #[] (syntaxSummary #[] #[]) (sourceModel #[] #[])
+    pure <| mkResponse "error" #[diag] false [] false #[] (syntaxSummary #[] #[] #[]) (sourceModel #[] #[])
   | .ok req => runParse req
 
 end LeanFmt.Frontend

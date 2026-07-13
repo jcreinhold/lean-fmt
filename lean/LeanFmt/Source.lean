@@ -134,6 +134,137 @@ partial def importSpans (stx : Syntax) (acc : Array Json := #[]) : Array Json :=
     args.foldl (fun a s => importSpans s a) acc
   | _ => acc
 
+/-!
+## Declaration header spans
+
+A rule that normalizes spacing around a declaration header (the gap after the kind
+keyword, around the return-type `:`, around `:=`/`where`, and between binders) needs the
+byte positions of those *specific* delimiter tokens — information the whole-command
+region and the inter-token trivia runs do not carry. `declHeaderSpans` walks each parsed
+`Lean.Parser.Command.declaration` and emits one record per declaration naming the byte
+range of each header role, recovered **purely from the parse tree** (no elaboration):
+
+```json
+{ "kind": "Lean.Parser.Command.definition",
+  "range": { "start": 0, "end": 26 },
+  "keyword": { "start": 0, "end": 3 },
+  "name": { "start": 4, "end": 5 },
+  "binders": [ { "range": {…}, "open": {…}, "close": {…}, "colon": {…} } ],
+  "sig_colon": { "start": 16, "end": 17 },
+  "assign": { "start": 22, "end": 24 } }
+```
+
+Optional roles (`name`, `sig_colon`, `assign`, `where`, a binder `colon`) are omitted
+when the parse tree has no such token — an `example` has no name, a `structure` has no
+`:=`, an `instBinder` has no `:` — so a consumer never sees a zero-width or guessed span.
+-/
+
+/-- The byte range of the first `atom` under `stx` in pre-order, if any (identifiers are
+    skipped). Used for the kind keyword and a binder's opening delimiter. -/
+partial def firstAtomRange? (stx : Syntax) : Option Syntax.Range :=
+  match stx with
+  | .atom .. => stx.getRange?
+  | .node _ _ args => args.findSome? firstAtomRange?
+  | _ => none
+
+/-- The byte range of the last `atom` under `stx` in pre-order, if any. Used for a
+    binder's closing delimiter. -/
+partial def lastAtomRange? (stx : Syntax) : Option Syntax.Range :=
+  match stx with
+  | .atom .. => stx.getRange?
+  | .node _ _ args => args.foldl (fun acc a => (lastAtomRange? a).orElse (fun _ => acc)) none
+  | _ => none
+
+/-- The byte range of the first `ident` under `stx` in pre-order, if any. Used for the
+    declaration name inside `declId`. -/
+partial def firstIdentRange? (stx : Syntax) : Option Syntax.Range :=
+  match stx with
+  | .ident .. => stx.getRange?
+  | .node _ _ args => args.findSome? firstIdentRange?
+  | _ => none
+
+/-- The byte range of the first `atom` under `stx` whose text equals `val`, in pre-order.
+    Used to locate the binder `:` separator (the first `:` precedes the type, so
+    first-occurrence is the separator even if the type itself contained a colon). -/
+partial def atomRangeWithVal? (stx : Syntax) (val : String) : Option Syntax.Range :=
+  match stx with
+  | .atom _ v => if v == val then stx.getRange? else none
+  | .node _ _ args => args.findSome? (atomRangeWithVal? · val)
+  | _ => none
+
+/-- The first `node` under `stx` (including `stx`) whose kind is `kind`, in pre-order. -/
+partial def nodeWithKind? (stx : Syntax) (kind : Name) : Option Syntax :=
+  match stx with
+  | .node _ k args =>
+    if k == kind then some stx
+    else args.findSome? (nodeWithKind? · kind)
+  | _ => none
+
+/-- Emit the `binders` array for one declaration's kind node: one record per
+    `Term.{explicit,implicit,strictImplicit,inst}Binder`, in source order, each carrying
+    the whole-binder `range`, its `open`/`close` delimiter atoms, and the `colon`
+    separator when present (absent for an `instBinder` like `[Add α]`). Does not descend
+    into a binder once matched. -/
+partial def binderRecords (stx : Syntax) (acc : Array Json := #[]) : Array Json :=
+  match stx with
+  | .node _ kind args =>
+    if kind == ``Lean.Parser.Term.explicitBinder || kind == ``Lean.Parser.Term.implicitBinder
+        || kind == ``Lean.Parser.Term.strictImplicitBinder || kind == ``Lean.Parser.Term.instBinder then
+      match stx.getRange? with
+      | some r =>
+        let fields : List (String × Json) :=
+          [("range", textRangeJson r)]
+            ++ (match firstAtomRange? stx with | some a => [("open", textRangeJson a)] | none => [])
+            ++ (match lastAtomRange? stx with | some a => [("close", textRangeJson a)] | none => [])
+            ++ (match atomRangeWithVal? stx ":" with | some a => [("colon", textRangeJson a)] | none => [])
+        acc.push (Json.mkObj fields)
+      | none => acc
+    else
+      args.foldl (fun a s => binderRecords s a) acc
+  | _ => acc
+
+/-- Collect one header record per top-level `Command.declaration` under `stx`. The kind
+    node is the declaration's non-`declModifiers` child (`Command.definition`,
+    `Command.theorem`, `Command.structure`, …); each header role is read from it by node
+    kind or atom text. Non-declaration commands contribute nothing. Emitted in source
+    order. -/
+partial def declHeaderSpans (stx : Syntax) (acc : Array Json := #[]) : Array Json :=
+  match stx with
+  | .node _ kind args =>
+    if kind == ``Lean.Parser.Command.declaration then
+      -- The kind node is the child that is not the (possibly synthetic) declModifiers.
+      match args.find? (fun a => a.getKind != ``Lean.Parser.Command.declModifiers) with
+      | some declKind =>
+        match declKind.getRange? with
+        | some r =>
+          -- The signature node holds the header binders and the return-type `:` only;
+          -- scoping binders/`sig_colon` to it keeps a `structure` field's `:` or a value
+          -- lambda's binder out of the header roles (the role-ambiguity stop-rule).
+          let sigNode? :=
+            (nodeWithKind? declKind ``Lean.Parser.Command.optDeclSig).orElse fun _ =>
+              nodeWithKind? declKind ``Lean.Parser.Command.declSig
+          let binders := match sigNode? with | some s => binderRecords s | none => #[]
+          let name? := (nodeWithKind? declKind ``Lean.Parser.Command.declId).bind firstIdentRange?
+          let sigColon? := sigNode?.bind fun s =>
+            (nodeWithKind? s ``Lean.Parser.Term.typeSpec).bind firstAtomRange?
+          let assign? := (nodeWithKind? declKind ``Lean.Parser.Command.declValSimple).bind firstAtomRange?
+          let where? := atomRangeWithVal? declKind "where"
+          let fields : List (String × Json) :=
+            [ ("kind", Json.str declKind.getKind.toString)
+            , ("range", textRangeJson r) ]
+              ++ (match firstAtomRange? declKind with | some a => [("keyword", textRangeJson a)] | none => [])
+              ++ (match name? with | some a => [("name", textRangeJson a)] | none => [])
+              ++ [("binders", Json.arr binders)]
+              ++ (match sigColon? with | some a => [("sig_colon", textRangeJson a)] | none => [])
+              ++ (match assign? with | some a => [("assign", textRangeJson a)] | none => [])
+              ++ (match where? with | some a => [("where", textRangeJson a)] | none => [])
+          acc.push (Json.mkObj fields)
+        | none => acc
+      | none => acc
+    else
+      args.foldl (fun a s => declHeaderSpans s a) acc
+  | _ => acc
+
 /-- Collect the byte ranges of `docComment` nodes (`/-- … -/`, `/-! … -/`) under `stx`
     as `{ "start", "end" }` objects. These are syntax, not trivia; they are reported so
     a downstream formatter can treat docstrings distinctly from ordinary comments. -/

@@ -111,6 +111,64 @@ pub struct ImportRecord {
     pub range: TextRange,
 }
 
+/// One binder in a declaration header signature (an `(x : T)`, `{α : T}`, `⦃…⦄`, or
+/// `[Inst]` group), decoded from a `declaration_headers[_].binders` entry.
+///
+/// `range` spans the whole binder including its delimiters; `open`/`close` are the
+/// delimiter atoms; `colon` is the `name : type` separator, absent for an instance
+/// binder (`[Add α]`) that has no name. Every span comes from the parse tree, so a
+/// spacing rule can normalize the gaps around each without re-scanning text.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BinderSpan {
+    /// The byte range of the whole binder, delimiters included.
+    pub range: TextRange,
+    /// The opening delimiter atom (`(`, `{`, `⦃`, `[`), if present.
+    #[serde(default, rename = "open", skip_serializing_if = "Option::is_none")]
+    pub open: Option<TextRange>,
+    /// The closing delimiter atom (`)`, `}`, `⦄`, `]`), if present.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub close: Option<TextRange>,
+    /// The `name : type` separator `:`, absent for an instance binder.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub colon: Option<TextRange>,
+}
+
+/// One declaration's header roles, decoded from a `syntax_summary.declaration_headers`
+/// entry returned by the Lean `lean_fmt_parse_file` command.
+///
+/// Every span is recovered from the pure parse tree (no elaboration). Optional roles are
+/// absent when the declaration has no such token — an `example` has no `name`, a
+/// `structure` has no `assign`, an anonymous role is never reported as a zero-width span.
+/// This is the substrate the `declaration/header-spacing` rule consumes; it identifies
+/// which trivia gap flanks which delimiter, which the whole-command region and trivia
+/// runs cannot.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DeclHeaderRecord {
+    /// The declaration's kind node (e.g. `Lean.Parser.Command.definition`).
+    pub kind: String,
+    /// The byte range of the whole declaration (excluding leading `declModifiers`).
+    pub range: TextRange,
+    /// The declaration kind keyword atom (`def`/`theorem`/`structure`/…), if present.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub keyword: Option<TextRange>,
+    /// The declaration name ident, absent for an `example` or anonymous `instance`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<TextRange>,
+    /// The header signature binders, in source order (empty when there are none).
+    #[serde(default)]
+    pub binders: Vec<BinderSpan>,
+    /// The return-type `:` from the signature's `typeSpec`, absent when there is none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sig_colon: Option<TextRange>,
+    /// The `:=` atom of a simple declaration value, absent for a `structure` or an
+    /// equation-style definition.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub assign: Option<TextRange>,
+    /// The `where` atom of a `structure` or a `where` block, if present.
+    #[serde(default, rename = "where", skip_serializing_if = "Option::is_none")]
+    pub where_kw: Option<TextRange>,
+}
+
 /// A byte↔line/column map over UTF-8 source.
 ///
 /// Reproduces Lean's `FileMap` codepoint-based column counting so a `TextRange`
@@ -220,7 +278,7 @@ impl<'a> SourceMap<'a> {
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::indexing_slicing, clippy::arithmetic_side_effects)]
 mod tests {
-    use super::{LineColumn, LineColumnRange, SourceMap, SyntaxRegion, TextRange};
+    use super::{DeclHeaderRecord, LineColumn, LineColumnRange, SourceMap, SyntaxRegion, TextRange};
 
     #[test]
     fn text_range_helpers() {
@@ -324,5 +382,53 @@ mod tests {
         assert_eq!(region.line_column.start, LineColumn::new(3, 0));
         assert_eq!(region.line_column.end, LineColumn::new(3, 18));
         assert_eq!(region.range.len(), 19, "byte span is 19 bytes wide");
+    }
+
+    #[test]
+    fn decl_header_decodes_from_lean_envelope() {
+        // Verbatim `declaration_headers[0]` for `def f (x : Nat) : Nat := x + 1\n`,
+        // captured from a live `lean_fmt_parse_file` run (v4.32.0-rc1). Every role span
+        // slices the exact source token.
+        let source = "def f (x : Nat) : Nat := x + 1\n";
+        let json = r#"{"assign":{"end":24,"start":22},"binders":[{"close":{"end":15,"start":14},"colon":{"end":10,"start":9},"open":{"end":7,"start":6},"range":{"end":15,"start":6}}],"keyword":{"end":3,"start":0},"kind":"Lean.Parser.Command.definition","name":{"end":5,"start":4},"range":{"end":30,"start":0},"sig_colon":{"end":17,"start":16}}"#;
+        let h: DeclHeaderRecord = serde_json::from_str(json).unwrap();
+        let at = |r: TextRange| source.get(r.start..r.end).unwrap();
+        assert_eq!(h.kind, "Lean.Parser.Command.definition");
+        assert_eq!(at(h.range), "def f (x : Nat) : Nat := x + 1");
+        assert_eq!(at(h.keyword.unwrap()), "def");
+        assert_eq!(at(h.name.unwrap()), "f");
+        assert_eq!(at(h.sig_colon.unwrap()), ":");
+        assert_eq!(at(h.assign.unwrap()), ":=");
+        assert!(h.where_kw.is_none());
+        assert_eq!(h.binders.len(), 1);
+        let b = &h.binders[0];
+        assert_eq!(at(b.range), "(x : Nat)");
+        assert_eq!(at(b.open.unwrap()), "(");
+        assert_eq!(at(b.close.unwrap()), ")");
+        assert_eq!(at(b.colon.unwrap()), ":");
+    }
+
+    #[test]
+    fn decl_header_absent_roles_are_none() {
+        // A `structure` has no `:=` and (after signature-scoping) no return `sig_colon`,
+        // but carries a `where`; its instance binder would have no `colon`. Verbatim
+        // captures for `structure S where\n  x : Nat\n` and `example : True := trivial\n`.
+        let struct_src = "structure S where\n  x : Nat\n";
+        let struct_json = r#"{"binders":[],"keyword":{"end":9,"start":0},"kind":"Lean.Parser.Command.structure","name":{"end":11,"start":10},"range":{"end":27,"start":0},"where":{"end":17,"start":12}}"#;
+        let s: DeclHeaderRecord = serde_json::from_str(struct_json).unwrap();
+        assert_eq!(
+            struct_src.get(s.where_kw.unwrap().start..s.where_kw.unwrap().end),
+            Some("where")
+        );
+        assert!(s.assign.is_none(), "a structure has no `:=`");
+        assert!(s.sig_colon.is_none(), "a field `:` is not the header return colon");
+        assert!(s.binders.is_empty());
+
+        // An `example` has no name.
+        let ex_json = r#"{"assign":{"end":17,"start":15},"binders":[],"keyword":{"end":7,"start":0},"kind":"Lean.Parser.Command.example","range":{"end":25,"start":0},"sig_colon":{"end":9,"start":8}}"#;
+        let e: DeclHeaderRecord = serde_json::from_str(ex_json).unwrap();
+        assert!(e.name.is_none(), "an example has no name");
+        assert!(e.sig_colon.is_some());
+        assert!(e.assign.is_some());
     }
 }

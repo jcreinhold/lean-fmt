@@ -16,7 +16,7 @@ pub mod toolchain;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use lean_fmt_edit::{Diagnostic, ImportRecord, SyntaxRegion, TextRange};
+use lean_fmt_edit::{DeclHeaderRecord, Diagnostic, ImportRecord, SyntaxRegion, TextRange};
 use lean_fmt_runtime::exports;
 use lean_rs_worker_parent::{
     LeanWorkerCapabilityBuilder, LeanWorkerChild, LeanWorkerError, LeanWorkerJsonCommand, LeanWorkerPool,
@@ -159,6 +159,11 @@ pub struct SyntaxSummary {
     /// in parse order. Empty for header-error / degraded-before-parse responses.
     #[serde(default)]
     pub command_regions: Vec<SyntaxRegion>,
+    /// Per-declaration header role spans (keyword/name/binders/return-colon/`:=`/
+    /// `where`), in parse order. The substrate the `declaration/header-spacing` rule
+    /// consumes. Empty for header-error / degraded-before-parse responses.
+    #[serde(default)]
+    pub declaration_headers: Vec<DeclHeaderRecord>,
 }
 
 /// The source model of a parsed snapshot: trivia runs plus docstring node ranges.
@@ -392,6 +397,11 @@ mod tests {
     // range, and the comment at bytes 11..23 is trivia — outside every import range.
     const PARSE_IMPORT_SPANS_JSON: &str = r#"{"diagnostics":[],"diagnostics_truncated":false,"module_header":{"import_spans":[{"module":"Init","range":{"end":11,"start":0}},{"module":"Init","range":{"end":34,"start":23}}],"imports":["Init"],"is_module":false},"source_model":{"docstrings":[],"trivia_runs":[{"end":7,"start":6},{"end":23,"start":11},{"end":30,"start":29},{"end":36,"start":34},{"end":40,"start":39},{"end":42,"start":41},{"end":45,"start":44},{"end":47,"start":46}]},"status":"ok","syntax_summary":{"command_count":1,"command_kinds":[{"count":1,"kind":"Lean.Parser.Command.declaration"}],"command_regions":[{"kind":"Lean.Parser.Command.declaration","line_column":{"end":{"column":10,"line":5},"start":{"column":0,"line":5}},"range":{"end":46,"start":36}}]}}"#;
 
+    // Verbatim envelope for `def f (x : Nat) : Nat := x + 1\n`, captured from a live
+    // `lean_fmt_parse_file` run (v4.32.0-rc1). Carries one `declaration_headers` record
+    // with every header role span.
+    const PARSE_DECL_HEADER_JSON: &str = r#"{"diagnostics":[],"diagnostics_truncated":false,"module_header":{"import_spans":[],"imports":["Init"],"is_module":false},"source_model":{"docstrings":[],"trivia_runs":[{"end":4,"start":3},{"end":6,"start":5},{"end":9,"start":8},{"end":11,"start":10},{"end":16,"start":15},{"end":18,"start":17},{"end":22,"start":21},{"end":25,"start":24},{"end":27,"start":26},{"end":29,"start":28},{"end":31,"start":30}]},"status":"ok","syntax_summary":{"command_count":1,"command_kinds":[{"count":1,"kind":"Lean.Parser.Command.declaration"}],"command_regions":[{"kind":"Lean.Parser.Command.declaration","line_column":{"end":{"column":30,"line":1},"start":{"column":0,"line":1}},"range":{"end":30,"start":0}}],"declaration_headers":[{"assign":{"end":24,"start":22},"binders":[{"close":{"end":15,"start":14},"colon":{"end":10,"start":9},"open":{"end":7,"start":6},"range":{"end":15,"start":6}}],"keyword":{"end":3,"start":0},"kind":"Lean.Parser.Command.definition","name":{"end":5,"start":4},"range":{"end":30,"start":0},"sig_colon":{"end":17,"start":16}}]}}"#;
+
     #[test]
     fn metadata_decodes_lean_side_envelope() {
         let meta: CapabilityMetadata = serde_json::from_str(METADATA_JSON).unwrap();
@@ -462,6 +472,26 @@ mod tests {
         assert_eq!(resp.diagnostics[0].severity, "error");
         assert_eq!(resp.diagnostics[0].line, 4);
         assert_eq!(resp.syntax_summary.command_count, 1);
+    }
+
+    #[test]
+    fn parse_decl_headers_decode_role_spans() {
+        let resp: ParseFileResponse = serde_json::from_str(PARSE_DECL_HEADER_JSON).unwrap();
+        assert_eq!(resp.status, ParseStatus::Ok);
+        let headers = &resp.syntax_summary.declaration_headers;
+        assert_eq!(headers.len(), 1, "one declaration header");
+        let h = &headers[0];
+        let source = "def f (x : Nat) : Nat := x + 1\n";
+        let at = |r: lean_fmt_edit::TextRange| &source[r.start..r.end];
+        assert_eq!(h.kind, "Lean.Parser.Command.definition");
+        assert_eq!(at(h.keyword.unwrap()), "def");
+        assert_eq!(at(h.name.unwrap()), "f");
+        assert_eq!(at(h.sig_colon.unwrap()), ":");
+        assert_eq!(at(h.assign.unwrap()), ":=");
+        assert!(h.where_kw.is_none());
+        assert_eq!(h.binders.len(), 1);
+        assert_eq!(at(h.binders[0].range), "(x : Nat)");
+        assert_eq!(at(h.binders[0].colon.unwrap()), ":");
     }
 
     #[test]
