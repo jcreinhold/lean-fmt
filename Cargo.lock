@@ -364,6 +364,7 @@ name = "lean-fmt-worker-child"
 version = "0.1.0"
 dependencies = [
  "lean-fmt-cli",
+ "lean-fmt-diagnostics",
  "lean-fmt-edit",
  "lean-fmt-project",
  "lean-fmt-runtime",
