@@ -15,3 +15,14 @@ description = "Package-owned Lean runtime payload, source digest, and capability
 workspace = true
 
 [dependencies]
+lean-toolchain = { workspace = true }
+lean-rs-worker-protocol = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+walkdir = { workspace = true }
+thiserror = { workspace = true }
+fs4 = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
