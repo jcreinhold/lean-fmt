@@ -1,11 +1,13 @@
 import Lake
 open Lake DSL
 
--- The `LeanFmt` Lean capability package. At the scaffold stage this is a
--- dependency-free library exporting placeholder metadata only; the real
--- `lean-rs-worker` capability exports (parse/format commands, shared facet)
--- are wired in the runtime-packaging and frontend prompts, at which point the
--- upstream `lean-rs` interop shims are required and the shared facet is enabled.
+-- The `LeanFmt` Lean capability package. It builds as a shared-library capability
+-- (`LeanLib.sharedFacet`) that a Lean-linked worker child loads, exposing the
+-- `@[export]` worker commands (`lean_fmt_metadata`, `lean_fmt_doctor`) rather than a
+-- subprocess dispatch loop. It stays dependency-free at this stage: the identity and
+-- self-check commands are plain request/response exports. The upstream `lean-rs`
+-- interop streaming shims are required later, by the first streaming export (the
+-- source-snapshot frontend), not by these commands.
 package «lean-fmt» where
   version := v!"0.1.0"
 
@@ -13,3 +15,4 @@ package «lean-fmt» where
 lean_lib LeanFmt where
   roots := #[`LeanFmt]
   globs := #[.andSubmodules `LeanFmt]
+  defaultFacets := #[LeanLib.sharedFacet]
