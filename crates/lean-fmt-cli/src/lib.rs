@@ -80,12 +80,17 @@ pub struct FixArgs {
     pub common: CommonArgs,
 
     /// Re-parse each edited file and refuse to write it if it no longer parses. On by
-    /// default; pass explicitly to be unambiguous. Conflicts with `--unsafe-no-validate`.
-    #[arg(long, conflicts_with = "unsafe_no_validate")]
+    /// default; pass explicitly to be unambiguous. Conflicts with the other level flags.
+    #[arg(long, conflicts_with_all = ["unsafe_no_validate", "check_elab"])]
     pub check_syntax: bool,
 
-    /// Skip the syntax re-parse gate before writing (developer escape hatch). The patch
-    /// conflict check still runs; only the re-parse is bypassed.
+    /// Re-parse *and elaborate* each edited file, refusing to write it unless elaboration
+    /// also succeeds (stricter and slower than the default syntax check). Opt-in.
+    #[arg(long, conflicts_with_all = ["unsafe_no_validate", "check_syntax"])]
+    pub check_elab: bool,
+
+    /// Skip the re-check gate before writing (developer escape hatch). The patch conflict
+    /// check still runs; only the re-parse/elaborate step is bypassed.
     #[arg(long)]
     pub unsafe_no_validate: bool,
 }
@@ -207,14 +212,17 @@ pub fn plan(command: &CliCommand) -> Result<Report> {
 
 /// Resolve the write-validation level for a `fix` invocation.
 ///
-/// `--unsafe-no-validate` disables the syntax re-parse gate (but never the patch conflict
-/// check, which [`lean_fmt_project::safe_apply`] always runs); otherwise the default
-/// [`ValidationLevel::Syntax`] applies. `--check-syntax` is the explicit affirmation of that
-/// default, and clap rejects passing both flags together.
+/// `--unsafe-no-validate` disables the re-check gate (but never the patch conflict check,
+/// which [`lean_fmt_project::safe_apply`] always runs); `--check-elab` selects the stricter
+/// parse-and-elaborate level; otherwise the default [`ValidationLevel::Syntax`] applies.
+/// `--check-syntax` is the explicit affirmation of that default. The three level flags are
+/// mutually exclusive, and clap rejects passing more than one together.
 #[must_use]
 pub fn validation_level(args: &FixArgs) -> ValidationLevel {
     if args.unsafe_no_validate {
         ValidationLevel::None
+    } else if args.check_elab {
+        ValidationLevel::Elab
     } else {
         ValidationLevel::Syntax
     }
@@ -503,6 +511,7 @@ mod tests {
         let args = FixArgs {
             common: common(temp.path()),
             check_syntax: false,
+            check_elab: false,
             unsafe_no_validate: false,
         };
         let report = plan(&CliCommand::Fix(args)).unwrap();
@@ -510,36 +519,40 @@ mod tests {
         assert_eq!(report.files.len(), 1);
     }
 
-    #[test]
-    fn validation_defaults_to_syntax_and_unsafe_flag_disables_it() {
-        let cli = Cli::try_parse_from(["lean-fmt", "fix", "Pkg/A.lean"]).unwrap();
+    fn fix_level(argv: &[&str]) -> ValidationLevel {
+        let cli = Cli::try_parse_from(argv).unwrap();
         let CliCommand::Fix(args) = &cli.command else {
             panic!("expected fix");
         };
-        assert_eq!(validation_level(args), ValidationLevel::Syntax);
-
-        let cli = Cli::try_parse_from(["lean-fmt", "fix", "--check-syntax", "Pkg/A.lean"]).unwrap();
-        let CliCommand::Fix(args) = &cli.command else {
-            panic!("expected fix");
-        };
-        assert_eq!(validation_level(args), ValidationLevel::Syntax);
-
-        let cli = Cli::try_parse_from(["lean-fmt", "fix", "--unsafe-no-validate", "Pkg/A.lean"]).unwrap();
-        let CliCommand::Fix(args) = &cli.command else {
-            panic!("expected fix");
-        };
-        assert_eq!(validation_level(args), ValidationLevel::None);
+        validation_level(args)
     }
 
     #[test]
-    fn check_syntax_and_unsafe_no_validate_conflict() {
-        let result = Cli::try_parse_from([
-            "lean-fmt",
-            "fix",
-            "--check-syntax",
-            "--unsafe-no-validate",
-            "Pkg/A.lean",
-        ]);
-        assert!(result.is_err(), "clap must reject both validation flags together");
+    fn validation_defaults_to_syntax_and_flags_select_the_level() {
+        assert_eq!(fix_level(&["lean-fmt", "fix", "Pkg/A.lean"]), ValidationLevel::Syntax);
+        assert_eq!(
+            fix_level(&["lean-fmt", "fix", "--check-syntax", "Pkg/A.lean"]),
+            ValidationLevel::Syntax
+        );
+        assert_eq!(
+            fix_level(&["lean-fmt", "fix", "--check-elab", "Pkg/A.lean"]),
+            ValidationLevel::Elab
+        );
+        assert_eq!(
+            fix_level(&["lean-fmt", "fix", "--unsafe-no-validate", "Pkg/A.lean"]),
+            ValidationLevel::None
+        );
+    }
+
+    #[test]
+    fn level_flags_are_mutually_exclusive() {
+        for pair in [
+            ["--check-syntax", "--unsafe-no-validate"],
+            ["--check-elab", "--unsafe-no-validate"],
+            ["--check-syntax", "--check-elab"],
+        ] {
+            let result = Cli::try_parse_from(["lean-fmt", "fix", pair[0], pair[1], "Pkg/A.lean"]);
+            assert!(result.is_err(), "clap must reject {pair:?} together");
+        }
     }
 }

@@ -275,4 +275,85 @@ def parseFileCommand (requestJson : String) : IO String := do
     pure <| mkResponse "error" #[diag] false [] false #[] (syntaxSummary #[] #[] #[] #[]) (sourceModel #[] #[])
   | .ok req => runParse req
 
+/-- Assemble the `lean_fmt_validate` response envelope: whether the snapshot elaborated
+    cleanly plus the (parse *and* elaboration) diagnostics. -/
+private def mkValidateResponse (valid : Bool) (diagnostics : Array Json) (truncated : Bool) :
+    String :=
+  Json.mkObj
+    [ ("valid", Json.bool valid)
+    , ("diagnostics", Json.arr diagnostics)
+    , ("diagnostics_truncated", Json.bool truncated) ]
+    |>.compress
+
+/-- Core validate routine: parse the header, build the command environment, then run the
+    full front-end command loop (`Lean.Elab.IO.processCommands`), which **parses and
+    elaborates** every command. The snapshot is `valid` only when the accumulated message
+    log carries no error — so a snapshot that parses but fails to elaborate (an unknown
+    identifier, a type error) is rejected, unlike the parse-only `lean_fmt_parse_file`.
+
+    A header that fails to parse, or imports that fail to resolve, mean elaboration cannot
+    be confirmed, so the snapshot is conservatively `valid = false` with the diagnostics. -/
+private def runValidate (req : ParseRequest) : IO String := do
+  -- Seed the module search path so `processHeader` can resolve the header's imports.
+  if let some sysroot := req.sysroot then
+    Lean.initSearchPath sysroot (req.searchPath.map System.FilePath.mk)
+  else if let some sysroot ← IO.getEnv "LEAN_SYSROOT" then
+    Lean.initSearchPath sysroot (req.searchPath.map System.FilePath.mk)
+  let inputCtx := Parser.mkInputContext req.source req.file
+  let (header, parserState, headerMessages) ← Parser.parseHeader inputCtx
+  -- A header that itself fails to parse cannot be elaborated: reject.
+  if headerMessages.hasErrors then
+    let (diags, trunc) ← renderDiagnostics headerMessages req.file
+    return mkValidateResponse false diags trunc
+  let processed : Except MessageLog (Environment × MessageLog) ←
+    try
+      let result ← (do
+        unsafe Lean.enableInitializersExecution
+        Elab.processHeader header {} headerMessages inputCtx)
+      pure (.ok result)
+    catch e =>
+      let mut log : MessageLog := {}
+      log := log.add { fileName := req.file, pos := ⟨1, 0⟩, data := toString e, severity := .error }
+      pure (.error log)
+  match processed with
+  | .error log =>
+    -- Unresolved imports: elaboration cannot be confirmed, so reject conservatively.
+    let (diags, trunc) ← renderDiagnostics log req.file
+    return mkValidateResponse false diags trunc
+  | .ok (env, importMessages) =>
+    -- The full front-end loop parses *and* elaborates each command, accumulating both
+    -- parse and elaboration messages in `commandState.messages`.
+    let commandState := Command.mkState env importMessages {}
+    let s ← Lean.Elab.IO.processCommands inputCtx parserState commandState
+    let msgs := s.commandState.messages
+    let (diags, trunc) ← renderDiagnostics msgs req.file
+    return mkValidateResponse (!msgs.hasErrors) diags trunc
+
+/--
+Request/response export: parse **and elaborate** an in-memory Lean source snapshot with
+the imports declared in its header, reporting whether elaboration succeeded. This is the
+stricter counterpart of `lean_fmt_parse_file`: it runs the full front-end command loop
+(`Lean.Elab.IO.processCommands`), so a snapshot that parses but fails to elaborate (an
+unknown identifier, a type error) is reported invalid.
+
+Request: `{"file"?, "source", "imports"?, "options"?: {"sysroot"?, "search_path"?}}`
+(the same envelope as `lean_fmt_parse_file`).
+Response: `{"valid", "diagnostics", "diagnostics_truncated"}`, where `valid` is `true`
+only when the accumulated parse+elaboration message log carries no error. A malformed
+request envelope, a header parse error, or unresolved imports all yield `valid = false`
+with the diagnostics rather than a throw.
+-/
+@[export lean_fmt_validate]
+def validateFileCommand (requestJson : String) : IO String := do
+  match decodeRequest requestJson with
+  | .error msg =>
+    let diag := Json.mkObj
+      [ ("severity", Json.str "error")
+      , ("message", Json.str s!"invalid validate request: {msg}")
+      , ("file", Json.str defaultFileLabel)
+      , ("line", toJson (0 : Nat))
+      , ("column", toJson (0 : Nat)) ]
+    pure <| mkValidateResponse false #[diag] false
+  | .ok req => runValidate req
+
 end LeanFmt.Frontend

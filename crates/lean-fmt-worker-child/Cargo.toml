@@ -31,6 +31,7 @@ lean-toolchain = { workspace = true }
 lean-fmt-edit = { workspace = true }
 lean-fmt-worker = { workspace = true }
 lean-fmt-runtime = { workspace = true }
+lean-fmt-project = { workspace = true }
 lean-fmt-cli = { workspace = true }
 serde_json = { workspace = true }
 tempfile = { workspace = true }

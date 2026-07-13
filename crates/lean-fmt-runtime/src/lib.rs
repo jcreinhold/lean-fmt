@@ -53,6 +53,9 @@ pub mod exports {
     /// `@[export lean_fmt_parse_file]` — source-snapshot parse command
     /// (`lean/LeanFmt/Frontend.lean`).
     pub const PARSE_FILE_EXPORT: &str = "lean_fmt_parse_file";
+    /// `@[export lean_fmt_validate]` — parse-*and-elaborate* validation command, the
+    /// stricter counterpart of [`PARSE_FILE_EXPORT`] (`lean/LeanFmt/Frontend.lean`).
+    pub const VALIDATE_EXPORT: &str = "lean_fmt_validate";
 }
 
 /// Request to build the packaged runtime for one Lean toolchain.
@@ -249,11 +252,12 @@ pub fn compute_runtime_source_digest() -> Result<String, Error> {
     compute_runtime_source_digest_from(Path::new(RUNTIME_SOURCE_ROOT))
 }
 
-fn export_signatures() -> [LeanExportSignature; 3] {
+fn export_signatures() -> [LeanExportSignature; 4] {
     [
         metadata_signature(exports::METADATA_EXPORT),
         doctor_signature(exports::DOCTOR_EXPORT),
         json_command_signature(exports::PARSE_FILE_EXPORT),
+        json_command_signature(exports::VALIDATE_EXPORT),
     ]
 }
 

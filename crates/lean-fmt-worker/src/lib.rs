@@ -220,6 +220,23 @@ pub struct FormatterDiagnostics {
     pub diagnostics: Vec<Diagnostic>,
 }
 
+/// Response from the `lean_fmt_validate` command (the parse-*and-elaborate* gate).
+///
+/// The request envelope is the same as [`ParseFileRequest`] — the Lean side shares the
+/// request decoder — so no separate request DTO is needed. `valid` is `true` only when the
+/// snapshot parsed **and** elaborated with no error-severity diagnostic; a header parse
+/// error, unresolved imports, or an elaboration failure (unknown identifier, type error)
+/// all yield `valid = false` with the diagnostics.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+pub struct ValidateResponse {
+    /// Whether the snapshot both parsed and elaborated without error.
+    pub valid: bool,
+    /// Parse and elaboration diagnostics rendered from the Lean message log.
+    pub diagnostics: Vec<ParseDiagnostic>,
+    /// Whether the diagnostics list was byte-bounded and truncated.
+    pub diagnostics_truncated: bool,
+}
+
 /// Worker boundary errors.
 #[derive(Debug, thiserror::Error)]
 pub enum WorkerError {
@@ -293,6 +310,7 @@ impl FormatterWorker {
             .json_command_export(exports::METADATA_EXPORT)
             .json_command_export(exports::DOCTOR_EXPORT)
             .json_command_export(exports::PARSE_FILE_EXPORT)
+            .json_command_export(exports::VALIDATE_EXPORT)
             .request_timeout(self.request_timeout))
     }
 
@@ -363,13 +381,44 @@ impl FormatterWorker {
         };
         self.dispatch_json(exports::PARSE_FILE_EXPORT, &request)
     }
+
+    /// Parse **and elaborate** an in-memory Lean source snapshot (`lean_fmt_validate`),
+    /// the stricter counterpart of [`parse_file`](Self::parse_file). The snapshot is
+    /// `valid` only when it both parses and elaborates without error, so an edit that
+    /// parses but breaks elaboration (an unknown identifier, a type error) is rejected —
+    /// a case `parse_file` accepts. Elaboration is slower, so this is the opt-in level.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WorkerError`] if capability load, child spawn, or dispatch fails (an
+    /// elaboration failure is reported *in* the response via `valid = false`, not as an
+    /// error).
+    pub fn validate(
+        &mut self,
+        file: impl Into<String>,
+        source: impl Into<String>,
+        search_path: &[PathBuf],
+    ) -> Result<ValidateResponse, WorkerError> {
+        let request = ParseFileRequest {
+            file: file.into(),
+            source: source.into(),
+            imports: Vec::new(),
+            options: ParseFileOptions {
+                sysroot: Some(self.lean_sysroot.display().to_string()),
+                search_path: search_path.iter().map(|path| path.display().to_string()).collect(),
+            },
+        };
+        self.dispatch_json(exports::VALIDATE_EXPORT, &request)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing, clippy::panic)]
 
-    use super::{CapabilityDoctor, CapabilityMetadata, FormatterDiagnostics, ParseFileResponse, ParseStatus};
+    use super::{
+        CapabilityDoctor, CapabilityMetadata, FormatterDiagnostics, ParseFileResponse, ParseStatus, ValidateResponse,
+    };
 
     // The exact compact envelopes emitted by `lean/LeanFmt/Capability.lean`. These
     // guard the parent DTOs against Lean-side drift without needing a live worker.
@@ -525,6 +574,30 @@ mod tests {
         assert_eq!(at(b.bullets[0].range), "·");
         assert_eq!(b.bullets[1].kind, "cdot");
         assert_eq!(at(b.bullets[1].range), "·");
+    }
+
+    // Verbatim envelopes emitted by `lean/LeanFmt/Frontend.lean`'s `validateFileCommand`
+    // (captured from a live parse+elaborate run against v4.32.0-rc1). The first source
+    // (`def a : Nat := 1`) elaborates cleanly; the second (`def a : Nat := undefinedName`)
+    // parses but fails to elaborate — a case the parse-only `lean_fmt_parse_file` accepts.
+    const VALIDATE_OK_JSON: &str = r#"{"diagnostics":[],"diagnostics_truncated":false,"valid":true}"#;
+    const VALIDATE_ELAB_FAIL_JSON: &str = r#"{"diagnostics":[{"column":15,"file":"<snapshot>","line":1,"message":"Unknown identifier `undefinedName`","severity":"error"}],"diagnostics_truncated":false,"valid":false}"#;
+
+    #[test]
+    fn validate_response_decodes_valid_and_invalid_envelopes() {
+        let ok: ValidateResponse = serde_json::from_str(VALIDATE_OK_JSON).unwrap();
+        assert!(ok.valid, "a well-typed snapshot is valid");
+        assert!(ok.diagnostics.is_empty());
+        assert!(!ok.diagnostics_truncated);
+
+        // Parses but fails to elaborate: valid is false with the elaboration diagnostic.
+        let bad: ValidateResponse = serde_json::from_str(VALIDATE_ELAB_FAIL_JSON).unwrap();
+        assert!(!bad.valid, "an unknown identifier fails elaboration validation");
+        assert_eq!(bad.diagnostics.len(), 1);
+        assert_eq!(bad.diagnostics[0].severity, "error");
+        assert_eq!(bad.diagnostics[0].line, 1);
+        assert_eq!(bad.diagnostics[0].column, 15);
+        assert!(bad.diagnostics[0].message.contains("Unknown identifier"));
     }
 
     #[test]

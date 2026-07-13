@@ -12,5 +12,5 @@ mod workspace;
 
 pub use config::{CONFIG_FILE_NAME, FormatterConfig};
 pub use error::{Error, Result};
-pub use validate::{SafeApplyError, ValidationLevel, safe_apply};
+pub use validate::{SafeApplyError, ValidationLevel, ValidationOutcome, safe_apply};
 pub use workspace::{ProjectRoot, ResolvedWorkspace, SourceFile, resolve, resolve_files};
