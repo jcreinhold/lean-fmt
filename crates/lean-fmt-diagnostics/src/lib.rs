@@ -6,6 +6,8 @@
 //! active rules over a parsed source model. Rules are added one module at a time; the
 //! text-cleanup rules land first.
 
+#[cfg(test)]
+mod comment_preservation;
 mod declaration;
 mod engine;
 mod imports;
