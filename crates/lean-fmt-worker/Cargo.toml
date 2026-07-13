@@ -1,29 +1,29 @@
 [package]
-name = "lean-fmt-worker"
-version.workspace = true
-edition.workspace = true
-rust-version.workspace = true
-license.workspace = true
-repository.workspace = true
 authors.workspace = true
-readme.workspace = true
-keywords.workspace = true
 categories.workspace = true
 description = "Worker-boundary runtime for lean-fmt: locates and loads the installed LeanFmt capability per toolchain."
+edition.workspace = true
+keywords.workspace = true
+license.workspace = true
+name = "lean-fmt-worker"
+readme.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+version.workspace = true
 
 [lints]
 workspace = true
 
 [dependencies]
+dirs = { workspace = true }
 lean-fmt-edit = { workspace = true }
 lean-fmt-runtime = { workspace = true }
 lean-rs-worker-parent = { workspace = true }
 lean-toolchain = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-thiserror = { workspace = true }
-dirs = { workspace = true }
 sha2 = { workspace = true }
+thiserror = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }

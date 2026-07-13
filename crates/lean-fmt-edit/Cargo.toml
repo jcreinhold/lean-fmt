@@ -1,23 +1,24 @@
 [package]
-name = "lean-fmt-edit"
-version.workspace = true
-edition.workspace = true
-rust-version.workspace = true
-license.workspace = true
-repository.workspace = true
 authors.workspace = true
-readme.workspace = true
-keywords.workspace = true
 categories.workspace = true
 description = "Conservative, source-ranged text-edit and patch engine for lean-fmt (conflict-checked, reversible)."
+edition.workspace = true
+keywords.workspace = true
+license.workspace = true
+name = "lean-fmt-edit"
+readme.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+version.workspace = true
 
 [lints]
 workspace = true
 
 [dependencies]
 serde = { workspace = true }
-thiserror = { workspace = true }
 similar = { workspace = true }
+thiserror = { workspace = true }
 
 [dev-dependencies]
+proptest = { workspace = true }
 serde_json = { workspace = true }

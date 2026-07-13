@@ -1,15 +1,15 @@
 [package]
-name = "lean-fmt-cli"
-version.workspace = true
-edition.workspace = true
-rust-version.workspace = true
-license.workspace = true
-repository.workspace = true
 authors.workspace = true
-readme.workspace = true
-keywords.workspace = true
 categories.workspace = true
 description = "Command-line interface for the lean-fmt Lean 4 formatter/linter (Lean-free parent binary)."
+edition.workspace = true
+keywords.workspace = true
+license.workspace = true
+name = "lean-fmt-cli"
+readme.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+version.workspace = true
 
 [[bin]]
 name = "lean-fmt"
@@ -24,11 +24,11 @@ workspace = true
 
 [dependencies]
 clap = { workspace = true }
+lean-fmt-diagnostics = { workspace = true }
+lean-fmt-project = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
-lean-fmt-project = { workspace = true }
-lean-fmt-diagnostics = { workspace = true }
 # Lean-free crates: the runtime shells out to Lake with an explicit sysroot; the worker
 # spawns the child binary as a subprocess. Neither links libleanshared into this parent.
 lean-fmt-runtime = { workspace = true }

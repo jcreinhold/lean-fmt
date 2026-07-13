@@ -1,16 +1,16 @@
 [package]
-name = "lean-fmt-worker-child"
-version.workspace = true
-edition.workspace = true
-rust-version.workspace = true
-license.workspace = true
-repository.workspace = true
 authors.workspace = true
-readme.workspace = true
-keywords.workspace = true
+build = "build.rs"
 categories.workspace = true
 description = "Lean-linking worker-child host for lean-fmt: loads the LeanFmt capability through the lean-rs worker pool. The only artifact in the workspace that links libleanshared."
-build = "build.rs"
+edition.workspace = true
+keywords.workspace = true
+license.workspace = true
+name = "lean-fmt-worker-child"
+readme.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+version.workspace = true
 
 [lints]
 workspace = true
@@ -28,12 +28,12 @@ lean-toolchain = { workspace = true }
 # The metadata + install round-trips live here because `CARGO_BIN_EXE_lean-fmt-worker-child`
 # (the freshly built child binary) is only exposed to this package's own tests.
 [dev-dependencies]
-lean-fmt-edit = { workspace = true }
-lean-fmt-worker = { workspace = true }
-lean-fmt-runtime = { workspace = true }
-lean-fmt-project = { workspace = true }
-lean-fmt-diagnostics = { workspace = true }
 lean-fmt-cli = { workspace = true }
+lean-fmt-diagnostics = { workspace = true }
+lean-fmt-edit = { workspace = true }
+lean-fmt-project = { workspace = true }
+lean-fmt-runtime = { workspace = true }
+lean-fmt-worker = { workspace = true }
 serde_json = { workspace = true }
 tempfile = { workspace = true }
 walkdir = { workspace = true }
