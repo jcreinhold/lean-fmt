@@ -2,8 +2,8 @@
   "categories": {
     "broken": {
       "files": 2,
-      "bytes": 74,
-      "lines": 6,
+      "bytes": 452,
+      "lines": 13,
       "disposition": "broken"
     },
     "comment-heavy": {
@@ -14,8 +14,8 @@
     },
     "custom-syntax": {
       "files": 1,
-      "bytes": 587,
-      "lines": 25,
+      "bytes": 1071,
+      "lines": 31,
       "disposition": "clean"
     },
     "large": {
@@ -44,6 +44,6 @@
     }
   },
   "total_files": 9,
-  "total_bytes": 4690,
-  "total_lines": 186
+  "total_bytes": 5552,
+  "total_lines": 199
 }
