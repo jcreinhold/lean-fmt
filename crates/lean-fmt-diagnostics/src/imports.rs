@@ -186,10 +186,7 @@ pub(crate) fn sorted(ctx: &RuleContext<'_>) -> Vec<Diagnostic> {
     // Drop adjacent duplicate bare imports (identical module, both bare).
     let mut kept: Vec<Unit> = Vec::new();
     for unit in units {
-        let is_duplicate = unit.bare
-            && kept
-                .last()
-                .is_some_and(|prev| prev.bare && prev.module == unit.module);
+        let is_duplicate = unit.bare && kept.last().is_some_and(|prev| prev.bare && prev.module == unit.module);
         if is_duplicate {
             continue;
         }
