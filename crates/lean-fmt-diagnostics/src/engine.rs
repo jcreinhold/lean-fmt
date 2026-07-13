@@ -5,8 +5,9 @@
 //! have an implementation, collecting their [`Diagnostic`]s. Rules with no implementation
 //! yet (most of the registry) are simply skipped, so the engine grows one rule at a time.
 
-use lean_fmt_edit::{Diagnostic, ImportRecord, SyntaxRegion, TextRange};
+use lean_fmt_edit::{DeclHeaderRecord, Diagnostic, ImportRecord, SyntaxRegion, TextRange};
 
+use crate::declaration;
 use crate::imports;
 use crate::layout;
 use crate::rules::registry;
@@ -34,6 +35,10 @@ pub struct RuleContext<'a> {
     /// (e.g. `layout/blank-lines`) key on these boundaries so they only ever edit trivia
     /// *between* commands. Defaults to empty for contexts built without a parsed body.
     pub regions: &'a [SyntaxRegion],
+    /// Per-declaration header role spans (keyword/name/binders/`:`/`:=`/`where`), in
+    /// parse order. The `declaration/header-spacing` rule keys on these so it normalizes
+    /// only the gaps around known header delimiters. Empty without a parsed body.
+    pub decls: &'a [DeclHeaderRecord],
 }
 
 impl<'a> RuleContext<'a> {
@@ -47,6 +52,7 @@ impl<'a> RuleContext<'a> {
             trivia_runs,
             imports: &[],
             regions: &[],
+            decls: &[],
         }
     }
 
@@ -61,6 +67,13 @@ impl<'a> RuleContext<'a> {
     #[must_use]
     pub fn with_regions(mut self, regions: &'a [SyntaxRegion]) -> Self {
         self.regions = regions;
+        self
+    }
+
+    /// Attach the parsed per-declaration header spans, for the header-spacing rule.
+    #[must_use]
+    pub fn with_decls(mut self, decls: &'a [DeclHeaderRecord]) -> Self {
+        self.decls = decls;
         self
     }
 
@@ -85,6 +98,7 @@ fn rule_impl(id: &str) -> Option<RuleFn> {
         "imports/sorted" => Some(imports::sorted),
         "layout/blank-lines" => Some(layout::blank_lines),
         "layout/end-name" => Some(layout::end_name),
+        "declaration/header-spacing" => Some(declaration::header_spacing),
         _ => None,
     }
 }

@@ -6,6 +6,7 @@
 //! active rules over a parsed source model. Rules are added one module at a time; the
 //! text-cleanup rules land first.
 
+mod declaration;
 mod engine;
 mod imports;
 mod layout;
