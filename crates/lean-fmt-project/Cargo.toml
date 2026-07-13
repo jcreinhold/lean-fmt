@@ -16,6 +16,8 @@ workspace = true
 
 [dependencies]
 lean-fmt-diagnostics = { workspace = true }
+lean-fmt-edit = { workspace = true }
+lean-fmt-worker = { workspace = true }
 serde = { workspace = true }
 toml = { workspace = true }
 walkdir = { workspace = true }

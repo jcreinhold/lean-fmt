@@ -317,6 +317,8 @@ name = "lean-fmt-project"
 version = "0.1.0"
 dependencies = [
  "lean-fmt-diagnostics",
+ "lean-fmt-edit",
+ "lean-fmt-worker",
  "serde",
  "tempfile",
  "thiserror",

@@ -14,7 +14,7 @@ use serde::Serialize;
 use thiserror::Error;
 
 use lean_fmt_diagnostics::{RuleInfo, RuleSelection, registry};
-use lean_fmt_project::{FormatterConfig, SourceFile};
+use lean_fmt_project::{FormatterConfig, SourceFile, ValidationLevel};
 
 /// Top-level CLI parser.
 #[derive(Debug, Parser)]
@@ -66,6 +66,30 @@ pub struct CommonArgs {
     pub ignore: Vec<String>,
 }
 
+/// Options for `lean-fmt fix`: the shared file options plus write-validation control.
+///
+/// The validation flags govern the safe-apply gate ([`lean_fmt_project::safe_apply`]) the
+/// write path routes through: after edits are patched in memory, the edited text is re-parsed
+/// and the file is written only if it still parses. The flags resolve to a
+/// [`ValidationLevel`] via [`validation_level`]; the disk write itself is wired in
+/// `LFMT-PROJECT-MODES`.
+#[derive(Debug, Clone, clap::Args)]
+pub struct FixArgs {
+    /// The shared file-processing options.
+    #[command(flatten)]
+    pub common: CommonArgs,
+
+    /// Re-parse each edited file and refuse to write it if it no longer parses. On by
+    /// default; pass explicitly to be unambiguous. Conflicts with `--unsafe-no-validate`.
+    #[arg(long, conflicts_with = "unsafe_no_validate")]
+    pub check_syntax: bool,
+
+    /// Skip the syntax re-parse gate before writing (developer escape hatch). The patch
+    /// conflict check still runs; only the re-parse is bypassed.
+    #[arg(long)]
+    pub unsafe_no_validate: bool,
+}
+
 /// The formatter subcommands.
 #[derive(Debug, Subcommand)]
 pub enum CliCommand {
@@ -74,7 +98,7 @@ pub enum CliCommand {
     /// Format files, reporting what would change.
     Format(CommonArgs),
     /// Apply safe fixes to files.
-    Fix(CommonArgs),
+    Fix(FixArgs),
     /// Show the diff formatting would produce.
     Diff(CommonArgs),
     /// List the available rules.
@@ -175,10 +199,24 @@ pub struct Report {
 /// dispatched through their own paths ([`plan_rules`] and [`install_worker`]).
 pub fn plan(command: &CliCommand) -> Result<Report> {
     match command {
-        CliCommand::Check(args) | CliCommand::Format(args) | CliCommand::Fix(args) | CliCommand::Diff(args) => {
-            plan_files(command.mode(), args)
-        }
+        CliCommand::Check(args) | CliCommand::Format(args) | CliCommand::Diff(args) => plan_files(command.mode(), args),
+        CliCommand::Fix(args) => plan_files(command.mode(), &args.common),
         CliCommand::Rules { .. } | CliCommand::InstallWorker(_) => Err(Error::NotReportable),
+    }
+}
+
+/// Resolve the write-validation level for a `fix` invocation.
+///
+/// `--unsafe-no-validate` disables the syntax re-parse gate (but never the patch conflict
+/// check, which [`lean_fmt_project::safe_apply`] always runs); otherwise the default
+/// [`ValidationLevel::Syntax`] applies. `--check-syntax` is the explicit affirmation of that
+/// default, and clap rejects passing both flags together.
+#[must_use]
+pub fn validation_level(args: &FixArgs) -> ValidationLevel {
+    if args.unsafe_no_validate {
+        ValidationLevel::None
+    } else {
+        ValidationLevel::Syntax
     }
 }
 
@@ -315,9 +353,8 @@ pub fn install_worker_command(args: &InstallWorkerArgs) -> std::result::Result<P
 #[must_use]
 pub fn command_format(command: &CliCommand) -> OutputFormat {
     match command {
-        CliCommand::Check(args) | CliCommand::Format(args) | CliCommand::Fix(args) | CliCommand::Diff(args) => {
-            args.format
-        }
+        CliCommand::Check(args) | CliCommand::Format(args) | CliCommand::Diff(args) => args.format,
+        CliCommand::Fix(args) => args.common.format,
         CliCommand::Rules { format } => *format,
         CliCommand::InstallWorker(_) => OutputFormat::Text,
     }
@@ -366,7 +403,13 @@ mod tests {
 
     use tempfile::TempDir;
 
-    use super::{CliCommand, CommonArgs, OutputFormat, plan, plan_rules, render, render_rules};
+    use clap::Parser;
+
+    use lean_fmt_project::ValidationLevel;
+
+    use super::{
+        Cli, CliCommand, CommonArgs, FixArgs, OutputFormat, plan, plan_rules, render, render_rules, validation_level,
+    };
 
     fn common(root: &std::path::Path) -> CommonArgs {
         CommonArgs {
@@ -450,5 +493,53 @@ mod tests {
         let temp = TempDir::new().unwrap();
         write(temp.path(), "notes.txt", "x\n");
         assert!(plan(&CliCommand::Check(common(temp.path()))).is_err());
+    }
+
+    #[test]
+    fn fix_mode_plans_like_the_other_file_modes() {
+        let temp = TempDir::new().unwrap();
+        write(temp.path(), "lakefile.toml", "[[lean_lib]]\nname = \"Pkg\"\n");
+        write(temp.path(), "Pkg/A.lean", "def a := 1\n");
+        let args = FixArgs {
+            common: common(temp.path()),
+            check_syntax: false,
+            unsafe_no_validate: false,
+        };
+        let report = plan(&CliCommand::Fix(args)).unwrap();
+        assert_eq!(report.mode, "fix");
+        assert_eq!(report.files.len(), 1);
+    }
+
+    #[test]
+    fn validation_defaults_to_syntax_and_unsafe_flag_disables_it() {
+        let cli = Cli::try_parse_from(["lean-fmt", "fix", "Pkg/A.lean"]).unwrap();
+        let CliCommand::Fix(args) = &cli.command else {
+            panic!("expected fix");
+        };
+        assert_eq!(validation_level(args), ValidationLevel::Syntax);
+
+        let cli = Cli::try_parse_from(["lean-fmt", "fix", "--check-syntax", "Pkg/A.lean"]).unwrap();
+        let CliCommand::Fix(args) = &cli.command else {
+            panic!("expected fix");
+        };
+        assert_eq!(validation_level(args), ValidationLevel::Syntax);
+
+        let cli = Cli::try_parse_from(["lean-fmt", "fix", "--unsafe-no-validate", "Pkg/A.lean"]).unwrap();
+        let CliCommand::Fix(args) = &cli.command else {
+            panic!("expected fix");
+        };
+        assert_eq!(validation_level(args), ValidationLevel::None);
+    }
+
+    #[test]
+    fn check_syntax_and_unsafe_no_validate_conflict() {
+        let result = Cli::try_parse_from([
+            "lean-fmt",
+            "fix",
+            "--check-syntax",
+            "--unsafe-no-validate",
+            "Pkg/A.lean",
+        ]);
+        assert!(result.is_err(), "clap must reject both validation flags together");
     }
 }
