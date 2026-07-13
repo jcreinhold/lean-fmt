@@ -23,9 +23,11 @@ authors = ["Jacob Reinhold <jcreinhold@gmail.com>"]
 clap = { version = "4", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+toml = "0.8"
 thiserror = "2"
 walkdir = "2"
 insta = "1"
+tempfile = "3"
 
 # Internal crates.
 lean-fmt-project = { path = "crates/lean-fmt-project" }
@@ -34,23 +36,108 @@ lean-fmt-runtime = { path = "crates/lean-fmt-runtime" }
 lean-fmt-diagnostics = { path = "crates/lean-fmt-diagnostics" }
 lean-fmt-edit = { path = "crates/lean-fmt-edit" }
 
-# Strict linting, mirroring lean-rs. `nursery` is intentionally omitted: those lints
-# are experimental and change between toolchains, which would make `-D warnings` brittle
-# across the CI matrix. Correctness/pedantic coverage is retained.
+# Strict linting, mirroring the lean-rs / lean-dup workspace lint set (correctness,
+# performance, pedantic, nursery, and a curated restriction set). Test modules opt out
+# of restriction lints (`unwrap_used`, `expect_used`, `indexing_slicing`, `panic`) with a
+# local `#![allow(...)]`, matching the lean-dup convention.
 [workspace.lints.rust]
 future-incompatible = "warn"
 let-underscore = "warn"
 nonstandard-style = "warn"
+redundant_lifetimes = "warn"
 rust-2018-idioms = "warn"
+rust-2024-compatibility = "deny"
 single_use_lifetimes = "warn"
 trivial_casts = "warn"
 unreachable_pub = "warn"
 unsafe-code = "deny"
 unused = { level = "warn", priority = -1 }
 
+# Comprehensive Clippy configuration for correctness, performance, and style
 [workspace.lints.clippy]
-all = { level = "warn", priority = -2 }
-pedantic = { level = "warn", priority = -1 }
-clone_on_ref_ptr = "warn"
-inefficient_to_string = "warn"
-redundant_clone = "warn"
+# === CORRECTNESS & BUG PREVENTION ===
+# These catch actual bugs and correctness issues
+all = { level = "warn", priority = -10 }        # Enable all default clippy lints
+complexity = { level = "warn", priority = -9 }  # Identify overly complex code that's error-prone
+correctness = { level = "warn", priority = -8 } # Catch logic errors and bugs
+suspicious = { level = "warn", priority = -7 }  # Flag suspicious but not necessarily incorrect code
+
+# === PERFORMANCE OPTIMIZATION ===
+# These catch performance anti-patterns
+clone_on_ref_ptr = "warn"                # Avoid unnecessary cloning of reference-counted types
+inefficient_to_string = "warn"           # Prefer more efficient string conversion methods
+large_stack_arrays = "warn"              # Flag large stack allocations that should be boxed
+manual_memcpy = "warn"                   # Suggest using copy_from_slice instead of manual loops
+perf = { level = "warn", priority = -6 } # General performance lints
+redundant_clone = "warn"                 # Remove unnecessary clone() calls
+
+# === STYLE & IDIOMATIC RUST ===
+# These enforce Rust best practices and consistent style
+nursery = { level = "warn", priority = -5 }  # Experimental lints that may become default
+pedantic = { level = "warn", priority = -4 } # Enforce pedantic style guidelines (can be strict)
+style = { level = "warn", priority = -3 }    # General style improvements,
+
+# === SAFETY & RELIABILITY ===
+# These prevent common sources of runtime panics and unsafe behavior
+arithmetic_side_effects = "warn" # Catch potential overflow/underflow
+exit = "warn"                    # Warn on std::process::exit() usage
+expect_used = "warn"             # Warn on expect() usage - should be used sparingly
+get_unwrap = "warn"              # Warn on get().unwrap() patterns
+indexing_slicing = "warn"        # Warn on direct array/slice indexing - prefer .get() for safety
+mem_forget = "deny"
+mutex_integer = "warn"
+panic = "warn"                   # Flag explicit panic!() calls
+ptr_as_ptr = "warn"
+rc_mutex = "warn"
+todo = "warn"                    # Flag todo!() macros that should be completed
+unimplemented = "warn"           # Flag unimplemented!() in production code
+unreachable = "warn"             # Flag unreachable!() usage - can panic in production
+unwrap_in_result = "warn"        # Warn on unwrap() inside functions returning Result
+unwrap_used = "warn"             # Warn on unwrap() usage - prefer expect() or proper error handling
+wildcard_enum_match_arm = "warn"
+
+# === DOCUMENTATION & MAINTAINABILITY ===
+blanket_clippy_restriction_lints = "warn"
+missing_errors_doc = "warn"               # Document when functions can return errors
+missing_panics_doc = "warn"               # Document when functions can panic
+missing_safety_doc = "warn"               # Require safety documentation for unsafe code
+
+# === CARGO & DEPENDENCY MANAGEMENT ===
+cargo = { level = "warn", priority = -1 } # Lints for Cargo.toml and dependency management
+lint_groups_priority = "warn"             # Allow lint group priority warnings
+
+# === ALLOWABLE EXCEPTIONS ===
+# These are often too pedantic for practical development
+items_after_statements = "allow"             # Allow items after statements in functions
+match_same_arms = "allow"                    # Match same arms are sometimes more clear
+missing_const_for_fn = "allow"
+missing_docs_in_private_items = "allow"      # Too pedantic for personal projects
+module_name_repetitions = "allow"            # Often unavoidable with good module organization
+multiple_crate_versions = "allow"            # Allow multiple crate versions (common in deps)
+must_use_candidate = "allow"                 # Don't force #[must_use] on everything
+option_if_let_else = "allow"                 # Allow if let/else instead of map_or_else
+redundant_closure_for_method_calls = "allow" # Lint has too many false positives
+redundant_pub_crate = "allow"                # Conflicts with unreachable_pub lint
+similar_names = "allow"                      # Can be overly pedantic about variable names
+single_match_else = "allow"                  # Allow single match instead of if let
+too_many_arguments = "allow"                 # Sometimes functions legitimately need many args
+too_many_lines = "allow"                     # We'll manage function length ourselves
+type_complexity = "allow"                    # Complex types are sometimes necessary
+unnecessary_wraps = "allow"                  # Allow unnecessary Result wraps for consistency
+
+# === ALLOWABLE EXCEPTIONS FOR NUMERICAL REASONS ===
+# Note: We want to catch arithmetic that could panic, so this is now "warn"
+cast_possible_truncation = "allow"
+cast_possible_wrap = "allow"
+cast_precision_loss = "allow"      # Allow precision loss casts for performance
+cast_sign_loss = "allow"
+float_arithmetic = "allow"         # Floating point operations are allowed for numerical reasons
+
+# === ADDITIONAL SAFETY LINTS ===
+# Extra protection against common mistakes
+disallowed_methods = "deny"
+disallowed_types = "deny"
+implicit_clone = "warn"     # Make cloning explicit
+map_flatten = "warn"        # Use flat_map instead of map().flatten()
+map_unwrap_or = "warn"      # Use map_or instead of map().unwrap_or()
+needless_collect = "warn"   # Avoid unnecessary collect() calls

@@ -1,0 +1,103 @@
+# Configuration for cargo-deny
+# See https://embarkstudios.github.io/cargo-deny/checks/cfg.html
+
+[graph]
+all-features = true
+targets = [
+  "aarch64-apple-darwin",
+  "aarch64-unknown-linux-gnu",
+  "x86_64-apple-darwin",
+  "x86_64-pc-windows-msvc",
+  "x86_64-unknown-linux-gnu",
+  "x86_64-unknown-linux-musl",
+]
+
+[advisories]
+# The path where the advisory database is cloned/fetched into
+db-path = "~/.cargo/advisory-db"
+# The url(s) of the advisory databases to use
+db-urls = ["https://github.com/rustsec/advisory-db"]
+# The lint level for unmaintained crates. Scoped to "workspace" so we are
+# alerted when *we* add an unmaintained dependency, but transitive ones from
+# upstream crates don't drown the signal. Switch to "all" if you want to audit
+# the full graph manually.
+unmaintained = "workspace"
+# The lint level for crates that have been yanked from their source registry
+yanked = "warn"
+# A list of advisory IDs to ignore. Note that ignored advisories will still
+# output a note when they are encountered.
+ignore = []
+
+[licenses]
+# List of explicitly allowed licenses.
+# Permissive only — compatible with this workspace's `MIT OR Apache-2.0`
+# dual license without imposing additional obligations on the consuming
+# binary. MPL-2.0 is the weakest copyleft we accept (file-level scope,
+# does not relicense linked code). Strong copyleft (GPL/LGPL/AGPL/SSPL/
+# CDDL/EPL/EUPL/CPAL) is intentionally omitted — anything not in `allow`
+# is rejected by default (newer cargo-deny removed `licenses.deny`).
+allow = [
+  "0BSD",
+  "Apache-2.0 WITH LLVM-exception",
+  "Apache-2.0",
+  "BSD-2-Clause",
+  "BSD-3-Clause",
+  "BSL-1.0",
+  "CC0-1.0",
+  "CDLA-Permissive-2.0",
+  "ISC",
+  "MIT",
+  "MIT-0",
+  "MPL-2.0",
+  "Unicode-3.0",
+  "Unicode-DFS-2016",
+  "Zlib",
+]
+# Don't warn about entries in `allow` that no crate currently uses — the list
+# is a forward-looking policy, not a snapshot of the current graph.
+unused-allowed-license = "allow"
+# The confidence threshold for detecting a license from a license text.
+confidence-threshold = 0.95
+
+[licenses.private]
+# If true, ignores workspace crates that aren't published, or are only
+# published to private registries
+ignore = false
+
+[bans]
+# Lint level for when multiple versions of the same crate are detected
+multiple-versions = "warn"
+# Lint level for when a crate version requirement is `*`
+wildcards = "allow"
+# The graph highlighting used when creating dotgraphs for crates
+# with multiple versions
+highlight = "all"
+
+# List of crates that are allowed. Use with care!
+allow = []
+
+# List of crates to deny
+deny = [
+  # Each entry can be either a crate name to ban all versions
+  # or a name and version range to ban specific versions
+  # { name = "openssl", version = "*" }, # Prefer rustls
+]
+
+# Certain crates/versions that will be skipped when doing duplicate detection.
+skip = []
+
+# Similarly to `skip` allows you to skip certain crates from being checked
+skip-tree = []
+
+[sources]
+# Lint level for what to happen when a crate from a crate registry that is
+# not in the allow list is encountered
+unknown-registry = "warn"
+# Lint level for what to happen when a crate from a git repository that is not
+# in the allow list is encountered
+unknown-git = "warn"
+# List of URLs for allowed crate registries. Defaults to the crates.io index
+# if not specified. If it is specified but empty, no registries are allowed.
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+# List of URLs for allowed Git repositories
+allow-git = []
