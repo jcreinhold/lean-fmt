@@ -16,6 +16,8 @@ workspace = true
 
 [dependencies]
 serde = { workspace = true }
+thiserror = { workspace = true }
+similar = { workspace = true }
 
 [dev-dependencies]
 serde_json = { workspace = true }

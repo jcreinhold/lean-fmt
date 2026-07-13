@@ -174,7 +174,11 @@ fn parse_file_round_trip_through_installed_worker() -> Result<(), String> {
     let modeled = worker
         .parse_file("Trivia.lean", trivia_src, &[])
         .map_err(|error| error.to_string())?;
-    assert_eq!(modeled.status, ParseStatus::Ok, "commented snapshot parses ok: {modeled:?}");
+    assert_eq!(
+        modeled.status,
+        ParseStatus::Ok,
+        "commented snapshot parses ok: {modeled:?}"
+    );
     let sm = &modeled.source_model;
 
     // Every comment/docstring marker in the source lands inside a reported region: line
@@ -183,12 +187,21 @@ fn parse_file_round_trip_through_installed_worker() -> Result<(), String> {
     let in_docstring = |off: usize| sm.docstrings.iter().any(|r| r.contains(off));
     for marker in ["-- leading comment", "-- trailing"] {
         let off = trivia_src.find(marker).expect("line comment present");
-        assert!(in_trivia(off), "line-comment marker {marker:?} at {off} is inside a trivia run");
+        assert!(
+            in_trivia(off),
+            "line-comment marker {marker:?} at {off} is inside a trivia run"
+        );
     }
     let block_at = trivia_src.find("/- block").expect("block comment present");
-    assert!(in_trivia(block_at), "block comment at {block_at} is inside a trivia run");
+    assert!(
+        in_trivia(block_at),
+        "block comment at {block_at} is inside a trivia run"
+    );
     let doc_at = trivia_src.find("/-- a docstring").expect("docstring present");
-    assert!(in_docstring(doc_at), "docstring at {doc_at} is a docstring node, not trivia");
+    assert!(
+        in_docstring(doc_at),
+        "docstring at {doc_at} is a docstring node, not trivia"
+    );
     assert!(!in_trivia(doc_at), "docstring bytes are not double-counted as trivia");
 
     // The classification tiles every run losslessly, and the run holding the block

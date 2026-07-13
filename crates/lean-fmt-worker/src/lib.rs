@@ -16,7 +16,7 @@ pub mod toolchain;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use lean_fmt_edit::{SyntaxRegion, TextRange};
+use lean_fmt_edit::{Diagnostic, SyntaxRegion, TextRange};
 use lean_fmt_runtime::exports;
 use lean_rs_worker_parent::{
     LeanWorkerCapabilityBuilder, LeanWorkerChild, LeanWorkerError, LeanWorkerJsonCommand, LeanWorkerPool,
@@ -190,6 +190,20 @@ pub struct ParseFileResponse {
     pub source_model: SourceModel,
 }
 
+/// The formatter diagnostics response envelope: schema version plus rule findings.
+///
+/// This is the wire shape the Lean `LeanFmt.Protocol` constructors emit and a future
+/// `lean_fmt_diagnostics` command returns; each [`Diagnostic`] carries an optional
+/// conflict-checked fix ([`lean_fmt_edit::EditSet`]).
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Default)]
+pub struct FormatterDiagnostics {
+    /// The edit-protocol schema version; must equal [`lean_fmt_edit::SCHEMA`].
+    pub schema: String,
+    /// The rule findings, each with an optional fix.
+    #[serde(default)]
+    pub diagnostics: Vec<Diagnostic>,
+}
+
 /// Worker boundary errors.
 #[derive(Debug, thiserror::Error)]
 pub enum WorkerError {
@@ -339,7 +353,7 @@ impl FormatterWorker {
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing, clippy::panic)]
 
-    use super::{CapabilityDoctor, CapabilityMetadata, ParseFileResponse, ParseStatus};
+    use super::{CapabilityDoctor, CapabilityMetadata, FormatterDiagnostics, ParseFileResponse, ParseStatus};
 
     // The exact compact envelopes emitted by `lean/LeanFmt/Capability.lean`. These
     // guard the parent DTOs against Lean-side drift without needing a live worker.
@@ -440,5 +454,27 @@ mod tests {
         assert_eq!(resp.status, ParseStatus::Error);
         assert!(resp.module_header.imports.is_empty());
         assert_eq!(resp.syntax_summary.command_count, 0);
+    }
+
+    // Captured verbatim from `LeanFmt.Protocol.diagnosticsJson` (a diagnostic with a fix
+    // edit set). Guards the cross-side edit-protocol contract: Lean builds it, Rust
+    // decodes it, and the decoded fix applies through `lean-fmt-edit`.
+    const DIAGNOSTICS_JSON: &str = r#"{"diagnostics":[{"applicability":"safe","fix":{"edits":[{"expected":"import B\n","new_text":"import A\n","range":{"end":9,"start":0}}]},"message":"imports are not sorted","range":{"end":9,"start":0},"rule":"import-sort"}],"schema":"lean-fmt.edit.v1"}"#;
+
+    #[test]
+    fn diagnostics_envelope_decodes_and_fix_applies() {
+        let resp: FormatterDiagnostics = serde_json::from_str(DIAGNOSTICS_JSON).unwrap();
+        assert_eq!(resp.schema, lean_fmt_edit::SCHEMA, "Lean and Rust agree on the schema");
+        assert_eq!(resp.diagnostics.len(), 1);
+        let diag = &resp.diagnostics[0];
+        assert_eq!(diag.rule, lean_fmt_edit::RuleId::new("import-sort"));
+        assert_eq!(diag.applicability, lean_fmt_edit::Applicability::Safe);
+        assert_eq!(diag.range, lean_fmt_edit::TextRange::new(0, 9));
+        // The decoded fix applies through the patch engine to reorder the imports.
+        let fix = diag.fix.as_ref().expect("diagnostic carries a fix");
+        let out = fix.apply("import B\n").expect("fix applies to the expected source");
+        assert_eq!(out.output, "import A\n");
+        // The same fix is stale against a different source and is rejected, not applied.
+        assert!(fix.apply("import C\n").is_err(), "stale source is rejected");
     }
 }
