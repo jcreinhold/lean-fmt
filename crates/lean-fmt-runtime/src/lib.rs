@@ -7,7 +7,7 @@
 //! returned [`LeanBuiltCapability`] with their own `lean-rs-worker-parent` configuration.
 //!
 //! Unlike a published library, `lean-fmt` is an application with no downstream hosts to
-//! vendor for, so [`RUNTIME_SOURCE_ROOT`] points at the repository's own `lean/` package
+//! vendor for, so the crate's runtime source root points at the repository's own `lean/` package
 //! and the digest is computed from it at materialization time. There is no vendored copy
 //! to drift and no hand-baked digest constant to keep in sync.
 

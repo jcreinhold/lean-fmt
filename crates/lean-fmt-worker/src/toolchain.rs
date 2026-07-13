@@ -383,8 +383,8 @@ impl fmt::Display for ToolchainError {
 
 impl std::error::Error for ToolchainError {}
 
-/// Why a usable worker could not be resolved. Every variant's [`Display`] names the
-/// `install-worker` command that fixes it.
+/// Why a usable worker could not be resolved. Every variant's [`Display`](std::fmt::Display) names
+/// the `install-worker` command that fixes it.
 #[derive(Debug)]
 pub enum ProvisionError {
     /// No worker is installed for this toolchain.
