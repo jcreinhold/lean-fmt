@@ -1,0 +1,34 @@
+[package]
+name = "lean-fmt-worker-child"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
+description = "Lean-linking worker-child host for lean-fmt: loads the LeanFmt capability through the lean-rs worker pool. The only artifact in the workspace that links libleanshared."
+build = "build.rs"
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "lean-fmt-worker-child"
+path = "src/main.rs"
+
+[dependencies]
+lean-rs-worker-child = { workspace = true }
+
+[build-dependencies]
+lean-toolchain = { workspace = true }
+
+# The metadata round-trip lives here because `CARGO_BIN_EXE_lean-fmt-worker-child`
+# (the freshly built child binary) is only exposed to this package's own tests.
+[dev-dependencies]
+lean-fmt-worker = { workspace = true }
+lean-fmt-runtime = { workspace = true }
+serde_json = { workspace = true }
+tempfile = { workspace = true }

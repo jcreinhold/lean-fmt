@@ -35,12 +35,15 @@ tempfile = "3"
 # Lean runtime packaging (names/versions confirmed in prompt 02 audit; crates.io).
 lean-toolchain = "0.3"
 lean-rs-worker-protocol = "0.3"
+lean-rs-worker-parent = "0.3"
+lean-rs-worker-child = "0.3"
 fs4 = "1.1"
 sha2 = "0.11"
 
 # Internal crates.
 lean-fmt-project = { path = "crates/lean-fmt-project" }
 lean-fmt-worker = { path = "crates/lean-fmt-worker" }
+lean-fmt-worker-child = { path = "crates/lean-fmt-worker-child" }
 lean-fmt-runtime = { path = "crates/lean-fmt-runtime" }
 lean-fmt-diagnostics = { path = "crates/lean-fmt-diagnostics" }
 lean-fmt-edit = { path = "crates/lean-fmt-edit" }
