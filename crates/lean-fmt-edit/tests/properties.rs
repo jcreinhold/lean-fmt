@@ -15,7 +15,13 @@
 //!   the output equals the source.
 //!
 //! A longer fuzz pass is a plain `PROPTEST_CASES=<n>` run of this file; see `docs/testing.md`.
-#![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing, clippy::panic, clippy::arithmetic_side_effects)]
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    clippy::panic,
+    clippy::arithmetic_side_effects
+)]
 
 use lean_fmt_edit::{EditSet, LineColumn, PatchError, SourceMap, TextEdit, TextRange, unified_diff};
 use proptest::prelude::*;

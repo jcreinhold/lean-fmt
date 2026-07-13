@@ -46,6 +46,9 @@ scripts/test.sh   # cargo test --workspace
 scripts/lean.sh   # lake -d lean build
 ```
 
+Topic docs: [`docs/testing.md`](docs/testing.md) (property and worker-driven fuzz suites),
+[`docs/performance.md`](docs/performance.md) (perf probe, benchmarks, budgets).
+
 ## License
 
 Licensed under either of [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE) at your option.

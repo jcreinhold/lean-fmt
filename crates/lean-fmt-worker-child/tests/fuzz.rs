@@ -1,7 +1,9 @@
 //! Worker-driven fuzz for the two properties that need a real Lean parse: **idempotence** and
-//! **parse preservation**. It takes every clean corpus file, applies a fixed battery of trivia
-//! mutations (trailing whitespace, blank lines, CRLF, leading/trailing blank padding), and drives
-//! each mutant through a real installed worker. For every mutant the worker accepts, it asserts:
+//! **parse preservation**. It takes every clean corpus file, applies a fixed battery of
+//! mutations — trivia (trailing whitespace, blank lines, CRLF, leading/trailing blank padding)
+//! plus one structural perturbation (body tab-indentation, which Lean's indentation-sensitive
+//! syntax may reject) — and drives each mutant through a real installed worker. For every mutant
+//! the worker accepts, it asserts:
 //!
 //! - **Parse preservation.** If the mutant parses, its formatted output parses too — formatting
 //!   never turns a parseable file into a broken one.
@@ -30,9 +32,7 @@ use std::path::{Path, PathBuf};
 
 use lean_fmt_cli::{InstallWorkerArgs, install_worker_command};
 use lean_fmt_diagnostics::RuleSelection;
-use lean_fmt_project::{
-    AnalysisOutcome, CacheKeyBuilder, FormatCache, FormatterConfig, ValidationLevel, analyze_file,
-};
+use lean_fmt_project::{AnalysisOutcome, CacheKeyBuilder, FormatCache, FormatterConfig, ValidationLevel, analyze_file};
 use lean_fmt_worker::FormatterWorker;
 use lean_fmt_worker::toolchain::{ToolchainId, resolve_in};
 
@@ -138,8 +138,17 @@ fn formatting_is_idempotent_and_preserves_parseability_under_trivia_mutations() 
     // accepts it (parsed), or `None` when it reports the file broken.
     let analyze = |worker: &mut FormatterWorker, label: &str, source: &str| -> Result<Option<String>, String> {
         let key = keys.key_for(source);
-        let analysis = analyze_file(worker, &selection, label, source, ValidationLevel::Syntax, &[], &cache, &key)
-            .map_err(|error| format!("{label}: {error}"))?;
+        let analysis = analyze_file(
+            worker,
+            &selection,
+            label,
+            source,
+            ValidationLevel::Syntax,
+            &[],
+            &cache,
+            &key,
+        )
+        .map_err(|error| format!("{label}: {error}"))?;
         match analysis.outcome {
             AnalysisOutcome::Analyzed { formatted, .. } => Ok(Some(formatted.unwrap_or_else(|| source.to_owned()))),
             AnalysisOutcome::Broken { .. } => Ok(None),

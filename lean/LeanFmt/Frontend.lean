@@ -201,16 +201,20 @@ private def runParse (req : ParseRequest) : IO String := do
     Lean.initSearchPath sysroot (req.searchPath.map System.FilePath.mk)
   let inputCtx := Parser.mkInputContext req.source req.file
   let (header, parserState, headerMessages) ← Parser.parseHeader inputCtx
+  -- A header that itself fails to parse is a hard `error`: there is no reliable import
+  -- set or body boundary to proceed from. This guard runs **before** any header-syntax
+  -- extraction, because `Elab.headerToImports`/`HeaderSyntax.isModule` on an
+  -- error-recovered header can reach unreachable code and abort the frontend outright
+  -- (e.g. a tab in the header region: `parseHeader` recovers, but import extraction
+  -- panics). A failed header has no trustworthy imports, so we report none.
+  if headerMessages.hasErrors then
+    let (diags, trunc) ← renderDiagnostics headerMessages req.file
+    return mkResponse "error" diags trunc [] false #[] (syntaxSummary #[] #[] #[] #[]) (sourceModel #[] #[])
   let imports := ((Elab.headerToImports header).map (·.module.toString)).toList.eraseDups
   let isModule := Elab.HeaderSyntax.isModule header
   -- Byte-anchored per-import records, recovered from the parsed header. Reliable only
-  -- once the header parses without error; the error branch below reports `#[]`.
+  -- once the header parses without error; the guard above reports `#[]` otherwise.
   let importSpans := LeanFmt.Source.importSpans header.raw
-  -- A header that itself fails to parse is a hard `error`: there is no reliable
-  -- import set or body boundary to proceed from.
-  if headerMessages.hasErrors then
-    let (diags, trunc) ← renderDiagnostics headerMessages req.file
-    return mkResponse "error" diags trunc imports isModule #[] (syntaxSummary #[] #[] #[] #[]) (sourceModel #[] #[])
   -- Build the command environment. `processHeader` reports unresolved imports as
   -- error messages (occasionally as a throw); either way we degrade rather than crash.
   let processed : Except MessageLog (Environment × MessageLog) ←
