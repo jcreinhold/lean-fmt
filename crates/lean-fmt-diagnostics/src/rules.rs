@@ -17,7 +17,7 @@ pub enum RuleCategory {
     Text,
     /// Import block ordering, grouping, and deduplication.
     Imports,
-    /// Indentation and blank-line layout of command bodies.
+    /// Blank-line layout and block-structure (namespace/section/end) delimiters.
     Layout,
     /// Declaration headers, binders, and signature spacing.
     Declaration,
@@ -189,6 +189,13 @@ pub fn registry() -> &'static [Rule] {
             default_enabled: true,
         },
         Rule {
+            id: "layout/end-name",
+            category: RuleCategory::Layout,
+            summary: "A bare `end` closing a named block carries the block's name.",
+            default_severity: Severity::Warning,
+            default_enabled: true,
+        },
+        Rule {
             id: "declaration/header-spacing",
             category: RuleCategory::Declaration,
             summary: "Spacing around declaration headers and binders.",
@@ -289,7 +296,7 @@ mod tests {
     /// Captured verbatim from `LeanFmt.Rules.allRuleIdsJson` (see prompt 13). The Lean
     /// side tags diagnostics with these ids; they must equal the Rust registry ids in
     /// order, or selection and reporting disagree across the worker boundary.
-    const LEAN_RULE_IDS_JSON: &str = r#"["text/trailing-whitespace","text/final-newline","imports/sorted","layout/blank-lines","declaration/header-spacing","tactic/block-indent","safety/preserve-comments","performance/large-file"]"#;
+    const LEAN_RULE_IDS_JSON: &str = r#"["text/trailing-whitespace","text/final-newline","imports/sorted","layout/blank-lines","layout/end-name","declaration/header-spacing","tactic/block-indent","safety/preserve-comments","performance/large-file"]"#;
 
     #[test]
     fn rust_and_lean_rule_ids_agree() {

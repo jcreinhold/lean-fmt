@@ -84,6 +84,7 @@ fn rule_impl(id: &str) -> Option<RuleFn> {
         "text/final-newline" => Some(text::final_newline),
         "imports/sorted" => Some(imports::sorted),
         "layout/blank-lines" => Some(layout::blank_lines),
+        "layout/end-name" => Some(layout::end_name),
         _ => None,
     }
 }

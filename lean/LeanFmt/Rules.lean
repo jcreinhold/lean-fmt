@@ -31,6 +31,9 @@ def importsSorted : String := "imports/sorted"
 /-- Excess consecutive blank lines between commands. -/
 def layoutBlankLines : String := "layout/blank-lines"
 
+/-- A bare `end` closing a named block carries the block's name. -/
+def layoutEndName : String := "layout/end-name"
+
 /-- Spacing around declaration headers and binders. -/
 def declarationHeaderSpacing : String := "declaration/header-spacing"
 
@@ -49,6 +52,7 @@ def allRuleIds : List String :=
   , textFinalNewline
   , importsSorted
   , layoutBlankLines
+  , layoutEndName
   , declarationHeaderSpacing
   , tacticBlockIndent
   , safetyPreserveComments

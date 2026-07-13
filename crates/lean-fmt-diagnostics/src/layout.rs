@@ -1,17 +1,81 @@
-//! The `layout/blank-lines` rule: collapse excess blank lines *between* top-level
-//! commands, editing only trivia and never a token or a comment.
+//! Block-layout rules over the parser-derived command regions ([`RuleContext::regions`]).
 //!
-//! The rule keys on the parser-derived command regions ([`RuleContext::regions`], from
-//! `LFMT-SOURCE-COORDS`): the gap between two consecutive command regions is pure
-//! inter-command trivia (whitespace plus line/block comments). Within each gap it
-//! collapses any run of two or more blank lines (three or more newlines) down to a single
-//! blank line. It never scans inside a command region, so blank lines within a multi-line
-//! proof body are left untouched — the stop-rule "edit only between commands".
+//! - `layout/blank-lines` collapses excess blank lines *between* top-level commands,
+//!   editing only trivia and never a token or a comment. The gap between two consecutive
+//!   command regions is pure inter-command trivia (whitespace plus line/block comments);
+//!   within each gap a run of two or more blank lines (three or more newlines) collapses
+//!   to a single blank line. It never scans inside a command region, so blank lines within
+//!   a multi-line proof body are left untouched — the stop-rule "edit only between
+//!   commands".
+//! - `layout/end-name` pairs each `end` with the `namespace`/`section` it closes using the
+//!   parser's command kinds (a stack, never a text scan for `end`), and appends the block's
+//!   name to a *bare* `end` that closes a *named* block. It only ever appends — never
+//!   rewrites or removes an existing end name, and never touches an anonymous section's
+//!   bare `end`.
 
 use lean_fmt_edit::{Applicability, Diagnostic, EditSet, RuleId, TextEdit, TextRange};
 
 use crate::engine::RuleContext;
 use crate::text::detect_eol;
+
+/// Command kind of a `namespace` opener.
+const NAMESPACE_KIND: &str = "Lean.Parser.Command.namespace";
+/// Command kind of a `section` opener.
+const SECTION_KIND: &str = "Lean.Parser.Command.section";
+/// Command kind of an `end` closer.
+const END_KIND: &str = "Lean.Parser.Command.end";
+
+/// Read the name following `keyword` in a command region's own source slice
+/// (`"namespace Foo"` with `"namespace"` → `"Foo"`; `"section"` → `""`).
+fn name_after_keyword(source: &str, range: TextRange, keyword: &str) -> String {
+    let slice = source.get(range.start..range.end).unwrap_or("");
+    slice.strip_prefix(keyword).unwrap_or("").trim().to_owned()
+}
+
+/// `layout/end-name`: append the block name to a bare `end` closing a named block.
+///
+/// Walks the command regions maintaining a stack of open blocks (name, empty for an
+/// anonymous section). On each `end`, pops the top block; if that block is named and the
+/// `end` is bare, emits a `Safe` insertion appending `" {name}"`. Unmatched `end`s (stack
+/// underflow), anonymous-block ends, and already-named ends are left untouched.
+#[must_use]
+pub(crate) fn end_name(ctx: &RuleContext<'_>) -> Vec<Diagnostic> {
+    let source = ctx.source;
+    let mut stack: Vec<String> = Vec::new();
+    let mut diagnostics = Vec::new();
+    for region in ctx.regions {
+        match region.kind.as_str() {
+            NAMESPACE_KIND => stack.push(name_after_keyword(source, region.range, "namespace")),
+            SECTION_KIND => stack.push(name_after_keyword(source, region.range, "section")),
+            END_KIND => {
+                let Some(block_name) = stack.pop() else {
+                    // Unmatched `end` (stack underflow): not ours to touch.
+                    continue;
+                };
+                if block_name.is_empty() {
+                    // Anonymous block: its `end` must stay bare.
+                    continue;
+                }
+                if !name_after_keyword(source, region.range, "end").is_empty() {
+                    // Already named: never rewrite an existing (possibly mismatched) name.
+                    continue;
+                }
+                let pos = region.range.end;
+                let insertion = format!(" {block_name}");
+                let edit = TextEdit::insert(pos, &insertion);
+                diagnostics.push(Diagnostic {
+                    rule: RuleId::new("layout/end-name"),
+                    message: format!("bare `end` should name its block: `end {block_name}`"),
+                    range: TextRange::new(pos, pos),
+                    applicability: Applicability::Safe,
+                    fix: Some(EditSet { edits: vec![edit] }),
+                });
+            }
+            _ => {}
+        }
+    }
+    diagnostics
+}
 
 /// ASCII whitespace that can make up a blank-line run.
 const fn is_layout_ws(byte: u8) -> bool {
@@ -107,13 +171,18 @@ mod tests {
 
     use lean_fmt_edit::{LineColumn, LineColumnRange, SyntaxRegion, TextRange};
 
-    use super::blank_lines;
+    use super::{blank_lines, end_name};
     use crate::engine::RuleContext;
 
     /// A command region over `[start, end)`; the line/column is irrelevant to the rule.
     fn region(start: usize, end: usize) -> SyntaxRegion {
+        region_kind("Lean.Parser.Command.declaration", start, end)
+    }
+
+    /// A command region with an explicit node kind over `[start, end)`.
+    fn region_kind(kind: &str, start: usize, end: usize) -> SyntaxRegion {
         SyntaxRegion {
-            kind: "Lean.Parser.Command.declaration".to_owned(),
+            kind: kind.to_owned(),
             range: TextRange::new(start, end),
             line_column: LineColumnRange {
                 start: LineColumn::new(1, 0),
@@ -205,5 +274,77 @@ mod tests {
         let regions = [region(0, 10), region(18, 28)];
         let out = apply_all(source, &run(source, &regions));
         assert_eq!(out, "def a := 1\r\n\r\ndef b := 2\r\n");
+    }
+
+    fn ns(start: usize, end: usize) -> SyntaxRegion {
+        region_kind("Lean.Parser.Command.namespace", start, end)
+    }
+    fn sec(start: usize, end: usize) -> SyntaxRegion {
+        region_kind("Lean.Parser.Command.section", start, end)
+    }
+    fn end_region(start: usize, end: usize) -> SyntaxRegion {
+        region_kind("Lean.Parser.Command.end", start, end)
+    }
+
+    fn run_end(source: &str, regions: &[SyntaxRegion]) -> Vec<lean_fmt_edit::Diagnostic> {
+        let ctx = RuleContext::new(source, "A.lean", &[]).with_regions(regions);
+        end_name(&ctx)
+    }
+
+    #[test]
+    fn names_a_bare_end_and_is_idempotent() {
+        let source = "namespace Foo\ndef a := 1\nend\n";
+        let regions = [ns(0, 13), region(14, 24), end_region(25, 28)];
+        let diagnostics = run_end(source, &regions);
+        assert_eq!(diagnostics.len(), 1);
+        let out = apply_all(source, &diagnostics);
+        assert_eq!(out, "namespace Foo\ndef a := 1\nend Foo\n");
+        // Re-run: the `end` now reads `end Foo` (region widened), so nothing to do.
+        let regions2 = [ns(0, 13), region(14, 24), end_region(25, 32)];
+        assert!(run_end(&out, &regions2).is_empty());
+    }
+
+    #[test]
+    fn nested_blocks_pair_to_the_right_names() {
+        let source = "namespace Foo\nsection Bar\ndef a := 1\nend\nend\n";
+        let regions = [
+            ns(0, 13),
+            sec(14, 25),
+            region(26, 36),
+            end_region(37, 40),
+            end_region(41, 44),
+        ];
+        let out = apply_all(source, &run_end(source, &regions));
+        assert_eq!(out, "namespace Foo\nsection Bar\ndef a := 1\nend Bar\nend Foo\n");
+    }
+
+    #[test]
+    fn anonymous_section_end_stays_bare() {
+        let source = "section\ndef a := 1\nend\n";
+        let regions = [sec(0, 7), region(8, 18), end_region(19, 22)];
+        assert!(run_end(source, &regions).is_empty());
+    }
+
+    #[test]
+    fn already_named_end_is_untouched() {
+        let source = "namespace Foo\nend Foo\n";
+        let regions = [ns(0, 13), end_region(14, 21)];
+        assert!(run_end(source, &regions).is_empty());
+    }
+
+    #[test]
+    fn a_mismatched_end_name_is_left_alone() {
+        // `end Bar` closing `namespace Foo` is an elaboration error, but rewriting a name
+        // the user typed is not the formatter's job — leave it for the user to see.
+        let source = "namespace Foo\nend Bar\n";
+        let regions = [ns(0, 13), end_region(14, 21)];
+        assert!(run_end(source, &regions).is_empty());
+    }
+
+    #[test]
+    fn an_unmatched_end_is_left_alone() {
+        let source = "def a := 1\nend\n";
+        let regions = [region(0, 10), end_region(11, 14)];
+        assert!(run_end(source, &regions).is_empty());
     }
 }
