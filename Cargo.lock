@@ -373,6 +373,7 @@ dependencies = [
  "lean-toolchain",
  "serde_json",
  "tempfile",
+ "walkdir",
 ]
 
 [[package]]

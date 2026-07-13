@@ -27,3 +27,12 @@ thiserror = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
+# Used by the corpus golden test and benchmark harness (separate test/bench crates, so these
+# must be dev-dependencies even though the same crates appear under [dependencies]).
+walkdir = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[[bench]]
+name = "corpus"
+harness = false

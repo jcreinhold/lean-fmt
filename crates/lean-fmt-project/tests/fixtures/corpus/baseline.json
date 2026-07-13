@@ -1,0 +1,49 @@
+{
+  "categories": {
+    "broken": {
+      "files": 2,
+      "bytes": 74,
+      "lines": 6,
+      "disposition": "broken"
+    },
+    "comment-heavy": {
+      "files": 1,
+      "bytes": 846,
+      "lines": 29,
+      "disposition": "clean"
+    },
+    "custom-syntax": {
+      "files": 1,
+      "bytes": 587,
+      "lines": 25,
+      "disposition": "clean"
+    },
+    "large": {
+      "files": 1,
+      "bytes": 1557,
+      "lines": 52,
+      "disposition": "clean"
+    },
+    "mathlib-style": {
+      "files": 1,
+      "bytes": 766,
+      "lines": 33,
+      "disposition": "clean"
+    },
+    "medium": {
+      "files": 1,
+      "bytes": 643,
+      "lines": 29,
+      "disposition": "clean"
+    },
+    "small": {
+      "files": 2,
+      "bytes": 217,
+      "lines": 12,
+      "disposition": "clean"
+    }
+  },
+  "total_files": 9,
+  "total_bytes": 4690,
+  "total_lines": 186
+}
