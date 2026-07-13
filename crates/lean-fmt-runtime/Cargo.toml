@@ -1,0 +1,14 @@
+[package]
+name = "lean-fmt-runtime"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Package-owned Lean runtime payload, source digest, and capability build/install for lean-fmt."
+
+[lints]
+workspace = true
+
+[dependencies]

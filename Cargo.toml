@@ -1,0 +1,56 @@
+# Workspace root for lean-fmt: a Ruff-style formatter/linter for Lean 4.
+#
+# Ownership split (see docs/architecture in the prompt stack's proof-notes):
+#   - Rust owns CLI UX, project discovery, caching, patching, reporting, and packaging.
+#   - Lean owns parsing/semantics through the real frontend, exposed as a downstream
+#     `lean-rs-worker` capability loaded by a Lean-linked worker child.
+# The parent/CLI crates in this workspace MUST stay free of `libleanshared`; only the
+# worker-child path (added in a later prompt) links Lean.
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.91"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/jcreinhold/lean-fmt"
+authors = ["Jacob Reinhold <jcreinhold@gmail.com>"]
+
+[workspace.dependencies]
+# External dependencies (names/versions confirmed in prompt 02 audit).
+clap = { version = "4", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+walkdir = "2"
+insta = "1"
+
+# Internal crates.
+lean-fmt-project = { path = "crates/lean-fmt-project" }
+lean-fmt-worker = { path = "crates/lean-fmt-worker" }
+lean-fmt-runtime = { path = "crates/lean-fmt-runtime" }
+lean-fmt-diagnostics = { path = "crates/lean-fmt-diagnostics" }
+lean-fmt-edit = { path = "crates/lean-fmt-edit" }
+
+# Strict linting, mirroring lean-rs. `nursery` is intentionally omitted: those lints
+# are experimental and change between toolchains, which would make `-D warnings` brittle
+# across the CI matrix. Correctness/pedantic coverage is retained.
+[workspace.lints.rust]
+future-incompatible = "warn"
+let-underscore = "warn"
+nonstandard-style = "warn"
+rust-2018-idioms = "warn"
+single_use_lifetimes = "warn"
+trivial_casts = "warn"
+unreachable_pub = "warn"
+unsafe-code = "deny"
+unused = { level = "warn", priority = -1 }
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -2 }
+pedantic = { level = "warn", priority = -1 }
+clone_on_ref_ptr = "warn"
+inefficient_to_string = "warn"
+redundant_clone = "warn"

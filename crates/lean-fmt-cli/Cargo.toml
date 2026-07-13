@@ -1,0 +1,21 @@
+[package]
+name = "lean-fmt-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Command-line interface for the lean-fmt Lean 4 formatter/linter (Lean-free parent binary)."
+
+[[bin]]
+name = "lean-fmt"
+path = "src/main.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+clap = { workspace = true }
+lean-fmt-project = { workspace = true }
+lean-fmt-diagnostics = { workspace = true }

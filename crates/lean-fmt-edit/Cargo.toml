@@ -1,0 +1,14 @@
+[package]
+name = "lean-fmt-edit"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Conservative, source-ranged text-edit and patch engine for lean-fmt (conflict-checked, reversible)."
+
+[lints]
+workspace = true
+
+[dependencies]

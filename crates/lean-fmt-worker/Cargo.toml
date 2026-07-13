@@ -1,0 +1,14 @@
+[package]
+name = "lean-fmt-worker"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Worker-boundary runtime for lean-fmt: locates and loads the installed LeanFmt capability per toolchain."
+
+[lints]
+workspace = true
+
+[dependencies]

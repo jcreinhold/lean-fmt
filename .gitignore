@@ -1,0 +1,14 @@
+# Rust
+/target
+**/*.rs.bk
+
+# Lean / Lake
+/lean/.lake
+/lean/build
+**/*.olean
+**/*.ilean
+**/*.trace
+
+# Editor / OS
+.DS_Store
+*.swp

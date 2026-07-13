@@ -1,0 +1,15 @@
+[package]
+name = "lean-fmt-project"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Lake project discovery, file walking, and check/fix/diff orchestration for lean-fmt."
+
+[lints]
+workspace = true
+
+[dependencies]
+lean-fmt-diagnostics = { workspace = true }

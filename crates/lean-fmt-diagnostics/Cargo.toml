@@ -1,0 +1,14 @@
+[package]
+name = "lean-fmt-diagnostics"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Diagnostic and rule-report model for lean-fmt (severity, codes, source-ranged findings)."
+
+[lints]
+workspace = true
+
+[dependencies]
