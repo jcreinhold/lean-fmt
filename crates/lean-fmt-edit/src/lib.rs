@@ -28,6 +28,7 @@ mod trivia;
 
 pub use edit::{Applicability, Diagnostic, EditSet, PatchError, PatchOutcome, RuleId, SCHEMA, TextEdit, unified_diff};
 pub use source::{
-    BinderSpan, DeclHeaderRecord, ImportRecord, LineColumn, LineColumnRange, SourceMap, SyntaxRegion, TextRange,
+    BinderSpan, DeclHeaderRecord, ImportRecord, LineColumn, LineColumnRange, SourceMap, SyntaxRegion,
+    TacticBlockRecord, TacticBulletMarker, TextRange,
 };
 pub use trivia::{Trivia, TriviaKind, classify_trivia, trivia_tiles_runs};

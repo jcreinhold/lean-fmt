@@ -16,7 +16,7 @@ pub mod toolchain;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use lean_fmt_edit::{DeclHeaderRecord, Diagnostic, ImportRecord, SyntaxRegion, TextRange};
+use lean_fmt_edit::{DeclHeaderRecord, Diagnostic, ImportRecord, SyntaxRegion, TacticBlockRecord, TextRange};
 use lean_fmt_runtime::exports;
 use lean_rs_worker_parent::{
     LeanWorkerCapabilityBuilder, LeanWorkerChild, LeanWorkerError, LeanWorkerJsonCommand, LeanWorkerPool,
@@ -164,6 +164,11 @@ pub struct SyntaxSummary {
     /// consumes. Empty for header-error / degraded-before-parse responses.
     #[serde(default)]
     pub declaration_headers: Vec<DeclHeaderRecord>,
+    /// Per-`by`-block tactic anchor spans (`by`/seq/first-step/bullets), in parse order.
+    /// The substrate the `tactic/block-indent` rule consumes. Empty for header-error /
+    /// degraded-before-parse responses.
+    #[serde(default)]
+    pub tactic_blocks: Vec<TacticBlockRecord>,
 }
 
 /// The source model of a parsed snapshot: trivia runs plus docstring node ranges.
@@ -402,6 +407,12 @@ mod tests {
     // with every header role span.
     const PARSE_DECL_HEADER_JSON: &str = r#"{"diagnostics":[],"diagnostics_truncated":false,"module_header":{"import_spans":[],"imports":["Init"],"is_module":false},"source_model":{"docstrings":[],"trivia_runs":[{"end":4,"start":3},{"end":6,"start":5},{"end":9,"start":8},{"end":11,"start":10},{"end":16,"start":15},{"end":18,"start":17},{"end":22,"start":21},{"end":25,"start":24},{"end":27,"start":26},{"end":29,"start":28},{"end":31,"start":30}]},"status":"ok","syntax_summary":{"command_count":1,"command_kinds":[{"count":1,"kind":"Lean.Parser.Command.declaration"}],"command_regions":[{"kind":"Lean.Parser.Command.declaration","line_column":{"end":{"column":30,"line":1},"start":{"column":0,"line":1}},"range":{"end":30,"start":0}}],"declaration_headers":[{"assign":{"end":24,"start":22},"binders":[{"close":{"end":15,"start":14},"colon":{"end":10,"start":9},"open":{"end":7,"start":6},"range":{"end":15,"start":6}}],"keyword":{"end":3,"start":0},"kind":"Lean.Parser.Command.definition","name":{"end":5,"start":4},"range":{"end":30,"start":0},"sig_colon":{"end":17,"start":16}}]}}"#;
 
+    // Verbatim envelope for `theorem t : True ∧ True := by\n  refine ⟨?_, ?_⟩\n  · trivial\n  · trivial\n`,
+    // captured from a live `lean_fmt_parse_file` run (v4.32.0-rc1). Carries one
+    // `tactic_blocks` record with the `by` keyword span, the tactic-sequence span, the
+    // base column, the first-step span, and the two `·` bullet markers.
+    const PARSE_TACTIC_BLOCKS_JSON: &str = r#"{"diagnostics":[],"diagnostics_truncated":false,"module_header":{"import_spans":[],"imports":["Init"],"is_module":false},"source_model":{"docstrings":[],"trivia_runs":[{"end":8,"start":7},{"end":10,"start":9},{"end":12,"start":11},{"end":17,"start":16},{"end":21,"start":20},{"end":26,"start":25},{"end":29,"start":28},{"end":34,"start":31},{"end":41,"start":40},{"end":48,"start":47},{"end":56,"start":53},{"end":59,"start":58},{"end":69,"start":66},{"end":72,"start":71},{"end":80,"start":79}]},"status":"ok","syntax_summary":{"command_count":1,"command_kinds":[{"count":1,"kind":"Lean.Parser.Command.declaration"}],"command_regions":[{"kind":"Lean.Parser.Command.declaration","line_column":{"end":{"column":11,"line":4},"start":{"column":0,"line":1}},"range":{"end":79,"start":0}}],"declaration_headers":[{"assign":{"end":28,"start":26},"binders":[],"keyword":{"end":7,"start":0},"kind":"Lean.Parser.Command.theorem","name":{"end":9,"start":8},"range":{"end":79,"start":0},"sig_colon":{"end":11,"start":10}}],"tactic_blocks":[{"base_column":2,"bullets":[{"kind":"cdot","range":{"end":58,"start":56}},{"kind":"cdot","range":{"end":71,"start":69}}],"by":{"end":31,"start":29},"first_step":{"end":53,"start":34},"seq":{"end":79,"start":34}}]}}"#;
+
     #[test]
     fn metadata_decodes_lean_side_envelope() {
         let meta: CapabilityMetadata = serde_json::from_str(METADATA_JSON).unwrap();
@@ -492,6 +503,28 @@ mod tests {
         assert_eq!(h.binders.len(), 1);
         assert_eq!(at(h.binders[0].range), "(x : Nat)");
         assert_eq!(at(h.binders[0].colon.unwrap()), ":");
+    }
+
+    #[test]
+    fn parse_tactic_blocks_decode_anchor_spans() {
+        let resp: ParseFileResponse = serde_json::from_str(PARSE_TACTIC_BLOCKS_JSON).unwrap();
+        assert_eq!(resp.status, ParseStatus::Ok);
+        let blocks = &resp.syntax_summary.tactic_blocks;
+        assert_eq!(blocks.len(), 1, "one tactic block");
+        let b = &blocks[0];
+        let source = "theorem t : True ∧ True := by\n  refine ⟨?_, ?_⟩\n  · trivial\n  · trivial\n";
+        let at = |r: lean_fmt_edit::TextRange| &source[r.start..r.end];
+        assert_eq!(at(b.by_kw), "by");
+        assert_eq!(b.base_column, Some(2));
+        // The first step is `refine ⟨?_, ?_⟩`; the sequence spans through the last bullet body.
+        assert_eq!(at(b.first_step.unwrap()), "refine ⟨?_, ?_⟩");
+        assert_eq!(at(b.seq.unwrap()), "refine ⟨?_, ?_⟩\n  · trivial\n  · trivial");
+        // Both `·` markers are captured, in source order, each two bytes wide.
+        assert_eq!(b.bullets.len(), 2);
+        assert_eq!(b.bullets[0].kind, "cdot");
+        assert_eq!(at(b.bullets[0].range), "·");
+        assert_eq!(b.bullets[1].kind, "cdot");
+        assert_eq!(at(b.bullets[1].range), "·");
     }
 
     #[test]

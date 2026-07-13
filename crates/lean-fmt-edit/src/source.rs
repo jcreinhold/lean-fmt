@@ -169,6 +169,51 @@ pub struct DeclHeaderRecord {
     pub where_kw: Option<TextRange>,
 }
 
+/// One `·`/`case` bullet marker inside a tactic block, decoded from a
+/// `tactic_blocks[_].bullets` entry.
+///
+/// `kind` is `"cdot"` for a `·` marker or `"case"` for a `case` label; `range` is the
+/// byte range of the marker atom itself (the `·`, or the `case` keyword). A spacing rule
+/// normalizes the gap after the marker without re-scanning text.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TacticBulletMarker {
+    /// The marker kind: `"cdot"` (a `·` bullet) or `"case"` (a `case` label).
+    pub kind: String,
+    /// The byte range of the marker atom.
+    pub range: TextRange,
+}
+
+/// One `by` block's tactic anchors, decoded from a `syntax_summary.tactic_blocks` entry
+/// returned by the Lean `lean_fmt_parse_file` command.
+///
+/// Every span is recovered from the pure parse tree (no elaboration). `by` (always
+/// present) is the `by` atom. `seq`/`base_column`/`first_step` are absent when the tactic
+/// sequence parsed synthetically — an unrecognized tactic token collapses the sequence,
+/// the token-table-dependent degradation — in which case `bullets` is empty too, so a
+/// consumer never sees a wrong or zero-width span. This is the substrate the
+/// `tactic/block-indent` rule consumes for conservative intra-line spacing; it never
+/// reindents, so it needs only these anchors, not the full tactic tree.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TacticBlockRecord {
+    /// The `by` keyword atom.
+    #[serde(rename = "by")]
+    pub by_kw: TextRange,
+    /// The enclosing `Tactic.tacticSeq` range, absent when the sequence parsed
+    /// synthetically.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seq: Option<TextRange>,
+    /// The 0-based codepoint column of the sequence start (the block's indentation),
+    /// absent when there is no sequence range.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_column: Option<usize>,
+    /// The first top-level tactic step, for the `by`→step gap; absent when none parsed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub first_step: Option<TextRange>,
+    /// Every `·`/`case` marker in the block, at any nesting depth, in source order.
+    #[serde(default)]
+    pub bullets: Vec<TacticBulletMarker>,
+}
+
 /// A byte↔line/column map over UTF-8 source.
 ///
 /// Reproduces Lean's `FileMap` codepoint-based column counting so a `TextRange`
@@ -278,7 +323,7 @@ impl<'a> SourceMap<'a> {
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::indexing_slicing, clippy::arithmetic_side_effects)]
 mod tests {
-    use super::{DeclHeaderRecord, LineColumn, LineColumnRange, SourceMap, SyntaxRegion, TextRange};
+    use super::{DeclHeaderRecord, LineColumn, LineColumnRange, SourceMap, SyntaxRegion, TacticBlockRecord, TextRange};
 
     #[test]
     fn text_range_helpers() {
@@ -430,5 +475,54 @@ mod tests {
         assert!(e.name.is_none(), "an example has no name");
         assert!(e.sig_colon.is_some());
         assert!(e.assign.is_some());
+    }
+
+    #[test]
+    fn tactic_block_decodes_bullets_from_lean_envelope() {
+        // Verbatim `tactic_blocks[0]` for the `·`-bulleted proof
+        // `theorem t : True ∧ True := by\n  refine ⟨?_, ?_⟩\n  · trivial\n  · trivial`,
+        // captured from a live `lean_fmt_parse_file` run (v4.32.0-rc1). `⟨`/`⟩`/`·` are
+        // multibyte, so the byte offsets exercise UTF-8 handling.
+        let source = "theorem t : True ∧ True := by\n  refine ⟨?_, ?_⟩\n  · trivial\n  · trivial";
+        let json = r#"{"base_column":2,"bullets":[{"kind":"cdot","range":{"end":58,"start":56}},{"kind":"cdot","range":{"end":71,"start":69}}],"by":{"end":31,"start":29},"first_step":{"end":53,"start":34},"seq":{"end":79,"start":34}}"#;
+        let b: TacticBlockRecord = serde_json::from_str(json).unwrap();
+        let at = |r: TextRange| source.get(r.start..r.end).unwrap();
+        assert_eq!(at(b.by_kw), "by");
+        assert_eq!(at(b.first_step.unwrap()), "refine ⟨?_, ?_⟩");
+        assert_eq!(b.base_column, Some(2));
+        assert_eq!(b.bullets.len(), 2);
+        assert!(b.bullets.iter().all(|m| m.kind == "cdot"));
+        assert_eq!(at(b.bullets[0].range), "·");
+        assert_eq!(at(b.bullets[1].range), "·");
+        // `seq` spans the whole indented sequence (refine through the second bullet body).
+        assert!(at(b.seq.unwrap()).starts_with("refine"));
+    }
+
+    #[test]
+    fn tactic_block_same_line_and_case_and_absent() {
+        // Same-line `by trivial`: seq == first_step == the single tactic, no bullets.
+        let same_line = "theorem t : True := by trivial";
+        let same_json = r#"{"base_column":23,"bullets":[],"by":{"end":22,"start":20},"first_step":{"end":30,"start":23},"seq":{"end":30,"start":23}}"#;
+        let s: TacticBlockRecord = serde_json::from_str(same_json).unwrap();
+        assert_eq!(same_line.get(s.by_kw.start..s.by_kw.end), Some("by"));
+        assert_eq!(same_line.get(23..30), Some("trivial"));
+        assert_eq!(s.first_step, s.seq, "a one-tactic block: first step spans the sequence");
+        assert!(s.bullets.is_empty());
+
+        // A `case` label is reported as a `"case"` bullet marker (the keyword atom).
+        let case_src = "theorem t : True := by\n  case a => trivial";
+        let case_json = r#"{"base_column":2,"bullets":[{"kind":"case","range":{"end":29,"start":25}}],"by":{"end":22,"start":20},"first_step":{"end":42,"start":25},"seq":{"end":42,"start":25}}"#;
+        let c: TacticBlockRecord = serde_json::from_str(case_json).unwrap();
+        assert_eq!(c.bullets.len(), 1);
+        assert_eq!(c.bullets[0].kind, "case");
+        assert_eq!(case_src.get(25..29), Some("case"));
+
+        // A synthetic/degraded block: only the `by` atom, everything else absent/empty.
+        let degraded_json = r#"{"by":{"end":22,"start":20},"bullets":[]}"#;
+        let d: TacticBlockRecord = serde_json::from_str(degraded_json).unwrap();
+        assert!(d.seq.is_none(), "synthetic sequence has no range");
+        assert!(d.base_column.is_none());
+        assert!(d.first_step.is_none());
+        assert!(d.bullets.is_empty());
     }
 }

@@ -265,6 +265,98 @@ partial def declHeaderSpans (stx : Syntax) (acc : Array Json := #[]) : Array Jso
       args.foldl (fun a s => declHeaderSpans s a) acc
   | _ => acc
 
+/-!
+## Tactic block spans
+
+A rule that normalizes the *intra-line* spacing inside a `by` block (the gap after `by`
+for a same-line tactic, and the gap after a `·`/`case` bullet marker) needs the byte
+positions of those anchors — not the whole-command region and not the inter-token trivia
+runs. `tacticBlockSpans` walks every `Lean.Parser.Term.byTactic` and emits one record per
+block, recovered **purely from the parse tree** (no elaboration):
+
+```json
+{ "by": { "start": 18, "end": 20 },
+  "seq": { "start": 23, "end": 40 },
+  "base_column": 2,
+  "first_step": { "start": 23, "end": 34 },
+  "bullets": [ { "kind": "cdot", "range": { "start": 54, "end": 56 } } ] }
+```
+
+`by` (always present) is the `by` atom. `seq` is the enclosing `Tactic.tacticSeq` range;
+it is **absent** when the sequence parsed synthetically (an unrecognized tactic token
+collapses the sequence — the token-table-dependent degradation), in which case
+`base_column`/`first_step` are absent and `bullets` is empty: a consumer never sees a
+wrong or zero-width span. `base_column` is the 0-based codepoint column of the sequence
+start (the block's indentation), so the rule can tell a leading-indentation gap from an
+intra-line one. `first_step` is the first top-level tactic step (for the `by`→step gap).
+`bullets` are every `·` (`cdotTk`) and `case` marker atom in the block, at any nesting
+depth, so the rule can normalize the space after each marker.
+-/
+
+/-- Every `·` (`Lean.cdotTk`) and `case` (`Tactic.case`) marker atom under `stx`, as
+    `{ "kind": "cdot"|"case", "range": {…} }` in source order. Does **not** descend into a
+    nested `by` block — that block gets its own record — so a marker is reported exactly
+    once by the innermost enclosing block. -/
+partial def bulletMarkers (stx : Syntax) (acc : Array Json := #[]) : Array Json :=
+  match stx with
+  | .node _ kind args =>
+    if kind == ``Lean.Parser.Term.byTactic then acc
+    else
+      let acc :=
+        if kind == ``Lean.cdotTk then
+          match stx.getRange? with
+          | some r => acc.push (Json.mkObj [("kind", Json.str "cdot"), ("range", textRangeJson r)])
+          | none => acc
+        else if kind == ``Lean.Parser.Tactic.case then
+          match atomRangeWithVal? stx "case" with
+          | some r => acc.push (Json.mkObj [("kind", Json.str "case"), ("range", textRangeJson r)])
+          | none => acc
+        else acc
+      args.foldl (fun a s => bulletMarkers s a) acc
+  | _ => acc
+
+/-- The byte range of the first top-level tactic step of a `Tactic.tacticSeq` — the first
+    ranged **node** child of its `tacticSeq1Indented`'s step list (the `;`/newline
+    separators are atoms, skipped). `none` for a synthetic or bracketed sequence. -/
+def firstStepRange? (seqNode : Syntax) : Option Syntax.Range :=
+  match nodeWithKind? seqNode ``Lean.Parser.Tactic.tacticSeq1Indented with
+  | some indented =>
+    (indented.getArgs.foldl (fun a nn => a ++ nn.getArgs) #[]).findSome? fun c =>
+      match c with
+      | .node .. => c.getRange?
+      | _ => none
+  | none => none
+
+/-- Collect one record per `Term.byTactic` block under `stx`, in source order. Each record
+    names the `by` atom, the enclosing `tacticSeq` range and its indentation column, the
+    first top-level step, and every `·`/`case` marker — all recovered parse-only. A block
+    whose sequence parsed synthetically emits just the `by` atom and an empty `bullets`
+    array (never a wrong span). -/
+partial def tacticBlockSpans (fileMap : FileMap) (stx : Syntax) (acc : Array Json := #[]) :
+    Array Json :=
+  match stx with
+  | .node _ kind args =>
+    let acc :=
+      if kind == ``Lean.Parser.Term.byTactic then
+        match firstAtomRange? stx with
+        | some byR =>
+          let seqNode? := nodeWithKind? stx ``Lean.Parser.Tactic.tacticSeq
+          let seqRange? := seqNode?.bind (·.getRange?)
+          let firstStep? := seqNode?.bind firstStepRange?
+          let baseCol? := seqRange?.map fun r => (fileMap.toPosition r.start).column
+          let bullets := match seqNode? with | some s => bulletMarkers s | none => #[]
+          let fields : List (String × Json) :=
+            [("by", textRangeJson byR)]
+              ++ (match seqRange? with | some r => [("seq", textRangeJson r)] | none => [])
+              ++ (match baseCol? with | some c => [("base_column", toJson c)] | none => [])
+              ++ (match firstStep? with | some r => [("first_step", textRangeJson r)] | none => [])
+              ++ [("bullets", Json.arr bullets)]
+          acc.push (Json.mkObj fields)
+        | none => acc
+      else acc
+    args.foldl (fun a s => tacticBlockSpans fileMap s a) acc
+  | _ => acc
+
 /-- Collect the byte ranges of `docComment` nodes (`/-- … -/`, `/-! … -/`) under `stx`
     as `{ "start", "end" }` objects. These are syntax, not trivia; they are reported so
     a downstream formatter can treat docstrings distinctly from ordinary comments. -/
