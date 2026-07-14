@@ -9,6 +9,9 @@
 **/*.ilean
 **/*.trace
 
+# lean-fmt local worker/format cache
+.lean-fmt-cache/
+
 # Editor / OS
 .DS_Store
 *.swp
