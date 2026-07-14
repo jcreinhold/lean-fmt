@@ -24,6 +24,7 @@ workspace = true
 
 [dependencies]
 clap = { workspace = true }
+indicatif = { workspace = true }
 lean-fmt-diagnostics = { workspace = true }
 lean-fmt-project = { workspace = true }
 serde = { workspace = true }

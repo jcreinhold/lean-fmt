@@ -37,8 +37,8 @@ use lean_fmt_cli::{InstallWorkerArgs, install_worker_command};
 use lean_fmt_diagnostics::RuleSelection;
 use lean_fmt_project::FormatService;
 use lean_fmt_project::{
-    AnalysisOutcome, CacheKeyBuilder, FormatCache, FormatterConfig, ServiceRequest, ServiceResponse, ServiceSettings,
-    ValidationLevel, analyze_file,
+    AnalysisOutcome, CacheKeyBuilder, FleetPlan, FormatCache, FormatterConfig, RunMode, ServiceRequest,
+    ServiceResponse, ServiceSettings, SourceFile, ValidationLevel, analyze_file, run_project_fleet,
 };
 use lean_fmt_worker::FormatterWorker;
 use lean_fmt_worker::toolchain::{InstalledWorker, ToolchainId, resolve_in};
@@ -210,6 +210,76 @@ fn corpus_performance_probe() -> Result<(), String> {
         "fix workload: trailing whitespace must produce an edit"
     );
     println!("name=fix elapsed_us={}", fix_elapsed.as_micros());
+
+    // --- Workload: fleet scaling (parallel workers vs. one warm worker). The relative,
+    // machine-independent budget is that a `k`-worker fleet finishes a cold, cache-disabled pass
+    // faster than a single worker: each file's ~200ms+ import overlaps `k`-wide, so wallclock falls
+    // even after `k` worker-startup costs. A ratio, not an absolute time — matching the probe
+    // discipline. `installed` is cloned because the server workload below moves the original. ---
+    let fleet_files: Vec<SourceFile> = files
+        .iter()
+        .map(|(path, _)| SourceFile {
+            module: Path::new(path)
+                .file_stem()
+                .and_then(|stem| stem.to_str())
+                .unwrap_or("File")
+                .to_owned(),
+            path: PathBuf::from(path),
+        })
+        .collect();
+    let fleet_installed = installed.clone();
+    // A `Fn` builder capturing only `&fleet_installed`, so it is `Copy` and both passes can take it
+    // by value (the fleet moves its `make_parser`).
+    let make_worker = || Ok::<_, String>(FormatterWorker::from_installed(&fleet_installed));
+    let fleet_cache = FormatCache::disabled(temp.path().join("cache-fleet"));
+    let cores = std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get);
+    let jobs = cores.min(n).max(1);
+
+    let serial_start = Instant::now();
+    let _serial = run_project_fleet(
+        make_worker,
+        RunMode::Check,
+        &fleet_files,
+        &selection,
+        &keys,
+        ValidationLevel::Syntax,
+        &[],
+        &fleet_cache,
+        FleetPlan { jobs: 1 },
+        |_, _, _| {},
+    )?;
+    let serial_elapsed = serial_start.elapsed();
+
+    let parallel_start = Instant::now();
+    let _parallel = run_project_fleet(
+        make_worker,
+        RunMode::Check,
+        &fleet_files,
+        &selection,
+        &keys,
+        ValidationLevel::Syntax,
+        &[],
+        &fleet_cache,
+        FleetPlan { jobs },
+        |_, _, _| {},
+    )?;
+    let parallel_elapsed = parallel_start.elapsed();
+    println!(
+        "name=fleet_scaling files={n} jobs={jobs} serial_us={} parallel_us={}",
+        serial_elapsed.as_micros(),
+        parallel_elapsed.as_micros()
+    );
+    // Only a genuine fan-out (>=2 workers over >=2 files) is expected to beat the serial pass; a
+    // single-core or single-file run has no parallelism to exploit, so skip the assertion there.
+    if jobs >= 2 && n >= 2 {
+        assert!(
+            parallel_elapsed < serial_elapsed,
+            "perf budget: {jobs}-worker fleet ({}us) is not faster than one worker ({}us) over {n} files \
+             — parallel fan-out has regressed",
+            parallel_elapsed.as_micros(),
+            serial_elapsed.as_micros()
+        );
+    }
 
     // --- Workload: server round-trip latency through the FormatService actor. ---
     let settings = ServiceSettings {

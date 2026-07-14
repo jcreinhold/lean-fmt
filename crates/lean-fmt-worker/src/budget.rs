@@ -58,6 +58,16 @@ const DEFAULT_LEAN_MAX_MEMORY_KIB: u64 = 16 * 1024 * 1024;
 /// `LEAN_FMT_PINNED_RSS_KIB`.
 const DEFAULT_PINNED_RSS_CEILING_KIB: u64 = 16 * 1024 * 1024;
 
+/// Memory budget fallback (8 GiB, in KiB) used only when total-RAM detection fails and
+/// `LEAN_FMT_MEM_BUDGET_KIB` is unset. Paired with the 2 GiB per-worker soft ceiling this
+/// still admits ~4 parallel workers — a safe floor on a machine whose RAM we cannot read.
+const DEFAULT_MEM_BUDGET_KIB: u64 = 8 * 1024 * 1024;
+
+/// Fraction of detected total RAM (in tenths) the auto memory budget claims when
+/// `LEAN_FMT_MEM_BUDGET_KIB` is unset. 8/10 leaves headroom for the OS and the parent process.
+const MEM_BUDGET_RAM_NUMERATOR: u64 = 8;
+const MEM_BUDGET_RAM_DENOMINATOR: u64 = 10;
+
 /// Resolved Lean resource caps, threaded to both the capability build and the runtime worker.
 ///
 /// Construct with [`LeanResourceBudget::from_env`]; the fields are the single source of truth
@@ -81,6 +91,11 @@ pub struct LeanResourceBudget {
     /// Pinned-mode per-worker/total RSS ceiling, in KiB. Applied only when a worker holds a
     /// pinned superset environment, where the ordinary soft ceiling would recycle the pin.
     pub pinned_rss_ceiling_kib: u64,
+    /// Total memory, in KiB, the fleet may spread parallel worker children across. Bounds the
+    /// auto worker count so `W × per_worker_rss` stays within it. Defaults to ~80% of detected
+    /// total RAM (or an 8 GiB floor when detection fails); overridable via
+    /// `LEAN_FMT_MEM_BUDGET_KIB`.
+    pub mem_budget_kib: u64,
 }
 
 impl Default for LeanResourceBudget {
@@ -94,6 +109,7 @@ impl Default for LeanResourceBudget {
             max_imports: DEFAULT_MAX_IMPORTS,
             lean_max_memory_kib: DEFAULT_LEAN_MAX_MEMORY_KIB,
             pinned_rss_ceiling_kib: DEFAULT_PINNED_RSS_CEILING_KIB,
+            mem_budget_kib: DEFAULT_MEM_BUDGET_KIB,
         }
     }
 }
@@ -106,11 +122,21 @@ impl LeanResourceBudget {
     /// `soft <= post_job <= hard_kill` reverts to the default triple.
     #[must_use]
     pub fn from_env() -> Self {
-        Self::resolve(|key| std::env::var(key).ok())
+        Self::resolve_with(|key| std::env::var(key).ok(), detect_total_ram_kib())
     }
 
     /// Env-lookup-injectable core of [`from_env`](Self::from_env), for deterministic tests.
+    /// Total-RAM detection is left out (`None`), so `mem_budget_kib` uses the fixed fallback.
+    #[cfg(test)]
     fn resolve(lookup: impl Fn(&str) -> Option<String>) -> Self {
+        Self::resolve_with(lookup, None)
+    }
+
+    /// Env- and RAM-injectable core of [`from_env`](Self::from_env). `detected_ram_kib` is the
+    /// machine's total RAM when it could be read; the auto memory budget claims ~80% of it, or
+    /// falls back to the fixed floor when it is `None`. An explicit `LEAN_FMT_MEM_BUDGET_KIB`
+    /// overrides both.
+    fn resolve_with(lookup: impl Fn(&str) -> Option<String>, detected_ram_kib: Option<u64>) -> Self {
         let defaults = Self::default();
 
         let threads = parse_positive_u32(lookup("LEAN_NUM_THREADS").as_deref()).unwrap_or(defaults.threads);
@@ -143,6 +169,13 @@ impl LeanResourceBudget {
         let pinned_rss_ceiling_kib =
             parse_positive_u64(lookup("LEAN_FMT_PINNED_RSS_KIB").as_deref()).unwrap_or(defaults.pinned_rss_ceiling_kib);
 
+        let mem_budget_kib = parse_positive_u64(lookup("LEAN_FMT_MEM_BUDGET_KIB").as_deref()).unwrap_or_else(|| {
+            detected_ram_kib
+                .map(|ram| (ram / MEM_BUDGET_RAM_DENOMINATOR).saturating_mul(MEM_BUDGET_RAM_NUMERATOR))
+                .filter(|&budget| budget >= 1)
+                .unwrap_or(defaults.mem_budget_kib)
+        });
+
         Self {
             threads,
             per_worker_rss_soft_kib,
@@ -152,7 +185,92 @@ impl LeanResourceBudget {
             max_imports,
             lean_max_memory_kib,
             pinned_rss_ceiling_kib,
+            mem_budget_kib,
         }
+    }
+
+    /// The largest worker count whose combined RSS ceiling stays within [`mem_budget_kib`], for
+    /// the given mode. Per-file mode bounds each worker at the ~2 GiB soft ceiling; pinned mode
+    /// at the (much larger) pinned ceiling, so pinned runs self-limit to very few workers.
+    /// Always `>= 1` — one worker runs even if it nominally overcommits the budget.
+    #[must_use]
+    pub fn max_workers_within_memory(&self, pinned: bool) -> usize {
+        let per_worker = self.per_worker_rss_for_mode(pinned);
+        // `per_worker` is `>= 1`, so the division is always defined; `checked_div` keeps the
+        // strict `arithmetic_side_effects` lint satisfied without an unchecked `/`.
+        let cap = self.mem_budget_kib.checked_div(per_worker).unwrap_or(0);
+        usize::try_from(cap).unwrap_or(usize::MAX).max(1)
+    }
+
+    /// Resolve how many parallel worker children to run. Without `requested`, the count is the
+    /// number of CPUs clamped down to what memory allows ([`max_workers_within_memory`]). An
+    /// explicit `requested` (a `-j`/`--jobs` value) wins and is only floored at 1 — honoring the
+    /// user's intent even past the memory cap; the caller is responsible for any overcommit
+    /// warning (compare against [`max_workers_within_memory`]).
+    ///
+    /// [`max_workers_within_memory`]: Self::max_workers_within_memory
+    #[must_use]
+    pub fn worker_count(&self, pinned: bool, requested: Option<usize>) -> usize {
+        resolve_worker_count(available_cpus(), self.max_workers_within_memory(pinned), requested)
+    }
+
+    /// The per-worker RSS ceiling that bounds one child in the given mode.
+    fn per_worker_rss_for_mode(&self, pinned: bool) -> u64 {
+        let per_worker = if pinned {
+            self.pinned_rss_ceiling_kib
+        } else {
+            self.per_worker_rss_soft_kib
+        };
+        per_worker.max(1)
+    }
+}
+
+/// Detected CPU parallelism, floored at 1 when the platform cannot report it.
+fn available_cpus() -> usize {
+    std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get)
+}
+
+/// Pure worker-count policy: an explicit `requested` wins (floored at 1); otherwise take the
+/// CPU count clamped down to the memory cap. Split out from environment/CPU probing so the
+/// clamp/override matrix is deterministically testable.
+fn resolve_worker_count(cpus: usize, mem_cap: usize, requested: Option<usize>) -> usize {
+    match requested {
+        Some(n) => n.max(1),
+        None => cpus.min(mem_cap).max(1),
+    }
+}
+
+/// Best-effort total physical RAM in KiB. Reads `/proc/meminfo` on Linux and `hw.memsize` via
+/// a single `sysctl` call on macOS; returns `None` on any other platform or on any read/parse
+/// failure, in which case the memory budget falls back to its fixed floor. Never panics.
+fn detect_total_ram_kib() -> Option<u64> {
+    #[cfg(target_os = "linux")]
+    {
+        let meminfo = std::fs::read_to_string("/proc/meminfo").ok()?;
+        // A `MemTotal:      16384000 kB` line — value already in KiB.
+        for line in meminfo.lines() {
+            if let Some(rest) = line.strip_prefix("MemTotal:") {
+                let kib = rest.split_whitespace().next()?.parse::<u64>().ok()?;
+                return (kib >= 1).then_some(kib);
+            }
+        }
+        None
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let output = std::process::Command::new("sysctl")
+            .args(["-n", "hw.memsize"])
+            .output()
+            .ok()?;
+        if !output.status.success() {
+            return None;
+        }
+        let bytes = std::str::from_utf8(&output.stdout).ok()?.trim().parse::<u64>().ok()?;
+        (bytes >= 1024).then_some(bytes / 1024)
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    {
+        None
     }
 }
 
@@ -262,5 +380,56 @@ mod tests {
             budget_from(&[("LEAN_FMT_PINNED_RSS_KIB", "nope")]).pinned_rss_ceiling_kib,
             16 * 1024 * 1024
         );
+    }
+
+    #[test]
+    fn mem_budget_defaults_to_fixed_floor_without_detection() {
+        // `resolve` injects no detected RAM, so the budget is the fixed 8 GiB floor.
+        assert_eq!(budget_from(&[]).mem_budget_kib, 8 * 1024 * 1024);
+    }
+
+    #[test]
+    fn mem_budget_uses_eighty_percent_of_detected_ram() {
+        // 32 GiB detected → 80% claimed.
+        let budget = LeanResourceBudget::resolve_with(|_| None, Some(32 * 1024 * 1024));
+        assert_eq!(budget.mem_budget_kib, (32 * 1024 * 1024) / 10 * 8);
+    }
+
+    #[test]
+    fn explicit_mem_budget_overrides_detection() {
+        let budget = LeanResourceBudget::resolve_with(
+            |key| (key == "LEAN_FMT_MEM_BUDGET_KIB").then(|| "1000000".to_owned()),
+            Some(64 * 1024 * 1024),
+        );
+        assert_eq!(budget.mem_budget_kib, 1_000_000);
+    }
+
+    #[test]
+    fn max_workers_within_memory_divides_budget_by_per_worker_ceiling() {
+        // 8 GiB budget / 2 GiB per-file soft ceiling = 4 workers; pinned uses the 16 GiB
+        // ceiling, so the same budget admits only 1.
+        let budget = budget_from(&[]);
+        assert_eq!(budget.max_workers_within_memory(false), 4);
+        assert_eq!(budget.max_workers_within_memory(true), 1);
+    }
+
+    #[test]
+    fn max_workers_within_memory_is_never_zero() {
+        // A tiny budget below one per-worker ceiling still yields one worker.
+        let budget = budget_from(&[("LEAN_FMT_MEM_BUDGET_KIB", "1")]);
+        assert_eq!(budget.max_workers_within_memory(false), 1);
+    }
+
+    #[test]
+    fn resolve_worker_count_matrix() {
+        // Auto: CPUs clamped down to the memory cap.
+        assert_eq!(resolve_worker_count(8, 4, None), 4);
+        assert_eq!(resolve_worker_count(2, 4, None), 2);
+        assert_eq!(resolve_worker_count(0, 4, None), 1);
+        // Explicit request wins, floored at 1, even past the memory cap (overcommit is the
+        // caller's to warn about).
+        assert_eq!(resolve_worker_count(8, 4, Some(16)), 16);
+        assert_eq!(resolve_worker_count(8, 4, Some(0)), 1);
+        assert_eq!(resolve_worker_count(8, 4, Some(1)), 1);
     }
 }

@@ -19,14 +19,16 @@ mod serve;
 use std::path::{Path, PathBuf};
 
 use clap::{Parser, Subcommand, ValueEnum};
+use indicatif::{ProgressBar, ProgressStyle};
 use serde::Serialize;
 use thiserror::Error;
 
 use lean_fmt_diagnostics::{RuleInfo, RuleSelection, registry};
 use lean_fmt_project::{
-    AnalysisOutcome, CacheKeyBuilder, FileReport, FormatCache, FormatterConfig, ProjectRun, RunMode, RunSummary,
-    SourceFile, ValidationLevel, run_project, superset_union,
+    AnalysisOutcome, CacheKeyBuilder, FileReport, FleetPlan, FormatCache, FormatterConfig, ProjectRun, RunMode,
+    RunSummary, SourceFile, ValidationLevel, run_project, run_project_fleet, superset_union,
 };
+use lean_fmt_worker::budget::LeanResourceBudget;
 use lean_fmt_worker::toolchain::resolve_installed_worker;
 use lean_fmt_worker::{FormatterWorker, PinOutcome};
 
@@ -49,6 +51,10 @@ pub enum OutputFormat {
 }
 
 /// Options shared by the file-processing modes.
+// Each bool is an independent CLI flag (`--no-cache`, `--statistics`, `--pinned`, `--verbose`);
+// this is a flat argument record clap fills, not a state machine, so the bools do not interact and
+// folding them into enums would only obscure the 1:1 flag mapping.
+#[allow(clippy::struct_excessive_bools)]
 #[derive(Debug, Clone, clap::Args)]
 pub struct CommonArgs {
     /// Explicit `.lean` files to process. When given, workspace discovery is skipped.
@@ -99,6 +105,19 @@ pub struct CommonArgs {
     /// the worker's resource budget, the run degrades cleanly to per-file — never an error.
     #[arg(long)]
     pub pinned: bool,
+
+    /// Number of parallel worker children to run. Omitted (the default) auto-derives the count
+    /// from CPU parallelism, clamped down to what the memory budget allows (each per-file worker
+    /// holds ~2 GiB; a pinned worker holds the whole superset, so pinned self-limits to 1–2). An
+    /// explicit value wins and is honored even past the memory cap (with a warning). Also settable
+    /// via `LEAN_FMT_JOBS`; the flag takes precedence.
+    #[arg(short = 'j', long, value_name = "N")]
+    pub jobs: Option<usize>,
+
+    /// Print one `[done/total] path` line per file as it completes, above the progress bar.
+    /// Off by default: a single updating progress bar replaces the old per-file spam.
+    #[arg(short, long)]
+    pub verbose: bool,
 }
 
 /// Options for `lean-fmt fix`: the shared file options plus write-validation control.
@@ -542,19 +561,26 @@ fn execute(mode_label: &'static str, mode: RunMode, args: &CommonArgs, level: Va
     let selection = selection_for(args, &config);
     let (root, files) = resolve_targets(args, &config)?;
 
-    // One warm worker per workspace, resolved for the pinned toolchain.
+    // Resolve the workspace worker payload and the memory budget that bounds how many worker
+    // children we may run at once. Every worker below is built from `installed`.
     let worker_root = root.clone().unwrap_or_else(|| args.root.clone());
     let installed = resolve_installed_worker(&worker_root).map_err(|error| Error::Worker(error.to_string()))?;
-    let mut worker = FormatterWorker::from_installed(&installed);
     let cache = cache_for(args, cache_root_for(&worker_root));
     let search_path = project_search_path(&worker_root);
+    let budget = LeanResourceBudget::from_env();
 
-    // Behind `--pinned`: import the whole-project superset once and pin it, so every file
-    // parses against one environment instead of re-importing its closure per file. A superset
-    // that does not resolve or exceeds the worker budget degrades cleanly to per-file; the
-    // resulting `superset_id` keys the cache so pinned and per-file results never mix.
-    let superset_id = if args.pinned {
-        match worker.setup_pinned_env(superset_union(&files), &search_path) {
+    // Behind `--pinned`: import the whole-project superset once and pin it, so every file parses
+    // against one environment instead of re-importing its closure per file. The `superset_id` is
+    // part of the cache key, so all workers in the fleet must agree on it — decide it ONCE here
+    // with a probe worker, then have each fleet worker reproduce the same pin. A superset that
+    // does not resolve or exceeds the worker budget degrades cleanly to per-file (id stays `None`,
+    // so pinned and per-file results never share a cache entry). When we run a single worker, the
+    // probe worker is reused as the executor so the superset is imported exactly once.
+    let superset_imports: Option<Vec<String>> = args.pinned.then(|| superset_union(&files));
+    let mut probe: Option<FormatterWorker> = None;
+    let superset_id = if let Some(imports) = superset_imports.as_ref() {
+        let mut worker = FormatterWorker::from_installed(&installed);
+        let id = match worker.setup_pinned_env(imports.clone(), &search_path) {
             Ok(PinOutcome::Pinned { id, resident_imports }) => {
                 eprintln!("lean-fmt: pinned superset environment ({resident_imports} imports)");
                 Some(id)
@@ -564,10 +590,13 @@ fn execute(mode_label: &'static str, mode: RunMode, args: &CommonArgs, level: Va
                 None
             }
             Err(error) => return Err(Error::Worker(error.to_string())),
-        }
+        };
+        probe = Some(worker);
+        id
     } else {
         None
     };
+    let pinned_effective = superset_id.is_some();
 
     let keys = CacheKeyBuilder::new(
         &config,
@@ -578,24 +607,130 @@ fn execute(mode_label: &'static str, mode: RunMode, args: &CommonArgs, level: Va
         superset_id,
     );
 
-    // Progress goes to stderr so stdout carries only the report (clean JSON when requested).
-    let run = run_project(
-        &mut worker,
-        mode,
-        &files,
-        &selection,
-        &keys,
-        level,
-        &search_path,
-        &cache,
-        |message| eprintln!("{message}"),
-    );
+    // Worker count: auto-derive from CPU parallelism capped by the memory budget, or honor an
+    // explicit `-j`/`LEAN_FMT_JOBS`. Warn (do not fail) if an explicit value overcommits memory.
+    let requested = resolve_jobs(args);
+    let jobs = budget.worker_count(pinned_effective, requested);
+    if let Some(n) = requested {
+        let cap = budget.max_workers_within_memory(pinned_effective);
+        if n > cap {
+            eprintln!("lean-fmt: -j {n} exceeds the ~{cap}-worker memory budget; expect memory pressure");
+        }
+    }
+
+    // One updating progress bar on stderr; stdout stays report-only. `--verbose` restores the old
+    // per-file lines above the bar. On a non-TTY (pipe/CI) indicatif draws no bar automatically.
+    let progress = ProgressUi::new(files.len());
+    let run = match (jobs, probe) {
+        (1, Some(mut worker)) => {
+            // Single worker: reuse the (possibly pinned) probe worker as the executor — no second
+            // superset import. The serial core is byte-identical to the fleet's one-worker path.
+            let mut done = 0usize;
+            run_project(
+                &mut worker,
+                mode,
+                &files,
+                &selection,
+                &keys,
+                level,
+                &search_path,
+                &cache,
+                |message| {
+                    done = done.saturating_add(1);
+                    progress.bump(done, args.verbose.then_some(message));
+                },
+            )
+        }
+        (_, other) => {
+            // Per-file (no probe) or pinned with >1 worker (the probe only fixed the global pin
+            // decision; the fleet builds its own pinned workers). Release any probe worker's child.
+            drop(other);
+            let total = files.len();
+            let make_parser = || -> std::result::Result<FormatterWorker, String> {
+                let mut worker = FormatterWorker::from_installed(&installed);
+                // Reproduce the same pin the probe decided on. `superset_imports` is `Some` only
+                // under `--pinned`; `pinned_effective` gates out the probe's fall-back case.
+                if let Some(imports) = superset_imports.as_ref().filter(|_| pinned_effective) {
+                    match worker.setup_pinned_env(imports.clone(), &search_path) {
+                        Ok(PinOutcome::Pinned { .. }) => {}
+                        Ok(PinOutcome::FellBack { reason }) => {
+                            return Err(format!("worker could not reproduce the pinned superset: {reason}"));
+                        }
+                        Err(error) => return Err(error.to_string()),
+                    }
+                }
+                Ok(worker)
+            };
+            run_project_fleet(
+                make_parser,
+                mode,
+                &files,
+                &selection,
+                &keys,
+                level,
+                &search_path,
+                &cache,
+                FleetPlan { jobs },
+                |done, _total, path| {
+                    let line = args.verbose.then(|| format!("[{done}/{total}] {path}"));
+                    progress.bump(done, line.as_deref());
+                },
+            )
+            .map_err(Error::Worker)?
+        }
+    };
+    progress.finish();
 
     print!("{}", render_run(&run, mode_label, root.as_deref(), args.format)?);
     if args.statistics {
         eprint!("{}", render_statistics(&run));
     }
     Ok(run.exit_code())
+}
+
+/// Resolve the requested worker count: the explicit `-j`/`--jobs` flag wins; otherwise a positive
+/// `LEAN_FMT_JOBS`; otherwise `None`, which lets [`LeanResourceBudget::worker_count`] auto-derive it.
+fn resolve_jobs(args: &CommonArgs) -> Option<usize> {
+    if let Some(jobs) = args.jobs {
+        return Some(jobs);
+    }
+    std::env::var("LEAN_FMT_JOBS")
+        .ok()
+        .and_then(|value| value.trim().parse::<usize>().ok())
+        .filter(|jobs| *jobs > 0)
+}
+
+/// A single updating progress bar over the run, on stderr, keeping stdout report-only.
+///
+/// indicatif draws the bar only on a TTY: piped or CI output gets no bar, but `--verbose` per-file
+/// lines still print. Positions are clamped so a pathological file count never overflows the `u64`
+/// gauge.
+struct ProgressUi {
+    bar: ProgressBar,
+}
+
+impl ProgressUi {
+    fn new(total: usize) -> Self {
+        let bar = ProgressBar::new(u64::try_from(total).unwrap_or(u64::MAX));
+        if let Ok(style) = ProgressStyle::with_template(
+            "{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} ({per_sec}, ETA {eta})",
+        ) {
+            bar.set_style(style.progress_chars("=>-"));
+        }
+        Self { bar }
+    }
+
+    /// Advance the bar to `done`, first printing `verbose_line` above it when present (`--verbose`).
+    fn bump(&self, done: usize, verbose_line: Option<&str>) {
+        if let Some(line) = verbose_line {
+            self.bar.println(line);
+        }
+        self.bar.set_position(u64::try_from(done).unwrap_or(u64::MAX));
+    }
+
+    fn finish(&self) {
+        self.bar.finish_and_clear();
+    }
 }
 
 /// Parse arguments, dispatch the command, and return a process exit code.
@@ -864,6 +999,8 @@ mod tests {
             no_cache: false,
             statistics: false,
             pinned: false,
+            jobs: None,
+            verbose: false,
         }
     }
 

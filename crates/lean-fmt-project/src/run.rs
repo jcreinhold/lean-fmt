@@ -338,47 +338,71 @@ pub fn run_project<P: SourceParser>(
 
     let mut reports = Vec::with_capacity(total);
     for (index, file) in ordered.iter().enumerate() {
-        let path = file.path.display().to_string();
         let position = index.saturating_add(1);
-        progress(&format!("[{position}/{total}] {path}"));
-
-        let source = match std::fs::read_to_string(&file.path) {
-            Ok(source) => source,
-            Err(error) => {
-                reports.push(FileReport::Failed {
-                    path,
-                    message: format!("could not read file: {error}"),
-                });
-                continue;
-            }
-        };
-
-        let key = keys.key_for(&source);
-        match analyze_file(parser, selection, &path, &source, level, search_path, cache, &key) {
-            Ok(analysis) => {
-                let wrote = if mode == RunMode::Fix {
-                    match write_if_formatted(&file.path, &analysis) {
-                        Ok(wrote) => wrote,
-                        Err(message) => {
-                            reports.push(FileReport::Failed { path, message });
-                            continue;
-                        }
-                    }
-                } else {
-                    false
-                };
-                reports.push(FileReport::Analyzed { analysis, wrote });
-            }
-            Err(error) => {
-                reports.push(FileReport::Failed {
-                    path,
-                    message: error.to_string(),
-                });
-            }
-        }
+        progress(&format!("[{position}/{total}] {}", file.path.display()));
+        reports.push(process_one_file(
+            parser,
+            mode,
+            file,
+            selection,
+            keys,
+            level,
+            search_path,
+            cache,
+        ));
     }
 
     ProjectRun { mode, reports }
+}
+
+/// Process exactly one file end-to-end into a [`FileReport`] — the shared per-file body of both
+/// the serial [`run_project`] loop and the parallel [`run_project_fleet`](crate::run_project_fleet)
+/// scheduler, so the two paths are byte-identical by construction.
+///
+/// Reads the file, builds its cache key, runs [`analyze_file`], and (in [`RunMode::Fix`]) writes
+/// the formatted output back through the safe-write gate. Any per-file failure — an unreadable
+/// file, a worker transport error, or a failed write — becomes [`FileReport::Failed`]; it never
+/// propagates, so one bad file cannot abort a run.
+pub(crate) fn process_one_file<P: SourceParser>(
+    parser: &mut P,
+    mode: RunMode,
+    file: &SourceFile,
+    selection: &RuleSelection,
+    keys: &CacheKeyBuilder,
+    level: ValidationLevel,
+    search_path: &[PathBuf],
+    cache: &FormatCache,
+) -> FileReport {
+    let path = file.path.display().to_string();
+
+    let source = match std::fs::read_to_string(&file.path) {
+        Ok(source) => source,
+        Err(error) => {
+            return FileReport::Failed {
+                path,
+                message: format!("could not read file: {error}"),
+            };
+        }
+    };
+
+    let key = keys.key_for(&source);
+    match analyze_file(parser, selection, &path, &source, level, search_path, cache, &key) {
+        Ok(analysis) => {
+            let wrote = if mode == RunMode::Fix {
+                match write_if_formatted(&file.path, &analysis) {
+                    Ok(wrote) => wrote,
+                    Err(message) => return FileReport::Failed { path, message },
+                }
+            } else {
+                false
+            };
+            FileReport::Analyzed { analysis, wrote }
+        }
+        Err(error) => FileReport::Failed {
+            path,
+            message: error.to_string(),
+        },
+    }
 }
 
 /// Write the formatted output back to `path`, if the analysis produced any. Returns whether a

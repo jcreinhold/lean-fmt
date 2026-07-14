@@ -64,16 +64,27 @@ resolved once from the environment with conservative defaults and threaded to ea
    and to the sibling `cargo build` via an explicit `--jobs` on the spawned command. **Default: `1`** (the `LeanFmt`
    package is tiny, so a serial build is safe and fast); set `LEAN_NUM_THREADS` to raise it.
 
-2. **The runtime worker child (`check`/`fix`/`diff`/`serve`).** The one-worker pool already serializes files, but a
-   single heavy file can still OOM. [`FormatterWorker`](../crates/lean-fmt-worker/src/lib.rs) applies the budget's RSS
-   ceilings and restart cadence uniformly (every construction routes through `FormatterWorker::new`): a soft per-worker
-   ceiling and total-child ceiling on the pool, a hard-kill ceiling sampled on an interval (a clean
-   `RssHardLimitExceeded` instead of an OS OOM), a memory-bounded recycle after N imports, a per-child thread cap
-   (`LEAN_RS_NUM_THREADS`), and an in-runtime Lean allocator guardrail (`LEAN_RS_LEAN_MAX_MEMORY_KIB`) below the OS OOM.
-   In `--pinned` mode (see [Pinning one superset environment](#pinning-one-superset-environment)) the import-count
-   recycle is disabled — it would throw away the resident superset — and the per-worker ceiling rises to
-   `LEAN_FMT_PINNED_RSS_KIB`, so a legitimately large pinned environment survives between files while the hard-kill
-   guard still bounds a runaway.
+2. **The runtime worker children (`check`/`fix`/`diff`/`serve`).** A run fans out across a *fleet* of `W` independent
+   worker children (see [Running the batch in parallel](#running-the-batch-in-parallel-the-fleet)); each child is one
+   `LeanWorkerPool` of size 1 that serializes its own files, and a single heavy file can still OOM one child.
+   [`FormatterWorker`](../crates/lean-fmt-worker/src/lib.rs) applies the budget's RSS ceilings and restart cadence
+   uniformly to every child (every construction routes through `FormatterWorker::new`): a soft per-worker ceiling and
+   total-child ceiling on the pool, a hard-kill ceiling sampled on an interval (a clean `RssHardLimitExceeded` instead of
+   an OS OOM), a memory-bounded recycle after N imports, a per-child thread cap (`LEAN_RS_NUM_THREADS`), and an in-runtime
+   Lean allocator guardrail (`LEAN_RS_LEAN_MAX_MEMORY_KIB`) below the OS OOM. In `--pinned` mode (see [Pinning one
+   superset environment](#pinning-one-superset-environment)) the import-count recycle is disabled — it would throw away
+   the resident superset — and the per-worker ceiling rises to `LEAN_FMT_PINNED_RSS_KIB`, so a legitimately large pinned
+   environment survives between files while the hard-kill guard still bounds a runaway.
+
+3. **The worker count itself.** These per-child ceilings bound *one* worker; the fleet runs `W` of them, so peak RSS is
+   roughly `W × per_worker_ceiling`. `W` is therefore **derived from a memory budget**, never hardcoded:
+   `W = clamp(available_parallelism, 1, ⌊mem_budget_kib / per_worker_for_mode⌋)`, where `per_worker_for_mode` is the soft
+   ceiling per-file (~2 GiB) or the pinned ceiling (~16 GiB) under `--pinned`. The same formula thus yields "many workers,
+   per-file" or "few workers, pinned" automatically — pinned self-limits to 1–2 workers because each holds the whole
+   superset. `-j/--jobs` (or `LEAN_FMT_JOBS`) overrides the auto count, floored at 1 and honored even past the memory cap
+   with a one-line warning. `mem_budget_kib` defaults to a conservative fraction (8/10) of detected system RAM
+   (`/proc/meminfo` on Linux, `sysctl hw.memsize` on macOS), falling back to a fixed **8 GiB** when detection is
+   unavailable; `LEAN_FMT_MEM_BUDGET_KIB` overrides it.
 
 Defaults mirror the `lean-host-mcp` reference (soft **2 GiB** / post-job **5 GiB** / hard-kill **16 GiB**, **250 ms**
 sampling, recycle after **~64** imports). Every knob is overridable:
@@ -81,6 +92,8 @@ sampling, recycle after **~64** imports). Every knob is overridable:
 | Env var | Controls | Default |
 | --- | --- | --- |
 | `LEAN_NUM_THREADS` | build + runtime-child threads | `1` |
+| `LEAN_FMT_JOBS` | parallel worker children (fleet size `W`) | auto (memory-capped) |
+| `LEAN_FMT_MEM_BUDGET_KIB` | total memory budget `W` is derived from | 8/10 of detected RAM, else 8 GiB |
 | `LEAN_FMT_RSS_SOFT_KIB` | per-worker + total soft RSS ceiling | 2 GiB |
 | `LEAN_FMT_RSS_POST_JOB_KIB` | post-job restart threshold | 5 GiB |
 | `LEAN_FMT_RSS_HARD_KIB` | hard-kill RSS ceiling | 16 GiB |
@@ -104,18 +117,23 @@ The perf probe encodes this as a **relative, machine-independent budget**: a war
 than the cache miss it replaces (in practice it is thousands of times cheaper). The assertion guards against a cache
 that silently stopped paying off, without pinning a fragile absolute time.
 
-## Why there is no Rust-side optimization to chase
+## Why there is no Rust-side *hot-path* optimization to chase
 
 Profiling says the dominant cost — ~200–250 ms/file — is Lean worker parse/elaboration, which the formatter does not own
 and cannot speed up without weakening the validation it exists to provide. The Rust-side hot paths are already
 sub-microsecond (table above), three-to-four orders of magnitude below the worker cost, so shaving them would not move
 end-to-end time.
 
+The wallclock chase is therefore **orchestration, not the hot path**: overlap that unavoidable per-file worker cost
+across cores (the [fleet](#running-the-batch-in-parallel-the-fleet)) and avoid paying it at all where possible (the
+[cache](#the-one-load-bearing-optimization-the-cache) and [`--pinned`](#pinning-one-superset-environment)). Those are
+structural wins measured in worker round-trips saved or parallelized, not instructions shaved.
+
 Per the `lean-rs` discipline, we do **not** optimize from a microbenchmark without a measured end-to-end win, and we do
 **not** trade away a safety check for speed. The `fix` workload (~485 ms/file) is roughly two worker round-trips — one
 to parse, one for the safe-write re-validation of the edited output — and that second round-trip is the
 comment-preservation and re-parse guarantee, not overhead to remove. The conclusion of this profiling pass is that the
-cache is the win, it is measured, and no further Rust optimization is warranted.
+cache is the per-file win, parallelism is the whole-batch win, and no further Rust *hot-path* optimization is warranted.
 
 ## The cost of a cold scan
 
@@ -137,11 +155,43 @@ files in a large library rarely do. But there is one environment every file can 
 whole-project **superset**, the union of every file's imports, loaded once. Holding it turns a cold
 pass from N imports into one import plus N cheap parses. That is the `--pinned` optimization below.
 
-A first pass over a whole large library, every file cold *and unpinned*, is a long batch — plausibly
-hours, single-threaded. We have not measured it end to end, and it is not the everyday workload:
-lean-fmt formats the files you change, and the cache then serves every unchanged file in
-microseconds. But a cold pass over an entire ecosystem is a real one-time cost, and `--pinned` is
-what collapses it.
+A first pass over a whole large library, every file cold, was — when the run was strictly
+single-threaded — a long batch, plausibly hours. It is not the everyday workload: lean-fmt formats
+the files you change, and the cache then serves every unchanged file in microseconds. But a cold pass
+over an entire ecosystem is a real one-time cost, and there are two independent levers that collapse
+it: **running the batch across a fleet of workers** (below), which divides wallclock by the worker
+count, and **`--pinned`** (further below), which removes the per-file import entirely. They compose.
+
+## Running the batch in parallel (the fleet)
+
+The per-file cost is Lean parse/elaboration in a worker child, and one child serves one file at a
+time (`LeanWorkerPool` size 1; its lease mutably borrows the pool). So the way to use the other cores
+is not to make one worker concurrent — it is to run **`W` independent worker children at once**, each
+draining files off a shared queue. That is [`run_project_fleet`](../crates/lean-fmt-project/src/fleet.rs):
+it path-sorts the files, hands each of `W` OS threads its own worker (built *inside* the thread — the
+worker is not `Send`, so it never crosses a thread boundary), and each thread claims the next index off
+one atomic cursor until the list is drained. A worker stuck on a cold import does not hold back the
+others; a worker that fails to start strands no files (its peers drain the cursor); only *all* workers
+failing to start is an error. Reports are index-tagged and re-sorted after the join, so the output is
+**byte-identical to the serial path** regardless of completion order — the fleet is a scheduling layer,
+not a semantic change, and it delegates to the serial [`run_project`](../crates/lean-fmt-project/src/run.rs)
+when `W == 1`. The result cache is `&self` and writes one file per `sha256(identity)`, so concurrent
+writers never collide.
+
+Wallclock falls roughly linearly in `W` for a cold pass (each file's ~200 ms–1 s import now overlaps
+`W`-wide), bounded by the memory cap that sets `W` in the first place — peak RSS ≈ `W × per_worker`,
+which is exactly why `W` is derived from a memory budget rather than from core count alone (see
+[Bounding Lean resource use](#bounding-lean-resource-use-memory--the-build-fork-storm)). Progress is a
+single [`indicatif`](https://docs.rs/indicatif) bar on stderr (done/total, throughput, ETA), auto-plain
+on a non-TTY so piped/CI output stays clean; `--verbose` restores the old per-file lines above the bar,
+and stdout carries only the report (a `--format json` run stays one clean object).
+
+The fleet and `--pinned` are orthogonal. Per-file is the default and parallelizes wide (many ~2 GiB
+workers). Pinned holds the whole superset per worker, so the memory cap self-limits it to 1–2 workers;
+the CLI makes the pin decision once with a probe worker (so every worker agrees on the `superset_id`
+that keys the cache), and when `W == 1` reuses that probe worker as the executor so the superset is
+imported exactly once. A fleet worker that cannot reproduce the agreed pin is treated as a startup
+failure, so results are never keyed under an inconsistent `superset_id`.
 
 ## Pinning one superset environment
 
