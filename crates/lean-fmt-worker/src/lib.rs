@@ -11,6 +11,7 @@
 //! linked into this library or the parent CLI. (The child binary lives in the separate
 //! `lean-fmt-worker-child` crate, whose `build.rs` is the workspace's only Lean link step.)
 
+pub mod budget;
 pub mod toolchain;
 
 use std::path::PathBuf;
@@ -20,13 +21,14 @@ use lean_fmt_edit::{DeclHeaderRecord, Diagnostic, ImportRecord, SyntaxRegion, Ta
 use lean_fmt_runtime::exports;
 use lean_rs_worker_parent::{
     LeanWorkerCapabilityBuilder, LeanWorkerChild, LeanWorkerError, LeanWorkerJsonCommand, LeanWorkerPool,
-    LeanWorkerPoolConfig,
+    LeanWorkerPoolConfig, LeanWorkerRestartPolicy,
 };
 use lean_toolchain::LeanBuiltCapability;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
+use crate::budget::LeanResourceBudget;
 use crate::toolchain::InstalledWorker;
 
 /// Default per-request timeout for a worker command. Loading and answering a static
@@ -263,19 +265,29 @@ pub struct FormatterWorker {
     child_binary: PathBuf,
     lean_sysroot: PathBuf,
     request_timeout: Duration,
+    budget: LeanResourceBudget,
 }
 
 impl FormatterWorker {
     /// Construct a worker over an already-built capability, the child binary, and the
     /// Lean sysroot the child loads `libleanshared` from.
+    ///
+    /// The [`LeanResourceBudget`] is resolved once from the environment and bounds the
+    /// one-worker pool's RSS ceilings and idle recycle; [`Self::builder`] applies the rest
+    /// (hard-kill, memory-bounded restart, per-child thread cap, Lean memory guardrail).
     #[must_use]
     pub fn new(built: LeanBuiltCapability, child_binary: impl Into<PathBuf>, lean_sysroot: impl Into<PathBuf>) -> Self {
+        let budget = LeanResourceBudget::from_env();
+        let pool_config = LeanWorkerPoolConfig::new(1)
+            .per_worker_rss_ceiling_kib(budget.per_worker_rss_soft_kib)
+            .max_total_child_rss_kib(budget.per_worker_rss_soft_kib);
         Self {
-            pool: LeanWorkerPool::new(LeanWorkerPoolConfig::new(1)),
+            pool: LeanWorkerPool::new(pool_config),
             built,
             child_binary: child_binary.into(),
             lean_sysroot: lean_sysroot.into(),
             request_timeout: DEFAULT_REQUEST_TIMEOUT,
+            budget,
         }
     }
 
@@ -311,7 +323,19 @@ impl FormatterWorker {
             .json_command_export(exports::DOCTOR_EXPORT)
             .json_command_export(exports::PARSE_FILE_EXPORT)
             .json_command_export(exports::VALIDATE_EXPORT)
-            .request_timeout(self.request_timeout))
+            .request_timeout(self.request_timeout)
+            // Hard-kill a child that crosses the ceiling mid-job (clean `RssHardLimitExceeded`
+            // instead of an OS OOM), and retire it after a bounded run so module-cache growth
+            // cannot accumulate unbounded across a long `check`/`fix`.
+            .rss_hard_limit(self.budget.hard_kill_rss_kib, self.budget.rss_sample)
+            .restart_policy(LeanWorkerRestartPolicy::memory_bounded(
+                self.budget.max_imports,
+                self.budget.post_job_rss_kib,
+            ))
+            // Cap the child's task-manager threads and give the Lean allocator an in-runtime
+            // memory backstop below the OS OOM (both via the typed A2 knobs, no ambient env).
+            .num_threads(self.budget.threads)
+            .lean_max_memory_kib(self.budget.lean_max_memory_kib))
     }
 
     /// Dispatch one JSON command through a freshly leased worker session.

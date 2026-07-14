@@ -28,6 +28,7 @@ fn build_cached_against_explicit_sysroot() -> Result<(), String> {
         cache_root: temp.path().to_path_buf(),
         toolchain_label: toolchain.clone(),
         lean_sysroot: sysroot.clone(),
+        lean_num_threads: 1,
     })
     .map_err(|error| error.to_string())?;
     let cold_elapsed = cold_start.elapsed();
@@ -37,6 +38,7 @@ fn build_cached_against_explicit_sysroot() -> Result<(), String> {
         cache_root: temp.path().to_path_buf(),
         toolchain_label: toolchain.clone(),
         lean_sysroot: sysroot,
+        lean_num_threads: 1,
     })
     .map_err(|error| error.to_string())?;
     let warm_elapsed = warm_start.elapsed();

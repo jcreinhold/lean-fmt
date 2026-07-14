@@ -70,6 +70,12 @@ pub struct FormatterRuntimeBuild {
     pub toolchain_label: String,
     /// Lean sysroot whose `bin/lake` and `LEAN_SYSROOT` drive the Lake build.
     pub lean_sysroot: PathBuf,
+    /// Thread cap passed to Lake as `LEAN_NUM_THREADS`, bounding both its build-job
+    /// parallelism and each spawned `lean`'s task-manager threads. Lake exposes no
+    /// `-j`/`--jobs` flag, so this is the only lever that prevents an uncapped `lean`
+    /// fork-storm during the capability build. Must be `>= 1`; callers resolve it from
+    /// [`lean_fmt_worker::budget::LeanResourceBudget`].
+    pub lean_num_threads: u32,
 }
 
 /// Request to materialize the packaged runtime as a Lake source package without
@@ -210,7 +216,8 @@ pub fn build_cached(input: FormatterRuntimeBuild) -> Result<FormatterRuntime, Er
     let mut builder = CargoLeanCapability::new(&package.project_root, LIBRARY_NAME)
         .package(MATERIALIZED_PACKAGE_NAME)
         .module(LIBRARY_NAME)
-        .lean_sysroot(input.lean_sysroot);
+        .lean_sysroot(input.lean_sysroot)
+        .lean_num_threads(input.lean_num_threads);
     for signature in export_signatures() {
         builder = builder.export_signature(signature);
     }

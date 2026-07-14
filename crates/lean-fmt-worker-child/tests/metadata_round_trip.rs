@@ -34,6 +34,7 @@ fn metadata_round_trip_through_real_child() -> Result<(), String> {
         cache_root: temp.path().to_path_buf(),
         toolchain_label: toolchain,
         lean_sysroot: sysroot.clone(),
+        lean_num_threads: 1,
     })
     .map_err(|error| error.to_string())?;
 

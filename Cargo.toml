@@ -157,3 +157,20 @@ implicit_clone = "warn"     # Make cloning explicit
 map_flatten = "warn"        # Use flat_map instead of map().flatten()
 map_unwrap_or = "warn"      # Use map_or instead of map().unwrap_or()
 needless_collect = "warn"   # Avoid unnecessary collect() calls
+
+# TEMPORARY: consume the local lean-rs 0.3.1 checkout for the memory/thread-cap knobs
+# (`CargoLeanCapability::lean_num_threads`, worker `num_threads`/`lean_max_memory_kib`) that are
+# not yet on crates.io. All eight lean-rs crates in the graph are patched together so the worker
+# protocol/runtime types resolve to a single consistent source (patching a subset would mix
+# crates.io 0.3.0 with local 0.3.1 and fail to unify across the worker boundary).
+# REMOVE once lean-rs 0.3.1 is published; the `"0.3"` requirements then resolve to it directly.
+# (This path is absent on CI; publishing + dropping this block is required before merge.)
+[patch.crates-io]
+lean-rs = { path = "../lean-rs/crates/lean-rs" }
+lean-rs-abi = { path = "../lean-rs/crates/lean-rs-abi" }
+lean-rs-host = { path = "../lean-rs/crates/lean-rs-host" }
+lean-rs-sys = { path = "../lean-rs/crates/lean-rs-sys" }
+lean-rs-worker-child = { path = "../lean-rs/crates/lean-rs-worker-child" }
+lean-rs-worker-parent = { path = "../lean-rs/crates/lean-rs-worker-parent" }
+lean-rs-worker-protocol = { path = "../lean-rs/crates/lean-rs-worker-protocol" }
+lean-toolchain = { path = "../lean-rs/crates/lean-toolchain" }

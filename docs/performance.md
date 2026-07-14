@@ -49,6 +49,44 @@ Worker-driven workloads (`--test perf`, per file unless noted):
 | `fix`             | ~485 ms/file | Dirty file: parse + rules + format + safe-write. |
 | `server_roundtrip`| ~243 ms/file | `FormatService` actor; overhead is negligible.   |
 
+## Bounding Lean resource use (memory & the build fork-storm)
+
+Correctness aside, the load-bearing *stability* control is bounding how much CPU and memory Lean is allowed to consume.
+Two surfaces spawn Lean subprocesses, and both are capped from one place — [`LeanResourceBudget`](../crates/lean-fmt-worker/src/budget.rs),
+resolved once from the environment with conservative defaults and threaded to each surface as typed knobs (no ambient
+`set_var`, no generic child-env passthrough):
+
+1. **The capability build (`install-worker`).** `lake build` derives *both* its build-job parallelism and each spawned
+   `lean`'s task-manager thread count from `LEAN_NUM_THREADS` — Lake 5.x exposes **no `-j`/`--jobs` flag**, so this env
+   var is the only lever. Unset, Lake fans out to ~`nproc` parallel multi-GB `lean` elaborations (a fork-storm that can
+   OOM the machine) while a sibling `cargo build` of the worker-child links `libleanshared` across every core. The budget
+   passes `budget.threads` to Lake via [`CargoLeanCapability::lean_num_threads`](../crates/lean-fmt-runtime/src/lib.rs)
+   and to the sibling `cargo build` via an explicit `--jobs` on the spawned command. **Default: `1`** (the `LeanFmt`
+   package is tiny, so a serial build is safe and fast); set `LEAN_NUM_THREADS` to raise it.
+
+2. **The runtime worker child (`check`/`fix`/`diff`/`serve`).** The one-worker pool already serializes files, but a
+   single heavy file can still OOM. [`FormatterWorker`](../crates/lean-fmt-worker/src/lib.rs) applies the budget's RSS
+   ceilings and restart cadence uniformly (every construction routes through `FormatterWorker::new`): a soft per-worker
+   ceiling and total-child ceiling on the pool, a hard-kill ceiling sampled on an interval (a clean
+   `RssHardLimitExceeded` instead of an OS OOM), a memory-bounded recycle after N imports, a per-child thread cap
+   (`LEAN_RS_NUM_THREADS`), and an in-runtime Lean allocator guardrail (`LEAN_RS_LEAN_MAX_MEMORY_KIB`) below the OS OOM.
+
+Defaults mirror the `lean-host-mcp` reference (soft **2 GiB** / post-job **5 GiB** / hard-kill **16 GiB**, **250 ms**
+sampling, recycle after **~64** imports). Every knob is overridable:
+
+| Env var | Controls | Default |
+| --- | --- | --- |
+| `LEAN_NUM_THREADS` | build + runtime-child threads | `1` |
+| `LEAN_FMT_RSS_SOFT_KIB` | per-worker + total soft RSS ceiling | 2 GiB |
+| `LEAN_FMT_RSS_POST_JOB_KIB` | post-job restart threshold | 5 GiB |
+| `LEAN_FMT_RSS_HARD_KIB` | hard-kill RSS ceiling | 16 GiB |
+| `LEAN_FMT_RSS_SAMPLE_MILLIS` | RSS sampling interval | 250 |
+| `LEAN_FMT_MAX_IMPORTS` | imports before a memory-bounded recycle | 64 |
+| `LEAN_FMT_LEAN_MAX_MEMORY_KIB` | Lean allocator guardrail | 16 GiB |
+
+Parsing is total: a missing or malformed value falls back to the default, and an RSS triple that violates
+`soft <= post_job <= hard_kill` reverts to the default triple rather than feed the pool an inverted ceiling.
+
 ## The one load-bearing optimization: the cache
 
 The measured before/after is unambiguous. A cold parse costs **~245 ms/file** — dominated by the Lean worker parsing and

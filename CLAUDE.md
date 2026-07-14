@@ -41,6 +41,14 @@ scripts/lean.sh    # lake -d lean build (the LeanFmt capability package)
 
 CI runs the same commands on `ubuntu-latest`, stable Rust only.
 
+**Bounding Lean's resource use.** Every Lean subprocess — the `install-worker` `lake build` and the runtime worker
+child — is capped from one [`LeanResourceBudget`](crates/lean-fmt-worker/src/budget.rs) (thread count, RSS ceilings,
+memory-bounded restart, Lean allocator guardrail), resolved once from the environment. Lake exposes no `-j`/`--jobs`
+flag, so `LEAN_NUM_THREADS` (default `1` here) is the only lever preventing an uncapped `lean` fork-storm at install;
+runtime caps default to the `lean-host-mcp` reference (2/5/16 GiB, 250 ms, ~64 imports) and are overridable via
+`LEAN_FMT_*` env vars. See [`docs/performance.md`](docs/performance.md). Caps are set via `Command::env` / typed
+`lean-rs` builders — never `std::env::set_var` (unsafe under `unsafe-code = "deny"`).
+
 ## Discipline
 
 - **`libleanshared` is linked in exactly one crate: `lean-fmt-worker-child`.** No other crate may depend

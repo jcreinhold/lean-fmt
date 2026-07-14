@@ -20,6 +20,7 @@ use std::process::{Command, ExitCode};
 
 use lean_fmt_runtime::{FormatterRuntimeBuild, build_cached};
 use lean_fmt_worker::FormatterWorker;
+use lean_fmt_worker::budget::LeanResourceBudget;
 use lean_fmt_worker::toolchain::{
     SmokeOutcome, ToolchainId, WORKER_FILE_NAME, WorkerSidecar, hash_lean_header, install_dir, resolve_in,
 };
@@ -55,6 +56,12 @@ pub(crate) fn install(args: &InstallWorkerArgs) -> Result<PathBuf, String> {
     }
     std::fs::create_dir_all(&dest).map_err(|error| format!("create install dir {}: {error}", dest.display()))?;
 
+    // Resolve the resource budget once and apply its thread cap to both build subprocesses.
+    // Lake has no `-j`/`--jobs`, so `LEAN_NUM_THREADS` (carried by `lean_num_threads`) is the
+    // only lever bounding the `lean` fork-storm; the sibling `cargo build` gets the same cap
+    // via `--jobs` so the two builds cannot together saturate every core.
+    let budget = LeanResourceBudget::from_env();
+
     // 1. Build (or reuse) the capability directly into the install dir, so the manifest
     //    the parent later loads points at the installed artifacts — no dylib to relocate.
     eprintln!("==> building LeanFmt capability for {id}");
@@ -62,6 +69,7 @@ pub(crate) fn install(args: &InstallWorkerArgs) -> Result<PathBuf, String> {
         cache_root: dest.clone(),
         toolchain_label: id.elan_label(),
         lean_sysroot: sysroot.clone(),
+        lean_num_threads: budget.threads,
     })
     .map_err(|error| format!("build LeanFmt capability: {error}"))?;
     let manifest = runtime
@@ -75,7 +83,7 @@ pub(crate) fn install(args: &InstallWorkerArgs) -> Result<PathBuf, String> {
 
     // 2. Place the Lean-linked worker-child binary beside it.
     let installed_child = dest.join(WORKER_FILE_NAME);
-    place_worker_child(args, &id, &sysroot, &installed_child)?;
+    place_worker_child(args, &id, &sysroot, &installed_child, budget.threads)?;
 
     // 3. Write the sidecar optimistically so the smoke test's resolution finds the fresh
     //    artifacts; the real smoke outcome is recorded below.
@@ -158,6 +166,7 @@ fn place_worker_child(
     id: &ToolchainId,
     sysroot: &Path,
     dest_bin: &Path,
+    jobs: u32,
 ) -> Result<(), String> {
     if let Some(prebuilt) = &args.worker_child {
         eprintln!(
@@ -172,9 +181,21 @@ fn place_worker_child(
              prebuilt binary or --source-dir <dir> to a checkout"
         )
     })?;
-    eprintln!("==> building {WORKER_FILE_NAME} for {id} (workspace source)");
+    eprintln!("==> building {WORKER_FILE_NAME} for {id} (workspace source, --jobs {jobs})");
+    // Cap parallel codegen so linking `libleanshared` here cannot saturate every core at the
+    // same moment the sibling Lake build is elaborating. Explicit `--jobs` on the spawned
+    // command — never `set_var` (unsafe under this workspace's `unsafe-code = "deny"`).
+    let jobs = jobs.to_string();
     let status = Command::new("cargo")
-        .args(["build", "--release", "-p", WORKER_FILE_NAME, "--locked"])
+        .args([
+            "build",
+            "--release",
+            "-p",
+            WORKER_FILE_NAME,
+            "--locked",
+            "--jobs",
+            &jobs,
+        ])
         .current_dir(&workspace)
         .env("LEAN_SYSROOT", sysroot)
         .status()
