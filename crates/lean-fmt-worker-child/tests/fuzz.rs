@@ -130,6 +130,7 @@ fn formatting_is_idempotent_and_preserves_parseability_under_trivia_mutations() 
         installed.toolchain_label.as_str(),
         installed.runtime_source_digest.as_str(),
         ValidationLevel::Syntax,
+        None,
     );
     // Disabled cache so every analysis genuinely re-parses.
     let cache = FormatCache::disabled(temp.path().join("cache"));

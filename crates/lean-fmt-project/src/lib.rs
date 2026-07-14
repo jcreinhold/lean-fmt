@@ -18,7 +18,7 @@ pub use analyze::{AnalysisOutcome, AnalyzeError, FileAnalysis, SourceParser, ana
 pub use cache::{CacheKey, CacheLookup, CacheMiss, FormatCache, InvalidationReason, config_fingerprint, source_digest};
 pub use config::{CONFIG_FILE_NAME, FormatterConfig};
 pub use error::{Error, Result};
-pub use run::{CacheKeyBuilder, FileReport, ProjectRun, RunMode, RunSummary, run_project};
+pub use run::{CacheKeyBuilder, FileReport, ProjectRun, RunMode, RunSummary, run_project, superset_union};
 pub use server::{FormatService, ParseFinding, ServiceRequest, ServiceResponse, ServiceSettings};
 pub use validate::{SafeApplyError, ValidationLevel, ValidationOutcome, safe_apply};
 pub use workspace::{ProjectRoot, ResolvedWorkspace, SourceFile, resolve, resolve_files};

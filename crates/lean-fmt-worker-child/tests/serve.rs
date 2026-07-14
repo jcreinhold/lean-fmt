@@ -69,6 +69,7 @@ fn format_service_serves_requests_through_installed_worker() -> Result<(), Strin
             installed.toolchain_label.as_str(),
             installed.runtime_source_digest.as_str(),
             ValidationLevel::Syntax,
+            None,
         ),
     };
     let cache = FormatCache::new(temp.path().join("cache"));

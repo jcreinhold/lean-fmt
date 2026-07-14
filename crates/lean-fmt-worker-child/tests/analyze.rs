@@ -46,7 +46,7 @@ fn trailing_whitespace_only() -> RuleSelection {
 }
 
 fn key(digest: &str) -> CacheKey {
-    CacheKey::new("0.1.0", "cfg", "tc", digest, Vec::new(), "rt", "Syntax")
+    CacheKey::new("0.1.0", "cfg", "tc", digest, Vec::new(), "rt", "Syntax", None)
 }
 
 #[test]

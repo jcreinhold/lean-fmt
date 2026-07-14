@@ -170,11 +170,16 @@ pub struct CacheKeyBuilder {
     toolchain_label: String,
     runtime_source_digest: String,
     validation_mode: String,
+    superset_id: Option<String>,
 }
 
 impl CacheKeyBuilder {
     /// Build the run-wide key ingredients. `config` is fingerprinted to just its
-    /// output-affecting fields; `level` fixes the validation mode.
+    /// output-affecting fields; `level` fixes the validation mode; `superset_id` is `Some`
+    /// only for a pinned run (see [`FormatterWorker::setup_pinned_env`]) and keys every file's
+    /// result to that superset, so pinned and per-file results never satisfy each other.
+    ///
+    /// [`FormatterWorker::setup_pinned_env`]: lean_fmt_worker::FormatterWorker::setup_pinned_env
     #[must_use]
     pub fn new(
         config: &FormatterConfig,
@@ -182,6 +187,7 @@ impl CacheKeyBuilder {
         toolchain_label: impl Into<String>,
         runtime_source_digest: impl Into<String>,
         level: ValidationLevel,
+        superset_id: Option<String>,
     ) -> Self {
         Self {
             formatter_version: formatter_version.into(),
@@ -189,6 +195,7 @@ impl CacheKeyBuilder {
             toolchain_label: toolchain_label.into(),
             runtime_source_digest: runtime_source_digest.into(),
             validation_mode: validation_mode_label(level).to_owned(),
+            superset_id,
         }
     }
 
@@ -203,8 +210,35 @@ impl CacheKeyBuilder {
             scan_imports(source),
             self.runtime_source_digest.as_str(),
             self.validation_mode.as_str(),
+            self.superset_id.clone(),
         )
     }
+}
+
+/// The whole-project import superset: the sorted, de-duplicated union of every file's `import`
+/// lines.
+///
+/// This is the raw list handed to [`FormatterWorker::setup_pinned_env`], which builds the
+/// pinned environment once and reuses it across every file.
+///
+/// Reads each file in turn and unions its imports via the same cheap, worker-free
+/// [`scan_imports`] used for the cache key, so it needs no Lean and never holds every source
+/// in memory at once. An unreadable file is skipped (its imports simply do not join the union);
+/// the pin probe then either resolves what was gathered or falls back to per-file, so a missed
+/// file degrades gracefully rather than corrupting the run.
+///
+/// [`FormatterWorker::setup_pinned_env`]: lean_fmt_worker::FormatterWorker::setup_pinned_env
+#[must_use]
+pub fn superset_union(files: &[SourceFile]) -> Vec<String> {
+    let mut union: Vec<String> = Vec::new();
+    for file in files {
+        if let Ok(source) = std::fs::read_to_string(&file.path) {
+            union.extend(scan_imports(&source));
+        }
+    }
+    union.sort();
+    union.dedup();
+    union
 }
 
 /// The stable label for a validation level, used in the cache key so a result cached under
@@ -217,18 +251,66 @@ fn validation_mode_label(level: ValidationLevel) -> &'static str {
     }
 }
 
-/// A cheap, deterministic scan of the header's `import` lines for the cache key. This does not
-/// need to equal the worker's authoritative import set — only be a stable function of the
-/// source — because the source digest already invalidates on any content change; the imports
-/// field is a redundant guard kept faithful to the semantic-inputs design.
+/// A cheap, deterministic, worker-free scan of a file's header imports. Two callers rely on it:
+/// the cache key (where it need only be a stable function of the source, since the source digest
+/// already invalidates on any content change) and [`superset_union`] (where completeness
+/// matters, because a missed import leaves the pinned superset without that module's notation and
+/// makes the file parse differently — the divergence the pin is meant to avoid).
+///
+/// It therefore understands the Lean module system, not just the legacy `import Foo` form: the
+/// header may open with a bare `module` line, and each import may carry visibility or meta
+/// modifiers (`public import Foo`, `private import Foo`, `meta import Foo`) and an optional `all`
+/// (`import all Foo`). Block comments (including nested ones and the `/-! -/` doc block) and `--`
+/// line comments are skipped so prose that mentions "import" is never mistaken for one, and the
+/// scan stops at the first command — imports are contiguous at the top of the file, so no later
+/// line (a string literal, say) can masquerade as an import.
 fn scan_imports(source: &str) -> Vec<String> {
-    source
-        .lines()
-        .filter_map(|line| {
-            let rest = line.trim_start().strip_prefix("import ")?;
-            rest.split_whitespace().next().map(ToOwned::to_owned)
-        })
-        .collect()
+    let mut imports = Vec::new();
+    let mut comment_depth: usize = 0;
+    for raw in source.lines() {
+        let line = raw.trim();
+        if comment_depth > 0 {
+            comment_depth = adjust_comment_depth(line, comment_depth);
+            continue;
+        }
+        if line.is_empty() || line.starts_with("--") || line == "module" {
+            continue;
+        }
+        if line.starts_with("/-") {
+            comment_depth = adjust_comment_depth(line, 0);
+            continue;
+        }
+        match import_module_name(line) {
+            Some(module) => imports.push(module),
+            // The first non-blank, non-comment, non-import line ends the header.
+            None => break,
+        }
+    }
+    imports
+}
+
+/// Update the block-comment nesting depth across one line by netting `/-` opens against `-/`
+/// closes. Ordering within the line is ignored (headers do not close and reopen on one line),
+/// so this is a count, not a parse — enough to skip the license and doc blocks reliably.
+fn adjust_comment_depth(line: &str, depth: usize) -> usize {
+    let opens = line.matches("/-").count();
+    let closes = line.matches("-/").count();
+    depth.saturating_add(opens).saturating_sub(closes)
+}
+
+/// The module name of one header import line, or `None` if the line is not an import. Strips any
+/// leading `public`/`private`/`meta` modifiers, the `import` keyword, and an optional `all`.
+fn import_module_name(line: &str) -> Option<String> {
+    let mut rest = line;
+    while let Some(next) = ["public ", "private ", "meta "]
+        .into_iter()
+        .find_map(|m| rest.strip_prefix(m))
+    {
+        rest = next.trim_start();
+    }
+    let after = rest.strip_prefix("import ")?;
+    let after = after.strip_prefix("all ").unwrap_or(after);
+    after.split_whitespace().next().map(ToOwned::to_owned)
 }
 
 /// Drive [`analyze_file`] across `files` through one warm `parser`, in deterministic order.
@@ -328,7 +410,9 @@ mod tests {
     };
     use tempfile::TempDir;
 
-    use super::{AnalysisOutcome, CacheKeyBuilder, FileReport, RunMode, SourceFile, SourceParser, run_project};
+    use super::{
+        AnalysisOutcome, CacheKeyBuilder, FileReport, RunMode, SourceFile, SourceParser, run_project, superset_union,
+    };
     use crate::cache::FormatCache;
     use crate::config::FormatterConfig;
     use crate::validate::ValidationLevel;
@@ -380,6 +464,7 @@ mod tests {
                     trivia_runs: trivia,
                     docstrings: Vec::new(),
                 },
+                fell_back: false,
             }
         }
 
@@ -400,6 +485,7 @@ mod tests {
                     module_header: empty_header(),
                     syntax_summary: empty_summary(),
                     source_model: SourceModel::default(),
+                    fell_back: false,
                 },
             }
         }
@@ -446,6 +532,7 @@ mod tests {
             "tc",
             "rt",
             ValidationLevel::Syntax,
+            None,
         )
     }
 
@@ -470,6 +557,75 @@ mod tests {
             cache,
             |_message| {},
         )
+    }
+
+    #[test]
+    fn superset_union_covers_every_file_sorted_deduped_and_skips_unreadable() {
+        let dir = TempDir::new().unwrap();
+        let a = source_file(
+            dir.path(),
+            "A.lean",
+            "import Init\nimport Mathlib.Data.Nat.Basic\ndef a := 1\n",
+        );
+        // A repeated import (across files) and a reordered pair: the union sorts and dedups.
+        let b = source_file(
+            dir.path(),
+            "B.lean",
+            "  import Mathlib.Data.Nat.Basic\nimport Algebra\ndef b := 1\n",
+        );
+        let missing = SourceFile {
+            module: "Missing".to_owned(),
+            path: dir.path().join("Missing.lean"),
+        };
+
+        let union = superset_union(&[a, b, missing]);
+        assert_eq!(
+            union,
+            vec![
+                "Algebra".to_owned(),
+                "Init".to_owned(),
+                "Mathlib.Data.Nat.Basic".to_owned(),
+            ],
+            "the union is sorted, de-duplicated, and unaffected by the unreadable file",
+        );
+    }
+
+    #[test]
+    fn scan_imports_handles_the_module_system_and_skips_comment_prose() {
+        let source = "\
+/-
+Copyright (c) 2018. All rights reserved.
+Authors: Someone
+-/
+module
+
+public import Mathlib.Algebra.Algebra.Hom
+private import Mathlib.Tactic.Common
+public meta import Mathlib.Meta.Foo
+import all Mathlib.Data.Set.Basic
+import Init
+
+/-!
+# Title
+Do not treat this public import Fake.Module as a real import.
+-/
+
+namespace Foo
+public import ShouldNotAppear.AfterACommand
+";
+        assert_eq!(
+            super::scan_imports(source),
+            vec![
+                "Mathlib.Algebra.Algebra.Hom".to_owned(),
+                "Mathlib.Tactic.Common".to_owned(),
+                "Mathlib.Meta.Foo".to_owned(),
+                "Mathlib.Data.Set.Basic".to_owned(),
+                "Init".to_owned(),
+            ],
+            "module-system modifiers and `import all` are recognized; the `module` line, the \
+             license and doc blocks (prose mentioning import included), and anything after the \
+             first command are all excluded",
+        );
     }
 
     #[test]

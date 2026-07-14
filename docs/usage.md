@@ -56,6 +56,7 @@ Shared options (`check`, `format`, `fix`, `diff`):
 | `--ignore <SELECTOR>` | Deactivate a rule id, category, or `all` (repeatable). Beats a matching select. |
 | `--no-cache` | Ignore the incremental result cache (diagnostic escape hatch; the cache is otherwise sound). |
 | `--statistics` | Print run statistics (counts, cache hits, files written) to stderr. |
+| `--pinned` | Import the project's whole-project superset once and parse every file against it, turning a cold pass from N imports into one import plus N parses. Off by default; needs the project's oleans built (`.lake/build/lib`). Degrades cleanly to per-file if the superset does not resolve or exceeds its RSS ceiling. See [performance.md](performance.md#pinning-one-superset-environment). |
 
 `fix` adds write-validation control (the safe-apply gate re-parses each edited file before writing it):
 

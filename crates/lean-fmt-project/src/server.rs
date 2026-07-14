@@ -464,6 +464,7 @@ mod tests {
                     trivia_runs: trivia,
                     docstrings: Vec::new(),
                 },
+                fell_back: false,
             }
         }
 
@@ -529,6 +530,7 @@ mod tests {
                 "tc",
                 "rt",
                 ValidationLevel::Syntax,
+                None,
             ),
         }
     }

@@ -52,6 +52,13 @@ pub struct CacheKey {
     /// The validation mode the result was produced under. Part of the key so a weaker
     /// cached result never satisfies a stronger requested check.
     pub validation_mode: String,
+    /// The pinned-superset id the result was produced under, or `None` for a per-file parse.
+    /// A pinned result (parsed against the whole-project superset grammar) is not
+    /// interchangeable with a per-file one, so it is keyed: when the project's import union
+    /// changes the id churns and prior pinned entries fall stale, while a per-file result
+    /// (`None`) never collides with a pinned one.
+    #[serde(default)]
+    pub superset_id: Option<String>,
 }
 
 impl CacheKey {
@@ -66,6 +73,7 @@ impl CacheKey {
         imports: Vec<String>,
         runtime_source_digest: impl Into<String>,
         validation_mode: impl Into<String>,
+        superset_id: Option<String>,
     ) -> Self {
         let mut imports = imports;
         imports.sort();
@@ -78,6 +86,7 @@ impl CacheKey {
             imports,
             runtime_source_digest: runtime_source_digest.into(),
             validation_mode: validation_mode.into(),
+            superset_id,
         }
     }
 
@@ -108,6 +117,9 @@ impl CacheKey {
         if self.validation_mode != other.validation_mode {
             reasons.push(InvalidationReason::ValidationMode);
         }
+        if self.superset_id != other.superset_id {
+            reasons.push(InvalidationReason::Superset);
+        }
         reasons
     }
 }
@@ -129,6 +141,9 @@ pub enum InvalidationReason {
     RuntimeDigest,
     /// The requested validation mode changed.
     ValidationMode,
+    /// The pinned-superset id changed (or a pinned result was requested where a per-file one
+    /// was cached, or vice versa).
+    Superset,
 }
 
 /// Fingerprint the rule-affecting fields of a [`FormatterConfig`].
@@ -324,6 +339,7 @@ mod tests {
             vec!["Init".to_owned()],
             "runtime-digest-abc",
             "Syntax",
+            None,
         )
     }
 
@@ -360,6 +376,7 @@ mod tests {
             vec!["Init".to_owned()],
             "runtime-digest-abc",
             "Syntax",
+            None,
         );
         match cache.lookup::<String>("Foo.lean", &key) {
             CacheLookup::Miss(CacheMiss::Stale(reasons)) => {
@@ -417,6 +434,37 @@ mod tests {
     }
 
     #[test]
+    fn a_superset_id_change_invalidates_so_pinned_and_per_file_results_never_mix() {
+        // A result cached per-file (`None`) must not satisfy a pinned request, and a result
+        // pinned under one project import-union must not satisfy a request under another.
+        let per_file = base_key();
+        let mut pinned = base_key();
+        pinned.superset_id = Some("union-abc".to_owned());
+        assert_eq!(
+            per_file.differences(&pinned),
+            vec![InvalidationReason::Superset],
+            "None vs Some must be a Superset invalidation",
+        );
+
+        let mut pinned_other = base_key();
+        pinned_other.superset_id = Some("union-xyz".to_owned());
+        assert_eq!(
+            pinned.differences(&pinned_other),
+            vec![InvalidationReason::Superset],
+            "a changed union id must be a Superset invalidation",
+        );
+
+        // The store honours it: a per-file entry misses for a pinned lookup.
+        let dir = tempfile::tempdir().unwrap();
+        let cache = FormatCache::new(dir.path());
+        cache.store("Foo.lean", &per_file, "per-file".to_owned()).unwrap();
+        assert!(matches!(
+            cache.lookup::<String>("Foo.lean", &pinned),
+            CacheLookup::Miss(CacheMiss::Stale(ref r)) if r == &[InvalidationReason::Superset]
+        ));
+    }
+
+    #[test]
     fn an_unrelated_file_does_not_invalidate_this_files_entry() {
         // Storing a second, different file leaves the first file's entry a clean hit —
         // freshness is per-identity, never workspace-wide dirtiness.
@@ -458,6 +506,7 @@ mod tests {
             vec!["B".to_owned(), "A".to_owned(), "A".to_owned()],
             "rt",
             "Syntax",
+            None,
         );
         let b = CacheKey::new(
             "0.1.0",
@@ -467,6 +516,7 @@ mod tests {
             vec!["A".to_owned(), "B".to_owned()],
             "rt",
             "Syntax",
+            None,
         );
         assert_eq!(a, b);
         assert!(a.differences(&b).is_empty());

@@ -353,6 +353,7 @@ mod tests {
                         trivia_runs: trivia,
                         docstrings: Vec::new(),
                     },
+                    fell_back: false,
                 },
                 parse_calls: 0,
             }
@@ -374,6 +375,7 @@ mod tests {
                 module_header: empty_header(),
                 syntax_summary: empty_summary(),
                 source_model: SourceModel::default(),
+                fell_back: false,
             };
             response.status = ParseStatus::Error;
             Self {
@@ -440,7 +442,7 @@ mod tests {
     }
 
     fn key() -> CacheKey {
-        CacheKey::new("0.1.0", "cfg", "tc", "src-digest", Vec::new(), "rt", "Syntax")
+        CacheKey::new("0.1.0", "cfg", "tc", "src-digest", Vec::new(), "rt", "Syntax", None)
     }
 
     #[test]

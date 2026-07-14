@@ -6,7 +6,9 @@
 //! - the **capability build** (`lake build` → the `lean` fork-storm), capped by
 //!   [`threads`](LeanResourceBudget::threads) via `LEAN_NUM_THREADS`;
 //! - the **runtime worker child**, capped by the RSS ceilings, the memory-bounded restart
-//!   cadence, the per-child thread count, and the Lean runtime memory guardrail.
+//!   cadence, the per-child thread count, and the Lean runtime memory guardrail. In pinned
+//!   mode it also carries a higher [`pinned_rss_ceiling_kib`](LeanResourceBudget::pinned_rss_ceiling_kib)
+//!   so a resident whole-project superset environment is not recycled between files.
 //!
 //! Defaults mirror the `lean-host-mcp` reference (soft 2 / post-job 5 / hard-kill 16 GiB,
 //! 250 ms RSS sampling, recycle after ~64 imports). Every knob is overridable via a
@@ -48,6 +50,14 @@ const DEFAULT_MAX_IMPORTS: u64 = 64;
 /// bound; pairing it with the RSS hard kill gives an in-runtime backstop below the OS OOM.
 const DEFAULT_LEAN_MAX_MEMORY_KIB: u64 = 16 * 1024 * 1024;
 
+/// Pinned-mode per-worker/total RSS ceiling (16 GiB, in KiB). In pinned mode the child holds
+/// one whole-project superset environment resident for its lifetime, so the ordinary 2 GiB
+/// soft ceiling would recycle it between files — discarding the pin and defeating the
+/// optimization. This higher ceiling lets a legitimately large resident superset survive
+/// while the hard-kill guard still bounds a genuine runaway. Overridable via
+/// `LEAN_FMT_PINNED_RSS_KIB`.
+const DEFAULT_PINNED_RSS_CEILING_KIB: u64 = 16 * 1024 * 1024;
+
 /// Resolved Lean resource caps, threaded to both the capability build and the runtime worker.
 ///
 /// Construct with [`LeanResourceBudget::from_env`]; the fields are the single source of truth
@@ -68,6 +78,9 @@ pub struct LeanResourceBudget {
     pub max_imports: u64,
     /// Lean-runtime memory guardrail, in KiB (`LEAN_RS_LEAN_MAX_MEMORY_KIB`).
     pub lean_max_memory_kib: u64,
+    /// Pinned-mode per-worker/total RSS ceiling, in KiB. Applied only when a worker holds a
+    /// pinned superset environment, where the ordinary soft ceiling would recycle the pin.
+    pub pinned_rss_ceiling_kib: u64,
 }
 
 impl Default for LeanResourceBudget {
@@ -80,6 +93,7 @@ impl Default for LeanResourceBudget {
             rss_sample: Duration::from_millis(DEFAULT_RSS_SAMPLE_MILLIS),
             max_imports: DEFAULT_MAX_IMPORTS,
             lean_max_memory_kib: DEFAULT_LEAN_MAX_MEMORY_KIB,
+            pinned_rss_ceiling_kib: DEFAULT_PINNED_RSS_CEILING_KIB,
         }
     }
 }
@@ -126,6 +140,8 @@ impl LeanResourceBudget {
         let max_imports = parse_positive_u64(lookup("LEAN_FMT_MAX_IMPORTS").as_deref()).unwrap_or(defaults.max_imports);
         let lean_max_memory_kib = parse_positive_u64(lookup("LEAN_FMT_LEAN_MAX_MEMORY_KIB").as_deref())
             .unwrap_or(defaults.lean_max_memory_kib);
+        let pinned_rss_ceiling_kib =
+            parse_positive_u64(lookup("LEAN_FMT_PINNED_RSS_KIB").as_deref()).unwrap_or(defaults.pinned_rss_ceiling_kib);
 
         Self {
             threads,
@@ -135,6 +151,7 @@ impl LeanResourceBudget {
             rss_sample,
             max_imports,
             lean_max_memory_kib,
+            pinned_rss_ceiling_kib,
         }
     }
 }
@@ -231,5 +248,19 @@ mod tests {
         assert_eq!(budget.rss_sample, Duration::from_millis(500));
         assert_eq!(budget.max_imports, 16);
         assert_eq!(budget.lean_max_memory_kib, 8_388_608);
+    }
+
+    #[test]
+    fn pinned_ceiling_defaults_and_overrides() {
+        assert_eq!(budget_from(&[]).pinned_rss_ceiling_kib, 16 * 1024 * 1024);
+        assert_eq!(
+            budget_from(&[("LEAN_FMT_PINNED_RSS_KIB", "12582912")]).pinned_rss_ceiling_kib,
+            12_582_912
+        );
+        // A malformed value falls back to the default.
+        assert_eq!(
+            budget_from(&[("LEAN_FMT_PINNED_RSS_KIB", "nope")]).pinned_rss_ceiling_kib,
+            16 * 1024 * 1024
+        );
     }
 }

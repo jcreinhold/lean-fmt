@@ -65,6 +65,9 @@ fn build_service(args: &ServeArgs) -> Result<FormatService> {
         installed.toolchain_label.as_str(),
         installed.runtime_source_digest.as_str(),
         level,
+        // The serve loop is not pinned: it serves ad-hoc edits over a long-lived session, not
+        // a batch pass over a fixed file set, so there is no whole-project superset to build.
+        None,
     );
     let settings = ServiceSettings {
         selection,
@@ -172,6 +175,7 @@ mod tests {
                         trivia_runs: Vec::new(),
                         docstrings: Vec::new(),
                     },
+                    fell_back: false,
                 })
             }
 
@@ -201,6 +205,7 @@ mod tests {
                 "tc",
                 "rt",
                 ValidationLevel::Syntax,
+                None,
             ),
         };
         let service = FormatService::spawn(settings, cache, 8, || Ok(Clean)).unwrap();

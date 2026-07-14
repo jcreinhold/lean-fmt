@@ -24,10 +24,10 @@ use thiserror::Error;
 use lean_fmt_diagnostics::{RuleInfo, RuleSelection, registry};
 use lean_fmt_project::{
     AnalysisOutcome, CacheKeyBuilder, FileReport, FormatCache, FormatterConfig, ProjectRun, RunMode, RunSummary,
-    SourceFile, ValidationLevel, run_project,
+    SourceFile, ValidationLevel, run_project, superset_union,
 };
-use lean_fmt_worker::FormatterWorker;
 use lean_fmt_worker::toolchain::resolve_installed_worker;
+use lean_fmt_worker::{FormatterWorker, PinOutcome};
 
 /// Top-level CLI parser.
 #[derive(Debug, Parser)]
@@ -89,6 +89,15 @@ pub struct CommonArgs {
     /// the report. Kept off stdout so a `--format json` run stays a single clean object.
     #[arg(long)]
     pub statistics: bool,
+
+    /// Import the project's whole-project superset (the union of every file's imports) once
+    /// and parse every file against that pinned environment, instead of rebuilding each
+    /// file's import environment per file. This turns a cold pass over a large project from
+    /// N imports into 1 import + N cheap parses. Off by default; requires the project's
+    /// oleans to be built (`.lake/build/lib`). If the superset does not resolve or exceeds
+    /// the worker's resource budget, the run degrades cleanly to per-file — never an error.
+    #[arg(long)]
+    pub pinned: bool,
 }
 
 /// Options for `lean-fmt fix`: the shared file options plus write-validation control.
@@ -471,9 +480,26 @@ fn cache_root_for(root: &Path) -> PathBuf {
 /// The import search path handed to the worker: the project's built module directory, when
 /// it exists. Absent when the project is unbuilt (project-internal imports then Degrade to a
 /// reported broken file rather than being silently formatted against a stale model).
+///
+/// Lake's current layout writes oleans under `.lake/build/lib/lean` (a module `Foo.Bar`
+/// resolves to `.lake/build/lib/lean/Foo/Bar.olean`); older layouts wrote them directly under
+/// `.lake/build/lib`. Use the most specific directory that exists — the nested module root when
+/// present, otherwise the base — and exactly one of them. The base dir holds the package's
+/// shared library and, under the new module system, is not itself a module root; passing it
+/// *alongside* the nested root makes Lean's resolver reject the project's own imports (verified:
+/// with both on the path the superset import fails to resolve; with the nested root alone it
+/// resolves). Passing the wrong directory leaves every project-internal import unresolved,
+/// silently degrading each such file to a reported broken file.
 fn project_search_path(root: &Path) -> Vec<PathBuf> {
-    let lib = root.join(".lake").join("build").join("lib");
-    if lib.is_dir() { vec![lib] } else { Vec::new() }
+    let base = root.join(".lake").join("build").join("lib");
+    let nested = base.join("lean");
+    if nested.is_dir() {
+        vec![nested]
+    } else if base.is_dir() {
+        vec![base]
+    } else {
+        Vec::new()
+    }
 }
 
 /// Resolve the workspace and worker, drive [`run_project`] across every file through one warm
@@ -492,6 +518,28 @@ fn execute(mode_label: &'static str, mode: RunMode, args: &CommonArgs, level: Va
     let worker_root = root.clone().unwrap_or_else(|| args.root.clone());
     let installed = resolve_installed_worker(&worker_root).map_err(|error| Error::Worker(error.to_string()))?;
     let mut worker = FormatterWorker::from_installed(&installed);
+    let cache = cache_for(args, cache_root_for(&worker_root));
+    let search_path = project_search_path(&worker_root);
+
+    // Behind `--pinned`: import the whole-project superset once and pin it, so every file
+    // parses against one environment instead of re-importing its closure per file. A superset
+    // that does not resolve or exceeds the worker budget degrades cleanly to per-file; the
+    // resulting `superset_id` keys the cache so pinned and per-file results never mix.
+    let superset_id = if args.pinned {
+        match worker.setup_pinned_env(superset_union(&files), &search_path) {
+            Ok(PinOutcome::Pinned { id, resident_imports }) => {
+                eprintln!("lean-fmt: pinned superset environment ({resident_imports} imports)");
+                Some(id)
+            }
+            Ok(PinOutcome::FellBack { reason }) => {
+                eprintln!("lean-fmt: running per-file (pinned mode unavailable): {reason}");
+                None
+            }
+            Err(error) => return Err(Error::Worker(error.to_string())),
+        }
+    } else {
+        None
+    };
 
     let keys = CacheKeyBuilder::new(
         &config,
@@ -499,9 +547,8 @@ fn execute(mode_label: &'static str, mode: RunMode, args: &CommonArgs, level: Va
         installed.toolchain_label.as_str(),
         installed.runtime_source_digest.as_str(),
         level,
+        superset_id,
     );
-    let cache = cache_for(args, cache_root_for(&worker_root));
-    let search_path = project_search_path(&worker_root);
 
     // Progress goes to stderr so stdout carries only the report (clean JSON when requested).
     let run = run_project(
@@ -768,7 +815,8 @@ mod tests {
     use lean_fmt_project::ValidationLevel;
 
     use super::{
-        Cli, CliCommand, CommonArgs, FixArgs, OutputFormat, plan, plan_rules, render, render_rules, validation_level,
+        Cli, CliCommand, CommonArgs, FixArgs, OutputFormat, plan, plan_rules, project_search_path, render,
+        render_rules, validation_level,
     };
 
     fn common(root: &std::path::Path) -> CommonArgs {
@@ -782,7 +830,30 @@ mod tests {
             ignore: Vec::new(),
             no_cache: false,
             statistics: false,
+            pinned: false,
         }
+    }
+
+    #[test]
+    fn project_search_path_prefers_the_nested_module_dir_and_survives_both_layouts() {
+        // Unbuilt project: no search path, so project-internal imports Degrade to broken.
+        let unbuilt = TempDir::new().unwrap();
+        assert!(project_search_path(unbuilt.path()).is_empty());
+
+        // Current Lake layout: oleans under `.lake/build/lib/lean`. Even though the parent
+        // `.lake/build/lib` also exists, only the nested module root is offered — passing the
+        // parent alongside it makes Lean's resolver reject the project's own imports.
+        let current = TempDir::new().unwrap();
+        let base = current.path().join(".lake").join("build").join("lib");
+        let nested = base.join("lean");
+        fs::create_dir_all(&nested).unwrap();
+        assert_eq!(project_search_path(current.path()), vec![nested]);
+
+        // Older layout: oleans directly under `.lake/build/lib`, no nested `lean` dir.
+        let legacy = TempDir::new().unwrap();
+        let legacy_lib = legacy.path().join(".lake").join("build").join("lib");
+        fs::create_dir_all(&legacy_lib).unwrap();
+        assert_eq!(project_search_path(legacy.path()), vec![legacy_lib]);
     }
 
     fn write(dir: &std::path::Path, rel: &str, contents: &str) {

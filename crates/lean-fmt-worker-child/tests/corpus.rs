@@ -90,6 +90,7 @@ fn corpus_formats_idempotently_and_broken_files_stay_broken() -> Result<(), Stri
         installed.toolchain_label.as_str(),
         installed.runtime_source_digest.as_str(),
         ValidationLevel::Syntax,
+        None,
     );
     // Disabled cache so every analysis genuinely re-parses (idempotence must not be masked).
     let cache = FormatCache::disabled(temp.path().join("cache"));

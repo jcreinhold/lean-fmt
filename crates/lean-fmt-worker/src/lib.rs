@@ -27,6 +27,7 @@ use lean_toolchain::LeanBuiltCapability;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use sha2::{Digest, Sha256};
 
 use crate::budget::LeanResourceBudget;
 use crate::toolchain::InstalledWorker;
@@ -80,6 +81,16 @@ pub struct ParseFileRequest {
     pub imports: Vec<String>,
     /// Search-path options for resolving the header's imports.
     pub options: ParseFileOptions,
+    /// Pinned mode only: the whole-project import superset (the sorted, de-duplicated union
+    /// of every project file's imports) that the worker child imports once and reuses.
+    /// Omitted from the wire in per-file mode, so those requests stay byte-identical.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub superset_imports: Vec<String>,
+    /// Pinned mode only: the stable id of the superset (a hash of the union). `Some` selects
+    /// the pinned path in the child (build-once-keyed-by-id, then reuse); `None`, omitted
+    /// from the wire, selects the per-file path.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub superset_id: Option<String>,
 }
 
 /// Search-path options for [`ParseFileRequest`].
@@ -206,6 +217,13 @@ pub struct ParseFileResponse {
     /// The trivia/docstring source model (empty for header-error responses).
     #[serde(default)]
     pub source_model: SourceModel,
+    /// Whether the child parsed this file against its *own* header imports after a pinned
+    /// parse failed (or the superset env could not be built). `false` for an ordinary
+    /// per-file request and for a clean pinned parse; `true` only when the superset path was
+    /// requested but the result came from the per-file fallback. Defaulted for per-file
+    /// responses, which omit it.
+    #[serde(default)]
+    pub fell_back: bool,
 }
 
 /// The formatter diagnostics response envelope: schema version plus rule findings.
@@ -251,6 +269,79 @@ pub enum WorkerError {
     },
 }
 
+/// The pinned whole-project import superset: the sorted, de-duplicated union of every
+/// project file's imports, plus a stable id (a hash of that union).
+///
+/// Built once from a raw import list via [`Superset::new`] and held resident in the warm
+/// worker child; every pinned parse reuses the one environment it imports. The id is stable
+/// across input reordering (the list is sorted before hashing), so a project whose set of
+/// imports is unchanged keeps the same id — and the same cache keys — run to run.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Superset {
+    imports: Vec<String>,
+    id: String,
+}
+
+impl Superset {
+    /// Build a superset from a raw import list: sort, de-duplicate, then hash the result into
+    /// a stable id. Reordering or repeating the input yields the same superset.
+    #[must_use]
+    pub fn new(imports: Vec<String>) -> Self {
+        let mut imports = imports;
+        imports.sort();
+        imports.dedup();
+        let id = superset_id(&imports);
+        Self { imports, id }
+    }
+
+    /// The stable id (hash of the sorted, de-duplicated union).
+    #[must_use]
+    pub fn id(&self) -> &str {
+        &self.id
+    }
+
+    /// The sorted, de-duplicated import union.
+    #[must_use]
+    pub fn imports(&self) -> &[String] {
+        &self.imports
+    }
+}
+
+/// Lowercase hex SHA-256 over the newline-joined sorted union — a stable id for a [`Superset`].
+fn superset_id(imports: &[String]) -> String {
+    use std::fmt::Write as _;
+    let mut hasher = Sha256::new();
+    hasher.update(imports.join("\n").as_bytes());
+    let mut out = String::new();
+    for byte in hasher.finalize() {
+        let _ = write!(out, "{byte:02x}");
+    }
+    out
+}
+
+/// The result of installing a pinned superset environment (see
+/// [`FormatterWorker::setup_pinned_env`]).
+///
+/// A [`FellBack`](PinOutcome::FellBack) is a *successful* graceful degrade — the worker could
+/// not hold the superset (its imports did not resolve, or it exceeded the resource budget), so
+/// the run proceeds exactly as today, per file. It is not an error: only a genuinely unusable
+/// worker returns `Err` from `setup_pinned_env`.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum PinOutcome {
+    /// The superset environment was built and is now resident; pinned parses will reuse it.
+    Pinned {
+        /// The superset id to fold into the cache key so pinned and per-file results never mix.
+        id: String,
+        /// The number of distinct imports held resident (diagnostic).
+        resident_imports: usize,
+    },
+    /// The pin could not be installed; the worker is running per-file, as if unpinned.
+    FellBack {
+        /// A human-readable reason, for logging.
+        reason: String,
+    },
+}
+
 /// Loads the `LeanFmt` capability produced by the runtime crate and drives its
 /// `@[export]` commands through the Lean-linked `lean-fmt-worker-child`.
 ///
@@ -266,6 +357,9 @@ pub struct FormatterWorker {
     lean_sysroot: PathBuf,
     request_timeout: Duration,
     budget: LeanResourceBudget,
+    /// The installed superset, when this worker is pinned. `None` (the default) runs every
+    /// parse per-file, exactly as before. Set only by [`Self::setup_pinned_env`].
+    superset: Option<Superset>,
 }
 
 impl FormatterWorker {
@@ -278,17 +372,30 @@ impl FormatterWorker {
     #[must_use]
     pub fn new(built: LeanBuiltCapability, child_binary: impl Into<PathBuf>, lean_sysroot: impl Into<PathBuf>) -> Self {
         let budget = LeanResourceBudget::from_env();
-        let pool_config = LeanWorkerPoolConfig::new(1)
-            .per_worker_rss_ceiling_kib(budget.per_worker_rss_soft_kib)
-            .max_total_child_rss_kib(budget.per_worker_rss_soft_kib);
         Self {
-            pool: LeanWorkerPool::new(pool_config),
+            pool: LeanWorkerPool::new(Self::default_pool_config(&budget)),
             built,
             child_binary: child_binary.into(),
             lean_sysroot: lean_sysroot.into(),
             request_timeout: DEFAULT_REQUEST_TIMEOUT,
             budget,
+            superset: None,
         }
+    }
+
+    /// The per-file pool config: the soft RSS ceiling recycles a child that grows between jobs.
+    fn default_pool_config(budget: &LeanResourceBudget) -> LeanWorkerPoolConfig {
+        LeanWorkerPoolConfig::new(1)
+            .per_worker_rss_ceiling_kib(budget.per_worker_rss_soft_kib)
+            .max_total_child_rss_kib(budget.per_worker_rss_soft_kib)
+    }
+
+    /// The pinned pool config: a higher RSS ceiling so a resident whole-project superset is
+    /// not recycled between files (which would discard the pin and defeat the optimization).
+    fn pinned_pool_config(budget: &LeanResourceBudget) -> LeanWorkerPoolConfig {
+        LeanWorkerPoolConfig::new(1)
+            .per_worker_rss_ceiling_kib(budget.pinned_rss_ceiling_kib)
+            .max_total_child_rss_kib(budget.pinned_rss_ceiling_kib)
     }
 
     /// Construct a worker from a resolved on-disk install (see
@@ -314,6 +421,15 @@ impl FormatterWorker {
     /// registered as JSON exports. Registering both keeps the warm session shared.
     fn builder(&self) -> Result<LeanWorkerCapabilityBuilder, WorkerError> {
         let builder = LeanWorkerCapabilityBuilder::from_built_capability(&self.built, Vec::<String>::new())?;
+        // Pinned mode disables the import-count recycle: recycling after N imports would throw
+        // away the one resident superset the pin exists to keep. An RSS safety valve (sized for
+        // the pinned ceiling) and the hard-kill guard still bound a genuine runaway; a recycled
+        // child self-heals by rebuilding the superset from the next request's carried list.
+        let restart_policy = if self.superset.is_some() {
+            LeanWorkerRestartPolicy::disabled().max_rss_kib(self.budget.pinned_rss_ceiling_kib)
+        } else {
+            LeanWorkerRestartPolicy::memory_bounded(self.budget.max_imports, self.budget.post_job_rss_kib)
+        };
         Ok(builder
             .worker_child(LeanWorkerChild::for_toolchain(
                 self.child_binary.clone(),
@@ -328,10 +444,7 @@ impl FormatterWorker {
             // instead of an OS OOM), and retire it after a bounded run so module-cache growth
             // cannot accumulate unbounded across a long `check`/`fix`.
             .rss_hard_limit(self.budget.hard_kill_rss_kib, self.budget.rss_sample)
-            .restart_policy(LeanWorkerRestartPolicy::memory_bounded(
-                self.budget.max_imports,
-                self.budget.post_job_rss_kib,
-            ))
+            .restart_policy(restart_policy)
             // Cap the child's task-manager threads and give the Lean allocator an in-runtime
             // memory backstop below the OS OOM (both via the typed A2 knobs, no ambient env).
             .num_threads(self.budget.threads)
@@ -394,7 +507,25 @@ impl FormatterWorker {
         source: impl Into<String>,
         search_path: &[PathBuf],
     ) -> Result<ParseFileResponse, WorkerError> {
-        let request = ParseFileRequest {
+        let request = self.build_request(file, source, search_path, self.superset.as_ref());
+        self.dispatch_json(exports::PARSE_FILE_EXPORT, &request)
+    }
+
+    /// Build a parse request, stamping the pinned superset when `superset` is `Some`. The
+    /// superset fields skip-serialize when absent, so a per-file request is byte-identical on
+    /// the wire to one from before pinning existed.
+    fn build_request(
+        &self,
+        file: impl Into<String>,
+        source: impl Into<String>,
+        search_path: &[PathBuf],
+        superset: Option<&Superset>,
+    ) -> ParseFileRequest {
+        let (superset_imports, superset_id) = match superset {
+            Some(superset) => (superset.imports.clone(), Some(superset.id.clone())),
+            None => (Vec::new(), None),
+        };
+        ParseFileRequest {
             file: file.into(),
             source: source.into(),
             imports: Vec::new(),
@@ -402,8 +533,94 @@ impl FormatterWorker {
                 sysroot: Some(self.lean_sysroot.display().to_string()),
                 search_path: search_path.iter().map(|path| path.display().to_string()).collect(),
             },
-        };
-        self.dispatch_json(exports::PARSE_FILE_EXPORT, &request)
+            superset_imports,
+            superset_id,
+        }
+    }
+
+    /// Install a pinned whole-project superset environment, so every subsequent
+    /// [`parse_file`](Self::parse_file) reuses one imported environment instead of importing
+    /// each file's closure afresh — turning `N` imports into `1 import + N cheap parses`.
+    ///
+    /// The pool is rebuilt with a pinned-tuned config (import-count recycle disabled, a higher
+    /// RSS ceiling sized for the resident superset). A trivial probe parse then forces the
+    /// one-time import and confirms it fits.
+    ///
+    /// This never trades correctness for speed: the Lean child parses each file against the
+    /// superset and, on any parse error, silently re-parses that one file against its own
+    /// header imports (reported via [`ParseFileResponse::fell_back`]). Fold the returned
+    /// [`PinOutcome::Pinned::id`] into the cache key so a pinned result never satisfies a
+    /// per-file request until it is validated.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WorkerError`] only for a genuinely unusable worker (capability load, child
+    /// spawn, or a protocol failure). A superset that does not resolve or exceeds the resource
+    /// budget is **not** an error: it returns [`PinOutcome::FellBack`], leaves the worker
+    /// unpinned, and the run proceeds per-file.
+    ///
+    /// `search_path` must be the same project module directory (`.lake/build/lib`) the
+    /// per-file parses use, so the superset's project imports resolve when the child builds
+    /// the environment during the probe.
+    pub fn setup_pinned_env(
+        &mut self,
+        imports: Vec<String>,
+        search_path: &[PathBuf],
+    ) -> Result<PinOutcome, WorkerError> {
+        let superset = Superset::new(imports);
+        // Adopt the pinned pool config and pin state before probing, so the probe request runs
+        // under exactly the config the pinned run will use.
+        self.pool = LeanWorkerPool::new(Self::pinned_pool_config(&self.budget));
+        self.superset = Some(superset.clone());
+
+        // A trivial parse carrying the superset forces the child to build the pinned env once,
+        // under the project search path so its imports resolve.
+        let probe = self.build_request(
+            "<pin-probe>.lean",
+            "def _leanFmtPinProbe := 0\n",
+            search_path,
+            Some(&superset),
+        );
+        match self.dispatch_json::<ParseFileRequest, ParseFileResponse>(exports::PARSE_FILE_EXPORT, &probe) {
+            // The child could not build the superset env (an import did not resolve) and parsed
+            // the probe per-file instead. Degrade the whole run to per-file, cleanly.
+            Ok(response) if response.fell_back => {
+                self.clear_pin();
+                Ok(PinOutcome::FellBack {
+                    reason: "superset environment did not build (an import did not resolve); running per-file"
+                        .to_owned(),
+                })
+            }
+            Ok(_) => Ok(PinOutcome::Pinned {
+                id: superset.id.clone(),
+                resident_imports: superset.imports.len(),
+            }),
+            // Resource exhaustion building the superset is a graceful degrade, not an error:
+            // the union was too large for the budget, so fall back to per-file for the whole run.
+            Err(WorkerError::Parent { source }) if is_pin_resource_exhaustion(&source) => {
+                self.clear_pin();
+                Ok(PinOutcome::FellBack {
+                    reason: format!("superset exceeded the worker resource budget; running per-file ({source})"),
+                })
+            }
+            // A genuinely unusable worker: surface it. Per-file parsing would fail identically.
+            Err(other) => {
+                self.clear_pin();
+                Err(other)
+            }
+        }
+    }
+
+    /// Drop the pin and restore the per-file pool config. Used when a pin attempt falls back.
+    fn clear_pin(&mut self) {
+        self.superset = None;
+        self.pool = LeanWorkerPool::new(Self::default_pool_config(&self.budget));
+    }
+
+    /// Whether this worker holds a pinned superset environment.
+    #[must_use]
+    pub fn is_pinned(&self) -> bool {
+        self.superset.is_some()
     }
 
     /// Parse **and elaborate** an in-memory Lean source snapshot (`lean_fmt_validate`),
@@ -423,17 +640,29 @@ impl FormatterWorker {
         source: impl Into<String>,
         search_path: &[PathBuf],
     ) -> Result<ValidateResponse, WorkerError> {
-        let request = ParseFileRequest {
-            file: file.into(),
-            source: source.into(),
-            imports: Vec::new(),
-            options: ParseFileOptions {
-                sysroot: Some(self.lean_sysroot.display().to_string()),
-                search_path: search_path.iter().map(|path| path.display().to_string()).collect(),
-            },
-        };
+        // Validation is the parse-*and-elaborate* gate; elaboration must run against a file's
+        // own imports, so validate is always per-file — never pinned.
+        let request = self.build_request(file, source, search_path, None);
         self.dispatch_json(exports::VALIDATE_EXPORT, &request)
     }
+}
+
+/// Whether a worker error is a resource-exhaustion outcome that a pin attempt should treat as
+/// a graceful fall-back to per-file rather than a hard error. These arise when the superset is
+/// too large for the budget (a hard-kill, a pool memory-budget refusal, a restart-limit or
+/// queue timeout) or the child aborted mid-import (the Lean allocator guardrail). Everything
+/// else — spawn, bootstrap, handshake, protocol, decode — means a genuinely unusable worker.
+fn is_pin_resource_exhaustion(error: &LeanWorkerError) -> bool {
+    matches!(
+        error,
+        LeanWorkerError::Timeout { .. }
+            | LeanWorkerError::RssHardLimitExceeded { .. }
+            | LeanWorkerError::WorkerPoolMemoryBudgetExceeded { .. }
+            | LeanWorkerError::WorkerPoolQueueTimeout { .. }
+            | LeanWorkerError::RestartLimitExceeded { .. }
+            | LeanWorkerError::ChildExited { .. }
+            | LeanWorkerError::ChildPanicOrAbort { .. }
+    )
 }
 
 #[cfg(test)]
@@ -683,5 +912,77 @@ mod tests {
         assert_eq!(out.output, "import A\n");
         // The same fix is stale against a different source and is rejected, not applied.
         assert!(fix.apply("import C\n").is_err(), "stale source is rejected");
+    }
+
+    #[test]
+    fn parse_ok_envelope_defaults_fell_back_false() {
+        // Per-file responses omit `fell_back`; it defaults to false so old envelopes decode.
+        let resp: ParseFileResponse = serde_json::from_str(PARSE_OK_JSON).unwrap();
+        assert!(!resp.fell_back, "a per-file response is not a fall-back");
+    }
+
+    #[test]
+    fn superset_id_is_stable_across_reordering_and_duplication() {
+        use super::Superset;
+        let a = Superset::new(vec!["B".to_owned(), "A".to_owned(), "A".to_owned(), "C".to_owned()]);
+        let b = Superset::new(vec!["C".to_owned(), "A".to_owned(), "B".to_owned()]);
+        assert_eq!(a.id(), b.id(), "reordered/duplicated inputs yield the same id");
+        assert_eq!(a.imports(), ["A".to_owned(), "B".to_owned(), "C".to_owned()]);
+        // A different union yields a different id.
+        let c = Superset::new(vec!["A".to_owned(), "B".to_owned()]);
+        assert_ne!(a.id(), c.id(), "a changed union changes the id");
+    }
+
+    #[test]
+    fn parse_request_omits_superset_fields_when_unpinned() {
+        use super::{ParseFileOptions, ParseFileRequest};
+        let request = ParseFileRequest {
+            file: "A.lean".to_owned(),
+            source: "def a := 1\n".to_owned(),
+            imports: Vec::new(),
+            options: ParseFileOptions {
+                sysroot: None,
+                search_path: Vec::new(),
+            },
+            superset_imports: Vec::new(),
+            superset_id: None,
+        };
+        let json = serde_json::to_string(&request).unwrap();
+        assert!(
+            !json.contains("superset_imports"),
+            "an empty superset list is off the wire"
+        );
+        assert!(!json.contains("superset_id"), "an absent superset id is off the wire");
+    }
+
+    #[test]
+    fn parse_request_carries_superset_fields_when_pinned() {
+        use super::{ParseFileOptions, ParseFileRequest, Superset};
+        let superset = Superset::new(vec!["Init".to_owned(), "Mathlib.Data.Nat.Basic".to_owned()]);
+        let request = ParseFileRequest {
+            file: "A.lean".to_owned(),
+            source: "def a := 1\n".to_owned(),
+            imports: Vec::new(),
+            options: ParseFileOptions {
+                sysroot: None,
+                search_path: Vec::new(),
+            },
+            superset_imports: superset.imports().to_vec(),
+            superset_id: Some(superset.id().to_owned()),
+        };
+        let value: serde_json::Value = serde_json::to_value(&request).unwrap();
+        assert_eq!(
+            value["superset_imports"],
+            serde_json::json!(["Init", "Mathlib.Data.Nat.Basic"]),
+        );
+        assert_eq!(value["superset_id"], serde_json::json!(superset.id()));
+    }
+
+    #[test]
+    fn parse_response_decodes_fell_back_true() {
+        // A pinned parse that fell back to per-file carries `fell_back: true`.
+        let envelope = r#"{"diagnostics":[],"diagnostics_truncated":false,"fell_back":true,"module_header":{"imports":["Init"],"is_module":false},"status":"ok","syntax_summary":{"command_count":0,"command_kinds":[]}}"#;
+        let resp: ParseFileResponse = serde_json::from_str(envelope).unwrap();
+        assert!(resp.fell_back, "the child reported a per-file fall-back");
     }
 }

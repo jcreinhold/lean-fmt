@@ -7,7 +7,12 @@ import LeanFmt.Source
 The source-snapshot parse command of the `LeanFmt` worker capability. It exposes a
 single request/response export, `lean_fmt_parse_file`, that parses an in-memory Lean
 source string with the imports declared in its own header and returns parse
-diagnostics plus a lightweight syntax summary — **without elaborating**.
+diagnostics plus a lightweight syntax summary. It is **parse-only by default**: it pays
+no elaboration cost. Only when a parse-only body degrades does it retry with *selective
+elaboration* (`elaborateCommands`) — elaborating every command except the heavy
+declarations and the effectful ones, so file-local notation the file declares itself
+(including via downstream commands like mathlib's `notation3`) registers into the parser,
+while declaration bodies and their proof-elaboration cost stay untouched.
 
 The flow mirrors `lean-rs-host-shims`' `buildModuleSnapshot`
 (`InfoTree.lean`), specialized to a self-contained `String → IO String` JSON command
@@ -23,14 +28,26 @@ The flow mirrors `lean-rs-host-shims`' `buildModuleSnapshot`
 * a parse-only loop over `Lean.Parser.parseCommand` against a `ParserModuleContext`
   built from that environment collects the top-level commands and parse messages,
   paying no elaboration cost;
+* on a degraded body only, `elaborateCommands` re-runs the loop, elaborating every command
+  except the heavy/effectful ones so file-local notation registers into the parser; its
+  elaboration messages are discarded, so the reported status still reflects parse
+  fidelity alone;
 * diagnostics are rendered from the `MessageLog` following `Elaboration.lean`'s
   `serializeMessages` pattern.
 
 When an imported module cannot be resolved on the search path, the command **degrades
 gracefully**: it reports the import errors as diagnostics, returns
 `status = "degraded"`, and still delivers a best-effort parse, rather than crashing the
-worker across the ABI. Per-request environment setup is the baseline here; per-project
-environment caching is a later concern.
+worker across the ABI.
+
+By default this command rebuilds the import environment on every request. When a request
+carries a `superset_id`, it instead builds the project-wide superset environment once — the
+union of every file's imports — retains it in a process-global cell, and parses every file
+against it, turning N per-file imports into one import plus N parses. A file whose parse
+degrades under that wider grammar (a token or ambiguity introduced by notation it does not
+import) is transparently re-parsed against its own imports and marked `fell_back`, so the
+result is never worse than the per-file path. `docs/performance.md` explains the cost model
+and the memory bound.
 -/
 
 namespace LeanFmt.Frontend
@@ -51,6 +68,12 @@ private structure ParseRequest where
   source : String
   sysroot : Option String
   searchPath : List String
+  /-- Union of every project file's imports. Present only in pinned mode; the worker
+      builds this environment once and parses every file against it. -/
+  supersetImports : List String
+  /-- Stable id of the superset (a hash of the sorted-unique union). `none` selects the
+      per-file path; `some id` selects the pinned path and keys the retained environment. -/
+  supersetId : Option String
 
 /-- Read a string field, falling back to `dflt` when absent or not a string. -/
 private def getStr (obj : Json) (field : String) (dflt : String) : String :=
@@ -68,7 +91,12 @@ private def decodeRequest (requestJson : String) : Except String ParseRequest :=
     match (options.getObjValAs? (Array String) "search_path").toOption with
     | some arr => arr.toList
     | none => []
-  .ok { file, source, sysroot, searchPath }
+  let supersetImports : List String :=
+    match (json.getObjValAs? (Array String) "superset_imports").toOption with
+    | some arr => arr.toList
+    | none => []
+  let supersetId : Option String := (json.getObjValAs? String "superset_id").toOption
+  .ok { file, source, sysroot, searchPath, supersetImports, supersetId }
 
 /-- Map a `MessageSeverity` to its lowercase JSON tag. -/
 private def severityTag : MessageSeverity → String
@@ -118,42 +146,118 @@ private structure BodyParse where
   /-- The accumulated parse message log. -/
   messages : MessageLog
 
-/-- The parse-only command loop: fold `parseCommand` over the body, collecting the
-    per-kind command counts, the per-command byte-anchored `SyntaxRegion`s, the token
-    spans (for the trivia model), the docstring spans, and the parse message log. -/
+/-- The empty body accumulator: nothing harvested yet, empty message log. -/
+private def BodyParse.empty : BodyParse :=
+  { kinds := #[], regions := #[], declHeaders := #[], tacticBlocks := #[]
+    tokenSpans := #[], docstrings := #[], messages := {} }
+
+/-- Fold one parsed command into the running body accumulator: bump its per-kind count and
+    append its `SyntaxRegion`, declaration-header spans, tactic-block spans, token spans, and
+    docstring spans. Pure, and shared by the parse-only and selective-elaboration loops, so the
+    two can never disagree on the projection the formatter rules consume — only on the parse
+    trees they feed it. Leaves `messages` untouched; the caller owns the parse message log. -/
+private def absorbCommand (inputCtx : Parser.InputContext) (stx : Syntax)
+    (body : BodyParse) : BodyParse :=
+  let kind := stx.getKind
+  let kinds :=
+    match body.kinds.findIdx? (fun (k, _) => k == kind) with
+    | some idx =>
+      match body.kinds[idx]? with
+      | some (_, n) => body.kinds.set! idx (kind, n + 1)
+      | none => body.kinds
+    | none => body.kinds.push (kind, 1)
+  let regions :=
+    match LeanFmt.Source.commandRegion inputCtx.fileMap stx with
+    | some region => body.regions.push region
+    | none => body.regions
+  { body with
+    kinds
+    regions
+    declHeaders := LeanFmt.Source.declHeaderSpans stx body.declHeaders
+    tacticBlocks := LeanFmt.Source.tacticBlockSpans inputCtx.fileMap stx body.tacticBlocks
+    tokenSpans := LeanFmt.Source.tokenSpans stx body.tokenSpans
+    docstrings := LeanFmt.Source.docCommentSpans stx body.docstrings }
+
+/-- The parse-only command loop: fold `parseCommand` over the body, collecting via
+    `absorbCommand` the per-kind command counts, the per-command byte-anchored `SyntaxRegion`s,
+    the token spans (for the trivia model), the docstring spans, and the parse message log. The
+    parser context is fixed to the imported environment, so file-local `notation`/`syntax` is
+    invisible here — only what the imports define. `elaborateCommands` lifts that limit for the
+    files that need it. -/
 private def parseCommands (inputCtx : Parser.InputContext) (env : Environment)
     (startState : Parser.ModuleParserState) (initialMessages : MessageLog) :
     BodyParse := Id.run do
   let mctx : Parser.ParserModuleContext := { env, options := {} }
   let mut state := startState
   let mut messages := initialMessages
-  let mut kinds : Array (Name × Nat) := #[]
-  let mut regions : Array Json := #[]
-  let mut declHeaders : Array Json := #[]
-  let mut tacticBlocks : Array Json := #[]
-  let mut tokenSpans : Array (Nat × Nat) := #[]
-  let mut docstrings : Array Json := #[]
+  let mut body : BodyParse := BodyParse.empty
   repeat
     let (stx, state', messages') := Parser.parseCommand inputCtx mctx state messages
     state := state'
     messages := messages'
     if Parser.isTerminalCommand stx then
       break
-    let kind := stx.getKind
-    kinds :=
-      match kinds.findIdx? (fun (k, _) => k == kind) with
-      | some idx =>
-        match kinds[idx]? with
-        | some (_, n) => kinds.set! idx (kind, n + 1)
-        | none => kinds
-      | none => kinds.push (kind, 1)
-    if let some region := LeanFmt.Source.commandRegion inputCtx.fileMap stx then
-      regions := regions.push region
-    declHeaders := LeanFmt.Source.declHeaderSpans stx declHeaders
-    tacticBlocks := LeanFmt.Source.tacticBlockSpans inputCtx.fileMap stx tacticBlocks
-    tokenSpans := LeanFmt.Source.tokenSpans stx tokenSpans
-    docstrings := LeanFmt.Source.docCommentSpans stx docstrings
-  pure { kinds, regions, declHeaders, tacticBlocks, tokenSpans, docstrings, messages }
+    body := absorbCommand inputCtx stx body
+  pure { body with messages }
+
+/-- Command kinds selective elaboration **skips**: the proof/term-heavy declarations (the cost
+    the parse-only default exists to avoid) and the effectful commands (`#eval`, `initialize`)
+    a formatter must not run. Every *other* command is elaborated for its syntax/scope
+    side-effect, so file-local notation registers into the parser — including downstream custom
+    notation commands like mathlib's `notation3`, which no fixed allowlist could name from here
+    (the `LeanFmt` package does not depend on mathlib).
+
+    A denylist, not an allowlist, because the failure modes are asymmetric: missing a
+    notation-defining command silently breaks parsing, whereas elaborating a harmless extra
+    command only wastes a little best-effort work — and most such commands fail fast anyway,
+    since the declarations they reference were skipped and are absent from the environment. -/
+private def skipElaborationKind (kind : Name) : Bool :=
+  [ ``Lean.Parser.Command.declaration, ``Lean.Parser.Command.«mutual»,
+    ``Lean.Parser.Command.«deriving», ``Lean.Parser.Command.eval,
+    ``Lean.Parser.Command.evalBang, ``Lean.Parser.Command.«initialize» ].contains kind
+
+/-- The selective-elaboration command loop: like `parseCommands`, but it elaborates each
+    command that is not `skipElaborationKind` as it goes, so file-local `notation`, `macro`,
+    `open`, and `namespace` register into the parser context for the commands that follow — the
+    reason a notation-declaring file parses cleanly here but degrades under the parse-only loop.
+    Declaration bodies are never elaborated, so the cost is a handful of cheap notation/scope
+    elaborations, not proof checking; commands that depend on skipped declarations fail fast.
+
+    Elaboration is best-effort and its messages are discarded: only *parse* messages reach the
+    result, so the reported `status` reflects parse fidelity alone. If elaborating a
+    syntax-affecting command throws (e.g. it references a declaration this loop skipped), the
+    loop keeps the pre-elaboration environment and continues; that command's notation simply
+    stays unregistered. The parser context is rebuilt from the live command-state scope each
+    step — the `currNamespace`/`openDecls` the parse-only loop cannot track. -/
+private def elaborateCommands (inputCtx : Parser.InputContext) (env : Environment)
+    (startState : Parser.ModuleParserState) (initialMessages : MessageLog) :
+    IO BodyParse := do
+  let mut cmdState := Command.mkState env
+  let mut pstate := startState
+  let mut parseMessages := initialMessages
+  let mut body : BodyParse := BodyParse.empty
+  repeat
+    let scope := cmdState.scopes.head?
+    let pmctx : Parser.ParserModuleContext :=
+      { env := cmdState.env
+        options := (scope.map (·.opts)).getD {}
+        currNamespace := (scope.map (·.currNamespace)).getD Name.anonymous
+        openDecls := (scope.map (·.openDecls)).getD [] }
+    let cmdPos := pstate.pos
+    let (stx, pstate', parseMessages') := Parser.parseCommand inputCtx pmctx pstate parseMessages
+    pstate := pstate'
+    parseMessages := parseMessages'
+    if Parser.isTerminalCommand stx then
+      break
+    body := absorbCommand inputCtx stx body
+    if !skipElaborationKind stx.getKind then
+      let cmdCtx : Command.Context :=
+        { cmdPos, fileName := inputCtx.fileName, fileMap := inputCtx.fileMap
+          snap? := none, cancelTk? := none }
+      match ← EIO.toIO' (((Command.elabCommand stx) cmdCtx).run cmdState) with
+      | .ok (_, sNew) => cmdState := { sNew with messages := {} }
+      | .error _ => pure ()
+  pure { body with messages := parseMessages }
 
 /-- Build the `syntax_summary` JSON object from per-kind command counts, the
     per-command byte-anchored `SyntaxRegion`s, and the per-declaration header spans. -/
@@ -179,7 +283,7 @@ private def sourceModel (triviaRuns : Array Json) (docstrings : Array Json) : Js
     per `import` statement (byte-anchored), empty when the header never parsed cleanly. -/
 private def mkResponse (status : String) (diagnostics : Array Json) (truncated : Bool)
     (imports : List String) (isModule : Bool) (importSpans : Array Json)
-    (summary : Json) (srcModel : Json) : String :=
+    (summary : Json) (srcModel : Json) (fellBack : Bool) : String :=
   Json.mkObj
     [ ("status", Json.str status)
     , ("diagnostics", Json.arr diagnostics)
@@ -189,8 +293,53 @@ private def mkResponse (status : String) (diagnostics : Array Json) (truncated :
         , ("is_module", Json.bool isModule)
         , ("import_spans", Json.arr importSpans) ])
     , ("syntax_summary", summary)
-    , ("source_model", srcModel) ]
+    , ("source_model", srcModel)
+    , ("fell_back", Json.bool fellBack) ]
     |>.compress
+
+/-- Process-global cell holding the built superset `Environment`, keyed by the caller's
+    superset id. It survives across requests within a warm worker child; a recycled child
+    finds it empty and rebuilds from the request-carried import list on the next request. -/
+initialize pinnedEnvRef : IO.Ref (Option (String × Environment)) ← IO.mkRef none
+
+/-- Build the project-wide superset environment by importing the union of every file's
+    imports once. Returns the diagnostics log on any failure — a header parse error, an
+    unresolved import, or a `processHeader` throw — so the caller falls back to per-file
+    parsing rather than pinning a partial environment. -/
+private def buildSupersetEnv (supersetImports : List String) (fileName : String) :
+    IO (Except MessageLog Environment) := do
+  let headerSrc := String.intercalate "\n" (supersetImports.map (fun m => "import " ++ m)) ++ "\n"
+  let inputCtx := Parser.mkInputContext headerSrc "<superset>"
+  let (header, _, headerMessages) ← Parser.parseHeader inputCtx
+  if headerMessages.hasErrors then
+    return .error headerMessages
+  try
+    let (env, msgs) ← (do
+      unsafe Lean.enableInitializersExecution
+      Elab.processHeader header {} headerMessages inputCtx)
+    if msgs.hasErrors then
+      pure (.error msgs)
+    else
+      pure (.ok env)
+  catch e =>
+    let mut log : MessageLog := {}
+    log := log.add { fileName, pos := ⟨1, 0⟩, data := toString e, severity := .error }
+    pure (.error log)
+
+/-- Return the retained superset environment for `id`, building and retaining it on the
+    first pinned request (or after a child recycle or an id change). `none` means the
+    superset could not be built, so the caller parses against the file's own imports. -/
+private def getOrBuildPinnedEnv (id : String) (supersetImports : List String)
+    (fileName : String) : IO (Option Environment) := do
+  if let some (id', env) ← pinnedEnvRef.get then
+    if id' == id then
+      return some env
+  match ← buildSupersetEnv supersetImports fileName with
+  | .ok env =>
+    pinnedEnvRef.set (some (id, env))
+    return some env
+  | .error _ =>
+    return none
 
 /-- Core parse routine over an already-decoded request. -/
 private def runParse (req : ParseRequest) : IO String := do
@@ -209,30 +358,16 @@ private def runParse (req : ParseRequest) : IO String := do
   -- panics). A failed header has no trustworthy imports, so we report none.
   if headerMessages.hasErrors then
     let (diags, trunc) ← renderDiagnostics headerMessages req.file
-    return mkResponse "error" diags trunc [] false #[] (syntaxSummary #[] #[] #[] #[]) (sourceModel #[] #[])
+    return mkResponse "error" diags trunc [] false #[] (syntaxSummary #[] #[] #[] #[]) (sourceModel #[] #[]) false
   let imports := ((Elab.headerToImports header).map (·.module.toString)).toList.eraseDups
   let isModule := Elab.HeaderSyntax.isModule header
   -- Byte-anchored per-import records, recovered from the parsed header. Reliable only
   -- once the header parses without error; the guard above reports `#[]` otherwise.
   let importSpans := LeanFmt.Source.importSpans header.raw
-  -- Build the command environment. `processHeader` reports unresolved imports as
-  -- error messages (occasionally as a throw); either way we degrade rather than crash.
-  let processed : Except MessageLog (Environment × MessageLog) ←
-    try
-      let result ← (do
-        unsafe Lean.enableInitializersExecution
-        Elab.processHeader header {} headerMessages inputCtx)
-      pure (.ok result)
-    catch e =>
-      let mut log : MessageLog := {}
-      log := log.add { fileName := req.file, pos := ⟨1, 0⟩, data := toString e, severity := .error }
-      pure (.error log)
-  match processed with
-  | .error log =>
-    let (diags, trunc) ← renderDiagnostics log req.file
-    return mkResponse "degraded" diags trunc imports isModule importSpans (syntaxSummary #[] #[] #[] #[]) (sourceModel #[] #[])
-  | .ok (env, importMessages) =>
-    let body := parseCommands inputCtx env parserState importMessages
+  -- Assemble the response from a completed body parse. Shared by the per-file and pinned
+  -- paths, so only the source of the `Environment` differs between them. `fellBack`
+  -- records whether the pinned environment was bypassed for this file.
+  let respond : BodyParse → Bool → IO String := fun body fellBack => do
     let (diags, trunc) ← renderDiagnostics body.messages req.file
     -- Trivia runs are the complement of *all* tokens — header (imports/`module`) plus
     -- body — so inter-unit trivia (e.g. a comment between the imports and the first
@@ -244,17 +379,69 @@ private def runParse (req : ParseRequest) : IO String := do
     -- `degraded` when imports or body carried errors (e.g. a missing module's parser
     -- extensions were absent, so notation failed to parse); `ok` otherwise.
     let status := if body.messages.hasErrors then "degraded" else "ok"
-    return mkResponse status diags trunc imports isModule importSpans (syntaxSummary body.kinds body.regions body.declHeaders body.tacticBlocks) srcModel
+    pure <| mkResponse status diags trunc imports isModule importSpans
+      (syntaxSummary body.kinds body.regions body.declHeaders body.tacticBlocks) srcModel fellBack
+  -- Parse the body against `env`, parse-only first. If it degrades — typically a token from
+  -- notation the file declares itself, which the parse-only loop never registers — retry with
+  -- selective elaboration, which registers file-local `notation`/`macro`/`open` as it goes.
+  -- Adopt the elaborated result only when it clears the parse errors, so a file already clean
+  -- is never re-elaborated and a still-degrading file is never made worse. The elaboration
+  -- cost is paid only on the files that actually need it.
+  let parseBody : Environment → MessageLog → IO BodyParse := fun env msgs => do
+    let body := parseCommands inputCtx env parserState msgs
+    if body.messages.hasErrors then
+      let elaborated ← elaborateCommands inputCtx env parserState msgs
+      pure (if elaborated.messages.hasErrors then body else elaborated)
+    else
+      pure body
+  -- Parse against the file's own imports: build its environment (reporting unresolved
+  -- imports as a degrade rather than a crash) and run the command loop.
+  let perFile : Bool → IO String := fun fellBack => do
+    let processed : Except MessageLog (Environment × MessageLog) ←
+      try
+        let result ← (do
+          unsafe Lean.enableInitializersExecution
+          Elab.processHeader header {} headerMessages inputCtx)
+        pure (.ok result)
+      catch e =>
+        let mut log : MessageLog := {}
+        log := log.add { fileName := req.file, pos := ⟨1, 0⟩, data := toString e, severity := .error }
+        pure (.error log)
+    match processed with
+    | .error log =>
+      let (diags, trunc) ← renderDiagnostics log req.file
+      pure <| mkResponse "degraded" diags trunc imports isModule importSpans
+        (syntaxSummary #[] #[] #[] #[]) (sourceModel #[] #[]) fellBack
+    | .ok (env, importMessages) =>
+      respond (← parseBody env importMessages) fellBack
+  -- Pinned superset path: parse against the retained project-wide environment. If the
+  -- superset grammar perturbs this file's parse (a new token or an ambiguity introduced
+  -- by notation the file does not import), re-parse it against its own imports, so a file
+  -- that parses cleanly on its own is never reported degraded by the superset.
+  match req.supersetId with
+  | none => perFile false
+  | some id =>
+    match ← getOrBuildPinnedEnv id req.supersetImports req.file with
+    | none => perFile true
+    | some env =>
+      let body ← parseBody env headerMessages
+      if body.messages.hasErrors then
+        perFile true
+      else
+        respond body false
 
 /--
 Request/response export: parse an in-memory Lean source snapshot with the imports
 declared in its header and return parse diagnostics plus a lightweight syntax summary.
 
-Request: `{"file"?, "source", "imports"?, "options"?: {"sysroot"?, "search_path"?}}`.
+Request: `{"file"?, "source", "imports"?, "superset_imports"?, "superset_id"?,
+"options"?: {"sysroot"?, "search_path"?}}`. A `superset_id` (with `superset_imports`)
+selects the pinned path; omitting it parses against the file's own header imports.
 Response: `{"status", "diagnostics", "diagnostics_truncated", "module_header":
 {"imports", "is_module", "import_spans"}, "syntax_summary": {"command_count",
 "command_kinds", "command_regions", "declaration_headers", "tactic_blocks"},
-"source_model": {"trivia_runs", "docstrings"}}`, where `import_spans` are per-`import`
+"source_model": {"trivia_runs", "docstrings"}, "fell_back"}`, where `fell_back` is `true`
+when the pinned environment was bypassed for this file, and `import_spans` are per-`import`
 `{module, range: {start, end}}` records, each `command_regions` entry is a byte-anchored
 `SyntaxRegion` (`{"kind", "range": {"start", "end"}, "line_column": …}`), each
 `declaration_headers` entry names the byte ranges of one declaration's header roles
@@ -276,7 +463,7 @@ def parseFileCommand (requestJson : String) : IO String := do
       , ("file", Json.str defaultFileLabel)
       , ("line", toJson (0 : Nat))
       , ("column", toJson (0 : Nat)) ]
-    pure <| mkResponse "error" #[diag] false [] false #[] (syntaxSummary #[] #[] #[] #[]) (sourceModel #[] #[])
+    pure <| mkResponse "error" #[diag] false [] false #[] (syntaxSummary #[] #[] #[] #[]) (sourceModel #[] #[]) false
   | .ok req => runParse req
 
 /-- Assemble the `lean_fmt_validate` response envelope: whether the snapshot elaborated

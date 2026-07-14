@@ -81,6 +81,7 @@ fn main() {
         "leanprover/lean4:bench",
         "runtime-digest",
         ValidationLevel::Syntax,
+        None,
     );
     let _selection = RuleSelection::new(
         Vec::new(),

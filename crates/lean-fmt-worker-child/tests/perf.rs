@@ -144,6 +144,7 @@ fn corpus_performance_probe() -> Result<(), String> {
         installed.toolchain_label.as_str(),
         installed.runtime_source_digest.as_str(),
         ValidationLevel::Syntax,
+        None,
     );
 
     let files = clean_corpus(&corpus_root());

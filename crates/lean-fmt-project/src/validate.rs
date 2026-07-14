@@ -178,6 +178,7 @@ mod tests {
                 tactic_blocks: Vec::new(),
             },
             source_model: SourceModel::default(),
+            fell_back: false,
         }
         .into()
     }
