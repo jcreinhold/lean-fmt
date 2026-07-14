@@ -12,6 +12,7 @@
 //! ([`plan`] and [`Report`] are the lighter pre-analysis path — they resolve the file set and
 //! active-rule count without running the worker, used for dry-run reporting and tests.)
 
+mod clean;
 mod install_worker;
 mod serve;
 
@@ -151,6 +152,29 @@ pub enum CliCommand {
     InstallWorker(InstallWorkerArgs),
     /// Run a long-lived format server for editor integration (stdio, line-delimited JSON).
     Serve(ServeArgs),
+    /// Remove the on-disk result cache (and, with `--workers`, the installed worker).
+    Clean(CleanArgs),
+}
+
+/// Options for `lean-fmt clean`.
+///
+/// Removing an absent target is a success, not an error: the command's contract is "after this
+/// runs, the cache is gone", which already holds when there is nothing to remove.
+#[derive(Debug, Clone, clap::Args)]
+pub struct CleanArgs {
+    /// The Lake project root whose `.lean-fmt-cache` to remove.
+    #[arg(long, default_value = ".", value_name = "DIR")]
+    pub root: PathBuf,
+
+    /// Also remove the installed Lean worker for this project's toolchain, so the next run
+    /// rebuilds it via `install-worker`. Off by default: the worker is expensive to rebuild
+    /// and the result cache is the usual thing to clear.
+    #[arg(long)]
+    pub workers: bool,
+
+    /// Output format.
+    #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+    pub format: OutputFormat,
 }
 
 /// Options for `lean-fmt serve`.
@@ -229,6 +253,7 @@ impl CliCommand {
             Self::Rules { .. } => "rules",
             Self::InstallWorker(_) => "install-worker",
             Self::Serve(_) => "serve",
+            Self::Clean(_) => "clean",
         }
     }
 }
@@ -280,7 +305,9 @@ pub fn plan(command: &CliCommand) -> Result<Report> {
     match command {
         CliCommand::Check(args) | CliCommand::Format(args) | CliCommand::Diff(args) => plan_files(command.mode(), args),
         CliCommand::Fix(args) => plan_files(command.mode(), &args.common),
-        CliCommand::Rules { .. } | CliCommand::InstallWorker(_) | CliCommand::Serve(_) => Err(Error::NotReportable),
+        CliCommand::Rules { .. } | CliCommand::InstallWorker(_) | CliCommand::Serve(_) | CliCommand::Clean(_) => {
+            Err(Error::NotReportable)
+        }
     }
 }
 
@@ -456,6 +483,7 @@ pub fn command_format(command: &CliCommand) -> OutputFormat {
         CliCommand::Check(args) | CliCommand::Format(args) | CliCommand::Diff(args) => args.format,
         CliCommand::Fix(args) => args.common.format,
         CliCommand::Rules { format } => *format,
+        CliCommand::Clean(args) => args.format,
         CliCommand::InstallWorker(_) | CliCommand::Serve(_) => OutputFormat::Text,
     }
 }
@@ -468,12 +496,12 @@ fn run_mode(command: &CliCommand) -> Option<(&'static str, RunMode, &CommonArgs,
         CliCommand::Format(args) => Some(("format", RunMode::Check, args, ValidationLevel::Syntax)),
         CliCommand::Diff(args) => Some(("diff", RunMode::Diff, args, ValidationLevel::Syntax)),
         CliCommand::Fix(args) => Some(("fix", RunMode::Fix, &args.common, validation_level(args))),
-        CliCommand::Rules { .. } | CliCommand::InstallWorker(_) | CliCommand::Serve(_) => None,
+        CliCommand::Rules { .. } | CliCommand::InstallWorker(_) | CliCommand::Serve(_) | CliCommand::Clean(_) => None,
     }
 }
 
 /// The per-project cache root: a hidden directory beside the workspace (like `.ruff_cache`).
-fn cache_root_for(root: &Path) -> PathBuf {
+pub(crate) fn cache_root_for(root: &Path) -> PathBuf {
     root.join(".lean-fmt-cache")
 }
 
@@ -588,6 +616,11 @@ pub fn run() -> std::process::ExitCode {
                 std::process::ExitCode::FAILURE
             }
         };
+    }
+    // clean is effectful filesystem removal, not a report; it is dispatched directly and does
+    // not need an installed worker.
+    if let CliCommand::Clean(args) = &cli.command {
+        return clean::run(args);
     }
     if let CliCommand::Rules { format } = &cli.command {
         return match render_rules(&plan_rules(), *format) {

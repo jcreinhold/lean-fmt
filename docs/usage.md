@@ -117,6 +117,12 @@ fingerprint, toolchain label, runtime source digest, source digest, the file's i
 mode — so an unchanged file with unchanged config and toolchain is a sound cache hit and is not re-parsed.
 `--no-cache` bypasses reuse and writes nothing to the cache; it is a diagnostic tool, not a correctness knob.
 
+To remove the cache from disk, run `lean-fmt clean` (rooted at `--root`, default the current directory). It
+deletes `.lean-fmt-cache`; removing an already-absent cache is a success, not an error. Add `--workers` to also
+remove the installed worker for the project's toolchain, forcing the next run to rebuild it via `install-worker`
+— reach for that only when the worker install itself is suspect, since it is expensive to rebuild. `clean` needs
+no worker and touches nothing else; `--format json` reports the removed and absent paths as a single object.
+
 The worker resolves project-internal imports against `.lake/build/lib`. If the project is unbuilt, a file with
 project-internal imports Degrades to a reported broken file rather than being formatted against a stale model —
 so build the project (`lake build`) before formatting files that import its own modules.
