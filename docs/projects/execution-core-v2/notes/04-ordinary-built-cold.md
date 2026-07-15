@@ -2,11 +2,14 @@
 
 ## Outcome
 
-Lean 4.32 does not expose a sound, memory-bounded way to reuse one imported environment across
+Lean 4.32 does not expose a sound way to reuse one imported environment across
 arbitrary source files. The best current pure-Lean fallback is therefore a fresh exact frontend
-process per file. Process exit is the correct reclamation boundary, and the measured sample stayed
-inside the envelope, but a full-corpus maximum is not yet evidence. The fallback is already far
-above the ten-minute mathlib goal. The production design must keep it honest and prefer
+process per file. Process exit is the correct reclamation boundary. A setup-free,
+one-child-at-a-time, 2,031-file characterization remained below the policy at each 250 ms sample but
+reached 6.48 GiB sampled RSS; it was stopped
+once both the time miss and memory behavior were decisive instead of wasting another hour on a
+known-slow fallback. The fallback is far above the ten-minute mathlib goal. The production design
+must keep it honest and prefer
 compiler-produced semantic artifacts when present; it must not disguise a union environment or
 same-process batch as exact.
 
@@ -30,12 +33,26 @@ lower bound on the exact fallback rather than the differential oracle. On the fi
 | Build exact constants/extensions and run import initialization | 27,163 ms | 438.1 ms | 62.8% |
 | Profiled process-per-file wall | 49,197 ms | 793.5 ms | — |
 
-Peak aggregate RSS was 2,842,992 KiB, the sampled memorystatus pressure level stayed normal (`1`),
-and swap growth was zero. The
-first complete-corpus attempt failed its built-artifact preflight and is retained only as failed
-evidence. After the exact Lake setup preflight passed all 8,795 files, the corrected full lower-bound
-run remained pending. The sample projects to 116.3 minutes. This is an import-only lower bound: body
-parsing, rules, validation, and reporting can only add work.
+Peak aggregate RSS was 2,842,992 KiB; endpoint free-memory remained 83%, and endpoint swap growth
+was zero. This older run did not sample the live memorystatus level. The fixed sample linearly
+projects to 116.3 minutes. This is an import-only lower bound: body parsing, rules, validation, and
+reporting can only add work.
+
+After the exact Lake setup preflight passed all 8,795 files, a bytewise path-prefix characterization
+completed 2,031 files before it was deliberately terminated. It accumulated 598,436 ms loading
+module closures and 910,322 ms finalizing imports: 742.9 ms/file, whose naive linear extrapolation is
+108.9 minutes for the full corpus before body work. Profiled wall was 1,675,503 ms, whose analogous
+extrapolation is 120.9 minutes. The sorted prefix is not claimed representative; more directly, it
+had already exceeded ten minutes after only 2,031 files. It had no file failure, sampled pressure
+stayed normal, swap delta was −24,576 KiB, and sampled aggregate RSS peaked
+at 6,797,232 KiB (6.48 GiB). `DownstreamTest/DownstreamTest.lean`, which imports the full Mathlib
+barrel, took 4,294 ms to load and 8,098 ms to finalize. The next source had been announced but had
+not produced a status record, so it is excluded from every aggregate.
+
+This run is retained as a terminated characterization, not represented as a complete mathlib
+benchmark. Continuing could not change the already order-of-magnitude time miss, and the peak
+establishes that a second unconstrained child is not safely admissible merely because an average
+file is smaller.
 
 ## Alternatives measured
 
@@ -49,14 +66,12 @@ reach ten minutes under the 8 GiB envelope.
 
 ### Exact-context grouping
 
-A full-corpus pure-Lean header pass found 8,357 distinct ordered `ModuleHeader` contexts among 8,795
-files. Of those, 8,090 are singletons. In Lean/Lake 4.32, each `setupServerModule` path used by the
-frozen workload leaves `ModuleSetup.imports?` as `none`; other setup fields can therefore split but
-cannot merge these source-header groups. Reusing one import per identical exact context could
-eliminate at most 438 imports (4.98%); the largest header group contains 58 files. This is an upper
-bound for this workload, not a generic claim about arbitrary `ModuleSetup` values, whose `imports?`
-field can override source imports. Header discovery itself took 3,222 ms, 4,854 ms profiled wall,
-and 709,552 KiB peak RSS.
+A full-corpus pure-Lean header pass found 8,357 distinct ordered source `ModuleHeader` values among
+8,795 files. Of those, 8,090 are singletons. Only 438 files (4.98%) repeat a prior source header; the
+largest group contains 58 files. This measures source-header candidates, not exact setup-context
+groups: `ModuleSetup` fields can split them, and an `imports?` override can also merge different
+source headers. Header discovery itself took 3,222 ms, 4,854 ms profiled wall, and 709,552 KiB peak
+RSS.
 
 Even that upper bound is not generally sound for full frontend runs whose bodies share a process.
 The committed adversarial
@@ -165,14 +180,15 @@ The smallest application-facing contract remains equivalent to:
 
 ```lean
 -- Conceptual contract; existing Lean shell/language APIs own the concrete types.
-processExactSource (source : String) (setup : Lean.ModuleSetup) : IO FrontendResult
+processExactSource (request : ExactSourceRequest) : IO FrontendResult
 ```
 
-This is a contract sketch, not a claim that `FrontendResult` is a current Lean declaration. The
-concrete integration should extend the existing shell/language processor rather than publish a new
-`HeaderImage` type. If Lean uses an image internally, a missing, stale, or corrupt image is an
-ordinary internal miss followed by the normal exact import. I/O failures that prevent the normal
-path remain reportable infrastructure failures.
+This is a contract sketch, not a claim that either named type is a current Lean declaration. The
+request bundles source bytes, exact filename/module identity, and `ModuleSetup`. The concrete integration
+should extend the existing shell/language processor rather than publish a new `HeaderImage` type.
+If Lean uses an image internally, a missing, stale, or corrupt image is an ordinary internal miss
+followed by the normal exact import. I/O failures that prevent the normal path remain reportable
+infrastructure failures.
 
 Any internal image or lazy environment representation must satisfy these invariants:
 
@@ -207,4 +223,6 @@ Prompt 06 should design around two honest capabilities: trusted compiler-side se
 and a slow fresh-process exact fallback. A future Lean-internal compact environment can replace the
 fallback's import mechanism without changing application callers, but it is not part of the current
 ordinary-built result. Same-process body batching, superset pinning, unsafe region release, and
-public worker controls remain excluded.
+public worker controls remain excluded. The duplicated workspace/spawn helpers in these disposable
+experiments are not production interfaces and must not be promoted; the production boundary should
+pull those decisions into one private capability.

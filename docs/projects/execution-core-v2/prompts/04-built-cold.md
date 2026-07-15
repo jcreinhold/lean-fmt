@@ -1,6 +1,6 @@
 ---
 claim_id: ECV2-BUILT-COLD
-status: planned
+status: verified
 depends_on: [ECV2-WORKLOADS]
 role: api-audit
 ---
@@ -37,7 +37,9 @@ extensions, and concurrency whose configured or measured aggregate can exceed 8 
 
 ## Check
 
-- Byte-compare optimized syntax/results with fresh exact frontend runs, including adversarial syntax.
-- Record end-to-end improvement, not only microbenchmarks.
+- Byte-compare every optimization retained for production with fresh exact frontend runs, including
+  adversarial syntax. Rejected mechanism probes must state the narrower projection they tested.
+- Record end-to-end improvement for every retained optimization, not only microbenchmarks. A probe
+  with no retained production path records its rejection evidence instead.
 - `lake build`
 - `git diff --check`

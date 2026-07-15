@@ -1,6 +1,6 @@
 ---
 kind: state
-first_unresolved: 04-built-cold
+first_unresolved: 05-compiler-artifacts
 ---
 
 # Current state
@@ -15,7 +15,7 @@ as independent measured prerequisites.
 | 01-reset | ECV2-RESET | verified | — |
 | 02-native-reset | ECV2-NATIVE-RESET | verified | ECV2-RESET |
 | 03-workloads | ECV2-WORKLOADS | verified | ECV2-NATIVE-RESET |
-| 04-built-cold | ECV2-BUILT-COLD | planned | ECV2-WORKLOADS |
+| 04-built-cold | ECV2-BUILT-COLD | verified | ECV2-WORKLOADS |
 | 05-compiler-artifacts | ECV2-COMPILER-ARTIFACTS | planned | ECV2-WORKLOADS |
 | 06-design | ECV2-DESIGN | planned | ECV2-BUILT-COLD, ECV2-COMPILER-ARTIFACTS |
 | 07-check | ECV2-CHECK | planned | ECV2-DESIGN |
@@ -27,8 +27,9 @@ as independent measured prerequisites.
 
 ## Known evidence
 
-- Exact imports from existing `.olean`s averaged 667 ms/file on the deterministic 62-file sample,
-  projecting to 97.8 minutes serial.
+- Setup-free imports from existing `.olean`s averaged 697.2 ms/file across load and finalization on
+  the deterministic 62-file sample. A 2,031-file sorted-prefix characterization had already taken
+  27.9 minutes when deliberately stopped; its sampled peak RSS was 6.48 GiB.
 - One process retaining distinct exact contexts crossed 8 GiB during its sixth file.
 - A fresh exact child remained below the envelope but cannot meet the goal through safe concurrency.
 - A pure Lean module-linter plugin receives exact custom syntax during compilation with no detected
@@ -40,6 +41,8 @@ These facts constrain prompts 04 and 05; they do not predetermine their final in
 
 - [ECV2-WORKLOADS](../results/03-workloads.md) freezes exact semantics, the independent project
   build/cache axes, deterministic mathlib selection, and the resource-bounded profiling format.
+- [ECV2-BUILT-COLD](../results/04-built-cold.md) rejects same-runtime reuse and the ordinary-built
+  fresh-process fallback as a competitive path, while preserving it as the exact isolation model.
 
 ## Verification convention
 

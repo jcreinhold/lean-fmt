@@ -213,6 +213,15 @@ The fixed 62-file sample was rerun with fresh children while timing header parsi
 finalization averaged 438.1 ms/file; finalization was 62.8% of those two phases. The profiled wall
 time was 49.197 seconds with 2,842,992 KiB peak aggregate RSS and zero swap growth.
 
+After exact setup preflight, a sorted-prefix characterization completed 2,031 mathlib files before
+being deliberately terminated once the conclusion was decisive. Loading plus finalization averaged
+742.9 ms/file, projecting to 108.9 minutes; profiled wall projected to 120.9 minutes. There were no
+file failures. Sampled aggregate RSS peaked at 6,797,232 KiB, pressure remained normal, and swap
+delta was negative. `DownstreamTest/DownstreamTest.lean` alone spent 4,294 ms loading and 8,098 ms
+finalizing its 10,406-module environment. This is retained as a terminated characterization, not a
+complete mathlib benchmark; continuing could not make the fallback competitive and would have
+wasted roughly another hour.
+
 Across all 8,795 mathlib files there are 8,357 distinct ordered source-header contexts; 8,090 are
 singletons, so header-equivalent reuse can eliminate at most 438 imports in this fixed Lake 4.32
 workload. It is also not sufficient for same-process body processing: two committed files with

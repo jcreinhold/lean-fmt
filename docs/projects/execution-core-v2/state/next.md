@@ -1,9 +1,9 @@
 # Next Proof Packet
 
 - Stack: execution-core-v2
-- First unresolved: 04-built-cold
-- Claim ID: ECV2-BUILT-COLD
-- Prompt: 04-built-cold
+- First unresolved: 05-compiler-artifacts
+- Claim ID: ECV2-COMPILER-ARTIFACTS
+- Prompt: 05-compiler-artifacts
 - Module: (docs only)
 - Target file: (docs only)
 
@@ -17,12 +17,12 @@ Read this file, the target prompt, target files, listed source/template line ran
 
 ## Proof Task
 
-- Find the fastest exact path when project `.olean`s are current but no formatter artifact or cache exists. Sub-ten-minute mathlib is the goal; every meaningful improvement is retained even if current Lean cannot yet reach it.
+- Turn the module-linter probe into a pure Lean compiler plugin that runs rules over the exact syntax while Lean already owns the correct environment and emits a compact, sound sidecar.
 
 ## Reuse
 
-- The import-only 62-file lower bound and `Mathlib.lean` union measurement.
-- Lean `ImportState`, `importModulesCore`, `finalizeImport`, `EnvironmentHeader.moduleData`, persistent extensions, initializers, compacted regions, incremental snapshots, and compiler setup artifacts.
+- `experiments/pure-lean-core/LeanFmtProbePlugin.lean` and its recorded timings.
+- Lean `Command.ModuleLinter`, plugin loading, file maps, module setup, and Lake build traces.
 
 ## Lean Work
 
@@ -30,4 +30,4 @@ Inspect the live goal, search relevant declarations, test plausible proof steps,
 
 ## Stop Rules
 
-- Reject union/superset parsing, final-file grammar used retroactively, unsafe region release with live extensions, and concurrency whose configured or measured aggregate can exceed 8 GiB.
+- Do not trust source mtimes, omit plugin identity from the build trace, or let an artifact claim a validation level it did not execute.
