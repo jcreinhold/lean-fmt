@@ -1,6 +1,6 @@
 ---
 kind: state
-first_unresolved: 03-workloads
+first_unresolved: 04-built-cold
 ---
 
 # Current state
@@ -14,7 +14,7 @@ as independent measured prerequisites.
 | --- | --- | --- | --- |
 | 01-reset | ECV2-RESET | verified | — |
 | 02-native-reset | ECV2-NATIVE-RESET | verified | ECV2-RESET |
-| 03-workloads | ECV2-WORKLOADS | planned | ECV2-NATIVE-RESET |
+| 03-workloads | ECV2-WORKLOADS | verified | ECV2-NATIVE-RESET |
 | 04-built-cold | ECV2-BUILT-COLD | planned | ECV2-WORKLOADS |
 | 05-compiler-artifacts | ECV2-COMPILER-ARTIFACTS | planned | ECV2-WORKLOADS |
 | 06-design | ECV2-DESIGN | planned | ECV2-BUILT-COLD, ECV2-COMPILER-ARTIFACTS |
@@ -35,6 +35,11 @@ as independent measured prerequisites.
   overhead in the initial sample.
 
 These facts constrain prompts 04 and 05; they do not predetermine their final interface.
+
+## Completed results
+
+- [ECV2-WORKLOADS](../results/03-workloads.md) freezes exact semantics, the independent project
+  build/cache axes, deterministic mathlib selection, and the resource-bounded profiling format.
 
 ## Verification convention
 

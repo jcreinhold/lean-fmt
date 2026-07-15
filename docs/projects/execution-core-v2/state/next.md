@@ -1,9 +1,9 @@
 # Next Proof Packet
 
 - Stack: execution-core-v2
-- First unresolved: 03-workloads
-- Claim ID: ECV2-WORKLOADS
-- Prompt: 03-workloads
+- First unresolved: 04-built-cold
+- Claim ID: ECV2-BUILT-COLD
+- Prompt: 04-built-cold
 - Module: (docs only)
 - Target file: (docs only)
 
@@ -17,13 +17,12 @@ Read this file, the target prompt, target files, listed source/template line ran
 
 ## Proof Task
 
-- Define the exact formatter oracle and four non-interchangeable workloads before selecting an execution strategy: ordinary project built with current `.olean`s, formatter-integrated build artifacts present, formatter cache cold, and formatter cache warm.
+- Find the fastest exact path when project `.olean`s are current but no formatter artifact or cache exists. Sub-ten-minute mathlib is the goal; every meaningful improvement is retained even if current Lean cannot yet reach it.
 
 ## Reuse
 
-- `notes/02-architecture-pause.md` and `experiments/pure-lean-core/RESULT.md`.
-- Lean v4.32.0 `Environment`, `Elab.Frontend`, `Language.Lean`, module-linter, plugin, and snapshot APIs.
-- Mathlib commit `783ccda4ee524f13cc5636237be0a1942bc04824` and its 8,795-file workload.
+- The import-only 62-file lower bound and `Mathlib.lean` union measurement.
+- Lean `ImportState`, `importModulesCore`, `finalizeImport`, `EnvironmentHeader.moduleData`, persistent extensions, initializers, compacted regions, incremental snapshots, and compiler setup artifacts.
 
 ## Lean Work
 
@@ -31,4 +30,4 @@ Inspect the live goal, search relevant declarations, test plausible proof steps,
 
 ## Stop Rules
 
-- Do not call a formatter-integrated build an ordinary built project. Do not count project compilation inside a formatter-cache timing without reporting it separately.
+- Reject union/superset parsing, final-file grammar used retroactively, unsafe region release with live extensions, and concurrency whose configured or measured aggregate can exceed 8 GiB.

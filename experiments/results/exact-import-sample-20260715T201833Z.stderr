@@ -1,0 +1,12 @@
+✖ [2/5] Running LeanFmt.Frontend
+error: no such file or directory (error code: 4294967294)
+  file: /Users/jcreinhold/Code/lean-fmt/experiments/pure-lean-core/../../crates/lean-fmt/lean/LeanFmt/Frontend.lean
+✖ [3/5] Running AnalyzeMain
+error: AnalyzeMain.lean: bad import 'LeanFmt.Frontend'
+✖ [5/5] Running «pure-lean-analyze»:exe
+error: bad imports (see the 'AnalyzeMain' job for details)
+Some required targets logged failures:
+- LeanFmt.Frontend
+- AnalyzeMain
+- «pure-lean-analyze»:exe
+error: build failed

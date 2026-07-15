@@ -1,7 +1,7 @@
 import Lake.Config.Env
 import Lake.Config.InstallPath
 import Lake.Load.Workspace
-import LeanFmt.Frontend
+import Lean.Elab.Frontend
 
 open Lean System
 
@@ -21,28 +21,8 @@ private def loadTargetWorkspace (root : FilePath) : IO Lake.Workspace := do
   let workspace? ← Lake.loadWorkspace config |>.toBaseIO
   workspace?.getDM <| throw <| IO.userError s!"could not load Lake workspace at {root}"
 
-private def requestJson (sysroot : FilePath) (searchPath : Array String)
-    (path : FilePath) (source : String) : Json :=
-  Json.mkObj
-    [ ("schema", Json.str "lean-fmt.frontend.v2")
-    , ("file", Json.str path.toString)
-    , ("source", Json.str source)
-    , ("options", Json.mkObj
-        [ ("sysroot", Json.str sysroot.toString)
-        , ("search_path", toJson searchPath) ]) ]
-
 private def usage : String :=
-  "usage: pure-lean-analyze <lake-workspace-root> <lean-source-file>..."
-
-private def analyzeFile (sysroot : FilePath) (searchPath : Array String)
-    (file : FilePath) : IO UInt32 := do
-  let source ← IO.FS.readFile file
-  let before ← IO.monoNanosNow
-  let response ← LeanFmt.Frontend.analyzeCommand (requestJson sysroot searchPath file source).compress
-  let elapsedMs := ((← IO.monoNanosNow) - before) / 1000000
-  let status := (Json.parse response >>= fun json => json.getObjValAs? String "status").toOption
-  IO.println s!"analyze_status={status.getD "invalid-response"} elapsed_ms={elapsedMs} response_bytes={response.utf8ByteSize}"
-  return if status == some "ok" then 0 else 1
+  "usage: pure-lean-analyze --import-only <lake-workspace-root> <lean-source-file>..."
 
 private def importFile (sysroot : FilePath) (searchPath : Array String)
     (file : FilePath) : IO UInt32 := do
@@ -60,8 +40,7 @@ private def importFile (sysroot : FilePath) (searchPath : Array String)
   IO.println s!"import_status={if messages.hasErrors then "error" else "ok"} elapsed_ms={elapsedMs}"
   return if messages.hasErrors then 1 else 0
 
-private def runParent (rootArg : String) (fileArgs : List String)
-    (importOnly : Bool) : IO UInt32 := do
+private def runParent (rootArg : String) (fileArgs : List String) : IO UInt32 := do
   let root : FilePath := rootArg
   let workspace ← loadTargetWorkspace root
   let appPath ← IO.appPath
@@ -73,7 +52,7 @@ private def runParent (rootArg : String) (fileArgs : List String)
     (← IO.getStdout).flush
     let output ← IO.Process.output {
       cmd := appPath.toString
-      args := #[if importOnly then "--child-import" else "--child", sysroot, file] ++ searchPath
+      args := #["--child-import", sysroot, file] ++ searchPath
       env := #[("LEAN_NUM_THREADS", "1")]
     }
     IO.print output.stdout
@@ -83,20 +62,18 @@ private def runParent (rootArg : String) (fileArgs : List String)
   return result
 
 unsafe def run (args : List String) : IO UInt32 := do
-  if let "--child" :: sysroot :: file :: searchPath := args then
-    return ← analyzeFile sysroot searchPath.toArray file
   if let "--child-import" :: sysroot :: file :: searchPath := args then
     return ← importFile sysroot searchPath.toArray file
-  let (importOnly, args) := match args with
-    | "--import-only" :: rest => (true, rest)
-    | _ => (false, args)
+  let args := match args with
+    | "--import-only" :: rest => rest
+    | _ => args
   let rootArg :: fileArgs := args
     | IO.eprintln usage
       return 2
   if fileArgs.isEmpty then
     IO.eprintln usage
     return 2
-  runParent rootArg fileArgs importOnly
+  runParent rootArg fileArgs
 
 end PureLeanAnalyze
 

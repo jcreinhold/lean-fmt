@@ -4,10 +4,6 @@ open Lake DSL
 
 package «pure-lean-core»
 
-lean_lib LeanFmt where
-  srcDir := "../../crates/lean-fmt/lean"
-  roots := #[`LeanFmt.Frontend]
-
 lean_lib LeanFmtProbePlugin
 
 @[default_target]

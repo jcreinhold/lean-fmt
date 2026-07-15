@@ -1,0 +1,124 @@
+source=/Users/jcreinhold/Code/mathlib4/Archive/Arithcc.lean
+import_status=ok elapsed_ms=2011
+source=/Users/jcreinhold/Code/mathlib4/Mathlib/Algebra/Algebra/Rat.lean
+import_status=ok elapsed_ms=878
+source=/Users/jcreinhold/Code/mathlib4/Mathlib/Algebra/Category/ModuleCat/Ext/DimensionShifting.lean
+import_status=ok elapsed_ms=2650
+source=/Users/jcreinhold/Code/mathlib4/Mathlib/Algebra/Divisibility/Hom.lean
+import_status=ok elapsed_ms=508
+source=/Users/jcreinhold/Code/mathlib4/Mathlib/Algebra/Group/Pointwise/Finset/Scalar.lean
+import_status=ok elapsed_ms=609
+source=/Users/jcreinhold/Code/mathlib4/Mathlib/Algebra/Homology/DerivedCategory/Basic.lean
+import_status=ok elapsed_ms=840
+source=/Users/jcreinhold/Code/mathlib4/Mathlib/Algebra/Jordan/Basic.lean
+import_status=ok elapsed_ms=998
+source=/Users/jcreinhold/Code/mathlib4/Mathlib/Algebra/Module/Submodule/Union.lean
+import_status=ok elapsed_ms=953
+source=/Users/jcreinhold/Code/mathlib4/Mathlib/Algebra/Order/Group/Int/Sum.lean
+import_status=ok elapsed_ms=583
+source=/Users/jcreinhold/Code/mathlib4/Mathlib/Algebra/Order/Sub/Unbundled/Basic.lean
+import_status=ok elapsed_ms=417
+source=/Users/jcreinhold/Code/mathlib4/Mathlib/Algebra/Ring/IsFormallyReal.lean
+import_status=ok elapsed_ms=677
+source=/Users/jcreinhold/Code/mathlib4/Mathlib/AlgebraicGeometry/IdealSheaf/Subscheme.lean
+import_status=ok elapsed_ms=1802
+source=/Users/jcreinhold/Code/mathlib4/Mathlib/AlgebraicTopology/MooreComplex.lean
+import_status=ok elapsed_ms=736
+source=/Users/jcreinhold/Code/mathlib4/Mathlib/Analysis/Asymptotics/SuperpolynomialDecay.lean
+import_status=ok elapsed_ms=1025
+source=/Users/jcreinhold/Code/mathlib4/Mathlib/Analysis/Calculus/FDeriv/RestrictScalars.lean
+import_status=ok elapsed_ms=1021
+source=/Users/jcreinhold/Code/mathlib4/Mathlib/Analysis/Convex/Cone/InnerDual.lean
+import_status=ok elapsed_ms=1282
+source=/Users/jcreinhold/Code/mathlib4/Mathlib/Analysis/InnerProductSpace/l2Space.lean
+import_status=ok elapsed_ms=1019
+source=/Users/jcreinhold/Code/mathlib4/Mathlib/Analysis/Normed/Module/Multilinear/Basic.lean
+import_status=ok elapsed_ms=889
+source=/Users/jcreinhold/Code/mathlib4/Mathlib/Analysis/SpecialFunctions/Gamma/Basic.lean
+import_status=ok elapsed_ms=1575
+source=/Users/jcreinhold/Code/mathlib4/Mathlib/CategoryTheory/Action/Concrete.lean
+import_status=ok elapsed_ms=636
+source=/Users/jcreinhold/Code/mathlib4/Mathlib/CategoryTheory/ConcreteCategory/Representable.lean
+import_status=ok elapsed_ms=579
+source=/Users/jcreinhold/Code/mathlib4/Mathlib/CategoryTheory/Groupoid/VertexGroup.lean
+import_status=ok elapsed_ms=568
+source=/Users/jcreinhold/Code/mathlib4/Mathlib/CategoryTheory/Limits/Preserves/Ulift.lean
+import_status=ok elapsed_ms=559
+source=/Users/jcreinhold/Code/mathlib4/Mathlib/CategoryTheory/Localization/Pi.lean
+import_status=ok elapsed_ms=578
+source=/Users/jcreinhold/Code/mathlib4/Mathlib/CategoryTheory/Monoidal/Widesubcategory.lean
+import_status=ok elapsed_ms=603
+source=/Users/jcreinhold/Code/mathlib4/Mathlib/CategoryTheory/Shift/Opposite.lean
+import_status=ok elapsed_ms=629
+source=/Users/jcreinhold/Code/mathlib4/Mathlib/CategoryTheory/SmallRepresentatives.lean
+import_status=ok elapsed_ms=615
+source=/Users/jcreinhold/Code/mathlib4/Mathlib/Combinatorics/Matroid/Minor/Delete.lean
+import_status=ok elapsed_ms=636
+source=/Users/jcreinhold/Code/mathlib4/Mathlib/Computability/Halting.lean
+import_status=ok elapsed_ms=606
+source=/Users/jcreinhold/Code/mathlib4/Mathlib/Data/FP/Basic.lean
+import_status=ok elapsed_ms=446
+source=/Users/jcreinhold/Code/mathlib4/Mathlib/Data/Fintype/Shrink.lean
+import_status=ok elapsed_ms=535
+source=/Users/jcreinhold/Code/mathlib4/Mathlib/Data/Multiset/Bind.lean
+import_status=ok elapsed_ms=537
+source=/Users/jcreinhold/Code/mathlib4/Mathlib/Data/PFunctor/Multivariate/Basic.lean
+import_status=ok elapsed_ms=582
+source=/Users/jcreinhold/Code/mathlib4/Mathlib/Data/Stream/Init.lean
+import_status=ok elapsed_ms=532
+source=/Users/jcreinhold/Code/mathlib4/Mathlib/FieldTheory/MvRatFunc/Rank.lean
+import_status=ok elapsed_ms=951
+source=/Users/jcreinhold/Code/mathlib4/Mathlib/Geometry/Manifold/Sheaf/Basic.lean
+import_status=ok elapsed_ms=916
+source=/Users/jcreinhold/Code/mathlib4/Mathlib/GroupTheory/NoncommPiCoprod.lean
+import_status=ok elapsed_ms=665
+source=/Users/jcreinhold/Code/mathlib4/Mathlib/LinearAlgebra/Basis/Exact.lean
+import_status=ok elapsed_ms=675
+source=/Users/jcreinhold/Code/mathlib4/Mathlib/LinearAlgebra/Matrix/CharP.lean
+import_status=ok elapsed_ms=552
+source=/Users/jcreinhold/Code/mathlib4/Mathlib/LinearAlgebra/RootSystem/Finite/Nondegenerate.lean
+import_status=ok elapsed_ms=940
+source=/Users/jcreinhold/Code/mathlib4/Mathlib/MeasureTheory/Constructions/ProjectiveFamilyContent.lean
+import_status=ok elapsed_ms=899
+source=/Users/jcreinhold/Code/mathlib4/Mathlib/MeasureTheory/Integral/IntervalIntegral/Periodic.lean
+import_status=ok elapsed_ms=1083
+source=/Users/jcreinhold/Code/mathlib4/Mathlib/MeasureTheory/SpecificCodomains/ContinuousMap.lean
+import_status=ok elapsed_ms=1108
+source=/Users/jcreinhold/Code/mathlib4/Mathlib/NumberTheory/LSeries/ZMod.lean
+import_status=ok elapsed_ms=1684
+source=/Users/jcreinhold/Code/mathlib4/Mathlib/NumberTheory/SelbergSieve.lean
+import_status=ok elapsed_ms=700
+source=/Users/jcreinhold/Code/mathlib4/Mathlib/Order/Filter/ENNReal.lean
+import_status=ok elapsed_ms=715
+source=/Users/jcreinhold/Code/mathlib4/Mathlib/Order/Quotient.lean
+import_status=ok elapsed_ms=529
+source=/Users/jcreinhold/Code/mathlib4/Mathlib/Probability/Kernel/Deterministic.lean
+import_status=ok elapsed_ms=871
+source=/Users/jcreinhold/Code/mathlib4/Mathlib/RingTheory/AlgebraicIndependent/TranscendenceBasis.lean
+import_status=ok elapsed_ms=877
+source=/Users/jcreinhold/Code/mathlib4/Mathlib/RingTheory/Flat/Tensor.lean
+import_status=ok elapsed_ms=959
+source=/Users/jcreinhold/Code/mathlib4/Mathlib/RingTheory/KrullDimension/Regular.lean
+import_status=ok elapsed_ms=1083
+source=/Users/jcreinhold/Code/mathlib4/Mathlib/RingTheory/PiTensorProduct.lean
+import_status=ok elapsed_ms=697
+source=/Users/jcreinhold/Code/mathlib4/Mathlib/RingTheory/Smooth/Basic.lean
+import_status=ok elapsed_ms=948
+source=/Users/jcreinhold/Code/mathlib4/Mathlib/SetTheory/Cardinal/Cofinality/Club.lean
+import_status=ok elapsed_ms=670
+source=/Users/jcreinhold/Code/mathlib4/Mathlib/Tactic/Conv.lean
+import_status=ok elapsed_ms=299
+source=/Users/jcreinhold/Code/mathlib4/Mathlib/Tactic/Nontriviality.lean
+import_status=ok elapsed_ms=319
+source=/Users/jcreinhold/Code/mathlib4/Mathlib/Testing/Plausible/Testable.lean
+import_status=ok elapsed_ms=280
+source=/Users/jcreinhold/Code/mathlib4/Mathlib/Topology/Algebra/ProperAction/AddTorsor.lean
+import_status=ok elapsed_ms=747
+source=/Users/jcreinhold/Code/mathlib4/Mathlib/Topology/Compactness/LocallyFinite.lean
+import_status=ok elapsed_ms=592
+source=/Users/jcreinhold/Code/mathlib4/Mathlib/Topology/Irreducible.lean
+import_status=ok elapsed_ms=604
+source=/Users/jcreinhold/Code/mathlib4/Mathlib/Topology/Order/ScottTopology.lean
+import_status=ok elapsed_ms=652
+source=/Users/jcreinhold/Code/mathlib4/Mathlib/Util/DischargerAsTactic.lean
+import_status=ok elapsed_ms=262
