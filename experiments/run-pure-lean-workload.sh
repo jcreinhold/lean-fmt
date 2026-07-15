@@ -2,13 +2,13 @@
 set -euo pipefail
 
 if [[ $# -ne 3 ]]; then
-	printf 'usage: %s <oracle|full|import> PROJECT_ROOT SOURCE_MANIFEST\n' "$0" >&2
+	printf 'usage: %s <oracle|full|import|groups|setup-audit> PROJECT_ROOT SOURCE_MANIFEST\n' "$0" >&2
 	exit 2
 fi
 
 mode=$1
-mathlib_root=$2
-manifest=$3
+mathlib_root=$(cd "$2" && pwd)
+manifest=$(cd "$(dirname "$3")" && pwd)/$(basename "$3")
 repo_root=$(cd "$(dirname "$0")/.." && pwd)
 experiment_root="$repo_root/experiments/pure-lean-core"
 files=()
@@ -40,6 +40,12 @@ full)
 	;;
 import)
 	exec lake exe pure-lean-analyze --import-only "$mathlib_root" "${files[@]}"
+	;;
+groups)
+	exec lake exe header-groups "$mathlib_root" "$manifest"
+	;;
+setup-audit)
+	exec lake exe setup-audit "$mathlib_root" "$manifest"
 	;;
 *)
 	printf 'unknown mode: %s\n' "$mode" >&2

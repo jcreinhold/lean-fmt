@@ -27,3 +27,12 @@ See [RESULT.md](RESULT.md) for observed behavior and limitations.
 reexecutes itself as a fresh exact child for every source. Set `PURE_LEAN_PROBE_MODE=import` when
 using `run-batch-probe.sh` to measure header parsing and environment construction without body
 analysis. Every probe is experimental and is hard-stopped by the script at 8 GiB aggregate RSS.
+
+`header-groups` counts distinct ordered `ModuleHeader` contexts without importing them. The
+`ExactReuseFixtures` pair demonstrates why identical imports do not make same-process file bodies
+safe: a command elaborator can mutate process-global state that the next file observes.
+
+`setup-audit` asks Lake for every selected file's exact `ModuleSetup` with `noBuild := true`. It
+groups 16 requests per bounded Lake build context; a missing dependency stops with Lake's named
+out-of-date module. The printed 64-bit setup hash is only a batched-versus-unbatched probe
+diagnostic, not a cache or artifact identity.

@@ -29,16 +29,28 @@ private def importFile (sysroot : FilePath) (searchPath : Array String)
   Lean.initSearchPath sysroot (searchPath.toList.map FilePath.mk)
   let source ← IO.FS.readFile file
   let input := Parser.mkInputContext source file.toString
-  let before ← IO.monoNanosNow
+  let parseStarted ← IO.monoNanosNow
   let (header, _, messages) ← Parser.parseHeader input
+  let parseMs := ((← IO.monoNanosNow) - parseStarted) / 1000000
   if messages.hasErrors then
     IO.println "import_status=header-error"
     return 1
+  let header : Elab.HeaderSyntax := header
+  let level := if header.isModule then OLeanLevel.exported else OLeanLevel.private
+  let imports := header.imports
   unsafe Lean.enableInitializersExecution
-  let (_, messages) ← Elab.processHeader header {} messages input
-  let elapsedMs := ((← IO.monoNanosNow) - before) / 1000000
-  IO.println s!"import_status={if messages.hasErrors then "error" else "ok"} elapsed_ms={elapsedMs}"
-  return if messages.hasErrors then 1 else 0
+  let (loadMs, finalizeMs, env) ← Lean.withImporting do
+    let loadStarted ← IO.monoNanosNow
+    let (_, importState) ← importModulesCore (globalLevel := level) imports |>.run
+    let loadMs := ((← IO.monoNanosNow) - loadStarted) / 1000000
+    let finalizeStarted ← IO.monoNanosNow
+    let env ← finalizeImport importState imports {} 0
+      (leakEnv := false) (loadExts := true) (level := level)
+    let finalizeMs := ((← IO.monoNanosNow) - finalizeStarted) / 1000000
+    return (loadMs, finalizeMs, env)
+  IO.println s!"import_status=ok parse_ms={parseMs} load_ms={loadMs} \
+    finalize_ms={finalizeMs} modules={env.header.modules.size}"
+  return 0
 
 private def runParent (rootArg : String) (fileArgs : List String) : IO UInt32 := do
   let root : FilePath := rootArg
@@ -61,7 +73,7 @@ private def runParent (rootArg : String) (fileArgs : List String) : IO UInt32 :=
       result := 1
   return result
 
-unsafe def run (args : List String) : IO UInt32 := do
+private unsafe def run (args : List String) : IO UInt32 := do
   if let "--child-import" :: sysroot :: file :: searchPath := args then
     return ← importFile sysroot searchPath.toArray file
   let args := match args with

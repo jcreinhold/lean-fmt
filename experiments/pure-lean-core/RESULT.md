@@ -204,3 +204,31 @@ compilation without a second import. It does not make old build artifacts suffic
 must participate in the module's build trace, and adding it to a previously built project must cause
 a rebuild. Production design must choose and document that integration contract rather than hiding
 the initial compilation cost behind a cache claim.
+
+## Ordinary-built cold follow-up
+
+The fixed 62-file sample was rerun with fresh children while timing header parsing,
+`importModulesCore`, and `finalizeImport` separately. Module loading averaged 259.1 ms/file and
+finalization averaged 438.1 ms/file; finalization was 62.8% of those two phases. The profiled wall
+time was 49.197 seconds with 2,842,992 KiB peak aggregate RSS and zero swap growth.
+
+Across all 8,795 mathlib files there are 8,357 distinct ordered source-header contexts; 8,090 are
+singletons, so header-equivalent reuse can eliminate at most 438 imports in this fixed Lake 4.32
+workload. It is also not sufficient for same-process body processing: two committed files with
+identical imports demonstrate that a command elaborator's process-global mutation leaks into the
+next full frontend run, while the second file passes alone in a fresh process.
+
+Lean's experimental header snapshot loads exact state substantially faster for a repeated header:
+`Mathlib/Tactic.lean` loaded in 1.104 seconds at 1,312,912 KiB peak RSS. The image took 4.900 seconds
+to create and occupied 150,145,927 bytes plus 1,750,928 bytes of dependency metadata. A smaller
+custom-syntax file still produced a 42,558,687-byte image. Fresh and loaded compiler-plugin
+projections were byte-identical in that setup-free case. The facility demonstrates the desired
+mechanism on a tested input, but not general exactness or a scalable per-context representation; it
+is also absent from an ordinary build and costs a cold import to create.
+
+The checkout initially lacked current dependencies needed by support scripts. After building the
+named project and script prerequisites, a batched `noBuild := true` Lake preflight obtained an exact
+`ModuleSetup` for all 8,795 selected files in 394.199 seconds. It peaked at 1,434,896 KiB aggregate
+RSS, remained at macOS pressure level 1, and had no positive swap delta. This establishes the
+ordinary-built premise; it is setup validation time, not formatter time. The printed setup hash is
+only a probe diagnostic and is not a semantic cache identity.
