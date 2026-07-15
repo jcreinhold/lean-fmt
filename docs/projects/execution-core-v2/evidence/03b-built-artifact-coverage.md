@@ -27,3 +27,15 @@ retained as failed preflight evidence and is not a performance result.
 Prerequisite target builds must run with `LEAN_NUM_THREADS=1` inside the profiler's 8 GiB/256 MiB
 envelope. Their wall time is reported separately. A full cold-check timing begins only after exact
 setup/import preflight succeeds for all selected files.
+
+After building `Archive`, `Counterexamples`, `MathlibTest`, and `docs`, 8,781 selected sources had a
+corresponding root-package `.olean`. The remaining 14 were standalone cache/downstream tests,
+lakefiles, or scripts that do not require their own output. The first full no-build setup audit then
+identified two actual missing dependencies: `Cli.Basic` and `ImportGraph.Imports.FromSource`.
+Building those modules took 4,149 ms wall, peaked at 1,046,832 KiB RSS, stayed at pressure level 1,
+and added no swap.
+
+The corrected batched `Lake.setupServerModule` audit succeeded for all 8,795 sources with
+`noBuild := true`: 394,199 ms wall, 1,434,896 KiB peak RSS, pressure level 1 throughout, and
+−8,192 KiB swap delta. This establishes the frozen ordinary-built premise. It is prerequisite
+validation and is not included in formatter-cache-cold execution time.
