@@ -22,8 +22,10 @@ hit should avoid frontend construction entirely.
 
 ## Workload vocabulary
 
-- **Ordinary built:** source and normal Lake `.olean`/`.ilean` artifacts are current; no lean-fmt
-  compiler artifact is assumed.
+- **Ordinary built:** for every selected source, all modules required by its exact Lake setup/header
+  have current normal `.olean`/`.ilean` artifacts; no lean-fmt compiler artifact is assumed. The
+  selected source need not itself have an output artifact. Prerequisite target builds are measured
+  and reported separately from formatter-cache-cold execution.
 - **Formatter-integrated built:** the exact compilation ran the lean-fmt plugin and produced trusted
   sidecars.
 - **Formatter-cache cold:** no reusable lean-fmt result-cache entry exists. This says nothing by

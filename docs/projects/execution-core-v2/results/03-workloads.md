@@ -9,11 +9,15 @@ Status: verified on 2026-07-15.
 - Added a revision-, toolchain-, count-, and digest-checked mathlib selector plus the fixed 62-file
   manifest.
 - Added a generic process-group profiler with explicit project build/cache states, 8 GiB RSS and
-  256 MiB swap-growth stops, raw streams, phase extraction, and output digesting.
+  256 MiB swap-growth stops, a live macOS pressure-level stop, raw streams, phase extraction, and
+  output digesting.
 - Added a distinct setup-aware oracle mode: it obtains Lake's per-file `ModuleSetup` and passes it
   to a fresh target-toolchain Lean frontend. Setup-free probes remain labeled lower bounds.
 - Removed the pure-Lean import probe's stale dependency on the deleted Rust-era frontend source.
   The failed first reproduction is retained as raw evidence rather than treated as a measurement.
+- Corrected “ordinary built” to mean that every artifact required by each selected file's exact
+  setup/header is current. A selected source does not need its own output, and prerequisite target
+  compilation is reported separately from formatter timing.
 
 ## Commands and measurements
 
@@ -69,8 +73,10 @@ equivalent `ModuleSetup` path.
 
 - The generated sample has 62 paths and the frozen SHA-256.
 - The full selector observes exactly 8,795 non-`.lake` Lean files.
-- Both successful profiles completed without a hard stop, RSS breach, pressure excursion, or swap
-  growth.
+- Both successful profiles completed without a hard stop, RSS breach, observed pressure excursion,
+  or swap growth. Subsequent profiles sample `kern.memorystatus_vm_pressure_level` during the run
+  and stop above the normal level (`1`), in addition to recording the human-readable before/after
+  pressure estimate.
 - Setup-aware fresh oracle runs pass for a heavy import barrel and imported custom command syntax.
 - `lake build` succeeds for production and the self-contained pure-Lean experiment.
 - The stack structural checker and generated-next checker pass after state advancement.
@@ -78,7 +84,6 @@ equivalent `ModuleSetup` path.
 ## Remaining uncertainty
 
 This prompt defines the oracle but does not prove a selective analyzer exact; prompt 04 must perform
-that differential work. The profiler samples pressure before and after and enforces RSS/swap during
-the run; a portable live pressure-state API remains a possible lower-layer gap. Generating Lake
-setup once per file is exact but not yet an optimized discovery path. No production module or
-execution strategy was selected here.
+that differential work. Live pressure enforcement currently uses the macOS memorystatus API; a
+portable equivalent remains a lower-layer gap. Generating Lake setup once per file is exact but not
+yet an optimized discovery path. No production module or execution strategy was selected here.

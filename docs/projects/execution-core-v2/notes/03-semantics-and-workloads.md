@@ -64,8 +64,10 @@ Every selected file produces exactly one file result, including syntax or elabor
 
 Project build state and formatter-result-cache state are separate axes:
 
-- **Ordinary built:** current normal `.olean`/`.ilean` artifacts exist, but no lean-fmt compiler
-  artifact is assumed. Reusing only those artifacts is the difficult transparent cold path.
+- **Ordinary built:** every module required by each selected source's exact Lake setup/header has a
+  current normal `.olean`/`.ilean`, but no lean-fmt compiler artifact is assumed. A selected source
+  need not have been compiled itself. Reusing only dependency artifacts is the difficult transparent
+  cold path; any prerequisite target build is timed separately.
 - **Formatter-integrated built:** the exact project compilation included the trusted lean-fmt plugin
   and produced its sidecar. Time spent creating that build is reported separately.
 - **Formatter-cache cold:** no valid lean-fmt semantic result entry exists for the selected identity.
@@ -88,6 +90,13 @@ and cache-warm. Any other combination must name both axes rather than borrowing 
 
 `experiments/select-mathlib-workload.sh` rejects a different revision, toolchain, count, or sample
 digest. `experiments/workloads/mathlib-v4.32.0-sample.txt` is the committed sample manifest.
+
+The initial checkout did not satisfy the ordinary-built premise for all 8,795 sources: 520 paths
+had no corresponding root-package `.olean`, including the `Archive`, `Counterexamples`, and
+`MathlibTest` libraries. A source's own missing output is not automatically a problem, but missing
+artifacts for modules it imports are. Before a full ordinary-built timing, the harness must
+materialize the relevant Lake library targets under the resource envelope and preflight every
+selected file's setup/import closure. Build time remains outside the formatter timing.
 
 ## Resource and evidence contract
 

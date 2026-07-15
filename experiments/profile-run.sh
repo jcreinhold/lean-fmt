@@ -19,6 +19,7 @@ sources=
 output_dir=
 rss_limit_kib=${LEAN_FMT_PROFILE_RSS_LIMIT_KIB:-8388608}
 swap_limit_kib=${LEAN_FMT_PROFILE_SWAP_LIMIT_KIB:-262144}
+pressure_limit=${LEAN_FMT_PROFILE_PRESSURE_LEVEL_MAX:-1}
 
 while (($#)); do
 	case "$1" in
@@ -84,11 +85,16 @@ swap_used_kib() {
     }'
 }
 
+pressure_level() {
+	sysctl -n kern.memorystatus_vm_pressure_level
+}
+
 command_text=$(printf '%q ' "$@")
 command_text=${command_text% }
 source_count=$(wc -l <"$sources" | tr -d ' ')
 source_digest=$(shasum -a 256 "$sources" | awk '{print $1}')
 swap_before_kib=$(swap_used_kib)
+pressure_level_before=$(pressure_level)
 pressure_before=$(memory_pressure -Q 2>/dev/null | tail -1 || true)
 {
 	printf 'schema=lean-fmt.profile.v1\n'
@@ -106,7 +112,9 @@ pressure_before=$(memory_pressure -Q 2>/dev/null | tail -1 || true)
 	printf 'command=%s\n' "$command_text"
 	printf 'rss_limit_kib=%s\n' "$rss_limit_kib"
 	printf 'swap_limit_kib=%s\n' "$swap_limit_kib"
+	printf 'pressure_level_limit=%s\n' "$pressure_limit"
 	printf 'swap_before_kib=%s\n' "$swap_before_kib"
+	printf 'pressure_level_before=%s\n' "$pressure_level_before"
 	printf 'pressure_before=%s\n' "$pressure_before"
 } >"$meta"
 
@@ -116,6 +124,7 @@ LEAN_NUM_THREADS=1 perl -MPOSIX -e \
 	"$@" >"$stdout_file" 2>"$stderr_file" &
 pid=$!
 peak_rss_kib=0
+peak_pressure_level=$pressure_level_before
 hard_stop=none
 while kill -0 "$pid" 2>/dev/null; do
 	rss_kib=$(ps -axo pgid=,rss= | awk -v group="$pid" \
@@ -125,10 +134,16 @@ while kill -0 "$pid" 2>/dev/null; do
 	fi
 	current_swap_kib=$(swap_used_kib)
 	swap_delta_kib=$((current_swap_kib - swap_before_kib))
+	current_pressure_level=$(pressure_level)
+	if ((current_pressure_level > peak_pressure_level)); then
+		peak_pressure_level=$current_pressure_level
+	fi
 	if ((rss_kib >= rss_limit_kib)); then
 		hard_stop=rss
 	elif ((swap_delta_kib > swap_limit_kib)); then
 		hard_stop=swap
+	elif ((current_pressure_level > pressure_limit)); then
+		hard_stop=pressure
 	fi
 	if [[ "$hard_stop" != none ]]; then
 		kill -TERM -- "-$pid" 2>/dev/null || true
@@ -144,6 +159,7 @@ finished_ns=$(python3 -c 'import time; print(time.monotonic_ns())')
 wall_ms=$(((finished_ns - started_ns) / 1000000))
 swap_after_kib=$(swap_used_kib)
 swap_delta_kib=$((swap_after_kib - swap_before_kib))
+pressure_level_after=$(pressure_level)
 pressure_after=$(memory_pressure -Q 2>/dev/null | tail -1 || true)
 output_digest=$(shasum -a 256 "$stdout_file" | awk '{print $1}')
 grep -E '^phase\.[A-Za-z0-9_.-]+_ms=[0-9]+$' "$stdout_file" >"$phases_file" || true
@@ -154,6 +170,8 @@ grep -E '^phase\.[A-Za-z0-9_.-]+_ms=[0-9]+$' "$stdout_file" >"$phases_file" || t
 	printf 'peak_rss_kib=%s\n' "$peak_rss_kib"
 	printf 'swap_after_kib=%s\n' "$swap_after_kib"
 	printf 'swap_delta_kib=%s\n' "$swap_delta_kib"
+	printf 'peak_pressure_level=%s\n' "$peak_pressure_level"
+	printf 'pressure_level_after=%s\n' "$pressure_level_after"
 	printf 'pressure_after=%s\n' "$pressure_after"
 	printf 'output_digest=%s\n' "$output_digest"
 	printf 'stdout=%s\n' "$stdout_file"
