@@ -114,6 +114,12 @@ pub struct CommonArgs {
     #[arg(short = 'j', long, value_name = "N")]
     pub jobs: Option<usize>,
 
+    /// Cap the total memory (in whole GiB) the auto worker count is derived from, overriding
+    /// detected available RAM. A convenient front-end to `LEAN_FMT_MEM_BUDGET_KIB`; an explicit
+    /// `-j` still wins. Lower this if a run pressures memory; raise it to permit more workers.
+    #[arg(long, value_name = "GIB")]
+    pub max_memory: Option<u64>,
+
     /// Print one `[done/total] path` line per file as it completes, above the progress bar.
     /// Off by default: a single updating progress bar replaces the old per-file spam.
     #[arg(short, long)]
@@ -567,7 +573,12 @@ fn execute(mode_label: &'static str, mode: RunMode, args: &CommonArgs, level: Va
     let installed = resolve_installed_worker(&worker_root).map_err(|error| Error::Worker(error.to_string()))?;
     let cache = cache_for(args, cache_root_for(&worker_root));
     let search_path = project_search_path(&worker_root);
-    let budget = LeanResourceBudget::from_env();
+    // The memory budget that bounds the fleet: detected available RAM (minus a reserve), or a
+    // `--max-memory <GiB>` cap when the user wants to pin it explicitly.
+    let mut budget = LeanResourceBudget::from_env();
+    if let Some(gib) = args.max_memory {
+        budget.mem_budget_kib = gib.saturating_mul(GIB_IN_KIB).max(1);
+    }
 
     // Behind `--pinned`: import the whole-project superset once and pin it, so every file parses
     // against one environment instead of re-importing its closure per file. The `superset_id` is
@@ -617,6 +628,14 @@ fn execute(mode_label: &'static str, mode: RunMode, args: &CommonArgs, level: Va
             eprintln!("lean-fmt: -j {n} exceeds the ~{cap}-worker memory budget; expect memory pressure");
         }
     }
+    // Report the derived plan so the worker count and its memory basis are visible and tunable.
+    let mode_word = if pinned_effective { "pinned" } else { "per-file" };
+    let plural = if jobs == 1 { "worker" } else { "workers" };
+    eprintln!(
+        "lean-fmt: {jobs} {plural} ({mode_word}, ~{} GiB each within a {} GiB budget); override with -j / --max-memory",
+        approx_gib(budget.per_worker_est_for_mode(pinned_effective)),
+        approx_gib(budget.mem_budget_kib),
+    );
 
     // One updating progress bar on stderr; stdout stays report-only. `--verbose` restores the old
     // per-file lines above the bar. On a non-TTY (pipe/CI) indicatif draws no bar automatically.
@@ -686,6 +705,23 @@ fn execute(mode_label: &'static str, mode: RunMode, args: &CommonArgs, level: Va
         eprint!("{}", render_statistics(&run));
     }
     Ok(run.exit_code())
+}
+
+/// KiB in one GiB, for the `--max-memory <GiB>` conversion and the plan summary.
+const GIB_IN_KIB: u64 = 1024 * 1024;
+
+/// Format a KiB quantity as a one-decimal GiB string (e.g. `12.0`). Uses checked integer math so
+/// it stays within the workspace's `arithmetic_side_effects` restriction lint.
+fn approx_gib(kib: u64) -> String {
+    let tenths = kib
+        .checked_mul(10)
+        .and_then(|scaled| scaled.checked_div(GIB_IN_KIB))
+        .unwrap_or(0);
+    format!(
+        "{}.{}",
+        tenths.checked_div(10).unwrap_or(0),
+        tenths.checked_rem(10).unwrap_or(0)
+    )
 }
 
 /// Resolve the requested worker count: the explicit `-j`/`--jobs` flag wins; otherwise a positive
@@ -1000,6 +1036,7 @@ mod tests {
             statistics: false,
             pinned: false,
             jobs: None,
+            max_memory: None,
             verbose: false,
         }
     }

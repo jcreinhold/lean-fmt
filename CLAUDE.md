@@ -48,9 +48,12 @@ environment. Lake exposes no `-j`/`--jobs` flag, so `LEAN_NUM_THREADS` (default 
 uncapped `lean` fork-storm at install; runtime caps default to the `lean-host-mcp` reference (2/5/16 GiB, 250 ms, ~64
 imports) and are overridable via `LEAN_FMT_*` env vars. A `check`/`fix`/`diff` run fans out across a fleet of `W`
 independent worker children ([`run_project_fleet`](crates/lean-fmt-project/src/fleet.rs)); because peak RSS ≈ `W ×
-per_worker`, `W = clamp(available_parallelism, 1, ⌊mem_budget/per_worker_for_mode⌋)` is derived from a memory budget
-(`LEAN_FMT_MEM_BUDGET_KIB`, default 8/10 of detected RAM) rather than raw core count, and is overridable via
-`-j/--jobs`/`LEAN_FMT_JOBS`. See [`docs/performance.md`](docs/performance.md). Caps are set via `Command::env` / typed
+per_worker_est`, `W = clamp(available_parallelism, 1, ⌊mem_budget/per_worker_est_for_mode⌋)` is derived from a memory
+budget rather than raw core count. Two knobs keep it from OOMing: `per_worker_est` is the *realistic peak* (~5 GiB
+post-job threshold, `LEAN_FMT_WORKER_EST_KIB`), **not** the 2 GiB soft floor; and `mem_budget` is detected *available*
+RAM minus a 2 GiB reserve (`MemAvailable`/`vm_stat`), not a fraction of total. Overridable via `-j/--jobs`/`LEAN_FMT_JOBS`
+and `--max-memory`/`LEAN_FMT_MEM_BUDGET_KIB`; every run prints the derived plan. See
+[`docs/performance.md`](docs/performance.md). Caps are set via `Command::env` / typed
 `lean-rs` builders — never `std::env::set_var` (unsafe under `unsafe-code = "deny"`).
 
 ## Discipline

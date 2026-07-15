@@ -77,14 +77,24 @@ resolved once from the environment with conservative defaults and threaded to ea
    environment survives between files while the hard-kill guard still bounds a runaway.
 
 3. **The worker count itself.** These per-child ceilings bound *one* worker; the fleet runs `W` of them, so peak RSS is
-   roughly `W × per_worker_ceiling`. `W` is therefore **derived from a memory budget**, never hardcoded:
-   `W = clamp(available_parallelism, 1, ⌊mem_budget_kib / per_worker_for_mode⌋)`, where `per_worker_for_mode` is the soft
-   ceiling per-file (~2 GiB) or the pinned ceiling (~16 GiB) under `--pinned`. The same formula thus yields "many workers,
-   per-file" or "few workers, pinned" automatically — pinned self-limits to 1–2 workers because each holds the whole
-   superset. `-j/--jobs` (or `LEAN_FMT_JOBS`) overrides the auto count, floored at 1 and honored even past the memory cap
-   with a one-line warning. `mem_budget_kib` defaults to a conservative fraction (8/10) of detected system RAM
-   (`/proc/meminfo` on Linux, `sysctl hw.memsize` on macOS), falling back to a fixed **8 GiB** when detection is
-   unavailable; `LEAN_FMT_MEM_BUDGET_KIB` overrides it.
+   roughly `W × per_worker_est`. `W` is therefore **derived from a memory budget**, never hardcoded:
+   `W = clamp(available_parallelism, 1, ⌊mem_budget_kib / per_worker_est_for_mode⌋)`. Two subtleties are load-bearing for
+   *not* OOMing:
+
+   - **`per_worker_est` is the realistic peak, not the soft floor.** The soft ceiling (~2 GiB) only triggers a
+     *between-jobs* recycle; a worker mid-import routinely exceeds it and is retired at the *post-job* threshold, so
+     sizing `W` against 2 GiB overcommits by 2–3× and OOMs. The estimate defaults to the **post-job threshold (~5 GiB)**
+     per-file, or the pinned ceiling (~16 GiB) under `--pinned` (a pinned worker holds the whole resident superset, so it
+     self-limits to 1–2 workers). Override with `LEAN_FMT_WORKER_EST_KIB` to match what a given project actually holds.
+   - **`mem_budget_kib` is detected *available* memory, not total.** Total RAM ignores current load; on a machine already
+     running a browser/editor, claiming a fraction of *total* still overcommits. So the budget defaults to the kernel's
+     available-memory estimate (`MemAvailable` in `/proc/meminfo` on Linux; free + inactive pages via `vm_stat` on macOS)
+     **minus a 2 GiB reserve** for the OS and parent. It falls back to a conservative **60% of total** when available
+     detection fails, then a fixed **8 GiB** floor when even total is unreadable.
+
+   `-j/--jobs` (or `LEAN_FMT_JOBS`) overrides the auto count, floored at 1 and honored even past the memory cap with a
+   one-line warning. `--max-memory <GiB>` (or `LEAN_FMT_MEM_BUDGET_KIB`) caps the budget explicitly. Every run prints the
+   plan it derived — `N workers (per-file, ~5.0 GiB each within a 9.8 GiB budget)` — so the choice is visible and tunable.
 
 Defaults mirror the `lean-host-mcp` reference (soft **2 GiB** / post-job **5 GiB** / hard-kill **16 GiB**, **250 ms**
 sampling, recycle after **~64** imports). Every knob is overridable:
@@ -93,7 +103,8 @@ sampling, recycle after **~64** imports). Every knob is overridable:
 | --- | --- | --- |
 | `LEAN_NUM_THREADS` | build + runtime-child threads | `1` |
 | `LEAN_FMT_JOBS` | parallel worker children (fleet size `W`) | auto (memory-capped) |
-| `LEAN_FMT_MEM_BUDGET_KIB` | total memory budget `W` is derived from | 8/10 of detected RAM, else 8 GiB |
+| `LEAN_FMT_MEM_BUDGET_KIB` | total memory budget `W` is derived from | available RAM − 2 GiB, else 60% of total, else 8 GiB |
+| `LEAN_FMT_WORKER_EST_KIB` | per-worker realistic-peak estimate `W` divides the budget by | 5 GiB (post-job threshold) |
 | `LEAN_FMT_RSS_SOFT_KIB` | per-worker + total soft RSS ceiling | 2 GiB |
 | `LEAN_FMT_RSS_POST_JOB_KIB` | post-job restart threshold | 5 GiB |
 | `LEAN_FMT_RSS_HARD_KIB` | hard-kill RSS ceiling | 16 GiB |
@@ -186,8 +197,8 @@ single [`indicatif`](https://docs.rs/indicatif) bar on stderr (done/total, throu
 on a non-TTY so piped/CI output stays clean; `--verbose` restores the old per-file lines above the bar,
 and stdout carries only the report (a `--format json` run stays one clean object).
 
-The fleet and `--pinned` are orthogonal. Per-file is the default and parallelizes wide (many ~2 GiB
-workers). Pinned holds the whole superset per worker, so the memory cap self-limits it to 1–2 workers;
+The fleet and `--pinned` are orthogonal. Per-file is the default and parallelizes wide (each worker
+budgeted at a ~5 GiB realistic peak). Pinned holds the whole superset per worker, so the memory cap self-limits it to 1–2 workers;
 the CLI makes the pin decision once with a probe worker (so every worker agrees on the `superset_id`
 that keys the cache), and when `W == 1` reuses that probe worker as the executor so the superset is
 imported exactly once. A fleet worker that cannot reproduce the agreed pin is treated as a startup
