@@ -1,13 +1,10 @@
 # Workspace root for lean-fmt: a Ruff-style formatter/linter for Lean 4.
 #
-# Ownership split (see docs/architecture in the prompt stack's proof-notes):
-#   - Rust owns CLI UX, project discovery, caching, patching, reporting, and packaging.
-#   - Lean owns parsing/semantics through the real frontend, exposed as a downstream
-#     `lean-rs-worker` capability loaded by a Lean-linked worker child.
-# The parent/CLI crates in this workspace MUST stay free of `libleanshared`; only the
-# worker-child path (added in a later prompt) links Lean.
+# The application binary owns product policy while remaining Lean-free. The worker
+# child is the sole Lean-linking artifact. There is deliberately no CLI library,
+# facade crate, or public Rust API between them.
 [workspace]
-members = ["crates/*"]
+members = ["crates/lean-fmt", "crates/lean-fmt-worker-child"]
 resolver = "3"
 
 [workspace.package]
@@ -22,36 +19,23 @@ rust-version = "1.91"
 version = "0.1.0"
 
 [workspace.dependencies]
-# External dependencies (names/versions confirmed in prompt 02 audit).
 clap = { version = "4", features = ["derive"] }
+dirs = "6"
+fs4 = "1.1"
 indicatif = "0.17"
-insta = "1"
+lean-rs-worker-child = "0.3"
+lean-rs-worker-parent = "0.3"
+lean-rs-worker-protocol = "0.3"
+lean-toolchain = "0.3"
 proptest = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+sha2 = "0.11"
 similar = "2"
 tempfile = "3"
 thiserror = "2"
 toml = "0.8"
 walkdir = "2"
-
-# Lean runtime packaging (names/versions confirmed in prompt 02 audit; crates.io).
-dirs = "6"
-fs4 = "1.1"
-lean-rs-worker-child = "0.3"
-lean-rs-worker-parent = "0.3"
-lean-rs-worker-protocol = "0.3"
-lean-toolchain = "0.3"
-sha2 = "0.11"
-
-# Internal crates.
-lean-fmt-cli = { path = "crates/lean-fmt-cli" }
-lean-fmt-diagnostics = { path = "crates/lean-fmt-diagnostics" }
-lean-fmt-edit = { path = "crates/lean-fmt-edit" }
-lean-fmt-project = { path = "crates/lean-fmt-project" }
-lean-fmt-runtime = { path = "crates/lean-fmt-runtime" }
-lean-fmt-worker = { path = "crates/lean-fmt-worker" }
-lean-fmt-worker-child = { path = "crates/lean-fmt-worker-child" }
 
 # Strict linting, mirroring the lean-rs / lean-dup workspace lint set (correctness,
 # performance, pedantic, nursery, and a curated restriction set). Test modules opt out
@@ -159,13 +143,9 @@ map_flatten = "warn"        # Use flat_map instead of map().flatten()
 map_unwrap_or = "warn"      # Use map_or instead of map().unwrap_or()
 needless_collect = "warn"   # Avoid unnecessary collect() calls
 
-# TEMPORARY: consume the local lean-rs 0.3.1 checkout for the memory/thread-cap knobs
-# (`CargoLeanCapability::lean_num_threads`, worker `num_threads`/`lean_max_memory_kib`) that are
-# not yet on crates.io. All eight lean-rs crates in the graph are patched together so the worker
-# protocol/runtime types resolve to a single consistent source (patching a subset would mix
-# crates.io 0.3.0 with local 0.3.1 and fail to unify across the worker boundary).
-# REMOVE once lean-rs 0.3.1 is published; the `"0.3"` requirements then resolve to it directly.
-# (This path is absent on CI; publishing + dropping this block is required before merge.)
+# Use the local lean-rs checkout while the execution core is rebuilt. This does
+# not link Lean into the application; only the child package consumes the
+# Lean-linking dependency.
 [patch.crates-io]
 lean-rs = { path = "../lean-rs/crates/lean-rs" }
 lean-rs-abi = { path = "../lean-rs/crates/lean-rs-abi" }

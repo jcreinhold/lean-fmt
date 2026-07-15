@@ -3,3 +3,4 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 cargo test --workspace
+scripts/check-boundary.sh

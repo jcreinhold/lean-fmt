@@ -102,9 +102,9 @@ checksum = "9330f8b2ff13f34540b44e946ef35111825727b38d33286ef986142615121801"
 
 [[package]]
 name = "clap"
-version = "4.6.1"
+version = "4.6.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1ddb117e43bbf7dacf0a4190fef4d345b9bad68dfc649cb349e7d17d28428e51"
+checksum = "dd059f9da4f5c36b3787f65d38ccaab1cc315f07b01f89abc8359ee6a8205011"
 dependencies = [
  "clap_builder",
  "clap_derive",
@@ -112,9 +112,9 @@ dependencies = [
 
 [[package]]
 name = "clap_builder"
-version = "4.6.0"
+version = "4.6.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "714a53001bf66416adb0e2ef5ac857140e7dc3a0c48fb28b2f10762fc4b5069f"
+checksum = "f09628afdcc538b57f3c6341e9c8e9970f18e4a481690a64974d7023bd33548b"
 dependencies = [
  "anstream",
  "anstyle",
@@ -391,51 +391,21 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bbd2bcb4c963f2ddae06a2efc7e9f3591312473c50c6685e1f298068316e66fe"
 
 [[package]]
-name = "lean-fmt-cli"
+name = "lean-fmt"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "dirs",
+ "fs4",
  "indicatif",
- "lean-fmt-diagnostics",
- "lean-fmt-project",
- "lean-fmt-runtime",
- "lean-fmt-worker",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror",
-]
-
-[[package]]
-name = "lean-fmt-diagnostics"
-version = "0.1.0"
-dependencies = [
- "lean-fmt-edit",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "lean-fmt-edit"
-version = "0.1.0"
-dependencies = [
+ "lean-rs-worker-parent",
+ "lean-rs-worker-protocol",
+ "lean-toolchain",
  "proptest",
  "serde",
  "serde_json",
- "similar",
- "thiserror",
-]
-
-[[package]]
-name = "lean-fmt-project"
-version = "0.1.0"
-dependencies = [
- "lean-fmt-diagnostics",
- "lean-fmt-edit",
- "lean-fmt-worker",
- "serde",
- "serde_json",
  "sha2",
+ "similar",
  "tempfile",
  "thiserror",
  "toml 0.8.23",
@@ -443,51 +413,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "lean-fmt-runtime"
-version = "0.1.0"
-dependencies = [
- "fs4",
- "lean-rs-worker-protocol",
- "lean-toolchain",
- "serde",
- "serde_json",
- "sha2",
- "tempfile",
- "thiserror",
- "walkdir",
-]
-
-[[package]]
-name = "lean-fmt-worker"
-version = "0.1.0"
-dependencies = [
- "dirs",
- "lean-fmt-edit",
- "lean-fmt-runtime",
- "lean-rs-worker-parent",
- "lean-toolchain",
- "serde",
- "serde_json",
- "sha2",
- "tempfile",
- "thiserror",
-]
-
-[[package]]
 name = "lean-fmt-worker-child"
 version = "0.1.0"
 dependencies = [
- "lean-fmt-cli",
- "lean-fmt-diagnostics",
- "lean-fmt-edit",
- "lean-fmt-project",
- "lean-fmt-runtime",
- "lean-fmt-worker",
  "lean-rs-worker-child",
  "lean-toolchain",
- "serde_json",
- "tempfile",
- "walkdir",
 ]
 
 [[package]]

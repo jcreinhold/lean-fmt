@@ -1,0 +1,40 @@
+[package]
+authors.workspace = true
+categories.workspace = true
+description = "Lean-free application binary for the lean-fmt Lean 4 formatter and linter."
+edition.workspace = true
+keywords.workspace = true
+license.workspace = true
+name = "lean-fmt"
+readme = "README.md"
+repository.workspace = true
+rust-version.workspace = true
+version.workspace = true
+include = ["src/**", "lean/**", "README.md"]
+
+[[bin]]
+name = "lean-fmt"
+path = "src/main.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+clap = { workspace = true }
+dirs = { workspace = true }
+fs4 = { workspace = true }
+indicatif = { workspace = true }
+lean-rs-worker-parent = { workspace = true }
+lean-rs-worker-protocol = { workspace = true }
+lean-toolchain = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+similar = { workspace = true }
+thiserror = { workspace = true }
+toml = { workspace = true }
+walkdir = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }
+tempfile = { workspace = true }

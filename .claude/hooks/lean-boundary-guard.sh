@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Boundary guard (CLAUDE.md): lean-fmt links libleanshared in exactly one crate,
+# Boundary guard (AGENTS.md): lean-fmt links libleanshared in exactly one crate,
 # lean-fmt-worker-child (its lone lean-rs-worker-child dependency), and denies unsafe
 # workspace-wide with no opt-out crate. This blocks an edit that would breach either
 # boundary, surfacing the violation in the edit loop rather than at the CI link/lint step.
@@ -20,7 +20,7 @@ case "$f" in
 	# (it holds no raw FFI); kept as defense-in-depth.
 	if printf '%s' "$body" | grep -Eq 'allow\(\s*unsafe_code\s*\)' ||
 		{ printf '%s' "$body" | grep -Eq 'extern[[:space:]]+"C"' && printf '%s' "$body" | grep -q 'lean_'; }; then
-		echo "lean-fmt boundary (CLAUDE.md): unsafe-code is denied workspace-wide with no opt-out crate, and lean-fmt declares no raw Lean FFI. Do not add allow(unsafe_code) or raw lean_* externs; reach Lean only through the lean-fmt-worker-child capability boundary." >&2
+		echo "lean-fmt boundary (AGENTS.md): unsafe-code is denied workspace-wide with no opt-out crate, and lean-fmt declares no raw Lean FFI. Do not add allow(unsafe_code) or raw lean_* externs; reach Lean only through the lean-fmt-worker-child capability boundary." >&2
 		exit 2
 	fi
 	exit 0
@@ -38,7 +38,7 @@ case "$f" in
 	esac
 	if printf '%s' "$body" | grep -Eq '(^|[^-])lean-rs-worker-child' ||
 		printf '%s' "$body" | grep -q 'libleanshared'; then
-		echo "lean-fmt boundary (CLAUDE.md): only crates/lean-fmt-worker-child may link libleanshared (its lone lean-rs-worker-child dependency). The CLI/parent crates must stay Lean-free and spawn the child as a subprocess. Route the capability through lean-fmt-worker instead." >&2
+		echo "lean-fmt boundary (AGENTS.md): only crates/lean-fmt-worker-child may link libleanshared. The lean-fmt application must stay Lean-free and spawn the child as a subprocess." >&2
 		exit 2
 	fi
 	exit 0

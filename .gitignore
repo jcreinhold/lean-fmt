@@ -3,8 +3,8 @@
 **/*.rs.bk
 
 # Lean / Lake
-/lean/.lake
-/lean/build
+**/.lake/
+**/build/
 **/*.olean
 **/*.ilean
 **/*.trace
