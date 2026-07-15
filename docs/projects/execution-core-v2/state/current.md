@@ -48,3 +48,5 @@ These facts constrain prompts 04 and 05; they do not predetermine their final in
 
 A claim becomes verified only after its prompt checks pass and meaningful command output is recorded.
 State is coordination metadata, not evidence. Missing, stale, or unreproduced checks reopen a claim.
+Optimization uses the frozen sample and targeted stress files; complete mathlib runs are reserved for
+plausible release candidates and are reused by digest during the final audit.

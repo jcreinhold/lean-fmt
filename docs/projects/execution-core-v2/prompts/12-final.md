@@ -30,6 +30,8 @@ bounds are breached, or performance wording exceeds measurements.
 
 - Run the deep-module audit and inspect all production callers.
 - `lake build`
-- Full differential, cache, modes, service, and mathlib suites.
+- Differential, cache, modes, and service suites at their specified scope.
+- Validate the digests and coverage of ECV2-SCALE's completed full-mathlib acceptance evidence. Rerun
+  a full path only if the candidate binary, workload, toolchain, or relevant configuration changed.
 - Generic stack checker and generated-state check.
 - `git diff --check`

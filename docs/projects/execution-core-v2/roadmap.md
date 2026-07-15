@@ -35,6 +35,20 @@ hit should avoid frontend construction entirely.
 Reports and performance evidence must name both build state and cache state. Prerequisite project
 compilation is timed separately and is never hidden inside a “cold check” claim.
 
+## Evidence policy
+
+Development does not repeatedly execute the full mathlib workload. Correctness uses focused fixtures
+and fresh-frontend differential cases; optimization uses the frozen representative sample plus named
+worst-case files; resource work uses targeted retention and failure tests. A run stops as soon as its
+measurements decisively reject the hypothesis being tested. Linear projections are planning evidence,
+not full-workload measurements, and must name their sampling limitations.
+
+A complete 8,795-file run is a late acceptance check for a release candidate whose sampled evidence
+already makes the relevant target plausible. Its purpose is to find long-tail failures, omissions, and
+late memory growth that samples cannot exclude. It is not repeated merely to establish a known-slow
+baseline, and it is not rerun after documentation-only changes. Raw evidence records the exact binary
+digest so an unchanged candidate's completed acceptance run can be reused by the final audit.
+
 ## Governing semantics
 
 Each source is interpreted under its exact ordered header, search-path precedence, toolchain and
@@ -83,8 +97,9 @@ Callers never select worker count, pinning, import reuse, or artifact strategy.
   honestly with its best achieved measurement and any upstream blocker.
 - Formatter-integrated cache-cold mathlib completes under ten minutes; cache-warm completes under
   30 seconds without constructing a frontend environment.
-- Every mathlib run covers 8,795 files and stays within aggregate RSS ≤8 GiB, normal macOS pressure,
-  and ≤256 MiB new swap.
+- Every run described as full-mathlib acceptance covers 8,795 files and stays within aggregate RSS
+  ≤8 GiB, normal macOS pressure, and ≤256 MiB new swap. Sampled and deliberately stopped diagnostic
+  runs are labeled as such and never presented as acceptance.
 - Check, format, and diff never write. Fix writes only conflict-free output validated under the exact
   semantic identity that produced its edits.
 - Compiler artifacts and result-cache entries are atomic, soundly identified, and ordinary misses
