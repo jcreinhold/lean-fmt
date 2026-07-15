@@ -6,7 +6,24 @@
 **/*.trace
 /target/
 **/.lean-fmt-cache/
+
+# Local editor state
+/.idea/
+/.vscode/
+
+# Crash dumps and compiler profiling output
+core
+core.*
+perf.data
+perf.data.*
+*.profraw
+*.profdata
+
+# Temporary and backup files
 *.log
 *.tmp
 *.swp
+*.swo
+*.bak
+*~
 .DS_Store
