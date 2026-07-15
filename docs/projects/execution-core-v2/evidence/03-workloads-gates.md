@@ -10,6 +10,8 @@ Run on 2026-07-15 from `/Users/jcreinhold/Code/lean-fmt` unless noted.
 | Regenerate and compare the 62-file manifest | pass; byte-identical |
 | Generate the full manifest | pass; 8,795 paths |
 | Profiler with `LEAN_FMT_PROFILE_RSS_LIMIT_KIB=1` | exit 137; `hard_stop=rss` |
+| Setup-aware oracle, `Mathlib/Tactic.lean` | pass; 7,064 ms, 1,989,008 KiB peak |
+| Setup-aware oracle, custom-syntax `Mathlib/Data/Finset/Attr.lean` | pass; 1,650 ms, 1,026,400 KiB peak |
 | `check_stack.py --structural` | pass; 12 prompts, 0 warnings |
 | `write_next.py --check` | pass; `04-built-cold` selected |
 | `check_stack.py --verify` | pass; no verified proof prompts |

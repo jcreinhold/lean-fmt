@@ -2,7 +2,7 @@
 set -euo pipefail
 
 if [[ $# -ne 3 ]]; then
-	printf 'usage: %s <full|import> MATHLIB_ROOT SOURCE_MANIFEST\n' "$0" >&2
+	printf 'usage: %s <oracle|full|import> PROJECT_ROOT SOURCE_MANIFEST\n' "$0" >&2
 	exit 2
 fi
 
@@ -18,6 +18,23 @@ done <"$manifest"
 
 cd "$experiment_root"
 case "$mode" in
+oracle)
+	result=0
+	for relative_path in "${files[@]}"; do
+		relative_path=${relative_path#"$mathlib_root/"}
+		setup_file=$(mktemp)
+		printf 'source=%s\n' "$mathlib_root/$relative_path"
+		if (cd "$mathlib_root" && lake setup-file "$relative_path" >"$setup_file" &&
+			lake env lean --setup="$setup_file" "$relative_path"); then
+			printf 'oracle_status=ok\n'
+		else
+			printf 'oracle_status=error\n'
+			result=1
+		fi
+		rm -f "$setup_file"
+	done
+	exit "$result"
+	;;
 full)
 	exec lake exe pure-lean-core "$mathlib_root" "${files[@]}"
 	;;

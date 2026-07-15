@@ -10,9 +10,11 @@ For a source snapshot `S`, the exact context consists of all of the following:
 
 1. the exact Lean toolchain and frontend options;
 2. the ordered search path, including precedence between roots;
-3. the source's ordered header syntax, including `prelude`, import modifiers, and imports;
-4. the imported modules and extensions selected by that header; and
-5. syntax, macro, command, scoped-environment, and other frontend effects established by earlier
+3. Lake's exact per-file `ModuleSetup`, including module/package identity, module-system mode,
+   options, plugins, dynamic libraries, import overrides, and ordered import artifacts;
+4. the source's ordered header syntax, including `prelude`, import modifiers, and imports;
+5. the imported modules and extensions selected by the setup and header; and
+6. syntax, macro, command, scoped-environment, and other frontend effects established by earlier
    commands in `S`, in source order.
 
 Changing any component creates a different semantic identity. Import sets are not unordered sets.
@@ -22,8 +24,9 @@ retroactively for preceding commands.
 
 The differential oracle is a fresh process running Lean's full frontend over the complete source
 under this exact context. The process starts with only the target toolchain and target workspace
-search path. It does not inherit formatter-project search roots. A candidate fast path is exact only
-when its projected result byte-compares with this oracle on ordinary and adversarial sources.
+search path, obtains current per-file setup from `lake setup-file`, and passes it through Lean's
+`--setup` input. It does not inherit formatter-project search roots. A candidate fast path is exact
+only when its projected result byte-compares with this oracle on ordinary and adversarial sources.
 
 ## Analysis and validation levels
 
