@@ -1,99 +1,110 @@
 ---
 kind: roadmap
-topic: "Ground-up lean-fmt execution core"
-main_results: [ECV2-FINAL]
+topic: "Native Lean lean-fmt execution core"
+main_results: [ECV2-CHECK, ECV2-SCALE, ECV2-FINAL]
 prereq_stacks: []
 blueprint_tracked: false
 ---
 
-# Execution Core v2 Roadmap
+# Native Lean Execution Core Roadmap
 
 ## Goal
 
-Rebuild lean-fmt around the smallest viable architecture: exactly two binary crates, no public Rust
-library API, and one process boundary. `crates/lean-fmt` owns command-line behavior, discovery,
-execution, caching, edits, and reports without linking Lean. `crates/lean-fmt-worker-child` is the
-only Lean-linked artifact and owns the real Lean frontend behavior. The implementation must make a
-full `lean-fmt check` over `~/Code/mathlib4` complete in a reasonable time while the complete
-process tree remains inside an 8 GiB aggregate memory envelope.
+Build `lean-fmt` from the `lake init` foundation as a native Lean application. Pure Lean is the
+presumption. Another language is admissible only for a named capability or measured end-to-end gain
+not currently available in Lean.
 
-## Design boundary
+The primary performance goal is a cache-cold `lean-fmt check` over an already ordinarily built
+mathlib checkout in under ten minutes. This is a goal, not permission to weaken exactness or memory
+safety: the stack records and retains every meaningful improvement even if a current Lean limitation
+prevents reaching it. Formatter-integrated builds should be faster still, and a valid result-cache
+hit should avoid frontend construction entirely.
 
-Both crates are binaries. Rust modules and types remain private unless the language requires
-visibility inside their binary crate. `RunEngine` is the private application-side owner of a run:
-it discovers inputs, opens one compatible Lean session at a time, sequences files, enforces memory,
-and collects results. `LeanRun` is the private process-boundary abstraction for one child lifetime:
-it owns protocol state, exact import-context identity, reuse, shutdown, and failure reporting.
+## Workload vocabulary
 
-Lean remains the oracle for parsing and semantic structure. Every file is evaluated against its
-own exact ordered header imports and options. Reuse is legal only when the child confirms a
-compatible ordered context; imports are never sorted, deduplicated, or replaced by a union grammar.
-The Rust side must not attempt to reproduce Lean's parser or semantic decisions.
+- **Ordinary built:** source and normal Lake `.olean`/`.ilean` artifacts are current; no lean-fmt
+  compiler artifact is assumed.
+- **Formatter-integrated built:** the exact compilation ran the lean-fmt plugin and produced trusted
+  sidecars.
+- **Formatter-cache cold:** no reusable lean-fmt result-cache entry exists. This says nothing by
+  itself about ordinary or formatter-integrated build artifacts.
+- **Formatter-cache warm:** every selected source has a valid semantic result entry.
+
+Reports and performance evidence must name both build state and cache state. Prerequisite project
+compilation is timed separately and is never hidden inside a “cold check” claim.
+
+## Governing semantics
+
+Each source is interpreted under its exact ordered header, search-path precedence, toolchain and
+options, and sequential file-local syntax effects. Fresh full frontend execution is the differential
+oracle. Full elaboration is an explicit validation level, not automatically the formatter workload.
+Union or accumulated grammar is not exact merely because it parses successfully.
+
+Rust does not own project discovery, caching, edits, or scheduling by default. Lean already provides
+Lake APIs, process supervision, allocator limits, compiler plugins, command/module linters, syntax,
+and validation. If portable OS RSS enforcement or toolchain bootstrap ultimately needs a non-Lean
+shim, it must remain smaller than the capability it supplies and must not become the application
+architecture.
+
+## Design direction
+
+Two measured semantic sources feed one private application operation:
+
+1. an ordinary-built exact path, optimized toward shared parser/module data without exposing
+   unrelated grammar; and
+2. compact results produced by a pure Lean compiler plugin while the exact frontend already owns the
+   environment.
+
+Both produce the same semantic result and cache identity. The CLI owns user intent and rendering;
+private deep modules own workspace discovery, source snapshots, artifact/cache validation, exact
+fallback, resource enforcement, deterministic collection, conflict checks, validation, and writes.
+Callers never select worker count, pinning, import reuse, or artifact strategy.
 
 ## Work order
 
-1. Reset the workspace to the two-binary skeleton and freeze invariants.
-2. Establish the Lean child as an executable behavioral oracle.
-3. Design the private `RunEngine`/`LeanRun` boundary twice and select the deeper design.
-4. Implement `lean-fmt check` end to end before adding other modes.
-5. Reuse one child and compatible exact ordered import contexts without changing semantics.
-6. Scale whole-repository execution under the 8 GiB aggregate envelope.
-7. Add a coarse trace-epoch cache whose invalidation is simple and honest.
-8. Add format, diff, and conservative fix behavior on the proven check core.
-9. Add the long-lived service only after command-line execution is stable.
-10. Run full acceptance, including mathlib performance and memory evidence.
-11. Audit the final system against design, correctness, and scope claims.
+1. Preserve the failed Rust attempt and replace production with the native Lean foundation.
+2. Freeze exact semantics and the four workload states.
+3. Optimize the ordinarily built cold path and identify the smallest upstream Lean facility if
+   exact shared import/parser state is unavailable.
+4. Build the compiler-plugin artifact path independently.
+5. Design the production modules twice from those measurements.
+6. Implement check, then semantic result caching, modes and conservative edits.
+7. Optimize and accept all mathlib workload states under the resource envelope.
+8. Add editor service only after batch acceptance, then audit from fresh evidence.
 
 ## Completion contract
 
-- The workspace has exactly the `lean-fmt` and `lean-fmt-worker-child` binary crates.
-- There is no public Rust library API and no crate exists only to forward another crate's concepts.
-- Only `lean-fmt-worker-child` links `libleanshared`; the parent communicates solely by a versioned
-  subprocess protocol.
-- Lean oracle fixtures fix the meaning of discovery inputs, ordered imports, parsing, semantic
-  projection, diagnostics, and edits before Rust orchestration is optimized.
-- `RunEngine` and `LeanRun` are private, concrete, and structurally enforce one owner for each child
-  and its protocol state.
-- A file's exact ordered import context and options determine semantic execution. Reuse never
-  changes that context and never introduces syntax from unrelated imports.
-- The complete child process tree stays below 8 GiB; exceeding the envelope terminates cleanly with
-  a useful diagnostic rather than relying on OS OOM behavior.
-- The first complete product path is `lean-fmt check`; format, diff, fix, cache, and service behavior
-  reuse that core instead of creating parallel implementations.
-- The cache uses a coarse trace epoch. A changed toolchain, capability, configuration, ordered
-  import trace, or output-affecting rule identity advances the epoch and invalidates the affected
-  stored results as a unit; no speculative fine-grained dependency graph is introduced.
-- Reports are deterministic and complete. Fixes remain conflict-checked, reversible, and validated
-  before any write.
+- The active implementation is a native Lean package/executable named `lean-fmt`, with library
+  modules under `LeanFmt`; no Rust workspace or legacy worker code remains.
+- Reports are exact, deterministic, path-sorted, and complete.
+- Ordinary-built cold mathlib performance is driven toward sub-ten-minute execution and reported
+  honestly with its best achieved measurement and any upstream blocker.
+- Formatter-integrated cache-cold mathlib completes under ten minutes; cache-warm completes under
+  30 seconds without constructing a frontend environment.
+- Every mathlib run covers 8,795 files and stays within aggregate RSS ≤8 GiB, normal macOS pressure,
+  and ≤256 MiB new swap.
+- Check, format, and diff never write. Fix writes only conflict-free output validated under the exact
+  semantic identity that produced its edits.
+- Compiler artifacts and result-cache entries are atomic, soundly identified, and ordinary misses
+  when absent, stale, corrupt, or untrusted.
+- Editor service reuses the same semantic primitive and does not create a second orchestrator.
 
-## Blueprint impact
+## Blueprint
 
-This is genuine repository maintenance with no mathematical declarations, source-facing claims,
-or blueprint dependency edges. Therefore this roadmap alone sets `blueprint_tracked: false`.
-Prompts must not add blueprint fields, proof targets, or placeholder mathematical sections.
+This is genuine repository maintenance with no mathematical declarations or source-facing theorem
+claims. Therefore this roadmap alone sets `blueprint_tracked: false`.
 
-## Design and performance references
+## References
 
-- `~/Code/papers/logic-and-computation/software-engineering/philosophy-of-software-design/02-the-nature-of-complexity.md`
-- `~/Code/papers/logic-and-computation/software-engineering/philosophy-of-software-design/04-modules-should-be-deep.md`
-- `~/Code/papers/logic-and-computation/software-engineering/philosophy-of-software-design/05-information-hiding-and-leakage.md`
-- `~/Code/papers/logic-and-computation/software-engineering/philosophy-of-software-design/07-different-layer-different-abstraction.md`
-- `~/Code/papers/logic-and-computation/software-engineering/philosophy-of-software-design/08-pull-complexity-downwards.md`
-- `~/Code/papers/logic-and-computation/software-engineering/philosophy-of-software-design/09-better-together-or-better-apart.md`
-- `~/Code/papers/logic-and-computation/software-engineering/philosophy-of-software-design/10-define-errors-out-of-existence.md`
-- `~/Code/papers/logic-and-computation/software-engineering/philosophy-of-software-design/11-design-it-twice.md`
-- `~/Code/papers/logic-and-computation/software-engineering/philosophy-of-software-design/16-modifying-existing-code.md`
-- `~/Code/papers/logic-and-computation/software-engineering/philosophy-of-software-design/20-designing-for-performance.md`
-- `~/.codex/plugins/cache/lean-rs-skills/lean-rs-skills/0.1.1/skills/deep-module-design/SKILL.md`
-- `~/.codex/plugins/cache/lean-rs-skills/lean-rs-skills/0.1.1/skills/optimizing-lean-performance/SKILL.md`
+- `notes/02-architecture-pause.md` and `experiments/pure-lean-core/RESULT.md`.
+- *A Philosophy of Software Design*: complexity, deep modules, information hiding, different-layer
+  abstraction, pulling complexity downward, combining/separating, defining errors away, designing
+  twice, comments-first interfaces, modifying existing code, and performance design.
+- The `deep-module-design` and `optimizing-lean-performance` skills.
 
-## Risks and stop rules
+## Stop rules
 
-- Do not optimize by changing the oracle result or broadening a file's import context.
-- Do not create a third crate, a public library facade, a trait with one production implementor, or
-  a pass-through abstraction.
-- Do not add command modes before the check path has end-to-end oracle and memory evidence.
-- Stop if the exact mathlib toolchain, ordered import behavior, or process-tree memory cannot be
-  reproduced; record the failure instead of substituting a different environment.
-- Stop if any change would link Lean into the application binary, bypass edit conflicts, weaken
-  validation, exceed 8 GiB, or make the child protocol state ambiguous.
+- Never trade exact context, selected files, validation, or the 8 GiB envelope for timing.
+- Never call formatter-integrated artifacts ordinary project build artifacts.
+- Do not restore the archived Rust decomposition by accretion.
+- Optimizations without meaningful end-to-end improvement are removed unless they simplify design.

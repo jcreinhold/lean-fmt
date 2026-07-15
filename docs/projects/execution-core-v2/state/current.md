@@ -1,34 +1,42 @@
 ---
 kind: state
-first_unresolved: 02-oracle
+first_unresolved: 03-workloads
 ---
 
 # Current state
 
-The clean two-binary foundation is verified. Execution continues with the exact semantic oracle and
-measurement contract.
+The failed implementation is archived and the active production tree is a fresh native Lean 4.32.0
+package created with `lake init`. The Rust-first and two-binary prompts have been replaced. Execution
+now begins by freezing workload semantics before ordinary-built and compiler-integrated paths proceed
+as independent measured prerequisites.
 
 | Prompt | Claim | Status | Depends on |
 | --- | --- | --- | --- |
 | 01-reset | ECV2-RESET | verified | — |
-| 02-oracle | ECV2-ORACLE | planned | ECV2-RESET |
-| 03-design | ECV2-DESIGN | planned | ECV2-ORACLE |
-| 04-check | ECV2-CHECK | planned | ECV2-DESIGN |
-| 05-reuse | ECV2-REUSE | planned | ECV2-CHECK |
-| 06-scale | ECV2-SCALE | planned | ECV2-REUSE |
-| 07-cache | ECV2-CACHE | planned | ECV2-SCALE |
-| 08-modes | ECV2-MODES | planned | ECV2-CACHE |
-| 09-serve | ECV2-SERVE | planned | ECV2-MODES |
-| 10-acceptance | ECV2-ACCEPTANCE | planned | ECV2-SERVE |
-| 11-final | ECV2-FINAL | planned | ECV2-ACCEPTANCE |
+| 02-native-reset | ECV2-NATIVE-RESET | verified | ECV2-RESET |
+| 03-workloads | ECV2-WORKLOADS | planned | ECV2-NATIVE-RESET |
+| 04-built-cold | ECV2-BUILT-COLD | planned | ECV2-WORKLOADS |
+| 05-compiler-artifacts | ECV2-COMPILER-ARTIFACTS | planned | ECV2-WORKLOADS |
+| 06-design | ECV2-DESIGN | planned | ECV2-BUILT-COLD, ECV2-COMPILER-ARTIFACTS |
+| 07-check | ECV2-CHECK | planned | ECV2-DESIGN |
+| 08-cache | ECV2-CACHE | planned | ECV2-CHECK |
+| 09-modes | ECV2-MODES | planned | ECV2-CACHE |
+| 10-scale | ECV2-SCALE | planned | ECV2-MODES |
+| 11-serve | ECV2-SERVE | planned | ECV2-SCALE |
+| 12-final | ECV2-FINAL | planned | ECV2-SERVE |
 
-## Blockers
+## Known evidence
 
-None recorded. ECV2-ORACLE must freeze exact semantics and the measurable workload before the Rust
-execution path is optimized.
+- Exact imports from existing `.olean`s averaged 667 ms/file on the deterministic 62-file sample,
+  projecting to 97.8 minutes serial.
+- One process retaining distinct exact contexts crossed 8 GiB during its sixth file.
+- A fresh exact child remained below the envelope but cannot meet the goal through safe concurrency.
+- A pure Lean module-linter plugin receives exact custom syntax during compilation with no detected
+  overhead in the initial sample.
+
+These facts constrain prompts 04 and 05; they do not predetermine their final interface.
 
 ## Verification convention
 
-A claim becomes verified only after its prompt-specific checks pass and their meaningful output is
-recorded under `evidence/` or `results/`. State is coordination metadata, not evidence. A failed or
-unreproduced command reopens the owning claim.
+A claim becomes verified only after its prompt checks pass and meaningful command output is recorded.
+State is coordination metadata, not evidence. Missing, stale, or unreproduced checks reopen a claim.

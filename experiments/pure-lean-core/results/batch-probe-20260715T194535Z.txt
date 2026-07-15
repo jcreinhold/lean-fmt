@@ -1,0 +1,15 @@
+lean=4.32.0
+target_toolchain=leanprover/lean4:v4.32.0
+workspace=/Users/jcreinhold/Code/mathlib4 packages=9
+lean_path_entries=10 discovered_lean_files=8795
+source=/Users/jcreinhold/Code/mathlib4/Mathlib/Algebra/Group/Basic.lean
+frontend=ok imported_modules=1436 local_declarations=548 elapsed_ms=2944
+source=/Users/jcreinhold/Code/mathlib4/Mathlib/Algebra/Order/Group/Basic.lean
+frontend=ok imported_modules=1547 local_declarations=32 elapsed_ms=1185
+source=/Users/jcreinhold/Code/mathlib4/Mathlib/CategoryTheory/Category/Basic.lean
+frontend=ok imported_modules=1875 local_declarations=120 elapsed_ms=1549
+source=/Users/jcreinhold/Code/mathlib4/Mathlib/CategoryTheory/Functor/Basic.lean
+frontend=ok imported_modules=1878 local_declarations=58 elapsed_ms=1068
+source=/Users/jcreinhold/Code/mathlib4/Mathlib/Data/List/Basic.lean
+frontend=ok imported_modules=1860 local_declarations=507 elapsed_ms=3102
+source=/Users/jcreinhold/Code/mathlib4/Mathlib/Data/Finset/Basic.lean

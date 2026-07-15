@@ -1,0 +1,14 @@
+lean_fmt_revision=3e52c6ef1b09f301cada807243cbfad651b90bed
+mathlib_revision=783ccda4ee524f13cc5636237be0a1942bc04824
+lean_toolchain=leanprover/lean4:v4.32.0
+machine=Darwin Mac 25.5.0 Darwin Kernel Version 25.5.0: Mon Apr 27 20:41:15 PDT 2026; root:xnu-12377.121.6~2/RELEASE_ARM64_T6041 arm64
+rss_limit_kib=8388608
+swap_before=total = 5120.00M  used = 3452.31M  free = 1667.69M  (encrypted)
+pressure_before=System-wide memory free percentage: 81%
+exit_status=0
+hard_stopped=0
+wall_seconds=6
+peak_rss_kib=3208576
+swap_after=total = 5120.00M  used = 3452.31M  free = 1667.69M  (encrypted)
+pressure_after=System-wide memory free percentage: 79%
+output=/Users/jcreinhold/Code/lean-fmt/experiments/pure-lean-core/results/batch-probe-20260715T194733Z.txt

@@ -1,0 +1,15 @@
+lean_fmt_revision=3e52c6ef1b09f301cada807243cbfad651b90bed
+mathlib_revision=783ccda4ee524f13cc5636237be0a1942bc04824
+lean_toolchain=leanprover/lean4:v4.32.0
+machine=Darwin supermartingale.local 25.5.0 Darwin Kernel Version 25.5.0: Mon Apr 27 20:41:15 PDT 2026; root:xnu-12377.121.6~2/RELEASE_ARM64_T6041 arm64
+rss_limit_kib=8388608
+swap_before=total = 5120.00M  used = 3524.38M  free = 1595.62M  (encrypted)
+pressure_before=System-wide memory free percentage: 79%
+hard_stop_rss_kib=8481504
+exit_status=143
+hard_stopped=1
+wall_seconds=7
+peak_rss_kib=8481504
+swap_after=total = 5120.00M  used = 3524.38M  free = 1595.62M  (encrypted)
+pressure_after=System-wide memory free percentage: 79%
+output=/Users/jcreinhold/Code/lean-fmt/experiments/lean-native/results/import-probe-20260715T194107Z.tsv

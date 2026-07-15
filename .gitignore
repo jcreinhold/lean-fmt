@@ -1,17 +1,12 @@
-# Rust
-/target
-**/*.rs.bk
-
-# Lean / Lake
+/.lake/
 **/.lake/
 **/build/
 **/*.olean
 **/*.ilean
 **/*.trace
-
-# lean-fmt local worker/format cache
-.lean-fmt-cache/
-
-# Editor / OS
-.DS_Store
+/target/
+**/.lean-fmt-cache/
+*.log
+*.tmp
 *.swp
+.DS_Store
