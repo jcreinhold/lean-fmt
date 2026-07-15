@@ -68,8 +68,9 @@ Two measured semantic sources feed one private application operation:
 
 1. an ordinary-built exact path, optimized toward shared parser/module data without exposing
    unrelated grammar; and
-2. compact results produced by a pure Lean compiler plugin while the exact frontend already owns the
-   environment.
+2. compact module-owned results produced while the exact frontend already owns the environment.
+   Existing `.ilean` data, persistent `.olean` module data, and a Lake module facet are evaluated in
+   that order; custom sidecar identity is not rebuilt outside the module/build system.
 
 Both produce the same semantic result and cache identity. The CLI owns user intent and rendering;
 private deep modules own workspace discovery, source snapshots, artifact/cache validation, exact
@@ -82,7 +83,8 @@ Callers never select worker count, pinning, import reuse, or artifact strategy.
 2. Freeze exact semantics and the four workload states.
 3. Optimize the ordinarily built cold path and identify the smallest upstream Lean facility if
    exact shared import/parser state is unavailable.
-4. Build the compiler-plugin artifact path independently.
+4. Build the compiler-integrated module-artifact path independently, using Lean/Lake's ownership of
+   module success and dependency traces rather than post-hoc promotion.
 5. Design the production modules twice from those measurements.
 6. Implement check, then semantic result caching, modes and conservative edits.
 7. Optimize and accept all mathlib workload states under the resource envelope.

@@ -34,6 +34,9 @@ as independent measured prerequisites.
 - A fresh exact child remained below the envelope but cannot meet the goal through safe concurrency.
 - A pure Lean module-linter plugin receives exact custom syntax during compilation with no detected
   overhead in the initial sample.
+- The active package now uses Lean 4.32's module system throughout. Investigation rejected external
+  candidate promotion: the module/Lake build owner must structurally bind plugin, setup, success,
+  trace, and publication.
 
 These facts constrain prompts 04 and 05; they do not predetermine their final interface.
 
