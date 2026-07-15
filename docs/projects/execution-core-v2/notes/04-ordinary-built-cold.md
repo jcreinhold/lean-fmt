@@ -30,7 +30,8 @@ lower bound on the exact fallback rather than the differential oracle. On the fi
 | Build exact constants/extensions and run import initialization | 27,163 ms | 438.1 ms | 62.8% |
 | Profiled process-per-file wall | 49,197 ms | 793.5 ms | — |
 
-Peak aggregate RSS was 2,842,992 KiB, pressure stayed at 83% free, and swap growth was zero. The
+Peak aggregate RSS was 2,842,992 KiB, the sampled memorystatus pressure level stayed normal (`1`),
+and swap growth was zero. The
 first complete-corpus attempt failed its built-artifact preflight and is retained only as failed
 evidence. After the exact Lake setup preflight passed all 8,795 files, the corrected full lower-bound
 run remained pending. The sample projects to 116.3 minutes. This is an import-only lower bound: body
@@ -65,6 +66,12 @@ succeeds in a fresh Lean process and fails after the first file in a shared proc
 elaborators are arbitrary programs, so identical import environments do not imply isolated runtime
 state. This fixture rejects same-process body processing; it does not by itself prove that a
 read-only imported base could never be shared across isolated runtimes.
+
+The current-tree control was rerun after the fixture was committed. A fresh invocation of
+`lake env lean fixtures/B_Observe.lean` exited `0`. One invocation of `pure-lean-core` over
+`A_Poison.lean` followed by `B_Observe.lean` exited `1`; the first frontend completed and the second
+reported `formatter reuse leaked process-global command state`. This is a differential isolation
+test, not an inference from the implementation.
 
 ### Parser-only or selective processing
 

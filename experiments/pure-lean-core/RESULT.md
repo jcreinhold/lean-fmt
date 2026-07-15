@@ -199,11 +199,12 @@ compiler already owns the correct environment. On `Mathlib/Data/Finset/Attr.lean
 warm plain/plugin runs measured 0.69, 0.69, 0.69, and 0.72 seconds, so the probe added no detectable
 overhead. `Mathlib/Data/List/Basic.lean` emitted a 20 KiB command-range artifact.
 
-The probe proves that rules and edits can be computed in pure Lean during ordinary exact
-compilation without a second import. It does not make old build artifacts sufficient: the plugin
-must participate in the module's build trace, and adding it to a previously built project must cause
-a rebuild. Production design must choose and document that integration contract rather than hiding
-the initial compilation cost behind a cache claim.
+The probe proves that a pure Lean module linter can project top-level command syntax during ordinary
+exact compilation without a second import. It does not yet prove byte-complete source coverage,
+formatter rules, edits, failed-compilation behavior, or validation. It also does not make old build
+artifacts sufficient: the plugin must participate in the module's build trace, and adding it to a
+previously built project must cause a rebuild. Production design must choose and document that
+integration contract rather than hiding the initial compilation cost behind a cache claim.
 
 ## Ordinary-built cold follow-up
 
