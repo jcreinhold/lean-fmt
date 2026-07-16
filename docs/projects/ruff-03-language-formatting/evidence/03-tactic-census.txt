@@ -1,0 +1,178 @@
+modules_analyzed=62 skipped=0 token_bearing_nodes=122011
+tactic_nodes=15769 tacticSeq=1967 tacticSeq1Indented=1966 tacticSeqBracketed=1 bullets=371
+
+# `tacticSeqBracketed` is the number this census exists for. `tacticSeq` minus
+# `tacticSeq1Indented` does NOT equal it: `tacticSeqIndentGt` falls back to
+# `node ``tacticSeq1Indented pushNone` (`Term/Basic.lean:90-92`), which carries no token and
+# is excluded from this census the way every empty slot is. Only the direct count is honest.
+
+# Nodes whose subtree carries no token are excluded, as in the term census: an absent slot
+# has no atoms, so there is nothing a layout could decide about it.
+
+# every distinct tactic kind this stack can cite a compiler declaration for, most common
+# first. `Lean.Parser.Tactic.*` is a parser declaration in the compiler pinned at v4.32.0;
+# its atoms and their declared spacing can be read. This is the only list on which a per-kind
+# cited tactic layout is even possible.
+1992 Lean.Parser.Tactic.rwRule
+1967 Lean.Parser.Tactic.tacticSeq
+1966 Lean.Parser.Tactic.tacticSeq1Indented
+1495 Lean.Parser.Tactic.simpLemma
+ 844 Lean.Parser.Tactic.rwRuleSeq
+ 712 Lean.Parser.Tactic.rcasesPat.one
+ 704 Lean.Parser.Tactic.rwSeq
+ 691 Lean.Parser.Tactic.rcasesPatMed
+ 621 Lean.Parser.Tactic.simp
+ 557 Lean.Parser.Tactic.rcasesPatLo
+ 400 Lean.Parser.Tactic.exact
+ 313 Lean.Parser.Tactic.tacticHave__
+ 261 Lean.Parser.Tactic.refine
+ 239 Lean.Parser.Tactic.rintroPat.one
+ 198 Lean.Parser.Tactic.rcasesPat.tuple
+ 170 Lean.Parser.Tactic.apply
+ 148 Lean.Parser.Tactic.simpa
+ 142 Lean.Parser.Tactic.location
+ 137 Lean.Parser.Tactic.elimTarget
+ 132 Lean.Parser.Tactic.intro
+ 130 Lean.Parser.Tactic.locationHyp
+ 126 Lean.Parser.Tactic.obtain
+ 118 Lean.Parser.Tactic.simpaArgsRest
+ 111 Lean.Parser.Tactic.inductionAltLHS
+ 111 Lean.Parser.Tactic.inductionAlt
+ 101 Lean.Parser.Tactic.simpArgs
+  86 Lean.Parser.Tactic.tacticLet__
+  84 Lean.Parser.Tactic.tacticRfl
+  69 Lean.Parser.Tactic.rintro
+  64 Lean.Parser.Tactic.induction
+  60 Lean.Parser.Tactic.inductionAlts
+  53 Lean.Parser.Tactic.«tactic_<;>_»
+  44 Lean.Parser.Tactic.tacticRwa__
+  41 Lean.Parser.Tactic.simpaUsingBangArgsRest
+  41 Lean.Parser.Tactic.simpaUsingBang
+  41 Lean.Parser.Tactic.dsimp
+  38 Lean.Parser.Tactic.rcases
+  35 Lean.Parser.Tactic.tacticSuffices_
+  35 Lean.Parser.Tactic.simpAll
+  35 Lean.Parser.Tactic.constructor
+  35 Lean.Parser.Tactic.cases
+  33 Lean.Parser.Tactic.change
+  30 Lean.Parser.Tactic.rcasesPat.ignore
+  27 Lean.Parser.Tactic.rcasesPat.clear
+  24 Lean.Parser.Tactic.classical
+  22 Lean.Parser.Tactic.tacticLetI__
+  21 Lean.Parser.Tactic.tacticInfer_instance
+  20 Lean.Parser.Tactic.unfold
+  20 Lean.Parser.Tactic.replace
+  20 Lean.Parser.Tactic.grind
+  20 Lean.Parser.Tactic.congr
+  19 Lean.Parser.Tactic.locationType
+  19 Lean.Parser.Tactic.Conv.convSeq1Indented
+  19 Lean.Parser.Tactic.Conv.convSeq
+  16 Lean.Parser.Tactic.posConfigItem
+  16 Lean.Parser.Tactic.optConfig
+  16 Lean.Parser.Tactic.configItem
+  15 Lean.Parser.Tactic.Conv.convRw__
+  13 Lean.Parser.Tactic.simpStar
+  13 Lean.Parser.Tactic.rcasesPat.paren
+  12 Lean.Parser.Tactic.specialize
+  12 Lean.Parser.Tactic.locationWildcard
+  12 Lean.Parser.Tactic.assumption
+  10 Lean.Parser.Tactic.tacticHaveI__
+   9 Lean.Parser.Tactic.subst
+   9 Lean.Parser.Tactic.lia
+   9 Lean.Parser.Tactic.generalizeArg
+   9 Lean.Parser.Tactic.generalize
+   8 Lean.Parser.Tactic.simpPre
+   8 Lean.Parser.Tactic.revert
+   8 Lean.Parser.Tactic.caseArg
+   8 Lean.Parser.Tactic.case
+   7 Lean.Parser.Tactic.tacticIterate____
+   7 Lean.Parser.Tactic.tacticErw___
+   7 Lean.Parser.Tactic.simpErase
+   7 Lean.Parser.Tactic.intros
+   6 Lean.Parser.Tactic.tacticNorm_cast__
+   6 Lean.Parser.Tactic.rintroPat.binder
+   6 Lean.Parser.Tactic.Conv.convSeq.antiquot
+   5 Lean.Parser.Tactic.grindParam
+   5 Lean.Parser.Tactic.grindLemma
+   5 Lean.Parser.Tactic.Conv.occs.antiquot
+   4 Lean.Parser.Tactic.renameI
+   4 Lean.Parser.Tactic.quot
+   4 Lean.Parser.Tactic.Conv.enterArg
+   4 Lean.Parser.Tactic.Conv.argArg
+   4 Lean.Parser.Tactic.allGoals
+   3 Lean.Parser.Tactic.symm
+   3 Lean.Parser.Tactic.Conv.paren
+   3 Lean.Parser.Tactic.Conv.enter
+   2 Lean.Parser.Tactic.simpStar.antiquot
+   2 Lean.Parser.Tactic.pushCast
+   2 Lean.Parser.Tactic.paren
+   2 Lean.Parser.Tactic.first
+   2 Lean.Parser.Tactic.Conv.whnf
+   2 Lean.Parser.Tactic.Conv.nestedTacticCore
+   2 Lean.Parser.Tactic.Conv.conv
+   1 Lean.Parser.Tactic.withReducible
+   1 Lean.Parser.Tactic.tacticTrivial
+   1 Lean.Parser.Tactic.tacticSeqBracketed
+   1 Lean.Parser.Tactic.tacticSeq.antiquot
+   1 Lean.Parser.Tactic.tacticExfalso
+   1 Lean.Parser.Tactic.tacticExact_mod_cast_
+   1 Lean.Parser.Tactic.show
+   1 Lean.Parser.Tactic.runTac
+   1 Lean.Parser.Tactic.rotateLeft
+   1 Lean.Parser.Tactic.right
+   1 Lean.Parser.Tactic.repeat'
+   1 Lean.Parser.Tactic.left
+   1 Lean.Parser.Tactic.injection
+   1 Lean.Parser.Tactic.Conv.simp
+   1 Lean.Parser.Tactic.Conv.rhs
+   1 Lean.Parser.Tactic.Conv.pattern
+   1 Lean.Parser.Tactic.Conv.nestedTactic
+   1 Lean.Parser.Tactic.Conv.lhs
+   1 Lean.Parser.Tactic.Conv.convTactic
+   1 Lean.Parser.Tactic.Conv.convConvSeq
+   1 Lean.Parser.Tactic.contradiction
+
+# every distinct tactic-position kind this stack CANNOT cite: `Mathlib.Tactic.*` and other
+# corpus-defined `syntax`/`macro` declarations. These are an open set — the corpus being
+# formatted extends it — and the same closed-versus-open test that licensed the binders
+# (`notes/02-expressions.md` §5) refuses them.
+  79 Lean.Elab.Tactic.Ext.ext
+  72 Mathlib.Tactic.ToAdditive.to_additive
+  60 Mathlib.Tactic.tacticSimp_rw___
+  39 Mathlib.Tactic.convert!
+  30 Batteries.Tactic.Lint.nolint
+  29 Mathlib.Tactic.Translate.attrArgs
+  29 Lean.calcTactic
+  26 Mathlib.Tactic.Choose.chooseBinder
+  24 Mathlib.Tactic.Translate.bracketedOption
+  24 Mathlib.Tactic.Translate.attrOption
+  23 Mathlib.Tactic.GCongr.gcongr
+  22 stacksTag
+  22 Mathlib.Tactic.linarith
+  22 Mathlib.CrossRef.stacksTagDBStacks
+  22 Mathlib.CrossRef.stacksTag
+  20 Mathlib.Tactic.useSyntax
+  19 «tacticBy_cases_:_»
+  19 Mathlib.Tactic.filterUpwards
+  19 Lean.Elab.Tactic.Ext.tacticExt1___
+  17 Mathlib.Tactic.RingNF.ring
+  17 Mathlib.Tactic.Reassoc.reassoc
+  17 Batteries.Tactic.Alias.alias
+  16 Aesop.Frontend.Parser.aesopTactic
+  15 Mathlib.Tactic.Positivity.positivity
+  15 Mathlib.Tactic.optAttrArg
+  15 Mathlib.Tactic.Contrapose.contrapose!
+  15 Batteries.Tactic.congrConfigWith
+  12 Mathlib.Tactic.CategoryStar.«termCategory*__»
+  10 Mathlib.Tactic.Conv.convRHS
+  10 Mathlib.Tactic.Choose.choose
+   8 Mathlib.Tactic.TermCongr.termCongr
+   8 Mathlib.Tactic.setTactic
+   8 Mathlib.Tactic.setArgsRest
+   8 Mathlib.Tactic.GRewrite.grwSeq
+   8 Mathlib.Meta.FunProp.funPropTacStx
+   7 Mathlib.Tactic.GCongr.gcongrAttr
+   7 Mathlib.Tactic.Conv.convLHS
+   6 Mathlib.Tactic.splitIfs
+   6 Mathlib.Tactic.linarithArgsRest
+   6 Batteries.Tactic.exacts

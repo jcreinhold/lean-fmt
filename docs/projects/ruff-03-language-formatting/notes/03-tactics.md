@@ -168,14 +168,19 @@ assumed, and the fifth-time-running pattern from prompt 02 says what to expect:
 2. **How many qualifying blocks are already canonical.** Real Lean indents tactic blocks by two. If the
    answer is "almost all", this layout joins `app_slack=0`, `binder_slack=0` and `match_slack=0` as a
    sixth no-op, and the honest report is that it changes nothing.
-3. **What `tacticSeqBracketed` actually costs.** The census's exhaustive list is `Lean.Parser.Term.*`
-   only (`evidence/02-term-census.txt:115`), so the tactic kinds appear only in its top-60 and
-   `tacticSeqBracketed` is below the cut. `tacticSeq` is 1967 and `tacticSeq1Indented` is 1966, which
-   *suggests* the bracketed form is vanishingly rare — but the difference is not the count, because
-   `tacticSeqIndentGt`'s `pushNone` branch makes token-free `tacticSeq1Indented` nodes that the census
-   excludes. **This needs its own census (`evidence/03-tactic-census.txt`), not an inference from two
-   numbers**, and 1967 − 1966 = 1 is exactly the kind of arithmetic that produced the stale `7` this
-   stack just finished correcting.
+3. **What `tacticSeqBracketed` actually costs — measured: `tacticSeqBracketed=1`.**
+   `evidence/03-tactic-census.txt` counts it directly across all 62 modules. **One.** The `{ tacs }`
+   spelling is dead syntax in real Lean, so a layout for it would be dead code on every input this
+   printer can receive — the same verdict `Term.proj` got, and for the same reason: not "too hard", but
+   "nothing to decide". That also disposes of its `"{ "`/`"}"` trap (spaced open, bare close —
+   `structInst` again, `notes/02-expressions.md` §5b) without needing to read it.
+
+   The count was taken rather than inferred, and the inference would have been *right*: 1967 − 1966 = 1.
+   It is still not evidence, because `tacticSeqIndentGt`'s `pushNone` branch (`Term/Basic.lean:90-92`)
+   makes token-free `tacticSeq1Indented` nodes that a token-bearing census excludes, so the two numbers
+   are not each other's complement and their agreeing here is luck. This stack has already shipped one
+   figure that was arithmetic rather than measurement — the stale `7` in `results/02-expressions.md` —
+   and the rule that catches it is: **a number nobody counted is not a number.**
 
 ## 7. Open, and honest about it
 
