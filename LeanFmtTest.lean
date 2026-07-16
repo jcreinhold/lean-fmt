@@ -854,12 +854,14 @@ private def printerRoundtrip (envelopePath sourcePath : String) (checkIdentity :
   -- round-trip above cannot see whether the header layout ran, because refusing it *is* the identity.
   let headerCanonical := if (← Printer.headerDoc? normalized projection.headerStop).isSome then 1
     else 0
+  let (tacticBlocks, tacticOwnable) := tree.tacticBlocks normalized
   IO.println s!"commands={tree.roots.size} canonical={tree.canonicalCommands normalized} \
 tokens={projection.tokens.size} nodes={projection.nodes.size} header_bytes={projection.headerStop} \
 header_canonical={headerCanonical} members={tree.memberShells normalized} \
 app_slack={tree.appSlack normalized} \
 binder_slack={tree.binderSlack normalized} \
 match_slack={tree.matchSlack normalized} \
+tactic_blocks={tacticBlocks} tactic_ownable={tacticOwnable} \
 tail_bytes={projection.normalizedBytes - projection.terminalStop}"
   return 0
 

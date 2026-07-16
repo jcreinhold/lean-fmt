@@ -982,6 +982,47 @@ builds two. -/
 def Tree.matchSlack (tree : Tree) (normalized : String) : Nat :=
   tree.slackIn normalized #["Lean.Parser.Term.matchAlt"]
 
+/-- The tactic blocks in this module, and how many of them a block layout could re-indent at all.
+
+Two numbers rather than a slack count, because `RLF-TACTICS` fails at a different place than
+`RLF-EXPRESSIONS` did. A slack counter asks *would the layout change these bytes*; the question here is
+prior to that — **may the layout touch this block at all** — and `notes/03-tactics.md` §5 is why.
+
+`nest` moves a `hard`. It cannot move a `.keep` gap, because those reach the output as `verbatim`,
+whose interior is never re-indented (`Doc.lean:62-68`) — the same guarantee that stops a comment body
+being rewritten. So re-indenting a block moves its tactics' *first* lines and leaves their continuation
+lines behind, and by `sepBy1Indent`'s separator clause (`Lean/Parser/Extra.lean:206-208`) a
+continuation that lands on the block's column stops being a continuation and becomes a tactic. The
+block may be re-indented only if the printer owns every newline in it, which here means: **every tactic
+is on one line.**
+
+A tactic's span is tested rather than its gaps, and that is deliberate — a newline *inside* a token is
+just as unownable as one in a gap, because a multi-line string literal reaches the output verbatim too,
+and must. `tokenSpanText` over the tactic's own first-to-last token catches both.
+
+**`ownable` is an upper bound, and is reported as one.** It asks only whether the printer could own the
+newlines *inside* this block. A block that passes can still sit inside one that does not — an ownable
+`simp`/`exact` pair nested under a `with` alternative whose lines this printer does not emit — and then
+its `nest` would count from column 0 instead of from where it actually starts (`Printer.lean:1186`,
+`startsLine`). The sufficient condition is ownable *and* reachable from the command root through
+printer-owned newlines only. This counter deliberately does not test that: the loose number is the one
+that says whether the strict one is worth computing, and if the upper bound is small the question is
+closed either way. -/
+def Tree.tacticBlocks (tree : Tree) (normalized : String) : Nat × Nat := Id.run do
+  let mut blocks := 0
+  let mut ownable := 0
+  for node in [0:tree.source.nodes.size] do
+    if tree.kindOf node != "Lean.Parser.Tactic.tacticSeq1Indented" then continue
+    let parts := tree.liftedParts node
+    if parts.isEmpty then continue
+    blocks := blocks + 1
+    let mut everyTacticOneLine := true
+    for part in parts do
+      let span := tree.tokenSpanText normalized part.first part.last
+      if span.contains '\n' then everyTacticOneLine := false
+    if everyTacticOneLine then ownable := ownable + 1
+  return (blocks, ownable)
+
 /-- How many of this module's commands take a canonical layout rather than the conservative path.
 
 Reported by `printer-roundtrip` and floored by `tests/printer/run.sh`, because byte identity cannot

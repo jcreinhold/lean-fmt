@@ -163,11 +163,17 @@ Two ways to own every newline in a block:
 The second is the candidate. Before it is written, three things have to be measured rather than
 assumed, and the fifth-time-running pattern from prompt 02 says what to expect:
 
-1. **How many blocks qualify** — a block with every gap single-line. Unknown; the census counts kinds,
-   not line spans.
+1. **How many blocks qualify — measured: `tactic_blocks=1966 tactic_ownable=1422`.** 72.3% of real
+   Lean's tactic blocks have every tactic on one line, so the printer could own their newlines. **This
+   is the first number in this stack that is not zero.** Five measurements running said the citable
+   part changes nothing; this one says the reachable part is most of the corpus. It is an upper bound
+   (`Printer.lean`, `Tree.tacticBlocks`) — ownable *inside* is necessary, not sufficient, because an
+   ownable block can sit inside a block that is not.
 2. **How many qualifying blocks are already canonical.** Real Lean indents tactic blocks by two. If the
    answer is "almost all", this layout joins `app_slack=0`, `binder_slack=0` and `match_slack=0` as a
-   sixth no-op, and the honest report is that it changes nothing.
+   sixth no-op, and the honest report is that it changes nothing. **Still unmeasured**, and §8 is why
+   the question is now sharper than it looks: the rule this printer would apply is not the rule Lean
+   applies.
 3. **What `tacticSeqBracketed` actually costs — measured: `tacticSeqBracketed=1`.**
    `evidence/03-tactic-census.txt` counts it directly across all 62 modules. **One.** The `{ tacs }`
    spelling is dead syntax in real Lean, so a layout for it would be dead code on every input this
@@ -192,3 +198,71 @@ assumed, and the fifth-time-running pattern from prompt 02 says what to expect:
   under a top-level command starts from column 0, so `nest 2` lands at 2. A `by` block nested inside
   another block does not, unless every enclosing level nests too — which is §5's "own every newline"
   again, one level up. Any layout here is therefore top-level-only until that is faced.
+
+## 8. The interface, designed twice — and Lean's own answer uses a primitive this `Doc` refuses
+
+Plan step 2 asks for the interface twice. Reading `sepByIndent.formatter`
+(`Lean/Parser/Extra.lean:211-226`) supplies a third design that outranks both, and then rules itself
+out — which is the useful part.
+
+**What Lean itself does** for exactly this construct:
+
+    def sepByIndent.formatter (p : Formatter) (_sep : String) (pSep : Formatter) : Formatter := do
+      ...
+        if i % 2 == 0 then p else pSep <|>
+          ((if i == stx.getArgs.size - 1 then pure () else pushWhitespace "\n") *> goLeft)
+      -- If there is any newline separator, then we add an `align` at the start
+      -- so that `withPosition` will pick up the right column.
+      if hasNewlineSep then
+        pushAlign (force := true)
+
+Two things, and both are citations this prompt did not have before:
+
+- **the separator it emits is exactly one `"\n"`** (`:220`) — never two, never a blank line;
+- **the block's column comes from `pushAlign (force := true)`** (`:224`), whose own comment says why:
+  *"so that `withPosition` will pick up the right column"*. Lean does not *choose* the block's column.
+  It aligns to wherever the first element already landed, and that is precisely how it guarantees the
+  `checkColEq` in §2 — the separator column and the first element's column are the same thing by
+  construction.
+
+**This printer cannot do that, by a decision that predates the prompt.** `Doc` has no align, and
+`Doc.nest`'s docstring says it is deliberate (`LeanFmt/Doc.lean:71-73`): "Relative and additive …
+**There is no align-to-current-column, which is column arithmetic and outside the caller's vocabulary
+by design.**" `ruff-02` is a verified stack; this one depends on it and does not get to reopen it.
+
+That is a real gap and it is worth being exact about how big. It is **not** a correctness blocker: a
+block emitted as `.nest 2 (.hard ++ t₁ ++ .hard ++ t₂ …)` puts every tactic at the same column, which
+is all `checkColEq` asks, and `Format.defIndent := 2` (`Init/Data/Format/Basic.lean:379`) is where the
+2 comes from rather than from taste. What it costs is that **this printer must *choose* the column
+where Lean *inherits* it** — so the two agree only when the block starts on its own line at the
+command's indent plus two, and diverge everywhere else. Since `nest` counts from column 0 for a printer
+that never nests (§7), "everywhere else" means every block that is not directly under a top-level
+command.
+
+So the two designs actually on offer:
+
+| | **A — re-indent** | **B — normalize the separator** |
+| --- | --- | --- |
+| what it emits | `nest 2` + `hard` per separator | one `"\n"` + the gap's original trailing indent, verbatim |
+| moves a column? | yes | **no** |
+| needs §5's ownership? | yes — the guard, ≤ 1422 blocks | no |
+| needs `align`? | substitutes `nest 2`, agreeing with Lean only at top level | no — it never picks a column |
+| citation | `Format.defIndent := 2` | `sepByIndent.formatter:220` emits exactly one `"\n"` |
+| reach | top-level ownable blocks only | **every block, ownable or not** |
+
+**B is the deliverable.** It is strictly weaker and strictly safer, and the asymmetry is not a
+compromise — it is §5 read correctly. A is dangerous *because* it moves columns, and every guard it
+needs exists to stop it moving one it should not. B never moves a column at all: it rewrites only the
+run of newlines inside a separator gap and re-emits that gap's trailing indentation byte for byte, so
+the tokens either side keep their columns and §2's `checkColEq` cannot be disturbed by construction.
+It needs no ownership, no margin, no `align`, and no nest — and it reaches all 1966 blocks rather than
+at most 1422.
+
+B needs one guard, and it is the one this stack already has: **whitespace-only.** A separator gap can
+hold a comment (`\n  -- why\n  `), and rewriting its newline run would delete the comment. That is
+`gapDoc`'s spaces-only test (`notes/02-expressions.md`, mutation 3) generalized from *spaces* to
+*whitespace*, and the mutation that proved it load-bearing there is the same mutation here.
+
+What B is worth is **unmeasured and might be nothing**: it changes a byte only where real Lean has a
+blank line between two tactics. That is the sixth instance of the question this stack keeps asking, and
+prompt 02's §8 is on record predicting the answer. It gets a counter before it gets a layout.
