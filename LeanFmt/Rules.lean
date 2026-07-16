@@ -5,6 +5,31 @@ import Lean
 
 namespace LeanFmt.Internal
 
+structure RuleInfo where
+  code : String
+  category : String
+  summary : String
+  fixable : Bool
+  defaultEnabled : Bool
+  deriving BEq, Lean.ToJson
+
+def ruleRegistry : Array RuleInfo := #[
+  {
+    code := "FMT001"
+    category := "text"
+    summary := "remove trailing horizontal whitespace"
+    fixable := true
+    defaultEnabled := true
+  },
+  {
+    code := "FMT002"
+    category := "text"
+    summary := "require a final newline"
+    fixable := true
+    defaultEnabled := true
+  }
+]
+
 private def commandShape (stx : Lean.Syntax) : CommandShape :=
   let range? := stx.getRange?.map fun range =>
     { start := range.start.byteIdx, stop := range.stop.byteIdx }

@@ -1,9 +1,9 @@
 # Next Proof Packet
 
 - Stack: execution-core-v2
-- First unresolved: 09-modes
-- Claim ID: ECV2-MODES
-- Prompt: 09-modes
+- First unresolved: 10-scale
+- Claim ID: ECV2-SCALE
+- Prompt: 10-scale
 - Module: (docs only)
 - Target file: (docs only)
 
@@ -17,13 +17,11 @@ Read this file, the target prompt, target files, listed source/template line ran
 
 ## Proof Task
 
-- Add `format`, `diff`, `fix`, `rules`, `clean`, and compiler-integration setup/status over the same semantic result used by check. First add one private edit capability that accepts an immutable source snapshot and selected findings and returns either a fully checked patch or one typed rejection. The application operation, not the CLI dispatcher, owns patch preparation, exact validation, stale-source checking, atomic publication, cache interaction, and deterministic aggregation.
+- Measure and optimize all three relevant mathlib paths: ordinarily built with formatter cache cold, formatter-integrated artifacts present with result cache cold, and result cache warm.
 
 ## Reuse
 
-- `roadmap.md`, `state/current.md`, and `notes/09-product-contract.md`
-- `LeanFmt/Application.lean`, `LeanFmt/ArtifactModel.lean`, `LeanFmt/Cache.lean`, and `LeanFmt/Rules.lean`
-- The archived implementation only as characterization evidence for rule/edit behavior; do not restore its public APIs, worker controls, or orchestration layers.
+- see the target prompt's Read section
 
 ## Lean Work
 
@@ -31,4 +29,4 @@ Inspect the live goal, search relevant declarations, test plausible proof steps,
 
 ## Stop Rules
 
-- Stop for replanning instead of weakening validation, treating arbitrary Lake source as safely rewritable, silently accepting unknown configuration, inventing strategy controls, or adding a second analyzer/orchestrator. Ordinary Lean API/name drift, missing small edit/diff/config helpers, and a failed first implementation attempt are not blockers.
+- Do not improve timing by weakening exactness, omitting files, hiding prerequisite compilation, or raising the memory envelope.

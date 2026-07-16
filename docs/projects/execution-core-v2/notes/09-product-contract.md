@@ -69,3 +69,32 @@ exit 0.
 The capability exposes only source identity, formatted output, edit count/change state, and exact
 reversion. It does not expose partially sorted edits or ask callers to sequence validation helpers.
 Publication and exact frontend validation remain application-owned work for the next major step.
+
+## Major step 2: product transaction and CLI
+
+The complete product surface now runs over `LeanFmt.Application.execute`. `RunRequest` contains only
+semantic user intent: mode, root/files, configuration and selectors, cache intent, validation level,
+and the memory envelope. `LeanFmt.Cli` owns output format, statistics, argument parsing, rendering,
+and exit mapping; these cannot enter analysis or cache identity by construction.
+
+`LeanFmt.Config` hides TOML decoding, strict key/selector validation, normalized glob matching,
+selection precedence, and per-file ignores. Discovered modules are path-filtered before source
+snapshotting. Explicit paths bypass include/exclude, while rule projection applies uniformly to
+artifact, exact-fallback, and result-cache sources. Canonical raw findings are cached before that
+projection.
+
+The application prepares one checked patch, validates its complete candidate with the exact frontend,
+rereads the held source, preserves permissions, and renames a same-directory temporary file. A
+semantic validation rejection and a deliberate concurrent source mutation both leave formatter
+output unpublished. A successful fix followed by a second fix produces one write then an unchanged
+no-op.
+
+The exact setup audit tightened the preexisting fallback: if Lake cannot construct a module setup,
+the minimal header context may retain malformed-header or unresolved-import diagnostics, but it can
+never authorize a successful analysis or write. This defines the dangerous false-success case away
+instead of calling incomplete plugin/dynamic-library context exact.
+
+`compiler setup` returns stable package/plugin/facet identifiers and guidance without interpreting or
+rewriting Lake source. `compiler status` checks current `.olean` ownership in isolated bounded
+children and reports `ready`, `missing`, or `unbuilt` without building or publishing. `clean` removes
+only `.lean-fmt-cache`.

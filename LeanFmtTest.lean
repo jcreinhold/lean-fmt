@@ -2,6 +2,7 @@ module
 
 import all LeanFmt.ArtifactStore
 import all LeanFmt.Cache
+import all LeanFmt.Config
 import all LeanFmt.Edit
 import all LeanFmt.Rules
 
@@ -116,6 +117,48 @@ private def testEdits : IO Unit := do
             #[findingWithEdit { start, stop } replacement]
           ensure ((← requireRevert patch) == propertySource)
             s!"single-edit reversibility failed at {start}-{stop}"
+
+private def testConfig : IO Unit := do
+  let directory ← IO.FS.createTempDir
+  let configPath := directory / "lean-fmt.toml"
+  try
+    IO.FS.writeFile configPath "\
+include = [\"LeanFmt/**/*.lean\", \"Main.lean\"]\n\
+exclude = [\"LeanFmt/Generated/**\"]\n\
+select = [\"text\"]\n\
+ignore = [\"FMT002\"]\n\
+[per-file-ignores]\n\
+\"LeanFmt/Legacy/*.lean\" = [\"FMT001\"]\n"
+    let config ← FormatterConfig.load directory
+    ensure (config.includesPath "LeanFmt/Internal/File.lean")
+      "recursive include pattern did not match"
+    ensure (config.includesPath "Main.lean") "root-file include pattern did not match"
+    ensure (!(config.includesPath "LeanFmt/Generated/File.lean"))
+      "exclude pattern did not win"
+    ensure (!(config.includesPath "Other.lean")) "unmatched path was included"
+    let .ok plan := config.rulePlan #[] #[]
+      | throw <| IO.userError "valid configured selectors were rejected"
+    ensure (plan.activeCount == 1) "configured ignore did not win"
+    let findings := runRules "def x := 1  "
+    ensure ((plan.findings "LeanFmt/File.lean" findings).map (·.code) == #["FMT001"])
+      "configured selector projection was wrong"
+    ensure ((plan.findings "LeanFmt/Legacy/File.lean" findings).isEmpty)
+      "per-file ignore did not win"
+    let .ok cliPlan := config.rulePlan #["FMT002"] #["FMT001"]
+      | throw <| IO.userError "valid CLI selectors were rejected"
+    ensure (cliPlan.activeCount == 1 &&
+      (cliPlan.findings "Main.lean" findings).map (·.code) == #["FMT002"])
+      "CLI selection did not replace config selection or ignore precedence changed"
+    ensure (match config.rulePlan #["UNKNOWN"] #[] with | .error _ => true | .ok _ => false)
+      "unknown CLI selector was accepted"
+    IO.FS.writeFile configPath "unknown = true\n"
+    let rejected ← try
+      discard <| FormatterConfig.load directory
+      pure false
+    catch _ => pure true
+    ensure rejected "unknown configuration key was accepted"
+  finally
+    IO.FS.removeDirAll directory
 
 private def testCacheIdentity : IO Unit := do
   let base : CacheIdentity := {
@@ -232,6 +275,7 @@ public unsafe def main (args : List String) : IO UInt32 := do
     testDigests
     testRules
     testEdits
+    testConfig
     testCacheIdentity
     testStore
     IO.println "lean-fmt module-artifact tests passed"

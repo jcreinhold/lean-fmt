@@ -1,6 +1,6 @@
 ---
 kind: state
-first_unresolved: 09-modes
+first_unresolved: 10-scale
 ---
 
 # Current state
@@ -20,7 +20,7 @@ as independent measured prerequisites.
 | 06-design | ECV2-DESIGN | verified | ECV2-BUILT-COLD, ECV2-COMPILER-ARTIFACTS |
 | 07-check | ECV2-CHECK | verified | ECV2-DESIGN |
 | 08-cache | ECV2-CACHE | verified | ECV2-CHECK |
-| 09-modes | ECV2-MODES | planned | ECV2-CACHE |
+| 09-modes | ECV2-MODES | verified | ECV2-CACHE |
 | 10-scale | ECV2-SCALE | planned | ECV2-MODES |
 | 11-serve | ECV2-SERVE | planned | ECV2-SCALE |
 | 12-final | ECV2-FINAL | planned | ECV2-SERVE |
@@ -63,8 +63,13 @@ as independent measured prerequisites.
   edit ordering, byte/UTF-8 validation, conflict rejection, complete assembly, source identity, and
   exact inverse construction. Its focused unit/property suite passes; validation and atomic
   publication remain in the application transaction.
+- Prompt 09 is complete. Check/format/diff/fix now share one canonical semantic result and one
+  application transaction; CLI presentation is a separate private module. Strict configuration,
+  deterministic previews, exact validated atomic fixes, rules, cache clean, and read-only compiler
+  setup/status pass focused unit and integration gates without a full mathlib run.
 
-These facts constrain prompts 04 and 05; they do not predetermine their final interface.
+These facts and the verified batch product surface constrain Prompt 10's optimization hypotheses;
+they do not authorize weaker semantics or a broader memory envelope.
 
 ## Completed results
 
@@ -84,6 +89,9 @@ These facts constrain prompts 04 and 05; they do not predetermine their final in
 - [ECV2-CACHE](../results/08-cache.md) adds a strategy-independent semantic cache capability with
   complete Lake epoch validation, atomic entries, corruption-as-miss behavior, an early all-hit
   return, and measured full-mathlib epoch plus genuine representative warm evidence.
+- [ECV2-MODES](../results/09-modes.md) adds the complete batch product surface over one canonical
+  result, with strict rule projection and a conflict-, validation-, staleness-, and
+  permission-safe per-file write transaction.
 
 ## Verification convention
 
