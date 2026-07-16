@@ -220,22 +220,66 @@ that makes this empirical rather than argued — pass one's output must re-analy
 `__analyze-exact` before anything else is asserted about it, so a collapse that violated `checkColGt`
 would fail as "formatted output does not analyze" rather than pass quietly.
 
+## 7b. The interface, designed twice — and why the shipped one is the under-expressive one
+
+Plan step 2 asks for the interface designed twice when a prompt introduces a new abstraction. This one
+introduced `Spacing`, so:
+
+**The shape model (shipped).** `spacingOf : kind → flat | bracketed | keep`, and a separator chosen by
+the gap's *position* within the node: `flat` spaces every gap, `bracketed` spaces every gap but the
+first and last. Caller knowledge: none — `termDoc` asks only for the kind. Error surface: a wrong
+entry mis-spaces one kind, and each entry is a sentence of grammar that a reader can check against the
+source. Cache identity: unaffected; the rule is a pure function of the tree.
+
+**The declared-atom model.** A table keyed on (kind, token text) giving the atom's *declared* string,
+and a gap computed from the two atoms around it: one space if the left declares a trailing space or
+the right declares a leading one, otherwise tight. This is not an invention — it is what `pushToken`
+does (`PrettyPrinter/Formatter.lean:366-417`), and tracing `(x : Nat)` through it right-to-left
+reproduces the shipped output exactly: `" : "` reaches `:414` and is pushed as `tk.trimAsciiEnd`,
+keeping its leading space literally, while `:413`'s `pushLine` supplies the trailing one.
+
+**The atom model is strictly more expressive, and mutation 4 is the proof rather than an argument.**
+Lifting `null`s recursively — reaching into `matchAlt`'s `sepBy1 (sepBy1 termParser ", ")` — makes the
+shipped model emit `| 0 , m => m`, *a space before the comma*, because `flat` spaces every gap and
+`", "` declares only a trailing one. The shape model cannot express "tight on the left, one space on
+the right" for a single gap; the atom model gets it for free from the declaration. **So the one-level
+null lift is not laziness. It is the boundary of what `flat` can express correctly, and stopping at it
+is what keeps the pattern run's bytes safe.**
+
+**But the atom model is not free-standing, and that is the finding.** The gaps it cannot derive from
+declared strings — `(` against an ident, an ident against `)` — are the ones `pushToken` sends to
+`:393`, which calls `parseToken` to re-lex the concatenation and see whether the lexer runs past the
+token. `parseToken` needs `env := ← getEnv` and the token table (`:357-364`). That is an
+`Environment`, which is exactly what this printer's architecture excludes
+(`notes/01-command-printing.md` §3-5). So the atom model as Lean writes it is **not available at this
+layer**; what is available is a hybrid — declared strings where they exist, plus a per-kind hardcoded
+rule for the tight gaps, which is what `bracketed` already is.
+
+That hybrid is a real improvement and it is deliberately not built here, because nothing it would
+unlock is claimable yet: the two kinds that need per-gap separators are `structInst`'s fields (blocked
+on §5b's column check, under any model) and `matchAlt`'s patterns (whose bytes are already safe).
+**Building it now would be expressiveness with no claim behind it.** It is the recommended shape for
+whoever lands the first `sepBy`-bearing kind, and `Spacing.bracketed`'s "tight" should be read as what
+it is: a stand-in for a lexer this printer cannot run, verified per kind by reading the grammar.
+
 ## 8. What the corpus says back: the citable part changes nothing
 
-`app_slack=0` and `binder_slack=0` across all 62 modules, over 11,679 applications and 3,851 binders,
-and `reformatted` sits at 12 — the same 12 it was before either layout existed
-(`evidence/01-printer-sample.txt`). **Real Lean already writes `f a` and `(x : Nat)`.**
+`app_slack=0`, `binder_slack=0` and `match_slack=0` across all 62 modules, over 11,679 applications,
+3,851 binders and 121 alternatives, and `reformatted` sits at 12 — the same 12 it was before any of
+the three layouts existed (`evidence/01-printer-sample.txt`). **Real Lean already writes `f a`,
+`(x : Nat)` and `| 0 => 1`.**
 
-Neither zero is taken on the corpus's word. A counter that measured nothing would report 0 just as
-readily, which is the exact shape `RLF-COMMANDS`'s `misordered=0` turned out to have, so both are
-hand-counted against a written fixture through the same code path — 7 and 15, `tests/printer/run.sh` —
-and three mutations confirm the golden pins the rule rather than the output: `bracketed` made
-unconditional gives `( x y : Nat )`, the last-gap arithmetic off by one gives `[Inhabited Nat ]`, and
-dropping the spaces-only guard deletes `/- why -/` from a binder and rejoins the two lines of an app.
+No zero is taken on the corpus's word. A counter that measured nothing would report 0 just as readily,
+which is the exact shape `RLF-COMMANDS`'s `misordered=0` turned out to have, so all three are
+hand-counted against a written fixture through the same code path — 7, 15 and 22,
+`tests/printer/run.sh` — and four mutations confirm the golden pins the rule rather than the output:
+`bracketed` made unconditional gives `( x y : Nat )`, the last-gap arithmetic off by one gives
+`[Inhabited Nat ]`, dropping the spaces-only guard deletes `/- why -/` from a binder and rejoins the
+two lines of an app, and lifting `null`s recursively gives `| 0 , m => m` (§7b).
 
-**This is the fourth time this corpus has answered the same way**, after 0 collapsible members of 260,
-`reformatted` unmoved by the member layout, and `app_slack=0`. It is consistent enough to be a finding
-rather than a run of luck:
+**This is the fifth time this corpus has answered the same way**, after 0 collapsible members of 260,
+`reformatted` unmoved by the member layout, `app_slack=0` and `binder_slack=0`. It is consistent
+enough to be a finding rather than a run of luck:
 
 > The part of term formatting that is citable today is the part that changes nothing on code people
 > actually wrote. The part that would change something is vertical — and it needs a margin and `nest`,

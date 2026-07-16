@@ -50,14 +50,14 @@ Printing inside the frontend would buy free arg order for a median 1.96 s fronte
 | 04-extensions | RLF-EXTENSIONS | planned | RLF-TACTICS |
 | 05-corpus | RLF-FINAL | planned | RLF-EXTENSIONS |
 
-**`RLF-EXPRESSIONS` is in progress.** `Term.app` and the three bracketed binders are laid out and
-`Term.proj` is answered; the census that decides the rest is `evidence/02-term-census.txt`, and the
-design is `notes/02-expressions.md`. What it has found so far is recorded under "Known evidence" below
-— the load-bearing items being that **spacing, not precedence, is what the projection cannot supply**,
-and that **both layouts are provable no-ops on all 62 modules of foreign Lean**. That second one has
-now happened four times running, and `notes/02-expressions.md` §8 promotes it from a curiosity to the
-finding: the citable part of term formatting is the part that changes nothing, and **the margin
-question is where the remaining value is**.
+**`RLF-EXPRESSIONS` is in progress.** `Term.app`, the three bracketed binders and `Term.matchAlt` are
+laid out and `Term.proj` is answered; the census that decides the rest is `evidence/02-term-census.txt`,
+and the design is `notes/02-expressions.md`. What it has found so far is recorded under "Known
+evidence" below — the load-bearing items being that **spacing, not precedence, is what the projection
+cannot supply**, and that **all three layouts are provable no-ops on all 62 modules of foreign Lean**.
+That second one has now happened five times running, and `notes/02-expressions.md` §8 promotes it from
+a curiosity to the finding: the citable part of term formatting is the part that changes nothing, and
+**the margin question is where the remaining value is**.
 
 ## Known evidence
 
@@ -94,8 +94,8 @@ question is where the remaining value is**.
   members, `reformatted` unmoved, now `app_slack=0`), and it says something about the prompt rather
   than the layout: *the part of term formatting that is safely available today is the part that changes
   nothing.* The part that would change something is vertical, and needs `nest` and a margin.
-  `binder_slack=0` below makes it four, which is where `notes/02-expressions.md` §8 stops treating it
-  as a coincidence.
+  `binder_slack=0` and `match_slack=0` below make it five, which is where `notes/02-expressions.md` §8
+  stops treating it as a coincidence.
 - **Three mutations prove the application layout non-vacuous, and they fail in three different
   places.** Dropping `gapDoc`'s spaces-only test deletes `/- why -/` outright, joins an app's lines,
   **and fails 7 of this repository's own 20 modules** — that guard is load-bearing on real code.
@@ -137,6 +137,31 @@ question is where the remaining value is**.
   originally wrote the commented binder with its other gaps already canonical, where a per-gap rule and
   an all-or-nothing rule emit identical bytes and the golden would have pinned neither; it now carries
   slack in the later gaps on purpose. Same shape as the header's per-gap import rule.
+- **`matchAlt` is laid out, and it is `flat` by a different route than `app`.** All three gaps an
+  alternative owns are *declared*: `"| "` carries a trailing space and `darrow := " => "` carries one
+  on each side (`Lean/Parser/Term.lean:265-270`, `:99`), where `app` declares no atom and the parser
+  requires the space instead. Its patterns keep their bytes: `sepBy1 (sepBy1 termParser ", ")` builds
+  two levels of `null` and `liftedParts` lifts one, so `| 0,     m => m` collapses at the ends and not
+  in the middle. Safe under §5b despite a live `checkColGe` and no `withoutPosition`, because
+  `matchAlts` saves at the **first alternative's `|`** — a line start, left of everything a same-line
+  collapse moves. `match_slack=0` on the sample over 121 alternatives; hand-counted at 22 first.
+- **The one-level `null` lift is the boundary of what the shipped model can express *correctly*, not a
+  shortcut.** Mutation 4 lifts `null`s recursively and reaches `matchAlt`'s pattern run, which emits
+  `| 0 , m => m` — **a space before the comma** — because `flat` spaces every gap while `", "` declares
+  only a trailing one. The shape model cannot say "tight left, one space right" for a single gap.
+  Stopping the lift is what keeps those bytes safe.
+- **The interface was designed twice, and the shipped one is the under-expressive one — on purpose.**
+  The alternative is a declared-atom table keyed on (kind, token text), computing each gap from the
+  adjacent atoms' declared strings, which is what `pushToken` does
+  (`PrettyPrinter/Formatter.lean:366-417`) and which would get the comma right. It is **not
+  free-standing at this layer**: the gaps it cannot derive from declared strings — a bracket against an
+  ident — are the ones `pushToken:393` sends to `parseToken`, which needs `env := ← getEnv` and the
+  token table (`:357-364`), i.e. an `Environment`, which the architecture excludes
+  (`notes/01-command-printing.md` §3-5). What is available is a hybrid: declared strings plus a
+  per-kind hardcoded rule for the tight gaps — which is what `bracketed` already is. Not built,
+  because everything it would unlock is blocked for other reasons (`structInst` on §5b's column check
+  under any model; `matchAlt`'s patterns are already safe), so it would be expressiveness with no
+  claim behind it. `notes/02-expressions.md` §7b is the comparison and the recommendation.
 - **`{` is not `{`, and it is the sharpest evidence in this stack that spacing must be read per
   declaration.** `structInst` declares its braces **spaced** — `"{ "` and `" }"`
   (`Lean/Parser/Term.lean:351-355`) — where `implicitBinder` declares them **bare**
