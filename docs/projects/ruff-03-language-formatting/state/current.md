@@ -5,9 +5,9 @@ first_unresolved: 01-commands
 
 # Current state
 
-`RLF-COMMANDS` is **in progress**: the printer skeleton is live and proven lossless, **413 of the
-corpus's 435 commands take a cited canonical layout** — `namespace` (25), `end` (25), `open` (7), and
-the shell of 356 of 367 declarations — **all 20 module headers take theirs**, and **54 constructor and
+`RLF-COMMANDS` is **in progress**: the printer skeleton is live and proven lossless, **415 of the
+corpus's 437 commands take a cited canonical layout** — `namespace` (25), `end` (25), `open` (7), and
+the shell of 358 of 369 declarations — **all 20 module headers take theirs**, and **54 constructor and
 field shells** are claimed inside those declarations. Its external prerequisite stack
 `ruff-02-layout-core` is verified and its live implementation still matches recorded state.
 
@@ -212,7 +212,7 @@ Printing inside the frontend would buy free arg order for a median 1.96 s fronte
   every command — the printer would fall back to bytes and be the identity function it was before any
   layout existed. This repository also writes its declarations the way the layout writes them, so even
   a layout that runs changes nothing here. `printer-roundtrip` therefore reports `canonical=`, the
-  commands actually laid out, and `tests/printer/run.sh` floors the corpus total: **413 of 435**, and `members=` the shells claimed
+  commands actually laid out, and `tests/printer/run.sh` floors the corpus total: **415 of 437**, and `members=` the shells claimed
   inside them, floored at 50 (**54**) because `canonical=` cannot see them — a command counts once
   whether it claims one region or six. The
   header gets the same treatment for the same reason, but as an exact count rather than a floor
@@ -291,13 +291,30 @@ Printing inside the frontend would buy free arg order for a median 1.96 s fronte
 
 - No blocker is currently recorded beyond the named prerequisite stacks.
 - **`RLF-COMMANDS` is not met, and the gap is now named work rather than unread grammar.**
-  413 of 435 commands have a layout, all 20 headers do, and 54 member shells are claimed. Outstanding:
+  415 of 437 commands have a layout, all 20 headers do, and 54 member shells are claimed. Outstanding:
   `results/01-commands.md`. The 22 commands still conservative are `instance` (11), `moduleDoc` (9),
   `registerOption` (1), and `initialize` (1). **Module headers and imports** and **structures and
   inductives** — the prompt's other named requirements — are done, the latter to the depth its grammar
   allows: the member *shell*, because everything past a member's name is a term (`RLF-EXPRESSIONS`'s)
   and `structFields`'s `manyIndent` makes field indentation parser-significant rather than cosmetic.
   See `notes/01-command-printing.md` §7.
+- **The corpus's 95% coverage is a fact about its command mix, and foreign code says so.** On the
+  frozen mathlib sample the same printer claims **1414 of 2734 commands (51.7%)**. That gap is not a
+  defect and not a floor to be raised for its own sake: `printer-unclaimed` names the kind of every
+  refusal, and the largest single category is **`lemma` (393)**, which is *Mathlib's own syntax*
+  (`Mathlib/Tactic/Lemma.lean:20`) and does not exist in the compiler this stack cites. The
+  conservative path is the right answer for it — that is "unknown commands must round-trip
+  conservatively" working, and it is `RLF-EXTENSIONS`'s to claim, not this prompt's. `variable` (277)
+  is `many1 bracketedBinder`, so it is terms and `RLF-EXPRESSIONS`'s. A bare percentage cannot tell
+  those apart from a guard misfiring, which is why the census reports kinds rather than a rate.
+- **`section` was named by this prompt's own task line and had no layout; only foreign code showed
+  it.** "namespaces/sections" is in `prompts/01-commands.md`, and **this corpus contains no `section`
+  command at all** — the sample has 181. `section` and `universe` (20) now take flat-run layouts cited
+  against `Command.lean:299-300` and `:531-532`. `sectionHeader`'s `@[expose]` slot is bracketed and is
+  refused by `opensAttributeBracket`, the same call `open` makes for `openOnly`; a mutation disabling
+  that guard emits `@[ expose ] public section` and fails the golden. As with the members, the corpus
+  cannot test any of this, so the wonky fixture carries the whole proof — a bare `section` is one token
+  and byte-identical, so the fixture needs *labelled* and `noncomputable` sections to show a decision.
 - **`moduleDoc` may well need no layout at all, and that is an answer rather than a gap.** It is
   `"/-!" >> commentBody >> ppLine` (`:60-61`): an opener and a body of prose. There is nothing in it
   the formatter may re-space, so the conservative path *is* its layout. Recording that conclusion, and

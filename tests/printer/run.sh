@@ -304,6 +304,20 @@ section
   def     indented : Nat := 6
 end
 
+section     Labeled
+def     labeled : Nat := 7
+end     Labeled
+
+noncomputable     section
+def     nc : Nat := 8
+end
+
+@[expose]     public     section
+def     exposed : Nat := 9
+end
+
+universe     u     v
+
 structure     Str     where
   field     : Nat
   private     modified     : Nat
@@ -357,6 +371,20 @@ LEAN_NUM_THREADS=1 lake env "$application" __analyze-exact \
 #                                    in `ppLine` (`Lean/Parser/Term.lean:91-93`). The source had it on
 #                                    its own line already; `@[inline]` below is where the break is
 #                                    visibly the formatter's doing.
+#   `section Labeled` / `end Labeled`  the label is `optional`, so a section is one token or two and
+#                                    `spaceSeparated` handles both without knowing which. The bare
+#                                    `section` above is the one-token case, and it is byte-identical --
+#                                    which is why it cannot be the only section here. These two collapse
+#                                    a run of spaces and are the evidence the layout decides anything.
+#   `noncomputable section`          `sectionHeader`'s keyword slots join the flat run. This is the
+#                                    header shape that actually occurs in the wild.
+#   `@[expose]     public     section`  the fourth header slot is bracketed, so the layout is refused
+#                                    and every space survives -- including the ones a claimed section
+#                                    would have collapsed. The slack is the point: it is what makes the
+#                                    guard's mutation visible rather than a no-op, and `def exposed`
+#                                    on the next line still gets its shell, so this is the guard
+#                                    refusing one command and not the file.
+#   `universe u v`                   `many1 ident` is a flat run whatever its length.
 #   `@[inline]` then `def e`         written on ONE line in the fixture and split into two, because
 #                                    `declModifiers` follows attributes with `ppDedent ppLine` unless
 #                                    `inline`, and `declaration` passes `inline := false`
@@ -449,6 +477,20 @@ section
   /-- Indented, and a line break cannot preserve that. -/
   def     indented : Nat := 6
 end
+
+section Labeled
+def labeled : Nat := 7
+end Labeled
+
+noncomputable section
+def nc : Nat := 8
+end
+
+@[expose]     public     section
+def exposed : Nat := 9
+end
+
+universe u v
 
 structure Str     where
   field     : Nat

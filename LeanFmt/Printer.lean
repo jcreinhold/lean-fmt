@@ -13,10 +13,10 @@ frontend. That is not a preference: `ruff-01`'s roadmap already committed to car
 printing in-frontend would buy free arg order for a median 1.96 s frontend run per file (`RLS-FINAL`).
 
 **What the projection does not carry, measured rather than assumed.** Over all 21 modules of this
-repository (39,869 nodes, `evidence/01-projection-shape.txt`), 14,365 nodes (36.0%) carry no token at
+repository (40,027 nodes, `evidence/01-projection-shape.txt`), 14,405 nodes (36.0%) carry no token at
 all — they are *absent* syntax, the unfilled optional slots of `declModifiers`, `optDeclSig`,
 `Termination.suffix` — and `collect` gives them range `(0,0)` because a node's range is the hull of the
-leaves beneath it and there are none. For 6,143 of them (15.4% of all nodes) the parent also has direct
+leaves beneath it and there are none. For 6,161 of them (15.4% of all nodes) the parent also has direct
 token children, so nothing in the projection says where among its siblings the absent slot belongs.
 `Lean.Syntax` has no position for them either; this is not something the projection dropped.
 
@@ -27,7 +27,7 @@ Two consequences run through everything below:
    siblings ascend in arg order. Sorting children by range would be correct for the 64.0% that carry
    tokens and silently wrong for the rest.
 2. **The conservative path reads bytes, not the tree.** Empty nodes contribute no bytes, so re-emitting
-   a command's byte extent is unaffected by all 6,143 ambiguous placements. It is the only path whose
+   a command's byte extent is unaffected by all 6,161 ambiguous placements. It is the only path whose
    correctness rests on no claim about any grammar, which is exactly what the roadmap's "unknown
    commands must round-trip conservatively" asks for. Every kind starts here and leaves only when a
    canonical layout for it is cited and pinned by a golden test.
@@ -52,7 +52,7 @@ transport format. This is the view a walk needs, computed once.
 Both child arrays ascend in index order, which **is** arg order by `collect`'s construction. The
 projection retains no other order, so this is not a property that can be checked against its output —
 `evidence/01-projection-shape.txt` checks the observable consequence instead: among a parent's
-token-bearing children, index order agrees with byte order (0 violations over 39,869 nodes). -/
+token-bearing children, index order agrees with byte order (0 violations over 40,027 nodes). -/
 structure Tree where
   source : LosslessSource
   /-- `nodeChildren[i]` are the node-children of node `i`, in arg order. -/
@@ -68,7 +68,7 @@ structure Tree where
 
   This is not the measured contiguity property being smuggled in as an assumption: it is computed as
   the max of the children's ends, which is the subtree's extent whether or not the indices happen to
-  be contiguous. `evidence/01-projection-shape.txt` reports 0 contiguity violations over 39,869 nodes,
+  be contiguous. `evidence/01-projection-shape.txt` reports 0 contiguity violations over 40,027 nodes,
   so the range is also gap-free in practice — but nothing below depends on that. -/
   subtreeEnd : Array Nat
 
@@ -239,6 +239,25 @@ private def Tree.singleLineTokens (tree : Tree) (normalized : String) (first las
 /-- Both halves, over a whole command. -/
 private def Tree.respaceable (tree : Tree) (normalized : String) (span : CommandSpan) : Bool :=
   tree.triviaClean span.first span.last && tree.singleLineTokens normalized span.first span.last
+
+/-- Does this command open an attribute bracket?
+
+`spaceSeparated` puts one space between every pair of tokens, which is right for a flat run of
+keywords and identifiers and wrong the moment a bracket appears: `@[` and `]` are tokens of their own,
+so a run holding them emits `@[ expose ]` rather than `@[expose]`. A kind whose grammar is a flat run
+*except* for an optional bracketed slot can therefore still take the flat layout on every command that
+does not fill that slot, and must keep its bytes on the ones that do.
+
+Asking it of the token text rather than of the tree is deliberate. The alternative is to find the slot
+structurally and check whether it is empty, which needs the slot's index in its parent — a second
+claim about the same grammar, and one that goes stale differently. `@[` is a single atom in the
+parser's token table, an identifier can never spell it, and no layout here emits one, so its presence
+is exactly the question being asked. -/
+private def Tree.opensAttributeBracket (tree : Tree) (normalized : String) (span : CommandSpan) :
+    Bool := Id.run do
+  for index in [span.first:span.last + 1] do
+    if tree.tokenText normalized index == "@[" then return true
+  return false
 
 /-- Do the bytes at `start` begin their line?
 
@@ -466,6 +485,25 @@ private def Tree.canonical? (tree : Tree) (normalized : String) (span : CommandS
   -- The identifier is optional, so this is one token or two; `spaceSeparated` handles both without
   -- knowing which, because it spaces whatever tokens the command actually has.
   | "Lean.Parser.Command.end" => tree.wholeSpan? normalized span
+  -- `Lean/Parser/Command.lean:299-300` (v4.32.0):
+  --   def «section» := leading_parser
+  --     sectionHeader >> "section" >> optional (ppSpace >> checkColGt >> ident)
+  -- The label is optional, so this is one token or two before the header, and `spaceSeparated` handles
+  -- both. `sectionHeader` (`:288-292`) is four optional slots:
+  --   optional ("@[" >> nonReservedSymbol "expose" >> "] ") >> optional ("public ") >>
+  --   optional ("noncomputable ") >> optional ("meta ")
+  -- Three of them are lone keyword atoms and flat-run correctly — `noncomputable section` is the one
+  -- that actually occurs. The first does not: `@[` and `]` are separate tokens, so a run holding them
+  -- emits `@[ expose ]`. Commands filling that slot keep their bytes, which is the call `open` already
+  -- makes for `openOnly`'s brackets rather than a new kind of judgement.
+  | "Lean.Parser.Command.section" => do
+    guard !(tree.opensAttributeBracket normalized span)
+    tree.wholeSpan? normalized span
+  -- `Lean/Parser/Command.lean:531-532` (v4.32.0):
+  --   def «universe» := leading_parser "universe" >> many1 (ppSpace >> checkColGt >> ident)
+  -- A keyword and one or more identifiers, one space apart. No brackets, no separators, and no terms:
+  -- `many1` of an `ident` is the flat run `spaceSeparated` is for, whatever its length.
+  | "Lean.Parser.Command.universe" => tree.wholeSpan? normalized span
   -- `Lean/Parser/Command.lean:852-853` (v4.32.0):
   --   def «open» := leading_parser withPosition ("open" >> openDecl)
   -- `withPosition` builds no node, so the command is the `open` atom plus one `openDecl` alternative
