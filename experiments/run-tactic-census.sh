@@ -14,9 +14,11 @@ set -euo pipefail
 # correct in `results/02-expressions.md`. Hence a census rather than a subtraction.
 #
 # The question this one asks is different from the term census's, because the answer to "can this be
-# cited" is already yes. `notes/03-tactics.md` §2-3 reads the grammar: every construct `RLF-TACTICS`
-# names is `sepByIndent`/`sepBy1Indent` (`Lean/Parser/Extra.lean:202-208`), all of it in the pinned
-# compiler, all of it citable. What is *not* known is how much of it this printer may touch, and §5
+# cited" is already yes. `notes/03-tactics.md` §2-3 reads the grammar: what this script counts —
+# tactic sequences and their bracketed spelling — is `sepBy1Indent` (`Lean/Parser/Extra.lean:202-208`),
+# in the pinned compiler and citable. (§3 names a second family, `many1Indent` (`:190-191`), which has
+# no separator clause at all; `do` and match alternatives are that one. Neither is counted here, and
+# neither is `RLF-TACTICS`'s to lay out.) What is *not* known is how much of it this printer may touch, and §5
 # says that turns on a property no kind census can see — whether the printer owns every newline inside
 # a block. So this script answers the two questions that are countable by kind:
 #
