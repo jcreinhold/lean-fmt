@@ -342,6 +342,23 @@ def     binderInst [  Inhabited Nat  ] : Nat := default
 
 def     binderCommented (  /- why -/  x  :  Nat  ) : Nat := x
 
+def     matchAlt : Nat → Nat
+  |     0     =>     1
+  |     n     =>     n
+
+def     matchAltPaired : Nat → Nat → Nat
+  |     0,     m     =>     m
+  |     n,     _     =>     n
+
+def     matchAltCommented : Nat → Nat
+  |     /- why -/     0     =>     1
+  |     n     =>     n
+
+def     matchAltBroken : Nat → Nat
+  |     0     =>
+    1
+  |     n     =>     n
+
 structure     Str     where
   field     : Nat
   private     modified     : Nat
@@ -453,6 +470,27 @@ LEAN_NUM_THREADS=1 lake env "$application" __analyze-exact \
 #                                    interior gap is both the first gap and the last, and both are
 #                                    tight. `Inhabited Nat` inside it is an app, found and collapsed by
 #                                    the same recursion that finds it inside a `paren`.
+#   `| 0 => 1`                       every gap a match alternative owns is one space, and all three
+#                                    are declared: `"| "` carries a trailing space and `darrow :=
+#                                    " => "` (`Term.lean:265-270`, `:99`) carries one on each side.
+#                                    So `matchAlt` is `flat` for the same reason `app` is, by a
+#                                    different route -- `app` has no atoms and the parser *requires*
+#                                    the space; here the atoms declare it.
+#   `| 0,     m => m`                the run between two patterns SURVIVES, and this is the
+#                                    conservative direction rather than an oversight.
+#                                    `sepBy1 (sepBy1 termParser ", ") " | "` builds **two** levels of
+#                                    `null` and `liftedParts` lifts one, so the pattern run arrives as
+#                                    a single opaque part and keeps its bytes. `| 0` and `=> m` around
+#                                    it still collapse, which is what makes this line evidence rather
+#                                    than a shrug: the alternative is laid out and the inner run is
+#                                    not.
+#   `|     /- why -/     0 => 1`     the per-gap refusal again, one construct further out.
+#   `| 0 =>` then `    1`            the gap holds a newline, so it is refused and the indentation
+#                                    survives. `matchAlt` has a live `checkColGe` and no
+#                                    `withoutPosition` -- collapsing it is still safe because
+#                                    `matchAlts` saves its position at the *first* `|`
+#                                    (`:279-280`), at the start of a line, left of every token a
+#                                    same-line collapse can move. That is the test `structInst` fails.
 #   `(  /- why -/  x : Nat)`         the refusal is **the gap's alone, and the rest of the binder is
 #                                    still laid out**. The comment sits in the first gap, so that gap
 #                                    keeps all of its bytes -- the tight rule is precisely what would
@@ -593,6 +631,23 @@ def binderInst [Inhabited Nat] : Nat := default
 
 def binderCommented (  /- why -/  x : Nat) : Nat := x
 
+def matchAlt : Nat → Nat
+  | 0 => 1
+  | n => n
+
+def matchAltPaired : Nat → Nat → Nat
+  | 0,     m => m
+  | n,     _ => n
+
+def matchAltCommented : Nat → Nat
+  |     /- why -/     0 => 1
+  | n => n
+
+def matchAltBroken : Nat → Nat
+  | 0 =>
+    1
+  | n => n
+
 structure Str     where
   field     : Nat
   private modified     : Nat
@@ -685,6 +740,25 @@ if [[ "$actual_binder_slack" == "$expected_binder_slack" ]]; then
 else
   printf 'FAIL binder_slack reported %s on the wonky fixture, expected %s; the sample'\''s count is vacuous\n' \
     "$actual_binder_slack" "$expected_binder_slack" >&2
+  failures=$((failures + 1))
+fi
+
+# `match_slack`, the third of these, and the fixture is counted the same way. Each alternative owns
+# exactly three gaps -- `| pat`, `pat =>`, `=> rhs` -- and each is one space when declared, so a
+# five-space run in any of them is one. `matchAlt` and `matchAltPaired` are 3+3 each; the pattern run
+# inside `0,     m` is NOT counted, because it is inside the `sepBy1` null and neither the layout nor
+# this counter reaches it. `matchAltCommented` is 2+3 and `matchAltBroken` is 2+3: each loses exactly
+# the gap whose bytes are not spaces-only -- the comment in one, the newline in the other -- which is
+# the same predicate the layout refuses on. Twenty-two.
+expected_match_slack=22
+actual_match_slack=$("$tests" printer-report "$work/wonky.json" "$work/wonky.lean" \
+  | tr ' ' '\n' | sed -n 's/^match_slack=\([0-9]*\)$/\1/p')
+if [[ "$actual_match_slack" == "$expected_match_slack" ]]; then
+  printf '  ok   match_slack counts the fixture'\''s %s alternative gaps (so 0 on mathlib is a fact)\n' \
+    "$expected_match_slack"
+else
+  printf 'FAIL match_slack reported %s on the wonky fixture, expected %s; the sample'\''s count is vacuous\n' \
+    "$actual_match_slack" "$expected_match_slack" >&2
   failures=$((failures + 1))
 fi
 

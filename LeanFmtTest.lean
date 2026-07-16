@@ -859,6 +859,7 @@ tokens={projection.tokens.size} nodes={projection.nodes.size} header_bytes={proj
 header_canonical={headerCanonical} members={tree.memberShells normalized} \
 app_slack={tree.appSlack normalized} \
 binder_slack={tree.binderSlack normalized} \
+match_slack={tree.matchSlack normalized} \
 tail_bytes={projection.normalizedBytes - projection.terminalStop}"
   return 0
 

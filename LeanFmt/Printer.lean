@@ -764,6 +764,24 @@ constructs like `(...)` so that the user can locally override whitespace sensiti
 re-spacing to break: `app` has to argue *collapse, do not break* against a `checkColGt` that is
 switched on, while here it is switched off by the grammar itself.
 
+**`matchAlt` is `flat` because every boundary it owns declares a space** (`Lean/Parser/Term.lean:265-270`):
+
+    matchAlt (rhsParser := termParser) := leading_parser (withAnonymousAntiquot := false)
+      "| " >> ppIndent (sepBy1 (sepBy1 termParser ", ") " | " >> darrow >>
+        checkColGe "…" >> rhsParser)
+
+`"| "` declares a trailing space, `darrow := " => "` (`:99`) declares one on each side, and those are
+the alternative's only own gaps — so all three are one space and none is tight. Its patterns are *not*
+touched: `sepBy1 (sepBy1 …)` builds **two** levels of `null` and `liftedParts` lifts one, so a
+multi-pattern alternative's inner run arrives as a single opaque part and keeps its bytes. That is the
+conservative direction, and `| 0,     m => m` in the golden is what it looks like.
+
+Collapsing here is safe under the rule `notes/02-expressions.md` §5b states, even though `matchAlt`
+has a live `checkColGe` and no `withoutPosition`: `matchAlts := withPosition $ many1Indent (ppLine >>
+matchAlt)` (`:279-280`) saves at the **first alternative's `|`**, which is at the start of a line and
+left of every token a same-line collapse can move. Contrast `sepByIndent` below, which saves at a
+position *inside* the construct.
+
 **`structInst` is deliberately absent, and it is absent twice over.** Its braces are declared `"{ "`
 and `" }"` (`Term.lean:351-355`), so `bracketed` would emit `{x := 1}` where the grammar says
 `{ x := 1 }` — the `Spacing.bracketed` docstring's counter-example. And even a rule that got the
@@ -786,6 +804,7 @@ private def spacingOf (kind : String) : Spacing :=
   match kind with
   | "Lean.Parser.Term.app" => .flat
   | "Lean.Parser.Term.binderDefault" => .flat
+  | "Lean.Parser.Term.matchAlt" => .flat
   | "Lean.Parser.Term.explicitBinder" => .bracketed
   | "Lean.Parser.Term.implicitBinder" => .bracketed
   | "Lean.Parser.Term.instBinder" => .bracketed
@@ -953,6 +972,15 @@ def Tree.binderSlack (tree : Tree) (normalized : String) : Nat :=
   tree.slackIn normalized
     #["Lean.Parser.Term.explicitBinder", "Lean.Parser.Term.implicitBinder",
       "Lean.Parser.Term.instBinder"]
+
+/-- The match-alternative gaps whose bytes are not the spacing `matchAlt` declares.
+
+Counts only the alternative's *own* gaps — `| pat`, `pat =>`, `=> rhs`. The gaps between two patterns
+of one alternative (`| 0, m =>`) are inside the `sepBy1` null and are not this counter's, for the same
+reason the layout does not touch them: `liftedParts` lifts one level of `null`, and `sepBy1 (sepBy1 …)`
+builds two. -/
+def Tree.matchSlack (tree : Tree) (normalized : String) : Nat :=
+  tree.slackIn normalized #["Lean.Parser.Term.matchAlt"]
 
 /-- How many of this module's commands take a canonical layout rather than the conservative path.
 
