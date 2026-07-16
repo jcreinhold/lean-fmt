@@ -17,15 +17,15 @@ anything at all.
 immediate parent node. There is **no children array and no arg index**.
 
 Measured by `experiments/run-projection-shape.sh` over every module of this repository — 21 modules,
-39,027 nodes, real parser output — by reconstructing the tree from the projection and testing each
+39,836 nodes, real parser output — by reconstructing the tree from the projection and testing each
 property (`evidence/01-projection-shape.txt`):
 
 | property | result |
 | --- | --- |
 | subtree of node *j* is a contiguous index range | **0 violations** |
 | among a parent's token-bearing node-children, index order agrees with byte order | **0 violations** |
-| nodes whose subtree contains no token at all | **14,092 — 36.1%** |
-| …of those, whose parent also has direct token children | **6,007 — 15.4% of all nodes** |
+| nodes whose subtree contains no token at all | **14,359 — 36.0%** |
+| …of those, whose parent also has direct token children | **6,138 — 15.4% of all nodes** |
 
 The first two are not luck. `LosslessSource.collect` pushes a node's placeholder at
 `build.nodes.size` *before* folding its args left to right, so children of one parent necessarily have
@@ -41,14 +41,14 @@ output. Byte order *is* observable, and index order disagreeing with it is what 
 wrong order would actually produce — so that is what row 2 measures. Both hard checks were then
 mutation-tested rather than trusted: a synthetic tree whose child precedes its parent, and one with a
 foreign node inside a parent's span, each raise the contiguity count; reversing child order on the real
-corpus raises row 2 to **4,962**, which is also the number of parents whose child order the check
-genuinely exercises.
+corpus raises row 2 into the thousands (**4,962** on the corpus as it stood that run), which is also
+the number of parents whose child order the check genuinely exercises.
 
 The last two decide the interface:
 
 - **More than a third of the tree is absent syntax.** `def f : Nat := 0` alone carries seven empty
   `null` children under `declModifiers` — the docComment, attributes, visibility, `noncomputable`,
-  `unsafe`, and `partial`/`nonrec` slots. Across the corpus, 12,576 of the 14,092 empty nodes are
+  `unsafe`, and `partial`/`nonrec` slots. Across the corpus, 12,806 of the 14,359 empty nodes are
   anonymous `null`; the named remainder is exactly what the name suggests — `letConfig` (480),
   `declModifiers` (323), `Termination.suffix` (292), `optEllipsis` (139), `optDeclSig` (101),
   `optDeriving` (28). These nodes are the *absence* of syntax, recorded positionally.
@@ -57,7 +57,7 @@ The last two decide the interface:
   the projection dropped — `Lean.Syntax` has none either. An empty `null` node genuinely has no
   position, and `Syntax.getPos?` returns `none` for it.
 
-**Therefore arg order cannot be recovered from positions.** For 6,007 of 39,027 nodes, an empty
+**Therefore arg order cannot be recovered from positions.** For 6,138 of 39,836 nodes, an empty
 node-child sits among direct token-children of the same parent and nothing in the projection says
 whether it came before or after them. That is a seventh of the tree, not an edge case, and no amount
 of care with ranges fixes it: the information is absent from `Lean.Syntax` upward.
@@ -144,7 +144,7 @@ grammar belongs.
   declaration it mirrors, and a golden fixture pins it. An uncited shape is an unsourced claim.
 - **The conservative fallback reads tokens, not the tree.** This is the load-bearing consequence of
   §2: empty nodes contribute no bytes, so a printer that re-emits a subtree's tokens in source order
-  with their trivia is unaffected by all 6,007 ambiguous placements. Unknown syntax round-trips
+  with their trivia is unaffected by all 6,138 ambiguous placements. Unknown syntax round-trips
   through the one path that does not depend on the information the projection lacks. The roadmap's
   "unknown commands must round-trip conservatively" and this measurement point the same way — the
   fallback is not a concession, it is the only path whose correctness does not rest on a grammar
@@ -155,12 +155,12 @@ grammar belongs.
 The roadmap requires "every supported parser category has an explicit ownership table and formatter
 fallback". The table is built from what the corpus actually contains, not from what I remember Lean
 having: `experiments/run-projection-shape.sh` censuses command kinds, and this repository yields
-**429 commands in 7 distinct kinds** (`evidence/01-projection-shape.txt`; the counts below move as the
+**435 commands in 7 distinct kinds** (`evidence/01-projection-shape.txt`; the counts below move as the
 project grows and are re-read from the probe rather than maintained by hand).
 
 | kind | count | owner |
 | --- | --- | --- |
-| `Lean.Parser.Command.declaration` | 361 | `RLF-COMMANDS` — the shell only; see below |
+| `Lean.Parser.Command.declaration` | 367 | `RLF-COMMANDS` — the shell and its members; see below |
 | `Lean.Parser.Command.namespace` | 25 | `RLF-COMMANDS` |
 | `Lean.Parser.Command.end` | 25 | `RLF-COMMANDS` |
 | `Lean.Parser.Command.moduleDoc` | 9 | `RLF-COMMANDS` |
@@ -217,6 +217,43 @@ ownership table has one row for all of them.
 the value on the conservative path until the expression prompt claims it. That is not a gap to
 apologize for; it is the decomposition the work order already chose, and the skeleton supports it
 directly because a command's Doc can mix canonical structure with `verbatim` subtrees.
+
+**Structures and inductives past their shell: the members get a shell of their own, and no more.** The
+prompt's task names structures and inductives, and the declaration shell stops at the declaration's
+name, so their members were the outstanding half. Their grammar decides how much of them is available
+(`Lean/Parser/Command.lean:210-212`, `:257-258`, `:265-266`):
+
+- **Everything past the member's name is a term.** `ctor` and `structSimpleBinder` both end in
+  `optDeclSig`, and `structCtor` puts `many (ppSpace >> Term.bracketedBinder)` before its `" :: "`.
+  `RLF-EXPRESSIONS` owns all of it, so the claim ends at the name. That also keeps the claim one
+  *contiguous* run, which is all a `Claim` can be — `structCtor`'s `::` is unreachable for the same
+  reason it is unowned.
+- **Their vertical layout is not this printer's to choose, and may not even be legal.** `structFields`
+  is `manyIndent`, i.e. `withPosition ((colGe p)*)` (`Lean/Parser/Extra.lean:199-201`), so a field's
+  indentation is parser-significant: re-indenting can change what parses. Laying members out
+  vertically would also need `Doc.nest`, which this printer never emits, and an indent width, which
+  this stack has deliberately left unset alongside the margin.
+- **So the member layout is the shell as a flat run**, and its guard follows from `hard` indenting to
+  nothing: a shell whose gaps cross a line cannot be reproduced, because the break would land the name
+  at column 0. `flatGaps` refuses those. This is why `structSimpleBinder`'s doc-commented fields are
+  refused while `ctor`'s documented constructors are laid out — a `ctor`'s doc comment sits under
+  `optional`, outside the shell, so it keeps its bytes and its break without the shell reproducing it;
+  a field's doc comment is inside its `declModifiers`, hence inside the shell.
+
+**What the measurement changed.** The probe was built to answer "would this layout decide anything?",
+expecting the answer to be no — a layout that provably changes nothing is a conclusion to record, not
+coverage to add. Its first draft said 11 fields had "slack" and appeared to argue for building it. That
+draft was wrong twice over: it measured the gap between a member's *first two tokens*, which for
+`field : Nat` is the gap before `optDeclSig`'s `:` — a term's spacing, which this prompt must not
+report on — and it counted any gap over one byte, which scores a doc comment's newline as collapsible
+slack. Corrected, the answer is **0 collapsible members out of 260**: 195 fields are one-token shells,
+11 are doc-broken, and all 46 constructors and 8 structure constructors are already tight.
+
+That is not an argument for skipping the layout, and the distinction matters. The corpus is this
+repository's own already-formatted code, so "nothing here would change" is a fact about the corpus, not
+about the rule: a formatter that leaves `|     first` alone is incomplete regardless. What the figure
+decides is *what can test it* — the corpus cannot, so `members=` counts the claims and the wonky
+fixture is the only evidence the layout changes a byte. Both are asserted in `tests/printer/run.sh`.
 
 ## 8. What this note does not decide
 

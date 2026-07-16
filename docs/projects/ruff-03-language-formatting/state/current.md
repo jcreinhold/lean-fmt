@@ -5,11 +5,17 @@ first_unresolved: 01-commands
 
 # Current state
 
-`RLF-COMMANDS` is **in progress**: the printer skeleton is live and proven lossless, **407 of the
-corpus's 429 commands take a cited canonical layout** — `namespace` (25), `end` (25), `open` (7), and
-the shell of 350 of 361 declarations — and **all 20 module headers take theirs**. Its external
-prerequisite stack `ruff-02-layout-core` is verified and its live implementation still matches recorded
-state.
+`RLF-COMMANDS` is **in progress**: the printer skeleton is live and proven lossless, **413 of the
+corpus's 435 commands take a cited canonical layout** — `namespace` (25), `end` (25), `open` (7), and
+the shell of 356 of 367 declarations — **all 20 module headers take theirs**, and **54 constructor and
+field shells** are claimed inside those declarations. Its external prerequisite stack
+`ruff-02-layout-core` is verified and its live implementation still matches recorded state.
+
+Corpus figures move whenever this repository's own code changes, because this repository *is* the
+corpus. They are re-read from `experiments/run-projection-shape.sh` rather than maintained by hand;
+when they are quoted in prose (`LeanFmt/Printer.lean`'s module docstring, `notes/01-command-printing.md`
+§2 and §7) they drift silently, and no gate catches it. Re-running the probe after touching `LeanFmt/`
+is part of the work, not an optional tidy-up.
 
 **`RLC-FINAL`'s standing caveat is now half-answered.** That prompt closed the layout stack noting
 nothing consumed it, so every claim about realistic documents rested on fixtures written against the
@@ -57,12 +63,40 @@ Printing inside the frontend would buy free arg order for a median 1.96 s fronte
   bound is defensive: no construct in this corpus nests a `declId` inside a declaration, so nothing
   here exercises it. `class Foo` needs no case of its own: `classTk` is one of `«structure»`'s two
   openers, so it is a `structure` node.
-- **A `structure`'s fields and an `inductive`'s constructors are left as bytes, and they are this
-  prompt's to claim.** The shell stops at the name, so `structure Str     where` re-spaces its keyword
-  and keeps its fields exactly. An earlier reading of state called their ownership unsettled; the
-  prompt settles it — `01-commands.md`'s task names "declarations, structures, inductives" outright,
-  so `structFields` (`:257-262`) and `ctor` (`:210-212`) belong to `RLF-COMMANDS`, not to
-  `RLF-EXPRESSIONS`. They are outstanding work, not an open question.
+- **A `structure`'s fields and an `inductive`'s constructors get a shell of their own, and the grammar
+  says how much of one.** `01-commands.md`'s task names "declarations, structures, inductives"
+  outright, so `structFields` (`:257-262`) and `ctor` (`:210-212`) are `RLF-COMMANDS`'s. Their claim is
+  the opener, the modifiers and the name, and stops there: everything past a member's name is
+  `optDeclSig` or a `bracketedBinder` — a term, and `RLF-EXPRESSIONS`'s — and stopping at the name is
+  also what keeps the claim one contiguous run, which is all a `Claim` can be. Their *vertical* layout
+  is not available at all: `structFields` is `manyIndent` = `withPosition ((colGe p)*)`
+  (`Lean/Parser/Extra.lean:199-201`), so field indentation is parser-significant, and re-indenting can
+  change what parses.
+- **The claim model is an array of regions, not a prefix.** `canonical?` returns the prefix ending at
+  the declaration's name; `Tree.claims` appends a claim per member, and `Tree.command` emits verbatim
+  bytes between them. That generalization is what lets one `structure` lay out its own shell, leave its
+  signature as bytes, then lay out each field's shell — regions a single prefix could not reach past.
+  Members are claimed only inside a command that already has a layout: a kind on the conservative path
+  rests on no grammar claim, and reaching inside it to lay out a field would be exactly such a claim.
+- **The member layout changes nothing in this corpus, and that is a fact about the corpus, not the
+  rule.** `evidence/01-projection-shape.txt`: **0 collapsible of 260 members** — 195 fields are
+  one-token shells (an unmodified field is just its name, with no gap to collapse), 11 are doc-broken,
+  and all 46 constructors and 8 structure constructors are already tight. The probe was built expecting
+  that to *retire* the work, and it does not: this repository is its own corpus, so "nothing here would
+  change" says the code is already formatted, not that `|     first` should be left alone. What the
+  figure decides is what can test the layout — the corpus cannot, so `members=` counts the claims and
+  the wonky fixture carries the only proof it changes a byte.
+- **A member shell needs no column guard, and the reason is why doc-commented fields are refused.**
+  The declaration shell needs `atLineStart` because it emits `hard` after the docstring, and `hard`
+  indents to nothing. A member shell is a pure flat run with no break in it, so it is correct at any
+  indentation. The price is that a shell whose gaps cross a line cannot be laid out at all —
+  `flatGaps` refuses it, because reproducing the break would put the name at column 0, which under
+  `manyIndent` may not even parse. That is why `structSimpleBinder`'s doc-commented fields are refused
+  while `ctor`'s documented constructors are laid out: a `ctor`'s doc comment sits under `optional`,
+  outside the shell, so it keeps its bytes and its break for free; a field's sits inside its
+  `declModifiers`, hence inside the shell. Both guards are mutation-tested — dropping `flatGaps` pulls
+  the field name up onto its doc comment's line, dropping `triviaClean` deletes `/- why -/` from
+  `|     /- why -/     third` outright, and each fails the golden.
 - **The declaration shell is laid out, modifiers included.** Cited against
   `Lean/Parser/Command.lean:282-285` (a `declaration` is exactly `declModifiers` plus one shape) and
   `:114-121` (seven optional
@@ -157,7 +191,9 @@ Printing inside the frontend would buy free arg order for a median 1.96 s fronte
   every command — the printer would fall back to bytes and be the identity function it was before any
   layout existed. This repository also writes its declarations the way the layout writes them, so even
   a layout that runs changes nothing here. `printer-roundtrip` therefore reports `canonical=`, the
-  commands actually laid out, and `tests/printer/run.sh` floors the corpus total: **407 of 429**. The
+  commands actually laid out, and `tests/printer/run.sh` floors the corpus total: **413 of 435**, and `members=` the shells claimed
+  inside them, floored at 50 (**54**) because `canonical=` cannot see them — a command counts once
+  whether it claims one region or six. The
   header gets the same treatment for the same reason, but as an exact count rather than a floor
   (`headers_canonical=20` of 20): a module has exactly one header, and the layout declines per group
   and per gap, so there is no header shape here it should refuse outright. The golden fixtures pin
@@ -234,11 +270,13 @@ Printing inside the frontend would buy free arg order for a median 1.96 s fronte
 
 - No blocker is currently recorded beyond the named prerequisite stacks.
 - **`RLF-COMMANDS` is not met, and the gap is now named work rather than unread grammar.**
-  407 of 429 commands have a layout, and all 20 headers do. Outstanding, in the prompt's own words:
-  **structures and inductives** past their shell (`structFields`, `ctor`), and `results/01-commands.md`.
-  The 22 commands still conservative are `instance` (11), `moduleDoc` (9), `registerOption` (1), and
-  `initialize` (1). **Module headers and imports are done** and were the prompt's other named
-  requirement.
+  413 of 435 commands have a layout, all 20 headers do, and 54 member shells are claimed. Outstanding:
+  `results/01-commands.md`. The 22 commands still conservative are `instance` (11), `moduleDoc` (9),
+  `registerOption` (1), and `initialize` (1). **Module headers and imports** and **structures and
+  inductives** — the prompt's other named requirements — are done, the latter to the depth its grammar
+  allows: the member *shell*, because everything past a member's name is a term (`RLF-EXPRESSIONS`'s)
+  and `structFields`'s `manyIndent` makes field indentation parser-significant rather than cosmetic.
+  See `notes/01-command-printing.md` §7.
 - **`moduleDoc` may well need no layout at all, and that is an answer rather than a gap.** It is
   `"/-!" >> commentBody >> ppLine` (`:60-61`): an opener and a body of prose. There is nothing in it
   the formatter may re-space, so the conservative path *is* its layout. Recording that conclusion, and

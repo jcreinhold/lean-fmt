@@ -29,6 +29,7 @@ failures=0
 total_commands=0
 total_canonical=0
 total_header_canonical=0
+total_members=0
 
 # One `key=value` out of a report line. Whole-token matching, because the report has both `canonical`
 # and `header_canonical` in it and a `.*canonical=` pattern reads the wrong one.
@@ -52,6 +53,7 @@ check_module() {
   total_commands=$((total_commands + $(field commands "$report")))
   total_canonical=$((total_canonical + $(field canonical "$report")))
   total_header_canonical=$((total_header_canonical + $(field header_canonical "$report")))
+  total_members=$((total_members + $(field members "$report")))
 }
 
 for module in $(find LeanFmt -name '*.lean' | LC_ALL=C sort) Main.lean; do
@@ -60,8 +62,9 @@ done
 
 modules_checked=$(( $(find LeanFmt -name '*.lean' | wc -l | tr -d ' ') + 1 ))
 printf -- '--- corpus ---\n'
-printf 'modules_checked=%s commands=%s canonical=%s headers_canonical=%s failures=%s\n' \
-  "$modules_checked" "$total_commands" "$total_canonical" "$total_header_canonical" "$failures"
+printf 'modules_checked=%s commands=%s canonical=%s headers_canonical=%s members=%s failures=%s\n' \
+  "$modules_checked" "$total_commands" "$total_canonical" "$total_header_canonical" \
+  "$total_members" "$failures"
 
 # Exact, not a floor: a module has exactly one header, every module here has one, and the layout is
 # written to decline *per group and per gap* rather than per header — so there is no shape of header in
@@ -89,6 +92,18 @@ fi
 if [[ "$total_canonical" -lt 350 ]]; then
   printf 'FAIL only %s of %s commands took a canonical layout; the layouts are not running\n' \
     "$total_canonical" "$total_commands" >&2
+  failures=$((failures + 1))
+fi
+
+# `members` is the same assertion one level down, and it needs its own floor because `canonical` cannot
+# see it: a command counts once whether it claimed one region or six, so every member claim could
+# vanish and `canonical` would not move. It is also the *only* assertion the corpus can make about the
+# member layout — `evidence/01-projection-shape.txt` measures that no constructor or field in this
+# repository holds collapsible slack, so laying them out reproduces their bytes exactly and the
+# round-trip is blind to it. The wonky fixture below is what pins that it changes anything at all.
+if [[ "$total_members" -lt 50 ]]; then
+  printf 'FAIL only %s member shells were claimed; the ctor/field layout is not running\n' \
+    "$total_members" >&2
   failures=$((failures + 1))
 fi
 
@@ -290,13 +305,21 @@ end
 
 structure     Str     where
   field     : Nat
+  private     modified     : Nat
+  /-- The modifier run is a doc comment, so the shell spans a line break. -/
+  documented     : Nat
 
 class     Cls     where
   method     : Nat
 
+structure     Ctor     where
+  private     mk     ::
+  payload     : Nat
+
 inductive     Ind     where
-  | first
+  |     first
   | second
+  |     /- why -/     third
 
 instance     : Inhabited Ind := ⟨.first⟩
 
@@ -344,11 +367,38 @@ LEAN_NUM_THREADS=1 lake env "$application" __analyze-exact \
 #                                    would silently drop this declaration onto the conservative path,
 #                                    and most real docstrings with it.
 #   `structure Str     where`        the shell is the keyword and the name, and it stops there: the
-#   `class Cls     where`            fields keep their bytes, `where` included. `class` is a
+#   `class Cls     where`            signature keeps its bytes, `where` included. `class` is a
 #   `inductive Ind     where`        `«structure»` node — `classTk` is one of its two openers — so it
 #                                    needs no case of its own. The name is *found* among the shape's
 #                                    children rather than indexed, because `«structure»` puts
 #                                    `structureTk` ahead of it while `definition` puts `declId` first.
+#   `  field     : Nat`              UNCHANGED: an unmodified field is a one-token shell. There is no
+#                                    gap in it to collapse, so no layout could change it, and the
+#                                    printer makes no claim rather than a claim that does nothing.
+#                                    `     : Nat` is `optDeclSig` — a term, and `RLF-EXPRESSIONS`'s.
+#   `  private modified     : Nat`   the field's shell is its modifiers and its name, so the run
+#                                    `private     modified` collapses and the signature does not.
+#                                    This line is the whole reason the member layout exists: no
+#                                    constructor or field in the corpus holds collapsible slack
+#                                    (`evidence/01-projection-shape.txt`), so nothing but a written
+#                                    fixture can show the layout changing a byte.
+#   `  /-- ... -/`                   UNCHANGED, and this is a refusal, not an oversight. A
+#   `  documented     : Nat`         `structSimpleBinder`'s doc comment is inside its `declModifiers`
+#                                    and therefore inside the shell, so the shell spans the line break
+#                                    after it. A flat run would pull the name up onto the doc
+#                                    comment's line; `hard` cannot put it back, because `hard` indents
+#                                    to nothing and this field is indented — and `structFields` is
+#                                    `manyIndent`, so a field at column 0 would not even parse.
+#                                    `flatGaps` refuses the shape. Contrast `Doc.lean`'s own
+#                                    documented constructors, which are laid out: a `ctor`'s doc
+#                                    comment sits under `optional`, outside the shell, and so keeps
+#                                    its bytes and its break without the shell having to reproduce it.
+#   `  private mk     ::`            a `structCtor`'s claim stops at the name, like every member's.
+#                                    `     ::` is untouched because `many (ppSpace >>
+#                                    Term.bracketedBinder)` may sit between the name and `" :: "`,
+#                                    which would make the shell two runs rather than one — and a
+#                                    `Claim` is one contiguous run.
+#   `  | first`                      a `ctor`'s shell is `|`, its modifiers, and its name.
 #   `instance     : ...`             UNCHANGED: excluded, and its grammar says why. `declId` is
 #                                    optional there (anonymous instances are ordinary Lean), so the
 #                                    shell would have to end at the keyword, and `optNamedPrio` is
@@ -401,13 +451,21 @@ end
 
 structure Str     where
   field     : Nat
+  private modified     : Nat
+  /-- The modifier run is a doc comment, so the shell spans a line break. -/
+  documented     : Nat
 
 class Cls     where
   method     : Nat
 
+structure Ctor     where
+  private mk     ::
+  payload     : Nat
+
 inductive Ind     where
   | first
   | second
+  |     /- why -/     third
 
 instance     : Inhabited Ind := ⟨.first⟩
 

@@ -12,11 +12,11 @@ frontend. That is not a preference: `ruff-01`'s roadmap already committed to car
 "without exposing Lean frontend objects to product callers", the artifact is already the cache key, and
 printing in-frontend would buy free arg order for a median 1.96 s frontend run per file (`RLS-FINAL`).
 
-**What the projection does not carry, measured rather than assumed.** Over all 20 modules of this
-repository (34,844 nodes, `evidence/01-projection-shape.txt`), 12,797 nodes (36.7%) carry no token at
+**What the projection does not carry, measured rather than assumed.** Over all 21 modules of this
+repository (39,836 nodes, `evidence/01-projection-shape.txt`), 14,359 nodes (36.0%) carry no token at
 all — they are *absent* syntax, the unfilled optional slots of `declModifiers`, `optDeclSig`,
 `Termination.suffix` — and `collect` gives them range `(0,0)` because a node's range is the hull of the
-leaves beneath it and there are none. For 5,345 of them (15.3% of all nodes) the parent also has direct
+leaves beneath it and there are none. For 6,138 of them (15.4% of all nodes) the parent also has direct
 token children, so nothing in the projection says where among its siblings the absent slot belongs.
 `Lean.Syntax` has no position for them either; this is not something the projection dropped.
 
@@ -24,10 +24,10 @@ Two consequences run through everything below:
 
 1. **Node order is index order, never range order.** `collect` pushes a node's placeholder at
    `build.nodes.size` before folding its args left to right, so a parent precedes its children and
-   siblings ascend in arg order. Sorting children by range would be correct for the 84.7% that carry
+   siblings ascend in arg order. Sorting children by range would be correct for the 64.0% that carry
    tokens and silently wrong for the rest.
 2. **The conservative path reads bytes, not the tree.** Empty nodes contribute no bytes, so re-emitting
-   a command's byte extent is unaffected by all 5,345 ambiguous placements. It is the only path whose
+   a command's byte extent is unaffected by all 6,138 ambiguous placements. It is the only path whose
    correctness rests on no claim about any grammar, which is exactly what the roadmap's "unknown
    commands must round-trip conservatively" asks for. Every kind starts here and leaves only when a
    canonical layout for it is cited and pinned by a golden test.
@@ -52,7 +52,7 @@ transport format. This is the view a walk needs, computed once.
 Both child arrays ascend in index order, which **is** arg order by `collect`'s construction. The
 projection retains no other order, so this is not a property that can be checked against its output —
 `evidence/01-projection-shape.txt` checks the observable consequence instead: among a parent's
-token-bearing children, index order agrees with byte order (0 violations over 34,844 nodes). -/
+token-bearing children, index order agrees with byte order (0 violations over 39,836 nodes). -/
 structure Tree where
   source : LosslessSource
   /-- `nodeChildren[i]` are the node-children of node `i`, in arg order. -/
@@ -68,7 +68,7 @@ structure Tree where
 
   This is not the measured contiguity property being smuggled in as an assumption: it is computed as
   the max of the children's ends, which is the subtree's extent whether or not the indices happen to
-  be contiguous. `evidence/01-projection-shape.txt` reports 0 contiguity violations over 34,844 nodes,
+  be contiguous. `evidence/01-projection-shape.txt` reports 0 contiguity violations over 39,836 nodes,
   so the range is also gap-free in practice — but nothing below depends on that. -/
   subtreeEnd : Array Nat
 
@@ -297,7 +297,7 @@ private def Tree.wholeSpan? (tree : Tree) (normalized : String) (span : CommandS
 
 /-- The first and last token index under `node`'s subtree, or `none` when it carries no token.
 
-`none` is the *absent syntax* case and is the common one: 36.7% of nodes are empty
+`none` is the *absent syntax* case and is the common one: 36.0% of nodes are empty
 (`evidence/01-projection-shape.txt`), because an unfilled optional slot is still a node. Asking this
 question is how a layout distinguishes "the slot is empty" from "the slot is filled", which is
 information the projection carries exactly and positions do not carry at all. -/
@@ -508,6 +508,122 @@ private def Tree.canonical? (tree : Tree) (normalized : String) (span : CommandS
       ++ tree.spaceSeparated normalized shell.restFirst shell.last)
   | _ => none
 
+/-- One region of a command a layout accounts for: the tokens `[first, last]`, and the `Doc` standing
+in for their bytes.
+
+A command's layout is an array of these — sorted, non-overlapping — and every byte *between* two
+claims stays verbatim. `canonical?` returns the first and largest of them, the prefix ending at the
+declaration's name; the members claim the rest. Generalizing from the single prefix to an array is
+what lets one `structure` command lay out its own shell, leave its signature as bytes, and then still
+lay out each field's shell — regions the prefix model could not reach past. -/
+private structure Claim where
+  first : Nat
+  last : Nat
+  doc : Doc
+
+/-- Do the gaps inside `[first, last]` hold no line break?
+
+The gap *bytes*, not the trivia runs: `triviaClean` is asked first and says no comment sits in them,
+so what is left is whitespace and the only question is whether it crosses a line. A flat run may
+collapse horizontal space to one byte, but it may never delete a newline. `declarationShell?` keeps
+such a break by emitting `hard` after its doc comment; a member shell cannot, because `hard` indents
+to nothing (`RLC-IMPL`: the printer never nests) and a member is indented, so the break would land the
+name at column 0 — which for `structFields` is `manyIndent`, i.e. `withPosition ((colGe p)*)`
+(`Lean/Parser/Extra.lean:199-201`), and would not parse. A member shell refuses the shape instead. -/
+private def Tree.flatGaps (tree : Tree) (normalized : String) (first last : Nat) : Bool := Id.run do
+  for index in [first:last] do
+    let some a := tree.source.tokens[index]? | return false
+    let some b := tree.source.tokens[index + 1]? | return false
+    if (sliceNormalized normalized a.stop b.start).contains '\n' then return false
+  return true
+
+/-- The shell of one `inductive` constructor or `structure` field: its opener, its modifiers, its name.
+
+`RLF-COMMANDS`'s task names structures and inductives, and `declarationShell?` stops at the
+declaration's own name, so the members are what is left of them. Their grammars leave a shell and
+little else (`Lean/Parser/Command.lean:210-212`, `:257-258`, `:265-266`, v4.32.0):
+
+    def ctor              := leading_parser
+      atomic (optional docComment >> "\n| ") >> ppGroup (declModifiers true >> rawIdent >> optDeclSig)
+    def structSimpleBinder := leading_parser
+      atomic (declModifiers true >> ident) >> optDeclSig >> optional (Term.binderTactic <|> Term.binderDefault)
+    def structCtor        := leading_parser
+      atomic (ppIndent (declModifiers true >> ident >> many (ppSpace >> Term.bracketedBinder) >> " :: "))
+
+Everything past the name is `optDeclSig` or a `bracketedBinder` — a *term*, which `RLF-EXPRESSIONS`
+owns — so the claim ends at the name. That also sidesteps `structCtor`'s `" :: "`, which `many
+(ppSpace >> Term.bracketedBinder)` can separate from the name by arbitrarily many tokens: the shell
+would not be one contiguous run, and a run is all a `Claim` can be.
+
+The name is indexed among the shape's **direct token children**, which is why each shape states how
+many it must have. `ctor`'s are `|` and the name; its doc comment is under `optional`, hence a child
+of a `null` node and not of the `ctor` — so it stays outside the shell and keeps its own bytes and
+line break for free. `structSimpleBinder`'s only direct token is the name, and its doc comment *is*
+inside `declModifiers` and therefore inside the shell — which `flatGaps` then refuses, correctly:
+that field's modifier run has to stay on its own line and nothing here could put it there.
+
+An unmodified field is just its name — a one-token shell, with no gap to collapse and nothing any
+layout could change. That is not a claim, and `first < name` is what says so. -/
+private def Tree.memberShell? (tree : Tree) (normalized : String) (node : Nat) : Option Claim := do
+  let (nameIndex, tokenCount) ← match tree.kindOf node with
+    | "Lean.Parser.Command.ctor" => some (1, 2)
+    | "Lean.Parser.Command.structSimpleBinder" => some (0, 1)
+    | "Lean.Parser.Command.structCtor" => some (0, 2)
+    | _ => none
+  let direct := tree.tokenChildren[node]!
+  guard (direct.size == tokenCount)
+  let name := direct[nameIndex]!
+  let modifiers ← (tree.nodeChildren[node]!).find? fun child =>
+    tree.kindOf child == "Lean.Parser.Command.declModifiers"
+  -- Tokens are indexed in source order, so the shell's first token is whichever of the opener and the
+  -- modifier run comes first — `ctor` puts `|` ahead of its modifiers, the other two do not.
+  let first := match tree.subtreeTokens modifiers with
+    | some (lo, _) => min lo direct[0]!
+    | none => direct[0]!
+  guard (first < name)
+  -- Over the whole shell: a comment between any two of these tokens would be dropped by the flat run.
+  guard (tree.triviaClean first name)
+  guard (tree.singleLineTokens normalized first name)
+  guard (tree.flatGaps normalized first name)
+  return { first, last := name, doc := tree.spaceSeparated normalized first name }
+
+/-- Every member shell inside this command that starts after the command's own claim ends. -/
+private def Tree.memberClaims (tree : Tree) (normalized : String) (root : Nat) (after : Nat) :
+    Array Claim := Id.run do
+  let mut claims : Array Claim := #[]
+  -- Pre-order DFS makes a node's subtree the contiguous index range `[root, subtreeEnd)`
+  -- (`RLF-COMMANDS` measures this: `evidence/01-projection-shape.txt`), and index order agrees with
+  -- source order, so the claims come out sorted with no sort.
+  for node in [root:tree.subtreeEnd[root]!] do
+    if let some claim := tree.memberShell? normalized node then
+      if claim.first > after then
+        claims := claims.push claim
+  return claims
+
+/-- Every region of this command the layout accounts for, in source order.
+
+Empty means the conservative path: no layout recognized the kind, and the command is bytes. Members
+are only claimed inside a command that has a layout of its own — a kind on the conservative path rests
+on no grammar claim, and reaching inside it to lay out a field would be exactly such a claim. -/
+private def Tree.claims (tree : Tree) (normalized : String) (span : CommandSpan) : Array Claim :=
+  match tree.canonical? normalized span with
+  | none => #[]
+  | some (last, doc) =>
+    #[{ first := span.first, last, doc }] ++ tree.memberClaims normalized span.root last
+
+/-- How many member shells this module's layouts claimed.
+
+Reported alongside `canonical` and floored by `tests/printer/run.sh`, for the same reason: this
+repository writes its constructors the way the layout would, so every member claim here could vanish
+and the round-trip would stay green. `evidence/01-projection-shape.txt` measures that no member in
+this corpus holds *collapsible* slack, which makes this number the only evidence the member layout
+ran at all, and `tests/printer/run.sh`'s wonky fixture the only evidence it changes anything. -/
+def Tree.memberShells (tree : Tree) (normalized : String) : Nat :=
+  tree.commands.foldl (init := 0) fun count span =>
+    match tree.canonical? normalized span with
+    | none => count
+    | some (last, _) => count + (tree.memberClaims normalized span.root last).size
+
 /-- How many of this module's commands take a canonical layout rather than the conservative path.
 
 Reported by `printer-roundtrip` and floored by `tests/printer/run.sh`, because byte identity cannot
@@ -521,24 +637,27 @@ def Tree.canonicalCommands (tree : Tree) (normalized : String) : Nat :=
 
 /-- One command.
 
-The extent is split into three: the trivia before the first token, the tokens the layout claimed, and
-**everything from there to the end of the extent**. Only the middle is ever canonicalized. The outer
-two are emitted verbatim
-because they carry the comments and blank lines *between* commands — which belong to no command's
-layout, and which `RLC-SPEC` measured the parser attaching greedily to whichever token came first.
+The extent is the claims, and the bytes between them. Everything a layout did not claim is emitted
+verbatim: the trivia before the first token, any region between two claims — a declaration's
+signature, a field's type — and everything from the last claim to the end of the extent. Those carry
+the comments and blank lines *between* commands, which belong to no command's layout, and which
+`RLC-SPEC` measured the parser attaching greedily to whichever token came first.
 
 `Doc.verbatim` is the right constructor for those and not a shortcut around the algebra. `RLC-IMPL`
 added it for exactly this shape — bytes that are not the formatter's to touch — and unlike `hard` it
 neither re-indents its content nor forces its group to break. -/
-def Tree.command (tree : Tree) (normalized : String) (span : CommandSpan) : Doc :=
-  match tree.canonical? normalized span with
-  | none => .verbatim (sliceNormalized normalized span.extent.start span.extent.stop)
-  | some (last, canonical) =>
-    let tokenStart := (tree.source.tokens[span.first]?.map (·.start)).getD span.extent.start
-    let tokenStop := (tree.source.tokens[last]?.map (·.stop)).getD span.extent.stop
-    let before : Doc := .verbatim (sliceNormalized normalized span.extent.start tokenStart)
-    let after : Doc := .verbatim (sliceNormalized normalized tokenStop span.extent.stop)
-    before ++ canonical ++ after
+def Tree.command (tree : Tree) (normalized : String) (span : CommandSpan) : Doc := Id.run do
+  let claims := tree.claims normalized span
+  if claims.isEmpty then
+    return .verbatim (sliceNormalized normalized span.extent.start span.extent.stop)
+  let mut doc : Doc := .empty
+  let mut cursor := span.extent.start
+  for claim in claims do
+    let start := (tree.source.tokens[claim.first]?.map (·.start)).getD span.extent.start
+    let stop := (tree.source.tokens[claim.last]?.map (·.stop)).getD span.extent.stop
+    doc := doc ++ .verbatim (sliceNormalized normalized cursor start) ++ claim.doc
+    cursor := stop
+  return doc ++ .verbatim (sliceNormalized normalized cursor span.extent.stop)
 
 /-! ## The module header
 

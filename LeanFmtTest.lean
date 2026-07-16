@@ -846,7 +846,7 @@ private def printerRoundtrip (envelopePath sourcePath : String) : IO UInt32 := d
     else 0
   IO.println s!"commands={tree.roots.size} canonical={tree.canonicalCommands normalized} \
 tokens={projection.tokens.size} nodes={projection.nodes.size} header_bytes={projection.headerStop} \
-header_canonical={headerCanonical} \
+header_canonical={headerCanonical} members={tree.memberShells normalized} \
 tail_bytes={projection.normalizedBytes - projection.terminalStop}"
   return 0
 
