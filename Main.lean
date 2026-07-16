@@ -1,4 +1,6 @@
 module
 
-public def main : IO Unit :=
-  IO.println "lean-fmt: native Lean foundation"
+import all LeanFmt.Application
+
+public unsafe def main (args : List String) : IO UInt32 :=
+  LeanFmt.Internal.Application.runCli args

@@ -1,9 +1,9 @@
 # Next Proof Packet
 
 - Stack: execution-core-v2
-- First unresolved: 07-check
-- Claim ID: ECV2-CHECK
-- Prompt: 07-check
+- First unresolved: 08-cache
+- Claim ID: ECV2-CACHE
+- Prompt: 08-cache
 - Module: (docs only)
 - Target file: (docs only)
 
@@ -17,7 +17,7 @@ Read this file, the target prompt, target files, listed source/template line ran
 
 ## Proof Task
 
-- Implement `lean-fmt check` over the selected design with exact Lake workspace/toolchain discovery, deterministic file selection, artifact use, and bounded exact fallback. Check never writes source.
+- Add a simple atomic result cache whose identity is semantic and independent of whether the result came from compiler integration or exact fallback.
 
 ## Reuse
 
@@ -29,4 +29,4 @@ Inspect the live goal, search relevant declarations, test plausible proof steps,
 
 ## Stop Rules
 
-- Do not add other product modes or duplicate the semantic analyzer.
+- see the target prompt's Stop section

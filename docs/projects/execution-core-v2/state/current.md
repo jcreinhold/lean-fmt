@@ -1,6 +1,6 @@
 ---
 kind: state
-first_unresolved: 07-check
+first_unresolved: 08-cache
 ---
 
 # Current state
@@ -18,7 +18,7 @@ as independent measured prerequisites.
 | 04-built-cold | ECV2-BUILT-COLD | verified | ECV2-WORKLOADS |
 | 05-compiler-artifacts | ECV2-COMPILER-ARTIFACTS | verified | ECV2-WORKLOADS |
 | 06-design | ECV2-DESIGN | verified | ECV2-BUILT-COLD, ECV2-COMPILER-ARTIFACTS |
-| 07-check | ECV2-CHECK | planned | ECV2-DESIGN |
+| 07-check | ECV2-CHECK | verified | ECV2-DESIGN |
 | 08-cache | ECV2-CACHE | planned | ECV2-CHECK |
 | 09-modes | ECV2-MODES | planned | ECV2-CACHE |
 | 10-scale | ECV2-SCALE | planned | ECV2-MODES |
@@ -41,6 +41,11 @@ as independent measured prerequisites.
   exposes it as a package-owned Lake facet. It matched the independent oracle on 62/62 files with
   0.375 ms mean plugin overhead, but one-process-per-module extraction averaged 791.638 ms and is
   therefore a design input rather than the production consumption strategy.
+- The first complete `check` operation now resolves the target root's exact Lean/Lake installation,
+  consumes source-validated module artifacts, and falls back to a fresh exact frontend child. The
+  two paths are byte-identical on findings and custom-syntax fixtures. Direct execution measured
+  648,272 KiB for a one-file artifact hit versus roughly 1.3 GiB through a rejected `lake env`
+  wrapper; the fallback monitor stopped a deliberately constrained child at 782,896 KiB aggregate.
 
 These facts constrain prompts 04 and 05; they do not predetermine their final interface.
 
@@ -56,6 +61,9 @@ These facts constrain prompts 04 and 05; they do not predetermine their final in
 - [ECV2-DESIGN](../results/06-design.md) selects one private Lake-owned intent-to-report operation,
   process-isolated per-module extraction, exact target-toolchain fallback, and measured private task
   concurrency while rejecting the experimental unsafe batch lifecycle as production architecture.
+- [ECV2-CHECK](../results/07-check.md) implements the private exact `check` transaction, stable
+  text/JSON reports, complete failure aggregation, direct target-toolchain discovery, and bounded
+  fresh-frontend fallback without source writes.
 
 ## Verification convention
 

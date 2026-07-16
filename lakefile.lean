@@ -8,10 +8,41 @@ package «lean-fmt» where
 @[default_target]
 lean_exe «lean-fmt» where
   root := `Main
+  supportInterpreter := true
+  weakLinkArgs := #["-lLake"]
 
 lean_lib LeanFmtCompilerPlugin where
   roots := #[`LeanFmtCompilerPlugin]
-  globs := #[Glob.one `LeanFmtCompilerPlugin, Glob.one `LeanFmt, Glob.submodules `LeanFmt]
+  globs := #[
+    Glob.one `LeanFmtCompilerPlugin,
+    Glob.one `LeanFmt.CompilerPlugin,
+    Glob.one `LeanFmt,
+    Glob.one `LeanFmt.Basic,
+    Glob.one `LeanFmt.Digest,
+    Glob.one `LeanFmt.ArtifactModel,
+    Glob.one `LeanFmt.Rules
+  ]
+
+lean_lib LeanFmtApplication where
+  roots := #[`LeanFmt.Application]
+  globs := #[
+    Glob.one `LeanFmt.ArtifactStore,
+    Glob.one `LeanFmt.Analysis,
+    Glob.one `LeanFmt.Application
+  ]
+
+/- The plugin shared library deliberately bundles the small semantic core at the process boundary.
+This later declaration remains the canonical owner for ordinary application imports, so changing
+application orchestration cannot invalidate compiler-integrated project modules. -/
+lean_lib LeanFmtCore where
+  roots := #[`LeanFmt]
+  globs := #[
+    Glob.one `LeanFmt,
+    Glob.one `LeanFmt.Basic,
+    Glob.one `LeanFmt.Digest,
+    Glob.one `LeanFmt.ArtifactModel,
+    Glob.one `LeanFmt.Rules
+  ]
 
 lean_exe «lean-fmt-tests» where
   root := `LeanFmtTest
@@ -62,3 +93,14 @@ lean_lib BrokenCompilerFixtures where
   plugins := #[`@/LeanFmtCompilerPlugin:shared]
   leanOptions := #[⟨`weak.leanFmt.trailingWhitespace,
     trailingWhitespaceEnabled⟩]
+
+lean_lib CheckFixtures where
+  srcDir := "tests/check"
+  roots := #[`Clean, `Findings]
+  plugins := #[`@/LeanFmtCompilerPlugin:shared]
+  leanOptions := #[⟨`weak.leanFmt.trailingWhitespace,
+    trailingWhitespaceEnabled⟩]
+
+lean_lib BrokenCheckFixtures where
+  srcDir := "tests/check"
+  roots := #[`MalformedHeader, `UnresolvedImport]

@@ -1,20 +1,16 @@
 module
 
-import all LeanFmt.ArtifactStore
+import all LeanFmt.Analysis
 
 open LeanFmt.Internal
 
 private unsafe def extract (moduleName : Lean.Name) (moduleFile output : System.FilePath) : IO Unit := do
-  Lean.initSearchPath (← Lean.findSysroot)
-  let (moduleData, _region) ← Lean.readModuleData moduleFile
-  let level := if moduleData.isModule then Lean.OLeanLevel.exported else .private
-  let artifacts : Lean.NameMap Lean.ImportArtifacts :=
-    ({} : Lean.NameMap Lean.ImportArtifacts).insert moduleName (.ofArray #[moduleFile])
-  let environment ← Lean.importModules #[{ module := moduleName }] {}
-    (trustLevel := 1024) (loadExts := false) (level := level) (arts := artifacts)
-  let some artifact := fromEnvironment? environment moduleName
-    | throw <| IO.userError s!"module {moduleName} contains no lean-fmt compiler payload"
-  writeArtifactAtomic output artifact
+  match ← compilerArtifact? moduleName moduleFile with
+  | some artifact => writeArtifactAtomic output artifact
+  | none =>
+    if let some parent := output.parent then
+      IO.FS.createDirAll parent
+    IO.FS.writeFile output "null"
   -- Exact per-module facet extraction deliberately uses process exit as its reclamation boundary.
   -- The experimental batch specialization tests `Environment.freeRegions`; production does not
   -- reproduce that unsafe lifetime protocol without a scoped exact-import API in Lean.

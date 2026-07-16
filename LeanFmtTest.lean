@@ -1,6 +1,7 @@
 module
 
-import all LeanFmt
+import all LeanFmt.ArtifactStore
+import all LeanFmt.Rules
 
 open LeanFmt LeanFmt.Internal
 
