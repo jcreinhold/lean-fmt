@@ -638,16 +638,156 @@ private def Tree.memberClaims (tree : Tree) (normalized : String) (root : Nat) (
         claims := claims.push claim
   return claims
 
+/-! ## Terms
+
+Only `Term.app` decides anything here, and that is measured rather than a place to start.
+`notes/02-expressions.md` §3 records why: Lean's own formatter takes inter-atom spacing from the
+atom's **declared** string — `infixl:65 " + "` (`Init/Notation.lean:284`) declares `+` with a space on
+each side, and `Init/Prelude.lean:5390` says so outright — falling back to a lexical
+minimum-separation rule only for atoms that declare none (`Lean/PrettyPrinter/Formatter.lean:366-417`).
+The projection records a token's *source* text, never the declaration, so a term layout can cite only
+those kinds whose spacing does not depend on that string.
+
+`Term.app` is the largest such kind and the largest term kind in real Lean at all — 11,679 of 122,011
+token-bearing nodes on the frozen sample (`evidence/02-term-census.txt`). It declares **no atom**:
+`app := trailing_parser:leadPrec:maxPrec many1 argument` (`Lean/Parser/Term.lean:892`). What separates
+a function from its argument is `argument := checkWsBefore "expected space" >> checkColGt "expected to
+be indented" >> …` (`:885-888`), and `checkWsBefore` "requires that there is some whitespace at this
+location" (`Lean/Parser/Basic.lean:1180-1184`). **The parser rejects `f a` with the space removed**, so
+one space is the minimum the grammar accepts rather than this formatter's taste. That is a stronger
+citation than any command layout has, each of which cited a shape the parser *permits*.
+
+`Term.proj` (1,448) needs no layout, and that is an answer rather than a gap. It is `checkNoWsBefore >>
+"." >> checkNoWsBefore >> (fieldIdx <|> rawIdent)` (`:906-907`), so the parser rejects `e . f` — every
+proj in a module that analyzed is *already* tight, and a layout collapsing it would be provably dead
+code on every input this printer can receive.
+-/
+
+/-- One constituent of a node, in source order: one of its own tokens, or a whole node-child.
+
+The projection stores a node's tokens and its node-children in two separate arrays, so neither alone
+is the node's shape. `f a b` is an `app` whose *token* child is `f` and whose *node* child is the
+`null` that `many1 argument` built — and `a` and `b` are that null's **tokens**, not its nodes. A
+layout that needs "the gaps between this node's parts" can get them from neither array, only from the
+two merged by position. -/
+private structure Part where
+  /-- First token index of this part. -/
+  first : Nat
+  /-- Last token index of this part; equal to `first` for one of the node's own tokens. -/
+  last : Nat
+  /-- The node-child this part is, or `none` when it is one of the node's own tokens. -/
+  child : Option Nat
+
+/-- A node's parts, in source order. -/
+private def Tree.parts (tree : Tree) (node : Nat) : Array Part := Id.run do
+  let mut parts : Array Part := #[]
+  for token in tree.tokenChildren[node]! do
+    parts := parts.push { first := token, last := token, child := none }
+  for child in tree.nodeChildren[node]! do
+    if let some (first, last) := tree.subtreeTokens child then
+      parts := parts.push { first, last, child := some child }
+  -- Tokens are indexed in source order, so ordering by `first` is ordering by position. Empty
+  -- node-children are dropped rather than placed: they contribute no bytes, and nothing in the
+  -- projection says where among its siblings an absent slot belongs (`evidence/01-projection-shape.txt`
+  -- measures 15.4% of nodes to be exactly that ambiguous).
+  return parts.qsort (·.first < ·.first)
+
+/-- An `app`'s parts: its function, and its arguments lifted out of the `null` that holds them.
+
+`many1 argument` builds exactly one `null` node around every argument (`Lean/Parser/Term.lean:892`),
+so an app's parts are *not* its own: `f a b` is `app` with token child `f` and node child `null`, and
+`a` and `b` are the null's tokens. Reading `parts` directly would collapse the gap between `f` and the
+null — the first argument — and leave every later gap inside it untouched, turning `f  a  b` into
+`f a  b`. The null is the `many`, not a constituent, so it is lifted rather than descended into. -/
+private def Tree.appParts (tree : Tree) (node : Nat) : Array Part := Id.run do
+  let mut parts : Array Part := #[]
+  for token in tree.tokenChildren[node]! do
+    parts := parts.push { first := token, last := token, child := none }
+  for child in tree.nodeChildren[node]! do
+    if tree.kindOf child == "null" then
+      parts := parts ++ tree.parts child
+    else if let some (first, last) := tree.subtreeTokens child then
+      parts := parts.push { first, last, child := some child }
+  return parts.qsort (·.first < ·.first)
+
+/-- The bytes between two of a node's parts, or the single space `app`'s grammar requires there.
+
+Only a gap that is spaces and nothing else collapses. A comment would be *deleted* by the space, which
+is the failure `respaceable` exists to prevent one layer up. A newline is refused for a different and
+sharper reason: joining two of an app's lines is a vertical decision this prompt does not have, and
+`argument`'s `checkColGt "expected to be indented"` makes it parser-significant — an argument pulled
+left of the enclosing saved position stops being an argument, the same way `structFields`'s
+`manyIndent` makes field indentation parser-significant. -/
+private def Tree.gapDoc (tree : Tree) (normalized : String) (node : Nat) (prior part : Part) : Doc :=
+  let raw := match tree.source.tokens[prior.last]?, tree.source.tokens[part.first]? with
+    | some a, some b => sliceNormalized normalized a.stop b.start
+    | _, _ => ""
+  if tree.kindOf node == "Lean.Parser.Term.app" && !raw.isEmpty && raw.all (· == ' ') then
+    .text " "
+  else
+    .verbatim raw
+
+/-- One term: the grammar this stack can cite for it, and its bytes everywhere else.
+
+**The recursion is what makes the fallback lossless rather than lazy.** A kind with no layout does not
+become bytes wholesale — its parts are recursed into and only the gaps *between* them keep their
+bytes. So an `app` nested inside a `paren` inside a notation is still found and still collapsed, while
+every byte no layout claimed survives untouched. A node with no parts contributes nothing, which is
+the absent-syntax case. -/
+private partial def Tree.termDoc (tree : Tree) (normalized : String) (node : Nat) : Doc := Id.run do
+  let isApp := tree.kindOf node == "Lean.Parser.Term.app"
+  let mut doc : Doc := .empty
+  let mut previous : Option Part := none
+  for part in (if isApp then tree.appParts node else tree.parts node) do
+    if let some prior := previous then
+      doc := doc ++ tree.gapDoc normalized node prior part
+    doc := doc ++ (match part.child with
+      | some child => tree.termDoc normalized child
+      | none => .verbatim (tree.tokenSpanText normalized part.first part.last))
+    previous := some part
+  return doc
+
+/-- Every maximal `Term.app` inside this command that no shell already claimed.
+
+Maximal, because `termDoc` recurses: an app inside an app's argument is laid out by its ancestor's
+claim already, and claiming it again would emit its bytes twice. Pre-order DFS makes a node's subtree
+the contiguous index range `[node, subtreeEnd)` (`evidence/01-projection-shape.txt`), so skipping a
+claimed app's subtree is one comparison and the claims come out in source order with no sort.
+
+**The overlap test against the shells is not defensive.** `declModifiers` can hold an attribute, an
+attribute can take an argument, and an argument is a term — so an app really can sit inside the region
+`declarationShell?` already claimed, and two claims over the same tokens would duplicate them. -/
+private def Tree.termClaims (tree : Tree) (normalized : String) (root : Nat) (taken : Array Claim) :
+    Array Claim := Id.run do
+  let mut claims : Array Claim := #[]
+  let mut skipUntil := root
+  for node in [root:tree.subtreeEnd[root]!] do
+    if node < skipUntil then continue
+    if tree.kindOf node != "Lean.Parser.Term.app" then continue
+    let some (first, last) := tree.subtreeTokens node | continue
+    if taken.any (fun claim => first ≤ claim.last && claim.first ≤ last) then continue
+    claims := claims.push { first, last, doc := tree.termDoc normalized node }
+    skipUntil := tree.subtreeEnd[node]!
+  return claims
+
 /-- Every region of this command the layout accounts for, in source order.
 
 Empty means the conservative path: no layout recognized the kind, and the command is bytes. Members
 are only claimed inside a command that has a layout of its own — a kind on the conservative path rests
-on no grammar claim, and reaching inside it to lay out a field would be exactly such a claim. -/
+on no grammar claim, and reaching inside it to lay out a field would be exactly such a claim.
+
+**Terms inherit that rule, and the reason is weaker for them than for members.** An `app` is an `app`
+whatever command encloses it — the parser said so, and collapsing its gaps rests on `argument`'s
+`checkWsBefore` rather than on any claim about the enclosing kind. So terms inside a `lemma` could be
+laid out soundly, and are not, only because that is a wider claim than this prompt measured. It is
+recorded in `results/02-expressions.md` as scope rather than as a rule. -/
 private def Tree.claims (tree : Tree) (normalized : String) (span : CommandSpan) : Array Claim :=
   match tree.canonical? normalized span with
   | none => #[]
   | some (last, doc) =>
-    #[{ first := span.first, last, doc }] ++ tree.memberClaims normalized span.root last
+    let shells := #[{ first := span.first, last, doc : Claim }] ++
+      tree.memberClaims normalized span.root last
+    (shells ++ tree.termClaims normalized span.root shells).qsort (·.first < ·.first)
 
 /-- How many member shells this module's layouts claimed.
 

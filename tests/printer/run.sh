@@ -318,6 +318,20 @@ end
 
 universe     u     v
 
+def     applied : Nat := id     7
+
+def     multiArg : List Nat := List.replicate     3     8
+
+def     nestedApp : Nat := id     (id     9)
+
+def     commentedApp : Nat := id     /- why -/     10
+
+def     brokenApp : Nat :=
+  id
+    11
+
+def     insideNotation : Nat := id     12 + id     13
+
 structure     Str     where
   field     : Nat
   private     modified     : Nat
@@ -385,6 +399,30 @@ LEAN_NUM_THREADS=1 lake env "$application" __analyze-exact \
 #                                    on the next line still gets its shell, so this is the guard
 #                                    refusing one command and not the file.
 #   `universe u v`                   `many1 ident` is a flat run whatever its length.
+#   `id 7`                           the first *term* this formatter decides. `app` declares no atom
+#                                    (`Lean/Parser/Term.lean:892`) and its `argument` opens with
+#                                    `checkWsBefore` (`:885-888`), so the parser *rejects* `id7` and
+#                                    one space is the grammar's minimum rather than a preference.
+#   `List.replicate 3 8`             BOTH gaps collapse. `many1 argument` builds one `null` around
+#                                    every argument, so reading the app's own parts would collapse
+#                                    only the gap to the first one and leave `3     8` alone. This
+#                                    line is the whole evidence `appParts` lifts the null.
+#   `id (id 9)`                      the recursion. The outer app's argument is a `paren`, which has
+#                                    no layout -- so its bytes are kept while the app *inside* it is
+#                                    still found and still collapsed. A fallback that emitted the
+#                                    paren wholesale would leave `(id     9)` and pass every other
+#                                    check here.
+#   `id     /- why -/     10`        a comment sits in the gap, so the space that would replace it
+#                                    would delete it. `gapDoc` refuses and the app keeps its bytes.
+#   `id` then `11` on two lines      the gap holds a newline. Refused, and not for tidiness:
+#                                    `argument`'s `checkColGt "expected to be indented"` makes an
+#                                    app's line breaks parser-significant, so joining these two lines
+#                                    could move `11` to a column where it stops being an argument.
+#                                    Vertical layout is not this prompt's to decide.
+#   `id 12 + id 13`                  both apps collapse and the spaces around `+` do not. `+` is a
+#                                    notation whose atom is declared `" + "` (`Init/Notation.lean:284`)
+#                                    -- spacing this printer cannot read, so it keeps those bytes and
+#                                    claims only the two apps the parser marked for it.
 #   `@[inline]` then `def e`         written on ONE line in the fixture and split into two, because
 #                                    `declModifiers` follows attributes with `ppDedent ppLine` unless
 #                                    `inline`, and `declaration` passes `inline := false`
@@ -491,6 +529,20 @@ def exposed : Nat := 9
 end
 
 universe u v
+
+def applied : Nat := id 7
+
+def multiArg : List Nat := List.replicate 3 8
+
+def nestedApp : Nat := id (id 9)
+
+def commentedApp : Nat := id     /- why -/     10
+
+def brokenApp : Nat :=
+  id
+    11
+
+def insideNotation : Nat := id 12 + id 13
 
 structure Str     where
   field     : Nat
