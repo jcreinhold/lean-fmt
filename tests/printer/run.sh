@@ -28,6 +28,13 @@ tests=$(lake -q query lean-fmt-tests --text)
 failures=0
 total_commands=0
 total_canonical=0
+total_header_canonical=0
+
+# One `key=value` out of a report line. Whole-token matching, because the report has both `canonical`
+# and `header_canonical` in it and a `.*canonical=` pattern reads the wrong one.
+field() {
+  printf '%s' "$2" | tr ' ' '\n' | sed -n "s/^$1=\([0-9]*\)$/\1/p"
+}
 
 check_module() {
   local module=$1
@@ -42,21 +49,30 @@ check_module() {
     return
   fi
   printf '%s\n' "$report"
-  local commands canonical
-  commands=$(printf '%s' "$report" | sed -n 's/.*commands=\([0-9]*\).*/\1/p')
-  canonical=$(printf '%s' "$report" | sed -n 's/.*canonical=\([0-9]*\).*/\1/p')
-  total_commands=$((total_commands + commands))
-  total_canonical=$((total_canonical + canonical))
+  total_commands=$((total_commands + $(field commands "$report")))
+  total_canonical=$((total_canonical + $(field canonical "$report")))
+  total_header_canonical=$((total_header_canonical + $(field header_canonical "$report")))
 }
 
 for module in $(find LeanFmt -name '*.lean' | LC_ALL=C sort) Main.lean; do
   check_module "$module"
 done
 
+modules_checked=$(( $(find LeanFmt -name '*.lean' | wc -l | tr -d ' ') + 1 ))
 printf -- '--- corpus ---\n'
-printf 'modules_checked=%s commands=%s canonical=%s failures=%s\n' \
-  "$(( $(find LeanFmt -name '*.lean' | wc -l | tr -d ' ') + 1 ))" \
-  "$total_commands" "$total_canonical" "$failures"
+printf 'modules_checked=%s commands=%s canonical=%s headers_canonical=%s failures=%s\n' \
+  "$modules_checked" "$total_commands" "$total_canonical" "$total_header_canonical" "$failures"
+
+# Exact, not a floor: a module has exactly one header, every module here has one, and the layout is
+# written to decline *per group and per gap* rather than per header — so there is no shape of header in
+# this repository it should refuse outright. A refusal is a claim that the header parse and the
+# projection disagree about what this file is, which is worth failing over rather than tracking as a
+# statistic.
+if [[ "$total_header_canonical" -ne "$modules_checked" ]]; then
+  printf 'FAIL only %s of %s headers took the canonical layout; the header layout is not running\n' \
+    "$total_header_canonical" "$modules_checked" >&2
+  failures=$((failures + 1))
+fi
 
 # The number byte identity cannot see.
 #
@@ -127,8 +143,8 @@ else
   #   tail_bytes   the `#exit` tail is real and non-empty, so the terminal path is exercised rather
   #                than trivially zero as it is on every module of this repository.
   #   header_bytes the module header is non-empty, so the `[0, headerStop)` split is exercised too.
-  tail_bytes=$(printf '%s' "$hostile" | sed -n 's/.*tail_bytes=\([0-9]*\).*/\1/p')
-  header_bytes=$(printf '%s' "$hostile" | sed -n 's/.*header_bytes=\([0-9]*\).*/\1/p')
+  tail_bytes=$(field tail_bytes "$hostile")
+  header_bytes=$(field header_bytes "$hostile")
   if [[ "$tail_bytes" -lt 1 ]]; then
     printf 'FAIL the #exit tail is empty; the terminal path was not exercised\n' >&2
     failures=$((failures + 1))
@@ -141,6 +157,99 @@ else
   else
     printf '  ok   the module header round-trips (%s bytes)\n' "$header_bytes"
   fi
+fi
+
+# The module header, on a header that is not already canonical.
+#
+# Every header in this repository is written the way the layout writes it, so the corpus proves only
+# that the layout runs (`headers_canonical` above) and loses nothing. What it *decides* needs a header
+# somebody wrote badly on purpose. This is a fixture of its own rather than lines bolted onto
+# `wonky.lean` below, because the header needs real imports, and an import that stops resolving should
+# fail as a header problem rather than as forty lines of unrelated diff.
+printf -- '--- the module header, on a header that needs canonicalizing ---\n'
+cat >"$work/header.lean" <<'FIXTURE'
+module
+import     Lean.Data.Position
+
+
+public import Lean.Data.Format
+
+-- Which imports are load-bearing is a comment somebody wrote on purpose.
+import all LeanFmt.Doc
+import Lean.Data.Json
+  import     Lean.Data.Name
+import /- why -/ Lean.Data.Options
+
+def probe : Nat := 0
+FIXTURE
+LEAN_NUM_THREADS=1 lake env "$application" __analyze-exact \
+  "$work/borrowed.setup.json" "$work/header.lean" "header.lean" 8589934592 >"$work/header.json"
+"$tests" printer-format "$work/header.json" "$work/header.lean" 80 >"$work/header.out"
+
+# Each line is a separate claim:
+#   `module` then a blank line   the fixture has none. The blank is the grammar's own: `header` opens
+#                                with `optional (moduleTk >> ppLine >> ppLine)`
+#                                (`Lean/Parser/Module/Syntax.lean:26`), and two `ppLine`s is a blank
+#                                line. This is the formatter deciding vertical space for the first
+#                                time — every command layout so far has only ever chosen spaces.
+#   `import Lean.Data.Position`  the run of spaces collapses to one, and the two blank lines below it
+#                                collapse to a single newline: one `ppLine` per import, no more.
+#   `public import ...Format`    modifiers are laid out without being enumerated. `import` is
+#                                `optional public >> optional meta >> "import " >> optional all >>
+#                                ident` (`Module/Syntax.lean:22-25`); the layout space-separates
+#                                whatever leaves are there, so `public`, `meta` and `all` need no case.
+#   the comment, then a blank    UNCHANGED. A comment in the gap means the gap's bytes are not the
+#                                layout's to choose, so the blank line above it and the newline below
+#                                it stand exactly as written. The import *under* it is still laid out:
+#                                the refusal is the gap's, not the header's. This module's own header
+#                                has a comment between its imports, so an all-or-nothing rule here
+#                                would have switched the layout off for the file that introduced it.
+#   `import all LeanFmt.Doc`     ...which is the `all` modifier, and the proof of the previous line.
+#   `  import Lean.Data.Name`    STAYS INDENTED, and its spaces still collapse. Both halves matter.
+#                                `Doc.hard` emits a newline plus the current indentation and this
+#                                printer never nests, so a break here would de-indent it silently —
+#                                the same reason `def indented` below keeps its bytes. The gap declines
+#                                and the indent survives; the *group* is unaffected and lays out
+#                                anyway. That the two decide separately is the whole point of splitting
+#                                them. (The same guard is what leaves `module import Foo` written on
+#                                one line alone: no newline in the gap means no line start.)
+#   `import /- why -/ ...`       UNCHANGED: a comment *inside* a group, where re-spacing would drop it.
+#                                The group keeps its bytes, and — unlike the comment in the gap above —
+#                                this is a group-level refusal, so the gaps on either side still lay
+#                                out normally.
+#   ORDER: Position, Format,     **never sorted.** Alphabetical would be Doc, Format, Json, Name,
+#   Doc, Json, Name, Options     Options, Position — a different order in five of six positions. Import
+#                                order is semantic in Lean's module system, and `RLF-COMMANDS` scopes
+#                                sorting out as a separate opt-in fix, so the walk keeps source order.
+cat >"$work/header.golden" <<'GOLDEN'
+module
+
+import Lean.Data.Position
+public import Lean.Data.Format
+
+-- Which imports are load-bearing is a comment somebody wrote on purpose.
+import all LeanFmt.Doc
+import Lean.Data.Json
+  import Lean.Data.Name
+import /- why -/ Lean.Data.Options
+
+def probe : Nat := 0
+GOLDEN
+if diff -u "$work/header.golden" "$work/header.out" >"$work/header.diff" 2>&1; then
+  printf '  ok   the header layout matches the golden file\n'
+else
+  printf 'FAIL the header layout does not match the golden file:\n' >&2
+  cat "$work/header.diff" >&2
+  failures=$((failures + 1))
+fi
+
+# ...and it must have done something, or the golden above is a copy of the input.
+if diff -q "$work/header.lean" "$work/header.out" >/dev/null 2>&1; then
+  printf 'FAIL the header layout changed nothing; it is not being exercised\n' >&2
+  failures=$((failures + 1))
+else
+  printf '  ok   the header layout changed the source (%s lines rewritten)\n' \
+    "$(diff "$work/header.lean" "$work/header.out" | grep -c '^<')"
 fi
 
 # The corpus above cannot test a canonical layout at all: this repository already writes
@@ -333,17 +442,26 @@ fi
 # Idempotence, the roadmap's "formatting twice is byte-identical to formatting once". The second pass
 # re-parses the first pass's *output*, so this is a real second format and not a repeated call: if the
 # layout emitted something the parser reads back differently, this is where it shows.
+#
+# Both fixtures, because they can fail differently. `wonky` re-spaces within a line; the header is the
+# only layout so far that emits *vertical* structure, and a rule that adds a line each pass would be
+# invisible here on `wonky` and obvious on the header.
 printf -- '--- idempotence ---\n'
-LEAN_NUM_THREADS=1 lake env "$application" __analyze-exact \
-  "$work/borrowed.setup.json" "$work/wonky.out" "wonky.lean" 8589934592 >"$work/wonky2.json"
-"$tests" printer-format "$work/wonky2.json" "$work/wonky.out" 80 >"$work/wonky.out2"
-if diff -u "$work/wonky.out" "$work/wonky.out2" >"$work/idem.diff" 2>&1; then
-  printf '  ok   formatting twice is byte-identical to formatting once\n'
-else
-  printf 'FAIL formatting is not idempotent:\n' >&2
-  cat "$work/idem.diff" >&2
-  failures=$((failures + 1))
-fi
+check_idempotent() {
+  local name=$1 once=$2
+  LEAN_NUM_THREADS=1 lake env "$application" __analyze-exact \
+    "$work/borrowed.setup.json" "$once" "$name.lean" 8589934592 >"$work/$name.2.json"
+  "$tests" printer-format "$work/$name.2.json" "$once" 80 >"$work/$name.out2"
+  if diff -u "$once" "$work/$name.out2" >"$work/$name.idem.diff" 2>&1; then
+    printf '  ok   %s: formatting twice is byte-identical to formatting once\n' "$name"
+  else
+    printf 'FAIL %s: formatting is not idempotent:\n' "$name" >&2
+    cat "$work/$name.idem.diff" >&2
+    failures=$((failures + 1))
+  fi
+}
+check_idempotent wonky "$work/wonky.out"
+check_idempotent header "$work/header.out"
 
 printf -- '--- result ---\n'
 printf 'failures=%s\n' "$failures"

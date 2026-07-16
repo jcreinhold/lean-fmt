@@ -820,7 +820,7 @@ private def printerRoundtrip (envelopePath sourcePath : String) : IO UInt32 := d
   let projection := artifact.source
   ensure (projection.validFor raw) s!"{sourcePath}: the projection does not match its own source"
   for width in [0, 1, 40, 80, 120, 1000] do
-    let formatted := Printer.format projection normalized width
+    let formatted ← Printer.format projection normalized width
     ensure (formatted == normalized)
       s!"{sourcePath}: conservative format changed bytes at width {width} \
 ({formatted.utf8ByteSize} bytes out, {normalized.utf8ByteSize} in)"
@@ -840,8 +840,13 @@ private def printerRoundtrip (envelopePath sourcePath : String) : IO UInt32 := d
     cursor := extent.stop
   ensure (cursor == projection.terminalStop)
     s!"{sourcePath}: extents end at {cursor}, expected terminalStop {projection.terminalStop}"
+  -- `header_canonical` is the header's answer to the question `canonical` asks of the commands: the
+  -- round-trip above cannot see whether the header layout ran, because refusing it *is* the identity.
+  let headerCanonical := if (← Printer.headerDoc? normalized projection.headerStop).isSome then 1
+    else 0
   IO.println s!"commands={tree.roots.size} canonical={tree.canonicalCommands normalized} \
 tokens={projection.tokens.size} nodes={projection.nodes.size} header_bytes={projection.headerStop} \
+header_canonical={headerCanonical} \
 tail_bytes={projection.normalizedBytes - projection.terminalStop}"
   return 0
 
@@ -864,7 +869,7 @@ private def printerFormat (envelopePath sourcePath widthText : String) : IO UInt
   let normalized := (LosslessSource.normalize raw).1
   let projection := artifact.source
   ensure (projection.validFor raw) s!"{sourcePath}: the projection does not match its own source"
-  IO.print (Printer.format projection normalized width)
+  IO.print (← Printer.format projection normalized width)
   return 0
 
 /- Layout cost, on the shapes `RLC-FINAL` names.

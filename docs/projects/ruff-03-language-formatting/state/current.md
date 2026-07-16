@@ -5,10 +5,11 @@ first_unresolved: 01-commands
 
 # Current state
 
-`RLF-COMMANDS` is **in progress**: the printer skeleton is live and proven lossless, and **391 of the
-corpus's 419 commands take a cited canonical layout** — `namespace` (25), `end` (25), and the shell of
-341 of 352 declarations. Its external prerequisite stack `ruff-02-layout-core` is verified and its live
-implementation still matches recorded state.
+`RLF-COMMANDS` is **in progress**: the printer skeleton is live and proven lossless, **407 of the
+corpus's 429 commands take a cited canonical layout** — `namespace` (25), `end` (25), `open` (7), and
+the shell of 350 of 361 declarations — and **all 20 module headers take theirs**. Its external
+prerequisite stack `ruff-02-layout-core` is verified and its live implementation still matches recorded
+state.
 
 **`RLC-FINAL`'s standing caveat is now half-answered.** That prompt closed the layout stack noting
 nothing consumed it, so every claim about realistic documents rested on fixtures written against the
@@ -94,7 +95,7 @@ Printing inside the frontend would buy free arg order for a median 1.96 s fronte
   holds the newline, the blank lines, and the next command's leading comments, so `Tree.command` emits
   the trivia before the first token and after the last one verbatim and canonicalizes only the middle.
 - **Imports are not commands, and the projection structurally cannot carry them.** The corpus holds
-  **403 commands in 7 distinct kinds** and not one is an `import`: the module header is not in the
+  **429 commands in 7 distinct kinds** and not one is an `import`: the module header is not in the
   token stream at all. `headerStop` is 54 bytes on `LeanFmt/Rules.lean` and covers `module` plus both
   `import` lines, recorded as bytes with no node and no token. This is one layer down and deliberate —
   `LosslessSource.ofSource` (`LosslessSource.lean:358`): "Neither producer may pass the module
@@ -108,40 +109,83 @@ Printing inside the frontend would buy free arg order for a median 1.96 s fronte
   actually firmer than the argument that reached it: **no frontend environment is required**, an empty
   one is available anywhere in `IO`, so the printer can parse `[0, headerStop)` with Lean's own parser
   on bytes `normalizedDigest` already binds.
-- **The header's cost is an `IO` boundary on `format`, and the boundary test does not forbid it.**
-  `tests/boundary/run.sh` constrains the *plugin's* import cone; `LeanFmt.Printer` is deliberately
-  outside `LeanFmtCompilerPlugin`'s globs, and `LeanFmtCore` already carries `LeanFmt.LosslessSource`,
-  whose `ofSource` takes `Array Lean.Syntax`. So importing `Lean.Parser.Module` in the printer breaks
-  no recorded rule, and `notes/01-command-printing.md`'s Design A is not contradicted either: its
-  argument was that printing *commands* in-frontend costs a median 1.96 s frontend run, and parsing a
-  header is not a frontend run. **This is the next piece of work and it is the prompt's own
-  requirement** — the task names "module headers, imports" and the Stop rules name ordered imports.
+- **The header is laid out, and its cost is one `IO` boundary that changed nothing about what a
+  formatted module depends on.** `Printer.format` is now `IO String` because `parseHeader` builds an
+  empty environment; both callers were `IO` already, and the parse reads only `normalized`, which
+  `format` already took because every conservative path slices bytes out of it. So the artifact's
+  digest still binds every input. `tests/boundary/run.sh` constrains the *plugin's* import cone and
+  `LeanFmt.Printer` is deliberately outside `LeanFmtCompilerPlugin`'s globs, so `import
+  Lean.Parser.Module` there breaks no recorded rule; `notes/01-command-printing.md`'s Design A is not
+  contradicted either, since its argument was about a median 1.96 s *frontend* run for commands and a
+  header parse is not a frontend run.
+- **The header layout declines per group and per gap, and an all-or-nothing rule would have switched
+  itself off on the file that introduced it.** The first draft refused the whole header when a comment
+  sat anywhere inside it — and `LeanFmt/Printer.lean`'s own header acquired a comment between its
+  imports in the same edit, so that draft refused it. The shipped shape mirrors `Tree.command`: each
+  group (`module`, `prelude`, each `import`) and each gap between two groups decides alone. So
+  `  import     Lean.Data.Name` keeps its indent (the gap declines) *and* collapses its spaces (the
+  group does not), which the golden pins.
+- **The header is where the formatter first decides vertical space, and the grammar decides it.**
+  `header := optional (moduleTk >> ppLine >> ppLine) >> optional («prelude» >> ppLine) >>
+  many («import» >> ppLine) >> ppLine` (`Lean/Parser/Module/Syntax.lean:26-29`): two `ppLine`s is a
+  blank line after `module`, one `ppLine` per import. Every command layout so far only ever chose
+  *spaces*, so this is the first rule that can add or remove a line. Import order is never touched —
+  the fixture's imports are in an order that differs from alphabetical in five of six positions, and
+  mutating the walk to reverse them fails.
+- **Groups are found by kind, not by argument index.** The `optional`/`many` wrappers are `null` nodes
+  whose empty slots have no position — the same absence measured below — so an index-based read would
+  need a case per filled/unfilled combination. Dispatching on `moduleTk`/`«prelude»`/`«import»`
+  needs none, and a future grammar change surfaces as a refusal rather than as a header laid out from
+  the wrong slot.
+- **Three header guards were untested until a fixture was written for each, and one still is.**
+  Mutation testing found `headerGap`'s line-start check, `headerGroupDoc`'s comment check, and its
+  newline check all surviving — the corpus reaches none of them, because every header here is already
+  canonical. The first two now have fixture lines (an indented import; `import /- why -/ Foo`) and
+  mutating either fails the golden by name. The third is **defensive and unreached, which is recorded
+  rather than left to be discovered**: five of the header's six atoms are fixed keywords and the sixth
+  leaf is a module name, so only `import «a⏎b»` could spell a newline — the lexer accepts it
+  (`takeUntilFn isIdEndEscape`, `Lean/Parser/Basic.lean:986`) but such a module would have to exist on
+  disk to elaborate, so no test here can reach it.
+- **`lake build` with no arguments does not build `LeanFmtTest`, and a real error was dismissed as
+  stale LSP noise because of it.** `Printer.headerDoc?` was reported unknown by the editor while
+  `lake build` reported success; the identifier really was wrong (the definition sat outside
+  `namespace Printer`), and only `lake build lean-fmt lean-fmt-tests` — what `tests/printer/run.sh`
+  runs — surfaced it. The standing lesson that LSP diagnostics go stale is true and was the wrong
+  reading here; the authoritative command names its targets.
 - **Coverage is counted by the printer, because byte identity cannot see it and the corpus cannot
   either.** Every module round-trips exactly and would still round-trip exactly if every guard refused
   every command — the printer would fall back to bytes and be the identity function it was before any
   layout existed. This repository also writes its declarations the way the layout writes them, so even
   a layout that runs changes nothing here. `printer-roundtrip` therefore reports `canonical=`, the
-  commands actually laid out, and `tests/printer/run.sh` floors the corpus total: **391 of 419**. The
-  golden fixture pins *what* the layouts produce; this pins *that* they run, on real code, at scale.
+  commands actually laid out, and `tests/printer/run.sh` floors the corpus total: **407 of 429**. The
+  header gets the same treatment for the same reason, but as an exact count rather than a floor
+  (`headers_canonical=20` of 20): a module has exactly one header, and the layout declines per group
+  and per gap, so there is no header shape here it should refuse outright. The golden fixtures pin
+  *what* the layouts produce; these pin *that* they run, on real code, at scale.
 - **Two independent measurements of coverage agree exactly, and keep agreeing as it grows.**
   `experiments/run-projection-shape.sh` re-implements the structural half of the printer's predicate in
-  Python against the same projection and finds 341 of 352 declarations claimable; the printer, in Lean,
-  counts 391 = 341 + 25 `namespace` + 25 `end`. So on this corpus every structurally-claimable
-  declaration also passes the runtime guards the probe cannot model (clean trivia, newline-free flat
-  run, column 0). The probe over-counts by construction and says so; `canonical=` is the honest figure.
-- **That 391 commands take the layout and all 20 modules stay byte-identical is what proves the shell
+  Python against the same projection and finds 350 of 361 declarations claimable; the printer, in Lean,
+  counts 407 = 350 + 25 `namespace` + 25 `end` + 7 `open`. So on this corpus every
+  structurally-claimable declaration also passes the runtime guards the probe cannot model (clean
+  trivia, newline-free flat run, column 0). The probe over-counts by construction and says so;
+  `canonical=` is the honest figure.
+- **That 407 commands take the layout and all 20 modules stay byte-identical is what proves the shell
   is a prefix.** A shell that ran past the name, or stopped short, would duplicate or drop bytes on
-  real code. Nothing asserts prefix-ness directly; the round-trip is the assertion.
+  real code. The same round-trip is the only thing asserting that the header layout's claim ends
+  exactly at `headerStop` — that the parser's idea of where the header stops and the projection's agree
+  is checked by `lastStop > headerStop`, but that the *bytes in between* are reproduced is checked only
+  by the identity. Nothing asserts either directly.
 - **A coverage number inferred from the wrong population was off by a factor of seven, and the fix
-  redirected the work.** The empty-node census reports 318 empty `declModifiers`, which reads like
+  redirected the work.** The empty-node census reports empty `declModifiers` in the hundreds (318 when
+  this was found, 323 now), which reads like
   "almost every declaration carries no modifiers" — but `declModifiers` is also on every structure
   *field* (`declModifiers true`, the inline form, `Lean/Parser/Command.lean:114`), so those 318 were
   never counting declarations. Counting the printer's actual predicate showed modifiers, not shapes,
   were the blocker on 262 of 345 declarations, which is why `declModifiers` was laid out next and why
   coverage went 45 → 271. The estimate would have sent this to `structure` and `inductive` instead.
 - **The ownership table is measured, and it is shorter than the prompt's list.**
-  `declaration` 345, `namespace` 25, `end` 25, `moduleDoc` 8, `open` 7, `registerOption` 1,
-  `initialize` 1 (`evidence/01-projection-shape.txt`, 412 commands). Structures, inductives, attributes, and binders
+  `declaration` 361, `namespace` 25, `end` 25, `moduleDoc` 9, `open` 7, `registerOption` 1,
+  `initialize` 1 (`evidence/01-projection-shape.txt`, 429 commands). Structures, inductives, attributes, and binders
   are **not** commands — the grammar nests them inside `declaration`, under `declModifiers` and the
   `def`/`theorem`/`structure`/`inductive` choice — so they are reached by dispatching within it. A
   declaration's *value* is a term, which `RLF-EXPRESSIONS` owns; `RLF-COMMANDS` lays out the shell and
@@ -150,7 +194,7 @@ Printing inside the frontend would buy free arg order for a median 1.96 s fronte
 - **The printer skeleton is lossless on real parser output, and the test proves it by mutation.**
   `LeanFmt/Printer.lean` renders header + command extents + `#exit` tail; with every kind on the
   conservative path it is the identity on accepted source. `tests/printer/run.sh`:
-  `modules_checked=20 commands=403 failures=0`, at margins 0, 1, 40, 80, 120, and 1000 — the margin
+  `modules_checked=20 commands=429 failures=0`, at margins 0, 1, 40, 80, 120, and 1000 — the margin
   must not matter, since `verbatim` is specified to emit bytes unchanged and not to force a break.
   A generated fixture on the real parser covers what this repository lacks: a custom `syntax`/
   `macro_rules` command (an unknown kind), CJK and emoji, a multi-line string literal, an inline and a
@@ -163,12 +207,13 @@ Printing inside the frontend would buy free arg order for a median 1.96 s fronte
   `11 commands produced 1 extents`. Byte identity alone would have accepted a printer with no
   command structure at all.
 - **A seventh of real syntax cannot be placed by position, so the printer must know the grammar.**
-  Measured by `experiments/run-projection-shape.sh` over all 20 modules of this repository, 34,844
-  nodes (`evidence/01-projection-shape.txt`): `pre_order_contiguity_violations=0` and
+  Measured by `experiments/run-projection-shape.sh` over 21 modules of this repository (the printer
+  test's 20 plus the `LeanFmt.lean` root, which projects to no commands), 39,027 nodes
+  (`evidence/01-projection-shape.txt`): `pre_order_contiguity_violations=0` and
   `nonempty_node_children_out_of_source_order=0`, so a tree view over the projection is
-  reconstructable and its child order agrees with the source. But **12,797 nodes (36.7%) carry no
+  reconstructable and its child order agrees with the source. But **14,092 nodes (36.1%) carry no
   token at all** — they are *absent* syntax, and `collect` gives them range `(0,0)` because a node's
-  range is the hull of the leaves beneath it and there are none. Of those, **5,345 (15.3% of all
+  range is the hull of the leaves beneath it and there are none. Of those, **6,007 (15.4% of all
   nodes)** sit under a parent that also has direct token children, so nothing in the projection says
   where among its siblings an absent slot belongs. This is not a gap the projection introduced:
   `Lean.Syntax` has no position for an empty node either. A printer therefore cannot reconstruct arg
@@ -176,7 +221,7 @@ Printing inside the frontend would buy free arg order for a median 1.96 s fronte
   per-construct by definition.
 - **The conservative fallback is the only path that rests on no grammar claim.** Empty nodes
   contribute no bytes, so re-emitting a subtree's tokens in source order with their trivia is
-  unaffected by all 5,345 ambiguous placements. The roadmap's "unknown commands must round-trip
+  unaffected by all 6,007 ambiguous placements. The roadmap's "unknown commands must round-trip
   conservatively" and this measurement point the same way.
 - **"Are children in arg order" is unaskable of the projection, and asking it produced a vacuous
   pass.** The projection stores only `parent`, so index order is the only order it retains and the
@@ -188,11 +233,12 @@ Printing inside the frontend would buy free arg order for a median 1.96 s fronte
 ## Blockers and prerequisites
 
 - No blocker is currently recorded beyond the named prerequisite stacks.
-- **`RLF-COMMANDS` is not met, and the gap is now mostly named work rather than unread grammar.**
-  398 of 419 commands have a layout. Outstanding, in the prompt's own words: **module headers and
-  imports** (not a command at all — see below), **structures and inductives** past their shell
-  (`structFields`, `ctor`), and `results/01-commands.md`. The 21 commands still conservative are
-  `instance` (11), `moduleDoc` (8), `registerOption` (1), and `initialize` (1).
+- **`RLF-COMMANDS` is not met, and the gap is now named work rather than unread grammar.**
+  407 of 429 commands have a layout, and all 20 headers do. Outstanding, in the prompt's own words:
+  **structures and inductives** past their shell (`structFields`, `ctor`), and `results/01-commands.md`.
+  The 22 commands still conservative are `instance` (11), `moduleDoc` (9), `registerOption` (1), and
+  `initialize` (1). **Module headers and imports are done** and were the prompt's other named
+  requirement.
 - **`moduleDoc` may well need no layout at all, and that is an answer rather than a gap.** It is
   `"/-!" >> commentBody >> ppLine` (`:60-61`): an opener and a body of prose. There is nothing in it
   the formatter may re-space, so the conservative path *is* its layout. Recording that conclusion, and
@@ -206,9 +252,6 @@ Printing inside the frontend would buy free arg order for a median 1.96 s fronte
   run would emit `( priority := 5 )`. Each needs its own fixture. How many of the 11 here are
   anonymous is **not measured**, and that number decides whether the keyword-ended shell is worth
   having.
-- **`moduleDoc` (8) and `open` (7) are still conservative, and `open` is deliberate.** `openDecl` has
-  bracketed forms (`open Foo (a b)`, `open Foo hiding a`) where one-space-between-tokens would be
-  wrong, so it needs its own citation rather than an assumption.
 - **A declaration's signature and value are untouched, by decision and not by omission.** Both are
   terms and `RLF-EXPRESSIONS` owns them (`notes/01-command-printing.md` §7), so the shell layout stops
   at the `declId`'s last token and everything after it is bytes. `Tree.canonical?` returns *the last

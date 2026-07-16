@@ -37,6 +37,10 @@ which this project already had to reason about carefully in `RLC-SPEC`. -/
 
 import all LeanFmt.LosslessSource
 import all LeanFmt.Doc
+-- The header is the one region the projection cannot describe (`LosslessSource.lean:358`), so laying
+-- it out means parsing it here. `Lean.Parser.parseHeader` needs no imported environment — see
+-- `headerSyntax?` — and this module is deliberately outside `LeanFmtCompilerPlugin`'s import cone.
+import Lean.Parser.Module
 
 namespace LeanFmt.Internal
 
@@ -236,17 +240,32 @@ private def Tree.singleLineTokens (tree : Tree) (normalized : String) (first las
 private def Tree.respaceable (tree : Tree) (normalized : String) (span : CommandSpan) : Bool :=
   tree.triviaClean span.first span.last && tree.singleLineTokens normalized span.first span.last
 
-/-- Does this token begin its line?
+/-- Do the bytes at `start` begin their line?
 
 `Doc.hard` emits a newline plus *the current indentation*, and this printer never nests, so the only
-indentation it can produce is column 0. A layout that breaks a line inside a command that does not
+indentation it can produce is column 0. A layout that breaks a line inside a construct that does not
 start at column 0 would therefore silently de-indent it. Whether a top-level command belongs at column
 0 is a language decision, and no prompt in this stack has made it — so the layouts that break lines ask
-this first and keep their bytes when the answer is no. -/
+this first and keep their bytes when the answer is no.
+
+`start - 1` is a byte step, and a multi-byte character before `start` makes the slice fail rather than
+spell `"\n"`. That answers `false`, which is the safe direction: such a position is not a line start. -/
+private def startsLine (normalized : String) (start : Nat) : Bool :=
+  start == 0 || sliceNormalized normalized (start - 1) start == "\n"
+
+/-- Is every byte in `[start, stop)` whitespace?
+
+The trivia question a layout has to ask, phrased over bytes rather than over the projection's
+classified runs, because the header's trivia never reaches the projection. It needs no classifier:
+trivia is whitespace and comments, and no comment is whitespace-only. -/
+private def whitespaceOnly (normalized : String) (start stop : Nat) : Bool :=
+  (sliceNormalized normalized start stop).all Char.isWhitespace
+
+/-- Does this token begin its line? See `startsLine`. -/
 private def Tree.atLineStart (tree : Tree) (normalized : String) (index : Nat) : Bool :=
   match tree.source.tokens[index]? with
   | none => false
-  | some token => token.start == 0 || sliceNormalized normalized (token.start - 1) token.start == "\n"
+  | some token => startsLine normalized token.start
 
 /-- The bytes from token `lo`'s start through token `hi`'s stop, trivia between them included. -/
 private def Tree.tokenSpanText (tree : Tree) (normalized : String) (lo hi : Nat) : String :=
@@ -521,14 +540,171 @@ def Tree.command (tree : Tree) (normalized : String) (span : CommandSpan) : Doc 
     let after : Doc := .verbatim (sliceNormalized normalized tokenStop span.extent.stop)
     before ++ canonical ++ after
 
+/-! ## The module header
+
+`[0, headerStop)` is the one region of a module the projection does not describe. That is not an
+oversight to route around: `LosslessSource.lean:358` records *why* — "a module linter never receives
+it" — so the artifact cannot carry header tokens without making its shape depend on which producer
+built it, which is strictly worse than carrying none.
+
+So the header's structure has to come from somewhere else, and the only two candidates are the bytes
+and the parser. The bytes alone are not enough: a lexical scan for `import` cannot tell a keyword from
+the same word inside a comment. That leaves parsing, here, which is why this is the one place the
+printer touches `Lean.Syntax`.
+
+`notes/01-command-printing.md`'s Design A is not contradicted by that. Its argument was that printing
+*commands* in-frontend costs a median 1.96 s frontend run per file (`RLS-FINAL`); a header parse is not
+a frontend run — `Lean.Parser.parseHeader` builds an *empty* environment and uses only the builtin
+token table plus `Module.updateTokens` (`Lean/Parser/Module.lean:75-79`). Nor does it widen what
+`format` depends on: `format` already takes `normalized`, because every conservative path slices bytes
+out of it. The header parse reads those same bytes. Its whole cost is that `format` becomes `IO`, and
+both callers are `IO` already.
+-/
+
+/-- Every leaf beneath `stx` as its byte range, in source order, or `none` if any has no bytes.
+
+`.missing` and the synthetic infos are refusals rather than skips. They mean the parser did not read
+this text, and a layout that quietly dropped them would emit a header that is missing a word.
+
+Only the leaf's *own* range is taken. The trivia around it needs no separate record: the gap between
+two leaves is exactly the bytes between them, so every question below is byte arithmetic on
+`normalized` and none of it depends on which of the two leaves the parser chose to attach a comment
+to. -/
+private partial def headerLeaves (stx : Lean.Syntax) (acc : Array (Nat × Nat)) :
+    Option (Array (Nat × Nat)) :=
+  match stx with
+  | .missing => none
+  | .node _ _ args => args.foldl (init := some acc) fun acc arg => acc.bind (headerLeaves arg)
+  | .atom info _ | .ident info _ _ _ =>
+    match info with
+    | .original _ pos _ endPos => some (acc.push (pos.byteIdx, endPos.byteIdx))
+    | _ => none
+
+/-- The header's line groups — the `module` keyword, `prelude`, and each `import` — in source order.
+
+Found by kind rather than by argument index. The grammar is
+
+    header := optional (moduleTk >> ppLine >> ppLine) >> optional («prelude» >> ppLine) >>
+      many («import» >> ppLine) >> ppLine
+
+(`Lean/Parser/Module/Syntax.lean:26-29`), whose only node-children through the `optional`/`many` nulls
+are exactly these three kinds. Dispatching on kind means the empty `optional` slots — which have no
+position, the same absence measured in this module's header comment — need no special case, and an
+argument-index assumption that a later Lean release invalidated would show up as a refusal rather than
+as a header laid out from the wrong slot. -/
+private partial def headerGroups (stx : Lean.Syntax) (acc : Array Lean.Syntax) : Array Lean.Syntax :=
+  match stx with
+  | .node _ kind args =>
+    if kind == ``Lean.Parser.Module.moduleTk || kind == ``Lean.Parser.Module.«prelude»
+        || kind == ``Lean.Parser.Module.«import» then
+      acc.push stx
+    else
+      args.foldl (init := acc) fun acc arg => headerGroups arg acc
+  | _ => acc
+
+/-- One group as a single line: its leaves one space apart, or its bytes when that would lose
+something.
+
+The two refusals are the ones every layout in this module makes, asked over one group's span: a comment
+between two leaves (`whitespaceOnly`) would be dropped by re-spacing, and a leaf spelling more than one
+line cannot go through `Doc.text`, which holds exactly one (`Doc.lean:47-51`).
+
+The newline check is defensive and no test reaches it, which is worth saying rather than leaving to be
+discovered. Five of the header's six atoms are fixed keywords, and the sixth leaf is a module name — so
+the only way to spell a newline inside one is an escaped identifier, `import «a⏎b»`, which the lexer
+does accept (`takeUntilFn isIdEndEscape`, `Lean/Parser/Basic.lean:986`). It is not reachable from these
+tests, because such a module would have to exist on disk to elaborate. The guard costs one scan and
+holds up a `Doc.text` precondition, so it stays.
+
+Space-separating covers `import`'s modifiers — `public`, `meta`, `all` — without enumerating them.
+They are leaves like any other and their order is the parser's, not this function's. -/
+private def headerGroupDoc (normalized : String) (leaves : Array (Nat × Nat)) : Doc := Id.run do
+  let some (firstStart, _) := leaves[0]? | return .empty
+  let some (_, lastStop) := leaves[leaves.size - 1]? | return .empty
+  let keepBytes : Doc := .verbatim (sliceNormalized normalized firstStart lastStop)
+  let mut line : Doc := .empty
+  for h : index in [0:leaves.size] do
+    let (start, stop) := leaves[index]
+    let text := sliceNormalized normalized start stop
+    if text.contains '\n' then return keepBytes
+    if index != 0 && !whitespaceOnly normalized leaves[index - 1]!.2 start then return keepBytes
+    line := if index == 0 then .text text else line ++ .text " " ++ .text text
+  return line
+
+/-- The bytes between two groups: the break the grammar asks for, or the bytes that were there.
+
+The grammar's own vertical layout is `optional (moduleTk >> ppLine >> ppLine) >> optional («prelude» >>
+ppLine) >> many («import» >> ppLine)` (`Lean/Parser/Module/Syntax.lean:26-29`) — a blank line after
+`module`, and one line each thereafter. That is what `afterModule` selects between.
+
+Choosing the gap means owning every byte in it, so the choice is declined in two cases and the bytes
+stand instead:
+
+* **a comment in the gap.** Common enough that this module's own header has one, and refusing the whole
+  header over it — the first thing this function did — would have switched the layout off for the file
+  that introduced it. The import below the comment still gets laid out; only the vertical decision
+  defers.
+* **the next group is not at a line start.** `Doc.hard` emits a newline plus the current indentation,
+  and this printer never nests, so an indented group would be silently de-indented (see `startsLine`).
+  It also declines when the gap holds no newline at all, so `module import Foo` on one line keeps its
+  bytes rather than being split by a rule nobody argued. -/
+private def headerGap (normalized : String) (stop start : Nat) (afterModule : Bool) : Doc :=
+  if whitespaceOnly normalized stop start && startsLine normalized start then
+    if afterModule then .hard ++ .hard else .hard
+  else
+    .verbatim (sliceNormalized normalized stop start)
+
+/-- The canonical header layout, or `none` to keep every byte of it.
+
+Import *order* is never touched. `many («import» >> ppLine)` is walked in source order and each import
+keeps its position, because import order is semantic in Lean's module system and `RLF-COMMANDS` scopes
+sorting out of this prompt explicitly.
+
+As in `Tree.command`, the claim is bounded by the leaves: the bytes before the first one (a file's
+copyright comment) and from the last one to `headerStop` (the blank line before the first command) go
+out verbatim, because they are trivia belonging to no group's layout. Between those bounds every byte
+is either a leaf or a gap, and `headerGroupDoc`/`headerGap` each decline to bytes on their own, so a
+refusal is local to the group or gap that earned it. -/
+private def headerLayout? (normalized : String) (headerStop : Nat) (stx : Lean.Syntax) :
+    Option Doc := Id.run do
+  if stx.getKind != ``Lean.Parser.Module.header then return none
+  let groups := headerGroups stx #[]
+  if groups.isEmpty then return none
+
+  let mut grouped : Array (Array (Nat × Nat)) := #[]
+  for group in groups do
+    let some leaves := headerLeaves group #[] | return none
+    if leaves.isEmpty then return none
+    grouped := grouped.push leaves
+
+  let some (firstStart, _) := grouped[0]![0]? | return none
+  let some (_, lastStop) := grouped[grouped.size - 1]!.back? | return none
+  -- The header parse and the projection agree on where the header ends, or this is not the header the
+  -- artifact was built from and none of its offsets mean anything here.
+  if lastStop > headerStop then return none
+  if !startsLine normalized firstStart then return none
+
+  let mut body : Doc := .empty
+  for h : g in [0:grouped.size] do
+    body := body ++ headerGroupDoc normalized grouped[g]
+    if g + 1 != grouped.size then
+      let some (_, stop) := grouped[g].back? | return none
+      let some (start, _) := grouped[g + 1]![0]? | return none
+      body := body ++
+        headerGap normalized stop start (groups[g]!.getKind == ``Lean.Parser.Module.moduleTk)
+
+  return some <|
+    .verbatim (sliceNormalized normalized 0 firstStart)
+      ++ body
+      ++ .verbatim (sliceNormalized normalized lastStop headerStop)
+
 /-- The whole module: header, commands, uninterpreted tail.
 
-The header is `[0, headerStop)` and is not a command — a module linter never receives it, so it has no
-tokens and cannot be printed from the tree. The tail is `[terminalStop, normalizedBytes)`: empty when
-the terminal is `eoi`, and `#exit` plus Lean's never-parsed remainder otherwise. Both are carried
-verbatim because neither is syntax this printer has any claim on. -/
-def Tree.document (tree : Tree) (normalized : String) : Doc :=
-  let header : Doc := .verbatim (sliceNormalized normalized 0 tree.source.headerStop)
+The header arrives already laid out because reading it needs `IO` (`headerDoc`) and nothing else here
+does. The tail is `[terminalStop, normalizedBytes)`: empty when the terminal is `eoi`, and `#exit`
+plus Lean's never-parsed remainder otherwise. It is carried verbatim because it is not syntax this
+printer has any claim on. -/
+def Tree.document (tree : Tree) (normalized : String) (header : Doc) : Doc :=
   let body := tree.commands.foldl
     (fun acc span => acc ++ tree.command normalized span) (.empty : Doc)
   let tail : Doc := .verbatim
@@ -537,18 +713,43 @@ def Tree.document (tree : Tree) (normalized : String) : Doc :=
 
 namespace Printer
 
+/-- Parse the header out of the source bytes and lay it out, or `none` to keep its bytes.
+
+Any parser message at all is a refusal. The header parser recovers from errors by fabricating partial
+syntax — `identWithPartialTrailingDot` exists to produce a dotted ident that "can never fully succeed"
+(`Lean/Parser/Extra.lean:84-88`) — and refusing on a non-empty log is what keeps that partial syntax
+out of a layout that would space-separate it into `import Foo .`. On an accepted module the log is
+empty, since the frontend parsed this same header without complaint to produce the artifact.
+
+The `?` form is separate from `headerDoc` because the answer is not observable in the output: refusing
+produces the same bytes the source already had, so a test that only reads formatted text cannot tell a
+layout that ran from one that declined. `tests/printer/run.sh` asks this directly. -/
+def headerDoc? (normalized : String) (headerStop : Nat) : IO (Option Doc) := do
+  let (stx, _, messages) ← Lean.Parser.parseHeader (Lean.Parser.mkInputContext normalized "<header>")
+  if !messages.toList.isEmpty then return none
+  return headerLayout? normalized headerStop stx.raw
+
+/-- The header laid out, or its bytes. -/
+def headerDoc (normalized : String) (headerStop : Nat) : IO Doc := do
+  return (← headerDoc? normalized headerStop).getD
+    (.verbatim (sliceNormalized normalized 0 headerStop))
+
 /-- Format one projected module.
 
 `width` is required rather than defaulted. The margin is configuration, it enters cache identity
 (`RLC-SPEC` §5), and `RLC-FINAL` left the value itself an open language decision — defaulting it here
 would settle by accident a question a later prompt owns.
 
-With every kind still on the conservative path this is the identity on accepted source, and that is a
-property worth testing rather than an embarrassment: it says the skeleton — header split, command
-extents, tail — loses nothing before any layout decision is layered on top. `tests/printer/run.sh`
-checks it against real parser output. -/
-def format (source : LosslessSource) (normalized : String) (width : Nat) : String :=
-  renderText width ((Tree.ofSource source).document normalized)
+`IO` is here for one reason: the header. `Lean.Parser.parseHeader` builds an empty environment, which
+is an `IO` action, and the header cannot be laid out without it (see the header section above). Both
+callers are `IO` already, and the parse reads only `normalized`, which this function already takes — so
+nothing about what a formatted module *depends on* changed, and the artifact's digest still binds it.
+
+`tests/printer/run.sh` checks the result against real parser output: every module round-trips byte for
+byte, which is what says a layout that ran neither ran long nor stopped short. -/
+def format (source : LosslessSource) (normalized : String) (width : Nat) : IO String := do
+  let header ← headerDoc normalized source.headerStop
+  return renderText width ((Tree.ofSource source).document normalized header)
 
 end Printer
 

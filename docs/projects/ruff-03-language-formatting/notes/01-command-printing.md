@@ -16,16 +16,16 @@ anything at all.
 `Node = {kind, parent : Option Nat, range}`, and `tokens : Array Token` where `Token` names its
 immediate parent node. There is **no children array and no arg index**.
 
-Measured by `experiments/run-projection-shape.sh` over every module of this repository — 20 modules,
-34,844 nodes, real parser output — by reconstructing the tree from the projection and testing each
+Measured by `experiments/run-projection-shape.sh` over every module of this repository — 21 modules,
+39,027 nodes, real parser output — by reconstructing the tree from the projection and testing each
 property (`evidence/01-projection-shape.txt`):
 
 | property | result |
 | --- | --- |
 | subtree of node *j* is a contiguous index range | **0 violations** |
 | among a parent's token-bearing node-children, index order agrees with byte order | **0 violations** |
-| nodes whose subtree contains no token at all | **12,797 — 36.7%** |
-| …of those, whose parent also has direct token children | **5,345 — 15.3% of all nodes** |
+| nodes whose subtree contains no token at all | **14,092 — 36.1%** |
+| …of those, whose parent also has direct token children | **6,007 — 15.4% of all nodes** |
 
 The first two are not luck. `LosslessSource.collect` pushes a node's placeholder at
 `build.nodes.size` *before* folding its args left to right, so children of one parent necessarily have
@@ -41,23 +41,23 @@ output. Byte order *is* observable, and index order disagreeing with it is what 
 wrong order would actually produce — so that is what row 2 measures. Both hard checks were then
 mutation-tested rather than trusted: a synthetic tree whose child precedes its parent, and one with a
 foreign node inside a parent's span, each raise the contiguity count; reversing child order on the real
-corpus raises row 2 to **4,324**, which is also the number of parents whose child order the check
+corpus raises row 2 to **4,962**, which is also the number of parents whose child order the check
 genuinely exercises.
 
 The last two decide the interface:
 
 - **More than a third of the tree is absent syntax.** `def f : Nat := 0` alone carries seven empty
   `null` children under `declModifiers` — the docComment, attributes, visibility, `noncomputable`,
-  `unsafe`, and `partial`/`nonrec` slots. Across the corpus, 11,462 of the 12,797 empty nodes are
-  anonymous `null`; the named remainder is exactly what the name suggests — `letConfig` (423),
-  `declModifiers` (318), `Termination.suffix` (261), `optDeclSig` (98), `optDeriving` (25). These
-  nodes are the *absence* of syntax, recorded positionally.
+  `unsafe`, and `partial`/`nonrec` slots. Across the corpus, 12,576 of the 14,092 empty nodes are
+  anonymous `null`; the named remainder is exactly what the name suggests — `letConfig` (480),
+  `declModifiers` (323), `Termination.suffix` (292), `optEllipsis` (139), `optDeclSig` (101),
+  `optDeriving` (28). These nodes are the *absence* of syntax, recorded positionally.
 - **An empty node has range `(0,0)`**, because `collect` computes a node's range as the hull of the
   leaves beneath it and there are none: `span.getD {start := 0, stop := 0}`. This is not information
   the projection dropped — `Lean.Syntax` has none either. An empty `null` node genuinely has no
   position, and `Syntax.getPos?` returns `none` for it.
 
-**Therefore arg order cannot be recovered from positions.** For 5,345 of 34,844 nodes, an empty
+**Therefore arg order cannot be recovered from positions.** For 6,007 of 39,027 nodes, an empty
 node-child sits among direct token-children of the same parent and nothing in the projection says
 whether it came before or after them. That is a seventh of the tree, not an edge case, and no amount
 of care with ranges fixes it: the information is absent from `Lean.Syntax` upward.
@@ -139,12 +139,12 @@ grammar belongs.
 ## 6. What this forces on the printer
 
 - **Node-children are read in arg order, never sorted by range.** Arg order is guaranteed by
-  `collect`; range order is wrong for 15.3% of nodes and *silently* wrong, which is worse.
+  `collect`; range order is wrong for 15.4% of nodes and *silently* wrong, which is worse.
 - **Every supported kind's shape is a citation.** The shape goes in the printer with the parser
   declaration it mirrors, and a golden fixture pins it. An uncited shape is an unsourced claim.
 - **The conservative fallback reads tokens, not the tree.** This is the load-bearing consequence of
   §2: empty nodes contribute no bytes, so a printer that re-emits a subtree's tokens in source order
-  with their trivia is unaffected by all 5,345 ambiguous placements. Unknown syntax round-trips
+  with their trivia is unaffected by all 6,007 ambiguous placements. Unknown syntax round-trips
   through the one path that does not depend on the information the projection lacks. The roadmap's
   "unknown commands must round-trip conservatively" and this measurement point the same way — the
   fallback is not a concession, it is the only path whose correctness does not rest on a grammar
@@ -154,15 +154,16 @@ grammar belongs.
 
 The roadmap requires "every supported parser category has an explicit ownership table and formatter
 fallback". The table is built from what the corpus actually contains, not from what I remember Lean
-having: `experiments/run-projection-shape.sh` censuses command kinds, and all 20 modules of this
-repository yield **403 commands in 7 distinct kinds** (`evidence/01-projection-shape.txt`).
+having: `experiments/run-projection-shape.sh` censuses command kinds, and this repository yields
+**429 commands in 7 distinct kinds** (`evidence/01-projection-shape.txt`; the counts below move as the
+project grows and are re-read from the probe rather than maintained by hand).
 
 | kind | count | owner |
 | --- | --- | --- |
-| `Lean.Parser.Command.declaration` | 336 | `RLF-COMMANDS` — the shell only; see below |
+| `Lean.Parser.Command.declaration` | 361 | `RLF-COMMANDS` — the shell only; see below |
 | `Lean.Parser.Command.namespace` | 25 | `RLF-COMMANDS` |
 | `Lean.Parser.Command.end` | 25 | `RLF-COMMANDS` |
-| `Lean.Parser.Command.moduleDoc` | 8 | `RLF-COMMANDS` |
+| `Lean.Parser.Command.moduleDoc` | 9 | `RLF-COMMANDS` |
 | `Lean.Parser.Command.open` | 7 | `RLF-COMMANDS` |
 | `Lean.Option.registerOption` | 1 | conservative fallback |
 | `Lean.Parser.Command.initialize` | 1 | conservative fallback |
@@ -182,13 +183,28 @@ syntax could not be produced by both mandated producers, which is the same argum
 keep raw bytes out of identity.
 
 This does **not** block the prompt's "canonical layouts for module headers, imports", and it is not a
-missing lower-layer piece. `Lean.Parser.parseHeader` (`Lean/Parser/Module.lean:75`) has signature
-`(inputCtx : InputContext) : IO (TSyntax ``Module.header × ModuleParserState × MessageLog)` — it takes
-**no `Environment`**. The header is self-contained by construction, being the thing that decides what
-is imported. So the printer can parse `[0, headerStop)` with Lean's own parser, on bytes
-`normalizedDigest` already binds, and that is the real parser rather than the textual guessing the
-roadmap forbids. The cost is that `format` acquires an `IO` boundary, or a pure header parse must be
-found; that is a decision `RLF-COMMANDS` owns and this note does not spend.
+missing lower-layer piece. **Corrected:** an earlier draft of this section argued from
+`parseHeader`'s *signature* — `(inputCtx : InputContext) : IO (TSyntax ``Module.header ×
+ModuleParserState × MessageLog)`, taking "**no `Environment`**" — and concluded the header was
+self-contained. The signature does not say that. Its body opens with `let dummyEnv ←
+mkEmptyEnvironment` and builds its token table from that plus `Module.updateTokens`
+(`Lean/Parser/Module.lean:75-79`), which is the whole reason it is `IO`. So it does need an
+environment; it makes an empty one. The conclusion survives and is firmer than the argument that
+reached it: **no *frontend* environment is required**, and an empty one is available anywhere in `IO`.
+
+**Decided (this was §8's open question).** `format` acquires the `IO` boundary; no pure header parse
+exists to find. Three things make the cost nil rather than merely acceptable:
+
+- Both of `format`'s callers are `IO` already.
+- It widens nothing. `format` already takes `normalized`, because every conservative path slices bytes
+  out of it; the header parse reads those same bytes, so what a formatted module depends on is
+  unchanged and the artifact's digest still binds all of it.
+- **Design A is not contradicted.** §5's argument against reading `Lean.Syntax` was that printing
+  *commands* in-frontend costs a median 1.96 s frontend run per file and gives up the cache. A header
+  parse is not a frontend run and does not touch the cache. The printer reads `Lean.Syntax` in exactly
+  one place, for the one region §7 shows the projection *structurally cannot* carry — and the
+  alternative there is not "read the projection" but "lexically guess at `import`", which cannot tell
+  a keyword from the same word in a comment and is the textual guessing the roadmap forbids.
 
 **Structures, inductives, attributes, and binders are not commands.** The prompt lists them beside
 declarations, but the grammar nests them: `declaration` wraps `declModifiers` (docstring, attributes,
@@ -207,12 +223,11 @@ directly because a command's Doc can mix canonical structure with `verbatim` sub
 - The canonical layout of any construct. `RLF-COMMANDS` decides commands; terms, tactics, and
   extensions belong to later prompts and are named here only where they constrain the interface.
 - Import sorting. The prompt is explicit that ordered import semantics are preserved and sorting is a
-  separate opt-in fix. Note that §7 makes this stronger than a policy: the printer does not have the
-  imports as syntax unless it parses the header itself, so reordering them is not something it could
-  do by accident.
+  separate opt-in fix. This *was* stronger than a policy while the printer had no header syntax to
+  reorder; §7 has since decided it parses the header, so the protection is now the ordinary kind — the
+  walk keeps source order because it is written to, and a mutation that reverses it fails the golden.
 - The margin. It is configuration and enters cache identity (`RLC-SPEC` §5); this note does not pick a
   number. `Printer.format` therefore requires `width` rather than defaulting it.
-- Whether `format` acquires an `IO` boundary to parse the header (§7).
 
 ## 9. Risks
 
