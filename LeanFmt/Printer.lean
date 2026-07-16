@@ -1023,6 +1023,55 @@ def Tree.tacticBlocks (tree : Tree) (normalized : String) : Nat × Nat := Id.run
     if everyTacticOneLine then ownable := ownable + 1
   return (blocks, ownable)
 
+/-- The separator gaps between two tactics that hold more than one newline — the gaps design B would
+have rewritten, and the only bytes in this prompt that would have changed.
+
+**It is 0 on the frozen sample, across 62 modules and 1,966 blocks, and design B is retired.** Real
+Lean does not put a blank line between two tactics: every blank line in the sample is followed by a
+column-0 line, so it *ends* an indented block rather than sitting inside one
+(`evidence/03-blank-line-columns.txt`, which reads the bytes as lines and never loads this code).
+The counter stays because the 0 is the finding and a number nobody can reproduce is not one —
+`tests/printer/run.sh` hand-counts it to 3 against a written fixture, and two mutations of the two
+guards below each move that 3.
+
+`sepByIndent.formatter` pushes exactly one `"\n"` per newline separator (`Lean/Parser/Extra.lean:218`),
+and design B cited that the way the header layout cites `ppLine >> ppLine`. **It is a weaker citation
+than it looks, and it would not have licensed B even at a non-zero count.** The header's `ppLine`s are
+a grammar declaring its own vertical shape. This is a *formatter*, and it starts from a `Syntax` tree
+whose newline separator is a null node (`n.matchesNull 0`, `:215`) — the blank line is already gone
+before that code runs, so one `"\n"` is all it can emit and not a ruling that an author's blank line
+should be collapsed. This printer starts from a lossless projection that still holds those bytes. The
+two disagree about what is known, not about what is right, and the compiler cannot be cited for a
+decision it never had the information to make.
+
+Two guards, and each refuses rather than counts:
+
+* **whitespace-only.** A separator gap can hold a comment — `\n  -- why\n  ` — and rewriting its
+  newline run would delete it. This is `gapDoc`'s spaces-only test widened from spaces to whitespace,
+  and mutation 3 of `RLF-EXPRESSIONS` is what proved that test load-bearing.
+* **a newline must be present at all.** A `;`-separated gap on one line is not this layout's business;
+  the grammar offers `psep` and a linebreak as alternatives (`Extra.lean:206-208`) and nothing licenses
+  turning one into the other.
+
+Counted per *gap* rather than per block, for the reason `binderCommented` exists in the printer
+fixtures: a block can hold one blank-line gap and five clean ones, and a per-block number could not
+tell a layout that fixed the one from a layout that rewrote all six. -/
+def Tree.tacticBlankGaps (tree : Tree) (normalized : String) : Nat := Id.run do
+  let mut count := 0
+  for node in [0:tree.source.nodes.size] do
+    if tree.kindOf node != "Lean.Parser.Tactic.tacticSeq1Indented" then continue
+    let parts := tree.liftedParts node
+    let mut previous : Option Part := none
+    for part in parts do
+      if let some prior := previous then
+        let raw := match tree.source.tokens[prior.last]?, tree.source.tokens[part.first]? with
+          | some a, some b => sliceNormalized normalized a.stop b.start
+          | _, _ => ""
+        let newlines := raw.foldl (fun n c => if c == '\n' then n + 1 else n) 0
+        if raw.all Char.isWhitespace && newlines > 1 then count := count + 1
+      previous := some part
+  return count
+
 /-- How many of this module's commands take a canonical layout rather than the conservative path.
 
 Reported by `printer-roundtrip` and floored by `tests/printer/run.sh`, because byte identity cannot

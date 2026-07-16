@@ -762,6 +762,95 @@ else
   failures=$((failures + 1))
 fi
 
+# The tactic block, and the counter that decided not to lay it out.
+#
+# `RLF-TACTICS` found exactly one change it could make to a tactic block without moving a column:
+# rewrite the newline run inside a separator gap to a single newline, re-emitting the gap's trailing
+# indentation byte for byte (`notes/03-tactics.md` §8, design B). Re-indenting is not on the table --
+# the column between two tactics *is* the separator (`checkColEq`, `Lean/Parser/Extra.lean:206-208`),
+# and `Doc.nest` moves a printer-emitted newline but cannot move a `.keep` gap, so a partial vertical
+# layout strands each tactic's continuation lines on the separator column, where they stop being
+# continuations and become tactics that do not parse (§5).
+#
+# `tactic_blank_gaps` is the whole of what design B would have rewritten, and on the frozen sample it
+# is **0, across all 62 modules and 1,966 blocks**: real Lean does not put a blank line between two
+# tactics. Every blank line in that sample is followed by a column-0 line -- it *ends* an indented
+# block rather than sitting inside one (`evidence/03-blank-line-columns.txt`). So design B ships
+# nothing, and tactic blocks stay on the conservative path.
+#
+# That 0 is a fact only if the counter can count, which is what this fixture is for -- `RLF-COMMANDS`'s
+# `misordered=0` was a number no input could have contradicted, and it took a mutation to notice.
+# Counted by reading it: `gapOne` is one gap, `gapTwo` is two, `noGap` is none (a single newline is
+# the separator, not a blank), and `gapCommented` is none -- its gap holds a comment, so it is not
+# whitespace-only, which is the same predicate every other layout in this file refuses on. Three.
+printf -- '--- the tactic block, and the counter that left it alone ---\n'
+cat >"$work/tactic.lean" <<'FIXTURE'
+module
+
+theorem gapOne : True := by
+  skip
+
+  trivial
+
+theorem gapTwo : True := by
+  skip
+
+  skip
+
+  trivial
+
+theorem noGap : True := by
+  skip
+  trivial
+
+theorem gapCommented : True := by
+  skip
+
+  -- A comment is not whitespace, so these are not the formatter's bytes to choose.
+  trivial
+FIXTURE
+LEAN_NUM_THREADS=1 lake env "$application" __analyze-exact \
+  "$work/borrowed.setup.json" "$work/tactic.lean" "tactic.lean" 8589934592 >"$work/tactic.json"
+tactic_report=$("$tests" printer-report "$work/tactic.json" "$work/tactic.lean")
+expected_blank_gaps=3
+actual_blank_gaps=$(field tactic_blank_gaps "$tactic_report")
+if [[ "$actual_blank_gaps" == "$expected_blank_gaps" ]]; then
+  printf '  ok   tactic_blank_gaps counts the fixture'\''s %s blank gaps (so 0 on mathlib is a fact)\n' \
+    "$expected_blank_gaps"
+else
+  printf 'FAIL tactic_blank_gaps reported %s on the tactic fixture, expected %s; the sample'\''s 0 is vacuous\n' \
+    "$actual_blank_gaps" "$expected_blank_gaps" >&2
+  failures=$((failures + 1))
+fi
+
+# The blocks themselves, because `tactic_blank_gaps` cannot see them: a counter that found no blocks
+# at all would report 0 gaps and look exactly like a counter that found four blocks with no gaps in
+# them. Exact, because the fixture has four `by` blocks and they are countable by eye. This is also
+# what makes `tactic_ownable`'s 1,422-of-1,966 on the sample a measurement rather than a guess.
+expected_tactic_blocks=4
+actual_tactic_blocks=$(field tactic_blocks "$tactic_report")
+if [[ "$actual_tactic_blocks" == "$expected_tactic_blocks" ]]; then
+  printf '  ok   tactic_blocks finds the fixture'\''s %s blocks\n' "$expected_tactic_blocks"
+else
+  printf 'FAIL tactic_blocks reported %s on the tactic fixture, expected %s\n' \
+    "$actual_tactic_blocks" "$expected_tactic_blocks" >&2
+  failures=$((failures + 1))
+fi
+
+# And the decision itself: the printer does not touch a tactic block. Byte identity is a weak
+# assertion everywhere else in this file -- it is what a printer that refused everything would also
+# produce -- but here that is precisely the claim being pinned, and the fixture is built so it can
+# fail. Every blank gap above survives, because `tactic_blank_gaps=0` on real code is what retired
+# design B rather than any doubt about whether it could be written.
+"$tests" printer-format "$work/tactic.json" "$work/tactic.lean" 80 >"$work/tactic.out"
+if diff -u "$work/tactic.lean" "$work/tactic.out" >"$work/tactic.diff" 2>&1; then
+  printf '  ok   tactic blocks come back byte-for-byte, blank gaps and all\n'
+else
+  printf 'FAIL the printer rewrote a tactic block; it is meant to be on the conservative path:\n' >&2
+  cat "$work/tactic.diff" >&2
+  failures=$((failures + 1))
+fi
+
 # Idempotence, the roadmap's "formatting twice is byte-identical to formatting once". The second pass
 # re-parses the first pass's *output*, so this is a real second format and not a repeated call: if the
 # layout emitted something the parser reads back differently, this is where it shows.

@@ -862,6 +862,7 @@ app_slack={tree.appSlack normalized} \
 binder_slack={tree.binderSlack normalized} \
 match_slack={tree.matchSlack normalized} \
 tactic_blocks={tacticBlocks} tactic_ownable={tacticOwnable} \
+tactic_blank_gaps={tree.tacticBlankGaps normalized} \
 tail_bytes={projection.normalizedBytes - projection.terminalStop}"
   return 0
 

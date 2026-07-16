@@ -1,0 +1,16 @@
+modules=62 blank_lines=3041 blank_gaps=3041 gaps_between_two_indented_lines=0
+
+# every blank gap, by the indentation of the non-blank line above and below it
+prev_col=  0 next_col=  0  count=  1446  eg Archive/Arithcc.lean:9
+prev_col=  2 next_col=  0  count=  1177  eg Archive/Arithcc.lean:39
+prev_col=  4 next_col=  0  count=   348  eg Archive/Arithcc.lean:333
+prev_col=  6 next_col=  0  count=    60  eg Archive/Arithcc.lean:119
+prev_col=  8 next_col=  0  count=     6  eg Mathlib/Algebra/Homology/DerivedCategory/Basic.lean:274
+prev_col= 10 next_col=  0  count=     2  eg Mathlib/CategoryTheory/Limits/Preserves/Ulift.lean:54
+prev_col= 12 next_col=  0  count=     2  eg Mathlib/Computability/Halting.lean:59
+
+# `next_col` is 0 in every row. A blank line in this sample always precedes a top-level line --
+# it ends an indented block rather than sitting inside one -- so `gaps_between_two_indented_lines`
+# is 0 and no blank line in the sample falls between two tactics. The `prev_col` spread is the
+# other half of the same fact: those are the blank lines *after* a proof, and the column is how
+# deep the proof's last line was.
