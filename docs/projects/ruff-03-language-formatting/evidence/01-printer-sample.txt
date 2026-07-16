@@ -1,0 +1,106 @@
+modules_analyzed=62 skipped=0 failures=0 reformatted=12
+commands=2734 canonical=1579 members=13 headers_canonical=62
+
+# `reformatted` is how many modules the printer changed at all. It is the number this
+# repository cannot produce: its own corpus is already canonical, so the layouts run there
+# and decide nothing. These are foreign modules, and every one of them still parses back to
+# the same tokens and the same comments.
+
+# what the layouts refused, by syntax kind (every command not counted in `canonical`).
+# A kind lands here for either of two unlike reasons: no layout claims it, or one does and a
+# runtime guard said no. `Lean.Parser.Command.declaration` is the second; the rest are the
+# first, and are the scope of the prompts after this one.
+ 393 lemma
+ 277 Lean.Parser.Command.variable
+ 155 Lean.Parser.Command.declaration/Lean.Parser.Command.instance
+ 108 Lean.Parser.Command.in
+ 104 Lean.Parser.Command.moduleDoc
+  36 Lean.Parser.Command.section
+  15 Batteries.Tactic.Alias.alias
+  12 Lean.Parser.Command.attribute
+   7 Lean.Parser.Command.notation
+   7 Lean.Parser.Command.include
+   7 Lean.Parser.Command.assertNotExists
+   6 Lean.Parser.Command.macro
+   4 Lean.Parser.Command.syntax
+   4 Lean.Parser.Command.open
+   4 Batteries.Tactic.Alias.aliasLR
+   3 Mathlib.Tactic.scopedNS
+   3 Lean.Parser.Command.macro_rules
+   3 Lean.Parser.Command.export
+   2 Lean.Parser.Command.mixfix
+   1 Lean.Parser.Command.elab
+   1 Lean.Parser.Command.deprecated_module
+   1 Lean.Parser.Command.declaration/Lean.Parser.Command.example
+   1 commandSuppress_compilation
+   1 adaptationNoteCmd
+
+# every module that lost information or failed to converge
+none
+
+# every module excluded, and why (excluded from the totals, not counted as a pass)
+none
+
+# per module
+Archive/Arithcc.lean	commands=57 canonical=44 tokens=2182 nodes=3395 header_bytes=227 header_canonical=1 members=7 tail_bytes=0
+Mathlib/Algebra/Algebra/Rat.lean	commands=25 canonical=8 tokens=414 nodes=717 header_bytes=306 header_canonical=1 members=0 tail_bytes=0
+Mathlib/Algebra/Category/ModuleCat/Ext/DimensionShifting.lean	commands=11 canonical=7 tokens=346 nodes=420 header_bytes=471 header_canonical=1 members=0 tail_bytes=0
+Mathlib/Algebra/Divisibility/Hom.lean	commands=7 canonical=4 tokens=154 nodes=194 header_bytes=361 header_canonical=1 members=0 tail_bytes=0
+Mathlib/Algebra/Group/Pointwise/Finset/Scalar.lean	commands=127 canonical=62 tokens=2797 nodes=4354 header_bytes=278 header_canonical=1 members=0 tail_bytes=0
+Mathlib/Algebra/Homology/DerivedCategory/Basic.lean	commands=60 canonical=19 tokens=1554 nodes=2499 header_bytes=429 header_canonical=1 members=0 tail_bytes=0
+Mathlib/Algebra/Jordan/Basic.lean	commands=29 canonical=16 tokens=2382 nodes=2917 header_bytes=219 header_canonical=1 members=0 tail_bytes=0
+Mathlib/Algebra/Module/Submodule/Union.lean	commands=10 canonical=2 tokens=1200 nodes=1806 header_bytes=430 header_canonical=1 members=0 tail_bytes=0
+Mathlib/Algebra/Order/Group/Int/Sum.lean	commands=8 canonical=3 tokens=682 nodes=864 header_bytes=323 header_canonical=1 members=0 tail_bytes=0
+Mathlib/Algebra/Order/Sub/Unbundled/Basic.lean	commands=71 canonical=62 tokens=2266 nodes=2963 header_bytes=276 header_canonical=1 members=0 tail_bytes=0
+Mathlib/Algebra/Ring/IsFormallyReal.lean	commands=28 canonical=17 tokens=915 nodes=1534 header_bytes=261 header_canonical=1 members=2 tail_bytes=0
+Mathlib/AlgebraicGeometry/IdealSheaf/Subscheme.lean	commands=93 canonical=22 tokens=6061 nodes=9224 header_bytes=400 header_canonical=1 members=0 tail_bytes=0
+Mathlib/AlgebraicTopology/MooreComplex.lean	commands=27 canonical=15 tokens=757 nodes=1132 header_bytes=331 header_canonical=1 members=0 tail_bytes=0
+Mathlib/Analysis/Asymptotics/SuperpolynomialDecay.lean	commands=68 canonical=51 tokens=2903 nodes=3862 header_bytes=256 header_canonical=1 members=0 tail_bytes=0
+Mathlib/Analysis/Calculus/FDeriv/RestrictScalars.lean	commands=28 canonical=19 tokens=658 nodes=863 header_bytes=252 header_canonical=1 members=0 tail_bytes=0
+Mathlib/Analysis/Convex/Cone/InnerDual.lean	commands=26 canonical=11 tokens=922 nodes=1390 header_bytes=291 header_canonical=1 members=0 tail_bytes=0
+Mathlib/Analysis/InnerProductSpace/l2Space.lean	commands=85 canonical=61 tokens=3749 nodes=5353 header_bytes=334 header_canonical=1 members=0 tail_bytes=0
+Mathlib/Analysis/Normed/Module/Multilinear/Basic.lean	commands=203 canonical=136 tokens=11211 nodes=14678 header_bytes=481 header_canonical=1 members=0 tail_bytes=0
+Mathlib/Analysis/SpecialFunctions/Gamma/Basic.lean	commands=62 canonical=56 tokens=4473 nodes=6547 header_bytes=283 header_canonical=1 members=0 tail_bytes=0
+Mathlib/CategoryTheory/Action/Concrete.lean	commands=44 canonical=28 tokens=1555 nodes=2278 header_bytes=458 header_canonical=1 members=0 tail_bytes=0
+Mathlib/CategoryTheory/ConcreteCategory/Representable.lean	commands=8 canonical=4 tokens=170 nodes=181 header_bytes=272 header_canonical=1 members=0 tail_bytes=0
+Mathlib/CategoryTheory/Groupoid/VertexGroup.lean	commands=15 canonical=9 tokens=343 nodes=539 header_bytes=406 header_canonical=1 members=0 tail_bytes=0
+Mathlib/CategoryTheory/Limits/Preserves/Ulift.lean	commands=12 canonical=3 tokens=472 nodes=674 header_bytes=404 header_canonical=1 members=0 tail_bytes=0
+Mathlib/CategoryTheory/Localization/Pi.lean	commands=7 canonical=4 tokens=939 nodes=1127 header_bytes=314 header_canonical=1 members=0 tail_bytes=0
+Mathlib/CategoryTheory/Monoidal/Widesubcategory.lean	commands=22 canonical=12 tokens=587 nodes=943 header_bytes=345 header_canonical=1 members=0 tail_bytes=0
+Mathlib/CategoryTheory/Shift/Opposite.lean	commands=49 canonical=18 tokens=1562 nodes=2371 header_bytes=267 header_canonical=1 members=0 tail_bytes=0
+Mathlib/CategoryTheory/SmallRepresentatives.lean	commands=33 canonical=20 tokens=1190 nodes=2016 header_bytes=259 header_canonical=1 members=0 tail_bytes=0
+Mathlib/Combinatorics/Matroid/Minor/Delete.lean	commands=63 canonical=6 tokens=2024 nodes=3002 header_bytes=208 header_canonical=1 members=0 tail_bytes=0
+Mathlib/Computability/Halting.lean	commands=14 canonical=11 tokens=475 nodes=621 header_bytes=246 header_canonical=1 members=0 tail_bytes=0
+Mathlib/Data/FP/Basic.lean	commands=41 canonical=33 tokens=1510 nodes=2237 header_bytes=410 header_canonical=1 members=4 tail_bytes=0
+Mathlib/Data/Fintype/Shrink.lean	commands=7 canonical=2 tokens=109 nodes=178 header_bytes=248 header_canonical=1 members=0 tail_bytes=0
+Mathlib/Data/Multiset/Bind.lean	commands=96 canonical=73 tokens=3825 nodes=6099 header_bytes=242 header_canonical=1 members=0 tail_bytes=0
+Mathlib/Data/PFunctor/Multivariate/Basic.lean	commands=48 canonical=35 tokens=1634 nodes=2375 header_bytes=278 header_canonical=1 members=0 tail_bytes=0
+Mathlib/Data/Stream/Init.lean	commands=172 canonical=146 tokens=6834 nodes=10249 header_bytes=328 header_canonical=1 members=0 tail_bytes=0
+Mathlib/FieldTheory/MvRatFunc/Rank.lean	commands=5 canonical=3 tokens=208 nodes=288 header_bytes=420 header_canonical=1 members=0 tail_bytes=0
+Mathlib/Geometry/Manifold/Sheaf/Basic.lean	commands=12 canonical=6 tokens=422 nodes=579 header_bytes=284 header_canonical=1 members=0 tail_bytes=0
+Mathlib/GroupTheory/NoncommPiCoprod.lean	commands=49 canonical=30 tokens=2428 nodes=3578 header_bytes=301 header_canonical=1 members=0 tail_bytes=0
+Mathlib/LinearAlgebra/Basis/Exact.lean	commands=23 canonical=5 tokens=1262 nodes=1662 header_bytes=304 header_canonical=1 members=0 tail_bytes=0
+Mathlib/LinearAlgebra/Matrix/CharP.lean	commands=5 canonical=2 tokens=73 nodes=102 header_bytes=247 header_canonical=1 members=0 tail_bytes=0
+Mathlib/LinearAlgebra/RootSystem/Finite/Nondegenerate.lean	commands=77 canonical=23 tokens=2928 nodes=4426 header_bytes=523 header_canonical=1 members=0 tail_bytes=0
+Mathlib/MeasureTheory/Constructions/ProjectiveFamilyContent.lean	commands=31 canonical=11 tokens=1157 nodes=1587 header_bytes=344 header_canonical=1 members=0 tail_bytes=0
+Mathlib/MeasureTheory/Integral/IntervalIntegral/Periodic.lean	commands=65 canonical=39 tokens=3881 nodes=5232 header_bytes=369 header_canonical=1 members=0 tail_bytes=0
+Mathlib/MeasureTheory/SpecificCodomains/ContinuousMap.lean	commands=14 canonical=4 tokens=799 nodes=909 header_bytes=278 header_canonical=1 members=0 tail_bytes=0
+Mathlib/NumberTheory/LSeries/ZMod.lean	commands=44 canonical=12 tokens=4961 nodes=6966 header_bytes=317 header_canonical=1 members=0 tail_bytes=0
+Mathlib/NumberTheory/SelbergSieve.lean	commands=56 canonical=47 tokens=2721 nodes=4107 header_bytes=306 header_canonical=1 members=0 tail_bytes=0
+Mathlib/Order/Filter/ENNReal.lean	commands=47 canonical=22 tokens=2912 nodes=4635 header_bytes=258 header_canonical=1 members=0 tail_bytes=0
+Mathlib/Order/Quotient.lean	commands=27 canonical=15 tokens=906 nodes=1396 header_bytes=243 header_canonical=1 members=0 tail_bytes=0
+Mathlib/Probability/Kernel/Deterministic.lean	commands=19 canonical=7 tokens=1017 nodes=1575 header_bytes=344 header_canonical=1 members=0 tail_bytes=0
+Mathlib/RingTheory/AlgebraicIndependent/TranscendenceBasis.lean	commands=98 canonical=63 tokens=5653 nodes=7432 header_bytes=409 header_canonical=1 members=0 tail_bytes=0
+Mathlib/RingTheory/Flat/Tensor.lean	commands=16 canonical=10 tokens=442 nodes=643 header_bytes=274 header_canonical=1 members=0 tail_bytes=0
+Mathlib/RingTheory/KrullDimension/Regular.lean	commands=26 canonical=11 tokens=1842 nodes=2517 header_bytes=387 header_canonical=1 members=0 tail_bytes=0
+Mathlib/RingTheory/PiTensorProduct.lean	commands=73 canonical=29 tokens=2522 nodes=3743 header_bytes=354 header_canonical=1 members=0 tail_bytes=0
+Mathlib/RingTheory/Smooth/Basic.lean	commands=108 canonical=56 tokens=4242 nodes=5625 header_bytes=424 header_canonical=1 members=0 tail_bytes=0
+Mathlib/SetTheory/Cardinal/Cofinality/Club.lean	commands=55 canonical=49 tokens=2448 nodes=3704 header_bytes=246 header_canonical=1 members=0 tail_bytes=0
+Mathlib/Tactic/Conv.lean	commands=21 canonical=6 tokens=615 nodes=873 header_bytes=272 header_canonical=1 members=0 tail_bytes=0
+Mathlib/Tactic/Nontriviality.lean	commands=2 canonical=1 tokens=5 nodes=8 header_bytes=237 header_canonical=1 members=0 tail_bytes=0
+Mathlib/Testing/Plausible/Testable.lean	commands=11 canonical=8 tokens=79 nodes=145 header_bytes=349 header_canonical=1 members=0 tail_bytes=0
+Mathlib/Topology/Algebra/ProperAction/AddTorsor.lean	commands=1 canonical=0 tokens=6 nodes=4 header_bytes=87 header_canonical=1 members=0 tail_bytes=0
+Mathlib/Topology/Compactness/LocallyFinite.lean	commands=10 canonical=7 tokens=299 nodes=427 header_bytes=261 header_canonical=1 members=0 tail_bytes=0
+Mathlib/Topology/Irreducible.lean	commands=85 canonical=53 tokens=4731 nodes=6695 header_bytes=441 header_canonical=1 members=0 tail_bytes=0
+Mathlib/Topology/Order/ScottTopology.lean	commands=94 canonical=38 tokens=2356 nodes=3633 header_bytes=315 header_canonical=1 members=0 tail_bytes=0
+Mathlib/Util/DischargerAsTactic.lean	commands=4 canonical=3 tokens=86 nodes=141 header_bytes=259 header_canonical=1 members=0 tail_bytes=0

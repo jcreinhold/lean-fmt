@@ -1,6 +1,6 @@
 ---
 claim_id: RLF-COMMANDS
-status: planned
+status: verified
 depends_on: []
 ---
 

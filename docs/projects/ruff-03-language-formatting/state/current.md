@@ -1,15 +1,24 @@
 ---
 kind: state
-first_unresolved: 01-commands
+first_unresolved: 02-expressions
 ---
 
 # Current state
 
-`RLF-COMMANDS` is **in progress**: the printer skeleton is live and proven lossless, **415 of the
-corpus's 437 commands take a cited canonical layout** — `namespace` (25), `end` (25), `open` (7), and
-the shell of 358 of 369 declarations — **all 20 module headers take theirs**, and **54 constructor and
-field shells** are claimed inside those declarations. Its external prerequisite stack
+`RLF-COMMANDS` is **verified** (`results/01-commands.md`): the printer is live and proven lossless on
+this repository *and* on 62 modules of foreign Lean, **415 of the corpus's 437 commands take a cited
+canonical layout** — `namespace` (25), `end` (25), `open` (7), and the shell of 358 of 369
+declarations — **all 20 module headers take theirs**, and **54 constructor and field shells** are
+claimed inside those declarations. `section` and `universe` have layouts too; this corpus contains
+none of either, so only the fixtures and the sample exercise them. Its external prerequisite stack
 `ruff-02-layout-core` is verified and its live implementation still matches recorded state.
+
+**The corpus's 95% is 57.8% on real Lean, and that is the honest number.** Coverage is measured on the
+frozen mathlib sample as well as here, and the two disagree because this repository's command mix is
+not Lean's. What the remainder consists of is measured rather than guessed (`printer-unclaimed`): the
+largest part is `lemma` (393), which is Mathlib's own syntax and correctly conservative, and the next
+is `variable` (277), which is binders and so terms. Nothing in the remainder is a guard misfiring —
+all 156 refused declarations are the cited `instance` (155) and `example` (1) exclusions.
 
 Corpus figures move whenever this repository's own code changes, because this repository *is* the
 corpus. They are re-read from `experiments/run-projection-shape.sh` rather than maintained by hand;
@@ -35,7 +44,7 @@ Printing inside the frontend would buy free arg order for a median 1.96 s fronte
 
 | Prompt | Claim | Status | Depends on |
 | --- | --- | --- | --- |
-| 01-commands | RLF-COMMANDS | planned | — |
+| 01-commands | RLF-COMMANDS | verified | — |
 | 02-expressions | RLF-EXPRESSIONS | planned | RLF-COMMANDS |
 | 03-tactics | RLF-TACTICS | planned | RLF-EXPRESSIONS |
 | 04-extensions | RLF-EXTENSIONS | planned | RLF-TACTICS |
@@ -290,16 +299,14 @@ Printing inside the frontend would buy free arg order for a median 1.96 s fronte
 ## Blockers and prerequisites
 
 - No blocker is currently recorded beyond the named prerequisite stacks.
-- **`RLF-COMMANDS` is not met, and the gap is now named work rather than unread grammar.**
-  415 of 437 commands have a layout, all 20 headers do, and 54 member shells are claimed. Outstanding:
-  `results/01-commands.md`. The 22 commands still conservative are `instance` (11), `moduleDoc` (9),
-  `registerOption` (1), and `initialize` (1). **Module headers and imports** and **structures and
-  inductives** — the prompt's other named requirements — are done, the latter to the depth its grammar
-  allows: the member *shell*, because everything past a member's name is a term (`RLF-EXPRESSIONS`'s)
-  and `structFields`'s `manyIndent` makes field indentation parser-significant rather than cosmetic.
-  See `notes/01-command-printing.md` §7.
+- **`RLF-COMMANDS` is met.** Every category its task line names is either laid out or deferred with the
+  grammar line that forces the deferral; `results/01-commands.md` audits them one by one. The 22
+  commands still conservative here are `instance` (11), `moduleDoc` (9), `registerOption` (1), and
+  `initialize` (1). **Binders** are the one named category with no layout, and they are
+  `RLF-EXPRESSIONS`'s twice over: `bracketedBinder` is a `Lean.Parser.Term` parser
+  (`Term/Basic.lean:256`), and every one of its four alternatives is bracketed.
 - **The corpus's 95% coverage is a fact about its command mix, and foreign code says so.** On the
-  frozen mathlib sample the same printer claims **1414 of 2734 commands (51.7%)**. That gap is not a
+  frozen mathlib sample the same printer claims **1579 of 2734 commands (57.8%)**. That gap is not a
   defect and not a floor to be raised for its own sake: `printer-unclaimed` names the kind of every
   refusal, and the largest single category is **`lemma` (393)**, which is *Mathlib's own syntax*
   (`Mathlib/Tactic/Lemma.lean:20`) and does not exist in the compiler this stack cites. The

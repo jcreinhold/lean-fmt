@@ -179,12 +179,16 @@ kinds it refuses are a different list:
 | --- | --- | --- |
 | `lemma` | 393 | `RLF-EXTENSIONS` — **not core Lean**; `Mathlib/Tactic/Lemma.lean:20` declares it |
 | `Lean.Parser.Command.variable` | 277 | `RLF-EXPRESSIONS` — `many1 bracketedBinder` (`:471-472`) |
-| `Lean.Parser.Command.section` | 181 | `RLF-COMMANDS` — **claimed now**; `:299-300` |
-| `Lean.Parser.Command.declaration` | 156 | `RLF-COMMANDS` — a runtime guard refused these |
+| `declaration/«instance»` | 155 | `RLF-COMMANDS` — cited exclusion, `declId` is `optional` |
 | `Lean.Parser.Command.in` | 108 | unclaimed — `open X in <cmd>` wraps another command |
 | `Lean.Parser.Command.moduleDoc` | 104 | `RLF-COMMANDS` — needs no layout; see below |
-| `Lean.Parser.Command.universe` | 20 | `RLF-COMMANDS` — **claimed now**; `:531-532` |
+| `Lean.Parser.Command.section` | 36 | `RLF-COMMANDS` — 181 total, 145 claimed; these are `@[expose]` |
 | `alias`, `attribute`, `notation`, `include`, `macro`, … | ~60 | `RLF-EXTENSIONS` or bracketed |
+| `declaration/«example»` | 1 | `RLF-COMMANDS` — no `declId` at all (`:200-201`) |
+
+The counts are after `section` (181, of which 145 claimed) and `universe` (20, all claimed) were given
+layouts; `canonical` on the sample went 1414 → 1579 as a result, and 145 + 20 = 165 = 1579 − 1414 is
+the reconciliation.
 
 Two things fall out of it that the corpus could not have said:
 
@@ -196,7 +200,15 @@ sample. It and `universe` are now claimed — both are flat runs of a keyword an
 tokens, so a flat run over a command holding them emits `@[ expose ]`. Its other three slots are lone
 keyword atoms and flat-run correctly, which matters because `noncomputable section` is the header shape
 that actually occurs. So the layout refuses the bracket and claims the rest — the same call `open`
-makes for `openOnly`.
+makes for `openOnly`, and the same one `instance` makes for `optNamedPrio`. A bracket is refused
+wherever it appears, which is one rule and not three separate omissions.
+
+**That refusal is the whole of the remaining 36**, and they are all `@[expose] public section` —
+v4.32.0's module-system idiom, in 36 of the sample's 62 modules. Claiming it is available and cheap:
+the declaration shell already emits its attribute slot verbatim rather than re-spacing it, and the
+same trick works here. It is not done because it would decide nothing — mathlib writes that header
+exactly as the layout would — and because "brackets need a layout that knows about them" is a claim
+this prompt declined to make for `openOnly` first. Making it here and not there would be arbitrary.
 
 **The biggest miss is syntax the compiler does not have.** `lemma` is Mathlib's, declared at
 `Mathlib/Tactic/Lemma.lean:20`, and it is 30% of the sample's unclaimed commands on its own. Nothing

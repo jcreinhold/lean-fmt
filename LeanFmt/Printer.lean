@@ -682,12 +682,28 @@ about which *kinds* this repository happens to contain, and a bare percentage ca
 number that low is either a list of grammars nobody has read yet, which is ordinary remaining work, or
 a guard refusing shapes it was built to claim, which is a defect. Only the kinds distinguish them.
 
-Deliberately not a count per kind: the caller tallies. A kind is refused for two unlike reasons — no
-layout claims it at all, or a layout claims it and a runtime guard said no — and this cannot tell them
-apart, so it reports the raw kind and leaves that reading to whoever has both this and the grammar. -/
+**A refused `declaration` reports its inner shape instead**, as `declaration/«instance»`. The bare kind
+is useless for exactly the case that matters: `declaration` is one kind covering eleven alternatives
+(`:282-285`), and refusing an `instance` is a decision this stack made and cited, while refusing a
+`def` would be a defect. Those must not tally to the same line. The shape is the second node-child's
+kind, which is where `declaration`'s grammar puts the alternative; a `declaration` with no such child
+cannot occur in an accepted module, and reports the bare kind rather than inventing one.
+
+Deliberately not a count per kind: the caller tallies. Even split by shape a kind is refused for two
+unlike reasons — no layout claims it at all, or a layout claims it and a runtime guard said no — and
+this still cannot tell those apart, so it reports the kind and leaves that reading to whoever has both
+this and the grammar. -/
 def Tree.unclaimedKinds (tree : Tree) (normalized : String) : Array String :=
   tree.commands.foldl (init := #[]) fun kinds span =>
-    if (tree.canonical? normalized span).isSome then kinds else kinds.push (tree.kindOf span.root)
+    if (tree.canonical? normalized span).isSome then kinds else
+      let kind := tree.kindOf span.root
+      let detailed :=
+        if kind == "Lean.Parser.Command.declaration" then
+          match (tree.nodeChildren[span.root]!)[1]? with
+          | some shape => s!"{kind}/{tree.kindOf shape}"
+          | none => kind
+        else kind
+      kinds.push detailed
 
 /-- One command.
 
