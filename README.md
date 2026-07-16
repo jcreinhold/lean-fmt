@@ -137,4 +137,5 @@ tests/check/run.sh
 tests/modes/run.sh
 tests/scale/run.sh
 tests/service/run.sh
+tests/boundary/run.sh
 ```

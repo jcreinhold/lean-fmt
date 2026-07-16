@@ -29,6 +29,7 @@ tests/check/run.sh
 tests/modes/run.sh
 tests/scale/run.sh
 tests/service/run.sh
+tests/boundary/run.sh
 ```
 
 Use the target project's exact Lean toolchain for frontend/plugin experiments. Keep experiments out
