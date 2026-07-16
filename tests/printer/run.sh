@@ -332,6 +332,16 @@ def     brokenApp : Nat :=
 
 def     insideNotation : Nat := id     12 + id     13
 
+def     binderSpaced (  x     y  :  Nat  ) : Nat := x
+
+def     binderTight (x :Nat) : Nat := x
+
+def     binderImplicit {  a  :  Nat  } : Nat := a
+
+def     binderInst [  Inhabited Nat  ] : Nat := default
+
+def     binderCommented (  /- why -/  x  :  Nat  ) : Nat := x
+
 structure     Str     where
   field     : Nat
   private     modified     : Nat
@@ -406,7 +416,7 @@ LEAN_NUM_THREADS=1 lake env "$application" __analyze-exact \
 #   `List.replicate 3 8`             BOTH gaps collapse. `many1 argument` builds one `null` around
 #                                    every argument, so reading the app's own parts would collapse
 #                                    only the gap to the first one and leave `3     8` alone. This
-#                                    line is the whole evidence `appParts` lifts the null.
+#                                    line is the whole evidence `liftedParts` lifts the null.
 #   `id (id 9)`                      the recursion. The outer app's argument is a `paren`, which has
 #                                    no layout -- so its bytes are kept while the app *inside* it is
 #                                    still found and still collapsed. A fallback that emitted the
@@ -423,6 +433,35 @@ LEAN_NUM_THREADS=1 lake env "$application" __analyze-exact \
 #                                    notation whose atom is declared `" + "` (`Init/Notation.lean:284`)
 #                                    -- spacing this printer cannot read, so it keeps those bytes and
 #                                    claims only the two apps the parser marked for it.
+#   `(x y : Nat)`                    the brackets go tight and the interior gaps go to one space, and
+#                                    the two halves have different citations. `explicitBinder` opens
+#                                    with a **bare** `"("` (`Term/Basic.lean:206-207`) -- not `" ( "` --
+#                                    so no declared space, and none from the lexical rule either since
+#                                    `(x` does not re-lex as one token. The interior is `many1
+#                                    binderIdent` (two idents always take a space,
+#                                    `Formatter.lean:387-389`) then `binderType`, whose atom is
+#                                    declared `" : "` (`:181-182`). Four spaces before `y` and two
+#                                    around `:` all go to one.
+#   `(x : Nat)` from `(x :Nat)`      **the layout ADDS a space** -- the first time it has. `(x :Nat)`
+#                                    parses, because `" : "` is a pretty-printing string and not a
+#                                    parsing one, so nothing was wrong with the input and the layout
+#                                    still rewrites it. Every other line here collapses; this one is
+#                                    the evidence the rule is the grammar's declared spacing and not
+#                                    "squeeze runs of spaces".
+#   `{a : Nat}` / `[Inhabited Nat]`  one rule, three binders, and `instBinder` is the shape that shows
+#                                    it is a rule: `[` >> term >> `]` is three parts, so its single
+#                                    interior gap is both the first gap and the last, and both are
+#                                    tight. `Inhabited Nat` inside it is an app, found and collapsed by
+#                                    the same recursion that finds it inside a `paren`.
+#   `(  /- why -/  x : Nat)`         the refusal is **the gap's alone, and the rest of the binder is
+#                                    still laid out**. The comment sits in the first gap, so that gap
+#                                    keeps all of its bytes -- the tight rule is precisely what would
+#                                    have deleted it -- while the three gaps after it collapse
+#                                    normally, `Nat  )` included. The source is written with slack in
+#                                    those later gaps on purpose: with `(  /- why -/  x : Nat)` as the
+#                                    input, a per-gap refusal and an all-or-nothing one produce the
+#                                    same bytes and this line would pin neither. This is the header's
+#                                    per-gap rule (`import` above) reaching the terms.
 #   `@[inline]` then `def e`         written on ONE line in the fixture and split into two, because
 #                                    `declModifiers` follows attributes with `ppDedent ppLine` unless
 #                                    `inline`, and `declaration` passes `inline := false`
@@ -544,6 +583,16 @@ def brokenApp : Nat :=
 
 def insideNotation : Nat := id 12 + id 13
 
+def binderSpaced (x y : Nat) : Nat := x
+
+def binderTight (x : Nat) : Nat := x
+
+def binderImplicit {a : Nat} : Nat := a
+
+def binderInst [Inhabited Nat] : Nat := default
+
+def binderCommented (  /- why -/  x : Nat) : Nat := x
+
 structure Str     where
   field     : Nat
   private modified     : Nat
@@ -611,6 +660,31 @@ if [[ "$actual_slack" == "$expected_slack" ]]; then
 else
   printf 'FAIL app_slack reported %s on the wonky fixture, expected %s; the sample'\''s 0 is vacuous\n' \
     "$actual_slack" "$expected_slack" >&2
+  failures=$((failures + 1))
+fi
+
+# `binder_slack` is the same measurement for the three bracketed binders, and it needs its own count
+# because `app_slack` cannot see it: they are disjoint sets of nodes. It is *not* the same predicate
+# either. An application's gaps are all "one space", so slack there means a run of two or more; a
+# binder's declared spacing differs per gap, so this counts every gap whose bytes are not what the
+# grammar declares -- which includes gaps that are **too tight**. `binderTight`'s `:Nat` is one of
+# them, and it is why this cannot be a "count the long runs" check.
+#
+# Counted by reading the fixture. `binderSpaced (  x     y  :  Nat  )` is five: four interior gaps
+# plus both brackets. `binderTight (x :Nat)` is one -- only the missing space after `:`; its other
+# three gaps are already exactly right. `binderImplicit {  a  :  Nat  }` is four, `binderInst
+# [  Inhabited Nat  ]` is two (`Inhabited Nat` is an app, and is `app_slack`'s to count, not this
+# one's). `binderCommented` is three: its commented gap is skipped by the same spaces-only predicate
+# the layout refuses on, and the three behind it still count. Fifteen.
+expected_binder_slack=15
+actual_binder_slack=$("$tests" printer-report "$work/wonky.json" "$work/wonky.lean" \
+  | tr ' ' '\n' | sed -n 's/^binder_slack=\([0-9]*\)$/\1/p')
+if [[ "$actual_binder_slack" == "$expected_binder_slack" ]]; then
+  printf '  ok   binder_slack counts the fixture'\''s %s binder gaps (so 0 on mathlib is a fact)\n' \
+    "$expected_binder_slack"
+else
+  printf 'FAIL binder_slack reported %s on the wonky fixture, expected %s; the sample'\''s count is vacuous\n' \
+    "$actual_binder_slack" "$expected_binder_slack" >&2
   failures=$((failures + 1))
 fi
 

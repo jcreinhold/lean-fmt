@@ -68,6 +68,7 @@ total_canonical=0
 total_members=0
 total_headers=0
 total_app_slack=0
+total_binder_slack=0
 
 field() {
   printf '%s' "$2" | tr ' ' '\n' | sed -n "s/^$1=\([0-9]*\)$/\1/p"
@@ -133,14 +134,16 @@ while read -r source; do
   total_members=$((total_members + $(field members "$line")))
   total_headers=$((total_headers + $(field header_canonical "$line")))
   total_app_slack=$((total_app_slack + $(field app_slack "$line")))
+  total_binder_slack=$((total_binder_slack + $(field binder_slack "$line")))
   printf 'ok\t%s\t%s\n' "$source" "$line" >>"$report"
 done <"$sources"
 
 {
   printf 'modules_analyzed=%s skipped=%s failures=%s reformatted=%s\n' \
     "$analyzed" "$skipped" "$failures" "$changed"
-  printf 'commands=%s canonical=%s members=%s headers_canonical=%s app_slack=%s\n' \
-    "$total_commands" "$total_canonical" "$total_members" "$total_headers" "$total_app_slack"
+  printf 'commands=%s canonical=%s members=%s headers_canonical=%s app_slack=%s binder_slack=%s\n' \
+    "$total_commands" "$total_canonical" "$total_members" "$total_headers" "$total_app_slack" \
+    "$total_binder_slack"
   printf '\n# `reformatted` is how many modules the printer changed at all. It is the number this\n'
   printf '# repository cannot produce: its own corpus is already canonical, so the layouts run there\n'
   printf '# and decide nothing. These are foreign modules, and every one of them still parses back to\n'

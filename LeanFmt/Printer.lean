@@ -698,8 +698,12 @@ private def Tree.parts (tree : Tree) (node : Nat) : Array Part := Id.run do
 so an app's parts are *not* its own: `f a b` is `app` with token child `f` and node child `null`, and
 `a` and `b` are the null's tokens. Reading `parts` directly would collapse the gap between `f` and the
 null — the first argument — and leave every later gap inside it untouched, turning `f  a  b` into
-`f a  b`. The null is the `many`, not a constituent, so it is lifted rather than descended into. -/
-private def Tree.appParts (tree : Tree) (node : Nat) : Array Part := Id.run do
+`f a  b`. The null is the `many`, not a constituent, so it is lifted rather than descended into.
+
+The same holds for every laid-out kind: `explicitBinder`'s `many1 binderIdent` and its `binderType`
+each arrive as one null, so `(x y : A)`'s parts are only the binder's own brackets until they are
+lifted. One level is enough — no grammar this file lays out nests a `many` inside an `optional`. -/
+private def Tree.liftedParts (tree : Tree) (node : Nat) : Array Part := Id.run do
   let mut parts : Array Part := #[]
   for token in tree.tokenChildren[node]! do
     parts := parts.push { first := token, last := token, child := none }
@@ -710,22 +714,96 @@ private def Tree.appParts (tree : Tree) (node : Nat) : Array Part := Id.run do
       parts := parts.push { first, last, child := some child }
   return parts.qsort (·.first < ·.first)
 
-/-- The bytes between two of a node's parts, or the single space `app`'s grammar requires there.
+/-- How a kind's grammar spaces the gaps between its parts. -/
+private inductive Spacing where
+  /-- Every gap is exactly one space. -/
+  | flat
+  /-- The two gaps just inside the outer brackets are tight; every other gap is one space. -/
+  | bracketed
+  /-- No layout: every gap keeps its bytes. -/
+  | keep
+  deriving BEq
 
-Only a gap that is spaces and nothing else collapses. A comment would be *deleted* by the space, which
-is the failure `respaceable` exists to prevent one layer up. A newline is refused for a different and
-sharper reason: joining two of an app's lines is a vertical decision this prompt does not have, and
-`argument`'s `checkColGt "expected to be indented"` makes it parser-significant — an argument pulled
-left of the enclosing saved position stops being an argument, the same way `structFields`'s
-`manyIndent` makes field indentation parser-significant. -/
-private def Tree.gapDoc (tree : Tree) (normalized : String) (node : Nat) (prior part : Part) : Doc :=
+/-- The spacing each kind's parser declares, and nothing else.
+
+**`bracketed` is one rule covering three binders, and it is read off their grammars rather than
+imposed on them** (`Lean/Parser/Term/Basic.lean`, v4.32.0):
+
+    def explicitBinder (requireType := false) := leading_parser ppGroup <|
+      "(" >> withoutPosition (many1 binderIdent >> binderType requireType >>
+        optional (binderTactic <|> binderDefault)) >> ")"                          -- :206-207
+    def implicitBinder (requireType := false) := leading_parser ppGroup <|
+      "{" >> withoutPosition (many1 binderIdent >> binderType requireType) >> "}"  -- :217-218
+    def instBinder := leading_parser ppGroup <|
+      "[" >> withoutPosition (optIdent >> termParser) >> "]"                       -- :248-249
+
+Each opens and closes with a **bare** atom — `"("`, not `" ( "` — so the declaration puts no space
+against the bracket, and Lean's lexical rule adds none either because `(x` does not re-lex as one
+token (`Lean/PrettyPrinter/Formatter.lean:392-399`). Every interior gap is one space, and each for its
+own declared reason: `many1 binderIdent` separates two idents, which is the one case that rule forcing
+a space unconditionally (`:387-389`); `binderType := … optional (" : " >> termParser)` (`:181-182`),
+`binderDefault := " := " >> termParser` (`:186-187`) and `optIdent := optional (atomic (ident >> " :
+"))` (`:238-239`) each declare their atom **with** a space on each side.
+
+That last group is the declared-string spacing `notes/02-expressions.md` §3 says the projection cannot
+carry — and it is citable here for the reason a notation's is not: these are parser declarations in
+the compiler this stack pins, a closed set, not an open one the corpus being formatted can extend.
+
+**`withoutPosition` is why collapsing inside these three is unconditionally safe**, and it is a
+stronger warrant than the one `app` gets. `withoutPosition(p)` "runs `p` without the saved position,
+meaning that position-checking parsers like `colGt` will have no effect… usually used by bracketing
+constructs like `(...)` so that the user can locally override whitespace sensitivity"
+(`Lean/Parser/Basic.lean:1565-1571`). So inside a binder's brackets there is no live column check for
+re-spacing to break: `app` has to argue *collapse, do not break* against a `checkColGt` that is
+switched on, while here it is switched off by the grammar itself.
+
+`strictImplicitBinder` is deliberately absent, and that is the same citation read the other way: it is
+the one bracketed binder whose interior is **not** wrapped in `withoutPosition` (`:234-236`), so an
+enclosing saved position still reaches its contents. Collapsing a run of spaces moves every later
+token on the line to the left, which is exactly the quantity `checkColGt` tests, so the rule that is
+free for the other three would be doing something unproven here. It is rare enough not to reach the
+sample's top kinds, and a rule that has to be argued is worse than none. -/
+private def spacingOf (kind : String) : Spacing :=
+  match kind with
+  | "Lean.Parser.Term.app" => .flat
+  | "Lean.Parser.Term.binderDefault" => .flat
+  | "Lean.Parser.Term.explicitBinder" => .bracketed
+  | "Lean.Parser.Term.implicitBinder" => .bracketed
+  | "Lean.Parser.Term.instBinder" => .bracketed
+  | _ => .keep
+
+/-- The separator a kind's grammar declares at gap `index` of `count` parts, or `none` to keep bytes. -/
+private def Spacing.separator (spacing : Spacing) (index count : Nat) : Option String :=
+  match spacing with
+  | .keep => none
+  | .flat => some " "
+  -- Gaps run `0 … count - 2`, so the last one is `count - 2`. At `count = 3` — `[C]` — the single
+  -- interior part makes gap 0 both the first and the last, and both are tight, which is why this is
+  -- two independent tests rather than an if/else.
+  | .bracketed => if index == 0 || index + 2 == count then some "" else some " "
+
+/-- The bytes between two of a node's parts, or the separator its grammar declares there.
+
+Only a gap that is *whitespace and nothing else* takes the separator. A comment would be **deleted**
+by it, which is the failure `respaceable` exists to prevent one layer up. A newline is refused for a
+different and sharper reason: rejoining a line is a vertical decision this prompt does not have, and
+`argument`'s `checkColGt "expected to be indented"` (`Lean/Parser/Term.lean:885-888`) makes an app's
+line breaks parser-significant — an argument pulled left of the enclosing saved position stops being
+an argument, the same way `structFields`'s `manyIndent` makes field indentation parser-significant.
+
+An **empty** gap passes that test and is a real case rather than a no-op: the declared `" : "` is a
+pretty-printing string, not a parsing one, so `(x :A)` parses and canonicalizes to `(x : A)`. This is
+the only place the layouts *add* a space rather than collapse one. -/
+private def Tree.gapDoc (tree : Tree) (normalized : String) (spacing : Spacing) (index count : Nat)
+    (prior part : Part) : Doc :=
   let raw := match tree.source.tokens[prior.last]?, tree.source.tokens[part.first]? with
     | some a, some b => sliceNormalized normalized a.stop b.start
     | _, _ => ""
-  if tree.kindOf node == "Lean.Parser.Term.app" && !raw.isEmpty && raw.all (· == ' ') then
-    .text " "
-  else
-    .verbatim raw
+  match spacing.separator index count with
+  | some separator =>
+    if raw.all (· == ' ') then (if separator.isEmpty then .empty else .text separator)
+    else .verbatim raw
+  | none => .verbatim raw
 
 /-- One term: the grammar this stack can cite for it, and its bytes everywhere else.
 
@@ -735,27 +813,31 @@ bytes. So an `app` nested inside a `paren` inside a notation is still found and 
 every byte no layout claimed survives untouched. A node with no parts contributes nothing, which is
 the absent-syntax case. -/
 private partial def Tree.termDoc (tree : Tree) (normalized : String) (node : Nat) : Doc := Id.run do
-  let isApp := tree.kindOf node == "Lean.Parser.Term.app"
+  let spacing := spacingOf (tree.kindOf node)
+  let parts := if spacing == .keep then tree.parts node else tree.liftedParts node
   let mut doc : Doc := .empty
+  let mut index := 0
   let mut previous : Option Part := none
-  for part in (if isApp then tree.appParts node else tree.parts node) do
+  for part in parts do
     if let some prior := previous then
-      doc := doc ++ tree.gapDoc normalized node prior part
+      doc := doc ++ tree.gapDoc normalized spacing (index - 1) parts.size prior part
     doc := doc ++ (match part.child with
       | some child => tree.termDoc normalized child
       | none => .verbatim (tree.tokenSpanText normalized part.first part.last))
     previous := some part
+    index := index + 1
   return doc
 
-/-- Every maximal `Term.app` inside this command that no shell already claimed.
+/-- Every maximal laid-out term inside this command that no shell already claimed.
 
-Maximal, because `termDoc` recurses: an app inside an app's argument is laid out by its ancestor's
-claim already, and claiming it again would emit its bytes twice. Pre-order DFS makes a node's subtree
-the contiguous index range `[node, subtreeEnd)` (`evidence/01-projection-shape.txt`), so skipping a
-claimed app's subtree is one comparison and the claims come out in source order with no sort.
+Maximal, because `termDoc` recurses: an app inside an app's argument, or inside a binder's type, is
+laid out by its ancestor's claim already, and claiming it again would emit its bytes twice. Pre-order
+DFS makes a node's subtree the contiguous index range `[node, subtreeEnd)`
+(`evidence/01-projection-shape.txt`), so skipping a claimed subtree is one comparison and the claims
+come out in source order with no sort.
 
 **The overlap test against the shells is not defensive.** `declModifiers` can hold an attribute, an
-attribute can take an argument, and an argument is a term — so an app really can sit inside the region
+attribute can take an argument, and an argument is a term — so a term really can sit inside the region
 `declarationShell?` already claimed, and two claims over the same tokens would duplicate them. -/
 private def Tree.termClaims (tree : Tree) (normalized : String) (root : Nat) (taken : Array Claim) :
     Array Claim := Id.run do
@@ -763,7 +845,7 @@ private def Tree.termClaims (tree : Tree) (normalized : String) (root : Nat) (ta
   let mut skipUntil := root
   for node in [root:tree.subtreeEnd[root]!] do
     if node < skipUntil then continue
-    if tree.kindOf node != "Lean.Parser.Term.app" then continue
+    if spacingOf (tree.kindOf node) == .keep then continue
     let some (first, last) := tree.subtreeTokens node | continue
     if taken.any (fun claim => first ≤ claim.last && claim.first ≤ last) then continue
     claims := claims.push { first, last, doc := tree.termDoc normalized node }
@@ -802,32 +884,56 @@ def Tree.memberShells (tree : Tree) (normalized : String) : Nat :=
     | none => count
     | some (last, _) => count + (tree.memberClaims normalized span.root last).size
 
-/-- How many application gaps in this module hold slack the layout would narrow.
+/-- How many gaps of the given kinds hold spacing the layout would rewrite.
 
-A fact about the *source*, deliberately not about the claims: it counts every `Term.app` in the module,
-including ones inside commands on the conservative path, and asks only whether a gap between two of
-its parts is more than one space. So it is an upper bound on what the layout changes, and it is that
-on purpose — it answers "does real Lean contain `f     a` at all", which is a question about Lean, not
-about this printer's guards, and a number filtered through the guards could not distinguish "the
-source is already tight" from "a guard refused it".
+A fact about the *source*, deliberately not about the claims: it counts every node of those kinds in
+the module, including ones inside commands on the conservative path, and asks only whether the
+separator its grammar declares differs from the bytes actually there. So it is an upper bound on what
+the layout changes, and it is that on purpose — it answers "does real Lean write `f     a` at all",
+which is a question about Lean rather than about this printer's guards, and a number filtered through
+the guards could not tell "the source is already canonical" from "a guard refused it".
 
 This exists because `reformatted` cannot see the difference. That counter is per module, and the
-command layouts already reformat 12 of the sample's 62, so an application layout that changed
-thousands of gaps and one that changed none produce the same 12. `RLF-COMMANDS` learned this shape
-already: `members=` had to be counted because byte identity could not see it. -/
-def Tree.appSlack (tree : Tree) (normalized : String) : Nat := Id.run do
+command layouts already reformat 12 of the sample's 62, so a term layout that changed thousands of
+gaps and one that changed none both report 12. `RLF-COMMANDS` learned this shape already: `members=`
+had to be counted because byte identity could not see it either.
+
+A gap that is not whitespace-only is not counted, because the layout refuses it — so this measures
+what the layout *does*, not what it declines. -/
+private def Tree.slackIn (tree : Tree) (normalized : String) (kinds : Array String) : Nat := Id.run do
   let mut count := 0
   for node in [0:tree.source.nodes.size] do
-    if tree.kindOf node != "Lean.Parser.Term.app" then continue
+    let kind := tree.kindOf node
+    if !kinds.contains kind then continue
+    let spacing := spacingOf kind
+    let parts := tree.liftedParts node
+    let mut index := 0
     let mut previous : Option Part := none
-    for part in tree.appParts node do
+    for part in parts do
       if let some prior := previous then
         let raw := match tree.source.tokens[prior.last]?, tree.source.tokens[part.first]? with
           | some a, some b => sliceNormalized normalized a.stop b.start
           | _, _ => ""
-        if raw.length > 1 && raw.all (· == ' ') then count := count + 1
+        if raw.all (· == ' ') then
+          if let some separator := spacing.separator (index - 1) parts.size then
+            if raw != separator then count := count + 1
       previous := some part
+      index := index + 1
   return count
+
+/-- How many application gaps in this module hold slack the layout would narrow. -/
+def Tree.appSlack (tree : Tree) (normalized : String) : Nat :=
+  tree.slackIn normalized #["Lean.Parser.Term.app"]
+
+/-- How many bracketed-binder gaps in this module hold spacing the layout would rewrite.
+
+Counted apart from `appSlack` rather than folded into one number, because the two answer different
+questions about the corpus and one can be zero while the other is not: `app` only ever *collapses*
+slack, while a binder is the one place a layout **adds** a space, to `(x :A)`. -/
+def Tree.binderSlack (tree : Tree) (normalized : String) : Nat :=
+  tree.slackIn normalized
+    #["Lean.Parser.Term.explicitBinder", "Lean.Parser.Term.implicitBinder",
+      "Lean.Parser.Term.instBinder"]
 
 /-- How many of this module's commands take a canonical layout rather than the conservative path.
 
