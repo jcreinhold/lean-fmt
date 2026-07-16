@@ -79,7 +79,6 @@ kind_census = defaultdict(int)
 command_census = defaultdict(int)
 decl_census = defaultdict(int)
 unread_shapes = defaultdict(int)
-modifier_shapes = defaultdict(int)
 
 for name in sorted(os.listdir(envelopes)):
     envelope = json.load(open(os.path.join(envelopes, name)))
@@ -159,14 +158,15 @@ for name in sorted(os.listdir(envelopes)):
         if starts != sorted(starts):
             argorder_violations += 1
 
-    # (5) How many declarations does the shell layout actually claim?
+    # (5) Which declarations is the shell layout structurally able to claim, and why not the rest?
     #
-    # `Printer.lean`'s `declarationShellEnd?` recognizes a `declaration` only when its `declModifiers`
-    # are empty and its shape is one of the four whose grammar was read. That is a coverage claim, and
-    # a coverage claim guessed from "318 empty declModifiers out of 336 declarations" would be wrong
-    # in both directions — an empty-modifiers declaration can still be an `instance` or a `structure`,
-    # which the printer does not recognize. So the predicate is re-implemented here against the same
-    # projection and counted, and the reason each rejection happens is counted with it.
+    # This is the *structural* half of `Printer.lean`'s `declarationShell?` — the part that depends on
+    # the shape of the tree — re-implemented against the same projection. It deliberately does NOT
+    # model the runtime guards (clean trivia, newline-free tokens in the flat run, column 0), which
+    # need the source bytes and the trivia runs. So this over-counts, and the honest figure for what
+    # the printer actually lays out is `canonical=` from `tests/printer/run.sh`, which is the printer
+    # counting itself. What this adds is the breakdown: *why* the rest are refused, which is what says
+    # where the next layout should go.
     SHELL_SHAPES = {
         "Lean.Parser.Command.abbrev", "Lean.Parser.Command.definition",
         "Lean.Parser.Command.theorem", "Lean.Parser.Command.opaque",
@@ -177,16 +177,15 @@ for name in sorted(os.listdir(envelopes)):
         ch = children[i]
         if len(ch) != 2 or kinds[nodes[ch[0]][0]] != "Lean.Parser.Command.declModifiers":
             decl_census["rejected: not modifiers + shape"] += 1
-        elif has_token_pre[ch[0]]:
-            decl_census["rejected: declModifiers non-empty"] += 1
-            modifier_shapes[kinds[nodes[ch[1]][0]]] += 1
+        elif len(children[ch[0]]) != 7:
+            decl_census["rejected: declModifiers is not 7 slots"] += 1
         elif kinds[nodes[ch[1]][0]] not in SHELL_SHAPES:
             decl_census["rejected: shape not read yet"] += 1
             unread_shapes[kinds[nodes[ch[1]][0]]] += 1
         elif not children[ch[1]] or kinds[nodes[children[ch[1]][0]][0]] != "Lean.Parser.Command.declId":
             decl_census["rejected: first child is not declId"] += 1
         else:
-            decl_census["claimed: shell laid out"] += 1
+            decl_census["structurally claimed: shell laid out"] += 1
 
     # (3)/(4) empty nodes, and whether their placement among siblings is recoverable
     has_token = has_token_pre
@@ -216,19 +215,17 @@ for kind, count in sorted(command_census.items(), key=lambda kv: -kv[1]):
     print(f"{count}\t{kind}")
 print()
 declarations = sum(decl_census.values())
-claimed = decl_census["claimed: shell laid out"]
+claimed = decl_census["structurally claimed: shell laid out"]
 cpct = (100.0 * claimed / declarations) if declarations else 0.0
-print(f"# what the declaration shell layout claims ({claimed}/{declarations} declarations, {cpct:.1f}%)")
+print(f"# what the declaration shell layout can structurally claim "
+      f"({claimed}/{declarations} declarations, {cpct:.1f}%); runtime guards may still refuse")
 for reason, count in sorted(decl_census.items(), key=lambda kv: -kv[1]):
     print(f"{count}\t{reason}")
 print()
 print("# shapes rejected only because their grammar has not been read yet")
 for kind, count in sorted(unread_shapes.items(), key=lambda kv: -kv[1]):
     print(f"{count}\t{kind}")
-print()
-print("# shapes rejected because declModifiers is non-empty")
-for kind, count in sorted(modifier_shapes.items(), key=lambda kv: -kv[1]):
-    print(f"{count}\t{kind}")
+
 
 # The two properties the tree view depends on are hard failures.
 if contiguity_violations or argorder_violations:

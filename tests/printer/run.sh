@@ -27,6 +27,7 @@ tests=$(lake -q query lean-fmt-tests --text)
 
 failures=0
 total_commands=0
+total_canonical=0
 
 check_module() {
   local module=$1
@@ -41,9 +42,11 @@ check_module() {
     return
   fi
   printf '%s\n' "$report"
-  local commands
+  local commands canonical
   commands=$(printf '%s' "$report" | sed -n 's/.*commands=\([0-9]*\).*/\1/p')
+  canonical=$(printf '%s' "$report" | sed -n 's/.*canonical=\([0-9]*\).*/\1/p')
   total_commands=$((total_commands + commands))
+  total_canonical=$((total_canonical + canonical))
 }
 
 for module in $(find LeanFmt -name '*.lean' | LC_ALL=C sort) Main.lean; do
@@ -51,8 +54,27 @@ for module in $(find LeanFmt -name '*.lean' | LC_ALL=C sort) Main.lean; do
 done
 
 printf -- '--- corpus ---\n'
-printf 'modules_checked=%s commands=%s failures=%s\n' \
-  "$(( $(find LeanFmt -name '*.lean' | wc -l | tr -d ' ') + 1 ))" "$total_commands" "$failures"
+printf 'modules_checked=%s commands=%s canonical=%s failures=%s\n' \
+  "$(( $(find LeanFmt -name '*.lean' | wc -l | tr -d ' ') + 1 ))" \
+  "$total_commands" "$total_canonical" "$failures"
+
+# The number byte identity cannot see.
+#
+# Every module above round-trips exactly, and would still round-trip exactly if every guard in
+# `canonical?` refused every command — the printer would fall back to bytes and be the identity
+# function, which is what it was before any layout existed. This repository also happens to write its
+# declarations the way the layout writes them, so even a layout that *ran* changes nothing here. So
+# the corpus can report `failures=0` while proving nothing about any layout at all.
+#
+# `canonical` is the printer counting the commands it actually laid out. A floor rather than an exact
+# count: it tracks the corpus as the project grows, and only a guard that stopped firing drives it
+# down. The golden fixture below is what pins *what* the layouts produce; this pins *that* they run,
+# on real code, at scale.
+if [[ "$total_canonical" -lt 150 ]]; then
+  printf 'FAIL only %s of %s commands took a canonical layout; the layouts are not running\n' \
+    "$total_canonical" "$total_commands" >&2
+  failures=$((failures + 1))
+fi
 
 # A corpus whose modules all projected to zero commands would pass every assertion above while
 # testing nothing. A floor rather than an exact count: it rises as the project grows, and only a
@@ -143,10 +165,19 @@ def     b     : Nat := 1
 
 private def     c : Nat := 2
 
-/-- A doc comment is a token, and a token that spans lines. -/
+/-- A one-line doc comment. -/
 def     d : Nat := 3
 
 @[inline] def     e : Nat := 4
+
+/-- A doc comment that
+spans lines, and whose prose is not the formatter's to re-space. -/
+def     multi : Nat := 5
+
+section
+  /-- Indented, and a line break cannot preserve that. -/
+  def     indented : Nat := 6
+end
 FIXTURE
 LEAN_NUM_THREADS=1 lake env "$application" __analyze-exact \
   "$work/borrowed.setup.json" "$work/wonky.lean" "wonky.lean" 8589934592 >"$work/wonky.json"
@@ -165,17 +196,27 @@ LEAN_NUM_THREADS=1 lake env "$application" __analyze-exact \
 #                                    signature is a term and `RLF-EXPRESSIONS` owns it, not this
 #                                    stack. A layout that claimed the whole command would have eaten
 #                                    them, which is exactly the failure this split exists to prevent.
-#   `private def     c`              `declModifiers` is non-empty, so the shell is refused whole, and
-#   `/-- ... -/ def     d`           the inner runs of spaces stay — which is how you can see the
-#   `@[inline] def     e`            conservative path actually ran rather than the layout agreeing.
-#                                    Deleting the modifiers guard rewrites all three, and the two it
-#                                    gets wrong are the point: `@[ inline ]` re-spaces a bracketed
-#                                    form, and `/-- ... -/ def d` pulls the code onto the docstring's
-#                                    line. **The docstring here is deliberately one line.** A
-#                                    multi-line one would be caught by `respaceable`'s newline check
-#                                    and this case would prove nothing about the guard; a one-line
-#                                    `/-- doc -/` is a newline-free token that `respaceable` is happy
-#                                    to re-space, so it is the guard alone that saves it.
+#   `private def c`                  a keyword modifier joins the flat run, one space apart.
+#   `/-- ... -/` then `def d`        the doc comment is emitted verbatim and the declaration goes on
+#                                    the next line. That break is the grammar's own: `docComment` ends
+#                                    in `ppLine` (`Lean/Parser/Term.lean:91-93`). The source had it on
+#                                    its own line already; `@[inline]` below is where the break is
+#                                    visibly the formatter's doing.
+#   `@[inline]` then `def e`         written on ONE line in the fixture and split into two, because
+#                                    `declModifiers` follows attributes with `ppDedent ppLine` unless
+#                                    `inline`, and `declaration` passes `inline := false`
+#                                    (`Command.lean:114-121`, `:282`). The brackets are not re-spaced:
+#                                    the slot goes out verbatim, so `@[ inline ]` cannot happen.
+#   `/-- multi\nline -/ def multi`   **a multi-line doc comment must still be laid out.** The token
+#                                    check that would refuse it is asked only of the flat run, never
+#                                    of the verbatim slots — collapsing the two into one guard here
+#                                    would silently drop this declaration onto the conservative path,
+#                                    and most real docstrings with it.
+#   `  def     indented`             UNCHANGED, spaces and all: it is not at column 0, and the line
+#                                    break the layout would emit indents to nothing, so the docstring
+#                                    would stay indented while the `def` jumped to column 0. Whether
+#                                    top-level commands belong at column 0 is a language decision no
+#                                    prompt here has made, so this keeps its bytes rather than guess.
 cat >"$work/wonky.golden" <<'GOLDEN'
 module
 
@@ -191,12 +232,22 @@ end Gamma
 
 def b     : Nat := 1
 
-private def     c : Nat := 2
+private def c : Nat := 2
 
-/-- A doc comment is a token, and a token that spans lines. -/
-def     d : Nat := 3
+/-- A one-line doc comment. -/
+def d : Nat := 3
 
-@[inline] def     e : Nat := 4
+@[inline]
+def e : Nat := 4
+
+/-- A doc comment that
+spans lines, and whose prose is not the formatter's to re-space. -/
+def multi : Nat := 5
+
+section
+  /-- Indented, and a line break cannot preserve that. -/
+  def     indented : Nat := 6
+end
 GOLDEN
 if diff -u "$work/wonky.golden" "$work/wonky.out" >"$work/wonky.diff" 2>&1; then
   printf '  ok   canonical layout matches the golden file\n'

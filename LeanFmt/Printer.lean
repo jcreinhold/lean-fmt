@@ -206,19 +206,53 @@ holds the newline, the blank lines, and the next command's leading comments, so 
 comment-free would disqualify nearly every command in any commented file. `Tree.command` emits that
 run verbatim instead, which is why it can be ignored here rather than handled.
 
-A token whose own text spans a newline (a block comment token, a multi-line string literal) also
-disqualifies the command: `Doc.text` requires newline-free content, and `RLC-IMPL` added `verbatim`
-precisely because re-indenting such a token is the `Std.Format` bug this project exists to avoid. -/
-private def Tree.respaceable (tree : Tree) (normalized : String) (span : CommandSpan) : Bool := Id.run do
-  for index in [span.first:span.last + 1] do
+This is the *trivia* half of the question. The other half — whether the tokens themselves are
+newline-free — is `singleLineTokens`, and the two are asked over different ranges by a layout that
+emits some of its tokens as `verbatim`: bytes that keep their newlines are fine, bytes that would be
+re-spaced are not. -/
+private def Tree.triviaClean (tree : Tree) (first last : Nat) : Bool := Id.run do
+  for index in [first:last + 1] do
     let some token := tree.source.tokens[index]? | return false
     if token.leading.any (·.kind != .whitespace) then
       return false
-    if index != span.last && token.trailing.any (·.kind != .whitespace) then
-      return false
-    if (tree.tokenText normalized index).contains '\n' then
+    if index != last && token.trailing.any (·.kind != .whitespace) then
       return false
   return true
+
+/-- Is every token in the range one line long?
+
+Required of any token a layout emits through `Doc.text`: `text` is specified to hold exactly one line
+(`Doc.lean:47-51`), the renderer measures columns by adding its width, and `RLC-IMPL` added `verbatim`
+precisely because re-indenting a multi-line token is the `Std.Format` bug this project exists to avoid.
+A layout emitting a token as `verbatim` instead does not need to ask. -/
+private def Tree.singleLineTokens (tree : Tree) (normalized : String) (first last : Nat) : Bool :=
+  Id.run do
+    for index in [first:last + 1] do
+      if (tree.tokenText normalized index).contains '\n' then
+        return false
+    return true
+
+/-- Both halves, over a whole command. -/
+private def Tree.respaceable (tree : Tree) (normalized : String) (span : CommandSpan) : Bool :=
+  tree.triviaClean span.first span.last && tree.singleLineTokens normalized span.first span.last
+
+/-- Does this token begin its line?
+
+`Doc.hard` emits a newline plus *the current indentation*, and this printer never nests, so the only
+indentation it can produce is column 0. A layout that breaks a line inside a command that does not
+start at column 0 would therefore silently de-indent it. Whether a top-level command belongs at column
+0 is a language decision, and no prompt in this stack has made it — so the layouts that break lines ask
+this first and keep their bytes when the answer is no. -/
+private def Tree.atLineStart (tree : Tree) (normalized : String) (index : Nat) : Bool :=
+  match tree.source.tokens[index]? with
+  | none => false
+  | some token => token.start == 0 || sliceNormalized normalized (token.start - 1) token.start == "\n"
+
+/-- The bytes from token `lo`'s start through token `hi`'s stop, trivia between them included. -/
+private def Tree.tokenSpanText (tree : Tree) (normalized : String) (lo hi : Nat) : String :=
+  match tree.source.tokens[lo]?, tree.source.tokens[hi]? with
+  | some a, some b => sliceNormalized normalized a.start b.stop
+  | _, _ => ""
 
 /-- Tokens joined by exactly one space.
 
@@ -226,19 +260,20 @@ This is the whole canonical layout for the keyword-then-identifier commands, and
 formatter first *decides* something: `namespace    Foo` becomes `namespace Foo` no matter what the
 source did. It is only correct for kinds whose grammar is a flat run of tokens that always want one
 space between them, which is why it is not the default. -/
-private def Tree.spaceSeparated (tree : Tree) (normalized : String) (span : CommandSpan) : Doc :=
+private def Tree.spaceSeparated (tree : Tree) (normalized : String) (first last : Nat) : Doc :=
   Id.run do
     let mut doc : Doc := .empty
-    for index in [span.first:span.last + 1] do
+    for index in [first:last + 1] do
       let text := tree.tokenText normalized index
-      doc := if index == span.first then .text text else doc ++ .text " " ++ .text text
+      doc := if index == first then .text text else doc ++ .text " " ++ .text text
     return doc
 
 /-- Space-separate every token of the command, if nothing would be lost. The layout for the kinds
 whose whole grammar is a flat run of tokens. -/
 private def Tree.wholeSpan? (tree : Tree) (normalized : String) (span : CommandSpan) :
     Option (Nat × Doc) :=
-  if tree.respaceable normalized span then some (span.last, tree.spaceSeparated normalized span)
+  if tree.respaceable normalized span then
+    some (span.last, tree.spaceSeparated normalized span.first span.last)
   else none
 
 /-- The first and last token index under `node`'s subtree, or `none` when it carries no token.
@@ -257,8 +292,18 @@ private def Tree.subtreeTokens (tree : Tree) (node : Nat) : Option (Nat × Nat) 
         | some (lo, hi) => some (min lo token, max hi token)
   return bounds
 
-/-- Where a `declaration`'s shell ends: the last token of its `declId`, or `none` when this is not a
-shape the printer has read the grammar for.
+/-- A `declaration`'s shell, as token indices: what to emit and where the claim stops. -/
+private structure DeclShell where
+  /-- Token bounds of the `docComment` slot, or `none` when it is empty. Emitted verbatim. -/
+  doc : Option (Nat × Nat)
+  /-- Token bounds of the `attributes` slot, or `none` when it is empty. Emitted verbatim. -/
+  attrs : Option (Nat × Nat)
+  /-- First token of the flat run: the keyword modifiers, the declaration keyword, the name. -/
+  restFirst : Nat
+  /-- Last token the shell claims: the `declId`'s. Everything after it is bytes. -/
+  last : Nat
+
+/-- A `declaration`'s shell, or `none` when this is not a shape the printer has read the grammar for.
 
 `Lean/Parser/Command.lean:282-285` (v4.32.0):
 
@@ -274,35 +319,58 @@ value (`:187-188`, `:194-195`, `:196-197`, `:198-199`) — and those four are wh
     def «theorem»   := leading_parser "theorem " >> recover declId .. >> ppIndent declSig >> declVal
     def «opaque»    := leading_parser "opaque " >> declId >> ppIndent declSig >> declVal
 
-**The modifiers must be empty.** `declModifiers` (`:114-121`) is seven optional slots, and two of them
-are not a flat run of one-space-apart tokens. `attributes >> ppDedent ppLine` is bracketed and wants
-its own line, so one space between its tokens produces `@[ inline ]`. `docComment` is one token that
-belongs on its own line, and one space after it produces `/-- doc -/ def d`. Neither has a cited
-layout here yet, so a declaration carrying either keeps its bytes.
+**The modifiers.** `declModifiers` (`:114-121`) is seven optional slots, in a fixed order:
 
-The `docComment` case is why this guard is not redundant with `respaceable`. A *multi-line* docstring
-is caught there, by the newline check — but a one-line `/-- doc -/` is a newline-free token that
-`respaceable` is happy to re-space, and only this guard stops it from being pulled up onto the
-declaration. `tests/printer/run.sh` pins that case specifically, with a one-line docstring, and
-deleting this line makes it fail.
+    def declModifiers (inline : Bool) := leading_parser
+      optional docComment >>
+      optional (Term.«attributes» >> if inline then skip else ppDedent ppLine) >>
+      optional visibility >> optional «protected» >> optional («meta» <|> «noncomputable») >>
+      optional «unsafe» >> optional («partial» <|> «nonrec»)
 
-**This layout claims 45 of 345 declarations — 13%.** Measured, not estimated, by re-implementing this
-predicate over the same projection in `experiments/run-projection-shape.sh`
-(`evidence/01-projection-shape.txt`). The estimate it replaced was wrong by a factor of seven: the
-empty-node census counts 318 empty `declModifiers`, which reads like "almost every declaration has
-none" until you notice `declModifiers` is also on every structure *field* (`declModifiers true`, the
-inline form), so those 318 were never a count of declarations. 262 declarations have non-empty
-modifiers here — 220 of them `definition` — and modifiers are the dominant blocker, not the shapes.
+Each `optional` is a `null` node whether or not it was filled, so the slots are addressable by index
+and an unfilled one is empty rather than absent. That is measured, not assumed — a `declModifiers`
+node with all seven slots empty still has seven children.
+
+The first two slots are not flat runs of one-space-apart tokens and are read by index:
+
+* **Slot 0, `docComment`.** `Lean/Parser/Term.lean:91-93` — which is inside `namespace Lean.Parser.Command`,
+  hence the kind — opens with the doc-comment atom, then `ppSpace`, then `commentBody`, then `ppLine`.
+  It ends in `ppLine`, so the declaration goes on the next line. Emitted `verbatim`: it is two tokens,
+  the opener and the body, and the body's interior is prose that is not this formatter's to re-space
+  or re-indent. (The grammar is paraphrased rather than quoted because quoting it here would open a
+  nested comment inside this one.)
+* **Slot 1, `attributes`.** Followed by `if inline then skip else ppDedent ppLine`, and `declaration`
+  passes `inline := false` (`:282`), so this line break is the grammar's own. Emitted `verbatim`
+  because it is bracketed — `@[` `inline` `]` one space apart is `@[ inline ]`.
+
+Slots 2–6 are each a single keyword atom (`«private»` is `leading_parser "private "`, `:68`, and its
+siblings are the same shape), so they join the flat run with the declaration keyword and the name.
+
+**The shapes.** Four of the eleven alternatives open the same way — a keyword atom, then `declId`,
+then a signature, then the value (`:187-188`, `:194-195`, `:196-197`, `:198-199`) — and those four are
+what this recognizes:
+
+    def «abbrev»    := leading_parser "abbrev " >> declId >> ppIndent optDeclSig >> declVal
+    def definition  := leading_parser "def " >> recover declId .. >> ppIndent optDeclSig >> declVal >> optDefDeriving
+    def «theorem»   := leading_parser "theorem " >> recover declId .. >> ppIndent declSig >> declVal
+    def «opaque»    := leading_parser "opaque " >> declId >> ppIndent declSig >> declVal
+
+`structure`, `instance`, and `inductive` are not among them and stay conservative:
+`evidence/01-projection-shape.txt` counts 21, 11, and 6 of them here, and their grammar has not been
+read.
 
 The signature and the value are deliberately *not* reached. Both are terms, `RLF-EXPRESSIONS` owns
 them, and everything from the `declId`'s last token onward stays verbatim until it does. -/
-private def Tree.declarationShellEnd? (tree : Tree) (root : Nat) : Option Nat := do
+private def Tree.declarationShell? (tree : Tree) (root : Nat) : Option DeclShell := do
   let children := tree.nodeChildren[root]!
   guard (children.size == 2)
   let modifiers := children[0]!
   let shape := children[1]!
   guard (tree.kindOf modifiers == "Lean.Parser.Command.declModifiers")
-  guard (tree.subtreeTokens modifiers).isNone
+  let slots := tree.nodeChildren[modifiers]!
+  -- Seven, because seven is what the grammar above has. If a future Lean adds an eighth, this stops
+  -- recognizing declarations rather than laying out a shape it has not read.
+  guard (slots.size == 7)
   guard <| [
       "Lean.Parser.Command.abbrev", "Lean.Parser.Command.definition",
       "Lean.Parser.Command.theorem", "Lean.Parser.Command.opaque"
@@ -310,8 +378,18 @@ private def Tree.declarationShellEnd? (tree : Tree) (root : Nat) : Option Nat :=
   let shapeChildren := tree.nodeChildren[shape]!
   let declId ← shapeChildren[0]?
   guard (tree.kindOf declId == "Lean.Parser.Command.declId")
+  let (first, _) ← tree.subtreeTokens root
   let (_, last) ← tree.subtreeTokens declId
-  return last
+  let doc := tree.subtreeTokens slots[0]!
+  let attrs := tree.subtreeTokens slots[1]!
+  -- The flat run starts after whichever of the two verbatim slots was filled last. Tokens are indexed
+  -- in source order and both slots precede the rest of the command, so this needs no search.
+  let restFirst := match attrs, doc with
+    | some (_, hi), _ => hi + 1
+    | none, some (_, hi) => hi + 1
+    | none, none => first
+  guard (restFirst <= last)
+  return { doc, attrs, restFirst, last }
 
 /-- The canonical layout for this command's kind, if it has one.
 
@@ -339,15 +417,37 @@ private def Tree.canonical? (tree : Tree) (normalized : String) (span : CommandS
   -- The identifier is optional, so this is one token or two; `spaceSeparated` handles both without
   -- knowing which, because it spaces whatever tokens the command actually has.
   | "Lean.Parser.Command.end" => tree.wholeSpan? normalized span
-  -- The declaration *shell*: the keyword and the name, one space apart. See `declarationShellEnd?`
-  -- for the citation and for why the modifiers, the signature, and the value are not touched.
+  -- The declaration *shell*: doc comment, attributes, modifiers, keyword, name. See
+  -- `declarationShell?` for the citations and for why the signature and the value are not touched.
   | "Lean.Parser.Command.declaration" => do
-    let shellEnd ← tree.declarationShellEnd? span.root
-    guard (shellEnd <= span.last)
-    let shell := { span with last := shellEnd }
-    guard (tree.respaceable normalized shell)
-    return (shellEnd, tree.spaceSeparated normalized shell)
+    let shell ← tree.declarationShell? span.root
+    guard (shell.last <= span.last)
+    -- Over the whole shell, because a comment between *any* two of these tokens would be dropped:
+    -- the layout chooses every gap in it, including the two it fills with a line break.
+    guard (tree.triviaClean span.first shell.last)
+    -- But only over the flat run, because the two verbatim slots keep their bytes and their newlines.
+    -- Asking it of the docstring would refuse every multi-line one, which is most of them.
+    guard (tree.singleLineTokens normalized shell.restFirst shell.last)
+    -- The line breaks below indent to nothing, so they may only be emitted at column 0.
+    guard (shell.doc.isNone && shell.attrs.isNone || tree.atLineStart normalized span.first)
+    let verbatimSlot (bounds : Option (Nat × Nat)) : Doc :=
+      match bounds with
+      | none => .empty
+      | some (lo, hi) => .verbatim (tree.tokenSpanText normalized lo hi) ++ .hard
+    return (shell.last, verbatimSlot shell.doc ++ verbatimSlot shell.attrs
+      ++ tree.spaceSeparated normalized shell.restFirst shell.last)
   | _ => none
+
+/-- How many of this module's commands take a canonical layout rather than the conservative path.
+
+Reported by `printer-roundtrip` and floored by `tests/printer/run.sh`, because byte identity cannot
+see this number and the corpus cannot either. This repository writes its declarations the way the
+layout would, so every guard here could refuse every command and the round-trip would still be green
+on all 20 modules — the formatter would simply have become the identity function again. This is the
+number that says the layout *ran*. -/
+def Tree.canonicalCommands (tree : Tree) (normalized : String) : Nat :=
+  tree.commands.foldl (init := 0) fun count span =>
+    if (tree.canonical? normalized span).isSome then count + 1 else count
 
 /-- One command.
 

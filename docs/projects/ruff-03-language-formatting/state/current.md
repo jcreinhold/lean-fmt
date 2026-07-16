@@ -5,9 +5,9 @@ first_unresolved: 01-commands
 
 # Current state
 
-`RLF-COMMANDS` is **in progress**: the printer skeleton is live and proven lossless, and 95 of the
-corpus's 412 commands now have a cited canonical layout — `namespace`, `end`, and the shell of 45 of
-345 declarations. Its external prerequisite stack `ruff-02-layout-core` is verified and its live
+`RLF-COMMANDS` is **in progress**: the printer skeleton is live and proven lossless, and **321 of the
+corpus's 418 commands take a cited canonical layout** — `namespace` (25), `end` (25), and the shell of
+271 declarations. Its external prerequisite stack `ruff-02-layout-core` is verified and its live
 implementation still matches recorded state.
 
 **`RLC-FINAL`'s standing caveat is now half-answered.** That prompt closed the layout stack noting
@@ -46,15 +46,29 @@ Printing inside the frontend would buy free arg order for a median 1.96 s fronte
   *changed* something (2 lines rewritten) so the golden cannot degenerate into a copy of its input.
   Idempotence is checked by re-parsing the first pass's output and formatting again — a real second
   format, not a repeated call.
-- **The declaration shell is laid out, and its guard catches what `respaceable` cannot.** `def     b`
-  becomes `def b`, cited against `Lean/Parser/Command.lean:282-285` (a `declaration` is exactly
-  `declModifiers` plus one shape) and `:187-198` (four shapes open `keyword >> declId >> sig >>
-  declVal`). Mutating away the "modifiers must be empty" guard is caught by the golden, and the two
-  cases it breaks are different in kind: `@[inline] def e` re-spaces to `@[ inline ] def e`, and
-  `/-- doc -/` is pulled up onto the `def`'s line. The second is the one that matters — the fixture's
-  docstring is **deliberately one line**, so it is newline-free and `respaceable` is happy to re-space
-  it; only the modifiers guard stops it. A multi-line docstring would have been caught by the newline
-  check and would have proven nothing about the guard.
+- **The declaration shell is laid out, modifiers included.** Cited against
+  `Lean/Parser/Command.lean:282-285` (a `declaration` is exactly `declModifiers` plus one shape),
+  `:187-198` (four shapes open `keyword >> declId >> sig >> declVal`), and `:114-121` (seven optional
+  modifier slots in fixed order). The two slots that are not flat token runs are read by index and
+  emitted verbatim, each followed by a line break the grammar itself asks for: `docComment` ends in
+  `ppLine` (`Lean/Parser/Term.lean:91-93`, which is inside `namespace Lean.Parser.Command` — hence the
+  kind), and attributes are followed by `ppDedent ppLine` unless `inline`, which `declaration` does not
+  pass. So `@[inline] def     e` on one line becomes `@[inline]` and `def e` on two. The slot
+  structure is measured, not assumed: each `optional` is a `null` node whether filled or not, so an
+  empty `declModifiers` still has seven children and the slots are addressable by index.
+- **The two guards are asked over different ranges, and collapsing them would be a silent regression.**
+  Trivia cleanliness is asked over the whole shell — a comment between any two of its tokens would be
+  dropped, including in the gaps the layout fills with a line break. The newline-free check is asked
+  only of the flat run, because the verbatim slots keep their bytes: asking it of the docstring would
+  refuse every multi-line one, and with it most real declarations. The fixture pins a multi-line
+  docstring being laid out for exactly that reason.
+- **A line break may only be emitted at column 0, and the corpus could never have found that.**
+  `Doc.hard` emits a newline plus the current indentation, this printer never nests, so its only
+  indentation is column 0. On an indented declaration the docstring would stay put while the `def`
+  jumped left. Mutating the guard to always pass reproduces exactly that (`  /-- ... -/` above
+  `def indented`), caught only by a deliberately indented fixture — every command in this repository
+  is at column 0. Whether top-level commands *belong* at column 0 is a language decision no prompt
+  here has made, so the layout keeps its bytes rather than assume one.
 - **Re-spacing is gated on losing nothing, and the gate is load-bearing.** A canonical layout chooses
   the space between tokens, so anything between them that is not whitespace would be dropped.
   `respaceable` refuses the layout when a comment sits inside the command, when a token's own text
@@ -75,16 +89,26 @@ Printing inside the frontend would buy free arg order for a median 1.96 s fronte
   `Environment`**, so the printer can parse `[0, headerStop)` with Lean's own parser on bytes
   `normalizedDigest` already binds. The open cost is that `format` acquires an `IO` boundary, or a
   pure header parse must be found.
-- **A coverage number inferred from the wrong population was off by a factor of seven.** The empty-node
-  census reports 318 empty `Lean.Parser.Command.declModifiers` against 345 declarations, which reads
-  like "almost every declaration carries no modifiers". It is not: `declModifiers` is also on every
-  structure *field* (`declModifiers true`, the inline form, `Lean/Parser/Command.lean:114`), so those
-  318 were never counting declarations. The predicate the printer actually uses was re-implemented over
-  the same projection and counted directly (`experiments/run-projection-shape.sh` step 5): the shell
-  layout claims **45 of 345 declarations, 13.0%**. 262 are rejected for non-empty modifiers (220 of
-  them `definition`) and 38 for a shape whose grammar has not been read (`structure` 21, `instance` 11,
-  `inductive` 6). **Modifiers, not shapes, are the dominant blocker** — the opposite of what the
-  estimate implied, and the reason the next layout is `declModifiers` rather than more shapes.
+- **Coverage is counted by the printer, because byte identity cannot see it and the corpus cannot
+  either.** Every module round-trips exactly and would still round-trip exactly if every guard refused
+  every command — the printer would fall back to bytes and be the identity function it was before any
+  layout existed. This repository also writes its declarations the way the layout writes them, so even
+  a layout that runs changes nothing here. `printer-roundtrip` therefore reports `canonical=`, the
+  commands actually laid out, and `tests/printer/run.sh` floors the corpus total: **321 of 418**. The
+  golden fixture pins *what* the layouts produce; this pins *that* they run, on real code, at scale.
+- **Two independent measurements of coverage agree exactly.** `experiments/run-projection-shape.sh`
+  re-implements the structural half of the printer's predicate in Python against the same projection
+  and finds 271 of 351 declarations claimable; the printer, in Lean, counts 321 = 271 + 25 `namespace`
+  + 25 `end`. So on this corpus every structurally-claimable declaration also passes the runtime guards
+  the probe cannot model (clean trivia, newline-free flat run, column 0). The probe over-counts by
+  construction and says so; `canonical=` is the honest figure.
+- **A coverage number inferred from the wrong population was off by a factor of seven, and the fix
+  redirected the work.** The empty-node census reports 318 empty `declModifiers`, which reads like
+  "almost every declaration carries no modifiers" — but `declModifiers` is also on every structure
+  *field* (`declModifiers true`, the inline form, `Lean/Parser/Command.lean:114`), so those 318 were
+  never counting declarations. Counting the printer's actual predicate showed modifiers, not shapes,
+  were the blocker on 262 of 345 declarations, which is why `declModifiers` was laid out next and why
+  coverage went 45 → 271. The estimate would have sent this to `structure` and `inductive` instead.
 - **The ownership table is measured, and it is shorter than the prompt's list.**
   `declaration` 345, `namespace` 25, `end` 25, `moduleDoc` 8, `open` 7, `registerOption` 1,
   `initialize` 1 (`evidence/01-projection-shape.txt`, 412 commands). Structures, inductives, attributes, and binders
@@ -134,12 +158,11 @@ Printing inside the frontend would buy free arg order for a median 1.96 s fronte
 ## Blockers and prerequisites
 
 - No blocker is currently recorded beyond the named prerequisite stacks.
-- **`RLF-COMMANDS` is not met: 95 of 412 commands have a layout.** `namespace` (25), `end` (25), and
-  the *shell* of 45 of 345 declarations. `declModifiers` is the blocker on 262 of them and is the next
-  piece of work: a doc comment and an attribute list each want their own line
-  (`attributes >> ppDedent ppLine`, `:114-121`), and neither is a flat run of one-space-apart tokens,
-  so a declaration carrying either keeps its bytes today. After that, three shapes (`structure` 21,
-  `instance` 11, `inductive` 6) need their grammar read.
+- **`RLF-COMMANDS` is not met: 321 of 418 commands have a layout.** The remaining declarations are all
+  rejected for one reason — **a shape whose grammar has not been read**: `structure` 54, `inductive`
+  15, `instance` 11 (`evidence/01-projection-shape.txt`). That is the next piece of work, and unlike
+  the four shapes already read they are not one-line openers, so `structure`'s fields and
+  `inductive`'s constructors will be the first layouts that need real vertical structure.
 - **`moduleDoc` (8) and `open` (7) are still conservative, and `open` is deliberate.** `openDecl` has
   bracketed forms (`open Foo (a b)`, `open Foo hiding a`) where one-space-between-tokens would be
   wrong, so it needs its own citation rather than an assumption.

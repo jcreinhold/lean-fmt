@@ -1,23 +1,23 @@
-modules_analyzed=21 skipped=0 nodes=37197
+modules_analyzed=21 skipped=0 nodes=37752
 pre_order_contiguity_violations=0
 nonempty_node_children_out_of_source_order=0
-empty_nodes=13591 (36.5% of all nodes)
-empty_nodes_with_ambiguous_placement=5753 (15.5% of all nodes)
+empty_nodes=13760 (36.4% of all nodes)
+empty_nodes_with_ambiguous_placement=5832 (15.4% of all nodes)
 
 # most common empty (absent-syntax) kinds
-12145	null
-460	Lean.Parser.Term.letConfig
+12291	null
+465	Lean.Parser.Term.letConfig
 323	Lean.Parser.Command.declModifiers
-277	Lean.Parser.Termination.suffix
-140	Lean.Parser.Term.optEllipsis
-106	group
-100	Lean.Parser.Command.optDeclSig
-27	Lean.Parser.Command.optDeriving
+282	Lean.Parser.Termination.suffix
+139	Lean.Parser.Term.optEllipsis
+118	group
+101	Lean.Parser.Command.optDeclSig
+28	Lean.Parser.Command.optDeriving
 11	Lean.Parser.Term.attrKind
 2	Lean.Parser.Term.structInstFields
 
-# command kinds in the corpus (412 commands, 7 distinct kinds)
-345	Lean.Parser.Command.declaration
+# command kinds in the corpus (418 commands, 7 distinct kinds)
+351	Lean.Parser.Command.declaration
 25	Lean.Parser.Command.namespace
 25	Lean.Parser.Command.end
 8	Lean.Parser.Command.moduleDoc
@@ -25,18 +25,11 @@ empty_nodes_with_ambiguous_placement=5753 (15.5% of all nodes)
 1	Lean.Option.registerOption
 1	Lean.Parser.Command.initialize
 
-# what the declaration shell layout claims (45/345 declarations, 13.0%)
-262	rejected: declModifiers non-empty
-45	claimed: shell laid out
-38	rejected: shape not read yet
+# what the declaration shell layout can structurally claim (271/351 declarations, 77.2%); runtime guards may still refuse
+271	structurally claimed: shell laid out
+80	rejected: shape not read yet
 
 # shapes rejected only because their grammar has not been read yet
-21	Lean.Parser.Command.structure
+54	Lean.Parser.Command.structure
+15	Lean.Parser.Command.inductive
 11	Lean.Parser.Command.instance
-6	Lean.Parser.Command.inductive
-
-# shapes rejected because declModifiers is non-empty
-220	Lean.Parser.Command.definition
-32	Lean.Parser.Command.structure
-9	Lean.Parser.Command.inductive
-1	Lean.Parser.Command.abbrev

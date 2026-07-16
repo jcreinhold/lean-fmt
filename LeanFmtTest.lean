@@ -840,8 +840,8 @@ private def printerRoundtrip (envelopePath sourcePath : String) : IO UInt32 := d
     cursor := extent.stop
   ensure (cursor == projection.terminalStop)
     s!"{sourcePath}: extents end at {cursor}, expected terminalStop {projection.terminalStop}"
-  IO.println s!"commands={tree.roots.size} tokens={projection.tokens.size} \
-nodes={projection.nodes.size} header_bytes={projection.headerStop} \
+  IO.println s!"commands={tree.roots.size} canonical={tree.canonicalCommands normalized} \
+tokens={projection.tokens.size} nodes={projection.nodes.size} header_bytes={projection.headerStop} \
 tail_bytes={projection.normalizedBytes - projection.terminalStop}"
   return 0
 
