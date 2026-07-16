@@ -53,3 +53,19 @@ unified diff. `fix` is the only `.lean` source writer. A per-file rejection leav
 but remains report data so other selected files are not silently dropped. Request or workspace
 failures exit 2; findings, broken files, or rejected fixes exit 1; successful clean and fix outcomes
 exit 0.
+
+## Major step 1: checked patch capability
+
+`LeanFmt.Edit` now owns the complete in-memory edit transaction. Its private `Patch` constructor:
+
+- extracts fixes from selected findings;
+- checks every half-open range against the exact UTF-8 source byte length;
+- checks both endpoints as constant-time Lean string boundaries;
+- imposes deterministic source order while retaining original indices for diagnostics;
+- rejects overlaps and competing insertions before assembly;
+- assembles one complete UTF-8 result; and
+- constructs inverse edits that reproduce the exact original snapshot.
+
+The capability exposes only source identity, formatted output, edit count/change state, and exact
+reversion. It does not expose partially sorted edits or ask callers to sequence validation helpers.
+Publication and exact frontend validation remain application-owned work for the next major step.

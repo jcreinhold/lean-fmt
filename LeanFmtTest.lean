@@ -2,6 +2,7 @@ module
 
 import all LeanFmt.ArtifactStore
 import all LeanFmt.Cache
+import all LeanFmt.Edit
 import all LeanFmt.Rules
 
 open LeanFmt LeanFmt.Internal
@@ -41,6 +42,80 @@ private def testRules : IO Unit := do
     "final-newline insertion range is not byte-exact"
   ensure ((runRules source false).map (·.code) == #["FMT002"])
     "traced trailing-whitespace configuration was ignored"
+
+private def findingWithEdit (range : SourceRange) (replacement : String) : Finding := {
+  code := "TEST"
+  severity := .warning
+  message := "test edit"
+  range
+  fix? := some { range, replacement }
+}
+
+private def requirePatch (source : String) (findings : Array Finding) : IO Patch :=
+  match preparePatch source findings with
+  | .ok patch => pure patch
+  | .error error => throw <| IO.userError s!"valid patch was rejected: {error}"
+
+private def requireRevert (patch : Patch) : IO String :=
+  match patch.revert with
+  | .ok source => pure source
+  | .error error => throw <| IO.userError s!"checked inverse was rejected: {error}"
+
+private def ensureRejected (source : String) (findings : Array Finding)
+    (accept : PatchError → Bool) (message : String) : IO Unit :=
+  match preparePatch source findings with
+  | .error error => ensure (accept error) s!"{message}: wrong rejection: {error}"
+  | .ok _ => throw <| IO.userError message
+
+private def testEdits : IO Unit := do
+  let source := "def α := 1  \n#check α"
+  let patch ← requirePatch source (runRules source)
+  ensure (patch.formatted == "def α := 1\n#check α\n")
+    "rule edits did not produce the expected UTF-8 output"
+  ensure patch.changed "nonempty edit set was reported unchanged"
+  ensure (patch.editCount == 2) "patch lost selected edits"
+  ensure (patch.matchesSource source) "patch lost its immutable source identity"
+  ensure (!(patch.matchesSource (source ++ "\n"))) "stale source matched a checked patch"
+  ensure ((← requireRevert patch) == source) "checked patch did not exactly reverse"
+
+  let ordered := #[
+    findingWithEdit { start := 0, stop := 1 } "A",
+    findingWithEdit { start := 1, stop := 2 } "B"
+  ]
+  let reverseOrder := #[ordered[1]!, ordered[0]!]
+  let adjacent ← requirePatch "xy" ordered
+  let adjacentReverse ← requirePatch "xy" reverseOrder
+  ensure (adjacent.formatted == "AB" && adjacentReverse.formatted == "AB")
+    "adjacent edits were rejected or input order changed output"
+
+  ensureRejected "abc" #[findingWithEdit { start := 1, stop := 4 } "x"]
+    (fun | .invalidRange .. => true | _ => false)
+    "out-of-range edit was accepted"
+  ensureRejected "αb" #[findingWithEdit { start := 1, stop := 2 } "x"]
+    (fun | .invalidBoundary .. => true | _ => false)
+    "non-boundary UTF-8 edit was accepted"
+  ensureRejected "abc" #[
+      findingWithEdit { start := 0, stop := 2 } "x",
+      findingWithEdit { start := 1, stop := 3 } "y"
+    ] (fun | .conflict .. => true | _ => false)
+    "overlapping replacements were accepted"
+  ensureRejected "abc" #[
+      findingWithEdit { start := 1, stop := 1 } "x",
+      findingWithEdit { start := 1, stop := 1 } "y"
+    ] (fun | .conflict .. => true | _ => false)
+    "competing insertions were accepted"
+
+  let propertySource := "aαβz"
+  let boundaries := #[0, 1, 3, 5, 6]
+  let replacements := #["", "x", "λ"]
+  for start in boundaries do
+    for stop in boundaries do
+      if start <= stop then
+        for replacement in replacements do
+          let patch ← requirePatch propertySource
+            #[findingWithEdit { start, stop } replacement]
+          ensure ((← requireRevert patch) == propertySource)
+            s!"single-edit reversibility failed at {start}-{stop}"
 
 private def testCacheIdentity : IO Unit := do
   let base : CacheIdentity := {
@@ -156,6 +231,7 @@ public unsafe def main (args : List String) : IO UInt32 := do
   | [] =>
     testDigests
     testRules
+    testEdits
     testCacheIdentity
     testStore
     IO.println "lean-fmt module-artifact tests passed"

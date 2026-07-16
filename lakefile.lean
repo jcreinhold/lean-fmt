@@ -29,6 +29,7 @@ lean_lib LeanFmtApplication where
     Glob.one `LeanFmt.ArtifactStore,
     Glob.one `LeanFmt.Analysis,
     Glob.one `LeanFmt.Cache,
+    Glob.one `LeanFmt.Edit,
     Glob.one `LeanFmt.Application
   ]
 

@@ -59,6 +59,10 @@ as independent measured prerequisites.
   a semantic-result projection, puts all edit sequencing behind one checked patch capability, and
   treats compiler setup as guidance because arbitrary executable `lakefile.lean` is not safely
   text-rewritable.
+- Prompt 09 major step 1 is implemented: one private checked-patch capability owns deterministic
+  edit ordering, byte/UTF-8 validation, conflict rejection, complete assembly, source identity, and
+  exact inverse construction. Its focused unit/property suite passes; validation and atomic
+  publication remain in the application transaction.
 
 These facts constrain prompts 04 and 05; they do not predetermine their final interface.
 
