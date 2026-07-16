@@ -447,6 +447,27 @@ private def Tree.canonical? (tree : Tree) (normalized : String) (span : CommandS
   -- The identifier is optional, so this is one token or two; `spaceSeparated` handles both without
   -- knowing which, because it spaces whatever tokens the command actually has.
   | "Lean.Parser.Command.end" => tree.wholeSpan? normalized span
+  -- `Lean/Parser/Command.lean:852-853` (v4.32.0):
+  --   def «open» := leading_parser withPosition ("open" >> openDecl)
+  -- `withPosition` builds no node, so the command is the `open` atom plus one `openDecl` alternative
+  -- (`:737-739`, a pseudo-kind, so the alternative *is* the child). Three of the six are flat runs of
+  -- identifiers and keywords that want one space between them (`:724-725`, `:732-735`):
+  --   openSimple  := many1 (ppSpace >> checkColGt >> ident)
+  --   openScoped  := " scoped" >> many1 (ppSpace >> checkColGt >> ident)
+  --   openHiding  := ppSpace >> atomic (ident >> " hiding") >> many1 (ppSpace >> checkColGt >> ident)
+  -- The other two are not, and are left conservative rather than guessed at (`:728-731`):
+  -- `openRenaming` is `sepBy1 openRenamingItem ", "`, so a flat run emits `a → b , c → d` with a
+  -- space before the comma; `openOnly` is `atomic (ident >> " (") >> many1 ident >> ")"`, so a flat
+  -- run emits `Foo ( a b )`. Both need a layout that knows about separators and brackets, which is a
+  -- claim this prompt has not made.
+  | "Lean.Parser.Command.open" => do
+    let children := tree.nodeChildren[span.root]!
+    guard (children.size == 1)
+    guard <| [
+        "Lean.Parser.Command.openSimple", "Lean.Parser.Command.openScoped",
+        "Lean.Parser.Command.openHiding"
+      ].contains (tree.kindOf children[0]!)
+    tree.wholeSpan? normalized span
   -- The declaration *shell*: doc comment, attributes, modifiers, keyword, name. See
   -- `declarationShell?` for the citations and for why the signature and the value are not touched.
   | "Lean.Parser.Command.declaration" => do

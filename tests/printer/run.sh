@@ -190,6 +190,16 @@ inductive     Ind     where
   | second
 
 instance     : Inhabited Ind := ⟨.first⟩
+
+open     Alpha
+
+open     Alpha     hiding     a
+
+open     scoped     Alpha
+
+open     Alpha     (a)
+
+open     Alpha     renaming     a     →     myA
 FIXTURE
 LEAN_NUM_THREADS=1 lake env "$application" __analyze-exact \
   "$work/borrowed.setup.json" "$work/wonky.lean" "wonky.lean" 8589934592 >"$work/wonky.json"
@@ -234,6 +244,15 @@ LEAN_NUM_THREADS=1 lake env "$application" __analyze-exact \
 #                                    optional there (anonymous instances are ordinary Lean), so the
 #                                    shell would have to end at the keyword, and `optNamedPrio` is
 #                                    bracketed. Two separate claims, neither made yet.
+#   `open Alpha`                     three of `openDecl`'s six alternatives are flat runs of
+#   `open Alpha hiding a`            identifiers and keywords (`openSimple`, `openScoped`,
+#   `open scoped Alpha`              `openHiding`), so one space between tokens is their layout.
+#   `open     Alpha     (a)`         UNCHANGED, and the other two say why. `openOnly` is
+#   `open     Alpha  renaming ...`   `ident >> " (" >> many1 ident >> ")"`, so a flat run gives
+#                                    `Alpha ( a )`; `openRenaming` is `sepBy1 openRenamingItem ", "`,
+#                                    so a flat run gives `a → myA , b → myB` -- a space before the
+#                                    comma. Brackets and separators need a layout that knows about
+#                                    them, and this prompt has not made that claim.
 #   `  def     indented`             UNCHANGED, spaces and all: it is not at column 0, and the line
 #                                    break the layout would emit indents to nothing, so the docstring
 #                                    would stay indented while the `def` jumped to column 0. Whether
@@ -282,6 +301,16 @@ inductive Ind     where
   | second
 
 instance     : Inhabited Ind := ⟨.first⟩
+
+open Alpha
+
+open Alpha hiding a
+
+open scoped Alpha
+
+open     Alpha     (a)
+
+open     Alpha     renaming     a     →     myA
 GOLDEN
 if diff -u "$work/wonky.golden" "$work/wonky.out" >"$work/wonky.diff" 2>&1; then
   printf '  ok   canonical layout matches the golden file\n'

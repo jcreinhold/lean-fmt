@@ -56,11 +56,12 @@ Printing inside the frontend would buy free arg order for a median 1.96 s fronte
   bound is defensive: no construct in this corpus nests a `declId` inside a declaration, so nothing
   here exercises it. `class Foo` needs no case of its own: `classTk` is one of `«structure»`'s two
   openers, so it is a `structure` node.
-- **A `structure`'s fields and an `inductive`'s constructors are left as bytes, which is a decision
-  with a gap in it.** The shell stops at the name, so `structure Str     where` re-spaces its keyword
-  and keeps its fields exactly. Fields are not terms and `RLF-EXPRESSIONS` has no obvious claim on
-  them; nor has `RLF-COMMANDS` made one. **No prompt currently owns `structFields` or `ctor`**, and
-  that should be settled before this stack's final audit rather than discovered there.
+- **A `structure`'s fields and an `inductive`'s constructors are left as bytes, and they are this
+  prompt's to claim.** The shell stops at the name, so `structure Str     where` re-spaces its keyword
+  and keeps its fields exactly. An earlier reading of state called their ownership unsettled; the
+  prompt settles it — `01-commands.md`'s task names "declarations, structures, inductives" outright,
+  so `structFields` (`:257-262`) and `ctor` (`:210-212`) belong to `RLF-COMMANDS`, not to
+  `RLF-EXPRESSIONS`. They are outstanding work, not an open question.
 - **The declaration shell is laid out, modifiers included.** Cited against
   `Lean/Parser/Command.lean:282-285` (a `declaration` is exactly `declModifiers` plus one shape) and
   `:114-121` (seven optional
@@ -99,11 +100,22 @@ Printing inside the frontend would buy free arg order for a median 1.96 s fronte
   `LosslessSource.ofSource` (`LosslessSource.lean:358`): "Neither producer may pass the module
   header — a module linter never receives it". The plugin producer is a module linter and Lean never
   hands it the header, so no schema carrying header syntax could be produced by both mandated
-  producers. **This is not a blocker and not a missing lower-layer piece**:
-  `Lean.Parser.parseHeader` (`Lean/Parser/Module.lean:75`) takes an `InputContext` and **no
-  `Environment`**, so the printer can parse `[0, headerStop)` with Lean's own parser on bytes
-  `normalizedDigest` already binds. The open cost is that `format` acquires an `IO` boundary, or a
-  pure header parse must be found.
+  producers. **This is not a blocker and not a missing lower-layer piece**, but the recorded reason was
+  read off a signature and is corrected here. `Lean.Parser.parseHeader` (`Lean/Parser/Module.lean:75`)
+  takes an `InputContext` and no `Environment` *as a parameter* — but its body opens with
+  `let dummyEnv ← mkEmptyEnvironment` and builds its token table from it, which is the whole reason it
+  is `IO`. So it does need an environment; it makes an empty one. The conclusion survives and is
+  actually firmer than the argument that reached it: **no frontend environment is required**, an empty
+  one is available anywhere in `IO`, so the printer can parse `[0, headerStop)` with Lean's own parser
+  on bytes `normalizedDigest` already binds.
+- **The header's cost is an `IO` boundary on `format`, and the boundary test does not forbid it.**
+  `tests/boundary/run.sh` constrains the *plugin's* import cone; `LeanFmt.Printer` is deliberately
+  outside `LeanFmtCompilerPlugin`'s globs, and `LeanFmtCore` already carries `LeanFmt.LosslessSource`,
+  whose `ofSource` takes `Array Lean.Syntax`. So importing `Lean.Parser.Module` in the printer breaks
+  no recorded rule, and `notes/01-command-printing.md`'s Design A is not contradicted either: its
+  argument was that printing *commands* in-frontend costs a median 1.96 s frontend run, and parsing a
+  header is not a frontend run. **This is the next piece of work and it is the prompt's own
+  requirement** — the task names "module headers, imports" and the Stop rules name ordered imports.
 - **Coverage is counted by the printer, because byte identity cannot see it and the corpus cannot
   either.** Every module round-trips exactly and would still round-trip exactly if every guard refused
   every command — the printer would fall back to bytes and be the identity function it was before any
@@ -176,9 +188,18 @@ Printing inside the frontend would buy free arg order for a median 1.96 s fronte
 ## Blockers and prerequisites
 
 - No blocker is currently recorded beyond the named prerequisite stacks.
-- **`RLF-COMMANDS` is not met: 391 of 419 commands have a layout.** The 28 without one are `instance`
-  (11), `moduleDoc` (8), `open` (7), `registerOption` (1), and `initialize` (1)
-  (`evidence/01-projection-shape.txt`). Every other declaration shape is laid out.
+- **`RLF-COMMANDS` is not met, and the gap is now mostly named work rather than unread grammar.**
+  398 of 419 commands have a layout. Outstanding, in the prompt's own words: **module headers and
+  imports** (not a command at all — see below), **structures and inductives** past their shell
+  (`structFields`, `ctor`), and `results/01-commands.md`. The 21 commands still conservative are
+  `instance` (11), `moduleDoc` (8), `registerOption` (1), and `initialize` (1).
+- **`moduleDoc` may well need no layout at all, and that is an answer rather than a gap.** It is
+  `"/-!" >> commentBody >> ppLine` (`:60-61`): an opener and a body of prose. There is nothing in it
+  the formatter may re-space, so the conservative path *is* its layout. Recording that conclusion, and
+  checking whether the opener's space is a real decision, is cheap and unstarted.
+- **`open`'s three flat alternatives are laid out; `openOnly` and `openRenaming` are not** (`:724-739`).
+  A flat run would emit `Alpha ( a )` and `a → myA , b → myB`. Brackets and separators need a layout
+  that knows about them, which no prompt here has claimed.
 - **`instance` is excluded on two separate grammar facts, not on difficulty** (`:202-204`). Its
   `declId` is `optional` — anonymous instances are ordinary Lean — so the shell cannot simply end at
   the name and must end at the keyword instead; and `optNamedPrio` (`:64-65`) is bracketed, so a flat
