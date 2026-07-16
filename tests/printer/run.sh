@@ -592,6 +592,28 @@ else
     "$(diff "$work/wonky.lean" "$work/wonky.out" | grep -c '^<') lines rewritten"
 fi
 
+# `app_slack` counts the application gaps holding more than one space, and it is reported over the
+# frozen mathlib sample where the answer is **0 across all 62 modules** — real Lean does not write
+# `f     a`. A counter that answered 0 because it was broken would say exactly the same thing, so it
+# is validated here against a corpus whose answer is known by reading it: `id     7` is one gap,
+# `List.replicate     3     8` is two, `id     (id     9)` is two (outer and inner), and
+# `id     12 + id     13` is two. `commentedApp` and `brokenApp` contribute none — their gaps are not
+# spaces-only, which is the same predicate the layout refuses on. Seven.
+#
+# This is `RLF-COMMANDS`'s lesson applied before the fact rather than after: its `misordered=0` was a
+# number no input could have contradicted, and it took a mutation to notice.
+expected_slack=7
+actual_slack=$("$tests" printer-report "$work/wonky.json" "$work/wonky.lean" \
+  | tr ' ' '\n' | sed -n 's/^app_slack=\([0-9]*\)$/\1/p')
+if [[ "$actual_slack" == "$expected_slack" ]]; then
+  printf '  ok   app_slack counts the fixture'\''s %s application gaps (so 0 on mathlib is a fact)\n' \
+    "$expected_slack"
+else
+  printf 'FAIL app_slack reported %s on the wonky fixture, expected %s; the sample'\''s 0 is vacuous\n' \
+    "$actual_slack" "$expected_slack" >&2
+  failures=$((failures + 1))
+fi
+
 # Idempotence, the roadmap's "formatting twice is byte-identical to formatting once". The second pass
 # re-parses the first pass's *output*, so this is a real second format and not a repeated call: if the
 # layout emitted something the parser reads back differently, this is where it shows.

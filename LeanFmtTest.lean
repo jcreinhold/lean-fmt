@@ -857,6 +857,7 @@ private def printerRoundtrip (envelopePath sourcePath : String) (checkIdentity :
   IO.println s!"commands={tree.roots.size} canonical={tree.canonicalCommands normalized} \
 tokens={projection.tokens.size} nodes={projection.nodes.size} header_bytes={projection.headerStop} \
 header_canonical={headerCanonical} members={tree.memberShells normalized} \
+app_slack={tree.appSlack normalized} \
 tail_bytes={projection.normalizedBytes - projection.terminalStop}"
   return 0
 

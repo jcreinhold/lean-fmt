@@ -802,6 +802,33 @@ def Tree.memberShells (tree : Tree) (normalized : String) : Nat :=
     | none => count
     | some (last, _) => count + (tree.memberClaims normalized span.root last).size
 
+/-- How many application gaps in this module hold slack the layout would narrow.
+
+A fact about the *source*, deliberately not about the claims: it counts every `Term.app` in the module,
+including ones inside commands on the conservative path, and asks only whether a gap between two of
+its parts is more than one space. So it is an upper bound on what the layout changes, and it is that
+on purpose — it answers "does real Lean contain `f     a` at all", which is a question about Lean, not
+about this printer's guards, and a number filtered through the guards could not distinguish "the
+source is already tight" from "a guard refused it".
+
+This exists because `reformatted` cannot see the difference. That counter is per module, and the
+command layouts already reformat 12 of the sample's 62, so an application layout that changed
+thousands of gaps and one that changed none produce the same 12. `RLF-COMMANDS` learned this shape
+already: `members=` had to be counted because byte identity could not see it. -/
+def Tree.appSlack (tree : Tree) (normalized : String) : Nat := Id.run do
+  let mut count := 0
+  for node in [0:tree.source.nodes.size] do
+    if tree.kindOf node != "Lean.Parser.Term.app" then continue
+    let mut previous : Option Part := none
+    for part in tree.appParts node do
+      if let some prior := previous then
+        let raw := match tree.source.tokens[prior.last]?, tree.source.tokens[part.first]? with
+          | some a, some b => sliceNormalized normalized a.stop b.start
+          | _, _ => ""
+        if raw.length > 1 && raw.all (· == ' ') then count := count + 1
+      previous := some part
+  return count
+
 /-- How many of this module's commands take a canonical layout rather than the conservative path.
 
 Reported by `printer-roundtrip` and floored by `tests/printer/run.sh`, because byte identity cannot
