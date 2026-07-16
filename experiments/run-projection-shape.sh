@@ -80,6 +80,7 @@ kind_census = defaultdict(int)
 command_census = defaultdict(int)
 decl_census = defaultdict(int)
 unread_shapes = defaultdict(int)
+instance_shape = defaultdict(int)
 member_census = defaultdict(int)
 member_flat = defaultdict(int)
 member_break = defaultdict(int)
@@ -199,6 +200,20 @@ for name in sorted(os.listdir(envelopes)):
         elif kinds[nodes[ch[1]][0]] not in SHELL_SHAPES:
             decl_census["rejected: shape not read yet"] += 1
             unread_shapes[kinds[nodes[ch[1]][0]]] += 1
+            # `instance` is the only unread shape this corpus has, and the one question that decides
+            # whether reading it would buy anything: its `declId` is `optional (ppSpace >> declId)`
+            # (`Lean/Parser/Command.lean:202-204`), so an anonymous instance's shell is the keyword
+            # alone — a one-token shell, with no gap for any layout to collapse. Named ones would have
+            # `instance` and the name to re-space. Counting them is what turns "excluded on grammar
+            # grounds" into a claim about how much that exclusion costs.
+            if kinds[nodes[ch[1]][0]] == "Lean.Parser.Command.instance":
+                named = any(
+                    kinds[nodes[g][0]] == "Lean.Parser.Command.declId"
+                    for c in children[ch[1]]
+                    for g in ([c] if kinds[nodes[c][0]] != "null" else children[c])
+                )
+                instance_shape["named (shell would re-space)" if named
+                               else "anonymous (one-token shell)"] += 1
         elif not any(
             kinds[nodes[g][0]] == "Lean.Parser.Command.declId"
             for c in children[ch[1]]
@@ -334,6 +349,10 @@ for label, count in sorted(member_census.items(), key=lambda kv: -kv[1]):
     print(f"{count}\t{label}: {member_flat[label]} collapsible, {member_singleton[label]} one-token, "
           f"{member_break[label]} broken by a doc comment, {tight} already tight, "
           f"{member_skipped[label]} unexpected shape")
+print()
+print("# of those, how the `instance` shells break down")
+for label, count in sorted(instance_shape.items(), key=lambda kv: -kv[1]):
+    print(f"{count}\t{label}")
 print()
 print("# shapes rejected only because their grammar has not been read yet")
 for kind, count in sorted(unread_shapes.items(), key=lambda kv: -kv[1]):

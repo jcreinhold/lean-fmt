@@ -13,10 +13,10 @@ frontend. That is not a preference: `ruff-01`'s roadmap already committed to car
 printing in-frontend would buy free arg order for a median 1.96 s frontend run per file (`RLS-FINAL`).
 
 **What the projection does not carry, measured rather than assumed.** Over all 21 modules of this
-repository (39,836 nodes, `evidence/01-projection-shape.txt`), 14,359 nodes (36.0%) carry no token at
+repository (39,869 nodes, `evidence/01-projection-shape.txt`), 14,365 nodes (36.0%) carry no token at
 all — they are *absent* syntax, the unfilled optional slots of `declModifiers`, `optDeclSig`,
 `Termination.suffix` — and `collect` gives them range `(0,0)` because a node's range is the hull of the
-leaves beneath it and there are none. For 6,138 of them (15.4% of all nodes) the parent also has direct
+leaves beneath it and there are none. For 6,143 of them (15.4% of all nodes) the parent also has direct
 token children, so nothing in the projection says where among its siblings the absent slot belongs.
 `Lean.Syntax` has no position for them either; this is not something the projection dropped.
 
@@ -27,7 +27,7 @@ Two consequences run through everything below:
    siblings ascend in arg order. Sorting children by range would be correct for the 64.0% that carry
    tokens and silently wrong for the rest.
 2. **The conservative path reads bytes, not the tree.** Empty nodes contribute no bytes, so re-emitting
-   a command's byte extent is unaffected by all 6,138 ambiguous placements. It is the only path whose
+   a command's byte extent is unaffected by all 6,143 ambiguous placements. It is the only path whose
    correctness rests on no claim about any grammar, which is exactly what the roadmap's "unknown
    commands must round-trip conservatively" asks for. Every kind starts here and leaves only when a
    canonical layout for it is cited and pinned by a golden test.
@@ -52,7 +52,7 @@ transport format. This is the view a walk needs, computed once.
 Both child arrays ascend in index order, which **is** arg order by `collect`'s construction. The
 projection retains no other order, so this is not a property that can be checked against its output —
 `evidence/01-projection-shape.txt` checks the observable consequence instead: among a parent's
-token-bearing children, index order agrees with byte order (0 violations over 39,836 nodes). -/
+token-bearing children, index order agrees with byte order (0 violations over 39,869 nodes). -/
 structure Tree where
   source : LosslessSource
   /-- `nodeChildren[i]` are the node-children of node `i`, in arg order. -/
@@ -68,7 +68,7 @@ structure Tree where
 
   This is not the measured contiguity property being smuggled in as an assumption: it is computed as
   the max of the children's ends, which is the subtree's extent whether or not the indices happen to
-  be contiguous. `evidence/01-projection-shape.txt` reports 0 contiguity violations over 39,836 nodes,
+  be contiguous. `evidence/01-projection-shape.txt` reports 0 contiguity violations over 39,869 nodes,
   so the range is also gap-free in practice — but nothing below depends on that. -/
   subtreeEnd : Array Nat
 
@@ -635,6 +635,22 @@ def Tree.canonicalCommands (tree : Tree) (normalized : String) : Nat :=
   tree.commands.foldl (init := 0) fun count span =>
     if (tree.canonical? normalized span).isSome then count + 1 else count
 
+/-- The syntax kind of every command the layouts refused, one entry per command.
+
+`canonicalCommands` counts the claims; this names the misses, and the two answer different questions.
+On this repository the miss list is short and already understood, so this exists for the frozen
+mathlib sample, where `canonical` is barely half of `commands` against 95% here. That gap is a fact
+about which *kinds* this repository happens to contain, and a bare percentage cannot say which — a
+number that low is either a list of grammars nobody has read yet, which is ordinary remaining work, or
+a guard refusing shapes it was built to claim, which is a defect. Only the kinds distinguish them.
+
+Deliberately not a count per kind: the caller tallies. A kind is refused for two unlike reasons — no
+layout claims it at all, or a layout claims it and a runtime guard said no — and this cannot tell them
+apart, so it reports the raw kind and leaves that reading to whoever has both this and the grammar. -/
+def Tree.unclaimedKinds (tree : Tree) (normalized : String) : Array String :=
+  tree.commands.foldl (init := #[]) fun kinds span =>
+    if (tree.canonical? normalized span).isSome then kinds else kinds.push (tree.kindOf span.root)
+
 /-- One command.
 
 The extent is the claims, and the bytes between them. Everything a layout did not claim is emitted
@@ -754,7 +770,9 @@ private def headerGroupDoc (normalized : String) (leaves : Array (Nat × Nat)) :
 
 The grammar's own vertical layout is `optional (moduleTk >> ppLine >> ppLine) >> optional («prelude» >>
 ppLine) >> many («import» >> ppLine)` (`Lean/Parser/Module/Syntax.lean:26-29`) — a blank line after
-`module`, and one line each thereafter. That is what `afterModule` selects between.
+`module`, and one line each thereafter. `afterModule` selects the first; the rest of the rule is
+below, because "one line each thereafter" is what the grammar asks when *generating* a header from
+syntax, and this printer is not generating one — it is reading a header somebody wrote.
 
 Choosing the gap means owning every byte in it, so the choice is declined in two cases and the bytes
 stand instead:
@@ -766,10 +784,29 @@ stand instead:
 * **the next group is not at a line start.** `Doc.hard` emits a newline plus the current indentation,
   and this printer never nests, so an indented group would be silently de-indented (see `startsLine`).
   It also declines when the gap holds no newline at all, so `module import Foo` on one line keeps its
-  bytes rather than being split by a rule nobody argued. -/
+  bytes rather than being split by a rule nobody argued.
+
+**A blank line the author left between two imports is kept**, and that is a stop rule rather than a
+preference. `RLF-COMMANDS` scopes import *organization* out of this prompt — "sorting is a separate
+opt-in fix" — and grouping imports by blank line is organization, not spacing: mathlib's headers put
+one between their `public import`s and their plain `import`s, and deleting it reorganizes the header
+just as surely as reordering it would. This layout re-spaces *within* a line and never decides which
+imports belong together.
+
+Runs of blank lines collapse to one, which is spacing and is this layout's to choose. The one blank
+line the layout *adds* is after `module`, because the header grammar puts `ppLine` there
+(`Lean/Parser/Module/Syntax.lean:17-36`) and a module keyword crowded against its first import is the
+one vertical shape the grammar itself rules out.
+
+An earlier version emitted a single `hard` between every pair of groups, which read "the grammar
+decides vertical space" as licence to delete blank lines. `evidence/01-printer-sample.txt` is where
+that surfaced: it dropped a line from real mathlib headers, and no header in this repository had a
+blank line inside it for the corpus to notice. -/
 private def headerGap (normalized : String) (stop start : Nat) (afterModule : Bool) : Doc :=
   if whitespaceOnly normalized stop start && startsLine normalized start then
-    if afterModule then .hard ++ .hard else .hard
+    let lines := (sliceNormalized normalized stop start).foldl
+      (fun count character => if character == '\n' then count + 1 else count) 0
+    if afterModule || lines > 1 then .hard ++ .hard else .hard
   else
     .verbatim (sliceNormalized normalized stop start)
 

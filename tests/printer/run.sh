@@ -240,6 +240,7 @@ cat >"$work/header.golden" <<'GOLDEN'
 module
 
 import Lean.Data.Position
+
 public import Lean.Data.Format
 
 -- Which imports are load-bearing is a comment somebody wrote on purpose.

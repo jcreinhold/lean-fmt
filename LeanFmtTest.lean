@@ -808,7 +808,16 @@ bytes unchanged and, unlike `hard`, not to force its group to break; a width-sen
 mean `verbatim` is re-indenting or breaking content that is not the formatter's to touch, which is the
 `Std.Format` defect (`Basic.lean:269-276`) that `RLC-IMPL` added the constructor to avoid. Width 0 is
 included on purpose: it is the most hostile margin there is. -/
-private def printerRoundtrip (envelopePath sourcePath : String) : IO UInt32 := do
+/- The identity check is a claim about *canonical* source, not about the printer.
+
+`checkIdentity` is true for this repository's corpus, whose modules are already written the way the
+layouts write them, so any changed byte there is a defect. It is false for the frozen mathlib sample
+(`experiments/run-printer-sample.sh`), which is foreign code the printer is *supposed* to reformat —
+asserting identity on it reports the declaration layout doing its job as a failure, which is exactly
+what the first draft of that script did. Everything else below holds either way: the projection
+matching its source, and the extents tiling `[headerStop, terminalStop)` exactly once. -/
+private def printerRoundtrip (envelopePath sourcePath : String) (checkIdentity : Bool) :
+    IO UInt32 := do
   let .ok json := Lean.Json.parse (← IO.FS.readFile envelopePath)
     | throw <| IO.userError s!"{envelopePath} is not JSON"
   let .ok (envelope : AnalysisEnvelope) := Lean.fromJson? json
@@ -819,10 +828,11 @@ private def printerRoundtrip (envelopePath sourcePath : String) : IO UInt32 := d
   let normalized := (LosslessSource.normalize raw).1
   let projection := artifact.source
   ensure (projection.validFor raw) s!"{sourcePath}: the projection does not match its own source"
-  for width in [0, 1, 40, 80, 120, 1000] do
-    let formatted ← Printer.format projection normalized width
-    ensure (formatted == normalized)
-      s!"{sourcePath}: conservative format changed bytes at width {width} \
+  if checkIdentity then
+    for width in [0, 1, 40, 80, 120, 1000] do
+      let formatted ← Printer.format projection normalized width
+      ensure (formatted == normalized)
+        s!"{sourcePath}: format changed bytes at width {width} \
 ({formatted.utf8ByteSize} bytes out, {normalized.utf8ByteSize} in)"
   let tree := Tree.ofSource projection
   let extents := tree.commandExtents
@@ -870,6 +880,27 @@ private def printerFormat (envelopePath sourcePath widthText : String) : IO UInt
   let projection := artifact.source
   ensure (projection.validFor raw) s!"{sourcePath}: the projection does not match its own source"
   IO.print (← Printer.format projection normalized width)
+  return 0
+
+/- Name every command the layouts refused, one syntax kind per line.
+
+`printer-report` counts the claims; this names the misses. It exists for the frozen mathlib sample,
+where `canonical` is about half of `commands` against 95% on this repository, and the percentage alone
+cannot say whether that is unread grammar or a guard misfiring. The caller tallies the lines. -/
+private def printerUnclaimed (envelopePath sourcePath : String) : IO UInt32 := do
+  let .ok json := Lean.Json.parse (← IO.FS.readFile envelopePath)
+    | throw <| IO.userError s!"{envelopePath} is not JSON"
+  let .ok (envelope : AnalysisEnvelope) := Lean.fromJson? json
+    | throw <| IO.userError s!"{envelopePath} is not an analysis envelope"
+  let some artifact := envelope.artifact?
+    | throw <| IO.userError s!"{sourcePath} produced no artifact: {envelope.diagnostics}"
+  let raw ← IO.FS.readFile sourcePath
+  let normalized := (LosslessSource.normalize raw).1
+  let projection := artifact.source
+  ensure (projection.validFor raw) s!"{sourcePath}: the projection does not match its own source"
+  let tree := Tree.ofSource projection
+  for kind in tree.unclaimedKinds normalized do
+    IO.println kind
   return 0
 
 /- Layout cost, on the shapes `RLC-FINAL` names.
@@ -971,8 +1002,12 @@ private def docBench : IO UInt32 := do
 public unsafe def main (args : List String) : IO UInt32 := do
   match args with
   | ["attach-report", envelopePath, sourcePath] => attachReport envelopePath sourcePath
-  | ["printer-roundtrip", envelopePath, sourcePath] => printerRoundtrip envelopePath sourcePath
+  | ["printer-roundtrip", envelopePath, sourcePath] =>
+    printerRoundtrip envelopePath sourcePath (checkIdentity := true)
+  | ["printer-report", envelopePath, sourcePath] =>
+    printerRoundtrip envelopePath sourcePath (checkIdentity := false)
   | ["printer-format", envelopePath, sourcePath, width] => printerFormat envelopePath sourcePath width
+  | ["printer-unclaimed", envelopePath, sourcePath] => printerUnclaimed envelopePath sourcePath
   | ["doc-bench"] => docBench
   | ["doc-dump"] => docDump
   | [] =>

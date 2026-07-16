@@ -43,6 +43,27 @@ Printing inside the frontend would buy free arg order for a median 1.96 s fronte
 
 ## Known evidence
 
+- **Foreign code found a defect that this repository's corpus and every fixture had missed.** The
+  printer now runs over the frozen mathlib sample (`experiments/run-printer-sample.sh`,
+  `evidence/01-printer-sample.txt`), and it found the header layout **deleting a blank line**.
+  `headerGap` emitted a single `hard` between every pair of import groups, reading the grammar's `many
+  («import» >> ppLine)` as "the grammar decides vertical space". Mathlib puts a blank line between its
+  `public import`s and its plain `import`s; the layout deleted it. **No header in this repository has a
+  blank line inside it**, so neither the 20-module corpus nor a fixture I wrote could see it. The rule
+  is now: keep a blank line the author left, collapse runs of them to one, add one only after
+  `module`. That is a stop rule, not taste — this prompt defers import *organization* ("sorting is a
+  separate opt-in fix"), and grouping imports by blank line is organization. The fixture now pins it
+  and a mutation back to the old rule fails the golden.
+- **The identity check is a claim about canonical source, not about the printer.** The first draft of
+  the mathlib harness diffed the formatted output against its input and reported 7 of 29 modules
+  failing. They were not failing, they were being formatted: `@[simp] theorem foo` becoming two lines
+  is the declaration layout's attribute rule working. Byte identity holds only for source already
+  written the way the layouts write it — true here, false and rightly so for mathlib. The properties
+  that hold on *arbitrary* input are **idempotence** and **information preservation** (the output
+  parses back to the same tokens and the same comments), and those are what the sample checks;
+  `printer-roundtrip` keeps the identity assertion for the corpus, where it is true, behind
+  `checkIdentity`.
+
 - **The formatter decides its first thing, and the corpus could not have tested it.**
   `namespace` and `end` have canonical layouts, cited against `Lean/Parser/Command.lean:317-318` and
   `:337-338` (v4.32.0): a keyword and an optional identifier, exactly one space apart. So
@@ -287,19 +308,25 @@ Printing inside the frontend would buy free arg order for a median 1.96 s fronte
 - **`instance` is excluded on two separate grammar facts, not on difficulty** (`:202-204`). Its
   `declId` is `optional` — anonymous instances are ordinary Lean — so the shell cannot simply end at
   the name and must end at the keyword instead; and `optNamedPrio` (`:64-65`) is bracketed, so a flat
-  run would emit `( priority := 5 )`. Each needs its own fixture. How many of the 11 here are
-  anonymous is **not measured**, and that number decides whether the keyword-ended shell is worth
-  having.
+  run would emit `( priority := 5 )`. Each needs its own fixture. **All 11 in the corpus are
+  anonymous** (`evidence/01-projection-shape.txt`), so their shells are the keyword alone with no gap
+  any layout could close: excluding `instance` provably costs this corpus nothing, and the
+  keyword-ended shell would be untestable here. A *named* instance has something to re-space, and the
+  fact that none occurs is a fact about this corpus rather than about Lean — that layout is a separate
+  claim that would need its own fixture to mean anything.
 - **A declaration's signature and value are untouched, by decision and not by omission.** Both are
   terms and `RLF-EXPRESSIONS` owns them (`notes/01-command-printing.md` §7), so the shell layout stops
   at the `declId`'s last token and everything after it is bytes. `Tree.canonical?` returns *the last
   token its layout claimed* precisely to make that expressible; a layout claiming the whole command
   would have re-spaced the signature, which is the failure the split exists to prevent.
-- **`Doc`'s break behaviour is still exercised only by `ruff-02`'s own fixtures.** The printer
-  consumes `Doc`, but only through `verbatim`, `text`, `cat`, and `empty` — no `group`, `line`, or
-  `nest` reaches it from real source yet, because `namespace`/`end` are one-liners with nothing to
-  break. `RLC-FINAL`'s "`call-args` is my model of a Lean call, not a Lean call" stands until a layout
-  lands that can actually exceed the margin.
+- **`Doc`'s *break* behaviour is still exercised only by `ruff-02`'s own fixtures.** The printer
+  consumes `Doc` through `verbatim`, `text`, `cat`, `empty` and `hard` — the last from the header
+  layout and from the line a declaration's doc comment forces — but no `group`, `line`, or `nest`
+  reaches it from real source. Those are the constructors that make a *decision*: `hard` breaks
+  unconditionally, so nothing yet asks the engine to measure a width and choose. Every layout so far
+  is a flat run of tokens one space apart. `RLC-FINAL`'s "`call-args` is my model of a Lean call, not a
+  Lean call" stands until a layout lands that can actually exceed the margin, which is
+  `RLF-EXPRESSIONS`.
 - **The margin is unset.** `Printer.format` requires `width` rather than defaulting it: the value is
   configuration, it enters cache identity (`RLC-SPEC` §5), and `RLC-FINAL` left it an open language
   decision. Nothing in this stack has picked one, and no caller passes one outside tests.

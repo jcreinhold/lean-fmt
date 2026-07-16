@@ -17,15 +17,15 @@ anything at all.
 immediate parent node. There is **no children array and no arg index**.
 
 Measured by `experiments/run-projection-shape.sh` over every module of this repository — 21 modules,
-39,836 nodes, real parser output — by reconstructing the tree from the projection and testing each
+39,869 nodes, real parser output — by reconstructing the tree from the projection and testing each
 property (`evidence/01-projection-shape.txt`):
 
 | property | result |
 | --- | --- |
 | subtree of node *j* is a contiguous index range | **0 violations** |
 | among a parent's token-bearing node-children, index order agrees with byte order | **0 violations** |
-| nodes whose subtree contains no token at all | **14,359 — 36.0%** |
-| …of those, whose parent also has direct token children | **6,138 — 15.4% of all nodes** |
+| nodes whose subtree contains no token at all | **14,365 — 36.0%** |
+| …of those, whose parent also has direct token children | **6,143 — 15.4% of all nodes** |
 
 The first two are not luck. `LosslessSource.collect` pushes a node's placeholder at
 `build.nodes.size` *before* folding its args left to right, so children of one parent necessarily have
@@ -48,7 +48,7 @@ The last two decide the interface:
 
 - **More than a third of the tree is absent syntax.** `def f : Nat := 0` alone carries seven empty
   `null` children under `declModifiers` — the docComment, attributes, visibility, `noncomputable`,
-  `unsafe`, and `partial`/`nonrec` slots. Across the corpus, 12,806 of the 14,359 empty nodes are
+  `unsafe`, and `partial`/`nonrec` slots. Across the corpus, 12,811 of the 14,365 empty nodes are
   anonymous `null`; the named remainder is exactly what the name suggests — `letConfig` (480),
   `declModifiers` (323), `Termination.suffix` (292), `optEllipsis` (139), `optDeclSig` (101),
   `optDeriving` (28). These nodes are the *absence* of syntax, recorded positionally.
@@ -57,7 +57,7 @@ The last two decide the interface:
   the projection dropped — `Lean.Syntax` has none either. An empty `null` node genuinely has no
   position, and `Syntax.getPos?` returns `none` for it.
 
-**Therefore arg order cannot be recovered from positions.** For 6,138 of 39,836 nodes, an empty
+**Therefore arg order cannot be recovered from positions.** For 6,143 of 39,869 nodes, an empty
 node-child sits among direct token-children of the same parent and nothing in the projection says
 whether it came before or after them. That is a seventh of the tree, not an edge case, and no amount
 of care with ranges fixes it: the information is absent from `Lean.Syntax` upward.
@@ -144,7 +144,7 @@ grammar belongs.
   declaration it mirrors, and a golden fixture pins it. An uncited shape is an unsourced claim.
 - **The conservative fallback reads tokens, not the tree.** This is the load-bearing consequence of
   §2: empty nodes contribute no bytes, so a printer that re-emits a subtree's tokens in source order
-  with their trivia is unaffected by all 6,138 ambiguous placements. Unknown syntax round-trips
+  with their trivia is unaffected by all 6,143 ambiguous placements. Unknown syntax round-trips
   through the one path that does not depend on the information the projection lacks. The roadmap's
   "unknown commands must round-trip conservatively" and this measurement point the same way — the
   fallback is not a concession, it is the only path whose correctness does not rest on a grammar
@@ -254,6 +254,33 @@ repository's own already-formatted code, so "nothing here would change" is a fac
 about the rule: a formatter that leaves `|     first` alone is incomplete regardless. What the figure
 decides is *what can test it* — the corpus cannot, so `members=` counts the claims and the wonky
 fixture is the only evidence the layout changes a byte. Both are asserted in `tests/printer/run.sh`.
+
+**What the corpus could not have told me, and what fixed it.** Everything above is measured on this
+repository's own modules, and that corpus has a weakness no care removes: I wrote it, so it is already
+formatted the way the layouts format it. The frozen mathlib sample is not, and running the printer
+over it (`experiments/run-printer-sample.sh`, `evidence/01-printer-sample.txt`) found a defect the
+corpus and every fixture had missed — **the header layout deleted a blank line**.
+
+`headerGap` emitted a single `hard` between every pair of import groups, on the reading that "the
+grammar decides vertical space": `many («import» >> ppLine)` asks for one line each. Mathlib's headers
+put a blank line between their `public import`s and their plain `import`s, and the layout deleted it.
+No header in this repository has a blank line inside it, so nothing here could notice.
+
+The rule is now: a blank line the author left is kept, runs of them collapse to one, and the only
+blank line the layout *adds* is after `module`. The correction is not a taste call — this prompt's
+stop rules say "sorting is a separate opt-in fix", and grouping imports by blank line is import
+*organization*, not spacing. Deleting that grouping reorganizes the header as surely as reordering it
+would. The grammar's `ppLine` says what to emit when *generating* a header from syntax; it is not a
+licence to delete what someone wrote.
+
+**The first draft of that harness was itself wrong, and in an instructive way.** It checked byte
+identity — format, then diff against the input — and reported 7 of 29 modules failing. They were not
+failing; they were being formatted. `@[simp] theorem foo` becoming two lines is the declaration
+layout's attribute rule working exactly as cited. Byte identity is a claim about *canonical source*,
+not about the printer, and it is only true of this repository because this repository is canonical. On
+arbitrary input the properties that hold are **idempotence** (`format(format(x)) = format(x)`) and
+**information preservation** (the output parses back to the same tokens and the same comments), and
+those are what the sample now checks. The identity assertion stays where it is true, on the corpus.
 
 ## 8. What this note does not decide
 

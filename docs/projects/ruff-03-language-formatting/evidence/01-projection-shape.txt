@@ -1,12 +1,12 @@
-modules_analyzed=21 skipped=0 nodes=39836
+modules_analyzed=21 skipped=0 nodes=39869
 pre_order_contiguity_violations=0
 nonempty_node_children_out_of_source_order=0
-empty_nodes=14359 (36.0% of all nodes)
-empty_nodes_with_ambiguous_placement=6138 (15.4% of all nodes)
+empty_nodes=14365 (36.0% of all nodes)
+empty_nodes_with_ambiguous_placement=6143 (15.4% of all nodes)
 
 # most common empty (absent-syntax) kinds
-12806	null
-489	Lean.Parser.Term.letConfig
+12811	null
+490	Lean.Parser.Term.letConfig
 326	Lean.Parser.Command.declModifiers
 297	Lean.Parser.Termination.suffix
 156	group
@@ -35,6 +35,9 @@ empty_nodes_with_ambiguous_placement=6138 (15.4% of all nodes)
 206	structure fields (simple): 0 collapsible, 195 one-token, 11 broken by a doc comment, 0 already tight, 0 unexpected shape
 46	inductive constructors: 0 collapsible, 0 one-token, 0 broken by a doc comment, 46 already tight, 0 unexpected shape
 8	structure constructors: 0 collapsible, 0 one-token, 0 broken by a doc comment, 8 already tight, 0 unexpected shape
+
+# of those, how the `instance` shells break down
+11	anonymous (one-token shell)
 
 # shapes rejected only because their grammar has not been read yet
 11	Lean.Parser.Command.instance
