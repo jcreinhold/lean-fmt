@@ -1,6 +1,6 @@
 # Next Proof Packet
 
-- Stack: ruff-03-language-formatting
+- Stack: 
 - First unresolved: 02-expressions
 - Claim ID: RLF-EXPRESSIONS
 - Prompt: 02-expressions

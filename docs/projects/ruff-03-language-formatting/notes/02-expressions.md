@@ -90,7 +90,53 @@ forced. Two rules, opposite directions, both grammar, no table needed.
 Those are the two strongest citations available anywhere in this stack — stronger than any command
 layout, which cited a shape the parser *permits* rather than one it *requires*.
 
-## 5. What is not citable, and is therefore deferred
+`proj`'s citation is so strong that it dissolves the work: zero spaces is forced, so every `proj` in
+existence already reads `e.f`, and a layout for it would be provably dead code on every input the
+parser accepts. It is cited here and deliberately not written.
+
+## 5. Rule 1 is citable after all — when the set of declarations is closed
+
+§3 says the projection cannot carry declared-atom spacing, which reads like a verdict on every atom.
+It is not. It is a verdict on *reading the table at runtime*. A layout can still name a specific
+declaration and mirror it, and whether that is honest turns on one question: **can the corpus being
+formatted change the declaration out from under the layout?**
+
+For a notation, yes — §6. For the bracketed binders, no. `explicitBinder`, `implicitBinder` and
+`instBinder` are `leading_parser`s in `Lean/Parser/Term/Basic.lean` of the compiler this stack pins at
+v4.32.0. That is a closed set: it changes when the toolchain changes, which is a version bump with a
+gate attached, not something a `.lean` file in the input can do. 3,851 nodes of the sample:
+
+| kind | count | grammar | cite |
+| --- | --- | --- | --- |
+| `Term.explicitBinder` | 2,100 | `"(" >> withoutPosition (many1 binderIdent >> binderType >> optional (binderTactic <|> binderDefault)) >> ")"` | `Term/Basic.lean:206-207` |
+| `Term.instBinder` | 951 | `"[" >> withoutPosition (optIdent >> termParser) >> "]"` | `:248-249` |
+| `Term.implicitBinder` | 800 | `"{" >> withoutPosition (many1 binderIdent >> binderType) >> "}"` | `:217-218` |
+
+One rule covers all three — **brackets tight, every interior gap one space** — and each half is read
+off the grammar. The brackets are declared bare (`"("`, not `" ( "`), and rule 2 adds nothing because
+`(x` does not re-lex as one token. The interior gaps are rule 1, each with its own declaration:
+`binderType := optional (" : " >> termParser)` (`:181-182`), `binderDefault := " := " >> termParser`
+(`:186-187`), `optIdent := optional (atomic (ident >> " : "))` (`:238-239`) — and `many1 binderIdent`,
+which is rule 2's unconditional ident-ident space.
+
+**`withoutPosition` is the part worth keeping.** All three wrap their interior in it, and it "runs `p`
+without the saved position, meaning that position-checking parsers like `colGt` will have no effect …
+usually used by bracketing constructs like `(...)` so that the user can locally override whitespace
+sensitivity" (`Parser/Basic.lean:1565-1571`). So §7's constraint — an app's line breaks are
+parser-significant — **is switched off by the grammar inside a binder's brackets**. That makes the
+binder warrant stronger than `app`'s, which is the reverse of what §4 would predict.
+
+`strictImplicitBinder` is the same citation read backwards, and stays on the conservative path: it is
+the one bracketed binder whose interior is *not* wrapped in `withoutPosition` (`:234-236`), so an
+enclosing saved position still reaches its contents, and collapsing a run of spaces moves them left —
+the quantity `colGt` tests. A rule that has to be argued is worse than none.
+
+**`(x :Nat)` is where this stops being cosmetic.** It parses today: `" : "` is a pretty-printing
+string, not a parsing one. So the layout rewrites source that was never wrong, and it is the first
+time this formatter has *added* a space rather than collapsed one. That is only defensible because the
+space being added is the one the declaration names.
+
+## 6. What is not citable, and is therefore deferred
 
 **Operators are notations, and their spacing is rule 1.** The census, by kind:
 
@@ -110,7 +156,13 @@ for `lemma`, for the same reason, and `RLF-EXTENSIONS` owns it. The census's own
 this is not detected by looking for guillemets: those are escaping, present only when the notation's
 syntax needs them.
 
-## 6. The margin and `nest` are still open, and `checkColGt` now constrains them
+§5 is the line between this section and that one, and it is not "core versus not". It is **closed
+versus open**. A core notation is declared in `Init/Notation.lean`, which this stack pins just as
+firmly as `Term/Basic.lean` — but `notation` is an extension point, and the corpus can add to it, so a
+table of core notations would be a table that is silently incomplete rather than merely stale.
+`Arithcc.«term_≃[_]_»` is in the census to prove it.
+
+## 7. The margin and `nest` are still open, and `checkColGt` now constrains them
 
 - **The margin is still unset.** `Printer.format` requires `width` rather than defaulting it
   (`RLC-SPEC` §5: it enters cache identity), and no prompt in this stack has picked a value.
@@ -128,3 +180,30 @@ That is what this prompt implements: **collapse, do not break.** `run-printer-sa
 that makes this empirical rather than argued — pass one's output must re-analyze through
 `__analyze-exact` before anything else is asserted about it, so a collapse that violated `checkColGt`
 would fail as "formatted output does not analyze" rather than pass quietly.
+
+## 8. What the corpus says back: the citable part changes nothing
+
+`app_slack=0` and `binder_slack=0` across all 62 modules, over 11,679 applications and 3,851 binders,
+and `reformatted` sits at 12 — the same 12 it was before either layout existed
+(`evidence/01-printer-sample.txt`). **Real Lean already writes `f a` and `(x : Nat)`.**
+
+Neither zero is taken on the corpus's word. A counter that measured nothing would report 0 just as
+readily, which is the exact shape `RLF-COMMANDS`'s `misordered=0` turned out to have, so both are
+hand-counted against a written fixture through the same code path — 7 and 15, `tests/printer/run.sh` —
+and three mutations confirm the golden pins the rule rather than the output: `bracketed` made
+unconditional gives `( x y : Nat )`, the last-gap arithmetic off by one gives `[Inhabited Nat ]`, and
+dropping the spaces-only guard deletes `/- why -/` from a binder and rejoins the two lines of an app.
+
+**This is the fourth time this corpus has answered the same way**, after 0 collapsible members of 260,
+`reformatted` unmoved by the member layout, and `app_slack=0`. It is consistent enough to be a finding
+rather than a run of luck:
+
+> The part of term formatting that is citable today is the part that changes nothing on code people
+> actually wrote. The part that would change something is vertical — and it needs a margin and `nest`,
+> which §7 does not have.
+
+That is not an argument against the layouts. It is what makes them safe to have landed: they are the
+horizontal skeleton the vertical work will be built on, and they are known not to move a byte of real
+code while `nest` is still missing. But it does say where the value in this stack is, and it is not in
+`RLF-EXPRESSIONS`'s remaining task lines. **The margin question is the one that matters, and it is
+still open.**

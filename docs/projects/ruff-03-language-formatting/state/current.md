@@ -50,11 +50,14 @@ Printing inside the frontend would buy free arg order for a median 1.96 s fronte
 | 04-extensions | RLF-EXTENSIONS | planned | RLF-TACTICS |
 | 05-corpus | RLF-FINAL | planned | RLF-EXTENSIONS |
 
-**`RLF-EXPRESSIONS` is in progress.** `Term.app` is laid out and `Term.proj` is answered; the census
-that decides the rest is `evidence/02-term-census.txt`, and the design is `notes/02-expressions.md`.
-What it has found so far is recorded under "Known evidence" below — the load-bearing item being that
-**spacing, not precedence, is what the projection cannot supply**, and that the application layout is a
-**provable no-op on all 62 modules of foreign Lean**.
+**`RLF-EXPRESSIONS` is in progress.** `Term.app` and the three bracketed binders are laid out and
+`Term.proj` is answered; the census that decides the rest is `evidence/02-term-census.txt`, and the
+design is `notes/02-expressions.md`. What it has found so far is recorded under "Known evidence" below
+— the load-bearing items being that **spacing, not precedence, is what the projection cannot supply**,
+and that **both layouts are provable no-ops on all 62 modules of foreign Lean**. That second one has
+now happened four times running, and `notes/02-expressions.md` §8 promotes it from a curiosity to the
+finding: the citable part of term formatting is the part that changes nothing, and **the margin
+question is where the remaining value is**.
 
 ## Known evidence
 
@@ -91,6 +94,8 @@ What it has found so far is recorded under "Known evidence" below — the load-b
   members, `reformatted` unmoved, now `app_slack=0`), and it says something about the prompt rather
   than the layout: *the part of term formatting that is safely available today is the part that changes
   nothing.* The part that would change something is vertical, and needs `nest` and a margin.
+  `binder_slack=0` below makes it four, which is where `notes/02-expressions.md` §8 stops treating it
+  as a coincidence.
 - **Three mutations prove the application layout non-vacuous, and they fail in three different
   places.** Dropping `gapDoc`'s spaces-only test deletes `/- why -/` outright, joins an app's lines,
   **and fails 7 of this repository's own 20 modules** — that guard is load-bearing on real code.
@@ -98,6 +103,40 @@ What it has found so far is recorded under "Known evidence" below — the load-b
   `List.replicate 3 8` into `List.replicate 3     8`. Emitting an unciteable kind's bytes wholesale
   instead of recursing into its parts leaves `id (id     9)`. The last two are **invisible to the
   corpus round-trip** and rest entirely on the fixture, which is what the fixture is for.
+- **The three bracketed binders are laid out on one rule, and rule 1 turns out to be citable when the
+  declaring set is closed.** `explicitBinder` (2,100), `instBinder` (951) and `implicitBinder` (800)
+  take *brackets tight, every interior gap one space* — read off `Lean/Parser/Term/Basic.lean:206-207`,
+  `:248-249`, `:217-218`. This is the first layout to depend on a **declared atom** (`binderType`'s
+  `" : "` at `:181-182`, `binderDefault`'s `" := "` at `:186-187`), which the bullet above says the
+  projection cannot carry — and the resolution is that that bullet is about *querying the table at
+  runtime*, not about naming a declaration. These are `leading_parser`s in the pinned v4.32.0 compiler:
+  a **closed** set, changed only by a toolchain bump. A notation is an **open** one the corpus can
+  extend. Closed-versus-open is the line, not core-versus-not.
+- **`withoutPosition` makes the binder warrant stronger than the app's, which is the reverse of what
+  the citations predict.** All three binders wrap their interior in it, and it "runs `p` without the
+  saved position, meaning that position-checking parsers like `colGt` will have no effect"
+  (`Lean/Parser/Basic.lean:1565-1571`). So the `checkColGt` that forces `app` into *collapse, do not
+  break* **is switched off by the grammar inside a binder's brackets**. `strictImplicitBinder` is that
+  same citation backwards and stays conservative: it is the one bracketed binder without
+  `withoutPosition` (`:234-236`), so collapsing would move its contents left under a live column check.
+- **`(x :Nat)` → `(x : Nat)` is the first space this formatter has ever added.** It parses today —
+  `" : "` is a pretty-printing string, not a parsing one — so the layout rewrites source that was never
+  wrong. Defensible only because the added space is the one the declaration names, and it is the
+  evidence the rule is declared spacing rather than "squeeze runs of spaces", which no collapsing-only
+  fixture could show.
+- **`binder_slack=0` on all 62 modules, and it is a different predicate from `app_slack`.** A binder's
+  declared spacing differs per gap, so this counts every gap whose bytes differ from the declaration —
+  gaps that are too *tight* included, which is why it cannot be a "count the long runs" check. Zero
+  across 3,851 binders: real Lean writes `(x : Nat)` already. Hand-counted at 15 against the wonky
+  fixture before being believed. Three mutations pin the rule rather than the output: `bracketed` made
+  unconditional gives `( x y : Nat )`; the last-gap arithmetic off by one gives `[Inhabited Nat ]`;
+  dropping the spaces-only guard deletes `/- why -/` **from inside a binder's brackets**, which is the
+  case that shows the guard earns its place there and not only in flat runs.
+- **The gap refusal is per gap, not per node — and the fixture nearly failed to say so.** A comment in
+  a binder's first gap freezes *that gap* while the three behind it still collapse. The fixture
+  originally wrote the commented binder with its other gaps already canonical, where a per-gap rule and
+  an all-or-nothing rule emit identical bytes and the golden would have pinned neither; it now carries
+  slack in the later gaps on purpose. Same shape as the header's per-gap import rule.
 - **Operators are notations, and their spacing is the declared string this printer cannot read.**
   13,219 of 122,011 token-bearing nodes (10.8%) are notation or foreign syntax: `«term_≤_»` (1548),
   `«term_=_»` (1059), `«term_*_»` (641), `termℕ` (638). Some are core and could each be hardcoded;
