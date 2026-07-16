@@ -66,6 +66,32 @@ trivia runs. `tail` is no longer stored as a string; it is the span `[terminalSt
 `headerStop`, `terminalStop`, and invariants 1–6 stand unchanged — only their representation is
 cheaper to check.
 
+### What the token stream covers: `[headerStop, terminalStop)`, and nothing else claims to
+
+Two boundaries are not free choices, and `RLS-FINAL` established both against real code after
+`RLS-IMPL` got the first one wrong.
+
+`terminalStop` is where the **terminal command begins**, not where it ends. Neither producer puts a
+terminal into `commands` — `eoi` has no text to spell and a module linter never receives it — so
+recording the terminal's end claims bytes no token covers. For `eoi` the two coincide at end of
+file, which is why every fixture agreed; for `#exit` they do not, and every file containing one was
+rejected whole. The tail `[terminalStop, normalizedBytes)` is therefore `#exit` plus the remainder
+Lean never parsed, reconstructed verbatim and never tokenized.
+
+Nothing is stranded before `eoi`, because trailing trivia is greedy up to the next token's text: a
+file ending `\n\n-- comment\n` records that comment inside the *last command's* trailing trivia.
+Leading trivia is consequently empty for every token but the first, which is why `headerStop` is the
+first command's leading start and why storing a `leadingStart` per token was rejected above.
+
+A **`choice` node contributes tokens from one alternative only**. The parser emits one when several
+parsers tie, and it holds several trees over a single byte range; walking every alternative spells
+those bytes once per alternative and the token stream runs backwards.
+`Lean/Parser/Basic.lean:1418-1440` licenses taking any one: `longestMatchStep` restores each
+alternative to the same `startPos` and keeps it only on a tie whose first component is the stop
+position. Equal start, equal stop, one tokenizer — they differ in tree shape alone. The `choice`
+node stays in `nodes` so a consumer sees that the range was ambiguous rather than being told a
+single parse was authoritative.
+
 ### Identity is normalized-only: `lineEndings` and raw identity are gone
 
 §6 froze `lineEndings`, `rawBytes`, and `rawDigest` into the schema. Implementation showed they
@@ -98,6 +124,16 @@ ordinary miss. `LosslessSource` itself keeps named fields — there is one per f
 Ratio against source is not the compactness claim and the test does not assert it: a 34-byte module
 measures 29x because two digests and the schema strings dominate. The artifact is `O(tokens + nodes
 + distinct kinds)`, and that is what the bound in `LeanFmtTest` checks.
+
+`RLS-FINAL` measured this on 62 real mathlib modules and the model holds:
+`artifact ≈ 24.86 × (tokens + nodes)` fits at `R² = 0.9986`, against `R² = 0.9436` for a fit against
+source bytes. Bytes-per-element varies 2.8x across the sample where ratio-against-source varies
+7.0x, so the stable divisor — the one the schema actually charges for — is elements.
+
+That also settles what looked like a contradiction. The fixture measures 3.93x and mathlib measures
+**10.26x**, from one cost model: token density varies 16.1x across the sample, and mathlib spends
+6.28 source bytes per token against the comment-heavy fixture's 23.0. A ratio is a fact about a
+file, not about this schema. Full profile in `results/03-acceptance.md`.
 
 ## Trivia classification
 

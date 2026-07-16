@@ -27,6 +27,7 @@ lake exe lean-fmt
 lake exe lean-fmt-tests
 tests/compiler/run.sh
 tests/check/run.sh
+tests/lossless/run.sh
 tests/modes/run.sh
 tests/scale/run.sh
 tests/service/run.sh
@@ -62,6 +63,12 @@ of production modules until their owning prompt selects and verifies the interfa
   text and cannot observe the file's bytes at all. Only reading a file and publishing one may touch
   raw bytes, via `LosslessSource.normalize`/`denormalize`. Digesting raw bytes against a
   compiler-produced identity compares two different strings.
+- A `Syntax` leaf walk is not a linear cover of the source. A `choice` node holds several parses of
+  one byte range, so exactly one alternative may spell those bytes; walking all of them runs the
+  token stream backwards. Terminal commands (`eoi`, `#exit`) are never in the command stream, so the
+  region a projection models ends where the terminal *begins*, and everything from there is
+  verbatim tail. Both rules are load-bearing on ordinary files, not edge cases: measured incidence
+  is 1 of 5 sampled mathlib modules for `choice`, and every file containing `#exit` for the other.
 - Fetch and consume `leanFmtArtifact` inside one private Lake-owning operation. `Lake.Artifact` is a
   public descriptor, not authority by type alone; recompute its content hash and match module and
   the full source snapshot. Filesystem presence or a raw path is not build validity.

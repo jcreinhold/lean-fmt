@@ -161,14 +161,19 @@ with open(sys.argv[1]) as stream:
 with open(sys.argv[2]) as stream:
     oracle = json.load(stream)
 
+# `RLS-IMPL` replaced the flat `commands`/`sourceBytes` projection with `LosslessSource`, so the
+# command stream is now the root of each command's node tree: `collect` walks one command at a time
+# with no parent, and widens each node to the hull of the leaves beneath it. That hull is what
+# `Syntax.getRange?` returns, which is what the probe records — so the two must still agree
+# command for command. The probe shares no module with `LeanFmt`, which is the point of comparing.
+source = artifact["source"]
+kinds, nodes = source["kinds"], source["nodes"]
 actual = []
-for command in artifact["commands"]:
-    item = {"kind": command["kind"]}
-    if "range" in command:
-        item.update(command["range"])
-    actual.append(item)
+for kind, parent, start, stop in nodes:
+    if parent is None:
+        actual.append({"kind": kinds[kind], "start": start, "stop": stop})
 assert actual == oracle["commands"], (actual, oracle["commands"])
-assert artifact["sourceBytes"] == oracle["source_bytes"]
+assert source["normalizedBytes"] == oracle["source_bytes"]
 PY
 
   artifact_bytes=$(wc -c <"$artifact" | tr -d ' ')
