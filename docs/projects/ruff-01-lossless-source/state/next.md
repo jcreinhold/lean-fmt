@@ -1,9 +1,9 @@
 # Next Proof Packet
 
 - Stack: ruff-01-lossless-source
-- First unresolved: 01-authority
-- Claim ID: RLS-SPEC
-- Prompt: 01-authority
+- First unresolved: 02-implementation
+- Claim ID: RLS-IMPL
+- Prompt: 02-implementation
 - Module: (docs only)
 - Target file: (docs only)
 
@@ -17,7 +17,7 @@ Read this file, the target prompt, target files, listed source/template line ran
 
 ## Proof Task
 
-- Deliver **RLS-SPEC**: Inspect Lean parser `SourceInfo`, token/trivia behavior, parser extensions, quotations, and current artifact code. Write `notes/01-source-authority.md` specifying which compiler-owned data is authoritative, a versioned wire schema, invariants, and rejected alternatives. Build adversarial fixtures before implementation.
+- Deliver **RLS-IMPL**: Add private modules for the immutable projection and codec. Produce it from both exact analysis and the compiler plugin/facet, validate all ranges and hashes on consumption, and migrate canonical semantic inputs without widening the public API.
 - Read `roadmap.md`, its prerequisite stack results, `AGENTS.md`, the current implementation and tests, and the relevant Lean compiler/Lake sources before changing an interface. Write interface comments and characterization tests before implementation where the behavior is not already frozen.
 
 ## Reuse
@@ -30,6 +30,6 @@ Inspect the live goal, search relevant declarations, test plausible proof steps,
 
 ## Stop Rules
 
-- No claim may rely on `Syntax.getRange?` alone or infer comments from gaps without proving round-trip behavior.
-- Record exact toolchain experiments and a byte-for-byte oracle.
+- Keep the compiler plugin dependency cone below application/cache/service modules.
+- Add corrupt, stale, wrong-module, wrong-source, local-syntax, comment, quotation, and Unicode tests.
 - Stop rather than weakening exact semantics, write safety, or the resource envelope.

@@ -1,0 +1,102 @@
+file=fixtures/Trivia.lean
+  raw_bytes=369 normalized_bytes=369 line_endings_normalized=false
+  commands=6 eoi=true
+  leaves=24 original=24 synthetic=0 missing=0
+  slice_roundtrip_normalized=true token_roundtrip_normalized=true
+  slice_roundtrip_raw=true token_roundtrip_raw=true
+  coverage=contiguous_from_zero
+file=fixtures/Tokens.lean
+  raw_bytes=757 normalized_bytes=757 line_endings_normalized=false
+  commands=18 eoi=true
+  leaves=139 original=139 synthetic=0 missing=0
+  slice_roundtrip_normalized=true token_roundtrip_normalized=true
+  slice_roundtrip_raw=true token_roundtrip_raw=true
+  coverage=contiguous_from_zero
+file=/private/tmp/claude-501/-Users-jcreinhold-Code-lean-fmt/fa885abd-e755-4fdf-86cf-66190171aee5/scratchpad/rt4/Crlf.lean
+  raw_bytes=31 normalized_bytes=28 line_endings_normalized=true
+  commands=3 eoi=true
+  leaves=8 original=8 synthetic=0 missing=0
+  slice_roundtrip_normalized=true token_roundtrip_normalized=true
+  slice_roundtrip_raw=false token_roundtrip_raw=false
+  coverage=contiguous_from_zero
+file=/private/tmp/claude-501/-Users-jcreinhold-Code-lean-fmt/fa885abd-e755-4fdf-86cf-66190171aee5/scratchpad/rt4/NoFinalNewline.lean
+  raw_bytes=37 normalized_bytes=37 line_endings_normalized=false
+  commands=3 eoi=true
+  leaves=8 original=8 synthetic=0 missing=0
+  slice_roundtrip_normalized=true token_roundtrip_normalized=true
+  slice_roundtrip_raw=true token_roundtrip_raw=true
+  coverage=contiguous_from_zero
+file=/private/tmp/claude-501/-Users-jcreinhold-Code-lean-fmt/fa885abd-e755-4fdf-86cf-66190171aee5/scratchpad/rt4/TrailingSpace.lean
+  raw_bytes=45 normalized_bytes=45 line_endings_normalized=false
+  commands=3 eoi=true
+  leaves=8 original=8 synthetic=0 missing=0
+  slice_roundtrip_normalized=true token_roundtrip_normalized=true
+  slice_roundtrip_raw=true token_roundtrip_raw=true
+  coverage=contiguous_from_zero
+file=/private/tmp/claude-501/-Users-jcreinhold-Code-lean-fmt/fa885abd-e755-4fdf-86cf-66190171aee5/scratchpad/rt4/HeaderOnly.lean
+  raw_bytes=7 normalized_bytes=7 line_endings_normalized=false
+  commands=2 eoi=true
+  leaves=2 original=2 synthetic=0 missing=0
+  slice_roundtrip_normalized=true token_roundtrip_normalized=true
+  slice_roundtrip_raw=true token_roundtrip_raw=true
+  coverage=contiguous_from_zero
+file=/private/tmp/claude-501/-Users-jcreinhold-Code-lean-fmt/fa885abd-e755-4fdf-86cf-66190171aee5/scratchpad/rt4/CommentOnly.lean
+  raw_bytes=38 normalized_bytes=38 line_endings_normalized=false
+  commands=2 eoi=true
+  leaves=2 original=2 synthetic=0 missing=0
+  slice_roundtrip_normalized=true token_roundtrip_normalized=true
+  slice_roundtrip_raw=true token_roundtrip_raw=true
+  coverage=contiguous_from_zero
+file=/private/tmp/claude-501/-Users-jcreinhold-Code-lean-fmt/fa885abd-e755-4fdf-86cf-66190171aee5/scratchpad/rt4/TrailingBlankLines.lean
+  raw_bytes=45 normalized_bytes=45 line_endings_normalized=false
+  commands=3 eoi=true
+  leaves=8 original=8 synthetic=0 missing=0
+  slice_roundtrip_normalized=true token_roundtrip_normalized=true
+  slice_roundtrip_raw=true token_roundtrip_raw=true
+  coverage=contiguous_from_zero
+file=/private/tmp/claude-501/-Users-jcreinhold-Code-lean-fmt/fa885abd-e755-4fdf-86cf-66190171aee5/scratchpad/rt4/Exit.lean
+  raw_bytes=56 normalized_bytes=56 line_endings_normalized=false
+  commands=3 eoi=false
+  leaves=8 original=8 synthetic=0 missing=0
+  slice_roundtrip_normalized=false token_roundtrip_normalized=false
+  slice_roundtrip_raw=false token_roundtrip_raw=false
+  coverage=contiguous_from_zero
+  slice_first_diff_byte=36
+    expected=before : Nat := 0\n#exit\nnot lean at all !!!\n
+    actual  =before : Nat := 0\n#exit\n
+  token_first_diff_byte=36
+    expected=before : Nat := 0\n#exit\nnot lean at all !!!\n
+    actual  =before : Nat := 0\n#exit\n
+  parse_error: /private/tmp/claude-501/-Users-jcreinhold-Code-lean-fmt/fa885abd-e755-4fdf-86cf-66190171aee5/scratchpad/rt4/Tabs.lean:4:0: error: tabs are not allowed; please configure your editor to expand them
+
+rejected: command parse failed: /private/tmp/claude-501/-Users-jcreinhold-Code-lean-fmt/fa885abd-e755-4fdf-86cf-66190171aee5/scratchpad/rt4/Tabs.lean
+  parse_error: /private/tmp/claude-501/-Users-jcreinhold-Code-lean-fmt/fa885abd-e755-4fdf-86cf-66190171aee5/scratchpad/rt4/Bom.lean:1:0: error: expected token
+
+rejected: command parse failed: /private/tmp/claude-501/-Users-jcreinhold-Code-lean-fmt/fa885abd-e755-4fdf-86cf-66190171aee5/scratchpad/rt4/Bom.lean
+  parse_error: /private/tmp/claude-501/-Users-jcreinhold-Code-lean-fmt/fa885abd-e755-4fdf-86cf-66190171aee5/scratchpad/rt4/LoneCr.lean:3:21: error: isolated carriage returns are not allowed
+
+rejected: command parse failed: /private/tmp/claude-501/-Users-jcreinhold-Code-lean-fmt/fa885abd-e755-4fdf-86cf-66190171aee5/scratchpad/rt4/LoneCr.lean
+
+--- control: file-local syntax under a parse-only token table ---
+  parse_error: fixtures/Syntax.lean:13:14: error: unexpected identifier; expected command
+
+  parse_error: fixtures/Syntax.lean:13:44: error: unexpected token ')'; expected command
+
+  parse_error: fixtures/Syntax.lean:14:52: error: unexpected token ')'; expected command
+
+  parse_error: fixtures/Syntax.lean:22:28: error: expected token
+
+  parse_error: fixtures/Syntax.lean:39:14: error: unexpected identifier; expected command
+
+  parse_error: fixtures/Syntax.lean:39:45: error: unexpected token ')'; expected command
+
+  parse_error: fixtures/Syntax.lean:40:48: error: unexpected token ')'; expected command
+
+rejected: command parse failed: fixtures/Syntax.lean
+  expected: parse-only projection cannot parse file-local syntax
+
+--- compiler-plugin probe: same fixtures, elaborated token table ---
+info: fixtures/Trivia.lean:22:0: lossless-probe module=Trivia source_bytes=369 commands=4 rebuilt_bytes=361 rebuilt_eq_source=false command_span=[8,369) leaves_original=22 leaves_synthetic=0 leaves_missing=0 prefix_missing=8
+info: fixtures/Tokens.lean:28:0: lossless-probe module=Tokens source_bytes=757 commands=16 rebuilt_bytes=749 rebuilt_eq_source=false command_span=[8,757) leaves_original=137 leaves_synthetic=0 leaves_missing=0 prefix_missing=8
+info: fixtures/Syntax.lean:44:0: lossless-probe module=Syntax source_bytes=1023 commands=17 rebuilt_bytes=1002 rebuilt_eq_source=false command_span=[21,1023) leaves_original=149 leaves_synthetic=0 leaves_missing=0 prefix_missing=21
+cases=13 failures=0
