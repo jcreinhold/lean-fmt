@@ -104,7 +104,7 @@ the way the layout would write them.
 | | this repository | frozen mathlib sample |
 | --- | --- | --- |
 | modules | 20 | **62**, 0 skipped |
-| commands with a cited layout | **415 of 437 (95.0%)** | **1579 of 2734 (57.8%)** |
+| commands with a cited layout | **423 of 446 (94.8%)** | **1579 of 2734 (57.8%)** |
 | module headers laid out | 20 of 20 | **62 of 62** |
 | member shells claimed | 54 | 13 |
 | modules the printer changed | 0 — it is already canonical | **12** |
@@ -120,8 +120,8 @@ Structural figures, from `evidence/01-projection-shape.txt`:
 
 | | |
 | --- | --- |
-| declarations structurally claimable | **358 of 369 (97.0%)** |
-| nodes carrying no token at all | **14,405 of 40,027 — 36.0%** |
+| declarations structurally claimable | **366 of 377 (97.1%)** |
+| nodes carrying no token at all | **14,827 of 41,340 — 35.9%** |
 | …of those, whose parent also has direct token children | **6,161 — 15.4% of all nodes** |
 
 **Two independent measurements of coverage agree exactly.**

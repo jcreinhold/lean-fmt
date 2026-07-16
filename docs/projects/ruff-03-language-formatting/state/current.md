@@ -6,8 +6,8 @@ first_unresolved: 02-expressions
 # Current state
 
 `RLF-COMMANDS` is **verified** (`results/01-commands.md`): the printer is live and proven lossless on
-this repository *and* on 62 modules of foreign Lean, **415 of the corpus's 437 commands take a cited
-canonical layout** — `namespace` (25), `end` (25), `open` (7), and the shell of 358 of 369
+this repository *and* on 62 modules of foreign Lean, **423 of the corpus's 446 commands take a cited
+canonical layout** — `namespace` (25), `end` (25), `open` (7), and the shell of 366 of 377
 declarations — **all 20 module headers take theirs**, and **54 constructor and field shells** are
 claimed inside those declarations. `section` and `universe` have layouts too; this corpus contains
 none of either, so only the fixtures and the sample exercise them. Its external prerequisite stack
@@ -50,7 +50,68 @@ Printing inside the frontend would buy free arg order for a median 1.96 s fronte
 | 04-extensions | RLF-EXTENSIONS | planned | RLF-TACTICS |
 | 05-corpus | RLF-FINAL | planned | RLF-EXTENSIONS |
 
+**`RLF-EXPRESSIONS` is in progress.** `Term.app` is laid out and `Term.proj` is answered; the census
+that decides the rest is `evidence/02-term-census.txt`, and the design is `notes/02-expressions.md`.
+What it has found so far is recorded under "Known evidence" below — the load-bearing item being that
+**spacing, not precedence, is what the projection cannot supply**, and that the application layout is a
+**provable no-op on all 62 modules of foreign Lean**.
+
 ## Known evidence
+
+- **Precedence was never the blocker, and spacing is.** The projection carries no precedence
+  (`LosslessSource.lean:64-86`), but it does not need to: the parser already applied precedence when
+  it built the tree, so `a + b * c` arrives with `b * c` already a subtree of `+`. The numbers are what
+  the parser needed to *decide* the shape; the shape is what a printer needs. What the tree does **not**
+  carry is the space between two atoms. Lean's own formatter takes it from the atom's *declared*
+  string — `infixl:65 " + "` (`Init/Notation.lean:284`) declares `+` with a space on each side, and
+  `Init/Prelude.lean:5390` says so outright — falling back to a lexical minimum-separation rule only
+  for atoms declaring none (`Lean/PrettyPrinter/Formatter.lean:366-417`). The projection records a
+  token's *source* text, never the declaration. So `RLF-COMMANDS`'s "one space between two tokens" does
+  not generalize to terms, and a term layout may cite only kinds whose spacing does not depend on that
+  declared string.
+- **`Term.app` is laid out, on the strongest citation in this stack.** It is the largest term kind in
+  real Lean — 11,679 of 122,011 token-bearing nodes on the frozen sample — and it declares **no atom
+  at all**: `app := trailing_parser:leadPrec:maxPrec many1 argument` (`Lean/Parser/Term.lean:892`).
+  What separates a function from its argument is `argument := checkWsBefore "expected space" >>
+  checkColGt … ` (`:885-888`), and `checkWsBefore` "requires that there is some whitespace at this
+  location" (`Lean/Parser/Basic.lean:1180-1184`). **The parser rejects `f a` with the space removed**,
+  so one space is the grammar's minimum rather than this formatter's taste — every command layout cited
+  a shape the parser merely *permits*.
+- **`Term.proj` needs no layout, and that is an answer rather than a gap.** It is `checkNoWsBefore >>
+  "." >> checkNoWsBefore >> (fieldIdx <|> rawIdent)` (`:906-907`), so the parser rejects `e . f`. Every
+  proj in a module that analyzed is already tight, and a layout collapsing it would be dead code on
+  every input this printer can receive. 1,448 occurrences, zero work.
+- **The application layout changes nothing on real Lean, and that is measured rather than assumed.**
+  `app_slack=0` across all 62 sample modules: real Lean does not write `f     a`. `reformatted` could
+  not have found this — it is per module, and the command layouts already reformat 12 of 62, so a term
+  layout changing thousands of gaps and one changing none both report 12. The counter is *validated*
+  rather than trusted, because a broken one would also answer 0, which is exactly what `misordered=0`
+  turned out to be: `tests/printer/run.sh` pins it at 7 against the wonky fixture, an answer known by
+  reading the golden. **This is the third appearance of this corpus shape** (0 collapsible of 260
+  members, `reformatted` unmoved, now `app_slack=0`), and it says something about the prompt rather
+  than the layout: *the part of term formatting that is safely available today is the part that changes
+  nothing.* The part that would change something is vertical, and needs `nest` and a margin.
+- **Three mutations prove the application layout non-vacuous, and they fail in three different
+  places.** Dropping `gapDoc`'s spaces-only test deletes `/- why -/` outright, joins an app's lines,
+  **and fails 7 of this repository's own 20 modules** — that guard is load-bearing on real code.
+  Reading the app's own parts instead of lifting the `null` that `many1 argument` builds turns
+  `List.replicate 3 8` into `List.replicate 3     8`. Emitting an unciteable kind's bytes wholesale
+  instead of recursing into its parts leaves `id (id     9)`. The last two are **invisible to the
+  corpus round-trip** and rest entirely on the fixture, which is what the fixture is for.
+- **Operators are notations, and their spacing is the declared string this printer cannot read.**
+  13,219 of 122,011 token-bearing nodes (10.8%) are notation or foreign syntax: `«term_≤_»` (1548),
+  `«term_=_»` (1059), `«term_*_»` (641), `termℕ` (638). Some are core and could each be hardcoded;
+  that is refused on two grounds. A table of hundreds of entries mirroring declarations this printer
+  cannot query goes stale silently the moment `Init/Notation.lean` changes, and no gate here would
+  notice. And it does not generalize — `Arithcc.«term_≃[_]_»` is in the same census, declared by the
+  corpus being formatted. So notations keep their bytes, the same answer `lemma` got, and
+  `RLF-EXTENSIONS` owns them. `termℕ` is why the census does not detect notations by their guillemets:
+  those are escaping, present only when the notation's own syntax needs them.
+- **A term layout inside a command on the conservative path would be sound, and is not done.** An
+  `app` is an `app` whatever encloses it, and collapsing its gaps rests on `argument`'s `checkWsBefore`
+  rather than on any claim about the enclosing kind — so terms inside a `lemma` could be laid out. They
+  are not, only because that is a wider claim than this prompt has measured. That is scope, recorded
+  rather than a rule.
 
 - **Foreign code found a defect that this repository's corpus and every fixture had missed.** The
   printer now runs over the frozen mathlib sample (`experiments/run-printer-sample.sh`,
@@ -221,7 +282,7 @@ Printing inside the frontend would buy free arg order for a median 1.96 s fronte
   every command — the printer would fall back to bytes and be the identity function it was before any
   layout existed. This repository also writes its declarations the way the layout writes them, so even
   a layout that runs changes nothing here. `printer-roundtrip` therefore reports `canonical=`, the
-  commands actually laid out, and `tests/printer/run.sh` floors the corpus total: **415 of 437**, and `members=` the shells claimed
+  commands actually laid out, and `tests/printer/run.sh` floors the corpus total: **423 of 446**, and `members=` the shells claimed
   inside them, floored at 50 (**54**) because `canonical=` cannot see them — a command counts once
   whether it claims one region or six. The
   header gets the same treatment for the same reason, but as an exact count rather than a floor
@@ -230,12 +291,12 @@ Printing inside the frontend would buy free arg order for a median 1.96 s fronte
   *what* the layouts produce; these pin *that* they run, on real code, at scale.
 - **Two independent measurements of coverage agree exactly, and keep agreeing as it grows.**
   `experiments/run-projection-shape.sh` re-implements the structural half of the printer's predicate in
-  Python against the same projection and finds 350 of 361 declarations claimable; the printer, in Lean,
-  counts 407 = 350 + 25 `namespace` + 25 `end` + 7 `open`. So on this corpus every
+  Python against the same projection and finds 366 of 377 declarations claimable; the printer, in Lean,
+  counts 423 = 366 + 25 `namespace` + 25 `end` + 7 `open`. So on this corpus every
   structurally-claimable declaration also passes the runtime guards the probe cannot model (clean
   trivia, newline-free flat run, column 0). The probe over-counts by construction and says so;
   `canonical=` is the honest figure.
-- **That 407 commands take the layout and all 20 modules stay byte-identical is what proves the shell
+- **That 423 commands take the layout and all 20 modules stay byte-identical is what proves the shell
   is a prefix.** A shell that ran past the name, or stopped short, would duplicate or drop bytes on
   real code. The same round-trip is the only thing asserting that the header layout's claim ends
   exactly at `headerStop` — that the parser's idea of where the header stops and the projection's agree
