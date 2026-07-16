@@ -1,6 +1,6 @@
 ---
 claim_id: ECV2-SCALE
-status: planned
+status: verified
 depends_on: [ECV2-MODES]
 ---
 

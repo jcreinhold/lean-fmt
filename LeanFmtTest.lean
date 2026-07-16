@@ -1,6 +1,7 @@
 module
 
 import all LeanFmt.ArtifactStore
+import all LeanFmt.Application
 import all LeanFmt.Cache
 import all LeanFmt.Config
 import all LeanFmt.Edit
@@ -269,6 +270,26 @@ private def verifyFacetArtifact (path sourcePath : System.FilePath)
   ensure (artifact.trailingWhitespace == expectedTrailingWhitespace)
     "facet artifact lost traced rule configuration"
 
+private def verifyOfficialFacet (root sourcePath : System.FilePath)
+    (expectedTrailingWhitespace : Bool) : IO Unit := do
+  let root ← IO.FS.realPath root
+  let config ← FormatterConfig.load root
+  let project ← Project.load root config #[sourcePath]
+  let some target := project.targets[0]?
+    | throw <| IO.userError "official-facet test did not select exactly one source"
+  unless project.targets.size == 1 do
+    throw <| IO.userError "official-facet test did not select exactly one source"
+  let artifacts ← Application.officialArtifacts project.workspace #[target]
+  let some (some artifact) := artifacts[0]?
+    | throw <| IO.userError "registered official facet was unavailable or invalid"
+  ensure (artifact.trailingWhitespace == expectedTrailingWhitespace)
+    "registered official facet lost traced rule configuration"
+  let some semantic := SemanticAnalysis.ofEnvelope? target.source { artifact? := some artifact }
+    | throw <| IO.userError "registered official facet did not produce a canonical result"
+  ensure (semantic == SemanticAnalysis.success target.source
+      (runRules target.source true))
+    "registered official facet differed from direct product semantics"
+
 public unsafe def main (args : List String) : IO UInt32 := do
   match args with
   | [] =>
@@ -303,8 +324,17 @@ public unsafe def main (args : List String) : IO UInt32 := do
   | ["print-lake-hash", path] =>
     IO.println (← Lake.computeFileHash path (text := true))
     return 0
+  | ["verify-official-facet", root, sourcePath, expected] =>
+    let some expected := if expected == "true" then some true else if expected == "false" then some false else none
+      | do
+      IO.eprintln "EXPECTED_TRAILING must be true or false"
+      return 2
+    verifyOfficialFacet root sourcePath expected
+    IO.println "lean-fmt registered compiler facet verified"
+    return 0
   | _ =>
     IO.eprintln "usage: lean-fmt-tests [verify-plugin-artifact MODULE SOURCE EXPECTED_TRAILING | \
       verify-facet-artifact ARTIFACT SOURCE EXPECTED_TRAILING EXPECTED_HASH | \
+      verify-official-facet ROOT SOURCE EXPECTED_TRAILING | \
       print-lake-hash ARTIFACT]"
     return 2

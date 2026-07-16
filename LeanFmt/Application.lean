@@ -69,27 +69,22 @@ private structure ChildOutput where
   stderr : String
   peakAggregateRssKiB : Nat
 
-private def artifactFile (mod : Lake.Module) : FilePath :=
-  Lean.modToFilePath (mod.pkg.buildDir / "lean-fmt-check-artifacts") mod.name "json"
+private structure FacetDescriptor where
+  hash : String
+  ext : String
+  path : String
+  deriving Lean.FromJson
 
-private def fetchArtifact (application : FilePath)
-    (mod : Lake.Module) : Lake.FetchM (Lake.Job Lake.Artifact) := do
-  let oleanJob ← mod.olean.fetch
-  let applicationJob ← Lake.inputBinFile application
-  let dependency := oleanJob.zipWith (fun olean executable => (olean, executable)) applicationJob
-  dependency.mapM fun (olean, executable) => do
-    Lake.withCurrPackage mod.pkg do
-      Lake.buildArtifactUnlessUpToDate (artifactFile mod) (text := true) (ext := "json")
-          (restore := true) (platformIndependent := true) do
-        Lake.proc {
-          cmd := executable.toString
-          args := #["__extract-artifact", mod.name.toString, olean.toString,
-            (artifactFile mod).toString]
-          env := #[
-            ⟨"LEAN_PATH", (← Lake.getLeanPath).toString⟩,
-            ⟨"LEAN_NUM_THREADS", "1"⟩
-          ]
-        }
+private def decodeFacetDescriptor? (encoded : String) : Option Lake.Artifact := do
+  let json ← Lean.Json.parse encoded |>.toOption
+  let descriptor : FacetDescriptor ← Lean.fromJson? json |>.toOption
+  let hash ← Lake.Hash.ofString? descriptor.hash
+  guard <| !descriptor.path.isEmpty
+  return {
+    descr := Lake.artifactWithExt hash descriptor.ext
+    path := FilePath.mk descriptor.path
+    mtime := 0
+  }
 
 private def withoutProcessOutput (action : IO α) : IO α := do
   let buffer ← IO.mkRef { : IO.FS.Stream.Buffer }
@@ -99,19 +94,39 @@ private def withoutProcessOutput (action : IO α) : IO α := do
     discard <| IO.setStdout stdout
     discard <| IO.setStderr stderr
 
-private def trustedArtifact? (workspace : Lake.Workspace) (application : FilePath)
-    (snapshot : SourceSnapshot) : IO (Option ModuleArtifact) := do
+/- Fetch the target workspace's registered formatter facet jobs together under Lake's no-build
+policy. Returned descriptors never escape this operation: every content hash is recomputed and
+every payload is matched to its immutable module/source snapshot. A missing, stale, corrupt, or
+failing facet is an ordered miss, never an extractor launch or a partial batch failure. -/
+def officialArtifacts (workspace : Lake.Workspace)
+    (snapshots : Array SourceSnapshot) : IO (Array (Option ModuleArtifact)) := do
   if (← IO.getEnv "LEAN_FMT_DISABLE_ARTIFACT") == some "1" then
-    return none
-  let some mod := snapshot.module?
-    | return none
+    return Array.replicate snapshots.size none
+  let facetName := `module.leanFmtArtifact
+  let some config := workspace.findModuleFacetConfig? facetName
+    | return Array.replicate snapshots.size none
   try
     withoutProcessOutput do
-      let facet ← workspace.runBuild (cfg := { verbosity := .quiet }) do
-        fetchArtifact application mod
-      readFacet? facet mod.name snapshot.source
+      let encoded ← workspace.runBuild (cfg := { noBuild := true, verbosity := .quiet }) do
+        let jobs ← snapshots.mapM fun snapshot => do
+          match snapshot.module? with
+          | none => return Lake.Job.pure none
+          | some mod =>
+            let job ← config.run (β := Lake.FacetOut facetName) mod
+            return job.mapResult fun
+              | .ok value state => .ok (some (config.format .json value)) state
+              | .error _ state => .ok none state
+        return Lake.Job.collectArray jobs "lean-fmt official artifacts"
+      (snapshots.zip encoded).mapM fun (snapshot, encoded?) => do
+        let some mod := snapshot.module?
+          | return none
+        let some encoded := encoded?
+          | return none
+        let some facet := decodeFacetDescriptor? encoded
+          | return none
+        readFacet? facet mod.name snapshot.source
   catch _ =>
-    return none
+    return Array.replicate snapshots.size none
 
 private def writeSetup (directory : FilePath) (index : Nat)
     (setup : Lean.ModuleSetup) : IO FilePath := do
@@ -253,23 +268,18 @@ private def canonicalAnalysis (snapshot : SourceSnapshot)
   | none => throw <| IO.userError s!"invalid exact analysis for {snapshot.relativePath}"
 
 private def analyzeFile (project : Project.Snapshot) (application temporary : FilePath)
-    (index : Nat) (request : RunRequest) (cache? : Option ResultCache)
+    (index : Nat) (request : RunRequest)
     (plan : RulePlan) (evidence : Project.ModuleEvidence)
-    (snapshot : SourceSnapshot) (cached? : Option SemanticAnalysis) : IO SemanticAnalysis := do
+    (snapshot : SourceSnapshot) (cached? : Option SemanticAnalysis)
+    (officialArtifact? : Option ModuleArtifact) : IO SemanticAnalysis := do
   if let some analysis := cached? then
     return analysis
   let analysis ← if !plan.requiresSyntax && evidence == .current then
     pure <| SemanticAnalysis.success snapshot.source (runRules snapshot.source true)
-  else if evidence == .current then do
-    match ← trustedArtifact? project.workspace application snapshot with
-    | some artifact => canonicalAnalysis snapshot { artifact? := some artifact }
-    | none =>
-      canonicalAnalysis snapshot
-        (← exactFallback project application temporary index request snapshot)
+  else if let some artifact := officialArtifact? then
+    canonicalAnalysis snapshot { artifact? := some artifact }
   else
     canonicalAnalysis snapshot (← exactFallback project application temporary index request snapshot)
-  if let some cache := cache? then
-    cache.write project snapshot analysis
   return analysis
 
 private structure DiffSource where
@@ -456,8 +466,7 @@ def execute (request : RunRequest) : IO RunReport := do
   let lookupStarted ← IO.monoNanosNow
   let cached ← match cache? with
     | none => pure (Array.replicate snapshots.size none)
-    | some cache =>
-      snapshots.mapM fun snapshot => cache.read? project snapshot
+    | some cache => cache.readAll project snapshots
   let lookupFinished ← IO.monoNanosNow
   recordPhase "cache_lookup" lookupStarted lookupFinished
   if cached.all Option.isSome && request.mode != .fix then
@@ -471,18 +480,29 @@ def execute (request : RunRequest) : IO RunReport := do
   let evidence ← Project.moduleEvidence project
   let evidenceFinished ← IO.monoNanosNow
   recordPhase "module_evidence" evidenceStarted evidenceFinished
+  let artifactStarted ← IO.monoNanosNow
+  let artifacts ← if plan.requiresSyntax then
+    officialArtifacts project.workspace snapshots
+  else
+    pure (Array.replicate snapshots.size none)
+  let artifactFinished ← IO.monoNanosNow
+  recordPhase "official_artifacts" artifactStarted artifactFinished
   let temporary ← IO.FS.createTempDir
   try
     let mut files := #[]
     let mut failures := #[]
-    for ((snapshot, cached?), sourceEvidence) in (snapshots.zip cached).zip evidence,
+    let mut analyses := #[]
+    for (((snapshot, cached?), sourceEvidence), artifact?) in
+        ((snapshots.zip cached).zip evidence).zip artifacts,
         index in [0:snapshots.size] do
       try
+        let analysis ← analyzeFile project application temporary index request plan sourceEvidence
+          snapshot cached? artifact?
+        analyses := analyses.push (some analysis)
         files := files.push
-          (← projectFile project application temporary index request plan snapshot
-            (← analyzeFile project application temporary index request cache? plan sourceEvidence
-              snapshot cached?))
+          (← projectFile project application temporary index request plan snapshot analysis)
       catch error =>
+        analyses := analyses.push none
         let message := toString error
         failures := failures.push s!"{snapshot.relativePath}: {message}"
         files := files.push {
@@ -490,6 +510,8 @@ def execute (request : RunRequest) : IO RunReport := do
           status := "infrastructure-failure"
           diagnostics := #[message]
         }
+    if let some cache := cache? then
+      cache.writeAll project snapshots analyses
     return summarize request.mode files failures
   finally
     IO.FS.removeDirAll temporary

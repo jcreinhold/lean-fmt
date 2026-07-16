@@ -1,6 +1,6 @@
 ---
 kind: state
-first_unresolved: 10-scale
+first_unresolved: 11-serve
 ---
 
 # Current state
@@ -21,7 +21,7 @@ as independent measured prerequisites.
 | 07-check | ECV2-CHECK | verified | ECV2-DESIGN |
 | 08-cache | ECV2-CACHE | verified | ECV2-CHECK |
 | 09-modes | ECV2-MODES | verified | ECV2-CACHE |
-| 10-scale | ECV2-SCALE | planned | ECV2-MODES |
+| 10-scale | ECV2-SCALE | verified | ECV2-MODES |
 | 11-serve | ECV2-SERVE | planned | ECV2-SCALE |
 | 12-final | ECV2-FINAL | planned | ECV2-SERVE |
 
@@ -72,13 +72,15 @@ as independent measured prerequisites.
   makes source-only FMT001/FMT002 appear to require syntax. The repaired prompt first adds complete
   source targets and honest rule input requirements, then measures current `.olean` validation,
   direct official facets, exact fallback, and cache paths in a bounded hypothesis ladder.
-- Prompt 10 major step 1 is implemented. One private project capability selects all 8,795 mathlib
-  sources, recovers 8,781 current/7 stale module statuses from one typed Lake graph, and hides the
-  seven standalone cases. Source-only semantic results no longer contain fake compiler projections.
-  The current 62-file release path fell from a stopped 180.958-second eight-file baseline to 1.967
-  seconds for 62 files at 709,936 KiB peak RSS. Focused unit, compiler, check, mode, and new complete-
-  selection/cache gates pass; intentional full, exact-remainder, direct-facet, and warm acceptance
-  remain.
+- Prompt 10 is complete. One private project capability selects all 8,795 mathlib sources and one
+  shared typed no-build graph proves ordinary module evidence for source-input rules. Syntax-input
+  rules use the registered `leanFmtArtifact` through a batched no-build Lake operation whose
+  descriptors are independently content- and snapshot-validated; current rules skip that path.
+  The result cache is now a source-aware, environment-scoped atomic index rather than one file per
+  source. On the frozen ordinary-built mathlib workload, cold execution finished in 109.649 seconds
+  at 1,315,248 KiB peak aggregate RSS; the forced worker-free all-hit path finished in 16.290 seconds
+  at 1,150,528 KiB. Both covered 8,795/8,795 sources with byte-identical sorted output, normal
+  pressure, and no swap growth.
 
 These facts and the verified batch product surface constrain Prompt 10's optimization hypotheses;
 they do not authorize weaker semantics or a broader memory envelope.
@@ -104,10 +106,14 @@ they do not authorize weaker semantics or a broader memory envelope.
 - [ECV2-MODES](../results/09-modes.md) adds the complete batch product surface over one canonical
   result, with strict rule projection and a conflict-, validation-, staleness-, and
   permission-safe per-file write transaction.
+- [ECV2-SCALE](../results/10-scale.md) completes source-wide execution, direct registered-facet
+  consumption, a source-aware aggregate cache index, and cold/warm full-mathlib acceptance under the
+  resource envelope.
 
 ## Verification convention
 
 A claim becomes verified only after its prompt checks pass and meaningful command output is recorded.
 State is coordination metadata, not evidence. Missing, stale, or unreproduced checks reopen a claim.
 Optimization uses the frozen sample and targeted stress files; complete mathlib runs are reserved for
-plausible release candidates and are reused by digest during the final audit.
+plausible release candidates and are reused by digest during the final audit. Prompt 11 now owns the
+editor service over the accepted batch semantic primitive.

@@ -222,15 +222,30 @@ private def moduleConfiguration (mod : Lake.Module) : String :=
     toString mod.platformIndependent
   ]
 
-def configurationIdentity (snapshot : Snapshot) (target : SourceTarget) : IO Digest :=
+/- Identify the evaluated root-package policy used by Lake for sources outside a declared library.
+Header bytes and import order remain in the source identity; ordered search roots and artifact
+contents remain in the environment epoch. This value covers the remaining setup decisions without
+running `setupServerModule` on an all-hit cache path. -/
+def externalConfigurationIdentity (workspace : Lake.Workspace) : Digest :=
+  let root := workspace.root
+  Digest.ofString <| String.intercalate "\u0000" [
+    toString root.id?,
+    (Lean.toJson workspace.serverOptions).compress,
+    toString root.precompileModules,
+    String.intercalate "\u0000" (root.dynlibs.map toString).toList,
+    String.intercalate "\u0000" (root.plugins.map toString).toList,
+    String.intercalate "\u0000" (root.externLibs.map (·.name.toString)).toList,
+    String.intercalate "\u0000" (root.extraDepTargets.map toString).toList
+  ]
+
+def configurationIdentity (_snapshot : Snapshot) (target : SourceTarget) : IO Digest :=
   match target.module? with
   | some mod => return Digest.ofString (moduleConfiguration mod)
   | none => do
     if target.path.fileName == some "lakefile.lean" then
       return Digest.ofString <| String.intercalate "\u0000"
         ["lakefile", target.relativePath, Lean.versionString, Lean.githash]
-    let setup ← exactSetup snapshot target
     return Digest.ofString <| String.intercalate "\u0000"
-      [target.relativePath, (Lean.toJson setup).compress]
+      ["external-source", target.relativePath]
 
 end LeanFmt.Internal.Project

@@ -57,6 +57,8 @@ verify_artifacts() {
 
 LEAN_NUM_THREADS=1 lake -R build +LocalSyntax:leanFmtArtifact
 verify_artifacts true
+LEAN_NUM_THREADS=1 lake exe lean-fmt-tests verify-official-facet \
+  . tests/compiler/LocalSyntax.lean true
 
 # The extractor must use the exact `.olean` returned by the facet even when ambient `LEAN_PATH`
 # contains a different module with the same name first.
@@ -89,6 +91,8 @@ LEAN_NUM_THREADS=1 lake -R -KleanFmtTrailingWhitespace=false build +LocalSyntax:
 disabled_trace=$(python3 -c \
   'import json; print(json.load(open(".lake/build/lib/lean/LocalSyntax.trace"))["depHash"])')
 verify_artifacts false
+LEAN_NUM_THREADS=1 lake -KleanFmtTrailingWhitespace=false exe lean-fmt-tests \
+  verify-official-facet . tests/compiler/LocalSyntax.lean false
 if [[ "$enabled_trace" == "$disabled_trace" ]]; then
   printf 'rule configuration did not invalidate the owning Lake module trace\n' >&2
   exit 1
@@ -138,8 +142,17 @@ if LEAN_NUM_THREADS=1 lake exe lean-fmt-tests \
   printf 'corrupt facet artifact was accepted\n' >&2
   exit 1
 fi
+# The production consumer runs the registered job in no-build mode rather than trusting presence or
+# launching an extractor. Corruption is a miss until the explicit facet prerequisite is rebuilt.
+if LEAN_NUM_THREADS=1 lake exe lean-fmt-tests verify-official-facet \
+    . tests/compiler/LocalSyntax.lean true; then
+  printf 'corrupt official facet was consumed without an explicit rebuild\n' >&2
+  exit 1
+fi
 rm -f "$artifact" "$artifact_trace" "$artifact.hash"
 LEAN_NUM_THREADS=1 lake build +LocalSyntax:leanFmtArtifact
+LEAN_NUM_THREADS=1 lake exe lean-fmt-tests verify-official-facet \
+  . tests/compiler/LocalSyntax.lean true
 verify_artifacts true
 
 rm -f "$olean"

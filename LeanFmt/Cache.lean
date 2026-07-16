@@ -43,6 +43,12 @@ private structure CacheEntry where
   analysis : SemanticAnalysis
   deriving Lean.ToJson, Lean.FromJson
 
+private structure CacheIndex where
+  schema : String
+  base : Digest
+  entries : Array CacheEntry
+  deriving Lean.ToJson, Lean.FromJson
+
 structure ResultCache where
   private mk ::
   root : System.FilePath
@@ -50,8 +56,10 @@ structure ResultCache where
   environment : Digest
   formatter : Digest
   validationLevel : ValidationLevel
+  directoryReady : IO.Ref Bool
+  loadedEntries : IO.Ref (Option (Std.HashMap String CacheEntry))
 
-def resultCacheSchema : String := "lean-fmt.result-cache.v1"
+def resultCacheSchema : String := "lean-fmt.result-cache.v2"
 
 private def digestParts (parts : Array String) : Digest :=
   Digest.ofString (String.intercalate "\u0000" parts.toList)
@@ -136,12 +144,29 @@ private def insideToolchain (toolchain path : System.FilePath) : Bool :=
   path == toolchain || path.toString.startsWith
     (toolchain.toString ++ System.FilePath.pathSeparator.toString)
 
+private def sourceRootParts? (root : System.FilePath) : IO (Option (Array String)) := do
+  try
+    unless ← root.isDir do
+      return none
+    let sources := (← root.walkDir fun path => pure <| path.fileName != some ".lake")
+      |>.filter (·.extension == some "lean")
+      |>.qsort (·.toString < ·.toString)
+    let mut parts := #[s!"source-root\u0000{← IO.FS.realPath root}"]
+    for source in sources do
+      let relative := Lake.relPathFrom root source |>.toString
+      let digest := Digest.ofBytes (← IO.FS.readBinFile source)
+      parts := parts.push s!"source\u0000{relative}\u0000{digest}"
+    return some parts
+  catch _ =>
+    return none
+
 private def environmentDigest? (workspace : Lake.Workspace) : IO (Option Digest) := do
   let toolchain ← IO.FS.realPath workspace.lakeEnv.lean.sysroot
   let roots := workspace.augmentedLeanPath
   let mut parts := #[
     s!"lean-version\u0000{Lean.versionString}",
-    s!"lean-githash\u0000{workspace.lakeEnv.lean.githash}"
+    s!"lean-githash\u0000{workspace.lakeEnv.lean.githash}",
+    s!"workspace-configuration\u0000{Project.externalConfigurationIdentity workspace}"
   ]
   parts := parts ++ pathParts "lean-path" workspace.augmentedLeanPath
   parts := parts ++ pathParts "source-path" workspace.augmentedLeanSrcPath
@@ -161,6 +186,15 @@ private def environmentDigest? (workspace : Lake.Workspace) : IO (Option Digest)
     let some rootParts ← sharedTraceParts? root
       | return none
     parts := parts ++ rootParts
+  let mut seenSourceRoots : Std.HashSet String := {}
+  for root in workspace.augmentedLeanSrcPath do
+    let root ← IO.FS.realPath root
+    if insideToolchain toolchain root || seenSourceRoots.contains root.toString then
+      continue
+    seenSourceRoots := seenSourceRoots.insert root.toString
+    let some rootParts ← sourceRootParts? root
+      | return none
+    parts := parts ++ rootParts
   return some (digestParts parts)
 
 private def identity (cache : ResultCache) (project : Project.Snapshot)
@@ -175,8 +209,21 @@ private def identity (cache : ResultCache) (project : Project.Snapshot)
     semanticSchema := semanticResultSchema
   }
 
-private def entryPath (cache : ResultCache) (identity : CacheIdentity) : System.FilePath :=
-  cache.root / "results" / s!"{cacheIdentityDigest identity}.json"
+private def resultDirectory (cache : ResultCache) : System.FilePath :=
+  cache.root / "results"
+
+private def baseDigest (cache : ResultCache) : Digest :=
+  digestParts #[
+    resultCacheSchema,
+    cache.toolchain,
+    toString cache.environment,
+    toString cache.formatter,
+    (Lean.toJson cache.validationLevel).compress,
+    semanticResultSchema
+  ]
+
+private def indexPath (cache : ResultCache) : System.FilePath :=
+  resultDirectory cache / s!"{baseDigest cache}.json"
 
 private def validAnalysis (target : Project.SourceTarget)
     (analysis : SemanticAnalysis) : Bool :=
@@ -190,73 +237,115 @@ private def temporaryPath (target : System.FilePath) : IO System.FilePath := do
   let nonce ← IO.monoNanosNow
   return System.FilePath.mk s!"{target}.tmp-{pid}-{nonce}"
 
-private def writeEntryAtomic (path : System.FilePath) (entry : CacheEntry) : IO Unit := do
-  if let some parent := path.parent then
-    IO.FS.createDirAll parent
+private def writeIndexAtomic (path : System.FilePath) (index : CacheIndex) : IO Unit := do
   let temporary ← temporaryPath path
   try
-    IO.FS.writeFile temporary (Lean.toJson entry).compress
+    IO.FS.writeFile temporary (Lean.toJson index).compress
     IO.FS.rename temporary path
   catch error =>
     if ← temporary.pathExists then
       IO.FS.removeFile temporary
     throw error
 
-/- Construct a cache capability only after the evaluated workspace's ordered roots and all
-non-toolchain module artifacts have trustworthy, content-matching Lake traces. Absence is a normal
-disabled-cache outcome; callers cannot manufacture a partial epoch. -/
+/- Construct a cache capability only after the evaluated workspace's ordered roots, current source
+contents, and all non-toolchain module artifacts have trustworthy, content-matching Lake traces.
+Absence is a normal disabled-cache outcome; callers cannot manufacture a partial epoch. -/
 def ResultCache.open? (workspace : Lake.Workspace) (application : System.FilePath)
     (validationLevel := ValidationLevel.syntax) : IO (Option ResultCache) := do
   try
     let some environment ← environmentDigest? workspace
       | return none
     let formatter := Digest.ofBytes (← IO.FS.readBinFile application)
+    let directoryReady ← IO.mkRef false
+    let loadedEntries ← IO.mkRef none
     return some {
       root := workspace.root.dir / ".lean-fmt-cache"
       toolchain := s!"{Lean.versionString}\u0000{workspace.lakeEnv.lean.githash}"
       environment
       formatter
       validationLevel
+      directoryReady
+      loadedEntries
     }
   catch _ =>
     return none
 
-/- Read one strategy-independent semantic result. Every parse, schema, identity, and payload failure
-is an ordinary miss. -/
-def ResultCache.read? (cache : ResultCache) (project : Project.Snapshot)
-    (target : Project.SourceTarget) : IO (Option SemanticAnalysis) := do
-  try
-    let expected ← identity cache project target
-    let path := entryPath cache expected
-    let contents ← IO.FS.readFile path
+private def ResultCache.loadEntries (cache : ResultCache) : IO (Std.HashMap String CacheEntry) := do
+  if let some entries ← cache.loadedEntries.get then
+    return entries
+  let entries ← try
+    let contents ← IO.FS.readFile (indexPath cache)
     let .ok json := Lean.Json.parse contents
-      | return none
-    let .ok (entry : CacheEntry) := Lean.fromJson? json
-      | return none
-    unless entry.schema == resultCacheSchema &&
-        entry.identity == cacheIdentityDigest expected &&
-        entry.payload == analysisDigest entry.analysis && validAnalysis target entry.analysis do
-      return none
-    return some entry.analysis
+      | pure {}
+    let .ok (index : CacheIndex) := Lean.fromJson? json
+      | pure {}
+    if index.schema != resultCacheSchema || index.base != baseDigest cache then
+      pure {}
+    else
+      pure <| index.entries.foldl
+        (init := Std.HashMap.emptyWithCapacity index.entries.size) fun entries entry =>
+          entries.insert (toString entry.identity) entry
   catch _ =>
-    return none
+    pure {}
+  cache.loadedEntries.set (some entries)
+  return entries
 
-/- Atomically store one exact semantic result. Cache write failure never changes a successful check
-result; a later run simply observes a miss. -/
-def ResultCache.write (cache : ResultCache) (project : Project.Snapshot)
-    (target : Project.SourceTarget) (analysis : SemanticAnalysis) : IO Unit := do
+/- Read an ordered batch from one environment-scoped index. Individual schema, identity, payload,
+and source failures remain ordinary per-target misses; a corrupt index is an empty cache. -/
+def ResultCache.readAll (cache : ResultCache) (project : Project.Snapshot)
+    (targets : Array Project.SourceTarget) : IO (Array (Option SemanticAnalysis)) := do
+  let entries ← cache.loadEntries
+  if entries.isEmpty then
+    return Array.replicate targets.size none
+  targets.mapM fun target => do
+    try
+      let expected ← identity cache project target
+      let digest := cacheIdentityDigest expected
+      let some entry := entries.get? (toString digest)
+        | return none
+      unless entry.schema == resultCacheSchema && entry.identity == digest &&
+          entry.payload == analysisDigest entry.analysis && validAnalysis target entry.analysis do
+        return none
+      return some entry.analysis
+    catch _ =>
+      return none
+
+private def ResultCache.ensureWriteDirectory (cache : ResultCache) : IO Unit := do
+  unless ← cache.directoryReady.get do
+    IO.FS.createDirAll (resultDirectory cache)
+    cache.directoryReady.set true
+
+/- Merge and atomically publish an ordered batch once. Cache failure never changes successful
+analysis; the next run simply observes the previous index or an empty cache. -/
+def ResultCache.writeAll (cache : ResultCache) (project : Project.Snapshot)
+    (targets : Array Project.SourceTarget)
+    (analyses : Array (Option SemanticAnalysis)) : IO Unit := do
   try
-    unless validAnalysis target analysis do
-      return
-    let expected ← identity cache project target
-    let path := entryPath cache expected
-    let entry : CacheEntry := {
+    let mut entries ← cache.loadEntries
+    for (target, analysis?) in targets.zip analyses do
+      let some analysis := analysis?
+        | continue
+      unless validAnalysis target analysis do
+        continue
+      let expected ← identity cache project target
+      let digest := cacheIdentityDigest expected
+      let entry : CacheEntry := {
+        schema := resultCacheSchema
+        identity := digest
+        payload := analysisDigest analysis
+        analysis
+      }
+      entries := entries.insert (toString digest) entry
+    cache.ensureWriteDirectory
+    let ordered := entries.toList.toArray.map (·.2)
+      |>.qsort (toString ·.identity < toString ·.identity)
+    let index : CacheIndex := {
       schema := resultCacheSchema
-      identity := cacheIdentityDigest expected
-      payload := analysisDigest analysis
-      analysis
+      base := baseDigest cache
+      entries := ordered
     }
-    writeEntryAtomic path entry
+    writeIndexAtomic (indexPath cache) index
+    cache.loadedEntries.set (some entries)
   catch _ =>
     return
 

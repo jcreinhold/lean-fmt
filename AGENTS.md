@@ -8,9 +8,11 @@ modules live under `LeanFmt`.
 The production tree is a native `lake init` project using Lean's private-by-default module system.
 All compiled production, entry-point, test, and fixture sources begin with `module`; only executable
 `lakefile.lean` configuration is exempt. The product now has one private intent-to-report operation,
-a semantic result cache, preview/fix modes, and read-only compiler-integration audit. A compiler
-plugin persists a silent formatter record in the successful module `.olean`, and a Lake module facet
-owns supported extraction into a compact content-addressed sidecar.
+an aggregate atomic semantic-result cache, preview/fix modes, and read-only compiler-integration
+audit. A compiler plugin persists a silent formatter record in the successful module `.olean`, and a
+Lake module facet owns supported extraction into a compact content-addressed sidecar. The application
+consumes that registered facet through one private no-build Lake operation only when a selected rule
+needs syntax.
 
 Do not restore the archived Rust workspace, worker protocol, `libleanshared` boundary, or seven-crate
 decomposition. Architecture work is governed by `docs/projects/execution-core-v2/` and its recorded

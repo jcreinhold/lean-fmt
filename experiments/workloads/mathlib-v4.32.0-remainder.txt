@@ -1,0 +1,12 @@
+Cache/Test.lean
+DownstreamTest/DownstreamTest.lean
+scripts/autolabel.lean
+scripts/check-yaml.lean
+scripts/check_title_labels.lean
+scripts/create_deprecated_modules.lean
+scripts/export_crossrefs.lean
+scripts/extract-unique-nonascii.lean
+scripts/find_command_range.lean
+scripts/lint-style.lean
+scripts/mk_all.lean
+scripts/nightly-testing-checklist.lean

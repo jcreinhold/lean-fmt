@@ -52,6 +52,7 @@ lean_lib LeanFmtCore where
 
 lean_exe «lean-fmt-tests» where
   root := `LeanFmtTest
+  supportInterpreter := true
 
 lean_exe artifactExtractor where
   root := `LeanFmtArtifactExtract
@@ -63,6 +64,15 @@ private def trailingWhitespaceEnabled : Bool :=
 
 private def artifactFile (mod : Module) : FilePath :=
   Lean.modToFilePath (mod.pkg.buildDir / "lean-fmt-artifacts") mod.name "json"
+
+private def artifactQueryJson (artifact : Artifact) : Lean.Json :=
+  Lean.Json.mkObj [
+    ("hash", .str artifact.hash.toString),
+    ("ext", .str artifact.ext),
+    ("path", .str artifact.path.toString)
+  ]
+
+local instance : QueryJson Artifact := ⟨artifactQueryJson⟩
 
 /- The compiler records the formatter payload in Lean's persistent lint log, which is serialized
 inside the successful `.olean`. This facet owns both extraction from that exact module artifact and

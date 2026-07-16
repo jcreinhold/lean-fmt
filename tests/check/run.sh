@@ -107,24 +107,18 @@ run_expect 2 "$work/memory.json" env LEAN_FMT_DISABLE_ARTIFACT=1 LEAN_FMT_TEST_D
   tests/check/Clean.lean
 grep -q 'resource envelope exhausted' "$work/memory.json"
 
-artifact=.lake/build/lean-fmt-check-artifacts/Findings.json
-printf 'corrupt\n' >"$artifact"
-run_expect 1 "$work/recovered.json" "$application" check --root . --json --no-cache \
-  tests/check/Findings.lean
-cmp "$work/artifact-findings.json" "$work/recovered.json"
-
 run_expect 1 "$work/repeated.json" "$application" check --root . --json --no-cache \
   tests/check/Findings.lean
 cmp "$work/artifact-findings.json" "$work/repeated.json"
 
-# The result cache is semantic rather than strategy-based. An artifact-produced entry and a
-# fallback-produced entry must be byte-identical, and a real hit must bypass the analyzer child.
+# The result cache is semantic rather than strategy-based. A module-evidence entry and a fresh exact
+# entry must be byte-identical, and a real hit must bypass the analyzer child.
 rm -rf "$cache_root"
 run_expect 1 "$work/cache-artifact.json" "$application" check --root . --json \
   tests/check/Findings.lean
 cache_entry=$(find "$cache_root/results" -type f -name '*.json' -print)
 test "$(printf '%s\n' "$cache_entry" | sed '/^$/d' | wc -l | tr -d ' ')" = 1
-cp "$cache_entry" "$work/artifact-cache-entry.json"
+cp "$cache_entry" "$work/module-cache-entry.json"
 run_expect 1 "$work/cache-hit.json" env LEAN_FMT_DISABLE_ARTIFACT=1 LEAN_FMT_TEST_DISABLE_MODULE_EVIDENCE=1 \
   LEAN_FMT_TEST_ANALYZER=/usr/bin/false "$application" check --root . --json \
   tests/check/Findings.lean
@@ -134,7 +128,7 @@ rm -rf "$cache_root"
 run_expect 1 "$work/cache-fallback.json" env LEAN_FMT_DISABLE_ARTIFACT=1 LEAN_FMT_TEST_DISABLE_MODULE_EVIDENCE=1 \
   "$application" check --root . --json tests/check/Findings.lean
 fallback_entry=$(find "$cache_root/results" -type f -name '*.json' -print)
-cmp "$work/artifact-cache-entry.json" "$fallback_entry"
+cmp "$work/module-cache-entry.json" "$fallback_entry"
 cmp "$work/cache-artifact.json" "$work/cache-fallback.json"
 
 # Corrupt committed entries are misses. A stray partial temporary file cannot shadow a valid entry.
@@ -175,6 +169,21 @@ run_expect 1 "$work/cache-restored-identity.json" env LEAN_FMT_DISABLE_ARTIFACT=
   LEAN_FMT_TEST_ANALYZER=/usr/bin/false "$application" check --root . --json \
   tests/check/Findings.lean
 cmp "$work/cache-repaired.json" "$work/cache-restored-identity.json"
+
+# Compact artifact-cache traces can omit their source inputs. The aggregate cache epoch therefore
+# hashes current source roots independently: changing another project source while leaving every
+# build artifact and trace untouched must still force a miss.
+project_source=LeanFmt/Cli.lean
+cp -p "$project_source" "$work/Cli.lean.backup"
+printf '\n-- cache-project-source-invalidation\n' >>"$project_source"
+run_expect 2 "$work/cache-dependency-source-miss.json" env LEAN_FMT_DISABLE_ARTIFACT=1 \
+  LEAN_FMT_TEST_DISABLE_MODULE_EVIDENCE=1 LEAN_FMT_TEST_ANALYZER=/usr/bin/false \
+  "$application" check --root . --json tests/check/Findings.lean
+cp -p "$work/Cli.lean.backup" "$project_source"
+run_expect 1 "$work/cache-dependency-source-restored.json" env LEAN_FMT_DISABLE_ARTIFACT=1 \
+  LEAN_FMT_TEST_DISABLE_MODULE_EVIDENCE=1 LEAN_FMT_TEST_ANALYZER=/usr/bin/false \
+  "$application" check --root . --json tests/check/Findings.lean
+cmp "$work/cache-repaired.json" "$work/cache-dependency-source-restored.json"
 
 # Disabled cache performs neither reads nor writes.
 run_expect 2 "$work/cache-disabled-read.json" env LEAN_FMT_DISABLE_ARTIFACT=1 LEAN_FMT_TEST_DISABLE_MODULE_EVIDENCE=1 \

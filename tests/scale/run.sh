@@ -69,9 +69,9 @@ assert paths == sorted(paths) == [
     "Nested/lakefile.lean",
     "lakefile.lean",
     "scripts/Standalone.lean",
-]
-assert all(f["status"] == "clean" for f in r["files"])
-assert not r["infrastructureFailures"]
+], paths
+assert all(f["status"] == "clean" for f in r["files"]), r["files"]
+assert not r["infrastructureFailures"], r["infrastructureFailures"]
 PY
 
 # Every semantic result, including standalone and Lake configuration sources, is cacheable. An
@@ -81,12 +81,12 @@ run_expect 0 "$work/warm.json" env LEAN_FMT_TEST_DISABLE_MODULE_EVIDENCE=1 \
   "$application" check --root "$project" --json
 cmp "$work/cold.json" "$work/warm.json"
 
-# Source identity independently invalidates the hit and the stale ordinary module cannot authorize
-# source-only findings. Other selected sources are retained rather than dropped with the failure.
+# Source identity independently invalidates the coarse project epoch. The stale ordinary module and
+# standalone source cannot use module evidence; all selected sources remain present in the report.
 cp -p "$project/Demo.lean" "$work/Demo.lean"
 printf '\n-- stale\n' >>"$project/Demo.lean"
-run_expect 2 "$work/stale.json" env LEAN_FMT_TEST_DISABLE_MODULE_EVIDENCE=1 \
-  LEAN_FMT_DISABLE_ARTIFACT=1 LEAN_FMT_TEST_ANALYZER=/usr/bin/false \
+run_expect 2 "$work/stale.json" env LEAN_FMT_DISABLE_ARTIFACT=1 \
+  LEAN_FMT_TEST_ANALYZER=/usr/bin/false \
   "$application" check --root "$project" --json
 python3 - "$work/stale.json" <<'PY'
 import json, sys
@@ -94,7 +94,7 @@ r = json.load(open(sys.argv[1]))
 assert len(r["files"]) == 4
 assert [f["path"] for f in r["files"]] == sorted(f["path"] for f in r["files"])
 failed = [f for f in r["files"] if f["status"] == "infrastructure-failure"]
-assert [f["path"] for f in failed] == ["Demo.lean"]
+assert [f["path"] for f in failed] == ["Demo.lean", "scripts/Standalone.lean"]
 PY
 cp -p "$work/Demo.lean" "$project/Demo.lean"
 

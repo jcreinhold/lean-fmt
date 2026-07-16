@@ -58,10 +58,14 @@ receive the same deterministic report and cache semantics as buildable modules.
 
 ## Cache and compiler integration
 
-Successful semantic results are cached under `.lean-fmt-cache/` by default. The cache key includes
-the exact source, target toolchain, evaluated source/module configuration, ordered Lake environment
-and verified build traces, formatter binary, validation level, and semantic-result schema. Missing or corrupt
-entries are ordinary misses. `--no-cache` performs neither cache reads nor writes.
+Successful semantic results are cached under `.lean-fmt-cache/` by default. One environment-scoped,
+atomically replaced index holds the per-source results, avoiding thousands of filesystem probes and
+writes. Each entry still validates the exact source, target toolchain, evaluated source/module
+configuration, ordered Lake environment, dependency trace content, formatter runtime, validation
+level, and semantic-result schema. The environment epoch also hashes current project and dependency
+sources because compact downloaded traces do not necessarily enumerate every source input. Missing,
+stale, or corrupt indexes and entries are ordinary misses. `--no-cache` performs neither cache reads
+nor writes.
 
 A warm run still evaluates the Lake workspace because `lakefile.lean` is executable configuration;
 skipping that step cannot be sound for general projects. Once its epoch is validated, an all-hit run
@@ -73,10 +77,20 @@ Each rule declares whether it needs only immutable source bytes or exact syntax.
 rules, one shared Lake no-build graph can use a current ordinary `.olean` as successful-compilation
 evidence without loading its frontend environment. It never fabricates a syntax projection. A
 compiler plugin stores syntax-capable formatter data in each integrated `.olean`; Lake owns its
-derived sidecar. Syntax-input rules use that exact artifact or the ordinary frontend in a fresh,
-memory-bounded child. Every path produces the same canonical result before rule projection. The CLI
-resolves the target root's Lean and Lake installation itself, so normal use does not wrap the binary
-in a second `lake env` process.
+derived sidecar. When syntax is required, one private Lake operation requests the registered
+`leanFmtArtifact` jobs with `noBuild := true`, then recomputes each content hash and verifies the
+module and complete source snapshot. Missing or invalid artifacts fall through to the exact frontend
+instead of being rebuilt during a check. Every path produces the same canonical result before rule
+projection. The CLI resolves the target root's Lean and Lake installation itself, so normal use does
+not wrap the binary in a second `lake env` process.
+
+On the recorded Apple-silicon machine, the release candidate checked an already ordinarily built
+mathlib revision `783ccda4` with 8,795 selected sources and a cold formatter cache in 109.649 seconds.
+Peak aggregate RSS was 1,315,248 KiB, memory pressure remained normal, and swap did not grow. The
+subsequent all-hit check took 16.290 seconds with module evidence, artifacts, and the analyzer all
+forcibly disabled; it returned byte-identical output without starting a frontend or extractor.
+These measurements exclude the prerequisite mathlib build and apply to the recorded binary and
+workload digests; full details are in the execution-core evidence.
 
 `compiler setup` prints versioned integration identifiers and guidance. It deliberately does not
 rewrite arbitrary executable `lakefile.lean`. `compiler status` performs a read-only, path-sorted

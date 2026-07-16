@@ -82,3 +82,35 @@ Complete discovery finds 8,788 modules and seven standalone sources in the froze
 workload. Of the modules, 8,781 are current and seven script/tool targets are stale. A diagnostic full
 run accidentally triggered by a Bash-3.2-incompatible wrapper finished in 63.647 seconds, establishing
 plausibility, but its pre-fix lakefile errors and invalid invocation exclude it from acceptance.
+
+## Final retained design
+
+The production cache is an environment-scoped atomic index rather than one file per semantic result.
+The file-per-entry design made a warm 8,795-source lookup take 46.868 seconds before the rest of the
+run and multiplied both filesystem metadata operations and publication points. The index loads once,
+per-source semantic identities remain independently validated, and a batch merge publishes once.
+The final complete warm lookup phase is 3.719 seconds.
+
+The environment epoch hashes current source contents under every ordered non-toolchain
+`LEAN_SRC_PATH` root in addition to validating artifact traces and outputs. This is deliberately
+coarse: downloaded Lake traces can omit source inputs, so artifact-only hashing admitted false hits
+after a dependency source changed. Standalone identities remain setup-free on the hit path; the
+shared epoch contains evaluated external configuration and ordered search roots, while the entry
+contains its relative path and exact source digest. Exact `ModuleSetup` is deferred until a miss
+actually requires frontend analysis.
+
+The formatter-integrated path now consumes the package's registered `module.leanFmtArtifact` facet
+directly. One private Lake operation requests the selected jobs with `noBuild := true`, decodes the
+official `Lake.Artifact` descriptors, recomputes content hashes, and matches module and full source
+snapshot. It never recreates a private facet or launches one extractor per file. The operation is
+skipped entirely when all enabled rules are source-only, as FMT001 and FMT002 currently are. Focused
+compiler fixtures prove trace invalidation, corruption rejection, exact source matching, failed-build
+nonpublication, and explicit rebuild behavior. A full formatter-integrated mathlib run would require
+a formatter-integrated prerequisite build and no current rule would consume its syntax, so it was
+not a plausible independent acceptance candidate.
+
+The ordinary-built, formatter-cache-cold release candidate completed all 8,795 sources in 109.649
+seconds at 1,315,248 KiB peak aggregate RSS. The forced all-hit path completed in 16.290 seconds with
+module evidence, artifact access, and the analyzer disabled. Both produced the same path-sorted output
+digest. No concurrency was introduced: removing false semantic dependencies, per-file Lake work, and
+per-entry cache I/O met the target with a simpler single-operation design.
