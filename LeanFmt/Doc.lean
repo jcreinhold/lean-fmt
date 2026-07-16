@@ -216,9 +216,17 @@ private partial def go (w : Nat) : List Cmd → Nat → Nat → String → Array
       | .brk =>
         let s := newlineIndent i
         go w z i (outBytes + s.utf8ByteSize) (out ++ s) marks
-    | .group d =>
-      let mode := if fits (Int.ofNat w - Int.ofNat col) (.doc i .flat d :: z) then Mode.flat else Mode.brk
-      go w (.doc i mode d :: z) col outBytes out marks
+    | .group d => match m with
+      -- Already flat: the enclosing group's fit test *pushed this group as `.doc i .flat d`* to reach
+      -- its answer, so re-testing here can only re-derive the answer that authorized it — and if it
+      -- ever derived a different one, `go` would emit a break inside a group that `fits` had certified
+      -- as flat. Honoring `m` is what keeps the two functions the same function. It is also the
+      -- difference between linear and quadratic on nested groups: without it every one of `n` nested
+      -- groups re-walks the tail. Measured, `evidence/03-layout-bench.txt`.
+      | .flat => go w (.doc i .flat d :: z) col outBytes out marks
+      | .brk =>
+        let mode := if fits (Int.ofNat w - Int.ofNat col) (.doc i .flat d :: z) then Mode.flat else Mode.brk
+        go w (.doc i mode d :: z) col outBytes out marks
 
 /-- Render `d` at margin `w`, returning the text and the source map.
 

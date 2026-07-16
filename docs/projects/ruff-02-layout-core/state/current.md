@@ -1,6 +1,6 @@
 ---
 kind: state
-first_unresolved: 03-acceptance
+first_unresolved: none
 ---
 
 # Current state
@@ -10,12 +10,15 @@ The layout contract is frozen in `notes/01-layout-design.md` and backed by a too
 module with each other. Its external prerequisite stack `ruff-01-lossless-source` is verified and its
 live implementation still matches recorded state.
 
-The engine is **live**. `LeanFmt/Doc.lean` implements the frozen contract — the algebra, the bounded
-renderer, and source marks — and `LeanFmt/Comments.lean` implements ownership. Both are in
+The engine is **live and audited**. `LeanFmt/Doc.lean` implements the frozen contract — the algebra,
+the bounded renderer, and source marks — and `LeanFmt/Comments.lean` implements ownership. Both are in
 `LeanFmtCore` and deliberately not in `LeanFmtCompilerPlugin`: the plugin runs inside every
-compilation of every downstream module, and nothing the compiler does needs to render a document. No
-printer consumes them yet; `Rules.lean` still produces `Finding`s from text rules only, and no
-language-specific printer exists. `RLC-FINAL` owns acceptance.
+compilation of every downstream module, and nothing the compiler does needs to render a document.
+
+**Nothing consumes it.** `LeanFmt.Doc` and `LeanFmt.Comments` are imported only by `LeanFmtTest.lean`;
+`Rules.lean` still produces `Finding`s from text rules, and no language-specific printer exists — the
+roadmap places printers in a later stack. This stack is complete, and that completeness is bounded by
+this fact: every claim about *realistic* documents rests on fixtures written here.
 
 The chosen model is a **Wadler/Leijen document tree whose `line` carries its flat text, rendered by a
 bounded work list**. Lean core's own `Std.Format` is rejected: it is a closed inductive and the one
@@ -25,7 +28,7 @@ constructor that decides this cannot be added from outside it.
 | --- | --- | --- | --- |
 | 01-design | RLC-SPEC | verified | — |
 | 02-engine | RLC-IMPL | verified | RLC-SPEC |
-| 03-acceptance | RLC-FINAL | planned | RLC-IMPL |
+| 03-acceptance | RLC-FINAL | verified | RLC-IMPL |
 
 ## Known evidence
 
@@ -96,34 +99,53 @@ constructor that decides this cannot be added from outside it.
   only the generated fixture caught it. Real-parse coverage of trailing, inline-block, newline-spanning
   block, and dangling positions comes from `tests/layout/run.sh`'s generated fixture (`comments=5
   leading=1 trailing=3 dangling=1`), which borrows a setup exactly as `tests/lossless/run.sh` does.
+- **Attachment holds on the frozen mathlib sample, and Lean's own rule loses a comment there**
+  (`RLC-FINAL`, `evidence/03-attachment-sample.txt`). 62 modules, 119,856 tokens, `failures=0`;
+  `comments=127 leading=116 trailing=11 dangling=0`, with real trailing comments in 7 modules. The
+  `splitPoint` correction is load-bearing on real code, not only in argument:
+  `Mathlib/Probability/Kernel/Deterministic.lean:146` opens a three-line block comment after `·` on the
+  same line, and mutating `splitPoint` back to `chooseNiceTrailStop`'s raw scan **fails that module**
+  on "preserve every comment exactly once". Restored, it attaches as `trailing` of `·`.
+- **Nested groups were quadratic, and that was a real defect, now fixed** (`RLC-FINAL`). `go` decided
+  every `group` with a fit test regardless of the mode it was already in, so `n` nested groups ran `n`
+  tail walks: 72× across an 8× size step. A group inside an already-flat group must not be re-tested —
+  `fits` reached its answer by *assuming* inner groups render flat, so re-deciding can only re-derive
+  that answer or contradict the test that authorized it. Now 7.6× across the same step, 854× faster at
+  n=8000, and **byte-identical across 16,400 renders** (400 documents × 41 margins): the fix removed
+  work, not decisions. The roadmap's "near-linear on adversarial nesting" was **not met** before this.
+- **The residual hole is Wadler's, not this implementation's.** `n` sibling groups spending no column
+  and offering no break are Θ(n²) (66× across an 8× step), because "does this fit up to the next break"
+  genuinely depends on the whole tail when there is no next break. **Lean core's `Std.Format` is
+  quadratic on the identical shape** (4.0× per doubling, measured). Only Oppen's running total closes
+  it, and §3's rejection of Oppen is untouched by anything found here — so the cost is accepted a second
+  time on the same terms. The bound is now stated exactly: `render` is O(n·k) for k the largest
+  node-distance between break opportunities, and a token-per-node printer bounds k by its widest
+  construct.
+- **`mark` costs a constant, and peak RSS is ≈3.4× output size.** 100,000 marks render in 14.8 ms,
+  growth 105× over a 100× size step; `/usr/bin/time -l` reports 672 MB peak RSS for a benchmark whose
+  largest output is 200 MB. Against the 8 GiB envelope and a 660 KB largest real artifact, the margin is
+  four orders of magnitude. The ratio, not the 672 MB, is what generalizes.
 
 ## Blockers and prerequisites
 
 - No blocker is currently recorded beyond the named prerequisite stacks.
 - If live code contradicts prerequisite results, reopen the owning prerequisite rather than patching around it.
 - Full mathlib is not development evidence; follow this roadmap's evidence policy.
-- **The known complexity hole is `RLC-FINAL`'s.** The fit test is bounded in columns of *text*, not in
-  nodes between columns: `empty`, `nest`, `group`, and `mark` consume no width, so an adversarial
-  zero-width document could give O(n·w) → O(n²). Every shape measured is linear. There is a concrete
-  lead: a discarded fixture with a zero-width tail *did* defeat Oppen's buffer bound, which is the
-  same pathology from the other side.
-- **`mark`'s cost is still unmeasured.** `RLC-IMPL` resolved the *semantic* half of this: `mark` is
-  implemented, its interaction with `group` is settled (it consumes no width, `fits` walks through it,
-  and a `closeMark` command records the output end), and `testDoc` covers it. The *cost* half is not
-  resolved. Each mark costs one extra work-list entry, so linearity is a structural argument, not a
-  benchmark — no probe carries source ranges through a render at scale. `RLC-FINAL` inherits this with
-  its other benchmarks.
-- **Peak RSS was never measured for either model.** A's O(n) memory is argued affordable from
-  `RLS-FINAL`'s artifact sizes, not from a resident-set figure. The roadmap's 8 GiB envelope is
-  unverified for this component.
-- **The comment rule has never met code it did not anticipate.** `RLC-IMPL` widened coverage from one
-  synthetic fixture to 18 real modules, but they are *this project's own* modules, in a house style
-  with no trailing comments — so the positions that matter are still covered only by fixtures written
-  against the rule they test. The frozen 62-module mathlib sample has still not been run through
-  attachment, and it is the only corpus available that nobody wrote to suit this rule. `RLC-FINAL`.
-- **`leading` is exercised by no parser output.** `nonempty_leading=0` on 4.32, and all 59 corpus
-  comments arrive via trailing runs. The non-empty-leading path exists because the projection permits
-  it, but only hand-built projections in `testComments` cover it.
+- **Nothing consumes the layout core, so it is unvalidated by any real caller.** This is the binding
+  limit on everything above and the reason the stack is complete rather than finished: `call-args` is
+  my model of a Lean call, not a Lean call. The printer stack turns these claims into evidence.
+- **The O(n·k) precondition is stated, not enforced.** `Doc.wellFormed` checks the newline invariant;
+  nothing checks that a document offers breaks at bounded node-distance. It is unreachable from a
+  token-per-node printer by construction — an argument about printers that do not exist yet.
+- **`leading` is exercised by no parser output.** `nonempty_leading=0` on 4.32, and all 127 sample
+  comments arrive via trailing runs, as did all 59 corpus comments. The non-empty-leading path exists
+  because the projection permits it, but only hand-built projections in `testComments` cover it.
+- **No dangling comment exists in the mathlib sample.** `dangling=0` across all 62 modules. The
+  `trailer` path is structural rather than heuristic, and it is covered only by the generated fixture in
+  `tests/layout/run.sh`.
+- **Unicode width is unresolved and measured against nothing.** Columns are codepoints, which
+  under-count CJK and emoji by half and are not normalization-stable. No corpus or benchmark here
+  contains either; the first printer to format a string literal inherits it.
 - **Deliberately deferred to `RLC-FINAL` as remaining language decisions**, so silence is not mistaken
   for a ruling: inconsistent (`fill`) breaking, align-to-current-column, indentation clamping, and the
   margin value itself. The margin is configuration and must enter cache identity; the `Doc` is never

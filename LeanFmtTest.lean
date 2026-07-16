@@ -793,9 +793,107 @@ private def attachReport (envelopePath sourcePath : String) : IO UInt32 := do
 dangling={attachment.trailer.size} header_bytes={attachment.header.stop} tokens={projection.tokens.size}"
   return 0
 
+/- Layout cost, on the shapes `RLC-FINAL` names.
+
+`notes/01-layout-design.md` §4.6 records a known hole: the fit test is bounded in *columns*, not in
+nodes, so a document that never spends a column could make one fit test walk arbitrarily far. These
+fixtures are built to decide it rather than to pass. `tests/layout/bench.sh` reads the output and
+asserts; the numbers live in `evidence/03-layout-bench.txt`.
+
+Construction is deliberately outside every timed region, and every timed region forces its result: a
+pure `let` in Lean is not evaluated where it is written, and an unforced `render` measures 166 ns for
+any `n` — which is how this benchmark first lied. -/
+
+/-- **The adversary.** `n` sibling groups that never spend a column and never offer a break, so no fit
+test can ever answer early: each one walks the entire remaining tail. This is §4.6's hole made
+concrete, and it is not reachable from a printer that emits a token per node — see `bench.sh`. -/
+private def zeroWidthSiblings (n : Nat) : Doc := Id.run do
+  let mut d := Doc.text "x"
+  for _ in [0:n] do
+    d := .cat (.group (.nest 1 .empty)) d
+  return d
+
+/-- **Adversarial nesting**, which is the shape the roadmap names by that phrase: `n` groups deep,
+none of which spends a column. Distinct from `zeroWidthSiblings`, and the distinction is the whole
+result — see `evidence/03-layout-bench.txt`. -/
+private def zeroWidthNesting (n : Nat) : Doc := Id.run do
+  let mut d := Doc.text "x"
+  for _ in [0:n] do
+    d := .group (.nest 1 d)
+  return d
+
+/-- A Lean-shaped call, `f(a0, a1, ...)`: one group, `n` arguments, every argument carrying text. This
+is the shape a real printer emits, and the difference from `zeroWidthSiblings` is only that the text is
+there. -/
+private def callArgs (n : Nat) : Doc := Id.run do
+  let mut inner := Doc.empty
+  for i in [0:n] do
+    let arg := Doc.text s!"a{i}"
+    inner := if i == 0 then arg else .cat inner (.cat (.text ",") (.cat (.line " ") arg))
+  return .group (.cat (.text "f(") (.cat (.nest 2 (.cat (.line "") inner)) (.cat (.line "") (.text ")"))))
+
+/-- `n` nested calls, `f(f(f(...)))` — the depth axis rather than the width axis. -/
+private def nestedCalls (n : Nat) : Doc := Id.run do
+  let mut d := Doc.text "x"
+  for _ in [0:n] do
+    d := .group (.cat (.text "f(") (.cat (.nest 2 (.cat (.line "") d)) (.cat (.line "") (.text ")"))))
+  return d
+
+/-- `callArgs` with every argument marked, which is what a real printer does: one mark per token. The
+cost of `mark` is the open question `RLC-IMPL` left to this prompt. -/
+private def markedCallArgs (n : Nat) : Doc := Id.run do
+  let mut inner := Doc.empty
+  for i in [0:n] do
+    let arg := Doc.mark ⟨i, i + 1⟩ (.text s!"a{i}")
+    inner := if i == 0 then arg else .cat inner (.cat (.text ",") (.cat (.line " ") arg))
+  return .group (.cat (.text "f(") (.cat (.nest 2 (.cat (.line "") inner)) (.cat (.line "") (.text ")"))))
+
+private def benchOne (label : String) (n : Nat) (d : Doc) : IO Unit := do
+  -- Force construction before the clock starts, so building the fixture is not in the measurement.
+  if d.size == 0 then throw (IO.userError "the fixture is empty")
+  let start ← IO.monoNanosNow
+  let (out, marks) := render 80 d
+  -- `utf8ByteSize` is O(1) and forces the render; `String.length` would walk the output and bill the
+  -- walk to the renderer.
+  if out.utf8ByteSize + marks.size == 999999999 then throw (IO.userError "impossible")
+  let stop ← IO.monoNanosNow
+  IO.println s!"{label} n={n} nodes={d.size} ms={(Float.ofNat (stop - start)) / 1000000.0} \
+out_bytes={out.utf8ByteSize} marks={marks.size}"
+
+/-- Every generated document rendered at every margin, as text.
+
+This exists to settle equivalence claims about the renderer by diffing two builds, rather than by
+arguing that a change "should not" alter output. `results/03-acceptance.md` records the one it settled. -/
+private def docDump : IO UInt32 := do
+  let mut seed : Nat := 20260716
+  for i in [0:400] do
+    let (d, s) := genDoc 4 seed
+    seed := s
+    for w in [0:41] do
+      IO.println s!"{i} {w} {String.intercalate "⏎" ((renderText w d).splitOn "\n")}"
+  return 0
+
+private def docBench : IO UInt32 := do
+  for n in [1000, 2000, 4000, 8000] do
+    benchOne "zero-width-siblings" n (zeroWidthSiblings n)
+  for n in [1000, 2000, 4000, 8000] do
+    benchOne "zero-width-nesting" n (zeroWidthNesting n)
+  for n in [1000, 10000, 100000] do
+    benchOne "call-args" n (callArgs n)
+  -- Capped at 10,000: `nest` is unclamped by contract (§4.6), so depth `n` at unit 2 emits Θ(n²)
+  -- *bytes* — 200 MB here, and 20 GB at n=100,000. That cost is the output, not the fit test, which is
+  -- why the assertion in `bench.sh` is per output byte rather than per node.
+  for n in [100, 1000, 10000] do
+    benchOne "nested-calls" n (nestedCalls n)
+  for n in [1000, 10000, 100000] do
+    benchOne "marked-call-args" n (markedCallArgs n)
+  return 0
+
 public unsafe def main (args : List String) : IO UInt32 := do
   match args with
   | ["attach-report", envelopePath, sourcePath] => attachReport envelopePath sourcePath
+  | ["doc-bench"] => docBench
+  | ["doc-dump"] => docDump
   | [] =>
     testDigests
     testRules
@@ -845,5 +943,6 @@ public unsafe def main (args : List String) : IO UInt32 := do
       verify-facet-artifact ARTIFACT SOURCE EXPECTED_TRAILING EXPECTED_HASH | \
       verify-official-facet ROOT SOURCE EXPECTED_TRAILING | \
       attach-report ENVELOPE SOURCE | \
+      doc-bench | \
       print-lake-hash ARTIFACT]"
     return 2

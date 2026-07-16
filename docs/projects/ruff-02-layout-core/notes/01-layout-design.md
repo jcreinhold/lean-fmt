@@ -324,12 +324,31 @@ What it does promise, measured:
 Linear in document size on both shapes the roadmap names, at sizes far past any real module (the
 largest mathlib artifact `RLS-FINAL` measured is 660 KB, ~16k tokens).
 
-**The known hole.** The fit test is bounded in *columns*, not in *nodes*: `empty`, `nest`, `group`,
-and `mark` consume no width, so a document that nests them deeply between text could make one fit test
-walk arbitrarily far, giving O(n·w) at best and O(n²) in the pathological limit. Every shape measured
-here is linear, and every printer that emits text at bounded node-distance stays linear. This is not
-demonstrated for an adversarial zero-width document, and `RLC-FINAL` owns demonstrating it — the
-roadmap already assigns it "benchmark adversarial deeply nested documents".
+**The bound, stated exactly** (`RLC-FINAL`; this paragraph replaces a weaker one that was wrong).
+A fit test walks *to the next break in the tail*, not to the end of the document — so `render` is
+O(n·k), where k is the largest number of nodes between consecutive break opportunities. Every printer
+that offers a break at each line boundary has k bounded by its widest single construct, and is
+therefore linear. This is the whole precondition, and it is one a printer meets by existing: a module
+is not one line.
+
+Two things follow, and the second is the hole:
+
+- **Nesting is linear.** A group inside a group already rendered flat is *not* re-tested: the outer
+  fit test reached its answer by assuming the inner group renders flat, so re-deciding could only
+  re-derive that answer — or contradict the test that authorized it. Measured: 7.6× across an 8× size
+  step on `zero-width-nesting`, which is the roadmap's "adversarial nesting" verbatim. **This was not
+  true when this note was written.** The renderer re-tested every nested group, making the shape
+  quadratic (72×), and `RLC-FINAL` found it by measuring the claim instead of restating it. Fixing it
+  left all 16,400 generated renders byte-identical: it removed work, not decisions.
+- **The known hole is a document with no break at all.** `n` sibling groups that spend no column and
+  offer no break force each fit test to walk the entire tail, giving Θ(n²) — measured, 66× across an
+  8× step, and unchanged by the fix above. It is not a defect in the implementation but a property of
+  Wadler fit testing: **Lean core's own `Std.Format` is quadratic on the identical shape** (4.0× per
+  doubling, measured). Only a running total over the tail closes it, which is Oppen's `rightotal` —
+  the model §3 rejected on expressiveness. So the cost is accepted knowingly a second time, on the
+  same terms. It is unreachable from a printer that emits a token per node, because every token spends
+  a column; that is a precondition on printers, recorded here rather than assumed.
+  `tests/layout/bench.sh` pins all of it.
 
 ### 4.7 Width policy
 
