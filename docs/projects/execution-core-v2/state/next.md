@@ -17,11 +17,12 @@ Read this file, the target prompt, target files, listed source/template line ran
 
 ## Proof Task
 
-- Add the NDJSON editor service over the same private snapshot-analysis and validation primitive.
+- see the target prompt's Task section
 
 ## Reuse
 
-- see the target prompt's Read section
+- `roadmap.md`, `state/current.md`, `notes/06-design.md`, `notes/09-modes-design.md`, `notes/10-scale-design.md`, and `notes/11-service-design.md`.
+- `LeanFmt/Application.lean`, `LeanFmt/Cli.lean`, `LeanFmt/Project.lean`, `LeanFmt/Semantic.lean`, and the focused check/mode integration harnesses.
 
 ## Lean Work
 
@@ -29,4 +30,4 @@ Inspect the live goal, search relevant declarations, test plausible proof steps,
 
 ## Stop Rules
 
-- see the target prompt's Stop section
+- Stop for replanning instead of accepting on-disk evidence for unsaved bytes, retaining a mutable frontend environment across distinct exact headers, adding a second semantic projection or source writer, allowing unbounded input retention, exposing concurrency controls, or weakening the memory envelope. Ordinary Lean stream/JSON API drift, a missing focused fixture, and a failed first protocol test are not blockers.

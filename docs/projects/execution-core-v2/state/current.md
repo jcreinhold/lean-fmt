@@ -83,7 +83,10 @@ as independent measured prerequisites.
   pressure, and no swap growth.
 
 These facts and the verified batch product surface constrain Prompt 10's optimization hypotheses;
-they do not authorize weaker semantics or a broader memory envelope.
+they do not authorize weaker semantics or a broader memory envelope. Prompt 11's original service
+task was under-scoped; its repaired contract now defines unsaved-source authority, the private wire
+schema, strictly increasing versions, capacity-one FIFO backpressure, fixed input bounds, exact-child
+failure recovery, and a focused differential/resource suite before implementation begins.
 
 ## Completed results
 
