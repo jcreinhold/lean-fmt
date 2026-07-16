@@ -57,6 +57,10 @@ of production modules until their owning prompt selects and verifies the interfa
   typed no-build graph. Do not replace it with per-file Lake runs or module-only selection.
 - A current ordinary `.olean` is successful-compilation evidence for source-input rules, not a
   serialized syntax projection. Syntax-input rules require the compiler artifact or exact frontend.
+- Size the module artifact per element, not per source byte: it costs about 25 B x (tokens + nodes)
+  and lands in the `.olean` at its own size. Measured over the frozen mathlib sample that is 10.26x
+  the source, 660 KB for the largest module there. Ratio against source tracks token density, which
+  varies 16x, so a small source does not imply a small artifact.
 - Every compiler-produced offset and digest indexes the normalized source, `raw.crlfToLf`, because
   `Parser.mkInputContext` normalizes before assigning any position. Projections, rule findings, and
   artifact identity share that one coordinate system; a module linter is handed already-normalized
