@@ -718,7 +718,14 @@ private def Tree.liftedParts (tree : Tree) (node : Nat) : Array Part := Id.run d
 private inductive Spacing where
   /-- Every gap is exactly one space. -/
   | flat
-  /-- The two gaps just inside the outer brackets are tight; every other gap is one space. -/
+  /-- The two gaps just inside the outer brackets are tight; every other gap is one space.
+
+  **This is not a rule about brackets.** It is three declarations that happen to agree, and
+  `structInst` is the counter-example that proves it: it declares `"{ "` and `" }"` — *spaced* —
+  where `implicitBinder` declares a bare `"{"` and `"}"` (`Term.lean:351-355` against
+  `Term/Basic.lean:217-218`). Same brace, opposite spacing, and the projection sees `{` for both. So
+  a kind may be added here only by reading its own grammar and finding bare brackets, never by
+  recognizing that it has brackets at all. See `spacingOf`. -/
   | bracketed
   /-- No layout: every gap keeps its bytes. -/
   | keep
@@ -756,6 +763,18 @@ constructs like `(...)` so that the user can locally override whitespace sensiti
 (`Lean/Parser/Basic.lean:1565-1571`). So inside a binder's brackets there is no live column check for
 re-spacing to break: `app` has to argue *collapse, do not break* against a `checkColGt` that is
 switched on, while here it is switched off by the grammar itself.
+
+**`structInst` is deliberately absent, and it is absent twice over.** Its braces are declared `"{ "`
+and `" }"` (`Term.lean:351-355`), so `bracketed` would emit `{x := 1}` where the grammar says
+`{ x := 1 }` — the `Spacing.bracketed` docstring's counter-example. And even a rule that got the
+braces right could not run: `structInst`'s `withoutPosition` does not reach its fields, because
+`sepByIndent` re-establishes a saved position inside it and separates two fields by `", "` **or** by
+`checkColEq >> checkLinebreakBefore` (`Parser/Extra.lean:202-204`). Fields at a shared column on
+consecutive lines are separated *by that column*, so collapsing the gap after `{` moves the first
+field left, the second does not move, and the parse changes. That is a horizontal collapse breaking a
+later line — the one thing `notes/02-expressions.md` §7 assumes cannot happen — and it is why §5b
+sharpens the rule to *no live column check may compare two tokens whose relative columns the collapse
+changes*.
 
 `strictImplicitBinder` is deliberately absent, and that is the same citation read the other way: it is
 the one bracketed binder whose interior is **not** wrapped in `withoutPosition` (`:234-236`), so an

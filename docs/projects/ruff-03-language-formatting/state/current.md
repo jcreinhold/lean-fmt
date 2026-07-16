@@ -137,6 +137,26 @@ question is where the remaining value is**.
   originally wrote the commented binder with its other gaps already canonical, where a per-gap rule and
   an all-or-nothing rule emit identical bytes and the golden would have pinned neither; it now carries
   slack in the later gaps on purpose. Same shape as the header's per-gap import rule.
+- **`{` is not `{`, and it is the sharpest evidence in this stack that spacing must be read per
+  declaration.** `structInst` declares its braces **spaced** — `"{ "` and `" }"`
+  (`Lean/Parser/Term.lean:351-355`) — where `implicitBinder` declares them **bare**
+  (`Term/Basic.lean:217-218`). `{a : Nat}` and `{ x := 1 }` are both canonical, the projection records
+  `{` for both, and only the kind plus the declaration separates them. So `Spacing.bracketed` is not a
+  rule about brackets: it is three declarations that agree, and it would emit `{x := 1}` for this one.
+  A kind may be added to it only by reading its own grammar, never by noticing it has brackets — which
+  is now what the constructor's docstring says, with `structInst` named as the counter-example.
+- **Horizontal collapsing is not unconditionally safe, and `structInst` is the case that shows it.**
+  `withoutPosition` does not reach its fields: `sepByIndent` re-establishes a saved position inside it
+  and separates two fields by `", "` **or** by `checkColEq >> checkLinebreakBefore`
+  (`Lean/Parser/Extra.lean:202-204`), so fields at a shared column on consecutive lines are separated
+  *by that column*. Collapsing the gap after `{` moves the first field left, the second does not move,
+  and the parse changes — **a horizontal collapse breaking a later line**, which is the one thing
+  "collapse, do not break" assumed away. The rule sharpens to: *a collapse is safe when no live column
+  check compares two tokens whose relative columns the collapse changes*. `app` and the binders pass
+  it because the saved position sits at the construct's start, left of everything the collapse moves;
+  `sepByIndent` saves at the **first field**, inside the construct and to the right. **Records are
+  therefore deferred on the grammar and would be deferred under any model of spacing** — not on the
+  abstraction.
 - **Operators are notations, and their spacing is the declared string this printer cannot read.**
   13,219 of 122,011 token-bearing nodes (10.8%) are notation or foreign syntax: `«term_≤_»` (1548),
   `«term_=_»` (1059), `«term_*_»` (641), `termℕ` (638). Some are core and could each be hardcoded;

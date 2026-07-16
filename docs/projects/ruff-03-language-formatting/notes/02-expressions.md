@@ -136,6 +136,45 @@ string, not a parsing one. So the layout rewrites source that was never wrong, a
 time this formatter has *added* a space rather than collapsed one. That is only defensible because the
 space being added is the one the declaration names.
 
+## 5b. `structInst` breaks the rule §5 just established, twice, and both are worth keeping
+
+**`{` is not `{`.** `structInst` declares its braces **spaced** where `implicitBinder` declares them
+bare:
+
+    structInst := "{ " >> withoutPosition (… sepByIndent structInstField ", " …) >> " }"  -- Term.lean:351-355
+    implicitBinder := "{" >> withoutPosition (many1 binderIdent >> binderType) >> "}"     -- Basic.lean:217-218
+
+So `{a : Nat}` and `{ x := 1 }` are both canonical, and the projection cannot tell the two braces
+apart — the source text is `{` in both. Only the *kind* plus the *declaration* distinguishes them.
+This is the sharpest available proof that "brackets are tight" is not a rule about brackets: it is a
+fact about three specific declarations, and `Spacing.bracketed` is a coincidence that holds for the
+kinds it names and would emit `{x := 1}` for this one. It is why that constructor's docstring now
+names `structInst` as the counter-example rather than merely listing what it covers.
+
+**And `withoutPosition` does not reach the fields.** `sepByIndent` re-establishes a saved position
+*inside* it, and its separator is not just the comma (`Parser/Extra.lean:202-204`):
+
+    sepByIndent p sep psep := withPosition $ sepBy (checkColGe … >> p) sep
+      (psep <|> checkColEq … >> checkLinebreakBefore >> pushNone) allowTrailingSep
+
+Two fields are separated by `, ` **or by standing at the same column on a new line**. So this parses:
+
+    { x := 1
+      y := 2 }
+
+and re-spacing the gap after `{` moves `x` left while `y` — on the next line, its gap untouched —
+does not move. `checkColEq` then fails and the implicit separator stops matching. **A purely
+horizontal collapse breaks the parse of a later line**, which is precisely what §7's "collapse, do not
+break" was assumed to rule out.
+
+That assumption is not wrong, but it was under-argued, and this is the sharpening: a collapse is safe
+when no live column check compares two tokens whose *relative* columns the collapse changes. Same-line
+collapses are ordinarily safe because the saved position sits at the construct's start, left of
+everything the collapse moves — that is why `app` and the binders are fine. `sepByIndent` saves at the
+**first field**, which is inside the construct and to the right of it, and compares it against a token
+on another line. Records are therefore deferred on the grammar, not on the abstraction, and would be
+deferred under any model of spacing.
+
 ## 6. What is not citable, and is therefore deferred
 
 **Operators are notations, and their spacing is rule 1.** The census, by kind:
