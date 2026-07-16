@@ -1,6 +1,6 @@
 ---
 kind: state
-first_unresolved: 05-compiler-artifacts
+first_unresolved: 06-design
 ---
 
 # Current state
@@ -16,7 +16,7 @@ as independent measured prerequisites.
 | 02-native-reset | ECV2-NATIVE-RESET | verified | ECV2-RESET |
 | 03-workloads | ECV2-WORKLOADS | verified | ECV2-NATIVE-RESET |
 | 04-built-cold | ECV2-BUILT-COLD | verified | ECV2-WORKLOADS |
-| 05-compiler-artifacts | ECV2-COMPILER-ARTIFACTS | planned | ECV2-WORKLOADS |
+| 05-compiler-artifacts | ECV2-COMPILER-ARTIFACTS | verified | ECV2-WORKLOADS |
 | 06-design | ECV2-DESIGN | planned | ECV2-BUILT-COLD, ECV2-COMPILER-ARTIFACTS |
 | 07-check | ECV2-CHECK | planned | ECV2-DESIGN |
 | 08-cache | ECV2-CACHE | planned | ECV2-CHECK |
@@ -37,6 +37,10 @@ as independent measured prerequisites.
 - The active package now uses Lean 4.32's module system throughout. Investigation rejected external
   candidate promotion: the module/Lake build owner must structurally bind plugin, setup, success,
   trace, and publication.
+- The selected compiler path stores a compact formatter record in the successful `.olean` and
+  exposes it as a package-owned Lake facet. It matched the independent oracle on 62/62 files with
+  0.375 ms mean plugin overhead, but one-process-per-module extraction averaged 791.638 ms and is
+  therefore a design input rather than the production consumption strategy.
 
 These facts constrain prompts 04 and 05; they do not predetermine their final interface.
 
@@ -46,6 +50,9 @@ These facts constrain prompts 04 and 05; they do not predetermine their final in
   build/cache axes, deterministic mathlib selection, and the resource-bounded profiling format.
 - [ECV2-BUILT-COLD](../results/04-built-cold.md) rejects same-runtime reuse and the ordinary-built
   fresh-process fallback as a competitive path, while preserving it as the exact isolation model.
+- [ECV2-COMPILER-ARTIFACTS](../results/05-compiler-artifacts.md) selects compiler-owned persistent
+  lint data plus a package-owned Lake facet, with exact-path, invalidation, corruption, cache,
+  differential, resource, and independent-audit evidence.
 
 ## Verification convention
 

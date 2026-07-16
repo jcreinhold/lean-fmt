@@ -1,3 +1,5 @@
+module
+
 namespace LeanFmt
 
 /-- Version of the fresh native-Lean execution-core foundation. -/
