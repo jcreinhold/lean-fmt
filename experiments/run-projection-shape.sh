@@ -77,6 +77,9 @@ empty_nodes = 0
 empty_ambiguous = 0
 kind_census = defaultdict(int)
 command_census = defaultdict(int)
+decl_census = defaultdict(int)
+unread_shapes = defaultdict(int)
+modifier_shapes = defaultdict(int)
 
 for name in sorted(os.listdir(envelopes)):
     envelope = json.load(open(os.path.join(envelopes, name)))
@@ -156,6 +159,35 @@ for name in sorted(os.listdir(envelopes)):
         if starts != sorted(starts):
             argorder_violations += 1
 
+    # (5) How many declarations does the shell layout actually claim?
+    #
+    # `Printer.lean`'s `declarationShellEnd?` recognizes a `declaration` only when its `declModifiers`
+    # are empty and its shape is one of the four whose grammar was read. That is a coverage claim, and
+    # a coverage claim guessed from "318 empty declModifiers out of 336 declarations" would be wrong
+    # in both directions — an empty-modifiers declaration can still be an `instance` or a `structure`,
+    # which the printer does not recognize. So the predicate is re-implemented here against the same
+    # projection and counted, and the reason each rejection happens is counted with it.
+    SHELL_SHAPES = {
+        "Lean.Parser.Command.abbrev", "Lean.Parser.Command.definition",
+        "Lean.Parser.Command.theorem", "Lean.Parser.Command.opaque",
+    }
+    for i, n in enumerate(nodes):
+        if parent_of(n) is not None or kinds[n[0]] != "Lean.Parser.Command.declaration":
+            continue
+        ch = children[i]
+        if len(ch) != 2 or kinds[nodes[ch[0]][0]] != "Lean.Parser.Command.declModifiers":
+            decl_census["rejected: not modifiers + shape"] += 1
+        elif has_token_pre[ch[0]]:
+            decl_census["rejected: declModifiers non-empty"] += 1
+            modifier_shapes[kinds[nodes[ch[1]][0]]] += 1
+        elif kinds[nodes[ch[1]][0]] not in SHELL_SHAPES:
+            decl_census["rejected: shape not read yet"] += 1
+            unread_shapes[kinds[nodes[ch[1]][0]]] += 1
+        elif not children[ch[1]] or kinds[nodes[children[ch[1]][0]][0]] != "Lean.Parser.Command.declId":
+            decl_census["rejected: first child is not declId"] += 1
+        else:
+            decl_census["claimed: shell laid out"] += 1
+
     # (3)/(4) empty nodes, and whether their placement among siblings is recoverable
     has_token = has_token_pre
     for i, n in enumerate(nodes):
@@ -181,6 +213,21 @@ print()
 print(f"# command kinds in the corpus ({sum(command_census.values())} commands, "
       f"{len(command_census)} distinct kinds)")
 for kind, count in sorted(command_census.items(), key=lambda kv: -kv[1]):
+    print(f"{count}\t{kind}")
+print()
+declarations = sum(decl_census.values())
+claimed = decl_census["claimed: shell laid out"]
+cpct = (100.0 * claimed / declarations) if declarations else 0.0
+print(f"# what the declaration shell layout claims ({claimed}/{declarations} declarations, {cpct:.1f}%)")
+for reason, count in sorted(decl_census.items(), key=lambda kv: -kv[1]):
+    print(f"{count}\t{reason}")
+print()
+print("# shapes rejected only because their grammar has not been read yet")
+for kind, count in sorted(unread_shapes.items(), key=lambda kv: -kv[1]):
+    print(f"{count}\t{kind}")
+print()
+print("# shapes rejected because declModifiers is non-empty")
+for kind, count in sorted(modifier_shapes.items(), key=lambda kv: -kv[1]):
     print(f"{count}\t{kind}")
 
 # The two properties the tree view depends on are hard failures.

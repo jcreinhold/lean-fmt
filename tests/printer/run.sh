@@ -138,6 +138,15 @@ end Beta
 
 namespace /- a comment between the keyword and the name -/ Gamma
 end Gamma
+
+def     b     : Nat := 1
+
+private def     c : Nat := 2
+
+/-- A doc comment is a token, and a token that spans lines. -/
+def     d : Nat := 3
+
+@[inline] def     e : Nat := 4
 FIXTURE
 LEAN_NUM_THREADS=1 lake env "$application" __analyze-exact \
   "$work/borrowed.setup.json" "$work/wonky.lean" "wonky.lean" 8589934592 >"$work/wonky.json"
@@ -146,12 +155,27 @@ LEAN_NUM_THREADS=1 lake env "$application" __analyze-exact \
 # The golden file. Each line of it is a separate claim about the layout:
 #   `namespace Alpha` / `end Alpha`  the runs of spaces collapse to exactly one. This is the first
 #                                    thing this formatter has ever decided.
-#   `def a : Nat := 0`               untouched: `declaration` has no canonical layout yet, so it takes
-#                                    the conservative path and keeps its bytes.
+#   `def a : Nat := 0`               already canonical, and stays byte-identical.
 #   `namespace Beta` / `end Beta`    already canonical, and stays byte-identical.
 #   `namespace /- ... -/ Gamma`      a comment sits between the tokens, so re-spacing would drop it.
 #                                    `respaceable` refuses and the command keeps its bytes, comment
 #                                    and all. This is the guard, not an accident.
+#   `def b     : Nat := 1`           the declaration *shell* — the keyword and the name — is laid out,
+#                                    and stops there. The five spaces before `:` survive because the
+#                                    signature is a term and `RLF-EXPRESSIONS` owns it, not this
+#                                    stack. A layout that claimed the whole command would have eaten
+#                                    them, which is exactly the failure this split exists to prevent.
+#   `private def     c`              `declModifiers` is non-empty, so the shell is refused whole, and
+#   `/-- ... -/ def     d`           the inner runs of spaces stay — which is how you can see the
+#   `@[inline] def     e`            conservative path actually ran rather than the layout agreeing.
+#                                    Deleting the modifiers guard rewrites all three, and the two it
+#                                    gets wrong are the point: `@[ inline ]` re-spaces a bracketed
+#                                    form, and `/-- ... -/ def d` pulls the code onto the docstring's
+#                                    line. **The docstring here is deliberately one line.** A
+#                                    multi-line one would be caught by `respaceable`'s newline check
+#                                    and this case would prove nothing about the guard; a one-line
+#                                    `/-- doc -/` is a newline-free token that `respaceable` is happy
+#                                    to re-space, so it is the guard alone that saves it.
 cat >"$work/wonky.golden" <<'GOLDEN'
 module
 
@@ -164,6 +188,15 @@ end Beta
 
 namespace /- a comment between the keyword and the name -/ Gamma
 end Gamma
+
+def b     : Nat := 1
+
+private def     c : Nat := 2
+
+/-- A doc comment is a token, and a token that spans lines. -/
+def     d : Nat := 3
+
+@[inline] def     e : Nat := 4
 GOLDEN
 if diff -u "$work/wonky.golden" "$work/wonky.out" >"$work/wonky.diff" 2>&1; then
   printf '  ok   canonical layout matches the golden file\n'

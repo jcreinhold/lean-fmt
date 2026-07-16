@@ -60,11 +60,20 @@ structure Tree where
   roots : Array Nat
   /-- `rootOf[i]` is the command node `i` belongs to. -/
   rootOf : Array Nat
+  /-- Node `i`'s subtree is exactly the index range `[i, subtreeEnd[i])`.
 
-/-- Build the view in two linear passes.
+  This is not the measured contiguity property being smuggled in as an assumption: it is computed as
+  the max of the children's ends, which is the subtree's extent whether or not the indices happen to
+  be contiguous. `evidence/01-projection-shape.txt` reports 0 contiguity violations over 34,844 nodes,
+  so the range is also gap-free in practice — but nothing below depends on that. -/
+  subtreeEnd : Array Nat
+
+/-- Build the view in a few linear passes.
 
 `rootOf` is a single forward pass because a parent's index is always below its children's: `collect`
-pushes the placeholder before recursing. That is the same fact `nodeChildren`'s ordering rests on. -/
+pushes the placeholder before recursing. That is the same fact `nodeChildren`'s ordering rests on, and
+the same fact that lets `subtreeEnd` be folded in one backward pass: every child of `i` is above `i`,
+so it is already final by the time `i` is reached. -/
 def Tree.ofSource (source : LosslessSource) : Tree := Id.run do
   let count := source.nodes.size
   let mut nodeChildren : Array (Array Nat) := Array.replicate count #[]
@@ -83,7 +92,13 @@ def Tree.ofSource (source : LosslessSource) : Tree := Id.run do
     let node := source.tokens[index]!.node
     if node < count then
       tokenChildren := tokenChildren.modify node (·.push index)
-  return { source, nodeChildren, tokenChildren, roots, rootOf }
+  let mut subtreeEnd : Array Nat := Array.ofFn (n := count) (·.val + 1)
+  for offset in [0:count] do
+    let index := count - 1 - offset
+    for child in nodeChildren[index]! do
+      if subtreeEnd[child]! > subtreeEnd[index]! then
+        subtreeEnd := subtreeEnd.set! index subtreeEnd[child]!
+  return { source, nodeChildren, tokenChildren, roots, rootOf, subtreeEnd }
 
 /-- The kind name of a node. -/
 def Tree.kindOf (tree : Tree) (node : Nat) : String :=
@@ -219,30 +234,126 @@ private def Tree.spaceSeparated (tree : Tree) (normalized : String) (span : Comm
       doc := if index == span.first then .text text else doc ++ .text " " ++ .text text
     return doc
 
+/-- Space-separate every token of the command, if nothing would be lost. The layout for the kinds
+whose whole grammar is a flat run of tokens. -/
+private def Tree.wholeSpan? (tree : Tree) (normalized : String) (span : CommandSpan) :
+    Option (Nat × Doc) :=
+  if tree.respaceable normalized span then some (span.last, tree.spaceSeparated normalized span)
+  else none
+
+/-- The first and last token index under `node`'s subtree, or `none` when it carries no token.
+
+`none` is the *absent syntax* case and is the common one: 36.7% of nodes are empty
+(`evidence/01-projection-shape.txt`), because an unfilled optional slot is still a node. Asking this
+question is how a layout distinguishes "the slot is empty" from "the slot is filled", which is
+information the projection carries exactly and positions do not carry at all. -/
+private def Tree.subtreeTokens (tree : Tree) (node : Nat) : Option (Nat × Nat) := Id.run do
+  let some stop := tree.subtreeEnd[node]? | return none
+  let mut bounds : Option (Nat × Nat) := none
+  for index in [node:stop] do
+    for token in tree.tokenChildren[index]! do
+      bounds := match bounds with
+        | none => some (token, token)
+        | some (lo, hi) => some (min lo token, max hi token)
+  return bounds
+
+/-- Where a `declaration`'s shell ends: the last token of its `declId`, or `none` when this is not a
+shape the printer has read the grammar for.
+
+`Lean/Parser/Command.lean:282-285` (v4.32.0):
+
+    def declaration := leading_parser
+      declModifiers false >> («abbrev» <|> definition <|> «theorem» <|> «opaque» <|> ...)
+
+so a `declaration` is exactly two node-children, and the second one names the shape. Four of the
+eleven alternatives open the same way — a keyword atom, then `declId`, then a signature, then the
+value (`:187-188`, `:194-195`, `:196-197`, `:198-199`) — and those four are what this recognizes:
+
+    def «abbrev»    := leading_parser "abbrev " >> declId >> ppIndent optDeclSig >> declVal
+    def definition  := leading_parser "def " >> recover declId .. >> ppIndent optDeclSig >> declVal >> optDefDeriving
+    def «theorem»   := leading_parser "theorem " >> recover declId .. >> ppIndent declSig >> declVal
+    def «opaque»    := leading_parser "opaque " >> declId >> ppIndent declSig >> declVal
+
+**The modifiers must be empty.** `declModifiers` (`:114-121`) is seven optional slots, and two of them
+are not a flat run of one-space-apart tokens. `attributes >> ppDedent ppLine` is bracketed and wants
+its own line, so one space between its tokens produces `@[ inline ]`. `docComment` is one token that
+belongs on its own line, and one space after it produces `/-- doc -/ def d`. Neither has a cited
+layout here yet, so a declaration carrying either keeps its bytes.
+
+The `docComment` case is why this guard is not redundant with `respaceable`. A *multi-line* docstring
+is caught there, by the newline check — but a one-line `/-- doc -/` is a newline-free token that
+`respaceable` is happy to re-space, and only this guard stops it from being pulled up onto the
+declaration. `tests/printer/run.sh` pins that case specifically, with a one-line docstring, and
+deleting this line makes it fail.
+
+**This layout claims 45 of 345 declarations — 13%.** Measured, not estimated, by re-implementing this
+predicate over the same projection in `experiments/run-projection-shape.sh`
+(`evidence/01-projection-shape.txt`). The estimate it replaced was wrong by a factor of seven: the
+empty-node census counts 318 empty `declModifiers`, which reads like "almost every declaration has
+none" until you notice `declModifiers` is also on every structure *field* (`declModifiers true`, the
+inline form), so those 318 were never a count of declarations. 262 declarations have non-empty
+modifiers here — 220 of them `definition` — and modifiers are the dominant blocker, not the shapes.
+
+The signature and the value are deliberately *not* reached. Both are terms, `RLF-EXPRESSIONS` owns
+them, and everything from the `declId`'s last token onward stays verbatim until it does. -/
+private def Tree.declarationShellEnd? (tree : Tree) (root : Nat) : Option Nat := do
+  let children := tree.nodeChildren[root]!
+  guard (children.size == 2)
+  let modifiers := children[0]!
+  let shape := children[1]!
+  guard (tree.kindOf modifiers == "Lean.Parser.Command.declModifiers")
+  guard (tree.subtreeTokens modifiers).isNone
+  guard <| [
+      "Lean.Parser.Command.abbrev", "Lean.Parser.Command.definition",
+      "Lean.Parser.Command.theorem", "Lean.Parser.Command.opaque"
+    ].contains (tree.kindOf shape)
+  let shapeChildren := tree.nodeChildren[shape]!
+  let declId ← shapeChildren[0]?
+  guard (tree.kindOf declId == "Lean.Parser.Command.declId")
+  let (_, last) ← tree.subtreeTokens declId
+  return last
+
 /-- The canonical layout for this command's kind, if it has one.
 
 Every kind here is cited against the parser it mirrors and pinned by a golden test. A kind absent from
 this dispatch is not a bug and not a TODO — it is the conservative path, which is the roadmap's
-"unknown commands must round-trip conservatively" and the only path resting on no grammar claim. -/
-private def Tree.canonical? (tree : Tree) (normalized : String) (span : CommandSpan) : Option Doc :=
-  if !tree.respaceable normalized span then none else
+"unknown commands must round-trip conservatively" and the only path resting on no grammar claim.
+
+**A layout claims a prefix of the command's tokens, not necessarily all of them**, which is what the
+returned index says: the last token the `Doc` accounts for. Everything past it is bytes. A whole-kind
+layout returns `span.last` and reduces to the obvious thing; a *shell* layout — a `declaration`, whose
+signature and value are terms this stack does not own — returns the token where its claim stops. This
+is the shape `notes/01-command-printing.md` §7 committed to when it left declaration values to
+`RLF-EXPRESSIONS`, and it costs nothing, because a command's `Doc` was always able to mix canonical
+structure with `verbatim` subtrees. -/
+private def Tree.canonical? (tree : Tree) (normalized : String) (span : CommandSpan) :
+    Option (Nat × Doc) :=
   match tree.kindOf span.root with
   -- `Lean/Parser/Command.lean:317-318` (v4.32.0):
   --   def «namespace» := leading_parser "namespace " >> checkColGt >> ident
   -- A keyword and an identifier, always exactly one space apart. `checkColGt` constrains the parser,
   -- not the printer: it is satisfied by any column past the command's, and column 0 + one space is.
-  | "Lean.Parser.Command.namespace" => some (tree.spaceSeparated normalized span)
+  | "Lean.Parser.Command.namespace" => tree.wholeSpan? normalized span
   -- `Lean/Parser/Command.lean:337-338` (v4.32.0):
   --   def «end» := leading_parser "end" >> optional (ppSpace >> checkColGt >> identWithPartialTrailingDot)
   -- The identifier is optional, so this is one token or two; `spaceSeparated` handles both without
   -- knowing which, because it spaces whatever tokens the command actually has.
-  | "Lean.Parser.Command.end" => some (tree.spaceSeparated normalized span)
+  | "Lean.Parser.Command.end" => tree.wholeSpan? normalized span
+  -- The declaration *shell*: the keyword and the name, one space apart. See `declarationShellEnd?`
+  -- for the citation and for why the modifiers, the signature, and the value are not touched.
+  | "Lean.Parser.Command.declaration" => do
+    let shellEnd ← tree.declarationShellEnd? span.root
+    guard (shellEnd <= span.last)
+    let shell := { span with last := shellEnd }
+    guard (tree.respaceable normalized shell)
+    return (shellEnd, tree.spaceSeparated normalized shell)
   | _ => none
 
 /-- One command.
 
-The extent is split into three: the trivia before the first token, the token span itself, and the
-trivia after the last token. Only the middle is ever canonicalized. The outer two are emitted verbatim
+The extent is split into three: the trivia before the first token, the tokens the layout claimed, and
+**everything from there to the end of the extent**. Only the middle is ever canonicalized. The outer
+two are emitted verbatim
 because they carry the comments and blank lines *between* commands — which belong to no command's
 layout, and which `RLC-SPEC` measured the parser attaching greedily to whichever token came first.
 
@@ -252,9 +363,9 @@ neither re-indents its content nor forces its group to break. -/
 def Tree.command (tree : Tree) (normalized : String) (span : CommandSpan) : Doc :=
   match tree.canonical? normalized span with
   | none => .verbatim (sliceNormalized normalized span.extent.start span.extent.stop)
-  | some canonical =>
+  | some (last, canonical) =>
     let tokenStart := (tree.source.tokens[span.first]?.map (·.start)).getD span.extent.start
-    let tokenStop := (tree.source.tokens[span.last]?.map (·.stop)).getD span.extent.stop
+    let tokenStop := (tree.source.tokens[last]?.map (·.stop)).getD span.extent.stop
     let before : Doc := .verbatim (sliceNormalized normalized span.extent.start tokenStart)
     let after : Doc := .verbatim (sliceNormalized normalized tokenStop span.extent.stop)
     before ++ canonical ++ after
