@@ -117,8 +117,11 @@ The middle two are **invisible to the corpus round-trip** and rest entirely on t
   requires `width` rather than defaulting it (`RLC-SPEC` §5: it enters cache identity), and no prompt
   in this stack has picked a value. Not this prompt's task line, so it stays open — but §8 says
   plainly that horizontal formatting is done and it changed nothing.
-- **`nest` does not exist and `hard` indents to column 0** (`startsLine`), so no layout here can break
-  a line inside an indented command. Every rule this prompt added is horizontal for that reason.
+- **This printer never emits `nest`, so `hard` indents to column 0** (`startsLine`), and no layout here
+  can break a line inside an indented command. Every rule this prompt added is horizontal for that
+  reason. The gap is in the *printer*, not the engine: `Doc.nest` exists (`LeanFmt/Doc.lean:74`) and is
+  honored by both `fits` (`:179`) and `go` (`:209`). So this is a call the printer has never made,
+  which is a much smaller thing than a capability the stack lacks — `RLF-TACTICS` is where it gets made.
 - **The `bracketed` trap is documented, not removed.** A fourth kind added by noticing it has brackets
   would be wrong; `structInst` is named in the constructor's docstring as the counter-example. The
   hybrid model above is what actually removes it.

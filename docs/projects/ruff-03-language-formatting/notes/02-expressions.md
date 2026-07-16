@@ -249,9 +249,11 @@ and is `checkWsBefore`'s space as always. One occurrence on the sample, and it n
 - **`argument`'s `checkColGt "expected to be indented"` means an app's line breaks are
   parser-significant**, the same way `structFields`'s `manyIndent` made field indentation
   parser-significant (`notes/01-command-printing.md`). An argument moved to a column at or left of the
-  enclosing saved position stops being an argument. So breaking an app is not available until `nest`
-  is, and a re-space that only collapses runs of spaces *within one line* is the part that is safe
-  today.
+  enclosing saved position stops being an argument. So breaking an app is not available until this
+  printer nests, and a re-space that only collapses runs of spaces *within one line* is the part that is
+  safe today. To be exact about what is missing: `Doc.nest` exists (`LeanFmt/Doc.lean:74`) and both
+  `fits` (`:179`) and `go` (`:209`) honor it. The engine is ready; the printer has simply never called
+  it, and a margin has never been chosen to make breaking mean anything.
 
 That is what this prompt implements: **collapse, do not break.** `run-printer-sample.sh` is the check
 that makes this empirical rather than argued — pass one's output must re-analyze through
@@ -320,11 +322,11 @@ two lines of an app, and lifting `null`s recursively gives `| 0 , m => m` (§7b)
 enough to be a finding rather than a run of luck:
 
 > The part of term formatting that is citable today is the part that changes nothing on code people
-> actually wrote. The part that would change something is vertical — and it needs a margin and `nest`,
-> which §7 does not have.
+> actually wrote. The part that would change something is vertical — and it needs a margin and a
+> printer that nests, neither of which §7 has.
 
 That is not an argument against the layouts. It is what makes them safe to have landed: they are the
 horizontal skeleton the vertical work will be built on, and they are known not to move a byte of real
-code while `nest` is still missing. But it does say where the value in this stack is, and it is not in
+code while nothing breaks a line. But it does say where the value in this stack is, and it is not in
 `RLF-EXPRESSIONS`'s remaining task lines. **The margin question is the one that matters, and it is
 still open.**
