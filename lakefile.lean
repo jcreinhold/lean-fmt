@@ -28,6 +28,7 @@ lean_lib LeanFmtApplication where
   globs := #[
     Glob.one `LeanFmt.ArtifactStore,
     Glob.one `LeanFmt.Analysis,
+    Glob.one `LeanFmt.Cache,
     Glob.one `LeanFmt.Application
   ]
 

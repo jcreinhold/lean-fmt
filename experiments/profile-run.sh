@@ -162,7 +162,10 @@ swap_delta_kib=$((swap_after_kib - swap_before_kib))
 pressure_level_after=$(pressure_level)
 pressure_after=$(memory_pressure -Q 2>/dev/null | tail -1 || true)
 output_digest=$(shasum -a 256 "$stdout_file" | awk '{print $1}')
-grep -E '^phase\.[A-Za-z0-9_.-]+_ms=[0-9]+$' "$stdout_file" >"$phases_file" || true
+{
+	grep -E '^phase\.[A-Za-z0-9_.-]+_ms=[0-9]+$' "$stdout_file" || true
+	grep -E '^phase\.[A-Za-z0-9_.-]+_ms=[0-9]+$' "$stderr_file" || true
+} >"$phases_file"
 {
 	printf 'exit_status=%s\n' "$status"
 	printf 'hard_stop=%s\n' "$hard_stop"

@@ -1,6 +1,6 @@
 module
 
-import all LeanFmt.Analysis
+import all LeanFmt.Cache
 import Lake.Build.Module
 import Lake.Build.Run
 import Lake.Config.Env
@@ -21,6 +21,7 @@ private structure RunRequest where
   files : Array FilePath
   format : ReportFormat := .text
   maxMemoryGiB : Nat := 8
+  cache : Bool := true
 
 private structure SourceSnapshot where
   module : Lake.Module
@@ -49,7 +50,7 @@ private structure ChildOutput where
   peakAggregateRssKiB : Nat
 
 private def usage : String := "\
-usage: lean-fmt check [--root PATH] [--json] [--max-memory GIB] [FILE...]\n\
+usage: lean-fmt check [--root PATH] [--json] [--no-cache] [--max-memory GIB] [FILE...]\n\
        lean-fmt check --help"
 
 private def parseCheckArgs (args : List String) : Except String RunRequest :=
@@ -58,6 +59,7 @@ private def parseCheckArgs (args : List String) : Except String RunRequest :=
     | [] => .ok request
     | "--root" :: root :: rest => loop rest { request with root }
     | "--json" :: rest => loop rest { request with format := .json }
+    | "--no-cache" :: rest => loop rest { request with cache := false }
     | "--max-memory" :: value :: rest =>
       match value.toNat? with
       | some amount => loop rest { request with maxMemoryGiB := amount }
@@ -324,11 +326,28 @@ private def reportFromEnvelope (snapshot : SourceSnapshot)
     }
 
 private def analyzeFile (workspace : Lake.Workspace) (application temporary : FilePath)
-    (index : Nat) (request : RunRequest) (snapshot : SourceSnapshot) : IO FileReport := do
-  if let some artifact ← trustedArtifact? workspace application snapshot then
-    return reportFromEnvelope snapshot { artifact? := some artifact }
-  return reportFromEnvelope snapshot
-    (← exactFallback workspace application temporary index request snapshot)
+    (index : Nat) (request : RunRequest) (cache? : Option ResultCache)
+    (snapshot : SourceSnapshot) (cached? : Option AnalysisEnvelope) : IO FileReport := do
+  if let some analysis := cached? then
+    return reportFromEnvelope snapshot analysis
+  let analysis ← do
+    if let some artifact ← trustedArtifact? workspace application snapshot then
+      pure { artifact? := some artifact }
+    else
+      exactFallback workspace application temporary index request snapshot
+  if let some cache := cache? then
+    cache.write snapshot.module snapshot.source analysis
+  return reportFromEnvelope snapshot analysis
+
+private def summarize (files : Array FileReport) (failures : Array String := #[]) : RunReport :=
+  let findings := files.foldl (fun total file => total + file.findings.size) 0
+  let broken := files.foldl (fun total file =>
+    if file.status == "broken" then total + 1 else total) 0
+  { files, findings, broken, infrastructureFailures := failures }
+
+private def recordPhase (name : String) (started finished : Nat) : IO Unit := do
+  if (← IO.getEnv "LEAN_FMT_PROFILE_PHASES") == some "1" then
+    IO.eprintln s!"phase.{name}_ms={(finished - started) / 1000000}"
 
 /- Execute one immutable user request. This operation owns workspace discovery, exact module
 selection, source snapshots, trusted-artifact validation, fallback, deterministic aggregation, and
@@ -337,17 +356,40 @@ private def execute (request : RunRequest) : IO RunReport := do
   if request.maxMemoryGiB == 0 then
     throw <| IO.userError "--max-memory must provide a nonzero operating envelope"
   let root ← IO.FS.realPath request.root
+  let workspaceStarted ← IO.monoNanosNow
   let workspace ← loadWorkspace root
+  let workspaceFinished ← IO.monoNanosNow
+  recordPhase "workspace_load" workspaceStarted workspaceFinished
+  let selectionStarted ← IO.monoNanosNow
   let modules ← selectedModules workspace root request.files
   let snapshots ← snapshotSources root modules
+  let selectionFinished ← IO.monoNanosNow
+  recordPhase "selection_snapshot" selectionStarted selectionFinished
   let application ← IO.appPath
+  let epochStarted ← IO.monoNanosNow
+  let cache? ← if request.cache then ResultCache.open? workspace application else pure none
+  let epochFinished ← IO.monoNanosNow
+  recordPhase "cache_epoch" epochStarted epochFinished
+  let lookupStarted ← IO.monoNanosNow
+  let cached ← match cache? with
+    | none => pure (Array.replicate snapshots.size none)
+    | some cache =>
+      snapshots.mapM fun snapshot => cache.read? snapshot.module snapshot.source
+  let lookupFinished ← IO.monoNanosNow
+  recordPhase "cache_lookup" lookupStarted lookupFinished
+  if cached.all Option.isSome then
+    let files := (snapshots.zip cached).filterMap fun
+      | (snapshot, some analysis) => some (reportFromEnvelope snapshot analysis)
+      | (_, none) => none
+    return summarize files
   let temporary ← IO.FS.createTempDir
   try
     let mut files := #[]
     let mut failures := #[]
-    for snapshot in snapshots, index in [0:snapshots.size] do
+    for (snapshot, cached?) in snapshots.zip cached, index in [0:snapshots.size] do
       try
-        files := files.push (← analyzeFile workspace application temporary index request snapshot)
+        files := files.push
+          (← analyzeFile workspace application temporary index request cache? snapshot cached?)
       catch error =>
         let message := toString error
         failures := failures.push s!"{snapshot.relativePath}: {message}"
@@ -356,10 +398,7 @@ private def execute (request : RunRequest) : IO RunReport := do
           status := "infrastructure-failure"
           diagnostics := #[message]
         }
-    let findings := files.foldl (fun total file => total + file.findings.size) 0
-    let broken := files.foldl (fun total file =>
-      if file.status == "broken" then total + 1 else total) 0
-    return { files, findings, broken, infrastructureFailures := failures }
+    return summarize files failures
   finally
     IO.FS.removeDirAll temporary
 
@@ -409,11 +448,27 @@ private unsafe def runExtractChild (args : List String) : IO UInt32 := do
     IO.FS.writeFile output "null"
   return 0
 
+private unsafe def measureCacheEpoch (args : List String) : IO UInt32 := do
+  let [root] := args
+    | return 2
+  let root ← IO.FS.realPath root
+  let workspaceStarted ← IO.monoNanosNow
+  let workspace ← loadWorkspace root
+  let workspaceFinished ← IO.monoNanosNow
+  let epochStarted ← IO.monoNanosNow
+  let cache? ← ResultCache.open? workspace (← IO.appPath)
+  let epochFinished ← IO.monoNanosNow
+  IO.println s!"phase.workspace_load_ms={(workspaceFinished - workspaceStarted) / 1000000}"
+  IO.println s!"phase.cache_epoch_ms={(epochFinished - epochStarted) / 1000000}"
+  IO.println s!"cache_enabled={cache?.isSome}"
+  return if cache?.isSome then 0 else 1
+
 public unsafe def runCli (args : List String) : IO UInt32 := do
   let args := match args with | "--" :: rest => rest | _ => args
   match args with
   | "__analyze-exact" :: rest => runAnalyzeChild rest
   | "__extract-artifact" :: rest => runExtractChild rest
+  | "__measure-cache-epoch" :: rest => measureCacheEpoch rest
   | "check" :: "--help" :: _ => IO.println usage; return 0
   | "check" :: rest =>
     let request ← match parseCheckArgs rest with

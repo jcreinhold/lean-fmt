@@ -8,6 +8,7 @@ The first end-to-end command checks selected modules without writing their sourc
 lake build
 .lake/build/bin/lean-fmt check --root .
 .lake/build/bin/lean-fmt check --root . --json LeanFmt/Basic.lean
+.lake/build/bin/lean-fmt check --root . --no-cache
 .lake/build/bin/lean-fmt check --help
 ```
 
@@ -15,6 +16,17 @@ Exit `0` means every selected file is clean, exit `1` means the report contains 
 Lean files, and exit `2` means an infrastructure failure prevented a trustworthy result. The
 `--max-memory GIB` option sets the operating envelope for exact frontend fallback. `check` never
 writes source files.
+
+Successful semantic results are cached under `.lean-fmt-cache/` by default. The cache key includes
+the exact source, target toolchain, evaluated module configuration, ordered Lake environment and
+verified build traces, formatter binary, validation level, and artifact schema. Missing or corrupt
+entries are ordinary misses. `--no-cache` performs neither cache reads nor writes.
+
+A warm run still evaluates the Lake workspace because `lakefile.lean` is executable configuration;
+skipping that step cannot be sound for general projects. Once its epoch is validated, an all-hit run
+returns before constructing a project frontend environment, starting an analyzer/extractor child, or
+creating fallback temporary files. Modules without their own trustworthy Lake `.olean.trace` remain
+analyzable but are not cache-eligible.
 
 The active implementation uses Lean 4.32's module system throughout. A compiler plugin stores a
 compact formatter result in each successfully built `.olean`; Lake owns its derived sidecar. When

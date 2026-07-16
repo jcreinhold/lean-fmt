@@ -1,6 +1,7 @@
 module
 
 import all LeanFmt.ArtifactStore
+import all LeanFmt.Cache
 import all LeanFmt.Rules
 
 open LeanFmt LeanFmt.Internal
@@ -40,6 +41,31 @@ private def testRules : IO Unit := do
     "final-newline insertion range is not byte-exact"
   ensure ((runRules source false).map (·.code) == #["FMT002"])
     "traced trailing-whitespace configuration was ignored"
+
+private def testCacheIdentity : IO Unit := do
+  let base : CacheIdentity := {
+    source := Digest.ofString "source"
+    toolchain := "toolchain"
+    environment := Digest.ofString "environment"
+    formatter := Digest.ofString "formatter"
+    configuration := Digest.ofString "configuration"
+    validationLevel := .syntax
+    artifactSchema
+  }
+  let original := cacheIdentityDigest base
+  let changes := #[
+    cacheIdentityDigest { base with source := Digest.ofString "other-source" },
+    cacheIdentityDigest { base with toolchain := "other-toolchain" },
+    cacheIdentityDigest { base with environment := Digest.ofString "other-environment" },
+    cacheIdentityDigest { base with formatter := Digest.ofString "other-formatter" },
+    cacheIdentityDigest { base with configuration := Digest.ofString "other-configuration" },
+    cacheIdentityDigest { base with validationLevel := .elaboration },
+    cacheIdentityDigest { base with artifactSchema := "other-artifact-schema" }
+  ]
+  ensure (changes.all (· != original))
+    "a semantic cache identity component did not invalidate the key"
+  ensure (changes.toList.Pairwise (· != ·))
+    "distinct cache identity components collided in the test fixture"
 
 private def fixtureArtifact (source := "def x := 1\n") : ModuleArtifact := {
   schema := artifactSchema
@@ -130,6 +156,7 @@ public unsafe def main (args : List String) : IO UInt32 := do
   | [] =>
     testDigests
     testRules
+    testCacheIdentity
     testStore
     IO.println "lean-fmt module-artifact tests passed"
     return 0

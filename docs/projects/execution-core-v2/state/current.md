@@ -1,6 +1,6 @@
 ---
 kind: state
-first_unresolved: 08-cache
+first_unresolved: 09-modes
 ---
 
 # Current state
@@ -19,7 +19,7 @@ as independent measured prerequisites.
 | 05-compiler-artifacts | ECV2-COMPILER-ARTIFACTS | verified | ECV2-WORKLOADS |
 | 06-design | ECV2-DESIGN | verified | ECV2-BUILT-COLD, ECV2-COMPILER-ARTIFACTS |
 | 07-check | ECV2-CHECK | verified | ECV2-DESIGN |
-| 08-cache | ECV2-CACHE | planned | ECV2-CHECK |
+| 08-cache | ECV2-CACHE | verified | ECV2-CHECK |
 | 09-modes | ECV2-MODES | planned | ECV2-CACHE |
 | 10-scale | ECV2-SCALE | planned | ECV2-MODES |
 | 11-serve | ECV2-SERVE | planned | ECV2-SCALE |
@@ -50,6 +50,10 @@ as independent measured prerequisites.
   configuration cannot be semantically validated from a fixed static file list. The repaired prompt
   permits measured Lake workspace evaluation but forbids frontend/import environments, analyzer or
   extractor children, and per-file setup jobs on an all-hit run.
+- The semantic result cache now validates ordered search roots, 8,782 mathlib root oleans, dependency
+  artifacts, and managed shared libraries against Lake traces in 11.302 seconds. A genuine 62-file
+  all-hit run took 11.709 seconds total with 40 ms of entry lookup, no analyzer or extractor, 1.03 GiB
+  peak RSS, normal pressure, and no swap growth.
 
 These facts constrain prompts 04 and 05; they do not predetermine their final interface.
 
@@ -68,6 +72,9 @@ These facts constrain prompts 04 and 05; they do not predetermine their final in
 - [ECV2-CHECK](../results/07-check.md) implements the private exact `check` transaction, stable
   text/JSON reports, complete failure aggregation, direct target-toolchain discovery, and bounded
   fresh-frontend fallback without source writes.
+- [ECV2-CACHE](../results/08-cache.md) adds a strategy-independent semantic cache capability with
+  complete Lake epoch validation, atomic entries, corruption-as-miss behavior, an early all-hit
+  return, and measured full-mathlib epoch plus genuine representative warm evidence.
 
 ## Verification convention
 

@@ -1,9 +1,9 @@
 # Next Proof Packet
 
 - Stack: execution-core-v2
-- First unresolved: 08-cache
-- Claim ID: ECV2-CACHE
-- Prompt: 08-cache
+- First unresolved: 09-modes
+- Claim ID: ECV2-MODES
+- Prompt: 09-modes
 - Module: (docs only)
 - Target file: (docs only)
 
@@ -17,7 +17,7 @@ Read this file, the target prompt, target files, listed source/template line ran
 
 ## Proof Task
 
-- Add a simple atomic result cache whose identity is semantic and independent of whether the result came from compiler integration or exact fallback.
+- Add `format`, `diff`, `fix`, `rules`, `clean`, and compiler-integration setup/status over the same semantic result used by check.
 
 ## Reuse
 
