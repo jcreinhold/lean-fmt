@@ -54,6 +54,11 @@ as independent measured prerequisites.
   artifacts, and managed shared libraries against Lake traces in 11.302 seconds. A genuine 62-file
   all-hit run took 11.709 seconds total with 40 ms of entry lookup, no analyzer or extractor, 1.03 GiB
   peak RSS, normal pressure, and no swap growth.
+- Prompt 09's original list of modes omitted their observable output, configuration precedence,
+  compiler-integration behavior, and safe-write transaction. The repaired contract makes selection
+  a semantic-result projection, puts all edit sequencing behind one checked patch capability, and
+  treats compiler setup as guidance because arbitrary executable `lakefile.lean` is not safely
+  text-rewritable.
 
 These facts constrain prompts 04 and 05; they do not predetermine their final interface.
 
