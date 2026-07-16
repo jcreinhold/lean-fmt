@@ -705,6 +705,33 @@ def Tree.unclaimedKinds (tree : Tree) (normalized : String) : Array String :=
         else kind
       kinds.push detailed
 
+/-- The syntax kind of every node whose subtree carries at least one token, one entry per node.
+
+`unclaimedKinds` names the commands the layouts refused; this names what is *inside* them, and inside
+the regions every claimed command leaves verbatim — the terms. `RLF-EXPRESSIONS` has to pick which
+term kinds it can cite a grammar for, and `RLF-COMMANDS` paid to learn that a census taken over this
+repository answers a question about its author rather than about Lean, so the caller runs this over
+the frozen sample and tallies.
+
+**Nodes whose subtree holds no token are skipped**, because an absent slot has no atoms and therefore
+nothing a layout could decide about it — 36% of this corpus's nodes are absent syntax
+(`evidence/01-projection-shape.txt`). The filter is the subtree rather than the direct token
+children, so a *filled* `many`/`optional` wrapper survives it and `null` still leads the census. That
+is correct and not the filter leaking: those wrappers are real syntax, they simply declare no atoms
+of their own.
+
+Deliberately not a count per kind, and deliberately the bare kind: the caller tallies, and what it
+must tally by is the distinction between a kind this printer can cite (`Lean.Parser.Term.*`, a parser
+declaration in the compiler this stack pins) and one it cannot (a `notation`, whose kind is generated
+from its own syntax and whose spacing lives in its declaration, not in the tree). That distinction is
+visible in the kind string and in nothing else here. -/
+def Tree.nodeKinds (tree : Tree) : Array String := Id.run do
+  let mut kinds := #[]
+  for index in [0:tree.source.nodes.size] do
+    if (tree.subtreeTokens index).isSome then
+      kinds := kinds.push (tree.kindOf index)
+  return kinds
+
 /-- One command.
 
 The extent is the claims, and the bytes between them. Everything a layout did not claim is emitted

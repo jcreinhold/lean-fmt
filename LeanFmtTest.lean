@@ -903,6 +903,27 @@ private def printerUnclaimed (envelopePath sourcePath : String) : IO UInt32 := d
     IO.println kind
   return 0
 
+/- Name every node that carries a token, one syntax kind per line.
+
+`printer-unclaimed` names the commands the layouts refused; this names what is inside them. It exists
+for the same corpus and the same reason: `RLF-EXPRESSIONS` must pick the term kinds it can cite a
+grammar for, and this repository's term mix is no more representative of Lean than its command mix
+turned out to be. The caller tallies the lines. -/
+private def printerNodeKinds (envelopePath sourcePath : String) : IO UInt32 := do
+  let .ok json := Lean.Json.parse (← IO.FS.readFile envelopePath)
+    | throw <| IO.userError s!"{envelopePath} is not JSON"
+  let .ok (envelope : AnalysisEnvelope) := Lean.fromJson? json
+    | throw <| IO.userError s!"{envelopePath} is not an analysis envelope"
+  let some artifact := envelope.artifact?
+    | throw <| IO.userError s!"{sourcePath} produced no artifact: {envelope.diagnostics}"
+  let raw ← IO.FS.readFile sourcePath
+  let projection := artifact.source
+  ensure (projection.validFor raw) s!"{sourcePath}: the projection does not match its own source"
+  let tree := Tree.ofSource projection
+  for kind in tree.nodeKinds do
+    IO.println kind
+  return 0
+
 /- Layout cost, on the shapes `RLC-FINAL` names.
 
 `notes/01-layout-design.md` §4.6 records a known hole: the fit test is bounded in *columns*, not in
@@ -1008,6 +1029,7 @@ public unsafe def main (args : List String) : IO UInt32 := do
     printerRoundtrip envelopePath sourcePath (checkIdentity := false)
   | ["printer-format", envelopePath, sourcePath, width] => printerFormat envelopePath sourcePath width
   | ["printer-unclaimed", envelopePath, sourcePath] => printerUnclaimed envelopePath sourcePath
+  | ["printer-node-kinds", envelopePath, sourcePath] => printerNodeKinds envelopePath sourcePath
   | ["doc-bench"] => docBench
   | ["doc-dump"] => docDump
   | [] =>
