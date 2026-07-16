@@ -1,0 +1,29 @@
+Build completed successfully (39 jobs).
+LeanFmt/Analysis.lean              comments=9 leading=9 trailing=0 dangling=0 header_bytes=93 tokens=524
+LeanFmt/Application.lean           comments=9 leading=9 trailing=0 dangling=0 header_bytes=289 tokens=4244
+LeanFmt/ArtifactModel.lean         comments=1 leading=1 trailing=0 dangling=0 header_bytes=55 tokens=121
+LeanFmt/ArtifactStore.lean         comments=3 leading=3 trailing=0 dangling=0 header_bytes=104 tokens=395
+LeanFmt/Basic.lean                 comments=0 leading=0 trailing=0 dangling=0 header_bytes=8 tokens=12
+LeanFmt/Cache.lean                 comments=3 leading=3 trailing=0 dangling=0 header_bytes=117 tokens=1757
+LeanFmt/Cli.lean                   comments=0 leading=0 trailing=0 dangling=0 header_bytes=36 tokens=1758
+LeanFmt/Comments.lean              comments=5 leading=5 trailing=0 dangling=0 header_bytes=1501 tokens=586
+LeanFmt/CompilerPlugin.lean        comments=1 leading=1 trailing=0 dangling=0 header_bytes=104 tokens=115
+LeanFmt/Config.lean                comments=0 leading=0 trailing=0 dangling=0 header_bytes=56 tokens=1193
+LeanFmt/Digest.lean                comments=0 leading=0 trailing=0 dangling=0 header_bytes=31 tokens=1167
+LeanFmt/Doc.lean                   comments=4 leading=4 trailing=0 dangling=0 header_bytes=1892 tokens=1063
+LeanFmt/Edit.lean                  comments=0 leading=0 trailing=0 dangling=0 header_bytes=42 tokens=690
+LeanFmt/LosslessSource.lean        comments=18 leading=18 trailing=0 dangling=0 header_bytes=650 tokens=2028
+LeanFmt/Project.lean               comments=4 leading=4 trailing=0 dangling=0 header_bytes=248 tokens=1419
+LeanFmt/Rules.lean                 comments=0 leading=0 trailing=0 dangling=0 header_bytes=54 tokens=436
+LeanFmt/Semantic.lean              comments=1 leading=1 trailing=0 dangling=0 header_bytes=37 tokens=221
+LeanFmt/Service.lean               comments=1 leading=1 trailing=0 dangling=0 header_bytes=40 tokens=1017
+Main.lean                          comments=0 leading=0 trailing=0 dangling=0 header_bytes=32 tokens=16
+--- corpus ---
+modules_checked=18 comments_attached=59 dangling=0 failures=0
+--- comment positions, on the real parser ---
+positions.lean                     comments=5 leading=1 trailing=3 dangling=1 header_bytes=8 tokens=24
+  ok   every comment attached exactly once
+  ok   same-line comments trail their token
+  ok   own-line comments lead the next token
+  ok   a comment past the last token dangles
+failures=0

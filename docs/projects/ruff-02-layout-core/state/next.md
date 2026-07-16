@@ -1,9 +1,9 @@
 # Next Proof Packet
 
 - Stack: ruff-02-layout-core
-- First unresolved: 02-engine
-- Claim ID: RLC-IMPL
-- Prompt: 02-engine
+- First unresolved: 03-acceptance
+- Claim ID: RLC-FINAL
+- Prompt: 03-acceptance
 - Module: (docs only)
 - Target file: (docs only)
 
@@ -17,7 +17,7 @@ Read this file, the target prompt, target files, listed source/template line ran
 
 ## Proof Task
 
-- Deliver **RLC-IMPL**: Implement the selected private algebra, bounded renderer, source-map output, and centralized leading/trailing/dangling comment attachment. Add focused unit and property tests before language-specific printers.
+- Deliver **RLC-FINAL**: Benchmark adversarial deeply nested documents and representative Lean fragments, inspect allocations/RSS, and audit all callers. Record the stable layout contract and remaining language decisions.
 - Read `roadmap.md`, its prerequisite stack results, `AGENTS.md`, the current implementation and tests, and the relevant Lean compiler/Lake sources before changing an interface. Write interface comments and characterization tests before implementation where the behavior is not already frozen.
 
 ## Reuse
@@ -30,6 +30,6 @@ Inspect the live goal, search relevant declarations, test plausible proof steps,
 
 ## Stop Rules
 
-- Protect against quadratic flattening, repeated string concatenation, and unbounded alternative retention.
-- Preserve every comment exactly once.
+- Reject pass-through wrappers and one-constructor abstractions.
+- No full mathlib run.
 - Stop rather than weakening exact semantics, write safety, or the resource envelope.

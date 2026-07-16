@@ -1,6 +1,6 @@
 ---
 kind: state
-first_unresolved: 02-engine
+first_unresolved: 03-acceptance
 ---
 
 # Current state
@@ -10,9 +10,12 @@ The layout contract is frozen in `notes/01-layout-design.md` and backed by a too
 module with each other. Its external prerequisite stack `ruff-01-lossless-source` is verified and its
 live implementation still matches recorded state.
 
-Nothing is live yet. `LeanFmt` still has no layout engine — `Rules.lean` produces `Finding`s from
-text rules only — and `RLC-SPEC` is a specification prompt. `RLC-IMPL` owns building `LeanFmt/Doc.lean`
-against the frozen contract.
+The engine is **live**. `LeanFmt/Doc.lean` implements the frozen contract — the algebra, the bounded
+renderer, and source marks — and `LeanFmt/Comments.lean` implements ownership. Both are in
+`LeanFmtCore` and deliberately not in `LeanFmtCompilerPlugin`: the plugin runs inside every
+compilation of every downstream module, and nothing the compiler does needs to render a document. No
+printer consumes them yet; `Rules.lean` still produces `Finding`s from text rules only, and no
+language-specific printer exists. `RLC-FINAL` owns acceptance.
 
 The chosen model is a **Wadler/Leijen document tree whose `line` carries its flat text, rendered by a
 bounded work list**. Lean core's own `Std.Format` is rejected: it is a closed inductive and the one
@@ -21,7 +24,7 @@ constructor that decides this cannot be added from outside it.
 | Prompt | Claim | Status | Depends on |
 | --- | --- | --- | --- |
 | 01-design | RLC-SPEC | verified | — |
-| 02-engine | RLC-IMPL | planned | RLC-SPEC |
+| 02-engine | RLC-IMPL | verified | RLC-SPEC |
 | 03-acceptance | RLC-FINAL | planned | RLC-IMPL |
 
 ## Known evidence
@@ -75,6 +78,24 @@ constructor that decides this cannot be added from outside it.
 - **The error surface is empty by construction.** With no alternative constructor — no Wadler `Union`,
   no `best_fitting`, no `conditionalGroup` — the roadmap's "no unbounded alternative retention" is
   unrepresentable rather than a discipline to keep, and `render` is total.
+- **The newline-free `text` invariant forced a ninth constructor** (`RLC-IMPL`). A block comment and a
+  multi-line string are single tokens containing newlines whose bytes are not the formatter's to
+  touch: `text` cannot hold them, and `hard` would re-indent them — which is exactly the
+  `Std.Format` bug at `Basic.lean:269-276` that this project exists to avoid. `verbatim` emits bytes
+  unchanged and, unlike `hard`, does not force its group to break. `notes/01-layout-design.md` §4.1,
+  §4.2, §4.6 were corrected to match.
+- **Attachment holds on the real parser, and the split correction is load-bearing.** 18 modules +
+  `Main.lean`, `comments_attached=59 dangling=0 failures=0`, `partitions` true on every one
+  (`evidence/02-attachment.txt`). Adopting Lean's raw `chooseNiceTrailStop` scan verbatim **loses** a
+  block comment that spans a newline, because range-based attachment cannot own a torn comment; Lean
+  survives the same tear only because it moves a substring boundary. `splitPoint` therefore splits at
+  the first newline *outside* any comment — sound because a line comment provably cannot contain one.
+- **This repository has no same-line trailing comment.** Every corpus module reports `trailing=0`;
+  `grep -rnE '[^ /-][ ]+--[ ]'` over `LeanFmt` and `Main.lean` returns nothing. So the corpus cannot
+  exercise the split at all: under the raw-scan mutation above, **all 18 modules still passed** and
+  only the generated fixture caught it. Real-parse coverage of trailing, inline-block, newline-spanning
+  block, and dangling positions comes from `tests/layout/run.sh`'s generated fixture (`comments=5
+  leading=1 trailing=3 dangling=1`), which borrows a setup exactly as `tests/lossless/run.sh` does.
 
 ## Blockers and prerequisites
 
@@ -86,14 +107,23 @@ constructor that decides this cannot be added from outside it.
   zero-width document could give O(n·w) → O(n²). Every shape measured is linear. There is a concrete
   lead: a discarded fixture with a zero-width tail *did* defeat Oppen's buffer bound, which is the
   same pathology from the other side.
-- **`mark` is specified but unmeasured.** No probe carries source ranges through a render; its cost
-  and its interaction with `group` are unknown. `RLC-IMPL` owns it.
+- **`mark`'s cost is still unmeasured.** `RLC-IMPL` resolved the *semantic* half of this: `mark` is
+  implemented, its interaction with `group` is settled (it consumes no width, `fits` walks through it,
+  and a `closeMark` command records the output end), and `testDoc` covers it. The *cost* half is not
+  resolved. Each mark costs one extra work-list entry, so linearity is a structural argument, not a
+  benchmark — no probe carries source ranges through a render at scale. `RLC-FINAL` inherits this with
+  its other benchmarks.
 - **Peak RSS was never measured for either model.** A's O(n) memory is argued affordable from
   `RLS-FINAL`'s artifact sizes, not from a resident-set figure. The roadmap's 8 GiB envelope is
   unverified for this component.
-- **The comment rule is validated on one synthetic fixture** (56 leaves), adversarial by construction
-  rather than representative. The frozen 62-module mathlib sample has not been run through the trivia
-  probe.
+- **The comment rule has never met code it did not anticipate.** `RLC-IMPL` widened coverage from one
+  synthetic fixture to 18 real modules, but they are *this project's own* modules, in a house style
+  with no trailing comments — so the positions that matter are still covered only by fixtures written
+  against the rule they test. The frozen 62-module mathlib sample has still not been run through
+  attachment, and it is the only corpus available that nobody wrote to suit this rule. `RLC-FINAL`.
+- **`leading` is exercised by no parser output.** `nonempty_leading=0` on 4.32, and all 59 corpus
+  comments arrive via trailing runs. The non-empty-leading path exists because the projection permits
+  it, but only hand-built projections in `testComments` cover it.
 - **Deliberately deferred to `RLC-FINAL` as remaining language decisions**, so silence is not mistaken
   for a ruling: inconsistent (`fill`) breaking, align-to-current-column, indentation clamping, and the
   margin value itself. The margin is configuration and must enter cache identity; the `Doc` is never

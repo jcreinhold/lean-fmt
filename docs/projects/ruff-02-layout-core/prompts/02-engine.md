@@ -1,6 +1,6 @@
 ---
 claim_id: RLC-IMPL
-status: planned
+status: verified
 depends_on: [RLC-SPEC]
 ---
 

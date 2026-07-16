@@ -173,6 +173,7 @@ inductive Doc where
   | text (s : String)
   | line (flat : String)
   | hard
+  | verbatim (s : String)
   | cat (a b : Doc)
   | nest (n : Nat) (d : Doc)
   | group (d : Doc)
@@ -183,6 +184,16 @@ inductive Doc where
 contract deliberately departs from `Std.Format`, where a `\n` inside `text` is a hard break
 (`Basic.lean:269`) and a group must be re-evaluated after it. Splitting the two makes "this string is
 one line" checkable rather than conventional.
+
+`verbatim` was **added during RLC-IMPL**, not designed here; §"Decisions changed during execution" in
+`results/02-engine.md` records why. It is the escape hatch that departure forces. A block comment and a
+multi-line string literal are single tokens whose text contains newlines and whose interior bytes are
+not the formatter's to touch. With `text` newline-free and `hard` re-indenting to the current level,
+neither can carry them: emitting such a token as `text` violates the invariant, and splitting it into
+`hard`-separated lines rewrites its content — which is exactly what `Std.Format` does at
+`Basic.lean:269-276`, and precisely the bug this project exists to avoid. `verbatim s` emits `s`
+byte-for-byte, re-indenting nothing. It is the only constructor whose output is not a function of the
+current indentation.
 
 There is deliberately **no alternative constructor** — no Wadler `Union`, no Prettier
 `conditionalGroup`, no `ruff_formatter` `best_fitting`. The only choice in the algebra is flat versus
@@ -199,6 +210,11 @@ retention" satisfiable by construction rather than by discipline: there is no al
   break mode.
 - `hard` always renders as a newline plus the current indentation. A group containing a `hard` that
   is not inside a nested group can never be flat; the fit test reports "does not fit" on reaching one.
+- `verbatim s` renders `s` unchanged in **both** modes. Unlike `hard` it does not force its group to
+  break: a block comment is free to sit inside a flat group, because whether its bytes contain a
+  newline is a fact about the token, not a layout decision. It does move the cursor — to the width of
+  its last line if it spans one, otherwise forward by its width — so the fit test stays honest about
+  where the next token lands.
 - Nested groups decide independently. An outer group breaking does not break an inner one.
 
 ### 4.3 Indentation
@@ -278,10 +294,12 @@ constructor set.
 
 ### 4.6 Rendering complexity and failure behavior
 
-`render : Nat → Doc → String × Array (SourceRange × SourceRange)` is **total**. There is no `Except`,
-because there is no way for layout to fail: no backtracking, no alternatives, no unsatisfiable
-constraint. The whole error surface of the layout engine is empty, and that is a deliberate property
-of the constructor set (§4.1), not a claim about the implementation.
+`render : Nat → Doc → String × Array Mark` is **total** (`RLC-IMPL` named the pair
+`Mark {source, output : SourceRange}`; §4.4 is the contract it carries). There is no `Except`, because
+there is no way for layout to fail: no backtracking, no alternatives, no unsatisfiable constraint. The
+whole error surface of the layout engine is empty, and that is a deliberate property of the
+constructor set (§4.1), not a claim about the implementation. `verbatim` does not weaken this: it
+emits its bytes and cannot fail either.
 
 What the engine does *not* promise:
 
