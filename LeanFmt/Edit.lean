@@ -37,8 +37,6 @@ structure Patch where
   edits : Array Edit
   inverse : Array Edit
 
-def Patch.sourceDigest (patch : Patch) : Digest := patch.source
-
 def Patch.formatted (patch : Patch) : String := patch.output
 
 def Patch.editCount (patch : Patch) : Nat := patch.edits.size

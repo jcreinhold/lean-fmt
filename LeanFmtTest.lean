@@ -267,6 +267,18 @@ private def testLosslessSource : IO Unit := do
   ensure (!(source.validFor "def x := 2\n")) "a different source matched the projection"
   ensure (!(source.validFor "def x := 1")) "a truncated source matched the projection"
 
+  -- `#exit` ends the token stream before end of file. `terminalStop` is where the terminal command
+  -- begins, so the tail covers `#exit` and Lean's never-parsed remainder alike; no token may claim
+  -- to describe bytes the parser never read. Recording the terminal's *end* instead left `#exit`
+  -- itself covered by nothing, and every file containing one failed to validate at all.
+  let tailText := fixtureSourceText ++ "#exit\nnever parsed at all\n"
+  let withTail : LosslessSource :=
+    { source with normalizedBytes := tailText.utf8ByteSize
+                  normalizedDigest := Digest.ofString tailText }
+  ensure withTail.structurallyValid "a projection with an unparsed tail was rejected"
+  ensure (withTail.validFor tailText) "the tail projection rejected its own source"
+  ensure (withTail.terminalStop < withTail.normalizedBytes) "the tail fixture records no tail"
+
   let rejects (label : String) (broken : LosslessSource) : IO Unit :=
     ensure (!broken.structurallyValid) s!"{label} was accepted as a valid projection"
   rejects "a stale schema" { source with schema := "lean-fmt.lossless-source.v0" }
@@ -415,6 +427,10 @@ private unsafe def verifyPluginArtifact (moduleName : Lean.Name)
     "plugin lost traced rule configuration"
   ensure (artifact.source.kinds.contains "commandEmit_local_command")
     "plugin lost file-local command syntax"
+  -- The fixture's `{ first, second }` parses two ways over one byte range. `checkProjection` is
+  -- what proves only one alternative spells those bytes; this proves the case is not vacuous.
+  ensure (artifact.source.kinds.contains "choice")
+    "the fixture's ambiguous parse produced no choice node"
   checkProjection artifact.source source
   let expectedCodes := if expectedTrailingWhitespace then #["FMT001"] else #[]
   ensure (artifact.findings.map (·.code) == expectedCodes)

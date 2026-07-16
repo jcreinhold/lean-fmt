@@ -18,3 +18,12 @@ emit_local_command
 def «an identifier with spaces» : String := "λ → ∀ 🎉"
 
 def αβγ : Nat := 42 -- a trailing line comment after real code
+
+structure Ambiguous where
+  first : Nat
+  second : Nat
+
+/- `{ first, second }` parses both as a structure instance and as a set-like literal, so the parser
+emits a `choice` node holding both trees over one byte range. The projection must take exactly one
+alternative: walking every one would spell these bytes once per alternative. -/
+def choiceNode (first second : Nat) : Ambiguous := { first, second }

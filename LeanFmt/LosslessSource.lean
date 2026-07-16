@@ -185,8 +185,10 @@ structure LosslessSource where
   /-- `[0, headerStop)` is the module header. Module linters never receive it, so it is recorded
   rather than assumed to be covered by the command stream. -/
   headerStop : Nat
-  /-- End of the parsed region. Less than `normalizedBytes` only after `#exit`, whose tail Lean
-  never parses. -/
+  /-- Where the token stream ends, i.e. where the terminal command begins. `[terminalStop,
+  normalizedBytes)` is the uninterpreted tail: it reconstructs verbatim and is never a token. It is
+  empty exactly when the terminal is `eoi`, and is `#exit` plus Lean's never-parsed remainder
+  otherwise. -/
   terminalStop : Nat
   kinds : Array String
   nodes : Array Node
@@ -194,10 +196,6 @@ structure LosslessSource where
   deriving BEq, Repr, Lean.ToJson, Lean.FromJson
 
 def losslessSourceSchema : String := "lean-fmt.lossless-source.v1"
-
-/-- The uninterpreted tail after `#exit`. It is never reformatted and is never rule input. -/
-def LosslessSource.tail (source : LosslessSource) : SourceRange :=
-  { start := source.terminalStop, stop := source.normalizedBytes }
 
 namespace LosslessSource
 
@@ -298,6 +296,14 @@ private partial def collect (source : String) (parent : Option Nat) (stx : Lean.
     let index := build.nodes.size
     let placeholder : Node := { kind := kindIndex, parent, range := { start := 0, stop := 0 } }
     let build := { build with nodes := build.nodes.push placeholder }
+    -- A `choice` node holds several parses of *one* byte range, so walking every alternative would
+    -- emit those bytes once per alternative and the token stream would run backwards. Only the
+    -- first contributes; the `choice` node itself stays, so the ambiguity is visible rather than
+    -- silently resolved. `Parser/Basic.lean:1418-1440` is what licenses picking any one of them:
+    -- `longestMatchStep` restores each alternative to the same `startPos` and keeps it only when
+    -- its score ties, whose first component is the stop position. Equal start, equal stop, one
+    -- tokenizer: the alternatives differ in tree shape alone and spell identical text.
+    let args := if kind == Lean.choiceKind then args.extract 0 1 else args
     let (span, build) := args.foldl (init := (none, build)) fun (span, build) arg =>
       let (argSpan, build) := collect source (some index) arg build
       (mergeSpan span argSpan, build)
@@ -344,17 +350,6 @@ private partial def firstLeadingStart? (stx : Lean.Syntax) : Option Nat :=
     | .synthetic pos .. => some pos.byteIdx
     | .none => none
 
-/-- Byte offset where the last leaf's trailing trivia ends. -/
-private partial def lastTrailingStop? (stx : Lean.Syntax) : Option Nat :=
-  match stx with
-  | .missing => none
-  | .node _ _ args => args.reverse.findSome? lastTrailingStop?
-  | .atom info _ | .ident info _ _ _ =>
-    match info with
-    | .original _ _ trailing _ => some trailing.stopPos.byteIdx
-    | .synthetic _ endPos _ => some endPos.byteIdx
-    | .none => none
-
 /-- Project one accepted module.
 
 `normalized` must be the string the parser saw, i.e. `(normalize raw).1`, because every offset
@@ -369,11 +364,13 @@ def ofSource (mainModule : String) (normalized : String) (commands : Array Lean.
     (collect normalized none stx build).2
   -- With no commands the whole file is header: its trailing trivia runs to end of file.
   let headerStop := (commands.findSome? firstLeadingStart?).getD normalized.utf8ByteSize
-  -- `#exit` is a terminal whose own trailing trivia ends the parsed region; everything after it is
-  -- never parsed. For `eoi` this coincides with the last command's trailing stop.
+  -- Where the terminal command *begins*, which is where the modeled token stream ends: neither
+  -- producer puts a terminal into `commands`, so its own text is tail, not token. For `eoi` this is
+  -- end of file, since trailing trivia is greedy up to the next token's text and `eoi` has none.
+  -- For `#exit` it is the `#exit` itself, and the tail is that plus the never-parsed remainder.
   let terminalStop :=
-    match terminal?.bind lastTrailingStop? with
-    | some stop => stop
+    match terminal?.bind firstLeadingStart? with
+    | some start => start
     | none => match build.tokens.back? with
       | some token => token.trailingStop
       | none => normalized.utf8ByteSize
