@@ -1,6 +1,7 @@
 module
 
-import all LeanFmt.Analysis
+import all LeanFmt.Project
+import all LeanFmt.Semantic
 import Lake.Build.Trace
 import Lake.Config.Workspace
 
@@ -32,14 +33,14 @@ structure CacheIdentity where
   formatter : Digest
   configuration : Digest
   validationLevel : ValidationLevel
-  artifactSchema : String
+  semanticSchema : String
   deriving BEq, Lean.ToJson, Lean.FromJson
 
 private structure CacheEntry where
   schema : String
   identity : Digest
   payload : Digest
-  analysis : AnalysisEnvelope
+  analysis : SemanticAnalysis
   deriving Lean.ToJson, Lean.FromJson
 
 structure ResultCache where
@@ -162,46 +163,26 @@ private def environmentDigest? (workspace : Lake.Workspace) : IO (Option Digest)
     parts := parts ++ rootParts
   return some (digestParts parts)
 
-private def configurationDigest (mod : Lake.Module) : Digest :=
-  let options := (Lean.toJson mod.leanOptions).compress
-  let dynlibs := String.intercalate "\u0000" (mod.dynlibs.map toString).toList
-  let plugins := String.intercalate "\u0000" (mod.plugins.map toString).toList
-  digestParts #[
-    mod.name.toString,
-    toString mod.pkg.id?,
-    options,
-    String.intercalate "\u0000" mod.leanArgs.toList,
-    String.intercalate "\u0000" mod.weakLeanArgs.toList,
-    dynlibs,
-    plugins,
-    toString mod.allowImportAll,
-    toString mod.platformIndependent
-  ]
-
-private def identity (cache : ResultCache) (mod : Lake.Module)
-    (source : String) : CacheIdentity := {
-  source := Digest.ofString source
-  toolchain := cache.toolchain
-  environment := cache.environment
-  formatter := cache.formatter
-  configuration := configurationDigest mod
-  validationLevel := cache.validationLevel
-  artifactSchema
-}
+private def identity (cache : ResultCache) (project : Project.Snapshot)
+    (target : Project.SourceTarget) : IO CacheIdentity := do
+  return {
+    source := Digest.ofString target.source
+    toolchain := cache.toolchain
+    environment := cache.environment
+    formatter := cache.formatter
+    configuration := ← Project.configurationIdentity project target
+    validationLevel := cache.validationLevel
+    semanticSchema := semanticResultSchema
+  }
 
 private def entryPath (cache : ResultCache) (identity : CacheIdentity) : System.FilePath :=
   cache.root / "results" / s!"{cacheIdentityDigest identity}.json"
 
-private def validAnalysis (mod : Lake.Module) (source : String)
-    (analysis : AnalysisEnvelope) : Bool :=
-  match analysis.artifact? with
-  | none => !analysis.diagnostics.isEmpty
-  | some artifact =>
-    analysis.diagnostics.isEmpty && structurallyValid artifact &&
-      artifact.mainModule == mod.name.toString &&
-      artifact.source == Digest.ofString source && artifact.sourceBytes == source.utf8ByteSize
+private def validAnalysis (target : Project.SourceTarget)
+    (analysis : SemanticAnalysis) : Bool :=
+  analysis.validFor target.source
 
-private def analysisDigest (analysis : AnalysisEnvelope) : Digest :=
+private def analysisDigest (analysis : SemanticAnalysis) : Digest :=
   Digest.ofString (Lean.toJson analysis).compress
 
 private def temporaryPath (target : System.FilePath) : IO System.FilePath := do
@@ -242,15 +223,10 @@ def ResultCache.open? (workspace : Lake.Workspace) (application : System.FilePat
 
 /- Read one strategy-independent semantic result. Every parse, schema, identity, and payload failure
 is an ordinary miss. -/
-def ResultCache.read? (cache : ResultCache) (mod : Lake.Module)
-    (source : String) : IO (Option AnalysisEnvelope) := do
+def ResultCache.read? (cache : ResultCache) (project : Project.Snapshot)
+    (target : Project.SourceTarget) : IO (Option SemanticAnalysis) := do
   try
-    -- The module's own trace binds its evaluated setup, direct import artifacts, extra targets,
-    -- options, and plugins into the validated aggregate epoch. An ordinarily usable source with no
-    -- own build artifact remains analyzable, but is not cache-eligible under this coarse identity.
-    unless ← mod.oleanFile.pathExists do
-      return none
-    let expected := identity cache mod source
+    let expected ← identity cache project target
     let path := entryPath cache expected
     let contents ← IO.FS.readFile path
     let .ok json := Lean.Json.parse contents
@@ -259,7 +235,7 @@ def ResultCache.read? (cache : ResultCache) (mod : Lake.Module)
       | return none
     unless entry.schema == resultCacheSchema &&
         entry.identity == cacheIdentityDigest expected &&
-        entry.payload == analysisDigest entry.analysis && validAnalysis mod source entry.analysis do
+        entry.payload == analysisDigest entry.analysis && validAnalysis target entry.analysis do
       return none
     return some entry.analysis
   catch _ =>
@@ -267,12 +243,12 @@ def ResultCache.read? (cache : ResultCache) (mod : Lake.Module)
 
 /- Atomically store one exact semantic result. Cache write failure never changes a successful check
 result; a later run simply observes a miss. -/
-def ResultCache.write (cache : ResultCache) (mod : Lake.Module) (source : String)
-    (analysis : AnalysisEnvelope) : IO Unit := do
+def ResultCache.write (cache : ResultCache) (project : Project.Snapshot)
+    (target : Project.SourceTarget) (analysis : SemanticAnalysis) : IO Unit := do
   try
-    unless (← mod.oleanFile.pathExists) && validAnalysis mod source analysis do
+    unless validAnalysis target analysis do
       return
-    let expected := identity cache mod source
+    let expected ← identity cache project target
     let path := entryPath cache expected
     let entry : CacheEntry := {
       schema := resultCacheSchema

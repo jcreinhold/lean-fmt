@@ -5,12 +5,18 @@ import Lean
 
 namespace LeanFmt.Internal
 
+inductive RuleInput where
+  | source
+  | syntax
+  deriving BEq, Lean.ToJson
+
 structure RuleInfo where
   code : String
   category : String
   summary : String
   fixable : Bool
   defaultEnabled : Bool
+  input : RuleInput
   deriving BEq, Lean.ToJson
 
 def ruleRegistry : Array RuleInfo := #[
@@ -20,6 +26,7 @@ def ruleRegistry : Array RuleInfo := #[
     summary := "remove trailing horizontal whitespace"
     fixable := true
     defaultEnabled := true
+    input := .source
   },
   {
     code := "FMT002"
@@ -27,6 +34,7 @@ def ruleRegistry : Array RuleInfo := #[
     summary := "require a final newline"
     fixable := true
     defaultEnabled := true
+    input := .source
   }
 ]
 

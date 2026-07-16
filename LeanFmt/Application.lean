@@ -3,6 +3,8 @@ module
 import all LeanFmt.Cache
 import all LeanFmt.Config
 import all LeanFmt.Edit
+import all LeanFmt.Project
+import all LeanFmt.Semantic
 import Lake.Build.Module
 import Lake.Build.Run
 import Lake.Config.Env
@@ -38,11 +40,7 @@ structure RunRequest where
   ignore : Array String := #[]
   validationLevel : ValidationLevel := .syntax
 
-private structure SourceSnapshot where
-  module : Lake.Module
-  path : FilePath
-  relativePath : String
-  source : String
+private abbrev SourceSnapshot := Project.SourceTarget
 
 structure FileReport where
   path : String
@@ -71,51 +69,6 @@ private structure ChildOutput where
   stderr : String
   peakAggregateRssKiB : Nat
 
-private def expectedVersion (pin : String) : String :=
-  let version := (pin.splitOn ":").getLast!
-  if version.startsWith "v" then (version.drop 1).toString else version
-
-private def targetLeanInstall (root : FilePath) : IO Lake.LeanInstall := do
-  let sysroot ← match ← IO.getEnv "LEAN_SYSROOT" with
-    | some path => pure (FilePath.mk path)
-    | none =>
-      let lean := (← IO.getEnv "LEAN").getD "lean"
-      if lean.trimAscii.isEmpty then
-        throw <| IO.userError "target Lean discovery was disabled by an empty LEAN value"
-      let output ← IO.Process.output {
-        cmd := lean
-        args := #["--print-prefix"]
-        cwd := root
-      }
-      unless output.exitCode == 0 do
-        throw <| IO.userError s!"could not resolve the target Lean installation: \
-          {output.stderr.trimAscii}"
-      pure (FilePath.mk output.stdout.trimAscii.copy)
-  let install ← Lake.LeanInstall.get sysroot
-  unless install.githash == Lean.githash do
-    throw <| IO.userError s!"target Lean revision {install.githash} does not match this \
-      lean-fmt build ({Lean.githash}); install lean-fmt for the target toolchain"
-  return install
-
-private def loadWorkspace (root : FilePath) : IO Lake.Workspace := do
-  let pinPath := root / "lean-toolchain"
-  let pin ← IO.FS.readFile pinPath
-  let pin := pin.trimAscii.copy
-  unless expectedVersion pin == Lean.versionString do
-    throw <| IO.userError s!"target toolchain {pin} does not match this lean-fmt build \
-      (Lean {Lean.versionString}); install lean-fmt for the target toolchain"
-  let lean ← targetLeanInstall root
-  let lake := Lake.LakeInstall.ofLean lean
-  unless ← lake.lake.pathExists do
-    throw <| IO.userError s!"target toolchain has no Lake executable at {lake.lake}"
-  let elan? ← Lake.findElanInstall?
-  let lakeEnvResult ← (Lake.Env.compute lake lean elan?).toIO'
-  let lakeEnv ← match lakeEnvResult with
-    | .ok environment => pure environment
-    | .error message => throw <| IO.userError message
-  let loaded ← Lake.loadWorkspace { lakeEnv, wsDir := root } |>.toBaseIO
-  loaded.getDM <| throw <| IO.userError s!"could not load Lake workspace at {root}"
-
 private def artifactFile (mod : Lake.Module) : FilePath :=
   Lean.modToFilePath (mod.pkg.buildDir / "lean-fmt-check-artifacts") mod.name "json"
 
@@ -138,47 +91,6 @@ private def fetchArtifact (application : FilePath)
           ]
         }
 
-private def moduleLess (left right : Lake.Module) : Bool :=
-  left.leanFile.toString < right.leanFile.toString
-
-private def deduplicateModules (modules : Array Lake.Module) : Array Lake.Module :=
-  let (_, unique) := modules.foldl (init := (none, #[])) fun (previous, unique) mod =>
-    let path := mod.leanFile.toString
-    if previous == some path then (previous, unique) else (some path, unique.push mod)
-  unique
-
-private def allRootModules (workspace : Lake.Workspace) : IO (Array Lake.Module) := do
-  let mut modules := #[]
-  for library in workspace.root.leanLibs do
-    modules := modules ++ (← library.getModuleArray)
-  return deduplicateModules (modules.qsort moduleLess)
-
-private def selectedModules (workspace : Lake.Workspace) (root : FilePath)
-    (config : FormatterConfig) (requested : Array FilePath) : IO (Array Lake.Module) := do
-  if requested.isEmpty then
-    return (← allRootModules workspace).filter fun mod =>
-      config.includesPath (Lake.relPathFrom root mod.leanFile).toString
-  else
-    let mut modules := #[]
-    for requestedPath in requested do
-      let path := if requestedPath.isAbsolute then requestedPath else root / requestedPath
-      let path ← IO.FS.realPath path
-      let some mod := workspace.findModuleBySrc? path
-        | throw <| IO.userError s!"selected file is not a buildable Lake module: {path}"
-      modules := modules.push mod
-    return deduplicateModules (modules.qsort moduleLess)
-
-private def snapshotSources (root : FilePath)
-    (modules : Array Lake.Module) : IO (Array SourceSnapshot) := do
-  modules.mapM fun mod => do
-    let path ← IO.FS.realPath mod.leanFile
-    return {
-      module := mod
-      path
-      relativePath := (Lake.relPathFrom root path).toString
-      source := ← IO.FS.readFile path
-    }
-
 private def withoutProcessOutput (action : IO α) : IO α := do
   let buffer ← IO.mkRef { : IO.FS.Stream.Buffer }
   let stdout ← IO.setStdout (.ofBuffer buffer)
@@ -191,13 +103,13 @@ private def trustedArtifact? (workspace : Lake.Workspace) (application : FilePat
     (snapshot : SourceSnapshot) : IO (Option ModuleArtifact) := do
   if (← IO.getEnv "LEAN_FMT_DISABLE_ARTIFACT") == some "1" then
     return none
+  let some mod := snapshot.module?
+    | return none
   try
     withoutProcessOutput do
-      unless ← workspace.checkNoBuild (do snapshot.module.olean.fetch) do
-        return none
       let facet ← workspace.runBuild (cfg := { verbosity := .quiet }) do
-        fetchArtifact application snapshot.module
-      readFacet? facet snapshot.module.name snapshot.source
+        fetchArtifact application mod
+      readFacet? facet mod.name snapshot.source
   catch _ =>
     return none
 
@@ -206,6 +118,23 @@ private def writeSetup (directory : FilePath) (index : Nat)
   let path := directory / s!"{index}.setup.json"
   IO.FS.writeFile path (Lean.toJson setup).compress
   return path
+
+private def diagnosticSetup (snapshot : SourceSnapshot) : Lean.ModuleSetup :=
+  match snapshot.module? with
+  | some mod => {
+      name := mod.name
+      package? := mod.pkg.id?
+      isModule := true
+      options := mod.leanOptions
+    }
+  | none => { name := `_unknown }
+
+private def exactSetupResult (project : Project.Snapshot)
+    (snapshot : SourceSnapshot) : IO (Except IO.Error Lean.ModuleSetup) :=
+  try
+    return Except.ok (← Project.exactSetup project snapshot)
+  catch error =>
+    return Except.error error
 
 private def residentKiB : IO Nat := do
   let pid ← IO.Process.getPID
@@ -278,26 +207,13 @@ private def runBounded (arguments : IO.Process.SpawnArgs)
   let stderrTask ← IO.asTask child.stderr.readToEnd
   monitorChild child stdoutTask stderrTask maxBytes 0
 
-private def minimalSetup (snapshot : SourceSnapshot) : Lean.ModuleSetup := {
-  name := snapshot.module.name
-  package? := snapshot.module.pkg.id?
-  isModule := true
-  options := snapshot.module.leanOptions
-}
-
-private def exactFallback (workspace : Lake.Workspace) (application : FilePath)
+private def exactFallback (project : Project.Snapshot) (application : FilePath)
     (temporary : FilePath) (index : Nat) (request : RunRequest)
     (snapshot : SourceSnapshot) (validator := false) : IO AnalysisEnvelope := do
-  let setupCurrent ← withoutProcessOutput <| workspace.checkNoBuild (do snapshot.module.setup.fetch)
-  let setup? ← if setupCurrent then
-    some <$> workspace.runBuild (cfg := { noBuild := true, verbosity := .quiet }) do
-      snapshot.module.setup.fetch
-  else
-    try
-      some <$> withoutProcessOutput (workspace.runBuild (cfg := { verbosity := .quiet }) do
-        snapshot.module.setup.fetch)
-    catch _ => pure none
-  let setup := setup?.getD (minimalSetup snapshot)
+  let setupResult ← exactSetupResult project snapshot
+  let setup := match setupResult with
+    | .ok setup => setup
+    | .error _ => diagnosticSetup snapshot
   let setupPath ← writeSetup temporary index setup
   let sourcePath := temporary / s!"{index}.lean"
   IO.FS.writeFile sourcePath snapshot.source
@@ -313,7 +229,7 @@ private def exactFallback (workspace : Lake.Workspace) (application : FilePath)
     cmd := analyzer.toString
     args := #["__analyze-exact", setupPath.toString, sourcePath.toString,
       snapshot.path.toString, toString maxBytes]
-    env := workspace.augmentedEnvVars.push ⟨"LEAN_NUM_THREADS", some "1"⟩
+    env := project.workspace.augmentedEnvVars.push ⟨"LEAN_NUM_THREADS", some "1"⟩
   } maxBytes
   unless output.exitCode == 0 do
     throw <| IO.userError s!"exact frontend child failed for {snapshot.relativePath}: \
@@ -324,36 +240,36 @@ private def exactFallback (workspace : Lake.Workspace) (application : FilePath)
   let .ok envelope := Lean.fromJson? json
     | throw <| IO.userError s!"exact frontend child returned an invalid result for \
       {snapshot.relativePath}"
-  if setup?.isNone && envelope.artifact?.isSome then
-    throw <| IO.userError s!"could not establish the exact Lake module setup for \
-      {snapshot.relativePath}; refusing a successful result from diagnostic-only header fallback"
+  if let .error setupError := setupResult then
+    if envelope.artifact?.isSome then
+      throw <| IO.userError s!"could not establish the exact Lake setup for \
+        {snapshot.relativePath}: {setupError}"
   return envelope
 
 private def canonicalAnalysis (snapshot : SourceSnapshot)
-    (analysis : AnalysisEnvelope) : AnalysisEnvelope :=
-  match analysis.artifact? with
-  | none => analysis
-  | some artifact => {
-      artifact? := some {
-        artifact with
-        trailingWhitespace := true
-        findings := runRules snapshot.source true
-      }
-    }
+    (analysis : AnalysisEnvelope) : IO SemanticAnalysis :=
+  match SemanticAnalysis.ofEnvelope? snapshot.source analysis with
+  | some semantic => pure semantic
+  | none => throw <| IO.userError s!"invalid exact analysis for {snapshot.relativePath}"
 
-private def analyzeFile (workspace : Lake.Workspace) (application temporary : FilePath)
+private def analyzeFile (project : Project.Snapshot) (application temporary : FilePath)
     (index : Nat) (request : RunRequest) (cache? : Option ResultCache)
-    (snapshot : SourceSnapshot) (cached? : Option AnalysisEnvelope) : IO AnalysisEnvelope := do
+    (plan : RulePlan) (evidence : Project.ModuleEvidence)
+    (snapshot : SourceSnapshot) (cached? : Option SemanticAnalysis) : IO SemanticAnalysis := do
   if let some analysis := cached? then
     return analysis
-  let analysis ← do
-    if let some artifact ← trustedArtifact? workspace application snapshot then
-      pure { artifact? := some artifact }
-    else
-      exactFallback workspace application temporary index request snapshot
-  let analysis := canonicalAnalysis snapshot analysis
+  let analysis ← if !plan.requiresSyntax && evidence == .current then
+    pure <| SemanticAnalysis.success snapshot.source (runRules snapshot.source true)
+  else if evidence == .current then do
+    match ← trustedArtifact? project.workspace application snapshot with
+    | some artifact => canonicalAnalysis snapshot { artifact? := some artifact }
+    | none =>
+      canonicalAnalysis snapshot
+        (← exactFallback project application temporary index request snapshot)
+  else
+    canonicalAnalysis snapshot (← exactFallback project application temporary index request snapshot)
   if let some cache := cache? then
-    cache.write snapshot.module snapshot.source analysis
+    cache.write project snapshot analysis
   return analysis
 
 private structure DiffSource where
@@ -447,17 +363,17 @@ private def baseReport (snapshot : SourceSnapshot) (status : String)
   { path := snapshot.relativePath, status, findings, diagnostics }
 
 private def validationReport (snapshot : SourceSnapshot) (findings : Array Finding)
-    (validation : AnalysisEnvelope) : Option FileReport :=
-  match validation.artifact? with
+    (validation : SemanticAnalysis) : Option FileReport :=
+  match validation.result? with
   | some _ => none
   | none => some (baseReport snapshot "rejected" findings validation.diagnostics)
 
-private def projectFile (workspace : Lake.Workspace) (application temporary : FilePath)
+private def projectFile (project : Project.Snapshot) (application temporary : FilePath)
     (index : Nat) (request : RunRequest) (plan : RulePlan) (snapshot : SourceSnapshot)
-    (analysis : AnalysisEnvelope) : IO FileReport := do
-  let some artifact := analysis.artifact?
+    (analysis : SemanticAnalysis) : IO FileReport := do
+  let some result := analysis.result?
     | return baseReport snapshot "broken" #[] analysis.diagnostics
-  let findings := plan.findings snapshot.relativePath artifact.findings
+  let findings := plan.findings snapshot.relativePath result.findings
   let patch ← match preparePatch snapshot.source findings with
     | .ok patch => pure patch
     | .error error =>
@@ -479,7 +395,7 @@ private def projectFile (workspace : Lake.Workspace) (application temporary : Fi
     unless patch.changed do
       return baseReport snapshot "clean" findings
     let candidate := { snapshot with source := patch.formatted }
-    let validation ← exactFallback workspace application temporary
+    let validation ← canonicalAnalysis candidate <| ← exactFallback project application temporary
       (index + 1000000) request candidate (validator := true)
     if let some report := validationReport snapshot findings validation then
       return report
@@ -508,6 +424,10 @@ private def recordPhase (name : String) (started finished : Nat) : IO Unit := do
   if (← IO.getEnv "LEAN_FMT_PROFILE_PHASES") == some "1" then
     IO.eprintln s!"phase.{name}_ms={(finished - started) / 1000000}"
 
+private def recordDuration (name : String) (nanos : Nat) : IO Unit := do
+  if (← IO.getEnv "LEAN_FMT_PROFILE_PHASES") == some "1" then
+    IO.eprintln s!"phase.{name}_ms={nanos / 1000000}"
+
 /- Execute one immutable user request. This operation owns workspace discovery, exact module
 selection, source snapshots, trusted-artifact validation, fallback, deterministic aggregation, and
 resource intent. No caller can sequence or retain those mechanisms independently. -/
@@ -515,25 +435,20 @@ def execute (request : RunRequest) : IO RunReport := do
   if request.maxMemoryGiB == 0 then
     throw <| IO.userError "--max-memory must provide a nonzero operating envelope"
   let root ← IO.FS.realPath request.root
-  let workspaceStarted ← IO.monoNanosNow
-  let workspace ← loadWorkspace root
-  let workspaceFinished ← IO.monoNanosNow
-  recordPhase "workspace_load" workspaceStarted workspaceFinished
-  let selectionStarted ← IO.monoNanosNow
   let configPath? := request.configPath?.map fun path =>
     if path.isAbsolute then path else root / path
   let config ← FormatterConfig.load root configPath?
   let plan ← match config.rulePlan request.select request.ignore with
     | .ok plan => pure plan
     | .error message => throw <| IO.userError message
-  let modules ← selectedModules workspace root config request.files
-  let snapshots ← snapshotSources root modules
-  let selectionFinished ← IO.monoNanosNow
-  recordPhase "selection_snapshot" selectionStarted selectionFinished
+  let project ← Project.load root config request.files
+  recordDuration "workspace_load" project.workspaceLoadNanos
+  recordDuration "selection_snapshot" project.selectionNanos
+  let snapshots := project.targets
   let application ← IO.appPath
   let epochStarted ← IO.monoNanosNow
   let cache? ← if request.cache then
-    ResultCache.open? workspace application request.validationLevel
+    ResultCache.open? project.workspace application request.validationLevel
   else
     pure none
   let epochFinished ← IO.monoNanosNow
@@ -542,25 +457,31 @@ def execute (request : RunRequest) : IO RunReport := do
   let cached ← match cache? with
     | none => pure (Array.replicate snapshots.size none)
     | some cache =>
-      snapshots.mapM fun snapshot => cache.read? snapshot.module snapshot.source
+      snapshots.mapM fun snapshot => cache.read? project snapshot
   let lookupFinished ← IO.monoNanosNow
   recordPhase "cache_lookup" lookupStarted lookupFinished
   if cached.all Option.isSome && request.mode != .fix then
     let mut files := #[]
     for (snapshot, cached?) in snapshots.zip cached, index in [0:snapshots.size] do
       if let some analysis := cached? then
-        files := files.push (← projectFile workspace application "." index request plan
+        files := files.push (← projectFile project application "." index request plan
           snapshot analysis)
     return summarize request.mode files
+  let evidenceStarted ← IO.monoNanosNow
+  let evidence ← Project.moduleEvidence project
+  let evidenceFinished ← IO.monoNanosNow
+  recordPhase "module_evidence" evidenceStarted evidenceFinished
   let temporary ← IO.FS.createTempDir
   try
     let mut files := #[]
     let mut failures := #[]
-    for (snapshot, cached?) in snapshots.zip cached, index in [0:snapshots.size] do
+    for ((snapshot, cached?), sourceEvidence) in (snapshots.zip cached).zip evidence,
+        index in [0:snapshots.size] do
       try
         files := files.push
-          (← projectFile workspace application temporary index request plan snapshot
-            (← analyzeFile workspace application temporary index request cache? snapshot cached?))
+          (← projectFile project application temporary index request plan snapshot
+            (← analyzeFile project application temporary index request cache? plan sourceEvidence
+              snapshot cached?))
       catch error =>
         let message := toString error
         failures := failures.push s!"{snapshot.relativePath}: {message}"
@@ -621,7 +542,7 @@ private unsafe def measureCacheEpoch (args : List String) : IO UInt32 := do
     | return 2
   let root ← IO.FS.realPath root
   let workspaceStarted ← IO.monoNanosNow
-  let workspace ← loadWorkspace root
+  let workspace ← Project.loadWorkspace root
   let workspaceFinished ← IO.monoNanosNow
   let epochStarted ← IO.monoNanosNow
   let cache? ← ResultCache.open? workspace (← IO.appPath)
@@ -686,12 +607,14 @@ structure CompilerStatusReport where
 
 private def inspectCompilerArtifact (workspace : Lake.Workspace) (application : FilePath)
     (maxBytes : Nat) (snapshot : SourceSnapshot) : IO String := do
-  unless ← withoutProcessOutput <| workspace.checkNoBuild (do snapshot.module.olean.fetch) do
+  let some mod := snapshot.module?
+    | return "unbuilt"
+  unless ← withoutProcessOutput <| workspace.checkNoBuild (do mod.olean.fetch) do
     return "unbuilt"
   let output ← runBounded {
     cmd := application.toString
-    args := #["__inspect-artifact", snapshot.module.name.toString,
-      snapshot.module.oleanFile.toString, snapshot.path.toString, toString maxBytes]
+    args := #["__inspect-artifact", mod.name.toString,
+      mod.oleanFile.toString, snapshot.path.toString, toString maxBytes]
     env := workspace.augmentedEnvVars.push ⟨"LEAN_NUM_THREADS", some "1"⟩
   } maxBytes
   unless output.exitCode == 0 do
@@ -707,17 +630,17 @@ def compilerStatus (request : CompilerStatusRequest) : IO CompilerStatusReport :
   unless request.maxMemoryGiB > 0 do
     throw <| IO.userError "--max-memory must provide a nonzero operating envelope"
   let root ← IO.FS.realPath request.root
-  let workspace ← loadWorkspace root
-  let modules ← allRootModules workspace
-  let snapshots ← snapshotSources root modules
+  let project ← Project.loadAll root
   let application ← IO.appPath
   let maxBytes := request.maxMemoryGiB * 1024 * 1024 * 1024
   let mut statuses := #[]
-  for snapshot in snapshots do
-    let status ← inspectCompilerArtifact workspace application maxBytes snapshot
+  for snapshot in project.targets do
+    let some mod := snapshot.module?
+      | continue
+    let status ← inspectCompilerArtifact project.workspace application maxBytes snapshot
     statuses := statuses.push {
       path := snapshot.relativePath
-      module := snapshot.module.name.toString
+      module := mod.name.toString
       status
     }
   let ready := statuses.foldl (fun total item => if item.status == "ready" then total + 1 else total) 0

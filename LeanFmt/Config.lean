@@ -196,4 +196,7 @@ def RulePlan.findings (plan : RulePlan) (path : String)
 
 def RulePlan.activeCount (plan : RulePlan) : Nat := plan.selected.size
 
+def RulePlan.requiresSyntax (plan : RulePlan) : Bool :=
+  ruleRegistry.any fun rule => plan.selected.contains rule.code && rule.input == .syntax
+
 end LeanFmt.Internal

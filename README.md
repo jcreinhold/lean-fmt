@@ -52,24 +52,31 @@ malformed patterns fail clearly instead of being ignored.
 Rule selection is a projection over one canonical semantic result, so changing selection neither
 changes frontend strategy nor creates strategy-specific cache entries.
 
+Without positional files, selection covers every root-relative `.lean` source outside `.lake`, not
+only library modules. Standalone scripts and nested/root `lakefile.lean` configuration therefore
+receive the same deterministic report and cache semantics as buildable modules.
+
 ## Cache and compiler integration
 
 Successful semantic results are cached under `.lean-fmt-cache/` by default. The cache key includes
-the exact source, target toolchain, evaluated module configuration, ordered Lake environment and
-verified build traces, formatter binary, validation level, and artifact schema. Missing or corrupt
+the exact source, target toolchain, evaluated source/module configuration, ordered Lake environment
+and verified build traces, formatter binary, validation level, and semantic-result schema. Missing or corrupt
 entries are ordinary misses. `--no-cache` performs neither cache reads nor writes.
 
 A warm run still evaluates the Lake workspace because `lakefile.lean` is executable configuration;
 skipping that step cannot be sound for general projects. Once its epoch is validated, an all-hit run
 returns before constructing a project frontend environment, starting an analyzer/extractor child, or
-creating fallback temporary files. Modules without their own trustworthy Lake `.olean.trace` remain
-analyzable but are not cache-eligible.
+creating fallback temporary files. Buildable and standalone sources are both cacheable when the
+project capability can establish their complete semantic identity.
 
-A compiler plugin stores a compact formatter result in each successfully built `.olean`; Lake owns
-its derived sidecar. When that exact artifact is unavailable, the application runs the ordinary Lean
-frontend in a fresh, memory-bounded child. Both paths produce the same canonical result before rule
-projection. The CLI resolves the target root's Lean and Lake installation itself, so normal use does
-not wrap the binary in a second `lake env` process.
+Each rule declares whether it needs only immutable source bytes or exact syntax. For source-input
+rules, one shared Lake no-build graph can use a current ordinary `.olean` as successful-compilation
+evidence without loading its frontend environment. It never fabricates a syntax projection. A
+compiler plugin stores syntax-capable formatter data in each integrated `.olean`; Lake owns its
+derived sidecar. Syntax-input rules use that exact artifact or the ordinary frontend in a fresh,
+memory-bounded child. Every path produces the same canonical result before rule projection. The CLI
+resolves the target root's Lean and Lake installation itself, so normal use does not wrap the binary
+in a second `lake env` process.
 
 `compiler setup` prints versioned integration identifiers and guidance. It deliberately does not
 rewrite arbitrary executable `lakefile.lean`. `compiler status` performs a read-only, path-sorted
@@ -78,9 +85,11 @@ modules nor publishes artifacts. `clean` removes only the root `.lean-fmt-cache`
 
 ## Architecture and verification
 
-The application exposes no library API. Workspace discovery, source snapshots, artifact validation,
-fallback, cache sequencing, validation, stale checks, and writes remain behind one private execution
-operation. `LeanFmt.Cli` owns only parsing, presentation, statistics, and exit mapping. Design and
+The application exposes no library API. `LeanFmt.Project` hides complete source selection, immutable
+snapshots, module evidence, and exact setup; `LeanFmt.Semantic` keeps product results independent of
+compiler projections. Artifact validation, fallback, cache sequencing, validation, stale checks, and
+writes remain behind one private execution operation. `LeanFmt.Cli` owns only parsing, presentation,
+statistics, and exit mapping. Design and
 performance evidence lives in `docs/projects/execution-core-v2/`; exploratory code remains under
 `experiments/`.
 
@@ -90,4 +99,5 @@ LEAN_NUM_THREADS=1 lake exe lean-fmt-tests
 tests/compiler/run.sh
 tests/check/run.sh
 tests/modes/run.sh
+tests/scale/run.sh
 ```

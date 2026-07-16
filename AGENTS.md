@@ -25,6 +25,7 @@ lake exe lean-fmt-tests
 tests/compiler/run.sh
 tests/check/run.sh
 tests/modes/run.sh
+tests/scale/run.sh
 ```
 
 Use the target project's exact Lean toolchain for frontend/plugin experiments. Keep experiments out
@@ -46,6 +47,10 @@ of production modules until their owning prompt selects and verifies the interfa
   patch validated under the exact module setup, after a stale-source check.
 - Rule selection is a projection over canonical results and must not enter execution strategy or
   result-cache identity.
+- `LeanFmt.Project` owns complete non-`.lake` source selection, exact Lake setup, and one shared
+  typed no-build graph. Do not replace it with per-file Lake runs or module-only selection.
+- A current ordinary `.olean` is successful-compilation evidence for source-input rules, not a
+  serialized syntax projection. Syntax-input rules require the compiler artifact or exact frontend.
 - Fetch and consume `leanFmtArtifact` inside one private Lake-owning operation. `Lake.Artifact` is a
   public descriptor, not authority by type alone; recompute its content hash and match module and
   the full source snapshot. Filesystem presence or a raw path is not build validity.

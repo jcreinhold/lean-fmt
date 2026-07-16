@@ -168,7 +168,7 @@ private def testCacheIdentity : IO Unit := do
     formatter := Digest.ofString "formatter"
     configuration := Digest.ofString "configuration"
     validationLevel := .syntax
-    artifactSchema
+    semanticSchema := semanticResultSchema
   }
   let original := cacheIdentityDigest base
   let changes := #[
@@ -178,7 +178,7 @@ private def testCacheIdentity : IO Unit := do
     cacheIdentityDigest { base with formatter := Digest.ofString "other-formatter" },
     cacheIdentityDigest { base with configuration := Digest.ofString "other-configuration" },
     cacheIdentityDigest { base with validationLevel := .elaboration },
-    cacheIdentityDigest { base with artifactSchema := "other-artifact-schema" }
+    cacheIdentityDigest { base with semanticSchema := "other-semantic-schema" }
   ]
   ensure (changes.all (· != original))
     "a semantic cache identity component did not invalidate the key"

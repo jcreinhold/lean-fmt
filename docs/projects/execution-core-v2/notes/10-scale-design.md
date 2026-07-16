@@ -68,3 +68,17 @@ The repaired prompt first proves complete selection, then separates semantic res
 projection, then measures module evidence and direct official facet access. Only a sample-projected
 release candidate earns a full 8,795-source run. This preserves the evidence policy and prevents a
 long run from compensating for a known design error.
+
+## First retained measurement
+
+The shared typed Lake graph validates the frozen 62-file sample in 3.679 seconds as an isolated
+probe. Integrated into production, complete workspace loading, snapshotting, validation, source-rule
+execution, projection, and JSON rendering take 1.967 seconds at 709,936 KiB peak RSS. The previous
+per-file orchestration was stopped after 180.958 seconds on only eight sources and had already peaked
+at 4,776,128 KiB. The optimization is retained because it both removes a false compiler DTO
+dependency and improves the measured critical path by more than an order of magnitude.
+
+Complete discovery finds 8,788 modules and seven standalone sources in the frozen 8,795-source
+workload. Of the modules, 8,781 are current and seven script/tool targets are stale. A diagnostic full
+run accidentally triggered by a Bash-3.2-incompatible wrapper finished in 63.647 seconds, establishing
+plausibility, but its pre-fix lakefile errors and invalid invocation exclude it from acceptance.

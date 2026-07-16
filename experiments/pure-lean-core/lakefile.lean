@@ -27,3 +27,8 @@ lean_exe «setup-audit» where
   root := `SetupAudit
   supportInterpreter := true
   weakLinkArgs := #["-lLake"]
+
+lean_exe «module-evidence» where
+  root := `ModuleEvidence
+  supportInterpreter := true
+  weakLinkArgs := #["-lLake"]

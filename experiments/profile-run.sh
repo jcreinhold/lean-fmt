@@ -91,6 +91,13 @@ pressure_level() {
 
 command_text=$(printf '%q ' "$@")
 command_text=${command_text% }
+profile_binary=${LEAN_FMT_PROFILE_BINARY:-$1}
+if [[ -f "$profile_binary" ]]; then
+	profile_binary=$(cd "$(dirname "$profile_binary")" && pwd)/$(basename "$profile_binary")
+	profile_binary_digest=$(shasum -a 256 "$profile_binary" | awk '{print $1}')
+else
+	profile_binary_digest=unavailable
+fi
 source_count=$(wc -l <"$sources" | tr -d ' ')
 source_digest=$(shasum -a 256 "$sources" | awk '{print $1}')
 swap_before_kib=$(swap_used_kib)
@@ -110,6 +117,8 @@ pressure_before=$(memory_pressure -Q 2>/dev/null | tail -1 || true)
 	printf 'source_digest=%s\n' "$source_digest"
 	printf 'machine=%s\n' "$(uname -a)"
 	printf 'command=%s\n' "$command_text"
+	printf 'binary=%s\n' "$profile_binary"
+	printf 'binary_digest=%s\n' "$profile_binary_digest"
 	printf 'rss_limit_kib=%s\n' "$rss_limit_kib"
 	printf 'swap_limit_kib=%s\n' "$swap_limit_kib"
 	printf 'pressure_level_limit=%s\n' "$pressure_limit"

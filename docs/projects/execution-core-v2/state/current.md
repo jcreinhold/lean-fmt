@@ -72,6 +72,13 @@ as independent measured prerequisites.
   makes source-only FMT001/FMT002 appear to require syntax. The repaired prompt first adds complete
   source targets and honest rule input requirements, then measures current `.olean` validation,
   direct official facets, exact fallback, and cache paths in a bounded hypothesis ladder.
+- Prompt 10 major step 1 is implemented. One private project capability selects all 8,795 mathlib
+  sources, recovers 8,781 current/7 stale module statuses from one typed Lake graph, and hides the
+  seven standalone cases. Source-only semantic results no longer contain fake compiler projections.
+  The current 62-file release path fell from a stopped 180.958-second eight-file baseline to 1.967
+  seconds for 62 files at 709,936 KiB peak RSS. Focused unit, compiler, check, mode, and new complete-
+  selection/cache gates pass; intentional full, exact-remainder, direct-facet, and warm acceptance
+  remain.
 
 These facts and the verified batch product surface constrain Prompt 10's optimization hypotheses;
 they do not authorize weaker semantics or a broader memory envelope.
