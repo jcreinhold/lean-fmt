@@ -7,6 +7,7 @@ import all LeanFmt.Comments
 import all LeanFmt.Config
 import all LeanFmt.Doc
 import all LeanFmt.Edit
+import all LeanFmt.Printer
 import all LeanFmt.Rules
 import all LeanFmt.Service
 
@@ -793,6 +794,57 @@ private def attachReport (envelopePath sourcePath : String) : IO UInt32 := do
 dangling={attachment.trailer.size} header_bytes={attachment.header.stop} tokens={projection.tokens.size}"
   return 0
 
+/- Does the conservative printer lose bytes on real parser output?
+
+Every kind is still on the conservative path, so `Printer.format` is the identity on accepted source
+and this checks exactly that. The property is weaker than it looks and stronger than it sounds: it does
+not test any layout decision, because there are none yet — it tests that the *skeleton* is lossless.
+The header split at `headerStop`, the command extents tiling `[headerStop, terminalStop)`, and the
+uninterpreted tail from `terminalStop` are each a place where a byte can vanish, and each is checked
+here against code nobody wrote to suit the printer.
+
+Checked at several margins because the margin must not matter. `Doc.verbatim` is specified to emit its
+bytes unchanged and, unlike `hard`, not to force its group to break; a width-sensitive result would
+mean `verbatim` is re-indenting or breaking content that is not the formatter's to touch, which is the
+`Std.Format` defect (`Basic.lean:269-276`) that `RLC-IMPL` added the constructor to avoid. Width 0 is
+included on purpose: it is the most hostile margin there is. -/
+private def printerRoundtrip (envelopePath sourcePath : String) : IO UInt32 := do
+  let .ok json := Lean.Json.parse (← IO.FS.readFile envelopePath)
+    | throw <| IO.userError s!"{envelopePath} is not JSON"
+  let .ok (envelope : AnalysisEnvelope) := Lean.fromJson? json
+    | throw <| IO.userError s!"{envelopePath} is not an analysis envelope"
+  let some artifact := envelope.artifact?
+    | throw <| IO.userError s!"{sourcePath} produced no artifact: {envelope.diagnostics}"
+  let raw ← IO.FS.readFile sourcePath
+  let normalized := (LosslessSource.normalize raw).1
+  let projection := artifact.source
+  ensure (projection.validFor raw) s!"{sourcePath}: the projection does not match its own source"
+  for width in [0, 1, 40, 80, 120, 1000] do
+    let formatted := Printer.format projection normalized width
+    ensure (formatted == normalized)
+      s!"{sourcePath}: conservative format changed bytes at width {width} \
+({formatted.utf8ByteSize} bytes out, {normalized.utf8ByteSize} in)"
+  let tree := Tree.ofSource projection
+  let extents := tree.commandExtents
+  -- Every command contributes exactly one extent, and the extents touch end to end across
+  -- `[headerStop, terminalStop)`. The identity above would survive a *pair* of compensating errors
+  -- here — a command dropped and its bytes absorbed into its neighbour's extent reproduces the source
+  -- perfectly — so the tiling is checked directly rather than inferred from the bytes.
+  ensure (extents.size == tree.roots.size)
+    s!"{sourcePath}: {tree.roots.size} commands produced {extents.size} extents"
+  let mut cursor := projection.headerStop
+  for extent in extents do
+    ensure (extent.start == cursor)
+      s!"{sourcePath}: extent starts at {extent.start}, expected {cursor}"
+    ensure (extent.stop >= extent.start) s!"{sourcePath}: extent {extent.start} runs backwards"
+    cursor := extent.stop
+  ensure (cursor == projection.terminalStop)
+    s!"{sourcePath}: extents end at {cursor}, expected terminalStop {projection.terminalStop}"
+  IO.println s!"commands={tree.roots.size} tokens={projection.tokens.size} \
+nodes={projection.nodes.size} header_bytes={projection.headerStop} \
+tail_bytes={projection.normalizedBytes - projection.terminalStop}"
+  return 0
+
 /- Layout cost, on the shapes `RLC-FINAL` names.
 
 `notes/01-layout-design.md` §4.6 records a known hole: the fit test is bounded in *columns*, not in
@@ -892,6 +944,7 @@ private def docBench : IO UInt32 := do
 public unsafe def main (args : List String) : IO UInt32 := do
   match args with
   | ["attach-report", envelopePath, sourcePath] => attachReport envelopePath sourcePath
+  | ["printer-roundtrip", envelopePath, sourcePath] => printerRoundtrip envelopePath sourcePath
   | ["doc-bench"] => docBench
   | ["doc-dump"] => docDump
   | [] =>

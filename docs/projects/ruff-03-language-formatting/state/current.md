@@ -5,11 +5,16 @@ first_unresolved: 01-commands
 
 # Current state
 
-`RLF-COMMANDS` is **in progress**: its interface decision is made and its boundary is measured, and no
-printer exists yet. Its external prerequisite stack `ruff-02-layout-core` is verified, and its live
-implementation still matches recorded state — `LeanFmt/Doc.lean` and `LeanFmt/Comments.lean` are
-present in `LeanFmtCore`, and `RLC-FINAL`'s standing observation that **nothing consumes the layout
-core** is still true. This stack is what changes that.
+`RLF-COMMANDS` is **in progress**: the printer skeleton is live and proven lossless, and no canonical
+layout exists yet. Its external prerequisite stack `ruff-02-layout-core` is verified and its live
+implementation still matches recorded state.
+
+**`RLC-FINAL`'s standing caveat is now half-answered.** That prompt closed the layout stack noting
+nothing consumed it, so every claim about realistic documents rested on fixtures written against the
+engine. `LeanFmt/Printer.lean` is the first consumer: it renders a real `Doc` from a real projection of
+real modules. What it does not yet do is *decide* anything — every kind is still on the conservative
+path — so `Doc`'s break behaviour remains exercised only by `ruff-02`'s fixtures. The caveat narrows
+from "nothing consumes it" to "nothing yet asks it to break a line".
 
 `notes/01-command-printing.md` designs the printer interface twice and decides: **the printer reads the
 `LosslessSource` projection, not `Lean.Syntax` inside the frontend.** The decision is forced by
@@ -28,6 +33,21 @@ Printing inside the frontend would buy free arg order for a median 1.96 s fronte
 
 ## Known evidence
 
+- **The printer skeleton is lossless on real parser output, and the test proves it by mutation.**
+  `LeanFmt/Printer.lean` renders header + command extents + `#exit` tail; with every kind on the
+  conservative path it is the identity on accepted source. `tests/printer/run.sh`:
+  `modules_checked=20 commands=403 failures=0`, at margins 0, 1, 40, 80, 120, and 1000 — the margin
+  must not matter, since `verbatim` is specified to emit bytes unchanged and not to force a break.
+  A generated fixture on the real parser covers what this repository lacks: a custom `syntax`/
+  `macro_rules` command (an unknown kind), CJK and emoji, a multi-line string literal, an inline and a
+  newline-spanning block comment, and a 173-byte `#exit` tail. **Non-vacuity is proven twice, and the
+  two checks catch different things.** Mutating `tokenEnd` to ignore trailing trivia fails every
+  module — but by only *one byte* (5416 → 5415), because dropping a trailing run merely shifts a
+  boundary and the next extent absorbs the bytes; only the last command's trailing newline actually
+  escapes. Mutating the extent walk to never close at a command boundary is **invisible to byte
+  identity** — it round-trips perfectly at every margin — and is caught only by the tiling assertion:
+  `11 commands produced 1 extents`. Byte identity alone would have accepted a printer with no
+  command structure at all.
 - **A seventh of real syntax cannot be placed by position, so the printer must know the grammar.**
   Measured by `experiments/run-projection-shape.sh` over all 20 modules of this repository, 34,844
   nodes (`evidence/01-projection-shape.txt`): `pre_order_contiguity_violations=0` and
@@ -54,9 +74,18 @@ Printing inside the frontend would buy free arg order for a median 1.96 s fronte
 ## Blockers and prerequisites
 
 - No blocker is currently recorded beyond the named prerequisite stacks.
-- **No printer exists yet.** The interface is decided and the boundary measured; nothing renders a
-  `Doc` from a projection, so `RLC-FINAL`'s "nothing consumes the layout core" still stands and every
-  layout claim still rests on fixtures written in `ruff-02`.
+- **No canonical layout exists yet, so the printer decides nothing.** Every kind takes the
+  conservative path, which is why `format` is currently the identity. `RLF-COMMANDS` is not met until
+  module headers, imports, namespaces/sections, attributes, binders, declarations, structures,
+  inductives, and command comments have cited layouts with golden and idempotence tests. Until then
+  the skeleton is proven and the claim is not.
+- **`Doc`'s break behaviour is still exercised only by `ruff-02`'s own fixtures.** The printer
+  consumes `Doc`, but only through `verbatim`, `cat`, and `empty` — no `group`, `line`, or `nest`
+  reaches it from real source yet. `RLC-FINAL`'s "`call-args` is my model of a Lean call, not a Lean
+  call" stands until the first canonical layout lands.
+- **The margin is unset.** `Printer.format` requires `width` rather than defaulting it: the value is
+  configuration, it enters cache identity (`RLC-SPEC` §5), and `RLC-FINAL` left it an open language
+  decision. Nothing in this stack has picked one, and no caller passes one outside tests.
 - **Every supported kind's grammar shape will be a hardcoded claim about a parser the printer cannot
   query.** There is no `Environment` outside the frontend. Each shape must carry the parser
   declaration it mirrors and be pinned by a golden fixture, or it is the "textual guessing" the

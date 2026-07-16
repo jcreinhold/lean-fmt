@@ -43,10 +43,11 @@ lean_lib LeanFmtApplication where
 This later declaration remains the canonical owner for ordinary application imports, so changing
 application orchestration cannot invalidate compiler-integrated project modules.
 
-`LeanFmt.Doc` and `LeanFmt.Comments` are deliberately *not* in the plugin library above. The plugin
-runs inside every compilation of every downstream module, so its surface is the semantic core and
-nothing else; layout is a consumer of the projection, never a producer of it. Nothing the compiler
-does needs to render a document. -/
+`LeanFmt.Doc`, `LeanFmt.Comments`, and `LeanFmt.Printer` are deliberately *not* in the plugin library
+above. The plugin runs inside every compilation of every downstream module, so its surface is the
+semantic core and nothing else; layout is a consumer of the projection, never a producer of it. Nothing
+the compiler does needs to render a document, and `LeanFmt.Printer` is the sharpest case: it exists to
+turn a finished projection back into text, which is the one thing the compiler has no use for. -/
 lean_lib LeanFmtCore where
   roots := #[`LeanFmt]
   globs := #[
@@ -57,7 +58,8 @@ lean_lib LeanFmtCore where
     Glob.one `LeanFmt.LosslessSource,
     Glob.one `LeanFmt.Rules,
     Glob.one `LeanFmt.Doc,
-    Glob.one `LeanFmt.Comments
+    Glob.one `LeanFmt.Comments,
+    Glob.one `LeanFmt.Printer
   ]
 
 lean_exe «lean-fmt-tests» where
