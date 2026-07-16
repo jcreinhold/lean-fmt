@@ -1,15 +1,9 @@
 module
 
-import all LeanFmt.Digest
+import all LeanFmt.LosslessSource
 import Lean
 
 namespace LeanFmt.Internal
-
-/-- Half-open UTF-8 byte range in the exact source snapshot. -/
-structure SourceRange where
-  start : Nat
-  stop : Nat
-  deriving Inhabited, BEq, DecidableEq, Repr, Lean.ToJson, Lean.FromJson
 
 /-- A conservative replacement. Applying edits is deliberately not part of the compiler plugin. -/
 structure Edit where
@@ -32,26 +26,23 @@ structure Finding where
   fix? : Option Edit := none
   deriving Inhabited, BEq, DecidableEq, Repr, Lean.ToJson, Lean.FromJson
 
-/-- The compact syntax projection needed by current rules, not a serialized Lean syntax tree. -/
-structure CommandShape where
-  kind : String
-  range? : Option SourceRange
-  deriving Inhabited, BEq, DecidableEq, Repr, Lean.ToJson, Lean.FromJson
-
 /- The artifact is stored inside the successful module's `.olean`; exact toolchain, options,
 plugins, ordered imports, and dependency identity therefore belong to the module artifact itself
-rather than to a parallel cache identity. -/
+rather than to a parallel cache identity.
+
+`source` carries both the projection and the artifact's whole identity. There is no second module
+name or source digest beside it: a duplicate identity is one that can disagree with itself, and
+`findings` index the same normalized string `source` does. -/
 structure ModuleArtifact where
   schema : String
-  source : Digest
-  sourceBytes : Nat
-  mainModule : String
   trailingWhitespace : Bool
-  commands : Array CommandShape
+  source : LosslessSource
   findings : Array Finding
-  deriving BEq, DecidableEq, Repr, Lean.ToJson, Lean.FromJson
+  deriving BEq, Repr, Lean.ToJson, Lean.FromJson
 
-def artifactSchema : String := "lean-fmt.module-artifact.v1"
+/-- Bumped from `v1` when the command-kind/range projection became `LosslessSource`. A `v1` payload
+left in an `.olean` or a facet output describes a different shape and must miss, not decode. -/
+def artifactSchema : String := "lean-fmt.module-artifact.v2"
 
 def artifactLinter : Lean.Name := `leanFmt.semanticArtifact
 

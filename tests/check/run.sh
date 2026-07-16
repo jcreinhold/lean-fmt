@@ -69,8 +69,16 @@ python3 - "$work/exact-envelope.json" \
 import json, sys
 fallback = json.load(open(sys.argv[1]))["artifact"]
 integrated = json.load(open(sys.argv[2]))
+# The exact frontend and the compiler plugin must project one module identically. They reach the
+# same producer with the same arguments, so any difference here is a real divergence, not drift.
 assert fallback == integrated
-assert any(c["kind"] == "commandEmit_local_command" for c in fallback["commands"])
+source = fallback["source"]
+# File-local `syntax` reaches the kind table, which only an elaborated environment can parse.
+assert "commandEmit_local_command" in source["kinds"]
+# The projection covers the whole file: header, then a token stream tiling up to the terminal.
+assert source["headerStop"] > 0
+assert source["terminalStop"] == source["normalizedBytes"]
+assert source["tokens"], "the projection recorded no tokens"
 PY
 
 run_expect 1 "$work/broken.json" env LEAN_FMT_DISABLE_ARTIFACT=1 LEAN_FMT_TEST_DISABLE_MODULE_EVIDENCE=1 \

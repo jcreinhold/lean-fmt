@@ -19,22 +19,29 @@ private def messageStrings (messages : Lean.MessageLog) : IO (Array String) :=
 private def broken (messages : Lean.MessageLog) : IO AnalysisEnvelope := do
   return { artifact? := none, diagnostics := ← messageStrings messages }
 
+/- Split the snapshot chain the way a module linter sees it: the ordinary command stream, and the
+terminal command that ended the file. The terminal is `eoi`, or `#exit` when a file stops early and
+leaves an unparsed tail; dropping it would silently discard both the tail and the end of the parsed
+region. `isTerminalCommand` also admits `import`, which cannot occur here because the header is
+processed before `firstCmdSnap`. -/
 private partial def collectCommands
     (snapshot : Lean.Language.Lean.CommandParsedSnapshot)
-    (commands : Array Lean.Syntax := #[]) : Array Lean.Syntax :=
-  let commands := if Lean.Parser.isTerminalCommand snapshot.stx then commands
-    else commands.push snapshot.stx
+    (commands : Array Lean.Syntax := #[])
+    (terminal? : Option Lean.Syntax := none) : Array Lean.Syntax × Option Lean.Syntax :=
+  let isTerminal := Lean.Parser.isTerminalCommand snapshot.stx
+  let commands := if isTerminal then commands else commands.push snapshot.stx
+  let terminal? := if isTerminal then terminal? <|> some snapshot.stx else terminal?
   match snapshot.nextCmdSnap? with
-  | some next => collectCommands next.get commands
-  | none => commands
+  | some next => collectCommands next.get commands terminal?
+  | none => (commands, terminal?)
 
 private def processedCommands
-    (snapshot : Lean.Language.Lean.InitialSnapshot) : Array Lean.Syntax :=
+    (snapshot : Lean.Language.Lean.InitialSnapshot) : Array Lean.Syntax × Option Lean.Syntax :=
   match snapshot.result? with
-  | none => #[]
+  | none => (#[], none)
   | some parsed =>
     match parsed.processedSnap.get.result? with
-    | none => #[]
+    | none => (#[], none)
     | some processed => collectCommands processed.firstCmdSnap.get
 
 private def isApplicationRuntimePlugin (plugin : Lean.Plugin) : Bool :=
@@ -71,17 +78,13 @@ unsafe def analyzeExact (setup : Lean.ModuleSetup) (source : String)
     | return ← broken messages
   if messages.hasErrors then
     return ← broken messages
-  let commands := processedCommands snapshot
+  let (commands, terminal?) := processedCommands snapshot
   let checkTrailingWhitespace := options.getBool `leanFmt.trailingWhitespace true
-  let artifact : ModuleArtifact := {
-    schema := artifactSchema
-    source := LeanFmt.Digest.ofString source
-    sourceBytes := source.utf8ByteSize
-    mainModule := setup.name.toString
-    trailingWhitespace := checkTrailingWhitespace
-    commands := projectCommands commands
-    findings := runRules source checkTrailingWhitespace
-  }
+  -- `mkInputContext` normalized `source` before parsing it, so every offset above indexes the
+  -- normalized string. Measuring the artifact against `source` itself would mix two coordinate
+  -- systems inside one artifact for any file that uses CRLF.
+  let artifact := ModuleArtifact.ofParsedModule setup.name.toString
+    (LosslessSource.normalize source).1 commands terminal? checkTrailingWhitespace
   return { artifact? := some artifact }
 
 /- Extract the compiler-owned payload from one exact module artifact. Process exit remains the

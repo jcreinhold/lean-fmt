@@ -56,6 +56,12 @@ of production modules until their owning prompt selects and verifies the interfa
   typed no-build graph. Do not replace it with per-file Lake runs or module-only selection.
 - A current ordinary `.olean` is successful-compilation evidence for source-input rules, not a
   serialized syntax projection. Syntax-input rules require the compiler artifact or exact frontend.
+- Every compiler-produced offset and digest indexes the normalized source, `raw.crlfToLf`, because
+  `Parser.mkInputContext` normalizes before assigning any position. Projections, rule findings, and
+  artifact identity share that one coordinate system; a module linter is handed already-normalized
+  text and cannot observe the file's bytes at all. Only reading a file and publishing one may touch
+  raw bytes, via `LosslessSource.normalize`/`denormalize`. Digesting raw bytes against a
+  compiler-produced identity compares two different strings.
 - Fetch and consume `leanFmtArtifact` inside one private Lake-owning operation. `Lake.Artifact` is a
   public descriptor, not authority by type alone; recompute its content hash and match module and
   the full source snapshot. Filesystem presence or a raw path is not build validity.

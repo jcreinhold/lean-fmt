@@ -1,6 +1,6 @@
 ---
 kind: state
-first_unresolved: 02-implementation
+first_unresolved: 03-acceptance
 ---
 
 # Current state
@@ -8,12 +8,17 @@ first_unresolved: 02-implementation
 The lossless-source contract is frozen in `notes/01-source-authority.md` and backed by a
 toolchain oracle (`experiments/lossless-source/`) that shares no module with `LeanFmt`. Its
 external prerequisite stack `execution-core-v2` is verified and its live implementation still
-matches recorded state. No production module has changed yet.
+matches recorded state.
+
+`LeanFmt/LosslessSource.lean` is live. `CommandShape` is removed, `ModuleArtifact` carries one
+`LosslessSource`, and both producers reach it through `ModuleArtifact.ofParsedModule`, which
+`tests/check/run.sh` checks by asserting the exact frontend's artifact equals the plugin's
+byte-for-byte. All three defects `RLS-IMPL` inherited are fixed and measured.
 
 | Prompt | Claim | Status | Depends on |
 | --- | --- | --- | --- |
 | 01-authority | RLS-SPEC | verified | — |
-| 02-implementation | RLS-IMPL | planned | RLS-SPEC |
+| 02-implementation | RLS-IMPL | verified | RLS-SPEC |
 | 03-acceptance | RLS-FINAL | planned | RLS-IMPL |
 
 ## Known evidence
@@ -35,19 +40,31 @@ matches recorded state. No production module has changed yet.
   yields a wrong token table, and may run with `loadExts := true` only once per process.
 - Lean rejects tabs, a leading BOM, and isolated `\r`; those are outside "accepted source".
   `#exit` is accepted but leaves an unparsed tail (measured: parsing stopped at byte 36 of 56).
+- Artifact identity is normalized identity. A module linter is handed already-normalized
+  `fileMap.source` and cannot observe the file's bytes, so `lineEndings`, `rawBytes`, and
+  `rawDigest` were removed from the schema frozen in `notes/01-source-authority.md` §6; a field only
+  one of the two mandated producers can fill is two schemas in one structure. Consumers hold the
+  file and recover line endings themselves. Details in `notes/02-projection-interface.md`.
+- Derived field-name JSON measured 12.21x the source (8692 B for 714 B); the shipped fixed-shape
+  array encoding measures 3.93x (2798 B), 28 B per token against 114 B. The artifact is
+  `O(tokens + nodes + distinct kinds)`, not `O(source bytes)`: a 34-byte module measures 29x because
+  the schema strings and two digests dominate.
+- The CRLF defect is fixed end to end: a 734-byte CRLF file records `normalizedBytes = 714` and is
+  accepted by the `.olean` payload, the sidecar facet, and the registered no-build Lake job.
 
 ## Blockers and prerequisites
 
 - No blocker is currently recorded beyond the named prerequisite stacks.
 - If live code contradicts prerequisite results, reopen the owning prerequisite rather than patching around it.
 - Full mathlib is not development evidence; follow this roadmap's evidence policy.
-- `RLS-IMPL` inherits three recorded defects in shipped code, detailed in `results/01-authority.md`:
-  the plugin digests normalized text while the application digests raw bytes, so every CRLF file is
-  a permanent silent artifact miss; `analyzeExact` mixes normalized command ranges with raw rule
-  ranges inside one artifact and validation cannot detect it; and `collectCommands` drops `#exit`
-  and its tail along with the harmless `eoi`.
-- No size, time, or memory measurement of the new schema exists. The token stream is strictly larger
-  than `CommandShape`; nothing yet supports a claim that it is affordable.
+- The three defects `RLS-IMPL` inherited from `results/01-authority.md` are fixed and measured in
+  `results/02-implementation.md`: the CRLF identity mismatch, the mixed coordinate systems inside one
+  artifact, and the dropped `#exit` terminal and tail.
+- No size, time, or RSS profile of the new schema exists beyond three fixtures, all under 1 KB.
+  Nothing yet supports a claim that the token stream is affordable on a real module. `RLS-FINAL`
+  owns that profile, and it is the largest open risk in this stack.
+- No consumer reads the `nodes` table yet. It costs about as much as the token table and is 2.4x its
+  size; the roadmap requires syntax boundaries, so it ships, but its granularity is unmeasured.
 
 ## Verification convention
 

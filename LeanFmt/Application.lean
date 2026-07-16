@@ -312,7 +312,10 @@ private def availableAnalysis (plan : RulePlan) (evidence : Project.ModuleEviden
   if let some analysis := cached? then
     return some analysis
   if !plan.requiresSyntax && evidence == .current then
-    return some <| SemanticAnalysis.success snapshot.source (runRules snapshot.source true)
+    -- Source-only rules still index the normalized string, so this shortcut and the artifact path
+    -- produce findings in one coordinate system and remain interchangeable in the result cache.
+    let normalized := (LosslessSource.normalize snapshot.source).1
+    return some <| SemanticAnalysis.success normalized (runRules normalized true)
   else if let some artifact := officialArtifact? then
     return some (← canonicalAnalysis snapshot { artifact? := some artifact })
   else
@@ -414,16 +417,30 @@ private def validationReport (snapshot : SourceSnapshot) (findings : Array Findi
   | some _ => none
   | none => some (baseReport snapshot "rejected" findings validation.diagnostics)
 
+/- Findings index the normalized source, so edits are prepared against it and the result is returned
+to the file's own line-ending form on the way out. Preparing edits against the raw bytes would place
+every edit past its intended offset in a CRLF file. -/
+private structure PreparedFile where
+  findings : Array Finding
+  normalized : String
+  lineEndings : LineEndings
+  patch : Patch
+
+/-- The formatted text in the file's own line-ending form, i.e. what a write would produce. -/
+private def PreparedFile.output (prepared : PreparedFile) : String :=
+  LosslessSource.denormalize prepared.patch.formatted prepared.lineEndings
+
 private def prepareFile (plan : RulePlan) (snapshot : SourceSnapshot)
-    (analysis : SemanticAnalysis) : Except FileReport (Array Finding × Patch) := do
+    (analysis : SemanticAnalysis) : Except FileReport PreparedFile := do
   let some result := analysis.result?
     | throw (baseReport snapshot "broken" #[] analysis.diagnostics)
   let findings := plan.findings snapshot.relativePath result.findings
-  let patch ← match preparePatch snapshot.source findings with
+  let (normalized, lineEndings) := LosslessSource.normalize snapshot.source
+  let patch ← match preparePatch normalized findings with
     | .ok patch => pure patch
     | .error error =>
       throw (baseReport snapshot "rejected" findings #[toString error])
-  return (findings, patch)
+  return { findings, normalized, lineEndings, patch }
 
 private inductive PreviewMode where
   | check
@@ -440,37 +457,43 @@ private def previewFile (mode : PreviewMode) (plan : RulePlan) (snapshot : Sourc
     (analysis : SemanticAnalysis) : IO FileReport := do
   match prepareFile plan snapshot analysis with
   | .error report => return report
-  | .ok (findings, patch) =>
+  | .ok prepared =>
+    let findings := prepared.findings
     match mode with
     | .check =>
       return baseReport snapshot (if findings.isEmpty then "clean" else "findings") findings
     | .format =>
-      if patch.changed then
+      if prepared.patch.changed then
         return { (baseReport snapshot "would-format" findings) with
-          formatted := some patch.formatted }
+          formatted := some prepared.output }
       return baseReport snapshot "clean" findings
     | .diff =>
-      if patch.changed then
+      if prepared.patch.changed then
+        -- Both sides of the diff are normalized: a CRLF file must not read as every line changed.
         return { (baseReport snapshot "would-diff" findings) with
-          diff := some (unifiedDiff snapshot.relativePath snapshot.source patch.formatted) }
+          diff := some (unifiedDiff snapshot.relativePath prepared.normalized
+            prepared.patch.formatted) }
       return baseReport snapshot "clean" findings
 
 private def fixFile (run : ExactRun) (plan : RulePlan) (snapshot : SourceSnapshot)
     (analysis : SemanticAnalysis) : IO FileReport := do
   match prepareFile plan snapshot analysis with
   | .error report => return report
-  | .ok (findings, patch) =>
-    unless patch.changed do
+  | .ok prepared =>
+    let findings := prepared.findings
+    unless prepared.patch.changed do
       return baseReport snapshot "clean" findings
-    let candidate := snapshot.withSource patch.formatted
+    let output := prepared.output
+    -- The validator re-elaborates exactly the bytes a write would publish, line endings included.
+    let candidate := snapshot.withSource output
     let validation ← run.analyzeSnapshot candidate (validator := true)
     if let some report := validationReport snapshot findings validation then
       return report
-    match ← publishAtomic snapshot.path snapshot.source patch.formatted with
+    match ← publishAtomic snapshot.path snapshot.source output with
     | .error message => return baseReport snapshot "rejected" findings #[message]
     | .ok _ =>
       return { (baseReport snapshot "fixed" findings) with
-        formatted := some patch.formatted
+        formatted := some output
         written := true }
 
 def ExactRun.checkSnapshot (run : ExactRun) (plan : RulePlan)
@@ -624,8 +647,7 @@ private unsafe def runInspectArtifactChild (args : List String) : IO UInt32 := d
   let source ← IO.FS.readFile sourcePath
   match ← compilerArtifact? moduleName.toName moduleFile with
   | some artifact =>
-    if structurallyValid artifact && artifact.mainModule == moduleName &&
-        artifact.source == Digest.ofString source && artifact.sourceBytes == source.utf8ByteSize then
+    if artifact.validFor moduleName.toName source then
       IO.println "ready"
     else
       IO.println "missing"

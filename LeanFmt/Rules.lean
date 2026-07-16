@@ -38,14 +38,6 @@ def ruleRegistry : Array RuleInfo := #[
   }
 ]
 
-private def commandShape (stx : Lean.Syntax) : CommandShape :=
-  let range? := stx.getRange?.map fun range =>
-    { start := range.start.byteIdx, stop := range.stop.byteIdx }
-  { kind := stx.getKind.toString, range? }
-
-def projectCommands (commands : Array Lean.Syntax) : Array CommandShape :=
-  commands.map commandShape
-
 private def isHorizontalWhitespace (byte : UInt8) : Bool :=
   byte == 0x20 || byte == 0x09
 
@@ -64,10 +56,7 @@ private def trailingWhitespace (source : ByteArray) : Array Finding := Id.run do
   let mut lineStart := 0
   for index in [0:source.size] do
     if source.get! index == 0x0a then
-      let lineStop := if index > lineStart && source.get! (index - 1) == 0x0d then
-        index - 1
-      else
-        index
+      let lineStop := index
       let mut contentStop := lineStop
       while contentStop > lineStart && isHorizontalWhitespace (source.get! (contentStop - 1)) do
         contentStop := contentStop - 1
@@ -95,9 +84,28 @@ private def finalNewline (source : ByteArray) : Array Finding :=
     }]
 
 /-- Run configured source-local rules after the exact frontend has successfully elaborated the
-file. Configuration is supplied by traced Lean options, not an unverified external digest. -/
-def runRules (source : String) (checkTrailingWhitespace := true) : Array Finding :=
-  let bytes := source.toUTF8
+file. Configuration is supplied by traced Lean options, not an unverified external digest.
+
+`normalized` must be `(LosslessSource.normalize raw).1`. Every finding's range indexes it, which is
+the same string `LosslessSource` indexes; a caller passing raw bytes would produce an artifact whose
+two halves are measured in different coordinate systems. Accepted source cannot contain an isolated
+`\r`, so after normalization no carriage return survives for a line-oriented rule to consider. -/
+def runRules (normalized : String) (checkTrailingWhitespace := true) : Array Finding :=
+  let bytes := normalized.toUTF8
   (if checkTrailingWhitespace then trailingWhitespace bytes else #[]) ++ finalNewline bytes
+
+/-- Build the artifact for one accepted module.
+
+This is the only artifact producer. Exact analysis and the compiler plugin reach it with the same
+arguments, so they cannot drift into emitting different artifacts for the same module — which is
+what makes the facet a sound cache of the exact frontend rather than a second opinion. -/
+def ModuleArtifact.ofParsedModule (mainModule normalized : String)
+    (commands : Array Lean.Syntax) (terminal? : Option Lean.Syntax)
+    (checkTrailingWhitespace : Bool) : ModuleArtifact := {
+  schema := artifactSchema
+  trailingWhitespace := checkTrailingWhitespace
+  source := LosslessSource.ofSource mainModule normalized commands terminal?
+  findings := runRules normalized checkTrailingWhitespace
+}
 
 end LeanFmt.Internal

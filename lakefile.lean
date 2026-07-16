@@ -20,6 +20,7 @@ lean_lib LeanFmtCompilerPlugin where
     Glob.one `LeanFmt.Basic,
     Glob.one `LeanFmt.Digest,
     Glob.one `LeanFmt.ArtifactModel,
+    Glob.one `LeanFmt.LosslessSource,
     Glob.one `LeanFmt.Rules
   ]
 
@@ -48,6 +49,7 @@ lean_lib LeanFmtCore where
     Glob.one `LeanFmt.Basic,
     Glob.one `LeanFmt.Digest,
     Glob.one `LeanFmt.ArtifactModel,
+    Glob.one `LeanFmt.LosslessSource,
     Glob.one `LeanFmt.Rules
   ]
 

@@ -14,6 +14,12 @@ register_option leanFmt.trailingWhitespace : Bool := {
 }
 
 
+/- A module linter receives the non-terminal command stream and runs at the terminal command, which
+is `getRef` here. The terminal is what ends the parsed region — `eoi` ordinarily, `#exit` for a file
+with an unparsed tail — so the projection needs it and the command stream does not contain it.
+
+`fileMap.source` is the string the parser saw, already normalized by `Parser.mkInputContext`. This
+position cannot observe the file's bytes, which is why artifact identity is normalized identity. -/
 private def produceArtifact (commands : Array Syntax) : CommandElabM Unit := do
   let options ← getOptions
   let checkTrailingWhitespace := leanFmt.trailingWhitespace.get options
@@ -21,17 +27,10 @@ private def produceArtifact (commands : Array Syntax) : CommandElabM Unit := do
   if environment.mainModule.isAnonymous then
     return
   let fileMap ← getFileMap
-  let source := fileMap.source
-  let artifact : ModuleArtifact := {
-    schema := artifactSchema
-    source := LeanFmt.Digest.ofString source
-    sourceBytes := source.utf8ByteSize
-    mainModule := environment.mainModule.toString
-    trailingWhitespace := checkTrailingWhitespace
-    commands := projectCommands commands
-    findings := runRules source checkTrailingWhitespace
-  }
-  logAt (← getRef)
+  let terminal ← getRef
+  let artifact := ModuleArtifact.ofParsedModule environment.mainModule.toString fileMap.source
+    commands (some terminal) checkTrailingWhitespace
+  logAt terminal
     (.tagged artifactLinter <| .tagged Lean.Linter.linterMessageTag <|
       m!"{Lean.toJson artifact |>.compress}")
     (severity := .information) (isSilent := true)

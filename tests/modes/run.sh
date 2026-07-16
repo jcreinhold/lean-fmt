@@ -245,7 +245,7 @@ EOF
 python3 - "$work/downstream/.lake/build/lean-fmt-artifacts/Downstream.json" <<'PY'
 import json, sys
 artifact = json.load(open(sys.argv[1]))
-assert artifact["mainModule"] == "Downstream"
+assert artifact["source"]["mainModule"] == "Downstream"
 assert [finding["code"] for finding in artifact["findings"]] == ["FMT001"]
 PY
 

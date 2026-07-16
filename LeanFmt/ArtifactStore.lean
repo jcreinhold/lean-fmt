@@ -15,13 +15,20 @@ private def validEdit (sourceBytes : Nat) (edit : Edit) : Bool :=
 private def validFinding (sourceBytes : Nat) (finding : Finding) : Bool :=
   validRange sourceBytes finding.range && finding.fix?.all (validEdit sourceBytes)
 
-private def validCommand (sourceBytes : Nat) (command : CommandShape) : Bool :=
-  command.range?.all (validRange sourceBytes)
-
+/-- Structural validity, checkable without the source. `findings` are bounded by the same normalized
+byte count the projection is measured in, because both halves now index one string. -/
 def structurallyValid (artifact : ModuleArtifact) : Bool :=
   artifact.schema == artifactSchema &&
-    artifact.commands.all (validCommand artifact.sourceBytes) &&
-    artifact.findings.all (validFinding artifact.sourceBytes)
+    artifact.source.structurallyValid &&
+    artifact.findings.all (validFinding artifact.source.normalizedBytes)
+
+/-- Validity against the file a caller actually read. Normalizing is the caller's only correct move:
+no compiler-produced offset or digest indexes the bytes on disk. -/
+def ModuleArtifact.validFor (artifact : ModuleArtifact) (moduleName : Lean.Name)
+    (raw : String) : Bool :=
+  structurallyValid artifact &&
+    artifact.source.mainModule == moduleName.toString &&
+    artifact.source.validFor raw
 
 private def decodeEntry? (entry : Lean.Linter.LintEntry) : Option ModuleArtifact := do
   guard <| entry.linter == artifactLinter
@@ -36,7 +43,7 @@ def fromEnvironment? (environment : Lean.Environment)
     (moduleName : Lean.Name) : Option ModuleArtifact := do
   let (_, entries) ← Lean.Linter.getAllLints environment |>.find? (fun item => item.1 == moduleName)
   let artifact ← entries.findSome? decodeEntry?
-  guard <| artifact.mainModule == moduleName.toString
+  guard <| artifact.source.mainModule == moduleName.toString
   return artifact
 
 private def temporaryPath (target : System.FilePath) : IO System.FilePath := do
@@ -76,8 +83,7 @@ def readFacet? (facet : Lake.Artifact) (moduleName : Lean.Name)
       | return none
     let .ok artifact := Lean.fromJson? json
       | return none
-    unless structurallyValid artifact && artifact.mainModule == moduleName.toString &&
-        artifact.source == Digest.ofString source && artifact.sourceBytes == source.utf8ByteSize do
+    unless artifact.validFor moduleName source do
       return none
     return some artifact
   catch _ =>

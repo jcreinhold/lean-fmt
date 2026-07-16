@@ -32,18 +32,29 @@ private def testDigests : IO Unit := do
     "uppercase digest was accepted"
   ensure (Digest.parse? "abc").isNone "truncated digest was accepted"
 
+/- Rules run on the normalized source, never on the file's bytes. That is not a convenience: the
+parser normalizes before it assigns any offset, so findings measured against raw bytes would land in
+a different coordinate system than the projection they share an artifact with. -/
 private def testRules : IO Unit := do
-  let source := "def x := 1  \r\n#check x\t"
-  let findings := runRules source true
+  let raw := "def x := 1  \r\n#check x\t"
+  let (normalized, lineEndings) := LosslessSource.normalize raw
+  ensure (lineEndings == .crlf) "a CRLF source was not recognized as CRLF"
+  ensure (normalized == "def x := 1  \n#check x\t") "normalization is not crlfToLf"
+  ensure (LosslessSource.denormalize normalized lineEndings == raw)
+    "denormalize is not the inverse of normalize on accepted source"
+  ensure ((LosslessSource.normalize normalized) == (normalized, .lf))
+    "normalization is not idempotent"
+
+  let findings := runRules normalized true
   ensure (findings.map (·.code) == #["FMT001", "FMT001", "FMT002"])
     "rule ordering or coverage changed"
   ensure (findings[0]!.range == { start := 10, stop := 12 })
-    "CRLF trailing-whitespace range is not byte-exact"
-  ensure (findings[1]!.range == { start := 22, stop := 23 })
+    "trailing-whitespace range is not byte-exact in normalized coordinates"
+  ensure (findings[1]!.range == { start := 21, stop := 22 })
     "EOF trailing-whitespace range is not byte-exact"
-  ensure (findings[2]!.range == { start := 23, stop := 23 })
+  ensure (findings[2]!.range == { start := 22, stop := 22 })
     "final-newline insertion range is not byte-exact"
-  ensure ((runRules source false).map (·.code) == #["FMT002"])
+  ensure ((runRules normalized false).map (·.code) == #["FMT002"])
     "traced trailing-whitespace configuration was ignored"
 
 private def testServiceProtocol : IO Unit := do
@@ -209,24 +220,103 @@ private def testCacheIdentity : IO Unit := do
   ensure (changes.toList.Pairwise (· != ·))
     "distinct cache identity components collided in the test fixture"
 
-private def fixtureArtifact (source := "def x := 1\n") : ModuleArtifact := {
+/- The projection of `def x := 1\n`, written out by hand so the tiling invariant is legible: every
+token's span and trivia runs abut, covering `[headerStop, terminalStop)` exactly once.
+
+    byte 0    3 4 5 6  8 9 10 11
+         |def | |x| |:=| |1 |\n|
+-/
+private def fixtureSourceText : String := "def x := 1\n"
+
+private def fixtureLosslessSource (mainModule := "Test") : LosslessSource := {
+  schema := losslessSourceSchema
+  mainModule
+  normalizedBytes := fixtureSourceText.utf8ByteSize
+  normalizedDigest := Digest.ofString fixtureSourceText
+  headerStop := 0
+  terminalStop := fixtureSourceText.utf8ByteSize
+  kinds := #["Lean.Parser.Command.declaration"]
+  nodes := #[{ kind := 0, parent := none, range := { start := 0, stop := 10 } }]
+  tokens := #[
+    { node := 0, start := 0, stop := 3, trailing := #[{ kind := .whitespace, stop := 4 }] },
+    { node := 0, start := 4, stop := 5, trailing := #[{ kind := .whitespace, stop := 6 }] },
+    { node := 0, start := 6, stop := 8, trailing := #[{ kind := .whitespace, stop := 9 }] },
+    { node := 0, start := 9, stop := 10, trailing := #[{ kind := .whitespace, stop := 11 }] }
+  ]
+}
+
+private def fixtureArtifact : ModuleArtifact := {
   schema := artifactSchema
-  source := Digest.ofString source
-  sourceBytes := source.utf8ByteSize
-  mainModule := "Test"
   trailingWhitespace := true
-  commands := #[{
-    kind := "Lean.Parser.Command.declaration"
-    range? := some { start := 0, stop := 10 }
-  }]
+  source := fixtureLosslessSource
   findings := #[]
 }
+
+/- Every rejection below is an ordinary miss, not an error: a consumer that cannot authenticate a
+projection must fall back to the exact frontend rather than trust it or fail the run. -/
+private def testLosslessSource : IO Unit := do
+  let source := fixtureLosslessSource
+  ensure source.structurallyValid "a correctly tiled projection was rejected"
+  ensure (source.validFor fixtureSourceText) "the projection rejected its own source"
+
+  -- The recorded CRLF defect: the parser normalizes before it assigns any offset, so the CRLF and
+  -- LF forms of one module share a projection. Digesting raw bytes made every CRLF file a
+  -- permanent silent miss.
+  ensure (source.validFor "def x := 1\r\n")
+    "the CRLF form of the projected module was not recognized"
+  ensure (!(source.validFor "def x := 2\n")) "a different source matched the projection"
+  ensure (!(source.validFor "def x := 1")) "a truncated source matched the projection"
+
+  let rejects (label : String) (broken : LosslessSource) : IO Unit :=
+    ensure (!broken.structurallyValid) s!"{label} was accepted as a valid projection"
+  rejects "a stale schema" { source with schema := "lean-fmt.lossless-source.v0" }
+  rejects "a gap between tokens"
+    { source with tokens := source.tokens.set! 1 { source.tokens[1]! with start := 5 } }
+  rejects "overlapping tokens"
+    { source with tokens := source.tokens.set! 1 { source.tokens[1]! with start := 3 } }
+  rejects "a token whose span is inverted"
+    { source with tokens := source.tokens.set! 0 { source.tokens[0]! with start := 3, stop := 0 } }
+  let longTrailing := { source.tokens[0]! with trailing := #[{ kind := .whitespace, stop := 5 }] }
+  rejects "trivia running past the next token"
+    { source with tokens := source.tokens.set! 0 longTrailing }
+  rejects "a token stream that stops short of the terminal"
+    { source with terminalStop := source.terminalStop + 1 }
+  rejects "a terminal past the end of the source"
+    { source with terminalStop := source.normalizedBytes + 1 }
+  rejects "a header past the terminal" { source with headerStop := source.terminalStop + 1 }
+  rejects "a token owned by a nonexistent node"
+    { source with tokens := source.tokens.set! 0 { source.tokens[0]! with node := 9 } }
+  rejects "a node with a nonexistent kind"
+    { source with nodes := source.nodes.set! 0 { source.nodes[0]! with kind := 9 } }
+  rejects "a node with a nonexistent parent"
+    { source with nodes := source.nodes.set! 0 { source.nodes[0]! with parent := some 9 } }
+  rejects "a fabricated token position"
+    { source with tokens := source.tokens.set! 0 { source.tokens[0]! with info := .synthetic } }
+
+  let decoded : Except String LosslessSource := Lean.fromJson? (Lean.toJson source)
+  match decoded with
+  | .ok actual => ensure (actual == source) "lossless-source JSON round trip failed"
+  | .error message => throw <| IO.userError s!"lossless-source JSON decode failed: {message}"
 
 private def testStore : IO Unit := do
   let artifact := fixtureArtifact
   ensure (structurallyValid artifact) "valid module artifact was rejected"
   ensure (!(structurallyValid { artifact with schema := "other-schema" }))
     "schema change did not reject the artifact"
+  -- A `v1` payload left in an `.olean` describes the superseded command-kind projection.
+  ensure (!(structurallyValid { artifact with schema := "lean-fmt.module-artifact.v1" }))
+    "a stale v1 artifact was accepted by the current reader"
+  let outOfRange : Finding := {
+    code := "FMT001"
+    severity := .warning
+    message := "past the end"
+    range := { start := 0, stop := artifact.source.normalizedBytes + 1 }
+  }
+  ensure (!(structurallyValid { artifact with findings := #[outOfRange] }))
+    "a finding past the end of the projected source was accepted"
+  ensure (!(artifact.validFor `Other fixtureSourceText)) "a wrong-module artifact was accepted"
+  ensure (!(artifact.validFor `Test "other source")) "a wrong-source artifact was accepted"
+  ensure (artifact.validFor `Test fixtureSourceText) "a valid artifact was rejected for its source"
   let decoded : Except String ModuleArtifact := Lean.fromJson? (Lean.toJson artifact)
   match decoded with
   | .ok actual => ensure (actual == artifact) "module-artifact JSON round trip failed"
@@ -241,22 +331,74 @@ private def testStore : IO Unit := do
       path
       mtime := 0
     }
-    ensure ((← readFacet? facet `Test "def x := 1\n") == some artifact)
+    ensure ((← readFacet? facet `Test fixtureSourceText) == some artifact)
       "trusted facet artifact round trip failed"
     ensure (← readFacet? facet `Test "other source").isNone
       "source mismatch did not reject the facet artifact"
+    ensure (← readFacet? facet `Other fixtureSourceText).isNone
+      "module mismatch did not reject the facet artifact"
     IO.FS.writeFile path (Lean.toJson { artifact with schema := "other-schema" }).compress
-    ensure (← readFacet? facet `Test "def x := 1\n").isNone
+    ensure (← readFacet? facet `Test fixtureSourceText).isNone
       "tampered facet artifact did not fail its content hash"
     writeArtifactAtomic path artifact
     IO.FS.writeFile (directory / "nested" / "Test.json.tmp-interrupted") "partial"
-    ensure ((← readFacet? facet `Test "def x := 1\n") == some artifact)
+    ensure ((← readFacet? facet `Test fixtureSourceText) == some artifact)
       "an interrupted temporary write damaged the committed artifact"
     IO.FS.removeFile path
-    ensure (← readFacet? facet `Test "def x := 1\n").isNone
+    ensure (← readFacet? facet `Test fixtureSourceText).isNone
       "missing facet artifact was not an ordinary miss"
   finally
     IO.FS.removeDirAll directory
+
+private def sliceOf (source : String) (start stop : Nat) : String :=
+  String.Pos.Raw.extract source ⟨start⟩ ⟨stop⟩
+
+/- Check a projection against the real parser output it claims to describe.
+
+`structurallyValid` proves the spans tile; that is cheap and content-blind. What it cannot see is
+whether the recorded spans mean what they say. So this walks the projection independently, slices
+the source at every recorded boundary, and reads the bytes back:
+
+- reconstruction concatenates header, every token with its trivia, and the tail, and compares the
+  result to the whole file;
+- each trivia run must actually contain the form its kind names.
+
+Contiguity makes each trivia run's start the previous stop, so the walk below is the only place that
+recovers those starts — if the codec ever recorded a stop that disagreed with the bytes, this is
+what would catch it. -/
+private def checkProjection (source : LosslessSource) (raw : String) : IO Unit := do
+  let normalized := (LosslessSource.normalize raw).1
+  ensure source.structurallyValid "the compiler produced a projection that does not tile"
+  ensure (source.validFor raw) "the compiler projection does not match its own source"
+
+  let triviaHolds (kind : TriviaKind) (text : String) : Bool :=
+    match kind with
+    | .whitespace => text.all Char.isWhitespace
+    | .lineComment => text.startsWith "--" && !(text.contains '\n')
+    | .blockComment => text.startsWith "/-" && text.endsWith "-/"
+  let checkTrivia (runs : Array Trivia) (start : Nat) : IO Nat := do
+    let mut cursor := start
+    for run in runs do
+      let text := sliceOf normalized cursor run.stop
+      ensure (triviaHolds run.kind text)
+        s!"a trivia run classified {repr run.kind} does not contain one: {repr text}"
+      cursor := run.stop
+    return cursor
+
+  let mut rebuilt := sliceOf normalized 0 source.headerStop
+  let mut cursor := source.headerStop
+  for token in source.tokens do
+    let leadingStop ← checkTrivia token.leading cursor
+    ensure (leadingStop == token.start) "leading trivia does not reach its token"
+    rebuilt := rebuilt ++ sliceOf normalized cursor token.trailingStop
+    cursor := token.trailingStop
+    let _ ← checkTrivia token.trailing token.stop
+  rebuilt := rebuilt ++ sliceOf normalized source.terminalStop source.normalizedBytes
+  ensure (rebuilt == normalized) "the projection does not reconstruct its source byte-for-byte"
+  -- The module linter never receives the header, so `headerStop` is the one boundary the projection
+  -- asserts rather than observes. Every tracked fixture opens with `module`.
+  ensure ((sliceOf normalized 0 source.headerStop).startsWith "module")
+    "the recorded header is not the module header"
 
 private unsafe def verifyPluginArtifact (moduleName : Lean.Name)
     (sourcePath : System.FilePath) (expectedTrailingWhitespace : Bool) : IO Unit := do
@@ -267,17 +409,25 @@ private unsafe def verifyPluginArtifact (moduleName : Lean.Name)
   let source ← IO.FS.readFile sourcePath
   let some artifact := fromEnvironment? environment moduleName
     | throw <| IO.userError "module has no matching lean-fmt payload in its `.olean`"
-  ensure (artifact.source == Digest.ofString source) "plugin payload does not match the source"
+  ensure (artifact.validFor moduleName source) "plugin payload does not match the source"
   ensure (artifact.schema == artifactSchema) "plugin emitted the wrong schema"
-  ensure (artifact.mainModule == "LocalSyntax") "plugin lost module identity"
   ensure (artifact.trailingWhitespace == expectedTrailingWhitespace)
     "plugin lost traced rule configuration"
-  ensure (artifact.commands.any (·.kind == "commandEmit_local_command"))
+  ensure (artifact.source.kinds.contains "commandEmit_local_command")
     "plugin lost file-local command syntax"
+  checkProjection artifact.source source
   let expectedCodes := if expectedTrailingWhitespace then #["FMT001"] else #[]
   ensure (artifact.findings.map (·.code) == expectedCodes)
     "plugin rules differ from the configured direct rule engine"
-  ensure ((Lean.toJson artifact).compress.utf8ByteSize < 4096) "plugin artifact is not compact"
+  -- The roadmap asks for a compact representation. What grows with a file is the token and node
+  -- tables, so bound their cost per element; the fixed schema strings and two digests dominate a
+  -- small module and say nothing about compactness (a 34-byte module measures 29x its source and
+  -- is not thereby extravagant). Derived field-name JSON measured 114 bytes per token and 54 per
+  -- node on this fixture, against 28 and 13 for the array wire format.
+  let encoded := (Lean.toJson artifact).compress
+  let elements := artifact.source.tokens.size + artifact.source.nodes.size
+  ensure (encoded.utf8ByteSize < 1024 + 40 * elements)
+    s!"plugin artifact is not compact: {encoded.utf8ByteSize} bytes for {elements} elements"
 
 private def verifyFacetArtifact (path sourcePath : System.FilePath)
     (expectedTrailingWhitespace : Bool) (expectedHash : Lake.Hash) : IO Unit := do
@@ -289,9 +439,10 @@ private def verifyFacetArtifact (path sourcePath : System.FilePath)
   }
   let some artifact ← readFacet? facet `LocalSyntax source
     | throw <| IO.userError "facet artifact failed integrity or semantic validation"
-  ensure (artifact.mainModule == "LocalSyntax") "facet artifact lost module identity"
+  ensure (artifact.source.mainModule == "LocalSyntax") "facet artifact lost module identity"
   ensure (artifact.trailingWhitespace == expectedTrailingWhitespace)
     "facet artifact lost traced rule configuration"
+  checkProjection artifact.source source
 
 private def verifyOfficialFacet (root sourcePath : System.FilePath)
     (expectedTrailingWhitespace : Bool) : IO Unit := do
@@ -309,8 +460,9 @@ private def verifyOfficialFacet (root sourcePath : System.FilePath)
     "registered official facet lost traced rule configuration"
   let some semantic := SemanticAnalysis.ofEnvelope? target.source { artifact? := some artifact }
     | throw <| IO.userError "registered official facet did not produce a canonical result"
-  ensure (semantic == SemanticAnalysis.success target.source
-      (runRules target.source true))
+  let normalized := (LosslessSource.normalize target.source).1
+  ensure (semantic == SemanticAnalysis.success normalized
+      (runRules normalized expectedTrailingWhitespace))
     "registered official facet differed from direct product semantics"
 
 public unsafe def main (args : List String) : IO UInt32 := do
@@ -322,6 +474,7 @@ public unsafe def main (args : List String) : IO UInt32 := do
     testEdits
     testConfig
     testCacheIdentity
+    testLosslessSource
     testStore
     IO.println "lean-fmt module-artifact tests passed"
     return 0
