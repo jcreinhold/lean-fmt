@@ -1,6 +1,6 @@
 ---
 kind: state
-first_unresolved: 06-design
+first_unresolved: 07-check
 ---
 
 # Current state
@@ -17,7 +17,7 @@ as independent measured prerequisites.
 | 03-workloads | ECV2-WORKLOADS | verified | ECV2-NATIVE-RESET |
 | 04-built-cold | ECV2-BUILT-COLD | verified | ECV2-WORKLOADS |
 | 05-compiler-artifacts | ECV2-COMPILER-ARTIFACTS | verified | ECV2-WORKLOADS |
-| 06-design | ECV2-DESIGN | planned | ECV2-BUILT-COLD, ECV2-COMPILER-ARTIFACTS |
+| 06-design | ECV2-DESIGN | verified | ECV2-BUILT-COLD, ECV2-COMPILER-ARTIFACTS |
 | 07-check | ECV2-CHECK | planned | ECV2-DESIGN |
 | 08-cache | ECV2-CACHE | planned | ECV2-CHECK |
 | 09-modes | ECV2-MODES | planned | ECV2-CACHE |
@@ -53,6 +53,9 @@ These facts constrain prompts 04 and 05; they do not predetermine their final in
 - [ECV2-COMPILER-ARTIFACTS](../results/05-compiler-artifacts.md) selects compiler-owned persistent
   lint data plus a package-owned Lake facet, with exact-path, invalidation, corruption, cache,
   differential, resource, and independent-audit evidence.
+- [ECV2-DESIGN](../results/06-design.md) selects one private Lake-owned intent-to-report operation,
+  process-isolated per-module extraction, exact target-toolchain fallback, and measured private task
+  concurrency while rejecting the experimental unsafe batch lifecycle as production architecture.
 
 ## Verification convention
 

@@ -1,3 +1,5 @@
+module
+
 import Lean.Elab.Frontend
 import Lean.Elab.Import
 
@@ -57,4 +59,4 @@ private def run (args : List String) : IO UInt32 := do
 
 end HeaderGroups
 
-def main (args : List String) : IO UInt32 := HeaderGroups.run args
+public def main (args : List String) : IO UInt32 := HeaderGroups.run args

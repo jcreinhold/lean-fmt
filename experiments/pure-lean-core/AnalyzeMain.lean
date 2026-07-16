@@ -1,3 +1,5 @@
+module
+
 import Lake.Config.Env
 import Lake.Config.InstallPath
 import Lake.Load.Workspace

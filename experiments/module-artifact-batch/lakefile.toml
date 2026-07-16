@@ -1,0 +1,13 @@
+name = "module-artifact-batch"
+version = "0.1.0"
+defaultTargets = ["artifact-batch-probe", "artifact-concurrency-probe"]
+
+[[lean_exe]]
+name = "artifact-batch-probe"
+root = "Main"
+supportInterpreter = true
+
+[[lean_exe]]
+name = "artifact-concurrency-probe"
+root = "Concurrent"
+supportInterpreter = true

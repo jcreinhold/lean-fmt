@@ -1,3 +1,5 @@
+module
+
 import Lean
 import Lean.Elab.Import
 
@@ -58,8 +60,8 @@ private unsafe def processHeaderOnly (path : System.FilePath) : IO Observation :
   }
 
 private def printObservation (index : Nat) (path : String) (before after : Nat)
-    (elapsedMs : Nat) (observation : Observation) : IO Unit :=
-  IO.println <| String.intercalate "\t" [
+    (elapsedMs : Nat) (observation : Observation) : IO Unit := do
+  let line := String.intercalate "\t" [
     toString index,
     path,
     observation.status,
@@ -71,9 +73,10 @@ private def printObservation (index : Nat) (path : String) (before after : Nat)
     s!"rss_after_kib={after}",
     s!"elapsed_ms={elapsedMs}"
   ]
+  IO.println line
   (← IO.getStdout).flush
 
-unsafe def main (args : List String) : IO UInt32 := do
+public unsafe def main (args : List String) : IO UInt32 := do
   if args.isEmpty then
     IO.eprintln "usage: ImportProbe FILE..."
     return 2

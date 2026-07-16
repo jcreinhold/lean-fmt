@@ -1,6 +1,6 @@
 ---
 claim_id: ECV2-DESIGN
-status: planned
+status: verified
 depends_on: [ECV2-BUILT-COLD, ECV2-COMPILER-ARTIFACTS]
 ---
 

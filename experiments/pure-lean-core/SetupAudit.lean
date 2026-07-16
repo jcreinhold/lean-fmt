@@ -1,3 +1,5 @@
+module
+
 import Lake.Build.Module
 import Lake.Build.Run
 import Lake.Config.Env
@@ -66,4 +68,4 @@ private def run (args : List String) : IO UInt32 := do
 
 end SetupAudit
 
-def main (args : List String) : IO UInt32 := SetupAudit.run args
+public def main (args : List String) : IO UInt32 := SetupAudit.run args
