@@ -58,26 +58,48 @@ error.
 This is the same combinator, and the same argument, that made `RLF-EXPRESSIONS` defer `structInst`
 (`notes/02-expressions.md` §5b). It was one deferred kind there. Here it is the prompt.
 
-## 3. Every construct the task line names is this same combinator
+## 3. The task line names **two** families, and only one of them has §2's problem
 
-Read one at a time, and they converge:
+The first draft of this section said the task line was "one problem wearing seven hats". That is false,
+and `do` is the counter-example. There are two indentation combinators in `Lean/Parser/Extra.lean`, they
+are one letter apart in the source and not at all alike in what they mean:
 
-| construct | grammar | source |
-| --- | --- | --- |
-| tactic scripts | `sepBy1IndentSemicolon tacticParser` | `Term/Basic.lean:74-75` |
-| bullets | `cdotTk tacticSeqIndentGt`, and `cdotTk := unicode("· ", ". ")` | `Init/NotationExtra.lean:320-322` |
-| `where` (decls) | `... "where" >> sepByIndent (ppGroup letRecDecl) "; " (allowTrailingSep := true) ...` | `Term.lean:740-741` |
-| `where` (struct inst) | `... "where" >> structInstFields (sepByIndent structInstField "; " ...)` | `Command.lean:173-175` |
-| records (deferred by 02) | `sepByIndent` | `notes/02-expressions.md` §5b |
+    sepBy1Indent p sep psep _ =
+      withPosition $ sepBy1 (checkColGe .. >> p) sep
+        (psep <|> checkColEq .. >> checkLinebreakBefore >> pushNone) _     -- :206-208
+    many1Indent p =
+      withPosition $ many1 (checkColGe .. >> p)                            -- :190-191
 
-`sepByIndent` and `sepBy1Indent` differ only in emptiness (`Extra.lean:202-208`); the separator clause
-is identical. **Bullets are not a separate case**: `cdot` is `cdotTk` followed by a `tacticSeqIndentGt`,
-so a bullet is a *nested* tactic sequence and inherits §2 whole. Its atom `"· "` is declared with a
-trailing space, which is citable the way `matchAlt`'s `"| "` was — and it is declared with `syntax` in
-`Init/NotationExtra.lean` rather than `leading_parser`, which prompt 02's criterion already covers: the
-test is **closed versus open**, and `Init` is in the pinned compiler, so the corpus cannot redefine it.
+`many1Indent` has **no separator clause at all** — no `checkColEq`, no `checkLinebreakBefore`. Its
+column is a *bound* ("indented the same or more than the first parse", `:184-186`), not a token. So the
+whole of §2 — the column *is* the separator, move it and the program changes — applies to one family
+and not the other:
 
-So the task line's items are not seven problems. They are one problem, wearing seven hats.
+| construct | combinator | is the column a separator? | source |
+| --- | --- | --- | --- |
+| tactic scripts | `sepBy1IndentSemicolon` → `sepBy1Indent` | **yes** — `checkColEq` | `Term/Basic.lean:74-75` |
+| bullets | `cdotTk tacticSeqIndentGt` — nests a tactic sequence | **yes**, inherited | `Init/NotationExtra.lean:320-322` |
+| `where` (decls) | `sepByIndent (ppGroup letRecDecl) "; "` | **yes** | `Term.lean:740-741` |
+| `where` (struct inst) | `sepByIndent structInstField "; "` | **yes** | `Command.lean:173-175` |
+| records (deferred by 02) | `sepByIndent` | **yes** | `notes/02-expressions.md` §5b |
+| `do` | `doSeqIndent := many1Indent doSeqItem` | **no** — `checkColGe` only | `Lean/Parser/Do.lean:29-30` |
+| match alternatives | `matchAlts := withPosition $ many1Indent (ppLine >> matchAlt ..)` | **no** — `checkColGe` only | `Term.lean:279-280` |
+
+**Bullets are not a separate case**: `cdot` is `cdotTk` followed by a `tacticSeqIndentGt`, so a bullet
+is a *nested* tactic sequence and inherits §2 whole. Its atom `"· "` is declared with a trailing space,
+citable the way `matchAlt`'s `"| "` was — and it is declared with `syntax` in `Init/NotationExtra.lean`
+rather than `leading_parser`, which prompt 02's criterion already covers: the test is **closed versus
+open**, and `Init` is in the pinned compiler, so the corpus cannot redefine it.
+
+`do` is the one item in the task line that is *not* §2's problem, and it is also nearly absent: 43
+`doSeqItem` and 38 `doExpr` on the sample, against 1966 tactic sequences. Its own item separator is
+declared — `doSeqItem := ppLine >> doElemParser >> optional "; "` (`Do.lean:27-28`) — and that `ppLine`
+is the same citation vehicle the header layout uses. What it is *not* is free of §5: `many1Indent`
+still bounds every item at `checkColGe` against the first, so re-indenting `do` still requires owning
+every newline in it, for exactly §5's reason. It is a weaker constraint, not an absent one.
+
+So: six of the seven hats fit one head. `do`'s does not, and saying otherwise would have been an
+overclaim of the kind this stack keeps catching in its own prose.
 
 ## 4. What the enclosing check actually measures — and it is weaker than it looks
 
