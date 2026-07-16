@@ -33,6 +33,24 @@ Printing inside the frontend would buy free arg order for a median 1.96 s fronte
 
 ## Known evidence
 
+- **The formatter decides its first thing, and the corpus could not have tested it.**
+  `namespace` and `end` have canonical layouts, cited against `Lean/Parser/Command.lean:317-318` and
+  `:337-338` (v4.32.0): a keyword and an optional identifier, exactly one space apart. So
+  `namespace     Alpha` becomes `namespace Alpha`. **This repository already writes them canonically**,
+  so `printer-roundtrip` passes on all 20 modules while exercising the layout and changing nothing — a
+  canonical layout is only tested by source that is not already canonical. `tests/printer/run.sh`
+  therefore adds a generated non-canonical fixture with a golden file, and asserts the formatter
+  *changed* something (2 lines rewritten) so the golden cannot degenerate into a copy of its input.
+  Idempotence is checked by re-parsing the first pass's output and formatting again — a real second
+  format, not a repeated call.
+- **Re-spacing is gated on losing nothing, and the gate is load-bearing.** A canonical layout chooses
+  the space between tokens, so anything between them that is not whitespace would be dropped.
+  `respaceable` refuses the layout when a comment sits inside the command, when a token's own text
+  spans a newline (`Doc.text` requires newline-free content), and the command keeps its bytes instead.
+  Mutating the guard away makes `namespace /- c -/ Gamma` silently become `namespace Gamma` and fails
+  the golden. Only the runs *strictly inside* the command are examined: the last token's trailing run
+  holds the newline, the blank lines, and the next command's leading comments, so `Tree.command` emits
+  the trivia before the first token and after the last one verbatim and canonicalizes only the middle.
 - **Imports are not commands, and the projection structurally cannot carry them.** The corpus holds
   **403 commands in 7 distinct kinds** and not one is an `import`: the module header is not in the
   token stream at all. `headerStop` is 54 bytes on `LeanFmt/Rules.lean` and covers `module` plus both
@@ -94,15 +112,16 @@ Printing inside the frontend would buy free arg order for a median 1.96 s fronte
 ## Blockers and prerequisites
 
 - No blocker is currently recorded beyond the named prerequisite stacks.
-- **No canonical layout exists yet, so the printer decides nothing.** Every kind takes the
-  conservative path, which is why `format` is currently the identity. `RLF-COMMANDS` is not met until
-  module headers, imports, namespaces/sections, attributes, binders, declarations, structures,
-  inductives, and command comments have cited layouts with golden and idempotence tests. Until then
-  the skeleton is proven and the claim is not.
+- **Only 2 of the 7 command kinds have canonical layouts**, covering 50 of 403 commands. `declaration`
+  (336, 83%), `moduleDoc` (8), and `open` (7) are still conservative. `open` is deliberate for now:
+  `openDecl` has bracketed forms (`open Foo (a b)`, `open Foo hiding a`) where one-space-between-tokens
+  would be wrong, so it needs its own citation rather than an assumption. `RLF-COMMANDS` is not met
+  until the declaration shell — `declModifiers`, the signature, the `:=` — has a cited layout too.
 - **`Doc`'s break behaviour is still exercised only by `ruff-02`'s own fixtures.** The printer
-  consumes `Doc`, but only through `verbatim`, `cat`, and `empty` — no `group`, `line`, or `nest`
-  reaches it from real source yet. `RLC-FINAL`'s "`call-args` is my model of a Lean call, not a Lean
-  call" stands until the first canonical layout lands.
+  consumes `Doc`, but only through `verbatim`, `text`, `cat`, and `empty` — no `group`, `line`, or
+  `nest` reaches it from real source yet, because `namespace`/`end` are one-liners with nothing to
+  break. `RLC-FINAL`'s "`call-args` is my model of a Lean call, not a Lean call" stands until a layout
+  lands that can actually exceed the margin.
 - **The margin is unset.** `Printer.format` requires `width` rather than defaulting it: the value is
   configuration, it enters cache identity (`RLC-SPEC` §5), and `RLC-FINAL` left it an open language
   decision. Nothing in this stack has picked one, and no caller passes one outside tests.

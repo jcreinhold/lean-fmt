@@ -845,6 +845,28 @@ nodes={projection.nodes.size} header_bytes={projection.headerStop} \
 tail_bytes={projection.normalizedBytes - projection.terminalStop}"
   return 0
 
+/- Print one projected module to stdout, for golden and idempotence checks.
+
+Separate from `printer-roundtrip` because it answers a different question. That one asks whether the
+skeleton loses bytes; this one shows what the formatter actually *decided*, which is the only way a
+golden file can pin a canonical layout, and the only way idempotence can be checked at all — the second
+format needs the first one's output as a file to re-parse. -/
+private def printerFormat (envelopePath sourcePath widthText : String) : IO UInt32 := do
+  let .ok json := Lean.Json.parse (← IO.FS.readFile envelopePath)
+    | throw <| IO.userError s!"{envelopePath} is not JSON"
+  let .ok (envelope : AnalysisEnvelope) := Lean.fromJson? json
+    | throw <| IO.userError s!"{envelopePath} is not an analysis envelope"
+  let some artifact := envelope.artifact?
+    | throw <| IO.userError s!"{sourcePath} produced no artifact: {envelope.diagnostics}"
+  let some width := widthText.toNat?
+    | throw <| IO.userError s!"WIDTH must be a natural number, got {widthText}"
+  let raw ← IO.FS.readFile sourcePath
+  let normalized := (LosslessSource.normalize raw).1
+  let projection := artifact.source
+  ensure (projection.validFor raw) s!"{sourcePath}: the projection does not match its own source"
+  IO.print (Printer.format projection normalized width)
+  return 0
+
 /- Layout cost, on the shapes `RLC-FINAL` names.
 
 `notes/01-layout-design.md` §4.6 records a known hole: the fit test is bounded in *columns*, not in
@@ -945,6 +967,7 @@ public unsafe def main (args : List String) : IO UInt32 := do
   match args with
   | ["attach-report", envelopePath, sourcePath] => attachReport envelopePath sourcePath
   | ["printer-roundtrip", envelopePath, sourcePath] => printerRoundtrip envelopePath sourcePath
+  | ["printer-format", envelopePath, sourcePath, width] => printerFormat envelopePath sourcePath width
   | ["doc-bench"] => docBench
   | ["doc-dump"] => docDump
   | [] =>

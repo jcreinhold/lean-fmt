@@ -121,6 +121,83 @@ else
   fi
 fi
 
+# The corpus above cannot test a canonical layout at all: this repository already writes
+# `namespace Foo` with one space, so the layout runs and changes nothing, and `printer-roundtrip`
+# passing on it says only that the formatter agrees with code already in its own house style. A
+# canonical layout is only tested by source that is *not* canonical.
+printf -- '--- canonicalization, on source that needs it ---\n'
+cat >"$work/wonky.lean" <<'FIXTURE'
+module
+
+namespace     Alpha
+def a : Nat := 0
+end     Alpha
+
+namespace Beta
+end Beta
+
+namespace /- a comment between the keyword and the name -/ Gamma
+end Gamma
+FIXTURE
+LEAN_NUM_THREADS=1 lake env "$application" __analyze-exact \
+  "$work/borrowed.setup.json" "$work/wonky.lean" "wonky.lean" 8589934592 >"$work/wonky.json"
+"$tests" printer-format "$work/wonky.json" "$work/wonky.lean" 80 >"$work/wonky.out"
+
+# The golden file. Each line of it is a separate claim about the layout:
+#   `namespace Alpha` / `end Alpha`  the runs of spaces collapse to exactly one. This is the first
+#                                    thing this formatter has ever decided.
+#   `def a : Nat := 0`               untouched: `declaration` has no canonical layout yet, so it takes
+#                                    the conservative path and keeps its bytes.
+#   `namespace Beta` / `end Beta`    already canonical, and stays byte-identical.
+#   `namespace /- ... -/ Gamma`      a comment sits between the tokens, so re-spacing would drop it.
+#                                    `respaceable` refuses and the command keeps its bytes, comment
+#                                    and all. This is the guard, not an accident.
+cat >"$work/wonky.golden" <<'GOLDEN'
+module
+
+namespace Alpha
+def a : Nat := 0
+end Alpha
+
+namespace Beta
+end Beta
+
+namespace /- a comment between the keyword and the name -/ Gamma
+end Gamma
+GOLDEN
+if diff -u "$work/wonky.golden" "$work/wonky.out" >"$work/wonky.diff" 2>&1; then
+  printf '  ok   canonical layout matches the golden file\n'
+else
+  printf 'FAIL canonical layout does not match the golden file:\n' >&2
+  cat "$work/wonky.diff" >&2
+  failures=$((failures + 1))
+fi
+
+# The layout must actually have *done* something, or the golden file above is just a copy of the
+# input and pins nothing.
+if diff -q "$work/wonky.lean" "$work/wonky.out" >/dev/null 2>&1; then
+  printf 'FAIL the formatter changed nothing; the canonical layout is not being exercised\n' >&2
+  failures=$((failures + 1))
+else
+  printf '  ok   the formatter changed the source (%s)\n' \
+    "$(diff "$work/wonky.lean" "$work/wonky.out" | grep -c '^<') lines rewritten"
+fi
+
+# Idempotence, the roadmap's "formatting twice is byte-identical to formatting once". The second pass
+# re-parses the first pass's *output*, so this is a real second format and not a repeated call: if the
+# layout emitted something the parser reads back differently, this is where it shows.
+printf -- '--- idempotence ---\n'
+LEAN_NUM_THREADS=1 lake env "$application" __analyze-exact \
+  "$work/borrowed.setup.json" "$work/wonky.out" "wonky.lean" 8589934592 >"$work/wonky2.json"
+"$tests" printer-format "$work/wonky2.json" "$work/wonky.out" 80 >"$work/wonky.out2"
+if diff -u "$work/wonky.out" "$work/wonky.out2" >"$work/idem.diff" 2>&1; then
+  printf '  ok   formatting twice is byte-identical to formatting once\n'
+else
+  printf 'FAIL formatting is not idempotent:\n' >&2
+  cat "$work/idem.diff" >&2
+  failures=$((failures + 1))
+fi
+
 printf -- '--- result ---\n'
 printf 'failures=%s\n' "$failures"
 [[ "$failures" -eq 0 ]]

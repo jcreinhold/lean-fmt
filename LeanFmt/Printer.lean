@@ -100,6 +100,16 @@ def tokenEnd (token : Token) : Nat :=
 
 /-! ## Command extents -/
 
+/-- One command: which node it is, which bytes it owns, and which tokens it spans.
+
+`first`/`last` index `source.tokens` and are inclusive. They exist because a canonical layout needs the
+tokens, while the conservative path needs only the extent. -/
+structure CommandSpan where
+  root : Nat
+  extent : SourceRange
+  first : Nat
+  last : Nat
+
 /-- The byte extent of each command, in source order.
 
 The extents tile `[headerStop, terminalStop)` exactly once and touch, so concatenating their slices
@@ -113,13 +123,16 @@ measured on the parser and `Comments` splits.
 `Syntax.missing`) and would drag an extent back to the file start. An accepted module has none — the
 producer would not have accepted it — so this guards a case the type permits and the corpus does not
 contain, rather than one seen in the wild. -/
-def Tree.commandExtents (tree : Tree) : Array SourceRange := Id.run do
+def Tree.commands (tree : Tree) : Array CommandSpan := Id.run do
   let source := tree.source
-  let mut extents : Array SourceRange := #[]
+  let mut spans : Array CommandSpan := #[]
   let mut cursor := source.headerStop
   let mut current : Option Nat := none
   let mut stop := source.headerStop
-  for token in source.tokens do
+  let mut first := 0
+  let mut last := 0
+  for index in [0:source.tokens.size] do
+    let token := source.tokens[index]!
     if token.info == .missing then
       continue
     let root := tree.rootOf[token.node]?.getD 0
@@ -127,17 +140,26 @@ def Tree.commandExtents (tree : Tree) : Array SourceRange := Id.run do
     | none =>
       current := some root
       stop := tokenEnd token
+      first := index
+      last := index
     | some previous =>
       if previous == root then
         stop := tokenEnd token
+        last := index
       else
-        extents := extents.push { start := cursor, stop }
+        spans := spans.push { root := previous, extent := { start := cursor, stop }, first, last }
         cursor := stop
         current := some root
         stop := tokenEnd token
-  if current.isSome then
-    extents := extents.push { start := cursor, stop }
-  return extents
+        first := index
+        last := index
+  if let some previous := current then
+    spans := spans.push { root := previous, extent := { start := cursor, stop }, first, last }
+  return spans
+
+/-- The byte extent of each command. The tiling property above is about these. -/
+def Tree.commandExtents (tree : Tree) : Array SourceRange :=
+  tree.commands.map (·.extent)
 
 /-! ## Printing -/
 
@@ -152,17 +174,90 @@ private def sliceNormalized (source : String) (start stop : Nat) : String :=
     -- loud — output that is wrong is far easier to notice than output that is quietly short.
     | none => source
 
-/-- One command, printed conservatively: its bytes, unchanged.
+/-- The source text of one token. -/
+def Tree.tokenText (tree : Tree) (normalized : String) (index : Nat) : String :=
+  match tree.source.tokens[index]? with
+  | some token => sliceNormalized normalized token.start token.stop
+  | none => ""
 
-`Doc.verbatim` is the right constructor and not a shortcut around the algebra. `RLC-IMPL` added it for
-exactly this shape — bytes that are not the formatter's to touch — and unlike `hard` it neither
-re-indents its content nor forces its group to break.
+/-- May this command's tokens be re-spaced without losing anything?
 
-This is where category dispatch will branch as canonical layouts land, kind by kind, each cited against
-the parser it mirrors and pinned by a golden test. Until a kind has one, it prints as it was written. -/
-def Tree.command (tree : Tree) (normalized : String) (extent : SourceRange) : Doc :=
-  let _ := tree
-  .verbatim (sliceNormalized normalized extent.start extent.stop)
+A canonical layout emits the tokens and chooses the space between them, so anything *between* two
+tokens that is not whitespace would be dropped on the floor. This asks the projection directly rather
+than trusting the layout to be careful.
+
+Only the runs strictly inside the command are examined. The last token's trailing run is *not* — it
+holds the newline, the blank lines, and the next command's leading comments, so requiring it to be
+comment-free would disqualify nearly every command in any commented file. `Tree.command` emits that
+run verbatim instead, which is why it can be ignored here rather than handled.
+
+A token whose own text spans a newline (a block comment token, a multi-line string literal) also
+disqualifies the command: `Doc.text` requires newline-free content, and `RLC-IMPL` added `verbatim`
+precisely because re-indenting such a token is the `Std.Format` bug this project exists to avoid. -/
+private def Tree.respaceable (tree : Tree) (normalized : String) (span : CommandSpan) : Bool := Id.run do
+  for index in [span.first:span.last + 1] do
+    let some token := tree.source.tokens[index]? | return false
+    if token.leading.any (·.kind != .whitespace) then
+      return false
+    if index != span.last && token.trailing.any (·.kind != .whitespace) then
+      return false
+    if (tree.tokenText normalized index).contains '\n' then
+      return false
+  return true
+
+/-- Tokens joined by exactly one space.
+
+This is the whole canonical layout for the keyword-then-identifier commands, and it is where the
+formatter first *decides* something: `namespace    Foo` becomes `namespace Foo` no matter what the
+source did. It is only correct for kinds whose grammar is a flat run of tokens that always want one
+space between them, which is why it is not the default. -/
+private def Tree.spaceSeparated (tree : Tree) (normalized : String) (span : CommandSpan) : Doc :=
+  Id.run do
+    let mut doc : Doc := .empty
+    for index in [span.first:span.last + 1] do
+      let text := tree.tokenText normalized index
+      doc := if index == span.first then .text text else doc ++ .text " " ++ .text text
+    return doc
+
+/-- The canonical layout for this command's kind, if it has one.
+
+Every kind here is cited against the parser it mirrors and pinned by a golden test. A kind absent from
+this dispatch is not a bug and not a TODO — it is the conservative path, which is the roadmap's
+"unknown commands must round-trip conservatively" and the only path resting on no grammar claim. -/
+private def Tree.canonical? (tree : Tree) (normalized : String) (span : CommandSpan) : Option Doc :=
+  if !tree.respaceable normalized span then none else
+  match tree.kindOf span.root with
+  -- `Lean/Parser/Command.lean:317-318` (v4.32.0):
+  --   def «namespace» := leading_parser "namespace " >> checkColGt >> ident
+  -- A keyword and an identifier, always exactly one space apart. `checkColGt` constrains the parser,
+  -- not the printer: it is satisfied by any column past the command's, and column 0 + one space is.
+  | "Lean.Parser.Command.namespace" => some (tree.spaceSeparated normalized span)
+  -- `Lean/Parser/Command.lean:337-338` (v4.32.0):
+  --   def «end» := leading_parser "end" >> optional (ppSpace >> checkColGt >> identWithPartialTrailingDot)
+  -- The identifier is optional, so this is one token or two; `spaceSeparated` handles both without
+  -- knowing which, because it spaces whatever tokens the command actually has.
+  | "Lean.Parser.Command.end" => some (tree.spaceSeparated normalized span)
+  | _ => none
+
+/-- One command.
+
+The extent is split into three: the trivia before the first token, the token span itself, and the
+trivia after the last token. Only the middle is ever canonicalized. The outer two are emitted verbatim
+because they carry the comments and blank lines *between* commands — which belong to no command's
+layout, and which `RLC-SPEC` measured the parser attaching greedily to whichever token came first.
+
+`Doc.verbatim` is the right constructor for those and not a shortcut around the algebra. `RLC-IMPL`
+added it for exactly this shape — bytes that are not the formatter's to touch — and unlike `hard` it
+neither re-indents its content nor forces its group to break. -/
+def Tree.command (tree : Tree) (normalized : String) (span : CommandSpan) : Doc :=
+  match tree.canonical? normalized span with
+  | none => .verbatim (sliceNormalized normalized span.extent.start span.extent.stop)
+  | some canonical =>
+    let tokenStart := (tree.source.tokens[span.first]?.map (·.start)).getD span.extent.start
+    let tokenStop := (tree.source.tokens[span.last]?.map (·.stop)).getD span.extent.stop
+    let before : Doc := .verbatim (sliceNormalized normalized span.extent.start tokenStart)
+    let after : Doc := .verbatim (sliceNormalized normalized tokenStop span.extent.stop)
+    before ++ canonical ++ after
 
 /-- The whole module: header, commands, uninterpreted tail.
 
@@ -172,8 +267,8 @@ the terminal is `eoi`, and `#exit` plus Lean's never-parsed remainder otherwise.
 verbatim because neither is syntax this printer has any claim on. -/
 def Tree.document (tree : Tree) (normalized : String) : Doc :=
   let header : Doc := .verbatim (sliceNormalized normalized 0 tree.source.headerStop)
-  let body := tree.commandExtents.foldl
-    (fun acc extent => acc ++ tree.command normalized extent) (.empty : Doc)
+  let body := tree.commands.foldl
+    (fun acc span => acc ++ tree.command normalized span) (.empty : Doc)
   let tail : Doc := .verbatim
     (sliceNormalized normalized tree.source.terminalStop tree.source.normalizedBytes)
   header ++ body ++ tail
