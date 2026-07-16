@@ -46,6 +46,10 @@ as independent measured prerequisites.
   two paths are byte-identical on findings and custom-syntax fixtures. Direct execution measured
   648,272 KiB for a one-file artifact hit versus roughly 1.3 GiB through a rejected `lake env`
   wrapper; the fallback monitor stopped a deliberately constrained child at 782,896 KiB aggregate.
+- Prompt 08's original worker-free cache wording was source-false: executable `lakefile.lean`
+  configuration cannot be semantically validated from a fixed static file list. The repaired prompt
+  permits measured Lake workspace evaluation but forbids frontend/import environments, analyzer or
+  extractor children, and per-file setup jobs on an all-hit run.
 
 These facts constrain prompts 04 and 05; they do not predetermine their final interface.
 
