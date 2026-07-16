@@ -1,9 +1,9 @@
 # Next Proof Packet
 
-- Stack: 
-- First unresolved: 02-expressions
-- Claim ID: RLF-EXPRESSIONS
-- Prompt: 02-expressions
+- Stack: ruff-03-language-formatting
+- First unresolved: 03-tactics
+- Claim ID: RLF-TACTICS
+- Prompt: 03-tactics
 - Module: (docs only)
 - Target file: (docs only)
 
@@ -17,7 +17,7 @@ Read this file, the target prompt, target files, listed source/template line ran
 
 ## Proof Task
 
-- Deliver **RLF-EXPRESSIONS**: Implement precedence-aware formatting for applications, operators, binders, matches, records, projections, patterns, strings, numerals, syntax quotations, and antiquotations using parser/category information rather than textual guessing.
+- Deliver **RLF-TACTICS**: Implement deterministic blocks for tactic scripts, bullets, case alternatives, `do`, `where`, `let`, and nested layout. Add deep nesting and comment-placement fixtures.
 - Read `roadmap.md`, its prerequisite stack results, `AGENTS.md`, the current implementation and tests, and the relevant Lean compiler/Lake sources before changing an interface. Write interface comments and characterization tests before implementation where the behavior is not already frozen.
 
 ## Reuse
@@ -30,6 +30,6 @@ Inspect the live goal, search relevant declarations, test plausible proof steps,
 
 ## Stop Rules
 
-- Parentheses may change only with a precedence proof and exact reparse validation.
-- Never normalize literal contents.
+- Do not conflate visual indentation with Lean offside semantics.
+- Fallback must remain parse-preserving.
 - Stop rather than weakening exact semantics, write safety, or the resource envelope.

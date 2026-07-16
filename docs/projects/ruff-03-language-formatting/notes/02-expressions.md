@@ -201,6 +201,44 @@ firmly as `Term/Basic.lean` — but `notation` is an extension point, and the co
 table of core notations would be a table that is silently incomplete rather than merely stale.
 `Arithcc.«term_≃[_]_»` is in the census to prove it.
 
+## 6b. The rest of the task line, answered rather than deferred
+
+The prompt names eleven things. Four are layouts (§4, §5, and `matchAlt`), two are deferrals with
+citations (§5b, §6). The remaining five are answered by reading the grammar, and each answer is that
+there is nothing to build:
+
+**Patterns are terms.** There is no pattern syntax in Lean 4 to format: `matchAlt` parses its patterns
+with `sepBy1 (sepBy1 termParser ", ")` (`Term.lean:268`) — `termParser`, not a pattern parser. The
+census agrees and is the stronger evidence: **zero** of its 600 distinct kinds over 122,011 nodes have
+"pattern" in the name. So a pattern is a term, everything true of terms is true of patterns, and the
+`app` layout already runs inside them — `| .cons     x     xs => …` collapses because `.cons x xs` is
+an `app` wherever it stands. The task line's "patterns" is satisfied by §4, and by construction.
+
+**Strings and numerals cannot be touched, structurally.** The stop rule says "never normalize literal
+contents", and the printer cannot: a token reaches the output only through
+`.verbatim (tree.tokenSpanText normalized …)`, which slices the *source* bytes. There is no path from
+a layout to a token's interior — the layouts choose what goes *between* tokens and nothing else. `num`
+(1,115 on the sample) and the string literals are inert here, and would stay inert under any rule
+`spacingOf` could name.
+
+**Syntax quotations need no case, and every one of them says why.** They are bracketing constructs and
+they all wrap their contents in `withoutPosition`:
+
+    Term.quot     := "`(" >> withoutPosition (incQuotDepth termParser) >> ")"              -- Command.lean:20-21
+    Command.quot  := "`(" >> withoutPosition (incQuotDepth (many1Unbox commandParser)) >> ")"  -- :50-51
+    dynamicQuot   := withoutPosition <| "`(" >> ident >> "| " >> incQuotDepth (parserOfStack 1) >> ")"  -- Term.lean:1028-1029
+    (tactic quotations, `Term.lean:1124` and `:1126`, likewise)
+
+So the layout *already reaches inside a quotation* — an `app` in `` `(f     x) `` is an `app` — and
+that is safe by exactly the criterion §5b names, the same one that licenses the binders. This is the
+one place in the task line where the conservative answer would have been the *wrong* one: refusing
+quotations would have been a rule with no citation behind it.
+
+**Antiquotations are already conservative, and nothing claims inside one.** No antiquotation kind has
+a `spacingOf` entry, so an antiquot arrives at `termDoc` as an opaque part and its bytes are copied —
+`$x` cannot be split by a layout that never looks inside it. The `app` gap *around* one is the app's,
+and is `checkWsBefore`'s space as always. One occurrence on the sample, and it needs no rule.
+
 ## 7. The margin and `nest` are still open, and `checkColGt` now constrains them
 
 - **The margin is still unset.** `Printer.format` requires `width` rather than defaulting it

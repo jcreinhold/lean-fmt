@@ -1,6 +1,6 @@
 ---
 claim_id: RLF-EXPRESSIONS
-status: planned
+status: verified
 depends_on: [RLF-COMMANDS]
 ---
 

@@ -1,6 +1,6 @@
 ---
 kind: state
-first_unresolved: 02-expressions
+first_unresolved: 03-tactics
 ---
 
 # Current state
@@ -45,19 +45,28 @@ Printing inside the frontend would buy free arg order for a median 1.96 s fronte
 | Prompt | Claim | Status | Depends on |
 | --- | --- | --- | --- |
 | 01-commands | RLF-COMMANDS | verified | — |
-| 02-expressions | RLF-EXPRESSIONS | planned | RLF-COMMANDS |
+| 02-expressions | RLF-EXPRESSIONS | verified | RLF-COMMANDS |
 | 03-tactics | RLF-TACTICS | planned | RLF-EXPRESSIONS |
 | 04-extensions | RLF-EXTENSIONS | planned | RLF-TACTICS |
 | 05-corpus | RLF-FINAL | planned | RLF-EXTENSIONS |
 
-**`RLF-EXPRESSIONS` is in progress.** `Term.app`, the three bracketed binders and `Term.matchAlt` are
-laid out and `Term.proj` is answered; the census that decides the rest is `evidence/02-term-census.txt`,
-and the design is `notes/02-expressions.md`. What it has found so far is recorded under "Known
-evidence" below — the load-bearing items being that **spacing, not precedence, is what the projection
-cannot supply**, and that **all three layouts are provable no-ops on all 62 modules of foreign Lean**.
-That second one has now happened five times running, and `notes/02-expressions.md` §8 promotes it from
-a curiosity to the finding: the citable part of term formatting is the part that changes nothing, and
-**the margin question is where the remaining value is**.
+**`RLF-EXPRESSIONS` is verified** (`results/02-expressions.md`). `Term.app`, the three bracketed
+binders and `Term.matchAlt` are laid out; `Term.proj`, patterns, literals, quotations and
+antiquotations are **answered — nothing to build**, each from its own grammar rather than from a blanket
+caution; operators and records are **deferred with citations**, and precedence is **discharged, not
+implemented**. The census that decided the scope is `evidence/02-term-census.txt` and the design is
+`notes/02-expressions.md`. The load-bearing findings are that **spacing, not precedence, is what the
+projection cannot supply**, and that **every layout it added is a provable no-op on all 62 modules of
+foreign Lean**. That second one has now happened five times running, and `notes/02-expressions.md` §8
+promotes it from a curiosity to the finding: the citable part of term formatting is the part that
+changes nothing, and **the margin question is where the remaining value is**.
+
+**The prompt's own premise was wrong, and that is the result rather than a complication.** It asked for
+"precedence-aware" formatting. Precedence was never the blocker — the parser resolved it into the tree
+before the projection ever saw it — so the prompt's stated task was already done by someone else, and
+the real obstacle (the declared atom string, which the projection drops) was not named anywhere in it.
+`RLF-TACTICS` and `RLF-EXTENSIONS` should be read with that in mind: their premises have not been
+checked either.
 
 ## Known evidence
 
@@ -98,7 +107,7 @@ a curiosity to the finding: the citable part of term formatting is the part that
   stops treating it as a coincidence.
 - **Three mutations prove the application layout non-vacuous, and they fail in three different
   places.** Dropping `gapDoc`'s spaces-only test deletes `/- why -/` outright, joins an app's lines,
-  **and fails 7 of this repository's own 20 modules** — that guard is load-bearing on real code.
+  **and fails 12 of this repository's own 20 modules** — that guard is load-bearing on real code.
   Reading the app's own parts instead of lifting the `null` that `many1 argument` builds turns
   `List.replicate 3 8` into `List.replicate 3     8`. Emitting an unciteable kind's bytes wholesale
   instead of recursing into its parts leaves `id (id     9)`. The last two are **invisible to the
@@ -191,6 +200,18 @@ a curiosity to the finding: the citable part of term formatting is the part that
   corpus being formatted. So notations keep their bytes, the same answer `lemma` got, and
   `RLF-EXTENSIONS` owns them. `termℕ` is why the census does not detect notations by their guillemets:
   those are escaping, present only when the notation's own syntax needs them.
+- **Five of the task line's eleven items need nothing built, and each says so from the grammar.**
+  **Patterns are terms** — `matchAlt` parses them with `termParser` (`Lean/Parser/Term.lean:268`), and
+  0 of the census's 600 kinds over 122,011 nodes are patterns; the `app` layout already runs inside
+  them. **Strings and numerals cannot be touched structurally**: a token reaches the output only via
+  `.verbatim (tokenSpanText …)`, so there is no path from a layout to a token's interior and "never
+  normalize literal contents" holds by construction rather than by rule. **Syntax quotations need no
+  case, and this is the one place the conservative answer would have been *wrong*** — every quotation
+  wraps its contents in `withoutPosition` (`Lean/Parser/Command.lean:20-21`, `:50-51`;
+  `Term.lean:1028-1029`, `:1124`, `:1126`), so the layout already reaches inside `` `(f     x) `` and
+  is safe there by §5b's own criterion; refusing them would have been a rule with no citation.
+  **Antiquotations** have no `spacingOf` entry, so `$x` arrives as an opaque part and cannot be split.
+  **`Term.proj`** is the fourth (above).
 - **A term layout inside a command on the conservative path would be sound, and is not done.** An
   `app` is an `app` whatever encloses it, and collapsing its gaps rests on `argument`'s `checkWsBefore`
   rather than on any claim about the enclosing kind — so terms inside a `lemma` could be laid out. They
