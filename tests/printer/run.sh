@@ -70,7 +70,7 @@ printf 'modules_checked=%s commands=%s canonical=%s failures=%s\n' \
 # count: it tracks the corpus as the project grows, and only a guard that stopped firing drives it
 # down. The golden fixture below is what pins *what* the layouts produce; this pins *that* they run,
 # on real code, at scale.
-if [[ "$total_canonical" -lt 150 ]]; then
+if [[ "$total_canonical" -lt 350 ]]; then
   printf 'FAIL only %s of %s commands took a canonical layout; the layouts are not running\n' \
     "$total_canonical" "$total_commands" >&2
   failures=$((failures + 1))
@@ -178,6 +178,18 @@ section
   /-- Indented, and a line break cannot preserve that. -/
   def     indented : Nat := 6
 end
+
+structure     Str     where
+  field     : Nat
+
+class     Cls     where
+  method     : Nat
+
+inductive     Ind     where
+  | first
+  | second
+
+instance     : Inhabited Ind := ⟨.first⟩
 FIXTURE
 LEAN_NUM_THREADS=1 lake env "$application" __analyze-exact \
   "$work/borrowed.setup.json" "$work/wonky.lean" "wonky.lean" 8589934592 >"$work/wonky.json"
@@ -212,6 +224,16 @@ LEAN_NUM_THREADS=1 lake env "$application" __analyze-exact \
 #                                    of the verbatim slots — collapsing the two into one guard here
 #                                    would silently drop this declaration onto the conservative path,
 #                                    and most real docstrings with it.
+#   `structure Str     where`        the shell is the keyword and the name, and it stops there: the
+#   `class Cls     where`            fields keep their bytes, `where` included. `class` is a
+#   `inductive Ind     where`        `«structure»` node — `classTk` is one of its two openers — so it
+#                                    needs no case of its own. The name is *found* among the shape's
+#                                    children rather than indexed, because `«structure»` puts
+#                                    `structureTk` ahead of it while `definition` puts `declId` first.
+#   `instance     : ...`             UNCHANGED: excluded, and its grammar says why. `declId` is
+#                                    optional there (anonymous instances are ordinary Lean), so the
+#                                    shell would have to end at the keyword, and `optNamedPrio` is
+#                                    bracketed. Two separate claims, neither made yet.
 #   `  def     indented`             UNCHANGED, spaces and all: it is not at column 0, and the line
 #                                    break the layout would emit indents to nothing, so the docstring
 #                                    would stay indented while the `def` jumped to column 0. Whether
@@ -248,6 +270,18 @@ section
   /-- Indented, and a line break cannot preserve that. -/
   def     indented : Nat := 6
 end
+
+structure Str     where
+  field     : Nat
+
+class Cls     where
+  method     : Nat
+
+inductive Ind     where
+  | first
+  | second
+
+instance     : Inhabited Ind := ⟨.first⟩
 GOLDEN
 if diff -u "$work/wonky.golden" "$work/wonky.out" >"$work/wonky.diff" 2>&1; then
   printf '  ok   canonical layout matches the golden file\n'

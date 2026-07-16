@@ -170,6 +170,7 @@ for name in sorted(os.listdir(envelopes)):
     SHELL_SHAPES = {
         "Lean.Parser.Command.abbrev", "Lean.Parser.Command.definition",
         "Lean.Parser.Command.theorem", "Lean.Parser.Command.opaque",
+        "Lean.Parser.Command.inductive", "Lean.Parser.Command.structure",
     }
     for i, n in enumerate(nodes):
         if parent_of(n) is not None or kinds[n[0]] != "Lean.Parser.Command.declaration":
@@ -182,8 +183,12 @@ for name in sorted(os.listdir(envelopes)):
         elif kinds[nodes[ch[1]][0]] not in SHELL_SHAPES:
             decl_census["rejected: shape not read yet"] += 1
             unread_shapes[kinds[nodes[ch[1]][0]]] += 1
-        elif not children[ch[1]] or kinds[nodes[children[ch[1]][0]][0]] != "Lean.Parser.Command.declId":
-            decl_census["rejected: first child is not declId"] += 1
+        elif not any(
+            kinds[nodes[g][0]] == "Lean.Parser.Command.declId"
+            for c in children[ch[1]]
+            for g in ([c] if kinds[nodes[c][0]] != "null" else children[c])
+        ):
+            decl_census["rejected: no declId at the shape's head"] += 1
         else:
             decl_census["structurally claimed: shell laid out"] += 1
 

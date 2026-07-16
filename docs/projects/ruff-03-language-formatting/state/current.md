@@ -5,9 +5,9 @@ first_unresolved: 01-commands
 
 # Current state
 
-`RLF-COMMANDS` is **in progress**: the printer skeleton is live and proven lossless, and **321 of the
-corpus's 418 commands take a cited canonical layout** — `namespace` (25), `end` (25), and the shell of
-271 declarations. Its external prerequisite stack `ruff-02-layout-core` is verified and its live
+`RLF-COMMANDS` is **in progress**: the printer skeleton is live and proven lossless, and **391 of the
+corpus's 419 commands take a cited canonical layout** — `namespace` (25), `end` (25), and the shell of
+341 of 352 declarations. Its external prerequisite stack `ruff-02-layout-core` is verified and its live
 implementation still matches recorded state.
 
 **`RLC-FINAL`'s standing caveat is now half-answered.** That prompt closed the layout stack noting
@@ -46,9 +46,24 @@ Printing inside the frontend would buy free arg order for a median 1.96 s fronte
   *changed* something (2 lines rewritten) so the golden cannot degenerate into a copy of its input.
   Idempotence is checked by re-parsing the first pass's output and formatting again — a real second
   format, not a repeated call.
+- **Every declaration shape but `instance` has its shell laid out, and the name is found rather than
+  indexed.** Six shapes open with a keyword and the name — `abbrev`, `definition`, `theorem`, `opaque`
+  (`:187-199`), `inductive` (`:238-240`), `structure` (`:274-281`) — but `declId` does not sit at a
+  fixed child position: `definition` puts it first, `«structure»` puts `structureTk` ahead of it. So
+  it is looked for among the shape's children and one level inside their `optional` wrappers, which is
+  where every one of those grammars puts it, and **never deeper** — a `declId` found inside a value
+  would drag the shell past the name, and the shell must be a prefix of the command's tokens. That
+  bound is defensive: no construct in this corpus nests a `declId` inside a declaration, so nothing
+  here exercises it. `class Foo` needs no case of its own: `classTk` is one of `«structure»`'s two
+  openers, so it is a `structure` node.
+- **A `structure`'s fields and an `inductive`'s constructors are left as bytes, which is a decision
+  with a gap in it.** The shell stops at the name, so `structure Str     where` re-spaces its keyword
+  and keeps its fields exactly. Fields are not terms and `RLF-EXPRESSIONS` has no obvious claim on
+  them; nor has `RLF-COMMANDS` made one. **No prompt currently owns `structFields` or `ctor`**, and
+  that should be settled before this stack's final audit rather than discovered there.
 - **The declaration shell is laid out, modifiers included.** Cited against
-  `Lean/Parser/Command.lean:282-285` (a `declaration` is exactly `declModifiers` plus one shape),
-  `:187-198` (four shapes open `keyword >> declId >> sig >> declVal`), and `:114-121` (seven optional
+  `Lean/Parser/Command.lean:282-285` (a `declaration` is exactly `declModifiers` plus one shape) and
+  `:114-121` (seven optional
   modifier slots in fixed order). The two slots that are not flat token runs are read by index and
   emitted verbatim, each followed by a line break the grammar itself asks for: `docComment` ends in
   `ppLine` (`Lean/Parser/Term.lean:91-93`, which is inside `namespace Lean.Parser.Command` — hence the
@@ -94,14 +109,17 @@ Printing inside the frontend would buy free arg order for a median 1.96 s fronte
   every command — the printer would fall back to bytes and be the identity function it was before any
   layout existed. This repository also writes its declarations the way the layout writes them, so even
   a layout that runs changes nothing here. `printer-roundtrip` therefore reports `canonical=`, the
-  commands actually laid out, and `tests/printer/run.sh` floors the corpus total: **321 of 418**. The
+  commands actually laid out, and `tests/printer/run.sh` floors the corpus total: **391 of 419**. The
   golden fixture pins *what* the layouts produce; this pins *that* they run, on real code, at scale.
-- **Two independent measurements of coverage agree exactly.** `experiments/run-projection-shape.sh`
-  re-implements the structural half of the printer's predicate in Python against the same projection
-  and finds 271 of 351 declarations claimable; the printer, in Lean, counts 321 = 271 + 25 `namespace`
-  + 25 `end`. So on this corpus every structurally-claimable declaration also passes the runtime guards
-  the probe cannot model (clean trivia, newline-free flat run, column 0). The probe over-counts by
-  construction and says so; `canonical=` is the honest figure.
+- **Two independent measurements of coverage agree exactly, and keep agreeing as it grows.**
+  `experiments/run-projection-shape.sh` re-implements the structural half of the printer's predicate in
+  Python against the same projection and finds 341 of 352 declarations claimable; the printer, in Lean,
+  counts 391 = 341 + 25 `namespace` + 25 `end`. So on this corpus every structurally-claimable
+  declaration also passes the runtime guards the probe cannot model (clean trivia, newline-free flat
+  run, column 0). The probe over-counts by construction and says so; `canonical=` is the honest figure.
+- **That 391 commands take the layout and all 20 modules stay byte-identical is what proves the shell
+  is a prefix.** A shell that ran past the name, or stopped short, would duplicate or drop bytes on
+  real code. Nothing asserts prefix-ness directly; the round-trip is the assertion.
 - **A coverage number inferred from the wrong population was off by a factor of seven, and the fix
   redirected the work.** The empty-node census reports 318 empty `declModifiers`, which reads like
   "almost every declaration carries no modifiers" — but `declModifiers` is also on every structure
@@ -158,11 +176,15 @@ Printing inside the frontend would buy free arg order for a median 1.96 s fronte
 ## Blockers and prerequisites
 
 - No blocker is currently recorded beyond the named prerequisite stacks.
-- **`RLF-COMMANDS` is not met: 321 of 418 commands have a layout.** The remaining declarations are all
-  rejected for one reason — **a shape whose grammar has not been read**: `structure` 54, `inductive`
-  15, `instance` 11 (`evidence/01-projection-shape.txt`). That is the next piece of work, and unlike
-  the four shapes already read they are not one-line openers, so `structure`'s fields and
-  `inductive`'s constructors will be the first layouts that need real vertical structure.
+- **`RLF-COMMANDS` is not met: 391 of 419 commands have a layout.** The 28 without one are `instance`
+  (11), `moduleDoc` (8), `open` (7), `registerOption` (1), and `initialize` (1)
+  (`evidence/01-projection-shape.txt`). Every other declaration shape is laid out.
+- **`instance` is excluded on two separate grammar facts, not on difficulty** (`:202-204`). Its
+  `declId` is `optional` — anonymous instances are ordinary Lean — so the shell cannot simply end at
+  the name and must end at the keyword instead; and `optNamedPrio` (`:64-65`) is bracketed, so a flat
+  run would emit `( priority := 5 )`. Each needs its own fixture. How many of the 11 here are
+  anonymous is **not measured**, and that number decides whether the keyword-ended shell is worth
+  having.
 - **`moduleDoc` (8) and `open` (7) are still conservative, and `open` is deliberate.** `openDecl` has
   bracketed forms (`open Foo (a b)`, `open Foo hiding a`) where one-space-between-tokens would be
   wrong, so it needs its own citation rather than an assumption.

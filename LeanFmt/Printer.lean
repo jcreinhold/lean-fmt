@@ -292,6 +292,22 @@ private def Tree.subtreeTokens (tree : Tree) (node : Nat) : Option (Nat × Nat) 
         | some (lo, hi) => some (min lo token, max hi token)
   return bounds
 
+/-- The `declId` naming this shape: a child of it, or a child of one of its `optional` wrappers.
+
+Bounded to those two depths on purpose. Every shape `declarationShell?` recognizes puts the name
+there, and searching the whole subtree instead would let a `declId` appearing inside a value extend
+the shell over it — the shell must be a *prefix* of the command's tokens, and nothing enforces that
+but where this looks. -/
+private def Tree.shapeDeclId? (tree : Tree) (shape : Nat) : Option Nat := Id.run do
+  for child in tree.nodeChildren[shape]! do
+    if tree.kindOf child == "Lean.Parser.Command.declId" then
+      return some child
+    if tree.kindOf child == "null" then
+      for grandchild in tree.nodeChildren[child]! do
+        if tree.kindOf grandchild == "Lean.Parser.Command.declId" then
+          return some grandchild
+  return none
+
 /-- A `declaration`'s shell, as token indices: what to emit and where the claim stops. -/
 private structure DeclShell where
   /-- Token bounds of the `docComment` slot, or `none` when it is empty. Emitted verbatim. -/
@@ -346,21 +362,36 @@ The first two slots are not flat runs of one-space-apart tokens and are read by 
 Slots 2–6 are each a single keyword atom (`«private»` is `leading_parser "private "`, `:68`, and its
 siblings are the same shape), so they join the flat run with the declaration keyword and the name.
 
-**The shapes.** Four of the eleven alternatives open the same way — a keyword atom, then `declId`,
-then a signature, then the value (`:187-188`, `:194-195`, `:196-197`, `:198-199`) — and those four are
-what this recognizes:
+**The shapes.** Six of the eleven alternatives open with a keyword and the declaration's name, and the
+shell is exactly that prefix:
 
     def «abbrev»    := leading_parser "abbrev " >> declId >> ppIndent optDeclSig >> declVal
     def definition  := leading_parser "def " >> recover declId .. >> ppIndent optDeclSig >> declVal >> optDefDeriving
     def «theorem»   := leading_parser "theorem " >> recover declId .. >> ppIndent declSig >> declVal
-    def «opaque»    := leading_parser "opaque " >> declId >> ppIndent declSig >> declVal
+    def «opaque»    := leading_parser "opaque " >> recover declId .. >> ppIndent declSig >> optional declValSimple
+    def «inductive» := leading_parser "inductive " >> recover declId .. >> ppIndent optDeclSig >> ..
+    def «structure» := leading_parser (structureTk <|> classTk) >> declId >> ppIndent (optDeclSig >> ..) >> ..
 
-`structure`, `instance`, and `inductive` are not among them and stay conservative:
-`evidence/01-projection-shape.txt` counts 21, 11, and 6 of them here, and their grammar has not been
-read.
+(`:187-188`, `:194-195`, `:196-197`, `:198-199`, `:238-240`, `:274-281`. `«structure»` covers `class`
+too: `classTk` is one of its two openers, so `class Foo where` is a `structure` node.)
 
-The signature and the value are deliberately *not* reached. Both are terms, `RLF-EXPRESSIONS` owns
-them, and everything from the `declId`'s last token onward stays verbatim until it does. -/
+`declId` is *found* rather than indexed, because it does not sit at a fixed position: `definition` has
+it first, `«structure»` has `structureTk` ahead of it. It is looked for among the shape's children and
+one level inside their `optional` wrappers — which is where every grammar above puts it — and never
+deeper, so a `declId` occurring inside a value could not drag the shell past the name.
+
+**`instance` is excluded, and its grammar says why** (`:202-204`):
+
+    def «instance» := leading_parser
+      Term.attrKind >> "instance" >> optNamedPrio >> optional (ppSpace >> declId) >> ppIndent declSig >> declVal
+
+Its `declId` is optional — anonymous instances are ordinary Lean — so the shell would have to end at
+the keyword instead, and `optNamedPrio` (`:64-65`) is bracketed, so one space between its tokens gives
+`( priority := 5 )`. Neither is hard; both are separate claims needing separate fixtures, and
+`evidence/01-projection-shape.txt` counts 11 of them.
+
+The signature and the value are deliberately *not* reached, and neither are a `structure`'s fields or
+an `inductive`'s constructors. Everything from the `declId`'s last token onward stays verbatim. -/
 private def Tree.declarationShell? (tree : Tree) (root : Nat) : Option DeclShell := do
   let children := tree.nodeChildren[root]!
   guard (children.size == 2)
@@ -373,11 +404,10 @@ private def Tree.declarationShell? (tree : Tree) (root : Nat) : Option DeclShell
   guard (slots.size == 7)
   guard <| [
       "Lean.Parser.Command.abbrev", "Lean.Parser.Command.definition",
-      "Lean.Parser.Command.theorem", "Lean.Parser.Command.opaque"
+      "Lean.Parser.Command.theorem", "Lean.Parser.Command.opaque",
+      "Lean.Parser.Command.inductive", "Lean.Parser.Command.structure"
     ].contains (tree.kindOf shape)
-  let shapeChildren := tree.nodeChildren[shape]!
-  let declId ← shapeChildren[0]?
-  guard (tree.kindOf declId == "Lean.Parser.Command.declId")
+  let declId ← tree.shapeDeclId? shape
   let (first, _) ← tree.subtreeTokens root
   let (_, last) ← tree.subtreeTokens declId
   let doc := tree.subtreeTokens slots[0]!
