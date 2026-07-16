@@ -69,6 +69,17 @@ private structure ChildOutput where
   stderr : String
   peakAggregateRssKiB : Nat
 
+/- A valid exact-analysis capability. Construction brackets its temporary storage, fixes the target
+project/toolchain and aggregate envelope once, and owns collision-free request names. No caller can
+observe setup paths or sequence cleanup. Each analysis still receives a fresh child process. -/
+structure ExactRun where
+  private mk ::
+  project : Project.Snapshot
+  application : FilePath
+  temporary : FilePath
+  maxBytes : Nat
+  nextIndex : IO.Ref Nat
+
 private structure FacetDescriptor where
   hash : String
   ext : String
@@ -222,44 +233,48 @@ private def runBounded (arguments : IO.Process.SpawnArgs)
   let stderrTask ← IO.asTask child.stderr.readToEnd
   monitorChild child stdoutTask stderrTask maxBytes 0
 
-private def exactFallback (project : Project.Snapshot) (application : FilePath)
-    (temporary : FilePath) (index : Nat) (request : RunRequest)
+private def ExactRun.nextPathIndex (run : ExactRun) : IO Nat :=
+  run.nextIndex.modifyGet fun index => (index, index + 1)
+
+private def ExactRun.envelope (run : ExactRun)
     (snapshot : SourceSnapshot) (validator := false) : IO AnalysisEnvelope := do
-  let setupResult ← exactSetupResult project snapshot
+  let index ← run.nextPathIndex
+  let setupResult ← exactSetupResult run.project snapshot
   let setup := match setupResult with
     | .ok setup => setup
     | .error _ => diagnosticSetup snapshot
-  let setupPath ← writeSetup temporary index setup
-  let sourcePath := temporary / s!"{index}.lean"
+  let setupPath ← writeSetup run.temporary index setup
+  let sourcePath := run.temporary / s!"{index}.lean"
   IO.FS.writeFile sourcePath snapshot.source
-  let configuredMaxBytes := request.maxMemoryGiB * 1024 * 1024 * 1024
-  let maxBytes := ((← IO.getEnv "LEAN_FMT_TEST_MAX_BYTES").bind (·.toNat?))
-    |>.getD configuredMaxBytes
-  if (← residentKiB) * 1024 >= maxBytes then
-    throw <| IO.userError s!"resource envelope exhausted before exact frontend child \
-      (limit {maxBytes} bytes)"
-  let overrideName := if validator then "LEAN_FMT_TEST_VALIDATOR" else "LEAN_FMT_TEST_ANALYZER"
-  let analyzer := (← IO.getEnv overrideName).map FilePath.mk |>.getD application
-  let output ← runBounded {
-    cmd := analyzer.toString
-    args := #["__analyze-exact", setupPath.toString, sourcePath.toString,
-      snapshot.path.toString, toString maxBytes]
-    env := project.workspace.augmentedEnvVars.push ⟨"LEAN_NUM_THREADS", some "1"⟩
-  } maxBytes
-  unless output.exitCode == 0 do
-    throw <| IO.userError s!"exact frontend child failed for {snapshot.relativePath}: \
-      {output.stderr.trimAscii}"
-  let .ok json := Lean.Json.parse output.stdout
-    | throw <| IO.userError s!"exact frontend child returned invalid JSON for \
-      {snapshot.relativePath}"
-  let .ok envelope := Lean.fromJson? json
-    | throw <| IO.userError s!"exact frontend child returned an invalid result for \
-      {snapshot.relativePath}"
-  if let .error setupError := setupResult then
-    if envelope.artifact?.isSome then
-      throw <| IO.userError s!"could not establish the exact Lake setup for \
-        {snapshot.relativePath}: {setupError}"
-  return envelope
+  try
+    if (← residentKiB) * 1024 >= run.maxBytes then
+      throw <| IO.userError s!"resource envelope exhausted before exact frontend child \
+        (limit {run.maxBytes} bytes)"
+    let overrideName := if validator then "LEAN_FMT_TEST_VALIDATOR" else "LEAN_FMT_TEST_ANALYZER"
+    let analyzer := (← IO.getEnv overrideName).map FilePath.mk |>.getD run.application
+    let output ← runBounded {
+      cmd := analyzer.toString
+      args := #["__analyze-exact", setupPath.toString, sourcePath.toString,
+        snapshot.path.toString, toString run.maxBytes]
+      env := run.project.workspace.augmentedEnvVars.push ⟨"LEAN_NUM_THREADS", some "1"⟩
+    } run.maxBytes
+    unless output.exitCode == 0 do
+      throw <| IO.userError s!"exact frontend child failed for {snapshot.relativePath}: \
+        {output.stderr.trimAscii}"
+    let .ok json := Lean.Json.parse output.stdout
+      | throw <| IO.userError s!"exact frontend child returned invalid JSON for \
+        {snapshot.relativePath}"
+    let .ok envelope := Lean.fromJson? json
+      | throw <| IO.userError s!"exact frontend child returned an invalid result for \
+        {snapshot.relativePath}"
+    if let .error setupError := setupResult then
+      if envelope.artifact?.isSome then
+        throw <| IO.userError s!"could not establish the exact Lake setup for \
+          {snapshot.relativePath}: {setupError}"
+    return envelope
+  finally
+    if ← setupPath.pathExists then IO.FS.removeFile setupPath
+    if ← sourcePath.pathExists then IO.FS.removeFile sourcePath
 
 private def canonicalAnalysis (snapshot : SourceSnapshot)
     (analysis : AnalysisEnvelope) : IO SemanticAnalysis :=
@@ -267,20 +282,41 @@ private def canonicalAnalysis (snapshot : SourceSnapshot)
   | some semantic => pure semantic
   | none => throw <| IO.userError s!"invalid exact analysis for {snapshot.relativePath}"
 
-private def analyzeFile (project : Project.Snapshot) (application temporary : FilePath)
-    (index : Nat) (request : RunRequest)
-    (plan : RulePlan) (evidence : Project.ModuleEvidence)
+def ExactRun.analyzeSnapshot (run : ExactRun) (snapshot : SourceSnapshot)
+    (validator := false) : IO SemanticAnalysis := do
+  canonicalAnalysis snapshot (← run.envelope snapshot validator)
+
+/- Bracket a complete exact-analysis run. The capability is constructed only after a real fallback
+or editor request needs it; cache-only and ordinary-evidence batch runs create no temporary state. -/
+def withExactRun (project : Project.Snapshot) (maxMemoryGiB : Nat)
+    (action : ExactRun → IO α) : IO α := do
+  unless maxMemoryGiB > 0 do
+    throw <| IO.userError "--max-memory must provide a nonzero operating envelope"
+  let configuredMaxBytes := maxMemoryGiB * 1024 * 1024 * 1024
+  let maxBytes := ((← IO.getEnv "LEAN_FMT_TEST_MAX_BYTES").bind (·.toNat?))
+    |>.getD configuredMaxBytes
+  let temporary ← IO.FS.createTempDir
+  let nextIndex ← IO.mkRef 0
+  let run : ExactRun := {
+    project
+    application := ← IO.appPath
+    temporary
+    maxBytes
+    nextIndex
+  }
+  try action run finally IO.FS.removeDirAll temporary
+
+private def availableAnalysis (plan : RulePlan) (evidence : Project.ModuleEvidence)
     (snapshot : SourceSnapshot) (cached? : Option SemanticAnalysis)
-    (officialArtifact? : Option ModuleArtifact) : IO SemanticAnalysis := do
+    (officialArtifact? : Option ModuleArtifact) : IO (Option SemanticAnalysis) := do
   if let some analysis := cached? then
-    return analysis
-  let analysis ← if !plan.requiresSyntax && evidence == .current then
-    pure <| SemanticAnalysis.success snapshot.source (runRules snapshot.source true)
+    return some analysis
+  if !plan.requiresSyntax && evidence == .current then
+    return some <| SemanticAnalysis.success snapshot.source (runRules snapshot.source true)
   else if let some artifact := officialArtifact? then
-    canonicalAnalysis snapshot { artifact? := some artifact }
+    return some (← canonicalAnalysis snapshot { artifact? := some artifact })
   else
-    canonicalAnalysis snapshot (← exactFallback project application temporary index request snapshot)
-  return analysis
+    return none
 
 private structure DiffSource where
   lines : List String
@@ -378,35 +414,56 @@ private def validationReport (snapshot : SourceSnapshot) (findings : Array Findi
   | some _ => none
   | none => some (baseReport snapshot "rejected" findings validation.diagnostics)
 
-private def projectFile (project : Project.Snapshot) (application temporary : FilePath)
-    (index : Nat) (request : RunRequest) (plan : RulePlan) (snapshot : SourceSnapshot)
-    (analysis : SemanticAnalysis) : IO FileReport := do
+private def prepareFile (plan : RulePlan) (snapshot : SourceSnapshot)
+    (analysis : SemanticAnalysis) : Except FileReport (Array Finding × Patch) := do
   let some result := analysis.result?
-    | return baseReport snapshot "broken" #[] analysis.diagnostics
+    | throw (baseReport snapshot "broken" #[] analysis.diagnostics)
   let findings := plan.findings snapshot.relativePath result.findings
   let patch ← match preparePatch snapshot.source findings with
     | .ok patch => pure patch
     | .error error =>
-      return baseReport snapshot "rejected" findings #[toString error]
-  match request.mode with
-  | .check =>
-    return baseReport snapshot (if findings.isEmpty then "clean" else "findings") findings
-  | .format =>
-    if patch.changed then
-      return { (baseReport snapshot "would-format" findings) with
-        formatted := some patch.formatted }
-    return baseReport snapshot "clean" findings
-  | .diff =>
-    if patch.changed then
-      return { (baseReport snapshot "would-diff" findings) with
-        diff := some (unifiedDiff snapshot.relativePath snapshot.source patch.formatted) }
-    return baseReport snapshot "clean" findings
-  | .fix =>
+      throw (baseReport snapshot "rejected" findings #[toString error])
+  return (findings, patch)
+
+private inductive PreviewMode where
+  | check
+  | format
+  | diff
+
+private def RunMode.preview? : RunMode → Option PreviewMode
+  | .check => some .check
+  | .format => some .format
+  | .diff => some .diff
+  | .fix => none
+
+private def previewFile (mode : PreviewMode) (plan : RulePlan) (snapshot : SourceSnapshot)
+    (analysis : SemanticAnalysis) : IO FileReport := do
+  match prepareFile plan snapshot analysis with
+  | .error report => return report
+  | .ok (findings, patch) =>
+    match mode with
+    | .check =>
+      return baseReport snapshot (if findings.isEmpty then "clean" else "findings") findings
+    | .format =>
+      if patch.changed then
+        return { (baseReport snapshot "would-format" findings) with
+          formatted := some patch.formatted }
+      return baseReport snapshot "clean" findings
+    | .diff =>
+      if patch.changed then
+        return { (baseReport snapshot "would-diff" findings) with
+          diff := some (unifiedDiff snapshot.relativePath snapshot.source patch.formatted) }
+      return baseReport snapshot "clean" findings
+
+private def fixFile (run : ExactRun) (plan : RulePlan) (snapshot : SourceSnapshot)
+    (analysis : SemanticAnalysis) : IO FileReport := do
+  match prepareFile plan snapshot analysis with
+  | .error report => return report
+  | .ok (findings, patch) =>
     unless patch.changed do
       return baseReport snapshot "clean" findings
-    let candidate := { snapshot with source := patch.formatted }
-    let validation ← canonicalAnalysis candidate <| ← exactFallback project application temporary
-      (index + 1000000) request candidate (validator := true)
+    let candidate := snapshot.withSource patch.formatted
+    let validation ← run.analyzeSnapshot candidate (validator := true)
     if let some report := validationReport snapshot findings validation then
       return report
     match ← publishAtomic snapshot.path snapshot.source patch.formatted with
@@ -415,6 +472,11 @@ private def projectFile (project : Project.Snapshot) (application temporary : Fi
       return { (baseReport snapshot "fixed" findings) with
         formatted := some patch.formatted
         written := true }
+
+def ExactRun.checkSnapshot (run : ExactRun) (plan : RulePlan)
+    (snapshot : SourceSnapshot) : IO FileReport := do
+  let analysis ← run.analyzeSnapshot snapshot
+  previewFile .check plan snapshot analysis
 
 private def summarize (mode : RunMode) (files : Array FileReport)
     (failures : Array String := #[]) : RunReport :=
@@ -469,13 +531,13 @@ def execute (request : RunRequest) : IO RunReport := do
     | some cache => cache.readAll project snapshots
   let lookupFinished ← IO.monoNanosNow
   recordPhase "cache_lookup" lookupStarted lookupFinished
-  if cached.all Option.isSome && request.mode != .fix then
-    let mut files := #[]
-    for (snapshot, cached?) in snapshots.zip cached, index in [0:snapshots.size] do
-      if let some analysis := cached? then
-        files := files.push (← projectFile project application "." index request plan
-          snapshot analysis)
-    return summarize request.mode files
+  if cached.all Option.isSome then
+    if let some previewMode := request.mode.preview? then
+      let mut files := #[]
+      for (snapshot, cached?) in snapshots.zip cached do
+        if let some analysis := cached? then
+          files := files.push (← previewFile previewMode plan snapshot analysis)
+      return summarize request.mode files
   let evidenceStarted ← IO.monoNanosNow
   let evidence ← Project.moduleEvidence project
   let evidenceFinished ← IO.monoNanosNow
@@ -487,20 +549,33 @@ def execute (request : RunRequest) : IO RunReport := do
     pure (Array.replicate snapshots.size none)
   let artifactFinished ← IO.monoNanosNow
   recordPhase "official_artifacts" artifactStarted artifactFinished
-  let temporary ← IO.FS.createTempDir
-  try
+  let available ← (((snapshots.zip cached).zip evidence).zip artifacts).mapM fun
+    | (((snapshot, cached?), sourceEvidence), artifact?) =>
+      availableAnalysis plan sourceEvidence snapshot cached? artifact?
+  if available.all Option.isSome then
+    if let some previewMode := request.mode.preview? then
+      let analyses := available.filterMap id
+      let files ← (snapshots.zip analyses).mapM fun (snapshot, analysis) =>
+        previewFile previewMode plan snapshot analysis
+      if let some cache := cache? then
+        cache.writeAll project snapshots available
+      return summarize request.mode files
+  withExactRun project request.maxMemoryGiB fun exactRun => do
     let mut files := #[]
     let mut failures := #[]
     let mut analyses := #[]
-    for (((snapshot, cached?), sourceEvidence), artifact?) in
-        ((snapshots.zip cached).zip evidence).zip artifacts,
-        index in [0:snapshots.size] do
+    for (snapshot, available?) in snapshots.zip available do
       try
-        let analysis ← analyzeFile project application temporary index request plan sourceEvidence
-          snapshot cached? artifact?
+        let analysis ← match available? with
+          | some analysis => pure analysis
+          | none => exactRun.analyzeSnapshot snapshot
         analyses := analyses.push (some analysis)
-        files := files.push
-          (← projectFile project application temporary index request plan snapshot analysis)
+        let report ← match request.mode with
+          | .fix => fixFile exactRun plan snapshot analysis
+          | .check => previewFile .check plan snapshot analysis
+          | .format => previewFile .format plan snapshot analysis
+          | .diff => previewFile .diff plan snapshot analysis
+        files := files.push report
       catch error =>
         analyses := analyses.push none
         let message := toString error
@@ -513,8 +588,6 @@ def execute (request : RunRequest) : IO RunReport := do
     if let some cache := cache? then
       cache.writeAll project snapshots analyses
     return summarize request.mode files failures
-  finally
-    IO.FS.removeDirAll temporary
 
 private unsafe def runAnalyzeChild (args : List String) : IO UInt32 := do
   let [setupPath, snapshotPath, displayPath, maxBytes] := args

@@ -148,6 +148,23 @@ def loadAll (requestedRoot : FilePath) : IO Snapshot := do
     selectionNanos := selectionFinished - workspaceFinished
   }
 
+/- Resolve one already-selected source by filesystem identity. Path normalization and root
+containment stay below the service boundary; callers receive the canonical immutable target or a
+single ordinary miss. -/
+def Snapshot.findTarget? (snapshot : Snapshot) (requested : FilePath) : IO (Option SourceTarget) := do
+  if requested.isAbsolute then
+    return none
+  try
+    let path ← IO.FS.realPath (snapshot.root / requested)
+    unless insideRoot snapshot.root path do
+      return none
+    return snapshot.targets.find? (·.path == path)
+  catch _ =>
+    return none
+
+def SourceTarget.withSource (target : SourceTarget) (source : String) : SourceTarget :=
+  { target with source }
+
 /- Run one shared Lake no-build graph and recover one status per module. Lake's public runner only
 returns aggregate success; the exact-toolchain `import all` boundary lets this private capability
 await the typed jobs without parsing monitor output or exposing a temporal lifecycle to callers. -/

@@ -55,3 +55,24 @@ Input is bounded at two layers: 32 MiB per JSON line and 16 MiB per source. The 
 the incoming line before it can be rejected, but the application retains at most one such line and
 never accumulates a queue; the focused RSS test therefore validates the actual bound of the chosen
 Lean runtime interface.
+
+## Retained implementation
+
+`Application.ExactRun` is the bracketed capability selected above. It fixes the evaluated project,
+current executable, aggregate byte envelope, private temporary directory, and collision-free request
+counter. Its constructor and fields are inaccessible. Each `analyzeSnapshot` writes private setup and
+source inputs, starts one exact-toolchain child with one Lean thread, canonicalizes its response, and
+removes both inputs in a `finally` block before returning. The bracket removes its directory under all
+exit paths. Batch first resolves cache, ordinary module evidence, and official artifacts; it constructs
+an `ExactRun` only if a true frontend miss or fix validation remains.
+
+`Project.Snapshot.findTarget?` owns realpath normalization, root containment, and selected-source
+membership. `SourceTarget.withSource` is the only replacement-byte constructor exposed to internal
+callers, preserving canonical path/module identity. `Service` then owns only wire decoding, version
+state, response projection, and the read/process/flush loop. Its exact check calls
+`ExactRun.checkSnapshot`, which uses the same canonical analysis and rule/report projection as batch.
+
+The focused 100-request run confirmed the design experimentally: 44.388 seconds, 1,041,472 KiB peak
+parent-plus-descendant RSS, normal macOS pressure, zero swap growth, and parent median RSS decreasing
+from 800,496 KiB in the first ten responses to 723,776 KiB in the last ten. No retained frontend
+session, concurrent queue, cache write, or source write exists.

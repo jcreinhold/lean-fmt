@@ -1,12 +1,12 @@
 module
 
-import all LeanFmt.Application
+import all LeanFmt.Service
 
 open System
 
 namespace LeanFmt.Internal.Cli
 
-open LeanFmt.Internal LeanFmt.Internal.Application
+open LeanFmt.Internal LeanFmt.Internal.Application LeanFmt.Internal.Service
 
 private inductive ReportFormat where
   | text
@@ -25,8 +25,27 @@ private structure StatusCommand where
   request : CompilerStatusRequest := {}
   outputFormat : ReportFormat := .text
 
+private def parseServeArgs (args : List String) : Except String ServeOptions :=
+  let rec loop (remaining : List String) (options : ServeOptions) :=
+    match remaining with
+    | [] => .ok options
+    | "--root" :: root :: rest => loop rest { options with root }
+    | "--config" :: path :: rest => loop rest { options with configPath? := some path }
+    | "--select" :: selector :: rest =>
+      loop rest { options with select := options.select.push selector }
+    | "--ignore" :: selector :: rest =>
+      loop rest { options with ignore := options.ignore.push selector }
+    | "--max-memory" :: value :: rest =>
+      match value.toNat? with
+      | some amount => loop rest { options with maxMemoryGiB := amount }
+      | none => .error "--max-memory expects a whole number of GiB"
+    | option :: _ => .error s!"unknown serve option: {option}"
+  loop args {}
+
 private def usage : String := "\
 usage: lean-fmt {check|format|diff|fix} [OPTIONS] [FILE...]\n\
+       lean-fmt serve [--root PATH] [--config PATH] [--select SELECTOR]\n\
+                      [--ignore SELECTOR] [--max-memory GIB]\n\
        lean-fmt rules [--json]\n\
        lean-fmt clean [--root PATH] [--json]\n\
        lean-fmt compiler {setup|status} [--root PATH] [--json]\n\
@@ -209,7 +228,7 @@ unsafe def runCli (arguments : List String) : IO UInt32 := do
   match args with
   | "--help" :: _ => IO.println usage; return 0
   | command :: "--help" :: _ =>
-    if #["check", "format", "diff", "fix", "rules", "clean", "compiler"].contains command then
+    if #["check", "format", "diff", "fix", "serve", "rules", "clean", "compiler"].contains command then
       IO.println usage
       return 0
     IO.eprintln usage
@@ -218,6 +237,15 @@ unsafe def runCli (arguments : List String) : IO UInt32 := do
   | "format" :: rest => runFileCommand .format rest
   | "diff" :: rest => runFileCommand .diff rest
   | "fix" :: rest => runFileCommand .fix rest
+  | "serve" :: rest =>
+    let options ← match parseServeArgs rest with
+      | .ok options => pure options
+      | .error message => IO.eprintln message; return 2
+    try
+      serve options
+    catch error =>
+      IO.eprintln s!"lean-fmt: {error}"
+      return 2
   | "rules" :: rest =>
     let format ← match parseOutputArgs rest with
       | .ok format => pure format

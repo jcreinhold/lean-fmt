@@ -28,6 +28,7 @@ tests/compiler/run.sh
 tests/check/run.sh
 tests/modes/run.sh
 tests/scale/run.sh
+tests/service/run.sh
 ```
 
 Use the target project's exact Lean toolchain for frontend/plugin experiments. Keep experiments out
@@ -56,5 +57,8 @@ of production modules until their owning prompt selects and verifies the interfa
 - Fetch and consume `leanFmtArtifact` inside one private Lake-owning operation. `Lake.Artifact` is a
   public descriptor, not authority by type alone; recompute its content hash and match module and
   the full source snapshot. Filesystem presence or a raw path is not build validity.
+- `LeanFmt.Service` owns only private NDJSON framing, normalized path/version state, and capacity-one
+  FIFO sequencing. Unsaved bytes share `Application.ExactRun` with batch fallback, never disk-state
+  evidence or persistent cache entries, and every request receives a fresh bounded child.
 - Do not repeatedly run full mathlib during development. Prompt 10 uses the frozen sample and named
   stress cases; the 8,795-file run is reserved for a plausible late candidate.

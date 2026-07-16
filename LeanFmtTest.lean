@@ -6,8 +6,9 @@ import all LeanFmt.Cache
 import all LeanFmt.Config
 import all LeanFmt.Edit
 import all LeanFmt.Rules
+import all LeanFmt.Service
 
-open LeanFmt LeanFmt.Internal
+open LeanFmt LeanFmt.Internal LeanFmt.Internal.Service
 
 private def ensure (condition : Bool) (message : String) : IO Unit :=
   unless condition do
@@ -44,6 +45,28 @@ private def testRules : IO Unit := do
     "final-newline insertion range is not byte-exact"
   ensure ((runRules source false).map (·.code) == #["FMT002"])
     "traced trailing-whitespace configuration was ignored"
+
+private def testServiceProtocol : IO Unit := do
+  let health := Lean.Json.parse
+    "{\"id\":{\"client\":1},\"method\":\"health\"}" |>.toOption.bind fun json =>
+      decodeRequest json |>.toOption
+  match health with
+  | some (.health (.obj id)) =>
+    ensure (((id.get? "client").bind fun value => (Lean.Json.getNat? value).toOption) == some 1)
+      "service changed an object request id"
+  | _ => throw <| IO.userError "service rejected a valid health request"
+  let analyze := Lean.Json.parse
+    "{\"id\":2,\"method\":\"analyze\",\"path\":\"A.lean\",\"version\":3,\"source\":\"module\\n\"}"
+    |>.toOption.bind fun json => decodeRequest json |>.toOption
+  match analyze with
+  | some (.analyze (.num _) "A.lean" 3 "module\n") => pure ()
+  | _ => throw <| IO.userError "service rejected a valid analyze request"
+  ensure (versionAccepted none 0) "service rejected the first version"
+  ensure (versionAccepted (some 3) 4) "service rejected a newer version"
+  ensure (!(versionAccepted (some 3) 3)) "service accepted a duplicate version"
+  ensure (!(versionAccepted (some 3) 2)) "service accepted an older version"
+  ensure ((Lean.Json.parse "{\"id\":1,\"method\":\"unknown\"}" |>.toOption.bind fun json =>
+    decodeRequest json |>.toOption).isNone) "service accepted an unknown method"
 
 private def findingWithEdit (range : SourceRange) (replacement : String) : Finding := {
   code := "TEST"
@@ -295,6 +318,7 @@ public unsafe def main (args : List String) : IO UInt32 := do
   | [] =>
     testDigests
     testRules
+    testServiceProtocol
     testEdits
     testConfig
     testCacheIdentity

@@ -1,0 +1,2 @@
+tests/check/Clean.lean
+tests/check/Findings.lean

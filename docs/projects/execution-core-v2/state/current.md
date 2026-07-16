@@ -1,6 +1,6 @@
 ---
 kind: state
-first_unresolved: 11-serve
+first_unresolved: 12-final
 ---
 
 # Current state
@@ -22,7 +22,7 @@ as independent measured prerequisites.
 | 08-cache | ECV2-CACHE | verified | ECV2-CHECK |
 | 09-modes | ECV2-MODES | verified | ECV2-CACHE |
 | 10-scale | ECV2-SCALE | verified | ECV2-MODES |
-| 11-serve | ECV2-SERVE | planned | ECV2-SCALE |
+| 11-serve | ECV2-SERVE | verified | ECV2-SCALE |
 | 12-final | ECV2-FINAL | planned | ECV2-SERVE |
 
 ## Known evidence
@@ -82,11 +82,15 @@ as independent measured prerequisites.
   at 1,150,528 KiB. Both covered 8,795/8,795 sources with byte-identical sorted output, normal
   pressure, and no swap growth.
 
-These facts and the verified batch product surface constrain Prompt 10's optimization hypotheses;
-they do not authorize weaker semantics or a broader memory envelope. Prompt 11's original service
-task was under-scoped; its repaired contract now defines unsaved-source authority, the private wire
-schema, strictly increasing versions, capacity-one FIFO backpressure, fixed input bounds, exact-child
-failure recovery, and a focused differential/resource suite before implementation begins.
+- Prompt 11 is complete. `lean-fmt.service.v1` runs a private capacity-one NDJSON loop over the same
+  bracketed exact snapshot capability used by batch fallback. Unsaved bytes never consume disk-state
+  evidence or persistent cache entries. Strict per-path versions, stable recoverable errors, input
+  bounds, shutdown/EOF, and write absence pass the focused protocol matrix. One hundred sequential
+  exact requests completed in 44.388 seconds at 1,041,472 KiB aggregate peak RSS with normal pressure,
+  zero swap growth, and decreasing parent RSS.
+
+These facts constrain the final audit; they do not authorize weaker semantics, broader resource
+bounds, or performance wording beyond the recorded workload identities.
 
 ## Completed results
 
@@ -112,11 +116,13 @@ failure recovery, and a focused differential/resource suite before implementatio
 - [ECV2-SCALE](../results/10-scale.md) completes source-wide execution, direct registered-facet
   consumption, a source-aware aggregate cache index, and cold/warm full-mathlib acceptance under the
   resource envelope.
+- [ECV2-SERVE](../results/11-serve.md) adds the private capacity-one editor protocol over the shared
+  exact snapshot primitive, with version, recovery, write-safety, and bounded-resource evidence.
 
 ## Verification convention
 
 A claim becomes verified only after its prompt checks pass and meaningful command output is recorded.
 State is coordination metadata, not evidence. Missing, stale, or unreproduced checks reopen a claim.
 Optimization uses the frozen sample and targeted stress files; complete mathlib runs are reserved for
-plausible release candidates and are reused by digest during the final audit. Prompt 11 now owns the
-editor service over the accepted batch semantic primitive.
+plausible release candidates and are reused by digest during the final audit. Prompt 12 now owns a
+fresh requirement-by-requirement audit; unchanged full-mathlib evidence is reused by recorded digest.

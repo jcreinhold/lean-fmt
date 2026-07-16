@@ -1,6 +1,6 @@
 ---
 claim_id: ECV2-SERVE
-status: planned
+status: verified
 depends_on: [ECV2-SCALE]
 ---
 

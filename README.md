@@ -11,6 +11,7 @@ lake build
 .lake/build/bin/lean-fmt format --root . --json LeanFmt/Basic.lean
 .lake/build/bin/lean-fmt diff --root . LeanFmt/Basic.lean
 .lake/build/bin/lean-fmt fix --root . LeanFmt/Basic.lean
+.lake/build/bin/lean-fmt serve --root .
 .lake/build/bin/lean-fmt rules --json
 .lake/build/bin/lean-fmt compiler setup
 .lake/build/bin/lean-fmt compiler status --root . --json
@@ -97,6 +98,27 @@ rewrite arbitrary executable `lakefile.lean`. `compiler status` performs a read-
 audit of exact toolchain compatibility and embedded module-artifact coverage; it neither builds
 modules nor publishes artifacts. `clean` removes only the root `.lean-fmt-cache` and is idempotent.
 
+## Editor service
+
+`serve` reads `lean-fmt.service.v1` NDJSON from stdin and writes one compact response per line. It
+supports `health`, exact unsaved-source `analyze`, and `shutdown` requests with arbitrary JSON IDs.
+Analyze requests name an existing selected project source and carry a strictly increasing per-path
+version plus replacement source bytes. Unsaved bytes always run through a fresh exact-context child;
+ordinary outputs, compiler artifacts, and the persistent result cache describe disk state and are
+never reused for editor snapshots.
+
+The service processes exactly one request at a time and flushes its response before reading the next,
+giving FIFO behavior and bounded stream backpressure without a concurrent queue. Malformed requests,
+stale versions, invalid paths, child failures, and resource exhaustion are structured responses and
+do not terminate the service. Request lines are limited to 32 MiB and sources to 16 MiB. The service
+never writes source or `.lean-fmt-cache` state.
+
+```json
+{"id":1,"method":"health"}
+{"id":2,"method":"analyze","path":"LeanFmt/Basic.lean","version":1,"source":"module\n"}
+{"id":3,"method":"shutdown"}
+```
+
 ## Architecture and verification
 
 The application exposes no library API. `LeanFmt.Project` hides complete source selection, immutable
@@ -114,4 +136,5 @@ tests/compiler/run.sh
 tests/check/run.sh
 tests/modes/run.sh
 tests/scale/run.sh
+tests/service/run.sh
 ```

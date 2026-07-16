@@ -33,6 +33,7 @@ lean_lib LeanFmtApplication where
     Glob.one `LeanFmt.Edit,
     Glob.one `LeanFmt.Project,
     Glob.one `LeanFmt.Semantic,
+    Glob.one `LeanFmt.Service,
     Glob.one `LeanFmt.Application,
     Glob.one `LeanFmt.Cli
   ]
