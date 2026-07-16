@@ -33,6 +33,26 @@ Printing inside the frontend would buy free arg order for a median 1.96 s fronte
 
 ## Known evidence
 
+- **Imports are not commands, and the projection structurally cannot carry them.** The corpus holds
+  **403 commands in 7 distinct kinds** and not one is an `import`: the module header is not in the
+  token stream at all. `headerStop` is 54 bytes on `LeanFmt/Rules.lean` and covers `module` plus both
+  `import` lines, recorded as bytes with no node and no token. This is one layer down and deliberate —
+  `LosslessSource.ofSource` (`LosslessSource.lean:358`): "Neither producer may pass the module
+  header — a module linter never receives it". The plugin producer is a module linter and Lean never
+  hands it the header, so no schema carrying header syntax could be produced by both mandated
+  producers. **This is not a blocker and not a missing lower-layer piece**:
+  `Lean.Parser.parseHeader` (`Lean/Parser/Module.lean:75`) takes an `InputContext` and **no
+  `Environment`**, so the printer can parse `[0, headerStop)` with Lean's own parser on bytes
+  `normalizedDigest` already binds. The open cost is that `format` acquires an `IO` boundary, or a
+  pure header parse must be found.
+- **The ownership table is measured, and it is shorter than the prompt's list.**
+  `declaration` 336, `namespace` 25, `end` 25, `moduleDoc` 8, `open` 7, `registerOption` 1,
+  `initialize` 1 (`evidence/01-projection-shape.txt`). Structures, inductives, attributes, and binders
+  are **not** commands — the grammar nests them inside `declaration`, under `declModifiers` and the
+  `def`/`theorem`/`structure`/`inductive` choice — so they are reached by dispatching within it. A
+  declaration's *value* is a term, which `RLF-EXPRESSIONS` owns; `RLF-COMMANDS` lays out the shell and
+  leaves the value conservative, which the skeleton supports directly because one command's `Doc` can
+  mix canonical structure with `verbatim` subtrees.
 - **The printer skeleton is lossless on real parser output, and the test proves it by mutation.**
   `LeanFmt/Printer.lean` renders header + command extents + `#exit` tail; with every kind on the
   conservative path it is the identity on accepted source. `tests/printer/run.sh`:

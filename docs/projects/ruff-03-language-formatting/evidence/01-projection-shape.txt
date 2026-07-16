@@ -1,17 +1,26 @@
-modules_analyzed=20 skipped=0 nodes=34844
+modules_analyzed=21 skipped=0 nodes=35884
 pre_order_contiguity_violations=0
 nonempty_node_children_out_of_source_order=0
-empty_nodes=12797 (36.7% of all nodes)
-empty_nodes_with_ambiguous_placement=5345 (15.3% of all nodes)
+empty_nodes=13161 (36.7% of all nodes)
+empty_nodes_with_ambiguous_placement=5530 (15.4% of all nodes)
 
 # most common empty (absent-syntax) kinds
-11462	null
-423	Lean.Parser.Term.letConfig
-318	Lean.Parser.Command.declModifiers
-261	Lean.Parser.Termination.suffix
-135	Lean.Parser.Term.optEllipsis
-98	Lean.Parser.Command.optDeclSig
-62	group
-25	Lean.Parser.Command.optDeriving
+11785	null
+439	Lean.Parser.Term.letConfig
+319	Lean.Parser.Command.declModifiers
+269	Lean.Parser.Termination.suffix
+137	Lean.Parser.Term.optEllipsis
+99	Lean.Parser.Command.optDeclSig
+74	group
+26	Lean.Parser.Command.optDeriving
 11	Lean.Parser.Term.attrKind
 2	Lean.Parser.Term.structInstFields
+
+# command kinds in the corpus (403 commands, 7 distinct kinds)
+336	Lean.Parser.Command.declaration
+25	Lean.Parser.Command.namespace
+25	Lean.Parser.Command.end
+8	Lean.Parser.Command.moduleDoc
+7	Lean.Parser.Command.open
+1	Lean.Option.registerOption
+1	Lean.Parser.Command.initialize

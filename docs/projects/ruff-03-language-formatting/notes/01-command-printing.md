@@ -150,16 +150,71 @@ grammar belongs.
   fallback is not a concession, it is the only path whose correctness does not rest on a grammar
   claim.
 
-## 7. What this note does not decide
+## 7. The ownership table
+
+The roadmap requires "every supported parser category has an explicit ownership table and formatter
+fallback". The table is built from what the corpus actually contains, not from what I remember Lean
+having: `experiments/run-projection-shape.sh` censuses command kinds, and all 20 modules of this
+repository yield **403 commands in 7 distinct kinds** (`evidence/01-projection-shape.txt`).
+
+| kind | count | owner |
+| --- | --- | --- |
+| `Lean.Parser.Command.declaration` | 336 | `RLF-COMMANDS` — the shell only; see below |
+| `Lean.Parser.Command.namespace` | 25 | `RLF-COMMANDS` |
+| `Lean.Parser.Command.end` | 25 | `RLF-COMMANDS` |
+| `Lean.Parser.Command.moduleDoc` | 8 | `RLF-COMMANDS` |
+| `Lean.Parser.Command.open` | 7 | `RLF-COMMANDS` |
+| `Lean.Option.registerOption` | 1 | conservative fallback |
+| `Lean.Parser.Command.initialize` | 1 | conservative fallback |
+| everything else | 0 here | conservative fallback |
+
+Three facts the census settles, each of which changes the work:
+
+**Imports are not commands, and the projection cannot carry them.** No `import` appears above because
+the module header is not in the token stream at all: `headerStop` is 54 bytes on `LeanFmt/Rules.lean`,
+covering `module` and both `import` lines, and the projection records the header as *bytes* with no
+node and no token. This is deliberate and one layer down —
+`LosslessSource.ofSource` (`LosslessSource.lean:358`) states it outright: "**Neither producer may pass
+the module header — a module linter never receives it** — so the header is recorded as the prefix
+before the first leaf's leading trivia, which is a position both producers can actually see." The
+plugin producer is a module linter and Lean never hands it the header, so a schema carrying header
+syntax could not be produced by both mandated producers, which is the same argument `RLS-SPEC` used to
+keep raw bytes out of identity.
+
+This does **not** block the prompt's "canonical layouts for module headers, imports", and it is not a
+missing lower-layer piece. `Lean.Parser.parseHeader` (`Lean/Parser/Module.lean:75`) has signature
+`(inputCtx : InputContext) : IO (TSyntax ``Module.header × ModuleParserState × MessageLog)` — it takes
+**no `Environment`**. The header is self-contained by construction, being the thing that decides what
+is imported. So the printer can parse `[0, headerStop)` with Lean's own parser, on bytes
+`normalizedDigest` already binds, and that is the real parser rather than the textual guessing the
+roadmap forbids. The cost is that `format` acquires an `IO` boundary, or a pure header parse must be
+found; that is a decision `RLF-COMMANDS` owns and this note does not spend.
+
+**Structures, inductives, attributes, and binders are not commands.** The prompt lists them beside
+declarations, but the grammar nests them: `declaration` wraps `declModifiers` (docstring, attributes,
+visibility, `noncomputable`, `unsafe`, `partial`) and then one of `def`/`theorem`/`structure`/
+`inductive`/`abbrev`/`instance`. They are reached by dispatching *within* `declaration`, and the
+ownership table has one row for all of them.
+
+**A declaration's value is a term, and terms are not this prompt's.** `RLF-EXPRESSIONS` owns them.
+`RLF-COMMANDS` therefore lays out the declaration *shell* — modifiers, signature, the `:=` — and leaves
+the value on the conservative path until the expression prompt claims it. That is not a gap to
+apologize for; it is the decomposition the work order already chose, and the skeleton supports it
+directly because a command's Doc can mix canonical structure with `verbatim` subtrees.
+
+## 8. What this note does not decide
 
 - The canonical layout of any construct. `RLF-COMMANDS` decides commands; terms, tactics, and
   extensions belong to later prompts and are named here only where they constrain the interface.
 - Import sorting. The prompt is explicit that ordered import semantics are preserved and sorting is a
-  separate opt-in fix.
+  separate opt-in fix. Note that §7 makes this stronger than a policy: the printer does not have the
+  imports as syntax unless it parses the header itself, so reordering them is not something it could
+  do by accident.
 - The margin. It is configuration and enters cache identity (`RLC-SPEC` §5); this note does not pick a
-  number.
+  number. `Printer.format` therefore requires `width` rather than defaulting it.
+- Whether `format` acquires an `IO` boundary to parse the header (§7).
 
-## 8. Risks
+## 9. Risks
 
 - **A hardcoded grammar shape can be wrong or go stale.** The mitigation is citation plus golden
   fixtures plus the idempotence and round-trip checks the roadmap requires, not care.

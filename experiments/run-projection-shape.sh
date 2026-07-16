@@ -76,6 +76,7 @@ argorder_violations = 0
 empty_nodes = 0
 empty_ambiguous = 0
 kind_census = defaultdict(int)
+command_census = defaultdict(int)
 
 for name in sorted(os.listdir(envelopes)):
     envelope = json.load(open(os.path.join(envelopes, name)))
@@ -97,6 +98,11 @@ for name in sorted(os.listdir(envelopes)):
         p = parent_of(n)
         if p is not None:
             children[p].append(i)
+        else:
+            # A command: `collect` is called per command, so a parentless node is one. This is the
+            # inventory `RLF-COMMANDS`'s ownership table is built from — which kinds actually occur,
+            # rather than which ones I remember Lean having.
+            command_census[kinds[n[0]]] += 1
 
     token_children = defaultdict(list)
     for t in tokens:
@@ -170,6 +176,11 @@ print(f"empty_nodes_with_ambiguous_placement={empty_ambiguous} ({apct:.1f}% of a
 print()
 print("# most common empty (absent-syntax) kinds")
 for kind, count in sorted(kind_census.items(), key=lambda kv: -kv[1])[:10]:
+    print(f"{count}\t{kind}")
+print()
+print(f"# command kinds in the corpus ({sum(command_census.values())} commands, "
+      f"{len(command_census)} distinct kinds)")
+for kind, count in sorted(command_census.items(), key=lambda kv: -kv[1]):
     print(f"{count}\t{kind}")
 
 # The two properties the tree view depends on are hard failures.
