@@ -67,6 +67,11 @@ as independent measured prerequisites.
   application transaction; CLI presentation is a separate private module. Strict configuration,
   deterministic previews, exact validated atomic fixes, rules, cache clean, and read-only compiler
   setup/status pass focused unit and integration gates without a full mathlib run.
+- Prompt 10's original timing-only task was under-scoped. Production currently selects root Lake
+  modules while the frozen workload contains every non-`.lake` source, and its compiler-artifact DTO
+  makes source-only FMT001/FMT002 appear to require syntax. The repaired prompt first adds complete
+  source targets and honest rule input requirements, then measures current `.olean` validation,
+  direct official facets, exact fallback, and cache paths in a bounded hypothesis ladder.
 
 These facts and the verified batch product surface constrain Prompt 10's optimization hypotheses;
 they do not authorize weaker semantics or a broader memory envelope.

@@ -64,18 +64,27 @@ architecture.
 
 ## Design direction
 
-Two measured semantic sources feed one private application operation:
+Three measured evidence sources feed one private application operation:
 
-1. an ordinary-built exact path, optimized toward shared parser/module data without exposing
-   unrelated grammar; and
-2. compact module-owned results produced while the exact frontend already owns the environment.
-   Existing `.ilean` data, persistent `.olean` module data, and a Lake module facet are evaluated in
-   that order; custom sidecar identity is not rebuilt outside the module/build system.
+1. current ordinary module outputs, used as successful exact-compilation evidence for rules whose
+   declared input is only immutable source bytes;
+2. compact module-owned results produced while the exact frontend already owns the environment; and
+3. a fresh exact-context frontend fallback for stale, missing, standalone, broken, or otherwise
+   unsupported evidence.
 
-Both produce the same semantic result and cache identity. The CLI owns user intent and rendering;
+An ordinary `.olean` is validation evidence, not a serialized syntax projection. Syntax-dependent
+rules require the formatter-integrated artifact or the fresh frontend. Existing `.ilean` data,
+module-owned persistent `.olean` data, and the package-owned Lake facet remain compiler evidence;
+custom sidecar identity is not rebuilt outside the module/build system.
+
+All produce the same semantic result and cache identity. The CLI owns user intent and rendering;
 private deep modules own workspace discovery, source snapshots, artifact/cache validation, exact
 fallback, resource enforcement, deterministic collection, conflict checks, validation, and writes.
 Callers never select worker count, pinning, import reuse, or artifact strategy.
+
+Default project selection covers every root-relative `.lean` source outside `.lake`, not only Lake
+library modules. One private source-target capability hides whether Lake supplies a buildable module
+or standalone-file setup and guarantees exactly one deterministic result for each selected source.
 
 ## Work order
 
