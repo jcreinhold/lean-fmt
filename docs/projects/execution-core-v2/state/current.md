@@ -92,6 +92,13 @@ as independent measured prerequisites.
 These facts constrain the final audit; they do not authorize weaker semantics, broader resource
 bounds, or performance wording beyond the recorded workload identities.
 
+- Prompt 12's original audit task was under-scoped. Its repaired contract now requires a direct
+  roadmap-clause evidence matrix, active declaration/caller and tracked-source audits, every current
+  suite, a clean `git archive` package build/smoke, module/dependency/deep-boundary guards, and exact
+  digest rules. Prompt 11 changed active batch code, so final acceptance owes one monitored cold/warm
+  mathlib pair for the final executable; no formatter-integrated full run is warranted while all
+  enabled rules remain source-input rules.
+
 ## Completed results
 
 - [ECV2-WORKLOADS](../results/03-workloads.md) freezes exact semantics, the independent project

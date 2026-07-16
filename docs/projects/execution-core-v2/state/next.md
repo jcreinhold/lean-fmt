@@ -21,7 +21,9 @@ Read this file, the target prompt, target files, listed source/template line ran
 
 ## Reuse
 
-- see the target prompt's Read section
+- `roadmap.md`, `state/current.md`, every result note, and the evidence records for Prompts 10 and 11.
+- `AGENTS.md`, `README.md`, `lakefile.lean`, every active production/entry/test module, and every repository gate script. Read current source rather than carrying forward architectural conclusions.
+- The recorded full-mathlib profile metadata and current executable digest before deciding whether a complete path must run again.
 
 ## Lean Work
 
