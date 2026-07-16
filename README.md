@@ -85,10 +85,10 @@ instead of being rebuilt during a check. Every path produces the same canonical 
 projection. The CLI resolves the target root's Lean and Lake installation itself, so normal use does
 not wrap the binary in a second `lake env` process.
 
-On the recorded Apple-silicon machine, the release candidate checked an already ordinarily built
-mathlib revision `783ccda4` with 8,795 selected sources and a cold formatter cache in 109.649 seconds.
-Peak aggregate RSS was 1,315,248 KiB, memory pressure remained normal, and swap did not grow. The
-subsequent all-hit check took 16.290 seconds with module evidence, artifacts, and the analyzer all
+On the recorded Apple-silicon machine, the final release candidate checked an already ordinarily
+built mathlib revision `783ccda4` with 8,795 selected sources and a cold formatter cache in 136.549
+seconds. Peak aggregate RSS was 1,316,240 KiB, memory pressure remained normal, and swap did not grow.
+The subsequent all-hit check took 23.012 seconds with module evidence, artifacts, and the analyzer all
 forcibly disabled; it returned byte-identical output without starting a frontend or extractor.
 These measurements exclude the prerequisite mathlib build and apply to the recorded binary and
 workload digests; full details are in the execution-core evidence.

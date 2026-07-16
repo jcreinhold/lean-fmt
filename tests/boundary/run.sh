@@ -3,6 +3,7 @@ set -euo pipefail
 
 repo_root=$(cd "$(dirname "$0")/../.." && pwd)
 cd "$repo_root"
+git rev-parse --is-inside-work-tree >/dev/null
 
 # Native source boundary: lakefiles are executable configuration; every compiled Lean source uses
 # private-by-default modules. No Rust workspace, cache, build output, or generated binary is tracked.

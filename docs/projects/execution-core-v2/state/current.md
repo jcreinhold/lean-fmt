@@ -1,6 +1,6 @@
 ---
 kind: state
-first_unresolved: 12-final
+first_unresolved: none
 ---
 
 # Current state
@@ -23,7 +23,7 @@ as independent measured prerequisites.
 | 09-modes | ECV2-MODES | verified | ECV2-CACHE |
 | 10-scale | ECV2-SCALE | verified | ECV2-MODES |
 | 11-serve | ECV2-SERVE | verified | ECV2-SCALE |
-| 12-final | ECV2-FINAL | planned | ECV2-SERVE |
+| 12-final | ECV2-FINAL | verified | ECV2-SERVE |
 
 ## Known evidence
 
@@ -98,6 +98,12 @@ bounds, or performance wording beyond the recorded workload identities.
   digest rules. Prompt 11 changed active batch code, so final acceptance owes one monitored cold/warm
   mathlib pair for the final executable; no formatter-integrated full run is warranted while all
   enabled rules remain source-input rules.
+- Prompt 12 is complete. The final executable digest `27f7554e…` passed a refreshed 8,795-source
+  ordinary-built/cache-cold run in 136.549 seconds and a forced worker-free warm run in 23.012
+  seconds; reports were byte-identical and both stayed near 1.3 GiB with normal pressure and no swap
+  growth. All behavioral suites, the persistent native boundary guard, manual deep-module audit, and
+  a clean tracked-source archive build/runtime smoke pass. The requirement matrix contains no missing
+  or uncertain row.
 
 ## Completed results
 
@@ -125,11 +131,14 @@ bounds, or performance wording beyond the recorded workload identities.
   resource envelope.
 - [ECV2-SERVE](../results/11-serve.md) adds the private capacity-one editor protocol over the shared
   exact snapshot primitive, with version, recovery, write-safety, and bounded-resource evidence.
+- [ECV2-FINAL](../results/12-final-audit.md) maps every roadmap and final-audit requirement to live
+  implementation and direct evidence, including refreshed final-candidate performance and clean
+  tracked-source packaging.
 
 ## Verification convention
 
 A claim becomes verified only after its prompt checks pass and meaningful command output is recorded.
 State is coordination metadata, not evidence. Missing, stale, or unreproduced checks reopen a claim.
 Optimization uses the frozen sample and targeted stress files; complete mathlib runs are reserved for
-plausible release candidates and are reused by digest during the final audit. Prompt 12 now owns a
-fresh requirement-by-requirement audit; unchanged full-mathlib evidence is reused by recorded digest.
+plausible release candidates and are reused by digest. This stack is complete; reopening any claim
+requires restoring its prompt as `first_unresolved` and regenerating `state/next.md`.
