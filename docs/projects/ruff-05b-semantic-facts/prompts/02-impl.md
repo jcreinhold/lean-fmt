@@ -1,10 +1,26 @@
 ---
 claim_id: RSF-IMPL
-status: verified
+status: planned
 depends_on: [RSF-SPEC]
 ---
 
 # Implement the semantic tier, schema bump, and notation-spacing capture
+
+> **REOPENED by prompt-repair (2026-07-17).** The first pass of RSF-IMPL captured spacing by reading
+> the notation decl's **kernel value** (`env.find? kind >>= (·.value?)`, an `Expr`). That path is
+> module-system-incompatible: in a `module`-mode file the imported constant's *value* is stripped
+> (even `import all` does not restore it), so the capture returns **nothing** for imported notations.
+> The frozen mathlib sample is ~99% module-mode (60/62 sample files; 8194/8264 of `Mathlib/`), so the
+> fact was empty for essentially the entire target corpus — the RSF-FINAL audit caught this
+> (`results/03-final.md`, `evidence/02-module-mode-blocker.txt`). RSF-SPEC never chose `value?`; it
+> named the **registered formatter** as authoritative and, in `notes/01-semantic-facts.md` §5, "a
+> data-only atom store, if one exists" as the preferred mechanism to find first. That store exists and
+> is module-safe: **`evalConst Lean.ParserDescr kind`** reads the descriptor through the compiled
+> **meta** IR (retained in module mode — notation lowers to a `meta def : ParserDescr`,
+> `~/Code/lean4/src/Lean/Elab/Syntax.lean:445-449`), the same route the parser and pretty printer use
+> (`Lean/PrettyPrinter/Basic.lean:20-30`, `Lean/MonadEnv.lean:181-185`). This reopening re-implements
+> the capture on that path. Everything else RSF-IMPL delivered (the tier, schema `v4`, demand-gating,
+> the artifact codec, the test scaffold) is correct and stands; only the capture mechanism changes.
 
 ## Task
 
@@ -40,11 +56,18 @@ the one `RSF-SPEC` chose.
   miss. The semantic table follows Design B — one entry per distinct present `SyntaxNodeKind`, atom
   gaps ordered by position; keyed by kind, not by bare token.
 - Capture declared spacing in `analyzeExact` (`LeanFmt/Analysis.lean`) where the final command state /
-  `Environment` is live (line 77), reading the notation's **registered formatter** (the parser's
-  inverse) rather than reimplementing `pushToken` or reading the token table. Extract it into
-  serializable data *there*; no live `Environment` crosses into `ModuleArtifact` construction or
-  downstream. An atom whose declaration the lookup cannot resolve degrades to conservative source
+  `Environment` is live, reading each present kind's **`ParserDescr` via `evalConst Lean.ParserDescr
+  kind`** — the descriptor the registered formatter itself interprets (the parser's inverse), obtained
+  through the compiled meta IR so it is **module-safe**. Walk the `ParserDescr` for its untrimmed
+  `.symbol` / `.nonReservedSymbol` / `.unicodeSymbol` atoms in source order. Do **not** read
+  `ConstantInfo.value?` (the kernel `Expr`) — it is stripped for imported notations under the module
+  system and yields empty capture on ~99% of the corpus. Extract into serializable data *there*; no
+  live `Environment` crosses into `ModuleArtifact` construction or downstream. A kind whose descriptor
+  `evalConst` cannot resolve (not a `ParserDescr`, or eval fails) degrades to conservative source
   bytes, never invented spacing.
+  - `evalConst` runs compiled code, so the capture seam is `unsafe`/effectful (it already is —
+    `analyzeExact` is `unsafe` with initializers enabled); thread it through the monad rather than
+    forcing a pure lookup. Confirm module-safety on a `module`-mode fixture, not only a non-module one.
 - **The always-on plugin keeps emitting `semantic = none`.** Do not add capture to
   `LeanFmt/CompilerPlugin.lean`, and **do not grow its import closure or Lake glob**
   (`tests/boundary/run.sh` pins both): the plugin is linked into every target build. If capture is
@@ -54,7 +77,9 @@ the one `RSF-SPEC` chose.
   served by the cheap cached plugin artifact). Record the gating seam. A `format` run rejects a
   `semantic = none` cache and re-analyzes.
 - Add persistent regression tests: the fact round-trips through the `v4` codec, a `v3` artifact is a
-  clean miss (not a crash), and the captured spacing for the fixtures equals Lean's declared strings.
+  clean miss (not a crash), and the captured spacing for the fixtures equals Lean's declared strings —
+  **including at least one `module`-mode fixture with an imported notation**, the case the first pass
+  missed. The capture on a module-mode file must be non-empty for imported operators.
 - Write `results/02-impl.md`; update `state/current.md` after reading checks; regenerate `state/next.md`.
 
 ## Plan
@@ -62,10 +87,11 @@ the one `RSF-SPEC` chose.
 1. Add the tier case and fold it through selection/planning; keep the existing tests green.
 2. Bump the schema to `v4`; write the additive optional-field codec and its total decoder; version the
    digest.
-3. Capture the fact in `analyzeExact` from the live environment via the registered formatter;
-   serialize; confirm the plugin is untouched and its closure/glob did not grow.
+3. Capture the fact in `analyzeExact` via `evalConst Lean.ParserDescr kind` on each present kind,
+   walking the descriptor for its untrimmed atoms; serialize; confirm the plugin is untouched and its
+   closure/glob did not grow. Prove it on a module-mode fixture, not only a non-module one.
 4. Wire demand-gating; prove the fast path survives when nothing semantic is needed.
-5. Test round-trip, version miss, and spacing correctness on the fixtures.
+5. Test round-trip, version miss, and spacing correctness on the fixtures, module-mode included.
 
 ## Stop
 
@@ -81,6 +107,9 @@ the one `RSF-SPEC` chose.
   including the artifact/module suites and the engine tier tests.
 - Run `tests/boundary/run.sh` and inspect the plugin boundary manually; confirm no import-closure or
   glob growth.
+- **Run the capture on a `module`-mode file** (a small local fixture or one frozen-sample module) and
+  confirm `semantic.notations` is non-empty for its imported operators — the module-safety check whose
+  absence let the `value?` defect ship. Read the captured atoms, do not assume them.
 - Use focused fixtures and the frozen sample for scale; complete mathlib is forbidden.
 - From the KanProofs tool environment, run the generic stack structural checker and
   `write_next.py --check` for `docs/projects/ruff-05b-semantic-facts`.

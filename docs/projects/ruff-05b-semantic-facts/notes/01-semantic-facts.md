@@ -186,15 +186,21 @@ than a silent under-serve.
 
 ## 5. Remaining uncertainty (carried into RSF-IMPL)
 
-- **Exact capture API.** The fact is closure-sourced (F1), so RSF-IMPL captures it via the registered
-  formatter, e.g. running the kind's `combinator_formatter` (looked up through
-  `Lean.PrettyPrinter.formatterAttribute` / `Lean.PrettyPrinter.format`) on trivia-stripped node
-  instances and reading the `sym`s it emits at `pushToken`. The precise attribute/entry-point names
-  must be pinned first-hand in RSF-IMPL. **Preferred alternative to investigate first:** a data-only
-  atom store (does notation elaboration persist the untrimmed atoms anywhere queryable, avoiding a
-  formatter run?). If one exists it is cheaper and less volatile; if not, the formatter probe is the
-  authoritative fallback and is comment-safe because the probe runs on trivia-stripped nodes while our
-  `Doc` engine owns real trivia.
+- **Exact capture API — RESOLVED (2026-07-17, prompt-repair).** The "data-only atom store" this note
+  named as the preferred mechanism to find first **exists**: `evalConst Lean.ParserDescr kind` returns
+  the notation's `ParserDescr`, whose `.symbol` / `.nonReservedSymbol` / `.unicodeSymbol` fields carry
+  the untrimmed atom string. It is the descriptor the registered formatter *itself* interprets
+  (`~/Code/lean4/src/Lean/PrettyPrinter/Basic.lean:20-30` dispatches by kind, falls to
+  `evalConst ParserDescr k` then `interpretParserDescr'`; `Lean/PrettyPrinter/Formatter.lean:243`), so
+  reading it directly is the formatter's authoritative data without a formatter run. **Crucially it is
+  module-safe**: notation lowers to a `meta def : ParserDescr`
+  (`~/Code/lean4/src/Lean/Elab/Syntax.lean:445-449`), and `evalConst` runs the compiled **meta IR**
+  (`Lean/Environment.lean:2537-2540`, `evalConstCore`/`lean_eval_const`, meta-gated), which the module
+  system **retains** — unlike `ConstantInfo.value?` (the kernel `Expr`), which module mode strips for
+  imported constants (even under `import all`). The first RSF-IMPL pass wrongly read `value?` and so
+  captured nothing on module-mode files (~99% of mathlib); this resolution and the reopened prompt fix
+  it. Evidence: `evidence/02-module-mode-blocker.txt`, the compiler sweep summarized in
+  `results/03-final.md`.
 - **Probe cost.** Running a per-kind formatter probe inside `analyzeExact` adds work proportional to
   the number of *distinct* kinds, not tokens; expected small but unmeasured until RSF-FINAL. If it
   proves heavy, the demand-gating already confines it to formatting runs.

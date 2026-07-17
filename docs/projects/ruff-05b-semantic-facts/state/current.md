@@ -1,6 +1,6 @@
 ---
 kind: state
-first_unresolved: 03-final
+first_unresolved: 02-impl
 ---
 
 # Current state
@@ -21,8 +21,22 @@ elaboration facts.
 | Prompt | Claim | Status | Depends on |
 | --- | --- | --- | --- |
 | 01-spec | RSF-SPEC | verified | — |
-| 02-impl | RSF-IMPL | verified | RSF-SPEC |
+| 02-impl | RSF-IMPL | planned (reopened) | RSF-SPEC |
 | 03-final | RSF-FINAL | planned | RSF-IMPL |
+
+## Repair (2026-07-17, prompt-repair) — capture mechanism was module-broken
+
+The RSF-FINAL audit found RSF-IMPL's notation-spacing capture empty on `module`-mode files (~99% of
+mathlib: 60/62 sample, 8194/8264 of `Mathlib/`). Cause: it read the notation decl's **kernel value**
+(`env.find? kind >>= (·.value?)`, an `Expr`), which the module system strips for imported constants
+(even under `import all`). RSF-SPEC never chose this; it named the registered formatter as authoritative
+and (`notes/01-semantic-facts.md` §5) "a data-only atom store, if one exists" as preferred. That store
+exists and is module-safe — **`evalConst Lean.ParserDescr kind`** (compiled meta IR, retained in module
+mode; the route the parser and pretty printer already use) — proven empirically to recover `«term_+_» →
+" + "` etc. with `value? = none`. RSF-IMPL is reopened to swap the mechanism; RSF-SPEC stays verified;
+the tier/schema/demand-gating/codec/test-scaffold stand. Details: `results/03-final.md` (Resolution),
+`evidence/02-module-mode-blocker.txt`. **Next: re-implement `captureNotationSpacing` on `evalConst`
+with a module-mode test, then re-run the RSF-FINAL audit (differential + cost) on the fixed capture.**
 
 ## RSF-SPEC — what it settled (`notes/01-semantic-facts.md`, `results/01-spec.md`)
 
@@ -58,10 +72,12 @@ elaboration facts.
   `semantic : Option SemanticProjection := none`; `SemanticProjection`/`NotationSpacing` follow Design
   B (one entry per distinct `SyntaxNodeKind`, atoms by position, keyed by kind). `v3` is a clean miss;
   a fieldless payload decodes total-ly to `none` then misses on the schema guard.
-- **Capture in `analyzeExact`** (`Analysis.lean`): `collectDeclaredAtoms` reads the untrimmed atom
-  strings of `ParserDescr.symbol`/`.nonReservedSymbol` from each present kind's decl value in the live
-  `commandState.env` — pure data, no formatter run, no `Environment` escaping. Scoped to operator
-  atoms; `sepBy` separators and non-notation kinds degrade to source bytes.
+- **Capture in `analyzeExact`** (`Analysis.lean`): reads each present kind's untrimmed atom strings
+  (`ParserDescr.symbol`/`.nonReservedSymbol`/`.unicodeSymbol`) as pure data — no formatter run, no
+  `Environment` escaping; `sepBy` separators and non-notation kinds degrade to source bytes.
+  **⚠ Mechanism reopened (see Repair above):** the first pass read the kernel decl *value* (`value?`),
+  which is module-stripped → empty on module-mode files. The re-implementation reads the descriptor via
+  `evalConst Lean.ParserDescr kind` (module-safe). The scope/degradation behavior is unchanged.
 - **Demand-gating** (`Config.lean` `RulePlan.demandedTier`, `Application.lean`): a canonical-rendering
   run demands `.semantic`; the plugin artifact (always `none`) is then not fetched, so `format` re-runs
   `analyzeExact` with `captureSemantic := true` — the recorded cost, and the rejection of the fact-free

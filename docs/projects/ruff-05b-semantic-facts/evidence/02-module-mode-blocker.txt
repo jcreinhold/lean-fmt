@@ -1,0 +1,22 @@
+# RSF-FINAL evidence — module-system value-hiding blocks the notation-spacing capture
+
+## Corpus is module-mode
+sample (experiments/workloads/mathlib-v4.32.0-sample.txt): 60/62 files are module-mode
+all mathlib (v4.32.0): 8194/8264 (.lean under Mathlib/) begin with the `module` keyword
+
+## Production capture is empty for a module-mode file (Mathlib/Algebra/Algebra/Rat.lean)
+notation kinds PRESENT in its parse: «term_→+*_», «term_=_», «termℚ≥0», «term_<|_», Lean.Elab.Term.«termType*»
+__analyze-exact ... 1 semantic projection: {"notations": []}   <- all dropped
+
+## Why: value? is stripped under the module system, and import all does not restore it
+module + import Lean          : env.find? «term_+_» ok, value HIDDEN
+module + import all Lean      : env.find? «term_+_» ok, value HIDDEN
+module + import all Init      : value HIDDEN
+module + import all Init.Prelude (declaring module): value HIDDEN
+non-module (import Lean)      : value VISIBLE  -> " + "  (why non-module Archive/Arithcc.lean captured 55)
+readModuleData Init/Prelude.olean: «term_+_» NOT among its constants at all
+
+## The spacing information still exists in module-mode via the pretty printer
+LeanFmtTest.lean is itself module-mode; its run_cmd differential ppTerm(1 + 2 * 3) = "1 + 2 * 3"
+and ppTerm(-1) = "-1" pass. So the formatter/pushToken path yields the spacing in module-mode;
+only the ParserDescr-value data path RSF-IMPL chose does not.

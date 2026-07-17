@@ -1,8 +1,18 @@
 ---
 kind: result
 claim_id: RSF-IMPL
-status: verified
+status: superseded
 ---
+
+> **SUPERSEDED / REOPENED (2026-07-17, prompt-repair).** This note recorded RSF-IMPL as verified, but
+> the RSF-FINAL audit found the capture mechanism it describes — reading the notation decl's kernel
+> value (`env.find? kind >>= (·.value?)`) — is **module-system-incompatible**: in `module`-mode files
+> (~99% of mathlib) the imported constant's value is stripped, so capture returned an **empty** fact.
+> The verification below was sound only for non-module fixtures. The tier, schema `v4`, demand-gating,
+> codec, and test scaffold are correct and stand; the **capture mechanism is being re-implemented** on
+> the module-safe `evalConst Lean.ParserDescr kind` path (`notes/01-semantic-facts.md` §5,
+> `prompts/02-impl.md` repair note, `results/03-final.md`). Read the sections below as accurate *except*
+> where they describe the `value?` capture path and claim full-corpus coverage.
 
 # RSF-IMPL — semantic tier, schema v4, notation-spacing capture
 
