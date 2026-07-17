@@ -1,0 +1,95 @@
+RFX-SPEC characterization — the current boundary has no applicability dimension.
+
+Environment: commit 8a984f9, leanprover/lean4:v4.32.0, Darwin 25.5.0 arm64.
+No performance claim is made here; the measurements are a JSON shape and a source scan,
+neither of which is timing-sensitive.
+
+==============================================================================
+1. A fix is a single boolean today: `fixable` yes/no, and nothing about whether
+   applying it is safe.
+==============================================================================
+
+$ app=$(lake -q query lean-fmt --text)
+$ "$app" rules --json
+[{"category":"text","code":"FMT001","defaultEnabled":true,"fixable":true,"input":"source","summary":"remove trailing horizontal whitespace"},{"category":"text","code":"FMT002","defaultEnabled":true,"fixable":true,"input":"source","summary":"require a final newline"}]
+
+$ "$app" rules
+FMT001	text	fixable	default	remove trailing horizontal whitespace
+FMT002	text	fixable	default	require a final newline
+
+`fixable` is a `Bool` (`LeanFmt/Rules.lean:112`, `RuleInfo.fixable`). There is no
+third value and no per-fix classification: a rule either carries a `fix?` or it does
+not. "Whether the fix is safe to apply automatically" cannot be expressed.
+
+==============================================================================
+2. The concept does not exist anywhere in the tree.
+==============================================================================
+
+$ grep -rin 'applicab\|unsafe.fix\|displayonly\|display-only\|Applicability' \
+    LeanFmt Main.lean LeanFmtTest.lean tests docs/adding-a-rule.md \
+    | grep -vi 'unsafe def\|unsafe ('
+(no output)
+
+No type, no field, no config key, no CLI flag. `docs/adding-a-rule.md` documents
+`fixable := true  -- whether findings carry a fix?` and nothing else about fixes.
+
+==============================================================================
+3. Every fix that exists is applied unconditionally.
+==============================================================================
+
+`Finding.fix? : Option Edit`  (LeanFmt/ArtifactModel.lean:27)
+
+`preparePatch` collects every finding's fix and applies them as one transaction,
+with no filter on the kind of fix:
+
+    def preparePatch (source : String) (findings : Array Finding) : Except PatchError Patch := do
+      let edits := findings.filterMap (·.fix?)          -- LeanFmt/Edit.lean:113
+      validateEdits source edits
+      ...
+
+`fixFile` (LeanFmt/Application.lean:660) prepares that patch, runs the configured
+validation level, and publishes. The only gate between a finding's `fix?` and the
+file on disk is (a) exact-syntax/elaboration validation of the *whole* candidate and
+(b) the stale-source check. Neither asks whether an individual edit was safe.
+
+Runtime confirmation of unconditional application is the modes suite, which is green
+on this commit: `tests/modes/run.sh` (lines 298-315) applies `fix` to
+`tests/check/Findings.lean` and asserts `written == 1`, `status == "fixed"`, then a
+second `fix` is `written == 0`, `status == "clean"`. FMT001's trailing-whitespace fix
+is applied with no opt-in because there is no opt-out to speak of.
+
+==============================================================================
+4. Conflicts have indices, not provenance.
+==============================================================================
+
+`PatchError.conflict (leftIndex rightIndex : Nat) (left right : SourceRange)`
+(LeanFmt/Edit.lean:12). The indices are positions in the sorted edit array — an
+artifact of `preparePatch`'s internal ordering, not anything a user can act on. The
+rule codes that produced the two edits are dropped by `filterMap (·.fix?)` before the
+conflict is ever detected, so the error cannot name which two rules disagree.
+
+==============================================================================
+5. Atomicity is per file, and there is exactly one scope.
+==============================================================================
+
+`fixFile` publishes each snapshot independently through `publishAtomic`
+(LeanFmt/Application.lean:544): temp file, preserved permissions, stale re-read, rename.
+`execute` loops over snapshots (`:780`) and one file's rejection does not touch another
+file's publication. A file's patch is already all-or-nothing (`preparePatch` rejects
+the whole set on the first invalid or conflicting edit). There is no cross-file
+transaction and no notion of a "project transaction" distinct from the per-file one.
+
+==============================================================================
+What is frozen by the design note, given the above.
+==============================================================================
+
+- Applicability is a three-valued property of a *fix* (safe / unsafe / display-only),
+  following ruff's `Applicability`. It is not a property of an `Edit` (a byte fact) nor
+  of a `Finding` (a fix is optional; applicability is meaningless without one).
+- Default `fix` applies safe fixes only; unsafe fixes are shown, not applied, without
+  explicit opt-in; display-only is never applied.
+- Applicability appears in JSON and text output, and can be promoted/demoted per rule
+  through configuration only.
+- Conflict rejection carries rule-code provenance for both sides.
+- File atomicity is the transaction unit; the project result is the deterministic
+  aggregate of per-file transactions, with no partial file write.
