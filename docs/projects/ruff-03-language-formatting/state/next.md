@@ -1,9 +1,9 @@
 # Next Proof Packet
 
 - Stack: ruff-03-language-formatting
-- First unresolved: 07-offside-layout
-- Claim ID: RLF-OFFSIDE
-- Prompt: 07-offside-layout
+- First unresolved: 08-reflow-expr
+- Claim ID: RLF-REFLOW
+- Prompt: 08-reflow-expr
 - Module: (docs only)
 - Target file: (docs only)
 
@@ -17,8 +17,8 @@ Read this file, the target prompt, target files, listed source/template line ran
 
 ## Proof Task
 
-- Deliver **RLF-OFFSIDE**: the layout capability records and tactic/`do`/`where`/`let` blocks need — emit a multi-line block at a *canonical base column* while preserving every internal `colEq`/`colGt`/`colGe` relationship, so re-indentation never changes the parse. Per `notes/05-reflow-architecture.md` §3 this is **not** column-alignment (`Doc.align`/`pushAlign` inherits a column; a ruff-class formatter chooses one); the capability is a *parse-preserving re-indent to a chosen base*.
-- Read `roadmap.md`, `notes/05-reflow-architecture.md`, `results/03-tactics.md` (the re-indent design phase 1 killed and why), its prerequisite stack results, `AGENTS.md`, and the relevant Lean compiler/Lake sources. Confirm first-hand: `Doc.lean:44-81` (constructor set), `:62-68` (`verbatim` never re-indented), `:71-73` (the written no-align decision), `Lean/Parser/Extra.lean:199-208` (`manyIndent`/`sepByIndent` offside separators), `withoutPosition` at `Lean/Parser/Basic.lean:1565-1571`.
+- Deliver **RLF-REFLOW**: the first layout that makes the engine *decide*. Break applications, operators, notations, bracketed binders, and `match` alternatives across lines when they exceed the target width, using `group`/`nest`/`line` (`Doc.lean:44-81`, unused by real source until now) and the declared spacing from `RLF-NOTATION`. Set the default margin to **100** (`notes/05-reflow-architecture.md` §5).
+- Read `roadmap.md`, `notes/05-reflow-architecture.md`, `results/02-expressions.md` and `results/06-notation-facts.md`, `AGENTS.md`, and the relevant Lean compiler sources. Confirm first-hand the constraint that governs every break here: `argument := checkWsBefore >> checkColGt` (`Lean/Parser/Term.lean:885-892`) — **a wrapped argument must land at a column strictly greater than its function head**, or it stops being an argument and the parse changes.
 
 ## Reuse
 
@@ -30,8 +30,7 @@ Inspect the live goal, search relevant declarations, test plausible proof steps,
 
 ## Stop Rules
 
-- The capability must be parse-preserving by the reparse check, not by argument; a base that breaks an internal `colGt`/`colEq` is a bug.
-- `verbatim` interior is never re-indented; comments never move.
-- Do not adopt column-alignment (`align`/`pushAlign`); the base is chosen, not inherited.
-- If `ruff-02` is reopened, its `render` linear-bound guarantee must survive; stop rather than trading it for the constructor.
-- Stop rather than weakening exact semantics, write safety, or the resource envelope.
+- No break may violate `checkColGt`/`checkColGe`/`checkColEq`; a wrapped token that changes the parse is a bug, not a style choice — verified by reparse, not argued.
+- Do not touch import order, literal contents, or comment placement; a construct whose reflow would drop a comment keeps its bytes.
+- Idempotence is a gate: a second format must be byte-identical to the first.
+- Stop rather than weakening exact semantics, cache identity, write safety, or the resource envelope (8 GiB aggregate RSS / 256 MiB new swap; `render` stays linear-bounded).

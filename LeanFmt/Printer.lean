@@ -13,10 +13,10 @@ frontend. That is not a preference: `ruff-01`'s roadmap already committed to car
 printing in-frontend would buy free arg order for a median 1.96 s frontend run per file (`RLS-FINAL`).
 
 **What the projection does not carry, measured rather than assumed.** Over all 21 modules of this
-repository (47,329 nodes, `evidence/01-projection-shape.txt`), 16,943 nodes (35.8%) carry no token at
+repository (48,260 nodes, `evidence/01-projection-shape.txt`), 17,240 nodes (35.7%) carry no token at
 all — they are *absent* syntax, the unfilled optional slots of `declModifiers`, `optDeclSig`,
 `Termination.suffix` — and `collect` gives them range `(0,0)` because a node's range is the hull of the
-leaves beneath it and there are none. For 7,367 of them (15.6% of all nodes) the parent also has direct
+leaves beneath it and there are none. For 7,539 of them (15.6% of all nodes) the parent also has direct
 token children, so nothing in the projection says where among its siblings the absent slot belongs.
 `Lean.Syntax` has no position for them either; this is not something the projection dropped.
 
@@ -24,10 +24,10 @@ Two consequences run through everything below:
 
 1. **Node order is index order, never range order.** `collect` pushes a node's placeholder at
    `build.nodes.size` before folding its args left to right, so a parent precedes its children and
-   siblings ascend in arg order. Sorting children by range would be correct for the 64.2% that carry
+   siblings ascend in arg order. Sorting children by range would be correct for the 64.3% that carry
    tokens and silently wrong for the rest.
 2. **The conservative path reads bytes, not the tree.** Empty nodes contribute no bytes, so re-emitting
-   a command's byte extent is unaffected by all 7,367 ambiguous placements. It is the only path whose
+   a command's byte extent is unaffected by all 7,539 ambiguous placements. It is the only path whose
    correctness rests on no claim about any grammar, which is exactly what the roadmap's "unknown
    commands must round-trip conservatively" asks for. Every kind starts here and leaves only when a
    canonical layout for it is cited and pinned by a golden test.
@@ -56,7 +56,7 @@ transport format. This is the view a walk needs, computed once.
 Both child arrays ascend in index order, which **is** arg order by `collect`'s construction. The
 projection retains no other order, so this is not a property that can be checked against its output —
 `evidence/01-projection-shape.txt` checks the observable consequence instead: among a parent's
-token-bearing children, index order agrees with byte order (0 violations over 47,329 nodes). -/
+token-bearing children, index order agrees with byte order (0 violations over 48,260 nodes). -/
 structure Tree where
   source : LosslessSource
   /-- `nodeChildren[i]` are the node-children of node `i`, in arg order. -/
@@ -339,6 +339,113 @@ private def Tree.tokenSpanText (tree : Tree) (normalized : String) (lo hi : Nat)
   | some a, some b => sliceNormalized normalized a.start b.stop
   | _, _ => ""
 
+/-- Re-indent the token span `[lo, hi]` to a chosen canonical base column — the `RLF-OFFSIDE` primitive.
+
+Emit the block's text (first token through last, trivia included) with every **structural** line's
+indentation shifted by one constant delta `Δ = base − anchor`, where `anchor` is the first token's
+column. A uniform shift preserves every pairwise column difference and every column equality inside the
+block, so every internal `colEq`/`colGt`/`colGe` still holds and the parse is unchanged
+(`notes/06-offside-primitive.md` §1). The base is *chosen*, never inherited: this is re-indent, not
+`Doc.align`, which `notes/05-reflow-architecture.md` §3 ruled out because column-alignment is unstable
+under renames.
+
+The result carries the block **from the first token onward** — it does not emit the first token's own
+leading indentation, because the surrounding layout positions the first token at `base` (place `base`
+spaces before this string). Every continuation line then lands at `base + (its original column − anchor)`,
+which is its original relative offset preserved.
+
+Lines interior to a multi-line token — a block comment body, a multi-line string literal — are **never**
+shifted: their leading whitespace is the token's value, not layout, which is the entire reason `verbatim`
+exists (`Doc.lean:62-68`). A newline is token-interior when it lies inside some token's `[start, stop)`;
+a structural newline lies in the trivia between two tokens. A blank structural line emits no indentation
+(no trailing whitespace); the parser measures no column on a blank line. Leading whitespace is
+canonicalized to spaces, which preserves the codepoint column count `columnOf` compares against. -/
+private def Tree.reindentBlock (tree : Tree) (normalized : String) (lo hi : Nat) (base : Nat) : String :=
+  Id.run do
+    let some first := tree.source.tokens[lo]? | return ""
+    let some last := tree.source.tokens[hi]? | return ""
+    let anchor := columnOf normalized first.start
+    let delta : Int := (base : Int) - (anchor : Int)
+    -- Byte offsets of every newline that lies inside a token; the line it opens is emitted byte-exact.
+    let mut interior : List Nat := []
+    for index in [lo:hi + 1] do
+      let some token := tree.source.tokens[index]? | continue
+      let mut offset := token.start
+      for c in (tree.tokenText normalized index).toList do
+        if c == '\n' then interior := offset :: interior
+        offset := offset + c.utf8Size
+    -- Split the raw block into physical lines, each tagged with the byte offset of its preceding newline.
+    let block := sliceNormalized normalized first.start last.stop
+    let mut lines : Array (Option Nat × String) := #[]
+    let mut cursor : String := ""
+    let mut opener : Option Nat := none
+    let mut offset := first.start
+    for c in block.toList do
+      if c == '\n' then
+        lines := lines.push (opener, cursor)
+        cursor := ""
+        opener := some offset
+      else
+        cursor := cursor.push c
+      offset := offset + c.utf8Size
+    lines := lines.push (opener, cursor)
+    -- Reassemble, rebasing the indentation of every structural line.
+    let mut out : String := ""
+    for index in [0:lines.size] do
+      let (precedingNewline, text) := lines[index]!
+      if index != 0 then out := out.push '\n'
+      match precedingNewline with
+      | none => out := out ++ text                              -- first line: caller positions its token
+      | some newlineOffset =>
+        if interior.contains newlineOffset then
+          out := out ++ text                                    -- token-interior line: byte-exact
+        else
+          let chars := text.toList
+          let indentCount := (chars.takeWhile (fun c => c == ' ' || c == '\t')).length
+          let body := chars.drop indentCount
+          if body.isEmpty then
+            pure ()                                             -- blank structural line: no indentation
+          else
+            let indent := ((indentCount : Int) + delta).toNat
+            out := out ++ ("".pushn ' ' indent) ++ String.ofList body
+    return out
+
+/-- Locate the offside block a single-declaration fixture isolates: the first token that *begins* its
+line indented past column 0, through the last token of the module.
+
+This is deliberately a fixture's-eye view, not a general block finder — prompt `09` selects blocks by
+construct (a record, a tactic sequence, a `do`), which needs the node structure this does not consult.
+It exists so the `RLF-OFFSIDE` capability can be proven in isolation: a fixture whose body is one
+indented offside block, whose span is exactly *first indented line-start → last token*. -/
+def Tree.firstIndentedBlock (tree : Tree) (normalized : String) : Option (Nat × Nat) := Id.run do
+  let count := tree.source.tokens.size
+  if count == 0 then return none
+  for index in [0:count] do
+    let some token := tree.source.tokens[index]? | continue
+    if firstOnLine normalized token.start && columnOf normalized token.start > 0 then
+      return some (index, count - 1)
+  return none
+
+/-- Splice a re-indented copy of the block `[lo, hi]` back into the module, returning the full text.
+
+This is how a caller applies `reindentBlock`: replace the first token's line indentation so the token
+lands at `base`, emit the re-indented block from there, and keep every byte before the block's line and
+after the block's last token unchanged. Prompt `09` will splice construct blocks this way; the
+`RLF-OFFSIDE` property test splices the isolated fixture block at several bases and reparses each. -/
+def Tree.reindentSpanInModule (tree : Tree) (normalized : String) (lo hi base : Nat) : String :=
+  Id.run do
+    let some first := tree.source.tokens[lo]? | return normalized
+    let some last := tree.source.tokens[hi]? | return normalized
+    let before := sliceNormalized normalized 0 first.start
+    let mut lineStart := 0
+    let mut position := 0
+    for c in before.toList do
+      position := position + c.utf8Size
+      if c == '\n' then lineStart := position
+    let head := sliceNormalized normalized 0 lineStart
+    let tail := sliceNormalized normalized last.stop normalized.utf8ByteSize
+    return head ++ ("".pushn ' ' base) ++ tree.reindentBlock normalized lo hi base ++ tail
+
 /-- Tokens joined by exactly one space.
 
 This is the whole canonical layout for the keyword-then-identifier commands, and it is where the
@@ -363,7 +470,7 @@ private def Tree.wholeSpan? (tree : Tree) (normalized : String) (span : CommandS
 
 /-- The first and last token index under `node`'s subtree, or `none` when it carries no token.
 
-`none` is the *absent syntax* case and is the common one: 35.8% of nodes are empty
+`none` is the *absent syntax* case and is the common one: 35.7% of nodes are empty
 (`evidence/01-projection-shape.txt`), because an unfilled optional slot is still a node. Asking this
 question is how a layout distinguishes "the slot is empty" from "the slot is filled", which is
 information the projection carries exactly and positions do not carry at all. -/

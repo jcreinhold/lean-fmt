@@ -1,6 +1,6 @@
 ---
 kind: state
-first_unresolved: 07-offside-layout
+first_unresolved: 08-reflow-expr
 ---
 
 # Current state
@@ -47,14 +47,29 @@ byte-identical), parse-preservation (same token count), and idempotence, the las
 specifically. The boundary gate also forced a one-line `ruff-05b` repair — `tests/semantic/Emit.lean`
 now begins with `module` like its sibling oracle, verified still-emitting.
 
+**`RLF-OFFSIDE` is verified** (`results/07-offside-layout.md`), and it delivers the re-indent primitive
+`RLF-BLOCKS` (prompt 09) consumes — proven in isolation, no real construct re-laid-out yet. The
+design-twice (`notes/06-offside-primitive.md`) chose a printer-side `Tree.reindentBlock` over a new
+`Doc` constructor: re-indent is **width-independent** (a block is always broken, the base is chosen not
+measured), so it makes no flat-vs-break decision the engine exists for — the engine stays frozen and
+`ruff-02` is **not reopened**, honoring the prompt's Stop condition directly. The primitive shifts every
+structural line of a block by one delta `Δ = base − anchor` so all internal `colEq`/`colGt`/`colGe`
+survive; lines interior to a multi-line token (block comment, multi-line string) stay byte-exact. The
+correctness turns on shifting the *whole* block by one Δ — the naive "continuation lines only" shift is
+the phase-1 `by skip⏎ trivial` break (`evidence/04-coleq-break.txt`). Proven by the fresh frontend at
+several bases: re-indent to a left base, the identity, and a right base each reparse to the **same token
+stream** (parse-preservation), the `match`/arms share one column at every base (`colEq` preserved), and
+a multi-line string token is byte-exact across bases (its interior never shifts). Seven checks in
+`tests/printer/run.sh`, `failures=0`.
+
 The remainder of this file is the phase-1 record — a live claim about the conservative subset and the
 evidence for it — kept intact because it is the citation base phase 2 builds against.
 
 ## Phase 1 record (conservative subset — verified)
 
 `RLF-COMMANDS` is **verified** (`results/01-commands.md`): the printer is live and proven lossless on
-this repository *and* on 62 modules of foreign Lean, **474 of the corpus's 501 commands take a cited
-canonical layout** — `namespace` (25), `end` (25), `open` (7), and the shell of 417 of 432
+this repository *and* on 62 modules of foreign Lean, **477 of the corpus's 504 commands take a cited
+canonical layout** — `namespace` (25), `end` (25), `open` (7), and the shell of 420 of 435
 declarations — **all 20 module headers take theirs**, and **57 constructor and field shells** are
 claimed inside those declarations. `section` and `universe` have layouts too; this corpus contains
 none of either, so only the fixtures and the sample exercise them. Its external prerequisite stack
@@ -107,7 +122,7 @@ Printing inside the frontend would buy free arg order for a median 1.96 s fronte
 | 04-extensions | RLF-EXTENSIONS | verified | RLF-TACTICS |
 | 05-corpus | RLF-FINAL | verified | RLF-EXTENSIONS |
 | 06-notation-facts | RLF-NOTATION | verified | RLF-FINAL |
-| 07-offside-layout | RLF-OFFSIDE | planned | RLF-NOTATION |
+| 07-offside-layout | RLF-OFFSIDE | verified | RLF-NOTATION |
 | 08-reflow-expr | RLF-REFLOW | planned | RLF-OFFSIDE |
 | 09-reflow-blocks | RLF-BLOCKS | planned | RLF-REFLOW |
 | 10-reflow-final | RLF-ACCEPT | planned | RLF-BLOCKS |
@@ -570,7 +585,7 @@ recover a collapse that fires zero times.
   every command — the printer would fall back to bytes and be the identity function it was before any
   layout existed. This repository also writes its declarations the way the layout writes them, so even
   a layout that runs changes nothing here. `printer-roundtrip` therefore reports `canonical=`, the
-  commands actually laid out, and `tests/printer/run.sh` floors the corpus total: **474 of 501**, and `members=` the shells claimed
+  commands actually laid out, and `tests/printer/run.sh` floors the corpus total: **477 of 504**, and `members=` the shells claimed
   inside them, floored at 50 (**57**) because `canonical=` cannot see them — a command counts once
   whether it claims one region or six. The
   header gets the same treatment for the same reason, but as an exact count rather than a floor
@@ -579,12 +594,12 @@ recover a collapse that fires zero times.
   *what* the layouts produce; these pin *that* they run, on real code, at scale.
 - **Two independent measurements of coverage agree exactly, and keep agreeing as it grows.**
   `experiments/run-projection-shape.sh` re-implements the structural half of the printer's predicate in
-  Python against the same projection and finds 417 of 432 declarations claimable; the printer, in Lean,
-  counts 474 = 417 + 25 `namespace` + 25 `end` + 7 `open`. So on this corpus every
+  Python against the same projection and finds 420 of 435 declarations claimable; the printer, in Lean,
+  counts 477 = 420 + 25 `namespace` + 25 `end` + 7 `open`. So on this corpus every
   structurally-claimable declaration also passes the runtime guards the probe cannot model (clean
   trivia, newline-free flat run, column 0). The probe over-counts by construction and says so;
   `canonical=` is the honest figure.
-- **That 474 commands take the layout and all 20 modules stay byte-identical is what proves the shell
+- **That 477 commands take the layout and all 20 modules stay byte-identical is what proves the shell
   is a prefix.** A shell that ran past the name, or stopped short, would duplicate or drop bytes on
   real code. The same round-trip is the only thing asserting that the header layout's claim ends
   exactly at `headerStop` — that the parser's idea of where the header stops and the projection's agree

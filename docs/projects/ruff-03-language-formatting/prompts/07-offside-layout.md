@@ -1,6 +1,6 @@
 ---
 claim_id: RLF-OFFSIDE
-status: planned
+status: verified
 depends_on: [RLF-NOTATION]
 ---
 

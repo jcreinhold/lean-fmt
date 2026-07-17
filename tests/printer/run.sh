@@ -1322,6 +1322,170 @@ else
   failures=$((failures + 1))
 fi
 
+# --- offside re-indent, the RLF-OFFSIDE primitive ---
+#
+# The capability `RLF-OFFSIDE` delivers, proven in isolation: emit a multi-line offside block at a
+# chosen canonical base column, preserving every internal `colEq`/`colGt`/`colGe` so the parse never
+# changes (`notes/06-offside-primitive.md`). The design-twice chose a printer-side `reindentBlock` over
+# a new `Doc` constructor -- re-indent is width-independent, so the engine stays frozen and `ruff-02` is
+# not reopened. `printer-reindent` drives it: auto-detect the fixture's one indented offside block, shift
+# every structural line by one delta so the block's first token lands at `base`, and splice back.
+#
+# Parse-preservation is checked by the *fresh frontend at several bases*, not argued. The block's anchor
+# is column 4 (the `match`); re-indenting to a left base (2), the identity (4), and a right base (6) each
+# reparses, and the token stream is identical across all three -- re-indent moves whitespace and nothing
+# else (`notes/05-reflow-architecture.md` §4.1). The arms stay `colEq` the `match` at every base, which
+# is the offside relationship a naive per-line shift would break.
+printf -- '--- offside re-indent (RLF-OFFSIDE primitive) ---\n'
+cat >"$work/offside.lean" <<'FIXTURE'
+module
+
+def f : Nat :=
+    match 0 with
+    | 0 => 1
+    | _ => 2
+FIXTURE
+LEAN_NUM_THREADS=1 lake env "$application" __analyze-exact \
+  "$work/borrowed.setup.json" "$work/offside.lean" "offside.lean" 8589934592 >"$work/offside.json"
+
+# Each base reparses. `broken.lean` above pins that a parse error yields no artifact, so an artifact
+# coming back *is* the output parsing.
+offside_parses=1
+for base in 2 4 6; do
+  "$tests" printer-reindent "$work/offside.json" "$work/offside.lean" "$base" >"$work/offside.$base.lean"
+  LEAN_NUM_THREADS=1 lake env "$application" __analyze-exact \
+    "$work/borrowed.setup.json" "$work/offside.$base.lean" "offside.lean" 8589934592 \
+    >"$work/offside.$base.json" 2>/dev/null || true
+  if ! grep -qF '"artifact"' "$work/offside.$base.json"; then
+    printf 'FAIL re-indent to base %s produced Lean that does not re-parse:\n' "$base" >&2
+    cat "$work/offside.$base.lean" >&2
+    offside_parses=0
+  fi
+done
+if [ "$offside_parses" = 1 ]; then
+  printf '  ok   re-indent to bases 2, 4, 6 each re-parses\n'
+else
+  failures=$((failures + 1))
+fi
+
+# Re-indent to the anchor column (4) is the identity: Δ = 0, byte-for-byte the input. A primitive that
+# perturbed a block it was asked to leave in place would be caught here, and idempotence rests on it.
+if diff -q "$work/offside.lean" "$work/offside.4.lean" >/dev/null 2>&1; then
+  printf '  ok   re-indent to the anchor column is the identity\n'
+else
+  printf 'FAIL re-indent to the anchor column changed the block:\n' >&2
+  diff -u "$work/offside.lean" "$work/offside.4.lean" >&2
+  failures=$((failures + 1))
+fi
+
+# ...and the off-anchor bases actually moved bytes, or the property above is vacuous.
+if diff -q "$work/offside.lean" "$work/offside.2.lean" >/dev/null 2>&1 \
+   || diff -q "$work/offside.lean" "$work/offside.6.lean" >/dev/null 2>&1; then
+  printf 'FAIL an off-anchor base did not change the block; the re-indent is doing nothing\n' >&2
+  failures=$((failures + 1))
+else
+  printf '  ok   bases 2 and 6 each moved the block off its anchor\n'
+fi
+
+# The property: same token stream across all three bases, and the columns of `match`, `| 0` and `| _`
+# stay equal within each base (the `colEq` matchAlts require). Token texts are the source sliced at each
+# token's `[start, stop)`; columns are codepoints since the line's start, which is what the parser's
+# checks count (`Printer.lean` `columnOf`).
+cat >"$work/offside_verify.py" <<'PY'
+import json, sys
+work = sys.argv[1]
+
+def load(lean, js):
+    src = open(lean, 'rb').read()
+    toks = json.load(open(js))['artifact']['source']['tokens']
+    texts, cols = [], []
+    for t in toks:
+        start, stop = t[1], t[2]
+        texts.append(src[start:stop].decode('utf8'))
+        line_start = src.rfind(b'\n', 0, start) + 1
+        cols.append(len(src[line_start:start].decode('utf8')))
+    return texts, cols
+
+fails = 0
+streams = {b: load(f"{work}/offside.{b}.lean", f"{work}/offside.{b}.json") for b in (2, 4, 6)}
+orig = load(f"{work}/offside.lean", f"{work}/offside.json")
+
+t2, t4, t6 = (streams[b][0] for b in (2, 4, 6))
+if t2 == t4 == t6 == orig[0]:
+    print("  ok   the token stream is identical across bases 2, 4, 6 and the input")
+else:
+    print("FAIL the token stream differs across bases (a token was added, dropped or merged)", file=sys.stderr)
+    print(f"  base2={t2}\n  base4={t4}\n  base6={t6}\n  input={orig[0]}", file=sys.stderr)
+    fails += 1
+
+# `match`, first `|`, second `|` are token indices 5, 8, 12 in `def f : Nat := match 0 with | 0 => 1 | _ => 2`.
+for b in (2, 4, 6):
+    texts, cols = streams[b]
+    assert texts[5] == 'match' and texts[8] == '|' and texts[12] == '|', texts
+    if not (cols[5] == cols[8] == cols[12] == b):
+        print(f"FAIL at base {b} the match/arm columns are {cols[5]},{cols[8]},{cols[12]}, not all {b}", file=sys.stderr)
+        fails += 1
+if fails == 0:
+    print("  ok   at every base the match and both arms share one column (colEq preserved)")
+
+sys.exit(fails)
+PY
+if python3 "$work/offside_verify.py" "$work"; then :; else failures=$((failures + $?)); fi
+
+# The verbatim interior is never re-indented. A block whose arm holds a multi-line string literal:
+# re-indenting the block shifts the structural lines, but the string's second line is the token's
+# *value* and must stay byte-exact (`Doc.lean:62-68`, the reason `verbatim` exists). Re-indent to 4
+# (identity) and 8 (shift right); both reparse, the streams are equal, and the multi-line string token
+# is byte-identical -- its interior did not move with the block.
+cat >"$work/mlstring.lean" <<'FIXTURE'
+module
+
+def g : String :=
+    match 0 with
+    | 0 => "line one
+line two"
+    | _ => "z"
+FIXTURE
+LEAN_NUM_THREADS=1 lake env "$application" __analyze-exact \
+  "$work/borrowed.setup.json" "$work/mlstring.lean" "mlstring.lean" 8589934592 >"$work/mlstring.json"
+ml_parses=1
+for base in 4 8; do
+  "$tests" printer-reindent "$work/mlstring.json" "$work/mlstring.lean" "$base" >"$work/mlstring.$base.lean"
+  LEAN_NUM_THREADS=1 lake env "$application" __analyze-exact \
+    "$work/borrowed.setup.json" "$work/mlstring.$base.lean" "mlstring.lean" 8589934592 \
+    >"$work/mlstring.$base.json" 2>/dev/null || true
+  grep -qF '"artifact"' "$work/mlstring.$base.json" || ml_parses=0
+done
+if [ "$ml_parses" = 1 ]; then
+  printf '  ok   a block holding a multi-line string re-indents and re-parses\n'
+else
+  printf 'FAIL re-indenting a block with a multi-line string produced unparseable Lean\n' >&2
+  failures=$((failures + 1))
+fi
+cat >"$work/mlstring_verify.py" <<'PY'
+import json, sys
+work = sys.argv[1]
+
+def toks(b):
+    src = open(f"{work}/mlstring.{b}.lean", 'rb').read()
+    a = json.load(open(f"{work}/mlstring.{b}.json"))['artifact']['source']['tokens']
+    return [src[t[1]:t[2]].decode('utf8') for t in a]
+
+fails = 0
+t4, t8 = toks(4), toks(8)
+if t4 != t8:
+    print("FAIL the multi-line-string block's token stream changed under re-indent", file=sys.stderr)
+    fails += 1
+ml = [t for t in t4 if '\n' in t]
+if not (ml and ml == [t for t in t8 if '\n' in t] and ml[0] == '"line one\nline two"'):
+    print(f"FAIL the multi-line string token was not preserved byte-exact: {ml}", file=sys.stderr)
+    fails += 1
+if fails == 0:
+    print("  ok   the multi-line string token is byte-exact across bases (its interior never shifts)")
+sys.exit(fails)
+PY
+if python3 "$work/mlstring_verify.py" "$work"; then :; else failures=$((failures + $?)); fi
+
 # Idempotence, the roadmap's "formatting twice is byte-identical to formatting once". The second pass
 # re-parses the first pass's *output*, so this is a real second format and not a repeated call: if the
 # layout emitted something the parser reads back differently, this is where it shows.

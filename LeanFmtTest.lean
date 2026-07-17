@@ -1326,6 +1326,29 @@ private def printerFormat (envelopePath sourcePath widthText : String) : IO UInt
   IO.print (← Printer.format projection normalized width artifact.semantic)
   return 0
 
+/- Re-indent the fixture's one offside block to `base` and print the whole module — the `RLF-OFFSIDE`
+capability driven in isolation. The block is auto-detected (`firstIndentedBlock`: first line-starting
+token indented past column 0, through the last token), re-indented (`reindentBlock`, uniform Δ shift),
+and spliced back (`reindentSpanInModule`). The suite runs this at several bases and reparses each, so
+parse-preservation is checked by the fresh frontend rather than argued. -/
+private def printerReindent (envelopePath sourcePath baseText : String) : IO UInt32 := do
+  let .ok json := Lean.Json.parse (← IO.FS.readFile envelopePath)
+    | throw <| IO.userError s!"{envelopePath} is not JSON"
+  let .ok (envelope : AnalysisEnvelope) := Lean.fromJson? json
+    | throw <| IO.userError s!"{envelopePath} is not an analysis envelope"
+  let some artifact := envelope.artifact?
+    | throw <| IO.userError s!"{sourcePath} produced no artifact: {envelope.diagnostics}"
+  let some base := baseText.toNat?
+    | throw <| IO.userError s!"BASE must be a natural number, got {baseText}"
+  let raw ← IO.FS.readFile sourcePath
+  let normalized := (LosslessSource.normalize raw).1
+  ensure (artifact.source.validFor raw) s!"{sourcePath}: the projection does not match its own source"
+  let tree := Tree.ofSource artifact.source
+  let some (lo, hi) := tree.firstIndentedBlock normalized
+    | throw <| IO.userError s!"{sourcePath}: no indented offside block to re-indent"
+  IO.print (tree.reindentSpanInModule normalized lo hi base)
+  return 0
+
 /- Name every command the layouts refused, one syntax kind per line.
 
 `printer-report` counts the claims; this names the misses. It exists for the frozen mathlib sample,
@@ -1472,6 +1495,7 @@ public unsafe def main (args : List String) : IO UInt32 := do
   | ["printer-report", envelopePath, sourcePath] =>
     printerRoundtrip envelopePath sourcePath (checkIdentity := false)
   | ["printer-format", envelopePath, sourcePath, width] => printerFormat envelopePath sourcePath width
+  | ["printer-reindent", envelopePath, sourcePath, base] => printerReindent envelopePath sourcePath base
   | ["printer-unclaimed", envelopePath, sourcePath] => printerUnclaimed envelopePath sourcePath
   | ["printer-node-kinds", envelopePath, sourcePath] => printerNodeKinds envelopePath sourcePath
   | ["doc-bench"] => docBench
