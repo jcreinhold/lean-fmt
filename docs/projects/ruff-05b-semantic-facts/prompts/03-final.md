@@ -26,8 +26,11 @@ only to fix a defect it finds.
   editing an unrelated rule's prose does not perturb the semantic fact's bytes (the `ruff-05`
   invariant). Pin each.
 - **Demand-gating.** With no semantic rule selected and no format requested, no semantic capture runs
-  and the syntax-only artifact is byte-identical to the pre-`v4` baseline for that path. With a format
-  requested, the fact is present. Prove both.
+  and the artifact carries `semantic = none` (its `source` projection byte-identical to the pre-`v4`
+  content; only the schema tag advances to `v4`). With a format requested, `analyzeExact` runs the
+  capture and the fact is present (`semantic = some`), and a cached `semantic = none` artifact is
+  rejected rather than silently accepted. Prove all three: no-capture fast path, present-on-format, and
+  cache rejection.
 - **Cost envelope.** Time and peak aggregate RSS for semantic capture on the frozen representative
   sample, against the syntax-only baseline; name workload, machine, toolchain, commit, wall time, RSS,
   pressure, swap delta. Stay within 8 GiB / 256 MiB-swap.

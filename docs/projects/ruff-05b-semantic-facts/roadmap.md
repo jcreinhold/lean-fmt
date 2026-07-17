@@ -25,10 +25,13 @@ owns infrastructure the other also depends on.
 
 The semantic-fact machinery is shared by the formatter and the lint rules; burying it in either one
 complects two independent concerns (`deep-module-design` §8). The declared-spacing fact also forces an
-architecture decision neither consumer should own alone: capture needs the `Environment`, which is
-live only at the compiler-plugin producer (`LeanFmt/CompilerPlugin.lean:27`, `getEnv`), so a semantic
-fact is produced *there* and crosses into downstream code only as immutable data — never as a live
-`Environment`, matching `ruff-11`'s standing contract.
+architecture decision neither consumer should own alone: capture needs the frontend `Environment`,
+which is live at both producers (`LeanFmt/CompilerPlugin.lean:27` and the on-demand `analyzeExact`,
+`LeanFmt/Analysis.lean:77`). RSF-SPEC (F3/F4) resolved that honest demand-gating requires capturing at
+the **on-demand `analyzeExact`** — running the formatter probe in the always-on plugin would tax every
+integrated build — so the plugin keeps emitting `semantic = none` and `analyzeExact` produces the
+fact, crossing into downstream code only as immutable data, never as a live `Environment`, matching
+`ruff-11`'s standing contract.
 
 ## Completion contract
 
