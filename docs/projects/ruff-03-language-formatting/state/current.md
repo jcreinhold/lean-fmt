@@ -6,9 +6,9 @@ first_unresolved: none
 # Current state
 
 `RLF-COMMANDS` is **verified** (`results/01-commands.md`): the printer is live and proven lossless on
-this repository *and* on 62 modules of foreign Lean, **423 of the corpus's 446 commands take a cited
-canonical layout** — `namespace` (25), `end` (25), `open` (7), and the shell of 366 of 377
-declarations — **all 20 module headers take theirs**, and **54 constructor and field shells** are
+this repository *and* on 62 modules of foreign Lean, **435 of the corpus's 458 commands take a cited
+canonical layout** — `namespace` (25), `end` (25), `open` (7), and the shell of 378 of 389
+declarations — **all 20 module headers take theirs**, and **57 constructor and field shells** are
 claimed inside those declarations. `section` and `universe` have layouts too; this corpus contains
 none of either, so only the fixtures and the sample exercise them. Its external prerequisite stack
 `ruff-02-layout-core` is verified and its live implementation still matches recorded state.
@@ -21,10 +21,20 @@ is `variable` (277), which is binders and so terms. Nothing in the remainder is 
 all 156 refused declarations are the cited `instance` (155) and `example` (1) exclusions.
 
 Corpus figures move whenever this repository's own code changes, because this repository *is* the
-corpus. They are re-read from `experiments/run-projection-shape.sh` rather than maintained by hand;
-when they are quoted in prose (`LeanFmt/Printer.lean`'s module docstring, `notes/01-command-printing.md`
-§2 and §7) they drift silently, and no gate catches it. Re-running the probe after touching `LeanFmt/`
-is part of the work, not an optional tidy-up.
+corpus. They are re-read from `experiments/run-projection-shape.sh` rather than maintained by hand.
+**They used to drift silently and a gate now catches it** (`RLF-FINAL`) — `RLF-EXTENSIONS` added
+`Tree.mayCollapse` and left `Printer.lean`'s docstring, `notes/01-command-printing.md` §2 and §7, and
+this file all quoting a node count from two prompts earlier, which is how the hazard was proved live
+rather than theoretical. `tests/printer/run.sh` now closes the chain in two links: it asserts the
+committed `evidence/01-projection-shape.txt` reports the counts the printer just measured on the live
+corpus, and `experiments/check-quoted-figures.py` asserts every figure quoted in those three files
+agrees with that evidence. Either link alone is worthless — prose checked against stale evidence
+passes while everything is wrong together. Re-running the probe after touching `LeanFmt/` is part of
+the work, not an optional tidy-up, and the suite now says so rather than the prose asking politely.
+
+**The `results/NN-*.md` notes are excluded on purpose and are not gated.** They are snapshots of what
+a prompt measured when it ran; rewriting their figures to today's would claim `RLF-COMMANDS` measured
+something it did not. One is a live claim, the other is history — a difference in kind, not a gap.
 
 **`RLC-FINAL`'s standing caveat is now half-answered.** That prompt closed the layout stack noting
 nothing consumed it, so every claim about realistic documents rested on fixtures written against the
@@ -220,7 +230,7 @@ recover a collapse that fires zero times.
   layout changing thousands of gaps and one changing none both report 12. The counter is *validated*
   rather than trusted, because a broken one would also answer 0, which is exactly what `misordered=0`
   turned out to be: `tests/printer/run.sh` pins it at 7 against the wonky fixture, an answer known by
-  reading the golden. **This is the third appearance of this corpus shape** (0 collapsible of 260
+  reading the golden. **This is the third appearance of this corpus shape** (0 collapsible of 266
   members, `reformatted` unmoved, now `app_slack=0`), and it says something about the prompt rather
   than the layout: *the part of term formatting that is safely available today is the part that changes
   nothing.* The part that would change something is vertical, and needs `nest` and a margin.
@@ -396,9 +406,9 @@ recover a collapse that fires zero times.
   Members are claimed only inside a command that already has a layout: a kind on the conservative path
   rests on no grammar claim, and reaching inside it to lay out a field would be exactly such a claim.
 - **The member layout changes nothing in this corpus, and that is a fact about the corpus, not the
-  rule.** `evidence/01-projection-shape.txt`: **0 collapsible of 260 members** — 195 fields are
-  one-token shells (an unmodified field is just its name, with no gap to collapse), 11 are doc-broken,
-  and all 46 constructors and 8 structure constructors are already tight. The probe was built expecting
+  rule.** `evidence/01-projection-shape.txt`: **0 collapsible of 266 members** — 195 fields are
+  one-token shells (an unmodified field is just its name, with no gap to collapse), 14 are doc-broken,
+  and all 49 constructors and 8 structure constructors are already tight. The probe was built expecting
   that to *retire* the work, and it does not: this repository is its own corpus, so "nothing here would
   change" says the code is already formatted, not that `|     first` should be left alone. What the
   figure decides is what can test the layout — the corpus cannot, so `members=` counts the claims and
@@ -508,8 +518,8 @@ recover a collapse that fires zero times.
   every command — the printer would fall back to bytes and be the identity function it was before any
   layout existed. This repository also writes its declarations the way the layout writes them, so even
   a layout that runs changes nothing here. `printer-roundtrip` therefore reports `canonical=`, the
-  commands actually laid out, and `tests/printer/run.sh` floors the corpus total: **423 of 446**, and `members=` the shells claimed
-  inside them, floored at 50 (**54**) because `canonical=` cannot see them — a command counts once
+  commands actually laid out, and `tests/printer/run.sh` floors the corpus total: **435 of 458**, and `members=` the shells claimed
+  inside them, floored at 50 (**57**) because `canonical=` cannot see them — a command counts once
   whether it claims one region or six. The
   header gets the same treatment for the same reason, but as an exact count rather than a floor
   (`headers_canonical=20` of 20): a module has exactly one header, and the layout declines per group
@@ -517,12 +527,12 @@ recover a collapse that fires zero times.
   *what* the layouts produce; these pin *that* they run, on real code, at scale.
 - **Two independent measurements of coverage agree exactly, and keep agreeing as it grows.**
   `experiments/run-projection-shape.sh` re-implements the structural half of the printer's predicate in
-  Python against the same projection and finds 366 of 377 declarations claimable; the printer, in Lean,
-  counts 423 = 366 + 25 `namespace` + 25 `end` + 7 `open`. So on this corpus every
+  Python against the same projection and finds 378 of 389 declarations claimable; the printer, in Lean,
+  counts 435 = 378 + 25 `namespace` + 25 `end` + 7 `open`. So on this corpus every
   structurally-claimable declaration also passes the runtime guards the probe cannot model (clean
   trivia, newline-free flat run, column 0). The probe over-counts by construction and says so;
   `canonical=` is the honest figure.
-- **That 423 commands take the layout and all 20 modules stay byte-identical is what proves the shell
+- **That 435 commands take the layout and all 20 modules stay byte-identical is what proves the shell
   is a prefix.** A shell that ran past the name, or stopped short, would duplicate or drop bytes on
   real code. The same round-trip is the only thing asserting that the header layout's claim ends
   exactly at `headerStop` — that the parser's idea of where the header stops and the projection's agree

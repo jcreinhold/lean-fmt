@@ -116,19 +116,32 @@ probes rather than maintained by hand, and the corpus ones move whenever this re
 changes, because this repository *is* the corpus — they moved twice during this prompt for no reason
 but that.
 
+**Every corpus figure on this page is a snapshot of what `RLF-COMMANDS` measured when it ran, and
+is deliberately left at that value.** They are already out of date — later prompts added code, which
+is exactly the drift this section warned about. `evidence/01-projection-shape.txt` is where the
+current numbers live, and `RLF-FINAL` built the gate this page asks for below
+(`experiments/check-quoted-figures.py`), which holds the *live* claims — `Printer.lean`,
+`notes/01-command-printing.md`, `state/current.md` — to it. A result note is history and is not
+gated: rewriting these to today's values would claim this prompt measured something it did not.
+
 Structural figures, from `evidence/01-projection-shape.txt`:
 
 | | |
 | --- | --- |
 | declarations structurally claimable | **366 of 377 (97.1%)** |
 | nodes carrying no token at all | **14,827 of 41,340 — 35.9%** |
-| …of those, whose parent also has direct token children | **6,161 — 15.4% of all nodes** |
+| …of those, whose parent also has direct token children | **6,389 — 15.5% of all nodes** |
 
 **Two independent measurements of coverage agree exactly.**
 `experiments/run-projection-shape.sh` re-implements the structural half of the printer's predicate
-against the same projection, in a different language, and reports 358 claimable declarations; the
-printer counts `canonical=415 = 358 + 25 namespace + 25 end + 7 open`. The member figures agree the
+against the same projection, in a different language, and reports 366 claimable declarations; the
+printer counts `canonical=423 = 366 + 25 namespace + 25 end + 7 open`. The member figures agree the
 same way: 46 constructors + 8 structure constructors = the printer's `members=54`.
+
+(This paragraph read `358`/`415` until `RLF-FINAL` audited it — an earlier moment of this same run
+than the table above, so the two could not both be this prompt's result. The identity was always
+right; one side of it was a revision behind. It is the same drift this page names, caught inside the
+page that names it, which is the argument for the gate rather than against the sentence.)
 
 ## The number that matters is 57.8%, not 95%
 

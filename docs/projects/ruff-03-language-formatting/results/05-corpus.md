@@ -125,6 +125,56 @@ So terms are owned by a *guard*, commands by a *table*, and the reason is that t
 printer dispatches on is closed while the term set is open. That is the same closed-versus-open line
 `notes/02-expressions.md` drew for the bracketed binders, arrived at from the opposite end.
 
+## The audit found the stack stale, which is the one defect this prompt fixed rather than recorded
+
+Verifying `RLF-FINAL` requires state to agree with live code, and it did not. `state/current.md`
+claimed **423 of 446** commands where the live corpus is **435 of 458**; `LeanFmt/Printer.lean`'s module
+docstring claimed **41,340 nodes** where the probe reports **42,599**; `notes/01-command-printing.md`
+had both. `RLF-EXTENSIONS` added `Tree.mayCollapse` and every figure describing the corpus moved,
+because **this repository is the printer's own corpus** — and the prompts that change `LeanFmt/` are
+not the prompts that wrote the sentences quoting it. Nothing failed, because nothing was looking.
+
+**This was recorded three times and fixed zero times**, which is what moved it from tidy-up to the
+audit's business. `results/01-commands.md` named the remedy exactly and did not build it:
+
+> Re-running the probe after touching `LeanFmt/` is part of the work, not a tidy-up; **a gate that
+> diffed the quoted figures against the evidence would be better and does not exist.**
+
+It exists now, and it is a **chain of two links because either alone is worthless**:
+
+    live printer  ──►  evidence/01-projection-shape.txt  ──►  the prose that quotes it
+      tests/printer/run.sh                       experiments/check-quoted-figures.py
+
+`check-quoted-figures.py` alone would compare prose against an evidence file that is itself stale
+whenever the probe has not been re-run — **passing while everything is wrong together**, which is the
+`misordered=0` failure shape this stack already has one of. So `tests/printer/run.sh` asserts the first
+link too: the committed evidence reports the counts the printer just measured live. 33 figures across
+three files, and the arithmetic is re-derived rather than hardcoded — `canonical` is read out of the
+probe as `claimable + namespace + end + open`, not written as a constant that happens to be right.
+
+Mutation-tested, all three directions:
+
+| mutation | result |
+|---|---|
+| prose quotes `41,340` where evidence says `42,599` | `FAIL … quotes '41,340' where … says '42,599'` |
+| a gated sentence is reworded so the pattern misses | `FAIL … pattern never matched` |
+| evidence file left stale (probe not re-run) | `FAIL the shape evidence is stale: it reports 446 commands, the live corpus has 458` |
+
+The second matters most: **a pattern that stops matching is a failure, not a skip.** A gate that
+silently matched nothing would be worse than no gate, and this stack has already been bitten by exactly
+that (`misordered=0`, an answer no input could contradict).
+
+**What is deliberately not gated: `results/NN-*.md`.** Those are snapshots of what a prompt measured
+when it ran. Rewriting them to today's figures would claim `RLF-COMMANDS` measured something it did
+not. One is a live claim, the other is history — a difference in kind, not a gap, and the exclusion is
+stated in the gate's own docstring so the next reader does not "fix" it.
+
+The audit did find one real error inside a snapshot, and corrected it in place: `results/01-commands.md`
+said the two independent measurements "agree exactly" and then wrote `canonical=415 = 358 + 25 + 25 + 7`
+directly under a table reading **423** and **366**. Both cannot be that prompt's result; the prose was
+one revision behind its own table. The identity was always right — one side of it was stale. That is
+this page's own hazard, caught inside the page that names it.
+
 ## Style policy
 
 The prompt's title is "close whole-language coverage **and style policy**", and the honest statement of
