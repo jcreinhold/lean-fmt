@@ -1,0 +1,54 @@
+# RRE-SPEC. One lint rule's message string is inside the compiled bytes of every module.
+#
+# Regenerate with `experiments/run-rule-tier-boundary.sh` (section 2); this is its verbatim output.
+#
+# commit=17b517a  toolchain=leanprover/lean4:v4.32.0  machine=Darwin 25.5.0 arm64
+#
+# The chain, all of it already in the tree:
+#   LeanFmt/CompilerPlugin.lean:4   `import all LeanFmt.Rules`   -- the plugin links the rules
+#   lakefile.lean:114,121,132       `plugins := #[`@/LeanFmtCompilerPlugin:shared]`
+#   LeanFmt/Rules.lean:108          `findings := runRules normalized checkTrailingWhitespace`
+#                                   -- so the artifact the plugin writes into the .olean holds
+#                                      findings, and a finding holds its rule's message text.
+
+$ grep -n "^import" LeanFmt/CompilerPlugin.lean
+3:import all LeanFmt.ArtifactModel
+4:import all LeanFmt.Rules
+5:import Lean.Linter.PersistentLintLog
+
+LocalSyntax.olean      before = 4cdeb8c87a6b1944c37ecb211dda0f880096411e18b8bf93de379399029d4826
+LocalSyntax.trace hash before = 15187a81243bd6c9
+# edited only FMT001's message string in LeanFmt/Rules.lean -- one space, no other change
+LocalSyntax.olean      after  = 4e707288c7045e5b10cd68e93c3eefd93f196a4d9a49ed9738bc1256a43e8478
+LocalSyntax.trace hash after  = c41d0bdb51ec03f0
+
+trace:  INVALIDATED -- the module is re-elaborated
+olean:  BYTES CHANGED -- the rule's message is inside an unrelated module's .olean
+
+# The edit was `message := "trailing whitespace"` -> `message := "trailing whitespace "`. It changes
+# no rule's verdict, no range, no fix, and nothing about the projection. It changed the compiled
+# output of a module that has nothing to do with it.
+#
+# Both halves matter and they are different costs:
+#
+#   trace INVALIDATED is the cost paid by every plugin-using module whether or not it has a finding.
+#     Touching any rule re-elaborates the whole target project. `tests/compiler/run.sh:104-118`
+#     already asserts this invalidation is real; it asserts it as a *desired* property, because the
+#     property it is actually protecting is "a real plugin binary change must invalidate the module
+#     job". That is correct for a projection change and wrong for a rule-message change, and today
+#     the two are the same event.
+#
+#   olean BYTES CHANGED is the cost paid by modules that have a finding. The rule's prose is
+#     serialized into the .olean, so `.olean` bytes are a function of lint text.
+#
+# The .olean is byte-identical if the fixture has no FMT001 to carry the message: an earlier run of
+# this experiment against the committed (whitespace-free) fixture showed
+#   before = ea0a76107e14ec0ed23f9b273bbc947ab85f68f5394b82b67977f622bc290d9c
+#   after  = ea0a76107e14ec0ed23f9b273bbc947ab85f68f5394b82b67977f622bc290d9c
+#   trace  = aa4b98091cd6ff9c -> e3ef3494cf74a575   (still invalidated)
+# which is why the script mutates the fixture first. The trace cost is unconditional; the byte cost
+# needs a finding to carry.
+#
+# Scale of the unconditional half, if the rule families in ruff-08/09/10/11 are added this way:
+# every `.lean` in the target project is re-elaborated on every rule edit. The frozen mathlib sample
+# is 62 modules; real mathlib is ~6000. Nothing about a rule's message requires that.
