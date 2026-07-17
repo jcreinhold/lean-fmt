@@ -13,10 +13,10 @@ frontend. That is not a preference: `ruff-01`'s roadmap already committed to car
 printing in-frontend would buy free arg order for a median 1.96 s frontend run per file (`RLS-FINAL`).
 
 **What the projection does not carry, measured rather than assumed.** Over all 21 modules of this
-repository (48,877 nodes, `evidence/01-projection-shape.txt`), 17,416 nodes (35.6%) carry no token at
+repository (49,396 nodes, `evidence/01-projection-shape.txt`), 17,587 nodes (35.6%) carry no token at
 all — they are *absent* syntax, the unfilled optional slots of `declModifiers`, `optDeclSig`,
 `Termination.suffix` — and `collect` gives them range `(0,0)` because a node's range is the hull of the
-leaves beneath it and there are none. For 7,647 of them (15.6% of all nodes) the parent also has direct
+leaves beneath it and there are none. For 7,742 of them (15.7% of all nodes) the parent also has direct
 token children, so nothing in the projection says where among its siblings the absent slot belongs.
 `Lean.Syntax` has no position for them either; this is not something the projection dropped.
 
@@ -27,7 +27,7 @@ Two consequences run through everything below:
    siblings ascend in arg order. Sorting children by range would be correct for the 64.4% that carry
    tokens and silently wrong for the rest.
 2. **The conservative path reads bytes, not the tree.** Empty nodes contribute no bytes, so re-emitting
-   a command's byte extent is unaffected by all 7,647 ambiguous placements. It is the only path whose
+   a command's byte extent is unaffected by all 7,742 ambiguous placements. It is the only path whose
    correctness rests on no claim about any grammar, which is exactly what the roadmap's "unknown
    commands must round-trip conservatively" asks for. Every kind starts here and leaves only when a
    canonical layout for it is cited and pinned by a golden test.
@@ -56,7 +56,7 @@ transport format. This is the view a walk needs, computed once.
 Both child arrays ascend in index order, which **is** arg order by `collect`'s construction. The
 projection retains no other order, so this is not a property that can be checked against its output —
 `evidence/01-projection-shape.txt` checks the observable consequence instead: among a parent's
-token-bearing children, index order agrees with byte order (0 violations over 48,877 nodes). -/
+token-bearing children, index order agrees with byte order (0 violations over 49,396 nodes). -/
 structure Tree where
   source : LosslessSource
   /-- `nodeChildren[i]` are the node-children of node `i`, in arg order. -/
@@ -719,6 +719,12 @@ private structure Claim where
   byte-identical when it does not because the `line`'s flat spelling *is* this exact whitespace.
   `none` for every other claim, whose gap is emitted verbatim in full. -/
   leadFlat : Option String := none
+  /-- The exact leading-whitespace run on the first token's line that this claim owns, when the claim is
+  an `RLF-BLOCKS` offside re-index (`notes/08-blocks-layout.md`). Its `doc` emits the chosen canonical
+  base indentation itself (`base` spaces then the re-indented block), so `Tree.command` trims this exact
+  run off the verbatim gap ahead of it — the same seam `leadFlat` uses, for a block that moves to a
+  canonical column instead of a value that moves down. `none` for every non-re-index claim. -/
+  leadReindent : Option String := none
 
 /-- Do the gaps inside `[first, last]` hold no line break?
 
@@ -850,7 +856,7 @@ private def Tree.parts (tree : Tree) (node : Nat) : Array Part := Id.run do
   -- Tokens are indexed in source order, so ordering by `first` is ordering by position. Empty
   -- node-children are dropped rather than placed: they contribute no bytes, and nothing in the
   -- projection says where among its siblings an absent slot belongs (`evidence/01-projection-shape.txt`
-  -- measures 15.6% of nodes to be exactly that ambiguous).
+  -- measures 15.7% of nodes to be exactly that ambiguous).
   return parts.qsort (·.first < ·.first)
 
 /-- An `app`'s parts: its function, and its arguments lifted out of the `null` that holds them.
@@ -1250,6 +1256,76 @@ private def Tree.termClaims (tree : Tree) (normalized : String) (mayCollapse : B
     skipUntil := tree.subtreeEnd[node]!
   return claims
 
+/-- Re-index the command's outermost `by`-block to a canonical offside base — the `RLF-BLOCKS` layout
+that finally *handles* "indentation is a token" instead of deferring it (`results/03-tactics.md`).
+
+The claim is `reindentBlock` (`RLF-OFFSIDE`) applied by construct: a `tacticSeq1Indented` whose first
+token begins its own line is shifted by one uniform delta so that first tactic lands at the canonical
+column its nesting gives it, every internal `colEq`/`colGt`/`colGe` preserved (`notes/06` §1). The
+corpus is already canonical, so this is a no-op on every real block (the base formula reproduces a
+canonical block's own column, `Δ = 0`); the fixtures carry the proof it moves a byte
+(`notes/08-blocks-layout.md` §3, Design B1).
+
+Three guards make the shift safe *by argument*, which it must be because the projection printer does
+not reparse at runtime (the same boundary that makes the header parse its sole `Syntax` touch, so the
+`notes/08` §1b reparse ceiling is a **test-time** gate — `tests/printer/run.sh` reparses every fixture
+across six margins, and a base that breaks a parse there is a bug to fix, not a runtime fallback):
+
+* **A `by`-block only** — the token before the block is `by`, so the block is a `byTactic` body, whose
+  plain `tacticSeq` carries *no* external `checkColGt` (`Term/Basic.lean:185` vs `tacticSeqIndentGt`'s
+  floor at `:90`). Confirmed by reparse: a top-level own-line `by` block de-indents to any column ≥ 1
+  and re-parses (`by` at column 0 is the one failure, and this never moves the `by` token). The floored
+  bodies the prompt also names — `do`, `where`, `let`, focus `·` — use `tacticSeqIndentGt` and need the
+  runtime reparse gate this printer does not run; they keep their bytes and are `RLF-ACCEPT`'s (an
+  unfired trigger, like the margin's runtime override).
+* **First token begins its line** (`firstOnLine`, safety condition A, `notes/08` §1a) — so the anchor
+  moves *with* the block; a mid-line first token (`by skip`) would be left behind and fall out of
+  `colEq`, which is `evidence/04-coleq-break.txt`'s exact break.
+* **Outermost only** — the first `tacticSeq1Indented` in pre-order is the command's value `by` block;
+  every nested block (a `·` body, a `have … := by`) sits inside it and shifts *uniformly* with it, its
+  relative offset preserved, so it is skipped rather than re-based against a floor it does not share.
+
+The base is the block's offside parent plus one level: the enclosing `by`'s column when `by` begins its
+own line (`:=`↵`by`↵`tac`), else the command's own indentation (`:= by`↵`tac`, the corpus shape) — in
+both cases `+2`, so a child is one canonical level right of its parent. `verbatim` interiors are never
+touched (a multi-line string in a tactic keeps its bytes, `reindentBlock`). -/
+private def Tree.reindentClaims (tree : Tree) (normalized : String) (span : CommandSpan) :
+    Array Claim := Id.run do
+  let some stop := tree.subtreeEnd[span.root]? | return #[]
+  let commandIndent := match tree.source.tokens[span.first]? with
+    | some token => columnOf normalized token.start
+    | none => 0
+  let mut claims : Array Claim := #[]
+  let mut skipUntil := span.root
+  for node in [span.root:stop] do
+    if node < skipUntil then continue
+    if tree.kindOf node != "Lean.Parser.Tactic.tacticSeq1Indented" then continue
+    -- A tactic block is the coarsest thing this layout re-indexes: its interior shifts as one unit, so
+    -- once one is seen its whole subtree is off-limits to a finer claim, whether or not it is taken.
+    skipUntil := tree.subtreeEnd[node]!
+    let some (first, last) := tree.subtreeTokens node | continue
+    -- A `by`-block body (no external `checkColGt`), whose first tactic begins its own line (the anchor
+    -- moves with the block). Anything else keeps its bytes.
+    if first == 0 then continue
+    if tree.tokenText normalized (first - 1) != "by" then continue
+    let some head := tree.source.tokens[first]? | continue
+    if !firstOnLine normalized head.start then continue
+    let some byTok := tree.source.tokens[first - 1]? | continue
+    let base := (if firstOnLine normalized byTok.start then columnOf normalized byTok.start
+                 else commandIndent) + 2
+    -- The exact leading-whitespace run on the first tactic's line: everything from the line's start to
+    -- the tactic, which condition A guarantees is whitespace. `Tree.command` trims it off the gap.
+    let mut lineStart := 0
+    let before := sliceNormalized normalized 0 head.start
+    let mut position := 0
+    for c in before.toList do
+      position := position + c.utf8Size
+      if c == '\n' then lineStart := position
+    let origIndent := sliceNormalized normalized lineStart head.start
+    let doc := Doc.verbatim (("".pushn ' ' base) ++ tree.reindentBlock normalized first last base)
+    claims := claims.push { first, last, doc, leadReindent := some origIndent }
+  return claims
+
 /-- Every region of this command the layout accounts for, in source order.
 
 Empty means the conservative path: no layout recognized the kind, and the command is bytes. Members
@@ -1274,7 +1350,11 @@ private def Tree.claims (tree : Tree) (normalized : String) (span : CommandSpan)
     let shells := #[{ first := span.first, last, doc : Claim }] ++
       tree.memberClaims normalized span.root last
     let mayCollapse := tree.mayCollapse normalized span
-    (shells ++ tree.termClaims normalized mayCollapse span.root shells).qsort (·.first < ·.first)
+    -- The offside re-index runs *before* `termClaims` and joins `taken`, so the apps inside a re-indexed
+    -- `by` block are suppressed: the block is emitted as one unit and their bytes shift with it, where a
+    -- second term claim over them would emit them twice at the wrong column.
+    let taken := shells ++ tree.reindentClaims normalized span
+    (taken ++ tree.termClaims normalized mayCollapse span.root taken).qsort (·.first < ·.first)
 
 /-- How many member shells this module's layouts claimed.
 
@@ -1559,14 +1639,17 @@ def Tree.command (tree : Tree) (normalized : String) (span : CommandSpan) : Doc 
   for claim in claims do
     let start := (tree.source.tokens[claim.first]?.map (·.start)).getD span.extent.start
     let stop := (tree.source.tokens[claim.last]?.map (·.stop)).getD span.extent.stop
-    -- When the claim owns its leading whitespace (`Claim.leadFlat`, the move-value-down break), trim
-    -- that exact run off the tail of the verbatim gap: the claim's leading `line` re-emits it in flat
-    -- mode, so the byte total is unchanged, and drops it for a newline+indent when it breaks — which is
-    -- the only way to move a value down without leaving a trailing space on the line above.
+    -- When the claim owns its leading whitespace, trim that exact run off the tail of the verbatim gap.
+    -- Two claims do: `leadFlat` (the move-value-down break) re-emits it as a `line`'s flat form, byte
+    -- total unchanged, and drops it for a newline+indent when it breaks — the only way to move a value
+    -- down without a trailing space on the line above; `leadReindent` (the RLF-BLOCKS offside re-index)
+    -- replaces it with the block's chosen canonical base, which its `doc` emits itself. Both seams are
+    -- the same trim; they differ only in what the claim's `doc` puts back.
     let gap := sliceNormalized normalized cursor start
-    let gapDoc : Doc := match claim.leadFlat with
-      | some ws => .verbatim (String.ofList (gap.toList.take (gap.length - ws.length)))
-      | none => .verbatim gap
+    let gapDoc : Doc := match claim.leadFlat, claim.leadReindent with
+      | some ws, _ => .verbatim (String.ofList (gap.toList.take (gap.length - ws.length)))
+      | _, some ws => .verbatim (String.ofList (gap.toList.take (gap.length - ws.length)))
+      | _, _ => .verbatim gap
     doc := doc ++ gapDoc ++ claim.doc
     cursor := stop
   return doc ++ .verbatim (sliceNormalized normalized cursor span.extent.stop)

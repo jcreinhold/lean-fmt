@@ -1,37 +1,37 @@
-modules_analyzed=21 skipped=0 nodes=48877
+modules_analyzed=21 skipped=0 nodes=49396
 pre_order_contiguity_violations=0
 nonempty_node_children_out_of_source_order=0
-empty_nodes=17416 (35.6% of all nodes)
-empty_nodes_with_ambiguous_placement=7647 (15.6% of all nodes)
+empty_nodes=17587 (35.6% of all nodes)
+empty_nodes_with_ambiguous_placement=7742 (15.7% of all nodes)
 
 # most common empty (absent-syntax) kinds
-15505	null
-615	Lean.Parser.Term.letConfig
+15650	null
+629	Lean.Parser.Term.letConfig
 357	Lean.Parser.Command.declModifiers
-352	Lean.Parser.Termination.suffix
-242	group
-169	Lean.Parser.Term.optEllipsis
+353	Lean.Parser.Termination.suffix
+252	group
+170	Lean.Parser.Term.optEllipsis
 123	Lean.Parser.Command.optDeclSig
 36	Lean.Parser.Command.optDeriving
 15	Lean.Parser.Term.attrKind
 2	Lean.Parser.Term.structInstFields
 
-# command kinds in the corpus (505 commands, 6 distinct kinds)
-436	Lean.Parser.Command.declaration
+# command kinds in the corpus (506 commands, 6 distinct kinds)
+437	Lean.Parser.Command.declaration
 25	Lean.Parser.Command.namespace
 25	Lean.Parser.Command.end
 11	Lean.Parser.Command.moduleDoc
 7	Lean.Parser.Command.open
 1	Lean.Parser.Command.initialize
 
-# what the declaration shell layout can structurally claim (421/436 declarations, 96.6%); runtime guards may still refuse
-421	structurally claimed: shell laid out
+# what the declaration shell layout can structurally claim (422/437 declarations, 96.6%); runtime guards may still refuse
+422	structurally claimed: shell laid out
 15	rejected: shape not read yet
 
 # would a ctor/field shell layout decide anything? a member's shell is its opener, modifiers and
 # name; 'collapsible' counts shells holding horizontal slack a layout could close, which is the
 # only figure that argues for building one. See the script for why the other three cannot.
-236	structure fields (simple): 0 collapsible, 214 one-token, 22 broken by a doc comment, 0 already tight, 0 unexpected shape
+237	structure fields (simple): 0 collapsible, 214 one-token, 23 broken by a doc comment, 0 already tight, 0 unexpected shape
 58	inductive constructors: 0 collapsible, 0 one-token, 0 broken by a doc comment, 58 already tight, 0 unexpected shape
 10	structure constructors: 0 collapsible, 0 one-token, 0 broken by a doc comment, 10 already tight, 0 unexpected shape
 

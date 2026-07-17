@@ -1595,6 +1595,160 @@ if [[ -z "$reflow_idem" ]]; then
   printf '  ok   reflow: formatting twice is byte-identical at every margin (%s)\n' "$reflow_margins"
 fi
 
+# --- offside blocks, the RLF-BLOCKS capability ---
+#
+# Where "indentation is a token" (results/03-tactics.md) is finally *handled* rather than deferred: a
+# command's own-line `by` block is re-indexed to its canonical offside column (commandIndent+2, or the
+# enclosing `by`'s column+2 when `by` begins its own line), the RLF-OFFSIDE uniform shift applied by
+# construct (notes/08-blocks-layout.md §3, Design B1). The corpus is already canonical, so this is a
+# no-op there (printer-roundtrip above is byte-identical); the capability shows only on deliberately
+# non-canonical source, which is what this fixture is. A `by`-block body has no external checkColGt
+# (Term/Basic.lean:185), so a top-level own-line block de-indents to any column >= 1 and re-parses --
+# proven here by the fresh frontend, not argued, exactly as RLF-OFFSIDE's own test proves it.
+printf -- '--- offside blocks, canonical re-indentation (RLF-BLOCKS) ---\n'
+cat >"$work/blocks.lean" <<'FIXTURE'
+module
+
+theorem overIndented : True := by
+        skip
+        trivial
+
+theorem underIndented : True := by
+ skip
+ trivial
+
+theorem nested : True ∧ True := by
+      constructor
+      · skip
+        trivial
+      · trivial
+
+theorem withComment : True := by
+        skip
+        -- a reason, not whitespace: it must survive unmoved on its own line, shifted with the block
+        trivial
+
+theorem withString : True := by
+        have s : String := "line one
+line two"
+        trivial
+
+theorem inlineKept : True := by trivial
+FIXTURE
+LEAN_NUM_THREADS=1 lake env "$application" __analyze-exact \
+  "$work/borrowed.setup.json" "$work/blocks.lean" "blocks.lean" 8589934592 >"$work/blocks.json"
+
+# Re-index is width-independent (reindentBlock takes no margin), so every margin produces the *same*
+# output -- a property that distinguishes it from reflow and that a width leak would break. Format at
+# the reflow margins and reparse each.
+block_margins="0 1 40 80 100 1000"
+for w in $block_margins; do
+  "$tests" printer-format "$work/blocks.json" "$work/blocks.lean" "$w" >"$work/blocks.$w.out"
+  LEAN_NUM_THREADS=1 lake env "$application" __analyze-exact \
+    "$work/borrowed.setup.json" "$work/blocks.$w.out" "blocks.lean" 8589934592 \
+    >"$work/blocks.$w.json" 2>"$work/blocks.$w.err" || true
+done
+
+# The re-index fired: the over-margin-independent output is not a copy of its non-canonical input.
+if diff -q "$work/blocks.lean" "$work/blocks.100.out" >/dev/null 2>&1; then
+  printf 'FAIL RLF-BLOCKS did not re-index the non-canonical blocks; output equals input\n' >&2
+  failures=$((failures + 1))
+else
+  printf '  ok   the non-canonical blocks were re-indexed (%s lines rewritten)\n' \
+    "$(diff "$work/blocks.lean" "$work/blocks.100.out" | grep -c '^<')"
+fi
+
+# Width-independence: all six margins are byte-identical to one another.
+blocks_width=
+for w in $block_margins; do
+  if ! diff -q "$work/blocks.0.out" "$work/blocks.$w.out" >/dev/null 2>&1; then
+    printf 'FAIL RLF-BLOCKS output depends on the margin (%s differs from 0); re-index leaked a width\n' "$w" >&2
+    diff -u "$work/blocks.0.out" "$work/blocks.$w.out" >&2
+    failures=$((failures + 1)); blocks_width=1
+  fi
+done
+[[ -z "$blocks_width" ]] && printf '  ok   every margin (%s) produces identical output (re-index is width-independent)\n' "$block_margins"
+
+# Parse-preservation: every output reparses to the SAME token stream as the input. A shift that broke a
+# checkColEq between two tactics would fail to reparse or reparse to a different stream.
+cat >"$work/blocks_verify.py" <<'PY'
+import json, sys
+work, margins = sys.argv[1], sys.argv[2].split()
+def stream(lean, js):
+    src = open(lean, 'rb').read()
+    toks = json.load(open(js))['artifact']['source']['tokens']
+    return [src[t[1]:t[2]].decode('utf8') for t in toks]
+fails = 0
+orig = stream(f"{work}/blocks.lean", f"{work}/blocks.json")
+for w in margins:
+    try:
+        s = stream(f"{work}/blocks.{w}.out", f"{work}/blocks.{w}.json")
+    except Exception as e:
+        print(f"FAIL margin {w}: output did not reparse ({e})", file=sys.stderr); fails += 1; continue
+    if s != orig:
+        print(f"FAIL margin {w}: token stream differs from the input (a tactic fell out of its block)", file=sys.stderr)
+        fails += 1
+if fails == 0:
+    print(f"  ok   every margin reparses to the input's token stream (checkColEq preserved)")
+sys.exit(fails)
+PY
+if python3 "$work/blocks_verify.py" "$work" "$block_margins"; then :; else failures=$((failures + $?)); fi
+
+# The canonical columns, read off the width-independent output (margin 100). Every re-indexed block's
+# first tactic lands at column 2; the nested block's bullets share column 2 and their continuation lands
+# at column 4 (colGt the bullet), the uniform shift preserving the offside relationships.
+out="$work/blocks.100.out"
+if grep -qxE '  skip' "$out" && grep -qxE '  trivial' "$out" && grep -qxE '  constructor' "$out" \
+   && grep -qxE '  · skip' "$out" && grep -qxE '    trivial' "$out"; then
+  printf '  ok   every block sits at column 2; nested bullets at 2, their continuations at 4 (colEq/colGt)\n'
+else
+  printf 'FAIL a re-indexed block did not land at its canonical column:\n' >&2
+  cat "$out" >&2
+  failures=$((failures + 1))
+fi
+
+# A comment inside a block is not whitespace: it survives, on its own line, shifted with the block.
+if grep -qxF '  -- a reason, not whitespace: it must survive unmoved on its own line, shifted with the block' "$out"; then
+  printf '  ok   a comment inside a block survives and shifts with it (never dropped, never re-columned)\n'
+else
+  printf 'FAIL the comment inside withComment was dropped or moved off the block column:\n' >&2
+  cat "$out" >&2
+  failures=$((failures + 1))
+fi
+
+# A multi-line string is a token interior: its second line is the token's *value* and stays byte-exact
+# at column 0, unmoved by the block's shift (Doc.lean:62-68, the reason verbatim exists).
+if grep -qxF 'line two"' "$out"; then
+  printf '  ok   a multi-line string in a tactic keeps its interior byte-exact (unmoved by the shift)\n'
+else
+  printf 'FAIL the multi-line string interior was re-indented; a token value was rewritten:\n' >&2
+  cat "$out" >&2
+  failures=$((failures + 1))
+fi
+
+# The inline block keeps its bytes: `by trivial` on one line has a first token that does not begin its
+# line (safety condition A, notes/08 §1a), so it is never re-indexed -- the counterexample's guard.
+if grep -qxF 'theorem inlineKept : True := by trivial' "$out"; then
+  printf '  ok   an inline `by trivial` is left alone (its first token does not begin a line)\n'
+else
+  printf 'FAIL the inline block was touched; condition A (firstOnLine) did not hold it back:\n' >&2
+  cat "$out" >&2
+  failures=$((failures + 1))
+fi
+
+# Idempotence at every margin: reformat each output at the same margin; byte-identical. The canonical
+# base is a pure function of nesting depth, so the second pass recomputes it and changes nothing.
+blocks_idem=
+for w in $block_margins; do
+  "$tests" printer-format "$work/blocks.$w.json" "$work/blocks.$w.out" "$w" >"$work/blocks.$w.out2"
+  if ! diff -q "$work/blocks.$w.out" "$work/blocks.$w.out2" >/dev/null 2>&1; then
+    printf 'FAIL RLF-BLOCKS: formatting is not idempotent at margin %s:\n' "$w" >&2
+    diff -u "$work/blocks.$w.out" "$work/blocks.$w.out2" >&2
+    failures=$((failures + 1)); blocks_idem=1
+  fi
+done
+[[ -z "$blocks_idem" ]] && printf '  ok   RLF-BLOCKS: formatting twice is byte-identical at every margin (%s)\n' "$block_margins"
+
 # Idempotence, the roadmap's "formatting twice is byte-identical to formatting once". The second pass
 # re-parses the first pass's *output*, so this is a real second format and not a repeated call: if the
 # layout emitted something the parser reads back differently, this is where it shows.
