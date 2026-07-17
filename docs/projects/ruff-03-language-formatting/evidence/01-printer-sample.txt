@@ -44,9 +44,12 @@ tactic_blocks=1966 tactic_ownable=1422 tactic_ownable_own_line=558 tactic_ownabl
 # a blank line ends an indented block and never sits inside one.
 
 # what the layouts refused, by syntax kind (every command not counted in `canonical`).
-# A kind lands here for either of two unlike reasons: no layout claims it, or one does and a
-# runtime guard said no. `Lean.Parser.Command.declaration` is the second; the rest are the
-# first, and are the scope of the prompts after this one.
+# A kind lands here for one of three unlike reasons -- a layout claims it and a runtime guard
+# said no, the pinned compiler declares it and no layout claims it, or the corpus being
+# formatted declared it and this printer cannot read its grammar at all. This report cannot
+# tell them apart; `experiments/kind-inventory.txt` is where each kind is assigned one and
+# given its citation, and `RLF-FINAL` gates this run against it, so a kind absent from it
+# fails here rather than appearing as one more line in a report nobody has to read.
  393 lemma
  277 Lean.Parser.Command.variable
  155 Lean.Parser.Command.declaration/Lean.Parser.Command.instance

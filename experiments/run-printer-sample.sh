@@ -199,9 +199,12 @@ done <"$sources"
   printf '# the printer, and finds every one of its 3,041 blank lines followed by a column-0 line --\n'
   printf '# a blank line ends an indented block and never sits inside one.\n'
   printf '\n# what the layouts refused, by syntax kind (every command not counted in `canonical`).\n'
-  printf '# A kind lands here for either of two unlike reasons: no layout claims it, or one does and a\n'
-  printf '# runtime guard said no. `Lean.Parser.Command.declaration` is the second; the rest are the\n'
-  printf '# first, and are the scope of the prompts after this one.\n'
+  printf '# A kind lands here for one of three unlike reasons -- a layout claims it and a runtime guard\n'
+  printf '# said no, the pinned compiler declares it and no layout claims it, or the corpus being\n'
+  printf '# formatted declared it and this printer cannot read its grammar at all. This report cannot\n'
+  printf '# tell them apart; `experiments/kind-inventory.txt` is where each kind is assigned one and\n'
+  printf '# given its citation, and `RLF-FINAL` gates this run against it, so a kind absent from it\n'
+  printf '# fails here rather than appearing as one more line in a report nobody has to read.\n'
   sort "$scratch/unclaimed" | uniq -c | sort -rn
   printf '\n# every module that lost information or failed to converge\n'
   if grep -q '^FAIL' "$report"; then grep '^FAIL' "$report"; else printf 'none\n'; fi
@@ -210,5 +213,40 @@ done <"$sources"
   printf '\n# per module\n'
   grep '^ok' "$report" | cut -f2,3
 } | tee "$out"
+
+# --- the ownership gate ---------------------------------------------------------------------------
+#
+# `RLF-FINAL`: "zero silently unowned accepted syntax kinds in the frozen corpus". The refusals above
+# were never *unsafe* -- an unclaimed command keeps its own bytes, which is the conservative path
+# `tests/printer/run.sh` pins. They were silent: this script counted them and nothing compared the
+# count to anything, so a kind arriving in the corpus produced one more line in a report with no
+# reader. `experiments/kind-inventory.txt` gives every kind a disposition and a citation; this makes
+# the report a check.
+#
+# **Both directions are fatal, and the second one is the point.** A kind in the corpus but not the
+# inventory is the stop rule directly. A kind in the inventory but not the corpus is a sentence about
+# this sample that is no longer true -- the exact rot that `notes/04-extensions.md` §5 refused a table
+# for -- and catching it is what earns this file the right to exist. The inventory describes the
+# *frozen* corpus; running this script over a different one is expected to fire.
+inventory="$repo_root/experiments/kind-inventory.txt"
+# `-E`: BSD sed's basic regex has no `\|` alternation, so a BRE here silently matches nothing, reports
+# every kind as unowned, and reads like a real failure. Extended regex is portable across both seds.
+sed -nE 's/^(guard|core|corpus)[[:space:]]+//p' "$inventory" | sort -u >"$scratch/owned"
+sort -u "$scratch/unclaimed" >"$scratch/present"
+
+if ! unowned=$(comm -23 "$scratch/present" "$scratch/owned") || [[ -n "$unowned" ]]; then
+  printf '\nFAIL unowned syntax kind in the frozen corpus (RLF-FINAL stop rule).\n' >&2
+  printf 'These kinds are refused by the printer and named nowhere in %s:\n' "$inventory" >&2
+  printf '%s\n' "$unowned" | sed 's/^/  /' >&2
+  printf 'Read the grammar, give each a disposition (guard/core/corpus) and a citation, and add it.\n' >&2
+  failures=$((failures + 1))
+fi
+
+if ! dead=$(comm -13 "$scratch/present" "$scratch/owned") || [[ -n "$dead" ]]; then
+  printf '\nFAIL %s claims a kind the frozen corpus does not contain:\n' "$inventory" >&2
+  printf '%s\n' "$dead" | sed 's/^/  /' >&2
+  printf 'The inventory is a claim about this sample. Remove the entry or explain the drift.\n' >&2
+  failures=$((failures + 1))
+fi
 
 [[ "$failures" -eq 0 ]]

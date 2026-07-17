@@ -999,7 +999,7 @@ recorded in `results/02-expressions.md` as scope rather than as a rule.
 **That "soundly" was too strong, and `RLF-EXTENSIONS` had to narrow it.** Kind-locality is necessary
 and is not sufficient: an `app` really is an `app` anywhere, but *collapsing* it moves every token to
 its right on its line, and what those columns mean is not the app's business at all. See
-`respectsLines`, which is where that is now decided, and `evidence/04-coleq-break.txt`, which is the
+`Tree.mayCollapse`, which is where that is now decided, and `evidence/04-coleq-break.txt`, which is the
 `theorem` this docstring's reasoning would have broken. -/
 private def Tree.claims (tree : Tree) (normalized : String) (span : CommandSpan) : Array Claim :=
   match tree.canonical? normalized span with
