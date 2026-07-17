@@ -1256,12 +1256,13 @@ private def Tree.termClaims (tree : Tree) (normalized : String) (mayCollapse : B
     skipUntil := tree.subtreeEnd[node]!
   return claims
 
-/-- Re-index the command's outermost `by`-block to a canonical offside base — the `RLF-BLOCKS` layout
-that finally *handles* "indentation is a token" instead of deferring it (`results/03-tactics.md`).
+/-- Re-index the command's outermost `by`/`do` block to a canonical offside base — the `RLF-BLOCKS`
+layout that finally *handles* "indentation is a token" instead of deferring it (`results/03-tactics.md`).
 
-The claim is `reindentBlock` (`RLF-OFFSIDE`) applied by construct: a `tacticSeq1Indented` whose first
-token begins its own line is shifted by one uniform delta so that first tactic lands at the canonical
-column its nesting gives it, every internal `colEq`/`colGt`/`colGe` preserved (`notes/06` §1). The
+The claim is `reindentBlock` (`RLF-OFFSIDE`) applied by construct: a `tacticSeq1Indented` (`by` body)
+or `doSeqIndent` (`do` body) whose first token begins its own line is shifted by one uniform delta so
+that first item lands at the canonical column its nesting gives it, every internal `colEq`/`colGt`/`colGe`
+preserved (`notes/06` §1). The
 corpus is already canonical, so this is a no-op on every real block (the base formula reproduces a
 canonical block's own column, `Δ = 0`); the fixtures carry the proof it moves a byte
 (`notes/08-blocks-layout.md` §3, Design B1).
@@ -1271,48 +1272,122 @@ not reparse at runtime (the same boundary that makes the header parse its sole `
 `notes/08` §1b reparse ceiling is a **test-time** gate — `tests/printer/run.sh` reparses every fixture
 across six margins, and a base that breaks a parse there is a bug to fix, not a runtime fallback):
 
-* **A `by`-block only** — the token before the block is `by`, so the block is a `byTactic` body, whose
-  plain `tacticSeq` carries *no* external `checkColGt` (`Term/Basic.lean:185` vs `tacticSeqIndentGt`'s
-  floor at `:90`). Confirmed by reparse: a top-level own-line `by` block de-indents to any column ≥ 1
-  and re-parses (`by` at column 0 is the one failure, and this never moves the `by` token). The floored
-  bodies the prompt also names — `do`, `where`, `let`, focus `·` — use `tacticSeqIndentGt` and need the
-  runtime reparse gate this printer does not run; they keep their bytes and are `RLF-ACCEPT`'s (an
-  unfired trigger, like the margin's runtime override).
+* **A `by`- or `do`-block only** — the token before the block is `by` (a `byTactic` body,
+  `tacticSeq1Indented`) or `do` (a `Term.do` body, `doSeqIndent`), and both sequences are held together
+  by `sepByIndent`'s own `checkColEq`/`checkColGe` with *no* external `checkColGt` on the block
+  (`Term/Basic.lean:185` for `by`; `do` likewise). Confirmed by reparse: a top-level own-line `by` or
+  `do` block de-indents to any column ≥ 1 and re-parses (only column 0 fails, and this never moves the
+  `by`/`do` keyword). The constructs the prompt also names but this does **not** re-index — a
+  `structInst` record (its first field `x` rides the `{ ` line, so it is a *mid-line anchor*, safety
+  condition A / `notes/08` §1a's own counterexample: a re-index would strand the `{` and break the
+  field `checkColEq`; the vertical A1 break `notes/08` §2 designs is a separate `RLF-REFLOW`-style
+  capability that would re-enable the `structInst` collapse hazard `spacingOf` deliberately avoids
+  (`results/02` §5b), so it stays designed-but-deferred), `where` (the keyword leads its own node, at a
+  different canonical column than `+2`), `let` (its body sits `colGe` the `let`, not an indented
+  sequence), and focus `·` (a `tacticSeqIndentGt` with a real floor, but always *nested* inside a
+  `by`/`do` block and so shifted uniformly, never re-based on its own) — keep their bytes and are cited
+  conservative fallback (`roadmap.md`, `RLF-BLOCKS`; `results/09` §coverage).
 * **First token begins its line** (`firstOnLine`, safety condition A, `notes/08` §1a) — so the anchor
   moves *with* the block; a mid-line first token (`by skip`) would be left behind and fall out of
   `colEq`, which is `evidence/04-coleq-break.txt`'s exact break.
-* **Outermost only** — the first `tacticSeq1Indented` in pre-order is the command's value `by` block;
-  every nested block (a `·` body, a `have … := by`) sits inside it and shifts *uniformly* with it, its
-  relative offset preserved, so it is skipped rather than re-based against a floor it does not share.
+* **Outermost only** — the first block in pre-order is the command's value `by`/`do` block; every nested
+  block (a `·` body, a `have … := by`, a `do` inside a tactic) sits inside it and shifts *uniformly*
+  with it, its relative offset preserved, so it is skipped rather than re-based against a floor it does
+  not share.
 
-The base is the block's offside parent plus one level: the enclosing `by`'s column when `by` begins its
-own line (`:=`↵`by`↵`tac`), else the command's own indentation (`:= by`↵`tac`, the corpus shape) — in
-both cases `+2`, so a child is one canonical level right of its parent. `verbatim` interiors are never
+The base is one level right of the block's *offside parent*, and which construct that is turns on the
+keyword. When `by`/`do` begins its own line (`:=`↵`by`↵`tac`) the keyword itself is the offside column
+and already carries the depth, so the base is its column `+ 2`. When the keyword rides the value's line
+(`:= by`, `:= do`, `Id.run do`, a wrapped-signature `:= do`) the parent is the enclosing *statement*:
+the walk climbs to the nearest strict ancestor whose first token begins its own line, and re-indexes
+only when that ancestor is a `match` arm (base = arm `+ 2`) or the command root (base = command `+ 2`) —
+parents this layout can prove. The physical line the keyword *sits on* is not that quantity: a wrapped
+signature (`def f (…)`↵`    … := do`) lands the `do` on a continuation indented past the command while
+its item belongs at the command's column `+ 2`. Any other line-leading ancestor — an own-line
+application head (`Id.run do`), a `where`/`let` body — is a column this layout does not own, so the
+block keeps its bytes (the conservative fallback `roadmap.md` names). `verbatim` interiors are never
 touched (a multi-line string in a tactic keeps its bytes, `reindentBlock`). -/
 private def Tree.reindentClaims (tree : Tree) (normalized : String) (span : CommandSpan) :
     Array Claim := Id.run do
   let some stop := tree.subtreeEnd[span.root]? | return #[]
-  let commandIndent := match tree.source.tokens[span.first]? with
-    | some token => columnOf normalized token.start
-    | none => 0
   let mut claims : Array Claim := #[]
   let mut skipUntil := span.root
   for node in [span.root:stop] do
     if node < skipUntil then continue
-    if tree.kindOf node != "Lean.Parser.Tactic.tacticSeq1Indented" then continue
-    -- A tactic block is the coarsest thing this layout re-indexes: its interior shifts as one unit, so
-    -- once one is seen its whole subtree is off-limits to a finer claim, whether or not it is taken.
+    let kind := tree.kindOf node
+    if kind != "Lean.Parser.Tactic.tacticSeq1Indented" && kind != "Lean.Parser.Term.doSeqIndent" then
+      continue
+    -- A `by`/`do` block is the coarsest thing this layout re-indexes: its interior shifts as one unit,
+    -- so once one is seen its whole subtree is off-limits to a finer claim, whether or not it is taken.
     skipUntil := tree.subtreeEnd[node]!
     let some (first, last) := tree.subtreeTokens node | continue
-    -- A `by`-block body (no external `checkColGt`), whose first tactic begins its own line (the anchor
-    -- moves with the block). Anything else keeps its bytes.
+    -- The block is a `by`/`do` body (no external `checkColGt`) whose first item begins its own line (the
+    -- anchor moves with the block). The keyword before it is what witnesses the missing floor.
     if first == 0 then continue
-    if tree.tokenText normalized (first - 1) != "by" then continue
+    let keyword := tree.tokenText normalized (first - 1)
+    if keyword != "by" && keyword != "do" then continue
     let some head := tree.source.tokens[first]? | continue
     if !firstOnLine normalized head.start then continue
-    let some byTok := tree.source.tokens[first - 1]? | continue
-    let base := (if firstOnLine normalized byTok.start then columnOf normalized byTok.start
-                 else commandIndent) + 2
+    -- The canonical base is one level right of the block's *offside parent*, and which construct that
+    -- is depends on whether the `by`/`do` keyword begins its own line.
+    let commandIndent :=
+      match tree.subtreeTokens span.root with
+      | some (cf, _) => match tree.source.tokens[cf]? with
+        | some ct => columnOf normalized ct.start
+        | none => 0
+      | none => 0
+    let some kwTok := tree.source.tokens[first - 1]? | continue
+    let mut base := 0
+    let mut decided := false
+    if firstOnLine normalized kwTok.start then
+      -- Own-line keyword (`:=`↵`by`↵`tac`): the `by`/`do` *is* the offside column and already carries
+      -- the block's nesting depth, so the base is its column + 2 whatever encloses it.
+      base := columnOf normalized kwTok.start + 2
+      decided := true
+    else
+      -- Mid-line keyword (`:= by`, `:= do`, an `Id.run do`, a wrapped-signature `:= do`): the keyword
+      -- rides the value's line, so the offside parent is the enclosing *statement*. Climb to the
+      -- nearest strict ancestor whose first token begins its own line. A `match` arm (`|` line-leading
+      -- ⇒ base = arm + 2) or the command root (⇒ base = command + 2) is a parent this re-index can
+      -- prove — the *physical line the keyword sits on* is not that quantity, since a wrapped signature
+      -- (`def f (…)`↵`    … := do`) lands the `do` on a continuation indented past the command while
+      -- its item belongs at the command's column + 2. Any other line-leading ancestor — an own-line
+      -- application head (`Id.run`), a `where`/`let` body — is a column this layout does not own, so
+      -- the block keeps its bytes (the conservative fallback `roadmap.md` names). Ancestors whose first
+      -- token is the block's own head (a transparent `tacticSeq` wrapper) share the anchor and are
+      -- skipped by `pf < first`; ancestors whose first token sits mid-line are skipped by `firstOnLine`.
+      let mut anc := tree.source.nodes[node]!.parent
+      for _ in [span.root:stop] do
+        match anc with
+        | none => break
+        | some p =>
+          let leading :=
+            match tree.subtreeTokens p with
+            | some (pf, _) =>
+              if pf < first then
+                match tree.source.tokens[pf]? with
+                | some ptok =>
+                  if firstOnLine normalized ptok.start then some (columnOf normalized ptok.start)
+                  else none
+                | none => none
+              else none
+            | none => none
+          match leading with
+          | some col =>
+            -- A `match` arm is the offside parent of its own value; the command header — reached when
+            -- the line-leading ancestor sits at the command's own column, the shared column of the
+            -- `Command.declaration`/`Command.theorem`/`declModifiers` header nodes — is the parent of a
+            -- direct or wrapped value. Any other line-leading column is a construct this layout does
+            -- not own (an `Id.run` head at command + 2, a `where`/`let` body), so the block keeps bytes.
+            if tree.kindOf p == "Lean.Parser.Term.matchAlt" then
+              base := col + 2
+              decided := true
+            else if col == commandIndent then
+              base := commandIndent + 2
+              decided := true
+            break
+          | none => anc := tree.source.nodes[p]!.parent
+    if !decided then continue
     -- The exact leading-whitespace run on the first tactic's line: everything from the line's start to
     -- the tactic, which condition A guarantees is whitespace. `Tree.command` trims it off the gap.
     let mut lineStart := 0

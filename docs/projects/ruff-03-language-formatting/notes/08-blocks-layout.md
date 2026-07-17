@@ -153,3 +153,26 @@ proof it changes a byte, exactly as every prior layout's did.
 - **colEq spot-check:** a broken record's fields and a re-indented tactic block's tactics share one
   column, read off the output (as `RLF-OFFSIDE`'s test reads colEq off the re-indented block).
 - **Performance line:** `results/09` carries workload, machine, toolchain, commit, wall time, peak RSS.
+
+## 6. As-built: what "enclosing construct's indent" turned into (Plan step 3, after the fact)
+
+§3's B1 said the base is "the enclosing construct's indent + one level," sketched as `commandIndent +
+2·depth`. Implementing it against the corpus sharpened "which construct, read how" into a walk, because
+two real shapes break the sketch (both recorded in `results/09` with citations):
+
+- `commandIndent + 2` is **too shallow** for a `do` in a `match` arm (`Service.lean`'s `.analyze` arm,
+  items at arm + 2, not command + 2).
+- the keyword's **physical line indent** is **too deep** for a wrapped signature (`Service.lean`'s
+  `requiredAs`, `:= do` on a continuation line indented 4, item at command + 2 = 2, not 4 + 2) and for a
+  wrapped value head (`Printer.lean`'s `Id.run do`).
+
+The base is one level right of the **offside parent**, split on the keyword's position: an own-line
+`by`/`do` is itself the offside column (base = its column + 2); a mid-line keyword's parent is the
+enclosing statement, found by climbing the ancestor chain to the nearest node whose first token both
+precedes the block head (skipping the transparent `tacticSeq` wrapper) and begins its own line (skipping
+the mid-line `Term.do`/`declValSimple`), and re-indexing **only** when that ancestor is a `matchAlt` or
+sits at the command's own column — the two parents the layout can prove. This makes the earlier "conservative
+byte-fallback" of §1b/§4 concrete: any other line-leading ancestor (an `Id.run do` head, a `where`/`let`
+body) is a column the layout does not own, so the block keeps its bytes. `structInst` records join that
+fallback under the re-indent lens — the first field rides the `{ ` line (§1a's mid-line anchor), so §2's
+A1 vertical break stays designed-but-deferred as a separate `RLF-REFLOW`-style capability (`RLF-ACCEPT`).

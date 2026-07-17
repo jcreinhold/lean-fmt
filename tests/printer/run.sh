@@ -1749,6 +1749,118 @@ for w in $block_margins; do
 done
 [[ -z "$blocks_idem" ]] && printf '  ok   RLF-BLOCKS: formatting twice is byte-identical at every margin (%s)\n' "$block_margins"
 
+# --- do blocks: the same capability over `Term.do`, and the base formula's two hard cases ---
+#
+# `by` and `do` bodies are both `sepByIndent` sequences with no external checkColGt (tacticSeq1Indented
+# under byTactic; doSeqIndent under Term.do), so the same uniform re-index applies. What `do` adds to
+# the fixtures above is the *base formula's* two failure modes, which `by` alone did not exercise:
+#   * `wrapped` -- a multi-line signature lands `:= do` on a continuation line indented past the
+#     command (col 4), yet the body's canonical column is commandIndent+2 = 2, NOT the keyword line's
+#     4+2. The base is the offside *parent* (the command), read by climbing to the line-leading
+#     ancestor at the command's own column, not the physical line the keyword sits on.
+#   * `keptHead` -- an own-line `Id.run do` head is line-leading at commandIndent+2, a column this
+#     layout does not own (it is neither a match arm nor the command header), so the block keeps its
+#     bytes: the conservative fallback, pinned here as a deliberately non-canonical block left alone.
+# `Id` is a pure monad, so the fixture needs no IO and reparses under the borrowed setup.
+printf -- '--- do blocks (RLF-BLOCKS over Term.do) ---\n'
+cat >"$work/doblocks.lean" <<'FIXTURE'
+module
+
+def direct : Id Nat := do
+        let x := 1
+        pure x
+
+def wrapped (a : Nat) (b : Nat)
+    (c : Nat) : Id Nat := do
+        pure (a + b + c)
+
+def keptHead : Nat :=
+    Id.run do
+        pure 0
+FIXTURE
+LEAN_NUM_THREADS=1 lake env "$application" __analyze-exact \
+  "$work/borrowed.setup.json" "$work/doblocks.lean" "doblocks.lean" 8589934592 >"$work/doblocks.json"
+for w in $block_margins; do
+  "$tests" printer-format "$work/doblocks.json" "$work/doblocks.lean" "$w" >"$work/doblocks.$w.out"
+  LEAN_NUM_THREADS=1 lake env "$application" __analyze-exact \
+    "$work/borrowed.setup.json" "$work/doblocks.$w.out" "doblocks.lean" 8589934592 \
+    >"$work/doblocks.$w.json" 2>/dev/null || true
+done
+
+# The re-index fired on the two command-parented do blocks (direct + wrapped).
+if diff -q "$work/doblocks.lean" "$work/doblocks.100.out" >/dev/null 2>&1; then
+  printf 'FAIL RLF-BLOCKS did not re-index the non-canonical do blocks; output equals input\n' >&2
+  failures=$((failures + 1))
+else
+  printf '  ok   the non-canonical do blocks were re-indexed (%s lines rewritten)\n' \
+    "$(diff "$work/doblocks.lean" "$work/doblocks.100.out" | grep -c '^<')"
+fi
+
+# Width-independence.
+do_width=
+for w in $block_margins; do
+  if ! diff -q "$work/doblocks.0.out" "$work/doblocks.$w.out" >/dev/null 2>&1; then
+    printf 'FAIL do-block re-index depends on the margin (%s differs from 0)\n' "$w" >&2
+    failures=$((failures + 1)); do_width=1
+  fi
+done
+[[ -z "$do_width" ]] && printf '  ok   every margin (%s) produces identical output (width-independent)\n' "$block_margins"
+
+# Parse-preservation across margins: same token stream as the input.
+python3 - "$work" "$block_margins" <<'PY'
+import json, sys
+work, margins = sys.argv[1], sys.argv[2].split()
+def stream(lean, js):
+    src = open(lean, 'rb').read()
+    toks = json.load(open(js))['artifact']['source']['tokens']
+    return [src[t[1]:t[2]].decode('utf8') for t in toks]
+orig = stream(f"{work}/doblocks.lean", f"{work}/doblocks.json")
+fails = 0
+for w in margins:
+    try:
+        s = stream(f"{work}/doblocks.{w}.out", f"{work}/doblocks.{w}.json")
+    except Exception as e:
+        print(f"FAIL do margin {w}: output did not reparse ({e})", file=sys.stderr); fails += 1; continue
+    if s != orig:
+        print(f"FAIL do margin {w}: token stream differs from the input", file=sys.stderr); fails += 1
+if fails == 0:
+    print("  ok   every margin reparses to the input's token stream (parse-preserving)")
+sys.exit(fails)
+PY
+if [[ $? -ne 0 ]]; then failures=$((failures + 1)); fi
+
+# The base formula's two cases, read off margin 100. `direct` and `wrapped` land at column 2 (the
+# command's offside child), and `wrapped` proves the base is NOT the keyword line's indent+2 (=6);
+# `keptHead`'s body is left at its non-canonical column 8 (conservative fallback, bytes kept).
+do_out="$work/doblocks.100.out"
+if grep -qxE '  let x := 1' "$do_out" && grep -qxE '  pure x' "$do_out" \
+   && grep -qxE '  pure \(a \+ b \+ c\)' "$do_out"; then
+  printf '  ok   direct and wrapped-signature do bodies land at column 2 (offside parent = command, not keyword line)\n'
+else
+  printf 'FAIL a do body did not land at its canonical column 2:\n' >&2
+  cat "$do_out" >&2
+  failures=$((failures + 1))
+fi
+if grep -qxE '        pure 0' "$do_out"; then
+  printf '  ok   the own-line `Id.run do` head is a column this layout does not own; its body keeps its bytes (conservative fallback)\n'
+else
+  printf 'FAIL the Id.run do body was re-indexed; the conservative fallback did not hold:\n' >&2
+  cat "$do_out" >&2
+  failures=$((failures + 1))
+fi
+
+# Idempotence at every margin.
+do_idem=
+for w in $block_margins; do
+  "$tests" printer-format "$work/doblocks.$w.json" "$work/doblocks.$w.out" "$w" >"$work/doblocks.$w.out2"
+  if ! diff -q "$work/doblocks.$w.out" "$work/doblocks.$w.out2" >/dev/null 2>&1; then
+    printf 'FAIL do-block re-index is not idempotent at margin %s:\n' "$w" >&2
+    diff -u "$work/doblocks.$w.out" "$work/doblocks.$w.out2" >&2
+    failures=$((failures + 1)); do_idem=1
+  fi
+done
+[[ -z "$do_idem" ]] && printf '  ok   do blocks: formatting twice is byte-identical at every margin (%s)\n' "$block_margins"
+
 # Idempotence, the roadmap's "formatting twice is byte-identical to formatting once". The second pass
 # re-parses the first pass's *output*, so this is a real second format and not a repeated call: if the
 # layout emitted something the parser reads back differently, this is where it shows.

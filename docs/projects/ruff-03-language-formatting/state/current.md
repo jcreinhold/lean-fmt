@@ -1,6 +1,6 @@
 ---
 kind: state
-first_unresolved: 09-reflow-blocks
+first_unresolved: 10-reflow-final
 ---
 
 # Current state
@@ -48,7 +48,7 @@ specifically. The boundary gate also forced a one-line `ruff-05b` repair — `te
 now begins with `module` like its sibling oracle, verified still-emitting.
 
 **`RLF-OFFSIDE` is verified** (`results/07-offside-layout.md`), and it delivers the re-indent primitive
-`RLF-BLOCKS` (prompt 09) consumes — proven in isolation, no real construct re-laid-out yet. The
+`RLF-BLOCKS` (prompt 09) **now consumes** on real source. The
 design-twice (`notes/06-offside-primitive.md`) chose a printer-side `Tree.reindentBlock` over a new
 `Doc` constructor: re-indent is **width-independent** (a block is always broken, the base is chosen not
 measured), so it makes no flat-vs-break decision the engine exists for — the engine stays frozen and
@@ -91,6 +91,29 @@ record that the group now exists, the margin now steers output, and the binary d
 Five checks in `tests/printer/run.sh` (identity at margin 1000, a changed file at 100, token-stream
 parse-preservation across margins **0/1/40/80/100/1000**, the `checkColGt` column relation read off the
 broken output, and idempotence at every margin), `failures=0`.
+
+**`RLF-BLOCKS` is verified** (`results/09-reflow-blocks.md`), and it is where `RLF-OFFSIDE`'s primitive
+first meets real source: `Tree.reindentClaims` re-indexes the outermost `by`/`do` block of each command
+to its canonical offside column, applying the uniform `Δ` shift by argument. The design-twice
+(`notes/08-blocks-layout.md`) chose **B1** (canonical base = enclosing construct's indent + one level,
+Black's model) over **B2** (preserve the author's base, the identity on well-formed input). Implementing
+B1 sharpened "enclosing construct's indent" into a walk, because two corpus shapes break the naive
+readings: `commandIndent + 2` is too shallow for a `do` in a `match` arm (items at arm + 2), and the
+keyword's physical line indent is too deep for a wrapped signature (`:= do` on a continuation line
+indented past the command, item at command + 2). The as-built base is one level right of the **offside
+parent**: an own-line `by`/`do` is itself the offside column; a mid-line keyword's parent is the nearest
+line-leading ancestor that is a `matchAlt` or the command header — the two parents the layout can prove.
+Any other line-leading ancestor (an `Id.run do` head, a `where`/`let` body) is a column this layout does
+not own, so **the block keeps its bytes** — and `structInst` records join that fallback under the
+re-indent lens, their first field being a mid-line anchor (`notes/08` §1a), with §2's A1 vertical break
+designed-but-deferred to `RLF-ACCEPT` as a separate `RLF-REFLOW`-style breaking capability. Every
+fallback is a no-op on the canonical corpus, so the coverage is honest, not silent. Proven by the fresh
+frontend across margins **0/1/40/80/100/1000**: `by` and `do` fixtures with deliberately non-canonical
+indentation are re-indexed, width-independent, parse-preserving (same token stream), idempotent; comments
+and multi-line-string interiors survive unmoved; the `wrapped`-signature `do` lands at command + 2 (not
+keyword-line + 2) and the `Id.run do` head keeps its bytes; the 20-module corpus round-trips
+byte-identically (`commands=506 canonical=479 headers_canonical=20 failures=0`). The full
+`tests/printer/run.sh` is green.
 
 The remainder of this file is the phase-1 record — a live claim about the conservative subset and the
 evidence for it — kept intact because it is the citation base phase 2 builds against.
@@ -154,7 +177,7 @@ Printing inside the frontend would buy free arg order for a median 1.96 s fronte
 | 06-notation-facts | RLF-NOTATION | verified | RLF-FINAL |
 | 07-offside-layout | RLF-OFFSIDE | verified | RLF-NOTATION |
 | 08-reflow-expr | RLF-REFLOW | verified | RLF-OFFSIDE |
-| 09-reflow-blocks | RLF-BLOCKS | planned | RLF-REFLOW |
+| 09-reflow-blocks | RLF-BLOCKS | verified | RLF-REFLOW |
 | 10-reflow-final | RLF-ACCEPT | planned | RLF-BLOCKS |
 
 **`RLF-FINAL` is verified, and it closed phase 1** (`results/05-corpus.md`). It changed no layout and
@@ -743,7 +766,9 @@ recover a collapse that fires zero times.
   projection — the decision `hard` never made. `RLC-FINAL`'s "`call-args` is my model of a Lean call,
   not a Lean call" is discharged: a layout that can exceed the margin has landed. What is *not* yet
   wired is operator/binder/`match` breaking — the mechanism extends to them but only `app` is emitted
-  (`notes/07` §2), so their break behaviour is still fixtures-only and `RLF-BLOCKS`/`RLF-ACCEPT` own it.
+  (`notes/07` §2), so their break behaviour is still fixtures-only and `RLF-ACCEPT` owns it. `RLF-BLOCKS`
+  (verified) added the *offside re-index* of `by`/`do` blocks (`results/09`), not a new term break; the
+  `structInst` A1 vertical break it designed (`notes/08` §2) is likewise deferred to `RLF-ACCEPT`.
 - **The margin is set to 100, and it now changes output.** `Application.canonicalWidth := 100`
   (mathlib's text-linter convention) is the sole production margin; `Printer.format` still requires
   `width` rather than defaulting it, and the value enters cache identity through the `formatter` digest
