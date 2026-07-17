@@ -57,32 +57,47 @@ private partial def collectKinds (stx : Lean.Syntax) (acc : Lean.NameSet) : Lean
     args.foldl (init := acc) fun acc arg => collectKinds arg acc
   | _ => acc
 
-/- Recover a notation's declared atom strings — untrimmed, in source order — from its `ParserDescr`
-decl value in the live environment. This is the pretty-printing hint the parser trims away
-(`Init/Prelude.lean:5389`, `Lean/Parser/Basic.lean:1114`); it survives only in the descriptor, read
-here as data. Matches `ParserDescr.symbol`/`.nonReservedSymbol` (the operator atoms `RLF-NOTATION`
-needs); `sepBy` separators and builtin non-notation kinds contribute nothing and degrade to
+/- Recover a notation's declared atom strings — untrimmed, in source order — by walking its
+`ParserDescr`. This is the pretty-printing hint the parser trims away (`Init/Prelude.lean:5389`,
+`Lean/Parser/Basic.lean:1114`); it survives only in the descriptor. Matches `symbol` /
+`nonReservedSymbol` / `unicodeSymbol` (the operator atoms `RLF-NOTATION` needs) and recurses through
+the structural combinators (`unary`/`binary`/`node`/`trailingNode`/`nodeWithAntiquot`, and into a
+`sepBy` separator sub-parser). `const`/`cat`/`parser` leaves contribute nothing and degrade to
 conservative source bytes. No formatter runs and no `Environment` escapes. -/
-private partial def collectDeclaredAtoms (e : Lean.Expr) (acc : Array String := #[]) : Array String :=
-  let (fn, args) := e.getAppFnArgs
-  if (fn == ``Lean.ParserDescr.symbol || fn == ``Lean.ParserDescr.nonReservedSymbol)
-      && args.size ≥ 1 then
-    match args[0]! with
-    | .lit (.strVal s) => acc.push s
-    | _ => acc
-  else
-    e.getAppArgs.foldl (init := acc) fun acc arg => collectDeclaredAtoms arg acc
+private partial def descrAtoms : Lean.ParserDescr → Array String → Array String
+  | .symbol s, acc => acc.push s
+  | .nonReservedSymbol s _, acc => acc.push s
+  | .unicodeSymbol s _ _, acc => acc.push s
+  | .unary _ p, acc => descrAtoms p acc
+  | .binary _ p₁ p₂, acc => descrAtoms p₂ (descrAtoms p₁ acc)
+  | .node _ _ p, acc => descrAtoms p acc
+  | .trailingNode _ _ _ p, acc => descrAtoms p acc
+  | .nodeWithAntiquot _ _ p, acc => descrAtoms p acc
+  | .sepBy p _ psep _, acc => descrAtoms psep (descrAtoms p acc)
+  | .sepBy1 p _ psep _, acc => descrAtoms psep (descrAtoms p acc)
+  | _, acc => acc
 
-/- The declared notation spacing for every notation kind present in `commands`. Immutable data
-captured from the live `Environment`; a kind with no declared atoms is omitted, never invented. -/
-private def captureNotationSpacing (env : Lean.Environment)
+/- The declared notation spacing for every notation kind present in `commands`. Each present kind's
+`ParserDescr` is read via `evalConst` — the compiled *meta* IR the parser and pretty printer already
+interpret (`Lean/PrettyPrinter/Basic.lean` `runForNodeKind`), which the module system **retains** for
+imported constants (unlike `ConstantInfo.value?`, the kernel `Expr`, which it strips — the defect this
+replaced). The type is guarded to `ParserDescr`/`TrailingParserDescr` before eval, exactly as
+`runForNodeKind` does, so `infixl`/`infixr` trailing notations are captured too. A kind that is not a
+descriptor, or whose eval fails, is omitted — never invented. `unsafe` because `evalConst` runs
+compiled code; `analyzeExact` (its only caller) already is. -/
+private unsafe def captureNotationSpacing (env : Lean.Environment) (options : Lean.Options)
     (commands : Array Lean.Syntax) : SemanticProjection :=
   let kinds := commands.foldl (init := Lean.NameSet.empty) fun acc c => collectKinds c acc
   let notations := kinds.toList.foldl (init := #[]) fun acc kind =>
-    match env.find? kind >>= (·.value?) with
-    | some value =>
-      let atoms := collectDeclaredAtoms value
-      if atoms.isEmpty then acc else acc.push { kind := kind.toString, atoms }
+    match env.find? kind with
+    | some ci =>
+      if ci.type.isConstOf ``Lean.ParserDescr || ci.type.isConstOf ``Lean.TrailingParserDescr then
+        match env.evalConst Lean.ParserDescr options kind with
+        | .ok descr =>
+          let atoms := descrAtoms descr #[]
+          if atoms.isEmpty then acc else acc.push { kind := kind.toString, atoms }
+        | .error _ => acc
+      else acc
     | none => acc
   { notations }
 
@@ -123,7 +138,7 @@ unsafe def analyzeExact (setup : Lean.ModuleSetup) (source : String)
   -- live here and nowhere downstream — so the declared spacing is read into immutable data at this
   -- one seam. The always-on plugin producer never sets the flag, keeping integrated builds on the
   -- syntax-only path (`ArtifactModel.lean` `ofParsedModule`).
-  let semantic := if captureSemantic then some (captureNotationSpacing commandState.env commands) else none
+  let semantic := if captureSemantic then some (captureNotationSpacing commandState.env options commands) else none
   -- `mkInputContext` normalized `source` before parsing it, so every offset above indexes the
   -- normalized string. Measuring the artifact against `source` itself would mix two coordinate
   -- systems inside one artifact for any file that uses CRLF.

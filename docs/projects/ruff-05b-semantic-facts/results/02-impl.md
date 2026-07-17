@@ -1,18 +1,20 @@
 ---
 kind: result
 claim_id: RSF-IMPL
-status: superseded
+status: verified
 ---
 
-> **SUPERSEDED / REOPENED (2026-07-17, prompt-repair).** This note recorded RSF-IMPL as verified, but
-> the RSF-FINAL audit found the capture mechanism it describes — reading the notation decl's kernel
-> value (`env.find? kind >>= (·.value?)`) — is **module-system-incompatible**: in `module`-mode files
-> (~99% of mathlib) the imported constant's value is stripped, so capture returned an **empty** fact.
-> The verification below was sound only for non-module fixtures. The tier, schema `v4`, demand-gating,
-> codec, and test scaffold are correct and stand; the **capture mechanism is being re-implemented** on
-> the module-safe `evalConst Lean.ParserDescr kind` path (`notes/01-semantic-facts.md` §5,
-> `prompts/02-impl.md` repair note, `results/03-final.md`). Read the sections below as accurate *except*
-> where they describe the `value?` capture path and claim full-corpus coverage.
+> **RE-IMPLEMENTED (2026-07-17, prompt-repair).** The first pass captured spacing by reading the
+> notation decl's kernel value (`env.find? kind >>= (·.value?)`, an `Expr`), which the module system
+> strips for imported constants — empty capture on ~99% of mathlib. The RSF-FINAL audit caught it. The
+> capture now reads the descriptor through the compiled **meta** IR via `evalConst Lean.ParserDescr`
+> (module-safe; the route the parser and pretty printer already use), guarded to
+> `ParserDescr`/`TrailingParserDescr` exactly as `Lean/PrettyPrinter/Basic.lean` `runForNodeKind` does.
+> The tier, schema `v4`, demand-gating, codec, and test scaffold from the first pass are unchanged and
+> stand. The **new module-safety acceptance test** — a `module`-mode fixture whose imported `+`/`*`
+> values are stripped, yet whose spacing `evalConst` recovers — is what the first pass lacked and is
+> what this note records as verified. The "Capture mechanism" and "Tests" sections below describe the
+> re-implemented path; the rest is unchanged from the original delivery.
 
 # RSF-IMPL — semantic tier, schema v4, notation-spacing capture
 
@@ -35,11 +37,12 @@ canonical-rendering run pays for it.
   to `ModuleArtifact`; bumped `artifactSchema` to `lean-fmt.module-artifact.v4`; threaded an optional
   `semantic` parameter (default `none`) through `ofParsedModule` so the plugin call site stays `none`.
 - **`LeanFmt/Analysis.lean`** — the capture. `collectKinds` gathers the distinct syntax node kinds in
-  the command stream; `collectDeclaredAtoms` walks a `ParserDescr` decl value and collects the
-  untrimmed string args of `ParserDescr.symbol`/`.nonReservedSymbol` in source order (pure data — no
-  formatter is run, no `Environment` escapes); `captureNotationSpacing` reads each present kind's decl
-  from the **live final-command-state environment** (`commandState.env`, line 77, previously
-  discarded) and emits one `NotationSpacing` per kind that declares atoms. `analyzeExact` gained a
+  the command stream; `descrAtoms` walks a `ParserDescr` and collects the untrimmed strings of its
+  `symbol`/`nonReservedSymbol`/`unicodeSymbol` atoms in source order, recursing through the structural
+  combinators (`unary`/`binary`/`node`/`trailingNode`/`nodeWithAntiquot`, and into a `sepBy` separator
+  sub-parser); `captureNotationSpacing` reads each present kind's descriptor from the **live
+  final-command-state environment** (`commandState.env`, previously discarded) via `evalConst`, and
+  emits one `NotationSpacing` per kind that declares atoms. `analyzeExact` gained a
   `captureSemantic : Bool := false` parameter and populates `semantic` only when it is set.
 - **`LeanFmt/Config.lean`** — `RulePlan.demandedTier (renderCanonical)` = `requiredTier.max (if
   renderCanonical then .semantic else .source)`. This is the one seam where the formatter's demand
@@ -55,16 +58,25 @@ canonical-rendering run pays for it.
 The compiler plugin (`CompilerPlugin.lean`) was **not touched**; its call to `ofParsedModule` passes
 no `semantic`, so it keeps emitting `none`. The import closure and Lake glob are unchanged.
 
-## Capture mechanism
+## Capture mechanism (module-safe)
 
-Declared spacing is recovered as **pure data** from each notation's `ParserDescr` decl value:
-`env.find? kind >>= (·.value?)` is a `ParserDescr` `Expr`; the walker collects the untrimmed `String`
-arguments of `ParserDescr.symbol` / `.nonReservedSymbol` in encounter order. Name-carrying strings
-(`andthen`, category `term`) are skipped because they are arguments of other constructors. This reads
-the pretty-printing hint the parser trims away (`Parser/Basic.lean:1114`, documented
-`Init/Prelude.lean:5389`) without running the formatter or touching `CoreM`. Separators (`sepBy`) and
-builtin non-notation kinds contribute nothing and degrade to conservative source bytes, never invented
-spacing — matching the roadmap stop-rule.
+Declared spacing is recovered from each present kind's `ParserDescr`, read through the compiled
+**meta** IR via `env.evalConst Lean.ParserDescr options kind`. Notation lowers to a
+`meta def : ParserDescr` (`~/Code/lean4/src/Lean/Elab/Syntax.lean:445-449`); the module system
+**retains** that meta IR for imported constants — which is exactly why parsing imported notations keeps
+working in module-mode files — whereas it **strips** the kernel value (`ConstantInfo.value?`, an
+`Expr`). The first pass read `value?` and so captured nothing on the ~99% of the corpus that is
+module-mode; this reads the descriptor the parser and pretty printer themselves interpret. The type is
+guarded to `ParserDescr`/`TrailingParserDescr` before eval, exactly as `Lean/PrettyPrinter/Basic.lean`
+`runForNodeKind` does — so `infixl`/`infixr` trailing notations (typed `TrailingParserDescr`) are
+captured, not dropped. `descrAtoms` then walks the descriptor for the untrimmed `String` of each
+`symbol`/`nonReservedSymbol`/`unicodeSymbol`, in source order, recursing through the structural
+combinators. This reads the pretty-printing hint the parser trims away (`Parser/Basic.lean:1114`,
+documented `Init/Prelude.lean:5389`). `evalConst` runs compiled code, so `captureNotationSpacing` is
+`unsafe` (its only caller, `analyzeExact`, already is with initializers enabled); no `CoreM` or live
+`Environment` crosses the producer boundary — only the serialized atoms. A kind that is not a
+descriptor, or whose eval fails, is omitted; `sepBy` separators and builtin non-notation kinds
+degrade to conservative source bytes, never invented spacing — matching the roadmap stop-rule.
 
 ## Commands and evidence
 
@@ -76,6 +88,10 @@ spacing — matching the roadmap stop-rule.
 - `tests/check/run.sh` → passed (exit 0). First run surfaced the arity break — the harness calls
   `__analyze-exact` with 4 args; fixed by making `captureSemantic` a trailing optional argument.
 - `tests/compiler/run.sh` → passed (the `Broken` build error is the intended negative fixture).
+- `tests/semantic/run.sh` → passed on the now **`module`-mode** `Notation.lean` fixture: the imported
+  `«term_+_»`/`«term_*_»` (values stripped by the module system) and the local `«term_⊕corpus_»`
+  all capture their untrimmed atoms through the real `__analyze-exact` production path — the
+  module-safety check the first pass lacked, on production code end to end.
 - Stack structural checker (`check_stack.py --structural`) → `OK: 3 prompt(s), 0 warning(s)`.
 - `git diff --check` → clean.
 
@@ -88,19 +104,24 @@ spacing — matching the roadmap stop-rule.
   round-trips and stays valid; a stale `v3` schema is a clean miss; and a *fieldless* `v3` payload
   (no `semantic` key, faithful to a pre-field artifact) decodes total-ly to `none` and then misses on
   the schema guard — proving the optional field is additive, not a decode crash.
-- **Compile-time capture acceptance** (a `run_cmd` over two locally-declared notations) —
-  `collectDeclaredAtoms` recovers the *untrimmed* `" ⊹leanfmt⊹ "` (breakable both sides) and tight
-  `"⊟leanfmt⊟"`, and never the trimmed token. This runs against real `notation`/`prefix`-generated
-  `ParserDescr`s. It is in-module by necessity: under the module system an *imported* notation's decl
-  body is hidden (`value?` is `none` without `import all`), while `analyzeExact` reads the live
-  frontend environment where every value is present. The full fresh-frontend `pushToken` differential
-  is RSF-FINAL's.
+- **Module-safety acceptance** (a `run_cmd`, the test the first pass lacked) — `LeanFmtTest.lean` is
+  itself `module`-mode, so every *imported* notation's `value?` is stripped there. The test asserts
+  `value?` is **absent** for core `«term_+_»`/`«term_*_»`/`«term-_»`, and that `kindAtoms` (the
+  production `evalConst`/`descrAtoms` path) nonetheless recovers their untrimmed `" + "`/`" * "`/`"-"`.
+  This is precisely the case the `value?` path returned empty for; it now passes, and would fail on the
+  old mechanism.
+- **Compile-time capture acceptance** (a `run_cmd` over two locally-declared notations) — `kindAtoms`
+  recovers the *untrimmed* `" ⊹leanfmt⊹ "` (breakable both sides) and tight `"⊟leanfmt⊟"`, and never
+  the trimmed token. This runs against real `notation`/`prefix`-generated `ParserDescr`s. The full
+  fresh-frontend `pushToken` differential — core *and* corpus, on a `module`-mode fixture — is
+  RSF-FINAL's (`tests/semantic/run.sh`).
 
 ## Deviations and notes
 
-- **Capture is scoped to `symbol`/`nonReservedSymbol`** (the operator atoms `RLF-NOTATION` needs).
-  `sepBy` separators are out of scope and degrade to source bytes; recorded here so RSF-FINAL and
-  `ruff-03` know the boundary rather than discovering it.
+- **Capture is scoped to `symbol`/`nonReservedSymbol`/`unicodeSymbol`** (the operator atoms
+  `RLF-NOTATION` needs). A `sepBy`/`sepBy1` separator is captured only via the `symbol` inside its
+  `psep` sub-parser, not the bare antiquot-separator string; kinds that are not descriptors degrade to
+  source bytes. Recorded here so RSF-FINAL and `ruff-03` know the boundary rather than discovering it.
 - **`format` now always runs `analyzeExact`** rather than reading the cheap plugin `.olean`, because
   the plugin artifact cannot carry the semantic fact (F3/F4). This is the roadmap's "recorded cost,
   not hidden" made real; RSF-FINAL measures its envelope. A warm `ResultCache` still serves repeat

@@ -1,6 +1,6 @@
 ---
 kind: state
-first_unresolved: 02-impl
+first_unresolved: 03-final
 ---
 
 # Current state
@@ -21,10 +21,10 @@ elaboration facts.
 | Prompt | Claim | Status | Depends on |
 | --- | --- | --- | --- |
 | 01-spec | RSF-SPEC | verified | — |
-| 02-impl | RSF-IMPL | planned (reopened) | RSF-SPEC |
+| 02-impl | RSF-IMPL | verified (re-implemented) | RSF-SPEC |
 | 03-final | RSF-FINAL | planned | RSF-IMPL |
 
-## Repair (2026-07-17, prompt-repair) — capture mechanism was module-broken
+## Repair (2026-07-17, prompt-repair) — capture mechanism was module-broken, now fixed
 
 The RSF-FINAL audit found RSF-IMPL's notation-spacing capture empty on `module`-mode files (~99% of
 mathlib: 60/62 sample, 8194/8264 of `Mathlib/`). Cause: it read the notation decl's **kernel value**
@@ -32,11 +32,20 @@ mathlib: 60/62 sample, 8194/8264 of `Mathlib/`). Cause: it read the notation dec
 (even under `import all`). RSF-SPEC never chose this; it named the registered formatter as authoritative
 and (`notes/01-semantic-facts.md` §5) "a data-only atom store, if one exists" as preferred. That store
 exists and is module-safe — **`evalConst Lean.ParserDescr kind`** (compiled meta IR, retained in module
-mode; the route the parser and pretty printer already use) — proven empirically to recover `«term_+_» →
-" + "` etc. with `value? = none`. RSF-IMPL is reopened to swap the mechanism; RSF-SPEC stays verified;
-the tier/schema/demand-gating/codec/test-scaffold stand. Details: `results/03-final.md` (Resolution),
-`evidence/02-module-mode-blocker.txt`. **Next: re-implement `captureNotationSpacing` on `evalConst`
-with a module-mode test, then re-run the RSF-FINAL audit (differential + cost) on the fixed capture.**
+mode; the route the parser and pretty printer already use).
+
+**Re-implemented and re-verified (2026-07-17).** `LeanFmt/Analysis.lean` now reads each present kind's
+descriptor via `env.evalConst Lean.ParserDescr options kind` (type-guarded to
+`ParserDescr`/`TrailingParserDescr` exactly as `Lean/PrettyPrinter/Basic.lean` `runForNodeKind`), with
+a `ParserDescr` walker (`descrAtoms`) replacing the old `Expr` walker; `captureNotationSpacing` is now
+`unsafe` (its caller already is). A **module-mode acceptance test** was added in two places: a
+`LeanFmtTest.lean` `run_cmd` asserting core `«term_+_»`/`«term_*_»`/`«term-_»` have `value? = none` yet
+capture `" + "`/`" * "`/`"-"`; and `tests/semantic/Notation.lean` converted to `module` mode so the
+end-to-end `__analyze-exact` harness proves non-empty capture for imported operators on production
+code. All suites (build, tests, boundary, modes, check, compiler, semantic, structural) pass. RSF-IMPL
+is verified; RSF-SPEC stayed verified throughout. **Next: re-run the RSF-FINAL audit — re-ground the
+differential (done, `tests/semantic/run.sh` green on the module-mode fixture) and re-measure the cost
+envelope, which previously measured a near-no-op (only 2 non-module files captured).**
 
 ## RSF-SPEC — what it settled (`notes/01-semantic-facts.md`, `results/01-spec.md`)
 
@@ -74,10 +83,11 @@ with a module-mode test, then re-run the RSF-FINAL audit (differential + cost) o
   a fieldless payload decodes total-ly to `none` then misses on the schema guard.
 - **Capture in `analyzeExact`** (`Analysis.lean`): reads each present kind's untrimmed atom strings
   (`ParserDescr.symbol`/`.nonReservedSymbol`/`.unicodeSymbol`) as pure data — no formatter run, no
-  `Environment` escaping; `sepBy` separators and non-notation kinds degrade to source bytes.
-  **⚠ Mechanism reopened (see Repair above):** the first pass read the kernel decl *value* (`value?`),
-  which is module-stripped → empty on module-mode files. The re-implementation reads the descriptor via
-  `evalConst Lean.ParserDescr kind` (module-safe). The scope/degradation behavior is unchanged.
+  `Environment` escaping; `sepBy` separators and non-notation kinds degrade to source bytes. The
+  descriptor is read via **`evalConst Lean.ParserDescr kind`** (module-safe compiled meta IR),
+  type-guarded to `ParserDescr`/`TrailingParserDescr`. (The first pass read the kernel decl *value*
+  via `value?`, which the module system strips → empty capture on module-mode files; that defect was
+  caught by the RSF-FINAL audit and fixed here — see Repair above.)
 - **Demand-gating** (`Config.lean` `RulePlan.demandedTier`, `Application.lean`): a canonical-rendering
   run demands `.semantic`; the plugin artifact (always `none`) is then not fetched, so `format` re-runs
   `analyzeExact` with `captureSemantic := true` — the recorded cost, and the rejection of the fact-free
