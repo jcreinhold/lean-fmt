@@ -79,12 +79,11 @@ unsafe def analyzeExact (setup : Lean.ModuleSetup) (source : String)
   if messages.hasErrors then
     return ← broken messages
   let (commands, terminal?) := processedCommands snapshot
-  let checkTrailingWhitespace := options.getBool `leanFmt.trailingWhitespace true
   -- `mkInputContext` normalized `source` before parsing it, so every offset above indexes the
   -- normalized string. Measuring the artifact against `source` itself would mix two coordinate
   -- systems inside one artifact for any file that uses CRLF.
   let artifact := ModuleArtifact.ofParsedModule setup.name.toString
-    (LosslessSource.normalize source).1 commands terminal? checkTrailingWhitespace
+    (LosslessSource.normalize source).1 commands terminal?
   return { artifact? := some artifact }
 
 /- Extract the compiler-owned payload from one exact module artifact. Process exit remains the

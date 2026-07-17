@@ -175,9 +175,9 @@ private def renderRules (format : ReportFormat) : IO Unit :=
   | .json => IO.println (Lean.toJson ruleRegistry).compress
   | .text =>
     for rule in ruleRegistry do
-      let fix := if rule.fixable then "fixable" else "report-only"
-      let enabled := if rule.defaultEnabled then "default" else "optional"
-      IO.println s!"{rule.code}\t{rule.category}\t{fix}\t{enabled}\t{rule.summary}"
+      let fix := if rule.info.fixable then "fixable" else "report-only"
+      let enabled := if rule.info.defaultEnabled then "default" else "optional"
+      IO.println s!"{rule.info.code}\t{rule.info.category}\t{fix}\t{enabled}\t{rule.info.summary}"
 
 private def renderClean (format : ReportFormat) (report : CleanReport) : IO Unit :=
   match format with

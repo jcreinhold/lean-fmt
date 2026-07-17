@@ -11,6 +11,12 @@ lean_exe «lean-fmt» where
   supportInterpreter := true
   weakLinkArgs := #["-lLake"]
 
+/- This library is what gets linked into every compilation of every module of an integrating project,
+so its member list is that project's exposure to the formatter. `LeanFmt.Rules` was in it and is not
+any more: nothing here imports it, and while it was listed, editing a rule's message text rebuilt the
+plugin, invalidated every integrated module's Lake trace, and changed the compiled bytes of any
+module that had a finding — `notes/01-rule-facts.md` §3 measured all three. The import graph alone was
+never enough to prevent that; this list is the other half of the same boundary. -/
 lean_lib LeanFmtCompilerPlugin where
   roots := #[`LeanFmtCompilerPlugin]
   globs := #[
@@ -20,8 +26,7 @@ lean_lib LeanFmtCompilerPlugin where
     Glob.one `LeanFmt.Basic,
     Glob.one `LeanFmt.Digest,
     Glob.one `LeanFmt.ArtifactModel,
-    Glob.one `LeanFmt.LosslessSource,
-    Glob.one `LeanFmt.Rules
+    Glob.one `LeanFmt.LosslessSource
   ]
 
 lean_lib LeanFmtApplication where
@@ -71,9 +76,6 @@ lean_exe artifactExtractor where
   exeName := "lean-fmt-artifact-extract"
   supportInterpreter := true
 
-private def trailingWhitespaceEnabled : Bool :=
-  (get_config? leanFmtTrailingWhitespace).bind envToBool? |>.getD true
-
 private def artifactFile (mod : Module) : FilePath :=
   Lean.modToFilePath (mod.pkg.buildDir / "lean-fmt-artifacts") mod.name "json"
 
@@ -112,15 +114,11 @@ lean_lib CompilerFixtures where
   srcDir := "tests/compiler"
   roots := #[`LocalSyntax]
   plugins := #[`@/LeanFmtCompilerPlugin:shared]
-  leanOptions := #[⟨`weak.leanFmt.trailingWhitespace,
-    trailingWhitespaceEnabled⟩]
 
 lean_lib BrokenCompilerFixtures where
   srcDir := "tests/compiler"
   roots := #[`Broken]
   plugins := #[`@/LeanFmtCompilerPlugin:shared]
-  leanOptions := #[⟨`weak.leanFmt.trailingWhitespace,
-    trailingWhitespaceEnabled⟩]
 
 /- `Layout` is lint-clean and deliberately not canonically laid out: `namespace     Alpha` is five
 spaces where `LeanFmt.Printer` renders one (`Printer.lean:511-515`, citing `Command.lean:317-318`).
@@ -130,8 +128,6 @@ lean_lib CheckFixtures where
   srcDir := "tests/check"
   roots := #[`Clean, `Findings, `Layout]
   plugins := #[`@/LeanFmtCompilerPlugin:shared]
-  leanOptions := #[⟨`weak.leanFmt.trailingWhitespace,
-    trailingWhitespaceEnabled⟩]
 
 lean_lib BrokenCheckFixtures where
   srcDir := "tests/check"

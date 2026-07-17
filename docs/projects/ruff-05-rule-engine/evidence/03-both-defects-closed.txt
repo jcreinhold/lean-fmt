@@ -1,0 +1,37 @@
+RRE-IMPL. The two defects `evidence/01` and `evidence/02` measured, re-measured.
+Produced by `experiments/run-rule-tier-boundary.sh` against the RRE-IMPL working tree; the
+`commit=` line below is HEAD (RRE-SPEC's commit), not the tree, because the tree was not yet
+committed when this ran. The RRE-IMPL commit is the one that adds this file.
+
+Compare against `evidence/01`, where `check` REPORTED FMT001 while `format` suppressed it, and
+`evidence/02`, where the olean moved 4cdeb8c8... -> 4e707288... and the trace 15187a81... ->
+c41d0bdb... on a one-space edit to a rule's message.
+
+commit=5d037d0  toolchain=leanprover/lean4:v4.32.0
+
+=== 1. how many spellings of "turn FMT001 off" are there? ===
+$ grep -rn "leanFmt.trailingWhitespace\|trailingWhitespaceEnabled" LeanFmt lakefile.lean
+  (no match: the traced-option spelling is gone; `--ignore` is the only one left)
+
+--- the one remaining spelling must agree with itself across modes
+$ lean-fmt check --no-cache --json tests/compiler/LocalSyntax.lean
+  findings=1 status=findings      codes=['FMT001']
+$ lean-fmt check --no-cache --json --ignore FMT001 tests/compiler/LocalSyntax.lean
+  findings=0 status=clean         codes=[]
+$ lean-fmt format --no-cache --json tests/compiler/LocalSyntax.lean
+  findings=1 status=would-format  codes=['FMT001']
+$ lean-fmt format --no-cache --json --ignore FMT001 tests/compiler/LocalSyntax.lean
+  findings=0 status=clean         codes=[]
+
+=== 2. is one rule's message text in every module's compiled bytes? ===
+$ grep -n "^import" LeanFmt/CompilerPlugin.lean
+3:import all LeanFmt.ArtifactModel
+4:import Lean.Linter.PersistentLintLog
+LocalSyntax.olean      before = ee41d3ed0e6dfadcac013910cfb844d03aff290aab0d7d4b03cd802f7dab4b74
+LocalSyntax.trace hash before = 863b046929ed88ee
+# edited only FMT001's message string in LeanFmt/Rules.lean -- one space, no other change
+LocalSyntax.olean      after  = ee41d3ed0e6dfadcac013910cfb844d03aff290aab0d7d4b03cd802f7dab4b74
+LocalSyntax.trace hash after  = 863b046929ed88ee
+
+trace:  unchanged -- editing a rule does not rebuild the target project
+olean:  bytes unchanged -- the rule's message is not in the module's compiled bytes

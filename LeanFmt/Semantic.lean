@@ -84,9 +84,20 @@ def SemanticAnalysis.validFor (analysis : SemanticAnalysis) (raw : String) : Boo
       result.sourceBytes == normalized.utf8ByteSize
 
 /- Project a compiler protocol response into the product result. The projection remains compiler
-evidence; source-only product rules never receive a fabricated syntax projection. The artifact's own
-findings are canonical here — recomputing them on this side would be a second opinion about a module
-this process never elaborated, and could disagree with the artifact under different options. -/
+evidence; source-only product rules never receive a fabricated syntax projection.
+
+**The findings are computed here, from the artifact's facts.** They used to travel inside the
+artifact, and this comment used to defend that: recomputing them would be "a second opinion about a
+module this process never elaborated, and could disagree with the artifact under different options".
+The second clause was the only thing holding the first up, and it was circular — findings could
+disagree under different options only because a rule's enablement *was* an option. It is not any
+more. A rule is a pure total function of its facts, and `validFor` on the line above has just proved
+this artifact describes exactly these bytes, so there is one input and one function and no second
+opinion available to have.
+
+The empirical version is shorter. Carrying findings in the artifact did not prevent disagreement; it
+caused the one `notes/01-rule-facts.md` §2 measured, where `check` reported a rule the artifact said
+was off. Two deciders disagreed, so there is now one. -/
 def SemanticAnalysis.ofEnvelope? (raw : String)
     (envelope : AnalysisEnvelope) : Option SemanticAnalysis :=
   match envelope.artifact? with
@@ -95,7 +106,8 @@ def SemanticAnalysis.ofEnvelope? (raw : String)
   | some artifact =>
     if structurallyValid artifact && artifact.source.validFor raw &&
         envelope.diagnostics.isEmpty then
-      some (.success (LosslessSource.normalize raw).1 artifact.findings)
+      let normalized := (LosslessSource.normalize raw).1
+      some (.success normalized (runRules (.syntax (SyntaxFacts.of normalized artifact.source))))
     else
       none
 

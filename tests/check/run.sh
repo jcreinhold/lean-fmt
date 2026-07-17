@@ -54,6 +54,31 @@ run_expect 1 "$work/fallback-findings.json" env LEAN_FMT_DISABLE_ARTIFACT=1 LEAN
   "$application" check --root . --json --no-cache tests/check/Findings.lean
 cmp "$work/artifact-findings.json" "$work/fallback-findings.json"
 
+# `check` and `format` must never disagree about one unchanged file — the invariant
+# `notes/01-rule-facts.md` §2 caught the product violating. The trigger it used is gone (there is no
+# `leanFmt.trailingWhitespace` to turn off any more), so this asserts the invariant itself rather than
+# replaying a defect that can no longer be spelled.
+#
+# It is not the `cmp` above: that compares the artifact path against the exact-frontend fallback, and
+# both of those report. This compares the two paths that actually diverged. `check` here takes the
+# source-only shortcut in `availableAnalysis` — every rule is source-tier, the mode renders nothing,
+# and module evidence is current — while `format` takes the artifact path for the projection it must
+# print. Only the findings are comparable; mode, status, and rendered text are meant to differ.
+run_expect 1 "$work/agreement-check.json" "$application" check --root . --json --no-cache \
+  tests/check/Findings.lean
+run_expect 1 "$work/agreement-format.json" "$application" format --root . --json --no-cache \
+  tests/check/Findings.lean
+python3 - "$work/agreement-check.json" "$work/agreement-format.json" <<'PY'
+import json, sys
+def findings(path):
+    report = json.load(open(path))
+    file, = report["files"]
+    return [(f["code"], f["range"]["start"], f["range"]["stop"], f["message"]) for f in file["findings"]]
+checked, formatted = findings(sys.argv[1]), findings(sys.argv[2])
+assert checked, "the agreement fixture produced no findings, so agreement is vacuous"
+assert checked == formatted, f"check and format disagree: {checked} != {formatted}"
+PY
+
 run_expect 0 "$work/artifact-custom.json" "$application" check --root . --json --no-cache \
   tests/compiler/LocalSyntax.lean
 run_expect 0 "$work/fallback-custom.json" env LEAN_FMT_DISABLE_ARTIFACT=1 LEAN_FMT_TEST_DISABLE_MODULE_EVIDENCE=1 \

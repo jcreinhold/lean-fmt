@@ -88,6 +88,16 @@ cannot tell them apart.
 `ruff-08` through `ruff-11` add four rule families. Under this arrangement, every edit to any of
 them re-elaborates the target project. The frozen sample is 62 modules; mathlib is roughly 6000.
 
+**Amended by `RRE-IMPL`: the import is only half the channel.** This section named
+`CompilerPlugin.lean:4` as the cause, and fixing that import is not sufficient. `lean_lib
+LeanFmtCompilerPlugin` also *globs* `LeanFmt.Rules` (`lakefile.lean:24` at 5d037d0), and a Lake
+library links every module it globs whether or not anything in the library imports it. With the
+import removed and the glob left in place, rule text still reaches the plugin `.so` and still enters
+every integrated module's build graph — the defect survives an import boundary that reads as correct.
+Both had to go. `tests/boundary/run.sh` now pins both, and says so in the file; `evidence/03` measures
+the result with both halves in place. Anything reasoning about the plugin's exposure from the import
+graph alone is reasoning about half of it.
+
 ## 4. Diagnosis: the option is Lean-idiomatic, in the wrong process
 
 The option is not an arbitrary mistake, and the design must say why it is wrong rather than just

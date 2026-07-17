@@ -48,7 +48,7 @@ private def testRules : IO Unit := do
   ensure ((LosslessSource.normalize normalized) == (normalized, .lf))
     "normalization is not idempotent"
 
-  let findings := runRules normalized true
+  let findings := runSourceRules normalized
   ensure (findings.map (·.code) == #["FMT001", "FMT001", "FMT002"])
     "rule ordering or coverage changed"
   ensure (findings[0]!.range == { start := 10, stop := 12 })
@@ -57,8 +57,11 @@ private def testRules : IO Unit := do
     "EOF trailing-whitespace range is not byte-exact"
   ensure (findings[2]!.range == { start := 22, stop := 22 })
     "final-newline insertion range is not byte-exact"
-  ensure ((runRules normalized false).map (·.code) == #["FMT002"])
-    "traced trailing-whitespace configuration was ignored"
+  -- Ordering is `findingOrder`'s, not the registry's. The two agree here by accident of two rules,
+  -- which is exactly why the sort exists: the assertion above must keep holding when a rule whose
+  -- findings land earlier is registered later.
+  ensure (findings.map (·.range.start) == #[10, 21, 22])
+    "findings are not sorted by position"
 
 private def testServiceProtocol : IO Unit := do
   let health := Lean.Json.parse
@@ -108,7 +111,7 @@ private def ensureRejected (source : String) (findings : Array Finding)
 
 private def testEdits : IO Unit := do
   let source := "def α := 1  \n#check α"
-  let patch ← requirePatch source (runRules source)
+  let patch ← requirePatch source (runSourceRules source)
   ensure (patch.formatted == "def α := 1\n#check α\n")
     "rule edits did not produce the expected UTF-8 output"
   ensure patch.changed "nonempty edit set was reported unchanged"
@@ -177,7 +180,7 @@ ignore = [\"FMT002\"]\n\
     let .ok plan := config.rulePlan #[] #[]
       | throw <| IO.userError "valid configured selectors were rejected"
     ensure (plan.activeCount == 1) "configured ignore did not win"
-    let findings := runRules "def x := 1  "
+    let findings := runSourceRules "def x := 1  "
     ensure ((plan.findings "LeanFmt/File.lean" findings).map (·.code) == #["FMT001"])
       "configured selector projection was wrong"
     ensure ((plan.findings "LeanFmt/Legacy/File.lean" findings).isEmpty)
@@ -250,9 +253,7 @@ private def fixtureLosslessSource (mainModule := "Test") : LosslessSource := {
 
 private def fixtureArtifact : ModuleArtifact := {
   schema := artifactSchema
-  trailingWhitespace := true
   source := fixtureLosslessSource
-  findings := #[]
 }
 
 /- Every rejection below is an ordinary miss, not an error: a consumer that cannot authenticate a
@@ -321,14 +322,12 @@ private def testStore : IO Unit := do
   -- A `v1` payload left in an `.olean` describes the superseded command-kind projection.
   ensure (!(structurallyValid { artifact with schema := "lean-fmt.module-artifact.v1" }))
     "a stale v1 artifact was accepted by the current reader"
-  let outOfRange : Finding := {
-    code := "FMT001"
-    severity := .warning
-    message := "past the end"
-    range := { start := 0, stop := artifact.source.normalizedBytes + 1 }
-  }
-  ensure (!(structurallyValid { artifact with findings := #[outOfRange] }))
-    "a finding past the end of the projected source was accepted"
+  -- An artifact is now nothing but its schema and its projection, so this is the only remaining way
+  -- for one to be structurally wrong. The check that used to live here bounded every finding's range
+  -- by `normalizedBytes`; there are no findings to bound.
+  ensure (!(structurallyValid { artifact with
+      source := { artifact.source with terminalStop := artifact.source.normalizedBytes + 1 } }))
+    "an artifact whose projection is itself invalid was accepted"
   ensure (!(artifact.validFor `Other fixtureSourceText)) "a wrong-module artifact was accepted"
   ensure (!(artifact.validFor `Test "other source")) "a wrong-source artifact was accepted"
   ensure (artifact.validFor `Test fixtureSourceText) "a valid artifact was rejected for its source"
@@ -416,7 +415,7 @@ private def checkProjection (source : LosslessSource) (raw : String) : IO Unit :
     "the recorded header is not the module header"
 
 private unsafe def verifyPluginArtifact (moduleName : Lean.Name)
-    (sourcePath : System.FilePath) (expectedTrailingWhitespace : Bool) : IO Unit := do
+    (sourcePath : System.FilePath) : IO Unit := do
   Lean.enableInitializersExecution
   Lean.initSearchPath (← Lean.findSysroot)
   let environment ← Lean.importModules #[{ module := moduleName }] {}
@@ -426,8 +425,6 @@ private unsafe def verifyPluginArtifact (moduleName : Lean.Name)
     | throw <| IO.userError "module has no matching lean-fmt payload in its `.olean`"
   ensure (artifact.validFor moduleName source) "plugin payload does not match the source"
   ensure (artifact.schema == artifactSchema) "plugin emitted the wrong schema"
-  ensure (artifact.trailingWhitespace == expectedTrailingWhitespace)
-    "plugin lost traced rule configuration"
   ensure (artifact.source.kinds.contains "commandEmit_local_command")
     "plugin lost file-local command syntax"
   -- The fixture's `{ first, second }` parses two ways over one byte range. `checkProjection` is
@@ -435,9 +432,6 @@ private unsafe def verifyPluginArtifact (moduleName : Lean.Name)
   ensure (artifact.source.kinds.contains "choice")
     "the fixture's ambiguous parse produced no choice node"
   checkProjection artifact.source source
-  let expectedCodes := if expectedTrailingWhitespace then #["FMT001"] else #[]
-  ensure (artifact.findings.map (·.code) == expectedCodes)
-    "plugin rules differ from the configured direct rule engine"
   -- The roadmap asks for a compact representation. What grows with a file is the token and node
   -- tables, so bound their cost per element; the fixed schema strings and two digests dominate a
   -- small module and say nothing about compactness (a 34-byte module measures 29x its source and
@@ -449,7 +443,7 @@ private unsafe def verifyPluginArtifact (moduleName : Lean.Name)
     s!"plugin artifact is not compact: {encoded.utf8ByteSize} bytes for {elements} elements"
 
 private def verifyFacetArtifact (path sourcePath : System.FilePath)
-    (expectedTrailingWhitespace : Bool) (expectedHash : Lake.Hash) : IO Unit := do
+    (expectedHash : Lake.Hash) : IO Unit := do
   let source ← IO.FS.readFile sourcePath
   let facet : Lake.Artifact := {
     descr := Lake.artifactWithExt expectedHash "json"
@@ -459,12 +453,18 @@ private def verifyFacetArtifact (path sourcePath : System.FilePath)
   let some artifact ← readFacet? facet `LocalSyntax source
     | throw <| IO.userError "facet artifact failed integrity or semantic validation"
   ensure (artifact.source.mainModule == "LocalSyntax") "facet artifact lost module identity"
-  ensure (artifact.trailingWhitespace == expectedTrailingWhitespace)
-    "facet artifact lost traced rule configuration"
   checkProjection artifact.source source
 
-private def verifyOfficialFacet (root sourcePath : System.FilePath)
-    (expectedTrailingWhitespace : Bool) : IO Unit := do
+/-- The registered facet, end to end, plus the agreement the product had no test for.
+
+`RRE-SPEC` §2 proved `check` and `format` could report different findings for one unchanged file,
+because each spelled the rule configuration its own way and only one path was ever tested. The
+assertion this ends on is that regression: the same file, both product paths, byte-identical
+findings. It is not a tautology — the two paths reach `runRules` through different `Facts`, and the
+source-only shortcut in `availableAnalysis` never touches the artifact. If a future source-tier rule
+ever consults the projection, or the shortcut's `normalized` ever drifts from the artifact's, this is
+what notices. -/
+private def verifyOfficialFacet (root sourcePath : System.FilePath) : IO Unit := do
   let root ← IO.FS.realPath root
   let config ← FormatterConfig.load root
   let project ← Project.load root config #[sourcePath]
@@ -475,14 +475,16 @@ private def verifyOfficialFacet (root sourcePath : System.FilePath)
   let artifacts ← Application.officialArtifacts project.workspace #[target]
   let some (some artifact) := artifacts[0]?
     | throw <| IO.userError "registered official facet was unavailable or invalid"
-  ensure (artifact.trailingWhitespace == expectedTrailingWhitespace)
-    "registered official facet lost traced rule configuration"
   let some semantic := SemanticAnalysis.ofEnvelope? target.source { artifact? := some artifact }
     | throw <| IO.userError "registered official facet did not produce a canonical result"
   let normalized := (LosslessSource.normalize target.source).1
   ensure (semantic == SemanticAnalysis.success normalized
-      (runRules normalized expectedTrailingWhitespace))
+      (runRules (.syntax (SyntaxFacts.of normalized artifact.source))))
     "registered official facet differed from direct product semantics"
+  let some artifactResult := semantic.result?
+    | throw <| IO.userError "registered official facet produced no result to compare"
+  ensure (artifactResult.findings == runSourceRules normalized)
+    "the artifact path and the source-only shortcut disagree about one unchanged file"
 
 /-! ## Layout
 
@@ -1052,41 +1054,29 @@ public unsafe def main (args : List String) : IO UInt32 := do
     testComments
     IO.println "lean-fmt module-artifact tests passed"
     return 0
-  | ["verify-plugin-artifact", moduleName, sourcePath, expected] =>
-    let some expected := if expected == "true" then some true else if expected == "false" then some false else none
-      | do
-      IO.eprintln "EXPECTED_TRAILING must be true or false"
-      return 2
-    verifyPluginArtifact moduleName.toName sourcePath expected
+  | ["verify-plugin-artifact", moduleName, sourcePath] =>
+    verifyPluginArtifact moduleName.toName sourcePath
     IO.println "lean-fmt compiler payload verified"
     return 0
-  | ["verify-facet-artifact", path, sourcePath, expected, expectedHash] =>
-    let some expected := if expected == "true" then some true else if expected == "false" then some false else none
-      | do
-      IO.eprintln "EXPECTED_TRAILING must be true or false"
-      return 2
+  | ["verify-facet-artifact", path, sourcePath, expectedHash] =>
     let some expectedHash := Lake.Hash.ofString? expectedHash
       | do
       IO.eprintln "EXPECTED_HASH must be a Lake content hash"
       return 2
-    verifyFacetArtifact path sourcePath expected expectedHash
+    verifyFacetArtifact path sourcePath expectedHash
     IO.println "lean-fmt compiler artifact verified"
     return 0
   | ["print-lake-hash", path] =>
     IO.println (← Lake.computeFileHash path (text := true))
     return 0
-  | ["verify-official-facet", root, sourcePath, expected] =>
-    let some expected := if expected == "true" then some true else if expected == "false" then some false else none
-      | do
-      IO.eprintln "EXPECTED_TRAILING must be true or false"
-      return 2
-    verifyOfficialFacet root sourcePath expected
+  | ["verify-official-facet", root, sourcePath] =>
+    verifyOfficialFacet root sourcePath
     IO.println "lean-fmt registered compiler facet verified"
     return 0
   | _ =>
-    IO.eprintln "usage: lean-fmt-tests [verify-plugin-artifact MODULE SOURCE EXPECTED_TRAILING | \
-      verify-facet-artifact ARTIFACT SOURCE EXPECTED_TRAILING EXPECTED_HASH | \
-      verify-official-facet ROOT SOURCE EXPECTED_TRAILING | \
+    IO.eprintln "usage: lean-fmt-tests [verify-plugin-artifact MODULE SOURCE | \
+      verify-facet-artifact ARTIFACT SOURCE EXPECTED_HASH | \
+      verify-official-facet ROOT SOURCE | \
       attach-report ENVELOPE SOURCE | \
       doc-bench | \
       print-lake-hash ARTIFACT]"

@@ -84,7 +84,7 @@ private def keyString : Lean.Name → String
 private def selectorsValid (selectors : Array String) : Except String Unit := do
   for selector in selectors do
     unless selector == "all" || selector == "text" ||
-        ruleRegistry.any (·.code == selector) do
+        ruleRegistry.any (·.info.code == selector) do
       throw s!"unknown rule selector: {selector}"
 
 private def parsePerFileIgnores (value : Lake.Toml.Value) : Except String (Array PerFileIgnore) := do
@@ -157,9 +157,9 @@ def FormatterConfig.includesPath (config : FormatterConfig) (path : String) : Bo
 
 private def expandSelector (selector : String) : Array String :=
   if selector == "all" then
-    ruleRegistry.map (·.code)
+    ruleRegistry.map (·.info.code)
   else if selector == "text" then
-    ruleRegistry.filter (·.category == "text") |>.map (·.code)
+    ruleRegistry.filter (·.info.category == "text") |>.map (·.info.code)
   else
     #[selector]
 
@@ -196,7 +196,16 @@ def RulePlan.findings (plan : RulePlan) (path : String)
 
 def RulePlan.activeCount (plan : RulePlan) : Nat := plan.selected.size
 
-def RulePlan.requiresSyntax (plan : RulePlan) : Bool :=
-  ruleRegistry.any fun rule => plan.selected.contains rule.code && rule.input == .syntax
+/-- The cheapest facts that can answer every selected rule.
+
+This is the projection the roadmap asks for: selection derives what a run must *obtain*, and nothing
+else. It does not decide a worker, an artifact strategy, a cache identity, or an order — a run that
+selects nothing costs `source`, and turning a rule on can never rebuild or re-elaborate anything.
+
+The mode contributes separately (`RunMode.rendersCanonical`): a rendering mode needs the projection
+whatever its rules need. -/
+def RulePlan.requiredTier (plan : RulePlan) : Tier :=
+  ruleRegistry.foldl (init := .source) fun tier rule =>
+    if plan.selected.contains rule.code then tier.max rule.tier else tier
 
 end LeanFmt.Internal

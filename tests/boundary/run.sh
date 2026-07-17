@@ -40,20 +40,29 @@ if [[ "$public_entries" != "$expected_entries" ]]; then
   exit 1
 fi
 
-# The compiler plugin depends only on the small semantic artifact/rule core. It cannot acquire the
+# The compiler plugin depends only on the projection. It cannot acquire the rules, nor the
 # application, cache, project, service, CLI, edit, or exact-child orchestration cone.
+#
+# `LeanFmt.Rules` is named here rather than merely absent: it was in this set, and while it was,
+# editing one rule's message text invalidated every integrated module's Lake trace and changed the
+# compiled bytes of any module that had a finding (`notes/01-rule-facts.md` §3). The plugin projects;
+# findings are computed outside it by whoever holds the facts.
 plugin_imports=$(sed -n 's/^import all LeanFmt\.//p' LeanFmt/CompilerPlugin.lean | LC_ALL=C sort)
-if [[ "$plugin_imports" != $'ArtifactModel\nRules' ]]; then
+if [[ "$plugin_imports" != "ArtifactModel" ]]; then
   printf 'compiler plugin import boundary changed\n%s\n' "$plugin_imports" >&2
   exit 1
 fi
+# The import graph is only half of it. A Lake library links every module it globs, so a module listed
+# below reaches the plugin `.so` — and every integrated module's build graph — whether or not anything
+# imports it. `LeanFmt.Rules` was globbed here after its import was already gone.
 plugin_globs=$(awk '
   /lean_lib LeanFmtCompilerPlugin where/ { inside=1 }
   inside { print }
   inside && /^  ]/ { exit }
 ' lakefile.lean)
-if grep -Eq 'LeanFmt\.(Application|Cache|Cli|Config|Edit|Project|Semantic|Service)' <<<"$plugin_globs"; then
-  printf 'compiler plugin Lake target includes application modules\n' >&2
+if grep -Eq 'LeanFmt\.(Application|Cache|Cli|Config|Edit|Project|Rules|Semantic|Service)' \
+    <<<"$plugin_globs"; then
+  printf 'compiler plugin Lake target includes rule or application modules\n' >&2
   exit 1
 fi
 

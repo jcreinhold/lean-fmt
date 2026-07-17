@@ -6,21 +6,14 @@ import Lake.Build.Common
 
 namespace LeanFmt.Internal
 
-private def validRange (sourceBytes : Nat) (range : SourceRange) : Bool :=
-  range.start <= range.stop && range.stop <= sourceBytes
+/-- Structural validity, checkable without the source.
 
-private def validEdit (sourceBytes : Nat) (edit : Edit) : Bool :=
-  validRange sourceBytes edit.range
-
-private def validFinding (sourceBytes : Nat) (finding : Finding) : Bool :=
-  validRange sourceBytes finding.range && finding.fix?.all (validEdit sourceBytes)
-
-/-- Structural validity, checkable without the source. `findings` are bounded by the same normalized
-byte count the projection is measured in, because both halves now index one string. -/
+This used to also bound every finding's range by the projection's byte count. There are no findings
+in an artifact any more, and nothing was lost with that check: a finding is now computed by the
+process that reports it, from facts `validFor` has already matched to the bytes in hand, so its range
+is in range by construction rather than by audit. -/
 def structurallyValid (artifact : ModuleArtifact) : Bool :=
-  artifact.schema == artifactSchema &&
-    artifact.source.structurallyValid &&
-    artifact.findings.all (validFinding artifact.source.normalizedBytes)
+  artifact.schema == artifactSchema && artifact.source.structurallyValid
 
 /-- Validity against the file a caller actually read. Normalizing is the caller's only correct move:
 no compiler-produced offset or digest indexes the bytes on disk. -/

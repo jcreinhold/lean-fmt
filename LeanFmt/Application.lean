@@ -314,17 +314,27 @@ this value starts changing output and every cached `CanonicalText` becomes stale
 that never mentioned it. The value 100 matches mathlib's own convention and is otherwise arbitrary. -/
 def canonicalWidth : Nat := 100
 
-/-- Render a validated artifact's projection, and re-run the source rules against the result.
+/-- Render a validated artifact's projection, and re-run the rules against the result.
 
 The rules are re-run rather than reused because canonical text is not lint-clean and its coordinates
-are not the file's — see `CanonicalText`. `artifact.trailingWhitespace` is the flag the artifact was
-*built* under, so re-running with it keeps this side from forming a second opinion about a module this
-process never elaborated, which is the rule `SemanticAnalysis.ofEnvelope?` already states for
-findings. -/
+are not the file's — see `CanonicalText`.
+
+**Only `source`-tier rules run here, and that is a limit rather than a choice.** The facts available
+for canonical text are canonical text: `artifact.source` projects the *original*, so handing it to a
+syntax rule alongside the rendered string would measure a rule against one text using another text's
+offsets, which is the coordinate-mixing error this codebase has already paid for once. Projecting the
+canonical text instead means parsing it, which is a second frontend run per file.
+
+Nothing is skipped today, because every registered rule is `source`-tier. The day one is not, this
+becomes wrong silently, so here is the trigger: **whoever adds the first `syntax`-tier rule with a
+fix decides what `format` does with it, and `ruff-06`'s `RFX-SPEC` owns that decision** — it is
+chartered for "formatter interaction" and fix composition. The choice is between re-projecting
+canonical text and applying non-source fixes to the original in a separate pass. `RRE-FINAL` asserts
+this limit rather than leaving it to prose. -/
 private def renderCanonicalText (raw : String) (artifact : ModuleArtifact) : IO CanonicalText := do
   let normalized := (LosslessSource.normalize raw).1
   let text ← Printer.format artifact.source normalized canonicalWidth
-  return { text, findings := runRules text artifact.trailingWhitespace }
+  return { text, findings := runSourceRules text }
 
 private def canonicalAnalysis (snapshot : SourceSnapshot) (renderCanonical : Bool)
     (analysis : AnalysisEnvelope) : IO SemanticAnalysis := do
@@ -380,13 +390,16 @@ private def availableAnalysis (plan : RulePlan) (renderCanonical : Bool)
   if let some analysis := cached? then
     if cacheHitServes renderCanonical analysis then
       return some analysis
-  if !plan.requiresSyntax && !renderCanonical && evidence == .current then
-    -- Source-only rules still index the normalized string, so this shortcut and the artifact path
-    -- produce findings in one coordinate system and remain interchangeable in the result cache.
-    -- It is gated on `renderCanonical` because it takes no artifact, and canonical text cannot be
+  if plan.requiredTier == .source && !renderCanonical && evidence == .current then
+    -- Source rules index the normalized string, so this shortcut and the artifact path produce
+    -- findings in one coordinate system and remain interchangeable in the result cache. They are
+    -- also now the same call: `runRules` folds over the one registry either way, so this path can
+    -- no longer decide a rule differently from the artifact path. It used to, by passing a literal
+    -- `true` where the artifact path passed the artifact's own flag (`notes/01-rule-facts.md` §2).
+    -- Gated on `renderCanonical` because it takes no artifact, and canonical text cannot be
     -- rendered without the projection an artifact carries.
     let normalized := (LosslessSource.normalize snapshot.source).1
-    return some <| SemanticAnalysis.success normalized (runRules normalized true)
+    return some <| SemanticAnalysis.success normalized (runSourceRules normalized)
   else if let some artifact := officialArtifact? then
     return some (← canonicalAnalysis snapshot renderCanonical { artifact? := some artifact })
   else
@@ -743,7 +756,7 @@ def execute (request : RunRequest) : IO RunReport := do
   recordPhase "module_evidence" evidenceStarted evidenceFinished
   let artifactStarted ← IO.monoNanosNow
   -- A rendering mode needs the projection an artifact carries, whatever the selected rules need.
-  let artifacts ← if plan.requiresSyntax || renderCanonical then
+  let artifacts ← if plan.requiredTier != .source || renderCanonical then
     officialArtifacts project.workspace snapshots
   else
     pure (Array.replicate snapshots.size none)
