@@ -1,26 +1,27 @@
 ---
 kind: state
-first_unresolved: 03-acceptance
+first_unresolved: none
 ---
 
 # Current state
 
-`RFX-SPEC` and `RFX-IMPL` are **verified**. The design is `notes/01-model.md`; what was run is
-`results/01-model.md` and `results/02-transaction.md`, and the characterization is
-`evidence/01-no-applicability.txt`. The external prerequisite stacks `ruff-04-formatter-product` and
-`ruff-05-rule-engine` are both verified, and their live implementation was re-read here rather than
-trusted — every claim in the notes cites a file and line.
+**The fix-safety stack is complete.** `RFX-SPEC`, `RFX-IMPL`, and `RFX-FINAL` are all **verified**. The
+design is `notes/01-model.md`; what was run is `results/01-model.md`, `results/02-transaction.md`, and
+`results/03-acceptance.md`; the characterization is `evidence/01-no-applicability.txt`. The external
+prerequisite stacks `ruff-04-formatter-product` and `ruff-05-rule-engine` are both verified, and their
+live implementation was re-read rather than trusted — every claim in the notes cites a file and line.
 
-The applicability model now exists in code: `Fix { applicability, edits }`, admission through
-`Applicability.admitted`, per-rule reclassification as a `RulePlan` projection, conflict provenance, and
-`--unsafe-fixes`. All product suites (modes, boundary, check, service) and the module-artifact tests
-pass. `RFX-FINAL` remains planned.
+The applicability model exists in code and is verified against adversarial input: `Fix { applicability,
+edits }`, admission through `Applicability.admitted`, per-rule reclassification as a `RulePlan`
+projection, conflict provenance naming both rules, `--unsafe-fixes`, and atomic per-file publication
+that commits only at `rename`. All product suites (modes, boundary, check, service) and the
+module-artifact tests pass.
 
 | Prompt | Claim | Status | Depends on |
 | --- | --- | --- | --- |
 | 01-model | RFX-SPEC | verified | — |
 | 02-transaction | RFX-IMPL | verified | RFX-SPEC |
-| 03-acceptance | RFX-FINAL | planned | RFX-IMPL |
+| 03-acceptance | RFX-FINAL | verified | RFX-IMPL |
 
 ## What is frozen
 

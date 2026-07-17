@@ -164,6 +164,64 @@ private def testEdits : IO Unit := do
           ensure ((← requireRevert patch) == propertySource)
             s!"single-edit reversibility failed at {start}-{stop}"
 
+private def findingWithEdits (edits : Array Edit) (applicability : Applicability := .safe)
+    (code : String := "TEST") : Finding := {
+  code
+  severity := .warning
+  message := "test multi-edit"
+  range := edits[0]?.map (·.range) |>.getD { start := 0, stop := 0 }
+  fix? := some { applicability, edits }
+}
+
+/-- Adversarial fix-all cases for `RFX-FINAL`: mixed insert/delete/replace conflicts, multi-edit fixes
+inside one transaction, that applicability is never an edit property, and that a safe rule fix leaves a
+comment's text intact. The atomic-publish crash/stale cases live in `tests/modes/run.sh`, where a real
+temp-file-then-rename is exercised. -/
+private def testFixAllAdversarial : IO Unit := do
+  -- Insert / delete / replace mixing. An insertion strictly inside a replacement is a conflict;
+  -- adjacency at a shared boundary is not; a deletion beside a replacement composes.
+  ensureRejected "abc" #[
+      findingWithEdit { start := 0, stop := 2 } "X",
+      findingWithEdit { start := 1, stop := 1 } "!"
+    ] (fun | .conflict .. => true | _ => false)
+    "an insertion inside a replacement was accepted"
+  let boundary ← requirePatch "abc" #[
+      findingWithEdit { start := 0, stop := 2 } "X",
+      findingWithEdit { start := 2, stop := 2 } "!"]
+  ensure (boundary.formatted == "X!c") "an insertion at a replacement's end boundary was mishandled"
+  let deleteReplace ← requirePatch "abcd" #[
+      findingWithEdit { start := 0, stop := 1 } "",
+      findingWithEdit { start := 1, stop := 2 } "X"]
+  ensure (deleteReplace.formatted == "Xcd") "a deletion beside a replacement did not compose"
+
+  -- One `Fix` may carry several edits; they are one transaction. Disjoint edits apply together and
+  -- revert exactly; overlapping edits within a single fix still reject, naming that fix on both sides.
+  let multi ← requirePatch "abcd" #[findingWithEdits #[
+      { range := { start := 0, stop := 1 }, replacement := "X" },
+      { range := { start := 2, stop := 3 }, replacement := "Y" }] .safe "MULTI"]
+  ensure (multi.formatted == "XbYd") "a multi-edit fix did not apply as one transaction"
+  ensure ((← requireRevert multi) == "abcd") "a multi-edit fix did not revert exactly"
+  match preparePatch "abcd" #[findingWithEdits #[
+      { range := { start := 0, stop := 2 }, replacement := "X" },
+      { range := { start := 1, stop := 3 }, replacement := "Y" }] .safe "MULTI"] with
+  | .error (.conflict left right _ _) =>
+    ensure (left == "MULTI" && right == "MULTI") "an intra-fix conflict lost the fix's own provenance"
+  | _ => throw <| IO.userError "overlapping edits within one fix were accepted"
+
+  -- Applicability governs admission, never bytes. The same edit safe or unsafe assembles identically;
+  -- promotion/demotion decides whether `fix` applies it, upstream of the assembler.
+  let asSafe ← requirePatch "abc" #[findingWithEdit { start := 0, stop := 1 } "X" .safe "R"]
+  let asUnsafe ← requirePatch "abc" #[findingWithEdit { start := 0, stop := 1 } "X" .unsafe "R"]
+  ensure (asSafe.formatted == asUnsafe.formatted && asSafe.formatted == "Xbc")
+    "applicability changed the bytes a fix produces"
+
+  -- Comment loss: FMT001 strips trailing whitespace even when it trails comment text, but the
+  -- comment's content survives. A safe fix edits trivia, never a comment.
+  let commented := "def x := 1 -- c  \n"
+  let patch ← requirePatch commented (runSourceRules commented)
+  ensure (patch.formatted == "def x := 1 -- c\n") "FMT001 did not strip only the trailing whitespace"
+  ensure (("def x := 1 -- c\n".splitOn "-- c").length == 2) "the comment text was lost by a safe fix"
+
 private def testConfig : IO Unit := do
   let directory ← IO.FS.createTempDir
   let configPath := directory / "lean-fmt.toml"
@@ -1238,6 +1296,7 @@ public unsafe def main (args : List String) : IO UInt32 := do
     testMixedSelection
     testServiceProtocol
     testEdits
+    testFixAllAdversarial
     testConfig
     testApplicability
     testCacheIdentity

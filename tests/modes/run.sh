@@ -355,6 +355,24 @@ run_expect 1 "$work/stale.json" env LEAN_FMT_TEST_BEFORE_WRITE="$work/stale-hook
 grep -q 'source changed after analysis' "$work/stale.json"
 cp -p "$work/Findings.lean" "$source_file"
 
+# A crash between validation and the rename that commits the write. The before-write hook fails after
+# the temp file exists but before `rename`, standing in for a process death at that instant. The commit
+# is the single atomic `rename`, so the target keeps its exact bytes/mtime/mode, the run is an
+# infrastructure failure (exit 2), and no `.lean-fmt-tmp-*` file is orphaned beside the source.
+cat >"$work/crash-hook" <<'EOF'
+#!/bin/sh
+exit 1
+EOF
+chmod +x "$work/crash-hook"
+run_expect 2 "$work/crash.json" env LEAN_FMT_TEST_BEFORE_WRITE="$work/crash-hook" \
+  "$application" fix --root . --json --no-cache tests/check/Findings.lean
+metadata "$source_file" >"$work/source.after-crash"
+cmp "$work/source.before" "$work/source.after-crash"
+if compgen -G "$repo_root/tests/check/Findings.lean.lean-fmt-tmp-*" >/dev/null; then
+  echo 'a crash before rename orphaned a temp file at the target' >&2
+  exit 1
+fi
+
 original_mode=$(stat -f %Lp "$source_file" 2>/dev/null || stat -c %a "$source_file")
 run_expect 0 "$work/fixed.json" "$application" fix --root . --json --no-cache --check-elab \
   tests/check/Findings.lean
