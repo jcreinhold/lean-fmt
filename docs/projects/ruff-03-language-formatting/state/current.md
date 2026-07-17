@@ -1,9 +1,38 @@
 ---
 kind: state
-first_unresolved: none
+first_unresolved: 06-notation-facts
 ---
 
 # Current state
+
+## Reopened for phase 2 (reflowing formatter) — 2026-07-17
+
+**Phase 1 is verified and correct; the stack is reopened because its ambition changed, not because its
+work was wrong.** An audit of the ruff family found `ruff-03` shipped a formatter that is a *no-op on
+already-canonical Lean* — which phase 1 proves, seven times, is a fact about the corpus (already
+canonical) and the language (most reflow is parse-unsafe) rather than about the authors. Every deferral
+below carries a parser citation. But the roadmap Goal promised *canonical* formatting of terms,
+operators, records, tactics, and `do`, and the parts that change non-canonical bytes were deferred with
+receipts, not built. The user chose the **reflowing (ruff/Black-class)** ambition (2026-07-17, margin
+100), so phase 2 builds the deferred capability on top of the verified phase-1 claims.
+
+Phase 1's claims (`RLF-COMMANDS`..`RLF-FINAL`) stay **verified** — they are honest and narrow.
+`RLF-FINAL` closed the *conservative*-coverage inventory and style policy; it is no longer the stack's
+final claim. The design-twice, the layer map, and why operator spacing forces reopening the fact layer
+(`ruff-01`/`ruff-05`) are in `notes/05-reflow-architecture.md`. Phase 2 is five prompts:
+
+| Prompt | Claim | Capability |
+| --- | --- | --- |
+| 06-notation-facts | RLF-NOTATION | declared notation/atom spacing as an analysis-layer fact (reopens `ruff-01`/`ruff-05`) |
+| 07-offside-layout | RLF-OFFSIDE | parse-preserving re-indent to a canonical base (design-twice; reopens `ruff-02` only if a `Doc` constructor wins) |
+| 08-reflow-expr | RLF-REFLOW | margin-driven line breaking for app/operator/binder/match (engine `group`/`nest`/`line`) |
+| 09-reflow-blocks | RLF-BLOCKS | records + tactic/`do`/`where`/`let` offside layout |
+| 10-reflow-final | RLF-ACCEPT | idempotence + parse-preservation + coverage + performance acceptance |
+
+The remainder of this file is the phase-1 record — a live claim about the conservative subset and the
+evidence for it — kept intact because it is the citation base phase 2 builds against.
+
+## Phase 1 record (conservative subset — verified)
 
 `RLF-COMMANDS` is **verified** (`results/01-commands.md`): the printer is live and proven lossless on
 this repository *and* on 62 modules of foreign Lean, **459 of the corpus's 483 commands take a cited
@@ -59,8 +88,13 @@ Printing inside the frontend would buy free arg order for a median 1.96 s fronte
 | 03-tactics | RLF-TACTICS | verified | RLF-EXPRESSIONS |
 | 04-extensions | RLF-EXTENSIONS | verified | RLF-TACTICS |
 | 05-corpus | RLF-FINAL | verified | RLF-EXTENSIONS |
+| 06-notation-facts | RLF-NOTATION | planned | RLF-FINAL |
+| 07-offside-layout | RLF-OFFSIDE | planned | RLF-NOTATION |
+| 08-reflow-expr | RLF-REFLOW | planned | RLF-OFFSIDE |
+| 09-reflow-blocks | RLF-BLOCKS | planned | RLF-REFLOW |
+| 10-reflow-final | RLF-ACCEPT | planned | RLF-BLOCKS |
 
-**`RLF-FINAL` is verified, and the stack is closed** (`results/05-corpus.md`). It changed no layout and
+**`RLF-FINAL` is verified, and it closed phase 1** (`results/05-corpus.md`). It changed no layout and
 no output byte: its finding is that **the refusals were never unsafe, they were unread.** The stop rule
 is *zero silently unowned accepted syntax kinds*, and the word carrying it is **silently** — an
 unclaimed command already kept its bytes, but `run-printer-sample.sh` counted the refusals into a report
