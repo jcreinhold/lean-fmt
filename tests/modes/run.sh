@@ -5,11 +5,18 @@ repo_root=$(cd "$(dirname "$0")/../.." && pwd)
 work=$(mktemp -d)
 cache_root="$repo_root/.lean-fmt-cache"
 source_file="$repo_root/tests/check/Findings.lean"
+layout_file="$repo_root/tests/check/Layout.lean"
 artifact_root="$repo_root/.lake/build/lean-fmt-artifacts"
 
+# Both fixtures are edited in place below and both are tracked files, so restoring them is not
+# cleanup — it is the difference between a failing test and a dirty working tree the next run
+# silently measures instead.
 restore() {
   if [[ -f "$work/Findings.lean" ]]; then
     cp -p "$work/Findings.lean" "$source_file"
+  fi
+  if [[ -f "$work/Layout.lean" ]]; then
+    cp -p "$work/Layout.lean" "$layout_file"
   fi
   rm -rf "$cache_root" "$work"
 }
@@ -17,6 +24,7 @@ trap restore EXIT
 
 cd "$repo_root"
 cp -p "$source_file" "$work/Findings.lean"
+cp -p "$layout_file" "$work/Layout.lean"
 rm -rf "$cache_root"
 LEAN_NUM_THREADS=1 lake build lean-fmt lean-fmt-tests \
   LocalSyntax:leanFmtArtifact Findings:leanFmtArtifact Clean:leanFmtArtifact \
@@ -82,46 +90,100 @@ formatted = json.load(open(sys.argv[2]))
 diff = open(sys.argv[3]).read()
 assert check["mode"] == "check" and check["changed"] == 1 and check["written"] == 0
 assert formatted["files"][0]["formatted"] == "module\n\ndef findingValue : Nat := 1\n"
-expected = """--- a/tests/check/Findings.lean
-+++ b/tests/check/Findings.lean
-@@ -1,3 +1,3 @@
--module
--
--def findingValue : Nat := 1  
-+module
-+
-+def findingValue : Nat := 1
-mode=diff files=1 findings=1 changed=1 written=0 broken=0 rejected=0 infrastructure_failures=0
-"""
+# `RFP-IMPL` rewrote `unifiedDiff` over `Lean.Diff.diff`. This golden used to pin the naive output,
+# which reprinted all three lines as `-` and then all three as `+` to change one of them.
+#
+# Assembled from explicit pieces rather than written as a literal block: three of these lines end in
+# whitespace that is the assertion (the ' ' context marker on the blank line, and the two spaces that
+# are FMT001's actual violation), and a literal block would put trailing whitespace in this file for
+# `git diff --check` to reject and any editor to strip on save.
+#
+# The ' ' context lines are the whole point. They are what a diff has and a whole-file rewrite does
+# not, so reverting to one fails here.
+expected = "".join(line + "\n" for line in [
+    "--- a/tests/check/Findings.lean",
+    "+++ b/tests/check/Findings.lean",
+    "@@ -1,3 +1,3 @@",
+    " module",
+    " ",
+    "-def findingValue : Nat := 1" + "  ",
+    "+def findingValue : Nat := 1",
+    "mode=diff files=1 findings=1 changed=1 written=0 broken=0 rejected=0 infrastructure_failures=0",
+])
 assert diff == expected, repr(diff)
 PY
 
-# `RFP-SPEC` characterization: **`format` does not format.** It previews the fixes of selected lint
-# rules and nothing else, so a file that is lint-clean is reported clean however it is laid out.
+# `RFP-IMPL`: **`format` formats.** This was `RFP-SPEC`'s characterization of the opposite — it
+# asserted exit 0 and `clean`, pinning a `format` that previewed lint fixes and never looked at
+# layout. Wiring the printer in flips it, which is what that test existed to force.
 #
 # `tests/check/Layout.lean` holds `namespace     Alpha` — five spaces where `LeanFmt.Printer` renders
 # exactly one (`Printer.lean:344-348` `wholeSpan?` -> `spaceSeparated`, `:511-515` citing Lean's
-# `Command.lean:317-318`). The printer is compiled into `LeanFmtCore` and is reachable here; nothing
-# calls it. It could not run if it were called: both registry rules are `input := .source`
-# (`Rules.lean:29,37`), so `RulePlan.requiresSyntax` is `false` (`Config.lean:199-200`) and
-# `officialArtifacts` is never invoked (`Application.lean:569`) — no syntax tree is built at all.
+# `Command.lean:317-318`). It is otherwise lint-clean, which is the point: `findings` is 0 and
+# `changed` is 1, so the report cannot be explained by a fix. Only layout moved.
 #
-# This asserts today's truth so that changing it is deliberate. `RFP-IMPL` wires the printer in and
-# **must** flip this to exit 1: at that point `Layout.lean` is `would-format` with a canonical body.
-# A green run here after that work means the printer is still not reached.
-run_expect 0 "$work/layout-format.json" "$application" format --root . --json --no-cache \
+# This is also the regression test for `PreparedFile.changed`. Basing the patch on canonical text
+# makes `patch.changed` — "are there fix edits?" — the wrong question, and it answers `false` here.
+# Had that survived, `format` would report this file clean while printing a different body, and
+# `RFP-SPEC`'s test would have passed as though nothing were wired in at all.
+run_expect 1 "$work/layout-format.json" "$application" format --root . --json --no-cache \
   tests/check/Layout.lean
 python3 - "$work/layout-format.json" <<'PY'
 import json, sys
 r = json.load(open(sys.argv[1]))
 assert r["mode"] == "format", r["mode"]
-assert r["findings"] == 0 and r["changed"] == 0 and r["written"] == 0, r
-assert r["files"][0]["status"] == "clean", r["files"][0]
-# No `formatted` key: format withholds output precisely when it would change nothing.
-assert "formatted" not in r["files"][0] or r["files"][0]["formatted"] is None, r["files"][0]
+assert r["findings"] == 0, f"layout-only change must carry no findings: {r}"
+assert r["changed"] == 1 and r["written"] == 0, r
+assert r["files"][0]["status"] == "would-format", r["files"][0]
+assert r["files"][0]["formatted"] == \
+    "module\n\nnamespace Alpha\n\ndef layoutValue : Nat := 1\n\nend Alpha\n", \
+    repr(r["files"][0]["formatted"])
 PY
 grep -q 'namespace     Alpha' tests/check/Layout.lean \
   || { echo 'fixture lost its non-canonical spacing; the check above proves nothing' >&2; exit 1; }
+
+# `check` does not move, and that is the roadmap's first bullet rather than an optimization:
+# formatting is a canonical transformation, not a selectable rule, so it cannot enter rule selection
+# and `check` reports selected rules. The same file `format` calls `would-format` is `check`-clean.
+run_expect 0 "$work/layout-check.json" "$application" check --root . --json --no-cache \
+  tests/check/Layout.lean
+python3 - "$work/layout-check.json" <<'PY'
+import json, sys
+r = json.load(open(sys.argv[1]))
+assert r["mode"] == "check" and r["findings"] == 0 and r["changed"] == 0, r
+assert r["files"][0]["status"] == "clean", r["files"][0]
+PY
+
+# A file whose only defect is the missing final newline. This is the case that decides whether
+# `unifiedDiff` compares lines or *files*: `diffSource` reads the terminator into `finalNewline` and
+# drops it, so "end Alpha\n" and "end Alpha" both project to the line "end Alpha". A diff over bare
+# strings pairs them as unchanged and emits an empty hunk list — reporting `changed=1` above a diff
+# showing nothing, for the single edit `FMT002` exists to make. `DiffLine` carries the terminator into
+# the compared element to keep them unequal, and this test is why that type is not over-engineering.
+printf 'module\n\nnamespace Alpha\n\ndef layoutValue : Nat := 1\n\nend Alpha' >"$layout_file"
+run_expect 1 "$work/layout-nonl.diff" "$application" diff --root . --no-cache \
+  tests/check/Layout.lean
+python3 - "$work/layout-nonl.diff" <<'PY'
+import sys
+diff = open(sys.argv[1]).read()
+# GNU diff's exact rendering: the marker follows the side that lacks the terminator, so the same
+# text appears once removed and once added.
+expected = "".join(line + "\n" for line in [
+    "--- a/tests/check/Layout.lean",
+    "+++ b/tests/check/Layout.lean",
+    "@@ -4,4 +4,4 @@",
+    " ",
+    " def layoutValue : Nat := 1",
+    " ",
+    "-end Alpha",
+    "\\ No newline at end of file",
+    "+end Alpha",
+    "mode=diff files=1 findings=1 changed=1 written=0 broken=0 rejected=0 "
+    "infrastructure_failures=0",
+])
+assert diff == expected, repr(diff)
+PY
+cp -p "$work/Layout.lean" "$layout_file"
 
 # Artifact, exact fallback, and semantic-cache hit project to identical formatted output. The hit
 # remains usable under a different rule projection without invoking an analyzer.

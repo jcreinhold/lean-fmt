@@ -1,0 +1,82 @@
+`diff` emits a diff. Captured during RFP-IMPL.
+
+The old `unifiedDiff` never looked for a common line: it emitted every old line as `-` and every new
+line as `+` under one synthesized `@@` header. Applying that output reproduces the file, so it was
+correct -- and useless, since a one-line change reprinted the whole file. It had only ever run on
+FMT001/FMT002 fixes. RFP-IMPL points `diff` at canonical layout and makes it the surface formatting
+is reviewed on, and the roadmap names `diffs` in this claim's contract, so it is fixed here.
+
+`Lean.Diff.diff` (Lean/Util/Diff.lean:170) supplies the edit script -- a histogram diff, the family
+`git diff --histogram` uses. Only the hunking is ours: core's `linesToString` (:201) prints the whole
+script with no `@@` headers, which no tool consumes.
+
+--- before (RFP-SPEC's transcript, evidence/01): 7 lines reprinted to change 1 ---
+@@ -1,7 +1,7 @@
+-module
+-
+-namespace     Alpha
+-
+-def layoutValue : Nat := 1
+-
+-end Alpha
++module
++
++namespace Alpha
++
++def layoutValue : Nat := 1
++
++end Alpha
+
+--- after ---
+$ lean-fmt diff --root . --no-cache tests/check/Layout.lean
+--- a/tests/check/Layout.lean
++++ b/tests/check/Layout.lean
+@@ -1,6 +1,6 @@
+ module
+ 
+-namespace     Alpha
++namespace Alpha
+ 
+ def layoutValue : Nat := 1
+ 
+mode=diff files=1 findings=0 changed=1 written=0 broken=0 rejected=0 infrastructure_failures=0
+
+'end Alpha' is correctly absent: it is past 3 lines of context.
+
+--- is it a real unified diff? ask git, not me ---
+A hand-written `@@` header that git rejects is worth nothing, and "it looks right" is not a check.
+$ lean-fmt diff ... | git apply --check -
+  ACCEPTED
+$ git apply -   ->  APPLIED
+
+and the applied result is byte-identical to what `format` reports as formatted:
+$ cat tests/check/Layout.lean
+module
+
+namespace Alpha
+
+def layoutValue : Nat := 1
+
+end Alpha
+
+--- the case that decides whether this compares lines or files ---
+`diffSource` reads the terminator into `finalNewline` and drops it from `lines`, so "end Alpha\n" and
+"end Alpha" both project to the line "end Alpha". A diff over bare strings pairs them as unchanged and
+emits no hunk at all -- printing nothing while reporting changed=1, for the single edit FMT002 exists
+to make. `DiffLine` carries the terminator into the compared element so the two stay unequal.
+
+Same fixture, canonical layout, final newline removed. The only defect is the terminator:
+$ lean-fmt diff --root . --no-cache tests/check/Layout.lean
+--- a/tests/check/Layout.lean
++++ b/tests/check/Layout.lean
+@@ -4,4 +4,4 @@
+ 
+ def layoutValue : Nat := 1
+ 
+-end Alpha
+\ No newline at end of file
++end Alpha
+mode=diff files=1 findings=1 changed=1 written=0 broken=0 rejected=0 infrastructure_failures=0
+
+That is GNU diff's exact rendering: the marker follows the side that lacks the terminator, so
+the same text appears once removed and once added. findings=1 is the FMT002 that fixes it.

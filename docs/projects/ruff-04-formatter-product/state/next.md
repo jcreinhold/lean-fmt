@@ -1,9 +1,9 @@
 # Next Proof Packet
 
 - Stack: ruff-04-formatter-product
-- First unresolved: 02-integration
-- Claim ID: RFP-IMPL
-- Prompt: 02-integration
+- First unresolved: 03-acceptance
+- Claim ID: RFP-FINAL
+- Prompt: 03-acceptance
 - Module: (docs only)
 - Target file: (docs only)
 
@@ -17,7 +17,7 @@ Read this file, the target prompt, target files, listed source/template line ran
 
 ## Proof Task
 
-- Deliver **RFP-IMPL**: Connect canonical formatting to reports, diffs, cache identity, exact validation, conflict planning, stale checks, and permission-preserving publication. Ensure formatter-only checks avoid semantic capabilities not required by the source.
+- Deliver **RFP-FINAL**: Run command matrices, formatting goldens, idempotence, syntax/elaboration validation, cache invalidation, and frozen-sample timing. Publish the stable style policy and migration notes.
 - Read `roadmap.md`, its prerequisite stack results, `AGENTS.md`, the current implementation and tests, and the relevant Lean compiler/Lake sources before changing an interface. Write interface comments and characterization tests before implementation where the behavior is not already frozen.
 
 ## Reuse
@@ -30,6 +30,6 @@ Inspect the live goal, search relevant declarations, test plausible proof steps,
 
 ## Stop Rules
 
-- A partially formatted project is never published as a successful atomic operation where project atomicity was requested.
-- Rejected validation never writes.
+- No full mathlib run.
+- Any style change after this stack requires preview or an explicit compatibility decision.
 - Stop rather than weakening exact semantics, write safety, or the resource envelope.

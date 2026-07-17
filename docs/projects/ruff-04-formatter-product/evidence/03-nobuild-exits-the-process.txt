@@ -1,0 +1,77 @@
+Why `officialArtifacts` needed a `checkNoBuild` guard, and why its `catch` could never have worked.
+Captured during RFP-IMPL. Toolchain: leanprover/lean4:v4.31.0.
+
+RFP-SPEC established that no product path ever built a syntax tree: every registry rule is
+`input := .source`, so `RulePlan.requiresSyntax` was always false and `officialArtifacts` was
+never called. RFP-IMPL makes rendering modes need a projection, which called it for the first
+time -- against a module that was out of date. The run died with exit 3 and printed nothing.
+
+--- 1. Exit 3 is Lake's, and it is a process exit, not an exception ---
+$ grep -n 'noBuildCode' /Users/jcreinhold/.elan/toolchains/leanprover--lean4---v4.31.0/src/lean/lake/Lake/Build/Run.lean
+275:public def noBuildCode : ExitCode := 3
+368:      IO.Process.exit noBuildCode.toUInt8
+
+$ sed -n '363,370p' /Users/jcreinhold/.elan/toolchains/leanprover--lean4---v4.31.0/src/lean/lake/Lake/Build/Run.lean   # finalizeBuild
+  match result.out with
+  | .ok a =>
+    return a
+  | .error e =>
+    if cfg.noBuild && result.wantsRebuild then
+      IO.Process.exit noBuildCode.toUInt8
+    else
+      throw (IO.userError e)
+
+`IO.Process.exit` terminates. Only the `else` branch throws, so a `try/catch` around `runBuild`
+sees the non-noBuild failure and never the noBuild one -- the case it was written for is the one
+case it cannot catch. Worse, `withoutProcessOutput` was still holding stdout and stderr in a
+buffer that the exit never flushes, so the process died silently.
+
+--- 2. `checkNoBuild` asks the same question and returns a Bool ---
+$ sed -n '401,414p' /Users/jcreinhold/.elan/toolchains/leanprover--lean4---v4.31.0/src/lean/lake/Lake/Build/Run.lean
+Returns whether a build is needed to validate `build`. Does not report on the attempted build.
+
+This is equivalent to checking whether `lake build --no-build` exits with code 0.
+-/
+public def Workspace.checkNoBuild
+  (ws : Workspace) (build : FetchM (Job α))
+: BaseIO Bool := do
+  let jobs ← mkJobQueue
+  let cfg := {noBuild := true}
+  let mctx ← mkMonitorContext cfg jobs
+  let bctx ← mkBuildContext' ws cfg jobs
+  let job ← startBuild bctx build
+  let result ← monitorBuild mctx job
+  return result.isOk -- `isOk` means no failures, and thus no `--no-build` failures
+
+--- 3. This is Lake's own idiom, not a local invention ---
+`lake shake` guards the identical way before it builds:
+$ sed -n '1055,1059p' /Users/jcreinhold/.elan/toolchains/leanprover--lean4---v4.31.0/src/lean/lake/Lake/CLI/Main.lean
+  unless args.force do
+    let specs ← parseTargetSpecs ws []
+    let upToDate ← ws.checkNoBuild (buildSpecs specs)
+    unless upToDate do
+      error "there are out of date oleans; run `lake build` or fetch them from a cache first"
+
+and lean-fmt already did so in Project.exactSetup and compilerStatus. This one operation did not.
+
+--- 4. The guard is non-vacuous: removing it reproduces the bug ---
+Mutation, per the house standard. Delete the two guard lines from `officialArtifacts`:
+
+    -      unless ← workspace.checkNoBuild build do
+    -        return Array.replicate snapshots.size none
+           let encoded ← workspace.runBuild (cfg := { noBuild := true, ... }) build
+
+$ LEAN_NUM_THREADS=1 lake build && bash tests/modes/run.sh
+expected exit 0, got 3
+  modes_exit=1
+
+Exit 3 is Lake's `noBuildCode`, surfacing through lean-fmt's own exit status. The suite's last
+case is a second `fix` over an already-fixed fixture, which leaves the module stale -- that is
+what reaches the out-of-date path, and it is why the modes suite is this fix's regression test
+rather than a new fixture being needed.
+
+With the guard restored:
+
+$ bash tests/modes/run.sh
+  lean-fmt product mode integration tests passed
+  modes_exit=0
