@@ -1,9 +1,9 @@
 # Next Proof Packet
 
 - Stack: ruff-03-language-formatting
-- First unresolved: 06-notation-facts
-- Claim ID: RLF-NOTATION
-- Prompt: 06-notation-facts
+- First unresolved: 07-offside-layout
+- Claim ID: RLF-OFFSIDE
+- Prompt: 07-offside-layout
 - Module: (docs only)
 - Target file: (docs only)
 
@@ -17,8 +17,8 @@ Read this file, the target prompt, target files, listed source/template line ran
 
 ## Proof Task
 
-- Deliver **RLF-NOTATION**: give the printer the one thing phase 1 proved it lacks — each notation and atom's *declared* inter-token spacing — as a fact captured while the frontend `Environment` is live, so operators and notations can take canonical spacing without the printer ever holding an `Environment`. This is the hybrid decided in `notes/05-reflow-architecture.md` §2: environment-derived *data*, consumed by the lossless `Doc` engine.
-- Read `roadmap.md`, `notes/05-reflow-architecture.md`, its prerequisite stack results, `AGENTS.md`, the current implementation and tests, and the relevant Lean compiler/Lake sources before changing an interface. Confirm the phase-1 citations first-hand: `PrettyPrinter/Formatter.lean:357-417` (`pushToken`/`parseToken` needs `getEnv`), `Init/Notation.lean:284` and `Init/Prelude.lean:5390` (`infixl:65 " + "` declares its spaces), `LosslessSource.lean:64-86` (the projection drops it).
+- Deliver **RLF-OFFSIDE**: the layout capability records and tactic/`do`/`where`/`let` blocks need — emit a multi-line block at a *canonical base column* while preserving every internal `colEq`/`colGt`/`colGe` relationship, so re-indentation never changes the parse. Per `notes/05-reflow-architecture.md` §3 this is **not** column-alignment (`Doc.align`/`pushAlign` inherits a column; a ruff-class formatter chooses one); the capability is a *parse-preserving re-indent to a chosen base*.
+- Read `roadmap.md`, `notes/05-reflow-architecture.md`, `results/03-tactics.md` (the re-indent design phase 1 killed and why), its prerequisite stack results, `AGENTS.md`, and the relevant Lean compiler/Lake sources. Confirm first-hand: `Doc.lean:44-81` (constructor set), `:62-68` (`verbatim` never re-indented), `:71-73` (the written no-align decision), `Lean/Parser/Extra.lean:199-208` (`manyIndent`/`sepByIndent` offside separators), `withoutPosition` at `Lean/Parser/Basic.lean:1565-1571`.
 
 ## Reuse
 
@@ -30,8 +30,8 @@ Inspect the live goal, search relevant declarations, test plausible proof steps,
 
 ## Stop Rules
 
-- The printer must not gain an `Environment` dependency or a frontend import; the fact crosses the boundary, not the table.
-- Spacing may change only to the *declared* string; never invent spacing for an atom that declares none (that stays `app`'s parser-required minimum or conservative bytes).
-- A missing/stale fact must fall back to source bytes, never to a guessed layout.
-- Stop rather than weakening exact semantics, cache identity, write safety, or the resource envelope.
-- Stop and reopen — do not patch around — if a prerequisite stack's live code contradicts its results.
+- The capability must be parse-preserving by the reparse check, not by argument; a base that breaks an internal `colGt`/`colEq` is a bug.
+- `verbatim` interior is never re-indented; comments never move.
+- Do not adopt column-alignment (`align`/`pushAlign`); the base is chosen, not inherited.
+- If `ruff-02` is reopened, its `render` linear-bound guarantee must survive; stop rather than trading it for the constructor.
+- Stop rather than weakening exact semantics, write safety, or the resource envelope.

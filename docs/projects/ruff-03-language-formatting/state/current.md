@@ -1,6 +1,6 @@
 ---
 kind: state
-first_unresolved: 06-notation-facts
+first_unresolved: 07-offside-layout
 ---
 
 # Current state
@@ -34,14 +34,27 @@ five prompts that consume that foundation:
 
 Build order for reflow: `ruff-05b` (RSF-SPEC→IMPL→FINAL) first, then these consume it.
 
+**`RLF-NOTATION` is verified** (`results/06-notation-facts.md`), and it is the first output bytes phase 2
+changes. The printer consumes the `ruff-05b` `v4` notation-spacing fact — one immutable field threaded
+into `Tree` as a kind-keyed `Std.HashMap`, no `Environment`, no frontend import — and emits declared
+spacing: `1+2` → `1 + 2`, `8  +  9` → `8 + 9`, and the corpus notation `3⊗4` → `3 ⊗4`. The finding is
+that the separator is **per-gap, not per-node**: the corpus's own `" ⊗"` atom declares space-left/tight-
+right, so a uniform one-space rule would emit the wrong `3 ⊗ 4`. Atoms are emitted verbatim; only the
+gaps between parts are chosen, and a gap with no bounding atom (or holding a comment, or a `sepBy`
+count mismatch, or a `v3` artifact) keeps its bytes — the phase-1 conservative contract, with one new
+way *in* to the declared path. Gates: golden diff, conservative-fallback (`captureSemantic=0` →
+byte-identical), parse-preservation (same token count), and idempotence, the last two on the fact path
+specifically. The boundary gate also forced a one-line `ruff-05b` repair — `tests/semantic/Emit.lean`
+now begins with `module` like its sibling oracle, verified still-emitting.
+
 The remainder of this file is the phase-1 record — a live claim about the conservative subset and the
 evidence for it — kept intact because it is the citation base phase 2 builds against.
 
 ## Phase 1 record (conservative subset — verified)
 
 `RLF-COMMANDS` is **verified** (`results/01-commands.md`): the printer is live and proven lossless on
-this repository *and* on 62 modules of foreign Lean, **459 of the corpus's 483 commands take a cited
-canonical layout** — `namespace` (25), `end` (25), `open` (7), and the shell of 402 of 414
+this repository *and* on 62 modules of foreign Lean, **474 of the corpus's 501 commands take a cited
+canonical layout** — `namespace` (25), `end` (25), `open` (7), and the shell of 417 of 432
 declarations — **all 20 module headers take theirs**, and **57 constructor and field shells** are
 claimed inside those declarations. `section` and `universe` have layouts too; this corpus contains
 none of either, so only the fixtures and the sample exercise them. Its external prerequisite stack
@@ -93,7 +106,7 @@ Printing inside the frontend would buy free arg order for a median 1.96 s fronte
 | 03-tactics | RLF-TACTICS | verified | RLF-EXPRESSIONS |
 | 04-extensions | RLF-EXTENSIONS | verified | RLF-TACTICS |
 | 05-corpus | RLF-FINAL | verified | RLF-EXTENSIONS |
-| 06-notation-facts | RLF-NOTATION | planned | RLF-FINAL |
+| 06-notation-facts | RLF-NOTATION | verified | RLF-FINAL |
 | 07-offside-layout | RLF-OFFSIDE | planned | RLF-NOTATION |
 | 08-reflow-expr | RLF-REFLOW | planned | RLF-OFFSIDE |
 | 09-reflow-blocks | RLF-BLOCKS | planned | RLF-REFLOW |
@@ -557,7 +570,7 @@ recover a collapse that fires zero times.
   every command — the printer would fall back to bytes and be the identity function it was before any
   layout existed. This repository also writes its declarations the way the layout writes them, so even
   a layout that runs changes nothing here. `printer-roundtrip` therefore reports `canonical=`, the
-  commands actually laid out, and `tests/printer/run.sh` floors the corpus total: **459 of 483**, and `members=` the shells claimed
+  commands actually laid out, and `tests/printer/run.sh` floors the corpus total: **474 of 501**, and `members=` the shells claimed
   inside them, floored at 50 (**57**) because `canonical=` cannot see them — a command counts once
   whether it claims one region or six. The
   header gets the same treatment for the same reason, but as an exact count rather than a floor
@@ -566,12 +579,12 @@ recover a collapse that fires zero times.
   *what* the layouts produce; these pin *that* they run, on real code, at scale.
 - **Two independent measurements of coverage agree exactly, and keep agreeing as it grows.**
   `experiments/run-projection-shape.sh` re-implements the structural half of the printer's predicate in
-  Python against the same projection and finds 402 of 414 declarations claimable; the printer, in Lean,
-  counts 459 = 402 + 25 `namespace` + 25 `end` + 7 `open`. So on this corpus every
+  Python against the same projection and finds 417 of 432 declarations claimable; the printer, in Lean,
+  counts 474 = 417 + 25 `namespace` + 25 `end` + 7 `open`. So on this corpus every
   structurally-claimable declaration also passes the runtime guards the probe cannot model (clean
   trivia, newline-free flat run, column 0). The probe over-counts by construction and says so;
   `canonical=` is the honest figure.
-- **That 459 commands take the layout and all 20 modules stay byte-identical is what proves the shell
+- **That 474 commands take the layout and all 20 modules stay byte-identical is what proves the shell
   is a prefix.** A shell that ran past the name, or stopped short, would duplicate or drop bytes on
   real code. The same round-trip is the only thing asserting that the header layout's claim ends
   exactly at `headerStop` — that the parser's idea of where the header stops and the projection's agree

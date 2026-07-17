@@ -1,6 +1,6 @@
 ---
 claim_id: RLF-NOTATION
-status: planned
+status: verified
 depends_on: [RLF-FINAL]
 ---
 

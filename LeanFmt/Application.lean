@@ -342,7 +342,7 @@ canonical text and applying non-source fixes to the original in a separate pass.
 this limit rather than leaving it to prose. -/
 private def renderCanonicalText (raw : String) (artifact : ModuleArtifact) : IO CanonicalText := do
   let normalized := (LosslessSource.normalize raw).1
-  let text ← Printer.format artifact.source normalized canonicalWidth
+  let text ← Printer.format artifact.source normalized canonicalWidth artifact.semantic
   return { text, findings := runSourceRules text }
 
 private def canonicalAnalysis (snapshot : SourceSnapshot) (renderCanonical : Bool)

@@ -1320,7 +1320,10 @@ private def printerFormat (envelopePath sourcePath widthText : String) : IO UInt
   let normalized := (LosslessSource.normalize raw).1
   let projection := artifact.source
   ensure (projection.validFor raw) s!"{sourcePath}: the projection does not match its own source"
-  IO.print (← Printer.format projection normalized width)
+  -- The semantic fact rides along when the envelope carries it (a `captureSemantic=1` analysis); it is
+  -- `none` for every fixture analyzed without it, which is exactly the conservative path those goldens
+  -- pin. So this one line is what lets a notation fixture change while `wonky`/`header`/`ext` do not.
+  IO.print (← Printer.format projection normalized width artifact.semantic)
   return 0
 
 /- Name every command the layouts refused, one syntax kind per line.

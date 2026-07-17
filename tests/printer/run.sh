@@ -1197,6 +1197,131 @@ else
   failures=$((failures + 1))
 fi
 
+# --- notation spacing, from the ruff-05b semantic fact (RLF-NOTATION) ---
+#
+# The first layer to read a fact the projection cannot carry. `ruff-05b` captures each notation's
+# declared untrimmed atom strings from the live `Environment` (`" + "`, `" ⊗"`) into the `v4` artifact,
+# and this section is the printer consuming them. Every other fixture in this file analyzes with
+# `captureSemantic=0`, so its artifact holds no fact and its notations keep their bytes -- which is why
+# `wonky`'s `id 12 + id 13` above still keeps the spaces around `+`. Here the analysis passes `1`, the
+# fact is present, and the notations take their declared spacing.
+#
+# Each golden line is a separate claim:
+#   `1 + 2`, `1 + 2 * 3`   core `+`/`*`, imported and module-value-stripped, recovered by `ruff-05b`'s
+#                          `evalConst` path and emitted as the declared `" + "` / `" * "`. Precedence is
+#                          the parser's and untouched: `1 + 2 * 3` keeps its tree.
+#   `8 + 9` from `8  +  9` slack around a notation collapses to the declared single space, the same way
+#                          an app's does -- but chosen from the fact, not from a rule in `Printer.lean`.
+#   `3 ⊗4` from `3⊗4`      the asymmetric case, and the whole reason the separator is per-gap. The
+#                          corpus notation declares its atom `" ⊗"` -- a space on the left, tight on the
+#                          right -- so the gap before `⊗` opens to one space and the gap after it stays
+#                          tight. A uniform one-space rule would emit `3 ⊗ 4` and be wrong; the fact
+#                          says `3 ⊗4`, and this is that per-gap fidelity pinned.
+#   `6 /- keep -/ + 7`     UNCHANGED: the comment sits in the gap left of `+`, so that gap keeps its
+#                          bytes (the declared space would delete it) while the gap right of `+`, already
+#                          one space, is the declared spacing. The per-gap comment refusal reaching a
+#                          notation.
+#   `notation:65 ... => Prod.mk a b`  the declaration itself is a `notation` command on the conservative
+#                          path -- no fact keys it -- so it and its `" ⊗"` atom string keep every byte.
+printf -- '--- notation spacing, from the ruff-05b semantic fact ---\n'
+cat >"$work/notation.lean" <<'FIXTURE'
+module
+
+notation:65 a:66 " ⊗" b:65 => Prod.mk a b
+
+def add : Nat := 1+2
+def prec : Nat := 1+2*3
+def slack : Nat := 8  +  9
+def asym : Nat × Nat := 3⊗4
+def commented : Nat := 6 /- keep -/ + 7
+FIXTURE
+# captureSemantic=1: the fact is captured and carried in the artifact the printer reads.
+LEAN_NUM_THREADS=1 lake env "$application" __analyze-exact \
+  "$work/borrowed.setup.json" "$work/notation.lean" "notation.lean" 8589934592 1 >"$work/notation.json"
+"$tests" printer-format "$work/notation.json" "$work/notation.lean" 100 >"$work/notation.out"
+cat >"$work/notation.golden" <<'GOLDEN'
+module
+
+notation:65 a:66 " ⊗" b:65 => Prod.mk a b
+
+def add : Nat := 1 + 2
+def prec : Nat := 1 + 2 * 3
+def slack : Nat := 8 + 9
+def asym : Nat × Nat := 3 ⊗4
+def commented : Nat := 6 /- keep -/ + 7
+GOLDEN
+if diff -u "$work/notation.golden" "$work/notation.out" >"$work/notation.diff" 2>&1; then
+  printf '  ok   the notation layout matches the golden file\n'
+else
+  printf 'FAIL the notation layout does not match the golden file:\n' >&2
+  cat "$work/notation.diff" >&2
+  failures=$((failures + 1))
+fi
+
+# ...and it changed something, or the fact is doing nothing and the golden is a copy of the input.
+if diff -q "$work/notation.lean" "$work/notation.out" >/dev/null 2>&1; then
+  printf 'FAIL the notation layout changed nothing; the fact is not being consumed\n' >&2
+  failures=$((failures + 1))
+else
+  printf '  ok   the notation layout changed the source (%s lines rewritten)\n' \
+    "$(diff "$work/notation.lean" "$work/notation.out" | grep -c '^<')"
+fi
+
+# The fact is load-bearing. The SAME source analyzed with captureSemantic=0 carries no fact, and every
+# notation then keeps its bytes. This is the conservative fallback, and it is what says the spacing
+# above came from the fact rather than from the printer inventing it -- the difference between reading a
+# declaration and guessing one.
+LEAN_NUM_THREADS=1 lake env "$application" __analyze-exact \
+  "$work/borrowed.setup.json" "$work/notation.lean" "notation.lean" 8589934592 0 >"$work/notation.off.json"
+"$tests" printer-format "$work/notation.off.json" "$work/notation.lean" 100 >"$work/notation.off.out"
+if diff -q "$work/notation.lean" "$work/notation.off.out" >/dev/null 2>&1; then
+  printf '  ok   with no fact captured, every notation keeps its bytes (spacing is never invented)\n'
+else
+  printf 'FAIL a notation was respaced with no fact present; the fallback is not conservative:\n' >&2
+  diff -u "$work/notation.lean" "$work/notation.off.out" >&2
+  failures=$((failures + 1))
+fi
+
+# Parse-preservation: the respaced output re-parses, and to the same token count. `__analyze-exact`
+# yields no artifact for a module with parse errors (pinned non-vacuous by `broken.lean` above), so an
+# artifact coming back is the output parsing; the token count is checked too, because respacing must
+# move whitespace and nothing else -- no token added, dropped, or merged. The comment's survival is
+# pinned by the golden line above.
+if LEAN_NUM_THREADS=1 lake env "$application" __analyze-exact \
+     "$work/borrowed.setup.json" "$work/notation.out" "notation.out.lean" 8589934592 1 \
+     >"$work/notation.out.json" 2>"$work/notation.out.err" &&
+   grep -qF '"artifact"' "$work/notation.out.json"; then
+  if python3 -c "
+import json, sys
+a = json.load(open('$work/notation.json'))['artifact']['source']['tokens']
+b = json.load(open('$work/notation.out.json'))['artifact']['source']['tokens']
+sys.exit(0 if len(a) == len(b) else 1)
+"; then
+    printf '  ok   the respaced output re-parses to the same token count (parse-preserving)\n'
+  else
+    printf 'FAIL the respaced output re-parses to a different token count; a token moved\n' >&2
+    failures=$((failures + 1))
+  fi
+else
+  printf 'FAIL the printer emitted notation Lean it cannot re-read:\n' >&2
+  cat "$work/notation.out.json" "$work/notation.out.err" >&2
+  failures=$((failures + 1))
+fi
+
+# Idempotence, on the fact path. `check_idempotent` below re-analyzes with captureSemantic=0, so it
+# cannot exercise this; the notation layout only fires when the fact is present, so its second pass
+# must capture the fact again.
+LEAN_NUM_THREADS=1 lake env "$application" __analyze-exact \
+  "$work/borrowed.setup.json" "$work/notation.out" "notation.lean" 8589934592 1 >"$work/notation.idem.json"
+"$tests" printer-format "$work/notation.idem.json" "$work/notation.out" 100 >"$work/notation.out2"
+if diff -u "$work/notation.out" "$work/notation.out2" >"$work/notation.idem.diff" 2>&1; then
+  printf '  ok   notation: formatting twice is byte-identical to formatting once\n'
+else
+  printf 'FAIL notation: formatting is not idempotent:\n' >&2
+  cat "$work/notation.idem.diff" >&2
+  failures=$((failures + 1))
+fi
+
 # Idempotence, the roadmap's "formatting twice is byte-identical to formatting once". The second pass
 # re-parses the first pass's *output*, so this is a real second format and not a repeated call: if the
 # layout emitted something the parser reads back differently, this is where it shows.

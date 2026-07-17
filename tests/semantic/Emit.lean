@@ -1,3 +1,5 @@
+module
+
 import Lean
 
 /-! Independent oracle for the fresh-frontend differential. `run.sh` captures the declared spacing of

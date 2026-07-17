@@ -13,10 +13,10 @@ frontend. That is not a preference: `ruff-01`'s roadmap already committed to car
 printing in-frontend would buy free arg order for a median 1.96 s frontend run per file (`RLS-FINAL`).
 
 **What the projection does not carry, measured rather than assumed.** Over all 21 modules of this
-repository (44,562 nodes, `evidence/01-projection-shape.txt`), 15,953 nodes (35.8%) carry no token at
+repository (47,329 nodes, `evidence/01-projection-shape.txt`), 16,943 nodes (35.8%) carry no token at
 all — they are *absent* syntax, the unfilled optional slots of `declModifiers`, `optDeclSig`,
 `Termination.suffix` — and `collect` gives them range `(0,0)` because a node's range is the hull of the
-leaves beneath it and there are none. For 6,921 of them (15.5% of all nodes) the parent also has direct
+leaves beneath it and there are none. For 7,367 of them (15.6% of all nodes) the parent also has direct
 token children, so nothing in the projection says where among its siblings the absent slot belongs.
 `Lean.Syntax` has no position for them either; this is not something the projection dropped.
 
@@ -27,7 +27,7 @@ Two consequences run through everything below:
    siblings ascend in arg order. Sorting children by range would be correct for the 64.2% that carry
    tokens and silently wrong for the rest.
 2. **The conservative path reads bytes, not the tree.** Empty nodes contribute no bytes, so re-emitting
-   a command's byte extent is unaffected by all 6,921 ambiguous placements. It is the only path whose
+   a command's byte extent is unaffected by all 7,367 ambiguous placements. It is the only path whose
    correctness rests on no claim about any grammar, which is exactly what the roadmap's "unknown
    commands must round-trip conservatively" asks for. Every kind starts here and leaves only when a
    canonical layout for it is cited and pinned by a golden test.
@@ -37,6 +37,10 @@ which this project already had to reason about carefully in `RLC-SPEC`. -/
 
 import all LeanFmt.LosslessSource
 import all LeanFmt.Doc
+-- The notation-spacing fact (`ruff-05b`): pure immutable data, defined beside the projection in the
+-- same `LeanFmtCore` library. This is the only thing the printer consumes to give operators their
+-- declared spacing — it reads the fact, never an `Environment` or a frontend object.
+import all LeanFmt.ArtifactModel
 -- The header is the one region the projection cannot describe (`LosslessSource.lean:358`), so laying
 -- it out means parsing it here. `Lean.Parser.parseHeader` needs no imported environment — see
 -- `headerSyntax?` — and this module is deliberately outside `LeanFmtCompilerPlugin`'s import cone.
@@ -52,7 +56,7 @@ transport format. This is the view a walk needs, computed once.
 Both child arrays ascend in index order, which **is** arg order by `collect`'s construction. The
 projection retains no other order, so this is not a property that can be checked against its output —
 `evidence/01-projection-shape.txt` checks the observable consequence instead: among a parent's
-token-bearing children, index order agrees with byte order (0 violations over 44,562 nodes). -/
+token-bearing children, index order agrees with byte order (0 violations over 47,329 nodes). -/
 structure Tree where
   source : LosslessSource
   /-- `nodeChildren[i]` are the node-children of node `i`, in arg order. -/
@@ -71,6 +75,11 @@ structure Tree where
   be contiguous. `evidence/01-projection-shape.txt` reports 0 contiguity violations over 41,340 nodes,
   so the range is also gap-free in practice — but nothing below depends on that. -/
   subtreeEnd : Array Nat
+  /-- The `ruff-05b` notation-spacing fact, indexed for lookup: `notationSpacing[kind]` is the declared
+  untrimmed atom strings for that `SyntaxNodeKind`, in source order (`«term_+_» ↦ #[" + "]`). Empty when
+  the artifact carried no semantic projection (a `v3` artifact, or a producer that did not capture it),
+  which is the conservative fallback — a node whose kind is absent here keeps its source bytes. -/
+  notationSpacing : Std.HashMap String (Array String)
 
 /-- Build the view in a few linear passes.
 
@@ -78,7 +87,8 @@ structure Tree where
 pushes the placeholder before recursing. That is the same fact `nodeChildren`'s ordering rests on, and
 the same fact that lets `subtreeEnd` be folded in one backward pass: every child of `i` is above `i`,
 so it is already final by the time `i` is reached. -/
-def Tree.ofSource (source : LosslessSource) : Tree := Id.run do
+def Tree.ofSource (source : LosslessSource) (semantic : Option SemanticProjection := none) :
+    Tree := Id.run do
   let count := source.nodes.size
   let mut nodeChildren : Array (Array Nat) := Array.replicate count #[]
   let mut rootOf : Array Nat := Array.replicate count 0
@@ -102,7 +112,11 @@ def Tree.ofSource (source : LosslessSource) : Tree := Id.run do
     for child in nodeChildren[index]! do
       if subtreeEnd[child]! > subtreeEnd[index]! then
         subtreeEnd := subtreeEnd.set! index subtreeEnd[child]!
-  return { source, nodeChildren, tokenChildren, roots, rootOf, subtreeEnd }
+  let mut notationSpacing : Std.HashMap String (Array String) := {}
+  if let some projection := semantic then
+    for entry in projection.notations do
+      notationSpacing := notationSpacing.insert entry.kind entry.atoms
+  return { source, nodeChildren, tokenChildren, roots, rootOf, subtreeEnd, notationSpacing }
 
 /-- The kind name of a node. -/
 def Tree.kindOf (tree : Tree) (node : Nat) : String :=
@@ -722,7 +736,7 @@ private def Tree.parts (tree : Tree) (node : Nat) : Array Part := Id.run do
   -- Tokens are indexed in source order, so ordering by `first` is ordering by position. Empty
   -- node-children are dropped rather than placed: they contribute no bytes, and nothing in the
   -- projection says where among its siblings an absent slot belongs (`evidence/01-projection-shape.txt`
-  -- measures 15.5% of nodes to be exactly that ambiguous).
+  -- measures 15.6% of nodes to be exactly that ambiguous).
   return parts.qsort (·.first < ·.first)
 
 /-- An `app`'s parts: its function, and its arguments lifted out of the `null` that holds them.
@@ -762,6 +776,13 @@ private inductive Spacing where
   | bracketed
   /-- No layout: every gap keeps its bytes. -/
   | keep
+  /-- A notation's gaps, read from the `ruff-05b` declared-spacing fact rather than from a rule in this
+  file. `seps[g]` is the separator for gap `g`: `some " "` where a bounding atom declares a space,
+  `some ""` where the declared atoms are tight against each other, and `none` where neither side is a
+  declared atom (two operands adjacent), which keeps the source bytes. This is the one `Spacing` whose
+  gaps differ from each other — a mixfix like `a ≃[R] b` is tight inside its brackets and spaced
+  outside, per the notation's own declaration. -/
+  | declared (seps : Array (Option String))
   deriving BEq
 
 /-- The spacing each kind's parser declares, and nothing else.
@@ -852,6 +873,8 @@ private def Spacing.separator (spacing : Spacing) (index count : Nat) : Option S
   -- interior part makes gap 0 both the first and the last, and both are tight, which is why this is
   -- two independent tests rather than an if/else.
   | .bracketed => if index == 0 || index + 2 == count then some "" else some " "
+  -- The fact already decided each gap; `count` is unused because the answer is per-gap, not positional.
+  | .declared seps => (seps[index]?).getD none
 
 /-- May a collapse inside this command run at all, or would it move a column another line measures?
 
@@ -936,6 +959,65 @@ private def Tree.gapDoc (tree : Tree) (normalized : String) (mayCollapse : Bool)
     else .verbatim raw
   | none => .verbatim raw
 
+/-- The declared atom strings for this node's kind, or `none` when the fact does not cover it.
+
+`none` is the conservative case and covers three things at once: no semantic projection was carried, the
+projection carried no entry for this kind, or the kind is not a notation at all. All three keep the
+node's source bytes — the fact is consulted, never invented. -/
+private def Tree.declaredAtoms? (tree : Tree) (node : Nat) : Option (Array String) :=
+  tree.notationSpacing[tree.kindOf node]?
+
+/-- Turn the declared atom strings into a per-gap separator, or `none` to keep this node's bytes.
+
+The fact lists the notation's atoms in source order; the node's parts interleave those atoms (the
+`child = none` parts) with its operands. Walking them together assigns each atom-part its declared
+string, and each gap is then spaced by the declared strings that bound it: `some " "` when a bounding
+atom declares a space on that side, `some ""` when the bounding atoms are tight. A gap between two
+operands — neither side a declared atom — is `none`, keeping its bytes.
+
+The count guard is the whole safety of the positional map. `ruff-05b` captures one atom per distinct
+declared symbol, so a `sepBy` notation's repeated separator is captured once while the node repeats it
+per element; the atom-part count then disagrees with the fact and the whole node degrades to `keep`.
+That is conservative by construction: a mismatch never mis-assigns a declared string, it declines the
+node. -/
+private def Tree.declaredSpacing? (tree : Tree) (node : Nat) (parts : Array Part) : Option Spacing :=
+  Id.run do
+  let some atoms := tree.declaredAtoms? node | return none
+  let mut declaredOf : Array (Option String) := #[]
+  let mut cursor := 0
+  for part in parts do
+    if part.child.isNone then
+      declaredOf := declaredOf.push atoms[cursor]?
+      cursor := cursor + 1
+    else
+      declaredOf := declaredOf.push none
+  -- Every atom-part consumed exactly one declared string and none is left over: the positional map is
+  -- total both ways, or the node is declined.
+  if cursor != atoms.size then return none
+  let mut seps : Array (Option String) := #[]
+  for gap in [0:parts.size - 1] do
+    let leftSpace := (declaredOf[gap]!.map (·.endsWith " ")).getD false
+    let rightSpace := (declaredOf[gap + 1]!.map (·.startsWith " ")).getD false
+    let sep :=
+      if declaredOf[gap]!.isNone && declaredOf[gap + 1]!.isNone then none
+      else some (if leftSpace || rightSpace then " " else "")
+    seps := seps.push sep
+  return some (.declared seps)
+
+/-- How this node's gaps are spaced, and the parts to walk — the fact first, this file's rules second.
+
+A node the fact covers is laid out from its declared spacing (or declined to `keep` on a count
+mismatch); every other node falls back to `spacingOf`, exactly as before the fact existed. `keep` reads
+`parts` rather than `liftedParts` because a conservative node lifts nothing — it only recurses to find
+laid-out descendants. -/
+private def Tree.nodeSpacing (tree : Tree) (node : Nat) : Spacing × Array Part :=
+  let lifted := tree.liftedParts node
+  match tree.declaredSpacing? node lifted with
+  | some spacing => (spacing, lifted)
+  | none =>
+    let spacing := spacingOf (tree.kindOf node)
+    (spacing, if spacing == .keep then tree.parts node else lifted)
+
 /-- One term: the grammar this stack can cite for it, and its bytes everywhere else.
 
 **The recursion is what makes the fallback lossless rather than lazy.** A kind with no layout does not
@@ -945,8 +1027,7 @@ every byte no layout claimed survives untouched. A node with no parts contribute
 the absent-syntax case. -/
 private partial def Tree.termDoc (tree : Tree) (normalized : String) (mayCollapse : Bool)
     (node : Nat) : Doc := Id.run do
-  let spacing := spacingOf (tree.kindOf node)
-  let parts := if spacing == .keep then tree.parts node else tree.liftedParts node
+  let (spacing, parts) := tree.nodeSpacing node
   let mut doc : Doc := .empty
   let mut index := 0
   let mut previous : Option Part := none
@@ -977,7 +1058,10 @@ private def Tree.termClaims (tree : Tree) (normalized : String) (mayCollapse : B
   let mut skipUntil := root
   for node in [root:tree.subtreeEnd[root]!] do
     if node < skipUntil then continue
-    if spacingOf (tree.kindOf node) == .keep then continue
+    -- A node is worth claiming when this file lays out its kind *or* the fact declares its spacing; a
+    -- fact node that later fails the count guard still renders losslessly (`nodeSpacing` gives it
+    -- `keep`), so claiming it is safe. Only a node with neither is skipped to its bytes.
+    if spacingOf (tree.kindOf node) == .keep && (tree.declaredAtoms? node).isNone then continue
     let some (first, last) := tree.subtreeTokens node | continue
     if taken.any (fun claim => first ≤ claim.last && claim.first ≤ last) then continue
     claims := claims.push { first, last, doc := tree.termDoc normalized mayCollapse node }
@@ -1525,9 +1609,10 @@ nothing about what a formatted module *depends on* changed, and the artifact's d
 
 `tests/printer/run.sh` checks the result against real parser output: every module round-trips byte for
 byte, which is what says a layout that ran neither ran long nor stopped short. -/
-def format (source : LosslessSource) (normalized : String) (width : Nat) : IO String := do
+def format (source : LosslessSource) (normalized : String) (width : Nat)
+    (semantic : Option SemanticProjection := none) : IO String := do
   let header ← headerDoc normalized source.headerStop
-  return renderText width ((Tree.ofSource source).document normalized header)
+  return renderText width ((Tree.ofSource source semantic).document normalized header)
 
 end Printer
 
