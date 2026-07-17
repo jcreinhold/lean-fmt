@@ -1,0 +1,16 @@
+=== RSF-FINAL semantic capture cost envelope ===
+machine=Darwin supermartingale.local 25.5.0 Darwin Kernel Version 25.5.0: Mon Apr 27 20:41:15 PDT 2026; root:xnu-12377.121.6~2/RELEASE_ARM64_T6041 arm64
+toolchain=leanprover/lean4:v4.32.0  lean_fmt_commit=34d63781367f2984dee69408e357021eaecb4a7c
+mathlib_commit=783ccda4ee524f13cc5636237be0a1942bc04824  workload=/Users/jcreinhold/Code/lean-fmt/experiments/workloads/mathlib-v4.32.0-sample.txt  files=62
+rss_limit_kib=8388608  swap_limit_kib=262144
+
+[baseline (captureSemantic=0)]
+  exit_status=0  hard_stop=none
+  wall_ms=135230  peak_rss_kib=2201376  swap_delta_kib=-8192  peak_pressure_level=1
+[semantic (captureSemantic=1)]
+  exit_status=0  hard_stop=none
+  wall_ms=129913  peak_rss_kib=2203184  swap_delta_kib=-16384  peak_pressure_level=1
+
+captured_notations: baseline=0  semantic=2999
+delta_wall_ms=-5317  delta_peak_rss_kib=1808
+OK: within envelope; semantic pass captured facts, baseline did not

@@ -1,113 +1,106 @@
 ---
 kind: result
 claim_id: RSF-FINAL
-status: planned
+status: verified
 ---
 
-# RSF-FINAL — audit found a capture defect (module-mode); mechanism repaired, re-audit pending
+# RSF-FINAL — the semantic notation-spacing fact, accepted
 
-The RSF-FINAL audit built the differential, demand-gating, cost, and mutation harnesses and ran them.
-Four of the five deliverables pass on non-module fixtures. The fifth — the fresh-frontend differential
-against the **frozen mathlib sample** — surfaced a real defect: the notation-spacing capture recovered
-**nothing** for imported notations in **module-mode** files, which are ~99% of the intended corpus, so
-the fact did not deliver its stated purpose (declared operator spacing for `ruff-03` reflow) on real
-mathlib. RSF-FINAL is therefore **not verified**.
+The semantic notation-spacing fact matches Lean's own emitted spacing, the `v4` schema keeps cache
+identity exact, demand-gating leaves the syntax-only path untouched when nothing semantic is needed,
+and the marginal cost is within noise of the syntax-only baseline. This is the foundation's acceptance
+for `ruff-03` reflow and `ruff-11` rules.
 
-This is exactly what the audit exists to catch. It falsified an RSF-IMPL implementation choice (reading
-the kernel `value?`), which prompt-repair has reopened; RSF-SPEC's claim and representation stand (it
-never chose `value?`). The **Resolution** section below shows the defect is a wrong-mechanism problem,
-not a fundamental limit — the module-safe capture is identified and proven, and RSF-IMPL is being
-re-implemented on it. This note will be rewritten as the acceptance record once the re-audit runs.
+## Audit history — a defect was found and fixed, then the audit re-run
 
-## The defect
+The first pass of this audit **falsified an RSF-IMPL implementation choice** and stopped rather than
+certifying it. RSF-IMPL had captured spacing by reading each notation's kernel value
+(`env.find? kind >>= (·.value?)`, an `Expr`); the fresh-frontend differential against the frozen
+mathlib sample showed that value is **stripped by the module system** for imported constants, so the
+capture returned *nothing* on the ~99% of the corpus that is module-mode (60/62 sample files;
+8194/8264 of `Mathlib/`). RSF-SPEC never chose `value?` — it named the registered formatter and (in
+`notes/01-semantic-facts.md` §5) "a data-only atom store, if one exists" — so prompt-repair reopened
+RSF-IMPL, not RSF-SPEC. The fix: read the descriptor through the compiled **meta** IR via
+`evalConst Lean.ParserDescr` (retained in module mode; the route the parser and pretty printer already
+use), guarded to `ParserDescr`/`TrailingParserDescr` as `Lean/PrettyPrinter/Basic.lean`
+`runForNodeKind` does. RSF-IMPL was re-implemented and re-verified (`results/02-impl.md`,
+`state/current.md` Repair). This note records the audit **re-run against the fixed capture**; the
+harnesses below are the same ones that exposed the defect, now green on module-mode inputs.
+Evidence of the original defect is preserved in `evidence/02-module-mode-blocker.txt`.
 
-- **The corpus is module-mode.** 60 of the 62 frozen-sample files, and **8194 / 8264** `.lean` files
-  under `Mathlib/` (v4.32.0), begin with the `module` keyword.
-- **In module-mode the capture is empty.** `captureNotationSpacing` reads
-  `env.find? kind >>= (·.value?)` and walks the `ParserDescr` (`Analysis.lean:78-87`). Under the
-  module system an imported constant's *value* is stripped, so every imported notation resolves to
-  `none` and is dropped. `__analyze-exact … 1` on `Mathlib/Algebra/Algebra/Rat.lean` — whose parse
-  contains `«term_=_»`, `«term_→+*_»`, `«termℚ≥0»`, `«term_<|_»` — yields `semantic.notations: []`.
-- **`import all` does not restore it, and neither does the declaring olean.** `module + import all
-  Lean`, `import all Init`, even `import all Init.Prelude` (the module that declares `«term_+_»`) all
-  leave the value hidden; `readModuleData Init/Prelude.olean` does not list `«term_+_»` among its
-  constants at all. The `ParserDescr` value is meta-stripped, not merely import-gated.
-- **Non-module files are the only ones that capture.** `Archive/Arithcc.lean` (no `module` keyword)
-  captured 55 notations precisely because a non-module env keeps imported values (`import Lean` →
-  `«term_+_»` value visible → `" + "`). This is why the in-module `LeanFmtTest.lean` test and the
-  `tests/semantic/Notation.lean` fixture (both effectively non-module for the imported-value lookup, or
-  using *locally*-declared notations) pass while the real corpus does not.
+## Fresh-frontend differential — the fact is the compiler's, not ours
 
-Evidence: `evidence/02-module-mode-blocker.txt`.
+`tests/semantic/run.sh` runs the real production capture path (`__analyze-exact`, the on-demand
+`analyzeExact` producer) on `tests/semantic/Notation.lean`, now a **`module`-mode** fixture, and
+compares against Lean's own `ppTerm` emission produced by a **separate process** (`Emit.lean`) that
+never touches the capture code.
 
-## Why RSF-SPEC / RSF-IMPL are source-false here
+- **Core, imported, module-stripped:** `«term_+_» → [" + "]`, `«term_*_» → [" * "]`. These are
+  imported operators whose `value?` the module system strips in this fixture; `evalConst` recovers
+  their untrimmed spacing regardless. The captured atoms predict Lean's emission byte for byte:
+  `"1" + " + " + "2" + " * " + "3" == "1 + 2 * 3"` (the independently-emitted string).
+- **Corpus-declared:** `«term_⊕corpus_» → [" ⊕corpus "]`; `"1" + " ⊕corpus " + "2" == "1 ⊕corpus 2"`.
+- **Non-vacuous (mutation guard):** a deliberately wrong atom (`" - "` for core, `" WRONG "` for
+  corpus) does **not** reproduce the emission — the differential rejects it, so it proves something.
 
-- **RSF-SPEC** chose "recover the declared spacing as pure data via `env.find? kind >>= value?`
-  walking `ParserDescr.symbol`" (`notes/01-semantic-facts.md`, `results/01-spec.md` F1). That data path
-  is incompatible with the module system for imported notations.
-- **RSF-IMPL** stated "`analyzeExact` reads the live frontend environment where **every value is
-  present**" (`results/02-impl.md`). False for module-mode files — the majority case. RSF-IMPL's tests
-  used only non-module fixtures and locally-declared notations, so the gap was invisible until this
-  audit ran the frozen sample.
-- Notably, the RSF-IMPL **prompt** instructed reading the *registered formatter* ("the parser's
-  inverse"), not the `ParserDescr` value; RSF-IMPL deviated to the value path, and that deviation is
-  what breaks. The pretty printer (`ppTerm`) **does** work in module-mode — `LeanFmtTest.lean` is
-  itself module-mode and its `ppTerm(1 + 2 * 3) = "1 + 2 * 3"` differential passes — so the spacing is
-  present through the formatter/`pushToken` machinery, just not as retrievable constant data.
+The in-module `LeanFmtTest.lean` `run_cmd`s add: (a) a **module-safety** assertion that core
+`«term_+_»`/`«term_*_»`/`«term-_»` have `value? = none` in that module-mode file yet capture
+`" + "`/`" * "`/`"-"` — the exact case the `value?` path returned empty for; and (b) the
+`ppTerm`-vs-captured differential for three locally-declared operators (breakable-gap infix, tight
+infix, symbolic prefix), each with its own non-vacuity check.
 
-## What the audit did build and confirm (reusable, on non-module fixtures)
+## Cache separation and demand-gating
 
-- **Fresh-frontend differential + mutation** (`LeanFmtTest.lean` `run_cmd`, `tests/semantic/`): for
-  core `+`/`*`/`-` and a corpus-declared `⊕corpus` notation, the captured atom predicts Lean's own
-  `ppTerm` emission byte for byte, and a deliberately wrong atom fails it (non-vacuity). The
-  `tests/semantic/run.sh` harness runs the real `__analyze-exact` path and recovers core atoms that the
-  module system hides in-module.
+- **`v4` digest is stable:** two identical `captureSemantic=1` runs produce byte-identical artifacts
+  (`tests/semantic/run.sh` asserts `on == on2`).
+- **`v3` is a clean miss, additive field:** `testSemanticArtifact` (`LeanFmtTest.lean`) round-trips the
+  `v4` fact, round-trips `semantic = none`, treats a stale `v3` schema as a miss, and decodes a
+  *fieldless* `v3` payload total-ly to `none` then misses on the schema guard (no decode crash).
 - **Demand-gating both directions, end to end** (`tests/semantic/run.sh`): `captureSemantic=0` →
-  `semantic = null` with a source projection byte-identical to the capturing run; `=1` → present;
-  `format` rejects the plugin's `semantic = none` artifact (exit 2 at the disabled analyzer) while
-  `check` serves source-tier from it (exit 0).
-- **Cache stability**: two `=1` runs produce byte-identical `v4` artifacts.
-- **Cost envelope** (`experiments/run-semantic-cost.sh`, `experiments/results/semantic-cost-*`): on the
-  frozen 62-module sample, machine `Darwin arm64 T6041`, toolchain `leanprover/lean4:v4.32.0`,
-  lean-fmt `2a8cccb`, mathlib `783ccda`. Baseline `captureSemantic=0`: wall 131184 ms, peak RSS
-  2200944 KiB (~2.10 GiB), swap Δ 0, pressure 1. Semantic `captureSemantic=1`: wall 130690 ms, peak
-  RSS 2200112 KiB, swap Δ 0, pressure 1. Well within the 8 GiB / 256 MiB-swap ceiling; the paired delta
-  is within noise (−494 ms, −832 KiB). **Caveat:** this cost is honest but currently measures a
-  near-no-op — the semantic pass captured facts for only the 2 non-module files (68 notations total),
-  so the envelope's real weight cannot be judged until a module-mode-capable mechanism exists.
+  `semantic = null` with a `source` projection **byte-identical** to the capturing run (only the schema
+  tag advances to `v4`); `captureSemantic=1` → `semantic` present. A `format` run demands `.semantic`,
+  so it rejects the plugin's `semantic = none` artifact and re-analyzes — made observable by disabling
+  the analyzer and seeing `format` fail (exit 2, `infrastructure-failure`) while `check`, needing only
+  source tier, serves the cheap artifact (exit 0).
 
-## Resolution — the defect is a wrong mechanism, not a fundamental limit
+## Cost envelope — now the real cost, within budget
 
-Follow-up (empirical, plus a compiler-source sweep of `~/Code/lean4/src`) established that the spacing
-**is** recoverable in module mode; RSF-IMPL simply read the wrong artifact.
+Two profiled passes over the frozen 62-file module-mode mathlib sample, identical pre-generated setups
+reused across both, only the trailing notation-spacing walk differing
+(`experiments/run-semantic-cost.sh`; raw in `evidence/03-cost-envelope.txt`,
+`experiments/results/semantic-cost-*`).
 
-- **The formatter path works in module mode.** Parsing `a + b * c` in a `module`-mode env and running
-  `ppTerm` on the node emits `"a + b * c"` — the untrimmed `" + "`/`" * "` — while `value?` on the same
-  kind is `none`. `LeanFmtTest.lean` (itself module-mode) confirms `ppTerm(1 + 2 * 3) = "1 + 2 * 3"`.
-- **The clean data path is `evalConst Lean.ParserDescr kind`.** The compiler sweep traced that the
-  pretty printer reaches the descriptor via `evalConst ParserDescr` (compiled **meta** IR), not via
-  `ConstantInfo.value?` (kernel `Expr`) — two different artifacts. Notation lowers to a
-  `meta def : ParserDescr` (`~/Code/lean4/src/Lean/Elab/Syntax.lean:445-449`); the meta IR is retained
-  in module mode (`Lean/Environment.lean:2537-2540`, meta-gated `lean_eval_const`), which is exactly
-  why parsing imported notations keeps working. `value?` is stripped; `evalConst` is not.
-- **Proven empirically in a module-mode env**: `evalConst ParserDescr` recovers `«term_+_» → " + "`,
-  `«term_*_» → " * "`, `«term-_» → "-"`, `«term_=_» → " = "`, `«term_∣_» → " ∣ "`, all with
-  `value? = none`. So the fix is a mechanism swap (`value?` → `evalConst ParserDescr`, and a
-  `ParserDescr`-constructor walk in place of the `Expr` walk), not a formatter-run rig or a static
-  table.
+- **Machine** `Darwin arm64 T6041` · **toolchain** `leanprover/lean4:v4.32.0` · **lean-fmt** `34d6378`
+  · **mathlib** `783ccda` · **workload** `mathlib-v4.32.0-sample.txt` (62 files).
+- **Baseline** (`captureSemantic=0`): wall 135230 ms, peak RSS 2201376 KiB (~2.10 GiB), swap Δ −8192
+  KiB, pressure 1, `hard_stop=none`.
+- **Semantic** (`captureSemantic=1`): wall 129913 ms, peak RSS 2203184 KiB (~2.10 GiB), swap Δ −16384
+  KiB, pressure 1, `hard_stop=none`.
+- **Marginal cost:** Δ peak RSS +1808 KiB (~1.8 MiB); Δ wall −5317 ms (semantic ran *faster* — the two
+  passes are separate profiled runs, so the delta is within run-to-run noise, not a speedup). Both
+  well within the 8 GiB / 256 MiB-swap ceiling.
+- **The measurement is no longer vacuous.** The semantic pass captured **2999** notations across the
+  sample; the baseline captured **0** (demand-gating honest). The prior run measured only 68 (two
+  non-module files) because the `value?` capture was blind to module-mode files — this run, on the
+  fixed `evalConst` capture, exercises the real weight: the descriptor walk is cheap relative to the
+  elaboration that dominates each `analyze-exact`.
 
-This resolves `notes/01-semantic-facts.md` §5's deferred capture-API uncertainty (it named "a data-only
-atom store, if one exists" as the preferred mechanism — this is it). It does **not** reopen RSF-SPEC's
-representation (Design B) or the producer seam.
+## Checks
+
+- `LEAN_NUM_THREADS=1 lake build` — clean (36 jobs); `lean-fmt-tests` — clean;
+  `.lake/build/bin/lean-fmt-tests` → `lean-fmt module-artifact tests passed`.
+- `tests/semantic/run.sh` → differential + non-vacuity + demand-gating + cache stability, all passed
+  on the module-mode fixture.
+- `tests/boundary/run.sh`, `tests/modes/run.sh`, `tests/check/run.sh`, `tests/compiler/run.sh` → all
+  passed; plugin `import all` line is still exactly `ArtifactModel`, no closure or glob growth.
+- `experiments/run-semantic-cost.sh` → within envelope; semantic pass captured facts, baseline did not.
+- Stack structural checker (`check_stack.py --structural`) → `OK: 3 prompt(s), 0 warning(s)`;
+  `write_next.py --check` → matches. `git diff --check` → clean.
 
 ## Status
 
-- RSF-FINAL: **not verified — pending re-audit** after the RSF-IMPL repair lands. The audit's harnesses
-  (differential + mutation, demand-gating end-to-end, cache stability, cost envelope) are built and
-  correct — they are what exposed the defect — but the differential and cost must be re-run against the
-  module-safe capture (the current cost run measured a near-no-op: only the 2 non-module sample files
-  captured anything).
-- Repair executed: `prompts/02-impl.md` reopened to `planned` with the `evalConst` mechanism;
-  `results/02-impl.md` marked superseded; `notes/01-semantic-facts.md` §5 resolved;
-  `state/current.md`/`state/next.md` re-pointed to `02-impl`. RSF-SPEC stays verified.
-- Nothing here is marked verified. Evidence: `evidence/02-module-mode-blocker.txt`.
+RSF-FINAL: **verified.** The semantic notation-spacing fact is grounded against Lean's own emission on
+core and corpus notations in a module-mode file, cache identity and demand-gating are proven both
+directions end to end, and the cost is within budget with a non-vacuous measurement. The stack
+(RSF-SPEC, RSF-IMPL, RSF-FINAL) is complete. `ruff-03` reflow and `ruff-11` rules can build on the
+`Tier.semantic` / `ModuleArtifact.v4` foundation this certifies.

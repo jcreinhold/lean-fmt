@@ -1,11 +1,11 @@
 ---
 kind: state
-first_unresolved: 03-final
+first_unresolved: none
 ---
 
 # Current state
 
-**Foundation stack; RSF-SPEC verified** (created 2026-07-17). It exists because `ruff-03`'s reflowing
+**Foundation stack COMPLETE — RSF-SPEC, RSF-IMPL, RSF-FINAL all verified** (2026-07-17). It exists because `ruff-03`'s reflowing
 formatter and `ruff-11`'s compiler-backed rules both need the same missing infrastructure — a
 semantic fact tier — and neither should own infrastructure the other depends on. `ruff-05` shipped
 `Tier` with `source` and `syntax` only, deliberately, and named the semantic tier as future work
@@ -22,7 +22,7 @@ elaboration facts.
 | --- | --- | --- | --- |
 | 01-spec | RSF-SPEC | verified | — |
 | 02-impl | RSF-IMPL | verified (re-implemented) | RSF-SPEC |
-| 03-final | RSF-FINAL | planned | RSF-IMPL |
+| 03-final | RSF-FINAL | verified | RSF-IMPL |
 
 ## Repair (2026-07-17, prompt-repair) — capture mechanism was module-broken, now fixed
 
@@ -43,9 +43,15 @@ a `ParserDescr` walker (`descrAtoms`) replacing the old `Expr` walker; `captureN
 capture `" + "`/`" * "`/`"-"`; and `tests/semantic/Notation.lean` converted to `module` mode so the
 end-to-end `__analyze-exact` harness proves non-empty capture for imported operators on production
 code. All suites (build, tests, boundary, modes, check, compiler, semantic, structural) pass. RSF-IMPL
-is verified; RSF-SPEC stayed verified throughout. **Next: re-run the RSF-FINAL audit — re-ground the
-differential (done, `tests/semantic/run.sh` green on the module-mode fixture) and re-measure the cost
-envelope, which previously measured a near-no-op (only 2 non-module files captured).**
+is verified; RSF-SPEC stayed verified throughout.
+
+**RSF-FINAL re-audited and verified (2026-07-17).** The differential (`tests/semantic/run.sh`) is green
+on the module-mode fixture — core `+`/`*` (imported, value-stripped) and corpus `⊕corpus` all predict
+Lean's own `ppTerm` emission byte for byte, non-vacuously. The cost envelope was re-measured on the
+fixed capture: on the frozen 62-file module-mode sample the semantic pass captured **2999** notations
+(baseline 0), vs. the prior near-no-op of 68, at peak RSS ~2.10 GiB (Δ +1.8 MiB, wall within noise),
+well within the 8 GiB / 256 MiB ceiling. Evidence: `evidence/03-cost-envelope.txt`,
+`results/03-final.md`. **The stack is complete.**
 
 ## RSF-SPEC — what it settled (`notes/01-semantic-facts.md`, `results/01-spec.md`)
 
