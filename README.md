@@ -51,7 +51,8 @@ honor rule selection. Repeatable CLI `--select` replaces configured selection wh
 malformed patterns fail clearly instead of being ignored.
 
 Rule selection is a projection over one canonical semantic result, so changing selection neither
-changes frontend strategy nor creates strategy-specific cache entries.
+changes frontend strategy nor creates strategy-specific cache entries. It decides one thing only:
+which fact tier a run must obtain, which is the cheapest tier answering every selected rule.
 
 Without positional files, selection covers every root-relative `.lean` source outside `.lake`, not
 only library modules. Standalone scripts and nested/root `lakefile.lean` configuration therefore
@@ -74,11 +75,13 @@ returns before constructing a project frontend environment, starting an analyzer
 creating fallback temporary files. Buildable and standalone sources are both cacheable when the
 project capability can establish their complete semantic identity.
 
-Each rule declares whether it needs only immutable source bytes or exact syntax. For source-input
-rules, one shared Lake no-build graph can use a current ordinary `.olean` as successful-compilation
-evidence without loading its frontend environment. It never fabricates a syntax projection. A
-compiler plugin stores syntax-capable formatter data in each integrated `.olean`; Lake owns its
-derived sidecar. When syntax is required, one private Lake operation requests the registered
+Each rule declares whether it needs only immutable source bytes or exact syntax, by which fact view
+its implementation reads (`docs/adding-a-rule.md`). For source-tier rules, one shared Lake no-build
+graph can use a current ordinary `.olean` as successful-compilation evidence without loading its
+frontend environment. It never fabricates a syntax projection. A compiler plugin stores the exact
+frontend's lossless projection in each integrated `.olean` — the projection only, never this
+formatter's findings about the module, so editing a rule cannot rebuild an integrating project. Lake
+owns its derived sidecar. When syntax is required, one private Lake operation requests the registered
 `leanFmtArtifact` jobs with `noBuild := true`, then recomputes each content hash and verifies the
 module and complete source snapshot. Missing or invalid artifacts fall through to the exact frontend
 instead of being rebuilt during a check. Every path produces the same canonical result before rule
@@ -127,7 +130,7 @@ compiler projections. Artifact validation, fallback, cache sequencing, validatio
 writes remain behind one private execution operation. `LeanFmt.Cli` owns only parsing, presentation,
 statistics, and exit mapping. Design and
 performance evidence lives in `docs/projects/execution-core-v2/`; exploratory code remains under
-`experiments/`.
+`experiments/`. `docs/adding-a-rule.md` is the contributor guide for the rule engine.
 
 ```sh
 LEAN_NUM_THREADS=1 lake build

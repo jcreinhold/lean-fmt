@@ -112,7 +112,7 @@ def build_checks(f: dict[str, int]) -> list[tuple[str, str, str]]:
         (notes, r"For ([\d,]+) of [\d,]+ nodes, an empty", commas(ambig)),
         (notes, r"For [\d,]+ of ([\d,]+) nodes, an empty", commas(nodes)),
         (notes, r"unaffected by all ([\d,]+) ambiguous placements", commas(ambig)),
-        (notes, r"\*\*(\d+) commands in 7 distinct kinds\*\*", str(f["commands"])),
+        (notes, r"\*\*(\d+) commands in 6 distinct kinds\*\*", str(f["commands"])),
         (notes, r"\| `Lean\.Parser\.Command\.declaration` \| (\d+) \|", str(f["declarations"])),
         (notes, r"2734 commands against this repository's (\d+)", str(f["commands"])),
         (notes, r"the census above shows 0 in (\d+) commands here and 181", str(f["commands"])),

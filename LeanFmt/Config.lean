@@ -196,16 +196,23 @@ def RulePlan.findings (plan : RulePlan) (path : String)
 
 def RulePlan.activeCount (plan : RulePlan) : Nat := plan.selected.size
 
-/-- The cheapest facts that can answer every selected rule.
+/-- The cheapest facts that can answer every selected rule of `rules`.
 
 This is the projection the roadmap asks for: selection derives what a run must *obtain*, and nothing
 else. It does not decide a worker, an artifact strategy, a cache identity, or an order — a run that
 selects nothing costs `source`, and turning a rule on can never rebuild or re-elaborate anything.
 
 The mode contributes separately (`RunMode.rendersCanonical`): a rendering mode needs the projection
-whatever its rules need. -/
-def RulePlan.requiredTier (plan : RulePlan) : Tier :=
-  ruleRegistry.foldl (init := .source) fun tier rule =>
+whatever its rules need.
+
+`rules` is a parameter for the same reason `runRulesOf` takes one, and must stay in step with it: the
+two derive from one array or they can disagree about what a selection costs. Only tests pass their
+own; every production caller goes through `requiredTier`. -/
+def RulePlan.requiredTierOf (plan : RulePlan) (rules : Array Rule) : Tier :=
+  rules.foldl (init := .source) fun tier rule =>
     if plan.selected.contains rule.code then tier.max rule.tier else tier
+
+/-- The cheapest facts that can answer every selected rule the product ships. -/
+def RulePlan.requiredTier (plan : RulePlan) : Tier := plan.requiredTierOf ruleRegistry
 
 end LeanFmt.Internal

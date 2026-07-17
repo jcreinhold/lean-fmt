@@ -55,8 +55,16 @@ of production modules until their owning prompt selects and verifies the interfa
   result-cache identity.
 - `LeanFmt.Project` owns complete non-`.lake` source selection, exact Lake setup, and one shared
   typed no-build graph. Do not replace it with per-file Lake runs or module-only selection.
-- A current ordinary `.olean` is successful-compilation evidence for source-input rules, not a
-  serialized syntax projection. Syntax-input rules require the compiler artifact or exact frontend.
+- A current ordinary `.olean` is successful-compilation evidence for source-tier rules, not a
+  serialized syntax projection. Syntax-tier rules require the compiler artifact or exact frontend.
+- A rule's tier is its `RuleImpl` constructor, never a field. The field that used to declare it was a
+  claim no code had to honor and was wrong for the product's whole life without anything noticing.
+- The module artifact carries the projection and nothing else — facts, never findings. Rules run
+  outside the compiler, from those facts, in the process that reports them. `LeanFmt.Rules` is
+  reachable from neither `LeanFmt/CompilerPlugin.lean`'s imports nor `lean_lib
+  LeanFmtCompilerPlugin`'s globs, and both halves are load-bearing: Lake links every module a library
+  globs whether or not anything imports it. While the rules were reachable, editing one rule's message
+  string invalidated every integrated module's Lake trace. See `docs/adding-a-rule.md`.
 - Size the module artifact per element, not per source byte: it costs about 25 B x (tokens + nodes)
   and lands in the `.olean` at its own size. Measured over the frozen mathlib sample that is 10.26x
   the source, 660 KB for the largest module there. Ratio against source tracks token density, which

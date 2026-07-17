@@ -138,11 +138,11 @@ def main(argv):
         raw = handle.read()
 
     measured = check(artifact["source"], raw)
-    # `findings` share the projection's coordinate system; nothing may point outside it.
-    for finding in artifact["findings"]:
-        span = finding["range"]
-        if not span["start"] <= span["stop"] <= measured["normalized_bytes"]:
-            raise Failure(f"finding {finding['code']} has range {span} outside the source")
+    # This used to also bound every finding's range by the projection's byte count. An artifact
+    # carries no findings now: they are computed by the process that reports them, from facts already
+    # matched to the bytes in hand, so a range is in range by construction rather than by audit.
+    if "findings" in artifact:
+        raise Failure("artifact carries findings; it must carry only the projection")
     print(" ".join(f"{key}={value}" for key, value in measured.items()))
     return 0
 

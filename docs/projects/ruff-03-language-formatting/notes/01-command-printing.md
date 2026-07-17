@@ -24,8 +24,8 @@ property (`evidence/01-projection-shape.txt`):
 | --- | --- |
 | subtree of node *j* is a contiguous index range | **0 violations** |
 | among a parent's token-bearing node-children, index order agrees with byte order | **0 violations** |
-| nodes whose subtree contains no token at all | **15,654 — 35.7%** |
-| …of those, whose parent also has direct token children | **6,823 — 15.6% of all nodes** |
+| nodes whose subtree contains no token at all | **15,953 — 35.8%** |
+| …of those, whose parent also has direct token children | **6,921 — 15.5% of all nodes** |
 
 The first two are not luck. `LosslessSource.collect` pushes a node's placeholder at
 `build.nodes.size` *before* folding its args left to right, so children of one parent necessarily have
@@ -57,7 +57,7 @@ The last two decide the interface:
   the projection dropped — `Lean.Syntax` has none either. An empty `null` node genuinely has no
   position, and `Syntax.getPos?` returns `none` for it.
 
-**Therefore arg order cannot be recovered from positions.** For 6,823 of 43,840 nodes, an empty
+**Therefore arg order cannot be recovered from positions.** For 6,921 of 44,562 nodes, an empty
 node-child sits among direct token-children of the same parent and nothing in the projection says
 whether it came before or after them. That is a seventh of the tree, not an edge case, and no amount
 of care with ranges fixes it: the information is absent from `Lean.Syntax` upward.
@@ -106,7 +106,7 @@ The printer runs where the module was parsed, holding real `Lean.Syntax` and a l
 - **Cache identity.** Worse. The artifact stops being sufficient for formatting, so either formatting
   is uncacheable or a second key appears beside the one `RLS-FINAL` verified.
 - **Critical path.** A frontend run per format. `RLS-FINAL` measured analysis at median 1.96 s and max
-  15.6 s per module on the frozen sample. That is the whole cost of formatting, against ~0 for A.
+  15.5 s per module on the frozen sample. That is the whole cost of formatting, against ~0 for A.
 - **Memory.** A live `Environment` per file, against a 660 KB artifact.
 
 **And it contradicts a decision already made.** `ruff-01`'s completion contract commits to carrying
@@ -139,12 +139,12 @@ grammar belongs.
 ## 6. What this forces on the printer
 
 - **Node-children are read in arg order, never sorted by range.** Arg order is guaranteed by
-  `collect`; range order is wrong for 15.6% of nodes and *silently* wrong, which is worse.
+  `collect`; range order is wrong for 15.5% of nodes and *silently* wrong, which is worse.
 - **Every supported kind's shape is a citation.** The shape goes in the printer with the parser
   declaration it mirrors, and a golden fixture pins it. An uncited shape is an unsourced claim.
 - **The conservative fallback reads tokens, not the tree.** This is the load-bearing consequence of
   §2: empty nodes contribute no bytes, so a printer that re-emits a subtree's tokens in source order
-  with their trivia is unaffected by all 6,823 ambiguous placements. Unknown syntax round-trips
+  with their trivia is unaffected by all 6,921 ambiguous placements. Unknown syntax round-trips
   through the one path that does not depend on the information the projection lacks. The roadmap's
   "unknown commands must round-trip conservatively" and this measurement point the same way — the
   fallback is not a concession, it is the only path whose correctness does not rest on a grammar
@@ -155,24 +155,30 @@ grammar belongs.
 The roadmap requires "every supported parser category has an explicit ownership table and formatter
 fallback". The table is built from what the corpus actually contains, not from what I remember Lean
 having: `experiments/run-projection-shape.sh` censuses command kinds, and this repository yields
-**468 commands in 7 distinct kinds** (`evidence/01-projection-shape.txt`; the counts below move as the
+**483 commands in 6 distinct kinds** (`evidence/01-projection-shape.txt`; the counts below move as the
 project grows and are re-read from the probe rather than maintained by hand).
 
 | kind | count | owner |
 | --- | --- | --- |
-| `Lean.Parser.Command.declaration` | 399 | `RLF-COMMANDS` — the shell and its members; see below |
+| `Lean.Parser.Command.declaration` | 414 | `RLF-COMMANDS` — the shell and its members; see below |
 | `Lean.Parser.Command.namespace` | 25 | `RLF-COMMANDS` |
 | `Lean.Parser.Command.end` | 25 | `RLF-COMMANDS` |
-| `Lean.Parser.Command.moduleDoc` | 10 | `RLF-COMMANDS` |
+| `Lean.Parser.Command.moduleDoc` | 11 | `RLF-COMMANDS` |
 | `Lean.Parser.Command.open` | 7 | `RLF-COMMANDS` |
-| `Lean.Option.registerOption` | 1 | conservative fallback |
 | `Lean.Parser.Command.initialize` | 1 | conservative fallback |
 | everything else | 0 here | conservative fallback |
+
+`Lean.Option.registerOption` was in this table with count 1 until `RRE-IMPL` deleted this
+repository's only `register_option` (`ruff-05-rule-engine/notes/01-rule-facts.md` §4). It was also
+the corpus's only command outside `Lean.Parser.Command.*`, which is why the distinct-kind count fell
+from 7 to 6 — and it is a clean illustration of the paragraph below: the kind did not stop existing
+in Lean, it stopped existing *in code I wrote*. The conservative fallback that owned it is unchanged
+and still owns it.
 
 **This table is built from the corpus, and the corpus is not Lean.** Every count above is a fact about
 code I wrote, and "everything else | 0 here" is the line that should have been suspicious: it is not
 evidence that nothing else exists, only that I never wrote it. `experiments/run-printer-sample.sh` runs
-the same census over the frozen mathlib sample — 2734 commands against this repository's 468 — and the
+the same census over the frozen mathlib sample — 2734 commands against this repository's 483 — and the
 kinds it refuses are a different list:
 
 | kind | count | owner |
@@ -193,7 +199,7 @@ the reconciliation.
 Two things fall out of it that the corpus could not have said:
 
 **`section` is named by this prompt's task line, and this corpus has none of them.** "namespaces/
-sections" is in `prompts/01-commands.md`; the census above shows 0 in 468 commands here and 181 in the
+sections" is in `prompts/01-commands.md`; the census above shows 0 in 483 commands here and 181 in the
 sample. It and `universe` are now claimed — both are flat runs of a keyword and identifiers, which is
 `spaceSeparated`'s exact shape. The one hazard is `sectionHeader`'s first slot (`:288-292`):
 `optional ("@[" >> nonReservedSymbol "expose" >> "] ")` is *bracketed*, and `@[` and `]` are separate

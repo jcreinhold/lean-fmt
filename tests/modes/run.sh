@@ -360,7 +360,11 @@ python3 - "$work/downstream/.lake/build/lean-fmt-artifacts/Downstream.json" <<'P
 import json, sys
 artifact = json.load(open(sys.argv[1]))
 assert artifact["source"]["mainModule"] == "Downstream"
-assert [finding["code"] for finding in artifact["findings"]] == ["FMT001"]
+# The artifact is the projection and nothing else. A downstream integrator gets facts about its
+# module, never this formatter's verdicts about it -- that is what keeps a rule edit out of the
+# integrator's build graph (`ruff-05-rule-engine/notes/01-rule-facts.md` §3).
+assert "findings" not in artifact, artifact.keys()
+assert artifact["source"]["tokens"], "the downstream projection recorded no tokens"
 PY
 
 if [[ -d "$artifact_root" ]]; then

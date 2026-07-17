@@ -84,10 +84,6 @@ inductive Facts where
   | source (facts : SourceFacts)
   | «syntax» (facts : SyntaxFacts)
 
-def Facts.tier : Facts → Tier
-  | .source _ => .source
-  | .syntax _ => .syntax
-
 /-- The source facts every set of facts contains. Named for what it returns rather than as
 `Facts.source`, which is the constructor. -/
 def Facts.sourceFacts : Facts → SourceFacts
@@ -230,22 +226,33 @@ private def findingOrder (left right : Finding) : Bool :=
   else if left.range.stop != right.range.stop then left.range.stop < right.range.stop
   else left.code < right.code
 
-/-- Every finding the available facts can produce, from every registered rule, deterministically
-ordered.
+/-- Every finding the available facts can produce, from `rules`, deterministically ordered.
 
 **Selection is not applied here**, and must not be. `RulePlan.findings` projects afterwards, which is
 what lets one cache entry serve any `--select` and what keeps a rule's enablement out of every
 identity in the product. A rule whose tier the facts cannot serve is skipped: that is not a silent
-omission, because `RulePlan.requiredTier` is what decided which facts to obtain, and it derives the
-answer from the same registry. -/
-def runRules (facts : Facts) : Array Finding :=
-  let findings := ruleRegistry.foldl (init := #[]) fun findings rule =>
-    if !facts.tier.satisfies rule.tier then findings
-    else match rule.impl, facts with
-      | .source run, _ => findings ++ run facts.sourceFacts
-      | .syntax run, .syntax syntaxFacts => findings ++ run syntaxFacts
-      | .syntax _, .source _ => findings
+omission, because `RulePlan.requiredTierOf` is what decided which facts to obtain, and it derives the
+answer from the same array.
+
+The registry is a parameter here and fixed in `runRules`. That is the whole substitution seam, and it
+exists for one reason: the engine's tier behavior — skipping, mixed-tier ordering, tie-breaking —
+cannot be tested through `ruleRegistry`, because every rule the product ships is `source`-tier and
+the roadmap forbids shipping a fake one for coverage. Tests pass their own array. No production
+caller does, and none should: a rule set chosen per call site is a rule set that can differ per call
+site, which is the class of defect this whole stack exists to close. -/
+def runRulesOf (rules : Array Rule) (facts : Facts) : Array Finding :=
+  let findings := rules.foldl (init := #[]) fun findings rule =>
+    -- The skip is the third case, not a guard. A `facts.tier.satisfies rule.tier` test here would
+    -- be exactly redundant with this match and could drift from it; the match cannot drift, because
+    -- the constructor pair is what decides, and it is total.
+    match rule.impl, facts with
+    | .source run, _ => findings ++ run facts.sourceFacts
+    | .syntax run, .syntax syntaxFacts => findings ++ run syntaxFacts
+    | .syntax _, .source _ => findings
   findings.qsort findingOrder
+
+/-- Every finding the available facts can produce, from every rule the product ships. -/
+def runRules (facts : Facts) : Array Finding := runRulesOf ruleRegistry facts
 
 /-- Run every rule the module's own source can answer. -/
 def runSourceRules (normalized : String) : Array Finding :=

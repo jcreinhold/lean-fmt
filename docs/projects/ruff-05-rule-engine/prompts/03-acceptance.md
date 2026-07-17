@@ -1,6 +1,6 @@
 ---
 claim_id: RRE-FINAL
-status: planned
+status: verified
 depends_on: [RRE-IMPL]
 ---
 

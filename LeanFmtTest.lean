@@ -251,6 +251,136 @@ private def fixtureLosslessSource (mainModule := "Test") : LosslessSource := {
   ]
 }
 
+/-! ## The engine, exercised at both tiers
+
+Every rule the product ships is `source`-tier, so `ruleRegistry` cannot reach the engine's tier
+behavior at all: nothing is ever skipped, no `syntax` finding ever has to sort against a `source`
+one, and `requiredTier` is `.source` for every possible selection. `RRE-FINAL`'s work order asks for
+"a representative rule at each tier"; its stop rule says "do not retain fake product rules merely for
+coverage". Both hold at once only if the representative rules live here and never enter
+`ruleRegistry` — which is what `runRulesOf` and `requiredTierOf` take an array for.
+
+These rules are deliberately trivial and deliberately adversarial about order: `probeSyntax` is
+registered **last** and its findings land **first**, so an engine that concatenated in registry order
+would fail every assertion below. -/
+
+/-- `syntax`-tier: reports the projection's first token. Registered last, finds earliest. -/
+private def probeSyntax : Rule := {
+  info := {
+    code := "TST900", category := "test", summary := "probe: first token"
+    fixable := false, defaultEnabled := false
+  }
+  impl := .syntax fun facts =>
+    match facts.projection.tokens[0]? with
+    | none => #[]
+    | some token => #[{
+        code := "TST900", severity := .warning, message := "first token"
+        range := { start := token.start, stop := token.stop }
+      }]
+}
+
+/-- `source`-tier: reports the whole file. Shares its range with `probeTie` to pin tie-breaking. -/
+private def probeSource : Rule := {
+  info := {
+    code := "TST901", category := "test", summary := "probe: whole file"
+    fixable := false, defaultEnabled := false
+  }
+  impl := .source fun facts => #[{
+    code := "TST901", severity := .warning, message := "whole file"
+    range := { start := 0, stop := facts.bytes.size }
+  }]
+}
+
+/-- `source`-tier, same range as `probeSource`, registered after it but ordering before it by code. -/
+private def probeTie : Rule := {
+  info := {
+    code := "TST900", category := "test", summary := "probe: tie"
+    fixable := false, defaultEnabled := false
+  }
+  impl := .source fun facts => #[{
+    code := "TST900", severity := .warning, message := "tie"
+    range := { start := 0, stop := facts.bytes.size }
+  }]
+}
+
+private def testEngineTiers : IO Unit := do
+  let normalized := fixtureSourceText
+  let projection := fixtureLosslessSource
+  let syntaxFacts := Facts.syntax (SyntaxFacts.of normalized projection)
+  let sourceFacts := Facts.source (SourceFacts.of normalized)
+  let registry := #[probeSource, probeSyntax]
+
+  -- Mixed tiers, sorted by position and not by registry order. `probeSource` covers [0, 11) and
+  -- `probeSyntax` finds the `def` token at [0, 3): same start, so the shorter range wins the tie.
+  let mixed := runRulesOf registry syntaxFacts
+  ensure (mixed.map (·.code) == #["TST900", "TST901"])
+    "mixed-tier findings are not byte-sorted independently of registry order"
+  ensure (mixed.map (fun finding => (finding.range.start, finding.range.stop)) == #[(0, 3), (0, 11)])
+    "mixed-tier ranges are wrong or not sorted by stop within one start"
+
+  -- The same registry against facts that cannot serve the `syntax` rule: it is skipped, not guessed
+  -- at, not defaulted, and not an error. `requiredTierOf` is what makes the skip sound — it is what
+  -- decided to obtain these facts, and it reads the same array.
+  let skipped := runRulesOf registry sourceFacts
+  ensure (skipped.map (·.code) == #["TST901"])
+    "source facts did not skip exactly the syntax-tier rule"
+
+  -- Ties inside one position break on the code, so registry order cannot decide output.
+  let tied := runRulesOf #[probeSource, probeTie] sourceFacts
+  ensure (tied.map (·.code) == #["TST900", "TST901"])
+    "findings at one identical range are ordered by registry position rather than by code"
+  let tiedReversed := runRulesOf #[probeTie, probeSource] sourceFacts
+  ensure (tied == tiedReversed) "reordering the registry changed the output"
+
+  -- A rule's tier is its implementation's, and `ToJson` derives `input` from it rather than reading
+  -- a field. This is the drift `RuleInfo.input` allowed and `RuleImpl` makes unrepresentable.
+  ensure (probeSyntax.tier == .syntax && probeSource.tier == .source) "Rule.tier is not RuleImpl.tier"
+  let encoded := Lean.toJson probeSyntax
+  ensure ((encoded.getObjValAs? String "input").toOption == some "syntax")
+    "the rules wire shape does not derive input from the implementation"
+  ensure (ruleRegistry.all (·.tier == .source))
+    "a non-source rule reached ruleRegistry: `Application.renderCanonicalText` and the source-only \
+     shortcut in `availableAnalysis` both need revisiting (ruff-06/RFX-SPEC owns this)"
+
+/-- Selection derives what a run must *obtain*, and nothing else.
+
+The completion contract's first clause — selection "never selects worker, artifact, cache, or
+scheduling strategy" — has two halves. This is the half about cost: what a selection is allowed to
+make a run pay for. The other half, that selection stays out of cache identity, is
+`tests/check/run.sh`'s one-entry-two-selections check, which needs a real cache and a real project.
+
+`plan.selected` is what the fold reads, so these plans are built directly rather than through
+`FormatterConfig.rulePlan`: the probe codes are not in `ruleRegistry` and `selectorsValid` would
+rightly reject them. That is the seam working as intended — no fake rule is reachable from config. -/
+private def testMixedSelection : IO Unit := do
+  let registry := #[probeSource, probeSyntax]
+  let plan (selected : Array String) : RulePlan := { selected, perFileIgnores := #[] }
+
+  ensure ((plan #[]).requiredTierOf registry == .source)
+    "selecting nothing did not cost source facts"
+  ensure ((plan #["TST901"]).requiredTierOf registry == .source)
+    "selecting only a source rule cost more than source facts"
+  ensure ((plan #["TST900"]).requiredTierOf registry == .syntax)
+    "selecting a syntax rule did not require syntax facts"
+  -- The point of `Tier.max`: one syntax rule in a mixed selection decides the whole batch, and its
+  -- position in the array cannot matter.
+  ensure ((plan #["TST900", "TST901"]).requiredTierOf registry == .syntax)
+    "a mixed selection did not take the maximum of its rules' tiers"
+  ensure ((plan #["TST901", "TST900"]).requiredTierOf #[probeSyntax, probeSource] == .syntax)
+    "requiredTierOf depends on registry or selection order"
+  -- An unselected syntax rule cannot make a run pay for facts nothing will read. This is the
+  -- property that makes `--select` free: turning a rule off can never rebuild or re-elaborate.
+  ensure ((plan #["TST901"]).requiredTierOf #[probeSyntax, probeSource] == .source)
+    "an unselected syntax rule still cost the run its facts"
+  -- And the derivation must agree with what the engine will actually run, or a batch obtains facts
+  -- for rules it skips, or skips rules it obtained facts for.
+  ensure ((runRulesOf registry (.source (SourceFacts.of fixtureSourceText))).map (·.code) ==
+      #["TST901"])
+    "requiredTierOf and runRulesOf disagree about what source facts can answer"
+  ensure (ruleRegistry.all (fun rule => ({ selected := #[rule.code], perFileIgnores := #[] } :
+      RulePlan).requiredTier == .source))
+    "a shipped rule's selection costs more than source facts"
+
 private def fixtureArtifact : ModuleArtifact := {
   schema := artifactSchema
   source := fixtureLosslessSource
@@ -1044,6 +1174,8 @@ public unsafe def main (args : List String) : IO UInt32 := do
   | [] =>
     testDigests
     testRules
+    testEngineTiers
+    testMixedSelection
     testServiceProtocol
     testEdits
     testConfig

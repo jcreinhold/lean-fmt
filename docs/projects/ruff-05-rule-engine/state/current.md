@@ -1,22 +1,23 @@
 ---
 kind: state
-first_unresolved: 03-acceptance
+first_unresolved: none
 ---
 
 # Current state
 
-`RRE-SPEC` and `RRE-IMPL` are **verified**. The design is `notes/01-rule-facts.md`; what was run is
-`results/01-design.md` and `results/02-engine.md`. Both defects `RRE-SPEC` measured are closed,
-re-measured (`evidence/03-both-defects-closed.txt`), and pinned by gates. The external prerequisite
-stack `ruff-01-lossless-source` is verified and its live implementation still matches recorded state;
-`ruff-02`, `ruff-03`, and `ruff-04` are verified as well, and this stack re-read their live code
-rather than trusting it.
+All three prompts are **verified**. The design is `notes/01-rule-facts.md`; what was run is
+`results/01-design.md`, `results/02-engine.md`, and `results/03-acceptance.md`. Both defects
+`RRE-SPEC` measured are closed, re-measured (`evidence/03-both-defects-closed.txt`), and pinned by
+gates. The external prerequisite stack `ruff-01-lossless-source` is verified and its live
+implementation still matches recorded state; `ruff-02`, `ruff-03`, and `ruff-04` are verified as
+well, and this stack re-read their live code rather than trusting it — and moved `ruff-03`'s corpus
+figures, which are updated in place.
 
 | Prompt | Claim | Status | Depends on |
 | --- | --- | --- | --- |
 | 01-design | RRE-SPEC | verified | — |
 | 02-engine | RRE-IMPL | verified | RRE-SPEC |
-| 03-acceptance | RRE-FINAL | planned | RRE-IMPL |
+| 03-acceptance | RRE-FINAL | verified | RRE-IMPL |
 
 ## Known evidence
 
@@ -45,6 +46,19 @@ rather than trusting it.
   (`Lean/Elab/Command.lean:108-109`), which this roadmap forbids.
 - `RulePlan` selection was already correct and already selection-independent. The design kept it and
   deleted the other mechanism rather than reconciling the two.
+- **The engine's tier behavior is tested through a substitution seam.** `runRulesOf` and
+  `RulePlan.requiredTierOf` take the rule array as a parameter; `runRules`/`requiredTier` fix it to
+  `ruleRegistry`. Tests register probe rules at each tier without shipping fake ones, so the
+  work order's "add a representative rule at each tier" and the stop rule's "do not retain fake
+  product rules" both hold. `results/03-acceptance.md` is the argument.
+- **`RRE-IMPL` was marked verified on an incomplete gate set.** It broke `tests/lossless`,
+  `tests/modes`, and `tests/printer` — none of which the prompt's Check section named by category,
+  all of which consume what `LeanFmt/Rules.lean` produces. Fixed under `RRE-FINAL` and recorded
+  honestly in `results/03-acceptance.md`, the same class of gap `results/01-design.md` recorded for
+  `tests/compiler/run.sh`.
+- **Two dead members removed under audit.** The `facts.tier.satisfies` guard in `runRulesOf` was
+  redundant with the match's total constructor-pair case; `Facts.tier` had no callers once the guard
+  went. Both deleted.
 
 ## Blockers and prerequisites
 
@@ -52,17 +66,21 @@ rather than trusting it.
 - If live code contradicts prerequisite results, reopen the owning prerequisite rather than patching around it.
 - Full mathlib is not development evidence; follow this roadmap's evidence policy.
 
-## Open questions carried into `RRE-FINAL`
+## Open questions carried out of `RRE-FINAL`
 
-- **`Tier.syntax` has no rule.** Both live rules are source-tier, so `RulePlan.requiredTier` is
-  `.source` for every possible selection and `Tier.satisfies .source .syntax = false` is unreachable
-  from the product. The mixed-tier planning is real code on a branch nothing takes yet. `ruff-06`'s
-  `RFX-SPEC` owns the first syntax-tier fixable rule, and
-  `Application.renderCanonicalText`'s docstring names it as the trigger.
+- **`Tier.syntax` has no rule, and `testEngineTiers` now asserts that on purpose.**
+  `ruleRegistry.all (·.tier == .source)` fails the moment `ruff-06`'s `RFX-SPEC` ships a syntax-tier
+  rule — with a message naming the two places (`renderCanonicalText`, the `availableAnalysis`
+  shortcut) that assume otherwise. The assertion is a deliberate to-do list, not a bug. The
+  mixed-tier planning is still real code on a branch nothing in the product takes yet; the engine
+  tests take it through the probe rules.
 - **The agreement test asserts the invariant, not the original defect.** The trigger is deleted, so
   the old divergence is unspellable and no test can prove it would have caught the old one.
-- **`RRE-FINAL` owes the fanout measurement.** `notes/01-rule-facts.md` §11 records that §3 measured
-  invalidation on one module, not on a project; the frozen sample is 62 modules.
+- **The fanout measurement was judged not worth a sample run, not silently dropped.**
+  `notes/01-rule-facts.md` §11 and §3 measured invalidation on one module. `RRE-FINAL` did not run
+  the 62-module frozen sample: the mechanism is structural (the plugin's Lake library no longer
+  contains `LeanFmt.Rules`, so no module in any project can depend on it) and `tests/boundary/run.sh`
+  pins both the import and the glob. `results/03-acceptance.md` records this as a named non-measurement.
 - The redundant-import rule (`ruff-09`) needs the exact Lake module graph and does not fit the three
   tiers. Its module-local half is `semantic`; the cross-module half is not any of them. `RIR-SPEC`
   owns the question; `notes/01-rule-facts.md` §11 records that the model does not silently cover it.

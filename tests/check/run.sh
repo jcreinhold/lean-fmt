@@ -164,6 +164,37 @@ fallback_entry=$(find "$cache_root/results" -type f -name '*.json' -print)
 cmp "$work/module-cache-entry.json" "$fallback_entry"
 cmp "$work/cache-artifact.json" "$work/cache-fallback.json"
 
+# Selection is a projection over one cached result, not a component of its identity. Two runs that
+# differ only in `--select` must collide onto the same entry: the completion contract says selection
+# "never selects worker, artifact, cache, or scheduling strategy", and this is the cache half of it.
+# `LeanFmtTest.lean`'s `testMixedSelection` covers the other half (what a selection costs to obtain).
+#
+# The collision must be an entry collision, not a report collision — the reports differ, and are
+# meant to. So this counts entries and makes a miss fatal for the second run: it must produce its
+# answer from an entry a *differently selected* run wrote, or not at all.
+#
+# All three env vars are load-bearing and `LEAN_FMT_TEST_ANALYZER` alone is not enough. A plain
+# `check` on a current module takes the source-only shortcut in `availableAnalysis` and never
+# consults the analyzer or the cache, so a disabled analyzer would prove nothing — the run would
+# pass without a hit and the test would be vacuous. Disabling module evidence is what forces the
+# second run to need the cache; disabling the artifact closes the other way out.
+rm -rf "$cache_root"
+run_expect 1 "$work/select-all.json" "$application" check --root . --json \
+  tests/check/Findings.lean
+run_expect 0 "$work/select-fmt002.json" env LEAN_FMT_DISABLE_ARTIFACT=1 \
+  LEAN_FMT_TEST_DISABLE_MODULE_EVIDENCE=1 LEAN_FMT_TEST_ANALYZER=/usr/bin/false \
+  "$application" check --root . --json --select FMT002 tests/check/Findings.lean
+test "$(find "$cache_root/results" -type f -name '*.json' | wc -l | tr -d ' ')" = 1
+python3 - "$work/select-all.json" "$work/select-fmt002.json" <<'PY'
+import json, sys
+def codes(path):
+    file, = json.load(open(path))["files"]
+    return [f["code"] for f in file["findings"]]
+every, selected = codes(sys.argv[0 + 1]), codes(sys.argv[2])
+assert "FMT001" in every, f"the selection fixture lost its unselected rule: {every}"
+assert selected == [], f"--select FMT002 reported something else: {selected}"
+PY
+
 # Corrupt committed entries are misses. A stray partial temporary file cannot shadow a valid entry.
 printf '{"partial":' >"$fallback_entry"
 run_expect 2 "$work/cache-corrupt.json" env LEAN_FMT_DISABLE_ARTIFACT=1 LEAN_FMT_TEST_DISABLE_MODULE_EVIDENCE=1 \
