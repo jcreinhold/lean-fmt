@@ -272,7 +272,7 @@ private def ExactRun.nextPathIndex (run : ExactRun) : IO Nat :=
   run.nextIndex.modifyGet fun index => (index, index + 1)
 
 private def ExactRun.envelope (run : ExactRun)
-    (snapshot : SourceSnapshot) (validator := false) : IO AnalysisEnvelope := do
+    (snapshot : SourceSnapshot) (captureSemantic : Bool) (validator := false) : IO AnalysisEnvelope := do
   let index ← run.nextPathIndex
   let setupResult ← exactSetupResult run.project snapshot
   let setup := match setupResult with
@@ -290,7 +290,7 @@ private def ExactRun.envelope (run : ExactRun)
     let output ← runBounded {
       cmd := analyzer.toString
       args := #["__analyze-exact", setupPath.toString, sourcePath.toString,
-        snapshot.path.toString, toString run.maxBytes]
+        snapshot.path.toString, toString run.maxBytes, if captureSemantic then "1" else "0"]
       env := run.project.workspace.augmentedEnvVars.push ⟨"LEAN_NUM_THREADS", some "1"⟩
     } run.maxBytes
     unless output.exitCode == 0 do
@@ -358,8 +358,8 @@ private def canonicalAnalysis (snapshot : SourceSnapshot) (renderCanonical : Boo
   | none => throw <| IO.userError s!"invalid exact analysis for {snapshot.relativePath}"
 
 def ExactRun.analyzeSnapshot (run : ExactRun) (snapshot : SourceSnapshot)
-    (renderCanonical : Bool) (validator := false) : IO SemanticAnalysis := do
-  canonicalAnalysis snapshot renderCanonical (← run.envelope snapshot validator)
+    (renderCanonical : Bool) (validator := false) (captureSemantic : Bool := false) : IO SemanticAnalysis := do
+  canonicalAnalysis snapshot renderCanonical (← run.envelope snapshot captureSemantic validator)
 
 /- Bracket a complete exact-analysis run. The capability is constructed only after a real fallback
 or editor request needs it; cache-only and ordinary-evidence batch runs create no temporary state. -/
@@ -778,6 +778,10 @@ def execute (request : RunRequest) : IO RunReport := do
   -- treats it as one. A `check` run caches a result with no canonical text; a later `format` hitting
   -- it would otherwise short-circuit straight to "clean" for every file in the project.
   let renderCanonical := request.mode.rendersCanonical
+  -- What this run must actually obtain, rules and mode together. `semantic` is reachable only through
+  -- the mode: no rule is `semantic`-tier, so a rendering mode is the sole demander of the notation
+  -- fact (`RulePlan.demandedTier`). This is the gating seam — capture runs iff `demanded` reaches it.
+  let demanded := plan.demandedTier renderCanonical
   let cached := cached.map fun cached? => cached?.filter (cacheHitServes renderCanonical)
   if cached.all Option.isSome then
     if let some previewMode := request.mode.preview? then
@@ -791,8 +795,14 @@ def execute (request : RunRequest) : IO RunReport := do
   let evidenceFinished ← IO.monoNanosNow
   recordPhase "module_evidence" evidenceStarted evidenceFinished
   let artifactStarted ← IO.monoNanosNow
-  -- A rendering mode needs the projection an artifact carries, whatever the selected rules need.
-  let artifacts ← if plan.requiredTier != .source || renderCanonical then
+  -- The plugin artifact carries `source`+`syntax` but never `semantic` (it is always-on, so capturing
+  -- there would tax every build — `ruff-05b` F3/F4). A run that demands `semantic` therefore cannot be
+  -- served by it and must re-analyze via `analyzeExact`; fetching it would be wasted work and, worse,
+  -- would let `availableAnalysis` render canonical text off a fact-free artifact. Skipping the fetch
+  -- both records the gating cost and rejects the `semantic = none` artifact for a `format` run.
+  let artifacts ← if demanded == .semantic then
+    pure (Array.replicate snapshots.size none)
+  else if plan.requiredTier != .source then
     officialArtifacts project.workspace snapshots
   else
     pure (Array.replicate snapshots.size none)
@@ -817,7 +827,8 @@ def execute (request : RunRequest) : IO RunReport := do
       try
         let analysis ← match available? with
           | some analysis => pure analysis
-          | none => exactRun.analyzeSnapshot snapshot renderCanonical
+          | none =>
+            exactRun.analyzeSnapshot snapshot renderCanonical (captureSemantic := demanded == .semantic)
         analyses := analyses.push (some analysis)
         let report ← match request.mode with
           | .fix => fixFile exactRun plan request.unsafeFixes snapshot analysis
@@ -839,8 +850,14 @@ def execute (request : RunRequest) : IO RunReport := do
     return summarize request.mode files failures
 
 private unsafe def runAnalyzeChild (args : List String) : IO UInt32 := do
-  let [setupPath, snapshotPath, displayPath, maxBytes] := args
-    | return 2
+  -- The `captureSemantic` flag is a trailing optional argument: a direct 4-argument invocation (the
+  -- syntax-only path, and every existing test harness) omits it and captures no semantic fact.
+  let (setupPath, snapshotPath, displayPath, maxBytes, captureSemantic) ← match args with
+    | [setupPath, snapshotPath, displayPath, maxBytes] =>
+      pure (setupPath, snapshotPath, displayPath, maxBytes, "0")
+    | [setupPath, snapshotPath, displayPath, maxBytes, captureSemantic] =>
+      pure (setupPath, snapshotPath, displayPath, maxBytes, captureSemantic)
+    | _ => return 2
   let some maxBytes := maxBytes.toNat?
     | return 2
   Lean.Internal.setMaxMemory maxBytes.toUSize
@@ -849,7 +866,7 @@ private unsafe def runAnalyzeChild (args : List String) : IO UInt32 := do
   let .ok setup := Lean.fromJson? setupJson
     | throw <| IO.userError "invalid ModuleSetup payload"
   let source ← IO.FS.readFile snapshotPath
-  let envelope ← analyzeExact setup source displayPath
+  let envelope ← analyzeExact setup source displayPath (captureSemantic == "1")
   IO.println (Lean.toJson envelope).compress
   return 0
 

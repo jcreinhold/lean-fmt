@@ -1,6 +1,7 @@
 module
 
 import all LeanFmt.ArtifactStore
+import all LeanFmt.Analysis
 import all LeanFmt.Application
 import all LeanFmt.Cache
 import all LeanFmt.Comments
@@ -460,6 +461,17 @@ private def testEngineTiers : IO Unit := do
     "a non-source rule reached ruleRegistry: `Application.renderCanonicalText` and the source-only \
      shortcut in `availableAnalysis` both need revisiting (ruff-06/RFX-SPEC owns this)"
 
+  -- The lattice gained `semantic` above `syntax` (`ruff-05b`): richer facts serve any cheaper
+  -- requirement, and the cheaper cannot serve the dearer. No shipped rule is `semantic`-tier; the
+  -- formatter demands the fact through the mode (`RulePlan.demandedTier`), exercised below.
+  ensure (Tier.satisfies .semantic .syntax && Tier.satisfies .semantic .source)
+    "semantic facts failed to serve a cheaper requirement"
+  ensure (!Tier.satisfies .syntax .semantic && !Tier.satisfies .source .semantic)
+    "a cheaper tier was accepted for a semantic requirement"
+  ensure (Tier.satisfies .semantic .semantic) "semantic facts did not serve a semantic requirement"
+  ensure (Tier.max .syntax .semantic == .semantic && Tier.max .semantic .source == .semantic)
+    "Tier.max disagrees with the source ≤ syntax ≤ semantic chain"
+
 /-- Selection derives what a run must *obtain*, and nothing else.
 
 The completion contract's first clause — selection "never selects worker, artifact, cache, or
@@ -498,6 +510,18 @@ private def testMixedSelection : IO Unit := do
     "requiredTierOf and runRulesOf disagree about what source facts can answer"
   ensure (ruleRegistry.all (fun rule => ({ selected := #[rule.code], perFileIgnores := #[], extendSafe := #[], extendUnsafe := #[] } : RulePlan).requiredTier == .source))
     "a shipped rule's selection costs more than source facts"
+
+  -- Demand-gating (`ruff-05b`): the mode is the only demander of `semantic`, because no shipped rule
+  -- reaches that tier. A report run (no canonical rendering) stays at its rules' tier; a
+  -- canonical-rendering run (`format`/`diff`/`fix`) is lifted to `.semantic`, so the declared-spacing
+  -- fact is captured then and not on the syntax-only fast path. `demandedTier` folds over the shipped
+  -- registry, so this uses a shipped code rather than a probe.
+  let shippedPlan : RulePlan :=
+    { selected := #["FMT001"], perFileIgnores := #[], extendSafe := #[], extendUnsafe := #[] }
+  ensure (shippedPlan.demandedTier false == .source)
+    "a non-rendering run demanded more than its rules needed"
+  ensure (shippedPlan.demandedTier true == .semantic)
+    "a canonical-rendering run did not demand the semantic fact"
 
 private def fixtureArtifact : ModuleArtifact := {
   schema := artifactSchema
@@ -611,6 +635,80 @@ private def testStore : IO Unit := do
       "missing facet artifact was not an ordinary miss"
   finally
     IO.FS.removeDirAll directory
+
+/-- A `v4` artifact carrying the semantic fact: two notation kinds with their declared spacing. Design
+B keys by `SyntaxNodeKind`, one entry per distinct kind. -/
+private def fixtureSemanticArtifact : ModuleArtifact :=
+  { fixtureArtifact with semantic := some { notations := #[
+      { kind := "«term_+_»", atoms := #[" + "] },
+      { kind := "«term-_»", atoms := #["-"] }] } }
+
+/- The semantic fact is additive and demand-gated: the codec round-trips it, `semantic = none` (the
+always-on plugin's shape) stays valid, and a `v3` payload — including one that predates the field
+entirely — is an ordinary miss under the schema guard rather than a decode crash that would present
+unknown declared spacing as captured-and-empty. `ruff-05b` `RSF-IMPL`. -/
+private def testSemanticArtifact : IO Unit := do
+  ensure (structurallyValid fixtureSemanticArtifact)
+    "a v4 artifact carrying the semantic fact was rejected"
+  let decoded : Except String ModuleArtifact := Lean.fromJson? (Lean.toJson fixtureSemanticArtifact)
+  match decoded with
+  | .ok actual => ensure (actual == fixtureSemanticArtifact) "v4 semantic artifact JSON round trip failed"
+  | .error message => throw <| IO.userError s!"v4 semantic artifact decode failed: {message}"
+
+  -- The plugin producer emits `semantic = none`; that shape is valid and round-trips too.
+  ensure (fixtureArtifact.semantic.isNone) "the plugin-shaped fixture already carried a semantic fact"
+  ensure (structurallyValid fixtureArtifact) "a v4 artifact with semantic = none was rejected"
+  let noneDecoded : Except String ModuleArtifact := Lean.fromJson? (Lean.toJson fixtureArtifact)
+  match noneDecoded with
+  | .ok actual => ensure (actual == fixtureArtifact) "v4 semantic = none artifact JSON round trip failed"
+  | .error message => throw <| IO.userError s!"v4 semantic = none artifact decode failed: {message}"
+
+  -- A stale `v3` payload is a clean miss, the same discipline as the `v1` miss in `testStore`.
+  ensure (!(structurallyValid { fixtureArtifact with schema := "lean-fmt.module-artifact.v3" }))
+    "a stale v3 artifact was accepted by the current reader"
+  -- Faithful to a payload written before the field existed: no `semantic` key at all. The optional
+  -- field makes the decoder total over it (decodes to `none`), and the schema guard then misses.
+  let v3payload := Lean.Json.mkObj
+    [("schema", "lean-fmt.module-artifact.v3"), ("source", Lean.toJson fixtureLosslessSource)]
+  match (Lean.fromJson? v3payload : Except String ModuleArtifact) with
+  | .ok actual =>
+    ensure (actual.semantic.isNone && !structurallyValid actual)
+      "a fieldless v3 payload did not decode-then-miss cleanly"
+  | .error message => throw <| IO.userError s!"the v4 decoder is not total over a fieldless v3 payload: {message}"
+
+/- Two locally-declared notations whose `ParserDescr` the walker must read. They carry deliberately
+distinctive symbols so no other decl's atoms collide: an infix with a breakable gap on both sides, and
+a tight prefix. Under the module system an *imported* notation's decl body is hidden (`value?` is
+`none` without `import all`), but a notation declared here is visible — and it is a real `ParserDescr`
+generated by the `notation`/`prefix` commands, the same shape `analyzeExact` reads from the live
+frontend environment. -/
+local notation:65 a " ⊹leanfmt⊹ " b => HAdd.hAdd a b
+local prefix:100 "⊟leanfmt⊟" => Neg.neg
+
+/- Compile-time acceptance of the declared-spacing walker: `collectDeclaredAtoms` recovers the
+untrimmed atoms Lean *trims away* at parse time (`Parser/Basic.lean:1114`). The infix declares
+`" ⊹leanfmt⊹ "` — a breakable gap on both sides, spaces intact — and the prefix declares
+`"⊟leanfmt⊟"`, tight. Recovering the *spaced* form is the whole point: it proves capture reads the
+formatter's pp-hint, not the trimmed token the parser stores. If capture regresses this fails the
+build; `RSF-FINAL`'s fresh-frontend differential then confirms the atoms equal Lean's `pushToken`
+output on the live environment. `ruff-05b` `RSF-IMPL`. -/
+open Lean Elab Command in
+run_cmd do
+  let env ← getEnv
+  -- Only locally-declared decls carry a visible value here, so this collects exactly this module's
+  -- notation atoms — the imported universe contributes nothing (its bodies are hidden).
+  let mut atoms : Array String := #[]
+  for (_, ci) in env.constants.map₂.toList do
+    if let some value := ci.value? then
+      atoms := atoms ++ collectDeclaredAtoms value
+  unless atoms.contains " ⊹leanfmt⊹ " do
+    throwError "the infix's untrimmed breakable gap ' ⊹leanfmt⊹ ' was not captured; got {atoms}"
+  unless atoms.contains "⊟leanfmt⊟" do
+    throwError "the prefix's tight atom '⊟leanfmt⊟' was not captured; got {atoms}"
+  -- The trimmed spelling must never be what we captured: that would be the parser's token, not the
+  -- formatter's declared spacing, and the two are exactly what `RSF-SPEC` F1 proved differ.
+  unless !atoms.contains "⊹leanfmt⊹" do
+    throwError "captured the trimmed token '⊹leanfmt⊹' instead of the declared gap ' ⊹leanfmt⊹ '"
 
 private def sliceOf (source : String) (start stop : Nat) : String :=
   String.Pos.Raw.extract source ⟨start⟩ ⟨stop⟩
@@ -1302,6 +1400,7 @@ public unsafe def main (args : List String) : IO UInt32 := do
     testCacheIdentity
     testLosslessSource
     testStore
+    testSemanticArtifact
     testDoc
     testComments
     IO.println "lean-fmt module-artifact tests passed"

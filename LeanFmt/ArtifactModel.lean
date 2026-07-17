@@ -81,6 +81,26 @@ structure Finding where
   fix? : Option Fix := none
   deriving Inhabited, BEq, DecidableEq, Repr, Lean.ToJson, Lean.FromJson
 
+/-- The declared inter-atom spacing of one notation/atom syntax kind: the untrimmed declared atom
+strings, in source order (`" + "` for infix add, `"-"` for prefix neg). A leading or trailing ASCII
+space in a string is the notation's declared breakable gap on that side; its absence is tight. This
+is the pretty-printing hint the parser trims away (`Init/Prelude.lean:5389`,
+`Lean/Parser/Basic.lean:1114`), recovered as data from the notation's `ParserDescr` where the
+`Environment` is live. Keyed by `kind` (the `SyntaxNodeKind` string, matching the projection's node
+kinds), never by bare token — one token declares different gaps in different kinds (`ruff-05b`
+`notes/01-semantic-facts.md` §2-3). -/
+structure NotationSpacing where
+  kind : String
+  atoms : Array String
+  deriving Inhabited, BEq, Repr, Lean.ToJson, Lean.FromJson
+
+/-- The first semantic fact: declared spacing for every notation kind present in the module, one entry
+per distinct kind (Design B). Immutable data captured from the live `Environment` at the on-demand
+producer; carried in the artifact only when a consumer demanded the `.semantic` tier. -/
+structure SemanticProjection where
+  notations : Array NotationSpacing
+  deriving Inhabited, BEq, Repr, Lean.ToJson, Lean.FromJson
+
 /- The artifact is stored inside the successful module's `.olean`; exact toolchain, options,
 plugins, ordered imports, and dependency identity therefore belong to the module artifact itself
 rather than to a parallel cache identity.
@@ -97,19 +117,26 @@ long version is that the rules were in the compiler plugin's import closure, whi
 rule's message text inside every module's compiled bytes. Both are gone by construction now, because
 there is nothing here to disagree with and no reason for the plugin to link a rule.
 
-`ruff-11` adds semantic facts beside `source`. They are facts too, and the same rule applies to them:
+`ruff-11` adds further semantic facts beside `source`. They are facts too, and the same rule applies:
 elaboration evidence belongs here because only the frontend can make it; what a rule concludes from
 it does not. -/
 structure ModuleArtifact where
   schema : String
   source : LosslessSource
+  /-- The semantic projection (`v4`): declared notation spacing, `none` unless a consumer demanded it.
+  Optional because the two producers differ — the always-on compiler plugin emits `none` (no capture
+  in an integrated build), and the on-demand `analyzeExact` emits `some` only when the run's tier
+  reaches `.semantic` (a `format` run always does). See `ruff-05b` `notes/01-semantic-facts.md` §1. -/
+  semantic : Option SemanticProjection := none
   deriving BEq, Repr, Lean.ToJson, Lean.FromJson
 
-/-- Bumped from `v1` when the command-kind/range projection became `LosslessSource`, and from `v2`
-when findings and their rule configuration left the artifact. A stale payload must miss, not decode:
-a `v2` payload read as `v3` would drop its findings silently through the field defaults and describe
-a module with nothing wrong with it, which is the same class of bug `semanticResultSchema` names. -/
-def artifactSchema : String := "lean-fmt.module-artifact.v3"
+/-- Bumped from `v1` when the command-kind/range projection became `LosslessSource`, from `v2` when
+findings and their rule configuration left the artifact, and from `v3` when the optional `semantic`
+projection was added (`ruff-05b` `RSF-IMPL`). A stale payload must miss, not decode: a `v3` payload
+read as `v4` would describe a module whose declared spacing is unknown as if it had been captured and
+found empty, so the schema guard rejects it and forces re-analysis, the same discipline that made
+findings leave the artifact rather than default silently. -/
+def artifactSchema : String := "lean-fmt.module-artifact.v4"
 
 /-- Build the artifact for one accepted module.
 
@@ -119,11 +146,15 @@ what makes the facet a sound cache of the exact frontend rather than a second op
 
 It takes no rule configuration, and that is the point rather than an omission: an artifact is a
 function of the module and its source alone, so turning a rule on cannot rebuild or re-elaborate
-anything. -/
+anything. The optional `semantic` projection is likewise a function of the module and its environment;
+it defaults to `none` so the always-on plugin producer stays on the syntax-only path, and only
+`analyzeExact` passes `some` under demand. -/
 def ModuleArtifact.ofParsedModule (mainModule normalized : String)
-    (commands : Array Lean.Syntax) (terminal? : Option Lean.Syntax) : ModuleArtifact := {
+    (commands : Array Lean.Syntax) (terminal? : Option Lean.Syntax)
+    (semantic : Option SemanticProjection := none) : ModuleArtifact := {
   schema := artifactSchema
   source := LosslessSource.ofSource mainModule normalized commands terminal?
+  semantic
 }
 
 def artifactLinter : Lean.Name := `leanFmt.semanticArtifact

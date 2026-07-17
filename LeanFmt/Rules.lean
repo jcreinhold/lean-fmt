@@ -21,24 +21,34 @@ and its result is an `Array Finding`. -/
 /-- What a rule needs in order to decide, ordered by what it costs to obtain.
 
 `source` facts are free: the file was read. `syntax` facts need the exact frontend, so a run that
-selects any `syntax` rule needs a current `.olean` and its facet, or a frontend invocation.
+selects any `syntax` rule needs a current `.olean` and its facet, or a frontend invocation. `semantic`
+facts also need the exact frontend, but additionally read the module's `Environment` — the parser and
+notation declarations — which the projection does not otherwise carry.
 
-There is no `semantic` case yet, and its absence is deliberate. `ruff-11`'s `RMR-SPEC` is chartered
-to characterize the Lean APIs a semantic fact would project, and `ruff-11` depends on this stack, not
-the other way round. A tier nothing can produce is a tier nothing tests, and this file exists because
-that is exactly how `RuleInfo.input` rotted. The third case arrives with its facts, its producer, and
-its rule, together. -/
+The `semantic` case is added by `ruff-05b` (`RSF-IMPL`), which supplies all three things `ruff-05`
+required before a tier may exist — a producer, a consumer, and a test — so this is not the empty tier
+`RuleInfo.input` rotted into. Its producer is `analyzeExact`, which captures the declared notation
+spacing from the live `Environment` (`Analysis.lean`); its consumer is the **formatter** (not a rule
+yet — `ruff-11` adds semantic rules later, and only then do `Facts`/`RuleImpl` gain a `semantic`
+case); and it is exercised through the demand-gating seam (`RulePlan.demandedTier`) and the artifact
+round-trip tests. A `format` run demands this tier; a source/syntax-only run never does. -/
 inductive Tier where
   | source
   | «syntax»
+  | semantic
   deriving Inhabited, BEq, DecidableEq, Repr, Lean.ToJson, Lean.FromJson
 
-/-- Whether facts of tier `available` can run a rule of tier `required`. -/
+/-- Whether facts of tier `available` can run a rule of tier `required`. The tiers form a chain
+`source ≤ syntax ≤ semantic`: richer facts serve any cheaper requirement. -/
 def Tier.satisfies (available required : Tier) : Bool :=
   match required, available with
   | .source, _ => true
-  | .syntax, .syntax => true
   | .syntax, .source => false
+  | .syntax, .syntax => true
+  | .syntax, .semantic => true
+  | .semantic, .semantic => true
+  | .semantic, .source => false
+  | .semantic, .syntax => false
 
 /-- The cheaper of two tiers cannot serve the dearer, so a run needs the maximum of what it selects. -/
 def Tier.max (left right : Tier) : Tier :=

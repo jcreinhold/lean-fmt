@@ -273,4 +273,15 @@ def RulePlan.requiredTierOf (plan : RulePlan) (rules : Array Rule) : Tier :=
 /-- The cheapest facts that can answer every selected rule the product ships. -/
 def RulePlan.requiredTier (plan : RulePlan) : Tier := plan.requiredTierOf ruleRegistry
 
+/-- The tier a run must actually obtain, folding in the mode's own demand on top of its rules'.
+
+Rules alone give `requiredTier`; the mode contributes separately, because a rendering mode needs facts
+its rules do not. The declared-spacing fact (`Tier.semantic`) is consumed by the **formatter**, not by
+any rule, so `requiredTier` — a fold over rules — can never reach `semantic` on its own (`ruff-05b`).
+A canonical-rendering run demands it here instead: `format`/`diff`/`fix` obtain the semantic artifact,
+`check` and a source/syntax report do not. This is the one place the formatter's demand enters
+planning, so the gating cost is recorded rather than hidden across call sites. -/
+def RulePlan.demandedTier (plan : RulePlan) (renderCanonical : Bool) : Tier :=
+  plan.requiredTier.max (if renderCanonical then .semantic else .source)
+
 end LeanFmt.Internal

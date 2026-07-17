@@ -1,6 +1,6 @@
 ---
 kind: state
-first_unresolved: 02-impl
+first_unresolved: 03-final
 ---
 
 # Current state
@@ -21,7 +21,7 @@ elaboration facts.
 | Prompt | Claim | Status | Depends on |
 | --- | --- | --- | --- |
 | 01-spec | RSF-SPEC | verified | — |
-| 02-impl | RSF-IMPL | planned | RSF-SPEC |
+| 02-impl | RSF-IMPL | verified | RSF-SPEC |
 | 03-final | RSF-FINAL | planned | RSF-IMPL |
 
 ## RSF-SPEC — what it settled (`notes/01-semantic-facts.md`, `results/01-spec.md`)
@@ -48,10 +48,35 @@ elaboration facts.
   `lean-fmt.module-artifact.v4` (additive; `v3` misses); demand-gating cost model (plugin `none`,
   `analyzeExact` `some` on demand; the semantic table is part of the digest).
 
-## Design commitments (from the roadmap, to be verified in execution)
+## RSF-IMPL — what it delivered (`results/02-impl.md`)
 
-- **Facts are immutable data, never a live `Environment`.** Capture happens at the plugin producer and
-  crosses the boundary as serializable spacing, matching `ruff-11`'s standing contract.
+- **`Tier.semantic` in the engine** (`Rules.lean`): lattice `source ≤ syntax ≤ semantic`, with
+  `Tier.satisfies` extended over all nine cases. **No `Facts.semantic`/`RuleImpl.semantic` case** — the
+  notation fact's consumer is the formatter, not a rule; `ruff-11` adds semantic *rules*. So the tier
+  has a real producer + consumer + test, not the empty tier `RuleInfo.input` rotted into.
+- **`ModuleArtifact` at schema `v4`** (`ArtifactModel.lean`): additive optional
+  `semantic : Option SemanticProjection := none`; `SemanticProjection`/`NotationSpacing` follow Design
+  B (one entry per distinct `SyntaxNodeKind`, atoms by position, keyed by kind). `v3` is a clean miss;
+  a fieldless payload decodes total-ly to `none` then misses on the schema guard.
+- **Capture in `analyzeExact`** (`Analysis.lean`): `collectDeclaredAtoms` reads the untrimmed atom
+  strings of `ParserDescr.symbol`/`.nonReservedSymbol` from each present kind's decl value in the live
+  `commandState.env` — pure data, no formatter run, no `Environment` escaping. Scoped to operator
+  atoms; `sepBy` separators and non-notation kinds degrade to source bytes.
+- **Demand-gating** (`Config.lean` `RulePlan.demandedTier`, `Application.lean`): a canonical-rendering
+  run demands `.semantic`; the plugin artifact (always `none`) is then not fetched, so `format` re-runs
+  `analyzeExact` with `captureSemantic := true` — the recorded cost, and the rejection of the fact-free
+  artifact. `captureSemantic` is a trailing optional subprocess arg, so the syntax-only path and every
+  existing harness are byte-unchanged.
+- **Plugin untouched.** `CompilerPlugin.lean` still passes no `semantic` (emits `none`); its import
+  closure and Lake glob did not grow (`tests/boundary/run.sh` passed).
+- Checks: full build, in-process suite, boundary, modes, check, compiler suites, structural checker,
+  `git diff --check` — all green.
+
+## Design commitments (from the roadmap, verified in RSF-IMPL execution unless noted)
+
+- **Facts are immutable data, never a live `Environment`.** Capture happens at the on-demand
+  `analyzeExact` producer (RSF-SPEC F3/F4; not the always-on plugin) and crosses the boundary as
+  serializable spacing, matching `ruff-11`'s standing contract. ✓ built.
 - **`Tier.semantic` is added to the engine**, folded through `requiredTier` and mixed-tier planning;
   selection stays a projection over facts.
 - **Schema bumps `v3` → `v4`, additively.** The lossless `source` projection is unchanged; the
