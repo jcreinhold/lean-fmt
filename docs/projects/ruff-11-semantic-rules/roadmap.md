@@ -2,7 +2,7 @@
 kind: roadmap
 topic: "Compiler and elaboration-backed lint rules"
 main_results: [RMR-FINAL]
-prereq_stacks: [ruff-05-rule-engine, ruff-06-fix-safety]
+prereq_stacks: [ruff-05-rule-engine, ruff-05b-semantic-facts, ruff-06-fix-safety]
 blueprint_tracked: false
 ---
 
@@ -11,6 +11,13 @@ blueprint_tracked: false
 ## Goal
 
 Expose stable compiler/elaboration facts to high-value rules such as deprecated declaration use, unused binders or declarations where Lean can prove them, and other diagnostics with precise source ownership.
+
+The **semantic fact tier** these rules run at (`Tier.semantic`, the `Environment`-capture producer, and
+the immutable semantic projection in the artifact) is **not built here** — it is the
+`ruff-05b-semantic-facts` foundation, shared with `ruff-03`'s reflowing formatter. This stack's
+`RMR-SPEC` characterizes the *rule-facing* semantic facts (deprecation, unused binders, …) and consumes
+`ruff-05b`'s tier; it does not re-derive it. `ruff-05` shipped `Tier` without `semantic` deliberately
+and pointed here; that pointer now resolves to `ruff-05b`.
 
 ## Completion contract
 

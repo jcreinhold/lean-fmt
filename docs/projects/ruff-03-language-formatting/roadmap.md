@@ -2,7 +2,7 @@
 kind: roadmap
 topic: "Complete Lean language formatting"
 main_results: [RLF-ACCEPT]
-prereq_stacks: [ruff-02-layout-core]
+prereq_stacks: [ruff-02-layout-core, ruff-05b-semantic-facts]
 blueprint_tracked: false
 ---
 
@@ -21,9 +21,11 @@ is a bug, never a style choice.
 This stack runs in two phases. **Phase 1** (`RLF-COMMANDS`..`RLF-FINAL`, verified) shipped the
 formatting provably safe with the facts and primitives available, and characterized — with parser
 citations — why the rest was deferred; it is a no-op on already-canonical Lean by construction. **Phase
-2** (`RLF-NOTATION`..`RLF-ACCEPT`) builds the deferred capability: declared notation spacing captured
-as an analysis-layer fact, a parse-preserving offside re-indent, margin-driven line breaking, and
-record/tactic/`do` layout. The architecture, the design-twice, and the layer map are
+2** (`RLF-NOTATION`..`RLF-ACCEPT`) builds the deferred capability: it *consumes* declared notation
+spacing from the `ruff-05b-semantic-facts` foundation, adds a parse-preserving offside re-indent,
+margin-driven line breaking, and record/tactic/`do` layout. The declared-spacing fact is **not** built
+here — it needs the frontend `Environment`, so it is a semantic-tier fact owned by `ruff-05b`; phase 2
+only reads it. The architecture, the design-twice, and the layer map are
 `notes/05-reflow-architecture.md`.
 
 ## Completion contract
@@ -53,7 +55,7 @@ record/tactic/`do` layout. The architecture, the design-twice, and the layer map
 
 ### Phase 2 — reflowing formatter (`notes/05-reflow-architecture.md`)
 
-6. **RLF-NOTATION — Capture declared notation and atom spacing as an analysis-layer fact.** Read each notation/atom's declared inter-token spacing from the parser table while the frontend `Environment` is live, and cross it into the projection as an additive, lossless fact — unblocking operator/notation spacing without giving the printer an `Environment`. Reopens the owning fact layer (`ruff-01`/`ruff-05`).
+6. **RLF-NOTATION — Consume the notation-spacing fact to canonicalize operator spacing.** Use the declared notation/atom spacing fact produced by `ruff-05b-semantic-facts` (carried in the `v4` artifact) to give operators and notations their declared spacing (`a+b` → `a + b`); conservative fallback where no fact is present. The printer gains no `Environment` — it reads the immutable fact. The fact itself is `ruff-05b`'s, not this stack's.
 7. **RLF-OFFSIDE — Provide a parse-preserving re-indent for offside blocks.** Deliver the capability to emit a multi-line block at a canonical base column preserving every internal `colEq`/`colGt`/`colGe`, proven by fresh-frontend reparse. Design twice (new `Doc` constructor vs printer-side reconstruction); reopen `ruff-02` only if a constructor wins. Not column-alignment.
 8. **RLF-REFLOW — Reflow expressions to the target width.** Emit `group`/`nest`/`line` so applications, operators, notations, binders, and matches break across lines when they exceed the margin (default 100), every break respecting `checkColGt`. First layout that makes the engine decide.
 9. **RLF-BLOCKS — Lay out records and offside blocks.** Apply `RLF-OFFSIDE` to `structInst` records and tactic/`do`/`where`/`let` blocks at canonical indentation, preserving the offside separators; conservative fallback where a re-layout cannot be proven parse-preserving.

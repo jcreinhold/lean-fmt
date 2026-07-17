@@ -37,9 +37,14 @@ figures, which are updated in place.
   claim no code had to honor, which is why `RulePlan.requiresSyntax` answered `false` for the
   product's whole life. `RulePlan.requiredTier` folds `Tier.max` over the registry.
 - **`Tier` has `source` and `syntax` only.** No `semantic` case, deliberately, against the prompt's
-  own task text — `ruff-11`'s `RMR-SPEC` owns semantic-fact characterization and `ruff-11` depends on
-  this stack. A tier nothing can produce is a tier nothing tests, which is how `RuleInfo.input`
+  own task text — a tier nothing can produce is a tier nothing tests, which is how `RuleInfo.input`
   rotted. `results/02-engine.md` records this as a deliberate under-delivery, not an oversight.
+  **The `semantic` case is owned by the `ruff-05b-semantic-facts` foundation** (created 2026-07-17),
+  which adds `Tier.semantic`, the `Environment`-capture producer, and the first semantic fact (declared
+  notation spacing). Both `ruff-03`'s reflowing formatter and `ruff-11`'s lint rules consume it; the
+  earlier note here pointed at `ruff-11` for this, but the tier itself is shared infrastructure and
+  belongs to the foundation, not to either consumer. Adding `Tier.semantic` there will fold through the
+  `requiredTier`/planning seams this stack built.
 - Lean's own linter registry is a function table — a record with a `run` field and a `name`, in an
   `IO.Ref (Array Linter)` (`Lean/Elab/Command.lean:64-70,110-111`) — not an attribute and not a
   typeclass. Its one concession to dynamism is bought by plugin loadability

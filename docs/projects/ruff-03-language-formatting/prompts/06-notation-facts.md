@@ -4,76 +4,62 @@ status: planned
 depends_on: [RLF-FINAL]
 ---
 
-# Capture declared notation and atom spacing as an analysis-layer fact
+# Consume the notation-spacing fact to canonicalize operator spacing
 
 ## Task
 
-Deliver **RLF-NOTATION**: give the printer the one thing phase 1 proved it lacks — each notation and
-atom's *declared* inter-token spacing — as a fact captured while the frontend `Environment` is live,
-so operators and notations can take canonical spacing without the printer ever holding an
-`Environment`. This is the hybrid decided in `notes/05-reflow-architecture.md` §2: environment-derived
-*data*, consumed by the lossless `Doc` engine.
+Deliver **RLF-NOTATION**: use the declared notation/atom spacing fact — produced by the
+`ruff-05b-semantic-facts` foundation, carried in the `v4` `ModuleArtifact` — to give operators and
+notations their canonical *declared* spacing in the printer, so `a+b` becomes `a + b` and a
+corpus-declared notation is spaced as it declares. This is the horizontal half of operator formatting;
+margin line-breaking is `RLF-REFLOW` (prompt 08).
 
-Read `roadmap.md`, `notes/05-reflow-architecture.md`, its prerequisite stack results, `AGENTS.md`, the
-current implementation and tests, and the relevant Lean compiler/Lake sources before changing an
-interface. Confirm the phase-1 citations first-hand: `PrettyPrinter/Formatter.lean:357-417`
-(`pushToken`/`parseToken` needs `getEnv`), `Init/Notation.lean:284` and `Init/Prelude.lean:5390`
-(`infixl:65 " + "` declares its spaces), `LosslessSource.lean:64-86` (the projection drops it).
+This prompt does **not** build the fact. The semantic tier, the schema bump, and the
+`Environment`-capture producer are `ruff-05b`'s (see `notes/05-reflow-architecture.md` §2, §6). If the
+fact is absent or undecodable, the printer keeps its phase-1 conservative bytes for that node. Read
+`roadmap.md`, `notes/05-reflow-architecture.md`, `results/02-expressions.md` (why phase 1 could not
+supply spacing), the `ruff-05b` results (the fact's shape and guarantees), `AGENTS.md`, and the
+relevant Lean compiler sources.
 
 ## Target
 
-- **Reopen the owning lower layer.** The fact must be captured where the `Environment` exists — the
-  analysis producer (`ruff-01` `LosslessSource.ofSource` / the compiler-plugin linter) and, if a tier
-  is the right home, `ruff-05`'s fact-tier system. Reopen that stack's state and results as part of
-  this prompt (explicit pathspecs); do not smuggle a frontend dependency into `LeanFmt.Printer`, which
-  the architecture keeps `Environment`-free.
-- **Design the fact twice** before adding it (`notes/05-reflow-architecture.md` §2 is the capability
-  design; this is the *representation*): compare (a) per-notation-node declared-spacing recorded inline
-  in the projection versus (b) a side table keyed by syntax-kind/token resolved at print time. Compare
-  on projection size, cache identity (`RLC-SPEC` §5 — the fact enters the digest), staleness across
-  toolchain bumps, and whether a corpus-declared notation is expressible. Record the comparison and the
-  choice.
-- Keep the fact *additive and lossless*: the projection still records source bytes; the declared
-  spacing is extra, never a replacement. A node with no declared atom (e.g. `app`) carries no fact and
-  keeps its phase-1 treatment.
-- Add focused fixtures and persistent regression tests at the owning layer: a core notation
-  (`_ + _`), a corpus-declared notation, and a notation whose atoms declare asymmetric spacing.
-- Write `results/06-notation-facts.md` with exact commands, raw outputs or evidence locators,
-  measurements, decisions changed during execution, and remaining uncertainty. Update the reopened
-  prerequisite stack's state too.
-- Update `state/current.md` only after reading the checks, then regenerate `state/next.md`.
+- In `LeanFmt/Printer.lean`, map a notation node to its declared gaps from the `v4` semantic fact and
+  emit them, replacing the phase-1 conservative bytes for notations whose fact is present. The printer
+  gains no `Environment` — it reads the immutable fact, nothing more.
+- A node with no fact (custom syntax the producer could not resolve, or a `v3` artifact) keeps its
+  source bytes: conservative fallback, never invented spacing.
+- Add golden fixtures that *change*: `a+b` → `a + b`, an asymmetric-spacing notation, and a
+  corpus-declared notation; plus a comment-in-gap case that must be preserved (a notation gap holding a
+  comment keeps its bytes, per the phase-1 `respaceable` guard).
+- Prove idempotence (`format (format x) = format x`) and parse-preservation (reparse the respaced
+  output; same tokens and comments) on the fixtures.
+- Write `results/06-notation-facts.md` with commands, measurements, decisions changed, and remaining
+  uncertainty. Update `state/current.md` after reading checks; regenerate `state/next.md`.
 
 ## Plan
 
-1. Characterize what the projection carries today for a notation node and prove the declared string is
-   absent (re-run or extend the phase-1 census; cite `evidence/`).
-2. Locate the exact analysis point where the `Environment`/token table is live and the fact can be
-   read with Lean's own lookup (not a reimplementation of `parseToken`).
-3. Design the fact representation twice; choose; record cache-identity impact.
-4. Implement the smallest additive fact and the printer-side consumer that maps it to canonical gaps;
-   remove no lossless guarantee.
-5. Exercise core, corpus-declared, asymmetric-spacing, and no-atom nodes; confirm a stale/missing fact
-   degrades to the phase-1 conservative bytes rather than to wrong Lean.
+1. Confirm the `ruff-05b` fact is available in the artifact the printer already consumes; locate its
+   accessor.
+2. Design the node → declared-gaps mapping; where a construct declares tight-left/space-right per gap
+   (phase-1 `matchAlt` comma case), honor it exactly rather than spacing every gap.
+3. Emit declared spacing for notations with a fact; keep the conservative path for those without.
+4. Prove idempotence and parse-preservation on changing fixtures.
+5. Inspect callers/docs for a leaked mechanism or a claim stronger than the fixtures show.
 
 ## Stop
 
-- The printer must not gain an `Environment` dependency or a frontend import; the fact crosses the
-  boundary, not the table.
-- Spacing may change only to the *declared* string; never invent spacing for an atom that declares
-  none (that stays `app`'s parser-required minimum or conservative bytes).
-- A missing/stale fact must fall back to source bytes, never to a guessed layout.
-- Stop rather than weakening exact semantics, cache identity, write safety, or the resource envelope.
-- Stop and reopen — do not patch around — if a prerequisite stack's live code contradicts its results.
+- The printer must not gain an `Environment` dependency or a frontend import; it consumes the fact.
+- Spacing changes only to the *declared* string; a gap with no fact keeps its bytes.
+- A gap holding a comment keeps its bytes; no comment is dropped or moved.
+- Idempotence is a gate. Stop rather than weakening exact semantics, cache identity, or write safety.
 
 ## Check
 
 - Run `LEAN_NUM_THREADS=1 lake build` and the focused unit/integration suites named by touched modules,
-  including the reopened prerequisite's suites and `tests/printer/run.sh`.
-- Run `tests/boundary/run.sh` and inspect every changed module boundary manually; confirm
-  `LeanFmt.Printer` gained no forbidden import.
+  including `tests/printer/run.sh`.
+- Run `tests/boundary/run.sh` and inspect the printer boundary manually; confirm no forbidden import.
 - Use the frozen sample or synthetic saved reports for scale; complete mathlib is forbidden unless this
   prompt is `RCP-ACCEPT` and all prerequisite gates pass.
 - From the KanProofs tool environment, run the generic stack structural checker and
-  `write_next.py --check` for `docs/projects/ruff-03-language-formatting` **and** the reopened
-  prerequisite stack.
+  `write_next.py --check` for `docs/projects/ruff-03-language-formatting`.
 - Run `git diff --check` and read all output before marking RLF-NOTATION verified.

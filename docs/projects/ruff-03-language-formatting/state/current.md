@@ -18,16 +18,21 @@ receipts, not built. The user chose the **reflowing (ruff/Black-class)** ambitio
 
 Phase 1's claims (`RLF-COMMANDS`..`RLF-FINAL`) stay **verified** — they are honest and narrow.
 `RLF-FINAL` closed the *conservative*-coverage inventory and style policy; it is no longer the stack's
-final claim. The design-twice, the layer map, and why operator spacing forces reopening the fact layer
-(`ruff-01`/`ruff-05`) are in `notes/05-reflow-architecture.md`. Phase 2 is five prompts:
+final claim. The design-twice and the layer map are in `notes/05-reflow-architecture.md`. **The
+declared-spacing fact is not built here:** it needs the frontend `Environment` (a semantic-tier fact),
+so it is owned by the new foundation stack `ruff-05b-semantic-facts` (`Tier.semantic` + artifact `v4` +
+the capture producer), which both this reflow phase and `ruff-11`'s lint rules depend on. Phase 2 is
+five prompts that consume that foundation:
 
 | Prompt | Claim | Capability |
 | --- | --- | --- |
-| 06-notation-facts | RLF-NOTATION | declared notation/atom spacing as an analysis-layer fact (reopens `ruff-01`/`ruff-05`) |
+| 06-notation-facts | RLF-NOTATION | *consume* the `ruff-05b` notation-spacing fact → operators take declared spacing |
 | 07-offside-layout | RLF-OFFSIDE | parse-preserving re-indent to a canonical base (design-twice; reopens `ruff-02` only if a `Doc` constructor wins) |
 | 08-reflow-expr | RLF-REFLOW | margin-driven line breaking for app/operator/binder/match (engine `group`/`nest`/`line`) |
 | 09-reflow-blocks | RLF-BLOCKS | records + tactic/`do`/`where`/`let` offside layout |
 | 10-reflow-final | RLF-ACCEPT | idempotence + parse-preservation + coverage + performance acceptance |
+
+Build order for reflow: `ruff-05b` (RSF-SPEC→IMPL→FINAL) first, then these consume it.
 
 The remainder of this file is the phase-1 record — a live claim about the conservative subset and the
 evidence for it — kept intact because it is the citation base phase 2 builds against.

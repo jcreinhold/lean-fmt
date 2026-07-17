@@ -82,11 +82,16 @@ is answered by reading the open set from the environment instead of hardcoding i
 comment-loss objection to B is answered by never handing layout to Lean's formatter — only its
 *declared-spacing lookup*. The projection stays lossless; the fact is additive.
 
-**Consequence for scope:** N reopens the fact model (`ruff-01` `LosslessSource` and/or `ruff-05`'s tier
-system) — the owning layer, driven by this consumer's need, per the prompt-repair rule "reopen the
-prerequisite rather than patch around it." This is the one place phase 2 reaches below `ruff-03`, and
-prompt `06` owns that coordination explicitly. It is not a hidden shim: with no `Environment` outside
-the frontend, there is *no* lighter path to operator spacing, and phase 1 said so.
+**Consequence for scope — corrected 2026-07-17.** N is a *semantic-tier* fact: it needs the frontend
+`Environment`, which is live only at the compiler-plugin producer (`CompilerPlugin.lean:27`), and
+`ruff-05` shipped `Tier` with `source`/`syntax` only — the semantic tier does not exist yet. So N is
+**not** built inside `ruff-03`; that would re-derive the semantic tier in the wrong layer, where
+`ruff-11`'s rules could not reuse it. N is owned by a dedicated foundation stack,
+**`ruff-05b-semantic-facts`** (`Tier.semantic` + `ModuleArtifact` `v4` + the `Environment`-capture
+producer + the notation-spacing fact), which both this reflow phase and `ruff-11`'s lint rules depend
+on. Phase 2 prompt `06` only *consumes* the fact. With no `Environment` outside the frontend there is
+no lighter path to operator spacing — phase 1 said so — but the honest home for that path is the
+foundation, not a `ruff-03` prompt.
 
 ## 3. The `Doc.align` verdict
 
@@ -128,10 +133,15 @@ project may override it. It is a reviewed product-policy value, not a parser-for
 
 ## 6. Layer map (which prompt touches which layer)
 
-| Capability | Owning layer | Phase-2 prompt |
+| Capability | Owning layer | Prompt |
 | --- | --- | --- |
-| N — declared notation/atom spacing fact | `ruff-01` `LosslessSource` / `ruff-05` tiers (reopened) | `06` RLF-NOTATION |
+| N — declared notation/atom spacing **fact** (`Tier.semantic`, artifact `v4`, `Environment` capture) | **`ruff-05b-semantic-facts`** (new foundation; `RSF-SPEC`/`IMPL`/`FINAL`) | — |
+| N applied — operators/notations take declared spacing | `ruff-03` printer (consumes `ruff-05b`) | `06` RLF-NOTATION |
 | O — offside re-indent primitive | `ruff-02` `Doc` (design-twice; reopen only if a constructor wins) + `ruff-03` printer | `07` RLF-OFFSIDE |
 | B — margin line-breaking for app/operator/binder/match | `ruff-03` printer (engine ready) | `08` RLF-REFLOW |
 | O applied — records + tactic/`do`/`where`/`let` | `ruff-03` printer (consumes `07`) | `09` RLF-BLOCKS |
 | Idempotence / parse-preservation / perf / corpus acceptance | `ruff-03` | `10` RLF-ACCEPT |
+
+**Dependency edge:** `ruff-05b` depends on `ruff-01` + `ruff-05` (both verified) and is runnable now;
+`ruff-03` phase 2 and `ruff-11` both depend on `ruff-05b`. So the build order for reflow is
+`ruff-05b` (RSF-SPEC→IMPL→FINAL) → `ruff-03` `06`→`10`.

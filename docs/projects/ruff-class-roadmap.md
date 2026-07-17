@@ -25,15 +25,16 @@ envelope remain non-negotiable.
 | --- | --- | --- | --- |
 | 1 | `ruff-01-lossless-source` | Lossless tokens, trivia, comments, and compiler artifact | execution core |
 | 2 | `ruff-02-layout-core` | Deep document/layout engine and comment attachment | 01 |
-| 3 | `ruff-03-language-formatting` | Complete Lean command, term, tactic, and macro formatting | 02 |
+| 3 | `ruff-03-language-formatting` | Complete Lean command, term, tactic, and macro formatting (phase 1 conservative, verified; phase 2 reflow) | 02; phase-2 reflow also 05b |
 | 4 | `ruff-04-formatter-product` | Stable formatter policy and batch product semantics | 03 |
-| 5 | `ruff-05-rule-engine` | Source/syntax/semantic rule capabilities and contribution API | 01 |
+| 5 | `ruff-05-rule-engine` | Source/syntax rule capabilities and contribution API | 01 |
+| 5b | `ruff-05b-semantic-facts` | Semantic fact tier: `Tier.semantic`, `Environment` capture, artifact `v4`, notation-spacing fact | 01, 05 |
 | 6 | `ruff-06-fix-safety` | Safe/unsafe/display-only fixes and atomic fix-all | 04, 05 |
 | 7 | `ruff-07-suppressions` | Inline/file suppressions and unused-suppression diagnostics | 05 |
 | 8 | `ruff-08-source-rules` | High-confidence raw-source rules | 05, 06 |
 | 9 | `ruff-09-import-rules` | Duplicate, ordering, grouping, and redundant-import analysis | 01, 05, 06 |
 | 10 | `ruff-10-syntax-rules` | High-value exact-syntax lint rules | 01, 05, 06 |
-| 11 | `ruff-11-semantic-rules` | Compiler/elaboration-backed lint rules | 05, 06 |
+| 11 | `ruff-11-semantic-rules` | Compiler/elaboration-backed lint rules (consume 05b's semantic tier) | 05, 05b, 06 |
 | 12 | `ruff-12-rule-lifecycle` | Stable/preview/deprecated rules, explain, generated docs | 07–11 |
 | 13 | `ruff-13-config-discovery` | Hierarchical config, Git ignores, formatter/linter sections | 04, 12 |
 | 14 | `ruff-14-stream-range` | stdin/stdout and range formatting | 04, 13 |
