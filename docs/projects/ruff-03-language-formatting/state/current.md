@@ -1,6 +1,6 @@
 ---
 kind: state
-first_unresolved: 08-reflow-expr
+first_unresolved: 09-reflow-blocks
 ---
 
 # Current state
@@ -62,14 +62,44 @@ stream** (parse-preservation), the `match`/arms share one column at every base (
 a multi-line string token is byte-exact across bases (its interior never shifts). Seven checks in
 `tests/printer/run.sh`, `failures=0`.
 
+**`RLF-REFLOW` is verified** (`results/08-reflow-expr.md`), and it is the first layout that makes the
+engine *decide*: `group`/`nest`/`line` reach `Doc.go`'s fit test from real source, where phase 1 left
+them exercised only by `ruff-02`'s fixtures. `Tree.termDoc` now emits, for an over-margin single-line
+`app` command, `group (head ++ nest 2 (line sep ++ …))` — flat when the line fits the margin, one
+argument per line when it does not. The design-twice (`notes/07-reflow-policy.md`) chose **Design β**
+(the breakable gap *is* a `line` whose flat form is the declared separator, so the corpus round-trips
+byte-identically and the break consumes `RLF-NOTATION` directly) over **Design α** (term-local groups
+with verbatim gaps, disqualified by a trailing-space defect it cannot retract), and **Policy P1**
+(all-or-nothing, Black's shape) over **P2** (fill-mode, rejected on diff stability and idempotence). The
+engine is align-free (`Doc.lean:71-73`, no `align`), so the only layout that lands continuations
+strictly right of the head — the `checkColGt` the prompt names as governing every break — is to break
+*before* the value so its head starts a fresh line at a known `nest` base: head at column 2, arguments
+at column 4, each level `checkColGt`-safe by construction. **The architecture and Black's house style
+agree, and the agreement is forced, not chosen.** The seam is `Claim.leadFlat` — the value claim owns
+the breakable leading `line`, and `Tree.command` trims the separator bytes it would otherwise have
+emitted verbatim, so no trailing space survives a break. Scope is `app`-only and lives inside
+`Tree.mayCollapse` (single-line commands), which is honest rather than partial: **idempotence falls out
+of the boundary** — a first format breaks a single-line over-margin command into multi-line output `M`,
+and `M` is multi-line, so `mayCollapse` returns `false` and the second format keeps `M` byte-for-byte.
+Operators, binders, and `match` alternatives are named by the prompt and *deferred* (`notes/07` §2): the
+`group`/`nest`/`line` mechanism extends to them, but only `app` is wired, and the deferral is recorded
+rather than the coverage overstated. The margin stays **100** and a compile-time constant; cache
+identity is sound without a new component because the `formatter` cache-identity digest already hashes
+the application binary (`Cache.lean:258`), and `Application.lean`'s `canonicalWidth` docstring — which
+had pre-committed "the first `group` adds the key and its cache-identity component" — is corrected to
+record that the group now exists, the margin now steers output, and the binary digest already covers it.
+Five checks in `tests/printer/run.sh` (identity at margin 1000, a changed file at 100, token-stream
+parse-preservation across margins **0/1/40/80/100/1000**, the `checkColGt` column relation read off the
+broken output, and idempotence at every margin), `failures=0`.
+
 The remainder of this file is the phase-1 record — a live claim about the conservative subset and the
 evidence for it — kept intact because it is the citation base phase 2 builds against.
 
 ## Phase 1 record (conservative subset — verified)
 
 `RLF-COMMANDS` is **verified** (`results/01-commands.md`): the printer is live and proven lossless on
-this repository *and* on 62 modules of foreign Lean, **477 of the corpus's 504 commands take a cited
-canonical layout** — `namespace` (25), `end` (25), `open` (7), and the shell of 420 of 435
+this repository *and* on 62 modules of foreign Lean, **478 of the corpus's 505 commands take a cited
+canonical layout** — `namespace` (25), `end` (25), `open` (7), and the shell of 421 of 436
 declarations — **all 20 module headers take theirs**, and **57 constructor and field shells** are
 claimed inside those declarations. `section` and `universe` have layouts too; this corpus contains
 none of either, so only the fixtures and the sample exercise them. Its external prerequisite stack
@@ -101,11 +131,11 @@ something it did not. One is a live claim, the other is history — a difference
 **`RLC-FINAL`'s standing caveat is now half-answered.** That prompt closed the layout stack noting
 nothing consumed it, so every claim about realistic documents rested on fixtures written against the
 engine. `LeanFmt/Printer.lean` is the first consumer: it renders a real `Doc` from a real projection of
-real modules, and it now decides things. What it does not yet do is decide anything that could
-*overflow*: every layout so far is a flat run of tokens one space apart, so no `group`, `line`, or
-`nest` reaches the engine from real source and `Doc`'s break behaviour remains exercised only by
-`ruff-02`'s fixtures. The caveat narrows from "nothing consumes it" to "nothing yet asks it to break
-a line".
+real modules, and it now decides things. **`RLF-REFLOW` closed the remainder of this caveat**: an
+over-margin single-line `app` command now reaches `Doc.go`'s fit test with a real `group`/`nest`/`line`
+from real source and is broken one argument per line when it does not fit. `Doc`'s break behaviour is no
+longer exercised only by `ruff-02`'s fixtures — the caveat has gone from "nothing consumes it" to
+"nothing yet asks it to break a line" to answered.
 
 `notes/01-command-printing.md` designs the printer interface twice and decides: **the printer reads the
 `LosslessSource` projection, not `Lean.Syntax` inside the frontend.** The decision is forced by
@@ -123,7 +153,7 @@ Printing inside the frontend would buy free arg order for a median 1.96 s fronte
 | 05-corpus | RLF-FINAL | verified | RLF-EXTENSIONS |
 | 06-notation-facts | RLF-NOTATION | verified | RLF-FINAL |
 | 07-offside-layout | RLF-OFFSIDE | verified | RLF-NOTATION |
-| 08-reflow-expr | RLF-REFLOW | planned | RLF-OFFSIDE |
+| 08-reflow-expr | RLF-REFLOW | verified | RLF-OFFSIDE |
 | 09-reflow-blocks | RLF-BLOCKS | planned | RLF-REFLOW |
 | 10-reflow-final | RLF-ACCEPT | planned | RLF-BLOCKS |
 
@@ -585,7 +615,7 @@ recover a collapse that fires zero times.
   every command — the printer would fall back to bytes and be the identity function it was before any
   layout existed. This repository also writes its declarations the way the layout writes them, so even
   a layout that runs changes nothing here. `printer-roundtrip` therefore reports `canonical=`, the
-  commands actually laid out, and `tests/printer/run.sh` floors the corpus total: **477 of 504**, and `members=` the shells claimed
+  commands actually laid out, and `tests/printer/run.sh` floors the corpus total: **478 of 505**, and `members=` the shells claimed
   inside them, floored at 50 (**57**) because `canonical=` cannot see them — a command counts once
   whether it claims one region or six. The
   header gets the same treatment for the same reason, but as an exact count rather than a floor
@@ -594,12 +624,12 @@ recover a collapse that fires zero times.
   *what* the layouts produce; these pin *that* they run, on real code, at scale.
 - **Two independent measurements of coverage agree exactly, and keep agreeing as it grows.**
   `experiments/run-projection-shape.sh` re-implements the structural half of the printer's predicate in
-  Python against the same projection and finds 420 of 435 declarations claimable; the printer, in Lean,
-  counts 477 = 420 + 25 `namespace` + 25 `end` + 7 `open`. So on this corpus every
+  Python against the same projection and finds 421 of 436 declarations claimable; the printer, in Lean,
+  counts 478 = 421 + 25 `namespace` + 25 `end` + 7 `open`. So on this corpus every
   structurally-claimable declaration also passes the runtime guards the probe cannot model (clean
   trivia, newline-free flat run, column 0). The probe over-counts by construction and says so;
   `canonical=` is the honest figure.
-- **That 477 commands take the layout and all 20 modules stay byte-identical is what proves the shell
+- **That 478 commands take the layout and all 20 modules stay byte-identical is what proves the shell
   is a prefix.** A shell that ran past the name, or stopped short, would duplicate or drop bytes on
   real code. The same round-trip is the only thing asserting that the header layout's claim ends
   exactly at `headerStop` — that the parser's idea of where the header stops and the projection's agree
@@ -707,17 +737,21 @@ recover a collapse that fires zero times.
   at the `declId`'s last token and everything after it is bytes. `Tree.canonical?` returns *the last
   token its layout claimed* precisely to make that expressible; a layout claiming the whole command
   would have re-spaced the signature, which is the failure the split exists to prevent.
-- **`Doc`'s *break* behaviour is still exercised only by `ruff-02`'s own fixtures.** The printer
-  consumes `Doc` through `verbatim`, `text`, `cat`, `empty` and `hard` — the last from the header
-  layout and from the line a declaration's doc comment forces — but no `group`, `line`, or `nest`
-  reaches it from real source. Those are the constructors that make a *decision*: `hard` breaks
-  unconditionally, so nothing yet asks the engine to measure a width and choose. Every layout so far
-  is a flat run of tokens one space apart. `RLC-FINAL`'s "`call-args` is my model of a Lean call, not a
-  Lean call" stands until a layout lands that can actually exceed the margin, which is
-  `RLF-EXPRESSIONS`.
-- **The margin is unset.** `Printer.format` requires `width` rather than defaulting it: the value is
-  configuration, it enters cache identity (`RLC-SPEC` §5), and `RLC-FINAL` left it an open language
-  decision. Nothing in this stack has picked one, and no caller passes one outside tests.
+- **`Doc`'s *break* behaviour reaches real source as of `RLF-REFLOW`, and the margin now matters.**
+  `Tree.termDoc` emits `group`/`nest`/`line` for an over-margin single-line `app`, so `Doc.go`'s
+  `.group` fit test (`Doc.lean:219-229`) measures a real width and chooses flat-or-broken from a real
+  projection — the decision `hard` never made. `RLC-FINAL`'s "`call-args` is my model of a Lean call,
+  not a Lean call" is discharged: a layout that can exceed the margin has landed. What is *not* yet
+  wired is operator/binder/`match` breaking — the mechanism extends to them but only `app` is emitted
+  (`notes/07` §2), so their break behaviour is still fixtures-only and `RLF-BLOCKS`/`RLF-ACCEPT` own it.
+- **The margin is set to 100, and it now changes output.** `Application.canonicalWidth := 100`
+  (mathlib's text-linter convention) is the sole production margin; `Printer.format` still requires
+  `width` rather than defaulting it, and the value enters cache identity through the `formatter` digest
+  (the application-binary hash, `Cache.lean:258`) rather than a separate key — sound because the margin
+  is compiled in, so a change is reachable only by recompiling. No caller outside tests passes a
+  different value (`renderCanonicalText` is the only production caller; the tests drive `width` through
+  `format`'s parameter directly). Promoting it to a *runtime* project-overridable key would need its own
+  cache-identity input; the `canonicalWidth` docstring names that unfired trigger.
 - **Every supported kind's grammar shape will be a hardcoded claim about a parser the printer cannot
   query.** There is no `Environment` outside the frontend. Each shape must carry the parser
   declaration it mirrors and be pinned by a golden fixture, or it is the "textual guessing" the

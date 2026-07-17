@@ -1,9 +1,9 @@
 # Next Proof Packet
 
 - Stack: ruff-03-language-formatting
-- First unresolved: 08-reflow-expr
-- Claim ID: RLF-REFLOW
-- Prompt: 08-reflow-expr
+- First unresolved: 09-reflow-blocks
+- Claim ID: RLF-BLOCKS
+- Prompt: 09-reflow-blocks
 - Module: (docs only)
 - Target file: (docs only)
 
@@ -17,8 +17,8 @@ Read this file, the target prompt, target files, listed source/template line ran
 
 ## Proof Task
 
-- Deliver **RLF-REFLOW**: the first layout that makes the engine *decide*. Break applications, operators, notations, bracketed binders, and `match` alternatives across lines when they exceed the target width, using `group`/`nest`/`line` (`Doc.lean:44-81`, unused by real source until now) and the declared spacing from `RLF-NOTATION`. Set the default margin to **100** (`notes/05-reflow-architecture.md` §5).
-- Read `roadmap.md`, `notes/05-reflow-architecture.md`, `results/02-expressions.md` and `results/06-notation-facts.md`, `AGENTS.md`, and the relevant Lean compiler sources. Confirm first-hand the constraint that governs every break here: `argument := checkWsBefore >> checkColGt` (`Lean/Parser/Term.lean:885-892`) — **a wrapped argument must land at a column strictly greater than its function head**, or it stops being an argument and the parse changes.
+- Deliver **RLF-BLOCKS**: apply the `RLF-OFFSIDE` capability to the constructs phase 1 deferred on the offside grammar — `structInst` records, tactic sequences, `do`, `where`, and `let` blocks — laying each out at canonical indentation while preserving the column relationships that carry meaning. This is where "indentation is a token" (`results/03-tactics.md`) is *handled*, not deferred.
+- Read `roadmap.md`, `notes/05-reflow-architecture.md`, `notes/06-offside-primitive.md`, `results/03-tactics.md` and `results/04-extensions.md` (the offside counterexamples), `AGENTS.md`, and the relevant Lean compiler sources. Confirm first-hand: `sepByIndent`'s `checkColEq >> checkLinebreakBefore` separator (`Lean/Parser/Extra.lean:202-208`), `structInst`'s spaced braces `"{ "` / `" }"` (`Lean/Parser/Term.lean:351-355`), `tacticSeq1Indented`, and the `by skip skip` offside docstring (`Term/Basic.lean:57-65`).
 
 ## Reuse
 
@@ -30,7 +30,7 @@ Inspect the live goal, search relevant declarations, test plausible proof steps,
 
 ## Stop Rules
 
-- No break may violate `checkColGt`/`checkColGe`/`checkColEq`; a wrapped token that changes the parse is a bug, not a style choice — verified by reparse, not argued.
-- Do not touch import order, literal contents, or comment placement; a construct whose reflow would drop a comment keeps its bytes.
-- Idempotence is a gate: a second format must be byte-identical to the first.
-- Stop rather than weakening exact semantics, cache identity, write safety, or the resource envelope (8 GiB aggregate RSS / 256 MiB new swap; `render` stays linear-bounded).
+- Re-indentation is parse-preserving by reparse, not by argument; a base that breaks `checkColEq` between two fields or `checkColGt` between two tactics is a bug.
+- Comments inside a block never move or vanish; `verbatim` interiors are untouched.
+- A block that cannot be proven safe to re-lay-out keeps its bytes — conservative fallback, never a guessed layout.
+- Idempotence is a gate. Stop rather than weakening exact semantics, write safety, or the resource envelope.

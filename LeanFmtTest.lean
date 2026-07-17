@@ -1263,10 +1263,23 @@ private def printerRoundtrip (envelopePath sourcePath : String) (checkIdentity :
   let projection := artifact.source
   ensure (projection.validFor raw) s!"{sourcePath}: the projection does not match its own source"
   if checkIdentity then
+    -- Before `RLF-REFLOW` the formatter was margin-independent, so byte-identity held at every width.
+    -- Reflow makes it margin-*dependent* by design (`notes/07-reflow-policy.md`): an over-margin
+    -- single-line command breaks. Two invariants replace the old one and are together stronger:
+    --   * at *every* width, reflow only ever swaps a gap's spaces for a newline+indent, so the
+    --     non-whitespace content is byte-identical — a direct parse-preservation proxy (no token
+    --     added, dropped, or altered), checked here corpus-wide and by reparse on the fixtures;
+    --   * at any width no source line exceeds, nothing can break (a flat layout is never wider than
+    --     its source line), so the whole file is byte-identical — losslessness on the canonical corpus.
+    let maxLine := (normalized.splitOn "\n").foldl (fun m ln => max m ln.length) 0
+    let nonWs (s : String) : List Char := s.toList.filter (!·.isWhitespace)
     for width in [0, 1, 40, 80, 120, 1000] do
       let formatted ← Printer.format projection normalized width
-      ensure (formatted == normalized)
-        s!"{sourcePath}: format changed bytes at width {width} \
+      ensure (nonWs formatted == nonWs normalized)
+        s!"{sourcePath}: reflow changed non-whitespace bytes at width {width}"
+      if width ≥ maxLine then
+        ensure (formatted == normalized)
+          s!"{sourcePath}: format changed bytes at fitting width {width} \
 ({formatted.utf8ByteSize} bytes out, {normalized.utf8ByteSize} in)"
   let tree := Tree.ofSource projection
   let extents := tree.commandExtents

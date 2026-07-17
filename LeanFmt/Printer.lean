@@ -13,10 +13,10 @@ frontend. That is not a preference: `ruff-01`'s roadmap already committed to car
 printing in-frontend would buy free arg order for a median 1.96 s frontend run per file (`RLS-FINAL`).
 
 **What the projection does not carry, measured rather than assumed.** Over all 21 modules of this
-repository (48,260 nodes, `evidence/01-projection-shape.txt`), 17,240 nodes (35.7%) carry no token at
+repository (48,877 nodes, `evidence/01-projection-shape.txt`), 17,416 nodes (35.6%) carry no token at
 all — they are *absent* syntax, the unfilled optional slots of `declModifiers`, `optDeclSig`,
 `Termination.suffix` — and `collect` gives them range `(0,0)` because a node's range is the hull of the
-leaves beneath it and there are none. For 7,539 of them (15.6% of all nodes) the parent also has direct
+leaves beneath it and there are none. For 7,647 of them (15.6% of all nodes) the parent also has direct
 token children, so nothing in the projection says where among its siblings the absent slot belongs.
 `Lean.Syntax` has no position for them either; this is not something the projection dropped.
 
@@ -24,10 +24,10 @@ Two consequences run through everything below:
 
 1. **Node order is index order, never range order.** `collect` pushes a node's placeholder at
    `build.nodes.size` before folding its args left to right, so a parent precedes its children and
-   siblings ascend in arg order. Sorting children by range would be correct for the 64.3% that carry
+   siblings ascend in arg order. Sorting children by range would be correct for the 64.4% that carry
    tokens and silently wrong for the rest.
 2. **The conservative path reads bytes, not the tree.** Empty nodes contribute no bytes, so re-emitting
-   a command's byte extent is unaffected by all 7,539 ambiguous placements. It is the only path whose
+   a command's byte extent is unaffected by all 7,647 ambiguous placements. It is the only path whose
    correctness rests on no claim about any grammar, which is exactly what the roadmap's "unknown
    commands must round-trip conservatively" asks for. Every kind starts here and leaves only when a
    canonical layout for it is cited and pinned by a golden test.
@@ -56,7 +56,7 @@ transport format. This is the view a walk needs, computed once.
 Both child arrays ascend in index order, which **is** arg order by `collect`'s construction. The
 projection retains no other order, so this is not a property that can be checked against its output —
 `evidence/01-projection-shape.txt` checks the observable consequence instead: among a parent's
-token-bearing children, index order agrees with byte order (0 violations over 48,260 nodes). -/
+token-bearing children, index order agrees with byte order (0 violations over 48,877 nodes). -/
 structure Tree where
   source : LosslessSource
   /-- `nodeChildren[i]` are the node-children of node `i`, in arg order. -/
@@ -470,7 +470,7 @@ private def Tree.wholeSpan? (tree : Tree) (normalized : String) (span : CommandS
 
 /-- The first and last token index under `node`'s subtree, or `none` when it carries no token.
 
-`none` is the *absent syntax* case and is the common one: 35.7% of nodes are empty
+`none` is the *absent syntax* case and is the common one: 35.6% of nodes are empty
 (`evidence/01-projection-shape.txt`), because an unfilled optional slot is still a node. Asking this
 question is how a layout distinguishes "the slot is empty" from "the slot is filled", which is
 information the projection carries exactly and positions do not carry at all. -/
@@ -712,6 +712,13 @@ private structure Claim where
   first : Nat
   last : Nat
   doc : Doc
+  /-- The exact whitespace immediately before this claim's first token, when the claim owns it as a
+  breakable *leading* `line` rather than leaving it in the verbatim gap `Tree.command` stitches. This
+  is the move-the-value-down break of `RLF-REFLOW` (`notes/07-reflow-policy.md` §2, Design β): the
+  value after a `:=` hangs onto its own indented line when the command exceeds the margin, and stays
+  byte-identical when it does not because the `line`'s flat spelling *is* this exact whitespace.
+  `none` for every other claim, whose gap is emitted verbatim in full. -/
+  leadFlat : Option String := none
 
 /-- Do the gaps inside `[first, last]` hold no line break?
 
@@ -971,6 +978,17 @@ private def spacingOf (kind : String) : Spacing :=
   | "Lean.Parser.Term.instBinder" => .bracketed
   | _ => .keep
 
+/-- Kinds whose gaps `RLF-REFLOW` may break across lines when the construct exceeds the margin.
+
+`app` is the whole set for this prompt (`notes/07-reflow-policy.md` §2-3): it is the largest term kind
+(11,679 nodes, `results/02-expressions.md`), and its arguments are exactly what `argument`'s
+`checkColGt` (`Lean/Parser/Term.lean:889-892`) governs, so the "continuation strictly right of the head"
+rule the align-free engine forces has its cleanest warrant here. Operators, binders, and `matchAlt`
+break by the same `group`/`nest`/`line` mechanism and are added once their per-kind break points are
+proven by reparse; until then they stay on the flat path, which is lossless. -/
+private def reflows (kind : String) : Bool :=
+  kind == "Lean.Parser.Term.app"
+
 /-- The separator a kind's grammar declares at gap `index` of `count` parts, or `none` to keep bytes. -/
 private def Spacing.separator (spacing : Spacing) (index count : Nat) : Option String :=
   match spacing with
@@ -1135,15 +1153,52 @@ the absent-syntax case. -/
 private partial def Tree.termDoc (tree : Tree) (normalized : String) (mayCollapse : Bool)
     (node : Nat) : Doc := Id.run do
   let (spacing, parts) := tree.nodeSpacing node
+  let partDoc : Part → Doc := fun part =>
+    match part.child with
+    | some child => tree.termDoc normalized mayCollapse child
+    | none => .verbatim (tree.tokenSpanText normalized part.first part.last)
+  -- Reflow branch (`notes/07-reflow-policy.md` §2 Design β, §3 Policy P1): a breakable kind, inside a
+  -- single-line command (`mayCollapse`), whose every gap is a pure-space gap carrying a declared
+  -- separator. The head stays put; each following part hangs one `nest` (2 columns) below it under one
+  -- `group`, so the engine lays it flat when it fits the margin and one-part-per-line when it does not,
+  -- every continuation landing strictly right of the head (`checkColGt`, `Lean/Parser/Term.lean:889`).
+  -- A comment or non-space gap fails the `clean` guard and the flat path runs instead, so a break never
+  -- drops a byte. In flat mode `line sep` renders exactly `sep`, so the corpus round-trips unchanged.
+  if mayCollapse && reflows (tree.kindOf node) && parts.size ≥ 2 then
+    let mut clean := true
+    let mut index := 0
+    let mut previous : Option Part := none
+    for part in parts do
+      if let some prior := previous then
+        let raw := match tree.source.tokens[prior.last]?, tree.source.tokens[part.first]? with
+          | some a, some b => sliceNormalized normalized a.stop b.start
+          | _, _ => "\n"
+        if !raw.all (· == ' ') || (spacing.separator (index - 1) parts.size).isNone then
+          clean := false
+      previous := some part
+      index := index + 1
+    if clean then
+      let mut head : Doc := .empty
+      let mut tail : Doc := .empty
+      let mut idx := 0
+      let mut prev : Option Part := none
+      for part in parts do
+        match prev with
+        | none => head := partDoc part
+        | some _ =>
+          let sep := (spacing.separator (idx - 1) parts.size).getD " "
+          tail := tail ++ .line sep ++ partDoc part
+        prev := some part
+        idx := idx + 1
+      return .group (head ++ .nest 2 tail)
+  -- Flat path (unchanged): the gap between two parts keeps its declared separator or its bytes.
   let mut doc : Doc := .empty
   let mut index := 0
   let mut previous : Option Part := none
   for part in parts do
     if let some prior := previous then
       doc := doc ++ tree.gapDoc normalized mayCollapse spacing (index - 1) parts.size prior part
-    doc := doc ++ (match part.child with
-      | some child => tree.termDoc normalized mayCollapse child
-      | none => .verbatim (tree.tokenSpanText normalized part.first part.last))
+    doc := doc ++ partDoc part
     previous := some part
     index := index + 1
   return doc
@@ -1171,7 +1226,27 @@ private def Tree.termClaims (tree : Tree) (normalized : String) (mayCollapse : B
     if spacingOf (tree.kindOf node) == .keep && (tree.declaredAtoms? node).isNone then continue
     let some (first, last) := tree.subtreeTokens node | continue
     if taken.any (fun claim => first ≤ claim.last && claim.first ≤ last) then continue
-    claims := claims.push { first, last, doc := tree.termDoc normalized mayCollapse node }
+    let baseDoc := tree.termDoc normalized mayCollapse node
+    -- Move-the-value-down break (`notes/07-reflow-policy.md` §2 Design β). A breakable value hanging off
+    -- a `:=` owns the pure-space whitespace between the `:=` token and its first token as a leading
+    -- `line`, so the engine can drop the value onto its own indented line when the command exceeds the
+    -- margin — and leaves it byte-identical when it fits, because the `line`'s flat spelling *is* that
+    -- whitespace and `Tree.command` trims the same run off the verbatim gap. Gated on pure spaces so a
+    -- comment in the gap is never turned into a line and dropped, and on `mayCollapse` so a multi-line
+    -- command's bytes stay untouched.
+    let lead : Option String :=
+      if mayCollapse && reflows (tree.kindOf node) && first > 0 then
+        match tree.source.tokens[first - 1]?, tree.source.tokens[first]? with
+        | some assign, some head =>
+          let assignText := sliceNormalized normalized assign.start assign.stop
+          let ws := sliceNormalized normalized assign.stop head.start
+          if assignText == ":=" && ws.all (· == ' ') then some ws else none
+        | _, _ => none
+      else none
+    let doc := match lead with
+      | some ws => .group (.nest 2 (.line ws ++ baseDoc))
+      | none => baseDoc
+    claims := claims.push { first, last, doc, leadFlat := lead }
     skipUntil := tree.subtreeEnd[node]!
   return claims
 
@@ -1484,7 +1559,15 @@ def Tree.command (tree : Tree) (normalized : String) (span : CommandSpan) : Doc 
   for claim in claims do
     let start := (tree.source.tokens[claim.first]?.map (·.start)).getD span.extent.start
     let stop := (tree.source.tokens[claim.last]?.map (·.stop)).getD span.extent.stop
-    doc := doc ++ .verbatim (sliceNormalized normalized cursor start) ++ claim.doc
+    -- When the claim owns its leading whitespace (`Claim.leadFlat`, the move-value-down break), trim
+    -- that exact run off the tail of the verbatim gap: the claim's leading `line` re-emits it in flat
+    -- mode, so the byte total is unchanged, and drops it for a newline+indent when it breaks — which is
+    -- the only way to move a value down without leaving a trailing space on the line above.
+    let gap := sliceNormalized normalized cursor start
+    let gapDoc : Doc := match claim.leadFlat with
+      | some ws => .verbatim (String.ofList (gap.toList.take (gap.length - ws.length)))
+      | none => .verbatim gap
+    doc := doc ++ gapDoc ++ claim.doc
     cursor := stop
   return doc ++ .verbatim (sliceNormalized normalized cursor span.extent.stop)
 

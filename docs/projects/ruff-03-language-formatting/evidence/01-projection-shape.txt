@@ -1,37 +1,37 @@
-modules_analyzed=21 skipped=0 nodes=48260
+modules_analyzed=21 skipped=0 nodes=48877
 pre_order_contiguity_violations=0
 nonempty_node_children_out_of_source_order=0
-empty_nodes=17240 (35.7% of all nodes)
-empty_nodes_with_ambiguous_placement=7539 (15.6% of all nodes)
+empty_nodes=17416 (35.6% of all nodes)
+empty_nodes_with_ambiguous_placement=7647 (15.6% of all nodes)
 
 # most common empty (absent-syntax) kinds
-15355	null
-598	Lean.Parser.Term.letConfig
+15505	null
+615	Lean.Parser.Term.letConfig
 357	Lean.Parser.Command.declModifiers
-351	Lean.Parser.Termination.suffix
-234	group
+352	Lean.Parser.Termination.suffix
+242	group
 169	Lean.Parser.Term.optEllipsis
 123	Lean.Parser.Command.optDeclSig
 36	Lean.Parser.Command.optDeriving
 15	Lean.Parser.Term.attrKind
 2	Lean.Parser.Term.structInstFields
 
-# command kinds in the corpus (504 commands, 6 distinct kinds)
-435	Lean.Parser.Command.declaration
+# command kinds in the corpus (505 commands, 6 distinct kinds)
+436	Lean.Parser.Command.declaration
 25	Lean.Parser.Command.namespace
 25	Lean.Parser.Command.end
 11	Lean.Parser.Command.moduleDoc
 7	Lean.Parser.Command.open
 1	Lean.Parser.Command.initialize
 
-# what the declaration shell layout can structurally claim (420/435 declarations, 96.6%); runtime guards may still refuse
-420	structurally claimed: shell laid out
+# what the declaration shell layout can structurally claim (421/436 declarations, 96.6%); runtime guards may still refuse
+421	structurally claimed: shell laid out
 15	rejected: shape not read yet
 
 # would a ctor/field shell layout decide anything? a member's shell is its opener, modifiers and
 # name; 'collapsible' counts shells holding horizontal slack a layout could close, which is the
 # only figure that argues for building one. See the script for why the other three cannot.
-235	structure fields (simple): 0 collapsible, 214 one-token, 21 broken by a doc comment, 0 already tight, 0 unexpected shape
+236	structure fields (simple): 0 collapsible, 214 one-token, 22 broken by a doc comment, 0 already tight, 0 unexpected shape
 58	inductive constructors: 0 collapsible, 0 one-token, 0 broken by a doc comment, 58 already tight, 0 unexpected shape
 10	structure constructors: 0 collapsible, 0 one-token, 0 broken by a doc comment, 10 already tight, 0 unexpected shape
 

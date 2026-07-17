@@ -313,14 +313,29 @@ private def ExactRun.envelope (run : ExactRun)
 
 /-- The margin `Printer.format` is rendered at.
 
-A constant rather than a configuration key, because it cannot change a byte: `Doc.go` reads the margin
-only in the `.group`/`.brk` fit test (`Doc.lean:219-229`), and `LeanFmt/Printer.lean` emits no `group`
-— only `text`, `hard`, and `verbatim`. Every margin therefore produces identical output, so a
-`line-width` option would be a control that steers nothing. `RFP-SPEC` §3 refused it on exactly that
-evidence and named the trigger that reverses the refusal: whoever adds the first `group` to the
-printer adds the key *and* its cache-identity component in the same commit, because at that moment
-this value starts changing output and every cached `CanonicalText` becomes stale under an identity
-that never mentioned it. The value 100 matches mathlib's own convention and is otherwise arbitrary. -/
+`RLF-REFLOW` fired the trigger the older wording named: `Printer.termDoc` now emits `group`/`nest`/`line`
+for over-margin applications, so this value *does* change bytes — `Doc.go`'s `.group` fit test
+(`Doc.lean:219-229`) breaks a single-line app onto indented continuation lines exactly when its flat
+width exceeds this margin. The pre-reflow docstring's premise ("emits no `group`, so every margin
+produces identical output") is therefore retired.
+
+It stays a compile-time constant rather than a runtime `line-width` configuration key, and cache identity
+stays sound *without* a new component, because the constant is compiled into the application binary and
+the `formatter` cache-identity component already hashes that binary
+(`formatter := Digest.ofBytes (← IO.FS.readBinFile application)`, `Cache.lean:258`). A margin change is
+reachable only by editing this constant and recompiling, which changes the binary, which changes the
+`formatter` digest, which invalidates every cached `CanonicalText` rendered at the old margin. The older
+wording's fear — "stale under an identity that never mentioned it" — was mistaken about the digest's
+scope: the identity mentions the whole binary, this constant included.
+
+The next trigger, unfired: promoting the margin to a *runtime* project-overridable key (a `line-width`
+TOML value threaded through `FormatterConfig`) would break that argument, because a runtime override
+changes output without changing the binary, so the `formatter` digest would no longer see it. Whoever
+adds that key adds its own cache-identity input — folding the resolved margin into the `configuration`
+digest (`Project.configurationIdentity`, `Cache.lean:207`) — in the same commit. No caller does today:
+`renderCanonicalText` below is the sole production caller and the tests drive width through `format`'s
+required parameter directly, so there is no per-project override to hide and none is added speculatively.
+The value 100 matches mathlib's own text-linter convention and is otherwise arbitrary. -/
 def canonicalWidth : Nat := 100
 
 /-- Render a validated artifact's projection, and re-run the rules against the result.

@@ -1486,6 +1486,115 @@ sys.exit(fails)
 PY
 if python3 "$work/mlstring_verify.py" "$work"; then :; else failures=$((failures + $?)); fi
 
+# --- reflow, margin-driven line breaking, the RLF-REFLOW capability ---
+#
+# The first layout that makes the engine *decide* (notes/07-reflow-policy.md). An over-margin
+# single-line command hangs its app value onto its own indented line and, if that still exceeds the
+# margin, breaks one argument per line -- flat when it fits. The corpus is canonical and never exceeds
+# the margin (printer-roundtrip above holds byte-identity at every fitting width), so the capability can
+# only be tested on synthetic *over-margin* source, which is what these goldens are.
+printf -- '--- reflow, margin-driven line breaking (RLF-REFLOW) ---\n'
+cat >"$work/reflow.lean" <<'FIXTURE'
+module
+
+def target (a1 a2 a3 a4 a5 a6 a7 a8 a9 : Nat) : Nat := a1
+
+def wide : Nat := target 1111111111 2222222222 3333333333 4444444444 5555555555 6666666666 7777777777 8888888888 9999999999
+
+def nested : Nat := target (target 1111111111 2222222222 3333333333 4444444444 5555555555 6666666666 7777777777 8888888888 9999999999) 1010101010 1111111111 1212121212 1313131313 1414141414 1515151515 1616161616 1717171717
+
+def fits : Nat := target 1 2 3 4 5 6 7 8 9
+FIXTURE
+
+LEAN_NUM_THREADS=1 lake env "$application" __analyze-exact \
+  "$work/borrowed.setup.json" "$work/reflow.lean" "reflow.lean" 8589934592 >"$work/reflow.json"
+
+# Format at the margins the prompt names, and reparse each output. `|| true` so a non-parsing output
+# does not abort the run before the verifier can report *which* margin broke and how.
+reflow_margins="0 1 40 80 100 1000"
+for w in $reflow_margins; do
+  "$tests" printer-format "$work/reflow.json" "$work/reflow.lean" "$w" >"$work/reflow.$w.out"
+  LEAN_NUM_THREADS=1 lake env "$application" __analyze-exact \
+    "$work/borrowed.setup.json" "$work/reflow.$w.out" "reflow.lean" 8589934592 \
+    >"$work/reflow.$w.json" 2>"$work/reflow.$w.err" || true
+done
+
+# A margin wider than every line breaks nothing: the whole file is the identity.
+if diff -q "$work/reflow.lean" "$work/reflow.1000.out" >/dev/null 2>&1; then
+  printf '  ok   at margin 1000 nothing exceeds the margin, so the output is its input (identity)\n'
+else
+  printf 'FAIL at margin 1000 the formatter changed a file that fits\n' >&2
+  failures=$((failures + 1))
+fi
+
+# At margin 100 the wide commands exceed it and must change -- the goldens cannot degenerate to copies.
+if diff -q "$work/reflow.lean" "$work/reflow.100.out" >/dev/null 2>&1; then
+  printf 'FAIL at margin 100 the over-margin commands were not broken\n' >&2
+  failures=$((failures + 1))
+else
+  printf '  ok   at margin 100 the over-margin commands were broken (%s lines rewritten)\n' \
+    "$(diff "$work/reflow.lean" "$work/reflow.100.out" | grep -c '^<')"
+fi
+
+# Parse-preservation: every margin's output reparses to the SAME token stream as the input. A break
+# that violated `argument`'s checkColGt (Lean/Parser/Term.lean:889) would fail to reparse, or reparse
+# to a different stream -- the wrapped token would stop being an argument.
+cat >"$work/reflow_verify.py" <<'PY'
+import json, sys
+work, margins = sys.argv[1], sys.argv[2].split()
+
+def stream(lean, js):
+    src = open(lean, 'rb').read()
+    toks = json.load(open(js))['artifact']['source']['tokens']
+    return [src[t[1]:t[2]].decode('utf8') for t in toks]
+
+fails = 0
+orig = stream(f"{work}/reflow.lean", f"{work}/reflow.json")
+for w in margins:
+    try:
+        s = stream(f"{work}/reflow.{w}.out", f"{work}/reflow.{w}.json")
+    except Exception as e:
+        print(f"FAIL margin {w}: output did not reparse ({e})", file=sys.stderr)
+        fails += 1
+        continue
+    if s != orig:
+        print(f"FAIL margin {w}: token stream differs from the input (a token moved)", file=sys.stderr)
+        fails += 1
+if fails == 0:
+    print(f"  ok   every margin ({sys.argv[2]}) reparses to the input's token stream (parse-preserving)")
+sys.exit(fails)
+PY
+if python3 "$work/reflow_verify.py" "$work" "$reflow_margins"; then :; else failures=$((failures + $?)); fi
+
+# checkColGt made concrete: at margin 40 the wide value hangs on its own line, its head `target` at
+# column 2 and every argument strictly right of it at column 4 -- the relationship the reparse depends on.
+if grep -qE '^def wide : Nat :=$' "$work/reflow.40.out" && \
+   grep -qE '^  target$' "$work/reflow.40.out" && \
+   grep -qE '^    1111111111$' "$work/reflow.40.out"; then
+  printf '  ok   at margin 40 the value hangs: head at column 2, arguments at column 4 (checkColGt)\n'
+else
+  printf 'FAIL at margin 40 the wide value did not hang with the head left of its arguments\n' >&2
+  cat "$work/reflow.40.out" >&2
+  failures=$((failures + 1))
+fi
+
+# Idempotence at every margin: reparse the output and reformat it at the same margin; byte-identical.
+# A broken command is now multi-line, so `mayCollapse` declines it and its bytes are kept -- which is
+# why a second pass reproduces the first (notes/07-reflow-policy.md §4).
+reflow_idem=
+for w in $reflow_margins; do
+  "$tests" printer-format "$work/reflow.$w.json" "$work/reflow.$w.out" "$w" >"$work/reflow.$w.out2"
+  if ! diff -q "$work/reflow.$w.out" "$work/reflow.$w.out2" >/dev/null 2>&1; then
+    printf 'FAIL reflow: formatting is not idempotent at margin %s:\n' "$w" >&2
+    diff -u "$work/reflow.$w.out" "$work/reflow.$w.out2" >&2
+    failures=$((failures + 1))
+    reflow_idem=1
+  fi
+done
+if [[ -z "$reflow_idem" ]]; then
+  printf '  ok   reflow: formatting twice is byte-identical at every margin (%s)\n' "$reflow_margins"
+fi
+
 # Idempotence, the roadmap's "formatting twice is byte-identical to formatting once". The second pass
 # re-parses the first pass's *output*, so this is a real second format and not a repeated call: if the
 # layout emitted something the parser reads back differently, this is where it shows.
