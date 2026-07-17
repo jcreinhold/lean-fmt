@@ -1,6 +1,6 @@
 ---
 kind: state
-first_unresolved: 05-corpus
+first_unresolved: none
 ---
 
 # Current state
@@ -48,7 +48,53 @@ Printing inside the frontend would buy free arg order for a median 1.96 s fronte
 | 02-expressions | RLF-EXPRESSIONS | verified | RLF-COMMANDS |
 | 03-tactics | RLF-TACTICS | verified | RLF-EXPRESSIONS |
 | 04-extensions | RLF-EXTENSIONS | verified | RLF-TACTICS |
-| 05-corpus | RLF-FINAL | planned | RLF-EXTENSIONS |
+| 05-corpus | RLF-FINAL | verified | RLF-EXTENSIONS |
+
+**`RLF-FINAL` is verified, and the stack is closed** (`results/05-corpus.md`). It changed no layout and
+no output byte: its finding is that **the refusals were never unsafe, they were unread.** The stop rule
+is *zero silently unowned accepted syntax kinds*, and the word carrying it is **silently** — an
+unclaimed command already kept its bytes, but `run-printer-sample.sh` counted the refusals into a report
+and nothing compared that count to anything. `experiments/kind-inventory.txt` gives all 24 refused kinds
+a disposition and a citation — `guard` (4 kinds, 196 commands: a layout claims it, a named runtime guard
+declined), `core` (14, 542: the pinned compiler declares it, no layout claims it — scope, not
+soundness), `corpus` (6, 417: declared by the code being formatted, unreadable by construction) — and
+the three partition the sample exactly: **196 + 542 + 417 = 1155 = 2734 − 1579**.
+
+**It is not the clearance table `notes/04-extensions.md` §5 refused, and the direction is why.** That
+table would have *widened* what the printer collapses, so a stale entry emitted Lean that does not
+parse. This one widens nothing: every kind is refused whether listed or not, no entry changes an output
+byte, and a stale entry can only mis-describe a refusal — a wrong sentence, not wrong Lean. Both gate
+directions are mutation-tested on a two-module sub-sample, and **the second direction is the point**: a
+kind in the inventory but not the corpus is the exact rot §5 named, and catching it is what earns a
+hand-written table its place here.
+
+**The inventory covers commands and not terms, and that asymmetry is forced rather than chosen.** A
+refused command is inert — no layout claims it, the whole command keeps its bytes. An unread *term* kind
+is not: the printer descends into it and lays out the built-ins inside. So term ownership cannot be a
+list of kinds, and `RLF-EXTENSIONS` proved it cannot be — a user's `withPosition(term:max colEq
+term:max)` compiles to **no node at all**, and the column-check aliases are registered, so no census of
+kinds can be finished. **A term-kind inventory is unfinishable, not merely expensive**; `Tree.mayCollapse`
+is the answer there and needs no kind knowledge. Commands get a table because their set is closed; terms
+get a guard because theirs is open.
+
+**Mathlib was characterization input and not an authority, and the slack counters are what make that
+checkable.** The style policy is four rules (one space in a claimed flat run; the declared string where
+one is declared; `ppLine` after a docstring or attribute block; the header's blank-line rule). With
+`app_slack=0`, `binder_slack=0`, `match_slack=0` and `tactic_blank_gaps=0` on all 62 modules, mathlib
+**forced no style decision at all** — it already agrees with every rule. Where it disagreed once (a blank
+line between `public import`s and plain `import`s) the resolution kept the *author's* line rather than
+adopting mathlib's taste. The roadmap's worry about "unstable accidental style" never bit, and the
+reason is measured: there was no accidental style in the sample to copy.
+
+**The `"artifact"` checks are no longer vacuous.** `results/04-extensions.md` asserted in unchecked prose
+that `__analyze-exact` omits the key for a module with parse errors; three checks in
+`tests/printer/run.sh` are worth exactly that sentence's truth. It is now pinned on the real frontend —
+and **the fixture's first draft was `def wrong : Nat := 1`, which is perfectly good Lean**, so the run
+failed rather than printing `ok`. That self-guard is the property worth keeping. The withholding is on
+`messages.hasErrors` (`LeanFmt/Analysis.lean:79`), i.e. *any* error; a parse error is the fixture because
+it is the failure the checks exist to catch. The envelope's `diagnostics` carries a serialized artifact
+of the compiler plugin's own, which cannot fool `grep -F '"artifact"'` because JSON escapes it inside a
+string — verified at 0 rather than assumed.
 
 **`RLF-EXPRESSIONS` is verified** (`results/02-expressions.md`). `Term.app`, the three bracketed
 binders and `Term.matchAlt` are laid out; `Term.proj`, patterns, literals, quotations and
