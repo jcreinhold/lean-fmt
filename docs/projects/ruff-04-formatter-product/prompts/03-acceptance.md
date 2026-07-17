@@ -1,6 +1,6 @@
 ---
 claim_id: RFP-FINAL
-status: planned
+status: verified
 depends_on: [RFP-IMPL]
 ---
 

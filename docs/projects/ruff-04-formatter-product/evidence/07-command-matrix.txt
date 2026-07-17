@@ -1,0 +1,41 @@
+Command matrix. RFP-FINAL. Every cell is a run, not a reading of the code.
+
+Three fixtures separate the three things a file can need:
+  Clean.lean    - needs nothing
+  Layout.lean   - lint-clean, layout non-canonical   (only a rendering mode may move it)
+  Findings.lean - one fixable finding, FMT001 trailing whitespace
+
+fixture        mode     exit  status        changed findings written
+-------------- -------- ----  ------------- ------- -------- -------
+Clean.lean     check       0  clean               0        0       0
+Clean.lean     format      0  clean               0        0       0
+Clean.lean     diff        0  clean               0        0       0
+Clean.lean     fix         0  clean               0        0       0
+Layout.lean    check       0  clean               0        0       0
+Layout.lean    format      1  would-format        1        0       0
+Layout.lean    diff        1  would-diff          1        0       0
+Layout.lean    fix         0  fixed               1        0       1
+Findings.lean  check       1  findings            1        1       0
+Findings.lean  format      1  would-format        1        1       0
+Findings.lean  diff        1  would-diff          1        1       0
+Findings.lean  fix         0  fixed               1        1       1
+
+--- what the table says ---
+
+The Layout.lean block is the whole of RFP-SPEC and RFP-IMPL in four rows. `check` is clean at exit 0
+while `format` is would-format at exit 1, on the same bytes, with findings=0 throughout. findings=0 is
+what makes it layout: nothing here is a rule, so nothing here can be selected away. RFP-SPEC's
+transcript has `format` reporting this file clean at exit 0 (evidence/01) -- that row is what moved.
+
+Exit codes are two rules, not twelve:
+  - check      exits 1 on findings.        Formatting is not a rule, so layout cannot make it exit 1.
+  - format/diff exits 1 on changed > 0.    Either a fix or layout counts.
+  - fix        exits 0 when it succeeds, whatever it had to do. Exit is "did I fail", not "did I work".
+
+So `Layout.lean check` = 0 and `Layout.lean format` = 1 is not an inconsistency; it is the migration
+path RFP-SPEC named. A CI gate that meant "does anything need fixing" wants `check`, which does not
+move under this change and is stricter besides -- it exits 1 on a finding that has no fix, where
+`format` exits 1 only on a change it can make.
+
+`Clean.lean` is 0 in every mode and every column. That row is what makes the others mean something:
+without it the matrix could be a formatter that always reports work.

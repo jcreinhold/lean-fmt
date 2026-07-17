@@ -62,7 +62,7 @@ still holding stdout and stderr in a buffer the exit never flushes, which is why
 The fix is `Workspace.checkNoBuild` (`:405-414`), which asks the same question and returns a `Bool`
 without exiting — documented as "equivalent to checking whether `lake build --no-build` exits with code
 0". This is Lake's own idiom, not a local invention: `lake shake` guards identically
-(`Lake/CLI/Main.lean:1057`), and `Project.exactSetup` and `compilerStatus` already did. This one
+(`Lake/CLI/Main.lean:1113`), and `Project.exactSetup` and `compilerStatus` already did. This one
 operation did not. Full citations and the mutation in `evidence/03-nobuild-exits-the-process.txt`.
 
 **2. `diff` did not emit a diff, and this claim's contract names diffs.** `unifiedDiff` never looked

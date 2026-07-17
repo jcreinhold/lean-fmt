@@ -1,12 +1,13 @@
 ---
 kind: state
-first_unresolved: 03-acceptance
+first_unresolved: none
 ---
 
 # Current state
 
-`RFP-SPEC` and `RFP-IMPL` are verified. The policy is `notes/01-policy.md`; what was run is
-`results/01-policy.md` and `results/02-integration.md`. The external prerequisite stack
+**This stack is complete.** `RFP-SPEC`, `RFP-IMPL`, and `RFP-FINAL` are verified. The policy is
+`notes/01-policy.md` and is published as `notes/02-stability.md`; what was run is `results/01-policy.md`,
+`results/02-integration.md`, and `results/03-acceptance.md`. The external prerequisite stack
 `ruff-03-language-formatting` is verified and its live implementation was re-read here rather than
 trusted: every claim below cites the code.
 
@@ -14,7 +15,7 @@ trusted: every claim below cites the code.
 | --- | --- | --- | --- |
 | 01-policy | RFP-SPEC | verified | — |
 | 02-integration | RFP-IMPL | verified | RFP-SPEC |
-| 03-acceptance | RFP-FINAL | planned | RFP-IMPL |
+| 03-acceptance | RFP-FINAL | verified | RFP-IMPL |
 
 ## What the product does now
 
@@ -57,6 +58,24 @@ internal constant.
 (`Cache.lean:29-37`) keys findings only (`Semantic.lean:7-12`); style cannot change a finding; the
 empty surface keeps `configuration` free of style.
 
+**The margin proof holds on foreign Lean, measured.** `RFP-FINAL` formatted the frozen mathlib sample
+(62 modules) two ways: the printer harness at width 80 reformats 12, the product at width 100 reports
+12 `would-format`, the sets are identical, and the outputs are **12 byte-identical, 0 differing**
+(`evidence/06-frozen-sample.txt`). Different binaries, different tree-acquisition paths, different
+widths, same bytes. Idempotence is 12/12 at width 100 on the product's own output. `format` moves 12 of
+62 modules (19%) with `findings=0` throughout, so on real Lean this change is entirely layout.
+
+**Timing: 250.97 s and 1.58 GB for 62 modules, and it is the frontend, not the printer.** mathlib
+registers no `leanFmtArtifact` facet, so `officialArtifacts` misses in order and every module is parsed
+by the exact-frontend fallback — the slow path by construction. `Lean.Diff.diff` is not visible in
+either number.
+
+**The command matrix is the interface.** 3 fixtures × 4 modes, every cell a run
+(`evidence/07-command-matrix.txt`). Exit codes are two rules: `check` exits 1 on findings and layout
+cannot move it; `format`/`diff` exit 1 on `changed > 0`; `fix` exits 0 when it succeeds. So
+`Layout.lean check = 0` beside `Layout.lean format = 1` on the same bytes is not an inconsistency —
+it is the migration path, and `notes/02-stability.md §4` is where a user is told so.
+
 ## Blockers and prerequisites
 
 - **Never reach `runBuild` under `noBuild` without `checkNoBuild` first.** Lake's no-build policy does
@@ -64,7 +83,7 @@ empty surface keeps `configuration` free of style.
   (`Lake/Build/Run.lean:368`; `noBuildCode : ExitCode := 3` at `:275`). A `try/catch` cannot intercept
   a process exit, and under `withoutProcessOutput` the buffered stdout/stderr is never flushed, so the
   run dies silently. `Workspace.checkNoBuild` (`:405-414`) asks the same question and returns a `Bool`.
-  Lake guards this way itself (`Lake/CLI/Main.lean:1057`); so do `Project.exactSetup`, `compilerStatus`,
+  Lake guards this way itself (`Lake/CLI/Main.lean:1113`); so do `Project.exactSetup`, `compilerStatus`,
   and now `officialArtifacts` (`Application.lean:154`). This bit `RFP-IMPL` the first time any product
   path built a tree (`evidence/03-nobuild-exits-the-process.txt`).
 - **Findings cannot be reused across a format.** Canonical text still violates FMT001/FMT002 — the
@@ -80,8 +99,17 @@ empty surface keeps `configuration` free of style.
 - **A cache hit carries no tree.** `previewFile` returns before `officialArtifacts`, so a hit cannot
   build one. A hit now carries canonical *text*, which is what a rendering mode needs, and
   `cacheHitServes` (`Application.lean:371`) makes a `check`-populated entry a **miss** for a rendering
-  mode rather than an under-populated hit. Whether `fix` can take a hit is still open and unmeasured:
-  `RFP-IMPL` used `--no-cache` throughout to isolate the wiring.
+  mode rather than an under-populated hit. This is a single point of failure and it fails *silently*:
+  break it and `prepareFile` takes the `renderCanonical = true`, `canonical? = none` path, bases the
+  patch on the file's own bytes, and reports `clean` at exit 0 — "format does not format" resurrected
+  through the cache. `RFP-FINAL` pinned it (`tests/modes/run.sh:200-222`); the test asserts on
+  `changed`, `status`, and the exact bytes, because the exit code alone cannot see this. Whether `fix`
+  can take a hit is still open and unmeasured.
+- **Cite Lake and Lean against v4.32.0.** `find ~/.elan/toolchains ... | head -1` returns v4.31.0 and
+  every citation in this stack was first taken from it. The load-bearing ones survived — `Run.lean:275`,
+  `:368`, `:405-414` are identical in both — but `lake shake`'s guard moved from
+  `Lake/CLI/Main.lean:1057` to **`:1113`**. `RFP-IMPL`'s commit message still carries the stale number
+  and cannot be rewritten; `evidence/03` records the correction rather than hiding it.
 - **The first `group` in `Printer.lean` must add `line-width` and its cache-identity component in the
   same commit.** Today's identity is accidentally correct; a `group` makes the margin observable and
   existing entries stale under an identity that never mentioned it — consistent and wrong.

@@ -197,6 +197,30 @@ run_expect 1 "$work/format-fallback.json" env LEAN_FMT_DISABLE_ARTIFACT=1 \
   "$application" format --root . --json --no-cache tests/check/Findings.lean
 cmp "$work/format-artifact.json" "$work/format-fallback.json"
 
+# A `check`-populated entry is a **miss** for a rendering mode, not an under-populated hit. `check`
+# takes the source-only shortcut and stores no canonical text, so serving its entry to `format` would
+# put `prepareFile` on the `renderCanonical = true` but `canonical? = none` path — where it silently
+# bases the patch on the file's own bytes and consults no layout. That is `RFP-SPEC`'s "format does
+# not format", reintroduced through the cache and invisible: the report says `clean`, exit 0, which is
+# indistinguishable from a file that needs nothing. `cacheHitServes` is the only thing standing there,
+# so this pins it. The entry `check` leaves behind is real; only its usefulness to `format` is not.
+rm -rf "$cache_root"
+run_expect 0 "$work/seed-check.json" "$application" check --root . --json tests/check/Layout.lean
+run_expect 1 "$work/after-check-format.json" "$application" format --root . --json \
+  tests/check/Layout.lean
+python3 - "$work/seed-check.json" "$work/after-check-format.json" <<'PY'
+import json, sys
+seed = json.load(open(sys.argv[1]))
+after = json.load(open(sys.argv[2]))
+assert seed["files"][0]["status"] == "clean", seed
+assert after["changed"] == 1, f"a check-populated hit suppressed layout: {after}"
+assert after["files"][0]["status"] == "would-format", after["files"][0]
+assert after["files"][0]["formatted"] == \
+    "module\n\nnamespace Alpha\n\ndef layoutValue : Nat := 1\n\nend Alpha\n", \
+    repr(after["files"][0]["formatted"])
+PY
+rm -rf "$cache_root"
+
 cat >"$work/per-file.toml" <<'EOF'
 select = ["all"]
 [per-file-ignores]

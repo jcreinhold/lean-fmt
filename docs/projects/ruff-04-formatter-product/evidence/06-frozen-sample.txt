@@ -1,0 +1,80 @@
+The product over the frozen mathlib sample. RFP-FINAL.
+
+workload    : experiments/workloads/mathlib-v4.32.0-sample.txt (62 modules)
+profile     : format --root . --json --no-cache, one invocation, all 62 paths
+cache/build : --no-cache (cold, no semantic cache); mathlib .olean tree prebuilt
+machine     : Darwin arm64, 12 cores, 24 GB
+toolchain   : leanprover/lean4:v4.32.0
+lean-fmt    : 5cfad86
+mathlib     : 783ccda4ee5 (master-2026-07-14-9-g783ccda4ee5)
+
+The workload is a frozen list of *paths*, pinned to v4.32.0 by RLS-FINAL; the checkout it was
+read from is the commit above, which has drifted. All 62 paths still resolve (skipped=0), so
+the sample is intact, but its contents are this commit's, not v4.32.0's. Complete mathlib is
+forbidden by this prompt and was not run: 62 modules of 8,795.
+
+--- result ---
+changed                  = 12
+findings                 = 0
+broken                   = 0
+rejected                 = 0
+files                    = 62
+infrastructureFailures   = []
+exit                     = 1 (changed > 0)
+
+      250.97 real       204.12 user       143.41 sys
+          1584070656  maximum resident set size
+
+251 s wall for 62 modules is dominated by the exact frontend, not the printer: mathlib does not
+register the leanFmtArtifact facet, so officialArtifacts finds no facet config, misses in order,
+and every module is parsed by the fallback. That is the slow path by construction.
+
+--- the product renders what the printer renders ---
+The printer harness (experiments/run-printer-sample.sh, RLF-COMMANDS) independently reports
+`reformatted=12` over this same sample, running the *test* binary against a tree it parses directly.
+The product reaches its tree by a different path entirely -- the exact frontend, because mathlib
+registers no leanFmtArtifact facet. Two paths, same sample:
+
+  printer harness (test binary, width 80) : 12 modules reformatted
+  product `format`  (product binary, 100) : 12 modules would-format
+
+Matching counts could be coincidence, so the sets were compared, and then the bytes:
+
+  set difference of the two module lists  : empty (identical sets)
+  byte comparison of the 12 outputs       : 12 identical, 0 differing
+
+The 12:
+  Mathlib/Algebra/Homology/DerivedCategory/Basic.lean
+  Mathlib/Algebra/Ring/IsFormallyReal.lean
+  Mathlib/AlgebraicGeometry/IdealSheaf/Subscheme.lean
+  Mathlib/AlgebraicTopology/MooreComplex.lean
+  Mathlib/Analysis/Convex/Cone/InnerDual.lean
+  Mathlib/Analysis/SpecialFunctions/Gamma/Basic.lean
+  Mathlib/Data/Stream/Init.lean
+  Mathlib/LinearAlgebra/RootSystem/Finite/Nondegenerate.lean
+  Mathlib/RingTheory/AlgebraicIndependent/TranscendenceBasis.lean
+  Mathlib/RingTheory/Smooth/Basic.lean
+  Mathlib/Tactic/Conv.lean
+  Mathlib/Topology/Order/ScottTopology.lean
+
+That byte comparison is also the first foreign-Lean evidence for RFP-SPEC's width claim. The harness
+formats at width 80 and the product at 100. RFP-SPEC proved the margin is never read -- `Doc.go` reads
+it only at the `.group`/`.brk` fit test, and `Printer.lean` emits no `group` -- which predicts these
+outputs are byte-identical. On this repository that prediction is cheap, because the corpus is already
+canonical. On 12 foreign mathlib modules the printer actually changes, it is not, and it holds.
+
+--- idempotence, at the product's own width, on the product's own output ---
+format(format(x)) = format(x), measured rather than argued. Each of the 12 outputs was re-analyzed
+through the exact frontend (`__analyze-exact`, displayed as the original module so paths resolve) and
+re-formatted at width 100:
+
+  idempotent = 12   not = 0
+
+No file in the mathlib checkout was written to: the product's output was analyzed from scratch, which
+is what `__analyze-exact`'s separate source and display paths are for. `git status` in mathlib4 is
+clean, and the `.lean-fmt-cache/` this stack's runs left there was removed.
+
+That the exact frontend accepted all 12 is itself the syntax check: text the printer emitted that did
+not parse would fail here, not silently pass. Token- and comment-level information preservation over
+all 62 is the printer harness's `compare_tokens.py` check, which RLF-COMMANDS owns and which passes at
+failures=0 -- and the byte-identity above is what carries that result onto the product's output.
