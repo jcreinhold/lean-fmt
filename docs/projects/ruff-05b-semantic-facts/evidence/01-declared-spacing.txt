@@ -1,0 +1,26 @@
+# RSF-SPEC evidence: declared notation/atom spacing is a formatter pp-hint, not a token-table entry
+# Toolchain: leanprover/lean4 v4.32.0 ; captured for RSF-SPEC (docs/projects/ruff-05b-semantic-facts)
+
+## Parser TRIMS the symbol (so the token table stores the trimmed token):
+1114:  let sym := sym.trimAscii.copy
+1152:  let sym := sym.trimAscii.copy
+1239:  let sym := sym.trimAscii.copy
+  Token/TokenTable types:
+37:abbrev Token := String
+39:abbrev TokenTable := Lean.Data.Trie Token
+
+## Formatter keeps the UNTRIMMED sym and derives the gap from it:
+412:    else if tk.endsWith " " then
+442:def symbolNoAntiquot.formatter (sym : String) : Formatter := do
+446:    withMaybeTag (getExprPos? stx) <| pushToken info sym false
+468:      withMaybeTag (getExprPos? stx) <| pushToken info sym false
+
+## The compiler documents the whitespace as a pretty-printing hint:
+  Whitespace before or after the atom is used as a pretty printing hint.
+  For example, `" + "` parses `+` and pretty prints it with whitespace on both sides.
+  The whitespace has no effect on parsing behavior.
+
+## Fixture declarations (Init/Notation.lean):
+284:@[inherit_doc] infixl:65 " + "   => HAdd.hAdd
+293:@[inherit_doc] prefix:75 "-"     => Neg.neg
+295:@[inherit_doc] postfix:max "⁻¹"  => Inv.inv

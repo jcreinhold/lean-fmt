@@ -15,11 +15,15 @@ The deferrals are not one gap. They are three, with different owning layers:
 
 - **N — declared notation/atom spacing.** Operators and notations keep their source bytes because
   canonical spacing is the notation's *declared* atom string (`infixl:65 " + "`,
-  `Init/Notation.lean:284`; `Init/Prelude.lean:5390`), and the projection records a token's *source*
-  text, never its declaration (`LosslessSource.lean:64-86`). Lean's own formatter reads it from the
-  token table via `parseToken`, which needs `env := ← getEnv` (`PrettyPrinter/Formatter.lean:357-417`)
-  — an `Environment`, which exists **only inside the frontend**. So N is a *fact-capture* problem at
-  the analysis layer, not a printer problem.
+  `Init/Notation.lean:284`; documented as a pp-hint at `Init/Prelude.lean:5389`), and the projection
+  records a token's *source* text, never its declaration (`LosslessSource.lean:64-86`). The declared
+  gap lives **only** in the notation's registered formatter — the untrimmed `sym` baked into
+  `symbolNoAntiquot.formatter` (`PrettyPrinter/Formatter.lean:442-446`), which `pushToken` turns into a
+  breakable line — **not** in the token table, since the parser trims the symbol before registering it
+  (`Parser/Basic.lean:1114`). (ruff-05b RSF-SPEC F1 corrects an earlier draft here that said the fact
+  is read from the token table.) Recovering it needs `env := ← getEnv`, an `Environment` that exists
+  **only inside the frontend**. So N is a *fact-capture* problem at the analysis layer, not a printer
+  problem.
 - **O — offside-preserving vertical layout.** Records defer under *any* spacing model because
   `sepByIndent` makes a shared column the field separator (`checkColEq >> checkLinebreakBefore`,
   `Lean/Parser/Extra.lean:202-208`); tactics/`do`/`where`/`let` defer because indentation *is a token*

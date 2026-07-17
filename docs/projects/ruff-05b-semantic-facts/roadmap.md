@@ -36,10 +36,12 @@ fact is produced *there* and crosses into downstream code only as immutable data
   it. Selection remains a projection over facts and never selects worker/artifact/cache/scheduling.
 - Semantic facts are **immutable projections in the artifact** (schema bump `v3` → `v4`), never a
   mutable `Environment`, `CoreM` action, or elaborator lifecycle handed downstream.
-- The declared notation/atom spacing fact is captured from the parser table where the `Environment` is
-  live, is serializable, is additive (the lossless `source` projection is unchanged), and matches
-  Lean's own `pushToken` spacing for core *and* corpus-declared notations, verified by fresh-frontend
-  differential.
+- The declared notation/atom spacing fact is captured where the `Environment` is live from the
+  notation's **registered formatter** — the parser's pretty-printing inverse, which alone carries the
+  untrimmed atom string; the parser trims it, so the token table cannot (RSF-SPEC F1,
+  `notes/01-semantic-facts.md` §1). It is serializable, is additive (the lossless `source` projection
+  is unchanged), and matches Lean's own `pushToken` spacing for core *and* corpus-declared notations,
+  verified by fresh-frontend differential.
 - **Demand-gating is honest.** Semantic capture runs only when a consumer needs it. A project that
   neither runs a semantic rule nor formats keeps the syntax-only fast path. Formatting demands the
   notation fact, so `format` requires the semantic artifact — this cost is recorded, not hidden.
@@ -87,8 +89,9 @@ Therefore this roadmap sets `blueprint_tracked: false`.
 - No live `Environment` crosses the producer boundary; only immutable serializable facts do.
 - Preserve exact ordered imports, validation identity, private application boundaries, and atomic
   writes. The plugin producer's import closure must not grow (it is linked into every target build).
-- Spacing is captured from the parser table, never guessed; a fact absent for a node degrades to the
-  conservative source bytes, never to invented spacing.
+- Spacing is captured from the notation's registered formatter (the parser's pretty-printing inverse),
+  never guessed; a fact absent for a node degrades to the conservative source bytes, never to invented
+  spacing.
 - Stop resource experiments at 8 GiB aggregate RSS, abnormal pressure, or 256 MiB new swap.
 - Prefer pure Lean; another language requires a named unavailable Lean capability and measured benefit.
 - Do not restore workers, public strategy controls, accumulated/superset parsing, or per-file Lake runs.
