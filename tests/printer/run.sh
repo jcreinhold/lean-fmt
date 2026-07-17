@@ -927,7 +927,7 @@ fi
 
 # --- the collapse guard, and the parse it would otherwise break ---
 #
-# This fixture is the one in `evidence/04-coleq-break.txt`, and before `Tree.respectsLines` it made the
+# This fixture is the one in `evidence/04-coleq-break.txt`, and before `Tree.mayCollapse` it made the
 # printer emit Lean the printer could not re-read. Collapsing `(id     True)` moves `skip` four columns
 # left; `trivial`, on the next line, does not move; `sepByIndent`'s separator is
 # `checkColEq .. >> checkLinebreakBefore` (`Parser/Extra.lean:202-208`), so it stops matching and
@@ -1047,6 +1047,49 @@ else
   printf 'FAIL the printer emitted Lean it cannot re-read:\n' >&2
   cat "$work/coleq.out.json" "$work/coleq.out.err" >&2
   failures=$((failures + 1))
+fi
+
+# ...and the assertion that the assertion means something. `RLF-FINAL`.
+#
+# The two parse checks in this file are `grep -qF '"artifact"'`, and they are worth exactly as much as
+# the claim that `__analyze-exact` *omits* that key for a module with parse errors. If it emitted an
+# artifact regardless -- or emitted one holding a diagnostics list nobody reads -- both checks would
+# pass on every input, including the broken Lean they exist to catch, and nothing in this suite would
+# notice. That is the shape of a vacuous test: not a check that is wrong, but a check that cannot fail.
+#
+# So the absence is pinned directly, on the real frontend, against source that is definitely not Lean.
+# This is the negative half of `evidence/04-coleq-break.txt` -- that file records the printer emitting
+# a broken parse and this records what "broken parse" looks like coming back.
+#
+# The check guards its own fixture, which is not a bonus but the reason it can be trusted: this
+# fixture's first draft was `def wrong : Nat := 1`, which is perfectly good Lean, and the run said so
+# by failing here rather than by printing `ok`. A fixture that stopped being malformed -- a future
+# grammar accepting what this one rejects -- cannot quietly turn the check into a tautology.
+#
+# `:= :=` is a parse error and not an elaboration error, and the difference does not matter to the
+# property: `analyzeExact` withholds the artifact on `messages.hasErrors` (`LeanFmt/Analysis.lean:79`),
+# which is any error at all. A parse error is chosen because it is the one this suite's `"artifact"`
+# checks exist to catch -- the printer's own output failing to re-parse.
+printf -- '--- malformed input: what makes the parse checks non-vacuous ---\n'
+cat >"$work/broken.lean" <<'FIXTURE'
+module
+
+def wrong : Nat := := 1
+FIXTURE
+if LEAN_NUM_THREADS=1 lake env "$application" __analyze-exact \
+     "$work/borrowed.setup.json" "$work/broken.lean" "broken.lean" 8589934592 \
+     >"$work/broken.json" 2>"$work/broken.err"; then
+  if grep -qF '"artifact"' "$work/broken.json"; then
+    printf 'FAIL __analyze-exact emitted an artifact for source that does not parse.\n' >&2
+    printf '     Every `"artifact"` check in this file is therefore vacuous.\n' >&2
+    head -c 400 "$work/broken.json" >&2
+    failures=$((failures + 1))
+  else
+    printf '  ok   a module that does not parse yields no artifact (so the checks above can fail)\n'
+  fi
+else
+  # A non-zero exit is also a refusal to hand back an artifact, which is the property being pinned.
+  printf '  ok   a module that does not parse is rejected outright (so the checks above can fail)\n'
 fi
 
 # --- the extension boundary: the four cases RLF-EXTENSIONS names ---
