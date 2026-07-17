@@ -21,6 +21,28 @@ tactic_blocks=1966 tactic_ownable=1422 tactic_ownable_own_line=558 tactic_ownabl
 # evidence alone: `tests/printer/run.sh` hand-counts all three against a written fixture
 # (7, 15 and 22) through this same code path.
 
+# The four tactic counters are `RLF-TACTICS`, and they are why it ships no tactic layout.
+# A re-indenting layout would rewrite a block as `nest 2` over `hard`-separated tactics
+# beginning a fresh line at column 2. `tactic_blank_gaps=0` says every separator is already
+# exactly one newline -- real Lean never blank-lines between two tactics -- so such a layout
+# emits the input on exactly the blocks that already begin their line at column 2, and
+# changes bytes on every other. Splitting `ownable` says which:
+#
+#   at_two                324  begins its line at column 2   -> the layout is the identity
+#   own_line - at_two     234  begins deeper, so NESTED      -> it would de-indent it out of
+#                                                               its parent: a broken parse
+#   ownable - own_line    864  begins inline (`:= by simp`)  -> it would wrap it, which needs
+#                                                               a margin nobody has set
+#
+# So its whole licensed reach is 324 of 1966 blocks, and on all 324 it produces the input.
+# The 1098 where it would *do* something are the 1098 where it has no right to. That also
+# sizes `ownable` as an upper bound: it overstates the licensed reach by 4.4x.
+#
+# `tactic_blank_gaps=0` has a second support that no mutation of this code could rescue:
+# `run-blank-column-census.sh` reads the sample as lines, never loading the projection or
+# the printer, and finds every one of its 3,041 blank lines followed by a column-0 line --
+# a blank line ends an indented block and never sits inside one.
+
 # what the layouts refused, by syntax kind (every command not counted in `canonical`).
 # A kind lands here for either of two unlike reasons: no layout claims it, or one does and a
 # runtime guard said no. `Lean.Parser.Command.declaration` is the second; the rest are the

@@ -175,6 +175,21 @@ everything the collapse moves — that is why `app` and the binders are fine. `s
 on another line. Records are therefore deferred on the grammar, not on the abstraction, and would be
 deferred under any model of spacing.
 
+> **Correction (`RLF-EXTENSIONS`).** The rule above is right and the clearance it gives `app` is not,
+> and `evidence/04-coleq-break.txt` is the counterexample: `theorem tA : (id     True) := by skip` /
+> `trivial` parses, and this printer turned it into Lean it could not re-read. The error is in
+> *"the saved position sits at the construct's start"* — it asks only about the collapsing construct's
+> **own** saved position. The one that breaks belongs to a `sepByIndent` opened **to the app's right on
+> the same line**, by the `by` block, whose position is saved at the first tactic. `app` never had to be
+> record-shaped to be caught by §5b; it only had to share a line with something that was.
+>
+> So this section's diagnosis of records stands unchanged, and its list of who is safe does not. What
+> replaces "which kind is collapsing" is `respectsLines` in `LeanFmt/Printer.lean`, which asks the
+> question §5b actually poses — is any column here measured against another line? — of each **gap**, and
+> consults no kind at all. That last part is what §6 already demanded: a custom `syntax` can declare
+> `withPosition` and `colEq` itself (`Lean/Parser.lean:39-42, 50`), so any answer phrased as a list of
+> kinds is one this printer cannot finish writing.
+
 ## 6. What is not citable, and is therefore deferred
 
 **Operators are notations, and their spacing is rule 1.** The census, by kind:

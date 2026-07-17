@@ -64,6 +64,9 @@ wonky fixture through the same code path: **7, 15 and 22**.
   horizontal collapse *can* break a later line, when a live column check compares two tokens whose
   relative columns the collapse changes. `sepByIndent` saves its position at the first field — inside
   the construct, to the right of it — and a shared column is a legal field separator (§5b).
+  **`RLF-EXTENSIONS` found this rule under-applied as well as under-argued**: §5b cleared `app` by
+  checking only the app's own saved position, and `evidence/04-coleq-break.txt` breaks a `theorem` with
+  it. The rule was never wrong; the exemption was. See `results/04-extensions.md` and `respectsLines`.
 - **The design-twice conclusion was corrected by a mutation.** See below.
 
 ## The interface, designed twice (Plan step 2)

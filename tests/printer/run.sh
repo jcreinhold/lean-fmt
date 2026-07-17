@@ -906,6 +906,77 @@ else
   failures=$((failures + 1))
 fi
 
+# --- the collapse guard, and the parse it would otherwise break ---
+#
+# This fixture is the one in `evidence/04-coleq-break.txt`, and before `Tree.respectsLines` it made the
+# printer emit Lean the printer could not re-read. Collapsing `(id     True)` moves `skip` four columns
+# left; `trivial`, on the next line, does not move; `sepByIndent`'s separator is
+# `checkColEq .. >> checkLinebreakBefore` (`Parser/Extra.lean:202-208`), so it stops matching and
+# `trivial` falls out of the block and becomes a bogus command.
+#
+# The three declarations are one test because the guard has to be a line, not a refusal. `tA` must keep
+# its bytes, and `tB` and `dC` must still collapse -- a guard that refused all three would pass a byte
+# check on `tA` alone while quietly deleting the layer.
+printf -- '--- the collapse guard ---\n'
+cat >"$work/coleq.lean" <<'FIXTURE'
+module
+
+theorem tA : (id     True) := by skip
+                                 trivial
+
+theorem tB : (id     True) := by trivial
+
+def dC : Nat := (id     1)
+
+def dE : Nat := (id     1)  theorem tF : True := by skip
+                                                    trivial
+FIXTURE
+LEAN_NUM_THREADS=1 lake env "$application" __analyze-exact \
+  "$work/borrowed.setup.json" "$work/coleq.lean" "coleq.lean" 8589934592 >"$work/coleq.json"
+"$tests" printer-format "$work/coleq.json" "$work/coleq.lean" 100 >"$work/coleq.out"
+
+if grep -qF 'theorem tA : (id     True) := by skip' "$work/coleq.out"; then
+  printf '  ok   the app whose collapse would move a tactic block keeps its bytes\n'
+else
+  printf 'FAIL tA was collapsed; its `by` block is measured from a column this moves:\n' >&2
+  cat "$work/coleq.out" >&2
+  failures=$((failures + 1))
+fi
+
+if grep -qF 'theorem tB : (id True) := by trivial' "$work/coleq.out" &&
+   grep -qF 'def dC : Nat := (id 1)' "$work/coleq.out"; then
+  printf '  ok   apps with no later line to break still collapse\n'
+else
+  printf 'FAIL the guard refused tB or dC; nothing on their lines is measured across a break:\n' >&2
+  cat "$work/coleq.out" >&2
+  failures=$((failures + 1))
+fi
+
+# `dE` is the case a command's own subtree cannot see: the block that breaks belongs to `tF`, the
+# *next* command, and it is only reachable because two commands share a line. This is what the
+# `crossLineStarts` sentinel is for, and this is the only test that holds it.
+if grep -qF 'def dE : Nat := (id     1)  theorem tF' "$work/coleq.out"; then
+  printf '  ok   an app is not collapsed under the next command on its line\n'
+else
+  printf 'FAIL dE collapsed; it moves tF'\''s `by` block, which is not in dE'\''s subtree:\n' >&2
+  cat "$work/coleq.out" >&2
+  failures=$((failures + 1))
+fi
+
+# The property itself, and the only assertion here that would survive a rewrite of the rule: the
+# formatter's output parses. `__analyze-exact` emits no artifact for a module with parse errors, so
+# this fails loudly rather than silently comparing bytes that were never Lean.
+if LEAN_NUM_THREADS=1 lake env "$application" __analyze-exact \
+     "$work/borrowed.setup.json" "$work/coleq.out" "coleq.out.lean" 8589934592 \
+     >"$work/coleq.out.json" 2>"$work/coleq.out.err" &&
+   grep -qF '"artifact"' "$work/coleq.out.json"; then
+  printf '  ok   the formatted output still parses\n'
+else
+  printf 'FAIL the printer emitted Lean it cannot re-read:\n' >&2
+  cat "$work/coleq.out.json" "$work/coleq.out.err" >&2
+  failures=$((failures + 1))
+fi
+
 # Idempotence, the roadmap's "formatting twice is byte-identical to formatting once". The second pass
 # re-parses the first pass's *output*, so this is a real second format and not a repeated call: if the
 # layout emitted something the parser reads back differently, this is where it shows.
