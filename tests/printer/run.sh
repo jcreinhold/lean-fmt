@@ -808,6 +808,19 @@ theorem gapCommented : True := by
 
   -- A comment is not whitespace, so these are not the formatter's bytes to choose.
   trivial
+
+theorem nestedBlocks : True ∧ True := by
+  constructor
+  · skip
+    trivial
+  · trivial
+
+theorem nestedOwnLine : True := by
+  have h : True := by
+    trivial
+  exact h
+
+theorem inlineBlock : True := by trivial
 FIXTURE
 LEAN_NUM_THREADS=1 lake env "$application" __analyze-exact \
   "$work/borrowed.setup.json" "$work/tactic.lean" "tactic.lean" 8589934592 >"$work/tactic.json"
@@ -824,16 +837,58 @@ else
 fi
 
 # The blocks themselves, because `tactic_blank_gaps` cannot see them: a counter that found no blocks
-# at all would report 0 gaps and look exactly like a counter that found four blocks with no gaps in
-# them. Exact, because the fixture has four `by` blocks and they are countable by eye. This is also
-# what makes `tactic_ownable`'s 1,422-of-1,966 on the sample a measurement rather than a guess.
-expected_tactic_blocks=4
+# at all would report 0 gaps and look exactly like a counter that found blocks with no gaps in them.
+# Exact, and countable by eye: six `by` blocks, plus three nested inside them -- one per bullet, since
+# `· tac` nests a tactic sequence of its own (`Init/NotationExtra.lean:320-322`), and one for the inner
+# `by` of `nestedOwnLine`'s `have`. Ten. This is also what makes `tactic_ownable`'s 1,422-of-1,966 on
+# the sample a measurement rather than a guess.
+expected_tactic_blocks=10
 actual_tactic_blocks=$(field tactic_blocks "$tactic_report")
 if [[ "$actual_tactic_blocks" == "$expected_tactic_blocks" ]]; then
   printf '  ok   tactic_blocks finds the fixture'\''s %s blocks\n' "$expected_tactic_blocks"
 else
   printf 'FAIL tactic_blocks reported %s on the tactic fixture, expected %s\n' \
     "$actual_tactic_blocks" "$expected_tactic_blocks" >&2
+  failures=$((failures + 1))
+fi
+
+# `ownable`, `own_line` and `at_two`: the split that retired design A. Every shape below is in the
+# fixture because it lands in a different bucket, and a bucket nothing reaches is a number that cannot
+# be wrong.
+#
+# **ownable = 8.** All ten but `nestedBlocks`' own block and `nestedOwnLine`'s own block -- each has a
+# part spanning two lines (a bullet, and a `have ... := by` with its proof under it), so the printer
+# cannot own their newlines (§5).
+#
+# **own_line = 5.** The four column-2 blocks, plus `nestedOwnLine`'s inner `trivial`. The bullets' own
+# blocks are *not* here: `· skip` puts `skip` on the bullet's line, so the block begins inline even
+# though it is nested. Neither is `inlineBlock` -- `by trivial` never starts a line at all.
+#
+# **at_two = 4.** `gapOne`, `gapTwo`, `noGap`, `gapCommented`. Design A is the identity on exactly
+# these: `tactic_blank_gaps=0` says the separators are already one newline, so a block already
+# beginning its line at column 2 is a block A rewrites to its own bytes.
+#
+# The other four are what A cannot have, and they fail in two unlike ways. `nestedOwnLine`'s inner
+# block is at column 4 on its own line, so A would move it to 2 -- out of the `have` it belongs to,
+# which is §5's `.keep` trap with a number on it and the prompt's own "fallback must remain
+# parse-preserving" broken. The two bullets and `inlineBlock` begin inline, so A would break them onto
+# a new line, which is a *wrapping* decision wanting a margin no prompt in this stack has set (§7).
+# Neither is licensed, and `ownable` alone cannot tell any of the three apart -- which is what it means
+# for it to be an upper bound, made countable.
+expected_ownable=8
+expected_own_line=5
+expected_at_two=4
+actual_ownable=$(field tactic_ownable "$tactic_report")
+actual_own_line=$(field tactic_ownable_own_line "$tactic_report")
+actual_at_two=$(field tactic_ownable_at_two "$tactic_report")
+if [[ "$actual_ownable" == "$expected_ownable" && "$actual_own_line" == "$expected_own_line" &&
+      "$actual_at_two" == "$expected_at_two" ]]; then
+  printf '  ok   tactic_ownable=%s own_line=%s at_two=%s; all three buckets are reached\n' \
+    "$expected_ownable" "$expected_own_line" "$expected_at_two"
+else
+  printf 'FAIL tactic_ownable=%s own_line=%s at_two=%s, expected %s, %s and %s\n' \
+    "$actual_ownable" "$actual_own_line" "$actual_at_two" \
+    "$expected_ownable" "$expected_own_line" "$expected_at_two" >&2
   failures=$((failures + 1))
 fi
 

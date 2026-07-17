@@ -280,6 +280,30 @@ trivia is whitespace and comments, and no comment is whitespace-only. -/
 private def whitespaceOnly (normalized : String) (start stop : Nat) : Bool :=
   (sliceNormalized normalized start stop).all Char.isWhitespace
 
+/-- The column of the byte at `start`, counted in **codepoints** from its line's first byte.
+
+Codepoints rather than bytes or terminal cells, because that is what the parser's column checks count
+(`RLC-SPEC` §4.7) and this is used only to compare against them. It is deliberately not a width: the
+wonky fixture's `日本語` occupies six terminal cells and three columns, and a layout that confused the
+two would re-measure text this printer is not allowed to re-measure.
+
+Counted by folding the prefix and resetting at each newline, which needs no special case for a `start`
+on the first line: nothing resets it and the count is the prefix itself. `foldl` over a `String` steps
+codepoints, so the unit is right by construction rather than by an adjustment. -/
+private def columnOf (normalized : String) (start : Nat) : Nat :=
+  (sliceNormalized normalized 0 start).foldl (fun col c => if c == '\n' then 0 else col + 1) 0
+
+/-- Is the byte at `start` the first non-whitespace on its line?
+
+Distinct from `startsLine`, and the difference is the indentation: `startsLine` asks whether a token is
+at column 0, which is what a printer that never nests needs to know before it emits a line break.
+This asks whether a token *begins* its line, indented or not — the question a counter has to ask to
+tell `theorem foo := by\n  simp` from `theorem foo := by simp`, whose tactic blocks are both ownable
+and sit at very different columns for entirely different reasons. -/
+private def firstOnLine (normalized : String) (start : Nat) : Bool :=
+  (sliceNormalized normalized 0 start).foldl
+    (fun clean c => if c == '\n' then true else clean && c.isWhitespace) true
+
 /-- Does this token begin its line? See `startsLine`. -/
 private def Tree.atLineStart (tree : Tree) (normalized : String) (index : Nat) : Bool :=
   match tree.source.tokens[index]? with
@@ -1007,10 +1031,34 @@ its `nest` would count from column 0 instead of from where it actually starts (`
 `startsLine`). The sufficient condition is ownable *and* reachable from the command root through
 printer-owned newlines only. This counter deliberately does not test that: the loose number is the one
 that says whether the strict one is worth computing, and if the upper bound is small the question is
-closed either way. -/
-def Tree.tacticBlocks (tree : Tree) (normalized : String) : Nat × Nat := Id.run do
+closed either way.
+
+**`ownLine` and `atTwo`** are the rest of the tuple, and together they decide design A
+(`notes/03-tactics.md` §8). A would rewrite a block as `nest 2` over `hard`-separated tactics, starting
+on a new line at column 2: `nest` counts from column 0 for a printer that never nests (§7), and
+`Format.defIndent := 2` (`Init/Data/Format/Basic.lean:379`) is where the 2 comes from. Since
+`tacticBlankGaps` is 0 on real code, every separator is *already* one newline — so A rewrites a block
+to its own bytes exactly when the block already begins its line at column 2, and changes something
+otherwise. Splitting `ownable` three ways is what says *which* something, and the three answers are
+not alike:
+
+* **`atTwo`** — begins its line, at column 2. A is the identity here. This is A's whole no-op set.
+* **`ownLine` but not `atTwo`** — begins its line, deeper than 2. **Nested**, and A would de-indent it
+  to 2, out of whatever encloses it. This is the `.keep` trap of §5 with a number on it.
+* **not `ownLine`** — inline, as in `:= by simp`, where the block sits wherever `by ` left it. A would
+  break it onto a new line, which is a *wrapping* decision and wants a margin nobody has set (§7).
+
+`ownable` alone cannot tell the three apart — it says only that the printer could own the newlines
+*inside* the block — and the distance between it and `atTwo` is the measured size of the upper bound's
+overstatement.
+
+The block's column is its first tactic's, which is the whole block's: `checkColEq` puts every tactic in
+a `sepBy1Indent` on one column (`Lean/Parser/Extra.lean:206-208`), so there is nothing to average. -/
+def Tree.tacticBlocks (tree : Tree) (normalized : String) : Nat × Nat × Nat × Nat := Id.run do
   let mut blocks := 0
   let mut ownable := 0
+  let mut ownLine := 0
+  let mut atTwo := 0
   for node in [0:tree.source.nodes.size] do
     if tree.kindOf node != "Lean.Parser.Tactic.tacticSeq1Indented" then continue
     let parts := tree.liftedParts node
@@ -1020,8 +1068,14 @@ def Tree.tacticBlocks (tree : Tree) (normalized : String) : Nat × Nat := Id.run
     for part in parts do
       let span := tree.tokenSpanText normalized part.first part.last
       if span.contains '\n' then everyTacticOneLine := false
-    if everyTacticOneLine then ownable := ownable + 1
-  return (blocks, ownable)
+    if everyTacticOneLine then
+      ownable := ownable + 1
+      if let some first := parts[0]? then
+        if let some token := tree.source.tokens[first.first]? then
+          if firstOnLine normalized token.start then
+            ownLine := ownLine + 1
+            if columnOf normalized token.start == 2 then atTwo := atTwo + 1
+  return (blocks, ownable, ownLine, atTwo)
 
 /-- The separator gaps between two tactics that hold more than one newline — the gaps design B would
 have rewritten, and the only bytes in this prompt that would have changed.

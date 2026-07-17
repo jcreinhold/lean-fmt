@@ -1,9 +1,9 @@
 # Next Proof Packet
 
 - Stack: ruff-03-language-formatting
-- First unresolved: 03-tactics
-- Claim ID: RLF-TACTICS
-- Prompt: 03-tactics
+- First unresolved: 04-extensions
+- Claim ID: RLF-EXTENSIONS
+- Prompt: 04-extensions
 - Module: (docs only)
 - Target file: (docs only)
 
@@ -17,7 +17,7 @@ Read this file, the target prompt, target files, listed source/template line ran
 
 ## Proof Task
 
-- Deliver **RLF-TACTICS**: Implement deterministic blocks for tactic scripts, bullets, case alternatives, `do`, `where`, `let`, and nested layout. Add deep nesting and comment-placement fixtures.
+- Deliver **RLF-EXTENSIONS**: Define the extension registration boundary for known syntax kinds and a lossless default for custom syntax. Test syntax declared earlier in the same file, scoped notation, macro quotations, and mixed built-in/custom trees.
 - Read `roadmap.md`, its prerequisite stack results, `AGENTS.md`, the current implementation and tests, and the relevant Lean compiler/Lake sources before changing an interface. Write interface comments and characterization tests before implementation where the behavior is not already frozen.
 
 ## Reuse
@@ -30,6 +30,6 @@ Inspect the live goal, search relevant declarations, test plausible proof steps,
 
 ## Stop Rules
 
-- Do not conflate visual indentation with Lean offside semantics.
-- Fallback must remain parse-preserving.
+- No accumulated or superset grammar may enter acceptance.
+- A formatter extension cannot gain application lifecycle authority.
 - Stop rather than weakening exact semantics, write safety, or the resource envelope.

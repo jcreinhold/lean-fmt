@@ -1,6 +1,6 @@
 ---
 claim_id: RLF-TACTICS
-status: planned
+status: verified
 depends_on: [RLF-EXPRESSIONS]
 ---
 

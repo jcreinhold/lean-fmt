@@ -72,6 +72,8 @@ total_binder_slack=0
 total_match_slack=0
 total_tactic_blocks=0
 total_tactic_ownable=0
+total_tactic_ownable_own_line=0
+total_tactic_ownable_at_two=0
 total_tactic_blank_gaps=0
 
 field() {
@@ -142,6 +144,8 @@ while read -r source; do
   total_match_slack=$((total_match_slack + $(field match_slack "$line")))
   total_tactic_blocks=$((total_tactic_blocks + $(field tactic_blocks "$line")))
   total_tactic_ownable=$((total_tactic_ownable + $(field tactic_ownable "$line")))
+  total_tactic_ownable_own_line=$((total_tactic_ownable_own_line + $(field tactic_ownable_own_line "$line")))
+  total_tactic_ownable_at_two=$((total_tactic_ownable_at_two + $(field tactic_ownable_at_two "$line")))
   total_tactic_blank_gaps=$((total_tactic_blank_gaps + $(field tactic_blank_gaps "$line")))
   printf 'ok\t%s\t%s\n' "$source" "$line" >>"$report"
 done <"$sources"
@@ -152,8 +156,10 @@ done <"$sources"
   printf 'commands=%s canonical=%s members=%s headers_canonical=%s app_slack=%s binder_slack=%s match_slack=%s\n' \
     "$total_commands" "$total_canonical" "$total_members" "$total_headers" "$total_app_slack" \
     "$total_binder_slack" "$total_match_slack"
-  printf 'tactic_blocks=%s tactic_ownable=%s tactic_blank_gaps=%s\n' "$total_tactic_blocks" \
-    "$total_tactic_ownable" "$total_tactic_blank_gaps"
+  printf 'tactic_blocks=%s tactic_ownable=%s tactic_ownable_own_line=%s tactic_ownable_at_two=%s ' \
+    "$total_tactic_blocks" "$total_tactic_ownable" "$total_tactic_ownable_own_line" \
+    "$total_tactic_ownable_at_two"
+  printf 'tactic_blank_gaps=%s\n' "$total_tactic_blank_gaps"
   printf '\n# `reformatted` is how many modules the printer changed at all. It is the number this\n'
   printf '# repository cannot produce: its own corpus is already canonical, so the layouts run there\n'
   printf '# and decide nothing. These are foreign modules, and every one of them still parses back to\n'
@@ -171,6 +177,27 @@ done <"$sources"
   printf '# A broken counter reports 0 just as readily, so no number here is believed on this\n'
   printf '# evidence alone: `tests/printer/run.sh` hand-counts all three against a written fixture\n'
   printf '# (7, 15 and 22) through this same code path.\n'
+  printf '\n# The four tactic counters are `RLF-TACTICS`, and they are why it ships no tactic layout.\n'
+  printf '# A re-indenting layout would rewrite a block as `nest 2` over `hard`-separated tactics\n'
+  printf '# beginning a fresh line at column 2. `tactic_blank_gaps=0` says every separator is already\n'
+  printf '# exactly one newline -- real Lean never blank-lines between two tactics -- so such a layout\n'
+  printf '# emits the input on exactly the blocks that already begin their line at column 2, and\n'
+  printf '# changes bytes on every other. Splitting `ownable` says which:\n'
+  printf '#\n'
+  printf '#   at_two                324  begins its line at column 2   -> the layout is the identity\n'
+  printf '#   own_line - at_two     234  begins deeper, so NESTED      -> it would de-indent it out of\n'
+  printf '#                                                               its parent: a broken parse\n'
+  printf '#   ownable - own_line    864  begins inline (`:= by simp`)  -> it would wrap it, which needs\n'
+  printf '#                                                               a margin nobody has set\n'
+  printf '#\n'
+  printf '# So its whole licensed reach is 324 of 1966 blocks, and on all 324 it produces the input.\n'
+  printf '# The 1098 where it would *do* something are the 1098 where it has no right to. That also\n'
+  printf '# sizes `ownable` as an upper bound: it overstates the licensed reach by 4.4x.\n'
+  printf '#\n'
+  printf '# `tactic_blank_gaps=0` has a second support that no mutation of this code could rescue:\n'
+  printf '# `run-blank-column-census.sh` reads the sample as lines, never loading the projection or\n'
+  printf '# the printer, and finds every one of its 3,041 blank lines followed by a column-0 line --\n'
+  printf '# a blank line ends an indented block and never sits inside one.\n'
   printf '\n# what the layouts refused, by syntax kind (every command not counted in `canonical`).\n'
   printf '# A kind lands here for either of two unlike reasons: no layout claims it, or one does and a\n'
   printf '# runtime guard said no. `Lean.Parser.Command.declaration` is the second; the rest are the\n'

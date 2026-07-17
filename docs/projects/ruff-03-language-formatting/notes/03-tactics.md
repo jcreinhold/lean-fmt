@@ -58,11 +58,16 @@ error.
 This is the same combinator, and the same argument, that made `RLF-EXPRESSIONS` defer `structInst`
 (`notes/02-expressions.md` §5b). It was one deferred kind there. Here it is the prompt.
 
-## 3. The task line names **two** families, and only one of them has §2's problem
+## 3. The task line names **three** families, and only one of them has §2's problem
 
-The first draft of this section said the task line was "one problem wearing seven hats". That is false,
-and `do` is the counter-example. There are two indentation combinators in `Lean/Parser/Extra.lean`, they
-are one letter apart in the source and not at all alike in what they mean:
+The first draft of this section said the task line was "one problem wearing seven hats". That was false
+— `do` is the counter-example — and the correction that replaced it, "two families", was *also* short by
+one: it had no row for `let`, which the task line names. Both errors are the same error, made twice:
+reading the constructs that agree and asserting the rest. The rule that catches it is to read every item
+on the task line in the grammar, and the third family below is what that turned up.
+
+There are two indentation combinators in `Lean/Parser/Extra.lean`. They are one letter apart in the
+source and not at all alike in what they mean:
 
     sepBy1Indent p sep psep _ =
       withPosition $ sepBy1 (checkColGe .. >> p) sep
@@ -79,11 +84,12 @@ and not the other:
 | --- | --- | --- | --- |
 | tactic scripts | `sepBy1IndentSemicolon` → `sepBy1Indent` | **yes** — `checkColEq` | `Term/Basic.lean:74-75` |
 | bullets | `cdotTk tacticSeqIndentGt` — nests a tactic sequence | **yes**, inherited | `Init/NotationExtra.lean:320-322` |
-| `where` (decls) | `sepByIndent (ppGroup letRecDecl) "; "` | **yes** | `Term.lean:740-741` |
+| `where` (decls) — **0 on the sample** | `sepByIndent (ppGroup letRecDecl) "; "` | **yes** | `Term.lean:740-741` |
 | `where` (struct inst) | `sepByIndent structInstField "; "` | **yes** | `Command.lean:173-175` |
 | records (deferred by 02) | `sepByIndent` | **yes** | `notes/02-expressions.md` §5b |
 | `do` | `doSeqIndent := many1Indent doSeqItem` | **no** — `checkColGe` only | `Lean/Parser/Do.lean:29-30` |
 | match alternatives | `matchAlts := withPosition $ many1Indent (ppLine >> matchAlt ..)` | **no** — `checkColGe` only | `Term.lean:279-280` |
+| `let` | `optSemicolon := ppDedent $ semicolonOrLinebreak >> ppLine >> p` | **no** — no column check *at all* | `Term.lean:118-120`, `:550-551` |
 
 **Bullets are not a separate case**: `cdot` is `cdotTk` followed by a `tacticSeqIndentGt`, so a bullet
 is a *nested* tactic sequence and inherits §2 whole. Its atom `"· "` is declared with a trailing space,
@@ -98,8 +104,34 @@ is the same citation vehicle the header layout uses. What it is *not* is free of
 still bounds every item at `checkColGe` against the first, so re-indenting `do` still requires owning
 every newline in it, for exactly §5's reason. It is a weaker constraint, not an absent one.
 
-So: six of the seven hats fit one head. `do`'s does not, and saying otherwise would have been an
-overclaim of the kind this stack keeps catching in its own prose.
+**`let` is the third family, and it is neither combinator.** It is
+
+    «let» := leading_parser:leadPrec
+      withPosition ("let" >> letConfig >> letDecl) >> optSemicolon termParser   -- Term.lean:550-551
+    optSemicolon p := ppDedent $ semicolonOrLinebreak >> ppLine >> p            -- :118-120
+    semicolonOrLinebreak := ";" <|> checkLinebreakBefore >> pushNone            -- :100
+
+so what separates a `let` from its body is a semicolon **or a linebreak, with no column check on
+either side**. Not `checkColEq`, not even `checkColGe`: `withPosition` closes around the *declaration*
+and the body is outside it. §2's argument does not touch `let`, and neither does §4's — there is no
+column here to preserve, only a line break to keep.
+
+That makes `let` the freest of the three and the best-cited: its `ppLine` sits in the parser
+declaration, exactly like the module header's `optional (moduleTk >> ppLine >> ppLine)` that the header
+layout already cites. It is also the smallest: **26 `Term.let` on the sample**
+(`evidence/02-term-census.txt`), against 1966 tactic sequences. The 510 `letDecl` there are mostly the
+*tactic* `let` and `do`'s, which are different kinds reusing the same declaration parser — counting
+`letDecl` as `let` would be the `tacticSeqBracketed` mistake in the other direction, and §6.3 is where
+this stack agreed not to make it.
+
+And `let` is a **term** (`@[builtin_term_parser]`), so it was `RLF-EXPRESSIONS`' layer, not this one's;
+the task line reaches across a prompt boundary to name it. It does not matter much, because §5 catches
+it anyway: emitting that `ppLine` means emitting the newline before the body, and the body's own lines
+stay `.keep`. Same trap, one prompt down.
+
+So: six of the nine hats fit one head, `do` and match alternatives fit a second, and `let` fits a third.
+Saying otherwise — as this section did twice — is the overclaim this stack keeps catching in its own
+prose.
 
 ## 4. What the enclosing check actually measures — and it is weaker than it looks
 
@@ -191,11 +223,28 @@ assumed, and the fifth-time-running pattern from prompt 02 says what to expect:
    part changes nothing; this one says the reachable part is most of the corpus. It is an upper bound
    (`Printer.lean`, `Tree.tacticBlocks`) — ownable *inside* is necessary, not sufficient, because an
    ownable block can sit inside a block that is not.
-2. **How many qualifying blocks are already canonical.** Real Lean indents tactic blocks by two. If the
-   answer is "almost all", this layout joins `app_slack=0`, `binder_slack=0` and `match_slack=0` as a
-   sixth no-op, and the honest report is that it changes nothing. **Still unmeasured**, and §8 is why
-   the question is now sharper than it looks: the rule this printer would apply is not the rule Lean
-   applies.
+2. **How many qualifying blocks are already canonical — measured: `tactic_ownable_own_line=558`,
+   `tactic_ownable_at_two=324`.** The question turned out to be three questions, and splitting them is
+   the answer to this prompt. Design A rewrites a block as `nest 2` over `hard`-separated tactics
+   beginning a fresh line at column 2; `tactic_blank_gaps=0` (below) already says every separator *is*
+   one newline; so A is the identity on a block exactly when the block already begins its line at
+   column 2, and changes bytes otherwise. Of the 1422 ownable blocks:
+
+   | | count | what A does | licensed? |
+   | --- | --- | --- | --- |
+   | begins its line at column 2 | **324** | emits the bytes already there | vacuously — it is the identity |
+   | begins its line, deeper than 2 | **234** | de-indents it to 2, out of whatever encloses it | **no** — §5's `.keep` trap, and the prompt's "fallback must remain parse-preserving" |
+   | begins inline (`:= by simp`, `· skip`) | **864** | breaks it onto a new line | **no** — a *wrapping* decision, and the margin is unset (§7) |
+
+   So this layout is the **sixth no-op**, and this time the no-op is not a disappointment but the entire
+   safety margin: A's whole licensed reach is 324 of 1966 blocks (16.5%), and on every one of them it
+   produces the input. The 1098 blocks where it would *do* something are exactly the blocks where it has
+   no right to. `app_slack=0`, `binder_slack=0`, `match_slack=0`, `tactic_blank_gaps=0` and now this —
+   prompt 02's §8 is on record predicting it, and it is right for the sixth time.
+
+   This is also the number that puts a size on §5's warning that `ownable` is an **upper bound**: it
+   overstates A's licensed reach by 4.4×. "Ownable inside" was never the same claim as "safe to move",
+   and the distance between them is 1098 blocks.
 3. **What `tacticSeqBracketed` actually costs — measured: `tacticSeqBracketed=1`.**
    `evidence/03-tactic-census.txt` counts it directly across all 62 modules. **One.** The `{ tacs }`
    spelling is dead syntax in real Lean, so a layout for it would be dead code on every input this
@@ -288,3 +337,50 @@ hold a comment (`\n  -- why\n  `), and rewriting its newline run would delete th
 What B is worth is **unmeasured and might be nothing**: it changes a byte only where real Lean has a
 blank line between two tactics. That is the sixth instance of the question this stack keeps asking, and
 prompt 02's §8 is on record predicting the answer. It gets a counter before it gets a layout.
+
+## 9. The counters answered, and both designs are dead
+
+§8 ended by saying B gets a counter before it gets a layout. It got one. So did A. Neither survives,
+for different reasons, and the reasons are worth more than the verdict.
+
+**B is a no-op: `tactic_blank_gaps=0`,** across 62 modules and 1966 blocks. B rewrites the newline run
+inside a separator gap; real Lean has no gap with more than one newline in it. The independent census
+(`evidence/03-blank-line-columns.txt`) says why, and says it more sharply than the counter can: **every
+one of the sample's 3041 blank lines is followed by a column-0 line.** A blank line in real Lean *ends*
+an indented block; none sits inside one. So B's reach is empty structurally, not by scarcity, and a
+bigger sample would not change it.
+
+**B's citation was also weaker than §8 recorded, and that is the more useful finding.** §8's table cites
+`sepByIndent.formatter:218` — one `"\n"` per newline separator — as the licence to collapse a blank line,
+alongside `Format.defIndent := 2` as A's. They are not the same kind of citation and I wrote them into
+one column as though they were. `defIndent` is a constant the compiler indents by. But
+`sepByIndent.formatter` is a *formatter over a `Syntax` tree*, and its newline separator is a null node
+(`n.matchesNull 0`, `:215`): the blank line is already gone before that code runs. One newline is all it
+*can* emit. That is an absence of information, not a ruling that an author's blank line should go — and
+this printer, which starts from a lossless projection, still has the information Lean's formatter lost.
+**The compiler cannot be cited for a decision it never had the information to make.** Contrast the module
+header's `optional (moduleTk >> ppLine >> ppLine)`, which is a *grammar* declaring its own vertical shape;
+that citation is real, and it is why the header layout is the one thing in this stack that emits a blank
+line. So B would not have shipped at a non-zero count either.
+
+**A is the sixth no-op, and the no-op is the safety margin.** §6.2 has the table: A's licensed reach is
+the 324 blocks that already begin their line at column 2, where it emits the input. The other 1098
+ownable blocks are ones it would change and may not — 234 by de-indenting a nested block out of its
+parent (§5's `.keep` trap, and the prompt's "fallback must remain parse-preserving"), 864 by making a
+wrapping decision that needs a margin nobody has set (§7). A is not "too weak to bother with"; it is a
+rule whose entire effect is on blocks it has no licence to touch.
+
+**So `RLF-TACTICS` ships no tactic layout, and that is the finding rather than a failure to deliver.**
+The prompt's own stop rule — *do not conflate visual indentation with Lean offside semantics* — is
+precisely what A does, and §2 through §6 are the reading that shows it and the numbers that size it.
+What ships is the reading, the four counters, and the fixtures that keep them honest.
+
+**What would change the answer**, stated so a later stack does not have to re-derive it:
+
+- **`Doc.align`.** Not `nest`. §8's whole argument is that A must *choose* a column where Lean
+  *inherits* one, and `sepByIndent.formatter`'s own answer is `pushAlign (force := true)` (`:224`),
+  commented "so that `withPosition` will pick up the right column". `ruff-02` decided `Doc` has no align
+  (`Doc.lean:71-73`) and that decision is verified and closed to this stack. It is the single change that
+  would move the 234, and it is a `Doc` change, not a printer change.
+- **A margin.** It would move some of the 864, and it is `RLS-FINAL`'s to set, not this prompt's.
+- **Neither touches the 324**, which are already right. Nothing here is waiting on effort.

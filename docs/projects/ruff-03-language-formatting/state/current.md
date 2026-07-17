@@ -1,6 +1,6 @@
 ---
 kind: state
-first_unresolved: 03-tactics
+first_unresolved: 04-extensions
 ---
 
 # Current state
@@ -46,7 +46,7 @@ Printing inside the frontend would buy free arg order for a median 1.96 s fronte
 | --- | --- | --- | --- |
 | 01-commands | RLF-COMMANDS | verified | — |
 | 02-expressions | RLF-EXPRESSIONS | verified | RLF-COMMANDS |
-| 03-tactics | RLF-TACTICS | planned | RLF-EXPRESSIONS |
+| 03-tactics | RLF-TACTICS | verified | RLF-EXPRESSIONS |
 | 04-extensions | RLF-EXTENSIONS | planned | RLF-TACTICS |
 | 05-corpus | RLF-FINAL | planned | RLF-EXTENSIONS |
 
@@ -67,6 +67,44 @@ before the projection ever saw it — so the prompt's stated task was already do
 the real obstacle (the declared atom string, which the projection drops) was not named anywhere in it.
 `RLF-TACTICS` and `RLF-EXTENSIONS` should be read with that in mind: their premises have not been
 checked either.
+
+**`RLF-TACTICS` is verified, and it ships no tactic layout** (`results/03-tactics.md`). That is its
+finding, not a shortfall: in the constructs its task line names, the indentation *is a token* — a
+tactic's column occupies the slot a `;` would (`checkColEq`, `Lean/Parser/Extra.lean:206-208`), and the
+compiler's own docstring says `by skip skip` does not parse (`Term/Basic.lean:57-65`). The prompt's stop
+rule is *do not conflate visual indentation with Lean offside semantics*, and that rule turns out to be
+the whole prompt rather than a caution attached to it.
+
+Two designs were written out and both were killed by counters rather than by argument:
+
+- **Re-indent (`nest 2` + `hard`).** `nest` moves a printer-emitted newline but cannot move a `.keep`
+  gap, which reaches the output as `verbatim` and is never re-indented (`Doc.lean:62-68`). So
+  re-indenting moves each tactic's *first* line and abandons its continuation lines — onto the block's
+  own column, where they stop being continuations and become tactics that do not parse. Measured on the
+  sample: of 1966 blocks, **324 already begin their line at column 2, where the design emits the input**;
+  **234 begin deeper and it would de-indent them out of their parent**; **864 begin inline and it would
+  wrap them, needing a margin nobody has set**. Its entire licensed reach is the 324 where it does
+  nothing.
+- **Normalize the separator** (collapse a blank line between two tactics). **`tactic_blank_gaps=0`** on
+  62 modules and 1966 blocks — real Lean has no such gap. `evidence/03-blank-line-columns.txt` says why
+  and says it structurally: **all 3041 blank lines in the sample are followed by a column-0 line**, so a
+  blank line *ends* an indented block and never sits inside one. A bigger sample would not change it.
+
+**That is the sixth consecutive no-op** (`app_slack=0`, `binder_slack=0`, `match_slack=0`,
+`tactic_blank_gaps=0`, and re-indent's 324-of-324), which `notes/02-expressions.md` §8 predicted.
+
+Two findings outlast the verdict. **A citation was weaker than it looked, and the prompt caught it
+rather than shipping on it:** the separator design cited `sepByIndent.formatter` emitting one `"\n"`
+(`Extra.lean:218`) as licence to collapse an author's blank line. But that is a *formatter over a
+`Syntax` tree* whose newline separator is a null node (`:215`) — the blank line is gone before it runs,
+so one newline is all it *can* emit. An absence of information is not a ruling. This printer starts from
+a lossless projection that still has what Lean's formatter lost, and **the compiler cannot be cited for a
+decision it never had the information to make.** (The module header's `ppLine >> ppLine` is a *grammar*
+declaring its own shape; that citation is real, which is why the header is the one layout here that
+emits a blank line.) And **`Doc.align`, not effort, is what stands between this stack and re-indenting**:
+`sepByIndent.formatter`'s own answer is `pushAlign (force := true)` (`:224`) — it aligns because it must
+inherit a column it did not choose. `ruff-02` decided `Doc` has no align, by design and in writing
+(`Doc.lean:71-73`), and that decision is verified and closed to this stack.
 
 ## Known evidence
 
