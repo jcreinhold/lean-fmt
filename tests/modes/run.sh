@@ -19,7 +19,8 @@ cd "$repo_root"
 cp -p "$source_file" "$work/Findings.lean"
 rm -rf "$cache_root"
 LEAN_NUM_THREADS=1 lake build lean-fmt lean-fmt-tests \
-  LocalSyntax:leanFmtArtifact Findings:leanFmtArtifact Clean:leanFmtArtifact
+  LocalSyntax:leanFmtArtifact Findings:leanFmtArtifact Clean:leanFmtArtifact \
+  Layout:leanFmtArtifact
 application=$(lake -q query lean-fmt --text)
 
 run_expect() {
@@ -94,6 +95,33 @@ mode=diff files=1 findings=1 changed=1 written=0 broken=0 rejected=0 infrastruct
 """
 assert diff == expected, repr(diff)
 PY
+
+# `RFP-SPEC` characterization: **`format` does not format.** It previews the fixes of selected lint
+# rules and nothing else, so a file that is lint-clean is reported clean however it is laid out.
+#
+# `tests/check/Layout.lean` holds `namespace     Alpha` — five spaces where `LeanFmt.Printer` renders
+# exactly one (`Printer.lean:344-348` `wholeSpan?` -> `spaceSeparated`, `:511-515` citing Lean's
+# `Command.lean:317-318`). The printer is compiled into `LeanFmtCore` and is reachable here; nothing
+# calls it. It could not run if it were called: both registry rules are `input := .source`
+# (`Rules.lean:29,37`), so `RulePlan.requiresSyntax` is `false` (`Config.lean:199-200`) and
+# `officialArtifacts` is never invoked (`Application.lean:569`) — no syntax tree is built at all.
+#
+# This asserts today's truth so that changing it is deliberate. `RFP-IMPL` wires the printer in and
+# **must** flip this to exit 1: at that point `Layout.lean` is `would-format` with a canonical body.
+# A green run here after that work means the printer is still not reached.
+run_expect 0 "$work/layout-format.json" "$application" format --root . --json --no-cache \
+  tests/check/Layout.lean
+python3 - "$work/layout-format.json" <<'PY'
+import json, sys
+r = json.load(open(sys.argv[1]))
+assert r["mode"] == "format", r["mode"]
+assert r["findings"] == 0 and r["changed"] == 0 and r["written"] == 0, r
+assert r["files"][0]["status"] == "clean", r["files"][0]
+# No `formatted` key: format withholds output precisely when it would change nothing.
+assert "formatted" not in r["files"][0] or r["files"][0]["formatted"] is None, r["files"][0]
+PY
+grep -q 'namespace     Alpha' tests/check/Layout.lean \
+  || { echo 'fixture lost its non-canonical spacing; the check above proves nothing' >&2; exit 1; }
 
 # Artifact, exact fallback, and semantic-cache hit project to identical formatted output. The hit
 # remains usable under a different rule projection without invoking an analyzer.

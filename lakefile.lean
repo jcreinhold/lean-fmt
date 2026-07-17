@@ -122,9 +122,13 @@ lean_lib BrokenCompilerFixtures where
   leanOptions := #[⟨`weak.leanFmt.trailingWhitespace,
     trailingWhitespaceEnabled⟩]
 
+/- `Layout` is lint-clean and deliberately not canonically laid out: `namespace     Alpha` is five
+spaces where `LeanFmt.Printer` renders one (`Printer.lean:511-515`, citing `Command.lean:317-318`).
+It is the one fixture that separates "has no findings" from "needs no formatting", which is the
+distinction `RFP-SPEC` exists to name. -/
 lean_lib CheckFixtures where
   srcDir := "tests/check"
-  roots := #[`Clean, `Findings]
+  roots := #[`Clean, `Findings, `Layout]
   plugins := #[`@/LeanFmtCompilerPlugin:shared]
   leanOptions := #[⟨`weak.leanFmt.trailingWhitespace,
     trailingWhitespaceEnabled⟩]

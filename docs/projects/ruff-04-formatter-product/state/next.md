@@ -1,9 +1,9 @@
 # Next Proof Packet
 
 - Stack: ruff-04-formatter-product
-- First unresolved: 01-policy
-- Claim ID: RFP-SPEC
-- Prompt: 01-policy
+- First unresolved: 02-integration
+- Claim ID: RFP-IMPL
+- Prompt: 02-integration
 - Module: (docs only)
 - Target file: (docs only)
 
@@ -17,7 +17,7 @@ Read this file, the target prompt, target files, listed source/template line ran
 
 ## Proof Task
 
-- Deliver **RFP-SPEC**: Write the style guide, configuration schema, command truth table, exit behavior, and formatter/linter interaction. Characterize compatibility consequences for existing commands and name any migration aliases.
+- Deliver **RFP-IMPL**: Connect canonical formatting to reports, diffs, cache identity, exact validation, conflict planning, stale checks, and permission-preserving publication. Ensure formatter-only checks avoid semantic capabilities not required by the source.
 - Read `roadmap.md`, its prerequisite stack results, `AGENTS.md`, the current implementation and tests, and the relevant Lean compiler/Lake sources before changing an interface. Write interface comments and characterization tests before implementation where the behavior is not already frozen.
 
 ## Reuse
@@ -30,6 +30,6 @@ Inspect the live goal, search relevant declarations, test plausible proof steps,
 
 ## Stop Rules
 
-- Do not let formatter policy enter semantic cache identity unless it changes output.
-- Do not expose layout-engine mechanisms.
+- A partially formatted project is never published as a successful atomic operation where project atomicity was requested.
+- Rejected validation never writes.
 - Stop rather than weakening exact semantics, write safety, or the resource envelope.
