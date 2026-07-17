@@ -62,6 +62,10 @@ private def testRules : IO Unit := do
   -- findings land earlier is registered later.
   ensure (findings.map (·.range.start) == #[10, 21, 22])
     "findings are not sorted by position"
+  -- Every shipped fix is safe by the byte-level argument in `notes/01-model.md` §1: FMT001/FMT002
+  -- edit trivia the lexer cannot see, so they apply by default.
+  ensure (findings.all fun f => (f.fix?.map (·.applicability)) == some .safe)
+    "a shipped rule produced a non-safe fix"
 
 private def testServiceProtocol : IO Unit := do
   let health := Lean.Json.parse
@@ -85,12 +89,13 @@ private def testServiceProtocol : IO Unit := do
   ensure ((Lean.Json.parse "{\"id\":1,\"method\":\"unknown\"}" |>.toOption.bind fun json =>
     decodeRequest json |>.toOption).isNone) "service accepted an unknown method"
 
-private def findingWithEdit (range : SourceRange) (replacement : String) : Finding := {
-  code := "TEST"
+private def findingWithEdit (range : SourceRange) (replacement : String)
+    (applicability : Applicability := .safe) (code : String := "TEST") : Finding := {
+  code
   severity := .warning
   message := "test edit"
   range
-  fix? := some { range, replacement }
+  fix? := some { applicability, edits := #[{ range, replacement }] }
 }
 
 private def requirePatch (source : String) (findings : Array Finding) : IO Patch :=
@@ -198,6 +203,61 @@ ignore = [\"FMT002\"]\n\
       pure false
     catch _ => pure true
     ensure rejected "unknown configuration key was accepted"
+  finally
+    IO.FS.removeDirAll directory
+
+private def testApplicability : IO Unit := do
+  -- Admission: safe always, unsafe iff opted in, display-only never.
+  ensure (Applicability.safe.admitted false && Applicability.safe.admitted true)
+    "a safe fix was not admitted"
+  ensure (!Applicability.unsafe.admitted false && Applicability.unsafe.admitted true)
+    "unsafe admission did not track the opt-in"
+  ensure (!Applicability.displayOnly.admitted false && !Applicability.displayOnly.admitted true)
+    "a display-only fix was admitted"
+
+  -- Wire round-trip and stable spellings.
+  for (a, wire) in #[(Applicability.safe, "safe"), (.unsafe, "unsafe"), (.displayOnly, "display-only")] do
+    ensure (a.toWire == wire) s!"applicability wire spelling changed for {wire}"
+    ensure (match (Lean.fromJson? (Lean.toJson a) : Except String Applicability) with
+      | .ok decoded => decoded == a | .error _ => false) s!"applicability did not round-trip: {wire}"
+  ensure (match (Lean.fromJson? (.str "bogus") : Except String Applicability) with
+    | .error _ => true | _ => false) "an unknown applicability wire value was accepted"
+
+  -- Per-rule reclassification, resolved as a plan projection.
+  let plan : RulePlan := { selected := #["FMT001", "FMT002"], perFileIgnores := #[], extendSafe := #["FMT001"], extendUnsafe := #["FMT002"] }
+  ensure (plan.effectiveApplicability "FMT001" .unsafe == .safe) "extend-safe-fixes did not promote"
+  ensure (plan.effectiveApplicability "FMT001" .safe == .safe) "promotion changed an already-safe fix"
+  ensure (plan.effectiveApplicability "FMT002" .safe == .unsafe) "extend-unsafe-fixes did not demote"
+  ensure (plan.effectiveApplicability "FMT999" .safe == .safe) "an unlisted rule was reclassified"
+  -- Display-only is a floor no promotion can lift.
+  ensure (plan.effectiveApplicability "FMT001" .displayOnly == .displayOnly)
+    "extend-safe-fixes promoted a display-only fix"
+
+  -- `RulePlan.findings` carries the effective applicability onto the reported fix.
+  let demote : RulePlan := { selected := #["FMT001"], perFileIgnores := #[], extendSafe := #[], extendUnsafe := #["FMT001"] }
+  let projected := demote.findings "A.lean" (runSourceRules "def x := 1  \n")
+  ensure (projected.size == 1 && (projected[0]!.fix?.map (·.applicability)) == some .unsafe)
+    "the findings projection did not demote FMT001's fix"
+
+  -- Conflict provenance names both rules, not array indices.
+  match preparePatch "abc" #[
+      findingWithEdit { start := 0, stop := 2 } "x" .safe "RULE_A",
+      findingWithEdit { start := 1, stop := 3 } "y" .safe "RULE_B"
+    ] with
+  | .error error =>
+    let rendered := toString error
+    ensure ((rendered.splitOn "RULE_A").length == 2 && (rendered.splitOn "RULE_B").length == 2)
+      s!"conflict error did not name both rules: {rendered}"
+  | .ok _ => throw <| IO.userError "overlapping fixes were accepted"
+
+  -- Contradiction: a rule in both extend lists is rejected at plan construction.
+  let directory ← IO.FS.createTempDir
+  try
+    let configPath := directory / "lean-fmt.toml"
+    IO.FS.writeFile configPath "extend-safe-fixes = [\"FMT001\"]\nextend-unsafe-fixes = [\"FMT001\"]\n"
+    let config ← FormatterConfig.load directory
+    ensure (match config.rulePlan #[] #[] with | .error _ => true | _ => false)
+      "a rule in both extend lists was accepted"
   finally
     IO.FS.removeDirAll directory
 
@@ -354,7 +414,8 @@ make a run pay for. The other half, that selection stays out of cache identity, 
 rightly reject them. That is the seam working as intended — no fake rule is reachable from config. -/
 private def testMixedSelection : IO Unit := do
   let registry := #[probeSource, probeSyntax]
-  let plan (selected : Array String) : RulePlan := { selected, perFileIgnores := #[] }
+  let plan (selected : Array String) : RulePlan :=
+    { selected, perFileIgnores := #[], extendSafe := #[], extendUnsafe := #[] }
 
   ensure ((plan #[]).requiredTierOf registry == .source)
     "selecting nothing did not cost source facts"
@@ -377,8 +438,7 @@ private def testMixedSelection : IO Unit := do
   ensure ((runRulesOf registry (.source (SourceFacts.of fixtureSourceText))).map (·.code) ==
       #["TST901"])
     "requiredTierOf and runRulesOf disagree about what source facts can answer"
-  ensure (ruleRegistry.all (fun rule => ({ selected := #[rule.code], perFileIgnores := #[] } :
-      RulePlan).requiredTier == .source))
+  ensure (ruleRegistry.all (fun rule => ({ selected := #[rule.code], perFileIgnores := #[], extendSafe := #[], extendUnsafe := #[] } : RulePlan).requiredTier == .source))
     "a shipped rule's selection costs more than source facts"
 
 private def fixtureArtifact : ModuleArtifact := {
@@ -1179,6 +1239,7 @@ public unsafe def main (args : List String) : IO UInt32 := do
     testServiceProtocol
     testEdits
     testConfig
+    testApplicability
     testCacheIdentity
     testLosslessSource
     testStore

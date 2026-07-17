@@ -1,21 +1,25 @@
 ---
 kind: state
-first_unresolved: 02-transaction
+first_unresolved: 03-acceptance
 ---
 
 # Current state
 
-`RFX-SPEC` is **verified**. The design is `notes/01-model.md`; what was run is `results/01-model.md`,
-and the characterization is `evidence/01-no-applicability.txt`. The external prerequisite stacks
-`ruff-04-formatter-product` and `ruff-05-rule-engine` are both verified, and their live implementation
-was re-read here rather than trusted — every claim in the note cites a file and line.
+`RFX-SPEC` and `RFX-IMPL` are **verified**. The design is `notes/01-model.md`; what was run is
+`results/01-model.md` and `results/02-transaction.md`, and the characterization is
+`evidence/01-no-applicability.txt`. The external prerequisite stacks `ruff-04-formatter-product` and
+`ruff-05-rule-engine` are both verified, and their live implementation was re-read here rather than
+trusted — every claim in the notes cites a file and line.
 
-`RFX-IMPL` and `RFX-FINAL` remain planned.
+The applicability model now exists in code: `Fix { applicability, edits }`, admission through
+`Applicability.admitted`, per-rule reclassification as a `RulePlan` projection, conflict provenance, and
+`--unsafe-fixes`. All product suites (modes, boundary, check, service) and the module-artifact tests
+pass. `RFX-FINAL` remains planned.
 
 | Prompt | Claim | Status | Depends on |
 | --- | --- | --- | --- |
 | 01-model | RFX-SPEC | verified | — |
-| 02-transaction | RFX-IMPL | planned | RFX-SPEC |
+| 02-transaction | RFX-IMPL | verified | RFX-SPEC |
 | 03-acceptance | RFX-FINAL | planned | RFX-IMPL |
 
 ## What is frozen

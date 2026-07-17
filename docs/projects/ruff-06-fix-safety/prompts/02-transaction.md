@@ -1,6 +1,6 @@
 ---
 claim_id: RFX-IMPL
-status: planned
+status: verified
 depends_on: [RFX-SPEC]
 ---
 

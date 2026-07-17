@@ -143,7 +143,10 @@ private def trailingWhitespaceFinding (start stop : Nat) : Finding :=
     severity := .warning
     message := "trailing whitespace"
     range
-    fix? := some { range, replacement := "" }
+    -- Safe: deleting horizontal whitespace before a newline cannot change how any Lean text
+    -- elaborates, because the lexer cannot observe it. This is a byte-level argument, which is the
+    -- only kind a `source`-tier rule may use to claim safety (`notes/01-model.md` §1).
+    fix? := some { applicability := .safe, edits := #[{ range, replacement := "" }] }
   }
 
 private def trailingWhitespace (facts : SourceFacts) : Array Finding := Id.run do
@@ -177,7 +180,8 @@ private def finalNewline (facts : SourceFacts) : Array Finding :=
       severity := .warning
       message := "file must end with a newline"
       range
-      fix? := some { range, replacement := "\n" }
+      -- Safe for the same reason as FMT001: a terminating newline is trivia the lexer cannot see.
+      fix? := some { applicability := .safe, edits := #[{ range, replacement := "\n" }] }
     }]
 
 /-- Every rule the product ships, in one static array.

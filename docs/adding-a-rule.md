@@ -50,9 +50,32 @@ normalized source as UTF-8, derived once and shared across rules.
 Do not measure against the file's bytes. Reading a file and publishing one are the only operations
 that touch raw bytes, and they go through `LosslessSource.normalize`/`denormalize`.
 
-A `fix?` is a byte range and a replacement in those same coordinates. `preparePatch` rejects ranges
-that are out of bounds, land inside a UTF-8 scalar, or conflict with another edit — as a unit, so a
-bad fix cannot half-apply.
+A `fix?` is a `Fix`: one `applicability` and an array of `edits`, each a byte range and a replacement
+in those same coordinates. `preparePatch` rejects ranges that are out of bounds, land inside a UTF-8
+scalar, or conflict with another fix — as a unit, so a bad fix cannot half-apply, and a conflict names
+both rules and both finding ranges rather than an array index.
+
+## Applicability
+
+Every fix declares how safe it is to apply, following ruff's `Applicability`:
+
+| value | meaning | applied |
+| --- | --- | --- |
+| `.safe` | meaning-preserving under the rule's stated evidence | by default |
+| `.unsafe` | plausibly intended, but the rule cannot prove it preserves behavior/comments/intent | only under `--unsafe-fixes` |
+| `.displayOnly` | illustrates the finding; never meant to be applied | never |
+
+"Safe" is a claim under your rule's evidence and is tied to its tier — never merely "it reparses". A
+`.source`-tier rule editing trivia the lexer cannot see (FMT001/FMT002 edit whitespace) is safe by
+that argument; a `.syntax`-tier rewrite that moves tokens is not safe unless the projection proves the
+meaning is preserved. When in doubt, choose `.unsafe`: a user opts into it, and a later rule revision
+can promote it once the evidence exists.
+
+Set applicability on the `Fix` you emit; do **not** read configuration to decide it. `extend-safe-fixes`
+and `extend-unsafe-fixes` reclassify per rule, but that is resolved in `RulePlan.effectiveApplicability`
+as a projection over your emitted value — the same discipline that keeps a rule from reading its own
+enablement. `.displayOnly` is a floor configuration cannot lift: a rule that declined to make an edit
+applicable cannot be argued into it.
 
 ## Ordering
 
@@ -89,6 +112,9 @@ will stop you, and it is right to.
 
 - `LeanFmtTest.lean`'s `testRules` covers the shipped rules against a fixture with CRLF, trailing
   whitespace, and a missing final newline. Add your cases there.
+- `testApplicability` covers admission, per-rule reclassification, the display-only floor, and conflict
+  provenance. If your rule ships an `.unsafe` or `.displayOnly` fix, assert its applicability there and
+  add a `--unsafe-fixes` case to `tests/modes/run.sh`.
 - If your rule is the first `.syntax`-tier rule the product ships, you have more work than this
   document covers: `Application.renderCanonicalText` and the source-only shortcut in
   `availableAnalysis` both assume every rule is source-tier, and both say so in their docstrings.

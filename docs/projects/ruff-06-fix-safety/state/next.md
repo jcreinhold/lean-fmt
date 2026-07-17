@@ -1,9 +1,9 @@
 # Next Proof Packet
 
 - Stack: ruff-06-fix-safety
-- First unresolved: 02-transaction
-- Claim ID: RFX-IMPL
-- Prompt: 02-transaction
+- First unresolved: 03-acceptance
+- Claim ID: RFX-FINAL
+- Prompt: 03-acceptance
 - Module: (docs only)
 - Target file: (docs only)
 
@@ -17,7 +17,7 @@ Read this file, the target prompt, target files, listed source/template line ran
 
 ## Proof Task
 
-- Deliver **RFX-IMPL**: Extend findings, reports, configuration, edit planning, validation, and atomic publication. Add fix-only/unfixable selection without coupling rule selection to execution strategy.
+- Deliver **RFX-FINAL**: Test overlapping insert/delete/replace edits, UTF-8 boundaries, comment loss, promoted/demoted applicability, formatter composition, stale files, and crashes between validation and rename.
 - Read `roadmap.md`, its prerequisite stack results, `AGENTS.md`, the current implementation and tests, and the relevant Lean compiler/Lake sources before changing an interface. Write interface comments and characterization tests before implementation where the behavior is not already frozen.
 
 ## Reuse
@@ -30,6 +30,6 @@ Inspect the live goal, search relevant declarations, test plausible proof steps,
 
 ## Stop Rules
 
-- Preserve stale-source and permission checks.
-- No partial write on conflict or rejected validation.
+- Every applied edit has rule provenance and validation evidence.
+- No full mathlib run.
 - Stop rather than weakening exact semantics, write safety, or the resource envelope.

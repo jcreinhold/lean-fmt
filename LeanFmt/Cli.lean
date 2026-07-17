@@ -59,6 +59,7 @@ file options:\n\
   --statistics         write aggregate statistics to stderr\n\
   --no-cache           neither read nor write result cache entries\n\
   --max-memory GIB     aggregate operating envelope (default: 8)\n\
+  --unsafe-fixes       apply/preview unsafe fixes too (default: safe only)\n\
   --check-elab         fix: require elaboration validation"
 
 private def parseFileArgs (mode : RunMode) (args : List String) : Except String FileCommand :=
@@ -83,6 +84,8 @@ private def parseFileArgs (mode : RunMode) (args : List String) : Except String 
         loop rest { command with run := { command.run with validationLevel := .elaboration } }
       else
         .error "--check-elab is valid only for fix"
+    | "--unsafe-fixes" :: rest =>
+      loop rest { command with run := { command.run with unsafeFixes := true } }
     | "--max-memory" :: value :: rest =>
       match value.toNat? with
       | some amount =>
@@ -143,16 +146,24 @@ private def renderText (report : RunReport) : IO Unit := do
     for file in report.files do
       unless file.status == "clean" do IO.println s!"{file.path}: {file.status}"
       for diagnostic in file.diagnostics do IO.println s!"  {diagnostic}"
+      if file.withheldUnsafe > 0 then
+        IO.println s!"  {file.withheldUnsafe} unsafe fix(es) withheld; rerun with --unsafe-fixes to apply"
   | _ =>
     for file in report.files do
       for finding in file.findings do
+        -- A fix's applicability is shown next to the finding so a reader knows whether `fix` would
+        -- apply it by default (safe), only under `--unsafe-fixes` (unsafe), or never (display-only).
+        let fixTag := match finding.fix? with
+          | some fix => s!" [{fix.applicability}]"
+          | none => ""
         IO.println s!"{file.path}:{finding.range.start}-{finding.range.stop}: \
-          {finding.code} {finding.message}"
+          {finding.code} {finding.message}{fixTag}"
       for diagnostic in file.diagnostics do
         IO.println s!"{file.path}: {file.status}: {diagnostic}"
   IO.println s!"mode={report.mode} files={report.files.size} findings={report.findings} \
     changed={report.changed} written={report.written} broken={report.broken} \
-    rejected={report.rejected} infrastructure_failures={report.infrastructureFailures.size}"
+    rejected={report.rejected} withheld_unsafe={report.withheldUnsafe} \
+    infrastructure_failures={report.infrastructureFailures.size}"
 
 private def renderReport (format : ReportFormat) (report : RunReport) : IO Unit :=
   match format with
@@ -162,7 +173,7 @@ private def renderReport (format : ReportFormat) (report : RunReport) : IO Unit 
 private def renderStatistics (report : RunReport) : IO Unit :=
   IO.eprintln s!"lean-fmt statistics: mode={report.mode} files={report.files.size} \
     findings={report.findings} changed={report.changed} written={report.written} \
-    broken={report.broken} rejected={report.rejected} \
+    broken={report.broken} rejected={report.rejected} withheld_unsafe={report.withheldUnsafe} \
     infrastructure_failures={report.infrastructureFailures.size}"
 
 private def reportExitCode (mode : RunMode) (report : RunReport) : UInt32 :=

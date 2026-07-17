@@ -9,7 +9,10 @@ the first error; callers never receive partially assembled output. -/
 inductive PatchError where
   | invalidRange (index : Nat) (range : SourceRange) (sourceBytes : Nat)
   | invalidBoundary (index position : Nat)
-  | conflict (leftIndex rightIndex : Nat) (left right : SourceRange)
+  /-- Two fixes cannot both apply to one snapshot. The provenance is the two **rule codes** and the
+  two **finding ranges** — never internal edit indices, which name nothing a user can act on. A
+  conflict rejects the whole file; no edit is dropped and no fix wins. -/
+  | conflict (leftCode rightCode : String) (left right : SourceRange)
   | invalidOutputEncoding
   deriving BEq, Repr
 
@@ -19,13 +22,23 @@ instance : ToString PatchError where
       s!"edit {index} has invalid byte range {range.start}-{range.stop} for {sourceBytes}-byte source"
     | .invalidBoundary index position =>
       s!"edit {index} position {position} is not a UTF-8 boundary"
-    | .conflict leftIndex rightIndex left right =>
-      s!"edits {leftIndex} ({left.start}-{left.stop}) and {rightIndex} \
+    | .conflict leftCode rightCode left right =>
+      s!"fixes from {leftCode} ({left.start}-{left.stop}) and {rightCode} \
         ({right.start}-{right.stop}) conflict"
     | .invalidOutputEncoding => "checked edits unexpectedly produced invalid UTF-8"
 
+/-- An edit paired with the finding it came from, so a conflict rejection can name the rule and its
+finding range rather than an anonymous array index. The inverse-patch path, which has no finding,
+uses an empty code and the edit's own range. -/
+private structure ProvenancedEdit where
+  code : String
+  findingRange : SourceRange
+  edit : Edit
+
 private structure IndexedEdit where
   index : Nat
+  code : String
+  findingRange : SourceRange
   edit : Edit
 
 /-- An all-or-nothing transformation of one immutable source snapshot. Construction owns range,
@@ -67,8 +80,9 @@ private def validateEdits (source : String) (edits : Array Edit) : Except PatchE
     unless boundaryValid source edit.range.stop do
       throw <| .invalidBoundary index edit.range.stop
 
-private def sortedEdits (edits : Array Edit) : Array IndexedEdit :=
-  (edits.mapIdx fun index edit => { index, edit }).qsort editLess
+private def sortedEdits (edits : Array ProvenancedEdit) : Array IndexedEdit :=
+  (edits.mapIdx fun index item =>
+    { index, code := item.code, findingRange := item.findingRange, edit := item.edit }).qsort editLess
 
 private def conflict? (left right : IndexedEdit) : Bool :=
   right.edit.range.start < left.edit.range.stop ||
@@ -79,7 +93,7 @@ private def conflict? (left right : IndexedEdit) : Bool :=
 private def validateConflicts (edits : Array IndexedEdit) : Except PatchError Unit := do
   for left in edits, right in edits.drop 1 do
     if conflict? left right then
-      throw <| .conflict left.index right.index left.edit.range right.edit.range
+      throw <| .conflict left.code right.code left.findingRange right.findingRange
 
 private def decode (bytes : ByteArray) : Except PatchError String :=
   match String.fromUTF8? bytes with
@@ -107,12 +121,19 @@ private def assemble (source : String)
   output := output ++ sourceBytes.extract cursor sourceBytes.size
   return (← decode output, inverse)
 
-/-- Construct one complete patch from selected fix edits. Findings without fixes are deliberately
-ignored; every selected fix participates in the same validation and conflict transaction. -/
+/-- Construct one complete patch from selected fixes. Findings without a fix are deliberately ignored,
+and so are fixes the caller has already withheld by applicability (`Application.prepareFile` strips a
+non-admitted fix to `none` before reaching here — admission is a policy decision that does not belong
+in the assembler). Every remaining fix's edits participate in the same validation and conflict
+transaction, tagged with their rule so a conflict names it. -/
 def preparePatch (source : String) (findings : Array Finding) : Except PatchError Patch := do
-  let edits := findings.filterMap (·.fix?)
-  validateEdits source edits
-  let ordered := sortedEdits edits
+  let provenanced := findings.flatMap fun finding =>
+    match finding.fix? with
+    | some fix => fix.edits.map fun edit =>
+        ({ code := finding.code, findingRange := finding.range, edit } : ProvenancedEdit)
+    | none => #[]
+  validateEdits source (provenanced.map (·.edit))
+  let ordered := sortedEdits provenanced
   validateConflicts ordered
   let (output, inverse) ← assemble source ordered
   return {
@@ -126,7 +147,9 @@ def preparePatch (source : String) (findings : Array Finding) : Except PatchErro
 and test capability; publication never relies on a lossy formatter being invertible by convention. -/
 def Patch.revert (patch : Patch) : Except PatchError String := do
   validateEdits patch.output patch.inverse
-  let ordered := sortedEdits patch.inverse
+  let provenanced := patch.inverse.map fun edit =>
+    ({ code := "", findingRange := edit.range, edit } : ProvenancedEdit)
+  let ordered := sortedEdits provenanced
   validateConflicts ordered
   return (← assemble patch.output ordered).1
 

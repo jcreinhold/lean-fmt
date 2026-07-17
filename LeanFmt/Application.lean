@@ -50,6 +50,10 @@ structure RunRequest where
   configPath? : Option FilePath := none
   select : Array String := #[]
   ignore : Array String := #[]
+  /-- Apply unsafe fixes too, not just safe ones. Governs which fixes a rendering mode admits into its
+  patch — so `format`/`diff` preview exactly what `fix` would write — and never relaxes validation or
+  conflict rejection. Display-only fixes are unaffected: nothing applies them. -/
+  unsafeFixes : Bool := false
   validationLevel : ValidationLevel := .syntax
 
 private abbrev SourceSnapshot := Project.SourceTarget
@@ -62,6 +66,10 @@ structure FileReport where
   formatted : Option String := none
   diff : Option String := none
   written : Bool := false
+  /-- Fixes this file has that were withheld because they are unsafe and `--unsafe-fixes` was off.
+  Zero once the run opts in. It is what tells a user what `--unsafe-fixes` would add rather than
+  leaving the withheld fixes invisible. -/
+  withheldUnsafe : Nat := 0
   deriving Lean.ToJson
 
 structure RunReport where
@@ -72,6 +80,7 @@ structure RunReport where
   written : Nat
   broken : Nat
   rejected : Nat
+  withheldUnsafe : Nat
   infrastructureFailures : Array String
   deriving Lean.ToJson
 
@@ -576,6 +585,9 @@ private structure PreparedFile where
   normalized : String
   lineEndings : LineEndings
   patch : Patch
+  /-- Reported findings whose fix is unsafe and was not admitted into `patch` (opt-in was off). What
+  `--unsafe-fixes` would additionally apply. -/
+  withheldUnsafe : Nat
 
 /-- The formatted text in the file's own line-ending form, i.e. what a write would produce. -/
 private def PreparedFile.output (prepared : PreparedFile) : String :=
@@ -602,9 +614,15 @@ The fixes come from `result.canonical?`'s own findings, never from `result.findi
 same rules; they index different strings. `RFP-SPEC` §6 measured the gap — canonicalizing
 `namespace     Alpha` deletes four bytes — so a `result.findings` fix applied here would land four
 columns off and corrupt the file. `findings` stays original-coordinate because it is what the report
-shows the user, whose file has not moved. -/
-private def prepareFile (plan : RulePlan) (renderCanonical : Bool) (snapshot : SourceSnapshot)
-    (analysis : SemanticAnalysis) : Except FileReport PreparedFile := do
+shows the user, whose file has not moved.
+
+**Applicability gates the patch, not the report.** Every finding with a fix is reported (with its
+effective applicability, already resolved by `plan.findings`), but only the *admitted* fixes enter the
+patch: a non-admitted fix is stripped to `none` before `preparePatch`, which then only ever assembles
+edits that will actually be published. Admission is `Applicability.admitted unsafeFixes`, the one rule
+`format`/`diff`/`fix` share, so a preview shows exactly what a write would do. -/
+private def prepareFile (plan : RulePlan) (renderCanonical unsafeFixes : Bool)
+    (snapshot : SourceSnapshot) (analysis : SemanticAnalysis) : Except FileReport PreparedFile := do
   let some result := analysis.result?
     | throw (baseReport snapshot "broken" #[] analysis.diagnostics)
   let findings := plan.findings snapshot.relativePath result.findings
@@ -613,11 +631,22 @@ private def prepareFile (plan : RulePlan) (renderCanonical : Bool) (snapshot : S
     match (if renderCanonical then result.canonical? else none) with
     | some canonical => (canonical.text, plan.findings snapshot.relativePath canonical.findings)
     | none => (normalized, findings)
-  let patch ← match preparePatch base baseFindings with
+  let admitted := baseFindings.map fun finding =>
+    match finding.fix? with
+    | some fix => if fix.applicability.admitted unsafeFixes then finding else { finding with fix? := none }
+    | none => finding
+  let patch ← match preparePatch base admitted with
     | .ok patch => pure patch
     | .error error =>
       throw (baseReport snapshot "rejected" findings #[toString error])
-  return { findings, normalized, lineEndings, patch }
+  -- Counted over reported findings (original coordinates), which are the same rules as `baseFindings`
+  -- in the same number, so the coordinate system does not matter to a count.
+  let withheldUnsafe := findings.foldl (init := 0) fun total finding =>
+    match finding.fix? with
+    | some fix => if !fix.applicability.admitted unsafeFixes && fix.applicability == .unsafe then
+        total + 1 else total
+    | none => total
+  return { findings, normalized, lineEndings, patch, withheldUnsafe }
 
 private inductive PreviewMode where
   | check
@@ -635,36 +664,39 @@ private def PreviewMode.rendersCanonical : PreviewMode → Bool
   | .check => false
   | .format | .diff => true
 
-private def previewFile (mode : PreviewMode) (plan : RulePlan) (snapshot : SourceSnapshot)
-    (analysis : SemanticAnalysis) : IO FileReport := do
-  match prepareFile plan mode.rendersCanonical snapshot analysis with
+private def previewFile (mode : PreviewMode) (plan : RulePlan) (unsafeFixes : Bool)
+    (snapshot : SourceSnapshot) (analysis : SemanticAnalysis) : IO FileReport := do
+  match prepareFile plan mode.rendersCanonical unsafeFixes snapshot analysis with
   | .error report => return report
   | .ok prepared =>
     let findings := prepared.findings
+    let withheldUnsafe := prepared.withheldUnsafe
     match mode with
     | .check =>
-      return baseReport snapshot (if findings.isEmpty then "clean" else "findings") findings
+      return { (baseReport snapshot (if findings.isEmpty then "clean" else "findings") findings) with
+        withheldUnsafe }
     | .format =>
       if prepared.changed then
         return { (baseReport snapshot "would-format" findings) with
-          formatted := some prepared.output }
-      return baseReport snapshot "clean" findings
+          formatted := some prepared.output, withheldUnsafe }
+      return { (baseReport snapshot "clean" findings) with withheldUnsafe }
     | .diff =>
       if prepared.changed then
         -- Both sides of the diff are normalized: a CRLF file must not read as every line changed.
         return { (baseReport snapshot "would-diff" findings) with
           diff := some (unifiedDiff snapshot.relativePath prepared.normalized
-            prepared.patch.formatted) }
-      return baseReport snapshot "clean" findings
+            prepared.patch.formatted), withheldUnsafe }
+      return { (baseReport snapshot "clean" findings) with withheldUnsafe }
 
-private def fixFile (run : ExactRun) (plan : RulePlan) (snapshot : SourceSnapshot)
-    (analysis : SemanticAnalysis) : IO FileReport := do
-  match prepareFile plan (renderCanonical := true) snapshot analysis with
+private def fixFile (run : ExactRun) (plan : RulePlan) (unsafeFixes : Bool)
+    (snapshot : SourceSnapshot) (analysis : SemanticAnalysis) : IO FileReport := do
+  match prepareFile plan (renderCanonical := true) unsafeFixes snapshot analysis with
   | .error report => return report
   | .ok prepared =>
     let findings := prepared.findings
+    let withheldUnsafe := prepared.withheldUnsafe
     unless prepared.changed do
-      return baseReport snapshot "clean" findings
+      return { (baseReport snapshot "clean" findings) with withheldUnsafe }
     let output := prepared.output
     -- The validator re-elaborates exactly the bytes a write would publish, line endings included.
     -- It renders no canonical text: the question is whether these bytes elaborate, and rendering a
@@ -674,16 +706,19 @@ private def fixFile (run : ExactRun) (plan : RulePlan) (snapshot : SourceSnapsho
     if let some report := validationReport snapshot findings validation then
       return report
     match ← publishAtomic snapshot.path snapshot.source output with
-    | .error message => return baseReport snapshot "rejected" findings #[message]
+    | .error message => return { (baseReport snapshot "rejected" findings #[message]) with withheldUnsafe }
     | .ok _ =>
       return { (baseReport snapshot "fixed" findings) with
         formatted := some output
-        written := true }
+        written := true
+        withheldUnsafe }
 
 def ExactRun.checkSnapshot (run : ExactRun) (plan : RulePlan)
     (snapshot : SourceSnapshot) : IO FileReport := do
   let analysis ← run.analyzeSnapshot snapshot (renderCanonical := false)
-  previewFile .check plan snapshot analysis
+  -- The editor `check` path never applies fixes, so opt-in is irrelevant to its output; it reports
+  -- every finding's applicability and withholds nothing itself.
+  previewFile .check plan (unsafeFixes := false) snapshot analysis
 
 private def summarize (mode : RunMode) (files : Array FileReport)
     (failures : Array String := #[]) : RunReport :=
@@ -696,7 +731,8 @@ private def summarize (mode : RunMode) (files : Array FileReport)
     if file.status == "broken" then total + 1 else total) 0
   let rejected := files.foldl (fun total file =>
     if file.status == "rejected" then total + 1 else total) 0
-  { mode := mode.toString, files, findings, changed, written, broken, rejected,
+  let withheldUnsafe := files.foldl (fun total file => total + file.withheldUnsafe) 0
+  { mode := mode.toString, files, findings, changed, written, broken, rejected, withheldUnsafe,
     infrastructureFailures := failures }
 
 private def recordPhase (name : String) (started finished : Nat) : IO Unit := do
@@ -748,7 +784,7 @@ def execute (request : RunRequest) : IO RunReport := do
       let mut files := #[]
       for (snapshot, cached?) in snapshots.zip cached do
         if let some analysis := cached? then
-          files := files.push (← previewFile previewMode plan snapshot analysis)
+          files := files.push (← previewFile previewMode plan request.unsafeFixes snapshot analysis)
       return summarize request.mode files
   let evidenceStarted ← IO.monoNanosNow
   let evidence ← Project.moduleEvidence project
@@ -769,7 +805,7 @@ def execute (request : RunRequest) : IO RunReport := do
     if let some previewMode := request.mode.preview? then
       let analyses := available.filterMap id
       let files ← (snapshots.zip analyses).mapM fun (snapshot, analysis) =>
-        previewFile previewMode plan snapshot analysis
+        previewFile previewMode plan request.unsafeFixes snapshot analysis
       if let some cache := cache? then
         cache.writeAll project snapshots available
       return summarize request.mode files
@@ -784,10 +820,10 @@ def execute (request : RunRequest) : IO RunReport := do
           | none => exactRun.analyzeSnapshot snapshot renderCanonical
         analyses := analyses.push (some analysis)
         let report ← match request.mode with
-          | .fix => fixFile exactRun plan snapshot analysis
-          | .check => previewFile .check plan snapshot analysis
-          | .format => previewFile .format plan snapshot analysis
-          | .diff => previewFile .diff plan snapshot analysis
+          | .fix => fixFile exactRun plan request.unsafeFixes snapshot analysis
+          | .check => previewFile .check plan request.unsafeFixes snapshot analysis
+          | .format => previewFile .format plan request.unsafeFixes snapshot analysis
+          | .diff => previewFile .diff plan request.unsafeFixes snapshot analysis
         files := files.push report
       catch error =>
         analyses := analyses.push none

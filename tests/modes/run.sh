@@ -108,7 +108,8 @@ expected = "".join(line + "\n" for line in [
     " ",
     "-def findingValue : Nat := 1" + "  ",
     "+def findingValue : Nat := 1",
-    "mode=diff files=1 findings=1 changed=1 written=0 broken=0 rejected=0 infrastructure_failures=0",
+    "mode=diff files=1 findings=1 changed=1 written=0 broken=0 rejected=0 withheld_unsafe=0 "
+    "infrastructure_failures=0",
 ])
 assert diff == expected, repr(diff)
 PY
@@ -178,7 +179,7 @@ expected = "".join(line + "\n" for line in [
     "-end Alpha",
     "\\ No newline at end of file",
     "+end Alpha",
-    "mode=diff files=1 findings=1 changed=1 written=0 broken=0 rejected=0 "
+    "mode=diff files=1 findings=1 changed=1 written=0 broken=0 rejected=0 withheld_unsafe=0 "
     "infrastructure_failures=0",
 ])
 assert diff == expected, repr(diff)
@@ -234,6 +235,64 @@ import json, sys
 r = json.load(open(sys.argv[1]))
 assert r["findings"] == r["changed"] == 0 and r["files"][0]["status"] == "clean"
 PY
+
+# Applicability travels on the finding's fix. `Findings.lean`'s one FMT001 is safe by the byte-trivia
+# argument (`notes/01-model.md` §1), so `check` reports it with an edit and nothing is withheld.
+run_expect 1 "$work/applic-check.json" "$application" check --root . --json --no-cache \
+  tests/check/Findings.lean
+python3 - "$work/applic-check.json" <<'PY'
+import json, sys
+r = json.load(open(sys.argv[1]))
+fix = r["files"][0]["findings"][0]["fix"]
+assert fix["applicability"] == "safe", fix
+assert fix["edits"] and "range" in fix["edits"][0], fix
+assert r["withheldUnsafe"] == 0, r
+PY
+
+# `extend-unsafe-fixes` demotes FMT001 as a plan projection no rule reads (`notes/01-model.md` §2).
+# The reported finding now says `unsafe`; default `fix` withholds it with no write; `--unsafe-fixes`
+# opts in and applies it. The one admission rule governs preview and write alike, so `check` above and
+# `fix` here agree on what would apply.
+cat >"$work/demote.toml" <<'EOF'
+select = ["all"]
+extend-unsafe-fixes = ["FMT001"]
+EOF
+run_expect 1 "$work/demote-check.json" "$application" check --root . --json --no-cache \
+  --config "$work/demote.toml" tests/check/Findings.lean
+python3 - "$work/demote-check.json" <<'PY'
+import json, sys
+r = json.load(open(sys.argv[1]))
+assert r["files"][0]["findings"][0]["fix"]["applicability"] == "unsafe", r
+assert r["withheldUnsafe"] == 1, r
+PY
+run_expect 0 "$work/demote-withhold.json" "$application" fix --root . --json --no-cache \
+  --config "$work/demote.toml" tests/check/Findings.lean
+metadata "$source_file" >"$work/source.after-withhold"
+cmp "$work/source.before" "$work/source.after-withhold"
+python3 - "$work/demote-withhold.json" <<'PY'
+import json, sys
+r = json.load(open(sys.argv[1]))
+assert r["written"] == 0 and r["withheldUnsafe"] == 1, r
+assert r["files"][0]["status"] == "clean", r["files"][0]
+PY
+run_expect 0 "$work/demote-apply.json" "$application" fix --root . --json --no-cache \
+  --unsafe-fixes --config "$work/demote.toml" tests/check/Findings.lean
+python3 - "$work/demote-apply.json" <<'PY'
+import json, sys
+r = json.load(open(sys.argv[1]))
+assert r["written"] == 1 and r["withheldUnsafe"] == 0, r
+assert r["files"][0]["status"] == "fixed", r["files"][0]
+PY
+cp -p "$work/Findings.lean" "$source_file"
+
+# A rule in both extend lists is a config contradiction, rejected before any file is read.
+cat >"$work/both-lists.toml" <<'EOF'
+extend-safe-fixes = ["FMT001"]
+extend-unsafe-fixes = ["FMT001"]
+EOF
+run_expect 2 "$work/both-lists.out" "$application" check --root . --json --no-cache \
+  --config "$work/both-lists.toml" tests/check/Findings.lean
+grep -q 'both extend-safe-fixes and extend-unsafe-fixes' "$work/both-lists.out.stderr"
 
 # Config path filtering, layered selector precedence, unknown-key rejection, and stderr-only
 # statistics are product behavior rather than execution strategy.

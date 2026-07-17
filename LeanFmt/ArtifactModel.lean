@@ -11,6 +11,60 @@ structure Edit where
   replacement : String
   deriving Inhabited, BEq, DecidableEq, Repr, Lean.ToJson, Lean.FromJson
 
+/-- How safe it is to apply a fix, following ruff's `Applicability`.
+
+- `safe`: the rule's stated evidence guarantees the intended runtime/proof meaning is preserved.
+  Applied by default.
+- `unsafe`: the fix is plausibly intended, but the rule cannot prove it preserves behavior, comments,
+  or intent. Shown by default; applied only under explicit opt-in (`--unsafe-fixes`, or a per-rule
+  `extend-safe-fixes` promotion).
+- `displayOnly`: never applied. It illustrates the finding for a reader or an editor; configuration
+  cannot promote it, because a rule that declined to make an edit applicable cannot be argued into it.
+
+"Safe" is a claim under the rule's evidence and is tied to the rule's tier — never merely "it
+reparses". See `docs/projects/ruff-06-fix-safety/notes/01-model.md` §1. -/
+inductive Applicability where
+  | safe
+  | «unsafe»
+  | displayOnly
+  deriving Inhabited, BEq, DecidableEq, Repr
+
+/-- The wire spelling. Explicit and kebab-cased to match the product's config vocabulary
+(`extend-safe-fixes`, `per-file-ignores`) rather than relying on a derived enum encoding. -/
+def Applicability.toWire : Applicability → String
+  | .safe => "safe"
+  | .unsafe => "unsafe"
+  | .displayOnly => "display-only"
+
+instance : ToString Applicability := ⟨Applicability.toWire⟩
+
+/-- Whether a fix of this applicability is applied under the current opt-in. Safe always; unsafe only
+with `--unsafe-fixes`; display-only never. This is the one admission rule the whole product uses, so
+`format`, `diff`, and `fix` agree on what a run would apply. -/
+def Applicability.admitted (unsafeFixes : Bool) : Applicability → Bool
+  | .safe => true
+  | .unsafe => unsafeFixes
+  | .displayOnly => false
+
+instance : Lean.ToJson Applicability := ⟨fun a => .str a.toWire⟩
+
+instance : Lean.FromJson Applicability := ⟨fun json => do
+  match ← json.getStr? with
+  | "safe" => .ok .safe
+  | "unsafe" => .ok .unsafe
+  | "display-only" => .ok .displayOnly
+  | other => .error s!"unknown applicability: {other}"⟩
+
+/-- A proposed transformation attached to a finding: one applicability governing the whole edit set.
+
+Several edits form one atomic fix — disjoint by construction — so applicability is a property of the
+fix and not of any single `Edit`, which is a byte fact carrying no judgment. `notes/01-model.md` §1
+records why this is a structure rather than a field on `Edit` or on `Finding`. -/
+structure Fix where
+  applicability : Applicability
+  edits : Array Edit
+  deriving Inhabited, BEq, DecidableEq, Repr, Lean.ToJson, Lean.FromJson
+
 inductive Severity where
   | information
   | warning
@@ -24,7 +78,7 @@ structure Finding where
   severity : Severity
   message : String
   range : SourceRange
-  fix? : Option Edit := none
+  fix? : Option Fix := none
   deriving Inhabited, BEq, DecidableEq, Repr, Lean.ToJson, Lean.FromJson
 
 /- The artifact is stored inside the successful module's `.olean`; exact toolchain, options,

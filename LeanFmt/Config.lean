@@ -20,11 +20,19 @@ structure FormatterConfig where
   selectedSelectors : Array String
   ignoredSelectors : Array String
   perFileIgnores : Array PerFileIgnore
+  extendSafeFixes : Array String
+  extendUnsafeFixes : Array String
 
 structure RulePlan where
   private mk ::
   selected : Array String
   perFileIgnores : Array PerFileIgnore
+  /-- Rule codes whose fixes are promoted to safe, and demoted to unsafe. Resolved from
+  `extend-safe-fixes`/`extend-unsafe-fixes`; a code in both is rejected at plan construction, so the
+  two arrays are disjoint by the time they land here. Display-only is never in either — it is a floor
+  configuration cannot lift (`notes/01-model.md` §2). -/
+  extendSafe : Array String
+  extendUnsafe : Array String
 
 private def normalizePath (path : String) : String :=
   path.replace "\\" "/" |>.dropPrefix "./" |>.toString
@@ -102,6 +110,8 @@ private def defaultConfig : FormatterConfig := {
   selectedSelectors := #["all"]
   ignoredSelectors := #[]
   perFileIgnores := #[]
+  extendSafeFixes := #[]
+  extendUnsafeFixes := #[]
 }
 
 private def parseConfig (table : Lake.Toml.Table) : Except String FormatterConfig := do
@@ -110,6 +120,8 @@ private def parseConfig (table : Lake.Toml.Table) : Except String FormatterConfi
   let mut selectedSelectors := #["all"]
   let mut ignoredSelectors := #[]
   let mut perFileIgnores := #[]
+  let mut extendSafeFixes := #[]
+  let mut extendUnsafeFixes := #[]
   for (key, value) in table.items do
     match keyString key with
     | "include" =>
@@ -121,10 +133,22 @@ private def parseConfig (table : Lake.Toml.Table) : Except String FormatterConfi
     | "select" => selectedSelectors ← valueStrings "select" value
     | "ignore" => ignoredSelectors ← valueStrings "ignore" value
     | "per-file-ignores" => perFileIgnores ← parsePerFileIgnores value
+    | "extend-safe-fixes" => extendSafeFixes ← valueStrings "extend-safe-fixes" value
+    | "extend-unsafe-fixes" => extendUnsafeFixes ← valueStrings "extend-unsafe-fixes" value
     | unknown => throw s!"unknown configuration key: {unknown}"
   selectorsValid selectedSelectors
   selectorsValid ignoredSelectors
-  return { includePatterns, excludePatterns, selectedSelectors, ignoredSelectors, perFileIgnores }
+  selectorsValid extendSafeFixes
+  selectorsValid extendUnsafeFixes
+  return {
+    includePatterns := includePatterns
+    excludePatterns := excludePatterns
+    selectedSelectors := selectedSelectors
+    ignoredSelectors := ignoredSelectors
+    perFileIgnores := perFileIgnores
+    extendSafeFixes := extendSafeFixes
+    extendUnsafeFixes := extendUnsafeFixes
+  }
 
 private def loadTable (path : System.FilePath) : IO Lake.Toml.Table := do
   let input ← IO.FS.readFile path
@@ -180,19 +204,53 @@ def FormatterConfig.rulePlan (config : FormatterConfig) (cliSelect cliIgnore : A
   let ignoredBy := if cliOwnsSelection then cliIgnore else config.ignoredSelectors ++ cliIgnore
   let ignored := expandSelectors ignoredBy
   let selected := expandSelectors selectedBy |>.filter (!ignored.contains ·)
+  -- Reclassification is config-only; there is no CLI spelling, so it is resolved once here from the
+  -- config's own lists. A rule in both is a contradiction, not last-writer-wins.
+  let extendSafe := expandSelectors config.extendSafeFixes
+  let extendUnsafe := expandSelectors config.extendUnsafeFixes
+  for code in extendSafe do
+    if extendUnsafe.contains code then
+      throw s!"rule {code} is in both extend-safe-fixes and extend-unsafe-fixes"
   return {
     selected
     perFileIgnores := config.perFileIgnores
+    extendSafe
+    extendUnsafe
   }
 
 private def ignoredForPath (plan : RulePlan) (path code : String) : Bool :=
   plan.perFileIgnores.any fun entry =>
     entry.pattern.matches path && (expandSelectors entry.selectors).contains code
 
+/-- The effective applicability of `code`'s fix, after per-rule reclassification. Display-only is a
+floor no promotion can lift; otherwise `extend-safe-fixes` promotes and `extend-unsafe-fixes` demotes.
+The two lists are disjoint (checked at plan construction), so the order of these tests is immaterial.
+
+A projection, never read by a rule: like selection, reclassification lives in the plan so that turning
+a fix safe cannot re-elaborate anything and a rule cannot decide its own admission. -/
+def RulePlan.effectiveApplicability (plan : RulePlan) (code : String)
+    (base : Applicability) : Applicability :=
+  match base with
+  | .displayOnly => .displayOnly
+  | _ =>
+    if plan.extendSafe.contains code then .safe
+    else if plan.extendUnsafe.contains code then .unsafe
+    else base
+
+/-- Project canonical findings onto this plan: keep the selected, non-per-file-ignored ones, and
+rewrite each surviving fix's applicability to its effective value. The reported findings therefore
+carry the applicability a user will act on; admission (which of them `fix` applies) is a separate,
+downstream decision (`Applicability.admitted`). -/
 def RulePlan.findings (plan : RulePlan) (path : String)
     (findings : Array Finding) : Array Finding :=
-  findings.filter fun finding =>
-    plan.selected.contains finding.code && !ignoredForPath plan path finding.code
+  (findings.filter fun finding =>
+    plan.selected.contains finding.code && !ignoredForPath plan path finding.code).map
+    fun finding =>
+      match finding.fix? with
+      | some fix =>
+        let applicability := plan.effectiveApplicability finding.code fix.applicability
+        { finding with fix? := some { fix with applicability } }
+      | none => finding
 
 def RulePlan.activeCount (plan : RulePlan) : Nat := plan.selected.size
 

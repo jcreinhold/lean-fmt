@@ -42,8 +42,14 @@ structure SemanticAnalysis where
 /-- `v2` adds `canonical?`. `validFor` compares this exactly, so every `v1` entry on disk is a miss
 rather than a silently under-populated hit — a `v1` entry deserialized under `v2` would carry
 `canonical? := none` from the field default and read as "this file needs no canonical text", which is
-the stale-output bug `RFP-SPEC` §7 named. The schema is what makes the default safe. -/
-def semanticResultSchema : String := "lean-fmt.semantic-result.v2"
+the stale-output bug `RFP-SPEC` §7 named. The schema is what makes the default safe.
+
+`v3` (`RFX-IMPL`): `Finding.fix?` changed from `Option Edit` to `Option Fix`, carrying applicability.
+A `Finding` round-trips through *this* cache entry (never through the `.olean`, which holds only facts),
+so the on-disk shape moved and every `v2` entry must miss. `RFX-SPEC`'s note §7 said no bump was needed
+because it read "not in the artifact" as "not serialized"; the result cache is the second place a
+`Finding` is serialized, and the same discipline that versions `canonical?` versions this. -/
+def semanticResultSchema : String := "lean-fmt.semantic-result.v3"
 
 /-- `normalized` must be `(LosslessSource.normalize raw).1`, the string every finding indexes. -/
 def SemanticAnalysis.success (normalized : String) (findings : Array Finding) : SemanticAnalysis := {
