@@ -67,13 +67,13 @@ wonky fixture through the same code path: **7, 15 and 22**.
   **`RLF-EXTENSIONS` found this rule under-applied as well as under-argued**: §5b cleared `app` by
   checking only the app's own saved position, and `evidence/04-coleq-break.txt` breaks a `theorem` with
   it. The rule was never wrong; the exemption was. See `results/04-extensions.md` and `Tree.mayCollapse`.
-- **`matchAlt`'s collapse was withdrawn by `RLF-EXTENSIONS`, and this document's `match_slack` claims
-  should be read as scope rather than as behavior.** The guard that makes the term layer
-  parse-preserving is kind-free of necessity — a custom `syntax` can declare `withPosition` and `colEq`
-  (`Lean/Parser.lean:39-42, 50`), so no census of kinds can be finished — and it therefore refuses every
-  collapse inside a multi-line command, which is every match alternative there is. The grammar reading
-  in §5 stands; what is gone is the printer's ability to act on it. `match_slack=0` on the sample, so
-  the withdrawal costs nothing measurable and is visible only in `tests/printer/run.sh`'s golden.
+- **`matchAlt`'s collapse *across lines* was withdrawn by `RLF-EXTENSIONS`.** The guard that makes the
+  term layer parse-preserving is kind-free of necessity — a custom `syntax` can declare `withPosition`
+  and `colEq` (`Lean/Parser.lean:39-42, 50`), so no census of kinds can be finished — and it therefore
+  refuses every collapse inside a multi-line command. The grammar reading in §5 stands; what is gone is
+  the printer's ability to act on it. Alternatives written on **one** line still collapse, so the entry
+  and `match_slack` both stay live. `match_slack=0` on the sample, so the withdrawal costs nothing
+  measurable and is visible only in `tests/printer/run.sh`'s golden.
 - **The design-twice conclusion was corrected by a mutation.** See below.
 
 ## The interface, designed twice (Plan step 2)

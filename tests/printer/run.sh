@@ -497,15 +497,19 @@ LEAN_NUM_THREADS=1 lake env "$application" __analyze-exact \
 # is not what changed -- `matchAlts` really does save at the first `|` and the collapse really is
 # safe. `Tree.mayCollapse` cannot use that, because it is kind-free by necessity: it cannot tell
 # `matchAlts` spanning lines (harmless) from a custom `withPosition(term colEq term)` spanning lines
-# (a broken parse, `evidence/04-coleq-break.txt`), and a match alternative is always inside a
-# multi-line command. So `spacingOf`'s `matchAlt` entry is now unreachable on every input, and the
-# three `match_slack` fixtures below measure a layout the guard will not run.
+# (a broken parse, `evidence/04-coleq-break.txt`), and every alternative in THIS fixture is inside a
+# multi-line command.
 #
-# This is a real capability regression against `RLF-EXPRESSIONS`, taken deliberately because the
-# alternative was emitting Lean this printer cannot re-read, and priced at zero on real code:
-# `match_slack=0` across all 62 sample modules. Recovering it needs the thing `RLF-EXTENSIONS` is
-# named for -- a registration boundary listing the cross-line kinds whose grammar this stack has read
-# and cleared, with refusal as the default for everything the corpus declares itself.
+# The entry is not dead, and `inline.lean` below proves it: alternatives written on one line still
+# collapse. What the guard withdrew is "matchAlt spread across lines", not "matchAlt".
+#
+# It is still a real regression against `RLF-EXPRESSIONS`, taken deliberately because the alternative
+# was emitting Lean this printer cannot re-read, and priced at zero on real code: `match_slack=0`
+# across all 62 sample modules. Recovering the cross-line case needs a table of the cross-line kinds
+# whose grammar this stack has read and cleared. `RLF-EXTENSIONS` refused to build it, on the ground
+# `notes/02-expressions.md` §6 already refused the notation table: every entry is a claim about
+# `Lean/Parser/Term.lean` that goes stale silently, and it would buy back a collapse that fires zero
+# times on real Lean.
 #   `(  /- why -/  x : Nat)`         the refusal is **the gap's alone, and the rest of the binder is
 #                                    still laid out**. The comment sits in the first gap, so that gap
 #                                    keeps all of its bytes -- the tight rule is precisely what would
@@ -978,6 +982,31 @@ else
   failures=$((failures + 1))
 fi
 
+# `matchAlt` is NOT dead, and this is the fixture that says so. The golden above keeps every
+# multi-line alternative's bytes, which makes it look as though `spacingOf`'s `matchAlt` entry can
+# never fire -- an earlier revision of this file claimed exactly that, and it is false. Alternatives
+# are legal on one line, and there `mayCollapse` is true and the layout runs. So the entry stays,
+# `match_slack` stays a real counter, and what the guard withdrew is narrower than "matchAlt": it is
+# "matchAlt spread across lines".
+cat >"$work/inline.lean" <<'FIXTURE'
+module
+
+def inlineMatch (x : Nat) : Nat := match x with |     0     =>     1 |     n     =>     n
+
+def inlineAlts : Nat → Nat |     0     =>     1 |     n     =>     n
+FIXTURE
+LEAN_NUM_THREADS=1 lake env "$application" __analyze-exact \
+  "$work/borrowed.setup.json" "$work/inline.lean" "inline.lean" 8589934592 >"$work/inline.json"
+"$tests" printer-format "$work/inline.json" "$work/inline.lean" 200 >"$work/inline.out"
+if grep -qF 'def inlineMatch (x : Nat) : Nat := match x with | 0 => 1 | n => n' "$work/inline.out" &&
+   grep -qF 'def inlineAlts : Nat → Nat | 0 => 1 | n => n' "$work/inline.out"; then
+  printf '  ok   a one-line match still collapses; matchAlt is not dead code\n'
+else
+  printf 'FAIL a one-line match did not collapse, so spacingOf'\''s matchAlt entry is unreachable:\n' >&2
+  cat "$work/inline.out" >&2
+  failures=$((failures + 1))
+fi
+
 # The custom `colEq`, which is why the guard asks about the command and not about nodes. A user's
 # `withPosition(term:max colEq term:max)` compiles to NO node -- the only node here opens at `tbl`,
 # LEFT of the gap inside `(id     1)` -- so a census of nodes starting to the gap's right looks
@@ -1017,6 +1046,74 @@ if LEAN_NUM_THREADS=1 lake env "$application" __analyze-exact \
 else
   printf 'FAIL the printer emitted Lean it cannot re-read:\n' >&2
   cat "$work/coleq.out.json" "$work/coleq.out.err" >&2
+  failures=$((failures + 1))
+fi
+
+# --- the extension boundary: the four cases RLF-EXTENSIONS names ---
+#
+# `twice` is syntax declared earlier in the same file, `oplus` is scoped notation, `quoted` is a macro
+# quotation, and `mixed` is a built-in tree under a custom head. The boundary is two closed matches
+# with conservative defaults -- `canonical? | _ => none` and `spacingOf | _ => .keep` -- and what this
+# pins is that `.keep` is not a wall. `termDoc` recurses through a kind it cannot read, so `twice`'s
+# and `oplus`'s own gaps keep their bytes while the built-in `app` nested inside them is still laid
+# out. That is what makes the default lossless rather than lazy, and it is only sound because
+# `mayCollapse` has already established that nothing here is measured across a line break.
+printf -- '--- the extension boundary ---\n'
+cat >"$work/ext.lean" <<'FIXTURE'
+module
+
+namespace Ext
+
+syntax:max "twice " term : term
+macro_rules | `(twice $x) => `(($x, $x))
+
+def usesTwice : Nat × Nat := twice (id     1)
+
+scoped notation:65 a " oplus " b => (a, b)
+
+def usesScoped : Nat × Nat := (id     1) oplus (id     2)
+
+open Lean in
+def quoted (stx : Term) : MacroM Term := `($stx + $stx)
+
+def mixed : Nat × Nat := twice (id     (1 + 2))
+
+end Ext
+FIXTURE
+LEAN_NUM_THREADS=1 lake env "$application" __analyze-exact \
+  "$work/borrowed.setup.json" "$work/ext.lean" "ext.lean" 8589934592 >"$work/ext.json"
+"$tests" printer-format "$work/ext.json" "$work/ext.lean" 100 >"$work/ext.out"
+
+if grep -qF 'def usesTwice : Nat × Nat := twice (id 1)' "$work/ext.out" &&
+   grep -qF 'def usesScoped : Nat × Nat := (id 1) oplus (id 2)' "$work/ext.out" &&
+   grep -qF 'def mixed : Nat × Nat := twice (id (1 + 2))' "$work/ext.out"; then
+  printf '  ok   the walk descends through custom syntax and lays out the built-ins inside it\n'
+else
+  printf 'FAIL a `.keep` kind stopped the walk; the fallback is meant to recurse, not to wall off:\n' >&2
+  diff -u "$work/ext.lean" "$work/ext.out" >&2 || true
+  failures=$((failures + 1))
+fi
+
+# The custom heads themselves are never respaced -- there is no grammar here this printer can read,
+# so `twice `, ` oplus ` and the quotation keep every byte they were written with.
+if grep -qF 'scoped notation:65 a " oplus " b => (a, b)' "$work/ext.out" &&
+   grep -qF 'def quoted (stx : Term) : MacroM Term := `($stx + $stx)' "$work/ext.out" &&
+   grep -qF 'macro_rules | `(twice $x) => `(($x, $x))' "$work/ext.out"; then
+  printf '  ok   custom heads, scoped notation and quotations keep their bytes\n'
+else
+  printf 'FAIL the printer respaced syntax whose declaration it cannot read:\n' >&2
+  diff -u "$work/ext.lean" "$work/ext.out" >&2 || true
+  failures=$((failures + 1))
+fi
+
+if LEAN_NUM_THREADS=1 lake env "$application" __analyze-exact \
+     "$work/borrowed.setup.json" "$work/ext.out" "ext.out.lean" 8589934592 \
+     >"$work/ext.out.json" 2>"$work/ext.out.err" &&
+   grep -qF '"artifact"' "$work/ext.out.json"; then
+  printf '  ok   the formatted extension module still parses\n'
+else
+  printf 'FAIL formatting a module of custom syntax produced Lean that does not parse:\n' >&2
+  cat "$work/ext.out.json" "$work/ext.out.err" >&2
   failures=$((failures + 1))
 fi
 

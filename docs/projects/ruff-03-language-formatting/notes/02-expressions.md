@@ -198,15 +198,25 @@ deferred under any model of spacing.
 > `expected checkColEq`. Asking the command needs no census: if a check's two ends straddle a break, the
 > smallest node holding both spans one, so the command does too. One line in, one line out.
 >
-> **This costs `matchAlt` its collapse, and §5 should be read with that in mind.** A match alternative
-> is always inside a multi-line command, so `spacingOf`'s `matchAlt` entry is now unreachable and the
-> golden in `tests/printer/run.sh` keeps `|     0     =>     1` verbatim. Nothing in §5's grammar
-> reading was wrong: `matchAlts` saves at the first `|`, left of every token a same-line collapse can
-> move, and the collapse really is safe. `mayCollapse` simply cannot use that fact without being able to
-> tell `matchAlts` spanning lines from `termTbl` spanning lines, which is precisely the boundary
-> `RLF-EXTENSIONS` is named for and has not yet built. On real code the price is zero — `match_slack=0`
-> over all 62 modules — so this is a fixture-visible regression, taken over emitting Lean the printer
-> cannot re-read.
+> **This costs `matchAlt` its collapse *across lines*, and §5 should be read with that in mind.** The
+> golden in `tests/printer/run.sh` now keeps `|     0     =>     1` verbatim wherever the alternatives
+> are written one per line, because that is a multi-line command. Nothing in §5's grammar reading was
+> wrong: `matchAlts` saves at the first `|`, left of every token a same-line collapse can move, and the
+> collapse really is safe. `mayCollapse` simply cannot use that fact without being able to tell
+> `matchAlts` spanning lines from `termTbl` spanning lines.
+>
+> **The entry is not dead, and the distinction is worth keeping straight.** `def inlineAlts : Nat → Nat
+> | 0 => 1 | n => n` is a one-line command, so `mayCollapse` is true and the layout runs; `inline.lean`
+> in `tests/printer/run.sh` holds it. An earlier revision of this correction claimed the entry was
+> "unreachable on every input", which was false and was not measured before being written down.
+>
+> **The table that would buy the cross-line case back is refused, on §6's own ground.** It would list
+> the cross-line kinds whose grammar this stack has read and cleared — `matchAlts` saves at its own
+> first token, `termTbl` does not — with refusal as the default. Every entry is a claim about
+> `Lean/Parser/Term.lean` that goes stale silently the moment that file changes, which is exactly why §6
+> refused to hardcode the notations, and it would buy back a collapse that fires **zero** times on real
+> Lean: `match_slack=0` over all 62 modules. `results/02-expressions.md` already refused the hybrid atom
+> model for the same reason — expressiveness with no claim behind it.
 
 ## 6. What is not citable, and is therefore deferred
 

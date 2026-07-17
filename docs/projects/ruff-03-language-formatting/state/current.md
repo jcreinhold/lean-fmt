@@ -1,6 +1,6 @@
 ---
 kind: state
-first_unresolved: 04-extensions
+first_unresolved: 05-corpus
 ---
 
 # Current state
@@ -47,7 +47,7 @@ Printing inside the frontend would buy free arg order for a median 1.96 s fronte
 | 01-commands | RLF-COMMANDS | verified | — |
 | 02-expressions | RLF-EXPRESSIONS | verified | RLF-COMMANDS |
 | 03-tactics | RLF-TACTICS | verified | RLF-EXPRESSIONS |
-| 04-extensions | RLF-EXTENSIONS | planned | RLF-TACTICS |
+| 04-extensions | RLF-EXTENSIONS | verified | RLF-TACTICS |
 | 05-corpus | RLF-FINAL | planned | RLF-EXTENSIONS |
 
 **`RLF-EXPRESSIONS` is verified** (`results/02-expressions.md`). `Term.app`, the three bracketed
@@ -105,6 +105,43 @@ emits a blank line.) And **`Doc.align`, not effort, is what stands between this 
 `sepByIndent.formatter`'s own answer is `pushAlign (force := true)` (`:224`) — it aligns because it must
 inherit a column it did not choose. `ruff-02` decided `Doc` has no align, by design and in writing
 (`Doc.lean:71-73`), and that decision is verified and closed to this stack.
+
+**`RLF-EXTENSIONS` is verified, and its finding is that the term layer was not parse-preserving**
+(`results/04-extensions.md`). The registration boundary the prompt asks for was already there and is
+not a registry: `Tree.canonical? | _ => none` and `spacingOf | _ => .keep` are the two closed matches,
+a kind is registered iff this stack has read its declaration and written the citation down, and the
+default keeps its bytes. The four named cases — same-file `syntax`, scoped `notation`, macro
+quotations, mixed trees — all pass, and none of them was the hard part.
+
+**The hard part was that descending into an unread kind and collapsing inside it emits Lean this
+printer cannot re-read.** `theorem tA : (id     True) := by skip` / `trivial` parses; collapsing the
+app moved `skip` four columns left while `trivial` did not move, and `sepByIndent`'s separator is
+`checkColEq >> checkLinebreakBefore` (`Extra.lean:202-208`), so `trivial` fell out of the block.
+`notes/02-expressions.md` §5b had the governing rule right and then **cleared `app` under it by
+checking only the app's own saved position** — the one that breaks belongs to a block opened to the
+app's *right on the same line*. Both breaks are in `evidence/04-coleq-break.txt`, input and output
+re-analyzed.
+
+**The first fix was defeated by a custom `colEq`, and that is why the shipped guard asks about the
+command rather than about nodes.** A user's `withPosition(term:max colEq term:max)` compiles to **no
+node at all** — the only node opens at `tbl`, left of the gap — so a census of cross-line nodes opening
+to a gap's right looks straight past it; `tacticSeq1Indented` was caught only because it happens to be
+its own node. `colGt`, `colGe`, `colEq`, `lineEq` and `withPosition` are registered parser aliases
+(`Lean/Parser.lean:39-42, 50`), so the corpus can declare a live column check anywhere and no census of
+kinds can be finished. `Tree.mayCollapse` needs none: same-line pairs cannot flip (a collapse never
+reorders and never closes a gap below one space), so the hazard needs a check straddling a break — and
+if a check straddles a break the smallest node holding both ends does too, so the command does. One
+line in, one line out.
+
+**Seventh no-op, and it is the same one.** The layer's whole effect is narrowing a same-line run of
+spaces (`gapDoc` sends any gap with a newline to `.verbatim`), and `app_slack=0`, `binder_slack=0`,
+`match_slack=0` say real Lean has no such run. So the guard costs nothing on the sample — `reformatted`
+is still 12 — and is carried by fixtures instead. What it does cost is `matchAlt` **spread across
+lines** (`wonky`: 47 rewritten lines → 39). One-line alternatives still collapse, so the entry is not
+dead; an earlier revision claimed it was, without measuring, and that is corrected. The table that
+would buy the cross-line case back is designed and refused in `notes/04-extensions.md` §5, on §6's own
+ground: every entry is a claim about `Lean/Parser/Term.lean` that goes stale silently, and it would
+recover a collapse that fires zero times.
 
 ## Known evidence
 
