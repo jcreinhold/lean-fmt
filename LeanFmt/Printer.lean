@@ -853,74 +853,64 @@ private def Spacing.separator (spacing : Spacing) (index count : Nat) : Option S
   -- two independent tests rather than an if/else.
   | .bracketed => if index == 0 || index + 2 == count then some "" else some " "
 
-/-- May this collapse run, or would it move a column a later line is measured against?
+/-- May a collapse inside this command run at all, or would it move a column another line measures?
 
-**This is the guard `evidence/04-coleq-break.txt` exists for, and without it the printer emits Lean it
-cannot re-read.** `theorem tA : (id     True) := by skip` / `trivial` parses; collapsing the app to
-`(id True)` moves `skip` four columns left while `trivial`, on the next line, does not move, and
-`sepByIndent`'s separator is `checkColEq … >> checkLinebreakBefore` (`Parser/Extra.lean:202-208`) — so
-`trivial` stops being a tactic and becomes a bogus command. `notes/02-expressions.md` §5b stated the
-governing rule correctly and then cleared `app` under it by looking only at the app's *own* saved
-position; the block's `withPosition` saves at the **first tactic**, which is to the app's right.
+**Both breaks in `evidence/04-coleq-break.txt` are this predicate returning `true` when it must not.**
+`theorem tA : (id     True) := by skip` / `trivial` parses; collapsing the app to `(id True)` moves
+`skip` four columns left while `trivial`, on the next line, does not move, and `sepByIndent`'s
+separator is `checkColEq … >> checkLinebreakBefore` (`Parser/Extra.lean:202-208`) — so `trivial` stops
+being a tactic and becomes a bogus command. `notes/02-expressions.md` §5b stated the governing rule
+correctly and then cleared `app` under it by looking only at the app's *own* saved position; the
+block's `withPosition` saves at the **first tactic**, which is to the app's right.
 
 **Only a cross-line comparison can flip.** A collapse never reorders and never closes a same-line gap
 below one space, so for two tokens on the collapse's line `colGt` stays true and `colEq` stays false
 however far either slides. Tokens on other lines do not move at all. So the whole hazard is a saved
-position that moves while what it is compared against does not — and that requires a check whose two
-ends straddle a line break.
+position that moves while what it is compared against does not, and that needs a check whose two ends
+straddle a line break.
 
-Hence the test, asked of each **gap** rather than of the claim: refuse if any node starting at-or-right
-of the gap, on the gap's line, runs past that line. Such a node is the only place a moved saved
-position can be compared against an unmoved one. Everything starting *left* of the gap keeps its
-column, and everything on a later line keeps its column, so neither can be broken by bytes deleted
-here.
+**A single-line command has no such check, and that is the whole proof.** Say a check compares `P`,
+right of some gap and on its line, against `Q` on another line. The smallest node holding both spans a
+line break, and it lies inside the command, so the command spans one too. Contrapositive: if the
+command is one line, no gap in it can move a column any other line measures. Nothing weaker is needed
+and nothing about *which kinds* is asked.
 
-Per gap, and not per claim, because a claim spanning a line break collapses on more than one line and
-each line answers this differently. `wonky`'s `|     0     =>` / `1` is the case that forces it: the
-alternative straddles a break, so a claim-level test refuses it — but `many1Indent` saves at the first
-`|`, which is *left* of both gaps and does not move, and the collapse is safe. Anchoring at the gap
-keeps it.
+**It has to be the command and not the node, because a `withPosition` is not a node.** The first
+attempt at this refused a gap when a cross-line *node* opened to its right, which caught
+`tacticSeq1Indented` — but only because that block happens to be its own node, opening at the first
+tactic. `syntax:max "tbl " term ppSpace withPosition(term:max colEq term:max) : term` compiles to no
+node at all for its `withPosition`, and the node that does exist opens at `tbl`, *left* of the gap
+inside `(id     1)`. So the census looked straight past it and the printer emitted
+`expected checkColEq`. Asking the command sidesteps every such question: `colGt`, `colGe`, `colEq`,
+`lineEq` and `withPosition` are registered parser aliases (`Lean/Parser.lean:39-42, 50`), so custom
+`syntax` can put a live column check anywhere, and no census of *this* tree can promise to find it.
+That is the ground `notes/02-expressions.md` §6 already refused to hardcode notations on.
 
-**A node starting left of the gap is excluded, and that is what makes `matchAlt` legal.** The
-alternative's own node opens at `|`, before the gap that follows `|`, so it is not in this test's way;
-`tacticSeq1Indented` opens at `skip`, after the gap inside `(id     True)`, so it is.
+**The second clause is about the next command, not this one.** A command sharing its last line with the
+one after it moves that command's first token, and no fact about this command's own tokens can see it —
+`Tree.command` emits the bytes between commands verbatim, which keeps them but not their columns.
+`dE`/`tF` in `tests/printer/run.sh` is that case.
 
-**Kinds are not consulted, and that is the point.** A table of the layout-sensitive kinds would refuse
-`tacticSeq1Indented` and miss the next one, and it could never contain a *custom* one: `colGt`, `colGe`,
-`colEq`, `lineEq`, and `withPosition` are all registered parser aliases (`Lean/Parser.lean:39-42, 50`),
-so user `syntax` can declare exactly this shape and no table this printer can read would list it. That
-is the same ground on which `notes/02-expressions.md` §6 refused to hardcode the notations.
+**Asked of the command's tokens and not of its `extent`**, which runs to the end of the last token's
+*trailing* run and so reaches the next command's line for every command that has a blank line after it
+— i.e. nearly all of them. Reading `extent` here silently answers "multi-line" for a one-line `def` and
+turns the whole layer off; `tests/printer/run.sh` catches that, because `tB` and `dC` must still
+collapse.
 
-The frozen sample cannot see this guard: `app_slack`, `binder_slack`, and `match_slack` are all 0, so
-no collapse fires on any of the 62 modules and every restriction of it is free there. It is carried by
-`tests/printer/run.sh` instead, which is why that fixture asserts the break directly. -/
-private def respectsLines (normalized : String) (crossLine : Array Nat) (start : Nat) : Bool :=
-  !crossLine.any (fun other => start ≤ other && sameLine normalized start other)
-
-/-- Every node that opens on one line and closes on a later one, by its opening byte, in source order.
-
-The census the collapse guard is asked against. Built once per command rather than per gap, because
-`respectsLines` runs on every gap of every claim and rebuilding this under it would be quadratic in the
-command.
-
-**The last entry is not a node.** A command that shares its final line with the *next* command can move
-that command's first token, and a command's own subtree cannot see it — so when anything non-blank
-follows the extent on its line, the extent's end goes in as a sentinel and every gap on that line is
-refused. `Tree.command` emits the bytes between commands verbatim, which keeps them but does not keep
-their columns. Two commands on one line is rare enough that no sample here has it and cheap enough to
-refuse outright rather than measure. -/
-private def Tree.crossLineStarts (tree : Tree) (normalized : String) (span : CommandSpan) : Array Nat :=
-  Id.run do
-    let mut starts : Array Nat := #[]
-    for node in [span.root:tree.subtreeEnd[span.root]!] do
-      let some (first, last) := tree.subtreeTokens node | continue
-      let some a := tree.source.tokens[first]? | continue
-      let some b := tree.source.tokens[last]? | continue
-      if !sameLine normalized a.start b.stop then starts := starts.push a.start
-    let after := sliceNormalized normalized span.extent.stop normalized.utf8ByteSize
-    let restOfLine := after.takeWhile (· != '\n')
-    if !restOfLine.all Char.isWhitespace then starts := starts.push span.extent.stop
-    return starts
+**What this costs, stated plainly.** The layer now collapses only inside one-line commands, so
+`wonky`'s `|     0     =>` / `1` keeps its bytes even though `many1Indent` saves at the first `|`,
+left of both gaps, and the collapse is provably safe. Clearing it needs a table of which cross-line
+kinds carry no live check — a real claim per kind, which `RLF-EXTENSIONS` did not measure and would
+not be able to finish for a corpus that declares its own syntax. On real Lean the whole question is
+priced at zero: `app_slack`, `binder_slack` and `match_slack` are 0 across all 62 sample modules, so
+no collapse fires there under either rule. The fixtures carry it instead. -/
+private def Tree.mayCollapse (tree : Tree) (normalized : String) (span : CommandSpan) : Bool :=
+  match tree.source.tokens[span.first]?, tree.source.tokens[span.last]? with
+  | some first, some last =>
+    let after := sliceNormalized normalized last.stop normalized.utf8ByteSize
+    sameLine normalized first.start last.stop &&
+      (after.takeWhile (· != '\n')).all Char.isWhitespace
+  | _, _ => false
 
 /-- The bytes between two of a node's parts, or the separator its grammar declares there.
 
@@ -934,15 +924,14 @@ an argument, the same way `structFields`'s `manyIndent` makes field indentation 
 An **empty** gap passes that test and is a real case rather than a no-op: the declared `" : "` is a
 pretty-printing string, not a parsing one, so `(x :A)` parses and canonicalizes to `(x : A)`. This is
 the only place the layouts *add* a space rather than collapse one. -/
-private def Tree.gapDoc (tree : Tree) (normalized : String) (crossLine : Array Nat) (spacing : Spacing)
+private def Tree.gapDoc (tree : Tree) (normalized : String) (mayCollapse : Bool) (spacing : Spacing)
     (index count : Nat) (prior part : Part) : Doc :=
-  let anchor := (tree.source.tokens[prior.last]?.map (·.stop)).getD 0
   let raw := match tree.source.tokens[prior.last]?, tree.source.tokens[part.first]? with
     | some a, some b => sliceNormalized normalized a.stop b.start
     | _, _ => ""
   match spacing.separator index count with
   | some separator =>
-    if raw.all (· == ' ') && respectsLines normalized crossLine anchor then
+    if raw.all (· == ' ') && mayCollapse then
       (if separator.isEmpty then .empty else .text separator)
     else .verbatim raw
   | none => .verbatim raw
@@ -954,7 +943,7 @@ become bytes wholesale — its parts are recursed into and only the gaps *betwee
 bytes. So an `app` nested inside a `paren` inside a notation is still found and still collapsed, while
 every byte no layout claimed survives untouched. A node with no parts contributes nothing, which is
 the absent-syntax case. -/
-private partial def Tree.termDoc (tree : Tree) (normalized : String) (crossLine : Array Nat)
+private partial def Tree.termDoc (tree : Tree) (normalized : String) (mayCollapse : Bool)
     (node : Nat) : Doc := Id.run do
   let spacing := spacingOf (tree.kindOf node)
   let parts := if spacing == .keep then tree.parts node else tree.liftedParts node
@@ -963,9 +952,9 @@ private partial def Tree.termDoc (tree : Tree) (normalized : String) (crossLine 
   let mut previous : Option Part := none
   for part in parts do
     if let some prior := previous then
-      doc := doc ++ tree.gapDoc normalized crossLine spacing (index - 1) parts.size prior part
+      doc := doc ++ tree.gapDoc normalized mayCollapse spacing (index - 1) parts.size prior part
     doc := doc ++ (match part.child with
-      | some child => tree.termDoc normalized crossLine child
+      | some child => tree.termDoc normalized mayCollapse child
       | none => .verbatim (tree.tokenSpanText normalized part.first part.last))
     previous := some part
     index := index + 1
@@ -982,7 +971,7 @@ come out in source order with no sort.
 **The overlap test against the shells is not defensive.** `declModifiers` can hold an attribute, an
 attribute can take an argument, and an argument is a term — so a term really can sit inside the region
 `declarationShell?` already claimed, and two claims over the same tokens would duplicate them. -/
-private def Tree.termClaims (tree : Tree) (normalized : String) (crossLine : Array Nat) (root : Nat)
+private def Tree.termClaims (tree : Tree) (normalized : String) (mayCollapse : Bool) (root : Nat)
     (taken : Array Claim) : Array Claim := Id.run do
   let mut claims : Array Claim := #[]
   let mut skipUntil := root
@@ -991,7 +980,7 @@ private def Tree.termClaims (tree : Tree) (normalized : String) (crossLine : Arr
     if spacingOf (tree.kindOf node) == .keep then continue
     let some (first, last) := tree.subtreeTokens node | continue
     if taken.any (fun claim => first ≤ claim.last && claim.first ≤ last) then continue
-    claims := claims.push { first, last, doc := tree.termDoc normalized crossLine node }
+    claims := claims.push { first, last, doc := tree.termDoc normalized mayCollapse node }
     skipUntil := tree.subtreeEnd[node]!
   return claims
 
@@ -1018,8 +1007,8 @@ private def Tree.claims (tree : Tree) (normalized : String) (span : CommandSpan)
   | some (last, doc) =>
     let shells := #[{ first := span.first, last, doc : Claim }] ++
       tree.memberClaims normalized span.root last
-    let crossLine := tree.crossLineStarts normalized span
-    (shells ++ tree.termClaims normalized crossLine span.root shells).qsort (·.first < ·.first)
+    let mayCollapse := tree.mayCollapse normalized span
+    (shells ++ tree.termClaims normalized mayCollapse span.root shells).qsort (·.first < ·.first)
 
 /-- How many member shells this module's layouts claimed.
 

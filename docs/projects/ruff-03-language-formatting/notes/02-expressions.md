@@ -184,11 +184,29 @@ deferred under any model of spacing.
 > record-shaped to be caught by §5b; it only had to share a line with something that was.
 >
 > So this section's diagnosis of records stands unchanged, and its list of who is safe does not. What
-> replaces "which kind is collapsing" is `respectsLines` in `LeanFmt/Printer.lean`, which asks the
-> question §5b actually poses — is any column here measured against another line? — of each **gap**, and
-> consults no kind at all. That last part is what §6 already demanded: a custom `syntax` can declare
-> `withPosition` and `colEq` itself (`Lean/Parser.lean:39-42, 50`), so any answer phrased as a list of
-> kinds is one this printer cannot finish writing.
+> replaces "which kind is collapsing" is `Tree.mayCollapse` in `LeanFmt/Printer.lean`, which asks the
+> question §5b actually poses — is any column here measured against another line? — of the **enclosing
+> command**, and consults no kind at all. That last part is what §6 already demanded: a custom `syntax`
+> can declare `withPosition` and `colEq` itself (`Lean/Parser.lean:39-42, 50`), so any answer phrased as
+> a list of kinds is one this printer cannot finish writing.
+>
+> **The command, and not the node, and the second break in that evidence file is why.** A first attempt
+> refused a gap when a cross-line *node* opened to its right. That caught `by skip` / `trivial` — but
+> only by luck, because `tacticSeq1Indented` happens to be its own node opening at the first tactic. A
+> custom `withPosition(term:max colEq term:max)` compiles to **no node at all**, and the node that does
+> exist opens *left* of the gap, so the census looked past it and the printer emitted
+> `expected checkColEq`. Asking the command needs no census: if a check's two ends straddle a break, the
+> smallest node holding both spans one, so the command does too. One line in, one line out.
+>
+> **This costs `matchAlt` its collapse, and §5 should be read with that in mind.** A match alternative
+> is always inside a multi-line command, so `spacingOf`'s `matchAlt` entry is now unreachable and the
+> golden in `tests/printer/run.sh` keeps `|     0     =>     1` verbatim. Nothing in §5's grammar
+> reading was wrong: `matchAlts` saves at the first `|`, left of every token a same-line collapse can
+> move, and the collapse really is safe. `mayCollapse` simply cannot use that fact without being able to
+> tell `matchAlts` spanning lines from `termTbl` spanning lines, which is precisely the boundary
+> `RLF-EXTENSIONS` is named for and has not yet built. On real code the price is zero — `match_slack=0`
+> over all 62 modules — so this is a fixture-visible regression, taken over emitting Lean the printer
+> cannot re-read.
 
 ## 6. What is not citable, and is therefore deferred
 

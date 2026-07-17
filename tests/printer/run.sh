@@ -491,6 +491,21 @@ LEAN_NUM_THREADS=1 lake env "$application" __analyze-exact \
 #                                    `matchAlts` saves its position at the *first* `|`
 #                                    (`:279-280`), at the start of a line, left of every token a
 #                                    same-line collapse can move. That is the test `structInst` fails.
+#
+# READ THE GOLDEN BEFORE THIS COMMENT: every `matchAlt` gap above now KEEPS ITS BYTES, and the
+# paragraph either side of this one describes a collapse that no longer happens. The grammar reading
+# is not what changed -- `matchAlts` really does save at the first `|` and the collapse really is
+# safe. `Tree.mayCollapse` cannot use that, because it is kind-free by necessity: it cannot tell
+# `matchAlts` spanning lines (harmless) from a custom `withPosition(term colEq term)` spanning lines
+# (a broken parse, `evidence/04-coleq-break.txt`), and a match alternative is always inside a
+# multi-line command. So `spacingOf`'s `matchAlt` entry is now unreachable on every input, and the
+# three `match_slack` fixtures below measure a layout the guard will not run.
+#
+# This is a real capability regression against `RLF-EXPRESSIONS`, taken deliberately because the
+# alternative was emitting Lean this printer cannot re-read, and priced at zero on real code:
+# `match_slack=0` across all 62 sample modules. Recovering it needs the thing `RLF-EXTENSIONS` is
+# named for -- a registration boundary listing the cross-line kinds whose grammar this stack has read
+# and cleared, with refusal as the default for everything the corpus declares itself.
 #   `(  /- why -/  x : Nat)`         the refusal is **the gap's alone, and the rest of the binder is
 #                                    still laid out**. The comment sits in the first gap, so that gap
 #                                    keeps all of its bytes -- the tight rule is precisely what would
@@ -632,21 +647,21 @@ def binderInst [Inhabited Nat] : Nat := default
 def binderCommented (  /- why -/  x : Nat) : Nat := x
 
 def matchAlt : Nat → Nat
-  | 0 => 1
-  | n => n
+  |     0     =>     1
+  |     n     =>     n
 
 def matchAltPaired : Nat → Nat → Nat
-  | 0,     m => m
-  | n,     _ => n
+  |     0,     m     =>     m
+  |     n,     _     =>     n
 
 def matchAltCommented : Nat → Nat
-  |     /- why -/     0 => 1
-  | n => n
+  |     /- why -/     0     =>     1
+  |     n     =>     n
 
 def matchAltBroken : Nat → Nat
-  | 0 =>
+  |     0     =>
     1
-  | n => n
+  |     n     =>     n
 
 structure Str     where
   field     : Nat
@@ -960,6 +975,34 @@ if grep -qF 'def dE : Nat := (id     1)  theorem tF' "$work/coleq.out"; then
 else
   printf 'FAIL dE collapsed; it moves tF'\''s `by` block, which is not in dE'\''s subtree:\n' >&2
   cat "$work/coleq.out" >&2
+  failures=$((failures + 1))
+fi
+
+# The custom `colEq`, which is why the guard asks about the command and not about nodes. A user's
+# `withPosition(term:max colEq term:max)` compiles to NO node -- the only node here opens at `tbl`,
+# LEFT of the gap inside `(id     1)` -- so a census of nodes starting to the gap's right looks
+# straight past it, and an earlier version of this guard did exactly that and emitted
+# `expected checkColEq`. `term:max` matters twice over: without it the macro pattern's `$a $x` parses
+# as one application and the quotation itself will not compile.
+cat >"$work/tbl.lean" <<'FIXTURE'
+module
+
+syntax:max "tbl " term:max ppSpace withPosition(term:max colEq term:max) : term
+macro_rules
+  | `(tbl $a $x
+             $y) => `(($a, $x, $y))
+
+def broken : Nat × Nat × Nat := tbl (id     1) 2
+                                               3
+FIXTURE
+LEAN_NUM_THREADS=1 lake env "$application" __analyze-exact \
+  "$work/borrowed.setup.json" "$work/tbl.lean" "tbl.lean" 8589934592 >"$work/tbl.json"
+"$tests" printer-format "$work/tbl.json" "$work/tbl.lean" 100 >"$work/tbl.out"
+if diff -u "$work/tbl.lean" "$work/tbl.out" >"$work/tbl.diff" 2>&1; then
+  printf '  ok   a custom notation with a live colEq keeps its bytes\n'
+else
+  printf 'FAIL the printer collapsed under a column check declared by syntax it cannot read:\n' >&2
+  cat "$work/tbl.diff" >&2
   failures=$((failures + 1))
 fi
 
