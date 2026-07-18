@@ -447,6 +447,82 @@ def validFor (source : LosslessSource) (raw : String) : Bool :=
     source.normalizedBytes == normalized.utf8ByteSize &&
     source.normalizedDigest == Digest.ofString normalized
 
+/-! ## Query surface for syntax-tier rules
+
+A `.syntax`-tier rule reads the parse through these, never through `Lean.Syntax`: it sees node **kinds
+as strings** and children/tokens as indices into the arrays it already holds. Every helper is total —
+an out-of-range index is silence, never a panic — because a rule is `Facts → Array Finding` with no
+error channel. `structurallyValid` (checked before any rule runs) guarantees `node.kind <
+kinds.size` and `token.node < nodes.size`, so the `getD` fallbacks below never actually fire on a
+validated projection; they exist so the type, not a convention, keeps a rule total.
+
+The adjacency builders are one O(n) pass each and are meant to be called **once** per rule invocation,
+not per node — a rule that scans many nodes (FMT013 over every `paren`) builds the map first and then
+does O(1) lookups, keeping the whole scan linear. -/
+
+/-- Kind string of node `i`. -/
+def kindOf (source : LosslessSource) (i : Nat) : String :=
+  match source.nodes[i]? with
+  | some node => source.kinds[node.kind]?.getD ""
+  | none => ""
+
+/-- Child-node adjacency: entry `i` lists the indices of nodes whose `parent` is `i`, in node order
+(which is source order — `collect` pushes a node before its children). Leaf tokens are **not** here;
+they are `tokensByNode`. Built in one pass so a whole-tree scan stays linear. -/
+def childAdjacency (source : LosslessSource) : Array (Array Nat) := Id.run do
+  let mut adjacency := Array.replicate source.nodes.size #[]
+  for i in [0:source.nodes.size] do
+    if let some parent := source.nodes[i]!.parent then
+      if parent < adjacency.size then
+        adjacency := adjacency.modify parent (·.push i)
+  return adjacency
+
+/-- Tokens grouped by their owning node index (`Token.node`), in token (source) order. -/
+def tokensByNode (source : LosslessSource) : Array (Array Token) := Id.run do
+  let mut adjacency := Array.replicate source.nodes.size #[]
+  for token in source.tokens do
+    if token.node < adjacency.size then
+      adjacency := adjacency.modify token.node (·.push token)
+  return adjacency
+
+/-- Indices of the top-level command nodes (`parent = none`), in source order. These are the command
+stream the projection models — the header and the terminal are excluded by construction
+(`headerStop`/`terminalStop`), so a rule that folds over this sees exactly the non-terminal commands. -/
+def topLevelNodes (source : LosslessSource) : Array Nat := Id.run do
+  let mut out := #[]
+  for i in [0:source.nodes.size] do
+    if (source.nodes[i]!.parent).isNone then
+      out := out.push i
+  return out
+
+/-- A node kind that opens a syntax quotation or antiquotation: `Term.quot` (`` `(…) ``),
+`Term.dynamicQuot` (`` `(cat| …) ``), `Command.quot`, `Tactic.quotSeq`, and the antiquotation kinds.
+The interior of one of these is parsed with the ordinary grammar, so `paren`/`attributes`/`set_option`
+nodes appear inside it byte-for-byte as in code — but they are *data* a macro constructs, not code the
+author wrote to run. Every such kind carries the substring `quot`, and no non-quotation kind in the
+v4.32.0 grammar does (checked against the `Lean.Parser.*` node-kind names), which is what makes this
+substring test exact rather than a heuristic. -/
+private def isQuotationKind (kind : String) : Bool :=
+  (kind.toLower.splitOn "quot").length > 1
+
+/-- True when node `i` lies inside a syntax quotation — its kind, or any ancestor's, is a quotation
+kind (`isQuotationKind`). Syntax rules use this to stay silent on quoted data (catalog §5.2): a nested
+paren in `` `(($x)) `` or a `@[simp, simp]` inside `` `(command| …) `` is a macro's output, not a
+finding. The walk climbs the parent chain and is bounded by the node count (a tree has no cycle), so a
+defect nested arbitrarily deep inside a quotation is still excluded. -/
+def inQuotation (source : LosslessSource) (i : Nat) : Bool := Id.run do
+  let mut cursor := some i
+  for _ in [0:source.nodes.size + 1] do
+    match cursor with
+    | none => return false
+    | some j =>
+      match source.nodes[j]? with
+      | none => return false
+      | some node =>
+        if isQuotationKind (source.kinds[node.kind]?.getD "") then return true
+        cursor := node.parent
+  return false
+
 end LosslessSource
 
 end LeanFmt.Internal

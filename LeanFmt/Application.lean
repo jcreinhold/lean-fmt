@@ -361,10 +361,12 @@ syntax rule alongside the rendered string would measure a rule against one text 
 offsets, which is the coordinate-mixing error this codebase has already paid for once. Projecting the
 canonical text instead means parsing it, which is a second frontend run per file.
 
-Nothing is skipped today, because every registered rule is `source`-tier. The day one is not, this
-becomes wrong silently, so here is the trigger: **whoever adds the first `syntax`-tier rule with a
-fix decides what `format` does with it, and `ruff-06`'s `RFX-SPEC` owns that decision** — it is
-chartered for "formatter interaction" and fix composition. The choice is between re-projecting
+`ruff-10` shipped the first `syntax`-tier rules (FMT008–FMT013), so this limit is now **live rather
+than vacuous**: their findings are computed on the *original* projection (`ofEnvelope?`) and reported
+by `check`; their `.safe` fixes (FMT010/011/013) apply on original coordinates. What is deferred is
+*canonical*-coordinate syntax linting: this path still runs only `runSourceRules`, so `format`/`fix`
+neither re-flags nor re-fixes a syntax violation against the rendered text. **`ruff-06`'s `RFX-SPEC`
+owns the choice** — chartered for "formatter interaction" and fix composition — between re-projecting
 canonical text and applying non-source fixes to the original in a separate pass. `RRE-FINAL` asserts
 this limit rather than leaving it to prose. -/
 private def renderCanonicalText (raw : String) (artifact : ModuleArtifact) : IO CanonicalText := do
@@ -414,17 +416,24 @@ A `broken` entry always can: it records that the file did not analyze, which no 
 text would change. A successful entry cannot serve a rendering mode unless it carries the canonical
 text that mode must print — a `check` run caches an entry with `canonical? := none`, and treating that
 as a hit for `format` would report every file clean. Insufficient is a miss, not an answer. -/
-private def cacheHitServes (renderCanonical : Bool) (analysis : SemanticAnalysis) : Bool :=
+private def cacheHitServes (requiredTier : Tier) (renderCanonical : Bool)
+    (analysis : SemanticAnalysis) : Bool :=
   match analysis.result? with
   | none => true
-  | some result => !renderCanonical || result.canonical?.isSome
+  | some result =>
+    -- Tier gate: a `.source` shortcut entry computed no syntax findings, so it cannot serve a run that
+    -- selects a syntax rule. A `.syntax` entry (whole registry over the projection) serves everything.
+    -- A `broken` entry (`none`) serves any run — a file that did not analyze did not analyze at any
+    -- tier. Without this clause, shipping the first syntax rule would let a source-only `check` poison
+    -- a later `--select FMT010` into a persisted false clean.
+    (!renderCanonical || result.canonical?.isSome) && result.tier.satisfies requiredTier
 
 private def availableAnalysis (plan : RulePlan) (renderCanonical : Bool)
     (evidence : Project.ModuleEvidence)
     (snapshot : SourceSnapshot) (cached? : Option SemanticAnalysis)
     (officialArtifact? : Option ModuleArtifact) : IO (Option SemanticAnalysis) := do
   if let some analysis := cached? then
-    if cacheHitServes renderCanonical analysis then
+    if cacheHitServes plan.requiredTier renderCanonical analysis then
       return some analysis
   if plan.requiredTier == .source && !renderCanonical && evidence == .current
       && !Suppression.mayContainDirective snapshot.source then
@@ -987,7 +996,7 @@ def execute (request : RunRequest) : IO RunReport := do
   -- the mode: no rule is `semantic`-tier, so a rendering mode is the sole demander of the notation
   -- fact (`RulePlan.demandedTier`). This is the gating seam — capture runs iff `demanded` reaches it.
   let demanded := plan.demandedTier renderCanonical
-  let cached := cached.map fun cached? => cached?.filter (cacheHitServes renderCanonical)
+  let cached := cached.map fun cached? => cached?.filter (cacheHitServes plan.requiredTier renderCanonical)
   if cached.all Option.isSome then
     if let some previewMode := request.mode.preview? then
       let mut files := #[]

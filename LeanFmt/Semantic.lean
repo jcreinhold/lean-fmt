@@ -39,6 +39,15 @@ structure SemanticResult where
   a shortcut entry, not a stale under-population, because the shortcut is taken only when the source
   contains no directive sigil (`Suppression.mayContainDirective`), so there is nothing to parse. -/
   suppression : SuppressionFacts := {}
+  /-- The tier of facts that produced `findings`. `.source` when the source-only shortcut ran (source
+  rules only), `.syntax` when the artifact/exact path ran the whole registry against the projection.
+  An entry serves a run only when `tier.satisfies plan.requiredTier` (`cacheHitServes`): a `.source`
+  entry is complete for a source-only selection but **not** for one that selects a syntax rule, whose
+  findings it never computed. Before any syntax rule shipped this was moot — "source findings" was
+  "all findings" — and shipping FMT008–FMT013 is exactly what makes it load-bearing. Defaults `.source`
+  (the narrow value); the schema bump below makes every pre-tier entry miss rather than read as this
+  default and get mis-served. -/
+  tier : Tier := .source
   deriving BEq, Lean.ToJson, Lean.FromJson
 
 structure SemanticAnalysis where
@@ -60,19 +69,28 @@ because it read "not in the artifact" as "not serialized"; the result cache is t
 `v4` (`RSP-IMPL`): adds `suppression`. A `v3` entry read as `v4` would default `suppression := {}` and
 read as "this file has no directives", which for a directive-bearing file is the stale-suppression
 bug — so the schema guard makes every `v3` entry miss, the same discipline that versioned `canonical?`.
-The default stays safe only for shortcut entries, which by construction have no directives. -/
-def semanticResultSchema : String := "lean-fmt.semantic-result.v4"
+The default stays safe only for shortcut entries, which by construction have no directives.
+
+`v5` (`RYR-IMPL`): adds `tier`. A `v4` entry read as `v5` would default `tier := .source` and, if it
+had been a full artifact-path entry, read as "source findings only" — narrowing a complete entry, which
+would only *under*-serve (a miss, never a false clean), but the same schema discipline that versions
+`suppression` versions this so no `v4` entry is silently reinterpreted. -/
+def semanticResultSchema : String := "lean-fmt.semantic-result.v5"
 
 /-- `normalized` must be `(LosslessSource.normalize raw).1`, the string every finding indexes.
-`suppression` defaults empty for the source-only shortcut; `ofEnvelope?` passes the collected facts. -/
+`suppression` defaults empty for the source-only shortcut; `ofEnvelope?` passes the collected facts.
+`tier` records which facts produced `findings` — `.source` for the shortcut (source rules only),
+`.syntax` for the artifact/exact path (whole registry over the projection) — so a narrow shortcut entry
+cannot serve a run that selects a syntax rule (`cacheHitServes`). -/
 def SemanticAnalysis.success (normalized : String) (findings : Array Finding)
-    (suppression : SuppressionFacts := {}) : SemanticAnalysis := {
+    (tier : Tier := .source) (suppression : SuppressionFacts := {}) : SemanticAnalysis := {
   result? := some {
     schema := semanticResultSchema
     source := Digest.ofString normalized
     sourceBytes := normalized.utf8ByteSize
     findings
     suppression
+    tier
   }
 }
 
@@ -131,7 +149,7 @@ def SemanticAnalysis.ofEnvelope? (raw : String)
       -- The projection is in hand here (and only here), so this is where directives are parsed:
       -- syntax-tier, exactly like the syntax facts the findings are computed from.
       some (.success normalized (runRules (.syntax (SyntaxFacts.of normalized artifact.source)))
-        (Suppression.collect artifact.source normalized))
+        (tier := .syntax) (suppression := Suppression.collect artifact.source normalized))
     else
       none
 

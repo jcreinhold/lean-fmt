@@ -100,7 +100,7 @@ private def isCategory (selector : String) : Bool :=
 
 private def selectorsValid (selectors : Array String) : Except String Unit := do
   for selector in selectors do
-    unless selector == "all" || isCategory selector ||
+    unless selector == "all" || selector == "default" || isCategory selector ||
         allRuleInfos.any (·.code == selector) do
       throw s!"unknown rule selector: {selector}"
 
@@ -116,7 +116,7 @@ private def parsePerFileIgnores (value : Lake.Toml.Value) : Except String (Array
 private def defaultConfig : FormatterConfig := {
   includePatterns := #[]
   excludePatterns := #[]
-  selectedSelectors := #["all"]
+  selectedSelectors := #["default"]
   ignoredSelectors := #[]
   perFileIgnores := #[]
   extendSafeFixes := #[]
@@ -126,7 +126,7 @@ private def defaultConfig : FormatterConfig := {
 private def parseConfig (table : Lake.Toml.Table) : Except String FormatterConfig := do
   let mut includePatterns := #[]
   let mut excludePatterns := #[]
-  let mut selectedSelectors := #["all"]
+  let mut selectedSelectors := #["default"]
   let mut ignoredSelectors := #[]
   let mut perFileIgnores := #[]
   let mut extendSafeFixes := #[]
@@ -188,9 +188,18 @@ def FormatterConfig.includesPath (config : FormatterConfig) (path : String) : Bo
   (config.includePatterns.isEmpty || config.includePatterns.any (·.matches path)) &&
     !config.excludePatterns.any (·.matches path)
 
+/-- `all` is every registered rule; `default` is the rules whose `defaultEnabled` is set — the set a
+plain run selects when nothing is named. The distinction only became observable in `ruff-10`, which
+shipped the first `defaultEnabled := false` (preview) rules, FMT008 and FMT013: before them the two
+selectors expanded to the same set, so the default run selected `all` with no visible difference.
+`defaultEnabled` is enforced *here*, at the default selection, and nowhere else — an explicit `all`, a
+category, or a bare code is an opt-in that overrides the default-off, so naming FMT013 or its category
+still selects it. This is the field being honored rather than left to rot. -/
 private def expandSelector (selector : String) : Array String :=
   if selector == "all" then
     allRuleInfos.map (·.code)
+  else if selector == "default" then
+    allRuleInfos.filter (·.defaultEnabled) |>.map (·.code)
   else if isCategory selector then
     allRuleInfos.filter (·.category == selector) |>.map (·.code)
   else

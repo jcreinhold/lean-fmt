@@ -1,25 +1,31 @@
 ---
 kind: state
-first_unresolved: 02-implementation
+first_unresolved: 03-acceptance
 ---
 
 # Current state
 
-`RYR-SPEC` is **verified**. The frozen catalog is `notes/01-catalog.md`; what was run is
-`results/01-catalog.md`; the reproducible corpus evidence is `evidence/01-catalog.md`. Six syntax-tier
-rules **FMT008–FMT013** are specified across the four roadmap families, each grounded in a syntax kind
-cited to the pinned `leanprover/lean4:v4.32.0` compiler and, for adopted rules, a real Mathlib linter
-(`~/Code/mathlib4` @ `783ccda4…`). This prompt changed no production code; the baseline build,
-`tests/boundary/run.sh`, the structural checker, and `write_next --check` were all green on the
-unmodified tree. The external prerequisite stacks `ruff-01-lossless-source`, `ruff-05-rule-engine`,
-and `ruff-06-fix-safety` remain verified and their live code was re-read against this work
-(`LosslessSource` carries the node kinds + parent/child structure + leaf text the six rules read;
-`Rules.lean`'s `RuleImpl.syntax` and `SyntaxFacts` are the seam RYR-IMPL implements against).
+`RYR-SPEC` and `RYR-IMPL` are **verified**. The six syntax-tier rules **FMT008–FMT013** frozen by the
+catalog (`notes/01-catalog.md`) are implemented and shipping — all as **preview** (default-off). What
+was run is `results/02-implementation.md`; the design and the mid-implementation repair are
+`notes/02-implementation.md`. Rules are `RuleImpl.syntax` bodies reading the `LosslessSource`
+projection through total helpers; FMT010/011/013 carry `.safe` byte-range fixes reported on original
+coordinates, FMT008/009/012 are report-only. The first-syntax-tier cache wiring is in place: a
+`SemanticResult.tier` tag (schema `v5`) with a `cacheHitServes` gate keeps a source-only shortcut entry
+from serving a `.syntax` `--select` a false negative, while the universal `.syntax` entry serves any
+selection. Selection gained a `default` selector (the `defaultEnabled` rules) that the default config
+now uses instead of `"all"`. All eleven build/test gates are green, including the new
+`tests/syntax/run.sh`; the structural checker and `write_next --check` pass; `git diff --check` is clean.
+
+The one deliberate deferral: `format`/`fix` render canonical text and run only source rules, so a
+syntax `.safe` fix is *reported* by `check` but not *applied* by `fix`. `ruff-06`'s RFX-SPEC owns
+canonical-coordinate syntax fixing; the limit is documented (`Application.renderCanonicalText`) and
+pinned by `tests/syntax/run.sh`.
 
 | Prompt | Claim | Status | Depends on |
 | --- | --- | --- | --- |
 | 01-catalog | RYR-SPEC | verified | — |
-| 02-implementation | RYR-IMPL | planned | RYR-SPEC |
+| 02-implementation | RYR-IMPL | verified | RYR-SPEC |
 | 03-acceptance | RYR-FINAL | planned | RYR-IMPL |
 
 ## Catalog summary (frozen by RYR-SPEC)
@@ -27,19 +33,26 @@ and `ruff-06-fix-safety` remain verified and their live code was re-read against
 | code | family | default | fix | applicability |
 | --- | --- | --- | --- | --- |
 | FMT008 module docstring required | docs | preview | — | report-only |
-| FMT009 unclosed section/namespace | structure | enabled | — | report-only |
-| FMT010 duplicate attribute in a list | redundancy | enabled | delete dup | `.safe` |
-| FMT011 duplicate deriving class | redundancy | enabled | delete dup | `.safe` |
-| FMT012 development-only `set_option` | debug | enabled | — | report-only |
+| FMT009 unclosed section/namespace | structure | preview | — | report-only |
+| FMT010 duplicate attribute in a list | redundancy | preview | delete dup | `.safe` |
+| FMT011 duplicate deriving class | redundancy | preview | delete dup | `.safe` |
+| FMT012 development-only `set_option` | debug | preview | — | report-only |
 | FMT013 redundant nested parentheses | redundancy | preview | drop outer | `.safe` |
+
+All six ship preview; RYR-IMPL corrected FMT009–FMT012 off `enabled` (rationale:
+`notes/01-catalog.md` §3, `results/02-implementation.md`).
 
 ## Blockers and prerequisites
 
-- No blocker. RYR-IMPL's first task is the **first-syntax-tier wiring**, scoped in
-  `notes/01-catalog.md` §5: `Application.renderCanonicalText` and `availableAnalysis`'s source-only
-  shortcut currently assume every rule is `.source` (pinned by `testEngineTiers`), and must learn to
-  fetch the projection when a selected rule demands `.syntax`. The projection already carries what the
-  rules read, so this is integration, not a missing lower layer.
+- No blocker. The first-syntax-tier wiring RYR-SPEC scoped as owed is done: `cacheHitServes` gates on
+  `tier`, and `availableAnalysis` fetches the projection when a selected rule demands `.syntax`.
+  RYR-FINAL is acceptance — measure FMT013's true prevalence on the frozen sample, assert the FMT009
+  whole-file-section exclusion and near-misses at corpus scale, and decide FMT012's `set_option … in`
+  coverage. Do **not** run full mathlib during development; use the frozen sample and named stress
+  cases (`CLAUDE.md`).
+- Open deferral (not a blocker): canonical-coordinate syntax *fix application* is owned by `ruff-06`'s
+  RFX-SPEC. `fix` reports a syntax `.safe` fix but does not apply it; the limit is documented and
+  pinned.
 - If live code contradicts prerequisite results, reopen the owning prerequisite rather than patching
   around it. Full mathlib is not development evidence; follow this roadmap's evidence policy.
 

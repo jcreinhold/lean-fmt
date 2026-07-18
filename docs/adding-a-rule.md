@@ -135,11 +135,14 @@ will stop you, and it is right to.
 - `testApplicability` covers admission, per-rule reclassification, the display-only floor, and conflict
   provenance. If your rule ships an `.unsafe` or `.displayOnly` fix, assert its applicability there and
   add a `--unsafe-fixes` case to `tests/modes/run.sh`.
-- If your rule is the first `.syntax`-tier rule the product ships, you have more work than this
-  document covers: `Application.renderCanonicalText` and the source-only shortcut in
-  `availableAnalysis` both assume every rule is source-tier, and both say so in their docstrings.
-  `testEngineTiers` asserts that assumption still holds and will fail when you break it — that
-  failure is a to-do list, not a bug.
+- The `.syntax` tier is live: `ruff-10` shipped FMT008–FMT013 (all `preview`). A `.syntax` rule is
+  reported by `check` and its `.safe` fix is expressed on original coordinates, but
+  `Application.renderCanonicalText` still runs only `runSourceRules`, so `format`/`fix` do not yet
+  re-flag or apply a syntax fix against canonical text — `ruff-06`'s RFX-SPEC owns closing that.
+  `SemanticResult.tier` and `cacheHitServes` gate the result cache so a source-only shortcut entry
+  never serves a `.syntax` selection a false negative. `testEngineTiers` asserts the registry holds
+  both tiers and no `.semantic` rule; adding a `.semantic` rule is the case that still has more work
+  than this document covers.
 - `testEngineTiers` and `testMixedSelection` exercise the engine itself through `runRulesOf` and
   `requiredTierOf`, which take a rule array so the tests can register probe rules without shipping
   fake ones. Use that seam for engine behavior; use `ruleRegistry` for your rule's behavior.

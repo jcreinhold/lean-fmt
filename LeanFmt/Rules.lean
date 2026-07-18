@@ -269,6 +269,253 @@ private def bidiControl (facts : SourceFacts) : Array Finding :=
     (bytePos + c.utf8Size, findings)
   (facts.normalized.foldl step (0, #[])).2
 
+/-! ## Syntax-tier rules
+
+`FMT008`–`FMT013` read the exact frontend's projection through `SyntaxFacts`: node **kinds as
+strings**, child/token adjacency, and leaf source text. None reads `Lean.Syntax`, precedence (the
+projection carries none), or `choice` alternatives (only the first survives). Every kind string is
+cited to the pinned v4.32.0 compiler in `docs/projects/ruff-10-syntax-rules/notes/01-catalog.md` §2 and
+was read off real projections in that stack's `evidence/01-catalog.md` §1 — a wrong kind string is a
+rule that silently never fires, so these are the census's strings, not guesses. -/
+
+private def kModuleDoc := "Lean.Parser.Command.moduleDoc"
+private def kDeclaration := "Lean.Parser.Command.declaration"
+private def kNamespace := "Lean.Parser.Command.namespace"
+private def kSection := "Lean.Parser.Command.section"
+private def kEnd := "Lean.Parser.Command.end"
+private def kAttributes := "Lean.Parser.Term.attributes"
+private def kAttrInstance := "Lean.Parser.Term.attrInstance"
+private def kDerivingClass := "Lean.Parser.Command.derivingClass"
+private def kSetOption := "Lean.Parser.Command.set_option"
+private def kParen := "Lean.Parser.Term.paren"
+private def kHygienicLParen := "Lean.Parser.Term.hygienicLParen"
+
+/-- Source text of a normalized byte range, decoded as UTF-8. Ranges index the normalized source, so
+this is exact; an invalid slice (never produced by a validated projection) decodes to `""`. -/
+private def rangeText (bytes : ByteArray) (start stop : Nat) : String :=
+  (String.fromUTF8? (bytes.extract start stop)).getD ""
+
+/-! ### FMT008 — module lacks a module docstring
+
+Fires when the module has at least one `declaration` command but no `moduleDoc` (`/-! … -/`) node. A
+declaration-level `/-- … -/` is a `docComment` inside `declModifiers`, a different kind, so it does not
+satisfy the rule. Report-only: the missing thing is documentation text, which no formatter can write.
+The finding is a caret at `headerStop` — where a module doc belongs, right after the header. -/
+private def moduleDocRequired (facts : SyntaxFacts) : Array Finding := Id.run do
+  let projection := facts.projection
+  let mut firstDecl : Option Nat := none
+  let mut hasModuleDoc := false
+  for i in [0:projection.nodes.size] do
+    -- A `moduleDoc` or `declaration` inside a `` `(…) `` quotation is quoted data, not this module's
+    -- own docstring or declaration, so it neither satisfies nor triggers the requirement.
+    if projection.inQuotation i then
+      continue
+    let kind := projection.kindOf i
+    if kind == kModuleDoc then
+      hasModuleDoc := true
+    else if kind == kDeclaration && firstDecl.isNone then
+      firstDecl := some i
+  if hasModuleDoc || firstDecl.isNone then
+    return #[]
+  let insertion := projection.headerStop
+  return #[{
+    code := "FMT008"
+    severity := .warning
+    message := "module has declarations but no module docstring"
+    range := { start := insertion, stop := insertion }
+    fix? := none
+  }]
+
+/-! ### FMT009 — unclosed `section` or `namespace`
+
+Each `end` closes exactly one scope in accepted source (`namespace A.B` is one scope closed by one
+`end A.B`; `namespace A` `namespace B` needs two `end`s), so net open depth is a simple push/pop over
+the top-level command stream — no name matching, and no false positive from `end A.B` spelling. At the
+terminal, remaining opens are reported, except an outermost anonymous `noncomputable`/`public`/`meta`
+section (the idiomatic whole-file section), which is dropped from the outer end to mirror Mathlib's
+`linter.style.missingEnd`. Report-only: where a scope *should* have closed is author judgment. -/
+private structure OpenScope where
+  opener : Nat
+  isSection : Bool
+  named : Bool
+  outerSectionOk : Bool
+  deriving Inhabited
+
+private def unclosedScopes (facts : SyntaxFacts) : Array Finding := Id.run do
+  let projection := facts.projection
+  let bytes := facts.source.bytes
+  let mut stack : Array OpenScope := #[]
+  -- Only the top-level command stream is walked, and a quotation node always has a parent, so a
+  -- `namespace`/`section`/`end` quoted inside `` `(…) `` is never in this loop — no `inQuotation`
+  -- guard is needed here, unlike the node-scanning rules below.
+  for i in projection.topLevelNodes do
+    let kind := projection.kindOf i
+    if kind == kNamespace then
+      stack := stack.push { opener := i, isSection := false, named := true, outerSectionOk := false }
+    else if kind == kSection then
+      let range := projection.nodes[i]!.range
+      let text := rangeText bytes range.start range.stop
+      -- Modifiers precede the `section` keyword; the optional name follows it.
+      let parts := text.splitOn "section"
+      let before := parts.headD ""
+      let after := String.join (parts.drop 1)
+      let named := after.any fun c => !c.isWhitespace
+      let outerOk := before.splitOn " " |>.any fun word =>
+        word == "noncomputable" || word == "public" || word == "meta"
+      stack := stack.push { opener := i, isSection := true, named, outerSectionOk := outerOk }
+    else if kind == kEnd then
+      if !stack.isEmpty then
+        stack := stack.pop
+  if stack.isEmpty then
+    return #[]
+  -- Drop outermost anonymous sections that carry an outer-section modifier.
+  let mut lower := 0
+  while lower < stack.size &&
+      (stack[lower]!.isSection && !stack[lower]!.named && stack[lower]!.outerSectionOk) do
+    lower := lower + 1
+  if lower >= stack.size then
+    return #[]
+  let scope := stack[lower]!
+  let range := projection.nodes[scope.opener]!.range
+  let what := if scope.isSection then "section" else "namespace"
+  return #[{
+    code := "FMT009"
+    severity := .warning
+    message := s!"unclosed {what}"
+    range
+    fix? := none
+  }]
+
+/-- Duplicate detection shared by FMT010/FMT011: among sibling nodes of one `owner` kind, an entry
+whose byte-identical text already appeared earlier in the same list is a duplicate. The fix deletes the
+duplicate together with its preceding `", "` separator — `[previous sibling stop, duplicate stop)` — so
+`@[simp, simp]` becomes `@[simp]` and `deriving Repr, Repr` becomes `deriving Repr`. Safe: an exact
+repeat is idempotent, so removing it preserves what the elaborator records. -/
+private def duplicateSiblings (bytes : ByteArray) (projection : LosslessSource)
+    (childAdjacency : Array (Array Nat)) (memberKind code message : String)
+    (nodeIndex : Nat) : Array Finding := Id.run do
+  let members := (childAdjacency[nodeIndex]!).filter fun j => projection.kindOf j == memberKind
+  let mut texts : Array String := #[]
+  let mut findings := #[]
+  for idx in [0:members.size] do
+    let range := projection.nodes[members[idx]!]!.range
+    -- The node range is the leaf hull, so leading/trailing trivia is already excluded; the text is
+    -- the instance's own bytes, and two exact duplicates compare equal here.
+    let text := rangeText bytes range.start range.stop
+    if texts.contains text then
+      let prevStop := projection.nodes[members[idx-1]!]!.range.stop
+      let editRange : SourceRange := { start := prevStop, stop := range.stop }
+      findings := findings.push {
+        code
+        severity := .warning
+        message
+        range
+        fix? := some { applicability := .safe, edits := #[{ range := editRange, replacement := "" }] }
+      }
+    texts := texts.push text
+  return findings
+
+/-! ### FMT010 — duplicate attribute in one `@[…]` list. ### FMT011 — duplicate `deriving` class.
+Both are `duplicateSiblings` over the relevant owner/member kinds. -/
+private def duplicateAttribute (facts : SyntaxFacts) : Array Finding := Id.run do
+  let projection := facts.projection
+  let bytes := facts.source.bytes
+  let childAdjacency := projection.childAdjacency
+  let mut findings := #[]
+  -- `attributes` is `"@[" >> sepBy1 attrInstance ", " >> "]"`, and `sepBy1` inserts a null group node,
+  -- so the `attrInstance`s are children of that group, not of `attributes` directly. Grouping by the
+  -- actual parent (any node with `attrInstance` children) is robust to that intermediate, exactly as
+  -- FMT011 does for `derivingClass`.
+  for i in [0:projection.nodes.size] do
+    if projection.inQuotation i then
+      continue
+    if (childAdjacency[i]!).any fun j => projection.kindOf j == kAttrInstance then
+      findings := findings ++ duplicateSiblings bytes projection childAdjacency
+        kAttrInstance "FMT010" "duplicate attribute in attribute list" i
+  return findings
+
+private def duplicateDerivingClass (facts : SyntaxFacts) : Array Finding := Id.run do
+  let projection := facts.projection
+  let bytes := facts.source.bytes
+  let childAdjacency := projection.childAdjacency
+  let mut findings := #[]
+  -- `derivingClass` nodes sit under the `sepBy1` group node; grouping by that parent makes them
+  -- siblings, whichever intermediate the parser inserted. Any node with `derivingClass` children is an
+  -- owner, so scan every node once.
+  for i in [0:projection.nodes.size] do
+    if projection.inQuotation i then
+      continue
+    if (childAdjacency[i]!).any fun j => projection.kindOf j == kDerivingClass then
+      findings := findings ++ duplicateSiblings bytes projection childAdjacency
+        kDerivingClass "FMT011" "duplicate deriving class" i
+  return findings
+
+/-! ### FMT012 — development-only `set_option`
+
+Fires on a `set_option` command whose option name root is `debug`, `pp`, `profiler`, or `trace` — the
+exact set of Mathlib's `linter.style.setOption`. Matching the `set_option` **node** (not the string)
+means a `set_option`-looking string literal or comment never fires. Report-only: removing a committed
+option is author intent, and for the `… in` forms the scoped boundary is not a byte-safe question. -/
+private def isDevelopmentOption (name : String) : Bool :=
+  let root := (name.splitOn ".").headD name
+  root == "debug" || root == "pp" || root == "profiler" || root == "trace"
+
+private def developmentSetOption (facts : SyntaxFacts) : Array Finding := Id.run do
+  let projection := facts.projection
+  let bytes := facts.source.bytes
+  let tokensByNode := projection.tokensByNode
+  let mut findings := #[]
+  for i in [0:projection.nodes.size] do
+    if projection.inQuotation i then
+      continue
+    if projection.kindOf i == kSetOption then
+      let tokens := tokensByNode[i]!
+      -- tokens[0] is the `set_option` keyword atom; tokens[1] is the option-name identifier.
+      if tokens.size ≥ 2 then
+        let nameToken := tokens[1]!
+        let name := rangeText bytes nameToken.start nameToken.stop
+        if isDevelopmentOption name then
+          findings := findings.push {
+            code := "FMT012"
+            severity := .warning
+            message := s!"development-only option '{name}' set in committed source"
+            range := { start := projection.nodes[i]!.range.start, stop := nameToken.stop }
+            fix? := none
+          }
+  return findings
+
+/-! ### FMT013 — redundant nested parentheses
+
+Fires on a `paren` node whose only child **node** is itself a `paren` — `((e))`. The inner `(e)` is a
+complete atomic term, so dropping the outer pair cannot regroup anything; no precedence is consulted
+(the projection has none), which is why only the nested case is answerable here. The fix deletes the
+outer `(` and `)` as two edits. Preview default until RYR-FINAL measures its tree-shape rate. -/
+private def redundantNestedParen (facts : SyntaxFacts) : Array Finding := Id.run do
+  let projection := facts.projection
+  let childAdjacency := projection.childAdjacency
+  let mut findings := #[]
+  for i in [0:projection.nodes.size] do
+    if projection.inQuotation i then
+      continue
+    if projection.kindOf i == kParen then
+      -- A `paren` node is `hygienicLParen >> term >> ")"`; the `(` is itself a `hygienicLParen` node,
+      -- so a paren has two child nodes and the *term* is the one that is not the opener. The rule
+      -- fires when that term is itself a `paren` — `((e))`.
+      let inner := (childAdjacency[i]!).filter fun j => projection.kindOf j != kHygienicLParen
+      if inner.size == 1 && projection.kindOf inner[0]! == kParen then
+        let outer := projection.nodes[i]!.range
+        let inner := projection.nodes[inner[0]!]!.range
+        findings := findings.push {
+          code := "FMT013"
+          severity := .warning
+          message := "redundant nested parentheses"
+          range := outer
+          fix? := some { applicability := .safe, edits := #[
+            { range := { start := outer.start, stop := inner.start }, replacement := "" },
+            { range := { start := inner.stop, stop := outer.stop }, replacement := "" }] }
+        }
+  return findings
+
 /-- Every rule the product ships, in one static array.
 
 Static, not an attribute or an environment extension. The rule set is compiled and first-party, so
@@ -320,6 +567,66 @@ def ruleRegistry : Array Rule := #[
       defaultEnabled := true
     }
     impl := .source bidiControl
+  },
+  {
+    info := {
+      code := "FMT008"
+      category := "docs"
+      summary := "require a module docstring when a module declares anything"
+      fixable := false
+      defaultEnabled := false
+    }
+    impl := .syntax moduleDocRequired
+  },
+  {
+    info := {
+      code := "FMT009"
+      category := "structure"
+      summary := "report an unclosed section or namespace"
+      fixable := false
+      defaultEnabled := false
+    }
+    impl := .syntax unclosedScopes
+  },
+  {
+    info := {
+      code := "FMT010"
+      category := "redundancy"
+      summary := "remove a duplicate attribute in an attribute list"
+      fixable := true
+      defaultEnabled := false
+    }
+    impl := .syntax duplicateAttribute
+  },
+  {
+    info := {
+      code := "FMT011"
+      category := "redundancy"
+      summary := "remove a duplicate deriving class"
+      fixable := true
+      defaultEnabled := false
+    }
+    impl := .syntax duplicateDerivingClass
+  },
+  {
+    info := {
+      code := "FMT012"
+      category := "debug"
+      summary := "report a development-only set_option left in source"
+      fixable := false
+      defaultEnabled := false
+    }
+    impl := .syntax developmentSetOption
+  },
+  {
+    info := {
+      code := "FMT013"
+      category := "redundancy"
+      summary := "remove redundant nested parentheses"
+      fixable := true
+      defaultEnabled := false
+    }
+    impl := .syntax redundantNestedParen
   }
 ]
 

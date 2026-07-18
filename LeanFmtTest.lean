@@ -566,12 +566,14 @@ private def fixtureLosslessSource (mainModule := "Test") : LosslessSource := {
 
 /-! ## The engine, exercised at both tiers
 
-Every rule the product ships is `source`-tier, so `ruleRegistry` cannot reach the engine's tier
-behavior at all: nothing is ever skipped, no `syntax` finding ever has to sort against a `source`
-one, and `requiredTier` is `.source` for every possible selection. `RRE-FINAL`'s work order asks for
-"a representative rule at each tier"; its stop rule says "do not retain fake product rules merely for
-coverage". Both hold at once only if the representative rules live here and never enter
-`ruleRegistry` — which is what `runRulesOf` and `requiredTierOf` take an array for.
+`ruff-10` shipped `syntax`-tier product rules, so `ruleRegistry` now mixes tiers — but it still cannot
+exercise the *adversarial* seam this section pins: a `syntax` finding sorting **ahead** of a `source`
+one despite being registered **after** it, and a `syntax` rule skipped cleanly when only `source`
+facts are on hand. Pinning those needs two rules at controlled codes and ranges, which product rules
+do not guarantee. `RRE-FINAL`'s work order asks for "a representative rule at each tier"; its stop
+rule says "do not retain fake product rules merely for coverage". Both hold at once only if the
+representative rules live here and never enter `ruleRegistry` — which is what `runRulesOf` and
+`requiredTierOf` take an array for.
 
 These rules are deliberately trivial and deliberately adversarial about order: `probeSyntax` is
 registered **last** and its findings land **first**, so an engine that concatenated in registry order
@@ -651,9 +653,16 @@ private def testEngineTiers : IO Unit := do
   let encoded := Lean.toJson probeSyntax
   ensure ((encoded.getObjValAs? String "input").toOption == some "syntax")
     "the rules wire shape does not derive input from the implementation"
-  ensure (ruleRegistry.all (·.tier == .source))
-    "a non-source rule reached ruleRegistry: `Application.renderCanonicalText` and the source-only \
-     shortcut in `availableAnalysis` both need revisiting (ruff-06/RFX-SPEC owns this)"
+  -- `ruff-10` shipped the first `.syntax`-tier rules (FMT008–FMT013), so the registry is no longer
+  -- uniformly source-tier. The two seams that assumed it was are now both tier-aware: `ofEnvelope?`
+  -- tags its cache entry `.syntax` and the source-only shortcut tags `.source`, and `cacheHitServes`
+  -- serves an entry only when `result.tier.satisfies plan.requiredTier` — so a narrow shortcut entry
+  -- cannot answer a syntax `--select`. This asserts the new shape: syntax rules ship, source rules
+  -- still ship, and nothing reaches `semantic` tier (no rule's facts demand elaboration output).
+  ensure (ruleRegistry.any (·.tier == .syntax) && ruleRegistry.any (·.tier == .source))
+    "ruleRegistry lost its mix of source- and syntax-tier rules (ruff-10 shipped both)"
+  ensure (ruleRegistry.all (·.tier != .semantic))
+    "a semantic-tier rule reached ruleRegistry: the cache tier-gate serves at most `.syntax`"
 
   -- The lattice gained `semantic` above `syntax` (`ruff-05b`): richer facts serve any cheaper
   -- requirement, and the cheaper cannot serve the dearer. No shipped rule is `semantic`-tier; the
@@ -702,8 +711,11 @@ private def testMixedSelection : IO Unit := do
   ensure ((runRulesOf registry (.source (SourceFacts.of fixtureSourceText))).map (·.code) ==
       #["TST901"])
     "requiredTierOf and runRulesOf disagree about what source facts can answer"
-  ensure (ruleRegistry.all (fun rule => ({ selected := #[rule.code], perFileIgnores := #[], extendSafe := #[], extendUnsafe := #[] } : RulePlan).requiredTier == .source))
-    "a shipped rule's selection costs more than source facts"
+  -- Selecting exactly one shipped rule must cost exactly that rule's own tier — no more (paying for
+  -- facts it will not read) and no less (skipping facts it needs). `ruff-10`'s syntax rules make the
+  -- `.syntax` side of this non-vacuous; before them every shipped rule was `.source`.
+  ensure (ruleRegistry.all (fun rule => ({ selected := #[rule.code], perFileIgnores := #[], extendSafe := #[], extendUnsafe := #[] } : RulePlan).requiredTier == rule.tier))
+    "a shipped rule's single selection costs a different tier than the rule's own"
 
   -- Demand-gating (`ruff-05b`): the mode is the only demander of `semantic`, because no shipped rule
   -- reaches that tier. A report run (no canonical rendering) stays at its rules' tier; a
@@ -1104,11 +1116,22 @@ private def verifyOfficialFacet (root sourcePath : System.FilePath) : IO Unit :=
   let some semantic := SemanticAnalysis.ofEnvelope? target.source { artifact? := some artifact }
     | throw <| IO.userError "registered official facet did not produce a canonical result"
   let normalized := (LosslessSource.normalize target.source).1
+  -- The artifact path runs the whole registry against the projection and tags the result `.syntax`,
+  -- with source-suppression directives collected from the same projection. The direct construction
+  -- has to spell all three or it is comparing against a differently-shaped value — the `.syntax` tier
+  -- and collected `suppression` are exactly what `ofEnvelope?` attaches (`Semantic.lean`).
   ensure (semantic == SemanticAnalysis.success normalized
-      (runRules (.syntax (SyntaxFacts.of normalized artifact.source))))
+      (runRules (.syntax (SyntaxFacts.of normalized artifact.source)))
+      (tier := .syntax) (suppression := Suppression.collect artifact.source normalized))
     "registered official facet differed from direct product semantics"
   let some artifactResult := semantic.result?
     | throw <| IO.userError "registered official facet produced no result to compare"
+  -- The source-only shortcut computes `runSourceRules`; the artifact path computes the whole
+  -- registry. They agree on a file only when it triggers no `syntax`-tier rule, and `LocalSyntax`
+  -- carries none (no duplicate attribute/deriving, `set_option`, unclosed scope, or nested paren) —
+  -- so the full-registry findings still coincide with the source-only ones here. This is the
+  -- cross-path agreement `RRE-SPEC` §2 demanded; the tier tag on the cache entry, not finding
+  -- equality, is what keeps the paths honest when a file *does* trigger a syntax rule.
   ensure (artifactResult.findings == runSourceRules normalized)
     "the artifact path and the source-only shortcut disagree about one unchanged file"
 

@@ -1,9 +1,9 @@
 # Next Proof Packet
 
 - Stack: ruff-10-syntax-rules
-- First unresolved: 02-implementation
-- Claim ID: RYR-IMPL
-- Prompt: 02-implementation
+- First unresolved: 03-acceptance
+- Claim ID: RYR-FINAL
+- Prompt: 03-acceptance
 - Module: (docs only)
 - Target file: (docs only)
 
@@ -17,7 +17,7 @@ Read this file, the target prompt, target files, listed source/template line ran
 
 ## Proof Task
 
-- Deliver **RYR-IMPL**: Add the approved rules, metadata, fixes, suppressions, docs inputs, and exact category dispatch without giving rules parser or application lifecycle authority.
+- Deliver **RYR-FINAL**: Test custom syntax, quotations, generated syntax, comments, malformed files, all applicability classes, and the frozen sample; manually review every sample finding.
 - Read `roadmap.md`, its prerequisite stack results, `AGENTS.md`, the current implementation and tests, and the relevant Lean compiler/Lake sources before changing an interface. Write interface comments and characterization tests before implementation where the behavior is not already frozen.
 
 ## Reuse
@@ -30,6 +30,6 @@ Inspect the live goal, search relevant declarations, test plausible proof steps,
 
 ## Stop Rules
 
-- Unknown/custom syntax is preserved and ignored unless the rule explicitly owns it.
-- Deterministic ranges come from the lossless model.
+- A noisy default rule blocks completion or moves to preview.
+- No full mathlib run.
 - Stop rather than weakening exact semantics, write safety, or the resource envelope.

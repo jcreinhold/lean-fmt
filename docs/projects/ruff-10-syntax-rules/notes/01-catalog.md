@@ -71,7 +71,7 @@ redundant syntax** → FMT012, FMT013.
   whose concatenated names spell `Foo`. Leftover pushes at the terminal are the finding. This is the
   same stack Mathlib's `linter.style.missingEnd` reads from the elaborator; here it is recomputed from
   node kinds, which is sound because the stack is a per-file lexical fact (evidence §2, note ¹).
-- **Category:** `structure`. **Default:** enabled. **Fixable:** no (report-only) for now.
+- **Category:** `structure`. **Default:** **preview** (§3). **Fixable:** no (report-only) for now.
 - **Why report-only, not a fix:** appending `end Foo` at EOF is *usually* meaning-preserving, but the
   correct insertion point and name is exactly the judgment the author elided; a formatter guessing it
   can mask a genuine structural mistake (a scope meant to close earlier). Naming the open scope is the
@@ -87,7 +87,7 @@ redundant syntax** → FMT012, FMT013.
 - **Fires when:** one `Lean.Parser.Term.attributes` node (`@[ … ]`) has two `attrInstance` children
   with **byte-identical** normalized source text.
 - **Kinds:** `attributes` (Term.lean:589), `attrInstance` (Term.lean:587).
-- **Category:** `redundancy`. **Default:** enabled. **Fixable:** yes, **`.safe`**.
+- **Category:** `redundancy`. **Default:** **preview** (§3). **Fixable:** yes, **`.safe`**.
 - **Why the fix is safe:** attribute application is idempotent for an exact-duplicate instance —
   applying `simp` twice in one list is applying it once — so deleting the later duplicate (and its
   `", "` separator) removes text without changing what the elaborator records. "Safe" here is a claim
@@ -108,7 +108,7 @@ redundant syntax** → FMT012, FMT013.
   (`sepBy1 derivingClass ", "`, Command.lean:191), which appears in both deriving wrappers —
   `optDeriving` (inductive/structure, Command.lean:213) and `optDefDeriving` (`def`, Command.lean:206);
   the rule keys on the `derivingClass` siblings, so it covers either wrapper.
-- **Category:** `redundancy`. **Default:** enabled. **Fixable:** yes, **`.safe`** — deriving the same
+- **Category:** `redundancy`. **Default:** **preview** (§3). **Fixable:** yes, **`.safe`** — deriving the same
   instance twice derives it once; deleting the later duplicate (and its `", "`) is meaning-preserving
   by the same idempotence argument as FMT010.
 - **Exclusions:** exact textual match only; `deriving DecidableEq, Repr` is not a duplicate. A class
@@ -125,7 +125,7 @@ redundant syntax** → FMT012, FMT013.
 - **Kinds:** `«set_option»` (Command.lean:682); the option name is the `ident` leaf under it. The
   `set_option … in` term/tactic forms are also detectable and in scope; the standalone command is the
   common case and the primary target.
-- **Category:** `debug`. **Default:** enabled. **Fixable:** no (report-only).
+- **Category:** `debug`. **Default:** **preview** (§3). **Fixable:** no (report-only).
 - **Why report-only, not a delete fix:** although `pp`/`trace`/`profiler`/`debug` options do not
   change *elaboration results*, deleting a committed `set_option` is an intent decision (the author may
   be mid-debugging), and — for the `… in` forms — the boundary of what the `in` scopes is not something
@@ -169,16 +169,36 @@ redundant syntax** → FMT012, FMT013.
 | code | category | default | fix | applicability |
 | --- | --- | --- | --- | --- |
 | FMT008 | docs | preview | — | report-only |
-| FMT009 | structure | enabled | — | report-only |
-| FMT010 | redundancy | enabled | delete duplicate | `.safe` |
-| FMT011 | redundancy | enabled | delete duplicate | `.safe` |
-| FMT012 | debug | enabled | — | report-only |
+| FMT009 | structure | preview | — | report-only |
+| FMT010 | redundancy | preview | delete duplicate | `.safe` |
+| FMT011 | redundancy | preview | delete duplicate | `.safe` |
+| FMT012 | debug | preview | — | report-only |
 | FMT013 | redundancy | preview | drop outer pair | `.safe` |
 
 Four report-only, two `.safe`-fix. No `.unsafe` or `.displayOnly` fix ships: a rule either has a
 meaning-preserving edit under its own evidence or it emits none, following `ruff-08`'s discipline
 ("When there is no meaning-preserving edit, emit no fix rather than an `.unsafe` one nobody should
 apply", `docs/adding-a-rule.md:60-68`).
+
+**All six ship as `preview` (default-off), and that is a scaffold correction made during RYR-IMPL, not
+the freeze's original intent.** The freeze had FMT009–FMT012 `enabled`. Implementing that exposed two
+facts. (1) `defaultEnabled` was never enforced by selection — the default selection was literally
+`"all"`, so before ruff-10 (every rule default-on) it was moot, and FMT008/FMT013, already frozen
+`preview`, were in fact *running* by default. Enforcing the field (a `default` selector that expands to
+`defaultEnabled` rules) is the minimal fix ruff-10 needs for its own preview rules. (2) A default-on
+*syntax*-tier rule makes the default `check`/`format` run demand the projection for **every** file —
+retiring the measured source-only fast path (`ruff-05`) for the common case, and forcing non-module
+files (lakefiles, standalone scripts) onto the exact frontend, where they cost a full frontend run or
+fail with no analyzer. That is real work the scaffold already owns elsewhere: promoting a preview rule
+into the default set is **`ruff-12-rule-lifecycle`** ("experimental rules require preview";
+lifecycle-aware selection), the edit-loop/incremental cache is **`ruff-16`**, and the default-run cost
+budget is **`ruff-19`**. ruff-10's own roadmap says "at least six **stable or preview** rules" — preview
+is in scope; graduating to stable/default is not. So ruff-10 ships all six as preview, fully
+implemented and selectable (`--select <code>` / `<category>` / `all`), and ruff-12 graduates the stable
+ones once the lifecycle machinery and the ruff-16/ruff-19 support exist. The cache **tier tag**
+(`SemanticResult.tier`, `cacheHitServes`) that this stack added stays load-bearing regardless: any
+explicit `--select FMT010` still demands `.syntax`, and the tier gate is what stops a source-only
+shortcut entry from serving it a false negative.
 
 ## 4. What is rejected, and why (survey in evidence §2)
 

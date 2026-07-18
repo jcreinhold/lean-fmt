@@ -223,7 +223,7 @@ PY
 rm -rf "$cache_root"
 
 cat >"$work/per-file.toml" <<'EOF'
-select = ["all"]
+select = ["default"]
 [per-file-ignores]
 "tests/check/Findings.lean" = ["FMT001"]
 EOF
@@ -254,7 +254,7 @@ PY
 # opts in and applies it. The one admission rule governs preview and write alike, so `check` above and
 # `fix` here agree on what would apply.
 cat >"$work/demote.toml" <<'EOF'
-select = ["all"]
+select = ["default"]
 extend-unsafe-fixes = ["FMT001"]
 EOF
 run_expect 1 "$work/demote-check.json" "$application" check --root . --json --no-cache \
@@ -298,7 +298,7 @@ grep -q 'both extend-safe-fixes and extend-unsafe-fixes' "$work/both-lists.out.s
 # statistics are product behavior rather than execution strategy.
 cat >"$work/include.toml" <<'EOF'
 include = ["tests/check/Clean.lean"]
-select = ["all"]
+select = ["default"]
 EOF
 run_expect 0 "$work/include.json" "$application" check --root . --json --no-cache \
   --config "$work/include.toml"
@@ -309,7 +309,7 @@ assert [f["path"] for f in r["files"]] == ["tests/check/Clean.lean"]
 PY
 
 cat >"$work/ignore.toml" <<'EOF'
-select = ["all"]
+select = ["default"]
 ignore = ["FMT001"]
 EOF
 run_expect 0 "$work/config-ignore.json" "$application" check --root . --json --no-cache \
@@ -395,7 +395,9 @@ python3 - "$work/rules.json" <<'PY'
 import json, sys
 rules = json.load(open(sys.argv[1]))
 assert [r["code"] for r in rules] == \
-    ["FMT001", "FMT002", "FMT003", "FMT004", "FMT005", "FMT006", "FMT007"]
+    ["FMT001", "FMT002", "FMT003", "FMT004",
+     "FMT008", "FMT009", "FMT010", "FMT011", "FMT012", "FMT013",
+     "FMT005", "FMT006", "FMT007"], [r["code"] for r in rules]
 # The formatting rules are fixable text rules; the source-security rules are report-only and their
 # own category. FMT003/FMT004 flag bytes the formatter cannot express by reformatting. The import
 # family is its own `imports` category: FMT005 (duplicate) carries a safe fix, FMT006 (redundant,
@@ -407,9 +409,20 @@ assert all((not by_code[c]["fixable"]) and by_code[c]["category"] == "security"
 assert by_code["FMT005"]["fixable"] and by_code["FMT005"]["category"] == "imports"
 assert all((not by_code[c]["fixable"]) and by_code[c]["category"] == "imports"
            for c in ("FMT006", "FMT007"))
-# Import rules are reported at source coordinates and project onto the `source` tier for the wire
-# shape, so the catalog is uniform: every rule is default-enabled and source-indexed.
-assert all(r["defaultEnabled"] and r["input"] == "source" for r in rules)
+# FMT001-007 are source-tier and default-enabled: reported at source coordinates and projected onto
+# the `source` tier for the wire shape.
+source_default = ("FMT001", "FMT002", "FMT003", "FMT004", "FMT005", "FMT006", "FMT007")
+assert all(by_code[c]["defaultEnabled"] and by_code[c]["input"] == "source" for c in source_default)
+# FMT008-013 are the first syntax-tier rules and ship as preview: off by default, indexed on the
+# compiler projection (`input == "syntax"`), opted into only by an explicit `--select`. Their
+# categories name what each reports; FMT010/011/013 carry redundancy fixes, the rest are report-only.
+preview = ("FMT008", "FMT009", "FMT010", "FMT011", "FMT012", "FMT013")
+assert all((not by_code[c]["defaultEnabled"]) and by_code[c]["input"] == "syntax" for c in preview)
+assert by_code["FMT008"]["category"] == "docs" and not by_code["FMT008"]["fixable"]
+assert by_code["FMT009"]["category"] == "structure" and not by_code["FMT009"]["fixable"]
+assert by_code["FMT012"]["category"] == "debug" and not by_code["FMT012"]["fixable"]
+assert all(by_code[c]["fixable"] and by_code[c]["category"] == "redundancy"
+           for c in ("FMT010", "FMT011", "FMT013"))
 PY
 
 run_expect 0 "$work/setup-1.json" "$application" compiler setup --json

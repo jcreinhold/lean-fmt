@@ -145,8 +145,15 @@ run_expect 1 "$work/repeated.json" "$application" check --root . --json --no-cac
   tests/check/Findings.lean
 cmp "$work/artifact-findings.json" "$work/repeated.json"
 
-# The result cache is semantic rather than strategy-based. A module-evidence entry and a fresh exact
-# entry must be byte-identical, and a real hit must bypass the analyzer child.
+# The result cache stores one semantic result per module, but the two production strategies do not
+# compute the same result once a syntax-tier rule exists. The exact frontend runs the whole registry
+# and writes a syntax-tier entry that serves any selection; the source-only shortcut a plain `check`
+# takes on a current module runs only the source rules and writes a narrower source-tier entry,
+# missing every syntax-tier finding. So a module-evidence (shortcut) entry and a fresh exact entry are
+# deliberately NOT byte-identical: the shortcut entry is a source-tier subset, and its `tier` tag is
+# what stops it from serving a syntax `--select`. What stays strategy-independent is the *report* --
+# both paths project the active selection to the same findings -- and the fact that a real hit
+# bypasses the analyzer child.
 rm -rf "$cache_root"
 run_expect 1 "$work/cache-artifact.json" "$application" check --root . --json \
   tests/check/Findings.lean
@@ -162,7 +169,21 @@ rm -rf "$cache_root"
 run_expect 1 "$work/cache-fallback.json" env LEAN_FMT_DISABLE_ARTIFACT=1 LEAN_FMT_TEST_DISABLE_MODULE_EVIDENCE=1 \
   "$application" check --root . --json tests/check/Findings.lean
 fallback_entry=$(find "$cache_root/results" -type f -name '*.json' -print)
-cmp "$work/module-cache-entry.json" "$fallback_entry"
+# The shortcut wrote the source-tier subset; the exact frontend wrote the syntax-tier superset. The
+# superset adds the preview syntax finding (FMT008) that the default report projects back out.
+python3 - "$work/module-cache-entry.json" "$fallback_entry" <<'PY'
+import json, sys
+def result(path):
+    entry, = json.load(open(path))["entries"]
+    return entry["analysis"]["result"]
+short, full = result(sys.argv[1]), result(sys.argv[2])
+assert short["tier"] == "source", short["tier"]
+assert full["tier"] == "syntax", full["tier"]
+short_codes = {f["code"] for f in short["findings"]}
+full_codes = {f["code"] for f in full["findings"]}
+assert short_codes < full_codes, (short_codes, full_codes)
+assert "FMT008" in full_codes - short_codes, (short_codes, full_codes)
+PY
 cmp "$work/cache-artifact.json" "$work/cache-fallback.json"
 
 # Selection is a projection over one cached result, not a component of its identity. Two runs that
