@@ -16,6 +16,7 @@ Replace the private editor-facing NDJSON product surface with a native LSP serve
 
 - Support initialize/shutdown/exit, document open/change/close, diagnostics, document formatting, range formatting, code actions, fix-all, organize imports, cancellation, and dynamic configuration.
 - Honor UTF-16 LSP positions through one tested conversion layer while internal source ranges remain UTF-8 bytes.
+- Range formatting reports the reflow-expanded actual range (inherited from `ruff-14`, since reflow can rebreak the enclosing unit past the client selection), and dynamic `line-width` reconfiguration re-formats affected open documents rather than serving output rendered at the old margin.
 - Document versions prevent stale publication; capacity, request bytes, pending work, and child processes are bounded.
 - No second parser, formatter, rule engine, project resolver, or persistent cache for unsaved buffers.
 

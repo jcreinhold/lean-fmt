@@ -15,15 +15,15 @@ Support editor- and pipeline-friendly stdin/stdout operation plus syntax-aware r
 ## Completion contract
 
 - `-` reads UTF-8 source from stdin and `--stdin-filename` supplies project/config/module identity; stdin never writes source or persistent disk-state cache entries.
-- Range requests use byte or line/column positions with a documented encoding and expand to a structurally safe formatting boundary.
-- Output includes the actual formatted range and source map; text outside it is byte-identical except explicitly documented boundary whitespace.
+- Range requests use byte or line/column positions with a documented encoding and expand to a structurally safe formatting boundary — one that is **reflow-stable**, not merely parse-safe: phase-2 reflow can rebreak the enclosing construct, so the boundary must contain every line the reflow of that unit can move.
+- Output includes the actual formatted range and source map; because reflow can rebreak the enclosing unit, the **reported actual range may span lines the caller did not edit**, and text outside that reported range is byte-identical except explicitly documented boundary whitespace.
 - Whole-file formatting and full-range formatting are equivalent.
 
 ## Work order
 
 1. **RSF-SPEC — Define stream identity and range expansion.** Specify CLI forms, filename requirements, position encoding, enclosing-node selection, comment ownership at boundaries, diagnostics, exit codes, and cache/write policy.
 2. **RSF-IMPL — Implement stdin and syntax-aware ranges.** Reuse snapshot analysis and the layout source map to add stdin/stdout and range formatting, exact validation, actual-range reporting, and deterministic errors.
-3. **RSF-FINAL — Verify boundary stability and pipeline behavior.** Test UTF-8 positions, empty ranges, comments, custom syntax, nested nodes, malformed input, pipes, broken stdout, full-range equivalence, and repeated range idempotence.
+3. **RSF-FINAL — Verify boundary stability and pipeline behavior.** Test UTF-8 positions, empty ranges, comments, custom syntax, nested nodes, malformed input, pipes, broken stdout, full-range equivalence, reflow-expanded ranges (an edit whose enclosing unit rebreaks), and repeated range idempotence.
 
 ## Evidence and verification
 

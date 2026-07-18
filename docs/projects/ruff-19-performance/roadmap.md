@@ -14,7 +14,7 @@ Rebaseline the richer formatter/linter, prevent phase regressions, and decide me
 
 ## Completion contract
 
-- Persistent profiles separate discovery, config, cache epoch, artifact access, parsing, formatting, each rule tier, validation, rendering, and LSP latency.
+- Persistent profiles separate discovery, config, cache epoch, artifact access, parsing, formatting (including phase-2 reflow's `group`/fit-test cost as a named sub-phase), each rule tier, validation, rendering, and LSP latency; the recorded envelope is the post-reflow baseline (~61.7 MiB, up from the ~60.6 MiB conservative-era figure — still well inside the 8 GiB gate).
 - Use microfixtures, adversarial files, the frozen representative mathlib sample, and named stress files; full mathlib remains reserved for final acceptance.
 - Test exactly one-worker/one-thread first, then at most two isolated sessions only if it improves end-to-end release time by at least 20% within 8 GiB, normal pressure, and 256 MiB swap.
 - Optimizations without meaningful end-to-end gain are removed unless they simplify the design.
