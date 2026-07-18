@@ -191,4 +191,56 @@ fix_applies fmt013 NestedParen.lean FMT013 '((1))' '(1)'
 fix_applies fmt010 Duplicates.lean  FMT010 '@[simp, simp]' '@[simp]'
 fix_applies fmt011 Duplicates.lean  FMT011 'deriving Repr, Repr' 'deriving Repr'
 
+# --- RYC-FINAL adversarial composition cases -----------------------------------------------------
+# UTF-8 boundary: the fix range abuts a multibyte glyph (`ϕ`, 2 bytes). Every compiler-produced offset
+# indexes the normalized bytes, so dropping the outer parens of `((ϕ))` must land on the `(`/`)`
+# boundaries and leave `ϕ` intact. This is the frozen-sample `((ϕ i x))` shape (NoncommPiCoprod) in a
+# writable miniature.
+fix_applies fmt013-utf8 NestedParenUtf8.lean FMT013 '((' '(ϕ)'
+
+# Multi-edit over nested defects: `(((1)))` yields two FMT013 findings whose point-deletions are
+# distinct bytes; they compose in one transaction to `(1)` with no false conflict.
+fix_applies fmt013-triple NestedParenTriple.lean FMT013 '((' '(1)'
+
+# Token-mover: an earlier source-shifting fix (FMT010 drops `, simp`, and the attribute reflows onto
+# its own line) moves the later FMT013 paren defect to a new canonical offset. Because every edit is
+# derived from one re-projected canonical model and applied as one transaction, the paren fix still
+# lands exactly -- translating the original-coordinate edit onto the moved bytes would corrupt here.
+probe="tests/syntax/.ryc-fix-mover.lean"
+cp tests/syntax/AttrThenParen.lean "$probe"
+run_expect 0 "$work/mover-fix.json" \
+  sfmt fix --root . --json --no-cache --select FMT010 --select FMT013 "$probe"
+PROBE="$probe" python3 - "$work/mover-fix.json" <<'PY'
+import json, os, sys
+data = json.load(open(sys.argv[1]))
+assert data["written"] == 1 and data["changed"] == 1, data
+got = open(os.environ["PROBE"]).read()
+assert "((" not in got and ", simp" not in got, ("mover not fully composed", repr(got))
+assert "(1)" in got and "@[simp]" in got, ("mover lost a fix", repr(got))
+PY
+# Idempotence: a second `fix` on the written file is a no-op -- nothing is left to change.
+run_expect 0 "$work/mover-refix.json" \
+  sfmt fix --root . --json --no-cache --select FMT010 --select FMT013 "$probe"
+python3 - "$work/mover-refix.json" <<'PY'
+import json, sys
+data = json.load(open(sys.argv[1]))
+assert data["written"] == 0 and data["changed"] == 0, ("second fix was not a no-op", data)
+assert data["files"][0]["status"] == "clean", data["files"][0]
+PY
+rm -f "$probe"
+
+# Pass-order independence: the composed output does not depend on `--select` order. The same two rules
+# selected in either order write byte-identical results, because the edits live in one coordinate
+# system and one atomic transaction rather than a sequence of re-derived passes.
+order_a="tests/syntax/.ryc-fix-ordera.lean"
+order_b="tests/syntax/.ryc-fix-orderb.lean"
+cp tests/syntax/AttrThenParen.lean "$order_a"
+cp tests/syntax/AttrThenParen.lean "$order_b"
+run_expect 0 "$work/order-a.json" \
+  sfmt fix --root . --json --no-cache --select FMT010 --select FMT013 "$order_a"
+run_expect 0 "$work/order-b.json" \
+  sfmt fix --root . --json --no-cache --select FMT013 --select FMT010 "$order_b"
+cmp "$order_a" "$order_b" || { echo "pass-order changed the composed bytes" >&2; exit 1; }
+rm -f "$order_a" "$order_b"
+
 echo "lean-fmt syntax-tier rule integration tests passed"

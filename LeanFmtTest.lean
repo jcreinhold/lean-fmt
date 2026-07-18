@@ -393,6 +393,19 @@ private def testFixAllAdversarial : IO Unit := do
     ensure (left == "MULTI" && right == "MULTI") "an intra-fix conflict lost the fix's own provenance"
   | _ => throw <| IO.userError "overlapping edits within one fix were accepted"
 
+  -- Mixed-tier conflict (`RYC-FINAL`): the conflict path carries no tier. A syntax-rule fix (`FMT013`)
+  -- and a source-rule fix (`FMT001`) that overlap on the same canonical bytes reject and name BOTH
+  -- rules. No file drives this — the shipped rules are disjoint by design (the only source `.safe`
+  -- fixes, FMT001/FMT002/FMT005, edit whitespace/import/EOF bytes that never intersect a term paren or
+  -- attribute range), so the composition is exercised here at `preparePatch`, its owning layer.
+  match preparePatch "abc" #[
+      findingWithEdit { start := 0, stop := 2 } "" .safe "FMT013",
+      findingWithEdit { start := 1, stop := 3 } "" .safe "FMT001"] with
+  | .error (.conflict left right _ _) =>
+    ensure (#[left, right].qsort (· < ·) == #["FMT001", "FMT013"])
+      "a mixed-tier syntax/source conflict did not name both rules distinctly"
+  | _ => throw <| IO.userError "an overlapping syntax/source fix pair was accepted"
+
   -- Applicability governs admission, never bytes. The same edit safe or unsafe assembles identically;
   -- promotion/demotion decides whether `fix` applies it, upstream of the assembler.
   let asSafe ← requirePatch "abc" #[findingWithEdit { start := 0, stop := 1 } "X" .safe "R"]

@@ -1,11 +1,30 @@
 ---
 kind: state
-first_unresolved: 03-final
+first_unresolved: none
 ---
 
 # Current state
 
-**RYC-SPEC and RYC-IMPL verified; `fix` now applies syntax fixes.** This successor stack holds the one
+**RYC-SPEC, RYC-IMPL, and RYC-FINAL verified — the stack is complete.** `fix` applies syntax fixes by
+canonical re-projection, and the adversarial exercise `ruff-06` handed forward is closed by persistent
+regression tests (`results/03-final.md`): a token-moving fix (an earlier `FMT010` shift moves the later
+`FMT013` paren, which still lands exactly), a UTF-8 boundary (`((ϕ))→(ϕ)`), a multi-edit nested case
+(`(((1)))→(1)`), a mixed-tier conflict (a syntax `FMT013` edit and a source `FMT001` edit overlapping,
+rejected by `preparePatch` naming both rules), idempotence (a second `fix` is a no-op), and pass-order
+independence (`--select` order writes byte-identical bytes). The frozen sample's one real syntax edit
+(`FMT013` on `NoncommPiCoprod.lean:173`) was reviewed read-only via `format` and composes to
+`Commute m (ϕ i x)`, touching exactly that defect. Design B (parse-only) is not warranted for v1 — the
+re-projection is one gated frontend run (5.78s on that module) and the syntax rules are preview-only;
+revisiting belongs to `ruff-12`/`ruff-19`.
+
+RYC-FINAL applied one **prompt repair**: step 2 asked for a *file* with an overlapping syntax/source
+fix, but the shipped rules are disjoint by design (the only source `.safe` fixes — `FMT001`, `FMT002`,
+`FMT005` — edit whitespace/EOF/import bytes that cannot intersect a term-paren or attribute range), so
+no such file exists. The clause was narrowed to exercise the conflict path at its owning layer
+(`Edit.preparePatch`/`validateConflicts` in `LeanFmtTest.lean`, `ruff-06`'s convention), keeping the
+intent source-true.
+
+This successor stack holds the one
 deferral
 `ruff-10-syntax-rules` left open: `fix` applying a syntax-tier rule's `.safe` fix. `check` already
 reports FMT010/011/013 fixes on original coordinates, but `format`/`fix` render canonical text and run
@@ -44,7 +63,7 @@ fix-deferral pin for apply-and-verify cases; all twelve build/test gates pass.
 | --- | --- | --- | --- |
 | 01-spec | RYC-SPEC | verified | — |
 | 02-impl | RYC-IMPL | verified | RYC-SPEC |
-| 03-final | RYC-FINAL | planned | RYC-IMPL |
+| 03-final | RYC-FINAL | verified | RYC-IMPL |
 
 ## Scope
 

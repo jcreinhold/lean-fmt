@@ -1,6 +1,6 @@
 ---
 claim_id: RYC-FINAL
-status: planned
+status: verified
 depends_on: [RYC-IMPL]
 ---
 
@@ -31,9 +31,15 @@ interface. Write characterization tests before implementation where the behavior
 
 1. Reproduce and characterize the composed fix path RYC-IMPL delivered.
 2. Construct the adversarial fixtures: a syntax fix whose canonical re-projection moves the fixed
-   tokens (so a byte-translation approach would corrupt them), a fix at a multibyte-glyph boundary, a
-   multi-edit fix, and a file where a syntax `.safe` fix and a source `.safe` fix touch overlapping
-   canonical ranges (the conflict path must reject with provenance naming both rules).
+   tokens (so a byte-translation approach would corrupt them), a fix at a multibyte-glyph boundary, and
+   a multi-edit fix. For the mixed-tier conflict, note that the shipped rules are disjoint by design —
+   the only source `.safe` fixes (`FMT001` trailing whitespace, `FMT002` final newline, `FMT005`
+   duplicate import) edit whitespace/import/EOF bytes that cannot intersect a term-paren or attribute
+   range, so no file produces a natural syntax-vs-source overlap. Exercise the conflict path at its
+   owning layer instead (`Edit.preparePatch`/`validateConflicts`, tested in `LeanFmtTest.lean` as
+   `ruff-06` established for conflict cases): feed an overlapping finding set carrying a syntax code
+   (`FMT013`) and a source code (`FMT001`) and assert the conflict rejects with provenance naming both
+   rules.
 3. Assert idempotence: applying the fix and re-running `check` on the written file yields no finding,
    and a second `fix` is a no-op.
 4. Run the frozen sample through the composed path; manually review every applied edit for exactness
