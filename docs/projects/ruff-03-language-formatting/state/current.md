@@ -1,6 +1,6 @@
 ---
 kind: state
-first_unresolved: none
+first_unresolved: 11-operator-break
 ---
 
 # Current state
@@ -28,9 +28,12 @@ five prompts that consume that foundation:
 | --- | --- | --- |
 | 06-notation-facts | RLF-NOTATION | *consume* the `ruff-05b` notation-spacing fact → operators take declared spacing |
 | 07-offside-layout | RLF-OFFSIDE | parse-preserving re-indent to a canonical base (design-twice; reopens `ruff-02` only if a `Doc` constructor wins) |
-| 08-reflow-expr | RLF-REFLOW | margin-driven line breaking for app/operator/binder/match (engine `group`/`nest`/`line`) |
-| 09-reflow-blocks | RLF-BLOCKS | records + tactic/`do`/`where`/`let` offside layout |
-| 10-reflow-final | RLF-ACCEPT | idempotence + parse-preservation + coverage + performance acceptance |
+| 08-reflow-expr | RLF-REFLOW | margin-driven line breaking for `Term.app` (engine `group`/`nest`/`line`; operator/binder/match deferred to 11) |
+| 09-reflow-blocks | RLF-BLOCKS | tactic/`do` offside layout (structInst record break deferred to 12) |
+| 10-reflow-final | RLF-ACCEPT | idempotence + parse-tree preservation + coverage + performance acceptance of the app+offside subset |
+| 11-operator-break | RLF-OPERATOR-BREAK | break over-margin operators/notations, bracketed binders, `matchAlt` (discharges `notes/07` §2) |
+| 12-records | RLF-RECORDS | `structInst` A1 vertical break (discharges `notes/08` §2) |
+| 13-reflow-accept | RLF-REFLOW-ACCEPT | re-audit the complete reflow set; supersedes RLF-ACCEPT's subset coverage |
 
 Build order for reflow: `ruff-05b` (RSF-SPEC→IMPL→FINAL) first, then these consume it.
 
@@ -134,7 +137,14 @@ guarantees the printer never emits a re-association — the gate is the backstop
 guarantee. Performance held at **60.6 MiB** peak RSS / 0.13 s to format `Printer.lean` at margin 100
 (unchanged from `RLF-BLOCKS`, since the audit adds no production code). `RLF-ACCEPT` supersedes
 `RLF-FINAL`'s "whole-language coverage" claim, which closed the *conservative* subset only; the two
-acceptances stack and neither is weakened. **Phase 2 is complete: `first_unresolved: none`.**
+acceptances stack and neither is weakened. **`RLF-ACCEPT` accepted the *application-and-offside subset*
+of the reflow set** — the coverage table cited operator/binder/`match` breaking and the `structInst`
+record break as conservative-with-a-reason, *unbuilt*. A prompt-repair pass (2026-07-17) found that the
+stack's Goal promises canonical formatting of operators and records, so that deferred **breaking** breadth
+is a real Goal obligation with no owning prompt — under-scope. It is now scheduled: `RLF-OPERATOR-BREAK`
+(prompt 11) breaks operators/binders/matches, `RLF-RECORDS` (prompt 12) breaks records, and
+`RLF-REFLOW-ACCEPT` (prompt 13) re-audits the complete set and supersedes `RLF-ACCEPT`'s subset coverage.
+**Phase 2 is reopened for the breaking breadth: `first_unresolved: 11-operator-break`.**
 
 The remainder of this file is the phase-1 record — a live claim about the conservative subset and the
 evidence for it — kept intact because it is the citation base phase 2 builds against.
@@ -200,6 +210,9 @@ Printing inside the frontend would buy free arg order for a median 1.96 s fronte
 | 08-reflow-expr | RLF-REFLOW | verified | RLF-OFFSIDE |
 | 09-reflow-blocks | RLF-BLOCKS | verified | RLF-REFLOW |
 | 10-reflow-final | RLF-ACCEPT | verified | RLF-BLOCKS |
+| 11-operator-break | RLF-OPERATOR-BREAK | planned | RLF-REFLOW |
+| 12-records | RLF-RECORDS | planned | RLF-BLOCKS |
+| 13-reflow-accept | RLF-REFLOW-ACCEPT | planned | RLF-OPERATOR-BREAK, RLF-RECORDS, RLF-ACCEPT |
 
 **`RLF-FINAL` is verified, and it closed phase 1** (`results/05-corpus.md`). It changed no layout and
 no output byte: its finding is that **the refusals were never unsafe, they were unread.** The stop rule
@@ -792,7 +805,9 @@ recover a collapse that fires zero times.
   `structInst` A1 vertical break it designed (`notes/08` §2) is likewise unbuilt. `RLF-ACCEPT` (verified,
   the phase-2 acceptance) **audited** these rather than building them: `results/10`'s coverage table cites
   each as conservative-with-a-reason (the corpus offers no golden and each re-enables a named hazard), so
-  they are owned and documented, not silent — a future `RLF`-class prompt would build them, gaining table
+  they are owned and documented, not silent. The prompt-repair pass scheduled the build: operator/binder/
+  `match` breaking is `RLF-OPERATOR-BREAK` (prompt 11), the `structInst` A1 break is `RLF-RECORDS` (prompt
+  12), and `RLF-REFLOW-ACCEPT` (prompt 13) re-audits the complete set — each planned, gaining coverage-table
   rows without losing citations.
 - **The margin is set to 100, and it now changes output.** `Application.canonicalWidth := 100`
   (mathlib's text-linter convention) is the sole production margin; `Printer.format` still requires

@@ -1,7 +1,7 @@
 ---
 kind: roadmap
 topic: "Complete Lean language formatting"
-main_results: [RLF-ACCEPT]
+main_results: [RLF-REFLOW-ACCEPT]
 prereq_stacks: [ruff-02-layout-core, ruff-05b-semantic-facts]
 blueprint_tracked: false
 ---
@@ -21,9 +21,10 @@ is a bug, never a style choice.
 This stack runs in two phases. **Phase 1** (`RLF-COMMANDS`..`RLF-FINAL`, verified) shipped the
 formatting provably safe with the facts and primitives available, and characterized — with parser
 citations — why the rest was deferred; it is a no-op on already-canonical Lean by construction. **Phase
-2** (`RLF-NOTATION`..`RLF-ACCEPT`) builds the deferred capability: it *consumes* declared notation
+2** (`RLF-NOTATION`..`RLF-REFLOW-ACCEPT`) builds the deferred capability: it *consumes* declared notation
 spacing from the `ruff-05b-semantic-facts` foundation, adds a parse-preserving offside re-indent,
-margin-driven line breaking, and record/tactic/`do` layout. The declared-spacing fact is **not** built
+margin-driven line breaking (applications first, then operators/binders/matches and records), and
+record/tactic/`do` layout. The declared-spacing fact is **not** built
 here — it needs the frontend `Environment`, so it is a semantic-tier fact owned by `ruff-05b`; phase 2
 only reads it. The architecture, the design-twice, and the layer map are
 `notes/05-reflow-architecture.md`.
@@ -57,9 +58,12 @@ only reads it. The architecture, the design-twice, and the layer map are
 
 6. **RLF-NOTATION — Consume the notation-spacing fact to canonicalize operator spacing.** Use the declared notation/atom spacing fact produced by `ruff-05b-semantic-facts` (carried in the `v4` artifact) to give operators and notations their declared spacing (`a+b` → `a + b`); conservative fallback where no fact is present. The printer gains no `Environment` — it reads the immutable fact. The fact itself is `ruff-05b`'s, not this stack's.
 7. **RLF-OFFSIDE — Provide a parse-preserving re-indent for offside blocks.** Deliver the capability to emit a multi-line block at a canonical base column preserving every internal `colEq`/`colGt`/`colGe`, proven by fresh-frontend reparse. Design twice (new `Doc` constructor vs printer-side reconstruction); reopen `ruff-02` only if a constructor wins. Not column-alignment.
-8. **RLF-REFLOW — Reflow expressions to the target width.** Emit `group`/`nest`/`line` so applications, operators, notations, binders, and matches break across lines when they exceed the margin (default 100), every break respecting `checkColGt`. First layout that makes the engine decide.
-9. **RLF-BLOCKS — Lay out records and offside blocks.** Apply `RLF-OFFSIDE` to `structInst` records and tactic/`do`/`where`/`let` blocks at canonical indentation, preserving the offside separators; conservative fallback where a re-layout cannot be proven parse-preserving.
-10. **RLF-ACCEPT — Close the reflowing formatter.** Idempotence loop, exact fresh-frontend differential, reflow coverage table with citations, and the performance envelope over the corpus and frozen mathlib sample. Supersedes `RLF-FINAL`'s coverage claim; zero silently unowned reflow behaviour.
+8. **RLF-REFLOW — Reflow applications to the target width.** Emit `group`/`nest`/`line` so an over-margin `Term.app` breaks across lines (default margin 100), every break respecting `checkColGt`. First layout that makes the engine decide. (As built, this shipped the `Term.app` β-break; operator/binder/`match` breaking — named in the prompt — was deferred to `RLF-OPERATOR-BREAK`, `notes/07` §2.)
+9. **RLF-BLOCKS — Lay out offside blocks.** Apply `RLF-OFFSIDE` to tactic/`do` blocks at canonical indentation, preserving the offside separators; conservative fallback where a re-layout cannot be proven parse-preserving. (The `structInst` record vertical break was designed here — `notes/08` §2 — but deferred to `RLF-RECORDS` as an `RLF-REFLOW`-class break; `where`/`let` keep their bytes with citations.)
+10. **RLF-ACCEPT — Accept the application-and-offside reflow subset.** Idempotence loop, exact fresh-frontend differential (token, comment, **and parse-tree** comparison), reflow coverage table with citations, and the performance envelope over the corpus and frozen mathlib sample. Supersedes `RLF-FINAL`'s coverage claim for the subset it accepts; zero silently unowned reflow behaviour. Superseded in turn by `RLF-REFLOW-ACCEPT` once the remaining breaking constructs land.
+11. **RLF-OPERATOR-BREAK — Break operators, binders, and match alternatives.** Extend the `RLF-REFLOW` β-break to the constructs it deferred: over-margin operators/notations, bracketed binders, and `matchAlt`, each break parse-preserving and consuming the `RLF-NOTATION` spacing. Discharges `notes/07` §2.
+12. **RLF-RECORDS — Break records vertically.** Build the `structInst` A1 vertical break `RLF-BLOCKS` designed (`notes/08` §2) — one field per line at a fixed nest base so `checkColEq` falls out — guarded against the horizontal-collapse hazard (`results/02` §5b). Discharges the record deferral.
+13. **RLF-REFLOW-ACCEPT — Close the full reflowing formatter.** Re-run the idempotence loop, the exact fresh-frontend differential, the coverage table, and the performance envelope over the *complete* reflow set. Supersedes `RLF-ACCEPT`'s subset coverage; zero deferred *breaking* behaviour remains.
 
 ## Evidence and verification
 

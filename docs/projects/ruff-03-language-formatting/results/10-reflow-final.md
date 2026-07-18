@@ -156,8 +156,11 @@ two acceptances stack; neither is weakened.
   which is why the offside re-index owns only the two parents it can prove and keeps bytes elsewhere.
 - **Records and operator/binder/match breaking are deferred, not incapable** — each designed
   (`notes/07` §2, `notes/08` §2) and cited, unbuilt because the corpus offers no golden and each
-  re-enables a named hazard. A future `RLF`-class prompt could build them; the coverage table would gain
-  rows, not lose citations.
+  re-enables a named hazard. This acceptance therefore covers the **application-and-offside subset** of
+  the reflow set. A prompt-repair pass scheduled the remaining breadth: `RLF-OPERATOR-BREAK` (prompt 11)
+  breaks operators/binders/matches, `RLF-RECORDS` (prompt 12) breaks records, and `RLF-REFLOW-ACCEPT`
+  (prompt 13) re-audits the complete set and supersedes this document's coverage claim — each gaining
+  coverage-table rows without losing citations.
 - **The tree gate compares structure, not elaboration.** It certifies the *parse* is preserved, which is
   the write-safety ceiling this project set. It does not re-elaborate; a reflow that preserved the parse
   but changed elaboration (none is known, and the offside/spacing layouts cannot) would be outside its
