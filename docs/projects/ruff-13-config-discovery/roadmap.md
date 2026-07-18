@@ -16,6 +16,7 @@ Add predictable hierarchical configuration, explicit inheritance, Git ignore sup
 
 - For each file, the closest recognized config applies; explicit `extend` composes a parent config with cycle detection and paths resolved relative to their owning file.
 - Separate top-level discovery, `[format]`, and `[lint]` settings while providing a documented migration from the current flat schema.
+- The `[format]` section exposes the formatter's now-functional `line-width` (03 phase-2 made the margin observable; it is the compile-time constant `canonicalWidth := 100` today, `Application.lean:339`). Promoting it to a runtime per-project override changes formatted output without changing the binary, so the resolved margin MUST be folded into the `configuration` cache-identity digest (`Project.configurationIdentity`, `Cache.lean:207`) in the same commit — otherwise cached `CanonicalText` goes stale under an identity that never mentioned width (`ruff-04-formatter-product/state/current.md` "The group trigger fired"; `ruff-03-language-formatting/results/08-reflow-expr.md`).
 - Respect `.gitignore`, `.ignore`, repository excludes, and global ignores by default; explicit paths bypass them unless `force-exclude` is enabled.
 - `config show PATH --json` explains provenance and effective values deterministically.
 

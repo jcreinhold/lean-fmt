@@ -46,11 +46,16 @@ apply`, not by inspection (`evidence/05-diff-is-a-diff.txt`). `DiffLine` (`:415`
 terminator into the compared element; without it a file differing only in its final newline diffs to
 an empty hunk list while reporting `changed=1`, which is exactly FMT002's edit.
 
-**The stable style surface is empty, by proof rather than deferral.** `Doc.go` reads the margin at
-exactly one place — the `.group`/`.brk` case (`Doc.lean:219-229`) — and `LeanFmt/Printer.lean` emits
-only `Doc.text`, `Doc.hard`, and `Doc.verbatim`. No `group` means the margin is **never read**, so
-every margin produces identical bytes. `line-width` would be a knob that cannot change one, and
-`indent-*` the same against `nest`. Line endings are frozen as "preserve", which
+**The stable style surface is empty — at ship time by the no-group proof, now because the margin is a
+compile-time constant.** When `RFP-FINAL` shipped, `LeanFmt/Printer.lean` emitted only `Doc.text`,
+`Doc.hard`, and `Doc.verbatim`, so `Doc.go`'s single margin read — the `.group`/`.brk` fit test
+(`Doc.lean:219-229`) — never fired and every margin produced identical bytes. **03 phase-2
+(`RLF-REFLOW` onward) fired the trigger this stack named:** `Printer.termDoc` now emits
+`group`/`nest`/`line`, the margin *is* read, and over-margin input reflows, so the general "every
+margin is identical" proof is retired (`Application.lean:316-320`). The surface stays empty for a
+narrower reason: the margin is the compile-time constant `canonicalWidth := 100`
+(`Application.lean:339`), not a runtime key, so no `line-width` knob is exposed and none is needed
+yet; `indent-*` is still a no-op against `nest`. Line endings are frozen as "preserve", which
 `LosslessSource.normalize`/`denormalize` already guarantees. `RFP-IMPL` passes width 100 as an
 internal constant.
 
@@ -64,6 +69,11 @@ empty surface keeps `configuration` free of style.
 (`evidence/06-frozen-sample.txt`). Different binaries, different tree-acquisition paths, different
 widths, same bytes. Idempotence is 12/12 at width 100 on the product's own output. `format` moves 12 of
 62 modules (19%) with `findings=0` throughout, so on real Lean this change is entirely layout.
+Under 03 phase-2 "different widths, same bytes" survives as an *empirical* sample property, not a
+structural guarantee: `RLF-REFLOW-ACCEPT` re-ran the frozen sample and found the reflow breaks a no-op
+on it even at the stricter margin 80 (so a fortiori at 100), because no foreign construct in the sample
+is wide enough to break. A re-measurement of this table under the reflow printer is therefore expected
+to reproduce it, but has not been re-run in this stack.
 
 **Timing: 250.97 s and 1.58 GB for 62 modules, and it is the frontend, not the printer.** mathlib
 registers no `leanFmtArtifact` facet, so `officialArtifacts` misses in order and every module is parsed
@@ -110,9 +120,14 @@ it is the migration path, and `notes/02-stability.md §4` is where a user is tol
   `:368`, `:405-414` are identical in both — but `lake shake`'s guard moved from
   `Lake/CLI/Main.lean:1057` to **`:1113`**. `RFP-IMPL`'s commit message still carries the stale number
   and cannot be rewritten; `evidence/03` records the correction rather than hiding it.
-- **The first `group` in `Printer.lean` must add `line-width` and its cache-identity component in the
-  same commit.** Today's identity is accidentally correct; a `group` makes the margin observable and
-  existing entries stale under an identity that never mentioned it — consistent and wrong.
+- **The group trigger fired in 03 phase-2, and the compile-time constant kept cache identity sound.**
+  `Printer.lean` now emits `group`, so the margin is observable — but `canonicalWidth` is compiled into
+  the binary and the `formatter` cache-identity component already hashes the binary (`Cache.lean:258`),
+  so a margin change recompiles, changes the digest, and invalidates every stale `CanonicalText`
+  (`Application.lean:322-329`). The remaining, *unfired* trigger is a **runtime** project-overridable
+  `line-width` key: it changes output without changing the binary, so whoever adds it must fold the
+  resolved margin into the `configuration` digest (`Project.configurationIdentity`, `Cache.lean:207`)
+  in the same commit. That work is owned by `ruff-13-config-discovery`'s `[format]` section.
 - **This repository is the printer's own corpus, so editing `LeanFmt/` moves the gated figures.**
   `tests/printer/run.sh:137-145` fails on stale shape evidence; the remedy is
   `experiments/run-projection-shape.sh` and then `experiments/check-quoted-figures.py`, which checks
