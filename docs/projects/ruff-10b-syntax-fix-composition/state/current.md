@@ -1,15 +1,26 @@
 ---
 kind: state
-first_unresolved: 01-spec
+first_unresolved: 02-impl
 ---
 
 # Current state
 
-**Scaffolded, not started.** This successor stack holds the one deferral `ruff-10-syntax-rules` left
-open: `fix` applying a syntax-tier rule's `.safe` fix. `check` already reports FMT010/011/013 fixes on
-original coordinates, but `format`/`fix` render canonical text and run only `runSourceRules`, so a
-syntax fix is reported and never applied (`Application.renderCanonicalText`, pinned by
-`tests/syntax/run.sh`).
+**RYC-SPEC verified; interface frozen.** This successor stack holds the one deferral
+`ruff-10-syntax-rules` left open: `fix` applying a syntax-tier rule's `.safe` fix. `check` already
+reports FMT010/011/013 fixes on original coordinates, but `format`/`fix` render canonical text and run
+only `runSourceRules`, so a syntax fix is reported and never applied (`Application.renderCanonicalText`,
+pinned by `tests/syntax/run.sh`).
+
+RYC-SPEC characterized the live fix lifecycle and froze the composition interface (`notes/01-model.md`,
+`results/01-spec.md`). The finding: the whole composition reduces to putting canonical-coordinate
+syntax findings into `CanonicalText.findings` — `prepareFile` already builds the write patch from that
+field (`Application.lean:805-812`), and admission, `Edit.validateConflicts`, atomic publication, and the
+output re-elaboration validator already handle any-tier findings. Chosen **Design A**: when a
+canonical-rendering run demands the syntax tier, `renderCanonicalText` re-projects the rendered text
+through the exact frontend and uses the whole-registry findings as `CanonicalText.findings`; the edits
+are then natively in canonical coordinates (ruff-06's "re-project, don't translate"). **Design B**
+(parse-only projection) is rejected for v1 and named as the optimization if RYC-FINAL measures Design
+A's elaboration cost as unacceptable.
 
 The composition **model is already frozen** by `ruff-06-fix-safety`'s RFX-SPEC (`notes/01-model.md`
 §3, verified): a syntax-tier fix composes by **re-projecting the canonical text** — parse the rendered
@@ -21,7 +32,7 @@ that future stack.
 
 | Prompt | Claim | Status | Depends on |
 | --- | --- | --- | --- |
-| 01-spec | RYC-SPEC | planned | — |
+| 01-spec | RYC-SPEC | verified | — |
 | 02-impl | RYC-IMPL | planned | RYC-SPEC |
 | 03-final | RYC-FINAL | planned | RYC-IMPL |
 

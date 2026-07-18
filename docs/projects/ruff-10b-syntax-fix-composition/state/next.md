@@ -1,9 +1,9 @@
 # Next Proof Packet
 
 - Stack: ruff-10b-syntax-fix-composition
-- First unresolved: 01-spec
-- Claim ID: RYC-SPEC
-- Prompt: 01-spec
+- First unresolved: 02-impl
+- Claim ID: RYC-IMPL
+- Prompt: 02-impl
 - Module: (docs only)
 - Target file: (docs only)
 
@@ -17,8 +17,8 @@ Read this file, the target prompt, target files, listed source/template line ran
 
 ## Proof Task
 
-- Deliver **RYC-SPEC**: Specify the seam that lets `fix` apply a syntax-tier rule's `.safe` fix by re-projecting the rendered canonical text, honoring the model `ruff-06`'s RFX-SPEC froze, without changing `check`, cache identity, or the source-only fast path.
-- Read `roadmap.md`, `ruff-06-fix-safety/notes/01-model.md` §3 (the frozen composition model), `ruff-06-fix-safety/results/03-acceptance.md` (the handed-forward adversarial cases), `AGENTS.md`, and the live fix lifecycle — `LeanFmt/Application.lean` (`renderCanonicalText`, `canonicalAnalysis`, the fix/publish path), `LeanFmt/Rules.lean` (the FMT010/011/013 `.safe` fixes and their coordinate basis), and the `ruff-06` transaction/applicability/conflict code — before specifying an interface.
+- Deliver **RYC-IMPL**: Implement the RYC-SPEC seam so `fix` applies a syntax-tier rule's `.safe` fix by re-projecting the rendered canonical text and routing the canonical-coordinate fixes through the existing `ruff-06` applicability/conflict/transaction path. Drive it with the real FMT010/011/013 rules; remove the deferral path instead of leaving a parallel one.
+- Read `results/01-spec.md`, `roadmap.md`, `AGENTS.md`, the current fix lifecycle, and the relevant compiler/Lake sources before changing an interface. Write interface comments and characterization tests before implementation where the behavior is not already frozen.
 
 ## Reuse
 
@@ -30,6 +30,6 @@ Inspect the live goal, search relevant declarations, test plausible proof steps,
 
 ## Stop Rules
 
-- Do not specify translating original-coordinate edits onto moved canonical bytes; the frozen model is re-projection.
-- Do not let the applied artifact depend on fix pass order.
-- Stop rather than weakening exact semantics, write safety, cache identity, or the resource envelope, or giving rules lifecycle authority.
+- Unknown/custom syntax is preserved and ignored unless a rule explicitly owns it; a defect inside a quotation stays silent through re-projection too.
+- Deterministic ranges come from the re-projected canonical model; no edit is translated onto moved bytes.
+- Stop rather than weakening exact semantics, write safety, cache identity, or the resource envelope.
