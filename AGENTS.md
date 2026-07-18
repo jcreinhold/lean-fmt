@@ -45,7 +45,7 @@ out of production modules until their owning prompt selects and verifies the int
 - Treat formatter-cache cold, ordinary-project-built, formatter-integrated-built, and cache-warm as
   distinct workloads.
 - Stop memory experiments at 8 GiB aggregate RSS, abnormal pressure, or 256 MiB new swap.
-- Keep the public API minimal; prefer private deep modules that hide lifecycle and cache sequencing.
+- Prefer private deep modules that hide lifecycle and cache sequencing.
 - Keep CLI parsing and rendering in `LeanFmt.Cli`; semantic execution, validation, stale checking, and
   publication belong to `LeanFmt.Application` and its lower capabilities.
 - `check`, `format`, and `diff` never write source. `fix` publishes only a complete, conflict-free
@@ -54,15 +54,12 @@ out of production modules until their owning prompt selects and verifies the int
   result-cache identity.
 - `LeanFmt.Project` owns complete non-`.lake` source selection, exact Lake setup, and one shared typed
   no-build graph. Do not replace it with per-file Lake runs or module-only selection.
-- Path errors name the caller's own argument. A missing file throws `selected file does not exist:
-  <arg>`, matching the outside-root and not-a-Lean-source errors, so a file list passed as one path (an
-  unquoted variable in a shell like zsh that does not split) shows in full instead of a half-resolved
-  string. New path-taking CLI surface — ranges, LSP URIs, integration entry points — does the same:
-  pre-check, then report what the caller wrote.
+- Path errors name the caller's own argument, as `selected file does not exist: <arg>` does. New
+  path-taking CLI surface — ranges, LSP URIs, integration entry points — pre-checks and does the same.
 - A current ordinary `.olean` is successful-compilation evidence for source-tier rules, not a
   serialized syntax projection. Syntax-tier rules need the compiler artifact or the exact frontend.
-- A rule's tier is its `RuleImpl` constructor, never a field. The field that once declared it went
-  unenforced and stayed wrong for the product's whole life.
+- A rule's tier is its `RuleImpl` constructor, never a field; a declared tier field goes unenforced
+  and rots.
 - The module artifact holds the projection and nothing else — facts, never findings. Rules run outside
   the compiler, from those facts, in the process that reports them. `LeanFmt.Rules` is absent from both
   `LeanFmt/CompilerPlugin.lean`'s imports and `lean_lib LeanFmtCompilerPlugin`'s globs, and both
