@@ -1717,6 +1717,131 @@ if [[ -z "$op_idem" ]]; then
   printf '  ok   operator break: formatting twice is byte-identical at every margin (%s)\n' "$op_margins"
 fi
 
+# --- bracketed-binder signatures, the RLF-OPERATOR-BREAK binder case ---
+#
+# `optDeclSig`/`declSig` = `many (ppSpace >> (binderIdent <|> bracketedBinder)) >> typeSpec`
+# (Lean/Parser/Command.lean:130-135) -- no colGt/colGe/colEq anywhere (`ppIndent`/`ppSpace` are
+# pretty-printer hints), so an over-margin single-line signature breaks one binder per line at column 2,
+# the head binder left on the `def name` line, and reparses at any column (notes/09 §1.2). explicit,
+# implicit, and instance binders all break; a comment between binders keeps the whole signature flat.
+printf -- '--- bracketed-binder signatures (RLF-OPERATOR-BREAK) ---\n'
+cat >"$work/binder.lean" <<'FIXTURE'
+module
+
+def sig (aaaaaa : Nat) (bbbbbb : Nat) (cccccc : Nat) (dddddd : Nat) (eeeeee : Nat) : Nat := aaaaaa
+
+def mixed (aaaaaa : Nat) {bbbbbb : Type} [Add Nat] (dddddd : Nat) (eeeeee : Nat) : Nat := dddddd
+
+def bcomment (aaaaaa : Nat) /- keep -/ (bbbbbb : Nat) (cccccc : Nat) (dddddd : Nat) (eeeeee : Nat) : Nat := aaaaaa
+
+theorem thm (aaaaaa : Nat) (bbbbbb : Nat) (cccccc : Nat) (dddddd : Nat) (eeeeee : Nat) : aaaaaa = aaaaaa := rfl
+
+def small (a : Nat) : Nat := a
+FIXTURE
+
+LEAN_NUM_THREADS=1 lake env "$application" __analyze-exact \
+  "$work/borrowed.setup.json" "$work/binder.lean" "binder.lean" 8589934592 1 >"$work/binder.json"
+
+bind_margins="0 1 40 80 100 1000"
+for w in $bind_margins; do
+  "$tests" printer-format "$work/binder.json" "$work/binder.lean" "$w" >"$work/binder.$w.out"
+  LEAN_NUM_THREADS=1 lake env "$application" __analyze-exact \
+    "$work/borrowed.setup.json" "$work/binder.$w.out" "binder.lean" 8589934592 1 \
+    >"$work/binder.$w.json" 2>"$work/binder.$w.err" || true
+done
+
+if diff -q "$work/binder.lean" "$work/binder.1000.out" >/dev/null 2>&1; then
+  printf '  ok   at margin 1000 nothing exceeds the margin, so the output is its input (identity)\n'
+else
+  printf 'FAIL at margin 1000 the formatter changed a signature file that fits\n' >&2
+  failures=$((failures + 1))
+fi
+
+if diff -q "$work/binder.lean" "$work/binder.40.out" >/dev/null 2>&1; then
+  printf 'FAIL at margin 40 the over-margin signatures were not broken\n' >&2
+  failures=$((failures + 1))
+else
+  printf '  ok   at margin 40 the over-margin signatures were broken (%s lines rewritten)\n' \
+    "$(diff "$work/binder.lean" "$work/binder.40.out" | grep -c '^<')"
+fi
+
+bind_pp=
+for w in $bind_margins; do
+  if ! python3 "$repo_root/experiments/compare_tokens.py" \
+       "$work/binder.json" "$work/binder.$w.json" "$work/binder.lean" "$work/binder.$w.out" \
+       >"$work/binder.$w.pp" 2>&1; then
+    printf 'FAIL binder break at margin %s changed the parse: %s\n' "$w" "$(cat "$work/binder.$w.pp")" >&2
+    failures=$((failures + 1))
+    bind_pp=1
+  fi
+done
+if [[ -z "$bind_pp" ]]; then
+  printf '  ok   every margin (%s) reparses to the input token stream AND tree (no colGt to violate)\n' "$bind_margins"
+fi
+
+# The head binder stays on the `def name` line; every following binder hangs one per line at column 2.
+# explicit `(...)`, implicit `{...}`, and instance `[...]` binders all break the same way.
+if grep -qE '^def sig \(aaaaaa : Nat\)$' "$work/binder.40.out" && \
+   grep -qE '^  \(bbbbbb : Nat\)$' "$work/binder.40.out" && \
+   grep -qE '^  \{bbbbbb : Type\}$' "$work/binder.40.out" && \
+   grep -qE '^  \[Add Nat\]$' "$work/binder.40.out"; then
+  printf '  ok   at margin 40 binders hang one per line at column 2 (explicit, implicit, instance)\n'
+else
+  printf 'FAIL at margin 40 the signature did not break one binder per line\n' >&2
+  cat "$work/binder.40.out" >&2
+  failures=$((failures + 1))
+fi
+
+# A comment between two binders fails the clean guard, so the whole signature keeps its bytes (flat) --
+# the comment is never turned into a line and dropped.
+bind_cmt=
+for w in $bind_margins; do
+  if ! grep -qF '/- keep -/' "$work/binder.$w.out"; then
+    printf 'FAIL binder break at margin %s dropped the comment\n' "$w" >&2
+    failures=$((failures + 1))
+    bind_cmt=1
+  fi
+done
+if [[ -z "$bind_cmt" ]]; then
+  printf '  ok   a comment between binders survives at every margin (its signature stays flat)\n'
+fi
+if grep -qE '^def bcomment .* /- keep -/ .*: Nat := aaaaaa$' "$work/binder.40.out"; then
+  printf '  ok   the commented signature stays flat even over-margin (the clean guard declines it)\n'
+else
+  printf 'FAIL the commented signature was broken despite the comment in a gap\n' >&2
+  failures=$((failures + 1))
+fi
+
+# `declSig` (a `theorem`'s required-type signature) breaks by the same rule as `optDeclSig`.
+if grep -qE '^theorem thm \(aaaaaa : Nat\)$' "$work/binder.40.out"; then
+  printf '  ok   a theorem declSig breaks the same way as a def optDeclSig\n'
+else
+  printf 'FAIL the theorem declSig did not break\n' >&2
+  failures=$((failures + 1))
+fi
+
+# The fits case stays byte-canonical.
+if grep -qE '^def small \(a : Nat\) : Nat := a$' "$work/binder.40.out"; then
+  printf '  ok   a fitting signature stays flat and byte-canonical at margin 40\n'
+else
+  printf 'FAIL a fitting signature was broken at margin 40\n' >&2
+  failures=$((failures + 1))
+fi
+
+bind_idem=
+for w in $bind_margins; do
+  "$tests" printer-format "$work/binder.$w.json" "$work/binder.$w.out" "$w" >"$work/binder.$w.out2"
+  if ! diff -q "$work/binder.$w.out" "$work/binder.$w.out2" >/dev/null 2>&1; then
+    printf 'FAIL binder break: formatting is not idempotent at margin %s:\n' "$w" >&2
+    diff -u "$work/binder.$w.out" "$work/binder.$w.out2" >&2
+    failures=$((failures + 1))
+    bind_idem=1
+  fi
+done
+if [[ -z "$bind_idem" ]]; then
+  printf '  ok   binder break: formatting twice is byte-identical at every margin (%s)\n' "$bind_margins"
+fi
+
 # --- offside blocks, the RLF-BLOCKS capability ---
 #
 # Where "indentation is a token" (results/03-tactics.md) is finally *handled* rather than deferred: a

@@ -60,14 +60,18 @@ flattens the binder-group `null` and the return-type `null` into a single parts 
 `[explicitBinder, explicitBinder, explicitBinder, typeSpec]`. So the binders become the break points of
 `optDeclSig` (equally `declSig`, the required-signature form) without ever naming the `null`.
 
-Breaking before each binder reparses:
+Breaking before each binder reparses. As built, the β-mechanism's uniform `nest 2` hangs every part
+after the head one indent below the head, and the return-type `typeSpec` is itself a lifted part, so it
+lands on its own line at the same column:
 
     def f (aaaaaa : Nat)
-        (bbbbbb : Nat)
-        (cccccc : Nat) : Nat := aaaaaa   -- PARSE-PRESERVING
+      (bbbbbb : Nat)
+      (cccccc : Nat)
+      : Nat := aaaaaa                     -- PARSE-PRESERVING
 
-The continuation column is read off the *output* at implementation time and reparse-checked at every
-margin (the prompt's Stop condition), not asserted here.
+The continuation column (2) is read off the *output* at implementation time and reparse-checked at every
+margin (the prompt's Stop condition), not asserted here — `declSig`/`optDeclSig`'s
+`many (ppSpace >> …) >> typeSpec` carries no column check, so any column reparses.
 
 ### 1.3 `matchAlt` — its over-margin case is an offside re-indent, not a β-break
 

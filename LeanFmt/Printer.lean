@@ -982,6 +982,13 @@ private def spacingOf (kind : String) : Spacing :=
   | "Lean.Parser.Term.explicitBinder" => .bracketed
   | "Lean.Parser.Term.implicitBinder" => .bracketed
   | "Lean.Parser.Term.instBinder" => .bracketed
+  -- A declaration's signature: `many (ppSpace >> (binderIdent <|> bracketedBinder)) >> typeSpec`
+  -- (`Lean/Parser/Command.lean:130-135`). Every gap it owns — binder to binder, binder to `: type` — is
+  -- one space, and `many`/`ppSpace` carry no `colGt`/`colGe`/`colEq`, so `RLF-OPERATOR-BREAK` can break
+  -- a bracketed-binder signature across lines at any column (`notes/09` §1.2). `ppIndent` is a
+  -- pretty-printer hint with no parsing effect.
+  | "Lean.Parser.Command.optDeclSig" => .flat
+  | "Lean.Parser.Command.declSig" => .flat
   | _ => .keep
 
 /-- Kinds broken by name when the construct exceeds the margin — the ones a kind string alone selects.
@@ -991,14 +998,22 @@ private def spacingOf (kind : String) : Spacing :=
 (`Lean/Parser/Term.lean:889-892`) governs, so the "continuation strictly right of the head" rule the
 align-free engine forces has its cleanest warrant here.
 
+`optDeclSig`/`declSig` are here for the same reason as `app`: a declaration's signature is
+`many (ppSpace >> (binderIdent <|> bracketedBinder)) >> typeSpec` (`Lean/Parser/Command.lean:130-135`)
+with no column check on its binders at all, so an over-margin signature breaks one binder per line and
+reparses at any column (`notes/09` §1.2). Their parts are the binders and the `: type`; breaking before
+each is the same shape `app` uses.
+
 **Operators are broken too, but not from this list** (`RLF-OPERATOR-BREAK`, `notes/09` §3). They cannot
 be enumerated — `«term_+_»`, `«term_*_»`, every user mixfix — so the break site adds a second disjunct,
 `spacing.isDeclared`, which is true for exactly the notation nodes the `ruff-05b` fact covers. `matchAlt`
 is deliberately *not* here: its arms are already laid out one-per-line by `matchAlts`' `sepByIndent`, and
 its only over-margin case — a long right-hand side — is an offside re-indent owned by `RLF-BLOCKS`, not a
-β-break (`notes/09` §1.3). Bracketed binders reach the break through `optDeclSig`, added when built. -/
+β-break (`notes/09` §1.3). -/
 private def reflows (kind : String) : Bool :=
   kind == "Lean.Parser.Term.app"
+    || kind == "Lean.Parser.Command.optDeclSig"
+    || kind == "Lean.Parser.Command.declSig"
 
 /-- The separator a kind's grammar declares at gap `index` of `count` parts, or `none` to keep bytes. -/
 private def Spacing.separator (spacing : Spacing) (index count : Nat) : Option String :=
@@ -1180,16 +1195,16 @@ private partial def Tree.termDoc (tree : Tree) (normalized : String) (mayCollaps
   -- drops a byte. In flat mode `line sep` renders exactly `sep`, so the corpus round-trips unchanged.
   --
   -- **Which kinds, and which gaps** (`RLF-OPERATOR-BREAK`, `notes/09-operator-break.md` §2-3). `app`
-  -- breaks — its arguments are the `checkColGt` gap this rule was proven on — and so does any
-  -- fact-covered notation (`spacing.isDeclared`), whose operands carry *no* column check at all
-  -- (`«term_+_»` is `term:65 " + " term:66`, no `checkColGt`; all break shapes reparse,
-  -- `notes/09` §1.1), so the move-value-down break that lands their head at the indent base makes the
-  -- continuation strictly right of the head just as it does for `app`. The break *point* differs per
-  -- kind: `app` breaks before every part (its parts are all children, so "before every child" and
-  -- "before every part" coincide, and the `app` golden is unchanged); a notation breaks before its
-  -- operator *token* and keeps each operand glued to it on the continuation line — Black's binary
-  -- operator layout, `left`↵`  + right` (op_lead), a chain collapsing to one operand per line at a
-  -- single column because left-association lives in the never-nested head.
+  -- and the declaration signatures (`reflows`) break — `app`'s arguments are the `checkColGt` gap this
+  -- rule was proven on, a signature's binders carry no column check at all — and so does any fact-covered
+  -- notation (`spacing.isDeclared`), whose operands also carry no column check (`«term_+_»` is
+  -- `term:65 " + " term:66`, no `checkColGt`; all break shapes reparse, `notes/09` §1.1). The break
+  -- *point* differs per kind: an `app`/signature breaks before every part (their parts are children —
+  -- arguments, binders, the `: type` — so "before every child" and "before every part" coincide, and the
+  -- `app` golden is unchanged); a notation breaks before its operator *token* and keeps each operand
+  -- glued to it on the continuation line — Black's binary operator layout, `left`↵`  + right` (op_lead),
+  -- a chain collapsing to one operand per line at a single column because left-association lives in the
+  -- never-nested head.
   if mayCollapse && (reflows (tree.kindOf node) || isDeclared) && parts.size ≥ 2 then
     let mut clean := true
     let mut index := 0
