@@ -1,9 +1,9 @@
 # Next Proof Packet
 
 - Stack: ruff-10-syntax-rules
-- First unresolved: 01-catalog
-- Claim ID: RYR-SPEC
-- Prompt: 01-catalog
+- First unresolved: 02-implementation
+- Claim ID: RYR-IMPL
+- Prompt: 02-implementation
 - Module: (docs only)
 - Target file: (docs only)
 
@@ -17,7 +17,7 @@ Read this file, the target prompt, target files, listed source/template line ran
 
 ## Proof Task
 
-- Deliver **RYR-SPEC**: Inventory compiler syntax kinds and existing Lean/mathlib linters, sample real defects, and specify at least six stable or preview rules with codes, examples, exclusions, and fix safety.
+- Deliver **RYR-IMPL**: Add the approved rules, metadata, fixes, suppressions, docs inputs, and exact category dispatch without giving rules parser or application lifecycle authority.
 - Read `roadmap.md`, its prerequisite stack results, `AGENTS.md`, the current implementation and tests, and the relevant Lean compiler/Lake sources before changing an interface. Write interface comments and characterization tests before implementation where the behavior is not already frozen.
 
 ## Reuse
@@ -30,6 +30,6 @@ Inspect the live goal, search relevant declarations, test plausible proof steps,
 
 ## Stop Rules
 
-- Reject rules whose only justification is personal proof style.
-- Do not use source regexes for syntax claims.
+- Unknown/custom syntax is preserved and ignored unless the rule explicitly owns it.
+- Deterministic ranges come from the lossless model.
 - Stop rather than weakening exact semantics, write safety, or the resource envelope.
