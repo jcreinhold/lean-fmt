@@ -124,8 +124,11 @@ Lake subprocess — the `RIR-IMPL` stop rule, confirmed by code and by the flat 
   existence and throws `selected file does not exist: <path>` naming the caller's own argument
   (consistent with the outside-root / not-a-Lean-source siblings) instead of letting `realPath` emit a
   partially-resolved, absolutized buffer. Guarded in `tests/check/run.sh` (single-missing and
-  joined-list cases). `LeanFmt/Analysis.lean` is separately tracked but not globbed into any Lake
-  library (an orphan source); genuinely out of this stack's charter.
+  joined-list cases). The companion "`LeanFmt/Analysis.lean` is a tracked-but-unglobbed orphan" claim
+  from this same note was also wrong and is retracted: it *is* globbed (`lakefile.lean` `LeanFmtApplication`,
+  `Glob.one \`LeanFmt.Analysis`), built, and imported by `LeanFmt.Semantic`, `LeanFmtTest`, and
+  `LeanFmtArtifactExtract`. It just sorts first in `ls LeanFmt/*.lean`, so it led the mis-joined path
+  list and looked singled out. There is no orphan.
 - **The duplicate-with-comment organizer behavior** (the surviving line inherits the dropped
   duplicate's trailing comment) is preservation, not loss, but is mildly surprising; it is pinned so a
   future change to comment placement is a conscious one.

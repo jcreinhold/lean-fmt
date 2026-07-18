@@ -59,8 +59,10 @@ private `organize` command. The external prerequisite stacks `ruff-01-lossless-s
   **shell artifact, not a harness bug**: the repro passed modules through an unquoted `$mods` under zsh,
   which does not word-split, so the whole list arrived as one path. Separate args pass (`files=21`).
   Fixed the diagnostic anyway — `Project.load` pre-checks existence and throws `selected file does not
-  exist: <path>` in the caller's own terms; guarded in `tests/check/run.sh`. `LeanFmt/Analysis.lean` is
-  a tracked-but-unglobbed orphan source (genuinely out of scope).
+  exist: <path>` in the caller's own terms; guarded in `tests/check/run.sh`. The companion
+  "`LeanFmt/Analysis.lean` is an unglobbed orphan" claim was also wrong and is retracted: it is globbed
+  (`LeanFmtApplication`), built, and imported by `Semantic`/`LeanFmtTest`/`LeanFmtArtifactExtract`; it
+  merely sorts first, so it led the mis-joined path list. No orphan.
 
 ## Verification convention
 
