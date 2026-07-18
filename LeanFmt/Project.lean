@@ -186,6 +186,40 @@ private def batchModuleStatuses (workspace : Lake.Workspace)
   | .ok statuses _ => return statuses
   | .error _ _ => throw <| IO.userError "could not collect module evidence"
 
+/- For each name in `names` that resolves to a workspace module, the set of module names it
+transitively imports, fetched from one shared no-build Lake graph — never one build context per file.
+This is the graph fact FMT006 (redundant import) consumes; a `RuleImpl` cannot fetch it
+(`Rules.lean:17-19`), so it is produced here and threaded into the finding set by the application.
+
+The `startBuild`/`wait` pattern matches `batchModuleStatuses`: it is *not* `runBuild`, so an out-of-date
+target cannot trigger the `noBuild` process-exit (`finalizeBuild` → `IO.Process.exit`, which only fires
+under `runBuild`). A fetch that errors under `noBuild` — the closure would need a build to resolve —
+maps to the empty closure, a graceful miss: FMT006 then never reports a redundancy *through* that
+import. That can only lose a report (report-only anyway), never fabricate one. A name absent from the
+workspace is simply omitted. -/
+def importClosures (workspace : Lake.Workspace) (names : Array Lean.Name) :
+    IO (Array (Lean.Name × Array Lean.Name)) := do
+  let resolved := names.filterMap fun name =>
+    (workspace.findModule? name).map fun mod => (name, mod)
+  if resolved.isEmpty then return #[]
+  let registeredJobs ← Lake.mkJobQueue
+  let context ← Lake.mkBuildContext' workspace { noBuild := true } registeredJobs
+  let computation : Lake.Job (Lake.Job (Array (Array Lean.Name))) ←
+    Lake.Workspace.startBuild context do
+      let jobs ← resolved.mapM fun (_, mod) => do
+        let job ← mod.transImports.fetch
+        return job.mapResult fun
+          | .ok mods state => .ok (mods.map (·.name)) state
+          | .error _ state => .ok #[] state
+      return Lake.Job.collectArray jobs "lean-fmt import closures"
+  let closuresJob ← match ← computation.wait with
+    | .ok job _ => pure job
+    | .error _ _ => throw <| IO.userError "could not construct import closures"
+  let closures ← match ← closuresJob.wait with
+    | .ok closures _ => pure closures
+    | .error _ _ => throw <| IO.userError "could not collect import closures"
+  return (resolved.zip closures).map fun ((name, _), closure) => (name, closure)
+
 def moduleEvidence (snapshot : Snapshot) : IO (Array ModuleEvidence) := do
   if (← IO.getEnv "LEAN_FMT_TEST_DISABLE_MODULE_EVIDENCE") == some "1" then
     return Array.replicate snapshot.targets.size .needsFrontend

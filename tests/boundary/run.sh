@@ -10,6 +10,10 @@ git rev-parse --is-inside-work-tree >/dev/null
 while IFS= read -r source; do
   case "$source" in
     lakefile.lean|*/lakefile.lean) continue ;;
+    # Evidence probes under docs/ are run by hand (`lake env lean <file>`) and never globbed into the
+    # package, so they are not compiled sources. Some are legacy (non-`module`) on purpose — e.g. the
+    # RIR-SPEC probe exercises `parseImports'`, which is `meta`-gated under the module system.
+    docs/*) continue ;;
   esac
   first=$(awk 'NF {print $1; exit}' "$source")
   if [[ "$first" != module ]]; then

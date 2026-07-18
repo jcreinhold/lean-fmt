@@ -1,6 +1,6 @@
 ---
 claim_id: RIR-IMPL
-status: planned
+status: verified
 depends_on: [RIR-SPEC]
 ---
 

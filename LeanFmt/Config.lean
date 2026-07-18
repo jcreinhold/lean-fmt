@@ -89,16 +89,19 @@ private def keyString : Lean.Name → String
   | .str .anonymous value => value
   | name => name.toString
 
-/-- A selector names a category iff some registered rule declares it. Categories are derived from the
-registry, never a hardcoded list: a new category (`security`) becomes selectable the moment a rule
-carries it, and `expandSelector`/`selectorsValid` cannot drift apart. -/
+/-- A selector names a category iff some rule declares it. Categories are derived from the full rule
+identity set (`allRuleInfos` = engine rules + import rules), never a hardcoded list: a new category
+(`security`, `imports`) becomes selectable the moment a rule carries it, and
+`expandSelector`/`selectorsValid` cannot drift apart. Reading `allRuleInfos` rather than `ruleRegistry`
+is what makes `--select imports` and FMT005/6/7 selectable even though those rules live outside the
+linear-tier engine. -/
 private def isCategory (selector : String) : Bool :=
-  ruleRegistry.any (·.info.category == selector)
+  allRuleInfos.any (·.category == selector)
 
 private def selectorsValid (selectors : Array String) : Except String Unit := do
   for selector in selectors do
     unless selector == "all" || isCategory selector ||
-        ruleRegistry.any (·.info.code == selector) do
+        allRuleInfos.any (·.code == selector) do
       throw s!"unknown rule selector: {selector}"
 
 private def parsePerFileIgnores (value : Lake.Toml.Value) : Except String (Array PerFileIgnore) := do
@@ -187,9 +190,9 @@ def FormatterConfig.includesPath (config : FormatterConfig) (path : String) : Bo
 
 private def expandSelector (selector : String) : Array String :=
   if selector == "all" then
-    ruleRegistry.map (·.info.code)
+    allRuleInfos.map (·.code)
   else if isCategory selector then
-    ruleRegistry.filter (·.info.category == selector) |>.map (·.info.code)
+    allRuleInfos.filter (·.category == selector) |>.map (·.code)
   else
     #[selector]
 

@@ -1,9 +1,9 @@
 # Next Proof Packet
 
 - Stack: ruff-09-import-rules
-- First unresolved: 02-implementation
-- Claim ID: RIR-IMPL
-- Prompt: 02-implementation
+- First unresolved: 03-acceptance
+- Claim ID: RIR-FINAL
+- Prompt: 03-acceptance
 - Module: (docs only)
 - Target file: (docs only)
 
@@ -17,7 +17,7 @@ Read this file, the target prompt, target files, listed source/template line ran
 
 ## Proof Task
 
-- Deliver **RIR-IMPL**: Use the shared typed Lake graph and lossless header model to implement duplicate, order/group, and validated redundant-import rules plus one private organizer operation.
+- Deliver **RIR-FINAL**: Run fresh exact-context before/after differentials, comment preservation, plugin/prelude cases, suppressions, fix conflicts, and frozen-sample performance.
 - Read `roadmap.md`, its prerequisite stack results, `AGENTS.md`, the current implementation and tests, and the relevant Lean compiler/Lake sources before changing an interface. Write interface comments and characterization tests before implementation where the behavior is not already frozen.
 
 ## Reuse
@@ -30,6 +30,6 @@ Inspect the live goal, search relevant declarations, test plausible proof steps,
 
 ## Stop Rules
 
-- No per-file Lake subprocesses.
-- All edits pass exact syntax and required elaboration validation.
+- Record how many redundancy candidates are withheld and why.
+- No full mathlib run.
 - Stop rather than weakening exact semantics, write safety, or the resource envelope.

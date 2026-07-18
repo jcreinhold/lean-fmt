@@ -62,6 +62,7 @@ lean_lib LeanFmtCore where
     Glob.one `LeanFmt.ArtifactModel,
     Glob.one `LeanFmt.LosslessSource,
     Glob.one `LeanFmt.Rules,
+    Glob.one `LeanFmt.Imports,
     Glob.one `LeanFmt.Doc,
     Glob.one `LeanFmt.Comments,
     Glob.one `LeanFmt.Printer

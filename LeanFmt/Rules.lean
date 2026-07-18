@@ -367,4 +367,66 @@ def runRules (facts : Facts) : Array Finding := runRulesOf ruleRegistry facts
 def runSourceRules (normalized : String) : Array Finding :=
   runRules (.source (SourceFacts.of normalized))
 
+/-! ## Import rules — declared here, produced elsewhere
+
+The import family (`FMT005` duplicate, `FMT006` redundant, `FMT007` order/grouping) is **not** in
+`ruleRegistry`, because it is not part of the linear-tier `RuleImpl` engine. Header facts are orthogonal
+to the `source ≤ syntax ≤ semantic` chain — the syntax projection drops the header
+(`LosslessSource.lean:185-187`) — and redundancy needs the Lake graph, which a pure `RuleImpl` cannot
+fetch (`Rules.lean:17-19`). Their findings are produced by `LeanFmt.Internal.Imports` and the
+`Project` graph operation and merged into the report stream (`RIR-IMPL`).
+
+But their *identities* — code, category, summary, fixability, default — belong with every other rule's,
+so selection, `--select imports`, suppression, and `lean-fmt rules` all treat them uniformly and cannot
+drift. They are declared here as `RuleInfo`s and unioned into `allRuleInfos`, which is what
+`Config`'s selectors and the `rules` command read, rather than `ruleRegistry` alone. -/
+def importRuleInfos : Array RuleInfo := #[
+  {
+    code := "FMT005"
+    category := "imports"
+    summary := "remove a duplicate import"
+    fixable := true
+    defaultEnabled := true
+  },
+  {
+    code := "FMT006"
+    category := "imports"
+    summary := "report an import made redundant by another import's transitive closure"
+    fixable := false
+    defaultEnabled := true
+  },
+  {
+    code := "FMT007"
+    category := "imports"
+    summary := "report imports out of canonical order within a group"
+    fixable := false
+    defaultEnabled := true
+  }
+]
+
+/-- Every rule identity the product ships: the linear-tier engine's rules plus the import rules. This is
+the single source `Config` selection and the `rules` command read, so a rule cannot be selectable in one
+place and invisible in another. -/
+def allRuleInfos : Array RuleInfo := ruleRegistry.map (·.info) ++ importRuleInfos
+
+/-- Whether `code` names an import rule (produced by `Imports`/`Project`, not the `RuleImpl` engine). -/
+def isImportCode (code : String) : Bool := importRuleInfos.any (·.code == code)
+
+/-- The `lean-fmt rules` wire shape for the whole catalog: every engine rule with its derived `input`
+tier, then every import rule. An import rule's per-file read is the surface header — a **source**-level
+fact — so it projects onto `source`, the cheapest tier; the module graph FMT006 also consults is
+orthogonal to the `source ≤ syntax ≤ semantic` chain (`Imports`), a run-level input, not a deeper
+frontend tier, so it is not a higher `input`. This is the single array `rules --json` prints, so an
+import rule is as visible and selectable as any other. -/
+def allRulesJson : Array Lean.Json :=
+  ruleRegistry.map Lean.toJson ++ importRuleInfos.map fun info =>
+    Lean.Json.mkObj [
+      ("code", .str info.code),
+      ("category", .str info.category),
+      ("summary", .str info.summary),
+      ("fixable", .bool info.fixable),
+      ("defaultEnabled", .bool info.defaultEnabled),
+      ("input", .str "source")
+    ]
+
 end LeanFmt.Internal

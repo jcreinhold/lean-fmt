@@ -8,6 +8,7 @@ import all LeanFmt.Comments
 import all LeanFmt.Config
 import all LeanFmt.Doc
 import all LeanFmt.Edit
+import all LeanFmt.Imports
 import all LeanFmt.Printer
 import all LeanFmt.Rules
 import all LeanFmt.Service
@@ -159,6 +160,81 @@ private def testSourceSecurityProperties : IO Unit := do
   check (String.ofList (List.replicate 8 (Char.ofNat 0x00)))
   check (String.ofList [Char.ofNat 0x00, Char.ofNat 0x202e, Char.ofNat 0x1b])
   check (String.ofList [Char.ofNat 0x41, Char.ofNat 0x4e2d, Char.ofNat 0x202e])
+
+/-- Parse a surface header, refusing the `none` (parser-message) case the caller never intends. -/
+private def parseHeader! (source : String) : IO Imports.HeaderModel := do
+  match ← Imports.parseHeaderModel source with
+  | some header => return header
+  | none => throw <| IO.userError s!"header did not parse: {source}"
+
+/-- `FMT005`/`FMT006`/`FMT007` and the organizer, tested directly — import rules live outside the
+`RuleImpl` engine (`notes/01-semantics.md` §1b, §7), so the `runRulesOf` seam does not reach them; the
+header rules are pure functions of the parsed surface header, and `redundantFindings` is pure over the
+header plus a caller-supplied closure that stands in for the Lake graph. -/
+private def testImports : IO Unit := do
+  -- The surface header carries the modifier spelling, not the abstract import: `import all A` and
+  -- `import A` are distinct statements, so neither is the other's duplicate (`notes` §3).
+  let dup ← parseHeader! "import Foo.A\nimport Foo.A\n"
+  let dupFindings := Imports.duplicateFindings dup "import Foo.A\nimport Foo.A\n"
+  ensure (dupFindings.map (·.code) == #["FMT005"]) "exact duplicate did not fire FMT005 exactly once"
+  ensure (dupFindings[0]!.fix?.map (·.applicability) == some .safe)
+    "the duplicate-removal fix is not safe"
+  -- The safe fix deletes the *later* whole line (the second `import Foo.A`, bytes [13, 26)).
+  ensure (dupFindings[0]!.fix?.map (·.edits) == some #[{ range := { start := 13, stop := 26 }, replacement := "" }])
+    "the duplicate fix does not delete the later line"
+
+  -- `import all` is valid header syntax only under a `module` marker.
+  let notDupSrc := "module\nimport Foo.A\nimport all Foo.A\n"
+  let notDup ← parseHeader! notDupSrc
+  ensure (Imports.duplicateFindings notDup notDupSrc).isEmpty
+    "`import A` and `import all A` were wrongly treated as duplicates"
+
+  -- A literal `import Init` twice is a surface duplicate — it is the phantom `Init` the abstract list
+  -- injects that a surface rule can never see, not a written one (`notes` §1a).
+  let dupInit ← parseHeader! "import Init\nimport Init\n"
+  ensure ((Imports.duplicateFindings dupInit "import Init\nimport Init\n").size == 1)
+    "a literal repeated `import Init` did not fire FMT005"
+
+  -- FMT007 fires within one group; a blank line is a group boundary the canonical order never crosses.
+  let unordered ← parseHeader! "import Foo.B\nimport Foo.A\n"
+  ensure ((Imports.orderFindings unordered "import Foo.B\nimport Foo.A\n").map (·.code) == #["FMT007"])
+    "out-of-order imports in one group did not fire FMT007"
+  ensure ((Imports.orderFindings unordered "import Foo.B\nimport Foo.A\n")[0]!.fix?.isNone)
+    "FMT007 must be report-only (no fix)"
+  let grouped ← parseHeader! "import Foo.B\n\nimport Foo.A\n"
+  ensure (Imports.orderFindings grouped "import Foo.B\n\nimport Foo.A\n").isEmpty
+    "imports in different blank-line groups were wrongly reported out of order"
+
+  -- FMT006: `Foo.B` is reachable via `Foo.A`'s closure, so the plain `import Foo.B` is a candidate.
+  let redundant ← parseHeader! "import Foo.A\nimport Foo.B\n"
+  let closure : Lean.Name → Option (Array Lean.Name) := fun name =>
+    if name == `Foo.A then some #[`Foo.B] else none
+  let (redFindings, redWithheld) := Imports.redundantFindings redundant closure
+  ensure (redFindings.map (·.code) == #["FMT006"]) "a transitively-covered import did not fire FMT006"
+  ensure (redFindings[0]!.fix?.isNone) "FMT006 must be report-only (no fix)"
+  ensure (redWithheld == 0) "a plain covered import was wrongly withheld"
+
+  -- Withholding: `import all Foo.B` under a `module` marker exposes data reachability cannot reason
+  -- about, so it is withheld (counted), never reported.
+  let withheld ← parseHeader! "module\nimport Foo.A\nimport all Foo.B\n"
+  let (whFindings, whCount) := Imports.redundantFindings withheld closure
+  ensure (whFindings.isEmpty) "an `import all` redundancy candidate was reported rather than withheld"
+  ensure (whCount == 1) "the withheld-redundancy count was not recorded"
+  ensure (!Imports.redundancyEligible withheld withheld.imports[1]!)
+    "`import all` was judged redundancy-eligible"
+
+  -- The organizer: dedup composed with per-group sort, everything else preserved. Text in, text out.
+  let sortMe := "import Foo.B\nimport Foo.A\n"
+  ensure (Imports.organize (← parseHeader! sortMe) sortMe == "import Foo.A\nimport Foo.B\n")
+    "the organizer did not sort a group by module name"
+  let dedupMe := "import Foo.A\nimport Foo.A\n"
+  ensure (Imports.organize (← parseHeader! dedupMe) dedupMe == "import Foo.A\n")
+    "the organizer did not remove a duplicate"
+
+  -- A `prelude` file has no phantom `Init`: the surface model sees only the written imports (`notes` §1a).
+  let prelude ← parseHeader! "prelude\nimport Foo.A\n"
+  ensure (prelude.hasPrelude && prelude.imports.map (·.module) == #[`Foo.A])
+    "the prelude header model does not match the written imports"
 
 private def testServiceProtocol : IO Unit := do
   let health := Lean.Json.parse
@@ -1769,6 +1845,7 @@ public unsafe def main (args : List String) : IO UInt32 := do
     testRules
     testSourceSecurityRules
     testSourceSecurityProperties
+    testImports
     testEngineTiers
     testMixedSelection
     testServiceProtocol

@@ -3,6 +3,7 @@ module
 import all LeanFmt.Cache
 import all LeanFmt.Config
 import all LeanFmt.Edit
+import all LeanFmt.Imports
 import all LeanFmt.Printer
 import all LeanFmt.Project
 import all LeanFmt.Semantic
@@ -75,6 +76,10 @@ structure FileReport where
   cost of the directives — a nonzero count with an empty finding list means the file is clean only
   because it was told to be. -/
   suppressed : Nat := 0
+  /-- Redundant-import (FMT006) candidates *withheld* from the report because a modifier or role
+  reachability cannot reason about (`import all`, `meta import`, a re-exported `public import`) makes
+  them unsafe even to name. Recorded, never silent — `RIR-FINAL` audits this count. -/
+  withheldRedundant : Nat := 0
   deriving Lean.ToJson
 
 structure RunReport where
@@ -87,6 +92,7 @@ structure RunReport where
   rejected : Nat
   withheldUnsafe : Nat
   suppressed : Nat
+  withheldRedundant : Nat
   infrastructureFailures : Array String
   deriving Lean.ToJson
 
@@ -617,6 +623,8 @@ private structure PreparedFile where
   withheldUnsafe : Nat
   /-- How many config-selected findings a source directive suppressed. -/
   suppressed : Nat
+  /-- FMT006 candidates withheld by exposure-changing modifiers (see `FileReport.withheldRedundant`). -/
+  withheldRedundant : Nat
 
 /-- The formatted text in the file's own line-ending form, i.e. what a write would produce. -/
 private def PreparedFile.output (prepared : PreparedFile) : String :=
@@ -661,6 +669,91 @@ private def projectSuppression (result : SemanticResult) (bytes : ByteArray)
   let reported := (outcome.kept ++ result.suppression.malformed ++ outcome.unused).qsort reportOrder
   (reported, outcome.suppressed)
 
+/-! ## Import findings — computed fresh in IO, merged pre-selection
+
+The import family (FMT005/06/07) is not in the `RuleImpl` engine, so it does not ride the cached
+`SemanticResult`. FMT005/07 are pure over the file's own header, but FMT006 depends on *other* files
+through the Lake graph, so **none** of it enters the source-digest result cache — caching a graph fact
+under a single file's digest would serve a stale answer the moment an unrelated import changed. Import
+findings are recomputed every run here and merged into the report before selection (`plan.findings`),
+so `--select imports`, per-file ignores, and suppression all apply to them uniformly. -/
+
+private def anyImportSelected (plan : RulePlan) : Bool :=
+  importRuleInfos.any (plan.selected.contains ·.code)
+
+/-- The import findings for one already-parsed header at `normalized`'s coordinates, plus the
+withheld-redundant count. Each rule is gated on selection so an unselected FMT006 never consults the
+graph closure. Pure — the caller did the IO (header parse, closure fetch). -/
+private def importFindingsOfHeader (plan : RulePlan)
+    (closureOf : Lean.Name → Option (Array Lean.Name))
+    (header : Imports.HeaderModel) (normalized : String) : Array Finding × Nat := Id.run do
+  let mut findings : Array Finding := #[]
+  let mut withheld := 0
+  if plan.selected.contains "FMT005" then
+    findings := findings ++ Imports.duplicateFindings header normalized
+  if plan.selected.contains "FMT007" then
+    findings := findings ++ Imports.orderFindings header normalized
+  if plan.selected.contains "FMT006" then
+    let (redundant, w) := Imports.redundantFindings header closureOf
+    findings := findings ++ redundant
+    withheld := w
+  return (findings, withheld)
+
+/-- The distinct written import module names of `header`, the keys FMT006's closure fetch needs. -/
+private def headerImportNames (header : Imports.HeaderModel) : Array Lean.Name :=
+  header.imports.foldl (init := #[]) fun acc stmt =>
+    if acc.contains stmt.module then acc else acc.push stmt.module
+
+/-- Build a closure lookup for `names` (empty unless FMT006 is selected), then compute one file's
+import report. Used by the single-file editor path; the batch `execute` path shares one closure fetch
+across all files instead (`computeImportReports`). -/
+private def singleImportReport (plan : RulePlan) (workspace : Lake.Workspace)
+    (normalized : String) : IO (Array Finding × Nat) := do
+  unless anyImportSelected plan do return (#[], 0)
+  match ← Imports.parseHeaderModel normalized with
+  | none => return (#[], 0)
+  | some header =>
+    let closureOf ← if plan.selected.contains "FMT006" then
+        let pairs ← Project.importClosures workspace (headerImportNames header)
+        pure fun name => (pairs.find? (·.1 == name)).map (·.2)
+      else pure fun _ => none
+    return importFindingsOfHeader plan closureOf header normalized
+
+/-- Compute every target's import report in one pass: parse all headers, fetch the union of their
+import closures in a single no-build graph build (FMT006 only), then project per file. Returns one
+`(findings, withheldRedundant)` per snapshot, aligned with `snapshots`. -/
+private def computeImportReports (plan : RulePlan) (workspace : Lake.Workspace)
+    (snapshots : Array SourceSnapshot) : IO (Array (Array Finding × Nat)) := do
+  unless anyImportSelected plan do
+    return Array.replicate snapshots.size (#[], 0)
+  let headers ← snapshots.mapM fun snapshot => do
+    let (normalized, _) := LosslessSource.normalize snapshot.source
+    return (normalized, ← Imports.parseHeaderModel normalized)
+  let closureOf ← if plan.selected.contains "FMT006" then
+      let names := headers.foldl (init := #[]) fun acc (_, header?) =>
+        match header? with
+        | some header => (headerImportNames header).foldl (init := acc) fun acc name =>
+            if acc.contains name then acc else acc.push name
+        | none => acc
+      let pairs ← Project.importClosures workspace names
+      pure fun name => (pairs.find? (·.1 == name)).map (·.2)
+    else pure fun _ => none
+  return headers.map fun (normalized, header?) =>
+    match header? with
+    | none => (#[], 0)
+    | some header => importFindingsOfHeader plan closureOf header normalized
+
+/-- FMT005 duplicate-removal edits against `base`, the string the patch indexes. When the patch is
+canonical, the printer reflows the header but does not dedup it, so a duplicate survives into canonical
+text and its fix must be recomputed there — the same reason RuleImpl fixes come from `canonical.findings`
+rather than `result.findings` (`prepareFile`). Only FMT005 is a fix; FMT006/07 are report-only, so the
+patch never carries them. -/
+private def patchDuplicateFindings (plan : RulePlan) (base : String) : IO (Array Finding) := do
+  unless plan.selected.contains "FMT005" do return #[]
+  match ← Imports.parseHeaderModel base with
+  | none => return #[]
+  | some header => return Imports.duplicateFindings header base
+
 /-- Project one analysis into the edits a preview or write would apply.
 
 The patch is based on **canonical text** when the mode renders it, and on the file's own normalized
@@ -680,11 +773,14 @@ patch: a non-admitted fix is stripped to `none` before `preparePatch`, which the
 edits that will actually be published. Admission is `Applicability.admitted unsafeFixes`, the one rule
 `format`/`diff`/`fix` share, so a preview shows exactly what a write would do. -/
 private def prepareFile (plan : RulePlan) (renderCanonical unsafeFixes : Bool)
+    (reportImports patchImports : Array Finding) (withheldRedundant : Nat)
     (snapshot : SourceSnapshot) (analysis : SemanticAnalysis) : Except FileReport PreparedFile := do
   let some result := analysis.result?
     | throw (baseReport snapshot "broken" #[] analysis.diagnostics)
   let (normalized, lineEndings) := LosslessSource.normalize snapshot.source
-  let selected := plan.findings snapshot.relativePath result.findings
+  -- Import findings (`reportImports`, normalized coordinates) join the engine's findings *before*
+  -- selection, so `--select imports`, per-file ignores, and suppression treat them like any rule.
+  let selected := plan.findings snapshot.relativePath (result.findings ++ reportImports)
   let (findings, suppressed) := projectSuppression result normalized.toUTF8 selected
   -- The patch is built from the config-selected findings *unaffected by suppression*, in both modes.
   -- Suppression shapes the report (`findings`), never the bytes a write publishes: `format`/`fix`
@@ -695,7 +791,11 @@ private def prepareFile (plan : RulePlan) (renderCanonical unsafeFixes : Bool)
   -- `fix` never makes. Both patches now ignore the self-diagnostics, keeping preview and write agreed.
   let (base, baseFindings) :=
     match (if renderCanonical then result.canonical? else none) with
-    | some canonical => (canonical.text, plan.findings snapshot.relativePath canonical.findings)
+    -- `patchImports` is FMT005 recomputed against canonical text (the caller's IO), so the auto-fix
+    -- lands at canonical coordinates. The `none` branch's `selected` already carries FMT005 at
+    -- normalized coordinates, so no patch-side recomputation is needed there.
+    | some canonical =>
+      (canonical.text, plan.findings snapshot.relativePath (canonical.findings ++ patchImports))
     | none => (normalized, selected)
   let admitted := baseFindings.map fun finding =>
     match finding.fix? with
@@ -712,7 +812,7 @@ private def prepareFile (plan : RulePlan) (renderCanonical unsafeFixes : Bool)
     | some fix => if !fix.applicability.admitted unsafeFixes && fix.applicability == .unsafe then
         total + 1 else total
     | none => total
-  return { findings, normalized, lineEndings, patch, withheldUnsafe, suppressed }
+  return { findings, normalized, lineEndings, patch, withheldUnsafe, suppressed, withheldRedundant }
 
 private inductive PreviewMode where
   | check
@@ -730,41 +830,64 @@ private def PreviewMode.rendersCanonical : PreviewMode → Bool
   | .check => false
   | .format | .diff => true
 
+/-- The FMT005 findings to merge into a canonical patch: recomputed against canonical text when the
+mode renders it (the printer keeps the duplicate, so the auto-fix must land at canonical coordinates),
+empty otherwise (the normalized `reportImports` already carry it into the non-canonical patch). -/
+private def patchImportsFor (mode : PreviewMode) (plan : RulePlan)
+    (analysis : SemanticAnalysis) : IO (Array Finding) := do
+  if mode.rendersCanonical then
+    match analysis.result?.bind (·.canonical?) with
+    | some canonical => patchDuplicateFindings plan canonical.text
+    | none => pure #[]
+  else pure #[]
+
 private def previewFile (mode : PreviewMode) (plan : RulePlan) (unsafeFixes : Bool)
+    (reportImports : Array Finding) (withheldRedundant : Nat)
     (snapshot : SourceSnapshot) (analysis : SemanticAnalysis) : IO FileReport := do
-  match prepareFile plan mode.rendersCanonical unsafeFixes snapshot analysis with
+  let patchImports ← patchImportsFor mode plan analysis
+  match prepareFile plan mode.rendersCanonical unsafeFixes reportImports patchImports
+      withheldRedundant snapshot analysis with
   | .error report => return report
   | .ok prepared =>
     let findings := prepared.findings
     let withheldUnsafe := prepared.withheldUnsafe
     let suppressed := prepared.suppressed
+    let withheldRedundant := prepared.withheldRedundant
     match mode with
     | .check =>
       return { (baseReport snapshot (if findings.isEmpty then "clean" else "findings") findings) with
-        withheldUnsafe, suppressed }
+        withheldUnsafe, suppressed, withheldRedundant }
     | .format =>
       if prepared.changed then
         return { (baseReport snapshot "would-format" findings) with
-          formatted := some prepared.output, withheldUnsafe, suppressed }
-      return { (baseReport snapshot "clean" findings) with withheldUnsafe, suppressed }
+          formatted := some prepared.output, withheldUnsafe, suppressed, withheldRedundant }
+      return { (baseReport snapshot "clean" findings) with withheldUnsafe, suppressed, withheldRedundant }
     | .diff =>
       if prepared.changed then
         -- Both sides of the diff are normalized: a CRLF file must not read as every line changed.
         return { (baseReport snapshot "would-diff" findings) with
           diff := some (unifiedDiff snapshot.relativePath prepared.normalized
-            prepared.patch.formatted), withheldUnsafe, suppressed }
-      return { (baseReport snapshot "clean" findings) with withheldUnsafe, suppressed }
+            prepared.patch.formatted), withheldUnsafe, suppressed, withheldRedundant }
+      return { (baseReport snapshot "clean" findings) with withheldUnsafe, suppressed, withheldRedundant }
 
 private def fixFile (run : ExactRun) (plan : RulePlan) (unsafeFixes : Bool)
+    (reportImports : Array Finding) (withheldRedundant : Nat)
     (snapshot : SourceSnapshot) (analysis : SemanticAnalysis) : IO FileReport := do
-  match prepareFile plan (renderCanonical := true) unsafeFixes snapshot analysis with
+  -- `fix` always renders canonical; FMT005 is recomputed against that text (the `none` branch of
+  -- `prepareFile` falls back to normalized, where `reportImports` already carry FMT005).
+  let patchImports ← match analysis.result?.bind (·.canonical?) with
+    | some canonical => patchDuplicateFindings plan canonical.text
+    | none => pure #[]
+  match prepareFile plan (renderCanonical := true) unsafeFixes reportImports patchImports
+      withheldRedundant snapshot analysis with
   | .error report => return report
   | .ok prepared =>
     let findings := prepared.findings
     let withheldUnsafe := prepared.withheldUnsafe
     let suppressed := prepared.suppressed
+    let withheldRedundant := prepared.withheldRedundant
     unless prepared.changed do
-      return { (baseReport snapshot "clean" findings) with withheldUnsafe, suppressed }
+      return { (baseReport snapshot "clean" findings) with withheldUnsafe, suppressed, withheldRedundant }
     let output := prepared.output
     -- The validator re-elaborates exactly the bytes a write would publish, line endings included.
     -- It renders no canonical text: the question is whether these bytes elaborate, and rendering a
@@ -774,26 +897,31 @@ private def fixFile (run : ExactRun) (plan : RulePlan) (unsafeFixes : Bool)
     if let some report := validationReport snapshot findings validation then
       return report
     match ← publishAtomic snapshot.path snapshot.source output with
-    | .error message => return { (baseReport snapshot "rejected" findings #[message]) with withheldUnsafe, suppressed }
+    | .error message => return { (baseReport snapshot "rejected" findings #[message]) with
+        withheldUnsafe, suppressed, withheldRedundant }
     | .ok _ =>
       return { (baseReport snapshot "fixed" findings) with
         formatted := some output
         written := true
-        withheldUnsafe, suppressed }
+        withheldUnsafe, suppressed, withheldRedundant }
 
 def ExactRun.checkSnapshot (run : ExactRun) (plan : RulePlan)
     (snapshot : SourceSnapshot) : IO FileReport := do
   let analysis ← run.analyzeSnapshot snapshot (renderCanonical := false)
   -- The editor `check` path never applies fixes, so opt-in is irrelevant to its output; it reports
-  -- every finding's applicability and withholds nothing itself.
-  previewFile .check plan (unsafeFixes := false) snapshot analysis
+  -- every finding's applicability and withholds nothing itself. It computes its own single-file import
+  -- report (batch runs share one closure fetch via `computeImportReports`).
+  let (normalized, _) := LosslessSource.normalize snapshot.source
+  let (reportImports, withheldRedundant) ← singleImportReport plan run.project.workspace normalized
+  previewFile .check plan (unsafeFixes := false) reportImports withheldRedundant snapshot analysis
 
-private def summarize (mode : RunMode) (files : Array FileReport)
+private def summarize (modeString : String) (files : Array FileReport)
     (failures : Array String := #[]) : RunReport :=
   let findings := files.foldl (fun total file => total + file.findings.size) 0
   let changed := files.foldl (fun total file =>
     if file.status == "findings" || file.status == "would-format" ||
-        file.status == "would-diff" || file.status == "fixed" then total + 1 else total) 0
+        file.status == "would-diff" || file.status == "fixed" ||
+        file.status == "would-organize" || file.status == "organized" then total + 1 else total) 0
   let written := files.foldl (fun total file => if file.written then total + 1 else total) 0
   let broken := files.foldl (fun total file =>
     if file.status == "broken" then total + 1 else total) 0
@@ -801,8 +929,9 @@ private def summarize (mode : RunMode) (files : Array FileReport)
     if file.status == "rejected" then total + 1 else total) 0
   let withheldUnsafe := files.foldl (fun total file => total + file.withheldUnsafe) 0
   let suppressed := files.foldl (fun total file => total + file.suppressed) 0
-  { mode := mode.toString, files, findings, changed, written, broken, rejected, withheldUnsafe,
-    suppressed, infrastructureFailures := failures }
+  let withheldRedundant := files.foldl (fun total file => total + file.withheldRedundant) 0
+  { mode := modeString, files, findings, changed, written, broken, rejected, withheldUnsafe,
+    suppressed, withheldRedundant, infrastructureFailures := failures }
 
 private def recordPhase (name : String) (started finished : Nat) : IO Unit := do
   if (← IO.getEnv "LEAN_FMT_PROFILE_PHASES") == some "1" then
@@ -829,6 +958,13 @@ def execute (request : RunRequest) : IO RunReport := do
   recordDuration "workspace_load" project.workspaceLoadNanos
   recordDuration "selection_snapshot" project.selectionNanos
   let snapshots := project.targets
+  -- Import findings are computed fresh here, once, before any cache path: FMT005/07 are pure over each
+  -- file's header, but FMT006 reads the Lake graph, so none of it is cacheable under a file's own
+  -- digest (`computeImportReports`). One shared closure fetch covers every file; the result is threaded
+  -- into `previewFile`/`fixFile` so selection and suppression apply to import findings like any rule's.
+  let importStarted ← IO.monoNanosNow
+  let importReports ← computeImportReports plan project.workspace snapshots
+  recordDuration "import_findings" ((← IO.monoNanosNow) - importStarted)
   let application ← IO.appPath
   let epochStarted ← IO.monoNanosNow
   let cache? ← if request.cache then
@@ -855,10 +991,11 @@ def execute (request : RunRequest) : IO RunReport := do
   if cached.all Option.isSome then
     if let some previewMode := request.mode.preview? then
       let mut files := #[]
-      for (snapshot, cached?) in snapshots.zip cached do
+      for ((snapshot, cached?), importReport) in (snapshots.zip cached).zip importReports do
         if let some analysis := cached? then
-          files := files.push (← previewFile previewMode plan request.unsafeFixes snapshot analysis)
-      return summarize request.mode files
+          files := files.push (← previewFile previewMode plan request.unsafeFixes
+            importReport.1 importReport.2 snapshot analysis)
+      return summarize request.mode.toString files
   let evidenceStarted ← IO.monoNanosNow
   let evidence ← Project.moduleEvidence project
   let evidenceFinished ← IO.monoNanosNow
@@ -883,16 +1020,16 @@ def execute (request : RunRequest) : IO RunReport := do
   if available.all Option.isSome then
     if let some previewMode := request.mode.preview? then
       let analyses := available.filterMap id
-      let files ← (snapshots.zip analyses).mapM fun (snapshot, analysis) =>
-        previewFile previewMode plan request.unsafeFixes snapshot analysis
+      let files ← ((snapshots.zip analyses).zip importReports).mapM fun ((snapshot, analysis), ir) =>
+        previewFile previewMode plan request.unsafeFixes ir.1 ir.2 snapshot analysis
       if let some cache := cache? then
         cache.writeAll project snapshots available
-      return summarize request.mode files
+      return summarize request.mode.toString files
   withExactRun project request.maxMemoryGiB fun exactRun => do
     let mut files := #[]
     let mut failures := #[]
     let mut analyses := #[]
-    for (snapshot, available?) in snapshots.zip available do
+    for ((snapshot, available?), ir) in (snapshots.zip available).zip importReports do
       try
         let analysis ← match available? with
           | some analysis => pure analysis
@@ -900,10 +1037,10 @@ def execute (request : RunRequest) : IO RunReport := do
             exactRun.analyzeSnapshot snapshot renderCanonical (captureSemantic := demanded == .semantic)
         analyses := analyses.push (some analysis)
         let report ← match request.mode with
-          | .fix => fixFile exactRun plan request.unsafeFixes snapshot analysis
-          | .check => previewFile .check plan request.unsafeFixes snapshot analysis
-          | .format => previewFile .format plan request.unsafeFixes snapshot analysis
-          | .diff => previewFile .diff plan request.unsafeFixes snapshot analysis
+          | .fix => fixFile exactRun plan request.unsafeFixes ir.1 ir.2 snapshot analysis
+          | .check => previewFile .check plan request.unsafeFixes ir.1 ir.2 snapshot analysis
+          | .format => previewFile .format plan request.unsafeFixes ir.1 ir.2 snapshot analysis
+          | .diff => previewFile .diff plan request.unsafeFixes ir.1 ir.2 snapshot analysis
         files := files.push report
       catch error =>
         analyses := analyses.push none
@@ -916,7 +1053,75 @@ def execute (request : RunRequest) : IO RunReport := do
         }
     if let some cache := cache? then
       cache.writeAll project snapshots analyses
-    return summarize request.mode files failures
+    return summarize request.mode.toString files failures
+
+structure OrganizeRequest where
+  root : FilePath
+  files : Array FilePath
+  maxMemoryGiB : Nat := 8
+  configPath? : Option FilePath := none
+  /-- Report what would change without writing (like `check` for the organizer). -/
+  check : Bool := false
+
+/-- The opt-in "organize imports" capability the roadmap owes CLI and LSP, exposing no graph internals
+— text in, text out. It rewrites each target's surface header to canonical form: duplicates removed
+(FMT005's safe edit) and each blank-line/comment group sorted by module name (FMT007's reorder). The
+reorder is *observable to elaboration* (`notes/01-semantics.md` §2), which is why it is opt-in and never
+part of unattended `fix`; redundant imports (FMT006) are report-only and are **not** removed here.
+
+Every rewrite that changes a file is validated by re-elaboration before it is written — the same
+trusted-artifact discipline `fix` uses (`fixFile`) — so an organized header that fails to elaborate is
+rejected, never published. A clean project never constructs the validator. -/
+def organize (request : OrganizeRequest) : IO RunReport := do
+  if request.maxMemoryGiB == 0 then
+    throw <| IO.userError "--max-memory must provide a nonzero operating envelope"
+  let root ← IO.FS.realPath request.root
+  let configPath? := request.configPath?.map fun path =>
+    if path.isAbsolute then path else root / path
+  let config ← FormatterConfig.load root configPath?
+  let project ← Project.load root config request.files
+  let snapshots := project.targets
+  -- The canonical header rewrite is pure (no graph): compute every candidate first, and only pay for
+  -- the validator if some file actually changes.
+  let candidates ← snapshots.mapM fun snapshot => do
+    let (normalized, lineEndings) := LosslessSource.normalize snapshot.source
+    match ← Imports.parseHeaderModel normalized with
+    | none => pure none
+    | some header =>
+      let output := LosslessSource.denormalize (Imports.organize header normalized) lineEndings
+      pure (if output == snapshot.source then none else some output)
+  let anyChange := candidates.any Option.isSome
+  if request.check || !anyChange then
+    let files := (snapshots.zip candidates).map fun (snapshot, candidate?) =>
+      baseReport snapshot (if candidate?.isSome then "would-organize" else "clean")
+    return summarize "organize" files
+  withExactRun project request.maxMemoryGiB fun exactRun => do
+    let mut files := #[]
+    let mut failures := #[]
+    for (snapshot, candidate?) in snapshots.zip candidates do
+      match candidate? with
+      | none => files := files.push (baseReport snapshot "clean")
+      | some output =>
+        try
+          let candidate := snapshot.withSource output
+          let validation ← exactRun.analyzeSnapshot candidate (renderCanonical := false) (validator := true)
+          match validation.result? with
+          | none => files := files.push (baseReport snapshot "rejected" #[] validation.diagnostics)
+          | some _ =>
+            match ← publishAtomic snapshot.path snapshot.source output with
+            | .error message => files := files.push (baseReport snapshot "rejected" #[] #[message])
+            | .ok _ =>
+              files := files.push { (baseReport snapshot "organized") with
+                formatted := some output, written := true }
+        catch error =>
+          let message := toString error
+          failures := failures.push s!"{snapshot.relativePath}: {message}"
+          files := files.push {
+            path := snapshot.relativePath
+            status := "infrastructure-failure"
+            diagnostics := #[message]
+          }
+    return summarize "organize" files failures
 
 private unsafe def runAnalyzeChild (args : List String) : IO UInt32 := do
   -- The `captureSemantic` flag is a trailing optional argument: a direct 4-argument invocation (the

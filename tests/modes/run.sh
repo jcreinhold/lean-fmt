@@ -394,13 +394,21 @@ run_expect 0 "$work/rules.json" "$application" rules --json
 python3 - "$work/rules.json" <<'PY'
 import json, sys
 rules = json.load(open(sys.argv[1]))
-assert [r["code"] for r in rules] == ["FMT001", "FMT002", "FMT003", "FMT004"]
+assert [r["code"] for r in rules] == \
+    ["FMT001", "FMT002", "FMT003", "FMT004", "FMT005", "FMT006", "FMT007"]
 # The formatting rules are fixable text rules; the source-security rules are report-only and their
-# own category. FMT003/FMT004 flag bytes the formatter cannot express by reformatting.
+# own category. FMT003/FMT004 flag bytes the formatter cannot express by reformatting. The import
+# family is its own `imports` category: FMT005 (duplicate) carries a safe fix, FMT006 (redundant,
+# graph-derived) and FMT007 (order/grouping) are report-only.
 by_code = {r["code"]: r for r in rules}
 assert all(by_code[c]["fixable"] and by_code[c]["category"] == "text" for c in ("FMT001", "FMT002"))
 assert all((not by_code[c]["fixable"]) and by_code[c]["category"] == "security"
            for c in ("FMT003", "FMT004"))
+assert by_code["FMT005"]["fixable"] and by_code["FMT005"]["category"] == "imports"
+assert all((not by_code[c]["fixable"]) and by_code[c]["category"] == "imports"
+           for c in ("FMT006", "FMT007"))
+# Import rules are reported at source coordinates and project onto the `source` tier for the wire
+# shape, so the catalog is uniform: every rule is default-enabled and source-indexed.
 assert all(r["defaultEnabled"] and r["input"] == "source" for r in rules)
 PY
 
