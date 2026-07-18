@@ -1,9 +1,9 @@
 # Next Proof Packet
 
 - Stack: ruff-08-source-rules
-- First unresolved: 02-implementation
-- Claim ID: RSR-IMPL
-- Prompt: 02-implementation
+- First unresolved: 03-acceptance
+- Claim ID: RSR-FINAL
+- Prompt: 03-acceptance
 - Module: (docs only)
 - Target file: (docs only)
 
@@ -17,7 +17,7 @@ Read this file, the target prompt, target files, listed source/template line ran
 
 ## Proof Task
 
-- Deliver **RSR-IMPL**: Add the approved linear byte/string scans, registry metadata, configuration selectors, suppressions, JSON applicability, and generated rule examples.
+- Deliver **RSR-FINAL**: Run property/fuzz-style boundary tests and microbenchmarks on large files, verify worker-free execution, and record the final catalog.
 - Read `roadmap.md`, its prerequisite stack results, `AGENTS.md`, the current implementation and tests, and the relevant Lean compiler/Lake sources before changing an interface. Write interface comments and characterization tests before implementation where the behavior is not already frozen.
 
 ## Reuse
@@ -30,6 +30,6 @@ Inspect the live goal, search relevant declarations, test plausible proof steps,
 
 ## Stop Rules
 
-- No parser or project capability in source-rule implementations.
-- Avoid repeated UTF-8 decoding.
+- Remove rules whose false-positive policy is not defensible.
+- No full mathlib run.
 - Stop rather than weakening exact semantics, write safety, or the resource envelope.

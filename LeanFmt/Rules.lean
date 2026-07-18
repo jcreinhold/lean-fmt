@@ -194,6 +194,81 @@ private def finalNewline (facts : SourceFacts) : Array Finding :=
       fix? := some { applicability := .safe, edits := #[{ range, replacement := "\n" }] }
     }]
 
+/-! ## Source-security rules
+
+`FMT003` and `FMT004` flag bytes that survive into accepted source only inside a string literal or a
+comment: a bare control byte or bidirectional mark in the command stream is a hard parse error, so a
+file carrying one in code is not accepted source and no source rule runs on it
+(`notes/01-catalog.md` §2). The parser's acceptance is therefore the token context these rules would
+otherwise need — they scan bytes, and every byte they can see is already in a string or comment. Both
+are **report-only**: the byte is inside string data or a human-read comment, so deleting it is not a
+change a byte-level argument can call safe (`notes/01-catalog.md` §3). -/
+
+private def hexDigit (n : Nat) : Char :=
+  if n < 10 then Char.ofNat (n + '0'.toNat) else Char.ofNat (n - 10 + 'A'.toNat)
+
+/-- Uppercase four-digit hex, for the `U+XXXX` in a message. Every code these rules name is `≤ 0xFFFF`
+(`notes/01-catalog.md` §3), so four digits is exact, not a truncation. -/
+private def hex4 (n : Nat) : String :=
+  String.ofList [hexDigit (n / 4096 % 16), hexDigit (n / 256 % 16), hexDigit (n / 16 % 16),
+    hexDigit (n % 16)]
+
+/-- The `FMT003` set: C0 controls except TAB (`0x09`) and LF (`0x0A`), plus DEL (`0x7F`). CR (`0x0D`)
+is unreachable — it cannot survive into accepted normalized source — so its inclusion is moot. TAB is
+excluded: it is legitimate string content and its bare form is a read-boundary rejection, never a
+lint concern here. -/
+private def isForbiddenControl (byte : UInt8) : Bool :=
+  (byte < 0x20 && byte != 0x09 && byte != 0x0a) || byte == 0x7f
+
+private def controlFinding (start : Nat) (codepoint : Nat) : Finding :=
+  {
+    code := "FMT003"
+    severity := .warning
+    message := s!"forbidden control byte U+{hex4 codepoint}"
+    range := { start, stop := start + 1 }
+    -- Report-only: the byte is inside a string literal or comment, so removing it changes program
+    -- data or comment text — not a safe byte-level edit (`notes/01-catalog.md` §3).
+    fix? := none
+  }
+
+/-- A single byte scan; no UTF-8 decoding, because every forbidden byte is one ASCII byte and can
+never be a continuation byte of a multibyte scalar. -/
+private def forbiddenControlByte (facts : SourceFacts) : Array Finding := Id.run do
+  let bytes := facts.bytes
+  let mut findings := #[]
+  for index in [0:bytes.size] do
+    let byte := bytes.get! index
+    if isForbiddenControl byte then
+      findings := findings.push (controlFinding index byte.toNat)
+  return findings
+
+/-- The `FMT004` set: the twelve Unicode bidirectional formatting controls of the Trojan-Source
+attack (CVE-2021-42574). -/
+private def isBidiControl (c : Char) : Bool :=
+  let n := c.toNat
+  n == 0x061c || (0x200e ≤ n && n ≤ 0x200f) || (0x202a ≤ n && n ≤ 0x202e) ||
+    (0x2066 ≤ n && n ≤ 0x2069)
+
+private def bidiFinding (start width codepoint : Nat) : Finding :=
+  {
+    code := "FMT004"
+    severity := .warning
+    message := s!"suspicious bidirectional control U+{hex4 codepoint}"
+    range := { start, stop := start + width }
+    -- Report-only for the same reason as `FMT003`: the mark is string data or comment text.
+    fix? := none
+  }
+
+/-- One left fold over the normalized string, decoding each scalar once and carrying the running byte
+offset in the accumulator, so the range is the mark's exact UTF-8 span without a second pass. -/
+private def bidiControl (facts : SourceFacts) : Array Finding :=
+  let step := fun (state : Nat × Array Finding) (c : Char) =>
+    let (bytePos, findings) := state
+    let findings :=
+      if isBidiControl c then findings.push (bidiFinding bytePos c.utf8Size c.toNat) else findings
+    (bytePos + c.utf8Size, findings)
+  (facts.normalized.foldl step (0, #[])).2
+
 /-- Every rule the product ships, in one static array.
 
 Static, not an attribute or an environment extension. The rule set is compiled and first-party, so
@@ -225,6 +300,26 @@ def ruleRegistry : Array Rule := #[
       defaultEnabled := true
     }
     impl := .source finalNewline
+  },
+  {
+    info := {
+      code := "FMT003"
+      category := "security"
+      summary := "reject forbidden control bytes in source"
+      fixable := false
+      defaultEnabled := true
+    }
+    impl := .source forbiddenControlByte
+  },
+  {
+    info := {
+      code := "FMT004"
+      category := "security"
+      summary := "flag suspicious bidirectional controls in source"
+      fixable := false
+      defaultEnabled := true
+    }
+    impl := .source bidiControl
   }
 ]
 

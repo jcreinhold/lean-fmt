@@ -394,8 +394,14 @@ run_expect 0 "$work/rules.json" "$application" rules --json
 python3 - "$work/rules.json" <<'PY'
 import json, sys
 rules = json.load(open(sys.argv[1]))
-assert [r["code"] for r in rules] == ["FMT001", "FMT002"]
-assert all(r["fixable"] and r["category"] == "text" for r in rules)
+assert [r["code"] for r in rules] == ["FMT001", "FMT002", "FMT003", "FMT004"]
+# The formatting rules are fixable text rules; the source-security rules are report-only and their
+# own category. FMT003/FMT004 flag bytes the formatter cannot express by reformatting.
+by_code = {r["code"]: r for r in rules}
+assert all(by_code[c]["fixable"] and by_code[c]["category"] == "text" for c in ("FMT001", "FMT002"))
+assert all((not by_code[c]["fixable"]) and by_code[c]["category"] == "security"
+           for c in ("FMT003", "FMT004"))
+assert all(r["defaultEnabled"] and r["input"] == "source" for r in rules)
 PY
 
 run_expect 0 "$work/setup-1.json" "$application" compiler setup --json

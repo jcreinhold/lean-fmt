@@ -89,9 +89,15 @@ private def keyString : Lean.Name → String
   | .str .anonymous value => value
   | name => name.toString
 
+/-- A selector names a category iff some registered rule declares it. Categories are derived from the
+registry, never a hardcoded list: a new category (`security`) becomes selectable the moment a rule
+carries it, and `expandSelector`/`selectorsValid` cannot drift apart. -/
+private def isCategory (selector : String) : Bool :=
+  ruleRegistry.any (·.info.category == selector)
+
 private def selectorsValid (selectors : Array String) : Except String Unit := do
   for selector in selectors do
-    unless selector == "all" || selector == "text" ||
+    unless selector == "all" || isCategory selector ||
         ruleRegistry.any (·.info.code == selector) do
       throw s!"unknown rule selector: {selector}"
 
@@ -182,8 +188,8 @@ def FormatterConfig.includesPath (config : FormatterConfig) (path : String) : Bo
 private def expandSelector (selector : String) : Array String :=
   if selector == "all" then
     ruleRegistry.map (·.info.code)
-  else if selector == "text" then
-    ruleRegistry.filter (·.info.category == "text") |>.map (·.info.code)
+  else if isCategory selector then
+    ruleRegistry.filter (·.info.category == selector) |>.map (·.info.code)
   else
     #[selector]
 

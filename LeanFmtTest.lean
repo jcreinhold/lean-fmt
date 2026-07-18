@@ -69,6 +69,37 @@ private def testRules : IO Unit := do
   ensure (findings.all fun f => (f.fix?.map (·.applicability)) == some .safe)
     "a shipped rule produced a non-safe fix"
 
+/-- `FMT003`/`FMT004`: forbidden control bytes and suspicious bidirectional controls. A control byte
+or bidi mark only reaches accepted source inside a string literal or comment (bare occurrences are
+parse errors, `notes/01-catalog.md` §2), so those are the positions exercised here; ranges are
+byte-exact in normalized coordinates and both rules are report-only. -/
+private def testSourceSecurityRules : IO Unit := do
+  let ctl (n : Nat) : String := String.ofList [Char.ofNat n]
+  -- NUL inside a string literal, RLO (U+202E) inside a line comment.
+  let src := "def s := \"a" ++ ctl 0x00 ++ "b\"\n-- x" ++ ctl 0x202e ++ "y\n"
+  let security := (runSourceRules src).filter fun f => f.code == "FMT003" || f.code == "FMT004"
+  ensure (security.map (·.code) == #["FMT003", "FMT004"])
+    "control/bidi coverage or sort order changed"
+  ensure (security.all fun f => f.fix?.isNone)
+    "a source-security rule produced a fix; both are report-only by construction"
+  ensure (security.all fun f => f.severity == .warning) "source-security severity changed"
+  ensure (security[0]!.range == { start := 11, stop := 12 } &&
+      security[0]!.message == "forbidden control byte U+0000")
+    "FMT003 range or message is not byte-exact"
+  ensure (security[1]!.range == { start := 19, stop := 22 } &&
+      security[1]!.message == "suspicious bidirectional control U+202E")
+    "FMT004 range is not the mark's exact three-byte span, or its message changed"
+  -- A two-byte mark (ALM U+061C) gets a two-byte range: width is the scalar's, not a constant.
+  let alm := (runSourceRules ("-- " ++ ctl 0x061c ++ "\n")).filter (·.code == "FMT004")
+  ensure (alm.size == 1 && alm[0]!.range == { start := 3, stop := 5 } &&
+      alm[0]!.message == "suspicious bidirectional control U+061C")
+    "FMT004 width or zero-padded hex is wrong for a two-byte mark"
+  -- DEL (0x7F) is forbidden; TAB (0x09) and LF (0x0A) are not.
+  ensure (((runSourceRules ("-- " ++ ctl 0x7f ++ "\n")).filter (·.code == "FMT003")).size == 1)
+    "DEL (0x7F) was not flagged as a forbidden control byte"
+  ensure ((runSourceRules "def a := 1\n\tx := 2\n").all fun f => f.code != "FMT003" && f.code != "FMT004")
+    "TAB or LF was flagged as a forbidden control byte"
+
 private def testServiceProtocol : IO Unit := do
   let health := Lean.Json.parse
     "{\"id\":{\"client\":1},\"method\":\"health\"}" |>.toOption.bind fun json =>
@@ -257,6 +288,16 @@ ignore = [\"FMT002\"]\n\
       "CLI selection did not replace config selection or ignore precedence changed"
     ensure (match config.rulePlan #["UNKNOWN"] #[] with | .error _ => true | .ok _ => false)
       "unknown CLI selector was accepted"
+    -- `security` resolves through the same registry-derived category machinery as `text` — no
+    -- hardcoded category list — and the two categories are disjoint.
+    let bidi := runSourceRules ("-- x" ++ String.ofList [Char.ofNat 0x202e] ++ "y\n")
+    let .ok secPlan := config.rulePlan #["security"] #[]
+      | throw <| IO.userError "the 'security' category selector was rejected"
+    ensure ((secPlan.findings "A.lean" bidi).map (·.code) == #["FMT004"])
+      "the security category did not select FMT004"
+    ensure (match config.rulePlan #["text"] #[] with
+      | .ok p => (p.findings "A.lean" bidi).isEmpty | .error _ => false)
+      "a text selection reported a security finding: the categories are not disjoint"
     IO.FS.writeFile configPath "unknown = true\n"
     let rejected ← try
       discard <| FormatterConfig.load directory
@@ -1231,6 +1272,13 @@ private def testSuppression : IO Unit := do
   ensure (named.kept.map (·.code) == #["FMT002"] && named.suppressed == 1 && named.unused.isEmpty)
     "code selector suppressed the wrong set"
 
+  -- Suppression is a projection over codes, so the source-security codes flow through it like any
+  -- other. A report-only FMT004 finding is suppressed by a directive that names it.
+  let f004 := mkFinding "FMT004" 42 45
+  let bidiSuppressed := Suppression.apply (facts #[mkDir .file (some #["FMT004"]) ⟨0, bytes.size⟩]) bytes #[f004]
+  ensure (bidiSuppressed.kept.isEmpty && bidiSuppressed.suppressed == 1)
+    "a directive naming FMT004 did not suppress the report-only security finding"
+
   -- A directive whose scope holds no matching finding is unused: FMT900 with a safe removal fix.
   let dead := Suppression.apply (facts #[mkDir .line (some #["FMT001"]) ⟨7, 31⟩]) bytes #[f001]
   ensure (dead.kept.size == 1 && dead.suppressed == 0) "an out-of-scope directive still suppressed"
@@ -1600,6 +1648,7 @@ public unsafe def main (args : List String) : IO UInt32 := do
   | [] =>
     testDigests
     testRules
+    testSourceSecurityRules
     testEngineTiers
     testMixedSelection
     testServiceProtocol

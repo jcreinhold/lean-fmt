@@ -10,8 +10,9 @@ about — add an entry to `ruleRegistry` and you are done.
 ```lean
 {
   info := {
-    code := "FMT003"          -- unique; `lean-fmt rules` and every selector use it
-    category := "text"        -- `--select text` expands to every rule in a category
+    code := "FMTxxx"          -- unique; `lean-fmt rules` and every selector use it
+    category := "text"        -- `--select <category>` expands to every rule that declares it;
+                              -- categories are derived from the registry, not a fixed list
     summary := "..."          -- one line, imperative: what the rule makes true
     fixable := true           -- whether findings carry a `fix?`
     defaultEnabled := true
@@ -54,6 +55,21 @@ A `fix?` is a `Fix`: one `applicability` and an array of `edits`, each a byte ra
 in those same coordinates. `preparePatch` rejects ranges that are out of bounds, land inside a UTF-8
 scalar, or conflict with another fix — as a unit, so a bad fix cannot half-apply, and a conflict names
 both rules and both finding ranges rather than an array index.
+
+## Report-only rules
+
+A rule need not carry a fix. `fixable := false` and `impl := .source fun facts => #[…]` with every
+finding's `fix? := none` ships a **report-only** rule: it names a problem the formatter cannot correct
+by reformatting. `FMT003` (forbidden control byte) and `FMT004` (suspicious bidirectional control) are
+the shipped examples — both scan bytes in the `security` category. Report-only is the honest choice
+when the offending byte is inside a string literal or a comment: deleting it changes program data or
+human-read text, which is not a change a byte-level safety argument can call safe
+(`docs/projects/ruff-08-source-rules/notes/01-catalog.md` §3). When there is no meaning-preserving
+edit, emit no fix rather than an `.unsafe` one nobody should apply.
+
+These two rules also show why a `.source` scan needs no token context: a bare control byte or bidi
+mark in the command stream is a parse error, so any such byte in *accepted* source is already inside a
+string or comment. Acceptance supplies the context the scan would otherwise need.
 
 ## Applicability
 
@@ -110,8 +126,12 @@ will stop you, and it is right to.
 
 ## Testing it
 
-- `LeanFmtTest.lean`'s `testRules` covers the shipped rules against a fixture with CRLF, trailing
+- `LeanFmtTest.lean`'s `testRules` covers the formatting rules against a fixture with CRLF, trailing
   whitespace, and a missing final newline. Add your cases there.
+- `testSourceSecurityRules` covers the report-only rules: control/bidi bytes inside strings and
+  comments, byte-exact ranges (including multibyte marks), and the TAB/LF/DEL boundary. Model a
+  report-only rule's tests on it. `testConfig` asserts category selectors (`--select security`) and
+  `testSuppression` that the codes project through suppression like any other.
 - `testApplicability` covers admission, per-rule reclassification, the display-only floor, and conflict
   provenance. If your rule ships an `.unsafe` or `.displayOnly` fix, assert its applicability there and
   add a `--unsafe-fixes` case to `tests/modes/run.sh`.

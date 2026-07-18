@@ -1,43 +1,49 @@
 ---
 kind: state
-first_unresolved: 02-implementation
+first_unresolved: 03-acceptance
 ---
 
 # Current state
 
-`RSR-SPEC` is **verified**. The frozen catalog is `notes/01-catalog.md`; what was run is
-`results/01-catalog.md`; the acceptance boundary the catalog rests on is measured in
-`evidence/01-acceptance.lean` and its transcript `evidence/01-acceptance.txt`
-(`leanprover/lean4:v4.32.0`). No product behavior changed — the correct footprint for a spec prompt.
-The external prerequisite stacks `ruff-05-rule-engine` and `ruff-06-fix-safety` are verified; their
-live implementation (`LeanFmt/Rules.lean`, `LeanFmt/LosslessSource.lean`) was re-read against this
-work.
+`RSR-SPEC` and `RSR-IMPL` are **verified**. The frozen catalog is `notes/01-catalog.md`; what was run
+is `results/01-catalog.md` and `results/02-implementation.md`. The two approved rules are live in
+`LeanFmt/Rules.lean`'s `ruleRegistry`: `FMT003` (forbidden control byte) and `FMT004` (suspicious
+bidirectional control), both report-only, category `security`, default-enabled. Category selection is
+now registry-derived (`LeanFmt/Config.lean`), so `--select security` works with no hardcoded list. The
+external prerequisite stacks `ruff-05-rule-engine` and `ruff-06-fix-safety` remain verified and their
+live code was re-read against this work.
 
 | Prompt | Claim | Status | Depends on |
 | --- | --- | --- | --- |
 | 01-catalog | RSR-SPEC | verified | — |
-| 02-implementation | RSR-IMPL | planned | RSR-SPEC |
+| 02-implementation | RSR-IMPL | verified | RSR-SPEC |
 | 03-acceptance | RSR-FINAL | planned | RSR-IMPL |
 
 ## Known evidence
 
-- **A source rule reads `raw.crlfToLf` and nothing else, and that decides the catalog.** BOM and
-  isolated `\r` never reach accepted source (parse errors; `ruff-01` §5, re-measured); LF/CRLF
-  intermixing is accepted but `crlfToLf` erases the endings. So BOM and mixed-line-endings are
-  **rejected** as rules — invisible to any source rule, and owned by the read boundary / formatter.
-- **The two accepted rules need no token context.** A bare control or bidi byte is a parse error, so
-  every such byte in accepted source is already inside a string or comment — acceptance supplies the
-  context. `FMT003` (forbidden control byte) and `FMT004` (suspicious bidirectional control) are
-  linear byte scans, report-only, default-enabled, category `security`. Sets/ranges/messages frozen
-  in `notes/01-catalog.md` §3.
-- **`RSR-IMPL` implements those two rules** into `LeanFmt/Rules.lean`'s registry, with the
-  fixture/suppression/JSON/documentation obligations in `notes/01-catalog.md` §5, and writes the
-  persistent regression suite (this spec's characterization ships only as evidence).
+- **Two report-only source rules ship; BOM and mixed endings stay rejected.** `FMT003` scans the
+  shared `SourceFacts.bytes` (no decode); `FMT004` is one `String.foldl` decoding each scalar once and
+  carrying the byte offset, so a multibyte mark's range is its exact UTF-8 span. Both satisfy the
+  "no parser/project capability" and "avoid repeated UTF-8 decoding" stop rules. Measured byte-exact:
+  `FMT003 [11,12) U+0000`, `FMT004 [19,22) U+202E`, both `fix=false`.
+- **No hidden hardcoded lists.** The registry is the single source: suppression (projection over
+  codes), the `rules` command, config selection, and reporting all pick up FMT003/FMT004 with no
+  further code. Category selection was generalized (`isCategory` reads the registry) rather than given
+  a second `"text"`-style literal. Confirmed by `testConfig`/`testSuppression`/`tests/modes`, not
+  assumption.
+- **TAB exclusion is load-bearing.** `testRules`' fixture ends a line with `\t`; the catalog's TAB
+  exclusion keeps that unrelated test finding-clean. Confirmed against live tests.
+
+## Remaining work
+
+- **`RSR-FINAL` (03-acceptance)**: property/fuzz-style boundary tests and large-file microbenchmarks
+  (the linear-time and worker-free claims), and the final catalog record. A committed-byte corpus for
+  end-to-end control/bidi coverage belongs there.
 
 ## Blockers and prerequisites
 
 - **`ruff-01` precision gap (non-blocking, handed off).** LF/CRLF-intermixed files are accepted yet
-  classified `.crlf` by `normalize`; write safety holds via `ruff-01` round-trip invariant 4. See
+  classified `.crlf`; write safety holds via `ruff-01` round-trip invariant 4. See
   `notes/01-catalog.md` §4. Not this stack's to fix.
 - If live code contradicts prerequisite results, reopen the owning prerequisite rather than patching
   around it.
