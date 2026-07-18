@@ -1,9 +1,9 @@
 # Next Proof Packet
 
 - Stack: ruff-09-import-rules
-- First unresolved: 01-semantics
-- Claim ID: RIR-SPEC
-- Prompt: 01-semantics
+- First unresolved: 02-implementation
+- Claim ID: RIR-IMPL
+- Prompt: 02-implementation
 - Module: (docs only)
 - Target file: (docs only)
 
@@ -17,7 +17,7 @@ Read this file, the target prompt, target files, listed source/template line ran
 
 ## Proof Task
 
-- Deliver **RIR-SPEC**: Build fixtures for duplicated imports, transitive imports, scoped syntax, plugins, preludes, modifiers, and comments. Specify IMP rule codes, canonical grouping, safety, and cases that remain report-only.
+- Deliver **RIR-IMPL**: Use the shared typed Lake graph and lossless header model to implement duplicate, order/group, and validated redundant-import rules plus one private organizer operation.
 - Read `roadmap.md`, its prerequisite stack results, `AGENTS.md`, the current implementation and tests, and the relevant Lean compiler/Lake sources before changing an interface. Write interface comments and characterization tests before implementation where the behavior is not already frozen.
 
 ## Reuse
@@ -30,6 +30,6 @@ Inspect the live goal, search relevant declarations, test plausible proof steps,
 
 ## Stop Rules
 
-- Stop if an ordering rule cannot preserve exact syntax; keep it opt-in or display-only.
-- Do not infer redundancy solely from graph reachability.
+- No per-file Lake subprocesses.
+- All edits pass exact syntax and required elaboration validation.
 - Stop rather than weakening exact semantics, write safety, or the resource envelope.
