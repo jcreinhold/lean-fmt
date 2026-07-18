@@ -28,9 +28,13 @@ preview. All twelve build/test gates are green, including `tests/syntax/run.sh`;
 and `write_next --check` pass; `git diff --check` is clean.
 
 The one deliberate deferral: `format`/`fix` render canonical text and run only source rules, so a
-syntax `.safe` fix is *reported* by `check` but not *applied* by `fix`. `ruff-06`'s RFX-SPEC owns
-canonical-coordinate syntax fixing; the limit is documented (`Application.renderCanonicalText`) and
-pinned by `tests/syntax/run.sh`.
+syntax `.safe` fix is *reported* by `check` but not *applied* by `fix`. `ruff-06`'s RFX-SPEC already
+*froze the model* for this — a syntax-tier fix composes by **re-projecting the canonical text**, not by
+translating original-coordinate edits onto moved bytes — and handed the wiring and adversarial exercise
+forward to the stack that ships the first syntax-tier rule with a fix. ruff-10 is that stack for
+*reporting*; the `fix`-command *application* wiring is owned by the successor stack
+**`ruff-10b-syntax-fix-composition`** (RYC-SPEC/IMPL/FINAL). The current limit is documented
+(`Application.renderCanonicalText`) and pinned by `tests/syntax/run.sh`.
 
 | Prompt | Claim | Status | Depends on |
 | --- | --- | --- | --- |
@@ -61,9 +65,12 @@ All six ship preview; RYR-IMPL corrected FMT009–FMT012 off `enabled` (rational
   scope counting is fixed and regression-pinned; FMT012 fires on the `set_option … in` scoped form
   uniformly (same command node, report-only). Full mathlib was not run — development evidence is the
   frozen sample and named stress cases (`CLAUDE.md`).
-- Open deferral (not a blocker): canonical-coordinate syntax *fix application* is owned by `ruff-06`'s
-  RFX-SPEC. `fix` reports a syntax `.safe` fix but does not apply it; the limit is documented and
-  pinned.
+- Open deferral (not a blocker): canonical-coordinate syntax *fix application* is owned by the
+  successor stack **`ruff-10b-syntax-fix-composition`**. `ruff-06`'s RFX-SPEC froze the composition
+  model (re-project canonical text) and handed the wiring forward to the stack shipping the first
+  syntax-tier rule with a fix; ruff-10 delivered the rules and reports the fixes, and ruff-10b wires the
+  `fix`-command re-projection and exercises the adversarial cases. `fix` reports a syntax `.safe` fix
+  but does not apply it; the limit is documented and pinned.
 - If live code contradicts prerequisite results, reopen the owning prerequisite rather than patching
   around it. Full mathlib is not development evidence; follow this roadmap's evidence policy.
 

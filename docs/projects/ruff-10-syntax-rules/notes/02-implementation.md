@@ -114,8 +114,8 @@ Fixes: FMT010/011/013 emit `.safe` (byte-range delete / drop outer pair); FMT008
   canonical text are deferred to `ruff-06`'s fix-composition decision". No behavior change: `format`
   and `fix` still re-run only `runSourceRules` on canonical text. A syntax `.safe` fix is *reported*
   by `check` on original coordinates, but `fix` does not apply it (see the repair addendum below) —
-  RFX-SPEC owns the choice of re-projecting canonical text vs applying non-source fixes in a separate
-  pass.
+  RFX-SPEC froze the choice (re-project canonical text, not translate edits onto moved bytes) and the
+  successor stack `ruff-10b-syntax-fix-composition` owns wiring it into `fix`.
 - `testEngineTiers`: its "every shipped rule is source-tier" probe is now false for `ruleRegistry`;
   update the assertion to the new reality and keep the engine-seam probes (which pass their own array).
 - `docs/adding-a-rule.md`: refresh the "first `.syntax`-tier rule" caveat into a description of shipped
@@ -141,7 +141,8 @@ consequences are:
 - **Fix deferral is a limit, not a shim.** The three `.safe` fixes (FMT010/011/013) are reported by
   `check` with edits on original coordinates, but `fix` renders canonical text and runs only
   `runSourceRules`, so it neither applies nor withholds them — the file is left byte-identical and the
-  finding is still surfaced. `tests/syntax/run.sh` pins this; RFX-SPEC (`ruff-06`) closes it.
+  finding is still surfaced. `tests/syntax/run.sh` pins this; RFX-SPEC (`ruff-06`) froze the model and
+  the successor stack `ruff-10b-syntax-fix-composition` closes it.
 - **Tests.** `tests/syntax/run.sh` covers positives (findings + fix bytes), a clean negative, the six
   documented near-misses, quotation/custom-syntax exclusion, malformed-input handling, and the fix
   deferral, all via the exact frontend (the fixtures are unbuilt, so no artifact/module evidence

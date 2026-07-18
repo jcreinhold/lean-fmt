@@ -143,8 +143,10 @@ git diff --check
   keeping it a low-noise preview rule; it does not by itself justify graduation to default-on. That
   decision, with its full-corpus measurement and the default-run cost budget, belongs to
   `ruff-12-rule-lifecycle` / `ruff-19`, not this stack.
-- **Canonical-coordinate syntax fix application** remains the one deferred piece, owned by `ruff-06`'s
-  RFX-SPEC: `check` reports the `.safe` fixes, `fix` does not yet apply them. Documented and pinned; not
-  reopened here.
+- **Canonical-coordinate syntax fix application** remains the one deferred piece. `ruff-06`'s RFX-SPEC
+  froze the composition model (re-project canonical text) and handed the wiring forward to the stack
+  shipping the first syntax-tier rule with a fix; the `fix`-command application is owned by the
+  successor stack **`ruff-10b-syntax-fix-composition`** (scaffolded from this deferral). `check` reports
+  the `.safe` fixes, `fix` does not yet apply them. Documented and pinned; not reopened in ruff-10.
 - The frozen sample is 62 modules, not full mathlib (forbidden during development by `CLAUDE.md`); the
   named-stress and near-miss fixtures cover the edge shapes the corpus sample does not exercise.

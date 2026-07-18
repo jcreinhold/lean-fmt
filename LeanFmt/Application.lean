@@ -366,9 +366,13 @@ than vacuous**: their findings are computed on the *original* projection (`ofEnv
 by `check`; their `.safe` fixes (FMT010/011/013) apply on original coordinates. What is deferred is
 *canonical*-coordinate syntax linting: this path still runs only `runSourceRules`, so `format`/`fix`
 neither re-flags nor re-fixes a syntax violation against the rendered text. **`ruff-06`'s `RFX-SPEC`
-owns the choice** — chartered for "formatter interaction" and fix composition — between re-projecting
-canonical text and applying non-source fixes to the original in a separate pass. `RRE-FINAL` asserts
-this limit rather than leaving it to prose. -/
+already froze the model** (`ruff-06-fix-safety` `notes/01-model.md` §3): a syntax-tier fix composes by
+**re-projecting the canonical text** — parse the rendered file and run the rule against that
+projection — never by translating original-coordinate edits onto moved bytes, which would make the
+applied artifact depend on pass order. RFX-SPEC handed the *wiring and adversarial exercise* forward to
+"the stack that ships the first syntax-tier rule with a fix, with a real rule to drive them" — now
+owned by `ruff-10b-syntax-fix-composition`. `RRE-FINAL` asserts this limit rather than leaving it to
+prose. -/
 private def renderCanonicalText (raw : String) (artifact : ModuleArtifact) : IO CanonicalText := do
   let normalized := (LosslessSource.normalize raw).1
   let text ← Printer.format artifact.source normalized canonicalWidth artifact.semantic

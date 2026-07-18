@@ -6,7 +6,8 @@ exact category dispatch without giving rules parser or application-lifecycle aut
 **Status:** delivered. Six `.syntax`-tier rules **FMT008–FMT013** ship, fully implemented and
 selectable, all as **preview** (default-off). The first-syntax-tier cache wiring is in place; syntax
 findings are reported by `check`, and their `.safe` fixes are reported on original coordinates.
-Canonical-coordinate syntax *fix application* is a documented deferral owned by `ruff-06`'s RFX-SPEC.
+Canonical-coordinate syntax *fix application* is a documented deferral; RFX-SPEC (`ruff-06`) froze its
+model and the wiring is owned by the successor stack `ruff-10b-syntax-fix-composition`.
 
 ## What was produced
 
@@ -118,7 +119,8 @@ git diff --check
 3. **Syntax fix *application* deferred, not shimmed.** `check` reports the `.safe` fixes on original
    coordinates, but `format`/`fix` render canonical text and run only `runSourceRules`, so they do not
    apply a syntax fix. This is a documented tier limit (`Application.renderCanonicalText`), pinned by
-   `tests/syntax/run.sh`, with `ruff-06`'s RFX-SPEC owning closure — not a hole.
+   `tests/syntax/run.sh`; RFX-SPEC (`ruff-06`) froze the composition model and the successor stack
+   `ruff-10b-syntax-fix-composition` owns closure — not a hole.
 
 ## Remaining uncertainty (handed to RYR-FINAL)
 
@@ -128,5 +130,5 @@ git diff --check
   near-miss fixtures here; RYR-FINAL asserts the exclusion against corpus scale.
 - **`set_option … in` term/tactic forms** are detectable and in scope for FMT012; v1 targets the
   standalone command (the fixtures cover that). Whether to extend to the `in` forms is open.
-- **Canonical-coordinate syntax linting / fix composition** is the one deferred piece, owned by
-  RFX-SPEC.
+- **Canonical-coordinate syntax linting / fix composition** is the one deferred piece: RFX-SPEC froze
+  its model; the successor stack `ruff-10b-syntax-fix-composition` owns the wiring.

@@ -138,7 +138,8 @@ will stop you, and it is right to.
 - The `.syntax` tier is live: `ruff-10` shipped FMT008–FMT013 (all `preview`). A `.syntax` rule is
   reported by `check` and its `.safe` fix is expressed on original coordinates, but
   `Application.renderCanonicalText` still runs only `runSourceRules`, so `format`/`fix` do not yet
-  re-flag or apply a syntax fix against canonical text — `ruff-06`'s RFX-SPEC owns closing that.
+  re-flag or apply a syntax fix against canonical text — `ruff-06`'s RFX-SPEC froze the model
+  (re-project canonical text) and the successor stack `ruff-10b-syntax-fix-composition` owns wiring it.
   `SemanticResult.tier` and `cacheHitServes` gate the result cache so a source-only shortcut entry
   never serves a `.syntax` selection a false negative. `testEngineTiers` asserts the registry holds
   both tiers and no `.semantic` rule; adding a `.semantic` rule is the case that still has more work
