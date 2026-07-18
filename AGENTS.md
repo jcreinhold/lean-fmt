@@ -56,6 +56,12 @@ of production modules until their owning prompt selects and verifies the interfa
   result-cache identity.
 - `LeanFmt.Project` owns complete non-`.lake` source selection, exact Lake setup, and one shared
   typed no-build graph. Do not replace it with per-file Lake runs or module-only selection.
+- Path-selection errors name the caller's own argument, not a resolver's partially-resolved buffer.
+  A missing selected file throws `selected file does not exist: <arg>` (beside its outside-root and
+  not-a-Lean-source siblings), so a whole file list accidentally passed as one path — an unquoted shell
+  variable under a non-splitting shell like zsh — is legible on sight rather than a mangled absolutized
+  string. New CLI surface that takes paths (ranges, LSP document URIs, integration entry points)
+  follows the same rule: pre-check and report what the caller wrote.
 - A current ordinary `.olean` is successful-compilation evidence for source-tier rules, not a
   serialized syntax projection. Syntax-tier rules require the compiler artifact or exact frontend.
 - A rule's tier is its `RuleImpl` constructor, never a field. The field that used to declare it was a
