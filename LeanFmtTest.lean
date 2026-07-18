@@ -231,6 +231,22 @@ private def testImports : IO Unit := do
   ensure (Imports.organize (← parseHeader! dedupMe) dedupMe == "import Foo.A\n")
     "the organizer did not remove a duplicate"
 
+  -- RIR-FINAL: header rewrites preserve comments, modifiers, and group boundaries (`roadmap.md` §19).
+  -- A comment is a group boundary: each group sorts independently and the comment survives verbatim.
+  let twoGroups := "import Foo.D\nimport Foo.A\n-- section\nimport Foo.Z\nimport Foo.B\n"
+  ensure (Imports.organize (← parseHeader! twoGroups) twoGroups ==
+      "import Foo.A\nimport Foo.D\n-- section\nimport Foo.B\nimport Foo.Z\n")
+    "the organizer did not sort each comment-delimited group while preserving the comment"
+  -- A trailing inline comment forces a boundary: the two imports are not reordered across it.
+  let trailing := "import Foo.B -- note\nimport Foo.A\n"
+  ensure (Imports.organize (← parseHeader! trailing) trailing == trailing)
+    "the organizer reordered across a trailing comment or dropped it"
+  -- A modifier rides on the sliced statement bytes through a reorder (`import all` needs `module`).
+  let modifier := "module\nimport all Foo.B\nimport Foo.A\n"
+  ensure (Imports.organize (← parseHeader! modifier) modifier ==
+      "module\nimport Foo.A\nimport all Foo.B\n")
+    "the organizer dropped a modifier while reordering"
+
   -- A `prelude` file has no phantom `Init`: the surface model sees only the written imports (`notes` §1a).
   let prelude ← parseHeader! "prelude\nimport Foo.A\n"
   ensure (prelude.hasPrelude && prelude.imports.map (·.module) == #[`Foo.A])

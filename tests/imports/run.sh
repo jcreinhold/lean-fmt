@@ -16,7 +16,7 @@ set -euo pipefail
 repo_root=$(cd "$(dirname "$0")/../.." && pwd)
 work=$(mktemp -d)
 cache_root="$repo_root/.lean-fmt-cache"
-trap 'rm -rf "$work" "$cache_root"' EXIT
+trap 'rm -rf "$work" "$cache_root" "$repo_root/tests/imports/_fixconflict_tmp.lean"' EXIT
 
 cd "$repo_root"
 rm -rf "$cache_root"
@@ -38,6 +38,7 @@ sources=(
   tests/imports/Duplicate.lean
   tests/imports/Ordering.lean
   tests/imports/Redundant.lean
+  tests/imports/Suppressed.lean
 )
 snapshot_metadata "${sources[@]}" >"$work/before"
 
@@ -150,6 +151,55 @@ imports = [l for l in open(sys.argv[1]).read().splitlines() if l.startswith("imp
 assert imports == ["import LeanFmt.Basic"], imports
 PY
 cp -p "$work/Duplicate.backup" tests/imports/Duplicate.lean
+
+# RIR-FINAL differentials, run as persistent guards.
+
+# Suppression composes with the import layer: a trailing `ignore[FMT005]` on the duplicate line
+# suppresses the import finding through the same post-cache projection every rule flows through, so the
+# file reports clean with the suppression counted (an import finding is not special to suppression).
+run_expect 0 "$work/suppressed.json" "${fallback[@]}" "$application" check --root . --json \
+  --no-cache --select imports tests/imports/Suppressed.lean
+python3 - "$work/suppressed.json" <<'PY'
+import json, sys
+report = json.load(open(sys.argv[1]))
+file, = report["files"]
+assert file["status"] == "clean" and file["findings"] == [], file
+assert report["suppressed"] == 1, report["suppressed"]
+PY
+
+# Order is elaboration-significant, so the default `fix` must NEVER reorder a header — FMT007 carries
+# no fix, and only the explicit `organize` command rewrites. `fix` on the out-of-order fixture leaves
+# the written order untouched.
+cp -p tests/imports/Ordering.lean "$work/Ordering.fixbackup"
+run_expect 0 "$work/fix-noreorder.json" "${fallback[@]}" "$application" fix --root . --json \
+  --no-cache tests/imports/Ordering.lean
+python3 - tests/imports/Ordering.lean <<'PY'
+import sys
+imports = [l for l in open(sys.argv[1]).read().splitlines() if l.startswith("import ")]
+assert imports == ["import LeanFmt.Digest", "import LeanFmt.Basic"], imports
+PY
+cp -p "$work/Ordering.fixbackup" tests/imports/Ordering.lean
+
+# Fix conflict / composition: a file with both a duplicate import (FMT005, canonical-coordinate patch)
+# and a trailing-whitespace text finding (FMT001). `fix` applies both and validates the rewrite by
+# re-elaboration before writing — the two edits compose to a deduped, trimmed, valid file. Built at
+# runtime under the root (so the workspace resolves) and removed after.
+conflict=tests/imports/_fixconflict_tmp.lean
+printf 'module\n\nimport LeanFmt.Basic\nimport LeanFmt.Basic\n\ndef importFixConflictNoop : Nat := 0  \n' \
+  >"$conflict"
+run_expect 0 "$work/fix-conflict.json" "${fallback[@]}" "$application" fix --root . --json \
+  --no-cache "$conflict"
+python3 - "$work/fix-conflict.json" "$conflict" <<'PY'
+import json, sys
+report = json.load(open(sys.argv[1]))
+file, = report["files"]
+assert file["status"] == "fixed" and report["written"] == 1, report
+text = open(sys.argv[2]).read()
+imports = [l for l in text.splitlines() if l.startswith("import ")]
+assert imports == ["import LeanFmt.Basic"], imports          # duplicate removed
+assert "  \n" not in text and not text.rstrip("\n").endswith(" "), repr(text)  # whitespace trimmed
+PY
+rm -f "$conflict"
 
 snapshot_metadata "${sources[@]}" >"$work/after"
 cmp "$work/before" "$work/after"
