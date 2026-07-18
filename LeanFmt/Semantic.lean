@@ -1,6 +1,7 @@
 module
 
 import all LeanFmt.Analysis
+import all LeanFmt.Suppression
 
 namespace LeanFmt.Internal
 
@@ -32,6 +33,12 @@ structure SemanticResult where
   use. Such an entry is a miss for a rendering mode rather than an answer, which is why this is an
   `Option` and not a `String`. -/
   canonical? : Option CanonicalText := none
+  /-- The parsed source-suppression directives and malformed-directive diagnostics for this module.
+  These are facts — pure functions of the source — computed only where the projection is available
+  (`ofEnvelope?`), so the source-only shortcut carries the default empty value. Empty is *correct* for
+  a shortcut entry, not a stale under-population, because the shortcut is taken only when the source
+  contains no directive sigil (`Suppression.mayContainDirective`), so there is nothing to parse. -/
+  suppression : SuppressionFacts := {}
   deriving BEq, Lean.ToJson, Lean.FromJson
 
 structure SemanticAnalysis where
@@ -48,16 +55,24 @@ the stale-output bug `RFP-SPEC` §7 named. The schema is what makes the default 
 A `Finding` round-trips through *this* cache entry (never through the `.olean`, which holds only facts),
 so the on-disk shape moved and every `v2` entry must miss. `RFX-SPEC`'s note §7 said no bump was needed
 because it read "not in the artifact" as "not serialized"; the result cache is the second place a
-`Finding` is serialized, and the same discipline that versions `canonical?` versions this. -/
-def semanticResultSchema : String := "lean-fmt.semantic-result.v3"
+`Finding` is serialized, and the same discipline that versions `canonical?` versions this.
 
-/-- `normalized` must be `(LosslessSource.normalize raw).1`, the string every finding indexes. -/
-def SemanticAnalysis.success (normalized : String) (findings : Array Finding) : SemanticAnalysis := {
+`v4` (`RSP-IMPL`): adds `suppression`. A `v3` entry read as `v4` would default `suppression := {}` and
+read as "this file has no directives", which for a directive-bearing file is the stale-suppression
+bug — so the schema guard makes every `v3` entry miss, the same discipline that versioned `canonical?`.
+The default stays safe only for shortcut entries, which by construction have no directives. -/
+def semanticResultSchema : String := "lean-fmt.semantic-result.v4"
+
+/-- `normalized` must be `(LosslessSource.normalize raw).1`, the string every finding indexes.
+`suppression` defaults empty for the source-only shortcut; `ofEnvelope?` passes the collected facts. -/
+def SemanticAnalysis.success (normalized : String) (findings : Array Finding)
+    (suppression : SuppressionFacts := {}) : SemanticAnalysis := {
   result? := some {
     schema := semanticResultSchema
     source := Digest.ofString normalized
     sourceBytes := normalized.utf8ByteSize
     findings
+    suppression
   }
 }
 
@@ -113,7 +128,10 @@ def SemanticAnalysis.ofEnvelope? (raw : String)
     if structurallyValid artifact && artifact.source.validFor raw &&
         envelope.diagnostics.isEmpty then
       let normalized := (LosslessSource.normalize raw).1
-      some (.success normalized (runRules (.syntax (SyntaxFacts.of normalized artifact.source))))
+      -- The projection is in hand here (and only here), so this is where directives are parsed:
+      -- syntax-tier, exactly like the syntax facts the findings are computed from.
+      some (.success normalized (runRules (.syntax (SyntaxFacts.of normalized artifact.source)))
+        (Suppression.collect artifact.source normalized))
     else
       none
 

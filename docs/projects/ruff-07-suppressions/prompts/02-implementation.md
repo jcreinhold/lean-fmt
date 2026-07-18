@@ -1,6 +1,6 @@
 ---
 claim_id: RSP-IMPL
-status: planned
+status: verified
 depends_on: [RSP-SPEC]
 ---
 

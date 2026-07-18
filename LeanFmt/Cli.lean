@@ -163,7 +163,7 @@ private def renderText (report : RunReport) : IO Unit := do
   IO.println s!"mode={report.mode} files={report.files.size} findings={report.findings} \
     changed={report.changed} written={report.written} broken={report.broken} \
     rejected={report.rejected} withheld_unsafe={report.withheldUnsafe} \
-    infrastructure_failures={report.infrastructureFailures.size}"
+    suppressed={report.suppressed} infrastructure_failures={report.infrastructureFailures.size}"
 
 private def renderReport (format : ReportFormat) (report : RunReport) : IO Unit :=
   match format with
@@ -174,7 +174,7 @@ private def renderStatistics (report : RunReport) : IO Unit :=
   IO.eprintln s!"lean-fmt statistics: mode={report.mode} files={report.files.size} \
     findings={report.findings} changed={report.changed} written={report.written} \
     broken={report.broken} rejected={report.rejected} withheld_unsafe={report.withheldUnsafe} \
-    infrastructure_failures={report.infrastructureFailures.size}"
+    suppressed={report.suppressed} infrastructure_failures={report.infrastructureFailures.size}"
 
 private def reportExitCode (mode : RunMode) (report : RunReport) : UInt32 :=
   if !report.infrastructureFailures.isEmpty then 2

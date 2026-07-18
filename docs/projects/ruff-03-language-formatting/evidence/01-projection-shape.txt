@@ -1,42 +1,42 @@
-modules_analyzed=21 skipped=0 nodes=50221
+modules_analyzed=22 skipped=0 nodes=53760
 pre_order_contiguity_violations=0
 nonempty_node_children_out_of_source_order=0
-empty_nodes=17806 (35.5% of all nodes)
-empty_nodes_with_ambiguous_placement=7877 (15.7% of all nodes)
+empty_nodes=19042 (35.4% of all nodes)
+empty_nodes_with_ambiguous_placement=8483 (15.8% of all nodes)
 
 # most common empty (absent-syntax) kinds
-15837	null
-645	Lean.Parser.Term.letConfig
-357	Lean.Parser.Command.declModifiers
-353	Lean.Parser.Termination.suffix
-268	group
-170	Lean.Parser.Term.optEllipsis
-123	Lean.Parser.Command.optDeclSig
-36	Lean.Parser.Command.optDeriving
-15	Lean.Parser.Term.attrKind
+16939	null
+690	Lean.Parser.Term.letConfig
+380	Lean.Parser.Termination.suffix
+368	Lean.Parser.Command.declModifiers
+298	group
+181	Lean.Parser.Term.optEllipsis
+130	Lean.Parser.Command.optDeclSig
+37	Lean.Parser.Command.optDeriving
+17	Lean.Parser.Term.attrKind
 2	Lean.Parser.Term.structInstFields
 
-# command kinds in the corpus (506 commands, 6 distinct kinds)
-437	Lean.Parser.Command.declaration
-25	Lean.Parser.Command.namespace
-25	Lean.Parser.Command.end
+# command kinds in the corpus (541 commands, 6 distinct kinds)
+468	Lean.Parser.Command.declaration
+27	Lean.Parser.Command.namespace
+27	Lean.Parser.Command.end
 11	Lean.Parser.Command.moduleDoc
 7	Lean.Parser.Command.open
 1	Lean.Parser.Command.initialize
 
-# what the declaration shell layout can structurally claim (422/437 declarations, 96.6%); runtime guards may still refuse
-422	structurally claimed: shell laid out
-15	rejected: shape not read yet
+# what the declaration shell layout can structurally claim (451/468 declarations, 96.4%); runtime guards may still refuse
+451	structurally claimed: shell laid out
+17	rejected: shape not read yet
 
 # would a ctor/field shell layout decide anything? a member's shell is its opener, modifiers and
 # name; 'collapsible' counts shells holding horizontal slack a layout could close, which is the
 # only figure that argues for building one. See the script for why the other three cannot.
-237	structure fields (simple): 0 collapsible, 214 one-token, 23 broken by a doc comment, 0 already tight, 0 unexpected shape
-58	inductive constructors: 0 collapsible, 0 one-token, 0 broken by a doc comment, 58 already tight, 0 unexpected shape
+250	structure fields (simple): 0 collapsible, 220 one-token, 30 broken by a doc comment, 0 already tight, 0 unexpected shape
+61	inductive constructors: 0 collapsible, 0 one-token, 0 broken by a doc comment, 61 already tight, 0 unexpected shape
 10	structure constructors: 0 collapsible, 0 one-token, 0 broken by a doc comment, 10 already tight, 0 unexpected shape
 
 # of those, how the `instance` shells break down
-15	anonymous (one-token shell)
+17	anonymous (one-token shell)
 
 # shapes rejected only because their grammar has not been read yet
-15	Lean.Parser.Command.instance
+17	Lean.Parser.Command.instance

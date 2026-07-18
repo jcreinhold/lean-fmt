@@ -1,34 +1,41 @@
 ---
 kind: state
-first_unresolved: 02-implementation
+first_unresolved: 03-acceptance
 ---
 
 # Current state
 
-`RSP-SPEC` is **verified**. The design is `notes/01-spec.md`; what was run is `results/01-spec.md`,
-and the current-boundary characterization is `evidence/01-no-suppression.txt`. The external
-prerequisite stacks `ruff-05-rule-engine`, `ruff-05b-semantic-facts`, and `ruff-06-fix-safety` are
-verified, and this stack re-read their live code (`Rules.lean`, `Config.lean`, `Comments.lean`,
-`LosslessSource.lean`, `Application.lean`) rather than trusting recorded state.
+`RSP-SPEC` and `RSP-IMPL` are **verified**. The source-suppression layer is live: `LeanFmt/Suppression.lean`
+parses directives from the lossless comment trivia (plus the module header), projects them over the
+config-selected findings after the result cache, and reports the unused (`FMT900`) and malformed
+(`FMT901`) self-diagnostics. What was run is `results/02-implementation.md`; the scope/placement/recovery
+matrix is `evidence/02-suppression.txt`. The prerequisite stacks `ruff-05-rule-engine`,
+`ruff-05b-semantic-facts`, and `ruff-06-fix-safety` remain verified and were re-read against live code.
 
 | Prompt | Claim | Status | Depends on |
 | --- | --- | --- | --- |
 | 01-spec | RSP-SPEC | verified | — |
-| 02-implementation | RSP-IMPL | planned | RSP-SPEC |
+| 02-implementation | RSP-IMPL | verified | RSP-SPEC |
 | 03-acceptance | RSP-FINAL | planned | RSP-IMPL |
 
 ## Known evidence
 
-- **No source-suppression layer exists.** A `lean-fmt:` comment is inert; the concept scan is empty and
-  three genuine finding+directive fixtures all report the finding (`evidence/01-no-suppression.txt`).
-- **Directives are comment trivia only.** The grammar is read from `Comment{lineComment|blockComment}`
-  via `Comments.attach`, never by substring search, so strings, quotations, and doc comments are
-  excluded by construction (`notes/01-spec.md` §1).
-- **Suppression is a projection, not an engine change.** It filters `Array Finding` alongside
-  `RulePlan`, must not enter the result cache key, and cannot reach infrastructure failures, which are
-  never findings (`notes/01-spec.md` §6, §10).
-- **Reserved codes** `FMT900` (unused suppression, safe removal fix) and `FMT901` (malformed
-  suppression) in a `9xx` self-diagnostic band; `RSP-IMPL` confirms and finalizes.
+- **Every scope suppresses where designed.** `ignore-file`/`ignore-next` at the top of the file, after
+  an `import`, in the body, and as a trailing comment all suppress (`evidence/02-suppression.txt`).
+- **The module header is scanned directly.** `Comments.allTrivia` omits `[0, headerStop)`, so a
+  top-of-file directive was silently inert until `Suppression.headerComments` was added; the header
+  grammar (only `module`/`import`/whitespace/comments) makes a small scanner safe (`results/02` §1).
+- **Suppression shapes the report, not the patch.** `format`/`fix` reformat unconditionally; a directive
+  silences a diagnostic without changing published bytes, so `check`/`diff`/`format`/`fix` agree
+  (`results/02` §2). Batch `fix` therefore does not auto-remove an unused directive — an open item for
+  `RSP-FINAL` ("unused fixes").
+- **A directive inside a string is inert.** Directives are comment trivia only; a string is a token, so
+  `InString.lean` reports its finding unsuppressed — the `RSP-SPEC` stop rule holds by construction.
+- **Cache identity unchanged.** Directives are cached content (`SemanticResult.suppression`, schema
+  `v4`), not a key; config selection still projects afterward. Infrastructure failures are never
+  findings and remain unsuppressible.
+- **Corpus figures re-synced.** Adding `Suppression.lean` grew this repo's own printer corpus; the
+  `ruff-03` shape evidence and every figure quoting it were regenerated (541 commands, 53,760 nodes).
 
 ## Blockers and prerequisites
 

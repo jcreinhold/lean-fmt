@@ -6,6 +6,7 @@ import all LeanFmt.Edit
 import all LeanFmt.Printer
 import all LeanFmt.Project
 import all LeanFmt.Semantic
+import all LeanFmt.Suppression
 import Lake.Build.Module
 import Lake.Build.Run
 import Lake.Config.Env
@@ -70,6 +71,10 @@ structure FileReport where
   Zero once the run opts in. It is what tells a user what `--unsafe-fixes` would add rather than
   leaving the withheld fixes invisible. -/
   withheldUnsafe : Nat := 0
+  /-- Findings this file's source-suppression directives removed from the report. It is the visible
+  cost of the directives — a nonzero count with an empty finding list means the file is clean only
+  because it was told to be. -/
+  suppressed : Nat := 0
   deriving Lean.ToJson
 
 structure RunReport where
@@ -81,6 +86,7 @@ structure RunReport where
   broken : Nat
   rejected : Nat
   withheldUnsafe : Nat
+  suppressed : Nat
   infrastructureFailures : Array String
   deriving Lean.ToJson
 
@@ -414,14 +420,20 @@ private def availableAnalysis (plan : RulePlan) (renderCanonical : Bool)
   if let some analysis := cached? then
     if cacheHitServes renderCanonical analysis then
       return some analysis
-  if plan.requiredTier == .source && !renderCanonical && evidence == .current then
+  if plan.requiredTier == .source && !renderCanonical && evidence == .current
+      && !Suppression.mayContainDirective snapshot.source then
     -- Source rules index the normalized string, so this shortcut and the artifact path produce
     -- findings in one coordinate system and remain interchangeable in the result cache. They are
     -- also now the same call: `runRules` folds over the one registry either way, so this path can
     -- no longer decide a rule differently from the artifact path. It used to, by passing a literal
     -- `true` where the artifact path passed the artifact's own flag (`notes/01-rule-facts.md` §2).
     -- Gated on `renderCanonical` because it takes no artifact, and canonical text cannot be
-    -- rendered without the projection an artifact carries.
+    -- rendered without the projection an artifact carries. Also gated on the absence of a directive
+    -- sigil: suppression is parsed only from the syntax projection (`ofEnvelope?`), so a
+    -- directive-bearing file must take the artifact path even when its selected rules are all
+    -- source-tier — otherwise its `SuppressionFacts` would default empty and the directive silently
+    -- do nothing. `mayContainDirective` is a superset test, so this over-fetches only on files that
+    -- mention the sigil without a valid directive, never under-fetches.
     let normalized := (LosslessSource.normalize snapshot.source).1
     return some <| SemanticAnalysis.success normalized (runSourceRules normalized)
   else if let some artifact := officialArtifact? then
@@ -603,6 +615,8 @@ private structure PreparedFile where
   /-- Reported findings whose fix is unsafe and was not admitted into `patch` (opt-in was off). What
   `--unsafe-fixes` would additionally apply. -/
   withheldUnsafe : Nat
+  /-- How many config-selected findings a source directive suppressed. -/
+  suppressed : Nat
 
 /-- The formatted text in the file's own line-ending form, i.e. what a write would produce. -/
 private def PreparedFile.output (prepared : PreparedFile) : String :=
@@ -617,6 +631,35 @@ question and the wrong one: a file needing layout but no fixes has an empty edit
 is the question all three callers actually meant. -/
 private def PreparedFile.changed (prepared : PreparedFile) : Bool :=
   prepared.patch.formatted != prepared.normalized
+
+/-- Order findings by position, then code, so a report is deterministic regardless of which layer
+produced a finding (a rule, or the suppression projection's `FMT900`/`FMT901`). -/
+private def reportOrder (left right : Finding) : Bool :=
+  if left.range.start != right.range.start then left.range.start < right.range.start
+  else if left.range.stop != right.range.stop then left.range.stop < right.range.stop
+  else left.code < right.code
+
+/-- Project the source-suppression layer over the config-selected findings.
+
+Applied **after** `plan.findings` (config selection), so unused is computed against the config-selected
+set (`notes/01-spec.md` §8). Returns the reported findings — survivors plus the `FMT900` unused and
+`FMT901` malformed self-diagnostics, which are *not* themselves suppressible and bypass config
+selection (they are formatter self-diagnostics, always on in v1) — and the suppressed count.
+
+Coordinate note: directive scopes index the normalized source, so this projection is exact for the
+**report**, which the user reads against their own unmoved bytes. Suppression shapes only the report;
+it never touches a patch. `format`/`fix` reformat unconditionally — a directive silences a diagnostic
+without changing the bytes a write publishes — so `prepareFile` builds every patch from the
+config-selected findings, suppression-free, and `FMT900`/`FMT901` (themselves report-only, and not
+suppressible) never enter one. This keeps the non-canonical `check` patch and the canonical `fix`
+patch in agreement, and sidesteps the second frontend pass that mapping a normalized-coordinate scope
+onto reflowed canonical offsets would need — the same limit that governs syntax-tier fixes on
+canonical text. An editor may still apply an `FMT900` removal from the report; batch `fix` does not. -/
+private def projectSuppression (result : SemanticResult) (bytes : ByteArray)
+    (selected : Array Finding) : Array Finding × Nat :=
+  let outcome := Suppression.apply result.suppression bytes selected
+  let reported := (outcome.kept ++ result.suppression.malformed ++ outcome.unused).qsort reportOrder
+  (reported, outcome.suppressed)
 
 /-- Project one analysis into the edits a preview or write would apply.
 
@@ -640,12 +683,20 @@ private def prepareFile (plan : RulePlan) (renderCanonical unsafeFixes : Bool)
     (snapshot : SourceSnapshot) (analysis : SemanticAnalysis) : Except FileReport PreparedFile := do
   let some result := analysis.result?
     | throw (baseReport snapshot "broken" #[] analysis.diagnostics)
-  let findings := plan.findings snapshot.relativePath result.findings
   let (normalized, lineEndings) := LosslessSource.normalize snapshot.source
+  let selected := plan.findings snapshot.relativePath result.findings
+  let (findings, suppressed) := projectSuppression result normalized.toUTF8 selected
+  -- The patch is built from the config-selected findings *unaffected by suppression*, in both modes.
+  -- Suppression shapes the report (`findings`), never the bytes a write publishes: `format`/`fix`
+  -- reformat unconditionally (`projectSuppression` coordinate note), so a directive silences a
+  -- diagnostic without changing output. Feeding the suppression-projected set here instead would put
+  -- the `FMT900`/`FMT901` removal edits into the non-canonical `check` patch while the canonical
+  -- `fix` patch — drawn from `canonical.findings` — omits them, so `check` would report a change
+  -- `fix` never makes. Both patches now ignore the self-diagnostics, keeping preview and write agreed.
   let (base, baseFindings) :=
     match (if renderCanonical then result.canonical? else none) with
     | some canonical => (canonical.text, plan.findings snapshot.relativePath canonical.findings)
-    | none => (normalized, findings)
+    | none => (normalized, selected)
   let admitted := baseFindings.map fun finding =>
     match finding.fix? with
     | some fix => if fix.applicability.admitted unsafeFixes then finding else { finding with fix? := none }
@@ -661,7 +712,7 @@ private def prepareFile (plan : RulePlan) (renderCanonical unsafeFixes : Bool)
     | some fix => if !fix.applicability.admitted unsafeFixes && fix.applicability == .unsafe then
         total + 1 else total
     | none => total
-  return { findings, normalized, lineEndings, patch, withheldUnsafe }
+  return { findings, normalized, lineEndings, patch, withheldUnsafe, suppressed }
 
 private inductive PreviewMode where
   | check
@@ -686,22 +737,23 @@ private def previewFile (mode : PreviewMode) (plan : RulePlan) (unsafeFixes : Bo
   | .ok prepared =>
     let findings := prepared.findings
     let withheldUnsafe := prepared.withheldUnsafe
+    let suppressed := prepared.suppressed
     match mode with
     | .check =>
       return { (baseReport snapshot (if findings.isEmpty then "clean" else "findings") findings) with
-        withheldUnsafe }
+        withheldUnsafe, suppressed }
     | .format =>
       if prepared.changed then
         return { (baseReport snapshot "would-format" findings) with
-          formatted := some prepared.output, withheldUnsafe }
-      return { (baseReport snapshot "clean" findings) with withheldUnsafe }
+          formatted := some prepared.output, withheldUnsafe, suppressed }
+      return { (baseReport snapshot "clean" findings) with withheldUnsafe, suppressed }
     | .diff =>
       if prepared.changed then
         -- Both sides of the diff are normalized: a CRLF file must not read as every line changed.
         return { (baseReport snapshot "would-diff" findings) with
           diff := some (unifiedDiff snapshot.relativePath prepared.normalized
-            prepared.patch.formatted), withheldUnsafe }
-      return { (baseReport snapshot "clean" findings) with withheldUnsafe }
+            prepared.patch.formatted), withheldUnsafe, suppressed }
+      return { (baseReport snapshot "clean" findings) with withheldUnsafe, suppressed }
 
 private def fixFile (run : ExactRun) (plan : RulePlan) (unsafeFixes : Bool)
     (snapshot : SourceSnapshot) (analysis : SemanticAnalysis) : IO FileReport := do
@@ -710,8 +762,9 @@ private def fixFile (run : ExactRun) (plan : RulePlan) (unsafeFixes : Bool)
   | .ok prepared =>
     let findings := prepared.findings
     let withheldUnsafe := prepared.withheldUnsafe
+    let suppressed := prepared.suppressed
     unless prepared.changed do
-      return { (baseReport snapshot "clean" findings) with withheldUnsafe }
+      return { (baseReport snapshot "clean" findings) with withheldUnsafe, suppressed }
     let output := prepared.output
     -- The validator re-elaborates exactly the bytes a write would publish, line endings included.
     -- It renders no canonical text: the question is whether these bytes elaborate, and rendering a
@@ -721,12 +774,12 @@ private def fixFile (run : ExactRun) (plan : RulePlan) (unsafeFixes : Bool)
     if let some report := validationReport snapshot findings validation then
       return report
     match ← publishAtomic snapshot.path snapshot.source output with
-    | .error message => return { (baseReport snapshot "rejected" findings #[message]) with withheldUnsafe }
+    | .error message => return { (baseReport snapshot "rejected" findings #[message]) with withheldUnsafe, suppressed }
     | .ok _ =>
       return { (baseReport snapshot "fixed" findings) with
         formatted := some output
         written := true
-        withheldUnsafe }
+        withheldUnsafe, suppressed }
 
 def ExactRun.checkSnapshot (run : ExactRun) (plan : RulePlan)
     (snapshot : SourceSnapshot) : IO FileReport := do
@@ -747,8 +800,9 @@ private def summarize (mode : RunMode) (files : Array FileReport)
   let rejected := files.foldl (fun total file =>
     if file.status == "rejected" then total + 1 else total) 0
   let withheldUnsafe := files.foldl (fun total file => total + file.withheldUnsafe) 0
+  let suppressed := files.foldl (fun total file => total + file.suppressed) 0
   { mode := mode.toString, files, findings, changed, written, broken, rejected, withheldUnsafe,
-    infrastructureFailures := failures }
+    suppressed, infrastructureFailures := failures }
 
 private def recordPhase (name : String) (started finished : Nat) : IO Unit := do
   if (← IO.getEnv "LEAN_FMT_PROFILE_PHASES") == some "1" then

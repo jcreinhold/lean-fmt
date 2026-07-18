@@ -1,0 +1,83 @@
+# RSP-IMPL evidence -- source-suppression projection (commit c8f6257, lean4:v4.32.0)
+# Each block: the fixture, then 'lean-fmt check' on it. Byte offsets index normalized source.
+
+## HeaderFile.lean
+module$
+$
+-- lean-fmt: ignore-file$
+def v : Nat := 1  $
+-- check --
+mode=check files=1 findings=0 changed=0 written=0 broken=0 rejected=0 withheld_unsafe=0 suppressed=1 infrastructure_failures=0
+
+## HeaderNext.lean
+module$
+$
+-- lean-fmt: ignore-next$
+def v : Nat := 1  $
+-- check --
+mode=check files=1 findings=0 changed=0 written=0 broken=0 rejected=0 withheld_unsafe=0 suppressed=1 infrastructure_failures=0
+
+## AfterImport.lean
+module$
+import Init$
+-- lean-fmt: ignore-file$
+def v : Nat := 1  $
+-- check --
+mode=check files=1 findings=0 changed=0 written=0 broken=0 rejected=0 withheld_unsafe=0 suppressed=1 infrastructure_failures=0
+
+## BodyFile.lean
+module$
+$
+def a : Nat := 1$
+-- lean-fmt: ignore-file$
+def b : Nat := 2  $
+-- check --
+mode=check files=1 findings=0 changed=0 written=0 broken=0 rejected=0 withheld_unsafe=0 suppressed=1 infrastructure_failures=0
+
+## Trailing.lean
+module$
+$
+def v : Nat := 1  -- lean-fmt: ignore-file$
+-- check --
+_supp_probe.T3KuEm/Trailing.lean:26-50: FMT900 unused blanket suppression directive: no finding in its scope [safe]
+mode=check files=1 findings=1 changed=1 written=0 broken=0 rejected=0 withheld_unsafe=0 suppressed=0 infrastructure_failures=0
+
+## WrongCode.lean
+module$
+$
+-- lean-fmt: ignore[FMT002]$
+def v : Nat := 1  $
+-- check --
+_supp_probe.T3KuEm/WrongCode.lean:8-35: FMT900 unused suppression directive: FMT002 suppress nothing here [safe]
+_supp_probe.T3KuEm/WrongCode.lean:52-54: FMT001 trailing whitespace [safe]
+mode=check files=1 findings=2 changed=1 written=0 broken=0 rejected=0 withheld_unsafe=0 suppressed=0 infrastructure_failures=0
+
+## Malformed.lean
+module$
+$
+-- lean-fmt: bogus$
+def v : Nat := 1  $
+-- check --
+_supp_probe.T3KuEm/Malformed.lean:8-26: FMT901 malformed suppression directive: unknown suppression verb 'bogus' [display-only]
+_supp_probe.T3KuEm/Malformed.lean:43-45: FMT001 trailing whitespace [safe]
+mode=check files=1 findings=2 changed=1 written=0 broken=0 rejected=0 withheld_unsafe=0 suppressed=0 infrastructure_failures=0
+
+## Unused.lean
+module$
+$
+def a : Nat := 1$
+-- lean-fmt: ignore-file$
+def b : Nat := 2$
+-- check --
+_supp_probe.T3KuEm/Unused.lean:25-49: FMT900 unused blanket suppression directive: no finding in its scope [safe]
+mode=check files=1 findings=1 changed=1 written=0 broken=0 rejected=0 withheld_unsafe=0 suppressed=0 infrastructure_failures=0
+
+## InString.lean
+module$
+$
+def s : String := "-- lean-fmt: ignore-file"$
+def v : Nat := 1  $
+-- check --
+_supp_probe.T3KuEm/InString.lean:69-71: FMT001 trailing whitespace [safe]
+mode=check files=1 findings=1 changed=1 written=0 broken=0 rejected=0 withheld_unsafe=0 suppressed=0 infrastructure_failures=0
+

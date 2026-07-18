@@ -11,6 +11,7 @@ import all LeanFmt.Edit
 import all LeanFmt.Printer
 import all LeanFmt.Rules
 import all LeanFmt.Service
+import all LeanFmt.Suppression
 
 open LeanFmt LeanFmt.Internal LeanFmt.Internal.Service
 
@@ -1199,6 +1200,83 @@ private def testComments : IO Unit := do
   let headed := { tailProjection with headerStop := 0 }
   ensure ((Comments.attach headed tailText).header == ⟨0, 0⟩) "an empty header reported a region"
 
+/-- Project suppression directives over findings, and recover directives from the module header.
+
+`apply` is a pure projection over `Array Finding`; the first block checks it in isolation, with
+hand-built facts, so the scope arithmetic is tested without a parser. The second block is the
+regression that `RSP-IMPL` found and fixed: a directive in the module header `[0, headerStop)` — the
+natural home for `ignore-file` — is invisible to `Comments.allTrivia`, so `collect` scans the header
+itself. A hand-built single-command projection puts a directive above the first command and asserts it
+is both parsed and, when malformed, reported rather than dropped. -/
+private def testSuppression : IO Unit := do
+  -- `apply` in isolation. `src` supplies real bytes for the `FMT900` removal fix's range math.
+  let src := "module\n-- lean-fmt: ignore-file\ndef x := 1  \n"
+  let bytes := src.toUTF8
+  let mkFinding (code : String) (start stop : Nat) : Finding :=
+    { code, severity := .warning, message := "x", range := ⟨start, stop⟩ }
+  let f001 := mkFinding "FMT001" 42 44
+  let f002 := mkFinding "FMT002" 44 44
+  let mkDir (scope : DirectiveScope) (codes? : Option (Array String))
+      (scopeRange : SourceRange) : Directive :=
+    { scope, codes?, scopeRange, commentRange := ⟨7, 31⟩ }
+  let facts (ds : Array Directive) : SuppressionFacts := { directives := ds, malformed := #[] }
+
+  -- File-scope blanket suppresses every finding in the file.
+  let blanket := Suppression.apply (facts #[mkDir .file none ⟨0, bytes.size⟩]) bytes #[f001, f002]
+  ensure (blanket.kept.isEmpty && blanket.suppressed == 2 && blanket.unused.isEmpty)
+    "file blanket did not suppress every finding"
+
+  -- Code selector suppresses only the named code; the other survives.
+  let named := Suppression.apply (facts #[mkDir .file (some #["FMT001"]) ⟨0, bytes.size⟩]) bytes #[f001, f002]
+  ensure (named.kept.map (·.code) == #["FMT002"] && named.suppressed == 1 && named.unused.isEmpty)
+    "code selector suppressed the wrong set"
+
+  -- A directive whose scope holds no matching finding is unused: FMT900 with a safe removal fix.
+  let dead := Suppression.apply (facts #[mkDir .line (some #["FMT001"]) ⟨7, 31⟩]) bytes #[f001]
+  ensure (dead.kept.size == 1 && dead.suppressed == 0) "an out-of-scope directive still suppressed"
+  ensure (dead.unused.map (·.code) == #["FMT900"]) "an unused directive did not emit FMT900"
+  ensure (dead.unused[0]!.fix?.map (·.applicability) == some .safe) "the FMT900 removal fix is not safe"
+
+  -- A list with one live and one dead code suppresses the live one and reports the dead one.
+  let mixed := Suppression.apply (facts #[mkDir .file (some #["FMT001", "FMT999"]) ⟨0, bytes.size⟩]) bytes #[f001]
+  ensure (mixed.suppressed == 1 && mixed.unused.map (·.code) == #["FMT900"])
+    "a mixed live/dead code list did not both suppress and report"
+
+  -- The empty EOF `FMT002` sits exactly on a file scope's upper bound and must still be caught.
+  let eof := Suppression.apply (facts #[mkDir .file none ⟨0, 44⟩]) bytes #[f002]
+  ensure (eof.suppressed == 1) "a file scope ending at EOF did not catch the empty FMT002"
+
+  -- Header recovery. `headerStop` is the first command's start, so the directive on line 2 lives in
+  -- `[0, headerStop)`, which `Comments.allTrivia` omits and `collect` must scan for itself.
+  let mkProj (text : String) (headerStop : Nat) : LosslessSource :=
+    let size := text.utf8ByteSize
+    let tokenStop := headerStop + 3
+    {
+      schema := losslessSourceSchema
+      mainModule := "Test"
+      normalizedBytes := size
+      normalizedDigest := Digest.ofString text
+      headerStop
+      terminalStop := size
+      kinds := #["Lean.Parser.Command.declaration"]
+      nodes := #[{ kind := 0, parent := none, range := ⟨headerStop, size⟩ }]
+      tokens := #[{ node := 0, start := headerStop, stop := tokenStop, trailing := #[{ kind := .whitespace, stop := size }] }]
+    }
+  let headerFacts := Suppression.collect (mkProj src 32) src
+  ensure (headerFacts.directives.size == 1) "collect missed a directive in the module header"
+  ensure (headerFacts.directives[0]!.scope == .file) "the header directive parsed with the wrong scope"
+  ensure (headerFacts.directives[0]!.scopeRange == ⟨0, src.utf8ByteSize⟩)
+    "the header ignore-file scope is not the whole file"
+  ensure headerFacts.malformed.isEmpty "a well-formed header directive was flagged malformed"
+
+  -- A malformed header directive is reported (FMT901, display-only), never silently dropped.
+  let badSrc := "module\n-- lean-fmt: nope\ndef x := 1\n"
+  let badFacts := Suppression.collect (mkProj badSrc 25) badSrc
+  ensure (badFacts.directives.isEmpty && badFacts.malformed.map (·.code) == #["FMT901"])
+    "a malformed header directive was not reported as FMT901"
+  ensure (badFacts.malformed[0]!.fix?.map (·.applicability) == some .displayOnly)
+    "the FMT901 fix is not display-only"
+
 /-- Attach comments over a real projection and report what happened.
 
 The unit tests above build projections by hand, which checks the attachment algorithm against my
@@ -1529,6 +1607,7 @@ public unsafe def main (args : List String) : IO UInt32 := do
     testSemanticArtifact
     testDoc
     testComments
+    testSuppression
     IO.println "lean-fmt module-artifact tests passed"
     return 0
   | ["verify-plugin-artifact", moduleName, sourcePath] =>

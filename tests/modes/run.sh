@@ -109,7 +109,7 @@ expected = "".join(line + "\n" for line in [
     "-def findingValue : Nat := 1" + "  ",
     "+def findingValue : Nat := 1",
     "mode=diff files=1 findings=1 changed=1 written=0 broken=0 rejected=0 withheld_unsafe=0 "
-    "infrastructure_failures=0",
+    "suppressed=0 infrastructure_failures=0",
 ])
 assert diff == expected, repr(diff)
 PY
@@ -180,7 +180,7 @@ expected = "".join(line + "\n" for line in [
     "\\ No newline at end of file",
     "+end Alpha",
     "mode=diff files=1 findings=1 changed=1 written=0 broken=0 rejected=0 withheld_unsafe=0 "
-    "infrastructure_failures=0",
+    "suppressed=0 infrastructure_failures=0",
 ])
 assert diff == expected, repr(diff)
 PY
