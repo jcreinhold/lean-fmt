@@ -984,14 +984,19 @@ private def spacingOf (kind : String) : Spacing :=
   | "Lean.Parser.Term.instBinder" => .bracketed
   | _ => .keep
 
-/-- Kinds whose gaps `RLF-REFLOW` may break across lines when the construct exceeds the margin.
+/-- Kinds broken by name when the construct exceeds the margin — the ones a kind string alone selects.
 
-`app` is the whole set for this prompt (`notes/07-reflow-policy.md` §2-3): it is the largest term kind
-(11,679 nodes, `results/02-expressions.md`), and its arguments are exactly what `argument`'s
-`checkColGt` (`Lean/Parser/Term.lean:889-892`) governs, so the "continuation strictly right of the head"
-rule the align-free engine forces has its cleanest warrant here. Operators, binders, and `matchAlt`
-break by the same `group`/`nest`/`line` mechanism and are added once their per-kind break points are
-proven by reparse; until then they stay on the flat path, which is lossless. -/
+`app` is here (`notes/07-reflow-policy.md` §2-3): it is the largest term kind (11,679 nodes,
+`results/02-expressions.md`), and its arguments are exactly what `argument`'s `checkColGt`
+(`Lean/Parser/Term.lean:889-892`) governs, so the "continuation strictly right of the head" rule the
+align-free engine forces has its cleanest warrant here.
+
+**Operators are broken too, but not from this list** (`RLF-OPERATOR-BREAK`, `notes/09` §3). They cannot
+be enumerated — `«term_+_»`, `«term_*_»`, every user mixfix — so the break site adds a second disjunct,
+`spacing.isDeclared`, which is true for exactly the notation nodes the `ruff-05b` fact covers. `matchAlt`
+is deliberately *not* here: its arms are already laid out one-per-line by `matchAlts`' `sepByIndent`, and
+its only over-margin case — a long right-hand side — is an offside re-indent owned by `RLF-BLOCKS`, not a
+β-break (`notes/09` §1.3). Bracketed binders reach the break through `optDeclSig`, added when built. -/
 private def reflows (kind : String) : Bool :=
   kind == "Lean.Parser.Term.app"
 
@@ -1159,18 +1164,33 @@ the absent-syntax case. -/
 private partial def Tree.termDoc (tree : Tree) (normalized : String) (mayCollapse : Bool)
     (node : Nat) : Doc := Id.run do
   let (spacing, parts) := tree.nodeSpacing node
+  -- A notation/operator node — the ones the `ruff-05b` fact covers, which cannot be named by kind
+  -- (`«term_+_»`, every user mixfix); `RLF-OPERATOR-BREAK` gates the break on this (`notes/09` §3).
+  let isDeclared := match spacing with | .declared _ => true | _ => false
   let partDoc : Part → Doc := fun part =>
     match part.child with
     | some child => tree.termDoc normalized mayCollapse child
     | none => .verbatim (tree.tokenSpanText normalized part.first part.last)
   -- Reflow branch (`notes/07-reflow-policy.md` §2 Design β, §3 Policy P1): a breakable kind, inside a
   -- single-line command (`mayCollapse`), whose every gap is a pure-space gap carrying a declared
-  -- separator. The head stays put; each following part hangs one `nest` (2 columns) below it under one
-  -- `group`, so the engine lays it flat when it fits the margin and one-part-per-line when it does not,
+  -- separator. The head stays put; each following break point hangs one `nest` (2 columns) below it
+  -- under one `group`, so the engine lays it flat when it fits the margin and broken when it does not,
   -- every continuation landing strictly right of the head (`checkColGt`, `Lean/Parser/Term.lean:889`).
   -- A comment or non-space gap fails the `clean` guard and the flat path runs instead, so a break never
   -- drops a byte. In flat mode `line sep` renders exactly `sep`, so the corpus round-trips unchanged.
-  if mayCollapse && reflows (tree.kindOf node) && parts.size ≥ 2 then
+  --
+  -- **Which kinds, and which gaps** (`RLF-OPERATOR-BREAK`, `notes/09-operator-break.md` §2-3). `app`
+  -- breaks — its arguments are the `checkColGt` gap this rule was proven on — and so does any
+  -- fact-covered notation (`spacing.isDeclared`), whose operands carry *no* column check at all
+  -- (`«term_+_»` is `term:65 " + " term:66`, no `checkColGt`; all break shapes reparse,
+  -- `notes/09` §1.1), so the move-value-down break that lands their head at the indent base makes the
+  -- continuation strictly right of the head just as it does for `app`. The break *point* differs per
+  -- kind: `app` breaks before every part (its parts are all children, so "before every child" and
+  -- "before every part" coincide, and the `app` golden is unchanged); a notation breaks before its
+  -- operator *token* and keeps each operand glued to it on the continuation line — Black's binary
+  -- operator layout, `left`↵`  + right` (op_lead), a chain collapsing to one operand per line at a
+  -- single column because left-association lives in the never-nested head.
+  if mayCollapse && (reflows (tree.kindOf node) || isDeclared) && parts.size ≥ 2 then
     let mut clean := true
     let mut index := 0
     let mut previous : Option Part := none
@@ -1193,7 +1213,10 @@ private partial def Tree.termDoc (tree : Tree) (normalized : String) (mayCollaps
         | none => head := partDoc part
         | some _ =>
           let sep := (spacing.separator (idx - 1) parts.size).getD " "
-          tail := tail ++ .line sep ++ partDoc part
+          -- A notation breaks only before its operator tokens; an operand glues to its operator with a
+          -- literal `sep` so `+ right` never splits. `app` (not `.declared`) breaks before every part.
+          let breakHere := if isDeclared then part.child.isNone else true
+          tail := tail ++ (if breakHere then .line sep else .text sep) ++ partDoc part
         prev := some part
         idx := idx + 1
       return .group (head ++ .nest 2 tail)
@@ -1241,7 +1264,7 @@ private def Tree.termClaims (tree : Tree) (normalized : String) (mayCollapse : B
     -- comment in the gap is never turned into a line and dropped, and on `mayCollapse` so a multi-line
     -- command's bytes stay untouched.
     let lead : Option String :=
-      if mayCollapse && reflows (tree.kindOf node) && first > 0 then
+      if mayCollapse && (reflows (tree.kindOf node) || (tree.declaredAtoms? node).isSome) && first > 0 then
         match tree.source.tokens[first - 1]?, tree.source.tokens[first]? with
         | some assign, some head =>
           let assignText := sliceNormalized normalized assign.start assign.stop

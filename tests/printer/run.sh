@@ -1595,6 +1595,128 @@ if [[ -z "$reflow_idem" ]]; then
   printf '  ok   reflow: formatting twice is byte-identical at every margin (%s)\n' "$reflow_margins"
 fi
 
+# --- operator / notation reflow, the RLF-OPERATOR-BREAK capability ---
+#
+# RLF-REFLOW broke `app`; this breaks the notation kinds it deferred (notes/09-operator-break.md). An
+# over-margin operator chain hangs its value onto its own line (head at the indent base) and then breaks
+# op_lead -- the operator starts each continuation line, `left` / `  + right`, Black's binary-operator
+# layout -- every continuation at a single column because left-association lives in the never-nested head.
+# The break is gated on the ruff-05b declared-spacing fact (captureSemantic=1 below), so a notation with
+# no fact stays on the lossless flat path. Parse-preservation is checked with the *tree* gate
+# (compare_tokens.py), not the token stream alone: an operator re-association emits the same tokens and a
+# different tree (RLF-ACCEPT), and an operator break is exactly where that could hide.
+printf -- '--- operator / notation reflow (RLF-OPERATOR-BREAK) ---\n'
+cat >"$work/opbreak.lean" <<'FIXTURE'
+module
+
+def wrap (n : Nat) : Nat := n
+
+def opchain : Nat := 1111111111 + 2222222222 + 3333333333 + 4444444444 + 5555555555 + 6666666666 + 7777777777
+
+def opnested : Nat := wrap (1111111111 + 2222222222 + 3333333333 + 4444444444 + 5555555555 + 6666666666 + 7777777777)
+
+def opcomment : Nat := 1111111111 + 2222222222 /- keep -/ + 3333333333 + 4444444444 + 5555555555 + 6666666666
+
+def opfits : Nat := 1 + 2 + 3
+FIXTURE
+
+# captureSemantic=1 (the trailing 1): operators get their declared spacing AND become breakable. The same
+# source with no fact keeps every notation's bytes -- proven by the notation-spacing test above.
+LEAN_NUM_THREADS=1 lake env "$application" __analyze-exact \
+  "$work/borrowed.setup.json" "$work/opbreak.lean" "opbreak.lean" 8589934592 1 >"$work/opbreak.json"
+
+op_margins="0 1 40 80 100 1000"
+for w in $op_margins; do
+  "$tests" printer-format "$work/opbreak.json" "$work/opbreak.lean" "$w" >"$work/opbreak.$w.out"
+  LEAN_NUM_THREADS=1 lake env "$application" __analyze-exact \
+    "$work/borrowed.setup.json" "$work/opbreak.$w.out" "opbreak.lean" 8589934592 1 \
+    >"$work/opbreak.$w.json" 2>"$work/opbreak.$w.err" || true
+done
+
+# A margin wider than every line breaks nothing: the whole file is the identity.
+if diff -q "$work/opbreak.lean" "$work/opbreak.1000.out" >/dev/null 2>&1; then
+  printf '  ok   at margin 1000 nothing exceeds the margin, so the output is its input (identity)\n'
+else
+  printf 'FAIL at margin 1000 the formatter changed an operator file that fits\n' >&2
+  failures=$((failures + 1))
+fi
+
+# At margin 40 the wide operator chains exceed it and must change.
+if diff -q "$work/opbreak.lean" "$work/opbreak.40.out" >/dev/null 2>&1; then
+  printf 'FAIL at margin 40 the over-margin operators were not broken\n' >&2
+  failures=$((failures + 1))
+else
+  printf '  ok   at margin 40 the over-margin operators were broken (%s lines rewritten)\n' \
+    "$(diff "$work/opbreak.lean" "$work/opbreak.40.out" | grep -c '^<')"
+fi
+
+# Parse-preservation, token AND tree, at every margin. An operator break that re-associated would emit the
+# same token stream and a different parse tree, which a token-only gate cannot see (RLF-ACCEPT).
+op_pp=
+for w in $op_margins; do
+  if ! python3 "$repo_root/experiments/compare_tokens.py" \
+       "$work/opbreak.json" "$work/opbreak.$w.json" "$work/opbreak.lean" "$work/opbreak.$w.out" \
+       >"$work/opbreak.$w.pp" 2>&1; then
+    printf 'FAIL operator break at margin %s changed the parse: %s\n' "$w" "$(cat "$work/opbreak.$w.pp")" >&2
+    failures=$((failures + 1))
+    op_pp=1
+  fi
+done
+if [[ -z "$op_pp" ]]; then
+  printf '  ok   every margin (%s) reparses to the input token stream AND tree (no re-association)\n' "$op_margins"
+fi
+
+# op_lead made concrete: at margin 40 the operator leads each continuation at column 4, strictly right of
+# the head at column 2 -- the same relationship app's checkColGt needs, though operators impose no such
+# check (notes/09 §1.1), which is why the head hangs left of its operands and still reparses.
+if grep -qE '^def opchain : Nat :=$' "$work/opbreak.40.out" && \
+   grep -qE '^  1111111111 ' "$work/opbreak.40.out" && \
+   grep -qE '^    \+ 4444444444$' "$work/opbreak.40.out"; then
+  printf '  ok   at margin 40 the chain breaks op_lead: head at column 2, `+ operand` at column 4\n'
+else
+  printf 'FAIL at margin 40 the operator chain did not break op_lead\n' >&2
+  cat "$work/opbreak.40.out" >&2
+  failures=$((failures + 1))
+fi
+
+# The comment survives at every margin: a gap holding `/- keep -/` fails the clean guard, so the node
+# holding it stays flat (its bytes kept) while the chain around it breaks -- the comment is never a line.
+op_cmt=
+for w in $op_margins; do
+  if ! grep -qF '/- keep -/' "$work/opbreak.$w.out"; then
+    printf 'FAIL operator break at margin %s dropped the comment\n' "$w" >&2
+    failures=$((failures + 1))
+    op_cmt=1
+  fi
+done
+if [[ -z "$op_cmt" ]]; then
+  printf '  ok   the /- keep -/ comment survives at every margin (the clean guard keeps its node flat)\n'
+fi
+
+# The fits case stays byte-canonical -- a short operator is never moved or broken.
+if grep -qE '^def opfits : Nat := 1 \+ 2 \+ 3$' "$work/opbreak.40.out"; then
+  printf '  ok   a fitting operator stays flat and byte-canonical at margin 40\n'
+else
+  printf 'FAIL a fitting operator was broken or moved at margin 40\n' >&2
+  failures=$((failures + 1))
+fi
+
+# Idempotence at every margin: a broken command is multi-line, so `mayCollapse` declines it and its bytes
+# are kept -- a second pass reproduces the first.
+op_idem=
+for w in $op_margins; do
+  "$tests" printer-format "$work/opbreak.$w.json" "$work/opbreak.$w.out" "$w" >"$work/opbreak.$w.out2"
+  if ! diff -q "$work/opbreak.$w.out" "$work/opbreak.$w.out2" >/dev/null 2>&1; then
+    printf 'FAIL operator break: formatting is not idempotent at margin %s:\n' "$w" >&2
+    diff -u "$work/opbreak.$w.out" "$work/opbreak.$w.out2" >&2
+    failures=$((failures + 1))
+    op_idem=1
+  fi
+done
+if [[ -z "$op_idem" ]]; then
+  printf '  ok   operator break: formatting twice is byte-identical at every margin (%s)\n' "$op_margins"
+fi
+
 # --- offside blocks, the RLF-BLOCKS capability ---
 #
 # Where "indentation is a token" (results/03-tactics.md) is finally *handled* rather than deferred: a
