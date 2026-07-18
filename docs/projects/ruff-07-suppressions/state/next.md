@@ -1,9 +1,9 @@
 # Next Proof Packet
 
 - Stack: ruff-07-suppressions
-- First unresolved: 01-spec
-- Claim ID: RSP-SPEC
-- Prompt: 01-spec
+- First unresolved: 02-implementation
+- Claim ID: RSP-IMPL
+- Prompt: 02-implementation
 - Module: (docs only)
 - Target file: (docs only)
 
@@ -17,7 +17,7 @@ Read this file, the target prompt, target files, listed source/template line ran
 
 ## Proof Task
 
-- Deliver **RSP-SPEC**: Write a grammar with inline, next-item, and file forms; define selectors, placement, formatting preservation, precedence, and malformed/unknown behavior using adversarial Lean comments.
+- Deliver **RSP-IMPL**: Parse directives from lossless trivia, apply them after canonical findings, expose suppressed counts in diagnostics, and implement the unused-suppression rule and safe removal fix.
 - Read `roadmap.md`, its prerequisite stack results, `AGENTS.md`, the current implementation and tests, and the relevant Lean compiler/Lake sources before changing an interface. Write interface comments and characterization tests before implementation where the behavior is not already frozen.
 
 ## Reuse
@@ -30,6 +30,6 @@ Inspect the live goal, search relevant declarations, test plausible proof steps,
 
 ## Stop Rules
 
-- Avoid Python `noqa` syntax if it conflicts with Lean comment conventions.
-- A directive inside a string or quotation is not a comment directive.
+- Suppression state never changes required semantic capability or cache identity.
+- Infrastructure diagnostics remain unsuppressible.
 - Stop rather than weakening exact semantics, write safety, or the resource envelope.
