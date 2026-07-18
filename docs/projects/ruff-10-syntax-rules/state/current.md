@@ -1,21 +1,31 @@
 ---
 kind: state
-first_unresolved: 03-acceptance
+first_unresolved: none
 ---
 
 # Current state
 
-`RYR-SPEC` and `RYR-IMPL` are **verified**. The six syntax-tier rules **FMT008–FMT013** frozen by the
-catalog (`notes/01-catalog.md`) are implemented and shipping — all as **preview** (default-off). What
-was run is `results/02-implementation.md`; the design and the mid-implementation repair are
-`notes/02-implementation.md`. Rules are `RuleImpl.syntax` bodies reading the `LosslessSource`
-projection through total helpers; FMT010/011/013 carry `.safe` byte-range fixes reported on original
-coordinates, FMT008/009/012 are report-only. The first-syntax-tier cache wiring is in place: a
-`SemanticResult.tier` tag (schema `v5`) with a `cacheHitServes` gate keeps a source-only shortcut entry
-from serving a `.syntax` `--select` a false negative, while the universal `.syntax` entry serves any
-selection. Selection gained a `default` selector (the `defaultEnabled` rules) that the default config
-now uses instead of `"all"`. All eleven build/test gates are green, including the new
-`tests/syntax/run.sh`; the structural checker and `write_next --check` pass; `git diff --check` is clean.
+`RYR-SPEC`, `RYR-IMPL`, and `RYR-FINAL` are **verified** — the stack is complete. The six syntax-tier
+rules **FMT008–FMT013** frozen by the catalog (`notes/01-catalog.md`) are implemented, shipping — all
+as **preview** (default-off) — and have passed a frozen-sample differential and false-positive review
+(`results/03-acceptance.md`). What was run in implementation is `results/02-implementation.md`; the
+design and the mid-implementation repair are `notes/02-implementation.md`. Rules are `RuleImpl.syntax`
+bodies reading the `LosslessSource` projection through total helpers; FMT010/011/013 carry `.safe`
+byte-range fixes reported on original coordinates, FMT008/009/012 are report-only. The first-syntax-tier
+cache wiring is in place: a `SemanticResult.tier` tag (schema `v5`) with a `cacheHitServes` gate keeps a
+source-only shortcut entry from serving a `.syntax` `--select` a false negative, while the universal
+`.syntax` entry serves any selection. Selection gained a `default` selector (the `defaultEnabled` rules)
+that the default config now uses instead of `"all"`.
+
+RYR-FINAL ran the six rules over the frozen 62-module mathlib sample through the exact frontend and
+reviewed every finding: **one true positive** (FMT013 `((ϕ i x))` in `NoncommPiCoprod.lean`, a genuine
+redundant outer pair mathlib has no linter for) and **one false positive** (FMT009 miscounting
+`end Alpha.Beta`), which was a real correctness bug in the shipped rule and was **fixed** here with
+name-stack matching and two regression fixtures. Category coverage the prompt names — custom syntax,
+quotations, generated syntax, comments, malformed, both applicability classes, and the FMT012
+`set_option … in` scoped form — is closed by persistent fixtures. No rule was demoted; all six remain
+preview. All twelve build/test gates are green, including `tests/syntax/run.sh`; the structural checker
+and `write_next --check` pass; `git diff --check` is clean.
 
 The one deliberate deferral: `format`/`fix` render canonical text and run only source rules, so a
 syntax `.safe` fix is *reported* by `check` but not *applied* by `fix`. `ruff-06`'s RFX-SPEC owns
@@ -26,7 +36,7 @@ pinned by `tests/syntax/run.sh`.
 | --- | --- | --- | --- |
 | 01-catalog | RYR-SPEC | verified | — |
 | 02-implementation | RYR-IMPL | verified | RYR-SPEC |
-| 03-acceptance | RYR-FINAL | planned | RYR-IMPL |
+| 03-acceptance | RYR-FINAL | verified | RYR-IMPL |
 
 ## Catalog summary (frozen by RYR-SPEC)
 
@@ -44,12 +54,13 @@ All six ship preview; RYR-IMPL corrected FMT009–FMT012 off `enabled` (rational
 
 ## Blockers and prerequisites
 
-- No blocker. The first-syntax-tier wiring RYR-SPEC scoped as owed is done: `cacheHitServes` gates on
-  `tier`, and `availableAnalysis` fetches the projection when a selected rule demands `.syntax`.
-  RYR-FINAL is acceptance — measure FMT013's true prevalence on the frozen sample, assert the FMT009
-  whole-file-section exclusion and near-misses at corpus scale, and decide FMT012's `set_option … in`
-  coverage. Do **not** run full mathlib during development; use the frozen sample and named stress
-  cases (`CLAUDE.md`).
+- No blocker; the stack is complete. The first-syntax-tier wiring RYR-SPEC scoped as owed is done:
+  `cacheHitServes` gates on `tier`, and `availableAnalysis` fetches the projection when a selected rule
+  demands `.syntax`. RYR-FINAL closed the three questions it inherited: FMT013's frozen-sample
+  prevalence is one true positive in 62 modules with zero false positives; FMT009's dotted-`end`
+  scope counting is fixed and regression-pinned; FMT012 fires on the `set_option … in` scoped form
+  uniformly (same command node, report-only). Full mathlib was not run — development evidence is the
+  frozen sample and named stress cases (`CLAUDE.md`).
 - Open deferral (not a blocker): canonical-coordinate syntax *fix application* is owned by `ruff-06`'s
   RFX-SPEC. `fix` reports a syntax `.safe` fix but does not apply it; the limit is documented and
   pinned.

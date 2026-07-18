@@ -328,18 +328,33 @@ private def moduleDocRequired (facts : SyntaxFacts) : Array Finding := Id.run do
 
 /-! ### FMT009 — unclosed `section` or `namespace`
 
-Each `end` closes exactly one scope in accepted source (`namespace A.B` is one scope closed by one
-`end A.B`; `namespace A` `namespace B` needs two `end`s), so net open depth is a simple push/pop over
-the top-level command stream — no name matching, and no false positive from `end A.B` spelling. At the
-terminal, remaining opens are reported, except an outermost anonymous `noncomputable`/`public`/`meta`
-section (the idiomatic whole-file section), which is dropped from the outer end to mirror Mathlib's
-`linter.style.missingEnd`. Report-only: where a scope *should* have closed is author judgment. -/
+Matching is a name stack over the top-level command stream, as `notes/01-catalog.md` §2 specifies and
+`Lean.Elab.Command`'s scope stack does. `namespace Foo` pushes the name `Foo`; `section` pushes an
+anonymous scope; `section Bar` pushes `Bar`. A bare `end` pops one scope (the innermost, an anonymous
+section in accepted source). An `end Foo` pops the scopes whose names, concatenated outer→inner with
+`.`, spell `Foo` — so **one** `end A.B` closes both a single `namespace A.B` (one scope named `A.B`)
+**and** a `namespace A` / `namespace B` pair (two scopes). Popping only one per `end` is the false
+positive this rule shipped and RYR-FINAL's frozen-sample review caught on
+`Mathlib/Probability/Kernel/Deterministic.lean` (`namespace ProbabilityTheory` / `namespace Kernel`
+closed by one `end ProbabilityTheory.Kernel`). At the terminal, remaining opens are reported, except an
+outermost anonymous `noncomputable`/`public`/`meta` section (the idiomatic whole-file section), dropped
+to mirror Mathlib's `linter.style.missingEnd`. Report-only: where a scope *should* have closed is
+author judgment. -/
 private structure OpenScope where
   opener : Nat
   isSection : Bool
   named : Bool
+  name : String
   outerSectionOk : Bool
   deriving Inhabited
+
+/-- The whitespace-delimited words of a top-level scope command's node text. The node range is the leaf
+hull (trivia excluded), so this is exactly the keyword, any modifiers, and the scope name — e.g.
+`["noncomputable", "section", "Foo"]`, `["namespace", "A.B"]`, or `["end", "A.B"]`. Splitting on
+whitespace rather than on the keyword substring avoids mis-parsing a name that contains the keyword
+(e.g. a `Legendre` namespace). -/
+private def scopeWords (text : String) : List String :=
+  (text.splitOn " ").filter (·.length > 0)
 
 private def unclosedScopes (facts : SyntaxFacts) : Array Finding := Id.run do
   let projection := facts.projection
@@ -350,22 +365,39 @@ private def unclosedScopes (facts : SyntaxFacts) : Array Finding := Id.run do
   -- guard is needed here, unlike the node-scanning rules below.
   for i in projection.topLevelNodes do
     let kind := projection.kindOf i
+    let text := rangeText bytes (projection.nodes[i]!.range.start) (projection.nodes[i]!.range.stop)
     if kind == kNamespace then
-      stack := stack.push { opener := i, isSection := false, named := true, outerSectionOk := false }
+      -- `namespace <name>` — the name is the one word after the keyword. Fields, in order:
+      -- opener, isSection, named, name, outerSectionOk.
+      let scopeName := (scopeWords text).getD 1 ""
+      stack := stack.push ⟨i, false, true, scopeName, false⟩
     else if kind == kSection then
-      let range := projection.nodes[i]!.range
-      let text := rangeText bytes range.start range.stop
-      -- Modifiers precede the `section` keyword; the optional name follows it.
-      let parts := text.splitOn "section"
-      let before := parts.headD ""
-      let after := String.join (parts.drop 1)
-      let named := after.any fun c => !c.isWhitespace
-      let outerOk := before.splitOn " " |>.any fun word =>
+      let words := scopeWords text
+      let sectionIdx := words.findIdx (· == "section")
+      -- The name is the word after `section` (absent for an anonymous section); modifiers precede it.
+      let scopeName := words.getD (sectionIdx + 1) ""
+      let outerOk := (words.take sectionIdx).any fun word =>
         word == "noncomputable" || word == "public" || word == "meta"
-      stack := stack.push { opener := i, isSection := true, named, outerSectionOk := outerOk }
+      stack := stack.push ⟨i, true, scopeName.length > 0, scopeName, outerOk⟩
     else if kind == kEnd then
-      if !stack.isEmpty then
-        stack := stack.pop
+      let endName := (scopeWords text).getD 1 ""
+      if endName.isEmpty then
+        if !stack.isEmpty then stack := stack.pop
+      else
+        -- Pop scopes from the top, accumulating names, until the outer→inner join spells `endName`.
+        -- Accepted source always matches; on no match (unexpected input) fall back to a single pop.
+        let mut popped : Array String := #[]
+        let mut remaining := stack
+        let mut matched := false
+        while !remaining.isEmpty && !matched do
+          popped := popped.push remaining.back!.name
+          remaining := remaining.pop
+          if String.intercalate "." popped.reverse.toList == endName then
+            matched := true
+        if matched then
+          stack := remaining
+        else if !stack.isEmpty then
+          stack := stack.pop
   if stack.isEmpty then
     return #[]
   -- Drop outermost anonymous sections that carry an outer-section modifier.

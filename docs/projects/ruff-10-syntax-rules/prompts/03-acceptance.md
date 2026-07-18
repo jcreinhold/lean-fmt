@@ -1,6 +1,6 @@
 ---
 claim_id: RYR-FINAL
-status: planned
+status: verified
 depends_on: [RYR-IMPL]
 ---
 

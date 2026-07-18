@@ -75,6 +75,10 @@ expect_codes fmt009-pos Unclosed.lean     "FMT009" --select FMT009
 expect_codes fmt010-pos Duplicates.lean   "FMT010" --select FMT010
 expect_codes fmt011-pos Duplicates.lean   "FMT011" --select FMT011
 expect_codes fmt012-pos DevOption.lean    "FMT012" --select FMT012
+# FMT012 (RYR-FINAL scope decision): the inline `set_option pp.all true in <decl>` scoped form is the
+# same `set_option` command node, so a committed dev option fires whether standalone or `… in`-scoped.
+# Report-only, so the scoped boundary raises no byte-safety question -- reporting both is uniform.
+expect_codes fmt012-scoped-in ScopedInOption.lean "FMT012" --select FMT012
 expect_codes fmt013-pos NestedParen.lean  "FMT013" --select FMT013
 
 # The three fixable rules carry a `.safe` fix whose edits are expressed in original-source
@@ -107,6 +111,11 @@ expect_codes clean Clean.lean "" "${all_six[@]}"
 expect_codes near-008 NearNoDecl.lean     "" "${all_six[@]}"
 # FMT009: an outermost `noncomputable section` left open is the whole-file idiom, not an unclosed one.
 expect_codes near-009 NearOpenSection.lean "" "${all_six[@]}"
+# FMT009 regression (RYR-FINAL frozen-sample false positive): one `end Alpha.Beta` closes both a
+# `namespace Alpha` and a `namespace Beta` -- the name stack must pop the group the dotted name spells,
+# not one scope per `end`. `ScopesBalanced` adds a dotted namespace and a named section closed normally.
+expect_codes near-009-dotted EndDotted.lean      "" "${all_six[@]}"
+expect_codes near-009-nested ScopesBalanced.lean "" "${all_six[@]}"
 # FMT010: `@[local simp, simp]` differs by `attrKind`; comparison is byte-exact, so no duplicate.
 expect_codes near-010 NearAttr.lean       "" "${all_six[@]}"
 # FMT011: `deriving Repr, BEq` are distinct classes, not a repeat.
@@ -116,6 +125,11 @@ expect_codes near-012 NearOption.lean     "" "${all_six[@]}"
 # FMT013: a tuple `(1, 2)`, a type ascription `(1 : Nat)`, and a cdot `(· + 1)` are each a distinct
 # node kind, none a `paren` wrapping a `paren`.
 expect_codes near-013 NearParen.lean      "" "${all_six[@]}"
+
+# --- Comments: a defect named only inside a line or block comment is trivia, absent from the leaf
+# walk, and must not fire. `Comment.lean` buries a dev `set_option`, a redundant `((paren))`, a
+# duplicate `@[simp, simp]`, and a stray `end` in comments; all six stay silent.
+expect_codes comment Comment.lean "" "${all_six[@]}"
 
 # --- Quotation / generated syntax: a defect *inside* `` `(…) `` is data, not code, and must not fire.
 # `macro "myone" : term => `(((1)))` has a nested paren; `mydef` quotes `@[simp, simp]`.
