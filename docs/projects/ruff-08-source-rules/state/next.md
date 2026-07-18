@@ -1,9 +1,9 @@
 # Next Proof Packet
 
 - Stack: ruff-08-source-rules
-- First unresolved: 01-catalog
-- Claim ID: RSR-SPEC
-- Prompt: 01-catalog
+- First unresolved: 02-implementation
+- Claim ID: RSR-IMPL
+- Prompt: 02-implementation
 - Module: (docs only)
 - Target file: (docs only)
 
@@ -17,7 +17,7 @@ Read this file, the target prompt, target files, listed source/template line ran
 
 ## Proof Task
 
-- Deliver **RSR-SPEC**: Characterize Lean acceptance and meaning for BOM, CRLF/mixed endings, controls, and bidirectional marks. Assign stable codes, messages, ranges, defaults, and fix applicability; reject any candidate requiring token context.
+- Deliver **RSR-IMPL**: Add the approved linear byte/string scans, registry metadata, configuration selectors, suppressions, JSON applicability, and generated rule examples.
 - Read `roadmap.md`, its prerequisite stack results, `AGENTS.md`, the current implementation and tests, and the relevant Lean compiler/Lake sources before changing an interface. Write interface comments and characterization tests before implementation where the behavior is not already frozen.
 
 ## Reuse
@@ -30,6 +30,6 @@ Inspect the live goal, search relevant declarations, test plausible proof steps,
 
 ## Stop Rules
 
-- Do not duplicate canonical formatter policy as default lint noise.
-- Security diagnostics may be report-only.
+- No parser or project capability in source-rule implementations.
+- Avoid repeated UTF-8 decoding.
 - Stop rather than weakening exact semantics, write safety, or the resource envelope.

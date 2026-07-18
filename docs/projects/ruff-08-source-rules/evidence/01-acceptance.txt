@@ -1,0 +1,24 @@
+== frontend acceptance (reject = not accepted source) ==
+clean                  reject=false
+leading BOM            reject=true
+BOM before command     reject=true
+isolated CR            reject=true
+bare NUL               reject=true
+bare RLO in ident      reject=true
+NUL in string literal  reject=false
+NUL in line comment    reject=false
+RLO in string literal  reject=false
+RLO in line comment    reject=false
+LF/CRLF intermixed     reject=false
+
+== byte facts the source scan rests on ==
+crlfToLf preserves BOM     : true
+crlfToLf preserves RLO     : true
+crlfToLf preserves NUL     : true
+crlfToLf preserves lone CR : true
+crlfToLf collapses CRLF    : true
+BOM isWhitespace           : false
+RLO isWhitespace           : false
+NUL isWhitespace           : false
+BOM utf8 bytes             : [239, 187, 191]
+RLO utf8 bytes             : [226, 128, 174]
