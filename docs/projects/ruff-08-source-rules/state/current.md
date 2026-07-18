@@ -1,12 +1,13 @@
 ---
 kind: state
-first_unresolved: 03-acceptance
+first_unresolved: none
 ---
 
 # Current state
 
-`RSR-SPEC` and `RSR-IMPL` are **verified**. The frozen catalog is `notes/01-catalog.md`; what was run
-is `results/01-catalog.md` and `results/02-implementation.md`. The two approved rules are live in
+**The stack is complete: `RSR-SPEC`, `RSR-IMPL`, and `RSR-FINAL` are all verified.** The frozen
+catalog is `notes/01-catalog.md`; what was run is `results/01-catalog.md`,
+`results/02-implementation.md`, and `results/03-acceptance.md`. The two approved rules are live in
 `LeanFmt/Rules.lean`'s `ruleRegistry`: `FMT003` (forbidden control byte) and `FMT004` (suspicious
 bidirectional control), both report-only, category `security`, default-enabled. Category selection is
 now registry-derived (`LeanFmt/Config.lean`), so `--select security` works with no hardcoded list. The
@@ -17,7 +18,7 @@ live code was re-read against this work.
 | --- | --- | --- | --- |
 | 01-catalog | RSR-SPEC | verified | — |
 | 02-implementation | RSR-IMPL | verified | RSR-SPEC |
-| 03-acceptance | RSR-FINAL | planned | RSR-IMPL |
+| 03-acceptance | RSR-FINAL | verified | RSR-IMPL |
 
 ## Known evidence
 
@@ -33,12 +34,15 @@ live code was re-read against this work.
   assumption.
 - **TAB exclusion is load-bearing.** `testRules`' fixture ends a line with `\t`; the catalog's TAB
   exclusion keeps that unrelated test finding-clean. Confirmed against live tests.
-
-## Remaining work
-
-- **`RSR-FINAL` (03-acceptance)**: property/fuzz-style boundary tests and large-file microbenchmarks
-  (the linear-time and worker-free claims), and the final catalog record. A committed-byte corpus for
-  end-to-end control/bidi coverage belongs there.
+- **The scans are linear and worker-free, measured, not argued.** `tests/security/bench.sh` over
+  `LeanFmtTest.security-bench`: 7.8× across an 8× size step (2.5→20 MB), flat ~5 ns/byte at every
+  doubling, in one process with ~152 MiB peak RSS (`results/03-acceptance.md`,
+  `evidence/03-security-bench.txt`). The clean regime isolates the scan from the engine's shared
+  O(m log m) finding-sort; the dense regime confirms 32,768 findings fire at scale, worker-free.
+- **The whole pipeline surfaces the findings, not just the scan.** `tests/check/Security.lean` is a
+  committed byte corpus (U+202E in a comment, NUL in a string); `check --no-cache` reports
+  `FMT004 [17,20)` then `FMT003 [45,46)`, report-only, no write. `testSourceSecurityProperties` pins
+  the scans differentially against an independent oracle over 120 LCG inputs plus four edges.
 
 ## Blockers and prerequisites
 

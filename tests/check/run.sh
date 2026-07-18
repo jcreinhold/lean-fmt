@@ -26,6 +26,7 @@ sources=(
   tests/check/Findings.lean
   tests/check/MalformedHeader.lean
   tests/check/UnresolvedImport.lean
+  tests/check/Security.lean
 )
 snapshot_metadata "${sources[@]}" >"$work/before"
 
@@ -262,6 +263,31 @@ mkdir -p "$work/mismatch"
 printf 'leanprover/lean4:v0.0.0\n' >"$work/mismatch/lean-toolchain"
 run_expect 2 "$work/mismatch.out" "$application" check --root "$work/mismatch" --json
 grep -q 'does not match this lean-fmt build' "$work/mismatch.out.stderr"
+
+# The source-security family end-to-end, on committed bytes rather than a runtime-crafted string.
+# `Security.lean` carries a bidi mark (U+202E) inside a line comment and a NUL inside a string literal
+# — the only two places a control or bidi byte reaches accepted source (bare occurrences are parse
+# errors, `docs/projects/ruff-08-source-rules/notes/01-catalog.md` §2). The unit and property tests in
+# `LeanFmtTest.lean` pin the scans; this pins the whole pipeline — read, normalize, source facts,
+# rules, report — surfacing them byte-exact in normalized coordinates. The file is also in `sources`
+# above, so the `cmp` at the end proves `check` reads a control-byte file without writing it.
+run_expect 1 "$work/security.json" "$application" check --root . --json --no-cache \
+  tests/check/Security.lean
+python3 - "$work/security.json" <<'PY'
+import json, sys
+r = json.load(open(sys.argv[1]))
+file, = r["files"]
+assert file["status"] == "findings", file["status"]
+findings = [(f["code"], f["range"]["start"], f["range"]["stop"], f["message"]) for f in file["findings"]]
+# Position-sorted (`findingOrder`): the comment mark precedes the string byte.
+assert findings == [
+    ("FMT004", 17, 20, "suspicious bidirectional control U+202E"),
+    ("FMT003", 45, 46, "forbidden control byte U+0000"),
+], findings
+# Report-only: neither security finding carries a fix, and nothing is withheld as unsafe.
+assert all("fix" not in f for f in file["findings"]), file["findings"]
+assert r["withheldUnsafe"] == 0 and r["written"] == 0, r
+PY
 
 snapshot_metadata "${sources[@]}" >"$work/after"
 cmp "$work/before" "$work/after"
