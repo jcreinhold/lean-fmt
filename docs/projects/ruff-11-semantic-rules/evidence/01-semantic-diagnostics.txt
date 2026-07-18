@@ -1,0 +1,14 @@
+# RMR-SPEC characterization: default-on compiler diagnostics with stable kind + range
+# toolchain/commit/time: leanprover/lean4:v4.32.0 | lean-fmt bf3116d | 2026-07-18T23:34:26Z
+# platform: Darwin arm64
+
+## Command: lake env lean --json evidence/fixtures/Diagnostics.lean
+## columns: kind | severity | pos-endPos (1-based line:col) | message first line
+Lean.Linter.deprecatedAttr       warning  L9:20-L9:27  '`oldName` has been deprecated: Use `newName` instead'
+linter.unusedVariables           warning  L12:15-L12:16  'Variable name `x` is not explicitly referenced.'
+linter.unusedSectionVars         warning  L17:0-L17:47  'automatically included section variable(s) unused in theorem'
+linter.constructorNameAsVariable warning  L21:13-L21:17  "Local variable 'true' resembles constructor 'Bool.true' - wr"
+
+## Command: lake env lean evidence/fixtures/DeprecationEntry.lean
+## proves DeprecationEntry {newName?, since?, text?} is queryable from Environment data
+newName?=(some newName) since?=(some 2024-01-01) text?=none
