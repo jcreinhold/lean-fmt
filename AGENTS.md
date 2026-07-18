@@ -27,6 +27,7 @@ lake exe lean-fmt
 lake exe lean-fmt-tests
 tests/compiler/run.sh
 tests/check/run.sh
+tests/suppression/run.sh
 tests/lossless/run.sh
 tests/modes/run.sh
 tests/scale/run.sh

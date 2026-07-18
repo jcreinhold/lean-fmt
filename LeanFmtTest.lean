@@ -1236,6 +1236,12 @@ private def testSuppression : IO Unit := do
   ensure (dead.kept.size == 1 && dead.suppressed == 0) "an out-of-scope directive still suppressed"
   ensure (dead.unused.map (·.code) == #["FMT900"]) "an unused directive did not emit FMT900"
   ensure (dead.unused[0]!.fix?.map (·.applicability) == some .safe) "the FMT900 removal fix is not safe"
+  -- The removal edit is a *clean line* deletion: a directive alone on its line takes the whole line
+  -- and its terminating newline (`⟨7, 32⟩` over `src` — `-- …-file` is `[7, 31)`, the `\n` is `31`),
+  -- and replaces with nothing. Applying it must leave `module\ndef x := 1  \n`, not a blank line.
+  let removal := dead.unused[0]!.fix?.bind (·.edits[0]?)
+  ensure (removal.map (·.range) == some ⟨7, 32⟩ && removal.map (·.replacement) == some "")
+    "the FMT900 removal fix does not delete exactly the directive line and its newline"
 
   -- A list with one live and one dead code suppresses the live one and reports the dead one.
   let mixed := Suppression.apply (facts #[mkDir .file (some #["FMT001", "FMT999"]) ⟨0, bytes.size⟩]) bytes #[f001]

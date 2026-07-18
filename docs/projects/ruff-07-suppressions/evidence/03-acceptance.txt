@@ -1,0 +1,39 @@
+# RSP-FINAL acceptance matrix — one `check` (or `fix`) per case over committed fixtures.
+# Regenerate: tests/suppression/run.sh drives these assertions; this file is the raw transcript.
+# Env: leanprover/lean4:v4.32.0, Darwin arm64. All paths are tests/suppression/*.
+
+## doc comments / module docstrings — directive TEXT in a token is inert (RSP-SPEC stop rule)
+$ lean-fmt check --json tests/suppression/DocComment.lean   # FMT001 still fires; suppressed=0
+  tests/suppression/DocComment.lean:122-124: FMT001 trailing whitespace [safe]
+  mode=check files=1 findings=1 changed=1 written=0 broken=0 rejected=0 withheld_unsafe=0 suppressed=0 infrastructure_failures=0
+
+## nested syntax — ignore-next inside a namespace suppresses the inner finding
+  mode=check files=1 findings=0 changed=0 written=0 broken=0 rejected=0 withheld_unsafe=0 suppressed=1 infrastructure_failures=0
+
+## custom command — file-local syntax+macro; ignore-file suppresses; greet round-trips
+  mode=check files=1 findings=0 changed=0 written=0 broken=0 rejected=0 withheld_unsafe=0 suppressed=1 infrastructure_failures=0
+
+## unknown rule — ignore[FMT999] suppresses nothing: finding reported AND FMT900 unused
+  .acc-unknown.lean:8-35: FMT900 unused suppression directive: FMT999 suppress nothing here [safe]
+  .acc-unknown.lean:52-54: FMT001 trailing whitespace [safe]
+  mode=check files=1 findings=2 changed=1 written=0 broken=0 rejected=0 withheld_unsafe=0 suppressed=0 infrastructure_failures=0
+
+## per-file config — config drops FMT001, so ignore[FMT001] is redundant -> FMT900
+  tests/suppression/PerFile.lean:8-35: FMT900 unused suppression directive: FMT001 suppress nothing here [safe]
+  mode=check files=1 findings=1 changed=1 written=0 broken=0 rejected=0 withheld_unsafe=0 suppressed=0 infrastructure_failures=0
+
+## unused fix — blanket ignore over a clean file: FMT900 [safe], clean-line removal edit
+  code=FMT900 applicability=safe edit=8..28 repl=''
+
+## malformed — unknown verb: FMT901 [display-only], reported never dropped
+  tests/suppression/Malformed.lean:8-26: FMT901 malformed suppression directive: unknown suppression verb 'ignor' [display-only]
+  mode=check files=1 findings=1 changed=1 written=0 broken=0 rejected=0 withheld_unsafe=0 suppressed=0 infrastructure_failures=0
+
+## formatting movement + round-trip — ignore-next spans a multi-line item; fix reflows it away,
+## the directive comment round-trips exactly once, and the now-unused directive becomes FMT900.
+  before fix:
+    mode=check files=1 findings=0 changed=0 written=0 broken=0 rejected=0 withheld_unsafe=0 suppressed=1 infrastructure_failures=0
+  directive count after fix (must be 1): 1
+  re-check after fix:
+    .acc-move.lean:8-32: FMT900 unused blanket suppression directive: no finding in its scope [safe]
+    mode=check files=1 findings=1 changed=1 written=0 broken=0 rejected=0 withheld_unsafe=0 suppressed=0 infrastructure_failures=0

@@ -1,0 +1,2 @@
+[per-file-ignores]
+"**/PerFile.lean" = ["FMT001"]
