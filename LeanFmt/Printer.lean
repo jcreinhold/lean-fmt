@@ -13,10 +13,10 @@ frontend. That is not a preference: `ruff-01`'s roadmap already committed to car
 printing in-frontend would buy free arg order for a median 1.96 s frontend run per file (`RLS-FINAL`).
 
 **What the projection does not carry, measured rather than assumed.** Over all 21 modules of this
-repository (49,780 nodes, `evidence/01-projection-shape.txt`), 17,691 nodes (35.5%) carry no token at
+repository (50,221 nodes, `evidence/01-projection-shape.txt`), 17,806 nodes (35.5%) carry no token at
 all — they are *absent* syntax, the unfilled optional slots of `declModifiers`, `optDeclSig`,
 `Termination.suffix` — and `collect` gives them range `(0,0)` because a node's range is the hull of the
-leaves beneath it and there are none. For 7,809 of them (15.7% of all nodes) the parent also has direct
+leaves beneath it and there are none. For 7,877 of them (15.7% of all nodes) the parent also has direct
 token children, so nothing in the projection says where among its siblings the absent slot belongs.
 `Lean.Syntax` has no position for them either; this is not something the projection dropped.
 
@@ -27,7 +27,7 @@ Two consequences run through everything below:
    siblings ascend in arg order. Sorting children by range would be correct for the 64.5% that carry
    tokens and silently wrong for the rest.
 2. **The conservative path reads bytes, not the tree.** Empty nodes contribute no bytes, so re-emitting
-   a command's byte extent is unaffected by all 7,809 ambiguous placements. It is the only path whose
+   a command's byte extent is unaffected by all 7,877 ambiguous placements. It is the only path whose
    correctness rests on no claim about any grammar, which is exactly what the roadmap's "unknown
    commands must round-trip conservatively" asks for. Every kind starts here and leaves only when a
    canonical layout for it is cited and pinned by a golden test.
@@ -56,7 +56,7 @@ transport format. This is the view a walk needs, computed once.
 Both child arrays ascend in index order, which **is** arg order by `collect`'s construction. The
 projection retains no other order, so this is not a property that can be checked against its output —
 `evidence/01-projection-shape.txt` checks the observable consequence instead: among a parent's
-token-bearing children, index order agrees with byte order (0 violations over 49,780 nodes). -/
+token-bearing children, index order agrees with byte order (0 violations over 50,221 nodes). -/
 structure Tree where
   source : LosslessSource
   /-- `nodeChildren[i]` are the node-children of node `i`, in arg order. -/
@@ -1177,15 +1177,64 @@ bytes. So an `app` nested inside a `paren` inside a notation is still found and 
 every byte no layout claimed survives untouched. A node with no parts contributes nothing, which is
 the absent-syntax case. -/
 private partial def Tree.termDoc (tree : Tree) (normalized : String) (mayCollapse : Bool)
-    (node : Nat) : Doc := Id.run do
+    (node : Nat) (breakRecord : Bool := false) : Doc := Id.run do
   let (spacing, parts) := tree.nodeSpacing node
   -- A notation/operator node — the ones the `ruff-05b` fact covers, which cannot be named by kind
   -- (`«term_+_»`, every user mixfix); `RLF-OPERATOR-BREAK` gates the break on this (`notes/09` §3).
   let isDeclared := match spacing with | .declared _ => true | _ => false
+  -- Children recurse with `breakRecord := false`: only the `leadFlat` value's own record breaks, so a
+  -- nested record (a field value, which is mid-line after `field :=`) keeps its bytes (`notes/12` §2).
   let partDoc : Part → Doc := fun part =>
     match part.child with
     | some child => tree.termDoc normalized mayCollapse child
     | none => .verbatim (tree.tokenSpanText normalized part.first part.last)
+  -- RLF-RECORDS (`notes/12`): a `leadFlat` record breaks A1 — one field per line at a fixed nest base, so
+  -- the shared field column satisfies `sepByIndent`'s `checkColEq`/`checkColGe` by construction rather
+  -- than by arrangement. The `"{ "` opener is two columns and the `nest` is two, so field₁ (right after
+  -- it) and every later field land at the same column, running-indent + 2. Armed only under `breakRecord`
+  -- — the move-value-down value, which `leadFlat` places line-leading so `{` sits at the running indent
+  -- (§2's exact condition; a mid-line record would anchor field₁ off the nest base and the break would
+  -- change the parse). Only a plain record (`recordFields?`) whose inter-field gaps are pure whitespace
+  -- breaks; a comment between fields fails `clean` and the record keeps its bytes on the flat path.
+  if breakRecord && tree.kindOf node == "Lean.Parser.Term.structInst" then
+    -- The field/separator parts of a **plain** record, or `none` for any shape A1 does not handle.
+    -- `structInst := "{ " >> (optional (… " with ") >> structInstFields (sepByIndent structInstField ",")
+    -- >> optEllipsis >> optional (" : " term)) >> " }"` (`Term.lean:352-357`). The fields live two levels
+    -- down — `structInst → structInstFields → null` — below `liftedParts`' one level, so this walks to that
+    -- `null` and returns its `parts` (fields merged with `,` separators in source order). A record is plain
+    -- only when its sole non-empty node-child is the `structInstFields`: a `with`-clause, `: T` ascription,
+    -- or `..` ellipsis each shows up as another non-empty child and yields `none` (kept flat).
+    let recordFields? : Option (Array Part) := Id.run do
+      let mut fieldsNode : Option Nat := none
+      for child in tree.nodeChildren[node]! do
+        match tree.subtreeTokens child with
+        | none => pure ()  -- an absent optional slot (no `with`/type/ellipsis) contributes nothing
+        | some _ =>
+          if tree.kindOf child == "Lean.Parser.Term.structInstFields" then
+            if fieldsNode.isSome then return none
+            fieldsNode := some child
+          else
+            return none  -- a `with`-clause, type ascription, or non-empty ellipsis: not plain
+      let some fields := fieldsNode | return none
+      let some inner := (tree.nodeChildren[fields]!)[0]? | return none
+      return some (tree.parts inner)
+    if let some fields := recordFields? then
+      if h : fields.size ≥ 1 then
+        let mut clean := true
+        let mut previous : Option Part := none
+        for part in fields do
+          if let some prior := previous then
+            let raw := match tree.source.tokens[prior.last]?, tree.source.tokens[part.first]? with
+              | some a, some b => sliceNormalized normalized a.stop b.start
+              | _, _ => "\n"
+            if !raw.all (· == ' ') then clean := false
+          previous := some part
+        if clean then
+          -- break before every field child; a `,` separator token glues tight to the field before it.
+          let mut body : Doc := partDoc fields[0]
+          for part in fields.toList.drop 1 do
+            body := body ++ (if part.child.isSome then .line " " else .empty) ++ partDoc part
+          return .group (.text "{ " ++ .nest 2 body ++ .text " }")
   -- Reflow branch (`notes/07-reflow-policy.md` §2 Design β, §3 Policy P1): a breakable kind, inside a
   -- single-line command (`mayCollapse`), whose every gap is a pure-space gap carrying a declared
   -- separator. The head stays put; each following break point hangs one `nest` (2 columns) below it
@@ -1264,13 +1313,14 @@ private def Tree.termClaims (tree : Tree) (normalized : String) (mayCollapse : B
   let mut skipUntil := root
   for node in [root:tree.subtreeEnd[root]!] do
     if node < skipUntil then continue
-    -- A node is worth claiming when this file lays out its kind *or* the fact declares its spacing; a
+    -- A node is worth claiming when this file lays out its kind *or* the fact declares its spacing *or*
+    -- it is a `structInst` (`keep` for spacing, but the A1 break claims it as a whole — `notes/12`); a
     -- fact node that later fails the count guard still renders losslessly (`nodeSpacing` gives it
-    -- `keep`), so claiming it is safe. Only a node with neither is skipped to its bytes.
-    if spacingOf (tree.kindOf node) == .keep && (tree.declaredAtoms? node).isNone then continue
+    -- `keep`), so claiming it is safe. Only a node with none of these is skipped to its bytes.
+    if spacingOf (tree.kindOf node) == .keep && (tree.declaredAtoms? node).isNone
+        && tree.kindOf node != "Lean.Parser.Term.structInst" then continue
     let some (first, last) := tree.subtreeTokens node | continue
     if taken.any (fun claim => first ≤ claim.last && claim.first ≤ last) then continue
-    let baseDoc := tree.termDoc normalized mayCollapse node
     -- Move-the-value-down break (`notes/07-reflow-policy.md` §2 Design β). A breakable value hanging off
     -- a `:=` owns the pure-space whitespace between the `:=` token and its first token as a leading
     -- `line`, so the engine can drop the value onto its own indented line when the command exceeds the
@@ -1278,8 +1328,11 @@ private def Tree.termClaims (tree : Tree) (normalized : String) (mayCollapse : B
     -- whitespace and `Tree.command` trims the same run off the verbatim gap. Gated on pure spaces so a
     -- comment in the gap is never turned into a line and dropped, and on `mayCollapse` so a multi-line
     -- command's bytes stay untouched.
+    let breakable :=
+      reflows (tree.kindOf node) || (tree.declaredAtoms? node).isSome
+        || tree.kindOf node == "Lean.Parser.Term.structInst"
     let lead : Option String :=
-      if mayCollapse && (reflows (tree.kindOf node) || (tree.declaredAtoms? node).isSome) && first > 0 then
+      if mayCollapse && breakable && first > 0 then
         match tree.source.tokens[first - 1]?, tree.source.tokens[first]? with
         | some assign, some head =>
           let assignText := sliceNormalized normalized assign.start assign.stop
@@ -1287,6 +1340,8 @@ private def Tree.termClaims (tree : Tree) (normalized : String) (mayCollapse : B
           if assignText == ":=" && ws.all (· == ' ') then some ws else none
         | _, _ => none
       else none
+    -- `breakRecord` arms the A1 record break only for the `leadFlat` value (line-leading), `notes/12` §2.
+    let baseDoc := tree.termDoc normalized mayCollapse node (breakRecord := lead.isSome)
     let doc := match lead with
       | some ws => .group (.nest 2 (.line ws ++ baseDoc))
       | none => baseDoc

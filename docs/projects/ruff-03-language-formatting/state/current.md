@@ -1,6 +1,6 @@
 ---
 kind: state
-first_unresolved: 12-records
+first_unresolved: 13-reflow-accept
 ---
 
 # Current state
@@ -168,8 +168,32 @@ idempotence is free (a broken construct is multi-line ⇒ `mayCollapse=false` �
 held at **60.7 MiB** peak RSS / 0.14 s to format `Printer.lean` at margin 100 (isolated printer harness),
 unchanged from `RLF-ACCEPT` because the new production code never fires on canonical source.
 
-**Phase 2's remaining breaking breadth: `first_unresolved: 12-records`** — `RLF-RECORDS` (prompt 12) builds
-the `structInst` A1 vertical break, then `RLF-REFLOW-ACCEPT` (prompt 13) re-audits the complete set.
+**`RLF-RECORDS` is verified** (`results/12-records.md`), the second breaking-breadth prompt. It gives the
+`structInst` record literal an **A1** break — one field per line at a fixed nest base — the first β-break
+whose target carries a **column check**: `sepByIndent` re-establishes a `withPosition` inside the braces
+(`Term.lean:353`), so a field on a continuation line must `checkColGe`/`checkColEq` the *first* field's
+column. A1 makes that column fall out of the layout rather than be arranged: `"{ "` is two columns and the
+`nest` is two, so field₁ (right after `{ `) and every continuation land at running-indent+2, the one
+column `checkColEq` accepts (`notes/12` §1 — this is why A1 beats A2/fill, which needs a computed colEq).
+The break is parse-safe **only when `{` sits at the running indent** — line-leading — which is exactly the
+`leadFlat` (move-value-down) position; so `structInst` joins the `leadFlat` gate and `termDoc` emits the
+A1 body (fields as `.line`-separated parts, **no group of its own**) under a `breakRecord` flag that
+`termClaims` sets iff the record is the `leadFlat` value. Break and safety coincide by construction: the
+field `.line`s break exactly when the enclosing `leadFlat` group breaks — the same event that placed the
+record line-leading — with no runtime column test. Recursion clears `breakRecord`, so a **nested** record
+(a field value, mid-line) stays flat and keeps its bytes even when it overflows (the conservative fallback,
+`notes/08` §4, enforced structurally); a `with`/typed/ellipsis record or a comment-holding record likewise
+stays flat. The field-navigation helper is a local `let recordFields?` inside `termDoc`, **not** a
+top-level def, so the corpus stays 506 (the `RLF-OPERATOR-BREAK` discipline). Every margin's output
+reparses to the input token stream **and** parse tree (`compare_tokens.py`) at 0/1/40/80/100/1000 — the
+tree gate load-bearing because a field left of the anchor breaks `checkColGe` — idempotence is free
+(a broken record is multi-line ⇒ `mayCollapse=false`), and the canonical corpus round-trips
+(`commands=506 canonical=479 failures=0`). Performance held at **61.6 MiB** peak RSS / 0.14 s to format
+`Printer.lean` at margin 100 (isolated harness), a small uptick from 60.7 for the record navigation and A1
+emit; the node-count churn (49,780 → 50,221) was reconciled and `check-quoted-figures.py` passes (33).
+
+**Phase 2's remaining breaking breadth: `first_unresolved: 13-reflow-accept`** — `RLF-REFLOW-ACCEPT`
+(prompt 13) re-audits the complete reflow set and supersedes `RLF-ACCEPT`'s subset coverage.
 
 The remainder of this file is the phase-1 record — a live claim about the conservative subset and the
 evidence for it — kept intact because it is the citation base phase 2 builds against.
@@ -236,7 +260,7 @@ Printing inside the frontend would buy free arg order for a median 1.96 s fronte
 | 09-reflow-blocks | RLF-BLOCKS | verified | RLF-REFLOW |
 | 10-reflow-final | RLF-ACCEPT | verified | RLF-BLOCKS |
 | 11-operator-break | RLF-OPERATOR-BREAK | verified | RLF-REFLOW |
-| 12-records | RLF-RECORDS | planned | RLF-BLOCKS |
+| 12-records | RLF-RECORDS | verified | RLF-BLOCKS |
 | 13-reflow-accept | RLF-REFLOW-ACCEPT | planned | RLF-OPERATOR-BREAK, RLF-RECORDS, RLF-ACCEPT |
 
 **`RLF-FINAL` is verified, and it closed phase 1** (`results/05-corpus.md`). It changed no layout and
@@ -831,9 +855,9 @@ recover a collapse that fires zero times.
   the phase-2 acceptance) **audited** these rather than building them: `results/10`'s coverage table cites
   each as conservative-with-a-reason (the corpus offers no golden and each re-enables a named hazard), so
   they are owned and documented, not silent. The prompt-repair pass scheduled the build: operator/binder/
-  `match` breaking is `RLF-OPERATOR-BREAK` (prompt 11), the `structInst` A1 break is `RLF-RECORDS` (prompt
-  12), and `RLF-REFLOW-ACCEPT` (prompt 13) re-audits the complete set — each planned, gaining coverage-table
-  rows without losing citations.
+  `match` breaking is `RLF-OPERATOR-BREAK` (prompt 11, **verified**), the `structInst` A1 break is
+  `RLF-RECORDS` (prompt 12, **verified**), and `RLF-REFLOW-ACCEPT` (prompt 13) re-audits the complete set —
+  the first two now built and gaining coverage-table rows without losing citations, the third planned.
 - **The margin is set to 100, and it now changes output.** `Application.canonicalWidth := 100`
   (mathlib's text-linter convention) is the sole production margin; `Printer.format` still requires
   `width` rather than defaulting it, and the value enters cache identity through the `formatter` digest

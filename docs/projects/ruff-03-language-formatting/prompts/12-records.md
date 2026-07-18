@@ -1,6 +1,6 @@
 ---
 claim_id: RLF-RECORDS
-status: planned
+status: verified
 depends_on: [RLF-BLOCKS]
 ---
 

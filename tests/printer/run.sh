@@ -1842,6 +1842,147 @@ if [[ -z "$bind_idem" ]]; then
   printf '  ok   binder break: formatting twice is byte-identical at every margin (%s)\n' "$bind_margins"
 fi
 
+# --- record layout, the RLF-RECORDS capability ---
+#
+# `structInst := "{ " >> (optional (… " with ") >> structInstFields (sepByIndent structInstField ", ")
+# >> optEllipsis >> optional (" : " term)) >> " }"` (Term.lean:352-357). Unlike operators/binders,
+# `sepByIndent` re-establishes a `withPosition` inside the braces, so a field on a continuation line must
+# `checkColGe`/`checkColEq` the FIRST field's column (notes/12 §2). The A1 break -- one field per line at
+# a fixed nest base -- makes that column fall out of the layout: `"{ "` is two columns and the `nest` is
+# two, so field1 (right after `{ `) and every continuation land at running-indent+2, a single column. The
+# break is therefore parse-safe ONLY when `{` sits at the running indent, i.e. when the record is
+# line-leading -- which `leadFlat` (move-value-down) guarantees for a `:=` value. So the break is armed
+# only there (breakRecord flag); a nested record (a field value, mid-line) stays flat, and a comment
+# between fields makes the gap non-clean and also stays flat. The corpus is canonical and its records fit
+# (printer-roundtrip above is byte-identical), so the capability shows only on over-margin fixtures.
+printf -- '--- record layout, vertical A1 break (RLF-RECORDS) ---\n'
+cat >"$work/records.lean" <<'FIXTURE'
+module
+
+structure P where
+  x : Nat
+  y : Nat
+  z : Nat
+
+structure Q where
+  a : P
+  b : Nat
+
+def wide : P := { x := 111111111, y := 222222222, z := 333333333 }
+
+def nested : Q := { a := { x := 111111111, y := 222222222, z := 333333333 }, b := 444444444 }
+
+def commented : P := { x := 111111111, /- keep -/ y := 222222222, z := 333333333 }
+
+def f : P := { x := 1, y := 2, z := 3 }
+FIXTURE
+
+# Records are gated on the leadFlat position, not on the ruff-05b spacing fact, so no captureSemantic here.
+LEAN_NUM_THREADS=1 lake env "$application" __analyze-exact \
+  "$work/borrowed.setup.json" "$work/records.lean" "records.lean" 8589934592 >"$work/records.json"
+
+rec_margins="0 1 40 80 100 1000"
+for w in $rec_margins; do
+  "$tests" printer-format "$work/records.json" "$work/records.lean" "$w" >"$work/records.$w.out"
+  LEAN_NUM_THREADS=1 lake env "$application" __analyze-exact \
+    "$work/borrowed.setup.json" "$work/records.$w.out" "records.lean" 8589934592 \
+    >"$work/records.$w.json" 2>"$work/records.$w.err" || true
+done
+
+# A margin wider than every line breaks nothing: the whole file is the identity.
+if diff -q "$work/records.lean" "$work/records.1000.out" >/dev/null 2>&1; then
+  printf '  ok   at margin 1000 nothing exceeds the margin, so the output is its input (identity)\n'
+else
+  printf 'FAIL at margin 1000 the formatter changed a record file that fits\n' >&2
+  failures=$((failures + 1))
+fi
+
+# At margin 40 the wide record exceeds it and must change -- the goldens cannot degenerate to copies.
+if diff -q "$work/records.lean" "$work/records.40.out" >/dev/null 2>&1; then
+  printf 'FAIL at margin 40 the over-margin record was not broken\n' >&2
+  failures=$((failures + 1))
+else
+  printf '  ok   at margin 40 the over-margin record was broken (%s lines rewritten)\n' \
+    "$(diff "$work/records.lean" "$work/records.40.out" | grep -c '^<')"
+fi
+
+# Parse-preservation, token AND tree, at every margin. A record break landing a field left of the first
+# field's column would violate `sepByIndent`'s checkColGe and fail to reparse (or reparse differently);
+# the tree gate (compare_tokens.py) catches a same-token re-parse the token stream alone cannot.
+rec_pp=
+for w in $rec_margins; do
+  if ! python3 "$repo_root/experiments/compare_tokens.py" \
+       "$work/records.json" "$work/records.$w.json" "$work/records.lean" "$work/records.$w.out" \
+       >"$work/records.$w.pp" 2>&1; then
+    printf 'FAIL record break at margin %s changed the parse: %s\n' "$w" "$(cat "$work/records.$w.pp")" >&2
+    failures=$((failures + 1))
+    rec_pp=1
+  fi
+done
+if [[ -z "$rec_pp" ]]; then
+  printf '  ok   every margin (%s) reparses to the input token stream AND tree (checkColGe held)\n' "$rec_margins"
+fi
+
+# A1 made concrete: at margin 40 the value hangs (`{` at column 2), field1 lands right after `{ ` at
+# column 4, and every continuation lands at that same column 4 -- the shared column sepByIndent accepts.
+if grep -qE '^def wide : P :=$' "$work/records.40.out" && \
+   grep -qE '^  \{ x := 111111111,$' "$work/records.40.out" && \
+   grep -qE '^    z := 333333333 \}$' "$work/records.40.out"; then
+  printf '  ok   at margin 40 the record breaks A1: `{` at column 2, fields at column 4 (checkColEq)\n'
+else
+  printf 'FAIL at margin 40 the record did not break A1 with fields at a shared column\n' >&2
+  cat "$work/records.40.out" >&2
+  failures=$((failures + 1))
+fi
+
+# The nested record is mid-line (a field value after `a := `), so breakRecord is false and it stays flat
+# even when it overflows -- the conservative fallback (notes/12 §2). The outer record still breaks A1.
+if grep -qF '{ a := { x := 111111111, y := 222222222, z := 333333333 },' "$work/records.40.out"; then
+  printf '  ok   a nested (mid-line) record stays flat -- only the line-leading record breaks\n'
+else
+  printf 'FAIL at margin 40 the nested record was broken (mid-line break is not parse-safe)\n' >&2
+  cat "$work/records.40.out" >&2
+  failures=$((failures + 1))
+fi
+
+# The comment survives at every margin: a gap holding `/- keep -/` fails the clean guard, so the record
+# keeps its bytes flat while its value still hangs -- the comment is never moved onto its own line.
+rec_cmt=
+for w in $rec_margins; do
+  if ! grep -qF '/- keep -/' "$work/records.$w.out"; then
+    printf 'FAIL record break at margin %s dropped the comment\n' "$w" >&2
+    failures=$((failures + 1))
+    rec_cmt=1
+  fi
+done
+if [[ -z "$rec_cmt" ]]; then
+  printf '  ok   the /- keep -/ comment survives at every margin (the clean guard keeps the record flat)\n'
+fi
+
+# The fitting record stays byte-canonical -- a short record is never moved or broken.
+if grep -qE '^def f : P := \{ x := 1, y := 2, z := 3 \}$' "$work/records.40.out"; then
+  printf '  ok   a fitting record stays flat and byte-canonical at margin 40\n'
+else
+  printf 'FAIL a fitting record was broken or moved at margin 40\n' >&2
+  failures=$((failures + 1))
+fi
+
+# Idempotence at every margin: a broken record is multi-line, so `mayCollapse` declines it and its bytes
+# are kept -- a second pass reproduces the first.
+rec_idem=
+for w in $rec_margins; do
+  "$tests" printer-format "$work/records.$w.json" "$work/records.$w.out" "$w" >"$work/records.$w.out2"
+  if ! diff -q "$work/records.$w.out" "$work/records.$w.out2" >/dev/null 2>&1; then
+    printf 'FAIL record break: formatting is not idempotent at margin %s:\n' "$w" >&2
+    diff -u "$work/records.$w.out" "$work/records.$w.out2" >&2
+    failures=$((failures + 1))
+    rec_idem=1
+  fi
+done
+if [[ -z "$rec_idem" ]]; then
+  printf '  ok   record break: formatting twice is byte-identical at every margin (%s)\n' "$rec_margins"
+fi
+
 # --- offside blocks, the RLF-BLOCKS capability ---
 #
 # Where "indentation is a token" (results/03-tactics.md) is finally *handled* rather than deferred: a
