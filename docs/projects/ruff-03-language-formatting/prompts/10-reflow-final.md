@@ -1,6 +1,6 @@
 ---
 claim_id: RLF-ACCEPT
-status: planned
+status: verified
 depends_on: [RLF-BLOCKS]
 ---
 

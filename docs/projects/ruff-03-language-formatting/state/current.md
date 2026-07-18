@@ -1,6 +1,6 @@
 ---
 kind: state
-first_unresolved: 10-reflow-final
+first_unresolved: none
 ---
 
 # Current state
@@ -115,6 +115,27 @@ keyword-line + 2) and the `Id.run do` head keeps its bytes; the 20-module corpus
 byte-identically (`commands=506 canonical=479 headers_canonical=20 failures=0`). The full
 `tests/printer/run.sh` is green.
 
+**`RLF-ACCEPT` is verified** (`results/10-reflow-final.md`), and it closes phase 2. It adds no layout: it
+runs the reflowing formatter through the idempotence loop and the exact fresh-frontend differential over
+the corpus (`commands=506 canonical=479 failures=0`), the frozen mathlib sample (`modules_analyzed=62
+skipped=0 failures=0 reformatted=13`, losses `none`, exclusions `none`, ownership partition green),
+generated over-margin fixtures, and malformed input — every check `failures=0`. It publishes a **reflow
+coverage table** with a grammar citation for every construct, laid-out or cited-conservative, so nothing
+reflows silently. The audit's one finding was in the **gate**, not the printer: the parse-preservation
+differential compared only the token stream and comments, which on offside Lean is blind to a
+**re-association** (a re-index moving a tactic between blocks emits the same tokens, a different tree). So
+`experiments/compare_tokens.py` now also compares the parse tree — each node's `(kind, parent)`, byte
+offsets excluded — which is sound (a parse-preserving reformat yields the identical tree) and closes the
+gap; the 62-module sample re-run under the strengthened gate is byte-identical to the prior report
+(`reformatted=13`, all trees preserved). A **non-vacuity** fixture proves the gate can fail: the
+re-association pair has an identical 16-token stream, the tree gate rejects it (`node 34`
+reparented), and it accepts an identical pair. Independently, `RLF-BLOCKS`' uniform-Δ construction
+guarantees the printer never emits a re-association — the gate is the backstop for a regression in that
+guarantee. Performance held at **60.6 MiB** peak RSS / 0.13 s to format `Printer.lean` at margin 100
+(unchanged from `RLF-BLOCKS`, since the audit adds no production code). `RLF-ACCEPT` supersedes
+`RLF-FINAL`'s "whole-language coverage" claim, which closed the *conservative* subset only; the two
+acceptances stack and neither is weakened. **Phase 2 is complete: `first_unresolved: none`.**
+
 The remainder of this file is the phase-1 record — a live claim about the conservative subset and the
 evidence for it — kept intact because it is the citation base phase 2 builds against.
 
@@ -178,7 +199,7 @@ Printing inside the frontend would buy free arg order for a median 1.96 s fronte
 | 07-offside-layout | RLF-OFFSIDE | verified | RLF-NOTATION |
 | 08-reflow-expr | RLF-REFLOW | verified | RLF-OFFSIDE |
 | 09-reflow-blocks | RLF-BLOCKS | verified | RLF-REFLOW |
-| 10-reflow-final | RLF-ACCEPT | planned | RLF-BLOCKS |
+| 10-reflow-final | RLF-ACCEPT | verified | RLF-BLOCKS |
 
 **`RLF-FINAL` is verified, and it closed phase 1** (`results/05-corpus.md`). It changed no layout and
 no output byte: its finding is that **the refusals were never unsafe, they were unread.** The stop rule
@@ -766,9 +787,13 @@ recover a collapse that fires zero times.
   projection — the decision `hard` never made. `RLC-FINAL`'s "`call-args` is my model of a Lean call,
   not a Lean call" is discharged: a layout that can exceed the margin has landed. What is *not* yet
   wired is operator/binder/`match` breaking — the mechanism extends to them but only `app` is emitted
-  (`notes/07` §2), so their break behaviour is still fixtures-only and `RLF-ACCEPT` owns it. `RLF-BLOCKS`
+  (`notes/07` §2), so their break behaviour is fixtures-only. `RLF-BLOCKS`
   (verified) added the *offside re-index* of `by`/`do` blocks (`results/09`), not a new term break; the
-  `structInst` A1 vertical break it designed (`notes/08` §2) is likewise deferred to `RLF-ACCEPT`.
+  `structInst` A1 vertical break it designed (`notes/08` §2) is likewise unbuilt. `RLF-ACCEPT` (verified,
+  the phase-2 acceptance) **audited** these rather than building them: `results/10`'s coverage table cites
+  each as conservative-with-a-reason (the corpus offers no golden and each re-enables a named hazard), so
+  they are owned and documented, not silent — a future `RLF`-class prompt would build them, gaining table
+  rows without losing citations.
 - **The margin is set to 100, and it now changes output.** `Application.canonicalWidth := 100`
   (mathlib's text-linter convention) is the sole production margin; `Printer.format` still requires
   `width` rather than defaulting it, and the value enters cache identity through the `formatter` digest

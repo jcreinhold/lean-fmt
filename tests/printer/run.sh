@@ -1861,6 +1861,87 @@ for w in $block_margins; do
 done
 [[ -z "$do_idem" ]] && printf '  ok   do blocks: formatting twice is byte-identical at every margin (%s)\n' "$block_margins"
 
+# --- non-vacuity: the parse-preservation gate rejects a re-association (RLF-ACCEPT) ---
+#
+# The gate the frozen-sample differential leans on (`experiments/compare_tokens.py`) must be *able* to
+# fail, or it certifies nothing. The subtle failure it has to catch is a re-association: an offside
+# re-index that moves a tactic from an inner `by` block to the outer one. `RLF-BLOCKS` provably never
+# emits this — it shifts a whole block by a uniform delta, which preserves every column relation and so
+# the parse tree (`notes/06` RLF-OFFSIDE) — but a formatter *bug* could, and the gate is the backstop.
+#
+# The trap is that a re-association emits the *same tokens in the same order*: `good` and `bad` below
+# have identical token streams (asserted), so a token-only comparison is blind to it. What differs is
+# the tree: the moved `skip` acquires a different parent. `compare_tokens.py` compares the node
+# `(kind, parent)` sequence for exactly this reason, and this fixture is what proves that comparison is
+# not vacuous — it rejects `bad` and accepts an identical-to-itself `good`.
+printf -- '--- non-vacuity: the gate rejects a re-association the tokens hide (RLF-ACCEPT) ---\n'
+cat >"$work/reassoc_good.lean" <<'FIXTURE'
+module
+
+theorem t : True := by
+  have h : True := by
+    trivial
+    skip
+  exact h
+FIXTURE
+# `bad` moves `skip` out of the inner `by` (the `have`'s proof) into the outer sequence: same tokens,
+# different tree. This is what a broken re-index would produce, hand-written so the test owns the defect.
+cat >"$work/reassoc_bad.lean" <<'FIXTURE'
+module
+
+theorem t : True := by
+  have h : True := by
+    trivial
+  skip
+  exact h
+FIXTURE
+for v in good bad; do
+  LEAN_NUM_THREADS=1 lake env "$application" __analyze-exact \
+    "$work/borrowed.setup.json" "$work/reassoc_$v.lean" "reassoc_$v.lean" 8589934592 \
+    >"$work/reassoc_$v.json" 2>/dev/null
+done
+# 1. The tokens are identical — a token-only gate cannot tell these two apart.
+if python3 - "$work" <<'PY'
+import json, sys
+work = sys.argv[1]
+def stream(v):
+    src = open(f"{work}/reassoc_{v}.lean", 'rb').read()
+    toks = json.load(open(f"{work}/reassoc_{v}.json"))['artifact']['source']['tokens']
+    return [src[t[1]:t[2]].decode('utf8') for t in toks]
+g, b = stream('good'), stream('bad')
+if g == b:
+    print(f"  ok   the re-association leaves the token stream identical ({len(g)} tokens) — a token-only gate is blind to it")
+    sys.exit(0)
+print(f"FAIL the fixtures differ in tokens ({g} vs {b}); the non-vacuity premise does not hold", file=sys.stderr)
+sys.exit(1)
+PY
+then :; else failures=$((failures + 1)); fi
+# 2. The tree gate REJECTS the re-association (must exit nonzero).
+if python3 "$repo_root/experiments/compare_tokens.py" \
+     "$work/reassoc_good.json" "$work/reassoc_bad.json" \
+     "$work/reassoc_good.lean" "$work/reassoc_bad.lean" >"$work/reassoc.out" 2>&1; then
+  printf 'FAIL the parse-preservation gate accepted a re-association; it is vacuous:\n' >&2
+  cat "$work/reassoc.out" >&2
+  failures=$((failures + 1))
+else
+  if grep -q 'parse tree changed' "$work/reassoc.out"; then
+    printf '  ok   the gate rejects the re-association on the tree (%s)\n' "$(cat "$work/reassoc.out")"
+  else
+    printf 'FAIL the gate rejected the pair, but not for the tree reason:\n' >&2
+    cat "$work/reassoc.out" >&2
+    failures=$((failures + 1))
+  fi
+fi
+# 3. Sanity: the gate ACCEPTS an identical pair (no false positive on a real no-op).
+if python3 "$repo_root/experiments/compare_tokens.py" \
+     "$work/reassoc_good.json" "$work/reassoc_good.json" \
+     "$work/reassoc_good.lean" "$work/reassoc_good.lean" >/dev/null 2>&1; then
+  printf '  ok   the gate accepts an identical pair (no false positive)\n'
+else
+  printf 'FAIL the gate rejected an identical pair; it would reject legitimate no-op reformats\n' >&2
+  failures=$((failures + 1))
+fi
+
 # Idempotence, the roadmap's "formatting twice is byte-identical to formatting once". The second pass
 # re-parses the first pass's *output*, so this is a real second format and not a repeated call: if the
 # layout emitted something the parser reads back differently, this is where it shows.

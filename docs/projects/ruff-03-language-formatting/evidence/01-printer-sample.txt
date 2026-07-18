@@ -1,4 +1,4 @@
-modules_analyzed=62 skipped=0 failures=0 reformatted=12
+modules_analyzed=62 skipped=0 failures=0 reformatted=13
 commands=2734 canonical=1579 members=13 headers_canonical=62 app_slack=0 binder_slack=0 match_slack=0
 tactic_blocks=1966 tactic_ownable=1422 tactic_ownable_own_line=558 tactic_ownable_at_two=324 tactic_blank_gaps=0
 
