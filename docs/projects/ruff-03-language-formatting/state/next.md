@@ -1,9 +1,9 @@
 # Next Proof Packet
 
 - Stack: ruff-03-language-formatting
-- First unresolved: 11-operator-break
-- Claim ID: RLF-OPERATOR-BREAK
-- Prompt: 11-operator-break
+- First unresolved: 12-records
+- Claim ID: RLF-RECORDS
+- Prompt: 12-records
 - Module: (docs only)
 - Target file: (docs only)
 
@@ -17,8 +17,8 @@ Read this file, the target prompt, target files, listed source/template line ran
 
 ## Proof Task
 
-- Deliver **RLF-OPERATOR-BREAK**: extend the margin-driven β-break `RLF-REFLOW` built for `Term.app` to the constructs `RLF-REFLOW` named but deferred — **operators/notations, bracketed binders, and `match` alternatives** (`notes/07` §2 records the deferral; `RLF-ACCEPT`'s `results/10` coverage table cites it as conservative-with-a-reason). The mechanism exists (`group`/`nest`/`line`, `Doc.lean:44-81`); this prompt widens the `reflows` predicate (`Printer.lean:995`, currently `kind == "Lean.Parser.Term.app"`) and emits a break policy for each new kind, every break parse-preserving.
-- Read `roadmap.md`, `notes/05-reflow-architecture.md`, `notes/07-offside-layout.md` §2 (the deferral this discharges), `results/06-notation-facts.md` and `results/08-reflow-expr.md`, `AGENTS.md`, and the relevant Lean compiler sources. Confirm first-hand the governing constraints: the argument column rule `argument := checkWsBefore >> checkColGt` (`Lean/Parser/Term.lean:885-892`), the notation-spacing fact `RLF-NOTATION` reads, and that a broken binder/operator continuation must land at a column that keeps its parse (verified by reparse, not argued).
+- Deliver **RLF-RECORDS**: build the `structInst` record vertical break that `RLF-BLOCKS` **designed but did not build** (`notes/08-blocks-layout.md` §2, design **A1** — one field per line at a fixed nest base, so `checkColEq` falls out of the layout rather than being arranged). `RLF-BLOCKS` correctly declined it under its *re-indent* lens (a record's first field rides the `{ ` line — a mid-line anchor, §1a); this prompt delivers it as the `RLF-REFLOW`-class **break** it always was, guarded against the one hazard that kept it deferred.
+- Read `roadmap.md`, `notes/08-blocks-layout.md` §1a and §2, `results/02-expressions.md` §5b (the horizontal-collapse hazard), `results/08-reflow-expr.md` and `results/09-reflow-blocks.md`, `AGENTS.md`, and the relevant Lean compiler sources. Confirm first-hand: `structInst := "{ " >> … sepByIndent structInstField ", " … >> " }"` (`Lean/Parser/Term.lean:352-357`) with spaced braces and a `withPosition` **inside** the braces, so a break must land every field at the first field's column (`checkColEq`), and a horizontal *collapse* moves a position a later line is measured against (`spacingOf` docstring; `results/02` §5b).
 
 ## Reuse
 
@@ -30,7 +30,7 @@ Inspect the live goal, search relevant declarations, test plausible proof steps,
 
 ## Stop Rules
 
-- No break may violate `checkColGt`/`checkColGe`/`checkColEq`; a wrapped token that changes the parse is a bug, verified by reparse (token + tree), not argued.
-- A construct whose break would drop or move a comment keeps its bytes — conservative fallback, never a guessed layout.
+- The break must preserve `checkColEq` between fields, verified by reparse (token + tree), not argued; a field that lands off the shared column is a bug.
+- No horizontal collapse; a record holding a comment the break would move keeps its bytes.
 - Idempotence is a gate: a second format is byte-identical to the first at every margin.
-- Stop rather than weakening exact semantics, write safety, or the resource envelope (8 GiB aggregate RSS / 256 MiB new swap; `render` stays linear-bounded).
+- Stop rather than weakening exact semantics, write safety, or the resource envelope (8 GiB aggregate RSS / 256 MiB new swap).

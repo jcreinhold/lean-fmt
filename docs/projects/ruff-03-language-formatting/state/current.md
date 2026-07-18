@@ -1,6 +1,6 @@
 ---
 kind: state
-first_unresolved: 11-operator-break
+first_unresolved: 12-records
 ---
 
 # Current state
@@ -144,7 +144,32 @@ stack's Goal promises canonical formatting of operators and records, so that def
 is a real Goal obligation with no owning prompt — under-scope. It is now scheduled: `RLF-OPERATOR-BREAK`
 (prompt 11) breaks operators/binders/matches, `RLF-RECORDS` (prompt 12) breaks records, and
 `RLF-REFLOW-ACCEPT` (prompt 13) re-audits the complete set and supersedes `RLF-ACCEPT`'s subset coverage.
-**Phase 2 is reopened for the breaking breadth: `first_unresolved: 11-operator-break`.**
+
+**`RLF-OPERATOR-BREAK` is verified** (`results/11-operator-break.md`), and it is the first of the three
+breaking-breadth prompts. It extends the `RLF-REFLOW` β-break (`termDoc`'s `.group (head ++ .nest 2 tail)`)
+to over-margin **operators/notations** and **bracketed-binder signatures**, and — following the design in
+`notes/09` — assigns **`matchAlt`** to the offside layer that already owns its shape rather than building a
+β-break that would split its leading `|` token. The mechanism is unchanged; the prompt widened *where* it
+fires and added a per-kind choice of *which* gap breaks (`notes/09` §2, Design B). Operators are reached by
+the same authority that spaces them — the `ruff-05b` declared-spacing fact — via a fact-driven gate
+(`reflows kind || isDeclared`, where `isDeclared` is a local `let` matching `.declared`, not a top-level
+def, so the corpus stays 506); a fact-covered notation breaks **before its operator token** (`op_lead`,
+Black's convention), safe because `«term_+_»` = `syntax:65 term:65 " + " term:66` carries no `checkColGt`.
+Binders are reached through `optDeclSig`/`declSig` (added to `reflows`, given `.flat` spacing), whose
+`liftedParts` expose `[binder, …, typeSpec]` as break points hung one-per-line at column 2, safe because
+`many (ppSpace >> …) >> typeSpec` (`Lean/Parser/Command.lean:130-135`) carries no column check. `matchAlt`
+leads with a token and its arms are already one-per-line (`matchAlts`' `sepByIndent`); its only over-margin
+case is a long-rhs **offside re-indent** owned by `RLF-BLOCKS`, not a β-break — so the coverage table
+records match arms as *offside-laid-out* and no β-break waits on a later prompt. Every break is
+parse-preserving (token stream **and** parse tree, `experiments/compare_tokens.py`, reparsed through a
+fresh frontend) at margins 0/1/40/80/100/1000, consumes `RLF-NOTATION` spacing, and is a byte no-op on any
+construct that fits — so the canonical corpus round-trips (`commands=506 canonical=479 failures=0`) and
+idempotence is free (a broken construct is multi-line ⇒ `mayCollapse=false` ⇒ bytes preserved). Performance
+held at **60.7 MiB** peak RSS / 0.14 s to format `Printer.lean` at margin 100 (isolated printer harness),
+unchanged from `RLF-ACCEPT` because the new production code never fires on canonical source.
+
+**Phase 2's remaining breaking breadth: `first_unresolved: 12-records`** — `RLF-RECORDS` (prompt 12) builds
+the `structInst` A1 vertical break, then `RLF-REFLOW-ACCEPT` (prompt 13) re-audits the complete set.
 
 The remainder of this file is the phase-1 record — a live claim about the conservative subset and the
 evidence for it — kept intact because it is the citation base phase 2 builds against.
@@ -210,7 +235,7 @@ Printing inside the frontend would buy free arg order for a median 1.96 s fronte
 | 08-reflow-expr | RLF-REFLOW | verified | RLF-OFFSIDE |
 | 09-reflow-blocks | RLF-BLOCKS | verified | RLF-REFLOW |
 | 10-reflow-final | RLF-ACCEPT | verified | RLF-BLOCKS |
-| 11-operator-break | RLF-OPERATOR-BREAK | planned | RLF-REFLOW |
+| 11-operator-break | RLF-OPERATOR-BREAK | verified | RLF-REFLOW |
 | 12-records | RLF-RECORDS | planned | RLF-BLOCKS |
 | 13-reflow-accept | RLF-REFLOW-ACCEPT | planned | RLF-OPERATOR-BREAK, RLF-RECORDS, RLF-ACCEPT |
 

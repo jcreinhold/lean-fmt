@@ -1,15 +1,15 @@
-modules_analyzed=21 skipped=0 nodes=49396
+modules_analyzed=21 skipped=0 nodes=49780
 pre_order_contiguity_violations=0
 nonempty_node_children_out_of_source_order=0
-empty_nodes=17587 (35.6% of all nodes)
-empty_nodes_with_ambiguous_placement=7742 (15.7% of all nodes)
+empty_nodes=17691 (35.5% of all nodes)
+empty_nodes_with_ambiguous_placement=7809 (15.7% of all nodes)
 
 # most common empty (absent-syntax) kinds
-15650	null
-629	Lean.Parser.Term.letConfig
+15741	null
+636	Lean.Parser.Term.letConfig
 357	Lean.Parser.Command.declModifiers
 353	Lean.Parser.Termination.suffix
-252	group
+258	group
 170	Lean.Parser.Term.optEllipsis
 123	Lean.Parser.Command.optDeclSig
 36	Lean.Parser.Command.optDeriving

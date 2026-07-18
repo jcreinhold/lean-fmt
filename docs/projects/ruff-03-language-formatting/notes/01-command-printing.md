@@ -24,8 +24,8 @@ property (`evidence/01-projection-shape.txt`):
 | --- | --- |
 | subtree of node *j* is a contiguous index range | **0 violations** |
 | among a parent's token-bearing node-children, index order agrees with byte order | **0 violations** |
-| nodes whose subtree contains no token at all | **17,587 — 35.6%** |
-| …of those, whose parent also has direct token children | **7,742 — 15.7% of all nodes** |
+| nodes whose subtree contains no token at all | **17,691 — 35.5%** |
+| …of those, whose parent also has direct token children | **7,809 — 15.7% of all nodes** |
 
 The first two are not luck. `LosslessSource.collect` pushes a node's placeholder at
 `build.nodes.size` *before* folding its args left to right, so children of one parent necessarily have
@@ -57,7 +57,7 @@ The last two decide the interface:
   the projection dropped — `Lean.Syntax` has none either. An empty `null` node genuinely has no
   position, and `Syntax.getPos?` returns `none` for it.
 
-**Therefore arg order cannot be recovered from positions.** For 7,742 of 49,396 nodes, an empty
+**Therefore arg order cannot be recovered from positions.** For 7,809 of 49,780 nodes, an empty
 node-child sits among direct token-children of the same parent and nothing in the projection says
 whether it came before or after them. That is a seventh of the tree, not an edge case, and no amount
 of care with ranges fixes it: the information is absent from `Lean.Syntax` upward.
@@ -144,7 +144,7 @@ grammar belongs.
   declaration it mirrors, and a golden fixture pins it. An uncited shape is an unsourced claim.
 - **The conservative fallback reads tokens, not the tree.** This is the load-bearing consequence of
   §2: empty nodes contribute no bytes, so a printer that re-emits a subtree's tokens in source order
-  with their trivia is unaffected by all 7,742 ambiguous placements. Unknown syntax round-trips
+  with their trivia is unaffected by all 7,809 ambiguous placements. Unknown syntax round-trips
   through the one path that does not depend on the information the projection lacks. The roadmap's
   "unknown commands must round-trip conservatively" and this measurement point the same way — the
   fallback is not a concession, it is the only path whose correctness does not rest on a grammar
