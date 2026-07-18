@@ -110,15 +110,22 @@ Lake subprocess — the `RIR-IMPL` stop rule, confirmed by code and by the flat 
 
 ## Remaining uncertainty / observations
 
-- **A pre-existing, import-orthogonal harness limitation surfaced.** Passing ~20 real workspace
-  modules as an *explicit file list* to `check` fails with `no such file or directory` on one of them
-  (e.g. `LeanFmt/Application.lean`), deterministically. It reproduces with `--select FMT001` and with
-  default rules and after dropping the named file, so it is **not** caused by the import rules — it is
-  a property of the explicit-multi-real-module path in the check harness, which the test suites never
-  exercised (they pass one to three files). The production whole-project scan (no explicit list) is
-  unaffected. Recorded here rather than fixed: it is outside this stack's charter (import rules) and
-  belongs to the execution/check harness. `LeanFmt/Analysis.lean` is likewise tracked but not globbed
-  into any Lake library (an orphan source); also out of scope.
+- **A "multi-module `check` fails" observation was chased down and proved to be a shell artifact, not
+  a harness bug — the record is corrected here.** The original note read that passing ~20 real
+  workspace modules as an explicit file list to `check` fails with `no such file or directory`. It does
+  not. `check --root . --select FMT001 <21 modules>` passed as genuinely separate arguments reports
+  `files=21` and exits clean. The failing repro passed the modules through an *unquoted* `$mods`
+  variable under **zsh**, which — unlike bash — does not word-split unquoted expansions, so the whole
+  space-joined list arrived as a *single* path argument; `check` correctly reported that one (non-
+  existent) path as missing. The tell was that the error's `file:` field preserved the caller's own
+  separator (spaces or newlines) — impossible if the paths had arrived as separate `argv`. Verified:
+  `${=mods}` (forced zsh split) makes all 21 modules pass; bare `$mods` reproduces the "failure". The
+  follow-up fix improves the diagnostic so the mistake is legible: `Project.load` now pre-checks
+  existence and throws `selected file does not exist: <path>` naming the caller's own argument
+  (consistent with the outside-root / not-a-Lean-source siblings) instead of letting `realPath` emit a
+  partially-resolved, absolutized buffer. Guarded in `tests/check/run.sh` (single-missing and
+  joined-list cases). `LeanFmt/Analysis.lean` is separately tracked but not globbed into any Lake
+  library (an orphan source); genuinely out of this stack's charter.
 - **The duplicate-with-comment organizer behavior** (the surviving line inherits the dropped
   duplicate's trailing comment) is preservation, not loss, but is mildly surprising; it is pinned so a
   future change to comment placement is a conscious one.

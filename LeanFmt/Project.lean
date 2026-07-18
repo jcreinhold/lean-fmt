@@ -121,8 +121,16 @@ def load (requestedRoot : FilePath) (config : FormatterConfig)
     pure <| (← discoverPaths root).filter fun path =>
       config.includesPath (Lake.relPathFrom root path).toString
   else
-    requested.mapM fun path =>
-      IO.FS.realPath (if path.isAbsolute then path else root / path)
+    requested.mapM fun path => do
+      -- Resolve against the root, but report a missing file in the caller's own terms. `realPath` on a
+      -- path that does not exist throws `noFileOrDirectory` naming its partially-resolved buffer, which
+      -- absolutizes the leading component and mangles the rest — unreadable when a whole argument list
+      -- was passed as one path (an unquoted shell variable under a non-splitting shell). Name what the
+      -- caller wrote, consistent with the outside-root / not-a-source siblings and `Config` above.
+      let candidate := if path.isAbsolute then path else root / path
+      unless ← candidate.pathExists do
+        throw <| IO.userError s!"selected file does not exist: {path}"
+      IO.FS.realPath candidate
   let targets ← paths.mapM (snapshotTarget workspace root)
   let selectionFinished ← IO.monoNanosNow
   return {

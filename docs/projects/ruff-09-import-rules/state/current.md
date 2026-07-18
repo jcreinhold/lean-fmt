@@ -55,10 +55,12 @@ private `organize` command. The external prerequisite stacks `ruff-01-lossless-s
 - `ignore-next` / leading line directives in the header scope to the next *command*, not the next
   import, and honestly report `FMT900` when unused; a trailing directive on the import line suppresses.
   Characterized, not a defect (extending it is the RSP suppression model's charter).
-- Pre-existing, import-orthogonal harness limitation: passing ~20 real workspace modules as an explicit
-  file list to `check` fails `no such file` deterministically (reproduces without import rules; the
-  whole-project scan is unaffected). `LeanFmt/Analysis.lean` is a tracked-but-unglobbed orphan source.
-  Both out of this stack's charter; recorded, not fixed.
+- A "multi-module `check` fails with `no such file`" observation was later run down and proved to be a
+  **shell artifact, not a harness bug**: the repro passed modules through an unquoted `$mods` under zsh,
+  which does not word-split, so the whole list arrived as one path. Separate args pass (`files=21`).
+  Fixed the diagnostic anyway — `Project.load` pre-checks existence and throws `selected file does not
+  exist: <path>` in the caller's own terms; guarded in `tests/check/run.sh`. `LeanFmt/Analysis.lean` is
+  a tracked-but-unglobbed orphan source (genuinely out of scope).
 
 ## Verification convention
 

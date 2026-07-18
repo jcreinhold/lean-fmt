@@ -264,6 +264,19 @@ printf 'leanprover/lean4:v0.0.0\n' >"$work/mismatch/lean-toolchain"
 run_expect 2 "$work/mismatch.out" "$application" check --root "$work/mismatch" --json
 grep -q 'does not match this lean-fmt build' "$work/mismatch.out.stderr"
 
+# A requested file that does not exist is named in the caller's own terms, not `realPath`'s
+# partially-resolved buffer (which absolutizes the leading component and mangles the rest — unreadable
+# when an unquoted shell variable passes a whole list as one argument under a non-splitting shell like
+# zsh). The message matches its outside-root / not-a-Lean-source siblings.
+run_expect 2 "$work/missing.out" "$application" check --root . --json tests/check/DoesNotExist.lean
+grep -q 'selected file does not exist: tests/check/DoesNotExist.lean' "$work/missing.out.stderr"
+# The same, exact, when a whole space-joined list arrives as one argument: the message quotes the
+# entire string verbatim, so the shape of the mistake is legible rather than mangled.
+run_expect 2 "$work/missing-list.out" "$application" check --root . --json \
+  "tests/check/Clean.lean tests/check/Findings.lean"
+grep -q 'selected file does not exist: tests/check/Clean.lean tests/check/Findings.lean' \
+  "$work/missing-list.out.stderr"
+
 # The source-security family end-to-end, on committed bytes rather than a runtime-crafted string.
 # `Security.lean` carries a bidi mark (U+202E) inside a line comment and a NUL inside a string literal
 # — the only two places a control or bidi byte reaches accepted source (bare occurrences are parse
