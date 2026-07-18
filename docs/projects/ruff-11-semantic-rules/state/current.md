@@ -6,8 +6,15 @@ first_unresolved: 01-authority
 # Current state
 
 This stack is planned and has not begun. Its external prerequisite stacks are
-`ruff-05-rule-engine`, `ruff-06-fix-safety`. Before starting, confirm those roadmaps are verified and their live
-implementation still matches recorded state.
+`ruff-05-rule-engine`, `ruff-05b-semantic-facts`, and `ruff-06-fix-safety` (per `roadmap.md`'s
+`prereq_stacks`). **`ruff-05b-semantic-facts` is the foundation this stack builds on** — it produces the
+`Tier.semantic` capture and the immutable semantic projection; `RMR-SPEC` characterizes the *rule-facing*
+facts and consumes that tier rather than re-deriving it. Before starting, confirm those roadmaps are
+verified and their live implementation still matches recorded state. The tier/cache/re-projection
+machinery `RMR-IMPL` extends is now live for the source and syntax tiers (`requiredTier` gating,
+`cacheHitServes` on `tier.satisfies`, and the `availableAnalysis`/`reprojectCanonical` render path, at
+`SemanticResult` schema `v6` after `ruff-10`/`ruff-10b`); extend it for `.semantic` rather than adding a
+parallel path.
 
 | Prompt | Claim | Status | Depends on |
 | --- | --- | --- | --- |
