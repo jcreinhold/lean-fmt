@@ -1,11 +1,12 @@
 ---
 kind: state
-first_unresolved: 02-impl
+first_unresolved: 03-final
 ---
 
 # Current state
 
-**RYC-SPEC verified; interface frozen.** This successor stack holds the one deferral
+**RYC-SPEC and RYC-IMPL verified; `fix` now applies syntax fixes.** This successor stack holds the one
+deferral
 `ruff-10-syntax-rules` left open: `fix` applying a syntax-tier rule's `.safe` fix. `check` already
 reports FMT010/011/013 fixes on original coordinates, but `format`/`fix` render canonical text and run
 only `runSourceRules`, so a syntax fix is reported and never applied (`Application.renderCanonicalText`,
@@ -30,10 +31,19 @@ bytes, which would make the applied artifact depend on fix pass order. RFX-SPEC 
 fix, with a real rule to drive them." `ruff-10` shipped those rules (FMT010/011/013); this stack is
 that future stack.
 
+RYC-IMPL wired Design A (`results/02-impl.md`): `ExactRun.reprojectCanonical` re-runs the frontend on
+the rendered text and replaces `CanonicalText.findings` with the whole registry over that projection;
+`analyzeSnapshot` gains `needsSyntax`, `availableAnalysis` forces the exact-run path for
+`renderCanonical && requiredTier == .syntax`, and the result-cache schema bumped `v5 → v6`. Verified
+end-to-end: `fix --select FMT013/FMT010/FMT011` writes the corrected bytes (`((1))→(1)`,
+`@[simp, simp]→@[simp]`, `deriving Repr, Repr→deriving Repr`), `format` composes the fix into its
+preview, and a re-`check` of every written file is clean. `tests/syntax/run.sh` retired the
+fix-deferral pin for apply-and-verify cases; all twelve build/test gates pass.
+
 | Prompt | Claim | Status | Depends on |
 | --- | --- | --- | --- |
 | 01-spec | RYC-SPEC | verified | — |
-| 02-impl | RYC-IMPL | planned | RYC-SPEC |
+| 02-impl | RYC-IMPL | verified | RYC-SPEC |
 | 03-final | RYC-FINAL | planned | RYC-IMPL |
 
 ## Scope

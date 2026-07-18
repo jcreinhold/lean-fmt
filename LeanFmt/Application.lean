@@ -355,24 +355,21 @@ def canonicalWidth : Nat := 100
 The rules are re-run rather than reused because canonical text is not lint-clean and its coordinates
 are not the file's — see `CanonicalText`.
 
-**Only `source`-tier rules run here, and that is a limit rather than a choice.** The facts available
-for canonical text are canonical text: `artifact.source` projects the *original*, so handing it to a
-syntax rule alongside the rendered string would measure a rule against one text using another text's
-offsets, which is the coordinate-mixing error this codebase has already paid for once. Projecting the
-canonical text instead means parsing it, which is a second frontend run per file.
+**Only `source`-tier rules run *here*, by design — `syntax`-tier findings are composed one level up.**
+The facts available for canonical text are canonical text: `artifact.source` projects the *original*,
+so handing it to a syntax rule alongside the rendered string would measure a rule against one text using
+another text's offsets, the coordinate-mixing error this codebase has already paid for once. Projecting
+the canonical text instead means a second frontend run per file.
 
-`ruff-10` shipped the first `syntax`-tier rules (FMT008–FMT013), so this limit is now **live rather
-than vacuous**: their findings are computed on the *original* projection (`ofEnvelope?`) and reported
-by `check`; their `.safe` fixes (FMT010/011/013) apply on original coordinates. What is deferred is
-*canonical*-coordinate syntax linting: this path still runs only `runSourceRules`, so `format`/`fix`
-neither re-flags nor re-fixes a syntax violation against the rendered text. **`ruff-06`'s `RFX-SPEC`
-already froze the model** (`ruff-06-fix-safety` `notes/01-model.md` §3): a syntax-tier fix composes by
-**re-projecting the canonical text** — parse the rendered file and run the rule against that
-projection — never by translating original-coordinate edits onto moved bytes, which would make the
-applied artifact depend on pass order. RFX-SPEC handed the *wiring and adversarial exercise* forward to
-"the stack that ships the first syntax-tier rule with a fix, with a real rule to drive them" — now
-owned by `ruff-10b-syntax-fix-composition`. `RRE-FINAL` asserts this limit rather than leaving it to
-prose. -/
+`ruff-10` shipped the first `syntax`-tier rules (FMT008–FMT013); their findings are computed on the
+*original* projection (`ofEnvelope?`) and reported by `check` on original coordinates. Applying their
+`.safe` fixes through `fix`/`format` is done by `ExactRun.reprojectCanonical` (`ruff-10b`, RYC-IMPL): on
+a canonical-rendering run whose plan demands the syntax tier, it re-runs the frontend on the *rendered*
+text and takes the whole registry over that projection, so a fix `Edit` is natively in canonical
+coordinates — the model `ruff-06`'s RFX-SPEC froze (`ruff-06-fix-safety/notes/01-model.md` §3),
+"re-project, don't translate onto moved bytes". This function therefore stays source-only and is the
+*base* render; `reprojectCanonical` replaces `findings` when a syntax fix is selected. `RRE-FINAL`
+asserted the old limit; RYC-IMPL closed it. -/
 private def renderCanonicalText (raw : String) (artifact : ModuleArtifact) : IO CanonicalText := do
   let normalized := (LosslessSource.normalize raw).1
   let text ← Printer.format artifact.source normalized canonicalWidth artifact.semantic
@@ -390,9 +387,38 @@ private def canonicalAnalysis (snapshot : SourceSnapshot) (renderCanonical : Boo
     return semantic
   | none => throw <| IO.userError s!"invalid exact analysis for {snapshot.relativePath}"
 
+/-- Compose syntax-tier findings onto canonical text by **re-projecting** it — the model `ruff-06`'s
+RFX-SPEC froze (`ruff-06-fix-safety/notes/01-model.md` §3; RYC-SPEC `notes/01-model.md`). The base
+analysis' canonical text carries only source-rule findings (`renderCanonicalText` runs `runSourceRules`
+alone), so a `.syntax` `.safe` fix would be reported by `check` on original coordinates yet never enter
+the canonical patch. A syntax fix cannot be translated onto the moved canonical bytes without depending
+on pass order; instead re-run the exact frontend on the *rendered* text and take the whole registry
+over that projection, so every fix `Edit` is natively in canonical coordinates — the coordinate system
+`prepareFile`'s `base := canonical.text` already applies edits in.
+
+Reached only on a canonical-rendering run whose plan demands the syntax tier (gated at the call site
+and in `availableAnalysis`), so an ordinary `fix`/`format` pays no second frontend run. Canonical text
+is a reprint of an already-elaborated module and elaborates by construction; a candidate that fails to
+re-analyze keeps the source-only findings rather than fabricating a fix. -/
+private def ExactRun.reprojectCanonical (run : ExactRun) (snapshot : SourceSnapshot)
+    (analysis : SemanticAnalysis) : IO SemanticAnalysis := do
+  match analysis.result?.bind (·.canonical?) with
+  | none => return analysis
+  | some canonical =>
+    let reSnapshot := snapshot.withSource canonical.text
+    let reAnalysis ← canonicalAnalysis reSnapshot (renderCanonical := false)
+      (← run.envelope reSnapshot false)
+    match reAnalysis.result? with
+    | some result => return analysis.withCanonical { canonical with findings := result.findings }
+    | none => return analysis
+
 def ExactRun.analyzeSnapshot (run : ExactRun) (snapshot : SourceSnapshot)
-    (renderCanonical : Bool) (validator := false) (captureSemantic : Bool := false) : IO SemanticAnalysis := do
-  canonicalAnalysis snapshot renderCanonical (← run.envelope snapshot captureSemantic validator)
+    (renderCanonical : Bool) (needsSyntax := false) (validator := false)
+    (captureSemantic : Bool := false) : IO SemanticAnalysis := do
+  let base ← canonicalAnalysis snapshot renderCanonical (← run.envelope snapshot captureSemantic validator)
+  -- A `.syntax` selection that renders canonical needs its fixes composed from the canonical projection;
+  -- every other run keeps `base` untouched and pays no re-projection.
+  if renderCanonical && needsSyntax then run.reprojectCanonical snapshot base else pure base
 
 /- Bracket a complete exact-analysis run. The capability is constructed only after a real fallback
 or editor request needs it; cache-only and ordinary-evidence batch runs create no temporary state. -/
@@ -455,6 +481,13 @@ private def availableAnalysis (plan : RulePlan) (renderCanonical : Bool)
     -- mention the sigil without a valid directive, never under-fetches.
     let normalized := (LosslessSource.normalize snapshot.source).1
     return some <| SemanticAnalysis.success normalized (runSourceRules normalized)
+  else if renderCanonical && plan.requiredTier == .syntax then
+    -- A canonical-rendering syntax run (`fix`/`format --select FMT01x`) needs its canonical findings
+    -- re-projected from the *rendered* text, which requires an `ExactRun` (`reprojectCanonical`). The
+    -- official artifact projects the *original* source, so `canonicalAnalysis` off it would carry only
+    -- source-rule findings and drop the syntax fix. Force the exact-run path by declining to serve here
+    -- (RYC-IMPL). `check` never renders canonical, so it still takes the artifact path below.
+    return none
   else if let some artifact := officialArtifact? then
     return some (← canonicalAnalysis snapshot renderCanonical { artifact? := some artifact })
   else
@@ -1047,7 +1080,8 @@ def execute (request : RunRequest) : IO RunReport := do
         let analysis ← match available? with
           | some analysis => pure analysis
           | none =>
-            exactRun.analyzeSnapshot snapshot renderCanonical (captureSemantic := demanded == .semantic)
+            exactRun.analyzeSnapshot snapshot renderCanonical
+              (needsSyntax := plan.requiredTier == .syntax) (captureSemantic := demanded == .semantic)
         analyses := analyses.push (some analysis)
         let report ← match request.mode with
           | .fix => fixFile exactRun plan request.unsafeFixes ir.1 ir.2 snapshot analysis

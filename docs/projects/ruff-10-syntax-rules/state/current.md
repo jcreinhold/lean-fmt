@@ -33,8 +33,10 @@ syntax `.safe` fix is *reported* by `check` but not *applied* by `fix`. `ruff-06
 translating original-coordinate edits onto moved bytes — and handed the wiring and adversarial exercise
 forward to the stack that ships the first syntax-tier rule with a fix. ruff-10 is that stack for
 *reporting*; the `fix`-command *application* wiring is owned by the successor stack
-**`ruff-10b-syntax-fix-composition`** (RYC-SPEC/IMPL/FINAL). The current limit is documented
-(`Application.renderCanonicalText`) and pinned by `tests/syntax/run.sh`.
+**`ruff-10b-syntax-fix-composition`** (RYC-SPEC/IMPL/FINAL). As of ruff-10b RYC-IMPL that wiring is
+delivered — `fix`/`format` now apply syntax `.safe` fixes via canonical re-projection
+(`Application.reprojectCanonical`), and `tests/syntax/run.sh` pins apply-and-verify rather than the old
+deferral.
 
 | Prompt | Claim | Status | Depends on |
 | --- | --- | --- | --- |

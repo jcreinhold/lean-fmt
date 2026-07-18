@@ -1,6 +1,6 @@
 ---
 claim_id: RYC-IMPL
-status: planned
+status: verified
 depends_on: [RYC-SPEC]
 ---
 

@@ -1,9 +1,9 @@
 # Next Proof Packet
 
 - Stack: ruff-10b-syntax-fix-composition
-- First unresolved: 02-impl
-- Claim ID: RYC-IMPL
-- Prompt: 02-impl
+- First unresolved: 03-final
+- Claim ID: RYC-FINAL
+- Prompt: 03-final
 - Module: (docs only)
 - Target file: (docs only)
 
@@ -17,8 +17,8 @@ Read this file, the target prompt, target files, listed source/template line ran
 
 ## Proof Task
 
-- Deliver **RYC-IMPL**: Implement the RYC-SPEC seam so `fix` applies a syntax-tier rule's `.safe` fix by re-projecting the rendered canonical text and routing the canonical-coordinate fixes through the existing `ruff-06` applicability/conflict/transaction path. Drive it with the real FMT010/011/013 rules; remove the deferral path instead of leaving a parallel one.
-- Read `results/01-spec.md`, `roadmap.md`, `AGENTS.md`, the current fix lifecycle, and the relevant compiler/Lake sources before changing an interface. Write interface comments and characterization tests before implementation where the behavior is not already frozen.
+- Deliver **RYC-FINAL**: Drive the adversarial cases `ruff-06` handed forward — a fix moving tokens under formatter re-projection — plus UTF-8 boundaries, multi-edit fixes, syntax-vs-source conflicts on overlapping canonical ranges, idempotence, and a frozen-sample composition run. Manually review every applied edit for exactness and pass-order independence.
+- Read `results/01-spec.md`, `results/02-impl.md`, `roadmap.md`, `AGENTS.md`, the implemented lifecycle, and `ruff-06-fix-safety/results/03-acceptance.md` (the cases it named as owed) before changing an interface. Write characterization tests before implementation where the behavior is not already frozen.
 
 ## Reuse
 
@@ -30,6 +30,6 @@ Inspect the live goal, search relevant declarations, test plausible proof steps,
 
 ## Stop Rules
 
-- Unknown/custom syntax is preserved and ignored unless a rule explicitly owns it; a defect inside a quotation stays silent through re-projection too.
-- Deterministic ranges come from the re-projected canonical model; no edit is translated onto moved bytes.
-- Stop rather than weakening exact semantics, write safety, cache identity, or the resource envelope.
+- A composed fix that corrupts bytes, depends on pass order, or writes under a failed validation blocks completion.
+- No full mathlib run.
+- Stop rather than weakening exact semantics, write safety, or the resource envelope.

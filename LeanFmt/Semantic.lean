@@ -75,7 +75,7 @@ The default stays safe only for shortcut entries, which by construction have no 
 had been a full artifact-path entry, read as "source findings only" — narrowing a complete entry, which
 would only *under*-serve (a miss, never a false clean), but the same schema discipline that versions
 `suppression` versions this so no `v4` entry is silently reinterpreted. -/
-def semanticResultSchema : String := "lean-fmt.semantic-result.v5"
+def semanticResultSchema : String := "lean-fmt.semantic-result.v6"
 
 /-- `normalized` must be `(LosslessSource.normalize raw).1`, the string every finding indexes.
 `suppression` defaults empty for the source-only shortcut; `ofEnvelope?` passes the collected facts.

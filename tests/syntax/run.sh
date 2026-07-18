@@ -12,7 +12,9 @@ set -euo pipefail
 repo_root=$(cd "$(dirname "$0")/../.." && pwd)
 work=$(mktemp -d)
 cache_root="$repo_root/.lean-fmt-cache"
-trap 'rm -rf "$work" "$cache_root"' EXIT
+# `fix` writes in place and only operates on files under the project root, so the apply-and-verify
+# cases below run on in-tree probe copies; the trap removes them even if a case fails mid-run.
+trap 'rm -rf "$work" "$cache_root" "$repo_root"/tests/syntax/.ryc-fix-*.lean' EXIT
 
 cd "$repo_root"
 rm -rf "$cache_root"
@@ -152,22 +154,41 @@ assert data["infrastructureFailures"] == [], data
 assert data["files"][0]["status"] == "broken", data["files"][0]
 PY
 
-# --- Fix deferral: `fix` renders canonical text and runs only source rules, so a syntax-tier fix is
-# reported by `check` but neither applied nor withheld by `fix` (Application.renderCanonicalText:
-# `ruff-06`'s RFX-SPEC owns canonical-coordinate syntax fixing). Pin the current limit: the file is
-# left byte-identical and nothing is written.
-cp -p tests/syntax/NestedParen.lean "$work/NestedParen.lean"
-run_expect 0 "$work/fix-deferral.json" \
-  sfmt fix --root . --json --no-cache --select FMT013 tests/syntax/NestedParen.lean
-cmp tests/syntax/NestedParen.lean "$work/NestedParen.lean"
-python3 - "$work/fix-deferral.json" <<'PY'
-import json, sys
+# --- Fix application (RYC-IMPL): a syntax-tier `.safe` fix is now *applied* by `fix`, composed by
+# re-projecting the canonical text so its edits land in canonical coordinates (Application:
+# `reprojectCanonical`; ruff-10b RYC-SPEC `notes/01-model.md`). For each fixable rule, assert `fix`
+# writes the corrected bytes (the defect gone, the intended form present) and that a re-`check` of the
+# written file reports nothing for that rule -- the fix is idempotent.
+fix_applies() {
+  local label=$1 fixture=$2 selector=$3 gone=$4 present=$5
+  local probe="tests/syntax/.ryc-fix-$label.lean"
+  cp "tests/syntax/$fixture" "$probe"
+  run_expect 0 "$work/$label-fix.json" \
+    sfmt fix --root . --json --no-cache --select "$selector" "$probe"
+  GONE="$gone" PRESENT="$present" PROBE="$probe" LABEL="$label" python3 - "$work/$label-fix.json" <<'PY'
+import json, os, sys
 data = json.load(open(sys.argv[1]))
-assert data["written"] == 0 and data["changed"] == 0, data
+label = os.environ["LABEL"]
+assert data["written"] == 1 and data["changed"] == 1, (label, data)
 report = data["files"][0]
-# The finding is still surfaced -- `check`'s report is honest -- but the patch left the file alone.
-assert [f["code"] for f in report["findings"]] == ["FMT013"], report
-assert report["written"] is False and report["status"] == "clean", report
+assert report["status"] == "fixed" and report["written"] is True, (label, report)
+got = open(os.environ["PROBE"]).read()
+assert os.environ["GONE"] not in got, (label, "defect still present", repr(got))
+assert os.environ["PRESENT"] in got, (label, "fixed form absent", repr(got))
 PY
+  run_expect 0 "$work/$label-recheck.json" \
+    sfmt check --root . --json --no-cache --select "$selector" "$probe"
+  LABEL="$label" python3 - "$work/$label-recheck.json" <<'PY'
+import json, os, sys
+data = json.load(open(sys.argv[1]))
+assert data["findings"] == 0, (os.environ["LABEL"], "not idempotent", data)
+PY
+  rm -f "$probe"
+}
+
+# FMT013 deletes the outer pair (`((1))` -> `(1)`); FMT010/011 drop the duplicate `simp` / `Repr`.
+fix_applies fmt013 NestedParen.lean FMT013 '((1))' '(1)'
+fix_applies fmt010 Duplicates.lean  FMT010 '@[simp, simp]' '@[simp]'
+fix_applies fmt011 Duplicates.lean  FMT011 'deriving Repr, Repr' 'deriving Repr'
 
 echo "lean-fmt syntax-tier rule integration tests passed"
