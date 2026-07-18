@@ -1,6 +1,6 @@
 ---
 kind: state
-first_unresolved: 13-reflow-accept
+first_unresolved: none
 ---
 
 # Current state
@@ -118,7 +118,9 @@ keyword-line + 2) and the `Id.run do` head keeps its bytes; the 20-module corpus
 byte-identically (`commands=506 canonical=479 headers_canonical=20 failures=0`). The full
 `tests/printer/run.sh` is green.
 
-**`RLF-ACCEPT` is verified** (`results/10-reflow-final.md`), and it closes phase 2. It adds no layout: it
+**`RLF-ACCEPT` is verified** (`results/10-reflow-final.md`); it accepted the **application-and-offside
+subset** of the reflow set — the complete-set acceptance is `RLF-REFLOW-ACCEPT` (below), which supersedes
+its coverage claim. It adds no layout: it
 runs the reflowing formatter through the idempotence loop and the exact fresh-frontend differential over
 the corpus (`commands=506 canonical=479 failures=0`), the frozen mathlib sample (`modules_analyzed=62
 skipped=0 failures=0 reformatted=13`, losses `none`, exclusions `none`, ownership partition green),
@@ -192,8 +194,33 @@ tree gate load-bearing because a field left of the anchor breaks `checkColGe` �
 `Printer.lean` at margin 100 (isolated harness), a small uptick from 60.7 for the record navigation and A1
 emit; the node-count churn (49,780 → 50,221) was reconciled and `check-quoted-figures.py` passes (33).
 
-**Phase 2's remaining breaking breadth: `first_unresolved: 13-reflow-accept`** — `RLF-REFLOW-ACCEPT`
-(prompt 13) re-audits the complete reflow set and supersedes `RLF-ACCEPT`'s subset coverage.
+**`RLF-REFLOW-ACCEPT` is verified — phase 2 is complete** (`results/13-reflow-accept.md`,
+`first_unresolved: none`). It is the acceptance for the **complete** reflow set: application, operators,
+binders, and `structInst` records all break over the margin, and `by`/`do` blocks (outermost or a match
+arm's RHS) re-index — every break proven parse-preserving by fresh-frontend reparse (token stream **and**
+parse tree), idempotent, and a no-op on canonical bytes. The four-way differential is clean on all legs:
+the repository corpus round-trips byte-identically (`commands=506 canonical=479 failures=0`), the frozen
+mathlib sample is idempotent and token+tree parse-preserving on all 62 modules (`failures=0 reformatted=13`,
+unchanged from `RLF-ACCEPT` — the new breaks need a single-line over-margin construct the foreign sample
+does not present beyond the app breaks already counted, so, as on the canonical corpus, they are exercised
+by the synthetic fixtures), the over-margin fixtures for every breaking construct reparse to the input at
+margins 0/1/40/80/100/1000, and malformed input yields no artifact. The **rebuilt coverage table**
+(`results/13` — it supersedes `results/10`'s) moves operators/notations, all four bracketed-binder kinds,
+and `structInst` records from *cited-conservative* to *actively laid out*, each with its grammar citation;
+the only remaining cited-conservative entries are genuine grammatical fallbacks (`where`/`let` bodies,
+focus `·`, own-line application heads, horizontal collapse) and the parse-safety sub-cases of an owned
+break (a mid-line/`with`/typed record, a pure-term match arm). **Zero deferred *breaking* behaviour
+remains.** As an audit it changed no layout — it found every shipped break already parse-preserving — and
+added two fixtures for behaviours that were laid out but not fixture-backed (the strict-implicit binder
+`⦃x : T⦄`, and the arm-relative `by`-in-`match` re-index). Performance held at **61.7 MiB** peak RSS /
+0.14 s to format `Printer.lean` at margin 100 (isolated harness), unchanged from `RLF-RECORDS` (no new
+production code). The `RLF-ACCEPT` standing is narrowed below to the app+offside subset it accepted, and
+is not weakened.
+
+**Phase 2 (the reflowing formatter) is complete.** The roadmap Goal — canonical formatting of terms,
+operators, records, tactics, and `do`, reflowing over-width constructs to margin 100 while preserving the
+parse — is met: every β-breakable construct breaks, every offside block re-indexes, and every layout is a
+no-op on already-canonical bytes, proven parse-preserving by reparse throughout.
 
 The remainder of this file is the phase-1 record — a live claim about the conservative subset and the
 evidence for it — kept intact because it is the citation base phase 2 builds against.
@@ -261,7 +288,7 @@ Printing inside the frontend would buy free arg order for a median 1.96 s fronte
 | 10-reflow-final | RLF-ACCEPT | verified | RLF-BLOCKS |
 | 11-operator-break | RLF-OPERATOR-BREAK | verified | RLF-REFLOW |
 | 12-records | RLF-RECORDS | verified | RLF-BLOCKS |
-| 13-reflow-accept | RLF-REFLOW-ACCEPT | planned | RLF-OPERATOR-BREAK, RLF-RECORDS, RLF-ACCEPT |
+| 13-reflow-accept | RLF-REFLOW-ACCEPT | verified | RLF-OPERATOR-BREAK, RLF-RECORDS, RLF-ACCEPT |
 
 **`RLF-FINAL` is verified, and it closed phase 1** (`results/05-corpus.md`). It changed no layout and
 no output byte: its finding is that **the refusals were never unsafe, they were unread.** The stop rule

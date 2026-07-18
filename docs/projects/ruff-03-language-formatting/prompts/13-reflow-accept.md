@@ -1,6 +1,6 @@
 ---
 claim_id: RLF-REFLOW-ACCEPT
-status: planned
+status: verified
 depends_on: [RLF-OPERATOR-BREAK, RLF-RECORDS, RLF-ACCEPT]
 ---
 

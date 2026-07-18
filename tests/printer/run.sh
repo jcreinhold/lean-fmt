@@ -1730,7 +1730,7 @@ module
 
 def sig (aaaaaa : Nat) (bbbbbb : Nat) (cccccc : Nat) (dddddd : Nat) (eeeeee : Nat) : Nat := aaaaaa
 
-def mixed (aaaaaa : Nat) {bbbbbb : Type} [Add Nat] (dddddd : Nat) (eeeeee : Nat) : Nat := dddddd
+def mixed (aaaaaa : Nat) ⦃ssssss : Nat⦄ {bbbbbb : Type} [Add Nat] (dddddd : Nat) (eeeeee : Nat) : Nat := dddddd
 
 def bcomment (aaaaaa : Nat) /- keep -/ (bbbbbb : Nat) (cccccc : Nat) (dddddd : Nat) (eeeeee : Nat) : Nat := aaaaaa
 
@@ -1788,6 +1788,16 @@ if grep -qE '^def sig \(aaaaaa : Nat\)$' "$work/binder.40.out" && \
   printf '  ok   at margin 40 binders hang one per line at column 2 (explicit, implicit, instance)\n'
 else
   printf 'FAIL at margin 40 the signature did not break one binder per line\n' >&2
+  cat "$work/binder.40.out" >&2
+  failures=$((failures + 1))
+fi
+
+# The strict-implicit bracket `⦃x : T⦄` is a bracketedBinder like the other three, on the same
+# `optDeclSig` path with no column check, so it breaks onto its own line too -- the fourth bracket kind.
+if grep -qE '^  ⦃ssssss : Nat⦄$' "$work/binder.40.out"; then
+  printf '  ok   a strict-implicit binder ⦃x : T⦄ hangs on its own line too (all four bracket kinds)\n'
+else
+  printf 'FAIL at margin 40 the strict-implicit binder did not break onto its own line\n' >&2
   cat "$work/binder.40.out" >&2
   failures=$((failures + 1))
 fi
@@ -2248,6 +2258,83 @@ for w in $block_margins; do
   fi
 done
 [[ -z "$do_idem" ]] && printf '  ok   do blocks: formatting twice is byte-identical at every margin (%s)\n' "$block_margins"
+
+# --- match arms: offside re-index of a `by` block that is a match arm's RHS (RLF-OPERATOR-BREAK) ---
+#
+# `matchAlt` is NOT a β-break (`notes/09` §1.3/§4): its arms are already one-per-line by `matchAlts`'
+# `sepByIndent`, and it leads with a token a β-break would split. What IS laid out is a `by`/`do` block
+# that is a match arm's RHS -- `reindentClaims` (Printer.lean:1475) reads the arm as the offside parent
+# and re-indexes the block to arm-col+2, exactly as it re-indexes a declaration-level block to
+# commandIndent+2. A pure-term arm (no tactic/do block) and the arm placement itself keep their bytes:
+# a multi-line match is `mayCollapse=false` and `matchAlts` owns the `|` columns. This fixture pins the
+# arm-relative re-index (the over-indented `by` under `| 0 =>`) and the conservative pure-term arm.
+printf -- '--- match arms, arm-relative block re-index (RLF-OPERATOR-BREAK) ---\n'
+cat >"$work/matcharm.lean" <<'FIXTURE'
+module
+
+def wmatch (n : Nat) : True :=
+  match n with
+  | 0 => by
+              skip
+              trivial
+  | _ => by trivial
+
+def wterm (n : Nat) : Nat :=
+  match n with
+  | 0 => 1
+  | _ => n
+FIXTURE
+LEAN_NUM_THREADS=1 lake env "$application" __analyze-exact \
+  "$work/borrowed.setup.json" "$work/matcharm.lean" "matcharm.lean" 8589934592 1 >"$work/matcharm.json"
+
+marm_margins="40 80 100 1000"
+for w in $marm_margins; do
+  "$tests" printer-format "$work/matcharm.json" "$work/matcharm.lean" "$w" >"$work/matcharm.$w.out"
+  LEAN_NUM_THREADS=1 lake env "$application" __analyze-exact \
+    "$work/borrowed.setup.json" "$work/matcharm.$w.out" "matcharm.lean" 8589934592 1 \
+    >"$work/matcharm.$w.json" 2>"$work/matcharm.$w.err" || true
+done
+
+# The over-indented `by` under `| 0 =>` re-indexes to arm-col+2 = 4; the pure-term arm and the `|`
+# columns are untouched. The re-index is width-independent, so every margin produces the same output.
+if grep -qE '^  \| 0 => by$' "$work/matcharm.100.out" && \
+   grep -qE '^    skip$' "$work/matcharm.100.out" && \
+   grep -qE '^    trivial$' "$work/matcharm.100.out" && \
+   grep -qE '^  \| _ => n$' "$work/matcharm.100.out"; then
+  printf '  ok   a `by` block inside a match arm re-indexes to arm-col+2; the pure-term arm is kept\n'
+else
+  printf 'FAIL the match-arm block did not re-index to arm-col+2 (or the term arm was touched)\n' >&2
+  cat "$work/matcharm.100.out" >&2
+  failures=$((failures + 1))
+fi
+
+# Parse-preservation, token AND tree, at every margin -- a re-index that moved a tactic between arms
+# would reparent it (a re-association the token stream hides), which the tree gate catches.
+marm_pp=
+for w in $marm_margins; do
+  if ! python3 "$repo_root/experiments/compare_tokens.py" \
+       "$work/matcharm.json" "$work/matcharm.$w.json" "$work/matcharm.lean" "$work/matcharm.$w.out" \
+       >"$work/matcharm.$w.pp" 2>&1; then
+    printf 'FAIL match arm at margin %s changed the parse: %s\n' "$w" "$(cat "$work/matcharm.$w.pp")" >&2
+    failures=$((failures + 1))
+    marm_pp=1
+  fi
+done
+if [[ -z "$marm_pp" ]]; then
+  printf '  ok   every margin (%s) reparses to the input token stream AND tree (no re-association)\n' "$marm_margins"
+fi
+
+# Idempotence: the arm-relative base is a pure function of the arm column, so a second pass recomputes it.
+marm_idem=
+for w in $marm_margins; do
+  "$tests" printer-format "$work/matcharm.$w.json" "$work/matcharm.$w.out" "$w" >"$work/matcharm.$w.out2"
+  if ! diff -q "$work/matcharm.$w.out" "$work/matcharm.$w.out2" >/dev/null 2>&1; then
+    printf 'FAIL match arm: formatting is not idempotent at margin %s:\n' "$w" >&2
+    diff -u "$work/matcharm.$w.out" "$work/matcharm.$w.out2" >&2
+    failures=$((failures + 1)); marm_idem=1
+  fi
+done
+[[ -z "$marm_idem" ]] && printf '  ok   match arm: formatting twice is byte-identical at every margin (%s)\n' "$marm_margins"
 
 # --- non-vacuity: the parse-preservation gate rejects a re-association (RLF-ACCEPT) ---
 #
