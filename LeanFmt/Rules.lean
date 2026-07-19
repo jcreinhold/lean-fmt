@@ -178,57 +178,6 @@ instance : Lean.ToJson Rule where
     ("input", Lean.toJson rule.tier)
   ]
 
-private def isHorizontalWhitespace (byte : UInt8) : Bool :=
-  byte == 0x20 || byte == 0x09
-
-private def trailingWhitespaceFinding (start stop : Nat) : Finding :=
-  let range := { start, stop }
-  {
-    code := "FMT001"
-    severity := .warning
-    message := "trailing whitespace"
-    range
-    -- Safe: deleting horizontal whitespace before a newline cannot change how any Lean text
-    -- elaborates, because the lexer cannot observe it. This is a byte-level argument, which is the
-    -- only kind a `source`-tier rule may use to claim safety (`notes/01-model.md` §1).
-    fix? := some { applicability := .safe, edits := #[{ range, replacement := "" }] }
-  }
-
-private def trailingWhitespace (facts : SourceFacts) : Array Finding := Id.run do
-  let source := facts.bytes
-  let mut findings := #[]
-  let mut lineStart := 0
-  for index in [0:source.size] do
-    if source.get! index == 0x0a then
-      let lineStop := index
-      let mut contentStop := lineStop
-      while contentStop > lineStart && isHorizontalWhitespace (source.get! (contentStop - 1)) do
-        contentStop := contentStop - 1
-      if contentStop < lineStop then
-        findings := findings.push (trailingWhitespaceFinding contentStop lineStop)
-      lineStart := index + 1
-  let mut contentStop := source.size
-  while contentStop > lineStart && isHorizontalWhitespace (source.get! (contentStop - 1)) do
-    contentStop := contentStop - 1
-  if contentStop < source.size then
-    findings := findings.push (trailingWhitespaceFinding contentStop source.size)
-  return findings
-
-private def finalNewline (facts : SourceFacts) : Array Finding :=
-  let source := facts.bytes
-  if source.isEmpty || source.get! (source.size - 1) == 0x0a then
-    #[]
-  else
-    let range := { start := source.size, stop := source.size }
-    #[{
-      code := "FMT002"
-      severity := .warning
-      message := "file must end with a newline"
-      range
-      -- Safe for the same reason as FMT001: a terminating newline is trivia the lexer cannot see.
-      fix? := some { applicability := .safe, edits := #[{ range, replacement := "\n" }] }
-    }]
-
 /-! ## Source-security rules
 
 `FMT003` and `FMT004` flag bytes that survive into accepted source only inside a string literal or a
@@ -668,26 +617,6 @@ for a line-oriented rule to consider. -/
 def ruleRegistry : Array Rule := #[
   {
     info := {
-      code := "FMT001"
-      category := "text"
-      summary := "remove trailing horizontal whitespace"
-      fixable := true
-      defaultEnabled := true
-    }
-    impl := .source trailingWhitespace
-  },
-  {
-    info := {
-      code := "FMT002"
-      category := "text"
-      summary := "require a final newline"
-      fixable := true
-      defaultEnabled := true
-    }
-    impl := .source finalNewline
-  },
-  {
-    info := {
       code := "FMT003"
       category := "security"
       summary := "reject forbidden control bytes in source"
@@ -811,11 +740,11 @@ def ruleRegistry : Array Rule := #[
 
 /-- Findings sort by position, then by code.
 
-Concatenating each rule's output in registry order used to be enough, because both rules were
-`source`-tier and FMT001's findings happened to precede FMT002's. That was an accident of two rules
-and does not survive a fold over mixed tiers: a `syntax` rule's findings would otherwise land after
-every `source` rule's regardless of where in the file they are. Sorting on the code breaks ties
-inside one position so that registry order — which is not meaningful — cannot decide output. -/
+Concatenating each rule's output in registry order used to be enough back when the default rules were
+all `source`-tier and their findings happened to fall in position order. That was an accident and does
+not survive a fold over mixed tiers: a `syntax` rule's findings would otherwise land after every
+`source` rule's regardless of where in the file they are. Sorting on the code breaks ties inside one
+position so that registry order — which is not meaningful — cannot decide output. -/
 private def findingOrder (left right : Finding) : Bool :=
   if left.range.start != right.range.start then left.range.start < right.range.start
   else if left.range.stop != right.range.stop then left.range.stop < right.range.stop

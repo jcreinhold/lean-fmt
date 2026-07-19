@@ -309,14 +309,18 @@ module
 
 def bad : Nat := true
 LEAN
-# Mixed-tier fixture: a deprecated use (FMT014, semantic) AND trailing whitespace (FMT001, source) on
-# the `useOld` line — the trailing spaces are literal, written via printf.
+# Mixed-tier fixture: a deprecated use (FMT014, semantic) on the `useOld` line AND a redundant nested
+# paren (FMT013, syntax) on the `parened` line. Before `ruff-11c` RDF-LAYOUT this paired FMT014 with a
+# trailing-whitespace FMT001; that source rule retired into the formatter's layout, so a genuine
+# syntax-tier rule (FMT013) now stands in — still a strictly cheaper tier than the semantic FMT014, so
+# `max` still lands on `.semantic`, and FMT013 also carries a safe fix for the pass-order case below.
 {
   printf 'module\n\n'
   printf 'def newName : Nat := 1\n'
   printf '@[deprecated newName (since := "2024-01-01")]\n'
   printf 'def oldName : Nat := 0\n'
-  printf 'def useOld : Nat := oldName   \n'
+  printf 'def useOld : Nat := oldName\n'
+  printf 'def parened : Nat := ((1))\n'
 } >"$proj/acc/Mixed.lean"
 LEAN_NUM_THREADS=1 lake -d "$proj" build Demo >/dev/null
 
@@ -340,18 +344,18 @@ assert files == {"acc/Broken.lean": "broken"}, files       # present and broken,
 assert r["broken"] == 1 and not r["infrastructureFailures"], r
 PY
 
-# 2. Mixed-tier selection. `--select FMT001 --select FMT014` demands `.semantic` (the max of the two
-# tiers), runs the whole registry over the semantic facts, and reports both a semantic and a source
+# 2. Mixed-tier selection. `--select FMT013 --select FMT014` demands `.semantic` (the max of the two
+# tiers), runs the whole registry over the semantic facts, and reports both a semantic and a syntax
 # finding on the one file — byte-sorted, independent of registry order.
 check_exit env LEAN_NUM_THREADS=1 "$application" check --root "$proj" --json --no-cache \
-  --select FMT001 --select FMT014 "$proj/acc/Mixed.lean" >"$work/acc-mixed.json" 2>/dev/null
+  --select FMT013 --select FMT014 "$proj/acc/Mixed.lean" >"$work/acc-mixed.json" 2>/dev/null
 python3 - "$work/acc-mixed.json" <<'PY'
 import json, sys
 r = json.load(open(sys.argv[1]))
 f, = r["files"]
 codes = [x["code"] for x in f["findings"]]
 assert "FMT014" in codes, codes    # deprecated use — the semantic tier
-assert "FMT001" in codes, codes    # trailing whitespace — the source tier, in the same report
+assert "FMT013" in codes, codes    # redundant nested paren — the syntax tier, in the same report
 # The semantic finding preserves the compiler's own deprecation message.
 dep = next(x for x in f["findings"] if x["code"] == "FMT014")
 assert "deprecated" in dep["message"].lower(), dep
@@ -417,16 +421,16 @@ cmp -s "$work/mixed.fixed" "$proj/acc/Mixed.lean" \
   || { echo 'a second FMT014 fix modified an already-renamed file' >&2; exit 1; }
 
 # 3d. Pass-order independence. `--select` order must not change the published bytes: FMT014 (semantic,
-# re-projected) and FMT001 (source, trailing whitespace) compose the same either way. Both orders
+# re-projected) and FMT013 (syntax, safe paren removal) compose the same either way. Both orders
 # `fix --unsafe-fixes` a fresh copy of the original and must write byte-identical output.
 cp "$work/mixed.orig" "$proj/acc/OrderA.lean"
 cp "$work/mixed.orig" "$proj/acc/OrderB.lean"
 LEAN_NUM_THREADS=1 "$application" fix --root "$proj" --json --no-cache --unsafe-fixes \
-  --select FMT014 --select FMT001 "$proj/acc/OrderA.lean" >/dev/null 2>&1 || true
+  --select FMT014 --select FMT013 "$proj/acc/OrderA.lean" >/dev/null 2>&1 || true
 LEAN_NUM_THREADS=1 "$application" fix --root "$proj" --json --no-cache --unsafe-fixes \
-  --select FMT001 --select FMT014 "$proj/acc/OrderB.lean" >/dev/null 2>&1 || true
+  --select FMT013 --select FMT014 "$proj/acc/OrderB.lean" >/dev/null 2>&1 || true
 cmp -s "$proj/acc/OrderA.lean" "$proj/acc/OrderB.lean" \
-  || { echo 'pass order changed the published bytes (FMT014 vs FMT001 order-dependent)' >&2;
+  || { echo 'pass order changed the published bytes (FMT014 vs FMT013 order-dependent)' >&2;
        diff "$proj/acc/OrderA.lean" "$proj/acc/OrderB.lean" >&2; exit 1; }
 grep -q 'def useOld : Nat := newName' "$proj/acc/OrderA.lean" \
   || { echo 'order-independent fix did not apply the rename' >&2; exit 1; }

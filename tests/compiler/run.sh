@@ -107,8 +107,8 @@ import sys
 
 path = Path(sys.argv[1])
 source = path.read_text()
-old = 'message := "trailing whitespace"'
-new = 'message := "probe: trailing whitespace"'
+old = 'message := "redundant nested parentheses"'
+new = 'message := "probe: redundant nested parentheses"'
 if source.count(old) != 1:
     raise SystemExit("rule invalidation probe could not find its unique source marker")
 path.write_text(source.replace(old, new))

@@ -180,10 +180,11 @@ assert imports == ["import LeanFmt.Digest", "import LeanFmt.Basic"], imports
 PY
 cp -p "$work/Ordering.fixbackup" tests/imports/Ordering.lean
 
-# Fix conflict / composition: a file with both a duplicate import (FMT005, canonical-coordinate patch)
-# and a trailing-whitespace text finding (FMT001). `fix` applies both and validates the rewrite by
-# re-elaboration before writing — the two edits compose to a deduped, trimmed, valid file. Built at
-# runtime under the root (so the workspace resolves) and removed after.
+# Fix composition: a file with a duplicate import (FMT005) AND trailing whitespace. `fix` renders the
+# canonical patch, so the FMT005 dedup composes with the formatter's own trailing-whitespace/final-newline
+# normalization (a layout concern since `ruff-11c` RDF-LAYOUT, no longer the retired FMT001), and the
+# rewrite is validated by re-elaboration before writing — a deduped, trimmed, valid file. Built at runtime
+# under the root (so the workspace resolves) and removed after.
 conflict=tests/imports/_fixconflict_tmp.lean
 printf 'module\n\nimport LeanFmt.Basic\nimport LeanFmt.Basic\n\ndef importFixConflictNoop : Nat := 0  \n' \
   >"$conflict"

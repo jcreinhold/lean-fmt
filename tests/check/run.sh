@@ -203,18 +203,21 @@ cmp "$work/cache-artifact.json" "$work/cache-fallback.json"
 rm -rf "$cache_root"
 run_expect 1 "$work/select-all.json" "$application" check --root . --json \
   tests/check/Findings.lean
-run_expect 0 "$work/select-fmt002.json" env LEAN_FMT_DISABLE_ARTIFACT=1 \
+run_expect 0 "$work/select-fmt004.json" env LEAN_FMT_DISABLE_ARTIFACT=1 \
   LEAN_FMT_TEST_DISABLE_MODULE_EVIDENCE=1 LEAN_FMT_TEST_ANALYZER=/usr/bin/false \
-  "$application" check --root . --json --select FMT002 tests/check/Findings.lean
+  "$application" check --root . --json --select FMT004 tests/check/Findings.lean
 test "$(find "$cache_root/results" -type f -name '*.json' | wc -l | tr -d ' ')" = 1
-python3 - "$work/select-all.json" "$work/select-fmt002.json" <<'PY'
+python3 - "$work/select-all.json" "$work/select-fmt004.json" <<'PY'
 import json, sys
 def codes(path):
     file, = json.load(open(path))["files"]
     return [f["code"] for f in file["findings"]]
 every, selected = codes(sys.argv[0 + 1]), codes(sys.argv[2])
-assert "FMT001" in every, f"the selection fixture lost its unselected rule: {every}"
-assert selected == [], f"--select FMT002 reported something else: {selected}"
+# FMT004 is a source-tier rule that does not fire on this fixture (no bidi mark), so it forces a
+# cache read yet projects nothing — the collision the test needs. FMT005 (the duplicate import) is
+# the default finding the unselected run keeps.
+assert "FMT005" in every, f"the selection fixture lost its unselected rule: {every}"
+assert selected == [], f"--select FMT004 reported something else: {selected}"
 PY
 
 # Corrupt committed entries are misses. A stray partial temporary file cannot shadow a valid entry.

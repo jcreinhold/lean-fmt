@@ -1,6 +1,6 @@
 ---
 kind: state
-first_unresolved: 02-layout
+first_unresolved: 03-impl
 ---
 
 # Current state
@@ -8,13 +8,21 @@ first_unresolved: 02-layout
 RDF-SPEC (01) is verified: the decoupled interface is frozen in `notes/01-model.md` and
 `results/01-spec.md`, with six first-hand product probes in `evidence/01-fusion-and-subsumption.md`
 (fusion, printer non-subsumption of ws/newline, and the pre-existing FMT001 in-string corruption the
-retirement removes). Next unresolved is 02-layout (RDF-LAYOUT). It decouples lint-fix from formatting:
+retirement removes).
+
+RDF-LAYOUT (02) is verified (`results/02-layout.md`): the canonical printer now owns
+trailing-whitespace/final-newline normalization as layout, sound by construction (`trimTriviaWs` over
+proven-trivia slices + `normalizeEof` once in `format`; `Printer.lean:219-292,1194-1195,1918,2151`), and
+FMT001/FMT002 are deleted from `ruleRegistry` with every test-vehicle migrated onto surviving rules
+(FMT005/FMT013/FMT014) plus three new formatter-ownership regressions (`tests/modes/run.sh:542-585`). This
+landed before the patch split, so `format` still composes fixes today but the retired rules are gone. One
+known non-green: `tests/printer/run.sh`'s stale-evidence census (541 vs live 660) against a frozen ruff-03
+record the prompt forbids rewriting — pre-existing and out of scope (details in `results/02-layout.md`).
+
+Next unresolved is 03-impl (RDF-IMPL), the patch split proper. It decouples lint-fix from formatting:
 `format`/`diff` reflow
 only (no rule fix applied or previewed) and `fix`/`check --fix` apply admitted fixes at the file's own
-original coordinates (no reflow), so a user composes them as `ruff check --fix && ruff format`. As part of
-that split the formatter takes sole ownership of trailing-whitespace/final-newline normalization (layout,
-not a rule) and FMT001/FMT002 retire — matching `ruff format`, where whitespace/newline cleanup is
-formatter behavior.
+original coordinates (no reflow), so a user composes them as `ruff check --fix && ruff format`.
 
 Its external prerequisite stacks are `ruff-06-fix-safety`, `ruff-09-import-rules`,
 `ruff-10b-syntax-fix-composition`, and `ruff-11b-owned-semantic-fix`, all verified. This stack is the
@@ -30,7 +38,7 @@ implementation still matches recorded state.
 | Prompt | Claim | Status | Depends on |
 | --- | --- | --- | --- |
 | 01-spec | RDF-SPEC | verified | — |
-| 02-layout | RDF-LAYOUT | planned | RDF-SPEC |
+| 02-layout | RDF-LAYOUT | verified | RDF-SPEC |
 | 03-impl | RDF-IMPL | planned | RDF-LAYOUT |
 | 04-final | RDF-FINAL | planned | RDF-IMPL |
 

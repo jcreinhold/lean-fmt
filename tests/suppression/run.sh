@@ -35,27 +35,30 @@ run_expect() {
   fi
 }
 
-# A committed fixture must stay canonical apart from its deliberate trailing whitespace, so that
-# `git diff --check` and the printer agree the only reformatting is whitespace removal. Nothing to do
-# here beyond the assertions below; the fixtures are checked in exactly as the suite reads them.
+# A committed fixture must stay canonical, so `git diff --check` and the printer agree the fixtures
+# need no reformatting beyond the deliberate rule violation each carries (a duplicate import, a
+# redundant paren). Nothing to do here beyond the assertions below; the fixtures are checked in exactly
+# as the suite reads them.
 
 # --- Doc comments and module docstrings are tokens, not comments: directive text in them is inert. ---
-# The RSP-SPEC stop rule ("a directive is a comment, nothing else"), over the real parser. The FMT001
-# on the trailing-whitespace line must still report; suppressed stays 0.
+# The RSP-SPEC stop rule ("a directive is a comment, nothing else"), over the real parser. The FMT005
+# duplicate-import finding must still report; suppressed stays 0.
 run_expect 1 "$work/doc.json" "$application" check --root . --json --no-cache \
   tests/suppression/DocComment.lean
 python3 - "$work/doc.json" <<'PY'
 import json, sys
 file, = json.load(open(sys.argv[1]))["files"]
 codes = [f["code"] for f in file["findings"]]
-assert "FMT001" in codes, f"a docstring silenced a real finding: {codes}"
+assert "FMT005" in codes, f"a docstring silenced a real finding: {codes}"
 assert not any(c in ("FMT900", "FMT901") for c in codes), f"docstring text parsed as a directive: {codes}"
 assert file["suppressed"] == 0, f"a docstring suppressed something: {file['suppressed']}"
 PY
 
-# --- Nested syntax: ignore-next inside a namespace suppresses the inner finding. ---
+# --- Nested syntax: ignore-next inside a namespace suppresses the inner finding. The finding is a
+#     redundant nested paren (FMT013, a syntax rule opted into with `--select`), since after RDF-LAYOUT
+#     no default finding lands on a `def` inside a namespace — the retired FMT001 used to. ---
 run_expect 0 "$work/nested.json" "$application" check --root . --json --no-cache \
-  tests/suppression/Nested.lean
+  --select FMT013 tests/suppression/Nested.lean
 python3 - "$work/nested.json" <<'PY'
 import json, sys
 file, = json.load(open(sys.argv[1]))["files"]
@@ -74,16 +77,21 @@ assert file["findings"] == [], f"ignore-file left a finding on a custom command:
 assert file["suppressed"] >= 1, f"custom-command suppression miscounted: {file['suppressed']}"
 PY
 
-# --- Formatting movement + the round-trip invariant. `fix` reflows the ignore-next item, removing the
-#     trailing whitespace it was suppressing; the directive then suppresses nothing and becomes an
-#     honest FMT900. Through all of it the directive comment round-trips exactly once. ---
+# --- Formatting movement + the round-trip invariant. `fix` reflows the ignore-next item, collapsing
+#     its non-canonical `namespace     Beta` spacing to a single space (a movement the printer owns, as
+#     `tests/modes` proves on `Layout.lean`). The ignore-next covers a namespace with no finding, so it
+#     is an honest FMT900 throughout. What this pins is the movement: through the byte shift the
+#     directive comment round-trips exactly once. (Before RDF-LAYOUT this fixture used a trailing-space
+#     item and FMT001; the retired rule's whitespace behavior is now the reflow's, and the reflow only
+#     owns whitespace it lays down — not the bytes of a verbatim command body — so the item moved to a
+#     spacing the printer actually normalizes.) ---
 cp tests/suppression/Movement.lean "$scratch"
 before_directives=$(grep -c 'lean-fmt: ignore-next' "$scratch")
 test "$before_directives" = 1
 run_expect 0 "$work/move-fix.txt" "$application" fix --root . --no-cache "$scratch"
 after_directives=$(grep -c 'lean-fmt: ignore-next' "$scratch")
 test "$after_directives" = 1 || { echo "the directive comment did not round-trip exactly once" >&2; exit 1; }
-grep -q 'let inner := 1$' "$scratch" || { echo "fix did not reflow the item" >&2; exit 1; }
+grep -q '^namespace Beta$' "$scratch" || { echo "fix did not reflow the item" >&2; exit 1; }
 # After the finding is gone the directive is unused: check reports FMT900, and a second fix is a no-op.
 run_expect 1 "$work/move-recheck.json" "$application" check --root . --json --no-cache \
   "$scratch"
@@ -129,8 +137,9 @@ assert find["fix"]["applicability"] == "display-only", f"FMT901 is not display-o
 assert "ignor" in find["message"], f"FMT901 did not name the bad verb: {find['message']}"
 PY
 
-# --- Per-file config composition. The config already ignores FMT001 for this glob, so a directive
-#     naming FMT001 suppresses nothing and is itself unused: the RUF100 analog composes with config. ---
+# --- Per-file config composition. The config already ignores FMT005 for this glob, so the trailing
+#     directive naming FMT005 suppresses nothing and is itself unused: the RUF100 analog composes with
+#     config. ---
 run_expect 1 "$work/perfile.json" "$application" check --root . --json --no-cache \
   --config tests/suppression/lean-fmt.toml tests/suppression/PerFile.lean
 python3 - "$work/perfile.json" <<'PY'

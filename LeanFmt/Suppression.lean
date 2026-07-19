@@ -164,7 +164,7 @@ private def commandRoots (src : LosslessSource) : Array Node :=
 /-- Resolve a directive's byte scope from the comment position and the projection.
 
 - `file` — `[0, normalizedBytes]`: the whole module, inclusive of the end-of-file anchor so a file
-  directive can suppress `FMT002` (the empty `[eof, eof]` finding).
+  directive can suppress a zero-width end-of-file finding (an empty `[eof, eof]` range).
 - `line` — the physical source line the comment sits on. A trailing directive covers the code it
   trails; a leading one covers only its own line.
 - `nextItem` — the next command and its trailing trivia: from the following command-root's start to
@@ -185,9 +185,11 @@ private def directiveScope (src : LosslessSource) (bytes : ByteArray)
       ⟨cmd.range.start, max stop cmd.range.stop⟩
 
 /-- Whether a finding's anchor lies in a scope. Anchoring on `range.start` (not full containment) keeps
-line rules robust: `FMT001`'s range ends at the newline and `FMT002`'s is the empty `[eof, eof]` range.
-The empty-finding clause admits a zero-width finding sitting exactly on the scope's upper bound, which
-is how an end-of-file `FMT002` is caught by a `file`- or last-line-`line`-scoped directive. -/
+line rules robust against findings whose range ends on a line boundary or is empty: a finding whose
+range ends at the trailing newline still anchors on its line, and a zero-width `[eof, eof]` finding
+anchors at end of file. The empty-finding clause admits a zero-width finding sitting exactly on the
+scope's upper bound, which is how an end-of-file finding is caught by a `file`- or last-line-`line`-scoped
+directive. (The retired FMT001/FMT002 were the original line-boundary and eof examples.) -/
 def inScope (scope : SourceRange) (finding : Finding) : Bool :=
   scope.start ≤ finding.range.start &&
     (finding.range.start < scope.stop ||

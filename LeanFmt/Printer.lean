@@ -207,6 +207,90 @@ private def sliceNormalized (source : String) (start stop : Nat) : String :=
     -- loud — output that is wrong is far easier to notice than output that is quietly short.
     | none => source
 
+/-! ### Whitespace-trivia trimming (formatter-owned, `ruff format`-style)
+
+The canonical formatter — not a lint rule — owns trailing-whitespace and final-newline normalization
+(`docs/projects/ruff-11c-decouple-fix-format/notes/01-model.md` §3). `trimTriviaWs` removes horizontal
+whitespace (`0x20`, `0x09`) that sits immediately before a newline, but **only where that whitespace is
+whitespace *trivia*** — never token bytes, string-literal content, line-comment text, or block-comment
+bodies. Soundness is by construction, not by a byte scan of the final string: this is applied *only* to
+the printer's inter-token, leading, and trailing trivia slices (`Tree.gapDoc`, `Tree.command`), each of
+which is exactly what `Lean.Parser.whitespace` consumes (`LosslessSource.scanTrivia`) — whitespace runs
+interleaved with `--` line comments and `/- -/` block comments. A naive per-line `String` trim over the
+whole rendered output would re-commit the retired FMT001 defect, which deleted trailing whitespace
+*inside* a multi-line string literal (`docs/.../evidence/01-fusion-and-subsumption.md`, probe 4/6); a
+kind-aware pass over trivia-only slices cannot reach a token's bytes.
+
+A line comment runs to, but does not include, the newline, so any horizontal whitespace before that
+newline is the comment's own trailing bytes and is kept. A block comment's interior newlines and their
+leading indentation are content and are kept. Only whitespace-context horizontal runs immediately before
+a newline are dropped. Trailing whitespace at the very end of a slice is left for the caller: a slice may
+be inter-token spacing on one line, and the file-final newline is guaranteed once, in `format`. -/
+mutual
+  private partial def trimTriviaWsAux (cs : Array Char) (i : Nat) (pending out : String) : String :=
+    if i ≥ cs.size then
+      -- Slice end: keep any pending horizontal run. It is either inter-token spacing (kept) or the
+      -- file's final trailing run, which `normalizeEof` handles once over the whole output.
+      out ++ pending
+    else
+      let c := cs[i]!
+      if c == '\n' then
+        -- Newline in whitespace context: the pending horizontal run was trailing whitespace. Drop it.
+        trimTriviaWsAux cs (i + 1) "" (out.push '\n')
+      else if c == ' ' || c == '\t' then
+        trimTriviaWsAux cs (i + 1) (pending.push c) out
+      else if c == '-' && i + 1 < cs.size && cs[i + 1]! == '-' then
+        -- Line comment: commit the pending run (spacing before a comment, not before a newline).
+        copyLineCommentWs cs i "" (out ++ pending)
+      else if c == '/' && i + 1 < cs.size && cs[i + 1]! == '-' then
+        copyBlockCommentWs cs (i + 2) 1 ((out ++ pending).push '/' |>.push '-')
+      else
+        -- A non-space whitespace char (e.g. NBSP) the trim does not target: commit and keep going.
+        trimTriviaWsAux cs (i + 1) "" ((out ++ pending).push c)
+
+  -- A line comment runs to (not including) the newline. Its own trailing horizontal whitespace before
+  -- that newline is not meaningful text, so it is trimmed too — the sound part of what the retired
+  -- FMT001 did (`ruff format` trims trailing whitespace after a comment). A block comment's interior is
+  -- left untouched (`copyBlockCommentWs`), because its whitespace can be deliberate content.
+  private partial def copyLineCommentWs (cs : Array Char) (i : Nat) (pending out : String) : String :=
+    if i ≥ cs.size then out ++ pending
+    else if cs[i]! == '\n' then trimTriviaWsAux cs i "" out
+    else if cs[i]! == ' ' || cs[i]! == '\t' then copyLineCommentWs cs (i + 1) (pending.push cs[i]!) out
+    else copyLineCommentWs cs (i + 1) "" ((out ++ pending).push cs[i]!)
+
+  private partial def copyBlockCommentWs (cs : Array Char) (i depth : Nat) (out : String) : String :=
+    if depth == 0 then trimTriviaWsAux cs i "" out
+    else if i ≥ cs.size then out
+    else
+      let c := cs[i]!
+      if c == '-' && i + 1 < cs.size && cs[i + 1]! == '/' then
+        copyBlockCommentWs cs (i + 2) (depth - 1) (out.push '-' |>.push '/')
+      else if c == '/' && i + 1 < cs.size && cs[i + 1]! == '-' then
+        copyBlockCommentWs cs (i + 2) (depth + 1) (out.push '/' |>.push '-')
+      else
+        copyBlockCommentWs cs (i + 1) depth (out.push c)
+end
+
+/-- Trim trailing whitespace trivia in one printer-emitted trivia slice. See `trimTriviaWsAux`. -/
+private def trimTriviaWs (s : String) : String :=
+  trimTriviaWsAux s.toList.toArray 0 "" ""
+
+private partial def eofContentStop (cs : Array Char) (stop : Nat) : Nat :=
+  if stop > 0 then
+    let c := cs[stop - 1]!
+    if c == ' ' || c == '\t' || c == '\n' then eofContentStop cs (stop - 1) else stop
+  else 0
+
+/-- The file-final normalization the formatter owns: strip trailing horizontal whitespace and blank
+lines at end-of-output, then guarantee exactly one final newline. Applied once, in `format`, over the
+whole rendered string. The end of any accepted module is trivia (a token's trailing run or the verbatim
+tail after the terminal command) — never the interior of a string or comment token — so collapsing the
+final run is sound. An empty output stays empty. -/
+private def normalizeEof (s : String) : String :=
+  let cs := s.toList.toArray
+  let stop := eofContentStop cs cs.size
+  if stop == 0 then "" else String.ofList (cs.toList.take stop) ++ "\n"
+
 /-- The source text of one token. -/
 def Tree.tokenText (tree : Tree) (normalized : String) (index : Nat) : String :=
   match tree.source.tokens[index]? with
@@ -1107,8 +1191,8 @@ private def Tree.gapDoc (tree : Tree) (normalized : String) (mayCollapse : Bool)
   | some separator =>
     if raw.all (· == ' ') && mayCollapse then
       (if separator.isEmpty then .empty else .text separator)
-    else .verbatim raw
-  | none => .verbatim raw
+    else .verbatim (trimTriviaWs raw)
+  | none => .verbatim (trimTriviaWs raw)
 
 /-- The declared atom strings for this node's kind, or `none` when the fact does not cover it.
 
@@ -1814,13 +1898,24 @@ def Tree.command (tree : Tree) (normalized : String) (span : CommandSpan) : Doc 
     -- replaces it with the block's chosen canonical base, which its `doc` emits itself. Both seams are
     -- the same trim; they differ only in what the claim's `doc` puts back.
     let gap := sliceNormalized normalized cursor start
+    -- Emitted verbatim, *not* trimmed: an inter-claim gap can hold the command's own unclaimed tail
+    -- tokens (a `def`'s value, say), so a blanket whitespace trim here would reach token bytes — the
+    -- retired FMT001's exact unsoundness. Only slices proven pure trivia are trimmed: `gapDoc`'s
+    -- inter-token runs and the after-last-token trailing run below.
     let gapDoc : Doc := match claim.leadFlat, claim.leadReindent with
       | some ws, _ => .verbatim (String.ofList (gap.toList.take (gap.length - ws.length)))
       | _, some ws => .verbatim (String.ofList (gap.toList.take (gap.length - ws.length)))
       | _, _ => .verbatim gap
     doc := doc ++ gapDoc ++ claim.doc
     cursor := stop
-  return doc ++ .verbatim (sliceNormalized normalized cursor span.extent.stop)
+  -- The command tail splits at the last *token*: `[cursor, lastTokenStop)` may still carry unclaimed
+  -- tail tokens (kept verbatim), while `[lastTokenStop, extent.stop)` is the last token's trailing run —
+  -- pure trivia (`Tree.triviaClean` §222), where the formatter trims trailing whitespace. `cursor` is a
+  -- claim's last-token stop, so `cursor ≤ lastTokenStop` always.
+  let lastTokenStop := (tree.source.tokens[span.last]?.map (·.stop)).getD span.extent.stop
+  let tailStart := max cursor lastTokenStop
+  return doc ++ .verbatim (sliceNormalized normalized cursor tailStart)
+             ++ .verbatim (trimTriviaWs (sliceNormalized normalized tailStart span.extent.stop))
 
 /-! ## The module header
 
@@ -2053,7 +2148,7 @@ byte, which is what says a layout that ran neither ran long nor stopped short. -
 def format (source : LosslessSource) (normalized : String) (width : Nat)
     (semantic : Option SemanticProjection := none) : IO String := do
   let header ← headerDoc normalized source.headerStop
-  return renderText width ((Tree.ofSource source semantic).document normalized header)
+  return normalizeEof (renderText width ((Tree.ofSource source semantic).document normalized header))
 
 end Printer
 

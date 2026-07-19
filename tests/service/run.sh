@@ -113,13 +113,16 @@ assert result["path"] == "tests/check/Findings.lean"
 for key in ("status", "findings", "diagnostics"):
     assert result[key] == batch_file[key], (key, result[key], batch_file[key])
 
-# Unsaved bytes are analyzed, but never written to the project.
-unsaved = clean_source.rstrip("\n") + "  \n"
+# Unsaved bytes are analyzed, but never written to the project. The unsaved buffer adds a duplicate
+# import (FMT005) the on-disk `Clean.lean` does not have, so a finding proves the analysis read the
+# editor's bytes, not the file's. (Trailing whitespace is the formatter's layout since `ruff-11c`
+# RDF-LAYOUT and no longer a rule, so it could not stand in for a finding here.)
+unsaved = "module\n\nimport LeanFmt.Basic\nimport LeanFmt.Basic\n\ndef cleanValue : Nat := 1\n"
 send(proc, {"id": "unsaved", "method": "analyze",
             "path": "tests/check/Clean.lean", "version": 1, "source": unsaved})
 changed = receive(proc)
 assert changed["ok"] and changed["result"]["status"] == "findings"
-assert [finding["code"] for finding in changed["result"]["findings"]] == ["FMT001"]
+assert [finding["code"] for finding in changed["result"]["findings"]] == ["FMT005"]
 
 # Duplicate/older versions are rejected before even malformed source can reach Lean.
 send(proc, {"id": "stale", "method": "analyze", "path": "tests/check/Clean.lean",

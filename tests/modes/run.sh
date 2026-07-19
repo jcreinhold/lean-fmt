@@ -7,6 +7,13 @@ cache_root="$repo_root/.lean-fmt-cache"
 source_file="$repo_root/tests/check/Findings.lean"
 layout_file="$repo_root/tests/check/Layout.lean"
 artifact_root="$repo_root/.lake/build/lean-fmt-artifacts"
+# RDF-LAYOUT regression fixtures carry trailing whitespace and so are built at runtime, never committed
+# (`git diff --check` rejects a checked-in file with trailing spaces, and editors strip them on save).
+# They live under the lake root because `format`/`fix` need the file there; untracked, invisible to the
+# printer corpus (`git ls-files 'LeanFmt/*.lean'`), removed by the trap.
+nosel_fixture="$repo_root/tests/modes/.rdf-layout-nosel.lean"
+string_fixture="$repo_root/tests/modes/.rdf-layout-string.lean"
+tail_fixture="$repo_root/tests/modes/.rdf-layout-tail.lean"
 
 # Both fixtures are edited in place below and both are tracked files, so restoring them is not
 # cleanup — it is the difference between a failing test and a dirty working tree the next run
@@ -18,7 +25,8 @@ restore() {
   if [[ -f "$work/Layout.lean" ]]; then
     cp -p "$work/Layout.lean" "$layout_file"
   fi
-  rm -rf "$cache_root" "$work"
+  rm -rf "$cache_root" "$work" \
+    "$nosel_fixture" "$string_fixture" "$tail_fixture"
 }
 trap restore EXIT
 
@@ -89,25 +97,28 @@ check = json.load(open(sys.argv[1]))
 formatted = json.load(open(sys.argv[2]))
 diff = open(sys.argv[3]).read()
 assert check["mode"] == "check" and check["changed"] == 1 and check["written"] == 0
-assert formatted["files"][0]["formatted"] == "module\n\ndef findingValue : Nat := 1\n"
-# `RFP-IMPL` rewrote `unifiedDiff` over `Lean.Diff.diff`. This golden used to pin the naive output,
-# which reprinted all three lines as `-` and then all three as `+` to change one of them.
+assert formatted["files"][0]["formatted"] == \
+    "module\n\nimport LeanFmt.Basic\n\ndef findingValue : Nat := 1\n"
+# `RFP-IMPL` rewrote `unifiedDiff` over `Lean.Diff.diff`; a naive whole-file rewrite would reprint
+# every line as `-` then `+`. Here the only change is the removed duplicate import (FMT005), so a real
+# line diff drops exactly one line and keeps the rest as ' ' context.
 #
-# Assembled from explicit pieces rather than written as a literal block: three of these lines end in
-# whitespace that is the assertion (the ' ' context marker on the blank line, and the two spaces that
-# are FMT001's actual violation), and a literal block would put trailing whitespace in this file for
-# `git diff --check` to reject and any editor to strip on save.
+# Assembled from explicit pieces rather than written as a literal block: the ' ' context marker turns
+# the two blank lines into lines that are a single trailing space, and a literal block would put
+# trailing whitespace in this file for `git diff --check` to reject and any editor to strip on save.
 #
 # The ' ' context lines are the whole point. They are what a diff has and a whole-file rewrite does
 # not, so reverting to one fails here.
 expected = "".join(line + "\n" for line in [
     "--- a/tests/check/Findings.lean",
     "+++ b/tests/check/Findings.lean",
-    "@@ -1,3 +1,3 @@",
+    "@@ -1,6 +1,5 @@",
     " module",
     " ",
-    "-def findingValue : Nat := 1" + "  ",
-    "+def findingValue : Nat := 1",
+    " import LeanFmt.Basic",
+    "-import LeanFmt.Basic",
+    " ",
+    " def findingValue : Nat := 1",
     "mode=diff files=1 findings=1 changed=1 written=0 broken=0 rejected=0 withheld_unsafe=0 "
     "suppressed=0 infrastructure_failures=0",
 ])
@@ -159,8 +170,9 @@ PY
 # `unifiedDiff` compares lines or *files*: `diffSource` reads the terminator into `finalNewline` and
 # drops it, so "end Alpha\n" and "end Alpha" both project to the line "end Alpha". A diff over bare
 # strings pairs them as unchanged and emits an empty hunk list — reporting `changed=1` above a diff
-# showing nothing, for the single edit `FMT002` exists to make. `DiffLine` carries the terminator into
-# the compared element to keep them unequal, and this test is why that type is not over-engineering.
+# showing nothing, for the single edit the formatter's final-newline normalization makes (a layout
+# concern since `ruff-11c` RDF-LAYOUT, no longer the retired FMT002). `DiffLine` carries the terminator
+# into the compared element to keep them unequal, and this test is why that type is not over-engineering.
 printf 'module\n\nnamespace Alpha\n\ndef layoutValue : Nat := 1\n\nend Alpha' >"$layout_file"
 run_expect 1 "$work/layout-nonl.diff" "$application" diff --root . --no-cache \
   tests/check/Layout.lean
@@ -179,7 +191,7 @@ expected = "".join(line + "\n" for line in [
     "-end Alpha",
     "\\ No newline at end of file",
     "+end Alpha",
-    "mode=diff files=1 findings=1 changed=1 written=0 broken=0 rejected=0 withheld_unsafe=0 "
+    "mode=diff files=1 findings=0 changed=1 written=0 broken=0 rejected=0 withheld_unsafe=0 "
     "suppressed=0 infrastructure_failures=0",
 ])
 assert diff == expected, repr(diff)
@@ -225,7 +237,7 @@ rm -rf "$cache_root"
 cat >"$work/per-file.toml" <<'EOF'
 select = ["default"]
 [per-file-ignores]
-"tests/check/Findings.lean" = ["FMT001"]
+"tests/check/Findings.lean" = ["FMT005"]
 EOF
 run_expect 0 "$work/projected-hit.json" env LEAN_FMT_DISABLE_ARTIFACT=1 \
   LEAN_FMT_TEST_ANALYZER=/usr/bin/false "$application" check --root . --json \
@@ -236,8 +248,9 @@ r = json.load(open(sys.argv[1]))
 assert r["findings"] == r["changed"] == 0 and r["files"][0]["status"] == "clean"
 PY
 
-# Applicability travels on the finding's fix. `Findings.lean`'s one FMT001 is safe by the byte-trivia
-# argument (`notes/01-model.md` §1), so `check` reports it with an edit and nothing is withheld.
+# Applicability travels on the finding's fix. `Findings.lean`'s one FMT005 is safe (an exact duplicate
+# import is idempotent — removing it preserves what the elaborator records), so `check` reports it with
+# an edit and nothing is withheld.
 run_expect 1 "$work/applic-check.json" "$application" check --root . --json --no-cache \
   tests/check/Findings.lean
 python3 - "$work/applic-check.json" <<'PY'
@@ -249,13 +262,14 @@ assert fix["edits"] and "range" in fix["edits"][0], fix
 assert r["withheldUnsafe"] == 0, r
 PY
 
-# `extend-unsafe-fixes` demotes FMT001 as a plan projection no rule reads (`notes/01-model.md` §2).
+# `extend-unsafe-fixes` demotes FMT005 as a plan projection no rule reads (`notes/01-model.md` §2).
 # The reported finding now says `unsafe`; default `fix` withholds it with no write; `--unsafe-fixes`
 # opts in and applies it. The one admission rule governs preview and write alike, so `check` above and
-# `fix` here agree on what would apply.
+# `fix` here agree on what would apply. The file is layout-clean, so a withheld FMT005 leaves the
+# canonical reflow with nothing to change — the write comes only from the admitted fix.
 cat >"$work/demote.toml" <<'EOF'
 select = ["default"]
-extend-unsafe-fixes = ["FMT001"]
+extend-unsafe-fixes = ["FMT005"]
 EOF
 run_expect 1 "$work/demote-check.json" "$application" check --root . --json --no-cache \
   --config "$work/demote.toml" tests/check/Findings.lean
@@ -287,8 +301,8 @@ cp -p "$work/Findings.lean" "$source_file"
 
 # A rule in both extend lists is a config contradiction, rejected before any file is read.
 cat >"$work/both-lists.toml" <<'EOF'
-extend-safe-fixes = ["FMT001"]
-extend-unsafe-fixes = ["FMT001"]
+extend-safe-fixes = ["FMT005"]
+extend-unsafe-fixes = ["FMT005"]
 EOF
 run_expect 2 "$work/both-lists.out" "$application" check --root . --json --no-cache \
   --config "$work/both-lists.toml" tests/check/Findings.lean
@@ -310,12 +324,12 @@ PY
 
 cat >"$work/ignore.toml" <<'EOF'
 select = ["default"]
-ignore = ["FMT001"]
+ignore = ["FMT005"]
 EOF
 run_expect 0 "$work/config-ignore.json" "$application" check --root . --json --no-cache \
   --config "$work/ignore.toml" tests/check/Findings.lean
 run_expect 1 "$work/cli-select.json" "$application" check --root . --json --no-cache \
-  --config "$work/ignore.toml" --select FMT001 tests/check/Findings.lean
+  --config "$work/ignore.toml" --select FMT005 tests/check/Findings.lean
 
 printf 'unknown = true\n' >"$work/unknown.toml"
 run_expect 2 "$work/unknown.out" "$application" check --root . --json --no-cache \
@@ -395,24 +409,24 @@ python3 - "$work/rules.json" <<'PY'
 import json, sys
 rules = json.load(open(sys.argv[1]))
 assert [r["code"] for r in rules] == \
-    ["FMT001", "FMT002", "FMT003", "FMT004",
+    ["FMT003", "FMT004",
      "FMT008", "FMT009", "FMT010", "FMT011", "FMT012", "FMT013",
      "FMT014", "FMT015", "FMT016", "FMT017",
      "FMT005", "FMT006", "FMT007"], [r["code"] for r in rules]
-# The formatting rules are fixable text rules; the source-security rules are report-only and their
-# own category. FMT003/FMT004 flag bytes the formatter cannot express by reformatting. The import
-# family is its own `imports` category: FMT005 (duplicate) carries a safe fix, FMT006 (redundant,
-# graph-derived) and FMT007 (order/grouping) are report-only.
+# The source-security rules are report-only and their own category: FMT003/FMT004 flag bytes the
+# formatter cannot express by reformatting. Trailing-whitespace/final-newline normalization is the
+# formatter's layout since `ruff-11c` RDF-LAYOUT, not a rule, so no `text`-category rule remains. The
+# import family is its own `imports` category: FMT005 (duplicate) carries a safe fix, FMT006
+# (redundant, graph-derived) and FMT007 (order/grouping) are report-only.
 by_code = {r["code"]: r for r in rules}
-assert all(by_code[c]["fixable"] and by_code[c]["category"] == "text" for c in ("FMT001", "FMT002"))
 assert all((not by_code[c]["fixable"]) and by_code[c]["category"] == "security"
            for c in ("FMT003", "FMT004"))
 assert by_code["FMT005"]["fixable"] and by_code["FMT005"]["category"] == "imports"
 assert all((not by_code[c]["fixable"]) and by_code[c]["category"] == "imports"
            for c in ("FMT006", "FMT007"))
-# FMT001-007 are source-tier and default-enabled: reported at source coordinates and projected onto
-# the `source` tier for the wire shape.
-source_default = ("FMT001", "FMT002", "FMT003", "FMT004", "FMT005", "FMT006", "FMT007")
+# FMT003/004 (source-security) and FMT005-007 (imports) are the default-enabled, source-tier rules:
+# reported at source coordinates and projected onto the `source` tier for the wire shape.
+source_default = ("FMT003", "FMT004", "FMT005", "FMT006", "FMT007")
 assert all(by_code[c]["defaultEnabled"] and by_code[c]["input"] == "source" for c in source_default)
 # FMT008-013 are the first syntax-tier rules and ship as preview: off by default, indexed on the
 # compiler projection (`input == "syntax"`), opted into only by an explicit `--select`. Their
@@ -525,5 +539,74 @@ PY
 rm .lake/build/lean-fmt-clean-sentinel
 metadata "$source_file" >"$work/source.final"
 cmp "$work/source.before" "$work/source.final"
+
+# --- RDF-LAYOUT: the canonical reflow is the sole, sound owner of trailing-horizontal-whitespace and
+#     final-newline normalization. `ruff-11c` retired FMT001 (trailing whitespace) and FMT002 (final
+#     newline) as rules and folded the normalization into `LeanFmt.Printer`, mirroring `ruff format`.
+#     Three persistent regressions pin what that ownership means. ---
+
+# 1. No rule selected: the reflow trims interior AND final-line trailing whitespace and adds exactly one
+#    final newline. The change is pure layout, so `format` carries no findings; `check` (which runs
+#    selected rules, never layout) reports the very same file clean.
+printf 'module\n\ndef alpha : Nat := 1   \n\ndef beta : Nat := 2   ' >"$nosel_fixture"
+run_expect 1 "$work/nosel-format.json" "$application" format --root . --json --no-cache \
+  tests/modes/.rdf-layout-nosel.lean
+python3 - "$work/nosel-format.json" <<'PY'
+import json, sys
+r = json.load(open(sys.argv[1]))
+assert r["mode"] == "format" and r["changed"] == 1 and r["findings"] == 0, r
+f, = r["files"]
+assert f["status"] == "would-format", f
+assert f["findings"] == [], f  # the reflow, not a rule, made the change
+assert f["formatted"] == "module\n\ndef alpha : Nat := 1\n\ndef beta : Nat := 2\n", repr(f["formatted"])
+PY
+run_expect 0 "$work/nosel-check.json" "$application" check --root . --json --no-cache \
+  tests/modes/.rdf-layout-nosel.lean
+python3 - "$work/nosel-check.json" <<'PY'
+import json, sys
+r = json.load(open(sys.argv[1]))
+assert r["changed"] == 0, r  # layout is not a rule, so check does not move
+f, = r["files"]
+assert f["status"] == "clean" and f["findings"] == [], f
+PY
+
+# 2. In-string trailing whitespace is token content, not inter-token trivia, so the trim is sound by
+#    construction: the string value survives `format` AND `fix` byte-for-byte, no rule reports it, and
+#    only the missing final newline is added. This is the case the retired FMT001 corrupted — it edited
+#    the string's bytes — and it now cannot recur.
+printf 'module\n\ndef stringWsValue : String := "alpha   \n  beta"' >"$string_fixture"
+run_expect 1 "$work/string-format.json" "$application" format --root . --json --no-cache \
+  tests/modes/.rdf-layout-string.lean
+python3 - "$work/string-format.json" <<'PY'
+import json, sys
+f, = json.load(open(sys.argv[1]))["files"]
+assert f["findings"] == [], f
+assert f["formatted"] == 'module\n\ndef stringWsValue : String := "alpha   \n  beta"\n', \
+    repr(f["formatted"])
+PY
+run_expect 0 "$work/string-fix.json" "$application" fix --root . --json --no-cache \
+  tests/modes/.rdf-layout-string.lean
+python3 - "$work/string-fix.json" "$string_fixture" <<'PY'
+import json, sys
+r = json.load(open(sys.argv[1]))
+assert r["written"] == 1, r
+f, = r["files"]
+assert f["status"] == "fixed", f
+data = open(sys.argv[2], "rb").read()
+# The string interior "alpha   " keeps its trailing spaces; the file gained exactly one final newline.
+assert data == b'module\n\ndef stringWsValue : String := "alpha   \n  beta"\n', repr(data)
+PY
+
+# 3. A verbatim tail after a terminal `#exit` is emitted byte-for-byte EXCEPT its own trailing
+#    horizontal whitespace, which is layout the reflow lays down: it is trimmed and the file gains a
+#    final newline. (`#exit` ends the command stream, so everything after it is uninterpreted tail.)
+printf 'module\n\ndef x : Nat := 1\n#exit\ntrailing garbage   ' >"$tail_fixture"
+run_expect 1 "$work/tail-format.json" "$application" format --root . --json --no-cache \
+  tests/modes/.rdf-layout-tail.lean
+python3 - "$work/tail-format.json" <<'PY'
+import json, sys
+f, = json.load(open(sys.argv[1]))["files"]
+assert f["formatted"] == "module\n\ndef x : Nat := 1\n#exit\ntrailing garbage\n", repr(f["formatted"])
+PY
 
 printf 'lean-fmt product mode integration tests passed\n'
