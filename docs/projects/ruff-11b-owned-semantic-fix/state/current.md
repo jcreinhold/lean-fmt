@@ -1,11 +1,34 @@
 ---
 kind: state
-first_unresolved: 01-spec
+first_unresolved: 02-impl
 ---
 
 # Current state
 
-**Freshly scaffolded — no prompt run yet.** This successor stack holds the one deferral `ruff-11`'s
+**ROS-SPEC verified — the interface is frozen (`notes/01-model.md`, `results/01-spec.md`).** A
+first-hand probe (`evidence/infotree_probe.lean`, output `evidence/01-infotree-probe.txt`) settled the
+one open question `ruff-11` §8 left: the whole-file info trees are reachable through the **same**
+`toSnapshotTree(snapshot).getAll` walk `analyzeExact` already runs for the message log, via each
+`Snapshot.infoTree?` — a **consumer-side fold** (`tree.getAll.filterMap (·.infoTree?)`), **not** the
+"distinct producer change" §8 assumed. The probe resolved both deprecated use-sites from two distinct
+command trees and read every owned-fact field (`range`, `declName`, `newName?`, `since?`, `text?`) plus
+the two design obligations it surfaces: exclude the declaration site (`isBinder = true`) and dedup by
+range (each use emits its `TermInfo` twice). This **refines** §8 (recorded honestly in
+`results/01-spec.md` §5) and makes ROS-IMPL smaller than §8 assumed; the capability split is still
+adopted, now justified by the fold + info-tree-retention cost rather than a producer rewrite.
+
+Frozen for ROS-IMPL: the owned `DeprecatedOccurrence` fact `(range, declName, newName?, since?, text?,
+fixable)`; the **bare-identifier fixable predicate** (`newName? = some`, non-binder, bare `.const`,
+unambiguous re-resolving source spelling — everything else stays report-only); **Design B** the
+capability split (`SemanticCaps {notations, diagnostics, occurrences}`, `Option` sub-fields with
+`none`=not-captured/must-miss vs `some`=captured-possibly-empty, `SemanticResult v6 → v7`,
+`cacheHitServes` requiring `demandedCaps ⊆ caps` beside the unchanged `tier.satisfies`); the `unsafe`
+rename riding `ruff-06`'s admission/conflict/transaction/re-elaboration path unchanged
+(`ruff-10b`'s non-source-tier discipline); and the demand trigger (`RulePlan.demandedCaps`, the
+surfaced-only `check` path and integrated builds untouched). Design A′ (stay monolithic) is the
+recorded rejected alternative.
+
+This successor stack holds the one deferral `ruff-11`'s
 RMR-SPEC named and no later stack owns: the **owned, fixable FMT014** (a validated `unsafe` rename of a
 bare-identifier deprecated-declaration occurrence to its replacement) and the **info-tree capability
 split** (`ruff-11-semantic-rules/notes/01-authority.md` §§6,8). FMT014 ships today as a *surfaced*,
@@ -26,7 +49,7 @@ seams rather than trusting recorded state.
 
 | Prompt | Claim | Status | Depends on |
 | --- | --- | --- | --- |
-| 01-spec | ROS-SPEC | planned | — |
+| 01-spec | ROS-SPEC | verified | — |
 | 02-impl | ROS-IMPL | planned | ROS-SPEC |
 | 03-final | ROS-FINAL | planned | ROS-IMPL |
 
