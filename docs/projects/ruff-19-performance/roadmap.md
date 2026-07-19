@@ -2,7 +2,7 @@
 kind: roadmap
 topic: "Ruff-class performance and resource regression system"
 main_results: [RPR-FINAL]
-prereq_stacks: [ruff-04-formatter-product, ruff-12-rule-lifecycle, ruff-17-lsp]
+prereq_stacks: [ruff-01-lossless-source, ruff-04-formatter-product, ruff-10b-syntax-fix-composition, ruff-12-rule-lifecycle, ruff-17-lsp]
 blueprint_tracked: false
 ---
 
@@ -18,11 +18,21 @@ Rebaseline the richer formatter/linter, prevent phase regressions, and decide me
 - Use microfixtures, adversarial files, the frozen representative mathlib sample, and named stress files; full mathlib remains reserved for final acceptance.
 - Test exactly one-worker/one-thread first, then at most two isolated sessions only if it improves end-to-end release time by at least 20% within 8 GiB, normal pressure, and 256 MiB swap.
 - Optimizations without meaningful end-to-end gain are removed unless they simplify the design.
+- **Revisit the module-artifact granularity `ruff-01` handed forward.** The flattened node table is
+  ~45.6% of a real artifact and no shipped consumer reads it (10.26× source on the frozen sample,
+  droppable to ~5.6×; `ruff-01-lossless-source/state/current.md`). On measured size, decide whether to
+  drop it or narrow it to the syntax boundaries a consumer actually needs — a schema revision under the
+  existing stale-miss discipline — or record why the full tree stays.
+- **Own the syntax-fix re-projection cost `ruff-10b` handed forward.** `fix` re-projects rendered
+  canonical text through a full frontend run (~5.78 s/module, Design A;
+  `ruff-10b-syntax-fix-composition/state/current.md`). If graduating syntax rules off preview
+  (`ruff-12`) makes that cost material, adopt Design B — a parse-only projection of the rendered text in
+  place of full re-elaboration — or record why Design A stays.
 
 ## Work order
 
 1. **RPR-SPEC — Freeze feature-complete workloads and budgets.** Record machine/toolchain/commit, fixture manifests, cache/build states, binary digest, phase schema, expected output digests, latency/RSS/pressure/swap gates, and stop rules.
-2. **RPR-IMPL — Remove repeated work and measure private concurrency.** Profile representation, layout, rule tiers, validation, rendering, watch, and LSP. Optimize proven critical paths. Only after single-session work, test exactly two isolated sessions under the adoption rule.
+2. **RPR-IMPL — Remove repeated work and measure private concurrency.** Profile representation, layout, rule tiers, validation, rendering, watch, and LSP. Optimize proven critical paths, including the two revisits the completion contract inherits — the `ruff-01` artifact-size/node-table granularity and the `ruff-10b` syntax-fix re-projection (Design A vs parse-only Design B). Only after single-session work, test exactly two isolated sessions under the adoption rule.
 3. **RPR-FINAL — Install durable performance gates.** Add fast per-commit micro/representative checks, scheduled heavier sample checks, saved raw profiles, digest reuse, variance policy, and a result note accepting or rejecting concurrency.
 
 ## Evidence and verification

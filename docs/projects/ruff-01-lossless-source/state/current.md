@@ -88,7 +88,9 @@ The frozen 62-module mathlib sample is profiled and every case reconstructs byte
   and no consumer reads it; dropping it would take the sample from 10.26x to roughly 5.6x. The
   roadmap requires syntax boundaries, so it ships. Whether the full flattened tree is the right
   granularity is now a question with a measured price on it, and it belongs to whichever stack first
-  needs those boundaries.
+  needs those boundaries. **This revisit is now owned by `ruff-19-performance`** (completion contract,
+  master roadmap row 19): the syntax-tier consumers (`ruff-10`/`ruff-10b`/`ruff-11`) shipped without
+  narrowing the granularity, so it is settled on measured size in the performance stack, not rediscovered.
 - Aggregate ratio on full mathlib is an extrapolation and the sample's 16.1x spread in token density
   is exactly why extrapolating a ratio is unsound. The per-element model carries across; the ratio
   does not.

@@ -15,7 +15,9 @@ independence (`--select` order writes byte-identical bytes). The frozen sample's
 (`FMT013` on `NoncommPiCoprod.lean:173`) was reviewed read-only via `format` and composes to
 `Commute m (ϕ i x)`, touching exactly that defect. Design B (parse-only) is not warranted for v1 — the
 re-projection is one gated frontend run (5.78s on that module) and the syntax rules are preview-only;
-revisiting belongs to `ruff-12`/`ruff-19`.
+revisiting belongs to `ruff-19-performance`, which now **owns** this in its completion contract (master
+roadmap row 19): `ruff-12`'s graduating syntax rules off preview is the cost *trigger*, but the
+parse-only swap is measured and adopted-or-rejected in the performance stack.
 
 RYC-FINAL applied one **prompt repair**: step 2 asked for a *file* with an overlapping syntax/source
 fix, but the shipped rules are disjoint by design (the only source `.safe` fixes — `FMT001`, `FMT002`,
