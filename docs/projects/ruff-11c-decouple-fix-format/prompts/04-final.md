@@ -14,21 +14,29 @@ reflowing; the two compose in both orders; the `ruff-11b` capability split and v
 the retired canonical-coordinate fix machinery is gone. Prove it through the product CLI and persistent
 tests at the owning layer, and by direct inspection of the surviving surface.
 
-Read `roadmap.md`, `notes/01-model.md`, `results/01-spec.md`, `results/02-impl.md`, `AGENTS.md`, and the
-current implementation and tests before changing an interface. Write characterization tests before any
-adjustment where the behavior is not already frozen.
+Read `roadmap.md`, `notes/01-model.md`, `results/01-spec.md`, `results/02-layout.md`, `results/03-impl.md`,
+`AGENTS.md`, and the current implementation and tests before changing an interface. Write characterization
+tests before any adjustment where the behavior is not already frozen. Note RDF-LAYOUT already retired
+FMT001/FMT002 and gave the formatter ownership of ws/newline; the surviving fix tiers are import (FMT005),
+syntax (a `.safe` fix), and semantic (FMT014), and no source-tier fixable rule remains.
 
 ## Target
 
 Drive, through the product `check`/`format`/`diff`/`fix` CLI and persistent tests at the owning layer:
 
-- **`format`/`diff` are fix-free at every tier.** On fixtures whose only defect is (a) a source-tier
-  fixable finding, (b) a syntax-tier `.safe` fix (FMT008-class), and (c) FMT014's semantic rename,
-  `format` reflows and `diff` previews the reflow, and **neither applies the fix** — the finding
-  survives a post-`format` `check`. Applies with and without `--unsafe-fixes`.
+- **`format`/`diff` are fix-free at every tier.** On fixtures whose only defect is (a) an import-tier
+  fixable finding (FMT005), (b) a syntax-tier `.safe` fix (FMT013-class), and (c) FMT014's semantic
+  rename, `format` reflows and `diff` previews the reflow, and **neither applies the fix** — the finding
+  survives a post-`format` `check`. Applies with and without `--unsafe-fixes`. (No source-tier fixable
+  rule survives RDF-LAYOUT, so ws/newline is checked separately below as formatter layout.)
 - **`fix` applies at original coordinates, no reflow.** Each of (a)/(b)/(c), admitted, is rewritten by
   `fix` at the file's own bytes; the surrounding layout is **unchanged** (a badly-laid-out but
   otherwise-only-that-defect fixture keeps its layout); a fresh `check` of the written file is clean.
+- **Formatter owns ws/newline as layout.** `format` on a fixture with trailing horizontal whitespace and
+  no final newline trims and terminates it with **no rule selected** and with no lint finding reported
+  for it; the in-string-trailing-whitespace fixture keeps its string value under both `format` and `fix`
+  (the retired-FMT001 corruption cannot recur); `git grep` shows FMT001/FMT002 absent from live code and
+  tests.
 - **Coordinate exactness.** A fix on a fixture with an interior layout gap the printer would close
   (e.g. `namespace     Alpha`, `RFP-SPEC`'s measured four-byte deletion) lands on the correct original
   bytes — because it now indexes the same normalized string it is reported against, never reflowed text.
@@ -82,7 +90,7 @@ re-`check` — and confirm no `Environment`/`InfoTree`/`Position`/`FileMap` cros
 - Run `tests/boundary/run.sh` and inspect every changed module boundary manually.
 - From the KanProofs tool environment, run the generic stack structural checker and
   `write_next.py --check` for `docs/projects/ruff-11c-decouple-fix-format`.
-- Run `git diff --check` and read all output before marking RDF-FINAL verified. Write `results/03-final.md`
+- Run `git diff --check` and read all output before marking RDF-FINAL verified. Write `results/04-final.md`
   with exact commands, raw outputs or evidence locators, decisions changed during execution, and
   remaining uncertainty; update `state/current.md` after reading the checks, then regenerate
   `state/next.md`.

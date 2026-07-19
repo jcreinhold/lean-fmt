@@ -50,10 +50,22 @@ and the FMT005 canonical-coordinate fix; `AGENTS.md`; and the live seams before 
     is **false** for `fix`.
   - **`check`** — unchanged: report only, no published patch.
 - Characterize first-hand whether the canonical reflow already subsumes source-tier *formatting* fixes
-  (trailing whitespace FMT001, final newline, etc.) — including inside verbatim-fallback regions — so
-  `format`'s reflow-only output needs no source-rule-fix application. Freeze the answer; if the reflow
-  does **not** fully subsume a source-tier normalization in some region, record it as a known
-  `format`/`fix` divergence rather than papering over it.
+  (trailing whitespace FMT001, final newline, etc.) — including inside verbatim-fallback regions. The
+  answer, settled first-hand and frozen here: **it does not.** `Printer.format` emits the last token's
+  trailing run and every verbatim-token slot verbatim (`Printer.lean:222-236`), so today's clean
+  `format` output for trailing-whitespace/final-newline comes **entirely** from FMT001/FMT002's fixes
+  composed onto the canonical patch (`renderCanonicalText`'s `runSourceRules text`). Prove this with a
+  probe that deselects FMT001/FMT002 and shows `format` leaving trailing whitespace and no final newline.
+  Also record the pre-existing FMT001 soundness defect the probe surfaces: FMT001's byte-level trim
+  deletes trailing whitespace *inside multi-line string literals*, a silent value change the validator
+  does not catch. **Freeze the resolution (product decision, owner-confirmed):** trailing-whitespace and
+  final-newline normalization move **into the formatter's layout** (RDF-LAYOUT extends the canonical
+  trivia model to trim only the whitespace trivia the printer emits — string/token content untouched by
+  construction — and to guarantee one final newline), and **FMT001/FMT002 retire as lint rules**, so a
+  fix-free `format` is still whitespace/newline clean and the string-corruption defect cannot recur. Name
+  the retirement's blast radius (FMT001/FMT002 are the fixable-source vehicle across the persistent
+  suite; FMT003/FMT004 stay report-only, keeping the default source-only fast path) and hand the printer
+  change + test migration to RDF-LAYOUT.
 - **Freeze `format`'s report policy explicitly** — this is a product decision, not an implementation
   detail. Confirm first-hand that `FileReport.findings` is drawn from `result.findings` at original
   coordinates in every mode (`prepareFile:856`), so the report is already invariant under the patch

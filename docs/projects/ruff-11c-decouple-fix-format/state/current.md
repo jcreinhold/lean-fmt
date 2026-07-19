@@ -7,13 +7,17 @@ first_unresolved: 01-spec
 
 This stack is planned and has not begun. It decouples lint-fix from formatting: `format`/`diff` reflow
 only (no rule fix applied or previewed) and `fix`/`check --fix` apply admitted fixes at the file's own
-original coordinates (no reflow), so a user composes them as `ruff check --fix && ruff format`.
+original coordinates (no reflow), so a user composes them as `ruff check --fix && ruff format`. As part of
+that split the formatter takes sole ownership of trailing-whitespace/final-newline normalization (layout,
+not a rule) and FMT001/FMT002 retire — matching `ruff format`, where whitespace/newline cleanup is
+formatter behavior.
 
 Its external prerequisite stacks are `ruff-06-fix-safety`, `ruff-09-import-rules`,
 `ruff-10b-syntax-fix-composition`, and `ruff-11b-owned-semantic-fix`, all verified. This stack is the
-forward unwinding of the canonical-coordinate fix composition those stacks built: it keeps every fix
-(source, import FMT005, syntax `.safe`, semantic FMT014) and the `ruff-11b` capability split, and
-re-homes the fixes onto original coordinates and onto `fix` alone. A `git revert` of 10b/11b was
+forward unwinding of the canonical-coordinate fix composition those stacks built: it keeps every
+surviving fix and the `ruff-11b` capability split, and
+re-homes the surviving fixes (import FMT005, syntax `.safe`, semantic FMT014 — FMT001/FMT002 retire into
+the formatter) onto original coordinates and onto `fix` alone. A `git revert` of 10b/11b was
 rejected — it would delete their fix capabilities while leaving the coupling (FMT005 still rides
 `canonical.findings`, `format` still applies fixes) intact, and the decoupled end state is a state no
 prior commit occupied. Before starting, confirm those prerequisite roadmaps are verified and their live
@@ -22,16 +26,20 @@ implementation still matches recorded state.
 | Prompt | Claim | Status | Depends on |
 | --- | --- | --- | --- |
 | 01-spec | RDF-SPEC | planned | — |
-| 02-impl | RDF-IMPL | planned | RDF-SPEC |
-| 03-final | RDF-FINAL | planned | RDF-IMPL |
+| 02-layout | RDF-LAYOUT | planned | RDF-SPEC |
+| 03-impl | RDF-IMPL | planned | RDF-LAYOUT |
+| 04-final | RDF-FINAL | planned | RDF-IMPL |
 
 ## Scope
 
-- **In scope:** splitting `prepareFile`'s single canonical patch into a layout patch (`format`/`diff`,
-  no fixes) and a fix patch (`fix`, admitted fixes at original coordinates); `RunMode.rendersCanonical
-  := false` for `fix`; moving FMT014 occurrence capture and every rule fix onto the base
-  (original-coordinate) analysis; retiring `reprojectCanonical`'s fix/occurrence role, the 11b reproject
-  parameters, `patchDuplicateFindings`, and the `result.canonical?`-as-patch-source branch.
+- **In scope:** moving trailing-whitespace/final-newline normalization **into the formatter's layout**
+  (the canonical printer trims only the whitespace trivia it emits and guarantees one final newline) and
+  **retiring FMT001/FMT002** as lint rules, migrating their test vehicle onto surviving rules (RDF-LAYOUT);
+  splitting `prepareFile`'s single canonical patch into a layout patch (`format`/`diff`, no fixes) and a
+  fix patch (`fix`, admitted fixes at original coordinates); `RunMode.rendersCanonical := false` for
+  `fix`; moving FMT014 occurrence capture and every rule fix onto the base (original-coordinate) analysis;
+  retiring `reprojectCanonical`'s fix/occurrence role, the 11b reproject parameters,
+  `patchDuplicateFindings`, and the `result.canonical?`-as-patch-source branch.
 - **Out of scope:** a build-free/parse-only `layout` subcommand (a separate future stack — this stack
   does not change the frontend coupling: `format` and `fix` still require the file to elaborate); rule
   authoring and lifecycle (`ruff-12`); config discovery (`ruff-13`); a `fix --diff` preview beyond the

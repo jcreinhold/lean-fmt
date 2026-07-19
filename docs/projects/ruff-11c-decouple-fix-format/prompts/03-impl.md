@@ -1,7 +1,7 @@
 ---
 claim_id: RDF-IMPL
 status: planned
-depends_on: [RDF-SPEC]
+depends_on: [RDF-LAYOUT]
 ---
 
 # Implement the layout/fix split
@@ -14,10 +14,18 @@ is unchanged. Move every rule fix and FMT014's occurrence capture onto the base 
 analysis, retire the canonical-coordinate fix machinery, and keep the `ruff-11b` capability split and
 the `ruff-06` validator/transaction intact. Remove the retired path; do not leave a parallel one.
 
-Read `roadmap.md`, `results/01-spec.md` (the frozen interface and the chosen design), `notes/01-model.md`,
-`AGENTS.md`, and the current implementation and tests before changing an interface. Write or update the
-characterization tests that pin `format`-applies-no-fix and `fix`-at-original-coordinates before the
-implementation where the behavior is not already frozen.
+Read `roadmap.md`, `results/01-spec.md` (the frozen interface and the chosen design), `results/02-layout.md`
+(ws/newline is now the formatter's layout and FMT001/FMT002 are retired — do **not** treat them as live
+rules or as the fix vehicle here), `notes/01-model.md`, `AGENTS.md`, and the current implementation and
+tests before changing an interface. Write or update the characterization tests that pin
+`format`-applies-no-fix and `fix`-at-original-coordinates before the implementation where the behavior is
+not already frozen.
+
+RDF-LAYOUT precedes this prompt: the printer already owns trailing-whitespace/final-newline normalization
+and FMT001/FMT002 no longer exist, so the surviving fix vehicles are **import** (FMT005), **syntax** (a
+`.safe` fix such as FMT013), and **semantic** (FMT014). There is no source-tier fixable rule left; a
+default `format`/`check` still resolves to `requiredTier == .source` via FMT003/FMT004 (report-only) and
+keeps the source-only shortcut.
 
 ## Target
 
@@ -53,10 +61,11 @@ implementation where the behavior is not already frozen.
   transaction, output re-elaboration validator, and stale-source pre-check; every rule's report; and
   the invariant that `check`/`format`/`diff` never write source.
 - Add or update persistent regression tests at the owning layer (`LeanFmtTest.lean`, `tests/modes`,
-  `tests/check`, `tests/syntax`, `tests/semantic`, `tests/lossless`): a mixed fixture (bad layout **and**
-  an admitted fixable finding) where `format` reflows but leaves the finding and `fix` applies the
-  finding at original coordinates without reflowing; FMT005, a syntax `.safe` fix, and FMT014's rename
-  each applied by `fix` at original coordinates and absent from `format`; `diff` equals a `format`
+  `tests/check`, `tests/syntax`, `tests/semantic`, `tests/imports`, `tests/lossless`): a mixed fixture
+  (bad layout **and** an admitted fixable finding — an import/syntax/semantic fix, since no source-tier
+  fixable rule survives RDF-LAYOUT) where `format` reflows but leaves the finding and `fix` applies the
+  finding at original coordinates without reflowing; FMT005 (import), a syntax `.safe` fix, and FMT014's
+  rename each applied by `fix` at original coordinates and absent from `format`; `diff` equals a `format`
   preview.
 
 ## Plan
@@ -85,7 +94,7 @@ implementation where the behavior is not already frozen.
 - Run `tests/boundary/run.sh` and inspect every changed module boundary manually.
 - From the KanProofs tool environment, run the generic stack structural checker and
   `write_next.py --check` for `docs/projects/ruff-11c-decouple-fix-format`.
-- Run `git diff --check` and read all output before marking RDF-IMPL verified. Write `results/02-impl.md`
+- Run `git diff --check` and read all output before marking RDF-IMPL verified. Write `results/03-impl.md`
   with commands, outputs or evidence locators, decisions changed during execution, files changed, checks
   read, and remaining uncertainty; update `state/current.md` after reading the checks, then regenerate
   `state/next.md`.
