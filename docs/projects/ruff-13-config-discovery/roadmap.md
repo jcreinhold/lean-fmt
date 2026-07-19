@@ -2,7 +2,7 @@
 kind: roadmap
 topic: "Hierarchical and Git-aware configuration"
 main_results: [RCD-FINAL]
-prereq_stacks: [ruff-04-formatter-product, ruff-12-rule-lifecycle]
+prereq_stacks: [ruff-04-formatter-product, ruff-11d-format-in-place, ruff-12-rule-lifecycle]
 blueprint_tracked: false
 ---
 
@@ -17,7 +17,7 @@ Add predictable hierarchical configuration, explicit inheritance, Git ignore sup
 - For each file, the closest recognized config applies; explicit `extend` composes a parent config with cycle detection and paths resolved relative to their owning file.
 - Separate top-level discovery, `[format]`, and `[lint]` settings while providing a documented migration from the current flat schema.
 - The `[format]` section exposes the formatter's now-functional `line-width` (03 phase-2 made the margin observable; it is the compile-time constant `canonicalWidth := 100` today, `Application.lean:339`). Promoting it to a runtime per-project override changes formatted output without changing the binary, so the resolved margin MUST be folded into the `configuration` cache-identity digest (`Project.configurationIdentity`, `Cache.lean:207`) in the same commit — otherwise cached `CanonicalText` goes stale under an identity that never mentioned width (`ruff-04-formatter-product/state/current.md` "The group trigger fired"; `ruff-03-language-formatting/results/08-reflow-expr.md`).
-- Respect `.gitignore`, `.ignore`, repository excludes, and global ignores by default; explicit paths bypass them unless `force-exclude` is enabled.
+- Respect `.gitignore`, `.ignore`, repository excludes, and global ignores by default; explicit paths bypass them unless `force-exclude` is enabled. Since `ruff-11d-format-in-place`, `format` **writes** the selected set in place by default, so selection and exclude here govern which files are *published*, not merely reported: `force-exclude`, ignore precedence, and the `include`-filtered no-arg set MUST be verified against a `format` write (a file the config excludes is never written), not only against `check`/`lint`. The no-arg write of exactly `config.includesPath` is `ruff-11d` FIP-FINAL's baseline that this stack generalizes.
 - `config show PATH --json` explains provenance and effective values deterministically.
 
 ## Work order

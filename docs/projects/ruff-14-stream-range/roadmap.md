@@ -2,7 +2,7 @@
 kind: roadmap
 topic: "stdin/stdout and range formatting"
 main_results: [RSF-FINAL]
-prereq_stacks: [ruff-04-formatter-product, ruff-13-config-discovery]
+prereq_stacks: [ruff-04-formatter-product, ruff-11d-format-in-place, ruff-13-config-discovery]
 blueprint_tracked: false
 ---
 
@@ -14,7 +14,7 @@ Support editor- and pipeline-friendly stdin/stdout operation plus syntax-aware r
 
 ## Completion contract
 
-- `-` reads UTF-8 source from stdin and `--stdin-filename` supplies project/config/module identity; stdin never writes source or persistent disk-state cache entries.
+- `-` reads UTF-8 source from stdin and `--stdin-filename` supplies project/config/module identity; stdin never writes source or persistent disk-state cache entries. This stdin→stdout path is the raw-bytes-to-stdout surface that `ruff-11d-format-in-place` deliberately left unbuilt when it removed the old `=== path (N bytes) ===` stdout dump and made file-target `format` write in place: the default `format` publishes, `-`/`--stdin-filename` streams, and `format --check`/`diff` are the non-writing file-target previews. Do not reintroduce a file-target stdout escape hatch here.
 - Range requests use byte or line/column positions with a documented encoding and expand to a structurally safe formatting boundary — one that is **reflow-stable**, not merely parse-safe: phase-2 reflow can rebreak the enclosing construct, so the boundary must contain every line the reflow of that unit can move.
 - Output includes the actual formatted range and source map; because reflow can rebreak the enclosing unit, the **reported actual range may span lines the caller did not edit**, and text outside that reported range is byte-identical except explicitly documented boundary whitespace.
 - Whole-file formatting and full-range formatting are equivalent.
