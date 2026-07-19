@@ -1,9 +1,22 @@
 ---
 kind: state
-first_unresolved: 03-acceptance
+first_unresolved: none
 ---
 
 # Current state
+
+**RMR-FINAL is verified** (`results/03-acceptance.md`); the stack `ruff-11-semantic-rules` is complete
+for its shipped scope. The four surfaced semantic rules FMT014–FMT017 are accepted end to end through the
+product `check`/`fix` CLI: an elaboration error under a semantic `--select` is reported `broken`, never
+silently omitted (`prepareFile` emits a `broken` FileReport whenever `analysis.result?` is `none`, tier-
+independently — `Application.lean:823-825`, `Cli.lean:213`); a mixed `--select FMT001 --select FMT014`
+reports both tiers' findings in one byte-sorted run; a `fix` over a report-only semantic rule writes
+nothing (byte-identical source). Cache separation holds by schema (`v5`) and toolchain identity
+(`Cache.lean:167-168`), with demand-gating proven both directions. The diagnostics capture is additive
+in memory — capture-on peak RSS is at parity with capture-off (637 vs 636 MiB on the named stress
+fixture), inside the 8 GiB envelope. The acceptance harness is `tests/semantic/run.sh` §RMR-FINAL. The
+owned/fixable FMT014 autofix and the Design-B capability split remain explicitly deferred, owed to a
+later stack, not to this one (`notes/01-authority.md` §§8,11).
 
 **RMR-IMPL is verified** (`results/02-implementation.md`). The four surfaced semantic-tier rules
 FMT014–FMT017 ship end to end on the `Tier.semantic` / `ModuleArtifact` foundation: `analyzeExact`
@@ -47,7 +60,7 @@ together with the Design-B capability split. See `notes/01-authority.md` §§3,6
 | --- | --- | --- | --- |
 | 01-authority | RMR-SPEC | verified | — |
 | 02-implementation | RMR-IMPL | verified | RMR-SPEC |
-| 03-acceptance | RMR-FINAL | planned | RMR-IMPL |
+| 03-acceptance | RMR-FINAL | verified | RMR-IMPL |
 
 ## Blockers and prerequisites
 

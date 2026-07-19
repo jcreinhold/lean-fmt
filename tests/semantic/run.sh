@@ -178,4 +178,125 @@ assert matched >= 4, f"oracle matched only {matched} diagnostics"
 print("diagnostics differential: matched", matched, "kinds", sorted(got_kinds))
 PY
 
-printf 'lean-fmt semantic differential + demand-gating tests passed\n'
+# --- ruff-11 RMR-FINAL: end-to-end acceptance -----------------------------------------------------
+# Three product behaviors under a semantic `--select`, proven through the real `check`/`fix` CLI on a
+# throwaway project (a project so error and trailing-whitespace fixtures need not be committed — `git
+# diff --check` forbids trailing whitespace in tracked files):
+#   1. an elaboration ERROR is REPORTED broken, never silently omitted (`prompts/03` headline stop-rule);
+#   2. a mixed source+semantic selection reports both tiers' findings in one run;
+#   3. `fix` over a report-only semantic rule writes nothing.
+# Plus a named-stress cost measurement: the diagnostics capture is additive (capture-on peak RSS ≈
+# capture-off), well inside the 8 GiB envelope. Full mathlib is forbidden here (`prompts/03` Check).
+proj="$work/proj"
+mkdir -p "$proj/acc"
+cp lean-toolchain "$proj/lean-toolchain"
+cat >"$proj/lakefile.lean" <<'LEAN'
+import Lake
+open Lake DSL
+package "ruff11acc"
+lean_lib Demo where
+  roots := #[`Demo]
+  globs := #[Glob.one `Demo]
+LEAN
+# A clean library file so the package builds; the acceptance fixtures sit outside its glob (like
+# `tests/scale`'s standalone source) so an intentionally-broken fixture never fails `lake build`.
+cat >"$proj/Demo.lean" <<'LEAN'
+module
+
+def demo : Nat := 1
+LEAN
+# Elaboration ERROR fixture (a type mismatch): `analyzeExact` returns `broken`. With a semantic rule
+# selected the run demands `.semantic`, and a broken analysis must still surface as a reported file.
+cat >"$proj/acc/Broken.lean" <<'LEAN'
+module
+
+def bad : Nat := true
+LEAN
+# Mixed-tier fixture: a deprecated use (FMT014, semantic) AND trailing whitespace (FMT001, source) on
+# the `useOld` line — the trailing spaces are literal, written via printf.
+{
+  printf 'module\n\n'
+  printf 'def newName : Nat := 1\n'
+  printf '@[deprecated newName (since := "2024-01-01")]\n'
+  printf 'def oldName : Nat := 0\n'
+  printf 'def useOld : Nat := oldName   \n'
+} >"$proj/acc/Mixed.lean"
+LEAN_NUM_THREADS=1 lake -d "$proj" build Demo >/dev/null
+
+check_exit() {  # run a command, capture its exit code into $ACC_EXIT (never aborts the harness)
+  set +e; "$@"; ACC_EXIT=$?; set -e
+}
+
+# 1. Silent-omission-on-error. A semantic selection over a file that fails to elaborate reports the
+# file `broken` (exit 1, `broken == 1`), never dropping it from `files`.
+check_exit env LEAN_NUM_THREADS=1 "$application" check --root "$proj" --json --no-cache \
+  --select FMT014 "$proj/acc/Broken.lean" >"$work/acc-broken.json" 2>/dev/null
+if [[ $ACC_EXIT -ne 1 ]]; then
+  printf 'check over a broken file under a semantic selection: expected exit 1, got %s\n' "$ACC_EXIT" >&2
+  cat "$work/acc-broken.json" >&2; exit 1
+fi
+python3 - "$work/acc-broken.json" <<'PY'
+import json, sys
+r = json.load(open(sys.argv[1]))
+files = {f["path"]: f["status"] for f in r["files"]}
+assert files == {"acc/Broken.lean": "broken"}, files       # present and broken, NOT omitted
+assert r["broken"] == 1 and not r["infrastructureFailures"], r
+PY
+
+# 2. Mixed-tier selection. `--select FMT001 --select FMT014` demands `.semantic` (the max of the two
+# tiers), runs the whole registry over the semantic facts, and reports both a semantic and a source
+# finding on the one file — byte-sorted, independent of registry order.
+check_exit env LEAN_NUM_THREADS=1 "$application" check --root "$proj" --json --no-cache \
+  --select FMT001 --select FMT014 "$proj/acc/Mixed.lean" >"$work/acc-mixed.json" 2>/dev/null
+python3 - "$work/acc-mixed.json" <<'PY'
+import json, sys
+r = json.load(open(sys.argv[1]))
+f, = r["files"]
+codes = [x["code"] for x in f["findings"]]
+assert "FMT014" in codes, codes    # deprecated use — the semantic tier
+assert "FMT001" in codes, codes    # trailing whitespace — the source tier, in the same report
+# The semantic finding preserves the compiler's own deprecation message.
+dep = next(x for x in f["findings"] if x["code"] == "FMT014")
+assert "deprecated" in dep["message"].lower(), dep
+print("mixed-tier: one run reported", sorted(set(codes)))
+PY
+
+# 3. Fix over a report-only semantic rule writes nothing. FMT014 carries no fix, so a `fix` selecting
+# only it publishes no patch: the file is byte-identical afterward and the report shows no write.
+cp "$proj/acc/Mixed.lean" "$work/mixed.orig"
+check_exit env LEAN_NUM_THREADS=1 "$application" fix --root "$proj" --json --no-cache \
+  --select FMT014 "$proj/acc/Mixed.lean" >"$work/acc-fix.json" 2>/dev/null
+python3 - "$work/acc-fix.json" <<'PY'
+import json, sys
+r = json.load(open(sys.argv[1]))
+assert r["written"] == 0 and r["changed"] == 0, r    # report-only: nothing published
+PY
+cmp -s "$work/mixed.orig" "$proj/acc/Mixed.lean" \
+  || { echo 'fix over a report-only semantic rule modified the source' >&2; exit 1; }
+
+# 4. Cost — the diagnostics capture is additive. `$work/don.json` (capture=1) and `$work/doff.json`
+# (capture=0) above already prove the source projection is byte-identical either way; here we measure
+# peak RSS with `/usr/bin/time -l` (Darwin) and assert capture-on stays inside the envelope and does
+# not balloon over capture-off. Best-effort: if the tool/field is unavailable the check is skipped.
+if /usr/bin/time -l true >/dev/null 2>&1; then
+  rss_of() {  # peak RSS (bytes) of one `__analyze-exact` run at capture flag $1
+    /usr/bin/time -l env LEAN_NUM_THREADS=1 lake env "$application" __analyze-exact \
+      "$work/dsetup.json" "$diag" "$diag" "$maxb" "$1" >/dev/null 2>"$work/time$1.txt"
+    grep "maximum resident set size" "$work/time$1.txt" | awk '{print $1}'
+  }
+  on_rss=$(rss_of 1); off_rss=$(rss_of 0)
+  python3 - "$on_rss" "$off_rss" <<'PY'
+import sys
+on, off = int(sys.argv[1]), int(sys.argv[2])
+gib = 8 * 1024**3
+assert on < gib, f"capture-on peak RSS {on} exceeds the 8 GiB envelope"
+# Additive: capturing the already-collected MessageLog must not multiply memory. 1.5x is generous
+# headroom over the observed ~parity (both ~636 MiB on the named stress fixture).
+assert on <= off * 3 // 2, f"capture-on RSS {on} ballooned over capture-off {off}"
+print(f"cost: capture-on peak RSS {on//1048576} MiB vs capture-off {off//1048576} MiB (additive)")
+PY
+else
+  echo "cost: /usr/bin/time -l unavailable — RSS additivity check skipped"
+fi
+
+printf 'lean-fmt semantic differential + demand-gating + RMR-FINAL acceptance tests passed\n'
