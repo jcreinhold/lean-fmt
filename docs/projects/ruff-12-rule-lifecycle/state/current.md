@@ -14,8 +14,10 @@ shipped only the selector half of §7. On the promotion question the model left 
 FMT008–FMT017 preview rule graduates to stable or default-on**: default-on is the frontend-free
 security/correctness floor (FMT003–007) and the preview rules are opinionated syntax/semantic-tier
 rules whose meanings are not yet frozen; their correctness was reviewed on the frozen sample by ruff-10/
-ruff-11, and a fresh re-run was blocked by local mathlib4 toolchain drift (v4.33.0-rc1 vs this build's
-v4.32.0), not run against the maintainer's working tree.
+ruff-11, and — after the project toolchain was bumped to v4.33.0-rc1 to match the local mathlib4 — a
+fresh re-run of all ten preview rules over the 62-module sample confirmed it (0 broken, 0 infra, one
+FMT013 true-positive, zero false positives), corroborating the no-promotion decision on measured
+evidence rather than policy alone.
 
 **RRL-IMPL is verified** (`results/02-generation.md`; design `notes/01-schema.md` §12). The registry now
 carries `lifecycle`/`explanation`/`examples`/`replacement?` on every `RuleInfo` plus the FMT001/FMT002

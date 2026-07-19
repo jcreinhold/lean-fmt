@@ -54,14 +54,25 @@ precision." Decision: **FMT008–FMT017 stay preview / default-off.** Reasons, i
    new code; these rules are newly integrated and carry no forcing reason to freeze now. `preview`
    honestly signals "may still evolve."
 
-**Fresh frozen-sample re-run: attempted, blocked by environment.** `experiments/run-lifecycle-precision-sample.sh`
+**Fresh frozen-sample re-run: now performed at `v4.33.0-rc1`.** `experiments/run-lifecycle-precision-sample.sh`
 (new; extends ruff-10's `run-syntax-rule-sample.sh` to all ten preview rules with the `--preview` gate)
-refuses to run because the local `~/Code/mathlib4` has advanced to `leanprover/lean4:v4.33.0-rc1`
-(HEAD `8c79cb4`) while this build and the pinned review commit are `v4.32.0` (`783ccda`); lean-fmt's
-toolchain guard correctly rejects the mismatch. I did not check out the pinned commit — that mutates the
-maintainer's working tree. The decision therefore rests on the owning stacks' recorded reviews at the
-matching toolchain, which remain authoritative, plus the two product-policy reasons above; the new script
-reproduces the run once `mathlib4` is at the pinned commit.
+was originally blocked because the local `~/Code/mathlib4` had advanced to `leanprover/lean4:v4.33.0-rc1`
+(HEAD `8c79cb4`) while this build was `v4.32.0` (`783ccda`) and lean-fmt's toolchain guard correctly
+rejected the mismatch. That mismatch was resolved by bumping lean-fmt's own toolchain to
+`v4.33.0-rc1` to match `mathlib4` (the maintainer's working version), rather than checking `mathlib4`
+back to the pinned `v4.32.0` commit — so the run measures precision at the toolchain the project now
+ships on, not a reproduction of the owning stacks' `v4.32.0` reviews. With both aligned and mathlib's
+`v4.33.0-rc1` olean cache in place (`lake exe cache get`), the script ran clean over all 62 modules:
+**0 broken, 0 infrastructure failures, and exactly one finding** — a single true-positive FMT013
+(redundant nested parentheses) in `Mathlib/GroupTheory/NoncommPiCoprod.lean` (`((ϕ i x))`, where the
+outer parens wrap a complete application already sitting as one argument). Every self-linted rule
+(FMT008–012, FMT014–017) found nothing, and FMT013 — the one preview rule with no mathlib linter
+equivalent — surfaced one genuine hit and no false positives. The measured false-positive count is
+therefore **zero across the sample**, corroborating rather than altering the promotion decision: the
+factors above (default-on cost/opinionation, premature-freeze) already decided it, and the fresh
+numbers confirm the preview set is low-noise. `experiments/results/` is gitignored, so the raw
+`findings.tsv`/`status.tsv`/`summary.txt` live under
+`experiments/results/lifecycle-precision-sample-v4.33.0-rc1/` locally, not in the tree.
 
 ## Commands
 
@@ -74,7 +85,7 @@ $ tests/boundary/run.sh                          # Rules.lean out of the plugin 
 $ tests/modes/run.sh  tests/check/run.sh         # passed
 $ tests/syntax/run.sh tests/semantic/run.sh      # passed
 $ tests/service/run.sh tests/lossless/run.sh tests/compiler/run.sh tests/scale/run.sh   # passed
-$ experiments/run-lifecycle-precision-sample.sh  # blocked: mathlib4 toolchain drift (v4.33.0-rc1 vs v4.32.0)
+$ STAMP=v4.33.0-rc1 experiments/run-lifecycle-precision-sample.sh  # 62 modules: 0 broken, 0 infra, 1 finding (FMT013 TP), 0 FP
 ```
 
 Evidence cited: `docs/projects/ruff-10-syntax-rules/results/03-acceptance.md` (frozen-sample review,
@@ -85,10 +96,11 @@ FMT008–013), `docs/projects/ruff-11-semantic-rules/` (FMT014–017).
 - **Retired-only suppression inertness was unimplemented** (RRL-IMPL delivered only the §7 selector
   half). Implemented here rather than deferred — it is the frozen non-breaking floor and a small,
   well-specified fix.
-- **The promotion decision is policy-driven, not run-driven.** I attempted a fresh frozen-sample run to
-  make it evidence-first, but the local corpus's toolchain drift blocked it; the decision is unchanged
-  because the deciding factors (default-on cost/opinionation, premature-freeze) do not depend on a new
-  false-positive count, and the owning-stack reviews already supply that count.
+- **The promotion decision is policy-driven, and now also run-confirmed.** The fresh frozen-sample run
+  was initially blocked by toolchain drift, so the decision was first made on policy (default-on
+  cost/opinionation, premature-freeze) plus the owning-stack reviews. After the project's toolchain was
+  bumped to `v4.33.0-rc1`, the run completed (0 FP, 1 FMT013 TP over 62 modules) and corroborates the
+  decision without changing it.
 
 ## Remaining uncertainty
 
@@ -99,5 +111,7 @@ FMT008–013), `docs/projects/ruff-11-semantic-rules/` (FMT014–017).
 - **Optional retired-only suppression advisory** (§7/§13, a distinct "names a retired rule" code) is
   deliberately not added; the non-breaking floor (silent acceptance) is the frozen requirement and is now
   met.
-- **Fresh whole-sample precision numbers** await a `mathlib4` checkout at the pinned `v4.32.0` commit; the
-  script is committed for that run.
+- **Fresh whole-sample precision numbers** are now measured at `v4.33.0-rc1` (0 FP, 1 FMT013 TP over 62
+  modules), not at the pinned `v4.32.0` commit; the project moved up to match `mathlib4` rather than
+  pinning it back. The owning-stack `v4.32.0` reviews remain the record for that toolchain; a `v4.32.0`
+  reproduction would still require a `mathlib4` checkout at `783ccda`.
