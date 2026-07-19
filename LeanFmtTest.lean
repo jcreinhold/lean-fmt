@@ -487,6 +487,32 @@ ignore = [\"FMT004\"]\n\
       | throw <| IO.userError "the unfixable axis rejected a valid plan"
     ensure (unfix.selected == #["FMT013"] && unfix.fixableSelected.isEmpty)
       "unfixable did not withhold FMT013's fix while keeping it selected"
+    -- RRL-FINAL precedence matrix — the remaining lattice edges beyond the cases above.
+    -- (a) Tie → ignore: an exact select and an exact ignore of the same code are equal specificity, so
+    -- ignore wins and the rule is dropped.
+    let .ok tie := config.rulePlan { select := #["FMT004"], ignore := #["FMT004"] }
+      | throw <| IO.userError "an exact select/ignore tie was rejected"
+    ensure (tie.activeCount == 0) "an exact select/ignore tie did not resolve to ignore"
+    -- (b) `all` and `default` both expand to the stable set here (every stable rule is default-on),
+    -- and neither admits a preview rule without the gate; `all` + preview unlocks the whole registry.
+    let stableCount := (allRuleInfos.filter (·.lifecycle == .stable)).size
+    let .ok allPlan := config.rulePlan { select := #["all"] }
+      | throw <| IO.userError "the 'all' selector was rejected"
+    let .ok defPlan := config.rulePlan { select := #["default"] }
+      | throw <| IO.userError "the 'default' selector was rejected"
+    ensure (allPlan.activeCount == stableCount && defPlan.activeCount == stableCount)
+      "all/default did not expand to exactly the stable set without preview"
+    let .ok allPreview := config.rulePlan { select := #["all"], preview := true }
+      | throw <| IO.userError "'all' under preview was rejected"
+    ensure (allPreview.activeCount == allRuleInfos.size)
+      "'all' under preview did not unlock the whole registry"
+    -- (c) `extend-select` always adds, across the CLI-owns-selection boundary: with no CLI `select`, the
+    -- config selection (security minus the config's exact `ignore = [FMT004]`) still applies, and a CLI
+    -- extend-select adds FMT013 on top (needing the preview gate). Result: FMT003 + FMT013.
+    let .ok extended := config.rulePlan { extendSelect := #["FMT013"], preview := true }
+      | throw <| IO.userError "extend-select over the config selection was rejected"
+    ensure (extended.selected == #["FMT003", "FMT013"])
+      "extend-select did not add to the config selection while keeping the config ignore"
     IO.FS.writeFile configPath "unknown = true\n"
     let rejected ← try
       discard <| FormatterConfig.load directory
@@ -1760,6 +1786,28 @@ private def testSuppression : IO Unit := do
   let mixed := Suppression.apply (facts #[mkDir .file (some #["FMT013", "FMT999"]) ⟨0, bytes.size⟩]) bytes #[f013]
   ensure (mixed.suppressed == 1 && mixed.unused.map (·.code) == #["FMT900"])
     "a mixed live/dead code list did not both suppress and report"
+
+  -- `ruff-12` §7 non-breaking floor: a retired/reserved code is inert in a suppression — it suppresses
+  -- nothing but is never flagged unused. A retired-ONLY directive raises no FMT900 at all (it is
+  -- silently accepted), where a genuinely-unknown code (FMT999 above) would.
+  let retiredOnly := Suppression.apply (facts #[mkDir .file (some #["FMT001"]) ⟨0, bytes.size⟩]) bytes #[f013]
+  ensure (retiredOnly.kept.map (·.code) == #["FMT013"] && retiredOnly.suppressed == 0
+      && retiredOnly.unused.isEmpty)
+    "a retired-only suppression was not inert (should suppress nothing and raise no FMT900)"
+
+  -- A directive mixing a retired code with a live one that FIRES: the live code suppresses, the retired
+  -- code stays inert, and nothing is flagged unused (no dead live code).
+  let retiredLive := Suppression.apply (facts #[mkDir .file (some #["FMT001", "FMT013"]) ⟨0, bytes.size⟩]) bytes #[f013]
+  ensure (retiredLive.suppressed == 1 && retiredLive.unused.isEmpty)
+    "a retired+live directive that fired still flagged something unused"
+
+  -- A directive mixing a retired code with a live one that is DEAD (out of scope): normal per-code
+  -- analysis reports only the live dead code, never the inert retired one.
+  let retiredDead := Suppression.apply (facts #[mkDir .line (some #["FMT001", "FMT013"]) ⟨7, 31⟩]) bytes #[f013]
+  ensure (retiredDead.unused.map (·.code) == #["FMT900"]) "a retired+dead directive did not flag the dead live code"
+  ensure ((retiredDead.unused[0]!.message.splitOn "FMT013").length == 2
+      && (retiredDead.unused[0]!.message.splitOn "FMT001").length == 1)
+    "the unused report must name the dead live code (FMT013) and never the inert retired one (FMT001)"
 
   -- The empty finding sits exactly on a file scope's upper bound and must still be caught.
   let eof := Suppression.apply (facts #[mkDir .file none ⟨0, 44⟩]) bytes #[f014]

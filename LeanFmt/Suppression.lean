@@ -362,19 +362,24 @@ def apply (facts : SuppressionFacts) (bytes : ByteArray) (findings : Array Findi
     | some codes =>
       let used := codes.filter fun code =>
         findings.any fun f => f.code == code && inScope directive.scopeRange f
-      let dead := codes.filter fun code => !used.contains code
+      -- A reserved/retired code (`ruff-12` §7 non-breaking floor) is **inert**: it suppresses nothing
+      -- but is never flagged unused, so it stays out of the dead set that raises `FMT900`. A
+      -- retired-only directive therefore raises nothing (dead is empty); a mixed directive keeps normal
+      -- per-code analysis for its live codes, and a trim preserves the inert retired codes in place.
+      let dead := codes.filter fun code => !used.contains code && !isReservedCode code
+      let keep := codes.filter fun code => used.contains code || isReservedCode code
       if used.isEmpty then
-        -- every code dead: remove the whole directive
+        -- every live code dead: remove the whole directive (a retired-only directive has empty `dead`)
         unless dead.isEmpty do
           unused := unused.push (unusedFinding directive.commentRange
             s!"unused suppression directive: {String.intercalate ", " dead.toList} suppress nothing here"
             { applicability := .safe, edits := #[{ range := removalRange bytes directive.commentRange, replacement := "" }] })
       else if !dead.isEmpty then
-        -- some codes live: trim the list to the used codes
+        -- some codes live: trim the list to the used (and inert retired) codes
         unused := unused.push (unusedFinding directive.commentRange
           s!"unused suppression codes: {String.intercalate ", " dead.toList}"
           { applicability := .safe,
-            edits := #[{ range := directive.commentRange, replacement := rewriteDirective directive.scope used }] })
+            edits := #[{ range := directive.commentRange, replacement := rewriteDirective directive.scope keep }] })
   return { kept, suppressed, unused }
 
 end Suppression

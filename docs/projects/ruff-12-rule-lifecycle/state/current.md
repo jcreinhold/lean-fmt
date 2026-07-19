@@ -1,9 +1,21 @@
 ---
 kind: state
-first_unresolved: 03-acceptance
+first_unresolved: none
 ---
 
 # Current state
+
+**RRL-FINAL is verified** (`results/03-acceptance.md`) — the ruff-12 stack is complete. The acceptance
+audit ran the metadata invariants, executable examples, the full selector-precedence matrix,
+preview/deprecation migrations, suppression interaction, and documentation link checks. It found and
+fixed one frozen-spec gap — retired-only suppression inertness (`notes/01-schema.md` §7): a directive
+naming only reserved/retired codes is now inert (suppresses nothing, no FMT900), where RRL-IMPL had
+shipped only the selector half of §7. On the promotion question the model left open (§4/§12), **no
+FMT008–FMT017 preview rule graduates to stable or default-on**: default-on is the frontend-free
+security/correctness floor (FMT003–007) and the preview rules are opinionated syntax/semantic-tier
+rules whose meanings are not yet frozen; their correctness was reviewed on the frozen sample by ruff-10/
+ruff-11, and a fresh re-run was blocked by local mathlib4 toolchain drift (v4.33.0-rc1 vs this build's
+v4.32.0), not run against the maintainer's working tree.
 
 **RRL-IMPL is verified** (`results/02-generation.md`; design `notes/01-schema.md` §12). The registry now
 carries `lifecycle`/`explanation`/`examples`/`replacement?` on every `RuleInfo` plus the FMT001/FMT002
@@ -54,7 +66,7 @@ mathlib is not development evidence.
 | --- | --- | --- | --- |
 | 01-schema | RRL-SPEC | verified | — |
 | 02-generation | RRL-IMPL | verified | RRL-SPEC |
-| 03-acceptance | RRL-FINAL | planned | RRL-IMPL |
+| 03-acceptance | RRL-FINAL | verified | RRL-IMPL |
 
 ## Blockers and prerequisites
 

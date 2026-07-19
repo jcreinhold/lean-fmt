@@ -54,6 +54,20 @@ assert not any(c in ("FMT900", "FMT901") for c in codes), f"docstring text parse
 assert file["suppressed"] == 0, f"a docstring suppressed something: {file['suppressed']}"
 PY
 
+# --- Retired-only suppression is inert (`ruff-12` §7 non-breaking floor). `RetiredInert.lean` names a
+#     retired code (FMT001) in a directive over a file with a real duplicate-import finding (FMT005).
+#     The directive suppresses nothing and, crucially, is NOT flagged unused (FMT900) — a legacy config
+#     that still names a retired code keeps working silently. FMT005 reports; suppressed stays 0. ---
+run_expect 1 "$work/retired.json" "$application" check --root . --json --no-cache \
+  tests/suppression/RetiredInert.lean
+python3 - "$work/retired.json" <<'PY'
+import json, sys
+file, = json.load(open(sys.argv[1]))["files"]
+codes = [f["code"] for f in file["findings"]]
+assert codes == ["FMT005"], f"a retired-only suppression was not inert: {codes}"
+assert file["suppressed"] == 0, f"a retired-only directive suppressed something: {file['suppressed']}"
+PY
+
 # --- Nested syntax: ignore-next inside a namespace suppresses the inner finding. The finding is a
 #     redundant nested paren (FMT013, a syntax rule opted into with `--select`), since after RDF-LAYOUT
 #     no default finding lands on a `def` inside a namespace — the retired FMT001 used to. ---

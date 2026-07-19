@@ -161,4 +161,28 @@ explain_expect FMT999 2 ""
 # --- Generated-docs drift: the pages regenerate identically from the registry --------------------
 env "$application" docs --check >/dev/null
 
+# --- Documentation link check (RRL-FINAL): every relative link in the generated tree resolves, every
+# live rule has a page, and the index links each one. Catches a page/link that names a file the
+# generator did not write (a dangling doc reference).
+env "$application" rules --json >"$work/rules2.json"
+python3 - "$repo_root/docs/rules" "$work/rules2.json" <<'PY'
+import json, os, re, sys
+docs_dir, rules_json = sys.argv[1], sys.argv[2]
+codes = [r["code"] for r in json.load(open(rules_json))]
+index = open(os.path.join(docs_dir, "index.md")).read()
+# Every relative markdown link target in the index exists on disk.
+for target in re.findall(r"\]\(([^)]+)\)", index):
+    if target.startswith(("http://", "https://", "#")):
+        continue
+    assert os.path.exists(os.path.join(docs_dir, target)), f"index links a missing file: {target}"
+# Every live rule has a page and the index links it.
+for code in codes:
+    assert os.path.exists(os.path.join(docs_dir, f"{code}.md")), f"no page for live rule {code}"
+    assert f"({code}.md)" in index, f"index does not link {code}"
+# The generated config schema is referenced and present.
+assert os.path.exists(os.path.join(docs_dir, "schema.json")), "schema.json missing"
+assert "schema.json" in index, "index does not mention schema.json"
+print(f"doc links OK: {len(codes)} rule pages, index + schema resolve")
+PY
+
 echo "lean-fmt catalog executable-example tests passed"
