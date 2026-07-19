@@ -214,7 +214,9 @@ diagnostics are produced by `analyzeExact` in the reporting process, exactly lik
 
 A report-only FMT014 ships in RMR-IMPL. Its **structured unsafe autofix** (replace the occurrence text
 with the deprecation's `newName?`) is deferred, and this section freezes it so the later prompt does
-not rediscover it:
+not rediscover it. **The deferral is owned by `ruff-11b-owned-semantic-fix`** (roadmap row 11b), the
+successor stack that holds this enhancement together with the §6 Design-B capability split — the
+semantic analog of `ruff-10b` holding `ruff-06`'s deferred fix-composition wiring:
 
 - The substrate is real and verified: `deprecatedAttr.getParam? env declName : Option DeprecationEntry`
   returns `{newName?, since?, text?}` from `Environment` data, retained for imported **public** decls
