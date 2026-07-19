@@ -18,6 +18,10 @@ tail_fixture="$repo_root/tests/modes/.rdf-layout-tail.lean"
 # duplicate import, FMT005). It imports `LeanFmt.Basic`, so it must live under the lake root; `fix`
 # mutates it, so it is a fresh scratch, untracked, removed by the trap.
 mixed_fixture="$repo_root/tests/modes/.rdf-impl-mixed.lean"
+# RDF-FINAL confluence fixtures: two scratch copies of the mixed source driven through the two
+# composition orders (`fix; format` and `format; fix`) to prove both reach the same fixed-point bytes.
+comp_a_fixture="$repo_root/tests/modes/.rdf-final-comp-a.lean"
+comp_b_fixture="$repo_root/tests/modes/.rdf-final-comp-b.lean"
 
 # Both fixtures are edited in place below and both are tracked files, so restoring them is not
 # cleanup — it is the difference between a failing test and a dirty working tree the next run
@@ -30,7 +34,8 @@ restore() {
     cp -p "$work/Layout.lean" "$layout_file"
   fi
   rm -rf "$cache_root" "$work" \
-    "$nosel_fixture" "$string_fixture" "$tail_fixture" "$mixed_fixture"
+    "$nosel_fixture" "$string_fixture" "$tail_fixture" "$mixed_fixture" \
+    "$comp_a_fixture" "$comp_b_fixture"
 }
 trap restore EXIT
 
@@ -678,6 +683,68 @@ python3 - "$work/tail-format.json" <<'PY'
 import json, sys
 f, = json.load(open(sys.argv[1]))["files"]
 assert f["formatted"] == "module\n\ndef x : Nat := 1\n#exit\ntrailing garbage\n", repr(f["formatted"])
+PY
+
+# --- RDF-FINAL: composition confluence. The two decoupled operations touch disjoint concerns — `fix`
+#     rewrites rule-defect bytes at original coordinates and never reflows; `format` reflows layout and
+#     never applies a fix — so composing them in either order reaches the SAME fixed point. This is a
+#     genuine confluence, not an assumed one: both orders are materialized and their bytes compared.
+#     (`format` is a stdout preview here, never a writer, so order B captures its `formatted` to disk
+#     before the next step. `fix` is the only writer.) ---
+canonical='module\n\nimport LeanFmt.Basic\n\nnamespace Alpha\n\ndef mixedValue : Nat := 1\n\nend Alpha\n'
+source='module\n\nimport LeanFmt.Basic\nimport LeanFmt.Basic\n\nnamespace     Alpha\n\ndef mixedValue : Nat := 1\n\nend Alpha\n'
+
+# Order A — `fix` then `format`: fix dedups at original coords (layout still dirty), then format reflows.
+printf "$source" >"$comp_a_fixture"
+run_expect 0 "$work/comp-a-fix.json" "$application" fix --root . --no-cache tests/modes/.rdf-final-comp-a.lean
+run_expect 1 "$work/comp-a-format.json" "$application" format --root . --json --no-cache \
+  tests/modes/.rdf-final-comp-a.lean
+
+# Order B — `format` then `fix`: format reflows (both imports kept) to a materialized file, then fix
+# dedups that reflowed file at its own coords. Because format never writes, its preview is captured to
+# disk first; the fixed file is then already layout-canonical.
+printf "$source" >"$comp_b_fixture"
+run_expect 1 "$work/comp-b-format1.json" "$application" format --root . --json --no-cache \
+  tests/modes/.rdf-final-comp-b.lean
+python3 - "$work/comp-b-format1.json" "$comp_b_fixture" <<'PY'
+import json, sys
+f, = json.load(open(sys.argv[1]))["files"]
+open(sys.argv[2], "w").write(f["formatted"])   # materialize the preview: format never writes on its own
+PY
+run_expect 0 "$work/comp-b-fix.json" "$application" fix --root . --no-cache tests/modes/.rdf-final-comp-b.lean
+
+# Both orders converge to the identical canonical bytes. `format` never writes, so order A's converged
+# form is its stdout preview (`formatted`), while order B's is the on-disk file after `format`-materialize
+# then `fix`. Compare the two representations against each other and against the expected canonical bytes.
+CANON="$canonical" python3 - "$work/comp-a-format.json" "$comp_b_fixture" <<'PY'
+import json, os, sys
+canonical = os.environ["CANON"].encode().decode("unicode_escape")
+a, = json.load(open(sys.argv[1]))["files"]
+b_bytes = open(sys.argv[2]).read()
+assert a["formatted"] == canonical, ("order A (fix;format) diverged", repr(a["formatted"]))
+assert b_bytes == canonical, ("order B (format;fix) diverged", repr(b_bytes))
+assert a["formatted"] == b_bytes, "the two composition orders are not confluent"
+PY
+# Order B's converged file is a fixed point of BOTH operations: a fresh `format` is idempotent (clean,
+# nothing to reflow) and a fresh `fix` is idempotent (nothing to apply).
+run_expect 0 "$work/comp-b-format2.json" "$application" format --root . --json --no-cache \
+  tests/modes/.rdf-final-comp-b.lean
+python3 - "$work/comp-b-format2.json" <<'PY'
+import json, sys
+f, = json.load(open(sys.argv[1]))["files"]
+assert f["status"] == "clean" and f["formatted"] is None, ("order B not a format fixed point", f)
+PY
+# Order A's fixed file on disk is deduped-but-layout-dirty; order B's is fully converged. A post-
+# composition `check` of each is clean — no fix remains either way.
+run_expect 0 "$work/comp-a-check.json" "$application" check --root . --json --no-cache \
+  tests/modes/.rdf-final-comp-a.lean
+run_expect 0 "$work/comp-b-check.json" "$application" check --root . --json --no-cache \
+  tests/modes/.rdf-final-comp-b.lean
+python3 - "$work/comp-a-check.json" "$work/comp-b-check.json" <<'PY'
+import json, sys
+for p in sys.argv[1:3]:
+    f, = json.load(open(p))["files"]
+    assert f["status"] == "clean" and f["findings"] == [], (p, f)
 PY
 
 printf 'lean-fmt product mode integration tests passed\n'

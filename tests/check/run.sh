@@ -328,6 +328,45 @@ assert all("fix" not in f for f in file["findings"]), file["findings"]
 assert r["withheldUnsafe"] == 0 and r["written"] == 0, r
 PY
 
+# --- RDF-FINAL case 9: the decoupling is a net efficiency win, not just neutral. The `LEAN_FMT_TEST_ANALYZER`
+#     probe (a disabled frontend child) turns "did this path run the frontend?" into an observable: a run
+#     that reaches the frontend surfaces exactly one infrastructure failure, a run that does not stays
+#     green. `--no-cache` throughout so a cache hit never masks the path under test. ---
+
+# (a) `fix` on a source-only selection (FMT005, the duplicate import) takes the source shortcut in
+#     `availableAnalysis`: module evidence is current, no directive sigil, so the fix is served from the
+#     normalized string and applied at original coordinates with NO frontend child and NO artifact. With
+#     both the analyzer and the artifact disabled the fix still succeeds — proof it consulted neither.
+cp -p tests/check/Findings.lean "$work/Findings.effbak"
+run_expect 0 "$work/eff-fix-shortcut.json" env LEAN_FMT_DISABLE_ARTIFACT=1 \
+  LEAN_FMT_TEST_ANALYZER=/usr/bin/false "$application" fix --root . --json --no-cache \
+  --select FMT005 tests/check/Findings.lean
+python3 - "$work/eff-fix-shortcut.json" <<'PY'
+import json, sys
+r = json.load(open(sys.argv[1]))
+assert r["infrastructureFailures"] == [], ("source-only fix reached the frontend", r)
+assert r["written"] == 1, ("source-only fix did not apply the dedup", r)
+PY
+cp -p "$work/Findings.effbak" tests/check/Findings.lean
+
+# (b) A syntax `--select` adds NO frontend run to `format`. Since `ruff-11c` RDF-IMPL retired
+#     `reprojectCanonical`, `format` no longer does a second re-projection pass to land a syntax fix in
+#     canonical coordinates (it applies no fix). `format` still owes its single `analyzeExact` run — it
+#     demands `.semantic` for notation-aware layout, which the plugin artifact never carries — but that
+#     run is the SAME one whether or not a syntax rule is selected: plain `format` and `format --select
+#     FMT013` each reach the frontend exactly once (one infrastructure failure), never twice.
+for label in plain fmt013; do
+  args=(format --root . --json --no-cache)
+  [ "$label" = fmt013 ] && args+=(--select FMT013)
+  run_expect 2 "$work/eff-format-$label.json" env LEAN_FMT_TEST_ANALYZER=/usr/bin/false \
+    "$application" "${args[@]}" tests/check/Findings.lean
+  python3 - "$work/eff-format-$label.json" "$label" <<'PY'
+import json, sys
+r = json.load(open(sys.argv[1]))
+assert len(r["infrastructureFailures"]) == 1, (sys.argv[2], "not exactly one frontend run", r)
+PY
+done
+
 snapshot_metadata "${sources[@]}" >"$work/after"
 cmp "$work/before" "$work/after"
 

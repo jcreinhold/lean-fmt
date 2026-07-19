@@ -1,6 +1,6 @@
 ---
 kind: state
-first_unresolved: 04-final
+first_unresolved: none
 ---
 
 # Current state
@@ -34,22 +34,33 @@ architecture gate, `write_next.py --check`, and `git diff --check` are green. Th
 (`tests/printer/run.sh`'s stale-evidence census) is pre-existing and out of scope, carried from
 RDF-LAYOUT.
 
-Next unresolved is 04-final (RDF-FINAL), the adversarial acceptance sweep: re-verify the nine enumerated
-cases in `notes/01-model.md §9` (coordinate/UTF-8/multi-edit shapes, `diff`=`format`-preview,
-fix-no-reflow, format-applies-nothing) and freeze the decoupled interface.
+RDF-FINAL (04) is verified (`results/04-final.md`): the decoupling is accepted adversarially. All nine
+enumerated cases in `notes/01-model.md §9` are driven through the product CLI and pinned by persistent
+tests at the owning layer — including two new acceptances: composition **confluence** (`fix; format` and
+`format; fix` reach the identical fixed point, `tests/modes/run.sh`) and **efficiency** (`fix --select
+FMT005` takes the source shortcut consulting neither frontend nor artifact; `format --select FMT01x` reaches
+the frontend exactly once, never the retired second re-projection, `tests/check/run.sh`). One code change
+fell out of the acceptance: a source-false comment in `availableAnalysis` that mis-described `format` as
+taking the artifact path — corrected to the truth that `format` demands `.semantic` for notation layout and
+takes its single frontend run (the artifact branch serves non-rendering `check`/`fix` syntax runs). No
+behavior changed. The retirement is proven by grep; the frozen-sample review is read-only and frontend-free
+(the sole fixable finding's UTF-8 shape is reproduced by the `NestedParenUtf8` miniature on the real parser).
+
+**The stack is complete.** `format`/`diff` reflow only; `fix`/`check --fix` apply admitted fixes at original
+coordinates; a user composes them as `ruff check --fix && ruff format`.
 
 Its external prerequisite stacks are `ruff-06-fix-safety`, `ruff-09-import-rules`,
-`ruff-10b-syntax-fix-composition`, and `ruff-11b-owned-semantic-fix`, all verified. This stack is the
-forward unwinding of the canonical-coordinate fix composition those stacks built: it keeps every
-surviving fix and the `ruff-11b` capability split, and re-homes the surviving fixes onto original
-coordinates and onto `fix` alone.
+`ruff-10b-syntax-fix-composition`, and `ruff-11b-owned-semantic-fix`, all verified. This stack was the
+forward unwinding of the canonical-coordinate fix composition those stacks built: it kept every surviving
+fix and the `ruff-11b` capability split, and re-homed the surviving fixes onto original coordinates and onto
+`fix` alone.
 
 | Prompt | Claim | Status | Depends on |
 | --- | --- | --- | --- |
 | 01-spec | RDF-SPEC | verified | — |
 | 02-layout | RDF-LAYOUT | verified | RDF-SPEC |
 | 03-impl | RDF-IMPL | verified | RDF-LAYOUT |
-| 04-final | RDF-FINAL | planned | RDF-IMPL |
+| 04-final | RDF-FINAL | verified | RDF-IMPL |
 
 ## Scope
 

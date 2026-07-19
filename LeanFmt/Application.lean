@@ -474,11 +474,14 @@ private def availableAnalysis (plan : RulePlan) (renderCanonical applies : Bool)
     let normalized := (LosslessSource.normalize snapshot.source).1
     return some <| SemanticAnalysis.success normalized (runSourceRules normalized)
   else if let some artifact := officialArtifact? then
-    -- A canonical-rendering syntax run (`format --select FMT01x`) takes this artifact path since
-    -- `ruff-11c` RDF-IMPL: it renders `canonical.text` for layout and reports the artifact projection's
-    -- syntax findings at original coordinates. The old syntax branch that declined here to force an
-    -- `ExactRun` re-projection retired with `reprojectCanonical` — no fix is computed at canonical
-    -- coordinates, so no second frontend run is owed.
+    -- A non-rendering syntax/semantic run with a current artifact — `check`/`fix --select FMT01x` — is
+    -- served here from the plugin projection, no frontend run. Since `ruff-11c` RDF-IMPL there is no
+    -- longer a syntax branch that declines here to force an `ExactRun` re-projection: it retired with
+    -- `reprojectCanonical` (no fix is computed at canonical coordinates), so a syntax `--select` costs
+    -- one artifact read, never a second frontend pass. A *rendering* run (`format`/`diff`) never reaches
+    -- this branch: it demands `.semantic` for notation-aware layout (`RulePlan.demandedTier`), the plugin
+    -- artifact carries no `semantic` (`ruff-05b`), so the driver fetches no artifact for it and it takes
+    -- its single `analyzeExact` run — the same one it always owed, with no added run for the selection.
     return some (← canonicalAnalysis snapshot renderCanonical { artifact? := some artifact })
   else
     return none
