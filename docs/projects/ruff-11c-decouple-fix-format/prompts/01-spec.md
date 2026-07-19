@@ -54,9 +54,26 @@ and the FMT005 canonical-coordinate fix; `AGENTS.md`; and the live seams before 
   `format`'s reflow-only output needs no source-rule-fix application. Freeze the answer; if the reflow
   does **not** fully subsume a source-tier normalization in some region, record it as a known
   `format`/`fix` divergence rather than papering over it.
-- Freeze what retires and why it is safe: `reprojectCanonical`'s fix-carrying and occurrence/semantic
-  re-capture role and the `(captureSemantic captureOccurrences)` reproject parameters; the canonical
-  `patchDuplicateFindings`/`patchImports` recomputation; the `result.canonical?`-as-patch-source branch.
+- **Freeze `format`'s report policy explicitly** — this is a product decision, not an implementation
+  detail. Confirm first-hand that `FileReport.findings` is drawn from `result.findings` at original
+  coordinates in every mode (`prepareFile:856`), so the report is already invariant under the patch
+  change. Freeze the decision that `format`/`diff` **keep reporting** their original-coordinate findings
+  (only the patch loses fixes), and name the rejected alternative (`format` reports nothing about lint,
+  Ruff-style) with the reason it is deferred rather than taken here.
+- Freeze what retires and why it is safe, naming each edit site so the implementer cannot leave a
+  wasted path live:
+  - `reprojectCanonical` (`:418`) and its `(captureSemantic captureOccurrences)` parameters — deleted
+    entirely (it rewrites only `canonical.findings` at `:427`, which only the patch reads, so a fix-free
+    `format` has no consumer). Confirm there is no render-only survivor.
+  - `availableAnalysis`'s `renderCanonical && requiredTier == .syntax` branch (`:511-517`), which forces
+    the ExactRun+reproject path — removed, so `format --select FMT01x` takes the artifact path (`:518`)
+    and reports original-coordinate findings without a second frontend run.
+  - `RulePlan.demandedCaps` (consulted at `:493`) — **rewired** off `renderCanonical` onto the apply
+    signal, so a `fix` selecting FMT014 with an admissible fix demands the info-tree walk and a
+    `format --select FMT014` demands nothing. Specify the exact trigger.
+  - `patchDuplicateFindings`/canonical `patchImports` (`:819-828`); the `result.canonical?`-as-patch-source
+    branch of `prepareFile`; and any now-dead `CanonicalText.findings`/`renderCanonicalText` source-rule
+    surface that only fed the patch.
   State where FMT014's occurrences are captured after the change (the base `analyzeExact`, original
   coordinates) and that every fix now indexes the same string it is reported against — so the
   `RFP-SPEC`-measured coordinate gap (`namespace     Alpha` deleting four bytes) can no longer move a

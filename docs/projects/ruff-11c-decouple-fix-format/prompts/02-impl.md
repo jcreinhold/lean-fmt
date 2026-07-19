@@ -29,11 +29,20 @@ implementation where the behavior is not already frozen.
     on `canonical.text` and carries no rule fix; a **fix** patch bases on `normalized` and carries the
     admitted fixes from the original-coordinate `result.findings ++ reportImports`. Admission stays
     `Applicability.admitted unsafeFixes`; the conflict/transaction/validator path is unchanged.
-  - Retire `ExactRun.reprojectCanonical`'s fix-carrying and occurrence/semantic re-capture role and its
-    `(captureSemantic captureOccurrences)` parameters, `patchDuplicateFindings`/the canonical
-    `patchImports` recomputation, and the `result.canonical?`-as-patch-source branch. If
-    `reprojectCanonical` (or `canonicalAnalysis`'s syntax re-projection) has no remaining render-only
-    caller, remove it; if it retains a render-only role, narrow it to that.
+  - Delete `ExactRun.reprojectCanonical` (`:418`) and its `(captureSemantic captureOccurrences)`
+    parameters outright — it rewrites only `canonical.findings`, which only the patch reads, so a
+    fix-free `format` has no consumer (confirm no render-only survivor before deleting). Also retire
+    `patchDuplicateFindings`/the canonical `patchImports` recomputation (`:819-828`), the
+    `result.canonical?`-as-patch-source branch of `prepareFile`, and any now-dead
+    `CanonicalText.findings`/`renderCanonicalText` source-rule surface that only fed the patch.
+  - **Remove `availableAnalysis`'s `renderCanonical && requiredTier == .syntax` branch (`:511-517`)** so
+    `format --select FMT01x` takes the artifact path (`:518`) instead of forcing a second frontend run
+    for canonical findings it now discards. Verify `format`/`diff` no longer trigger an ExactRun on a
+    syntax selection, and that `fix` (now `renderCanonical := false`) becomes eligible for the
+    source-only shortcut (`:495-510`) on a source-only selection.
+  - **Rewire `RulePlan.demandedCaps` (`:493`)** off `renderCanonical` onto the apply signal: a `fix`
+    selecting FMT014 with an admissible fix demands `occurrences`; a `format --select FMT014` demands
+    nothing. Keep `cacheHitServes`'s `demandedCaps.subset result.caps` gate and the monolithic-era miss.
 - `LeanFmt/Analysis.lean`: FMT014's occurrences are captured in the base `analyzeExact` under demand at
   original coordinates (the walk already runs there for diagnostics); the rename attaches to the
   original-coordinate finding. The occurrence demand trigger becomes a `fix`/`check` selecting FMT014

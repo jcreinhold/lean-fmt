@@ -72,16 +72,33 @@ fixes ride which coordinates on which command — not about duplicating the fron
 
 ## What retires
 
-Because fixes no longer cross the reflow, the coordinate-translation machinery built to carry them
-collapses:
+The report (`FileReport.findings`) is drawn from `result.findings` at **original** coordinates in every
+mode (`prepareFile:856`); `reprojectCanonical` only ever rewrites `canonical.findings` (`:427`), which
+feeds **only the patch** (`:871`). So once `format` carries no fixes, `reprojectCanonical` has no
+remaining consumer — the canonical *text* is produced by `renderCanonicalText`/`canonicalAnalysis`
+without it — and the coordinate-translation machinery built to carry fixes collapses **entirely**:
 
-- `ExactRun.reprojectCanonical`'s **fix-carrying and occurrence/semantic re-capture role** — including
-  `ruff-11b`'s `(captureSemantic captureOccurrences)` reproject parameters. FMT014's occurrences are
+- `ExactRun.reprojectCanonical` (`Application.lean:418`) and its `(captureSemantic captureOccurrences)`
+  parameters — deleted, not narrowed to a render-only role (there is none). FMT014's occurrences are
   captured once in the base `analyzeExact` at original coordinates, which is exactly where `fix` now
   applies the rename. This directly unwinds ROS-IMPL §2 without reverting ROS-IMPL's sound work.
+- `availableAnalysis`'s `renderCanonical && requiredTier == .syntax` branch (`Application.lean:511-517`),
+  which today *forces* the ExactRun+reproject path so a canonical-rendering syntax run gets its fix at
+  canonical coordinates. With `format` fix-free this branch would keep `format` paying a second frontend
+  run for findings it discards; it is removed, so `format --select FMT01x` takes the cheap artifact path
+  (`:518`) and reports original-coordinate findings.
 - `patchDuplicateFindings` / the canonical `patchImports` recomputation (`Application.lean:819-828`):
   FMT005's fix comes from the original-coordinate `duplicateFindings` already in `selected`.
-- The `result.canonical?`-as-patch-source branch of `prepareFile`.
+- The `result.canonical?`-as-patch-source branch of `prepareFile`, and any now-dead `CanonicalText.findings`
+  / `renderCanonicalText`'s `runSourceRules` surface that only fed it.
+
+The occurrence demand (`RulePlan.demandedCaps`, consulted at `availableAnalysis:493`) is **rewired**:
+today it keys on `renderCanonical`; it must key on the *apply* signal so a `fix` selecting FMT014 with
+an admissible fix demands the info-tree walk while a `format --select FMT014` demands nothing.
+
+Net effect on the critical path is a **win**: `format` drops its second frontend run, and `fix`
+(no longer rendering canonical) becomes eligible for the source-only fast shortcut (`:495-510`) it was
+locked out of while it rendered.
 
 ## What is preserved unchanged
 

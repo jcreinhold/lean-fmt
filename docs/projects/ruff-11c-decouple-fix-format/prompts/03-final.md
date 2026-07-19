@@ -41,10 +41,16 @@ Drive, through the product `check`/`format`/`diff`/`fix` CLI and persistent test
   surfaced-only FMT014 `check`, and present only under the fixable demand (now on the base analysis);
   the monolithic-era cache entry still **misses** a fixable-FMT014 demand rather than serving a false
   clean (`SemanticCaps.subset` at the predicate layer).
-- **Retirement proof.** `reprojectCanonical`'s fix-carrying role, the `(captureSemantic
-  captureOccurrences)` reproject parameters, `patchDuplicateFindings`, and the
-  `result.canonical?`-as-patch-source branch are gone (grep the tree); any surviving `reprojectCanonical`
-  use is render-only.
+- **Retirement proof.** `reprojectCanonical` is gone entirely (grep returns nothing), along with its
+  `(captureSemantic captureOccurrences)` parameters, `availableAnalysis`'s `renderCanonical &&
+  requiredTier == .syntax` branch, `patchDuplicateFindings`, the `result.canonical?`-as-patch-source
+  branch, and any dead `CanonicalText.findings` surface. `RulePlan.demandedCaps` no longer reads
+  `renderCanonical`.
+- **Efficiency (the decoupling is a net win, not just neutral).** Confirm `format --select FMT01x` no
+  longer forces a second frontend run (it takes the artifact path): count the exact-frontend invocations
+  or wall-time delta on a named stress file, `format` before vs after. Confirm `fix` on a source-only
+  selection now takes the source shortcut. Report both against the 8 GiB / pressure / swap envelope; do
+  not run complete mathlib.
 - **Frozen-sample read-only review.** On the frozen representative sample, confirm `format` output is
   reflow-only (no rule fix applied) and that a `fix` of any real fixable finding there lands at original
   coordinates. Do not run complete mathlib.
