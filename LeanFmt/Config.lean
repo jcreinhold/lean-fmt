@@ -302,4 +302,32 @@ planning, so the gating cost is recorded rather than hidden across call sites. -
 def RulePlan.demandedTier (plan : RulePlan) (renderCanonical : Bool) : Tier :=
   plan.requiredTier.max (if renderCanonical then .semantic else .source)
 
+/-- Whether the plan selects a rule whose fix reads the owned deprecation-occurrence fact. Governs the
+`occurrences` capability and the info-tree fold's cost (`RuleInfo.needsOccurrences`). `rules` is a
+parameter for the same reason `requiredTierOf` takes one — capture cost and rule execution derive from
+one registry or they disagree about what a selection costs. -/
+def RulePlan.selectsOccurrenceRuleOf (plan : RulePlan) (rules : Array Rule) : Bool :=
+  rules.any fun rule => plan.selected.contains rule.code && rule.info.needsOccurrences
+
+def RulePlan.selectsOccurrenceRule (plan : RulePlan) : Bool :=
+  plan.selectsOccurrenceRuleOf ruleRegistry
+
+/-- The semantic sub-facts a run demands — the capability axis beside `demandedTier` (`ruff-11b`
+Design B). Non-empty only when the demanded tier reaches `.semantic`:
+- `notations` when a rendering mode needs the layout fact;
+- `diagnostics` when a selected rule reads the compiler diagnostics (the tier reached `.semantic`
+  through a rule) — always satisfied by any `.semantic` entry, which captures it monolithically;
+- `occurrences` when a rendering mode selects an occurrence-fix rule (FMT014's rename) — the one
+  capability that gates the whole-file info-tree fold.
+
+A `check` never renders, so it never demands `occurrences`: the surfaced report costs no info-tree walk.
+`cacheHitServes` serves a `.semantic` entry only when `demandedCaps.subset entry.caps`, so a demand for
+`occurrences` misses a monolithic-era entry that never captured it. -/
+def RulePlan.demandedCaps (plan : RulePlan) (renderCanonical : Bool) : SemanticCaps :=
+  if plan.demandedTier renderCanonical == .semantic then
+    { notations := renderCanonical
+      diagnostics := plan.requiredTier == .semantic
+      occurrences := renderCanonical && plan.selectsOccurrenceRule }
+  else {}
+
 end LeanFmt.Internal

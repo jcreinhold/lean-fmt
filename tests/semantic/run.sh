@@ -50,8 +50,8 @@ off = json.load(open(sys.argv[2]))["artifact"]
 on2 = json.load(open(sys.argv[3]))["artifact"]
 emit = open(sys.argv[4]).read().splitlines()
 
-# Both schemas advanced to v5 regardless of capture; only the semantic field differs.
-assert on["schema"] == off["schema"] == "lean-fmt.module-artifact.v5", on["schema"]
+# Both schemas advanced to v6 regardless of capture; only the semantic field differs.
+assert on["schema"] == off["schema"] == "lean-fmt.module-artifact.v6", on["schema"]
 
 # B. Demand-gating: no capture -> semantic is null; capture -> semantic present. The source
 # projection is byte-identical either way, so the fact is purely additive and the syntax-only path is
@@ -178,6 +178,60 @@ assert matched >= 4, f"oracle matched only {matched} diagnostics"
 print("diagnostics differential: matched", matched, "kinds", sorted(got_kinds))
 PY
 
+# --- ruff-11b ROS-IMPL: the owned occurrence fact, its differential, and its demand-gating -----------
+# The owned deprecation-occurrence fact is captured only under the *occurrences* capability (token "2"),
+# never the plain semantic capture (token "1"). Prove both directions of demand-gating, and that the
+# captured occurrence `(range, declName, newName?)` matches Lean's own resolution — the deprecatedAttr
+# diagnostic the compiler emitted at the very same byte, an independent oracle over the same fixture.
+LEAN_NUM_THREADS=1 lake env "$application" __analyze-exact \
+  "$work/dsetup.json" "$diag" "$diag" "$maxb" 2 >"$work/docc.json"
+
+python3 - "$work/don.json" "$work/docc.json" "$work/doracle.json" "$diag" <<'PY'
+import json, sys
+sem_semantic = json.load(open(sys.argv[1]))["artifact"]["semantic"]     # token "1"
+occ_semantic = json.load(open(sys.argv[2]))["artifact"]["semantic"]     # token "2"
+source = open(sys.argv[4], "rb").read()
+
+# Demand-gating, both directions: the plain semantic capture (token "1") does NOT run the info-tree
+# fold, so `occurrences` is null (the `none` Option); the occurrences capability (token "2") captures
+# it (a list). Lean's derived `ToJson` strips the trailing `?` from an Option field's name, so the
+# `occurrences?`/`newName?`/`since?` fields serialize under `occurrences`/`newName`/`since`.
+assert sem_semantic.get("occurrences") is None, \
+    f"token 1 captured occurrences (info-tree walk not gated): {sem_semantic.get('occurrences')}"
+occ = occ_semantic["occurrences"]
+assert isinstance(occ, list) and len(occ) >= 1, f"token 2 captured no occurrences: {occ}"
+
+# The fixture's one deprecated USE is `def useOld : Nat := oldName`. The declaration site `def oldName`
+# is a binder and must be excluded, so exactly the use is recorded (deduplicated to one entry).
+uses = [o for o in occ if o["declName"].split(".")[-1] == "oldName"]
+assert len(uses) == 1, f"expected exactly one `oldName` use occurrence (binder excluded), got {uses}"
+u = uses[0]
+assert u["newName"] is not None and u["newName"].split(".")[-1] == "newName", u
+assert u["fixable"] is True, f"a bare-identifier deprecated use must be fixable: {u}"
+
+# The occurrence range spells exactly the identifier, and it is NOT the declaration-site `oldName`
+# (that leading occurrence is `def oldName`; the use is the trailing one).
+r = u["range"]
+assert source[r["start"]:r["stop"]] == b"oldName", (r, source[r["start"]:r["stop"]])
+decl_pos = source.index(b"def oldName") + len(b"def ")
+assert r["start"] != decl_pos, "binder (declaration-site) occurrence was not excluded"
+
+# Differential: the occurrence resolves at the exact byte Lean's own deprecation diagnostic points to.
+def byte_offset(line, col):
+    lines = source.split(b"\n")
+    off = sum(len(lines[i]) + 1 for i in range(line - 1))
+    return off + len(lines[line - 1].decode("utf-8")[:col].encode("utf-8"))
+
+oracle = [json.loads(l) for l in open(sys.argv[3]) if l.strip().startswith("{")]
+dep = [o for o in oracle if o.get("kind") == "Lean.Linter.deprecatedAttr"]
+assert dep, "oracle emitted no deprecation diagnostic to differential against"
+starts = {byte_offset(o["pos"]["line"], o["pos"]["column"]) for o in dep}
+assert r["start"] in starts, \
+    f"occurrence at byte {r['start']} does not match Lean's deprecation resolution {sorted(starts)}"
+print("occurrence differential: use of", u["declName"].split(".")[-1], "->", u["newName"].split(".")[-1],
+      "at byte", r["start"], "(matches Lean); token-1 occurrences null, token-2 present")
+PY
+
 # --- ruff-11 RMR-FINAL: end-to-end acceptance -----------------------------------------------------
 # Three product behaviors under a semantic `--select`, proven through the real `check`/`fix` CLI on a
 # throwaway project (a project so error and trailing-whitespace fixtures need not be committed — `git
@@ -261,18 +315,52 @@ assert "deprecated" in dep["message"].lower(), dep
 print("mixed-tier: one run reported", sorted(set(codes)))
 PY
 
-# 3. Fix over a report-only semantic rule writes nothing. FMT014 carries no fix, so a `fix` selecting
-# only it publishes no patch: the file is byte-identical afterward and the report shows no write.
+# 3. Withheld (unadmitted) owned fix. FMT014's rename is `.unsafe` (`ruff-11b`): without `--unsafe-fixes`
+# it is *withheld*, so a `fix` selecting only it publishes no patch — the file is byte-identical
+# afterward, the report shows no write, and the withheld-unsafe count records the omission (so the
+# report never reads as "clean, nothing to fix" for a file that has a fix nobody admitted).
 cp "$proj/acc/Mixed.lean" "$work/mixed.orig"
 check_exit env LEAN_NUM_THREADS=1 "$application" fix --root "$proj" --json --no-cache \
   --select FMT014 "$proj/acc/Mixed.lean" >"$work/acc-fix.json" 2>/dev/null
 python3 - "$work/acc-fix.json" <<'PY'
 import json, sys
 r = json.load(open(sys.argv[1]))
-assert r["written"] == 0 and r["changed"] == 0, r    # report-only: nothing published
+assert r["written"] == 0 and r["changed"] == 0, r          # unadmitted: nothing published
+assert r["withheldUnsafe"] >= 1, r                         # ...but the fix exists and was withheld
 PY
 cmp -s "$work/mixed.orig" "$proj/acc/Mixed.lean" \
-  || { echo 'fix over a report-only semantic rule modified the source' >&2; exit 1; }
+  || { echo 'fix withholding an unsafe owned fix modified the source' >&2; exit 1; }
+
+# 3b. Admitted owned fix applies a real rename. `fix --unsafe-fixes --select FMT014` re-projects the
+# occurrence onto canonical text (`reprojectCanonical`, the `ruff-06` "re-project, don't translate"
+# path) and publishes the rename `oldName -> newName`: the file changes, the written use reads
+# `newName`, and a re-`check` of FMT014 is clean because the only deprecated use is gone.
+check_exit env LEAN_NUM_THREADS=1 "$application" fix --root "$proj" --json --no-cache \
+  --unsafe-fixes --select FMT014 "$proj/acc/Mixed.lean" >"$work/acc-apply.json" 2>/dev/null
+python3 - "$work/acc-apply.json" <<'PY'
+import json, sys
+r = json.load(open(sys.argv[1]))
+assert r["written"] == 1 and r["changed"] == 1, r          # admitted: the rename is published
+assert r["rejected"] == 0, r                               # a `written` fix already passed the validator
+PY
+grep -q 'def useOld : Nat := newName' "$proj/acc/Mixed.lean" \
+  || { echo 'admitted owned fix did not rename oldName -> newName' >&2; cat "$proj/acc/Mixed.lean" >&2; exit 1; }
+if grep 'useOld' "$proj/acc/Mixed.lean" | grep -q 'oldName'; then
+  echo 'the deprecated name survives on the use line after the fix' >&2; exit 1
+fi
+# The rename re-elaborates (the exact frontend runs fresh under `--no-cache`) and leaves no deprecated
+# use: a fresh check of FMT014 is clean.
+check_exit env LEAN_NUM_THREADS=1 "$application" check --root "$proj" --json --no-cache \
+  --select FMT014 "$proj/acc/Mixed.lean" >"$work/acc-recheck.json" 2>/dev/null
+python3 - "$work/acc-recheck.json" <<'PY'
+import json, sys
+r = json.load(open(sys.argv[1]))
+f, = r["files"]
+codes = [x["code"] for x in f["findings"]]
+assert "FMT014" not in codes, codes                        # the deprecated use is gone
+PY
+# Restore the fixture for any later reuse.
+cp "$work/mixed.orig" "$proj/acc/Mixed.lean"
 
 # 4. Cost — the diagnostics capture is additive. `$work/don.json` (capture=1) and `$work/doff.json`
 # (capture=0) above already prove the source projection is byte-identical either way; here we measure
@@ -284,16 +372,23 @@ if /usr/bin/time -l true >/dev/null 2>&1; then
       "$work/dsetup.json" "$diag" "$diag" "$maxb" "$1" >/dev/null 2>"$work/time$1.txt"
     grep "maximum resident set size" "$work/time$1.txt" | awk '{print $1}'
   }
-  on_rss=$(rss_of 1); off_rss=$(rss_of 0)
-  python3 - "$on_rss" "$off_rss" <<'PY'
+  on_rss=$(rss_of 1); off_rss=$(rss_of 0); occ_rss=$(rss_of 2)
+  python3 - "$on_rss" "$off_rss" "$occ_rss" <<'PY'
 import sys
-on, off = int(sys.argv[1]), int(sys.argv[2])
+on, off, occ = int(sys.argv[1]), int(sys.argv[2]), int(sys.argv[3])
 gib = 8 * 1024**3
 assert on < gib, f"capture-on peak RSS {on} exceeds the 8 GiB envelope"
 # Additive: capturing the already-collected MessageLog must not multiply memory. 1.5x is generous
 # headroom over the observed ~parity (both ~636 MiB on the named stress fixture).
 assert on <= off * 3 // 2, f"capture-on RSS {on} ballooned over capture-off {off}"
-print(f"cost: capture-on peak RSS {on//1048576} MiB vs capture-off {off//1048576} MiB (additive)")
+# The `occurrences` capability (token "2") adds the whole-file info-tree fold. The info trees are
+# already resident (the `messages` walk holds the same snapshot tree), so folding them is a read, not
+# a second elaboration: its peak must stay inside the envelope and near the diagnostics-only capture,
+# not balloon. This is the cost side of the demand-gating — the walk exists only under this token.
+assert occ < gib, f"occurrence-capture peak RSS {occ} exceeds the 8 GiB envelope"
+assert occ <= off * 3 // 2, f"occurrence capture RSS {occ} ballooned over capture-off {off}"
+print(f"cost: RSS diag-capture {on//1048576} MiB, occ-capture {occ//1048576} MiB "
+      f"vs capture-off {off//1048576} MiB (both additive; info-tree fold is a read)")
 PY
 else
   echo "cost: /usr/bin/time -l unavailable — RSS additivity check skipped"

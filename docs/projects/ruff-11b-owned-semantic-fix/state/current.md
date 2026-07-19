@@ -1,9 +1,35 @@
 ---
 kind: state
-first_unresolved: 02-impl
+first_unresolved: 03-final
 ---
 
 # Current state
+
+**ROS-IMPL verified — the owned fixable FMT014, the info-tree capability split, and the semantic
+fix's canonical re-projection are shipped (`results/02-impl.md`).** The owned
+`DeprecatedOccurrence` fact is captured from the whole-file info trees **under demand only**
+(`tree.getAll.filterMap (·.infoTree?)` consumer fold in `analyzeExact`, gated on `captureOccurrences`;
+`artifactSchema v6`), resolved to `(range, declName, newName?, since?, text?, fixable)` in
+normalized-source coordinates with the declaration-site binder excluded and dedup by range. FMT014's
+`unsafe` rename attaches by range-identity match in `deprecatedUse` and rides `ruff-06`'s
+applicability/conflict/transaction/re-elaboration path. The Design-B capability split ships
+(`SemanticCaps`, `SemanticResult v7`, `cacheHitServes` requiring `demandedCaps.subset caps`,
+`RulePlan.demandedCaps`), so a monolithic-era `.semantic` entry misses a fixable-FMT014 demand rather
+than serving a false clean, and the info-tree walk is paid only by a canonical render that selects
+FMT014.
+
+**Decision changed during ROS-IMPL (recorded in `results/02-impl.md` §2):** the semantic fix reaches the
+**same** `ExactRun.reprojectCanonical` seam a syntax fix does. `prepareFile` draws the patch from
+`canonical.findings`, so the original-source occurrence cannot supply the patch's coordinates — the walk
+re-projects onto the *rendered* text under the occurrence capability, and FMT014's rename lands at
+canonical coordinates. This is a faithful, more-literal reading of the frozen model's "exactly as
+`ruff-10b` routes a syntax fix" (`notes/01-model.md` §6), not a deviation; the model had not spelled out
+that the semantic tier shares that re-projection seam. Also recorded: Lean's derived `ToJson` strips the
+trailing `?` from an `Option` field name (wire keys `occurrences`/`newName`/`since`/`text`).
+
+Verified against live code and the full gate set: `lake build`, `lake exe lean-fmt-tests`,
+`tests/{semantic,modes,check,syntax,service,compiler,boundary}/run.sh`, the structural checker,
+`write_next.py --check`, and `git diff --check` — all green (`results/02-impl.md` §6).
 
 **ROS-SPEC verified — the interface is frozen (`notes/01-model.md`, `results/01-spec.md`).** A
 first-hand probe (`evidence/infotree_probe.lean`, output `evidence/01-infotree-probe.txt`) settled the
@@ -50,7 +76,7 @@ seams rather than trusting recorded state.
 | Prompt | Claim | Status | Depends on |
 | --- | --- | --- | --- |
 | 01-spec | ROS-SPEC | verified | — |
-| 02-impl | ROS-IMPL | planned | ROS-SPEC |
+| 02-impl | ROS-IMPL | verified | ROS-SPEC |
 | 03-final | ROS-FINAL | planned | ROS-IMPL |
 
 ## Scope

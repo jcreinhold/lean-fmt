@@ -48,6 +48,14 @@ structure SemanticResult where
   (the narrow value); the schema bump below makes every pre-tier entry miss rather than read as this
   default and get mis-served. -/
   tier : Tier := .source
+  /-- The semantic sub-facts this entry actually captured (`ruff-11b` Design B, the capability axis
+  beside `tier`). `{}` for a source/syntax entry (no projection); the projection's caps for a
+  `.semantic` entry (`notations` and `diagnostics` always, `occurrences` only when the info-tree fold
+  ran). `cacheHitServes` serves a `.semantic` run only when `demandedCaps.subset caps`, so a
+  monolithic-era `.semantic` entry — captured without the `occurrences` capability — misses a
+  fixable-FMT014 demand rather than serving a false clean. Defaults `{}`; the schema bump below makes
+  every pre-caps entry miss rather than read as this default. -/
+  caps : SemanticCaps := {}
   deriving BEq, Lean.ToJson, Lean.FromJson
 
 structure SemanticAnalysis where
@@ -74,8 +82,14 @@ The default stays safe only for shortcut entries, which by construction have no 
 `v5` (`RYR-IMPL`): adds `tier`. A `v4` entry read as `v5` would default `tier := .source` and, if it
 had been a full artifact-path entry, read as "source findings only" — narrowing a complete entry, which
 would only *under*-serve (a miss, never a false clean), but the same schema discipline that versions
-`suppression` versions this so no `v4` entry is silently reinterpreted. -/
-def semanticResultSchema : String := "lean-fmt.semantic-result.v6"
+`suppression` versions this so no `v4` entry is silently reinterpreted.
+
+`v6` (`RYC-IMPL`): the artifact/result gained the syntax-fix re-projection; `v7` (`ROS-IMPL`): adds
+`caps`. A `v6` entry read as `v7` would default `caps := {}` and, if it had been a `.semantic` entry,
+read as "captured no sub-facts" — which *under*-serves every `.semantic` demand (a miss, never a false
+clean), the safe direction; the schema bump makes it a clean miss rather than a silent reinterpretation
+so no `v6` `.semantic` entry serves a fixable-FMT014 demand it never captured occurrences for. -/
+def semanticResultSchema : String := "lean-fmt.semantic-result.v7"
 
 /-- `normalized` must be `(LosslessSource.normalize raw).1`, the string every finding indexes.
 `suppression` defaults empty for the source-only shortcut; `ofEnvelope?` passes the collected facts.
@@ -83,7 +97,8 @@ def semanticResultSchema : String := "lean-fmt.semantic-result.v6"
 `.syntax` for the artifact/exact path (whole registry over the projection) — so a narrow shortcut entry
 cannot serve a run that selects a syntax rule (`cacheHitServes`). -/
 def SemanticAnalysis.success (normalized : String) (findings : Array Finding)
-    (tier : Tier := .source) (suppression : SuppressionFacts := {}) : SemanticAnalysis := {
+    (tier : Tier := .source) (suppression : SuppressionFacts := {})
+    (caps : SemanticCaps := {}) : SemanticAnalysis := {
   result? := some {
     schema := semanticResultSchema
     source := Digest.ofString normalized
@@ -91,6 +106,7 @@ def SemanticAnalysis.success (normalized : String) (findings : Array Finding)
     findings
     suppression
     tier
+    caps
   }
 }
 
@@ -156,13 +172,18 @@ def SemanticAnalysis.ofEnvelope? (raw : String)
       -- `notes/01-authority.md` §6). An artifact without the projection runs the source/syntax
       -- registry against `.syntax` facts and is tagged `.syntax`, exactly as before — a `.syntax`
       -- entry then misses a `.semantic` selection through `cacheHitServes` rather than a false clean.
-      let (facts, tier) := match artifact.semantic with
+      -- The caps a `.semantic` entry provides are the projection's own (`notations`/`diagnostics`
+      -- always, `occurrences` iff the info-tree fold ran); a syntax entry provides none. `occurrences`
+      -- flow into the facts so the owned FMT014 rule can attach its rename fix — empty when the
+      -- capability was not demanded, keeping the report byte-identical to the surfaced-only path.
+      let (facts, tier, caps) := match artifact.semantic with
         | some projection =>
-          (Facts.semantic (SemanticFacts.of normalized artifact.source projection.diagnostics), Tier.semantic)
+          (Facts.semantic (SemanticFacts.of normalized artifact.source projection.diagnostics
+            (projection.occurrences?.getD #[])), Tier.semantic, projection.caps)
         | none =>
-          (Facts.syntax (SyntaxFacts.of normalized artifact.source), Tier.syntax)
-      some (.success normalized (runRules facts)
-        (tier := tier) (suppression := Suppression.collect artifact.source normalized))
+          (Facts.syntax (SyntaxFacts.of normalized artifact.source), Tier.syntax, ({} : SemanticCaps))
+      some (.success normalized (runRules facts) (tier := tier)
+        (suppression := Suppression.collect artifact.source normalized) (caps := caps))
     else
       none
 

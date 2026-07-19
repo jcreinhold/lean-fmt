@@ -3,6 +3,8 @@ module
 import all LeanFmt.ArtifactStore
 import all LeanFmt.Rules
 import Lean.Elab.Frontend
+import Lean.Server.InfoUtils
+import Lean.Linter.Deprecated
 
 namespace LeanFmt.Internal
 
@@ -135,11 +137,66 @@ private def captureDiagnostics (fileMap : Lean.FileMap) (sourceBytes : Nat)
         }
   return diagnostics
 
+/- The user-facing display of a resolved constant: the module-private mangling (`_private.M.0.foo`)
+stripped to what the source writes (`foo`, or a qualified `Foo.bar`). Pure on `Name` — no `Environment`
+— so it is a fact the rule reads as a plain string, never a `Name`. -/
+private def occurrenceDisplay (n : Lean.Name) : String := (Lean.privateToUserName n).toString
+
+/- Re-derive the owned deprecation-occurrence facts from the whole-file info trees. This is the fold
+`ruff-11b` `ROS-SPEC` proved reachable through the very snapshot tree `analyzeExact` already walks for
+the message log (`notes/01-model.md` §2, `evidence/infotree_probe.lean`): every command's info tree
+lives on its `Snapshot.infoTree?`, so `tree.getAll.filterMap (·.infoTree?)` — a *consumer-side* fold,
+not a producer change — surfaces the whole file, avoiding the per-command info reset that would limit
+`waitForFinalCmdState?` to the last command.
+
+For each `TermInfo` whose elaborated `expr` *is* a constant (`.constName?` is `some` — which already
+excludes an applied receiver, whose term is an `.app`, and dot-notation, whose term is the application)
+that carries `@[deprecated]`, and which is a use rather than the declaration binder (`isBinder`), one
+occurrence is recorded. Ranges come straight from `Info.range?` — already normalized-source byte
+offsets (the parser positions index the string `mkInputContext` normalized), so unlike a diagnostic's
+`Position` they need no `FileMap` round-trip — clamped to the module's byte span. Each use-site emits
+its `TermInfo` more than once, so the result is deduplicated by range. `fixable` is decided here
+(`notes/01-model.md` §5): a `newName?` must exist and the occurrence must spell a single bare
+identifier token, the conservative predicate a textual rename preserves; everything else is
+report-only and the output re-elaboration validator backstops the rest. -/
+private def occurrenceOfInfo (ci : Lean.Elab.ContextInfo) (info : Lean.Elab.Info)
+    (normalized : String) (sourceBytes : Nat) : Option DeprecatedOccurrence := do
+  let .ofTermInfo ti := info | none
+  if ti.isBinder then none else
+  let declName ← ti.expr.constName?
+  let entry ← Lean.Linter.deprecatedAttr.getParam? ci.env declName
+  let r ← info.range?
+  let start := min r.start.byteIdx sourceBytes
+  let stop := min (max r.start.byteIdx r.stop.byteIdx) sourceBytes
+  let spelled := String.fromUTF8! (normalized.toUTF8.extract start stop)
+  let newName? := entry.newName?.map occurrenceDisplay
+  let bare := !spelled.isEmpty && spelled.toList.all (fun c => !c.isWhitespace)
+  return {
+    range := { start, stop }
+    declName := occurrenceDisplay declName
+    newName?
+    since? := entry.since?
+    text? := entry.text?
+    fixable := newName?.isSome && bare
+  }
+
+private def captureDeprecatedOccurrences (tree : Lean.Language.SnapshotTree)
+    (normalized : String) (sourceBytes : Nat) : Array DeprecatedOccurrence :=
+  let trees := tree.getAll.filterMap (·.infoTree?)
+  let raw : Array DeprecatedOccurrence := trees.foldl (init := #[]) fun acc t =>
+    t.foldInfo (init := acc) fun ci info acc =>
+      match occurrenceOfInfo ci info normalized sourceBytes with
+      | some occ => acc.push occ
+      | none => acc
+  raw.foldl (init := #[]) fun acc occ =>
+    if acc.any (·.range == occ.range) then acc else acc.push occ
+
 /- Execute Lean's ordinary header and sequential command frontend under the exact `ModuleSetup`
 owned by the target Lake workspace. The resulting projection is the same one emitted by the
 compiler plugin; no accumulated environment or parser state crosses this process invocation. -/
 unsafe def analyzeExact (setup : Lean.ModuleSetup) (source : String)
-    (sourcePath : System.FilePath) (captureSemantic : Bool := false) : IO AnalysisEnvelope := do
+    (sourcePath : System.FilePath) (captureSemantic : Bool := false)
+    (captureOccurrences : Bool := false) : IO AnalysisEnvelope := do
   Lean.initSearchPath (← Lean.findSysroot)
   Lean.enableInitializersExecution
   let input := Lean.Parser.mkInputContext source sourcePath.toString
@@ -168,16 +225,23 @@ unsafe def analyzeExact (setup : Lean.ModuleSetup) (source : String)
     return ← broken messages
   let (commands, terminal?) := processedCommands snapshot
   -- The semantic projection is captured only under demand (`captureSemantic`, set by a run that
-  -- renders canonical text *or* selects a `.semantic` rule). Both sub-facts are captured together
-  -- (monolithic, `ruff-11` `notes/01-authority.md` §6), so a demanded `.semantic` artifact is complete
-  -- and `Tier.satisfies` stays a sound cache gate. `commandState.env` is the module's final
-  -- environment (parser and notation decls live here and nowhere downstream); `messages` is the
-  -- whole-file diagnostic log already assembled above; `input.fileMap` is normalized-coordinate. The
-  -- always-on plugin producer never sets the flag, keeping integrated builds on the syntax-only path.
+  -- renders canonical text *or* selects a `.semantic` rule). The two cheap sub-facts — `notations` and
+  -- `diagnostics` — are captured together (`ruff-11` `notes/01-authority.md` §6); the one expensive
+  -- sub-fact, the whole-file info-tree occurrence fold, is captured only under the *separate*
+  -- `captureOccurrences` capability (`ruff-11b` Design B, `notes/01-model.md` §4), so a plain `format`
+  -- or a `check --select FMT015` never pays the walk. `occurrences? := none` records *not captured* (a
+  -- fixable demand must miss the cache); `some` records captured-possibly-empty. `commandState.env` is
+  -- the module's final environment; `messages` is the whole-file diagnostic log; `input.fileMap` is
+  -- normalized-coordinate; `tree` is the same snapshot tree walked for `messages`. The always-on plugin
+  -- producer sets no capability, keeping integrated builds on the syntax-only path.
   let normalizedSource := (LosslessSource.normalize source).1
   let semantic ← if captureSemantic then do
       let diagnostics ← captureDiagnostics input.fileMap normalizedSource.utf8ByteSize messages
-      pure (some { captureNotationSpacing commandState.env options commands with diagnostics })
+      let occurrences? := if captureOccurrences then
+          some (captureDeprecatedOccurrences tree normalizedSource normalizedSource.utf8ByteSize)
+        else none
+      pure (some { captureNotationSpacing commandState.env options commands with
+        diagnostics, occurrences? })
     else pure none
   -- `mkInputContext` normalized `source` before parsing it, so every offset above indexes the
   -- normalized string. Measuring the artifact against `source` itself would mix two coordinate

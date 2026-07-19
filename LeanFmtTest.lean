@@ -978,6 +978,99 @@ private def testSemanticRules : IO Unit := do
   ensure (onSource.all (fun f => !semanticCodes.contains f.code))
     "a semantic rule fired on source facts that never carried a diagnostic"
 
+/- The owned FMT014 rename fix (`ruff-11b`, ROS-IMPL). The report is surfaced from the diagnostic
+(unchanged, always cheap); the `unsafe` rename fix is attached from the owned occurrence fact — and
+only when a *fixable* occurrence sits at the surfaced finding's own range with a `newName?`. This pins
+the rule half as pure data: the report never changes across the occurrence cases, only `fix?` does, so
+a `check` (empty occurrences) is byte-identical to the surfaced-only `ruff-11` behavior. `run.sh` proves
+the fix *applies* end to end through canonical re-projection; this pins the *attachment* predicate. -/
+private def testOwnedDeprecationFix : IO Unit := do
+  let depRange : SourceRange := { start := 0, stop := 4 }
+  let diag : Diagnostic :=
+    { kind := "Lean.Linter.deprecatedAttr", range := depRange, severity := .warning,
+      message := "`oldName` is deprecated" }
+  -- Run the shipped registry over `.semantic` facts carrying one deprecation diagnostic and a chosen
+  -- set of occurrences; return the single FMT014 finding (there is exactly one surfaced diagnostic).
+  let fmt014 (occurrences : Array DeprecatedOccurrence) : IO Finding := do
+    let facts := Facts.semantic
+      (SemanticFacts.of fixtureSourceText fixtureLosslessSource #[diag] occurrences)
+    match (runRulesOf ruleRegistry facts).filter (·.code == "FMT014") with
+    | #[f] => return f
+    | other => throw <| IO.userError s!"expected exactly one FMT014 finding, got {other.size}"
+  -- The report an occurrence set must never perturb: same code/severity/message/range every time.
+  let reportUnchanged (f : Finding) (label : String) : IO Unit := do
+    ensure (f.severity == .warning && f.message == "`oldName` is deprecated" && f.range == depRange)
+      s!"FMT014 report was perturbed by the {label} occurrence set"
+
+  let fixable : DeprecatedOccurrence :=
+    { range := depRange, declName := "oldName", newName? := some "newName",
+      since? := some "1.0", text? := none, fixable := true }
+
+  -- A. A fixable occurrence at the finding's range with a `newName?` attaches an `unsafe` rename whose
+  -- one edit replaces exactly that range with the new name.
+  let a ← fmt014 #[fixable]
+  reportUnchanged a "fixable"
+  match a.fix? with
+  | some fix =>
+    ensure (fix.applicability == .unsafe) "FMT014 rename fix must be unsafe (unproven textual swap)"
+    ensure (fix.edits == #[{ range := depRange, replacement := "newName" }])
+      "FMT014 fix did not replace the occurrence range with the deprecation's newName"
+  | none => throw <| IO.userError "a fixable deprecation occurrence attached no fix"
+
+  -- B. A non-bare occurrence (`fixable := false`) stays report-only — the capture-side predicate, not
+  -- the rule, decides bareness, and the rule offers no fix without it.
+  let b ← fmt014 #[{ fixable with fixable := false }]
+  reportUnchanged b "non-fixable"
+  ensure (b.fix?.isNone) "FMT014 attached a fix to a non-fixable (non-bare-identifier) occurrence"
+
+  -- C. A `newName? = none` occurrence (deprecation with no replacement) stays report-only: there is no
+  -- name to substitute, so no rename can be offered even though the use is bare.
+  let c ← fmt014 #[{ fixable with newName? := none }]
+  reportUnchanged c "no-replacement"
+  ensure (c.fix?.isNone) "FMT014 attached a fix to a deprecation with no replacement name"
+
+  -- D. An occurrence at a *different* range does not match the surfaced finding — the fix attaches by
+  -- range identity, never by position or count, so a stray occurrence cannot mis-fix another finding.
+  let d ← fmt014 #[{ fixable with range := { start := 100, stop := 104 } }]
+  reportUnchanged d "range-mismatch"
+  ensure (d.fix?.isNone) "FMT014 attached a fix from an occurrence at a different range"
+
+  -- E. No occurrences (the `check` path, or any run that did not demand the capability): report-only,
+  -- byte-identical to the surfaced-only behavior FMT014 shipped with in `ruff-11`.
+  let e ← fmt014 #[]
+  reportUnchanged e "empty"
+  ensure (e.fix?.isNone) "FMT014 was not report-only when no occurrences were captured"
+  ensure (e == { a with fix? := none })
+    "the surfaced-only FMT014 finding is not the fixable one minus its fix (report drifted)"
+
+/- `SemanticCaps.subset` (Design B) and the `needsOccurrences`↔tier invariant. The subset gate is what
+makes a monolithic-era `.semantic` cache entry miss a fixable-FMT014 demand rather than serve a false
+clean; the invariant is what keeps the capability from rotting into an unenforced field. -/
+private def testSemanticCaps : IO Unit := do
+  let all : SemanticCaps := { notations := true, diagnostics := true, occurrences := true }
+  let cheap : SemanticCaps := { notations := true, diagnostics := true }
+  let occ : SemanticCaps := { occurrences := true }
+  -- `{}` demands nothing, so a source/syntax run is served by any entry.
+  ensure (SemanticCaps.subset {} all && SemanticCaps.subset {} {}) "the empty demand is not a subset of everything"
+  -- A full entry serves every demand; the demand serves itself.
+  ensure (SemanticCaps.subset occ all && SemanticCaps.subset occ occ) "occurrences demand not served by an entry that has it"
+  -- The load-bearing miss: an occurrences demand against a monolithic-era entry (cheap sub-facts only,
+  -- no occurrence cap) is NOT a subset, so `cacheHitServes` recomputes rather than serving a false clean.
+  ensure (!SemanticCaps.subset occ cheap && !SemanticCaps.subset occ {})
+    "a fixable-FMT014 demand was (wrongly) served by an entry that captured no occurrences"
+  -- The cheap demand is served by an occurrence-bearing entry (superset), orthogonal to the tier.
+  ensure (SemanticCaps.subset cheap all) "the cheap sub-facts are not a subset of the full capability set"
+
+  -- The invariant: a `needsOccurrences` rule is `.semantic` (its fix reads an info-tree fact), and only
+  -- FMT014 declares it today. A declared-but-unenforced capability would rot exactly as a tier field
+  -- would; this ties it to the tier the registry actually derives from the constructor.
+  for rule in ruleRegistry do
+    if rule.info.needsOccurrences then
+      ensure (rule.tier == .semantic)
+        s!"{rule.info.code} needs occurrences but is not a semantic-tier rule"
+  ensure ((ruleRegistry.filter (·.info.needsOccurrences)).map (·.info.code) == #["FMT014"])
+    "exactly FMT014 must declare needsOccurrences (a new owner needs its own capture + tests)"
+
 /-- Capture a kind's declared atoms exactly as `analyzeExact`'s `captureNotationSpacing` does:
 type-guard to a descriptor, then read it through the **module-safe** compiled meta IR via `evalConst`
 (never `ConstantInfo.value?`, the kernel `Expr` the module system strips). `descrAtoms` is the
@@ -1993,6 +2086,8 @@ public unsafe def main (args : List String) : IO UInt32 := do
     testStore
     testSemanticArtifact
     testSemanticRules
+    testOwnedDeprecationFix
+    testSemanticCaps
     testDoc
     testComments
     testSuppression

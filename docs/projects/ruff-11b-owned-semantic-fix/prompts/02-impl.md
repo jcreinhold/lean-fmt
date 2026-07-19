@@ -1,6 +1,6 @@
 ---
 claim_id: ROS-IMPL
-status: planned
+status: verified
 depends_on: [ROS-SPEC]
 ---
 

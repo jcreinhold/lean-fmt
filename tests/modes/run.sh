@@ -424,12 +424,15 @@ assert by_code["FMT009"]["category"] == "structure" and not by_code["FMT009"]["f
 assert by_code["FMT012"]["category"] == "debug" and not by_code["FMT012"]["fixable"]
 assert all(by_code[c]["fixable"] and by_code[c]["category"] == "redundancy"
            for c in ("FMT010", "FMT011", "FMT013"))
-# FMT014-017 are the first semantic-tier rules (`ruff-11`): they surface compiler diagnostics, so they
-# ship as preview (off by default), are indexed on the `semantic` tier (`input == "semantic"`), and are
-# report-only — surfacing a deprecation or an unused binder is not an edit any fact here proves safe.
+# FMT014-017 are semantic-tier rules (`ruff-11`): they surface compiler diagnostics, so they ship as
+# preview (off by default) and are indexed on the `semantic` tier (`input == "semantic"`). FMT015-017
+# stay report-only — an unused binder or a name resemblance is not an edit any fact here proves safe.
+# FMT014 is the one owned, fixable semantic rule (`ruff-11b`): its unsafe rename of a deprecated
+# reference to its replacement makes it `fixable`, though the fix is withheld unless `--unsafe-fixes`.
 semantic = ("FMT014", "FMT015", "FMT016", "FMT017")
-assert all((not by_code[c]["defaultEnabled"]) and by_code[c]["input"] == "semantic"
-           and not by_code[c]["fixable"] for c in semantic)
+assert all((not by_code[c]["defaultEnabled"]) and by_code[c]["input"] == "semantic" for c in semantic)
+assert by_code["FMT014"]["fixable"]
+assert all(not by_code[c]["fixable"] for c in ("FMT015", "FMT016", "FMT017"))
 assert by_code["FMT014"]["category"] == "deprecation"
 assert by_code["FMT015"]["category"] == "unused" and by_code["FMT016"]["category"] == "unused"
 assert by_code["FMT017"]["category"] == "naming"

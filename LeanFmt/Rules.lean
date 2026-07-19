@@ -98,12 +98,18 @@ structure SemanticFacts where
   private mk ::
   «syntax» : SyntaxFacts
   diagnostics : Array Diagnostic
+  /-- The owned deprecation-occurrence facts (`ruff-11b`), empty unless the run demanded the
+  `occurrences` capability. A rule reads this as plain data; an empty array is *no fixes to offer*
+  (whether because nothing was captured or nothing was found — the two are distinguished at the cache
+  layer, not here), so a rule stays report-only on empty and the `check` path never triggers the walk. -/
+  occurrences : Array DeprecatedOccurrence
 
 /-- `normalized` must be the string `projection` indexes, the same contract `SyntaxFacts.of` carries.
-`diagnostics` are the projection's captured `Diagnostic`s, already in normalized-source coordinates. -/
+`diagnostics` are the projection's captured `Diagnostic`s, already in normalized-source coordinates;
+`occurrences` are the owned deprecation-occurrence facts (empty when the capability was not demanded). -/
 def SemanticFacts.of (normalized : String) (projection : LosslessSource)
-    (diagnostics : Array Diagnostic) : SemanticFacts :=
-  { «syntax» := SyntaxFacts.of normalized projection, diagnostics }
+    (diagnostics : Array Diagnostic) (occurrences : Array DeprecatedOccurrence := #[]) : SemanticFacts :=
+  { «syntax» := SyntaxFacts.of normalized projection, diagnostics, occurrences }
 
 /-- The facts a run actually obtained. `SyntaxFacts` contains `SourceFacts` and `SemanticFacts`
 contains `SyntaxFacts`, so richer facts run every cheaper rule too, and one run never needs two fact
@@ -143,6 +149,13 @@ structure RuleInfo where
   summary : String
   fixable : Bool
   defaultEnabled : Bool
+  /-- Whether this rule's fix reads the owned deprecation-occurrence fact (`ruff-11b`). It governs
+  *capture cost only*: `RulePlan.demandedCaps` sets the `occurrences` capability — and pays the
+  whole-file info-tree fold — exactly when a selected rule declares this in a rendering mode. A wrong
+  value never corrupts a file (the fix rides the output re-elaboration validator); it only over- or
+  under-captures. Unlike a tier field, it is not a claim the tier system enforces, so a test pins that
+  a `needsOccurrences` rule is `.semantic` and that its fix appears iff occurrences were captured. -/
+  needsOccurrences : Bool := false
   deriving BEq
 
 structure Rule where
@@ -607,9 +620,26 @@ private def surfaceDiagnostics (kind code : String) (facts : SemanticFacts) : Ar
       some { code, severity := d.severity, message := d.message, range := d.range, fix? := none }
     else none
 
-/-- FMT014 — use of a deprecated declaration (`@[deprecated]`), tag `Lean.Linter.deprecatedAttr`. -/
+/-- FMT014 — use of a deprecated declaration (`@[deprecated]`), tag `Lean.Linter.deprecatedAttr`.
+
+The **report** is surfaced from the compiler diagnostic — unchanged, always available, cheap. The
+**unsafe rename fix** is attached from the owned occurrence fact only when it was captured (`ruff-11b`):
+for each surfaced finding, a *fixable* occurrence at the same range contributes a `Fix` that replaces
+the identifier with the deprecation's `newName?`. When occurrences were not captured — `check`, or any
+run that did not demand the `occurrences` capability — `facts.occurrences` is empty and every finding
+is report-only, byte-identical to the surfaced-only behavior. The fix is `unsafe`: a textual name swap
+is plausibly intended but unproven, applied only under `--unsafe-fixes` and backstopped by the output
+re-elaboration validator (`ruff-06` `notes/01-model.md` §1, `ruff-11b` `notes/01-model.md` §6). -/
 private def deprecatedUse (facts : SemanticFacts) : Array Finding :=
-  surfaceDiagnostics kDeprecatedAttr "FMT014" facts
+  (surfaceDiagnostics kDeprecatedAttr "FMT014" facts).map fun finding =>
+    match facts.occurrences.find? (fun o => o.fixable && o.range == finding.range) with
+    | some occ =>
+      match occ.newName? with
+      | some replacement =>
+        { finding with fix? := some {
+            applicability := .unsafe, edits := #[{ range := occ.range, replacement }] } }
+      | none => finding
+    | none => finding
 
 /-- FMT015 — unused variable / binder, tag `linter.unusedVariables`. -/
 private def unusedVariable (facts : SemanticFacts) : Array Finding :=
@@ -741,8 +771,9 @@ def ruleRegistry : Array Rule := #[
       code := "FMT014"
       category := "deprecation"
       summary := "report use of a deprecated declaration"
-      fixable := false
+      fixable := true
       defaultEnabled := false
+      needsOccurrences := true
     }
     impl := .semantic deprecatedUse
   },

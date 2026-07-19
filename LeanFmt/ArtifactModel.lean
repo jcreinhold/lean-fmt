@@ -102,6 +102,57 @@ structure Diagnostic where
   message : String
   deriving Inhabited, BEq, Repr, Lean.ToJson, Lean.FromJson
 
+/-- One use of a `@[deprecated]` declaration, re-derived from the whole-file info trees where the
+elaborator recorded the resolved constant at each source occurrence. A *fact*, never a *finding*: only
+the frontend, having elaborated the module, knows which constant a bare identifier resolved to; a
+reader holding only bytes cannot. Carried in the artifact only when a run demanded the **occurrences**
+capability (a rendering mode selecting the owned FMT014 rule), so the whole-file info-tree fold is paid
+only when the fix is asked for (`ruff-11b` `notes/01-model.md` §§2-5).
+
+The owned analog of `Diagnostic`: FMT014's report is a `Diagnostic` (surfaced, always cheap), but its
+`unsafe` rename fix needs the *resolved constant and its replacement*, which only the info tree carries.
+
+- `range` is normalized-source byte offsets of the occurrence identifier token, from
+  `Info.range? (canonicalOnly := true)` through the exact frontend's `FileMap` — the same coordinate
+  system as `Diagnostic.range` and the projection.
+- `declName`/`newName?` are the **user-facing** display spellings (the module-private mangling stripped
+  at capture where the `Environment` is live), so no `Name` or `Environment` crosses into a rule. The
+  rename fix substitutes `newName?`.
+- `fixable` is decided at capture from the bare-identifier predicate (`notes/01-model.md` §5): a
+  non-binder occurrence resolving to a bare `.const` with a `newName?` whose display is a single
+  identifier. Every non-qualifying occurrence stays `fixable := false` and report-only; the output
+  re-elaboration validator backstops a rename that does not resolve. -/
+structure DeprecatedOccurrence where
+  range : SourceRange
+  declName : String
+  newName? : Option String
+  since? : Option String
+  text? : Option String
+  fixable : Bool
+  deriving Inhabited, BEq, Repr, Lean.ToJson, Lean.FromJson
+
+/-- Which semantic sub-facts a run demanded, or a captured projection provides. The capability axis
+Design B adds beside the tier (`ruff-11` `notes/01-authority.md` §6, `ruff-11b` `notes/01-model.md`
+§4): `Tier.satisfies` gates the tier lattice; `SemanticCaps.subset` gates the sub-facts within
+`.semantic`, orthogonally. `notations` and `diagnostics` are the two cheap sub-facts captured together
+whenever `.semantic` is demanded (Design A for those two, unchanged); `occurrences` is the one
+info-tree-backed sub-fact captured only on demand, so the walk is not forced onto every render. A
+cached `.semantic` entry serves a demand only when `demanded.subset provided` — a monolithic-era entry
+without the occurrence cap therefore misses a fixable-FMT014 demand rather than serving a false clean. -/
+structure SemanticCaps where
+  notations : Bool := false
+  diagnostics : Bool := false
+  occurrences : Bool := false
+  deriving Inhabited, BEq, Repr, Lean.ToJson, Lean.FromJson
+
+/-- `demanded ⊆ provided`: every capability the run demanded is present in the entry. Total (never a
+`satisfies`-style partial), so it composes with `Tier.satisfies` as a plain conjunction in
+`cacheHitServes`. -/
+def SemanticCaps.subset (demanded provided : SemanticCaps) : Bool :=
+  (!demanded.notations || provided.notations) &&
+    (!demanded.diagnostics || provided.diagnostics) &&
+    (!demanded.occurrences || provided.occurrences)
+
 /-- The declared inter-atom spacing of one notation/atom syntax kind: the untrimmed declared atom
 strings, in source order (`" + "` for infix add, `"-"` for prefix neg). A leading or trailing ASCII
 space in a string is the notation's declared breakable gap on that side; its absence is tight. This
@@ -124,11 +175,28 @@ rule.
 - `notations` (`ruff-05b`, formatter fact): declared spacing for every notation kind present, one
   entry per distinct kind (Design B).
 - `diagnostics` (`ruff-11`, rule fact, new in `v5`): the compiler's own diagnostics with a stable
-  `kind` tag and exact range, which the semantic-tier rules FMT014–FMT017 surface. -/
+  `kind` tag and exact range, which the semantic-tier rules FMT014–FMT017 surface.
+- `occurrences?` (`ruff-11b`, fix fact, new in `v6`): the owned deprecation-occurrence facts, present
+  (`some`, possibly empty) only when the run demanded the **occurrences** capability, and `none`
+  otherwise. `none` means *not captured* (a demand for it must miss the cache); `some #[]` means
+  *captured, none found* (a clean hit). This `Option` is the capability record inside the projection:
+  `notations`/`diagnostics` are always captured together at `.semantic` (cheap), but the info-tree fold
+  behind `occurrences?` is paid only when the fix is asked for (`ruff-11b` `notes/01-model.md` §4). -/
 structure SemanticProjection where
   notations : Array NotationSpacing
   diagnostics : Array Diagnostic := #[]
+  occurrences? : Option (Array DeprecatedOccurrence) := none
   deriving Inhabited, BEq, Repr, Lean.ToJson, Lean.FromJson
+
+/-- The capabilities a captured projection provides. `notations` and `diagnostics` are always captured
+together when the projection exists (a `.semantic` capture, Design A for the two cheap facts);
+`occurrences` is present iff the info-tree fold ran (`occurrences?.isSome`). Derived, not stored twice:
+the projection's shape *is* its capability record, so the two cannot disagree. -/
+def SemanticProjection.caps (projection : SemanticProjection) : SemanticCaps := {
+  notations := true
+  diagnostics := true
+  occurrences := projection.occurrences?.isSome
+}
 
 /- The artifact is stored inside the successful module's `.olean`; exact toolchain, options,
 plugins, ordered imports, and dependency identity therefore belong to the module artifact itself
@@ -161,16 +229,27 @@ structure ModuleArtifact where
   semantic : Option SemanticProjection := none
   deriving BEq, Repr, Lean.ToJson, Lean.FromJson
 
+/-- The capabilities a whole artifact provides: the projection's caps when a `.semantic` projection was
+captured, all-`false` otherwise (a syntax-only artifact provides no semantic sub-fact). -/
+def ModuleArtifact.caps (artifact : ModuleArtifact) : SemanticCaps :=
+  match artifact.semantic with
+  | some projection => projection.caps
+  | none => {}
+
 /-- Bumped from `v1` when the command-kind/range projection became `LosslessSource`, from `v2` when
 findings and their rule configuration left the artifact, from `v3` when the optional `semantic`
-projection was added (`ruff-05b` `RSF-IMPL`), and from `v4` when that projection gained `diagnostics`
-(`ruff-11` `RMR-IMPL`). A stale payload must miss, never read as captured-and-empty: a `v4` full
-`semantic` (notations, no `diagnostics` key) does not even decode under `v5` — the derived `FromJson`
-does not default an absent array field, it errors (verified, v4.32.0) — and a `v4` payload without the
-`semantic` key at all decodes with `semantic := none` and is then rejected by the schema guard. Both
-paths are a miss that forces re-analysis; the schema tag is the gate, decode-failure a backstop — the
-same discipline that made findings leave the artifact rather than default silently. -/
-def artifactSchema : String := "lean-fmt.module-artifact.v5"
+projection was added (`ruff-05b` `RSF-IMPL`), from `v4` when that projection gained `diagnostics`
+(`ruff-11` `RMR-IMPL`), and from `v5` when it gained the optional `occurrences?` deprecation-occurrence
+fact (`ruff-11b` `ROS-IMPL`). A stale payload must miss, never read as captured-and-empty: a `v5` full
+`semantic` (notations + diagnostics, no `occurrences?` key) *does* decode under `v6` — `occurrences?`
+is an `Option` and defaults to `none` on a missing key — but `none` is exactly *not captured*, so a run
+demanding the occurrence capability misses through the caps gate (`SemanticCaps.subset`,
+`cacheHitServes`) rather than reading a false "no deprecations". The schema tag still moves so no `v5`
+entry is silently reinterpreted; the caps gate is what makes the `Option` default safe, the same way
+the tier gate made the earlier defaults safe. A `v4` full `semantic` (no `diagnostics` key) still fails
+to decode outright — the derived `FromJson` does not default an absent *array* field, it errors
+(verified, v4.32.0) — a harder backstop for the older shape. -/
+def artifactSchema : String := "lean-fmt.module-artifact.v6"
 
 /-- Build the artifact for one accepted module.
 

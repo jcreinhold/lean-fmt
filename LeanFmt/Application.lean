@@ -284,7 +284,8 @@ private def ExactRun.nextPathIndex (run : ExactRun) : IO Nat :=
   run.nextIndex.modifyGet fun index => (index, index + 1)
 
 private def ExactRun.envelope (run : ExactRun)
-    (snapshot : SourceSnapshot) (captureSemantic : Bool) (validator := false) : IO AnalysisEnvelope := do
+    (snapshot : SourceSnapshot) (captureSemantic : Bool) (validator := false)
+    (captureOccurrences : Bool := false) : IO AnalysisEnvelope := do
   let index ← run.nextPathIndex
   let setupResult ← exactSetupResult run.project snapshot
   let setup := match setupResult with
@@ -301,8 +302,13 @@ private def ExactRun.envelope (run : ExactRun)
     let analyzer := (← IO.getEnv overrideName).map FilePath.mk |>.getD run.application
     let output ← runBounded {
       cmd := analyzer.toString
+      -- The trailing capture token encodes the demanded semantic capabilities: "0" none, "1" the two
+      -- cheap sub-facts (notations + diagnostics), "2" those plus the info-tree occurrence fold. A
+      -- direct 4-argument invocation (every syntax-only harness) omits it and captures nothing.
+      -- `occurrences` is only ever demanded together with the tier, so the token is a simple ladder.
       args := #["__analyze-exact", setupPath.toString, sourcePath.toString,
-        snapshot.path.toString, toString run.maxBytes, if captureSemantic then "1" else "0"]
+        snapshot.path.toString, toString run.maxBytes,
+        if captureOccurrences then "2" else if captureSemantic then "1" else "0"]
       env := run.project.workspace.augmentedEnvVars.push ⟨"LEAN_NUM_THREADS", some "1"⟩
     } run.maxBytes
     unless output.exitCode == 0 do
@@ -387,38 +393,52 @@ private def canonicalAnalysis (snapshot : SourceSnapshot) (renderCanonical : Boo
     return semantic
   | none => throw <| IO.userError s!"invalid exact analysis for {snapshot.relativePath}"
 
-/-- Compose syntax-tier findings onto canonical text by **re-projecting** it — the model `ruff-06`'s
+/-- Compose fix-bearing findings onto canonical text by **re-projecting** it — the model `ruff-06`'s
 RFX-SPEC froze (`ruff-06-fix-safety/notes/01-model.md` §3; RYC-SPEC `notes/01-model.md`). The base
 analysis' canonical text carries only source-rule findings (`renderCanonicalText` runs `runSourceRules`
-alone), so a `.syntax` `.safe` fix would be reported by `check` on original coordinates yet never enter
-the canonical patch. A syntax fix cannot be translated onto the moved canonical bytes without depending
+alone), so a `.syntax` `.safe` fix — or the owned `.semantic` FMT014 rename (`ruff-11b`) — would be
+reported by `check` on original coordinates yet never enter the canonical patch (`prepareFile` draws it
+from `canonical.findings`). A fix cannot be translated onto the moved canonical bytes without depending
 on pass order; instead re-run the exact frontend on the *rendered* text and take the whole registry
 over that projection, so every fix `Edit` is natively in canonical coordinates — the coordinate system
 `prepareFile`'s `base := canonical.text` already applies edits in.
 
-Reached only on a canonical-rendering run whose plan demands the syntax tier (gated at the call site
-and in `availableAnalysis`), so an ordinary `fix`/`format` pays no second frontend run. Canonical text
-is a reprint of an already-elaborated module and elaborates by construction; a candidate that fails to
-re-analyze keeps the source-only findings rather than fabricating a fix. -/
+`captureSemantic`/`captureOccurrences` pass to the re-projection what the plan demanded of the base:
+a syntax fix re-projects the `.syntax` registry (both `false`, one frontend run), while a
+fixable-FMT014 render re-projects with `captureOccurrences` so the info-tree fold runs on the
+*rendered* text and the FMT014 rename lands at canonical coordinates. The occurrence captured on the
+original source is deliberately unused for the patch — the same "re-project, don't translate" reason a
+syntax fix's original offset is.
+
+Reached only on a canonical-rendering run whose plan demands the syntax tier or the occurrence
+capability (gated at the call site and in `availableAnalysis`), so an ordinary `fix`/`format` pays no
+second frontend run. Canonical text is a reprint of an already-elaborated module and elaborates by
+construction; a candidate that fails to re-analyze keeps the source-only findings rather than
+fabricating a fix. -/
 private def ExactRun.reprojectCanonical (run : ExactRun) (snapshot : SourceSnapshot)
-    (analysis : SemanticAnalysis) : IO SemanticAnalysis := do
+    (analysis : SemanticAnalysis) (captureSemantic captureOccurrences : Bool) : IO SemanticAnalysis := do
   match analysis.result?.bind (·.canonical?) with
   | none => return analysis
   | some canonical =>
     let reSnapshot := snapshot.withSource canonical.text
     let reAnalysis ← canonicalAnalysis reSnapshot (renderCanonical := false)
-      (← run.envelope reSnapshot false)
+      (← run.envelope reSnapshot captureSemantic (captureOccurrences := captureOccurrences))
     match reAnalysis.result? with
     | some result => return analysis.withCanonical { canonical with findings := result.findings }
     | none => return analysis
 
 def ExactRun.analyzeSnapshot (run : ExactRun) (snapshot : SourceSnapshot)
     (renderCanonical : Bool) (needsSyntax := false) (validator := false)
-    (captureSemantic : Bool := false) : IO SemanticAnalysis := do
-  let base ← canonicalAnalysis snapshot renderCanonical (← run.envelope snapshot captureSemantic validator)
-  -- A `.syntax` selection that renders canonical needs its fixes composed from the canonical projection;
-  -- every other run keeps `base` untouched and pays no re-projection.
-  if renderCanonical && needsSyntax then run.reprojectCanonical snapshot base else pure base
+    (captureSemantic : Bool := false) (captureOccurrences : Bool := false) : IO SemanticAnalysis := do
+  let base ← canonicalAnalysis snapshot renderCanonical
+    (← run.envelope snapshot captureSemantic validator captureOccurrences)
+  -- A canonical render that carries a fix — a `.syntax` `.safe` fix or the owned `.semantic` FMT014
+  -- rename — needs it composed from the canonical projection; every other run keeps `base` untouched
+  -- and pays no re-projection. The occurrence fix re-projects with its capability so FMT014 lands at
+  -- canonical coordinates, exactly as a syntax fix re-projects the syntax registry.
+  if renderCanonical && (needsSyntax || captureOccurrences) then
+    run.reprojectCanonical snapshot base captureSemantic captureOccurrences
+  else pure base
 
 /- Bracket a complete exact-analysis run. The capability is constructed only after a real fallback
 or editor request needs it; cache-only and ordinary-evidence batch runs create no temporary state. -/
@@ -446,7 +466,7 @@ A `broken` entry always can: it records that the file did not analyze, which no 
 text would change. A successful entry cannot serve a rendering mode unless it carries the canonical
 text that mode must print — a `check` run caches an entry with `canonical? := none`, and treating that
 as a hit for `format` would report every file clean. Insufficient is a miss, not an answer. -/
-private def cacheHitServes (requiredTier : Tier) (renderCanonical : Bool)
+private def cacheHitServes (requiredTier : Tier) (demandedCaps : SemanticCaps) (renderCanonical : Bool)
     (analysis : SemanticAnalysis) : Bool :=
   match analysis.result? with
   | none => true
@@ -456,14 +476,21 @@ private def cacheHitServes (requiredTier : Tier) (renderCanonical : Bool)
     -- A `broken` entry (`none`) serves any run — a file that did not analyze did not analyze at any
     -- tier. Without this clause, shipping the first syntax rule would let a source-only `check` poison
     -- a later `--select FMT010` into a persisted false clean.
+    --
+    -- Caps gate (`ruff-11b` Design B): orthogonal to the tier, a `.semantic` entry serves a run only
+    -- when it captured every sub-fact the run demanded. `demandedCaps` is `{}` for a source/syntax run
+    -- (subset of anything), so this only ever adds a miss: a fixable-FMT014 demand
+    -- (`demandedCaps.occurrences`) against a monolithic-era `.semantic` entry (`caps.occurrences =
+    -- false`) misses and recomputes rather than serving a false clean.
     (!renderCanonical || result.canonical?.isSome) && result.tier.satisfies requiredTier
+      && demandedCaps.subset result.caps
 
 private def availableAnalysis (plan : RulePlan) (renderCanonical : Bool)
     (evidence : Project.ModuleEvidence)
     (snapshot : SourceSnapshot) (cached? : Option SemanticAnalysis)
     (officialArtifact? : Option ModuleArtifact) : IO (Option SemanticAnalysis) := do
   if let some analysis := cached? then
-    if cacheHitServes plan.requiredTier renderCanonical analysis then
+    if cacheHitServes plan.requiredTier (plan.demandedCaps renderCanonical) renderCanonical analysis then
       return some analysis
   if plan.requiredTier == .source && !renderCanonical && evidence == .current
       && !Suppression.mayContainDirective snapshot.source then
@@ -1033,7 +1060,9 @@ def execute (request : RunRequest) : IO RunReport := do
   -- the mode: no rule is `semantic`-tier, so a rendering mode is the sole demander of the notation
   -- fact (`RulePlan.demandedTier`). This is the gating seam — capture runs iff `demanded` reaches it.
   let demanded := plan.demandedTier renderCanonical
-  let cached := cached.map fun cached? => cached?.filter (cacheHitServes plan.requiredTier renderCanonical)
+  let demandedCaps := plan.demandedCaps renderCanonical
+  let cached := cached.map fun cached? =>
+    cached?.filter (cacheHitServes plan.requiredTier demandedCaps renderCanonical)
   if cached.all Option.isSome then
     if let some previewMode := request.mode.preview? then
       let mut files := #[]
@@ -1082,6 +1111,7 @@ def execute (request : RunRequest) : IO RunReport := do
           | none =>
             exactRun.analyzeSnapshot snapshot renderCanonical
               (needsSyntax := plan.requiredTier == .syntax) (captureSemantic := demanded == .semantic)
+              (captureOccurrences := demandedCaps.occurrences)
         analyses := analyses.push (some analysis)
         let report ← match request.mode with
           | .fix => fixFile exactRun plan request.unsafeFixes ir.1 ir.2 snapshot analysis
@@ -1187,7 +1217,10 @@ private unsafe def runAnalyzeChild (args : List String) : IO UInt32 := do
   let .ok setup := Lean.fromJson? setupJson
     | throw <| IO.userError "invalid ModuleSetup payload"
   let source ← IO.FS.readFile snapshotPath
-  let envelope ← analyzeExact setup source displayPath (captureSemantic == "1")
+  -- "0" none, "1" semantic (notations + diagnostics), "2" semantic + the info-tree occurrence fold.
+  let envelope ← analyzeExact setup source displayPath
+    (captureSemantic := captureSemantic == "1" || captureSemantic == "2")
+    (captureOccurrences := captureSemantic == "2")
   IO.println (Lean.toJson envelope).compress
   return 0
 
