@@ -267,7 +267,7 @@ unsafe def compilerArtifact? (moduleName : Lean.Name)
   let (moduleData, _region) ← Lean.readModuleData moduleFile
   let level := if moduleData.isModule then Lean.OLeanLevel.exported else .private
   let artifacts : Lean.NameMap Lean.ImportArtifacts :=
-    ({} : Lean.NameMap Lean.ImportArtifacts).insert moduleName (.ofArray #[moduleFile])
+    ({} : Lean.NameMap Lean.ImportArtifacts).insert moduleName (.ofArrays #[#[moduleFile]])
   let environment ← Lean.importModules #[{ module := moduleName }] {}
     (trustLevel := 1024) (loadExts := false) (level := level) (arts := artifacts)
   return fromEnvironment? environment moduleName
