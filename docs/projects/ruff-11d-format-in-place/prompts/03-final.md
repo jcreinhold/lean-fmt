@@ -1,6 +1,6 @@
 ---
 claim_id: FIP-FINAL
-status: planned
+status: verified
 depends_on: [FIP-IMPL]
 ---
 

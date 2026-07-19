@@ -22,6 +22,17 @@ mixed_fixture="$repo_root/tests/modes/.rdf-impl-mixed.lean"
 # composition orders (`fix; format` and `format; fix`) to prove both reach the same fixed-point bytes.
 comp_a_fixture="$repo_root/tests/modes/.rdf-final-comp-a.lean"
 comp_b_fixture="$repo_root/tests/modes/.rdf-final-comp-b.lean"
+# FIP-FINAL (`ruff-11d`) in-place-write acceptance fixtures: layout-dirty (exact-bytes/idempotence/
+# --check), an elaboration-error `broken` file, a CRLF file and an in-string-whitespace file (write
+# round-trip), a stale-source victim, and a no-arg project-selection pair (included + excluded). All
+# scratch under the lake root, untracked, trap-removed; the CRLF/whitespace ones cannot be committed.
+fin_exact_fixture="$repo_root/tests/modes/.fip-final-exact.lean"
+fin_broken_fixture="$repo_root/tests/modes/.fip-final-broken.lean"
+fin_crlf_fixture="$repo_root/tests/modes/.fip-final-crlf.lean"
+fin_string_fixture="$repo_root/tests/modes/.fip-final-string.lean"
+fin_stale_fixture="$repo_root/tests/modes/.fip-final-stale.lean"
+fin_incl_fixture="$repo_root/tests/modes/.fip-final-incl.lean"
+fin_excl_fixture="$repo_root/tests/modes/.fip-final-excl.lean"
 
 # Both fixtures are edited in place below and both are tracked files, so restoring them is not
 # cleanup — it is the difference between a failing test and a dirty working tree the next run
@@ -35,7 +46,10 @@ restore() {
   fi
   rm -rf "$cache_root" "$work" \
     "$nosel_fixture" "$string_fixture" "$tail_fixture" "$mixed_fixture" \
-    "$comp_a_fixture" "$comp_b_fixture"
+    "$comp_a_fixture" "$comp_b_fixture" \
+    "$fin_exact_fixture" "$fin_broken_fixture" "$fin_crlf_fixture" "$fin_string_fixture" \
+    "$fin_stale_fixture" "$fin_incl_fixture" "$fin_excl_fixture"
+  rm -f "$repo_root"/tests/modes/.fip-final-*.lean.lean-fmt-tmp-*
 }
 trap restore EXIT
 
@@ -758,5 +772,164 @@ for p in sys.argv[1:3]:
     f, = json.load(open(p))["files"]
     assert f["status"] == "clean" and f["findings"] == [], (p, f)
 PY
+
+# =================================================================================================
+# FIP-FINAL (`ruff-11d`): adversarial acceptance of the in-place default. `format` writes exactly the
+# canonical bytes and only those; it is idempotent; `--check` never writes; a broken file is never
+# written; CRLF and in-string bytes round-trip on write; the stale-source guard holds for format's
+# write as for fix's; no-arg selection writes exactly the included set. `check`/`diff` still never
+# write (asserted below and throughout the suite).
+# =================================================================================================
+
+# 1+2. Exact bytes + idempotence. A layout-dirty, otherwise lint-clean file: `format` writes EXACTLY the
+#      canonical bytes (byte-compared), no rule fix appears, and a second `format` writes nothing.
+printf 'module\n\nnamespace     Gamma\n\ndef exactValue : Nat := 1\n\nend Gamma\n' >"$fin_exact_fixture"
+canonical_exact='module\n\nnamespace Gamma\n\ndef exactValue : Nat := 1\n\nend Gamma\n'
+run_expect 0 "$work/fin-exact.json" "$application" format --root . --json --no-cache \
+  tests/modes/.fip-final-exact.lean
+CANON="$canonical_exact" python3 - "$work/fin-exact.json" "$fin_exact_fixture" <<'PY'
+import json, os, sys
+canonical = os.environ["CANON"].encode().decode("unicode_escape")
+r = json.load(open(sys.argv[1]))
+f, = r["files"]
+assert f["status"] == "formatted" and f["written"] is True and r["written"] == 1, f
+assert f["findings"] == [], ("a rule fix appeared on a format write", f)  # layout only, no fix
+data = open(sys.argv[2]).read()
+assert data == canonical, ("format wrote non-canonical bytes", repr(data))
+PY
+run_expect 0 "$work/fin-exact-2.json" "$application" format --root . --json --no-cache \
+  tests/modes/.fip-final-exact.lean
+CANON="$canonical_exact" python3 - "$work/fin-exact-2.json" "$fin_exact_fixture" <<'PY'
+import json, os, sys
+canonical = os.environ["CANON"].encode().decode("unicode_escape")
+f, = json.load(open(sys.argv[1]))["files"]
+assert f["status"] == "clean" and f["written"] is False, ("format is not idempotent", f)
+assert open(sys.argv[2]).read() == canonical, "a second format changed bytes"
+PY
+
+# 3. `--check` never writes. On the dirty fixture it exits non-zero and leaves the file byte-identical;
+#    plain `format` then writes it; on the now-clean file `--check` exits 0.
+printf 'module\n\nnamespace     Gamma\n\ndef exactValue : Nat := 1\n\nend Gamma\n' >"$fin_exact_fixture"
+metadata "$fin_exact_fixture" >"$work/fin-check.before"
+run_expect 1 "$work/fin-check.json" "$application" format --check --root . --json --no-cache \
+  tests/modes/.fip-final-exact.lean
+metadata "$fin_exact_fixture" >"$work/fin-check.after"
+cmp "$work/fin-check.before" "$work/fin-check.after"   # --check wrote nothing at all
+python3 - "$work/fin-check.json" <<'PY'
+import json, sys
+f, = json.load(open(sys.argv[1]))["files"]
+assert f["status"] == "would-format" and f["written"] is False, f
+PY
+run_expect 0 "$work/fin-check-write.json" "$application" format --root . --json --no-cache \
+  tests/modes/.fip-final-exact.lean
+run_expect 0 "$work/fin-check-clean.json" "$application" format --check --root . --json --no-cache \
+  tests/modes/.fip-final-exact.lean
+python3 - "$work/fin-check-clean.json" <<'PY'
+import json, sys
+f, = json.load(open(sys.argv[1]))["files"]
+assert f["status"] == "clean", ("--check on a clean file must be clean/exit 0", f)
+PY
+
+# 4. A broken file is never written and orphans no temp. An elaboration error (`Nat := true`) makes the
+#    file `broken`; it is byte-identical afterward and no `.lean-fmt-tmp-*` survives beside it — the
+#    validation guard holds for `format` exactly as for `fix`.
+printf 'module\n\ndef bad : Nat := true\n' >"$fin_broken_fixture"
+metadata "$fin_broken_fixture" >"$work/fin-broken.before"
+run_expect 1 "$work/fin-broken.json" "$application" format --root . --json --no-cache \
+  tests/modes/.fip-final-broken.lean
+metadata "$fin_broken_fixture" >"$work/fin-broken.after"
+cmp "$work/fin-broken.before" "$work/fin-broken.after"
+python3 - "$work/fin-broken.json" <<'PY'
+import json, sys
+r = json.load(open(sys.argv[1]))
+f, = r["files"]
+assert f["status"] == "broken" and r["broken"] == 1 and r["written"] == 0, f
+PY
+if compgen -G "$repo_root/tests/modes/.fip-final-broken.lean.lean-fmt-tmp-*" >/dev/null; then
+  echo 'a broken format orphaned a temp file at the target' >&2; exit 1
+fi
+
+# 5a. CRLF write round-trip. A CRLF file formatted in place keeps CRLF endings (denormalized on write):
+#     no bare LF appears, and the layout is canonical.
+printf 'module\r\n\r\nnamespace     Delta\r\n\r\ndef crlfValue : Nat := 1\r\n\r\nend Delta\r\n' \
+  >"$fin_crlf_fixture"
+run_expect 0 "$work/fin-crlf.json" "$application" format --root . --json --no-cache \
+  tests/modes/.fip-final-crlf.lean
+python3 - "$fin_crlf_fixture" <<'PY'
+import sys
+data = open(sys.argv[1], "rb").read()
+assert b"\r\n" in data, "format stripped CRLF line endings on write"
+assert b"\n" not in data.replace(b"\r\n", b""), "format left a bare LF in a CRLF file"
+assert b"namespace Delta\r\n" in data and b"namespace     Delta" not in data, \
+    ("layout not canonicalized on a CRLF write", data)
+PY
+
+# 5b. In-string trailing whitespace round-trip. `format` adds the missing final newline (layout) but the
+#     string value "alpha   " survives byte-for-byte — the trivia-only trim cannot reach token content,
+#     so the write cannot corrupt a string the way the retired FMT001 once did.
+printf 'module\n\ndef stringVal : String := "alpha   \n  beta"' >"$fin_string_fixture"
+run_expect 0 "$work/fin-string.json" "$application" format --root . --json --no-cache \
+  tests/modes/.fip-final-string.lean
+python3 - "$fin_string_fixture" <<'PY'
+import sys
+data = open(sys.argv[1], "rb").read()
+assert data == b'module\n\ndef stringVal : String := "alpha   \n  beta"\n', repr(data)
+PY
+
+# 6. Stale-source guard on format's write. A concurrent change between analysis and rename is caught by
+#    `publishAtomic` exactly as for `fix`: the write is refused, the file is `rejected`, nothing the
+#    formatter produced is published.
+printf 'module\n\nnamespace     Epsilon\n\ndef staleValue : Nat := 1\n\nend Epsilon\n' >"$fin_stale_fixture"
+cat >"$work/fin-stale-hook" <<'EOF'
+#!/bin/sh
+printf '\n-- concurrent change\n' >>"$1"
+EOF
+chmod +x "$work/fin-stale-hook"
+run_expect 1 "$work/fin-stale.json" env LEAN_FMT_TEST_BEFORE_WRITE="$work/fin-stale-hook" \
+  "$application" format --root . --json --no-cache tests/modes/.fip-final-stale.lean
+grep -q 'source changed after analysis' "$work/fin-stale.json"
+python3 - "$work/fin-stale.json" <<'PY'
+import json, sys
+r = json.load(open(sys.argv[1]))
+assert r["rejected"] == 1 and r["written"] == 0, r
+PY
+
+# 7. No-arg project-wide write. With `include` scoping selection to exactly one file, `format` with NO
+#    file arguments writes that file and leaves the excluded sibling byte-identical: no-arg selection
+#    (`Project.load` discovery filtered by `config.includesPath`) chooses the set, and the write default
+#    acts on exactly it — no `.lake` or out-of-set file is touched.
+printf 'module\n\nnamespace     Incl\n\ndef inclValue : Nat := 1\n\nend Incl\n' >"$fin_incl_fixture"
+printf 'module\n\nnamespace     Excl\n\ndef exclValue : Nat := 1\n\nend Excl\n' >"$fin_excl_fixture"
+cat >"$work/fin-noarg.toml" <<'EOF'
+select = ["default"]
+include = ["tests/modes/.fip-final-incl.lean"]
+EOF
+metadata "$fin_excl_fixture" >"$work/fin-excl.before"
+run_expect 0 "$work/fin-noarg.json" "$application" format --root . --json --no-cache \
+  --config "$work/fin-noarg.toml"
+python3 - "$work/fin-noarg.json" <<'PY'
+import json, sys
+r = json.load(open(sys.argv[1]))
+paths = [f["path"] for f in r["files"]]
+assert paths == ["tests/modes/.fip-final-incl.lean"], ("no-arg selection is not the included set", paths)
+f, = r["files"]
+assert f["status"] == "formatted" and f["written"] is True, f
+PY
+python3 - "$fin_incl_fixture" <<'PY'
+import sys
+assert open(sys.argv[1]).read() == "module\n\nnamespace Incl\n\ndef inclValue : Nat := 1\n\nend Incl\n"
+PY
+metadata "$fin_excl_fixture" >"$work/fin-excl.after"
+cmp "$work/fin-excl.before" "$work/fin-excl.after"   # the excluded sibling was never touched
+
+# 8. `check`/`diff` still never write — on a fresh dirty fixture, both leave it byte-identical.
+printf 'module\n\nnamespace     Zeta\n\ndef neverValue : Nat := 1\n\nend Zeta\n' >"$fin_exact_fixture"
+metadata "$fin_exact_fixture" >"$work/fin-nw.before"
+run_expect 0 "$work/fin-nw-check.json" "$application" check --root . --json --no-cache \
+  tests/modes/.fip-final-exact.lean
+run_expect 1 "$work/fin-nw-diff.txt" "$application" diff --root . --no-cache \
+  tests/modes/.fip-final-exact.lean
+metadata "$fin_exact_fixture" >"$work/fin-nw.after"
+cmp "$work/fin-nw.before" "$work/fin-nw.after"   # check and diff wrote nothing
 
 printf 'lean-fmt product mode integration tests passed\n'

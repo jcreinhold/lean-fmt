@@ -1,12 +1,12 @@
 ---
 kind: state
-first_unresolved: 03-final
+first_unresolved: none
 ---
 
 # Current state
 
-FIP-SPEC and FIP-IMPL are verified. `lean-fmt format` now publishes the canonical layout in place by
-default — like `ruff format`. The writer is `formatFile` (`Application.lean`, structurally `fixFile`
+**Stack complete — all three prompts verified.** `lean-fmt format` now publishes the canonical layout
+in place by default — like `ruff format`. The writer is `formatFile` (`Application.lean`, structurally `fixFile`
 with `renderCanonical := true`, status `formatted`), routed through the `ruff-06` guarded path
 (stale-source check, exact-setup validation on the reflowed bytes, atomic lossless publish). `format
 --check` (a `RunRequest.formatCheck` flag, gated in `Cli.lean`) is the non-writing CI preview
@@ -21,11 +21,15 @@ Scope was fixed with the owner to the **minimal default-flip**: config-scoped fi
 the existing `Project.load` discovery (`discoverPaths` + `config.includesPath`), so this stack changes
 only what happens to each resolved file, not which files are chosen.
 
-First unresolved is 03-final (FIP-FINAL): accept the in-place default adversarially through the product
-CLI and persistent tests — exact written bytes (and no rule fix on the written file), idempotence,
-`--check` never writes, a broken file never written (no orphan temp), CRLF and in-string round-trip on
-write, the stale-source guard on format's write, `check`/`diff` still never write, format+fix confluence
-with format writing, and no-arg project-wide write of exactly the included set. No full mathlib run.
+FIP-FINAL accepted the in-place default adversarially in `tests/modes/run.sh` (exact written bytes with
+no rule fix, idempotence, `--check` never writes, a broken file never written with no orphan temp, CRLF
+and in-string write round-trips, the stale-source guard on format's write, `check`/`diff` still never
+write, format+fix confluence with format writing, and no-arg project-wide write of exactly the included
+set). No full mathlib run — the write path was proven on real-frontend miniatures and by inspection.
+
+There is no further work in this stack. The named next surfaces belong to other stacks: config-scoped
+globs / `exclude` / a `[format]` section to `ruff-13-config-discovery`, and stdin/stdout + range to
+`ruff-14-stream-range` (both list `ruff-11d` as a prerequisite in `ruff-class-roadmap.md`).
 
 Prerequisite stacks `ruff-04-formatter-product`, `ruff-06-fix-safety`, and `ruff-11c-decouple-fix-format`
 are all verified. If live code contradicts a prerequisite result, reopen the owning prerequisite rather
@@ -35,7 +39,7 @@ than patching around it. Full mathlib is not development evidence.
 | --- | --- | --- | --- |
 | 01-spec | FIP-SPEC | verified | — |
 | 02-impl | FIP-IMPL | verified | FIP-SPEC |
-| 03-final | FIP-FINAL | planned | FIP-IMPL |
+| 03-final | FIP-FINAL | verified | FIP-IMPL |
 
 ## Scope
 
