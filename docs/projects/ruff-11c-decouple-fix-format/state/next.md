@@ -1,9 +1,9 @@
 # Next Proof Packet
 
 - Stack: ruff-11c-decouple-fix-format
-- First unresolved: 01-spec
-- Claim ID: RDF-SPEC
-- Prompt: 01-spec
+- First unresolved: 02-layout
+- Claim ID: RDF-LAYOUT
+- Prompt: 02-layout
 - Module: (docs only)
 - Target file: (docs only)
 
@@ -17,11 +17,8 @@ Read this file, the target prompt, target files, listed source/template line ran
 
 ## Proof Task
 
-- Deliver **RDF-SPEC**: Specify the split of `prepareFile`'s single canonical patch into two independent concerns — a **layout patch** (`format`/`diff`: canonical reflow, no rule fix) and a **fix patch** (`fix`: admitted rule fixes at the file's own original coordinates, no reflow) — with `check` unchanged. Freeze the mode→patch mapping, name every mechanism that retires because fixes no longer cross the reflow, and prove the `ruff-11b` capability split and the `ruff-06` validator are untouched. Change no observable rule report; change what each mode *writes and previews*.
-- Read `roadmap.md`; `ruff-06-fix-safety/notes/01-model.md` (the safe/unsafe/display-only applicability model, the atomic transaction, and the output re-elaboration validator); `ruff-10b-syntax-fix-composition/notes/01-model.md` (how a syntax `.safe` fix rides `reprojectCanonical` onto canonical text — the coordinate coupling this stack unwinds); `ruff-11b-owned-semantic-fix/notes/01-model.md` and `results/02-impl.md` §2 (FMT014's rename reaching `reprojectCanonical` with `captureOccurrences` — the decision this stack reverses in direction while keeping its result) and `results/03-final.md` §1 (the frozen fixable predicate); `ruff-04-formatter-product` and `ruff-09-import-rules` results for the origin of `RunMode.rendersCanonical` and the FMT005 canonical-coordinate fix; `AGENTS.md`; and the live seams before specifying an interface:
-- `LeanFmt/Application.lean`: `RunMode` and `RunMode.rendersCanonical` (23-44), `RunRequest.unsafeFixes` (55-59), `renderCanonicalText`/`canonicalAnalysis` (379-395), `ExactRun.reprojectCanonical` and its `(captureSemantic captureOccurrences)` gate (418-440), `cacheHitServes`/`availableAnalysis` (469-519), `patchDuplicateFindings` (819-828), `prepareFile` with its `base`/`baseFindings` branch and the `admitted` gate (830-888), `RunMode.preview?` (890-899).
-- `LeanFmt/Analysis.lean`: `analyzeExact`, `captureDeprecatedOccurrences`, `occurrenceOfInfo` — where the whole-file info trees are walked and occurrences resolved in normalized-source coordinates.
-- `LeanFmt/ArtifactModel.lean`/`LeanFmt/Semantic.lean`: `SemanticResult`, `SemanticCaps`, the canonical sub-result (`result.canonical?`), and the capability field.
+- Deliver **RDF-LAYOUT**: Make the canonical reflow the sole, sound owner of trailing-whitespace and final-newline normalization, and retire FMT001/FMT002 as lint rules. After this prompt, `Printer.format` output trims the trailing horizontal whitespace it lays down (in the whitespace *trivia* it emits — never token text, so string literals are safe **by construction**) and ends with exactly one final newline; FMT001 and FMT002 are gone from `ruleRegistry` and their rule definitions are deleted; and every persistent test that used FMT001/FMT002 as its fixable-source vehicle is migrated onto a surviving import/syntax/semantic rule. This lands **before** the RDF-IMPL patch split so `format` never regresses: while `format` still composes fixes (pre-split), the printer already owns ws/newline and FMT001/FMT002 no longer exist.
+- Read `roadmap.md`, `results/01-spec.md` (the frozen resolution and the first-hand evidence that the printer does *not* subsume ws/newline today, and the FMT001 string-corruption defect), `notes/01-model.md`, `AGENTS.md`, `docs/adding-a-rule.md`, and the live seams before changing an interface.
 
 ## Reuse
 
@@ -33,6 +30,6 @@ Inspect the live goal, search relevant declarations, test plausible proof steps,
 
 ## Stop Rules
 
-- Do not specify `format`/`diff` applying or previewing any rule fix, or `fix` reflowing.
-- Do not specify a fix computed at canonical coordinates; every fix rides the file's normalized bytes.
-- Do not weaken the capability split, `Tier.satisfies` soundness, the validator, exact semantics, write safety, or cache identity, or give rules lifecycle authority.
+- The formatter's ws/newline trim must be sound **by construction** — trivia only, never token/string bytes. If a test shows a string value changing under `format`, stop and fix the trim rather than narrowing the test.
+- Do not leave FMT001/FMT002 dormant in the registry, and do not reintroduce a "format applies a rule fix" coupling — the ws/newline normalization is layout, unconditional, no `--unsafe-fixes` gate.
+- Do not rewrite historical prerequisite-stack records. Do not give rules lifecycle authority.

@@ -1,11 +1,15 @@
 ---
 kind: state
-first_unresolved: 01-spec
+first_unresolved: 02-layout
 ---
 
 # Current state
 
-This stack is planned and has not begun. It decouples lint-fix from formatting: `format`/`diff` reflow
+RDF-SPEC (01) is verified: the decoupled interface is frozen in `notes/01-model.md` and
+`results/01-spec.md`, with six first-hand product probes in `evidence/01-fusion-and-subsumption.md`
+(fusion, printer non-subsumption of ws/newline, and the pre-existing FMT001 in-string corruption the
+retirement removes). Next unresolved is 02-layout (RDF-LAYOUT). It decouples lint-fix from formatting:
+`format`/`diff` reflow
 only (no rule fix applied or previewed) and `fix`/`check --fix` apply admitted fixes at the file's own
 original coordinates (no reflow), so a user composes them as `ruff check --fix && ruff format`. As part of
 that split the formatter takes sole ownership of trailing-whitespace/final-newline normalization (layout,
@@ -25,7 +29,7 @@ implementation still matches recorded state.
 
 | Prompt | Claim | Status | Depends on |
 | --- | --- | --- | --- |
-| 01-spec | RDF-SPEC | planned | — |
+| 01-spec | RDF-SPEC | verified | — |
 | 02-layout | RDF-LAYOUT | planned | RDF-SPEC |
 | 03-impl | RDF-IMPL | planned | RDF-LAYOUT |
 | 04-final | RDF-FINAL | planned | RDF-IMPL |

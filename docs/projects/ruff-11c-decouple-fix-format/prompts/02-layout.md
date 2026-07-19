@@ -47,7 +47,7 @@ printer does *not* subsume ws/newline today, and the FMT001 string-corruption de
 - **Test migration (the retirement's blast radius).** FMT001/FMT002 are the fixable-source vehicle across
   the persistent suite. Migrate each onto a surviving rule, preserving what the test actually proves:
   - `LeanFmtTest.lean`: the `extend-safe-fixes`/`extend-unsafe-fixes` applicability cases need a `.safe`
-    and an `.unsafe` example — use a surviving `.safe` fix (a syntax rule, e.g. FMT013/FMT009) and the
+    and an `.unsafe` example — use a surviving `.safe` fix (a syntax rule, e.g. FMT010/FMT011/FMT013) and the
     `.unsafe` FMT014; the conflict-rejection case (FMT001 vs FMT013 overlapping edits) uses two surviving
     rules' overlapping edits or synthetic findings through the engine seam; the per-file-ignore and
     plan-projection cases use any surviving rule code.
