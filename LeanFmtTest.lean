@@ -436,30 +436,57 @@ ignore = [\"FMT004\"]\n\
     ensure (!(config.includesPath "LeanFmt/Generated/File.lean"))
       "exclude pattern did not win"
     ensure (!(config.includesPath "Other.lean")) "unmatched path was included"
-    let .ok plan := config.rulePlan #[] #[]
+    let .ok plan := config.rulePlan {}
       | throw <| IO.userError "valid configured selectors were rejected"
+    -- Specificity precedence (`ruff-12`): config `ignore = [FMT004]` (exact) outranks `select = [security]`
+    -- (category), so only FMT003 survives.
     ensure (plan.activeCount == 1) "configured ignore did not win"
     let findings := runSourceRules secBytes
     ensure ((plan.findings "LeanFmt/File.lean" findings).map (·.code) == #["FMT003"])
       "configured selector projection was wrong"
     ensure ((plan.findings "LeanFmt/Legacy/File.lean" findings).isEmpty)
       "per-file ignore did not win"
-    let .ok cliPlan := config.rulePlan #["FMT004"] #["FMT003"]
+    let .ok cliPlan := config.rulePlan { select := #["FMT004"], ignore := #["FMT003"] }
       | throw <| IO.userError "valid CLI selectors were rejected"
     ensure (cliPlan.activeCount == 1 &&
       (cliPlan.findings "Main.lean" findings).map (·.code) == #["FMT004"])
       "CLI selection did not replace config selection or ignore precedence changed"
-    ensure (match config.rulePlan #["UNKNOWN"] #[] with | .error _ => true | .ok _ => false)
+    ensure (match config.rulePlan { select := #["UNKNOWN"] } with | .error _ => true | .ok _ => false)
       "unknown CLI selector was accepted"
     -- The whole `security` category resolves through registry-derived category machinery — no hardcoded
-    -- list — and `redundancy` is disjoint from it.
-    let .ok secPlan := config.rulePlan #["security"] #[]
+    -- list. All security rules are stable, so no preview gate is needed to select them.
+    let .ok secPlan := config.rulePlan { select := #["security"] }
       | throw <| IO.userError "the 'security' category selector was rejected"
     ensure ((secPlan.findings "A.lean" findings).map (·.code) == #["FMT003", "FMT004"])
       "the security category did not select both control-byte rules"
-    ensure (match config.rulePlan #["redundancy"] #[] with
-      | .ok p => (p.findings "A.lean" findings).isEmpty | .error _ => false)
-      "a redundancy selection reported a security finding: the categories are not disjoint"
+    -- Preview gate: `redundancy` (FMT010/11/13, all preview) selects nothing without preview mode, and
+    -- all three with it. This is the `ruff-12` gate on a category selector.
+    let .ok gated := config.rulePlan { select := #["redundancy"] }
+      | throw <| IO.userError "a category of preview rules was rejected"
+    ensure (gated.activeCount == 0) "a preview category selected rules without preview mode"
+    let .ok previewed := config.rulePlan { select := #["redundancy"], preview := true }
+      | throw <| IO.userError "the preview category was rejected under preview mode"
+    ensure (previewed.activeCount == 3) "preview mode did not unlock the redundancy category"
+    -- Explicit preview-code selection is an error without preview mode, and succeeds with it.
+    ensure (match config.rulePlan { select := #["FMT013"] } with | .error _ => true | .ok _ => false)
+      "an explicit preview-code selection was accepted without preview mode"
+    ensure (match config.rulePlan { select := #["FMT013"], preview := true } with
+      | .ok p => p.selected == #["FMT013"] | .error _ => false)
+      "preview mode did not admit an explicit preview-code selection"
+    -- Specificity keeps an exact select over a category ignore (the case flat subtraction dropped).
+    let .ok keep := config.rulePlan { select := #["FMT013"], ignore := #["redundancy"], preview := true }
+      | throw <| IO.userError "exact-vs-category precedence rejected a valid plan"
+    ensure (keep.selected == #["FMT013"]) "an exact select did not outrank a category ignore"
+    -- A retired code is accepted (non-breaking), selects no rule, and raises a notice.
+    let .ok retired := config.rulePlan { select := #["FMT001"] }
+      | throw <| IO.userError "a retired selector was rejected instead of accepted with a notice"
+    ensure (retired.activeCount == 0 && !retired.notices.isEmpty)
+      "a retired selector did not degrade to an empty selection with a notice"
+    -- Fixability axis: a selected rule made unfixable is still selected, but out of `fixableSelected`.
+    let .ok unfix := config.rulePlan { select := #["FMT013"], unfixable := #["FMT013"], preview := true }
+      | throw <| IO.userError "the unfixable axis rejected a valid plan"
+    ensure (unfix.selected == #["FMT013"] && unfix.fixableSelected.isEmpty)
+      "unfixable did not withhold FMT013's fix while keeping it selected"
     IO.FS.writeFile configPath "unknown = true\n"
     let rejected ← try
       discard <| FormatterConfig.load directory
@@ -468,6 +495,75 @@ ignore = [\"FMT004\"]\n\
     ensure rejected "unknown configuration key was accepted"
   finally
     IO.FS.removeDirAll directory
+
+/-- Catalog metadata invariants (`ruff-12` RRL-IMPL; `notes/01-schema.md` §10). Pure over the registry:
+unique/well-shaped codes, namespace disjointness, lifecycle/default coherence, and documentation
+presence. The *executable*-example check (each `bad` fires, each fix yields `good?`) runs through the
+real frontend in `tests/catalog/run.sh`; this test pins everything answerable without a projection. -/
+private def testCatalogInvariants : IO Unit := do
+  let infos := allRuleInfos
+  let codes := infos.map (·.code)
+  -- 1. Codes are `FMT` + exactly three digits, unique, and disjoint from reserved + meta codes.
+  let isCodeShaped := fun (c : String) =>
+    let chars := c.toList
+    chars.length == 6 && c.startsWith "FMT" && (chars.drop 3).all Char.isDigit
+  for info in infos do
+    ensure (isCodeShaped info.code) s!"rule code is not FMT###: {info.code}"
+    ensure ((codes.filter (· == info.code)).size == 1) s!"duplicate rule code: {info.code}"
+    ensure (!isReservedCode info.code) s!"live rule reuses a reserved code: {info.code}"
+    ensure (info.code != "FMT900" && info.code != "FMT901")
+      s!"live rule reuses a suppression meta code: {info.code}"
+  -- 2. Namespace disjointness: no category names a code or a reserved word.
+  for info in infos do
+    ensure (!info.category.isEmpty) s!"rule {info.code} has an empty category"
+    ensure (!isCodeShaped info.category) s!"category collides with a code shape: {info.category}"
+    ensure (info.category != "all" && info.category != "default" && info.category != "preview")
+      s!"category collides with a reserved word: {info.category}"
+  -- 3. Lifecycle / default coherence.
+  for info in infos do
+    if info.lifecycle == .preview then
+      ensure (!info.defaultEnabled) s!"preview rule is default-enabled: {info.code}"
+    if info.lifecycle == .deprecated then
+      ensure (!info.defaultEnabled) s!"deprecated rule is default-enabled: {info.code}"
+      let some r := info.replacement?
+        | throw <| IO.userError s!"deprecated rule {info.code} has no replacement"
+      ensure (codes.contains r || isReservedCode r)
+        s!"deprecated rule {info.code} names an unknown replacement: {r}"
+    else
+      ensure info.replacement?.isNone s!"non-deprecated rule {info.code} carries a replacement"
+  -- 4. Documentation: nonempty explanation always; ≥1 example unless exempt; a fixable non-exempt rule
+  --    ships a bad→good example so its fix is testable.
+  for info in infos do
+    ensure (!info.explanation.isEmpty) s!"rule {info.code} has no explanation"
+    if exampleExemptCodes.contains info.code then
+      ensure info.examples.isEmpty s!"exempt rule {info.code} unexpectedly ships an example"
+    else
+      ensure (!info.examples.isEmpty) s!"rule {info.code} ships no example and is not exempt"
+      ensure (info.examples.all (!·.bad.isEmpty)) s!"rule {info.code} has an empty example"
+      if info.fixable then
+        ensure (info.examples.any (·.good?.isSome))
+          s!"fixable rule {info.code} has no bad→good example to test its fix"
+      else
+        ensure (info.examples.all (·.good?.isNone))
+          s!"report-only rule {info.code} has a `good` example but nothing to fix"
+  -- 5. Reserved integrity: FMT001/FMT002 are reserved and not live.
+  ensure (isReservedCode "FMT001" && isReservedCode "FMT002")
+    "FMT001/FMT002 are no longer reserved"
+  ensure (!codes.contains "FMT001" && !codes.contains "FMT002")
+    "a retired code reappeared as a live rule"
+  -- 6. Generated docs are nonempty and one per live rule plus an index and the config schema (drift is
+  -- checked in the harness). The schema enumerates exactly the selector vocabulary `selectorsValid` accepts.
+  ensure (catalogDocs.size == infos.size + 2) "generated docs count does not match the catalog"
+  ensure (catalogDocs.all (!·.2.isEmpty)) "a generated doc page is empty"
+  ensure (catalogDocs.any (·.1 == "schema.json")) "the generated config schema is missing"
+  for info in infos do
+    ensure (selectorVocabulary.contains info.code)
+      s!"live code {info.code} is absent from the schema selector vocabulary"
+    ensure (selectorVocabulary.contains info.category)
+      s!"category {info.category} is absent from the schema selector vocabulary"
+  for (code, _) in reservedCodes do
+    ensure (selectorVocabulary.contains code)
+      s!"reserved code {code} is absent from the schema selector vocabulary"
 
 private def testApplicability : IO Unit := do
   -- Admission: safe always, unsafe iff opted in, display-only never.
@@ -521,7 +617,7 @@ private def testApplicability : IO Unit := do
     let configPath := directory / "lean-fmt.toml"
     IO.FS.writeFile configPath "extend-safe-fixes = [\"FMT013\"]\nextend-unsafe-fixes = [\"FMT013\"]\n"
     let config ← FormatterConfig.load directory
-    ensure (match config.rulePlan #[] #[] with | .error _ => true | _ => false)
+    ensure (match config.rulePlan {} with | .error _ => true | _ => false)
       "a rule in both extend lists was accepted"
   finally
     IO.FS.removeDirAll directory
@@ -595,7 +691,8 @@ would fail every assertion below. -/
 private def probeSyntax : Rule := {
   info := {
     code := "TST900", category := "test", summary := "probe: first token"
-    fixable := false, defaultEnabled := false
+    fixable := false, defaultEnabled := false, lifecycle := .preview
+    explanation := "probe", examples := #[]
   }
   impl := .syntax fun facts =>
     match facts.projection.tokens[0]? with
@@ -610,7 +707,8 @@ private def probeSyntax : Rule := {
 private def probeSource : Rule := {
   info := {
     code := "TST901", category := "test", summary := "probe: whole file"
-    fixable := false, defaultEnabled := false
+    fixable := false, defaultEnabled := false, lifecycle := .preview
+    explanation := "probe", examples := #[]
   }
   impl := .source fun facts => #[{
     code := "TST901", severity := .warning, message := "whole file"
@@ -622,7 +720,8 @@ private def probeSource : Rule := {
 private def probeTie : Rule := {
   info := {
     code := "TST900", category := "test", summary := "probe: tie"
-    fixable := false, defaultEnabled := false
+    fixable := false, defaultEnabled := false, lifecycle := .preview
+    explanation := "probe", examples := #[]
   }
   impl := .source fun facts => #[{
     code := "TST900", severity := .warning, message := "tie"
@@ -2082,6 +2181,7 @@ public unsafe def main (args : List String) : IO UInt32 := do
     testEdits
     testFixAllAdversarial
     testConfig
+    testCatalogInvariants
     testApplicability
     testCacheIdentity
     testLosslessSource

@@ -360,10 +360,13 @@ functions; `LeanFmt.Cli` writes them. Layout under `docs/rules/`:
 - `docs/rules/index.md` — a table of every live rule (code, category, lifecycle, default, fix, summary),
   grouped by category, sorted by code within a group; plus a short "retired codes" section from the
   reserved table. Generated, never hand-edited.
-- `docs/rules/FMT###.md` — one page per live rule: heading, the `[lifecycle]` badge, the metadata line
-  (category/tier/fix/default), the `explanation`, every `example` as a fenced bad/good pair, the
-  selectors, the suppression spelling, and — for a `deprecated` rule — the `replacement?` migration
-  line.
+- `docs/rules/FMT###.md` — one page per live rule: opens with a **YAML frontmatter block**
+  (`code`/`category`/`tier`/`lifecycle`/`fix`/`default`, plus `replacement` when present) carrying the
+  machine-readable axes so a tool parses the catalog straight from the pages (RRL-IMPL refinement, used
+  by the `tests/catalog` executable-example harness); then the visible body — heading, the `[lifecycle]`
+  badge, the metadata line (category/tier/fix/default), the `explanation`, every `example` as a fenced
+  bad/good pair, the selectors, the suppression spelling, and — for a `deprecated` rule — the
+  `replacement?` migration line.
 
 Determinism and drift: generation sorts by code and takes no ambient input, so the same registry always
 yields byte-identical files. A **drift check** (`lean-fmt rules --docs --check`, or a test) re-generates

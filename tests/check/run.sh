@@ -357,7 +357,7 @@ cp -p "$work/Findings.effbak" tests/check/Findings.lean
 #     FMT013` each reach the frontend exactly once (one infrastructure failure), never twice.
 for label in plain fmt013; do
   args=(format --root . --json --no-cache)
-  [ "$label" = fmt013 ] && args+=(--select FMT013)
+  [ "$label" = fmt013 ] && args+=(--preview --select FMT013)
   run_expect 2 "$work/eff-format-$label.json" env LEAN_FMT_TEST_ANALYZER=/usr/bin/false \
     "$application" "${args[@]}" tests/check/Findings.lean
   python3 - "$work/eff-format-$label.json" "$label" <<'PY'

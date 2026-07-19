@@ -20,6 +20,9 @@ structure ServeOptions where
   configPath? : Option FilePath := none
   select : Array String := #[]
   ignore : Array String := #[]
+  /-- Preview mode for the service session (`ruff-12`), unlocking preview rules exactly as `--preview`
+  does for a batch run. -/
+  preview : Bool := false
 
 inductive Request where
   | health (id : Lean.Json)
@@ -169,9 +172,11 @@ def serve (options : ServeOptions) : IO UInt32 := do
   let configPath? := options.configPath?.map fun path =>
     if path.isAbsolute then path else root / path
   let config ← FormatterConfig.load root configPath?
-  let plan ← match config.rulePlan options.select options.ignore with
+  let plan ← match config.rulePlan
+      { select := options.select, ignore := options.ignore, preview := options.preview } with
     | .ok plan => pure plan
     | .error message => throw <| IO.userError message
+  for notice in plan.notices do IO.eprintln s!"lean-fmt: {notice}"
   let project ← Project.load root config #[]
   let stdin ← IO.getStdin
   let stdout ← IO.getStdout

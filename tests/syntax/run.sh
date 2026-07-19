@@ -57,7 +57,7 @@ expect_codes() {
   local exit_code=0
   [[ -n "$expected" ]] && exit_code=1
   run_expect "$exit_code" "$work/$label.json" \
-    sfmt check --root . --json --no-cache "$@" "tests/syntax/$fixture"
+    sfmt check --root . --json --no-cache --preview "$@" "tests/syntax/$fixture"
   EXPECTED="$expected" LABEL="$label" python3 - "$work/$label.json" <<'PY'
 import json, os, sys
 data = json.load(open(sys.argv[1]))
@@ -144,7 +144,7 @@ expect_codes custom-syntax CustomSyntax.lean "" "${all_six[@]}"
 # --- Malformed input: an unparseable file is `broken`, reported without a crash and without a false
 # finding. A syntax rule needs a projection; a file that does not parse has none.
 run_expect 1 "$work/malformed.json" \
-  sfmt check --root . --json --no-cache "${all_six[@]}" tests/syntax/Malformed.lean
+  sfmt check --root . --json --no-cache --preview "${all_six[@]}" tests/syntax/Malformed.lean
 python3 - "$work/malformed.json" <<'PY'
 import json, sys
 data = json.load(open(sys.argv[1]))
@@ -164,7 +164,7 @@ fix_applies() {
   local probe="tests/syntax/.ryc-fix-$label.lean"
   cp "tests/syntax/$fixture" "$probe"
   run_expect 0 "$work/$label-fix.json" \
-    sfmt fix --root . --json --no-cache --select "$selector" "$probe"
+    sfmt fix --root . --json --no-cache --preview --select "$selector" "$probe"
   GONE="$gone" PRESENT="$present" PROBE="$probe" LABEL="$label" python3 - "$work/$label-fix.json" <<'PY'
 import json, os, sys
 data = json.load(open(sys.argv[1]))
@@ -177,7 +177,7 @@ assert os.environ["GONE"] not in got, (label, "defect still present", repr(got))
 assert os.environ["PRESENT"] in got, (label, "fixed form absent", repr(got))
 PY
   run_expect 0 "$work/$label-recheck.json" \
-    sfmt check --root . --json --no-cache --select "$selector" "$probe"
+    sfmt check --root . --json --no-cache --preview --select "$selector" "$probe"
   LABEL="$label" python3 - "$work/$label-recheck.json" <<'PY'
 import json, os, sys
 data = json.load(open(sys.argv[1]))
@@ -196,7 +196,7 @@ fix_applies fmt011 Duplicates.lean  FMT011 'deriving Repr, Repr' 'deriving Repr'
 # byte-for-byte, where `fix` above rewrote it to `(1)`. This is the RDF-IMPL decoupling on a syntax-tier
 # `.safe` fix: applied by `fix` at original coordinates, absent from `format`.
 run_expect 0 "$work/fmt013-format.json" \
-  sfmt format --check --root . --json --no-cache --select FMT013 tests/syntax/NestedParen.lean
+  sfmt format --check --root . --json --no-cache --preview --select FMT013 tests/syntax/NestedParen.lean
 python3 - "$work/fmt013-format.json" <<'PY'
 import json, sys
 file, = json.load(open(sys.argv[1]))["files"]
@@ -223,7 +223,7 @@ fix_applies fmt013-triple NestedParenTriple.lean FMT013 '((' '(1)'
 probe="tests/syntax/.ryc-fix-mover.lean"
 cp tests/syntax/AttrThenParen.lean "$probe"
 run_expect 0 "$work/mover-fix.json" \
-  sfmt fix --root . --json --no-cache --select FMT010 --select FMT013 "$probe"
+  sfmt fix --root . --json --no-cache --preview --select FMT010 --select FMT013 "$probe"
 PROBE="$probe" python3 - "$work/mover-fix.json" <<'PY'
 import json, os, sys
 data = json.load(open(sys.argv[1]))
@@ -234,7 +234,7 @@ assert "(1)" in got and "@[simp]" in got, ("mover lost a fix", repr(got))
 PY
 # Idempotence: a second `fix` on the written file is a no-op -- nothing is left to change.
 run_expect 0 "$work/mover-refix.json" \
-  sfmt fix --root . --json --no-cache --select FMT010 --select FMT013 "$probe"
+  sfmt fix --root . --json --no-cache --preview --select FMT010 --select FMT013 "$probe"
 python3 - "$work/mover-refix.json" <<'PY'
 import json, sys
 data = json.load(open(sys.argv[1]))
@@ -251,9 +251,9 @@ order_b="tests/syntax/.ryc-fix-orderb.lean"
 cp tests/syntax/AttrThenParen.lean "$order_a"
 cp tests/syntax/AttrThenParen.lean "$order_b"
 run_expect 0 "$work/order-a.json" \
-  sfmt fix --root . --json --no-cache --select FMT010 --select FMT013 "$order_a"
+  sfmt fix --root . --json --no-cache --preview --select FMT010 --select FMT013 "$order_a"
 run_expect 0 "$work/order-b.json" \
-  sfmt fix --root . --json --no-cache --select FMT013 --select FMT010 "$order_b"
+  sfmt fix --root . --json --no-cache --preview --select FMT013 --select FMT010 "$order_b"
 cmp "$order_a" "$order_b" || { echo "pass-order changed the composed bytes" >&2; exit 1; }
 rm -f "$order_a" "$order_b"
 

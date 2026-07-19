@@ -58,7 +58,7 @@ PY
 #     redundant nested paren (FMT013, a syntax rule opted into with `--select`), since after RDF-LAYOUT
 #     no default finding lands on a `def` inside a namespace — the retired FMT001 used to. ---
 run_expect 0 "$work/nested.json" "$application" check --root . --json --no-cache \
-  --select FMT013 tests/suppression/Nested.lean
+  --preview --select FMT013 tests/suppression/Nested.lean
 python3 - "$work/nested.json" <<'PY'
 import json, sys
 file, = json.load(open(sys.argv[1]))["files"]

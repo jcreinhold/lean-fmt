@@ -330,7 +330,7 @@ check_exit() {  # run a command, capture its exit code into $ACC_EXIT (never abo
 
 # 1. Silent-omission-on-error. A semantic selection over a file that fails to elaborate reports the
 # file `broken` (exit 1, `broken == 1`), never dropping it from `files`.
-check_exit env LEAN_NUM_THREADS=1 "$application" check --root "$proj" --json --no-cache \
+check_exit env LEAN_NUM_THREADS=1 "$application" check --root "$proj" --json --no-cache --preview \
   --select FMT014 "$proj/acc/Broken.lean" >"$work/acc-broken.json" 2>/dev/null
 if [[ $ACC_EXIT -ne 1 ]]; then
   printf 'check over a broken file under a semantic selection: expected exit 1, got %s\n' "$ACC_EXIT" >&2
@@ -347,7 +347,7 @@ PY
 # 2. Mixed-tier selection. `--select FMT013 --select FMT014` demands `.semantic` (the max of the two
 # tiers), runs the whole registry over the semantic facts, and reports both a semantic and a syntax
 # finding on the one file — byte-sorted, independent of registry order.
-check_exit env LEAN_NUM_THREADS=1 "$application" check --root "$proj" --json --no-cache \
+check_exit env LEAN_NUM_THREADS=1 "$application" check --root "$proj" --json --no-cache --preview \
   --select FMT013 --select FMT014 "$proj/acc/Mixed.lean" >"$work/acc-mixed.json" 2>/dev/null
 python3 - "$work/acc-mixed.json" <<'PY'
 import json, sys
@@ -367,7 +367,7 @@ PY
 # afterward, the report shows no write, and the withheld-unsafe count records the omission (so the
 # report never reads as "clean, nothing to fix" for a file that has a fix nobody admitted).
 cp "$proj/acc/Mixed.lean" "$work/mixed.orig"
-check_exit env LEAN_NUM_THREADS=1 "$application" fix --root "$proj" --json --no-cache \
+check_exit env LEAN_NUM_THREADS=1 "$application" fix --root "$proj" --json --no-cache --preview \
   --select FMT014 "$proj/acc/Mixed.lean" >"$work/acc-fix.json" 2>/dev/null
 python3 - "$work/acc-fix.json" <<'PY'
 import json, sys
@@ -383,7 +383,7 @@ cmp -s "$work/mixed.orig" "$proj/acc/Mixed.lean" \
 # canonical-coordinate path is gone). `fix --unsafe-fixes --select FMT014` publishes the rename
 # `oldName -> newName`: the file changes, the written use reads `newName`, and a re-`check` of FMT014 is
 # clean because the only deprecated use is gone.
-check_exit env LEAN_NUM_THREADS=1 "$application" fix --root "$proj" --json --no-cache \
+check_exit env LEAN_NUM_THREADS=1 "$application" fix --root "$proj" --json --no-cache --preview \
   --unsafe-fixes --select FMT014 "$proj/acc/Mixed.lean" >"$work/acc-apply.json" 2>/dev/null
 python3 - "$work/acc-apply.json" <<'PY'
 import json, sys
@@ -398,7 +398,7 @@ if grep 'useOld' "$proj/acc/Mixed.lean" | grep -q 'oldName'; then
 fi
 # The rename re-elaborates (the exact frontend runs fresh under `--no-cache`) and leaves no deprecated
 # use: a fresh check of FMT014 is clean.
-check_exit env LEAN_NUM_THREADS=1 "$application" check --root "$proj" --json --no-cache \
+check_exit env LEAN_NUM_THREADS=1 "$application" check --root "$proj" --json --no-cache --preview \
   --select FMT014 "$proj/acc/Mixed.lean" >"$work/acc-recheck.json" 2>/dev/null
 python3 - "$work/acc-recheck.json" <<'PY'
 import json, sys
@@ -414,7 +414,7 @@ PY
 # `newName`. This is the RDF-IMPL decoupling on the FMT014 rename: applied by `fix` at original
 # coordinates, absent from `format`. (`--unsafe-fixes` is a no-op for `format` — it admits nothing to apply.)
 cp "$work/mixed.orig" "$proj/acc/MixedFmt.lean"
-check_exit env LEAN_NUM_THREADS=1 "$application" format --check --root "$proj" --json --no-cache \
+check_exit env LEAN_NUM_THREADS=1 "$application" format --check --root "$proj" --json --no-cache --preview \
   --unsafe-fixes --select FMT014 "$proj/acc/MixedFmt.lean" >"$work/acc-format.json" 2>/dev/null
 python3 - "$work/acc-format.json" <<'PY'
 import json, sys
@@ -430,7 +430,7 @@ rm -f "$proj/acc/MixedFmt.lean"
 # 3c. Idempotence. A second `fix --unsafe-fixes --select FMT014` over the already-renamed file is a
 # no-op: nothing left to rename, so no write and the bytes are unchanged.
 cp "$proj/acc/Mixed.lean" "$work/mixed.fixed"
-check_exit env LEAN_NUM_THREADS=1 "$application" fix --root "$proj" --json --no-cache \
+check_exit env LEAN_NUM_THREADS=1 "$application" fix --root "$proj" --json --no-cache --preview \
   --unsafe-fixes --select FMT014 "$proj/acc/Mixed.lean" >"$work/acc-idem.json" 2>/dev/null
 python3 - "$work/acc-idem.json" <<'PY'
 import json, sys
@@ -446,9 +446,9 @@ cmp -s "$work/mixed.fixed" "$proj/acc/Mixed.lean" \
 # `fix --unsafe-fixes` a fresh copy of the original and must write byte-identical output.
 cp "$work/mixed.orig" "$proj/acc/OrderA.lean"
 cp "$work/mixed.orig" "$proj/acc/OrderB.lean"
-LEAN_NUM_THREADS=1 "$application" fix --root "$proj" --json --no-cache --unsafe-fixes \
+LEAN_NUM_THREADS=1 "$application" fix --root "$proj" --json --no-cache --preview --unsafe-fixes \
   --select FMT014 --select FMT013 "$proj/acc/OrderA.lean" >/dev/null 2>&1 || true
-LEAN_NUM_THREADS=1 "$application" fix --root "$proj" --json --no-cache --unsafe-fixes \
+LEAN_NUM_THREADS=1 "$application" fix --root "$proj" --json --no-cache --preview --unsafe-fixes \
   --select FMT013 --select FMT014 "$proj/acc/OrderB.lean" >/dev/null 2>&1 || true
 cmp -s "$proj/acc/OrderA.lean" "$proj/acc/OrderB.lean" \
   || { echo 'pass order changed the published bytes (FMT014 vs FMT013 order-dependent)' >&2;

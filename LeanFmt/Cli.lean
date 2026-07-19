@@ -39,6 +39,7 @@ private def parseServeArgs (args : List String) : Except String ServeOptions :=
       loop rest { options with select := options.select.push selector }
     | "--ignore" :: selector :: rest =>
       loop rest { options with ignore := options.ignore.push selector }
+    | "--preview" :: rest => loop rest { options with preview := true }
     | "--max-memory" :: value :: rest =>
       match value.toNat? with
       | some amount => loop rest { options with maxMemoryGiB := amount }
@@ -53,14 +54,21 @@ usage: lean-fmt {check|format|diff|fix} [OPTIONS] [FILE...]\n\
        lean-fmt organize [--root PATH] [--config PATH] [--check] [--json]\n\
                          [--max-memory GIB] [FILE...]\n\
        lean-fmt rules [--json]\n\
+       lean-fmt explain RULE [--json]\n\
+       lean-fmt docs [--root PATH] [--check]\n\
        lean-fmt clean [--root PATH] [--json]\n\
        lean-fmt compiler {setup|status} [--root PATH] [--json]\n\
 \n\
 file options:\n\
   --root PATH          Lake project root (default: .)\n\
   --config PATH        explicit lean-fmt.toml\n\
-  --select SELECTOR    activate a rule/category/all (repeatable)\n\
+  --select SELECTOR    set the active rules: a code/category/all (repeatable)\n\
+  --extend-select SEL  add to the active rules without replacing (repeatable)\n\
   --ignore SELECTOR    deactivate a rule/category/all (repeatable)\n\
+  --fixable SELECTOR   restrict which rules' fixes `fix` applies (repeatable)\n\
+  --unfixable SELECTOR withhold a rule's fix from `fix` (repeatable)\n\
+  --extend-fixable SEL add to the fixable set without replacing (repeatable)\n\
+  --preview            unlock preview (experimental) rules\n\
   --json               deterministic JSON output\n\
   --statistics         write aggregate statistics to stderr\n\
   --no-cache           neither read nor write result cache entries\n\
@@ -82,9 +90,23 @@ private def parseFileArgs (mode : RunMode) (args : List String) : Except String 
     | "--select" :: selector :: rest =>
       loop rest { command with run := {
         command.run with select := command.run.select.push selector } }
+    | "--extend-select" :: selector :: rest =>
+      loop rest { command with run := {
+        command.run with extendSelect := command.run.extendSelect.push selector } }
     | "--ignore" :: selector :: rest =>
       loop rest { command with run := {
         command.run with ignore := command.run.ignore.push selector } }
+    | "--fixable" :: selector :: rest =>
+      loop rest { command with run := {
+        command.run with fixable := command.run.fixable.push selector } }
+    | "--unfixable" :: selector :: rest =>
+      loop rest { command with run := {
+        command.run with unfixable := command.run.unfixable.push selector } }
+    | "--extend-fixable" :: selector :: rest =>
+      loop rest { command with run := {
+        command.run with extendFixable := command.run.extendFixable.push selector } }
+    | "--preview" :: rest =>
+      loop rest { command with run := { command.run with preview := true } }
     | "--statistics" :: rest => loop rest { command with statistics := true }
     | "--check-elab" :: rest =>
       if mode == .fix then
@@ -229,7 +251,52 @@ private def renderRules (format : ReportFormat) : IO Unit :=
     for info in allRuleInfos do
       let fix := if info.fixable then "fixable" else "report-only"
       let enabled := if info.defaultEnabled then "default" else "optional"
-      IO.println s!"{info.code}\t{info.category}\t{fix}\t{enabled}\t{info.summary}"
+      IO.println s!"{info.code}\t{info.category}\t{info.lifecycle.toWire}\t{fix}\t{enabled}\t{info.summary}"
+
+/-- `explain RULE` — one rule's full description, sourced entirely from the registry. A live rule prints
+its `explainText`/`ruleInfoJson`; a retired code prints its disposition and exits 0 (`explain` is
+discovery); an unknown token errors (exit 2). -/
+private def renderExplain (format : ReportFormat) (code : String) : IO UInt32 := do
+  match ruleInfoByCode? code with
+  | some info =>
+    match format with
+    | .json => IO.println (ruleInfoJson info (tierWireOf info.code)).compress
+    | .text => IO.print (explainText info)
+    return 0
+  | none =>
+    match reservedDisposition? code with
+    | some disposition =>
+      match format with
+      | .json => IO.println (Lean.Json.mkObj
+          [("code", .str code), ("lifecycle", .str "retired"), ("disposition", .str disposition)]).compress
+      | .text => IO.println s!"{code}  [retired]\n  {disposition}"
+      return 0
+    | none =>
+      IO.eprintln s!"unknown rule: {code}"
+      return 2
+
+/-- `docs` — generate `docs/rules/{index,FMT###}.md` from the registry, or (`--check`) verify the
+committed tree matches, which is the doc-drift / undocumented-rule invariant (`notes/01-schema.md` §9). -/
+private def runDocs (root : FilePath) (check : Bool) : IO UInt32 := do
+  let dir := root / "docs" / "rules"
+  if check then
+    let mut drift := #[]
+    for (name, content) in catalogDocs do
+      let path := dir / name
+      let actual? ← if ← path.pathExists then some <$> IO.FS.readFile path else pure none
+      unless actual? == some content do drift := drift.push name
+    if drift.isEmpty then
+      IO.println s!"docs up to date ({catalogDocs.size} files)"
+      return 0
+    IO.eprintln s!"generated docs drifted from {dir}: {String.intercalate ", " drift.toList}"
+    IO.eprintln "run `lean-fmt docs` to regenerate"
+    return 1
+  else
+    IO.FS.createDirAll dir
+    for (name, content) in catalogDocs do
+      IO.FS.writeFile (dir / name) content
+    IO.println s!"wrote {catalogDocs.size} files to {dir}"
+    return 0
 
 private def renderClean (format : ReportFormat) (report : CleanReport) : IO Unit :=
   match format with
@@ -280,7 +347,7 @@ unsafe def runCli (arguments : List String) : IO UInt32 := do
   match args with
   | "--help" :: _ => IO.println usage; return 0
   | command :: "--help" :: _ =>
-    if #["check", "format", "diff", "fix", "organize", "serve", "rules", "clean", "compiler"].contains command then
+    if #["check", "format", "diff", "fix", "organize", "serve", "rules", "explain", "docs", "clean", "compiler"].contains command then
       IO.println usage
       return 0
     IO.eprintln usage
@@ -318,6 +385,20 @@ unsafe def runCli (arguments : List String) : IO UInt32 := do
       | .error message => IO.eprintln message; return 2
     renderRules format
     return 0
+  | "explain" :: rest =>
+    -- `explain RULE [--json]`: exactly one rule token, optional `--json`.
+    match rest.filter (·.startsWith "-" |>.not), rest.contains "--json" with
+    | [code], json => renderExplain (if json then .json else .text) code
+    | [], _ => IO.eprintln "usage: lean-fmt explain RULE [--json]"; return 2
+    | _, _ => IO.eprintln "explain takes exactly one rule code"; return 2
+  | "docs" :: rest =>
+    let rec loop (remaining : List String) (root : FilePath) (check : Bool) : IO UInt32 := do
+      match remaining with
+      | [] => runDocs root check
+      | "--check" :: more => loop more root true
+      | "--root" :: dir :: more => loop more dir check
+      | option :: _ => IO.eprintln s!"unknown docs option: {option}"; return 2
+    loop rest "." false
   | "clean" :: rest =>
     let command ← match parseRootArgs rest with
       | .ok command => pure command

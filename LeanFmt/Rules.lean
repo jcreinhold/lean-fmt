@@ -141,6 +141,51 @@ def RuleImpl.tier : RuleImpl → Tier
   | .syntax _ => .syntax
   | .semantic _ => .semantic
 
+/-- A rule's **stability promise** (`ruff-12` RRL-SPEC `notes/01-schema.md` §4), orthogonal to
+`defaultEnabled`:
+
+- `stable` — the rule's meaning is frozen; a change of meaning requires a *new* code. Selectable by
+  `all`/`default`/category/code without a gate.
+- `preview` — experimental; meaning or behavior may change without a new code. Reachable only under
+  preview mode (`--preview`/`preview = true`), never by `all`/`default`/category otherwise, and never
+  default-enabled.
+- `deprecated` — superseded (by another rule, or by canonical formatting); still resolves for
+  back-compat, carries a `replacement?`, and is never default-enabled.
+
+`retired` is deliberately absent: a retired code (FMT001/FMT002) has no `RuleImpl` and no `RuleInfo`, so
+it lives in `reservedCodes`, not here. The three constructors plus the reserved table partition every
+non-meta code. -/
+inductive Lifecycle where
+  | stable
+  | preview
+  | deprecated
+  deriving Inhabited, BEq, DecidableEq, Repr
+
+def Lifecycle.toWire : Lifecycle → String
+  | .stable => "stable"
+  | .preview => "preview"
+  | .deprecated => "deprecated"
+
+instance : Lean.ToJson Lifecycle := ⟨fun l => .str l.toWire⟩
+
+instance : Lean.FromJson Lifecycle := ⟨fun j => do
+  match ← j.getStr? with
+  | "stable" => pure .stable
+  | "preview" => pure .preview
+  | "deprecated" => pure .deprecated
+  | other => .error s!"unknown lifecycle: {other}"⟩
+
+/-- One **executable** documentation example for a rule (`notes/01-schema.md` §8, §10 invariant 6).
+`bad` is source the rule must flag; `good?` is the post-fix source for a fixable rule and `none` for a
+report-only one. The catalog-invariant test runs each `bad` through the rule (source-tier in process;
+syntax/semantic through the real-frontend harnesses) and, for a fixable rule, asserts the emitted fix
+turns `bad` into `good?`. So an example that does not actually fire, or a fix that does not produce the
+stated `good`, fails the build — the "invalid examples" detection. -/
+structure RuleExample where
+  bad : String
+  good? : Option String := none
+  deriving BEq, Repr
+
 /-- What a rule tells a user about itself. Its tier is not in here: `Rule.tier` derives it from the
 implementation, so the two cannot disagree. -/
 structure RuleInfo where
@@ -149,6 +194,18 @@ structure RuleInfo where
   summary : String
   fixable : Bool
   defaultEnabled : Bool
+  /-- The stability promise (`Lifecycle`). Orthogonal to `defaultEnabled`: a `stable` rule may be
+  default-on or default-off, but a `preview`/`deprecated` rule is never default-on (a test pins this,
+  `notes/01-schema.md` §10 invariant 4). -/
+  lifecycle : Lifecycle
+  /-- Long-form explanation shown by `explain` and the generated rule page. One or more paragraphs; must
+  be nonempty for a live rule (invariant 5). -/
+  explanation : String
+  /-- Executable bad→good examples (≥1 for a live rule, invariant 5/6). -/
+  examples : Array RuleExample
+  /-- The successor code for a `deprecated` rule (its migration path); `none` otherwise. Required to be
+  `some` iff `lifecycle == .deprecated` (invariant 4). -/
+  replacement? : Option String := none
   /-- Whether this rule's fix reads the owned deprecation-occurrence fact (`ruff-11b`). It governs
   *capture cost only*: `RulePlan.demandedCaps` sets the `occurrences` capability — and pays the
   whole-file info-tree fold — exactly when a selected rule declares this in a rendering mode. A wrong
@@ -175,6 +232,7 @@ instance : Lean.ToJson Rule where
     ("summary", .str rule.info.summary),
     ("fixable", .bool rule.info.fixable),
     ("defaultEnabled", .bool rule.info.defaultEnabled),
+    ("lifecycle", Lean.toJson rule.info.lifecycle),
     ("input", Lean.toJson rule.tier)
   ]
 
@@ -622,6 +680,17 @@ def ruleRegistry : Array Rule := #[
       summary := "reject forbidden control bytes in source"
       fixable := false
       defaultEnabled := true
+      lifecycle := .stable
+      explanation := "\
+A C0 control byte other than TAB or LF, or the DEL byte (U+007F), appears in the source. In accepted \
+Lean these bytes can only survive inside a string literal or a comment — a bare control byte in the \
+command stream is a parse error — so the finding always lands on program data or human-read text. It is \
+report-only: deleting the byte would change that data or text, which no byte-level argument can call \
+safe. Illustrative (the byte cannot be shown verbatim): a string \"a<U+0000>b\" carrying an embedded \
+NUL is flagged at the NUL."
+      -- Example-exempt (see `exampleExemptCodes`): a verbatim control byte cannot be embedded in
+      -- documentation or printed by `explain`, so the explanation carries an escaped illustration.
+      examples := #[]
     }
     impl := .source forbiddenControlByte
   },
@@ -632,6 +701,16 @@ def ruleRegistry : Array Rule := #[
       summary := "flag suspicious bidirectional controls in source"
       fixable := false
       defaultEnabled := true
+      lifecycle := .stable
+      explanation := "\
+One of the twelve Unicode bidirectional formatting controls of the Trojan-Source attack \
+(CVE-2021-42574) appears in the source — inside a string or comment, since a bare one does not parse. \
+These marks can reorder how a line renders without changing its bytes, so committed code can read \
+differently from what the compiler sees. Report-only: the mark is string data or comment text, so \
+removing it is not a byte-safe edit. Illustrative (the mark cannot be shown verbatim): a comment \
+ending in a right-to-left override U+202E is flagged at the mark."
+      -- Example-exempt (see `exampleExemptCodes`): a verbatim bidi mark would reorder the doc itself.
+      examples := #[]
     }
     impl := .source bidiControl
   },
@@ -642,6 +721,13 @@ def ruleRegistry : Array Rule := #[
       summary := "require a module docstring when a module declares anything"
       fixable := false
       defaultEnabled := false
+      lifecycle := .preview
+      explanation := "\
+A module contains at least one declaration but no module docstring (`/-! … -/`). A declaration-level \
+`/-- … -/` is a different node and does not satisfy the requirement. Report-only: the missing thing is \
+documentation prose, which no formatter can write; the finding is a caret where a module doc belongs, \
+just after the header."
+      examples := #[{ bad := "def answer : Nat := 42\n" }]
     }
     impl := .syntax moduleDocRequired
   },
@@ -652,6 +738,13 @@ def ruleRegistry : Array Rule := #[
       summary := "report an unclosed section or namespace"
       fixable := false
       defaultEnabled := false
+      lifecycle := .preview
+      explanation := "\
+A `section` or `namespace` is opened and never closed by a matching `end`, tracked as a scope-name \
+stack over the top-level command stream (one `end A.B` closes both a single `namespace A.B` and an \
+`A`/`B` pair). An outermost anonymous `noncomputable`/`public`/`meta` section — the idiomatic whole-file \
+section — is not reported. Report-only: where a scope *should* close is author judgment."
+      examples := #[{ bad := "namespace Demo\n\ndef answer : Nat := 42\n" }]
     }
     impl := .syntax unclosedScopes
   },
@@ -662,6 +755,13 @@ def ruleRegistry : Array Rule := #[
       summary := "remove a duplicate attribute in an attribute list"
       fixable := true
       defaultEnabled := false
+      lifecycle := .preview
+      explanation := "\
+An `@[…]` attribute list names the same attribute twice. The safe fix deletes the later instance and \
+its preceding separator, so `@[simp, simp]` becomes `@[simp]`. Safe: an exact repeat is idempotent, so \
+removing it preserves what the elaborator records."
+      examples := #[{ bad := "@[simp, simp] def idem : Nat := 0\n"
+                      good? := "@[simp] def idem : Nat := 0\n" }]
     }
     impl := .syntax duplicateAttribute
   },
@@ -672,6 +772,13 @@ def ruleRegistry : Array Rule := #[
       summary := "remove a duplicate deriving class"
       fixable := true
       defaultEnabled := false
+      lifecycle := .preview
+      explanation := "\
+A `deriving` clause names the same class twice. The safe fix deletes the later instance and its \
+separator, so `deriving Repr, Repr` becomes `deriving Repr`. Safe for the same idempotence reason as \
+FMT010."
+      examples := #[{ bad := "inductive Color where\n  | red\n  deriving Repr, Repr\n"
+                      good? := "inductive Color where\n  | red\n  deriving Repr\n" }]
     }
     impl := .syntax duplicateDerivingClass
   },
@@ -682,6 +789,13 @@ def ruleRegistry : Array Rule := #[
       summary := "report a development-only set_option left in source"
       fixable := false
       defaultEnabled := false
+      lifecycle := .preview
+      explanation := "\
+A committed `set_option` sets an option whose root is `debug`, `pp`, `profiler`, or `trace` — the set \
+Mathlib's `linter.style.setOption` flags. Matching the `set_option` node (not a string) means a \
+`set_option`-looking string or comment never fires. Report-only: removing a committed option is author \
+intent, and the scoped `… in` boundary is not a byte-safe question."
+      examples := #[{ bad := "set_option trace.Meta.debug true\n\ndef answer : Nat := 42\n" }]
     }
     impl := .syntax developmentSetOption
   },
@@ -692,6 +806,13 @@ def ruleRegistry : Array Rule := #[
       summary := "remove redundant nested parentheses"
       fixable := true
       defaultEnabled := false
+      lifecycle := .preview
+      explanation := "\
+A parenthesized term's only child is itself parenthesized — `((e))`. The inner `(e)` is already a \
+complete atomic term, so dropping the outer pair cannot regroup anything; only the directly-nested case \
+is answered, because the projection carries no precedence. The safe fix deletes the outer pair."
+      examples := #[{ bad := "def twice : Nat := ((1))\n"
+                      good? := "def twice : Nat := (1)\n" }]
     }
     impl := .syntax redundantNestedParen
   },
@@ -702,7 +823,15 @@ def ruleRegistry : Array Rule := #[
       summary := "report use of a deprecated declaration"
       fixable := true
       defaultEnabled := false
+      lifecycle := .preview
       needsOccurrences := true
+      explanation := "\
+A reference resolves to a declaration marked `@[deprecated]`; the report surfaces the compiler's own \
+`Lean.Linter.deprecatedAttr` diagnostic unchanged. When the deprecation names a replacement and the run \
+applies fixes, an **unsafe** rename fix is offered (a textual name swap is plausibly intended but \
+unproven, so it applies only under `--unsafe-fixes` and is backstopped by output re-elaboration)."
+      examples := #[{ bad := "def new : Nat := 0\n@[deprecated new (since := \"1.0\")] def old : Nat := 0\ndef use : Nat := old\n"
+                      good? := "def new : Nat := 0\n@[deprecated new (since := \"1.0\")] def old : Nat := 0\ndef use : Nat := new\n" }]
     }
     impl := .semantic deprecatedUse
   },
@@ -713,6 +842,12 @@ def ruleRegistry : Array Rule := #[
       summary := "report an unused variable or binder"
       fixable := false
       defaultEnabled := false
+      lifecycle := .preview
+      explanation := "\
+A bound variable or binder is never used, surfaced from the compiler's `linter.unusedVariables` \
+diagnostic. Report-only: removing or renaming a binder is not an edit any byte-level or projection fact \
+here can prove safe."
+      examples := #[{ bad := "def constZero (x : Nat) : Nat := 0\n" }]
     }
     impl := .semantic unusedVariable
   },
@@ -723,6 +858,11 @@ def ruleRegistry : Array Rule := #[
       summary := "report a section variable unused in a theorem"
       fixable := false
       defaultEnabled := false
+      lifecycle := .preview
+      explanation := "\
+An automatically-included section `variable` is unused in a theorem, surfaced from the compiler's \
+`linter.unusedSectionVars` diagnostic. Report-only, for the same reason as FMT015."
+      examples := #[{ bad := "section\nvariable {α : Type} [inst : Inhabited α]\ntheorem refl_eq (a : α) : a = a := rfl\nend\n" }]
     }
     impl := .semantic unusedSectionVariable
   },
@@ -733,6 +873,12 @@ def ruleRegistry : Array Rule := #[
       summary := "report a bound variable that resembles a nullary constructor"
       fixable := false
       defaultEnabled := false
+      lifecycle := .preview
+      explanation := "\
+A bound variable's name matches a nullary constructor in scope, surfaced from the compiler's \
+`linter.constructorNameAsVariable` diagnostic — a pattern that reads as a constructor but binds a fresh \
+variable. Report-only."
+      examples := #[{ bad := "inductive Light where\n  | red\n  | green\n\ndef f (red : Light) : Light := red\n" }]
     }
     impl := .semantic constructorNameVariable
   }
@@ -806,6 +952,12 @@ def importRuleInfos : Array RuleInfo := #[
     summary := "remove a duplicate import"
     fixable := true
     defaultEnabled := true
+    lifecycle := .stable
+    explanation := "\
+The same module is imported twice in a header. The safe fix removes the later duplicate line. An exact \
+repeat imports nothing new, so removing it preserves the module's environment and import order."
+    examples := #[{ bad := "import Lean\nimport Lean\n"
+                    good? := "import Lean\n" }]
   },
   {
     code := "FMT006"
@@ -813,6 +965,16 @@ def importRuleInfos : Array RuleInfo := #[
     summary := "report an import made redundant by another import's transitive closure"
     fixable := false
     defaultEnabled := true
+    lifecycle := .stable
+    explanation := "\
+An import is already pulled in by another import's transitive closure, so it adds nothing to the \
+module's environment. Report-only: whether the redundant line documents intent or should be removed is \
+author judgment, and deciding it needs the Lake module graph, not this file alone. Illustrative \
+(needs a multi-module project): importing both a module and a second module that already imports it \
+flags the redundant one."
+    -- Example-exempt (see `exampleExemptCodes`): redundancy is a cross-module graph fact, not a
+    -- self-contained single-file snippet.
+    examples := #[]
   },
   {
     code := "FMT007"
@@ -820,8 +982,40 @@ def importRuleInfos : Array RuleInfo := #[
     summary := "report imports out of canonical order within a group"
     fixable := false
     defaultEnabled := true
+    lifecycle := .stable
+    explanation := "\
+Imports within a group are not in canonical (sorted) order. Report-only: reordering imports can change \
+initialization order in principle, so the reordering is surfaced rather than applied automatically."
+    examples := #[{ bad := "import Lean.Elab\nimport Lean.Data\n" }]
   }
 ]
+
+/-- The **reserved / retired** codes: codes that name no live rule but remain part of the catalog
+namespace forever, so a future rule never silently reuses one and a legacy config or suppression that
+still names one degrades gracefully rather than breaking (`notes/01-schema.md` §7). Each maps to a
+one-line disposition shown by a retirement notice and by `explain`.
+
+FMT900/FMT901 are **meta** self-diagnostics of the suppression engine (`Suppression.lean`), always
+active and never selectable; they are not in this table but §10 invariant 1 forbids any live rule from
+reusing them. -/
+def reservedCodes : Array (String × String) := #[
+  ("FMT001", "retired: line-boundary normalization is now part of canonical formatting; run `format`"),
+  ("FMT002", "retired: trailing-newline normalization is now part of canonical formatting; run `format`")
+]
+
+/-- Whether `code` names a reserved/retired code (§7). -/
+def isReservedCode (code : String) : Bool := reservedCodes.any (·.1 == code)
+
+/-- The retirement disposition for a reserved code, if any. -/
+def reservedDisposition? (code : String) : Option String :=
+  (reservedCodes.find? (·.1 == code)).map (·.2)
+
+/-- Rules exempt from the "≥1 executable example" invariant (§10 invariant 5/6), each for a stated
+structural reason: FMT003/FMT004 flag an invisible/dangerous byte that cannot be embedded verbatim in
+documentation, and FMT006 flags a cross-module graph fact that has no self-contained single-file
+snippet. Their `explanation` carries an escaped/illustrative example instead. Every other live rule
+must ship at least one executable example. -/
+def exampleExemptCodes : Array String := #["FMT003", "FMT004", "FMT006"]
 
 /-- Every rule identity the product ships: the linear-tier engine's rules plus the import rules. This is
 the single source `Config` selection and the `rules` command read, so a rule cannot be selectable in one
@@ -845,7 +1039,199 @@ def allRulesJson : Array Lean.Json :=
       ("summary", .str info.summary),
       ("fixable", .bool info.fixable),
       ("defaultEnabled", .bool info.defaultEnabled),
+      ("lifecycle", Lean.toJson info.lifecycle),
       ("input", .str "source")
     ]
+
+/-- The full metadata for one rule as JSON — every field, including `explanation` and `examples` — the
+object `explain --json` and the documentation generator both consume, so they can never disagree
+(`notes/01-schema.md` §8). `input`/`tier` is supplied by the caller (derived from the `RuleImpl` for an
+engine rule, `source` for an import rule). -/
+def ruleInfoJson (info : RuleInfo) (tier : String) : Lean.Json :=
+  Lean.Json.mkObj [
+    ("code", .str info.code),
+    ("category", .str info.category),
+    ("summary", .str info.summary),
+    ("fixable", .bool info.fixable),
+    ("defaultEnabled", .bool info.defaultEnabled),
+    ("lifecycle", Lean.toJson info.lifecycle),
+    ("input", .str tier),
+    ("explanation", .str info.explanation),
+    ("replacement", match info.replacement? with | some r => .str r | none => .null),
+    ("examples", Lean.Json.arr (info.examples.map fun ex =>
+      Lean.Json.mkObj [
+        ("bad", .str ex.bad),
+        ("good", match ex.good? with | some g => .str g | none => .null)]))
+  ]
+
+/-- The `input`/tier wire string for a catalog code: the engine rule's derived tier if it is in
+`ruleRegistry`, else `source` (the import family and any non-engine identity). -/
+def tierWireOf (code : String) : String :=
+  match ruleRegistry.find? (·.code == code) with
+  | some rule => (Lean.toJson rule.tier).getStr?.toOption.getD "source"
+  | none => "source"
+
+/-- Look up a live rule's identity by code (engine rules and the import family). -/
+def ruleInfoByCode? (code : String) : Option RuleInfo := allRuleInfos.find? (·.code == code)
+
+/-! ## Catalog rendering — one metadata source, every surface
+
+`explain`, the generated rule pages, and the `lean-fmt.toml` schema are **projections over the same
+`RuleInfo`** (`notes/01-schema.md` §3, §8, §9). Keeping the pure string-building here, beside
+`allRulesJson`, is what makes them impossible to disagree — and it is safe against the compiler-plugin
+boundary, because `LeanFmt.Rules` is not in the plugin closure (`docs/adding-a-rule.md`). `LeanFmt.Cli`
+does the IO (printing, writing, drift-checking); it adds no content of its own. -/
+
+private def lifecycleLabel : Lifecycle → String
+  | .stable => "stable"
+  | .preview => "preview"
+  | .deprecated => "deprecated"
+
+private def fixLabel (info : RuleInfo) : String := if info.fixable then "fixable" else "report-only"
+private def defaultLabel (info : RuleInfo) : String := if info.defaultEnabled then "on" else "off"
+
+/-- The human `explain RULE` text block (`notes/01-schema.md` §8): heading, metadata line, explanation,
+each example, and the select/suppress/docs footer. -/
+def explainText (info : RuleInfo) : String := Id.run do
+  let tier := tierWireOf info.code
+  let mut out := s!"{info.code}  {info.summary}  [{lifecycleLabel info.lifecycle}]\n"
+  out := out ++ s!"  category: {info.category}   tier: {tier}   fix: {fixLabel info}   default: {defaultLabel info}\n"
+  match info.replacement? with
+  | some r => out := out ++ s!"  replacement: {r}\n"
+  | none => pure ()
+  out := out ++ "\n  " ++ info.explanation ++ "\n"
+  for ex in info.examples do
+    out := out ++ "\n  Example\n    - bad -\n"
+    out := out ++ String.intercalate "\n" ((ex.bad.trimAsciiEnd.copy.splitOn "\n").map ("    " ++ ·)) ++ "\n"
+    match ex.good? with
+    | some g =>
+      out := out ++ "    - good -\n"
+      out := out ++ String.intercalate "\n" ((g.trimAsciiEnd.copy.splitOn "\n").map ("    " ++ ·)) ++ "\n"
+    | none => pure ()
+  out := out ++ s!"\n  Select:    --select {info.code}   |   --select {info.category}\n"
+  out := out ++ s!"  Suppress:  -- lean-fmt: ignore[{info.code}]\n"
+  out := out ++ s!"  Docs:      docs/rules/{info.code}.md\n"
+  return out
+
+/-- A fenced code block, language-tagged `lean`. -/
+private def fence (body : String) : String := "```lean\n" ++ body.trimAsciiEnd.copy ++ "\n```\n"
+
+/-- One rule's generated markdown page (`docs/rules/FMT###.md`, §9). Deterministic: pure over `info`.
+Opens with a YAML frontmatter block carrying the machine-readable axes (code, category, tier,
+lifecycle, fix, default, replacement) so a tool — the executable-example harness among them — parses
+the catalog straight from the pages without re-deriving them (`notes/01-schema.md` §9). The visible
+body below repeats the same facts for a human reader. -/
+def rulePageMarkdown (info : RuleInfo) : String := Id.run do
+  let tier := tierWireOf info.code
+  let mut out := "---\n"
+  out := out ++ s!"code: {info.code}\n"
+  out := out ++ s!"category: {info.category}\n"
+  out := out ++ s!"tier: {tier}\n"
+  out := out ++ s!"lifecycle: {lifecycleLabel info.lifecycle}\n"
+  out := out ++ s!"fix: {fixLabel info}\n"
+  out := out ++ s!"default: {defaultLabel info}\n"
+  match info.replacement? with
+  | some r => out := out ++ s!"replacement: {r}\n"
+  | none => pure ()
+  out := out ++ "---\n\n"
+  out := out ++ s!"# {info.code} — {info.summary}\n\n"
+  out := out ++ s!"- **Lifecycle:** {lifecycleLabel info.lifecycle}\n"
+  out := out ++ s!"- **Category:** `{info.category}`\n"
+  out := out ++ s!"- **Tier:** `{tier}`\n"
+  out := out ++ s!"- **Fix:** {fixLabel info}\n"
+  out := out ++ s!"- **Default:** {defaultLabel info}\n"
+  match info.replacement? with
+  | some r => out := out ++ s!"- **Replacement:** `{r}`\n"
+  | none => pure ()
+  out := out ++ "\n" ++ info.explanation ++ "\n"
+  for ex in info.examples do
+    out := out ++ "\n## Example\n\nBad:\n\n" ++ fence ex.bad
+    match ex.good? with
+    | some g => out := out ++ "\nGood:\n\n" ++ fence g
+    | none => pure ()
+  out := out ++ s!"\n## Using this rule\n\n"
+  out := out ++ s!"- Select: `--select {info.code}` or `--select {info.category}`\n"
+  out := out ++ s!"- Suppress: `-- lean-fmt: ignore[{info.code}]`\n"
+  return out
+
+/-- The generated catalog index (`docs/rules/index.md`, §9): a table of every live rule grouped by
+category, sorted by code within a group, plus the retired-code table. Deterministic. -/
+def catalogIndexMarkdown : String := Id.run do
+  let mut out := "# Rule catalog\n\n"
+  out := out ++ "Generated from the rule registry (`LeanFmt/Rules.lean`); do not edit by hand.\n\n"
+  let categories := (allRuleInfos.map (·.category)).foldl (init := #[]) fun acc c =>
+    if acc.contains c then acc else acc.push c
+  for category in categories.qsort (· < ·) do
+    out := out ++ s!"## {category}\n\n"
+    out := out ++ "| Code | Lifecycle | Default | Fix | Summary |\n| --- | --- | --- | --- | --- |\n"
+    let rules := (allRuleInfos.filter (·.category == category)).qsort (·.code < ·.code)
+    for info in rules do
+      out := out ++ s!"| [{info.code}]({info.code}.md) | {lifecycleLabel info.lifecycle} | \
+        {defaultLabel info} | {fixLabel info} | {info.summary} |\n"
+    out := out ++ "\n"
+  out := out ++ "## Retired codes\n\n"
+  out := out ++ "These codes name no live rule; they are reserved so a selector or suppression that \
+    still references one keeps working.\n\n| Code | Disposition |\n| --- | --- |\n"
+  for (code, disposition) in reservedCodes do
+    out := out ++ s!"| {code} | {disposition} |\n"
+  out := out ++ "\nThe machine-readable configuration schema is `schema.json`, generated from the same \
+    registry.\n"
+  return out
+
+/-- The selector vocabulary `selectorsValid` (`Config.lean`) accepts, in one deterministic order: `all`,
+`default`, then categories, live codes, and reserved codes, each sorted. The generated schema enum and
+`selectorsValid` both read `allRuleInfos`/`reservedCodes`, so the accepted tokens and the documented ones
+cannot drift. -/
+def selectorVocabulary : Array String :=
+  let categories := ((allRuleInfos.map (·.category)).foldl (init := #[]) fun acc c =>
+    if acc.contains c then acc else acc.push c).qsort (· < ·)
+  let codes := (allRuleInfos.map (·.code)).qsort (· < ·)
+  let reserved := (reservedCodes.map (·.1)).qsort (· < ·)
+  #["all", "default"] ++ categories ++ codes ++ reserved
+
+/-- The generated JSON-schema fragment for `lean-fmt.toml` (`notes/01-schema.md` §9, §11): every config
+key `parseConfig` accepts (`Config.lean:182-201`), with each selector-valued array constrained to
+`selectorVocabulary` and `preview` to a boolean. Built as a byte-stable pretty string beside the rule
+pages — deterministic, so `docs --check` drift-checks it like every other page. -/
+def catalogSchemaJson : String :=
+  let sel := "{ \"type\": \"array\", \"items\": { \"$ref\": \"#/$defs/selector\" } }"
+  let enumBody := String.intercalate ",\n"
+    (selectorVocabulary.toList.map fun s => "      \"" ++ s ++ "\"")
+  "{\n" ++
+  "  \"$schema\": \"http://json-schema.org/draft-07/schema#\",\n" ++
+  "  \"$id\": \"lean-fmt.toml\",\n" ++
+  "  \"title\": \"lean-fmt configuration\",\n" ++
+  "  \"description\": \"Generated from the rule registry (LeanFmt/Rules.lean); do not edit by hand.\",\n" ++
+  "  \"type\": \"object\",\n" ++
+  "  \"additionalProperties\": false,\n" ++
+  "  \"properties\": {\n" ++
+  "    \"include\": { \"type\": \"array\", \"items\": { \"type\": \"string\" } },\n" ++
+  "    \"exclude\": { \"type\": \"array\", \"items\": { \"type\": \"string\" } },\n" ++
+  "    \"select\": " ++ sel ++ ",\n" ++
+  "    \"extend-select\": " ++ sel ++ ",\n" ++
+  "    \"ignore\": " ++ sel ++ ",\n" ++
+  "    \"fixable\": " ++ sel ++ ",\n" ++
+  "    \"unfixable\": " ++ sel ++ ",\n" ++
+  "    \"extend-fixable\": " ++ sel ++ ",\n" ++
+  "    \"extend-safe-fixes\": " ++ sel ++ ",\n" ++
+  "    \"extend-unsafe-fixes\": " ++ sel ++ ",\n" ++
+  "    \"per-file-ignores\": { \"type\": \"object\", \"additionalProperties\": " ++ sel ++ " },\n" ++
+  "    \"preview\": { \"type\": \"boolean\" }\n" ++
+  "  },\n" ++
+  "  \"$defs\": {\n" ++
+  "    \"selector\": {\n" ++
+  "      \"description\": \"a live rule code, a category, a reserved code, or the words all/default\",\n" ++
+  "      \"enum\": [\n" ++
+  enumBody ++ "\n" ++
+  "      ]\n" ++
+  "    }\n" ++
+  "  }\n" ++
+  "}\n"
+
+/-- Every generated documentation file as `(relative path, content)` under `docs/rules/`, in a
+deterministic order. The `docs` command writes these; the drift check regenerates and compares. -/
+def catalogDocs : Array (String × String) :=
+  #[("index.md", catalogIndexMarkdown), ("schema.json", catalogSchemaJson)] ++
+    (allRuleInfos.qsort (·.code < ·.code)).map fun info => (s!"{info.code}.md", rulePageMarkdown info)
 
 end LeanFmt.Internal

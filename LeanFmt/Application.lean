@@ -55,6 +55,14 @@ structure RunRequest where
   configPath? : Option FilePath := none
   select : Array String := #[]
   ignore : Array String := #[]
+  /-- Lifecycle/fixability selection (`ruff-12` RRL-IMPL), threaded verbatim into `FormatterConfig.rulePlan`
+  through a `CliSelection`. `extendSelect` adds to the selection; `fixable`/`unfixable`/`extendFixable`
+  choose which selected rules' fixes `fix` applies; `preview` unlocks preview rules. -/
+  extendSelect : Array String := #[]
+  fixable : Array String := #[]
+  unfixable : Array String := #[]
+  extendFixable : Array String := #[]
+  preview : Bool := false
   /-- Apply unsafe fixes too, not just safe ones. Governs which fixes `fix` admits into its patch (and
   `check`'s preview of it), never relaxing validation or conflict rejection. Since `ruff-11c` the
   rendering modes carry no rule fix — `format` publishes only layout (`ruff-11d`), `diff` diffs only
@@ -840,9 +848,14 @@ private def prepareFile (plan : RulePlan) (renderCanonical unsafeFixes : Bool)
     | some canonical => (canonical.text, (#[] : Array Finding))
     -- Fix patch (`fix`) / report patch (`check`): admitted fixes on the file's own bytes.
     | none => (normalized, selected)
+  -- A fix enters the patch only when its rule is fix-selected (`fixable`/`unfixable` axis, `ruff-12`)
+  -- *and* its applicability is admitted. A selected-but-unfixable rule is still reported (its finding is
+  -- in `findings`); only the patch drops the fix — the same shape as a withheld unsafe fix.
   let admitted := baseFindings.map fun finding =>
     match finding.fix? with
-    | some fix => if fix.applicability.admitted unsafeFixes then finding else { finding with fix? := none }
+    | some fix =>
+      if plan.fixableSelected.contains finding.code && fix.applicability.admitted unsafeFixes then finding
+      else { finding with fix? := none }
     | none => finding
   let patch ← match preparePatch base admitted with
     | .ok patch => pure patch
@@ -1021,9 +1034,13 @@ def execute (request : RunRequest) : IO RunReport := do
   let configPath? := request.configPath?.map fun path =>
     if path.isAbsolute then path else root / path
   let config ← FormatterConfig.load root configPath?
-  let plan ← match config.rulePlan request.select request.ignore with
+  let plan ← match config.rulePlan {
+      select := request.select, extendSelect := request.extendSelect, ignore := request.ignore,
+      fixable := request.fixable, unfixable := request.unfixable,
+      extendFixable := request.extendFixable, preview := request.preview } with
     | .ok plan => pure plan
     | .error message => throw <| IO.userError message
+  for notice in plan.notices do IO.eprintln s!"lean-fmt: {notice}"
   let project ← Project.load root config request.files
   recordDuration "workspace_load" project.workspaceLoadNanos
   recordDuration "selection_snapshot" project.selectionNanos

@@ -18,14 +18,31 @@ structure FormatterConfig where
   includePatterns : Array PathPattern
   excludePatterns : Array PathPattern
   selectedSelectors : Array String
+  /-- `extend-select` (`ruff-12` RRL-IMPL): selectors that *add* to the chosen selection without
+  replacing it, so a project extends `default` without restating it. -/
+  extendSelectSelectors : Array String
   ignoredSelectors : Array String
   perFileIgnores : Array PerFileIgnore
   extendSafeFixes : Array String
   extendUnsafeFixes : Array String
+  /-- The fix-selection axis (`ruff-12`), orthogonal to rule selection and to safe/unsafe: which rules'
+  fixes `fix` may apply. `fixable` replaces the base (default `all`), `extend-fixable` adds, `unfixable`
+  removes; resolved by the same specificity model as select/ignore. A selected-but-unfixable rule is
+  still reported — only its fix is withheld. -/
+  fixableSelectors : Array String
+  unfixableSelectors : Array String
+  extendFixableSelectors : Array String
+  /-- Preview mode (`ruff-12`): with it off, `all`/`default`/category expand to stable rules only and an
+  explicit preview-code selection is an error; with it on, preview rules become reachable. -/
+  preview : Bool
 
 structure RulePlan where
   private mk ::
   selected : Array String
+  /-- Codes whose fixes `fix` may apply — the fix-selection axis resolved over the selected set
+  (`fixable`/`unfixable`/`extend-fixable`, `notes/01-schema.md` §6). A selected code absent here is
+  reported but its fix is withheld from the patch, exactly as an unadmitted unsafe fix is. -/
+  fixableSelected : Array String := #[]
   perFileIgnores : Array PerFileIgnore
   /-- Rule codes whose fixes are promoted to safe, and demoted to unsafe. Resolved from
   `extend-safe-fixes`/`extend-unsafe-fixes`; a code in both is rejected at plan construction, so the
@@ -33,6 +50,21 @@ structure RulePlan where
   configuration cannot lift (`notes/01-model.md` §2). -/
   extendSafe : Array String
   extendUnsafe : Array String
+  /-- Non-fatal notices raised while resolving selectors — a retired/reserved code named in a selector,
+  or a deprecated rule selected explicitly (`notes/01-schema.md` §7). The IO caller (`Application`,
+  `Service`) prints these to stderr; they never change exit status or which rules run. -/
+  notices : Array String := #[]
+
+/-- Every CLI-side selection input, bundled so `rulePlan` takes one argument instead of seven. Each
+field mirrors a `--flag`; empty/false is "not given on the CLI". -/
+structure CliSelection where
+  select : Array String := #[]
+  extendSelect : Array String := #[]
+  ignore : Array String := #[]
+  fixable : Array String := #[]
+  unfixable : Array String := #[]
+  extendFixable : Array String := #[]
+  preview : Bool := false
 
 private def normalizePath (path : String) : String :=
   path.replace "\\" "/" |>.dropPrefix "./" |>.toString
@@ -98,10 +130,14 @@ linear-tier engine. -/
 private def isCategory (selector : String) : Bool :=
   allRuleInfos.any (·.category == selector)
 
+/-- A selector token is valid if it is a meta selector, a category, a live code, or a **reserved/retired
+code** (`notes/01-schema.md` §7). Reserved codes are accepted rather than rejected so a legacy config
+that still names FMT001/FMT002 keeps loading; they resolve to no live rule and raise a notice at plan
+time (`rulePlan`). -/
 private def selectorsValid (selectors : Array String) : Except String Unit := do
   for selector in selectors do
     unless selector == "all" || selector == "default" || isCategory selector ||
-        allRuleInfos.any (·.code == selector) do
+        allRuleInfos.any (·.code == selector) || isReservedCode selector do
       throw s!"unknown rule selector: {selector}"
 
 private def parsePerFileIgnores (value : Lake.Toml.Value) : Except String (Array PerFileIgnore) := do
@@ -117,20 +153,30 @@ private def defaultConfig : FormatterConfig := {
   includePatterns := #[]
   excludePatterns := #[]
   selectedSelectors := #["default"]
+  extendSelectSelectors := #[]
   ignoredSelectors := #[]
   perFileIgnores := #[]
   extendSafeFixes := #[]
   extendUnsafeFixes := #[]
+  fixableSelectors := #[]
+  unfixableSelectors := #[]
+  extendFixableSelectors := #[]
+  preview := false
 }
 
 private def parseConfig (table : Lake.Toml.Table) : Except String FormatterConfig := do
   let mut includePatterns := #[]
   let mut excludePatterns := #[]
   let mut selectedSelectors := #["default"]
+  let mut extendSelectSelectors := #[]
   let mut ignoredSelectors := #[]
   let mut perFileIgnores := #[]
   let mut extendSafeFixes := #[]
   let mut extendUnsafeFixes := #[]
+  let mut fixableSelectors := #[]
+  let mut unfixableSelectors := #[]
+  let mut extendFixableSelectors := #[]
+  let mut preview := false
   for (key, value) in table.items do
     match keyString key with
     | "include" =>
@@ -140,23 +186,40 @@ private def parseConfig (table : Lake.Toml.Table) : Except String FormatterConfi
       let sources ← valueStrings "exclude" value
       excludePatterns ← sources.mapM compilePattern
     | "select" => selectedSelectors ← valueStrings "select" value
+    | "extend-select" => extendSelectSelectors ← valueStrings "extend-select" value
     | "ignore" => ignoredSelectors ← valueStrings "ignore" value
     | "per-file-ignores" => perFileIgnores ← parsePerFileIgnores value
     | "extend-safe-fixes" => extendSafeFixes ← valueStrings "extend-safe-fixes" value
     | "extend-unsafe-fixes" => extendUnsafeFixes ← valueStrings "extend-unsafe-fixes" value
+    | "fixable" => fixableSelectors ← valueStrings "fixable" value
+    | "unfixable" => unfixableSelectors ← valueStrings "unfixable" value
+    | "extend-fixable" => extendFixableSelectors ← valueStrings "extend-fixable" value
+    | "preview" =>
+      match value with
+      | .boolean _ b => preview := b
+      | _ => throw "configuration key 'preview' expects a boolean"
     | unknown => throw s!"unknown configuration key: {unknown}"
   selectorsValid selectedSelectors
+  selectorsValid extendSelectSelectors
   selectorsValid ignoredSelectors
   selectorsValid extendSafeFixes
   selectorsValid extendUnsafeFixes
+  selectorsValid fixableSelectors
+  selectorsValid unfixableSelectors
+  selectorsValid extendFixableSelectors
   return {
     includePatterns := includePatterns
     excludePatterns := excludePatterns
     selectedSelectors := selectedSelectors
+    extendSelectSelectors := extendSelectSelectors
     ignoredSelectors := ignoredSelectors
     perFileIgnores := perFileIgnores
     extendSafeFixes := extendSafeFixes
     extendUnsafeFixes := extendUnsafeFixes
+    fixableSelectors := fixableSelectors
+    unfixableSelectors := unfixableSelectors
+    extendFixableSelectors := extendFixableSelectors
+    preview := preview
   }
 
 private def loadTable (path : System.FilePath) : IO Lake.Toml.Table := do
@@ -188,13 +251,11 @@ def FormatterConfig.includesPath (config : FormatterConfig) (path : String) : Bo
   (config.includePatterns.isEmpty || config.includePatterns.any (·.matches path)) &&
     !config.excludePatterns.any (·.matches path)
 
-/-- `all` is every registered rule; `default` is the rules whose `defaultEnabled` is set — the set a
-plain run selects when nothing is named. The distinction only became observable in `ruff-10`, which
-shipped the first `defaultEnabled := false` (preview) rules, FMT008 and FMT013: before them the two
-selectors expanded to the same set, so the default run selected `all` with no visible difference.
-`defaultEnabled` is enforced *here*, at the default selection, and nowhere else — an explicit `all`, a
-category, or a bare code is an opt-in that overrides the default-off, so naming FMT013 or its category
-still selects it. This is the field being honored rather than left to rot. -/
+/-- Expand a selector to the codes it names, for the **subtractive** contexts (per-file-ignores and
+`extend-safe/unsafe-fixes`) that project a set of codes and test containment. `all`/`default`/category
+follow `defaultEnabled`/category; a bare code (live or reserved) is itself. These contexts never need
+the preview gate or specificity — they only remove or reclassify — so they keep the flat expansion.
+Positive selection (`select`/`ignore`/`fixable`) instead goes through `resolveAxis`. -/
 private def expandSelector (selector : String) : Array String :=
   if selector == "all" then
     allRuleInfos.map (·.code)
@@ -210,18 +271,86 @@ private def expandSelectors (selectors : Array String) : Array String :=
     (expandSelector selector).foldl (init := codes) fun codes code =>
       if codes.contains code then codes else codes.push code
 
-/-- Resolve CLI/config precedence once. A nonempty CLI select replaces configured selection and its
-configured ignores; otherwise configured selection is used. CLI ignores always apply to the chosen
-selection, and ignores win over selects within that layer. -/
-def FormatterConfig.rulePlan (config : FormatterConfig) (cliSelect cliIgnore : Array String) :
+/-- The specificity of a selector token (`notes/01-schema.md` §5.4): an exact code (3) is more specific
+than a category (2), which is more specific than `all`/`default` (1). A reserved code or unrecognized
+token has specificity 0 and mentions no live rule. -/
+private def selectorSpecificity (selector : String) : Nat :=
+  if selector == "all" || selector == "default" then 1
+  else if isCategory selector then 2
+  else if allRuleInfos.any (·.code == selector) then 3
+  else 0
+
+/-- Whether `selector` names live rule `info`, honoring the **preview gate** (§5.3): `all` and a
+category expand to stable rules only unless `preview` is on (then their preview rules too); `default`
+follows `defaultEnabled` (only stable rules are default-on); a deprecated rule is reached only by its
+exact code; an exact-code selector names exactly its own code. -/
+private def selectorMentions (preview : Bool) (selector : String) (info : RuleInfo) : Bool :=
+  let gated := info.lifecycle == .stable || (info.lifecycle == .preview && preview)
+  if selector == "all" then gated
+  else if selector == "default" then info.defaultEnabled
+  else if isCategory selector then info.category == selector && gated
+  else selector == info.code
+
+/-- Resolve one selection axis over `universe` by specificity (§5.4): a rule is enabled iff some
+`enable` selector names it and **strictly outranks** every `disable` selector that names it — a tie goes
+to the disabler ("ignore wins"). `preview` gates what `all`/category mention. -/
+private def resolveAxis (pool : Array RuleInfo) (preview : Bool)
+    (enable disable : Array String) : Array String :=
+  let best := fun (tokens : Array String) (info : RuleInfo) =>
+    tokens.foldl (init := 0) fun acc t =>
+      if selectorMentions preview t info then Nat.max acc (selectorSpecificity t) else acc
+  pool.filterMap fun info =>
+    let e := best enable info
+    let d := best disable info
+    if e > 0 && e > d then some info.code else none
+
+/-- Resolve CLI/config selection into a `RulePlan` (`notes/01-schema.md` §5–§6). A nonempty CLI
+`--select` replaces configured `select` and its configured ignores; `extend-select` always adds;
+ignores within the chosen layer always apply. Resolution is by specificity (`resolveAxis`), not flat
+subtraction: `--select FMT010 --ignore redundancy` keeps FMT010, because an exact selector outranks a
+category. The preview gate (§5.3) errors on an explicit preview-code selection when preview is off, and
+raises a non-fatal notice for a reserved/retired or deprecated code named in a selector. -/
+def FormatterConfig.rulePlan (config : FormatterConfig) (cli : CliSelection) :
     Except String RulePlan := do
-  selectorsValid cliSelect
-  selectorsValid cliIgnore
-  let cliOwnsSelection := !cliSelect.isEmpty
-  let selectedBy := if cliOwnsSelection then cliSelect else config.selectedSelectors
-  let ignoredBy := if cliOwnsSelection then cliIgnore else config.ignoredSelectors ++ cliIgnore
-  let ignored := expandSelectors ignoredBy
-  let selected := expandSelectors selectedBy |>.filter (!ignored.contains ·)
+  selectorsValid cli.select
+  selectorsValid cli.extendSelect
+  selectorsValid cli.ignore
+  selectorsValid cli.fixable
+  selectorsValid cli.unfixable
+  selectorsValid cli.extendFixable
+  let preview := config.preview || cli.preview
+  let cliOwnsSelection := !cli.select.isEmpty
+  let selectTokens := if cliOwnsSelection then cli.select else config.selectedSelectors
+  let extendSelectTokens := config.extendSelectSelectors ++ cli.extendSelect
+  let ignoreTokens := (if cliOwnsSelection then #[] else config.ignoredSelectors) ++ cli.ignore
+  let enableTokens := selectTokens ++ extendSelectTokens
+  -- Preview gate: an explicit exact-code selection of a preview rule is an error unless preview is on —
+  -- a specific message, never a silent drop. A category/`all` simply omits preview rules when off.
+  for t in enableTokens do
+    if let some info := allRuleInfos.find? (·.code == t) then
+      if info.lifecycle == .preview && !preview then
+        throw s!"rule {t} is in preview; enable preview mode (--preview) to select it"
+  -- Non-fatal notices: a reserved/retired code, or a deprecated rule, named in any selector.
+  let mut notices := #[]
+  for t in enableTokens ++ ignoreTokens do
+    if isReservedCode t then
+      notices := notices.push
+        s!"selector {t} names no live rule ({(reservedDisposition? t).getD "reserved code"})"
+    else if let some info := allRuleInfos.find? (·.code == t) then
+      if info.lifecycle == .deprecated then
+        let migration := match info.replacement? with | some r => s!"; use {r} instead" | none => ""
+        notices := notices.push s!"rule {t} is deprecated{migration}"
+  let selected := resolveAxis allRuleInfos preview enableTokens ignoreTokens
+  -- Fix-selection axis, resolved over the *selected* set (already preview-gated, so mention with
+  -- `preview := true`). Base is `all` unless `fixable` is configured; `extend-fixable` adds, `unfixable`
+  -- removes. A selected-but-unfixable code stays reported; only its fix is withheld (`prepareFile`).
+  let fixableOwns := !cli.fixable.isEmpty
+  let fixEnable := (if fixableOwns then cli.fixable
+      else if config.fixableSelectors.isEmpty then #["all"] else config.fixableSelectors)
+    ++ config.extendFixableSelectors ++ cli.extendFixable
+  let fixDisable := (if fixableOwns then #[] else config.unfixableSelectors) ++ cli.unfixable
+  let selectedInfos := allRuleInfos.filter (selected.contains ·.code)
+  let fixableSelected := resolveAxis selectedInfos true fixEnable fixDisable
   -- Reclassification is config-only; there is no CLI spelling, so it is resolved once here from the
   -- config's own lists. A rule in both is a contradiction, not last-writer-wins.
   let extendSafe := expandSelectors config.extendSafeFixes
@@ -231,9 +360,11 @@ def FormatterConfig.rulePlan (config : FormatterConfig) (cliSelect cliIgnore : A
       throw s!"rule {code} is in both extend-safe-fixes and extend-unsafe-fixes"
   return {
     selected
+    fixableSelected
     perFileIgnores := config.perFileIgnores
     extendSafe
     extendUnsafe
+    notices
   }
 
 private def ignoredForPath (plan : RulePlan) (path code : String) : Bool :=
