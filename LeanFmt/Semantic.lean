@@ -5,22 +5,19 @@ import all LeanFmt.Suppression
 
 namespace LeanFmt.Internal
 
-/-- A module's canonical layout, and the source-rule findings that index **it** rather than the file.
+/-- A module's canonical layout — the reflowed bytes, and nothing else.
 
-Both halves are needed and neither can be recovered from the other side of a cache hit. `text` is what
-`format` prints and what `fix` publishes. `findings` exists because canonical text is *not* lint-clean:
-the printer keeps a command's trailing trivia run verbatim (`Printer.lean:208-222`), so it strips no
-trailing whitespace and adds no final newline — `RFP-SPEC` §6 checked this rather than assuming it.
-Re-running the rules is therefore mandatory, and it cannot be deferred to the caller, because
-canonicalizing moves bytes: `namespace     Alpha` loses four of them, and every `findings` offset past
-that point would land in the wrong column. The two arrays are the same rules in two coordinate
-systems, and mixing them corrupts files.
+`text` is what `format` prints and what `diff` diffs the file's own bytes against. It carries **no**
+findings: since `ruff-11c` RDF-IMPL the layout patch applies no rule fix (a rule fix lands at the file's
+*original* coordinates through `fix`, never on the moved canonical bytes), so the source-rule surface
+that once re-indexed findings against this text (`renderCanonicalText`'s `runSourceRules`) is retired.
+`format`/`diff` render this text; the report they show is still `result.findings` at original
+coordinates, drawn one level up in `prepareFile` and independent of this structure.
 
-Both are selection-independent — `runRules` produces every rule's findings and `RulePlan.findings`
-projects afterwards — so one cache entry still serves any `--select`. -/
+Selection-independent — one rendered layout serves any `--select`, because selection never enters the
+canonical transformation. -/
 structure CanonicalText where
   text : String
-  findings : Array Finding
   deriving BEq, Lean.ToJson, Lean.FromJson
 
 structure SemanticResult where
@@ -88,8 +85,14 @@ would only *under*-serve (a miss, never a false clean), but the same schema disc
 `caps`. A `v6` entry read as `v7` would default `caps := {}` and, if it had been a `.semantic` entry,
 read as "captured no sub-facts" — which *under*-serves every `.semantic` demand (a miss, never a false
 clean), the safe direction; the schema bump makes it a clean miss rather than a silent reinterpretation
-so no `v6` `.semantic` entry serves a fixable-FMT014 demand it never captured occurrences for. -/
-def semanticResultSchema : String := "lean-fmt.semantic-result.v7"
+so no `v6` `.semantic` entry serves a fixable-FMT014 demand it never captured occurrences for.
+
+`v8` (`ruff-11c` RDF-IMPL): `CanonicalText` drops its `findings` array — the canonical layout carries no
+rule fix now that `format`/`diff` reflow only and every fix lands at original coordinates. A `v7`
+`canonical` object has an extra `findings` field the `v8` shape ignores, but a `v7` entry read as `v8`
+would also be serving canonical text whose findings the new code no longer folds into any patch; the
+schema bump makes it a clean miss instead. -/
+def semanticResultSchema : String := "lean-fmt.semantic-result.v8"
 
 /-- `normalized` must be `(LosslessSource.normalize raw).1`, the string every finding indexes.
 `suppression` defaults empty for the source-only shortcut; `ofEnvelope?` passes the collected facts.

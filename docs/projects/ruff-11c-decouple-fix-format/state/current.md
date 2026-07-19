@@ -1,6 +1,6 @@
 ---
 kind: state
-first_unresolved: 03-impl
+first_unresolved: 04-final
 ---
 
 # Current state
@@ -19,27 +19,36 @@ landed before the patch split, so `format` still composes fixes today but the re
 known non-green: `tests/printer/run.sh`'s stale-evidence census (541 vs live 660) against a frozen ruff-03
 record the prompt forbids rewriting — pre-existing and out of scope (details in `results/02-layout.md`).
 
-Next unresolved is 03-impl (RDF-IMPL), the patch split proper. It decouples lint-fix from formatting:
-`format`/`diff` reflow
-only (no rule fix applied or previewed) and `fix`/`check --fix` apply admitted fixes at the file's own
-original coordinates (no reflow), so a user composes them as `ruff check --fix && ruff format`.
+RDF-IMPL (03) is verified (`results/03-impl.md`): the patch split proper landed. `prepareFile`'s single
+canonical patch is now a **layout patch** (`format`/`diff`: reflow only, no rule fix applied or previewed)
+and a **fix patch** (`fix`; `check` computes it for its report: admitted fixes at original coordinates, no
+reflow), so a user composes the two as `ruff check --fix && ruff format`. The apply signal `applies :=
+mode == .fix` is now distinct from `rendersCanonical` (true for `format`/`diff` only), and occurrence
+capture keys off `applies` (`Config.lean:329-333`, `Application.lean:1000-1005`); `CanonicalText` shrank
+to `{ text }` (schema v7→v8); `reprojectCanonical`, `patchDuplicateFindings`, `patchImportsFor`, and the
+`result.canonical?`-as-patch-source branch are retired (no live def/call remains — only retirement
+rationale in docstrings). Every surviving fix (import FMT005, syntax `.safe`, semantic FMT014) and the
+`ruff-11b` capability split are preserved, each with a new regression proving it is applied by `fix` at
+original coordinates **and** absent from `format`. Full build clean; every touched suite passes; the
+architecture gate, `write_next.py --check`, and `git diff --check` are green. The one known non-green
+(`tests/printer/run.sh`'s stale-evidence census) is pre-existing and out of scope, carried from
+RDF-LAYOUT.
+
+Next unresolved is 04-final (RDF-FINAL), the adversarial acceptance sweep: re-verify the nine enumerated
+cases in `notes/01-model.md §9` (coordinate/UTF-8/multi-edit shapes, `diff`=`format`-preview,
+fix-no-reflow, format-applies-nothing) and freeze the decoupled interface.
 
 Its external prerequisite stacks are `ruff-06-fix-safety`, `ruff-09-import-rules`,
 `ruff-10b-syntax-fix-composition`, and `ruff-11b-owned-semantic-fix`, all verified. This stack is the
 forward unwinding of the canonical-coordinate fix composition those stacks built: it keeps every
-surviving fix and the `ruff-11b` capability split, and
-re-homes the surviving fixes (import FMT005, syntax `.safe`, semantic FMT014 — FMT001/FMT002 retire into
-the formatter) onto original coordinates and onto `fix` alone. A `git revert` of 10b/11b was
-rejected — it would delete their fix capabilities while leaving the coupling (FMT005 still rides
-`canonical.findings`, `format` still applies fixes) intact, and the decoupled end state is a state no
-prior commit occupied. Before starting, confirm those prerequisite roadmaps are verified and their live
-implementation still matches recorded state.
+surviving fix and the `ruff-11b` capability split, and re-homes the surviving fixes onto original
+coordinates and onto `fix` alone.
 
 | Prompt | Claim | Status | Depends on |
 | --- | --- | --- | --- |
 | 01-spec | RDF-SPEC | verified | — |
 | 02-layout | RDF-LAYOUT | verified | RDF-SPEC |
-| 03-impl | RDF-IMPL | planned | RDF-LAYOUT |
+| 03-impl | RDF-IMPL | verified | RDF-LAYOUT |
 | 04-final | RDF-FINAL | planned | RDF-IMPL |
 
 ## Scope

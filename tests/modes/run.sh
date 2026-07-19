@@ -14,6 +14,10 @@ artifact_root="$repo_root/.lake/build/lean-fmt-artifacts"
 nosel_fixture="$repo_root/tests/modes/.rdf-layout-nosel.lean"
 string_fixture="$repo_root/tests/modes/.rdf-layout-string.lean"
 tail_fixture="$repo_root/tests/modes/.rdf-layout-tail.lean"
+# The RDF-IMPL mixed fixture carries both a layout defect (`namespace␣␣␣␣␣Alpha`) and an admitted fix (a
+# duplicate import, FMT005). It imports `LeanFmt.Basic`, so it must live under the lake root; `fix`
+# mutates it, so it is a fresh scratch, untracked, removed by the trap.
+mixed_fixture="$repo_root/tests/modes/.rdf-impl-mixed.lean"
 
 # Both fixtures are edited in place below and both are tracked files, so restoring them is not
 # cleanup — it is the difference between a failing test and a dirty working tree the next run
@@ -26,7 +30,7 @@ restore() {
     cp -p "$work/Layout.lean" "$layout_file"
   fi
   rm -rf "$cache_root" "$work" \
-    "$nosel_fixture" "$string_fixture" "$tail_fixture"
+    "$nosel_fixture" "$string_fixture" "$tail_fixture" "$mixed_fixture"
 }
 trap restore EXIT
 
@@ -79,14 +83,17 @@ for directory, _, files in os.walk(root):
 PY
 }
 
-# Every preview mode consumes the same result, returns deterministic output, and leaves source
-# bytes, mtimes, and permissions untouched.
+# Every preview mode consumes the same result and leaves source bytes, mtimes, and permissions
+# untouched. `Findings.lean` is layout-clean but carries one FMT005 (duplicate import). Since `ruff-11c`
+# RDF-IMPL split layout from fix, `format`/`diff` reflow only and apply **no** rule fix: on a layout-clean
+# file they are `clean` and exit 0 even though `check` still reports the finding — the FMT005 dedup is a
+# fix, not layout, and rides `fix` (exercised below), never `format`.
 metadata "$source_file" >"$work/source.before"
 run_expect 1 "$work/check.json" "$application" check --root . --json --no-cache \
   tests/check/Findings.lean
-run_expect 1 "$work/format.json" "$application" format --root . --json --no-cache \
+run_expect 0 "$work/format.json" "$application" format --root . --json --no-cache \
   tests/check/Findings.lean
-run_expect 1 "$work/diff.txt" "$application" diff --root . --no-cache \
+run_expect 0 "$work/diff.txt" "$application" diff --root . --no-cache \
   tests/check/Findings.lean
 metadata "$source_file" >"$work/source.after-previews"
 cmp "$work/source.before" "$work/source.after-previews"
@@ -96,33 +103,20 @@ import json, sys
 check = json.load(open(sys.argv[1]))
 formatted = json.load(open(sys.argv[2]))
 diff = open(sys.argv[3]).read()
+# `check` reports the finding and its safe fix; it changes nothing on disk.
 assert check["mode"] == "check" and check["changed"] == 1 and check["written"] == 0
-assert formatted["files"][0]["formatted"] == \
-    "module\n\nimport LeanFmt.Basic\n\ndef findingValue : Nat := 1\n"
-# `RFP-IMPL` rewrote `unifiedDiff` over `Lean.Diff.diff`; a naive whole-file rewrite would reprint
-# every line as `-` then `+`. Here the only change is the removed duplicate import (FMT005), so a real
-# line diff drops exactly one line and keeps the rest as ' ' context.
-#
-# Assembled from explicit pieces rather than written as a literal block: the ' ' context marker turns
-# the two blank lines into lines that are a single trailing space, and a literal block would put
-# trailing whitespace in this file for `git diff --check` to reject and any editor to strip on save.
-#
-# The ' ' context lines are the whole point. They are what a diff has and a whole-file rewrite does
-# not, so reverting to one fails here.
-expected = "".join(line + "\n" for line in [
-    "--- a/tests/check/Findings.lean",
-    "+++ b/tests/check/Findings.lean",
-    "@@ -1,6 +1,5 @@",
-    " module",
-    " ",
-    " import LeanFmt.Basic",
-    "-import LeanFmt.Basic",
-    " ",
-    " def findingValue : Nat := 1",
-    "mode=diff files=1 findings=1 changed=1 written=0 broken=0 rejected=0 withheld_unsafe=0 "
-    "suppressed=0 infrastructure_failures=0",
-])
-assert diff == expected, repr(diff)
+assert [f["code"] for f in check["files"][0]["findings"]] == ["FMT005"]
+# `format` applies no rule fix and the file is layout-clean, so it is `clean` — but it still reports the
+# finding at original coordinates (`notes/01-model.md` §4: the report survives the patch split).
+assert formatted["mode"] == "format" and formatted["changed"] == 0
+assert formatted["files"][0]["status"] == "clean"
+assert formatted["files"][0]["formatted"] is None
+assert [f["code"] for f in formatted["files"][0]["findings"]] == ["FMT005"]
+# `diff` likewise shows no layout change — an empty diff body, `changed=0`, the FMT005 dedup withheld
+# from the layout preview. The stats line still reports the finding.
+assert "@@" not in diff, repr(diff)
+assert diff == ("mode=diff files=1 findings=1 changed=0 written=0 broken=0 rejected=0 "
+    "withheld_unsafe=0 suppressed=0 infrastructure_failures=0\n"), repr(diff)
 PY
 
 # `RFP-IMPL`: **`format` formats.** This was `RFP-SPEC`'s characterization of the opposite — it
@@ -198,17 +192,20 @@ assert diff == expected, repr(diff)
 PY
 cp -p "$work/Layout.lean" "$layout_file"
 
-# Artifact, exact fallback, and semantic-cache hit project to identical formatted output. The hit
-# remains usable under a different rule projection without invoking an analyzer.
+# Artifact, exact fallback, and semantic-cache hit project to identical formatted output — the reflowed
+# layout. `Layout.lean` reflows (`namespace     Alpha` -> `namespace Alpha`), so unlike the layout-clean
+# `Findings.lean` above (on which `format` is now clean) it exercises a real canonical render across all
+# three paths. The hit remains usable without invoking an analyzer.
 run_expect 1 "$work/format-artifact.json" "$application" format --root . --json \
-  tests/check/Findings.lean
+  tests/check/Layout.lean
 run_expect 1 "$work/format-hit.json" env LEAN_FMT_DISABLE_ARTIFACT=1 \
   LEAN_FMT_TEST_ANALYZER=/usr/bin/false "$application" format --root . --json \
-  tests/check/Findings.lean
+  tests/check/Layout.lean
 cmp "$work/format-artifact.json" "$work/format-hit.json"
 run_expect 1 "$work/format-fallback.json" env LEAN_FMT_DISABLE_ARTIFACT=1 \
-  "$application" format --root . --json --no-cache tests/check/Findings.lean
+  "$application" format --root . --json --no-cache tests/check/Layout.lean
 cmp "$work/format-artifact.json" "$work/format-fallback.json"
+rm -rf "$cache_root"
 
 # A `check`-populated entry is a **miss** for a rendering mode, not an under-populated hit. `check`
 # takes the source-only shortcut and stores no canonical text, so serving its entry to `format` would
@@ -540,6 +537,79 @@ rm .lake/build/lean-fmt-clean-sentinel
 metadata "$source_file" >"$work/source.final"
 cmp "$work/source.before" "$work/source.final"
 
+# --- RDF-IMPL: layout and fix are decoupled. On a fixture with **both** a layout defect
+#     (`namespace␣␣␣␣␣Alpha`) and an admitted fixable finding (a duplicate import, FMT005), `format`
+#     reflows the layout and leaves the finding, while `fix` applies the finding at original coordinates
+#     and does **not** reflow. A user composes them as `fix` then `format`, like `ruff check --fix` then
+#     `ruff format`. ---
+printf 'module\n\nimport LeanFmt.Basic\nimport LeanFmt.Basic\n\nnamespace     Alpha\n\ndef mixedValue : Nat := 1\n\nend Alpha\n' \
+  >"$mixed_fixture"
+
+# `format` reflows the namespace spacing but keeps BOTH imports — the dedup is a fix, not layout — and
+# still reports the FMT005 finding at original coordinates.
+run_expect 1 "$work/mixed-format.json" "$application" format --root . --json --no-cache \
+  tests/modes/.rdf-impl-mixed.lean
+python3 - "$work/mixed-format.json" <<'PY'
+import json, sys
+r = json.load(open(sys.argv[1]))
+assert r["mode"] == "format" and r["changed"] == 1, r
+f, = r["files"]
+assert f["status"] == "would-format", f
+assert [x["code"] for x in f["findings"]] == ["FMT005"], f          # finding survives format
+assert f["formatted"] == \
+    "module\n\nimport LeanFmt.Basic\nimport LeanFmt.Basic\n\nnamespace Alpha\n\n" \
+    "def mixedValue : Nat := 1\n\nend Alpha\n", repr(f["formatted"])  # reflowed, NOT deduped
+PY
+
+# `diff` equals the `format` preview: same reflow, same withheld fix.
+run_expect 1 "$work/mixed-diff.txt" "$application" diff --root . --no-cache \
+  tests/modes/.rdf-impl-mixed.lean
+python3 - "$work/mixed-diff.txt" <<'PY'
+import sys
+diff = open(sys.argv[1]).read()
+# the only hunk collapses the namespace spacing; no import line is removed.
+assert "-namespace     Alpha" in diff and "+namespace Alpha" in diff, repr(diff)
+assert "import LeanFmt.Basic" not in diff.replace(" import", ""), repr(diff)  # no import edit
+assert diff.rstrip().endswith("findings=1 changed=1 written=0 broken=0 rejected=0 "
+    "withheld_unsafe=0 suppressed=0 infrastructure_failures=0"), repr(diff)
+PY
+
+# `fix` applies the FMT005 dedup at original coordinates and does NOT reflow: the bad namespace spacing
+# is preserved byte-for-byte, exactly one import remains, and the file is written.
+run_expect 0 "$work/mixed-fix.json" "$application" fix --root . --json --no-cache \
+  tests/modes/.rdf-impl-mixed.lean
+python3 - "$work/mixed-fix.json" "$mixed_fixture" <<'PY'
+import json, sys
+r = json.load(open(sys.argv[1]))
+assert r["written"] == 1, r
+f, = r["files"]
+assert f["status"] == "fixed", f
+data = open(sys.argv[2], "rb").read()
+assert data == \
+    b"module\n\nimport LeanFmt.Basic\n\nnamespace     Alpha\n\ndef mixedValue : Nat := 1\n\nend Alpha\n", \
+    repr(data)  # deduped, layout (five spaces) untouched
+PY
+
+# The fixed file is now free of the finding (`check` reports nothing) but still layout-dirty, so a
+# following `format` is what reflows it — the two-command composition reaching its fixed point.
+run_expect 0 "$work/mixed-recheck.json" "$application" check --root . --json --no-cache \
+  tests/modes/.rdf-impl-mixed.lean
+python3 - "$work/mixed-recheck.json" <<'PY'
+import json, sys
+f, = json.load(open(sys.argv[1]))["files"]
+assert f["status"] == "clean" and f["findings"] == [], f
+PY
+run_expect 1 "$work/mixed-postfix-format.json" "$application" format --root . --json --no-cache \
+  tests/modes/.rdf-impl-mixed.lean
+python3 - "$work/mixed-postfix-format.json" <<'PY'
+import json, sys
+f, = json.load(open(sys.argv[1]))["files"]
+assert f["status"] == "would-format" and f["findings"] == [], f
+assert f["formatted"] == \
+    "module\n\nimport LeanFmt.Basic\n\nnamespace Alpha\n\ndef mixedValue : Nat := 1\n\nend Alpha\n", \
+    repr(f["formatted"])
+PY
+
 # --- RDF-LAYOUT: the canonical reflow is the sole, sound owner of trailing-horizontal-whitespace and
 #     final-newline normalization. `ruff-11c` retired FMT001 (trailing whitespace) and FMT002 (final
 #     newline) as rules and folded the normalization into `LeanFmt.Printer`, mirroring `ruff format`.
@@ -571,9 +641,10 @@ assert f["status"] == "clean" and f["findings"] == [], f
 PY
 
 # 2. In-string trailing whitespace is token content, not inter-token trivia, so the trim is sound by
-#    construction: the string value survives `format` AND `fix` byte-for-byte, no rule reports it, and
-#    only the missing final newline is added. This is the case the retired FMT001 corrupted — it edited
-#    the string's bytes — and it now cannot recur.
+#    construction: the string value survives byte-for-byte and no rule reports it. `format` adds the
+#    missing final newline as layout; `fix` — which since RDF-IMPL applies rule fixes, not layout — is a
+#    clean no-op on this finding-free file and adds no newline, leaving every byte exactly as written.
+#    This is the case the retired FMT001 corrupted (it edited the string's bytes); it now cannot recur.
 printf 'module\n\ndef stringWsValue : String := "alpha   \n  beta"' >"$string_fixture"
 run_expect 1 "$work/string-format.json" "$application" format --root . --json --no-cache \
   tests/modes/.rdf-layout-string.lean
@@ -589,12 +660,12 @@ run_expect 0 "$work/string-fix.json" "$application" fix --root . --json --no-cac
 python3 - "$work/string-fix.json" "$string_fixture" <<'PY'
 import json, sys
 r = json.load(open(sys.argv[1]))
-assert r["written"] == 1, r
+assert r["written"] == 0, r          # no finding, and layout is not fix's job
 f, = r["files"]
-assert f["status"] == "fixed", f
+assert f["status"] == "clean", f
 data = open(sys.argv[2], "rb").read()
-# The string interior "alpha   " keeps its trailing spaces; the file gained exactly one final newline.
-assert data == b'module\n\ndef stringWsValue : String := "alpha   \n  beta"\n', repr(data)
+# Byte-identical to the input: the string interior "alpha   " is intact and `fix` added no final newline.
+assert data == b'module\n\ndef stringWsValue : String := "alpha   \n  beta"', repr(data)
 PY
 
 # 3. A verbatim tail after a terminal `#exit` is emitted byte-for-byte EXCEPT its own trailing

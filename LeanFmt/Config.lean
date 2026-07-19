@@ -314,20 +314,23 @@ def RulePlan.selectsOccurrenceRule (plan : RulePlan) : Bool :=
 
 /-- The semantic sub-facts a run demands — the capability axis beside `demandedTier` (`ruff-11b`
 Design B). Non-empty only when the demanded tier reaches `.semantic`:
-- `notations` when a rendering mode needs the layout fact;
+- `notations` when a rendering mode needs the layout fact (`format`/`diff`; `fix` does not reflow);
 - `diagnostics` when a selected rule reads the compiler diagnostics (the tier reached `.semantic`
   through a rule) — always satisfied by any `.semantic` entry, which captures it monolithically;
-- `occurrences` when a rendering mode selects an occurrence-fix rule (FMT014's rename) — the one
-  capability that gates the whole-file info-tree fold.
+- `occurrences` when a run that **applies** fixes selects an occurrence-fix rule (FMT014's rename) — the
+  one capability that gates the whole-file info-tree fold.
 
-A `check` never renders, so it never demands `occurrences`: the surfaced report costs no info-tree walk.
-`cacheHitServes` serves a `.semantic` entry only when `demandedCaps.subset entry.caps`, so a demand for
-`occurrences` misses a monolithic-era entry that never captured it. -/
-def RulePlan.demandedCaps (plan : RulePlan) (renderCanonical : Bool) : SemanticCaps :=
+The `occurrences` demand keys off `applies` (true only for `fix`), not off `renderCanonical`, since
+`ruff-11c` RDF-IMPL split layout from fix: `format`/`diff` render (`renderCanonical`) but apply no fix,
+so they must not pay the info-tree fold, while `fix` applies the FMT014 rename but no longer renders. A
+`check` neither renders nor applies, so it demands neither `notations` nor `occurrences`. `cacheHitServes`
+serves a `.semantic` entry only when `demandedCaps.subset entry.caps`, so a fix's `occurrences` demand
+misses a monolithic-era entry that never captured it. -/
+def RulePlan.demandedCaps (plan : RulePlan) (renderCanonical applies : Bool) : SemanticCaps :=
   if plan.demandedTier renderCanonical == .semantic then
     { notations := renderCanonical
       diagnostics := plan.requiredTier == .semantic
-      occurrences := renderCanonical && plan.selectsOccurrenceRule }
+      occurrences := applies && plan.selectsOccurrenceRule }
   else {}
 
 end LeanFmt.Internal

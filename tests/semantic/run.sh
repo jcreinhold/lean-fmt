@@ -378,10 +378,11 @@ PY
 cmp -s "$work/mixed.orig" "$proj/acc/Mixed.lean" \
   || { echo 'fix withholding an unsafe owned fix modified the source' >&2; exit 1; }
 
-# 3b. Admitted owned fix applies a real rename. `fix --unsafe-fixes --select FMT014` re-projects the
-# occurrence onto canonical text (`reprojectCanonical`, the `ruff-06` "re-project, don't translate"
-# path) and publishes the rename `oldName -> newName`: the file changes, the written use reads
-# `newName`, and a re-`check` of FMT014 is clean because the only deprecated use is gone.
+# 3b. Admitted owned fix applies a real rename. Since `ruff-11c` RDF-IMPL `fix` applies the FMT014
+# occurrence edit at its original-source coordinates and owns no reflow (the retired `reprojectCanonical`
+# canonical-coordinate path is gone). `fix --unsafe-fixes --select FMT014` publishes the rename
+# `oldName -> newName`: the file changes, the written use reads `newName`, and a re-`check` of FMT014 is
+# clean because the only deprecated use is gone.
 check_exit env LEAN_NUM_THREADS=1 "$application" fix --root "$proj" --json --no-cache \
   --unsafe-fixes --select FMT014 "$proj/acc/Mixed.lean" >"$work/acc-apply.json" 2>/dev/null
 python3 - "$work/acc-apply.json" <<'PY'
@@ -407,6 +408,25 @@ codes = [x["code"] for x in f["findings"]]
 assert "FMT014" not in codes, codes                        # the deprecated use is gone
 PY
 
+# 3b'. The inverse half of the split, on the owned semantic fix. `format` owns no rule fix: on a fresh
+# copy of the original (deprecated `oldName` use intact), `format --unsafe-fixes --select FMT014` renders
+# layout only and never renames — `useOld := oldName` survives byte-for-byte, where `fix` above published
+# `newName`. This is the RDF-IMPL decoupling on the FMT014 rename: applied by `fix` at original
+# coordinates, absent from `format`. (`--unsafe-fixes` is a no-op for `format` — it admits nothing to apply.)
+cp "$work/mixed.orig" "$proj/acc/MixedFmt.lean"
+check_exit env LEAN_NUM_THREADS=1 "$application" format --root "$proj" --json --no-cache \
+  --unsafe-fixes --select FMT014 "$proj/acc/MixedFmt.lean" >"$work/acc-format.json" 2>/dev/null
+python3 - "$work/acc-format.json" <<'PY'
+import json, sys
+f, = json.load(open(sys.argv[1]))["files"]
+out = f["formatted"]
+assert out is None or ("oldName" in out and "def useOld : Nat := newName" not in out), \
+  ("format applied the FMT014 rename — it must not", repr(out))
+PY
+grep -q 'def useOld : Nat := oldName' "$proj/acc/MixedFmt.lean" \
+  || { echo 'format mutated the deprecated use — it must not write, let alone rename' >&2; exit 1; }
+rm -f "$proj/acc/MixedFmt.lean"
+
 # 3c. Idempotence. A second `fix --unsafe-fixes --select FMT014` over the already-renamed file is a
 # no-op: nothing left to rename, so no write and the bytes are unchanged.
 cp "$proj/acc/Mixed.lean" "$work/mixed.fixed"
@@ -420,8 +440,9 @@ PY
 cmp -s "$work/mixed.fixed" "$proj/acc/Mixed.lean" \
   || { echo 'a second FMT014 fix modified an already-renamed file' >&2; exit 1; }
 
-# 3d. Pass-order independence. `--select` order must not change the published bytes: FMT014 (semantic,
-# re-projected) and FMT013 (syntax, safe paren removal) compose the same either way. Both orders
+# 3d. Pass-order independence. `--select` order must not change the published bytes: FMT014 (semantic
+# occurrence rename) and FMT013 (syntax, safe paren removal), both at original-source coordinates,
+# compose the same either way. Both orders
 # `fix --unsafe-fixes` a fresh copy of the original and must write byte-identical output.
 cp "$work/mixed.orig" "$proj/acc/OrderA.lean"
 cp "$work/mixed.orig" "$proj/acc/OrderB.lean"

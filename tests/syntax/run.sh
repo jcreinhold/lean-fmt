@@ -154,11 +154,11 @@ assert data["infrastructureFailures"] == [], data
 assert data["files"][0]["status"] == "broken", data["files"][0]
 PY
 
-# --- Fix application (RYC-IMPL): a syntax-tier `.safe` fix is now *applied* by `fix`, composed by
-# re-projecting the canonical text so its edits land in canonical coordinates (Application:
-# `reprojectCanonical`; ruff-10b RYC-SPEC `notes/01-model.md`). For each fixable rule, assert `fix`
-# writes the corrected bytes (the defect gone, the intended form present) and that a re-`check` of the
-# written file reports nothing for that rule -- the fix is idempotent.
+# --- Fix application: a syntax-tier `.safe` fix is *applied* by `fix`. Since `ruff-11c` RDF-IMPL the
+# edits land in original-source coordinates and carry no reflow (`fix` owns no layout; the retired
+# `reprojectCanonical` and its canonical-coordinate composition are gone). For each fixable rule, assert
+# `fix` writes the corrected bytes (the defect gone, the intended form present) and that a re-`check` of
+# the written file reports nothing for that rule -- the fix is idempotent.
 fix_applies() {
   local label=$1 fixture=$2 selector=$3 gone=$4 present=$5
   local probe="tests/syntax/.ryc-fix-$label.lean"
@@ -191,6 +191,20 @@ fix_applies fmt013 NestedParen.lean FMT013 '((1))' '(1)'
 fix_applies fmt010 Duplicates.lean  FMT010 '@[simp, simp]' '@[simp]'
 fix_applies fmt011 Duplicates.lean  FMT011 'deriving Repr, Repr' 'deriving Repr'
 
+# The inverse half of the split: `format` applies no syntax fix. On the same FMT013 fixture — already
+# layout-canonical — `format --select FMT013` *reports* the redundant-paren finding but leaves `((1))`
+# byte-for-byte, where `fix` above rewrote it to `(1)`. This is the RDF-IMPL decoupling on a syntax-tier
+# `.safe` fix: applied by `fix` at original coordinates, absent from `format`.
+run_expect 0 "$work/fmt013-format.json" \
+  sfmt format --root . --json --no-cache --select FMT013 tests/syntax/NestedParen.lean
+python3 - "$work/fmt013-format.json" <<'PY'
+import json, sys
+file, = json.load(open(sys.argv[1]))["files"]
+assert "FMT013" in [f["code"] for f in file["findings"]], ("format dropped the report", file)
+out = file["formatted"]
+assert out is None or "((1))" in out, ("format applied the syntax fix — it must not", repr(out))
+PY
+
 # --- RYC-FINAL adversarial composition cases -----------------------------------------------------
 # UTF-8 boundary: the fix range abuts a multibyte glyph (`ϕ`, 2 bytes). Every compiler-produced offset
 # indexes the normalized bytes, so dropping the outer parens of `((ϕ))` must land on the `(`/`)`
@@ -202,10 +216,10 @@ fix_applies fmt013-utf8 NestedParenUtf8.lean FMT013 '((' '(ϕ)'
 # distinct bytes; they compose in one transaction to `(1)` with no false conflict.
 fix_applies fmt013-triple NestedParenTriple.lean FMT013 '((' '(1)'
 
-# Token-mover: an earlier source-shifting fix (FMT010 drops `, simp`, and the attribute reflows onto
-# its own line) moves the later FMT013 paren defect to a new canonical offset. Because every edit is
-# derived from one re-projected canonical model and applied as one transaction, the paren fix still
-# lands exactly -- translating the original-coordinate edit onto the moved bytes would corrupt here.
+# Multi-rule composition: FMT010 drops the duplicate `, simp` and FMT013 drops an outer paren pair in
+# the same file. Since RDF-IMPL both edits are expressed in original-source coordinates (no reflow, no
+# reprojection) and applied as one atomic transaction, so the two non-overlapping deletions compose
+# exactly -- neither shifts the other's bytes, and the write carries both fixes and no layout change.
 probe="tests/syntax/.ryc-fix-mover.lean"
 cp tests/syntax/AttrThenParen.lean "$probe"
 run_expect 0 "$work/mover-fix.json" \

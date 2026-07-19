@@ -180,14 +180,16 @@ assert imports == ["import LeanFmt.Digest", "import LeanFmt.Basic"], imports
 PY
 cp -p "$work/Ordering.fixbackup" tests/imports/Ordering.lean
 
-# Fix composition: a file with a duplicate import (FMT005) AND trailing whitespace. `fix` renders the
-# canonical patch, so the FMT005 dedup composes with the formatter's own trailing-whitespace/final-newline
-# normalization (a layout concern since `ruff-11c` RDF-LAYOUT, no longer the retired FMT001), and the
-# rewrite is validated by re-elaboration before writing — a deduped, trimmed, valid file. Built at runtime
-# under the root (so the workspace resolves) and removed after.
+# The split, on the load-bearing FMT005 regression: a file with a duplicate import (FMT005) AND trailing
+# whitespace. Since `ruff-11c` RDF-IMPL `fix` applies rule fixes at original coordinates and owns no
+# layout, while `format` owns layout and applies no fix — the decoupling `tests/modes` proves end to end.
+# So on this one file the two modes touch disjoint bytes. Built at runtime under the root (so the
+# workspace resolves) and removed after.
 conflict=tests/imports/_fixconflict_tmp.lean
-printf 'module\n\nimport LeanFmt.Basic\nimport LeanFmt.Basic\n\ndef importFixConflictNoop : Nat := 0  \n' \
-  >"$conflict"
+seed() { printf 'module\n\nimport LeanFmt.Basic\nimport LeanFmt.Basic\n\ndef importFixConflictNoop : Nat := 0  \n' >"$conflict"; }
+# `fix` removes the duplicate import at its original coordinates and validates by re-elaboration, but
+# leaves the trailing whitespace — layout is not fix's job.
+seed
 run_expect 0 "$work/fix-conflict.json" "${fallback[@]}" "$application" fix --root . --json \
   --no-cache "$conflict"
 python3 - "$work/fix-conflict.json" "$conflict" <<'PY'
@@ -197,8 +199,23 @@ file, = report["files"]
 assert file["status"] == "fixed" and report["written"] == 1, report
 text = open(sys.argv[2]).read()
 imports = [l for l in text.splitlines() if l.startswith("import ")]
-assert imports == ["import LeanFmt.Basic"], imports          # duplicate removed
-assert "  \n" not in text and not text.rstrip("\n").endswith(" "), repr(text)  # whitespace trimmed
+assert imports == ["import LeanFmt.Basic"], imports          # FMT005 fix applied at original coords
+assert text.endswith("0  \n"), repr(text)                    # trailing whitespace UNTOUCHED — layout is format's
+PY
+# `format` owns the inverse half: it trims the trailing whitespace but applies no FMT005 fix, so both
+# imports survive and the duplicate is reported, not removed.
+seed
+run_expect 1 "$work/format-conflict.json" "${fallback[@]}" "$application" format --root . --json \
+  --no-cache "$conflict"
+python3 - "$work/format-conflict.json" "$conflict" <<'PY'
+import json, sys
+file, = json.load(open(sys.argv[1]))["files"]
+assert file["status"] == "would-format", file
+out = file["formatted"]
+imports = [l for l in out.splitlines() if l.startswith("import ")]
+assert imports == ["import LeanFmt.Basic", "import LeanFmt.Basic"], imports  # NO fix — duplicate kept
+assert "  \n" not in out and not out.rstrip("\n").endswith(" "), repr(out)   # layout trimmed
+assert "FMT005" in [f["code"] for f in file["findings"]], file["findings"]   # reported, not removed
 PY
 rm -f "$conflict"
 

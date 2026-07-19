@@ -77,37 +77,40 @@ assert file["findings"] == [], f"ignore-file left a finding on a custom command:
 assert file["suppressed"] >= 1, f"custom-command suppression miscounted: {file['suppressed']}"
 PY
 
-# --- Formatting movement + the round-trip invariant. `fix` reflows the ignore-next item, collapsing
-#     its non-canonical `namespace     Beta` spacing to a single space (a movement the printer owns, as
-#     `tests/modes` proves on `Layout.lean`). The ignore-next covers a namespace with no finding, so it
-#     is an honest FMT900 throughout. What this pins is the movement: through the byte shift the
-#     directive comment round-trips exactly once. (Before RDF-LAYOUT this fixture used a trailing-space
-#     item and FMT001; the retired rule's whitespace behavior is now the reflow's, and the reflow only
-#     owns whitespace it lays down — not the bytes of a verbatim command body — so the item moved to a
-#     spacing the printer actually normalizes.) ---
+# --- Formatting movement + the round-trip invariant. Since `ruff-11c` RDF-IMPL the reflow is `format`'s,
+#     not `fix`'s: `format` collapses the ignore-next item's non-canonical `namespace     Beta` spacing to
+#     a single space (a movement the printer owns, as `tests/modes` proves on `Layout.lean`), and through
+#     that byte shift the directive comment round-trips exactly once. `fix` applies rule fixes only, so on
+#     this finding-free file it is a no-op that leaves the layout — its spacing included — byte-for-byte.
+#     The ignore-next covers a namespace with no finding, so it is an honest FMT900 throughout. ---
 cp tests/suppression/Movement.lean "$scratch"
-before_directives=$(grep -c 'lean-fmt: ignore-next' "$scratch")
-test "$before_directives" = 1
+test "$(grep -c 'lean-fmt: ignore-next' "$scratch")" = 1
+# `format` reflows the item, and the directive survives the movement exactly once.
+run_expect 1 "$work/move-format.json" "$application" format --root . --json --no-cache "$scratch"
+python3 - "$work/move-format.json" <<'PY'
+import json, sys
+file, = json.load(open(sys.argv[1]))["files"]
+assert file["status"] == "would-format", file
+out = file["formatted"]
+assert "namespace Beta\n" in out and "namespace     Beta" not in out, repr(out)  # reflowed
+assert out.count("lean-fmt: ignore-next") == 1, repr(out)                        # round-trips once
+PY
+# `fix` is a no-op: no rule finding here, and layout is not fix's job, so the file — non-canonical
+# spacing and all — is written zero times and left byte-for-byte. This is the split: `format` above
+# would move these bytes; `fix` must not.
 run_expect 0 "$work/move-fix.txt" "$application" fix --root . --no-cache "$scratch"
-after_directives=$(grep -c 'lean-fmt: ignore-next' "$scratch")
-test "$after_directives" = 1 || { echo "the directive comment did not round-trip exactly once" >&2; exit 1; }
-grep -q '^namespace Beta$' "$scratch" || { echo "fix did not reflow the item" >&2; exit 1; }
-# After the finding is gone the directive is unused: check reports FMT900, and a second fix is a no-op.
+grep -q 'written=0' "$work/move-fix.txt" || { echo "fix wrote a finding-free file" >&2; exit 1; }
+grep -q '^namespace     Beta$' "$scratch" || { echo "fix reflowed the item — it must not" >&2; exit 1; }
+test "$(grep -c 'lean-fmt: ignore-next' "$scratch")" = 1
+# The directive is unused (its item carries no finding): check reports a lone FMT900.
 run_expect 1 "$work/move-recheck.json" "$application" check --root . --json --no-cache \
   "$scratch"
 python3 - "$work/move-recheck.json" <<'PY'
 import json, sys
 file, = json.load(open(sys.argv[1]))["files"]
 codes = [f["code"] for f in file["findings"]]
-assert codes == ["FMT900"], f"post-fix directive is not a lone unused-directive report: {codes}"
+assert codes == ["FMT900"], f"directive is not a lone unused-directive report: {codes}"
 PY
-# fix exits 0: it reformatted successfully. The residual FMT900 is a lint diagnostic fix cannot remove
-# (it preserves comments), so it does not fail the format run — the lint-vs-format split (`check`
-# above still exits 1 on it). The idempotence claim is the byte result: nothing more to write.
-run_expect 0 "$work/move-idempotent.txt" "$application" fix --root . --no-cache "$scratch"
-grep -q 'written=0' "$work/move-idempotent.txt" || { echo "fix was not idempotent" >&2; exit 1; }
-# Batch fix does not auto-remove the unused directive (decision 2): it stays after a second fix.
-test "$(grep -c 'lean-fmt: ignore-next' "$scratch")" = 1
 
 # --- Unused fixes. A blanket ignore over a clean file is FMT900 with a *safe* removal fix whose edit
 #     deletes exactly the directive line and its newline — the editor code-action, never batch fix. ---

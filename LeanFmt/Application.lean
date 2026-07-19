@@ -35,13 +35,16 @@ def RunMode.toString : RunMode → String
 
 /-- Whether this mode's answer contains canonical text, and therefore needs a projection to render.
 
-`check` does not, and that is the roadmap's first bullet rather than an optimization: formatting is a
-canonical transformation, not a selectable rule, so it cannot enter rule selection and `check` reports
-selected rules. A file that is badly laid out but lint-clean is `check`-clean. Keeping `check` off this
-path is also what preserves its source-only fast path, which needs no artifact at all. -/
+`format` and `diff` render it; `check` and `fix` do not. `check` reports selected rules and a
+badly-laid-out but lint-clean file is `check`-clean. `fix` stopped rendering at `ruff-11c` RDF-IMPL: it
+applies admitted rule fixes at the file's **original** coordinates and does not reflow, mirroring
+`ruff check --fix` (the user composes `fix` then `format` for both). So a fixed file keeps its layout
+until `format` runs, and a fix `Edit` lands on the bytes the user sees. Keeping `check`/`fix` off this
+path is also what lets them take the source-only fast path on a source-only selection, which needs no
+artifact at all. -/
 def RunMode.rendersCanonical : RunMode → Bool
-  | .check => false
-  | .format | .diff | .fix => true
+  | .check | .fix => false
+  | .format | .diff => true
 
 structure RunRequest where
   mode : RunMode
@@ -356,30 +359,20 @@ required parameter directly, so there is no per-project override to hide and non
 The value 100 matches mathlib's own text-linter convention and is otherwise arbitrary. -/
 def canonicalWidth : Nat := 100
 
-/-- Render a validated artifact's projection, and re-run the rules against the result.
+/-- Render a validated artifact's projection to canonical layout text — the layout, and only the layout.
 
-The rules are re-run rather than reused because canonical text is not lint-clean and its coordinates
-are not the file's — see `CanonicalText`.
-
-**Only `source`-tier rules run *here*, by design — `syntax`-tier findings are composed one level up.**
-The facts available for canonical text are canonical text: `artifact.source` projects the *original*,
-so handing it to a syntax rule alongside the rendered string would measure a rule against one text using
-another text's offsets, the coordinate-mixing error this codebase has already paid for once. Projecting
-the canonical text instead means a second frontend run per file.
-
-`ruff-10` shipped the first `syntax`-tier rules (FMT008–FMT013); their findings are computed on the
-*original* projection (`ofEnvelope?`) and reported by `check` on original coordinates. Applying their
-`.safe` fixes through `fix`/`format` is done by `ExactRun.reprojectCanonical` (`ruff-10b`, RYC-IMPL): on
-a canonical-rendering run whose plan demands the syntax tier, it re-runs the frontend on the *rendered*
-text and takes the whole registry over that projection, so a fix `Edit` is natively in canonical
-coordinates — the model `ruff-06`'s RFX-SPEC froze (`ruff-06-fix-safety/notes/01-model.md` §3),
-"re-project, don't translate onto moved bytes". This function therefore stays source-only and is the
-*base* render; `reprojectCanonical` replaces `findings` when a syntax fix is selected. `RRE-FINAL`
-asserted the old limit; RYC-IMPL closed it. -/
+No rule runs here. Since `ruff-11c` RDF-IMPL the canonical text carries no findings: `format`/`diff`
+render this text and report `result.findings` at **original** coordinates (drawn one level up in
+`prepareFile`), and every fix lands at original coordinates through `fix`, never on these moved bytes.
+The retired `runSourceRules text` here was the source-rule surface that only ever fed the old
+canonical-patch, and `ExactRun.reprojectCanonical` — which re-projected the whole registry over the
+*rendered* text so a syntax/semantic fix landed in canonical coordinates — retired with it. The
+"re-project, don't translate onto moved bytes" model (`ruff-06-fix-safety/notes/01-model.md` §3) still
+holds; RDF-IMPL satisfies it the other way, by never moving the bytes a fix indexes. -/
 private def renderCanonicalText (raw : String) (artifact : ModuleArtifact) : IO CanonicalText := do
   let normalized := (LosslessSource.normalize raw).1
   let text ← Printer.format artifact.source normalized canonicalWidth artifact.semantic
-  return { text, findings := runSourceRules text }
+  return { text }
 
 private def canonicalAnalysis (snapshot : SourceSnapshot) (renderCanonical : Bool)
     (analysis : AnalysisEnvelope) : IO SemanticAnalysis := do
@@ -393,52 +386,21 @@ private def canonicalAnalysis (snapshot : SourceSnapshot) (renderCanonical : Boo
     return semantic
   | none => throw <| IO.userError s!"invalid exact analysis for {snapshot.relativePath}"
 
-/-- Compose fix-bearing findings onto canonical text by **re-projecting** it — the model `ruff-06`'s
-RFX-SPEC froze (`ruff-06-fix-safety/notes/01-model.md` §3; RYC-SPEC `notes/01-model.md`). The base
-analysis' canonical text carries only source-rule findings (`renderCanonicalText` runs `runSourceRules`
-alone), so a `.syntax` `.safe` fix — or the owned `.semantic` FMT014 rename (`ruff-11b`) — would be
-reported by `check` on original coordinates yet never enter the canonical patch (`prepareFile` draws it
-from `canonical.findings`). A fix cannot be translated onto the moved canonical bytes without depending
-on pass order; instead re-run the exact frontend on the *rendered* text and take the whole registry
-over that projection, so every fix `Edit` is natively in canonical coordinates — the coordinate system
-`prepareFile`'s `base := canonical.text` already applies edits in.
+/-- Analyze one snapshot: build the exact envelope the plan demanded and project it, rendering canonical
+layout when `renderCanonical`.
 
-`captureSemantic`/`captureOccurrences` pass to the re-projection what the plan demanded of the base:
-a syntax fix re-projects the `.syntax` registry (both `false`, one frontend run), while a
-fixable-FMT014 render re-projects with `captureOccurrences` so the info-tree fold runs on the
-*rendered* text and the FMT014 rename lands at canonical coordinates. The occurrence captured on the
-original source is deliberately unused for the patch — the same "re-project, don't translate" reason a
-syntax fix's original offset is.
-
-Reached only on a canonical-rendering run whose plan demands the syntax tier or the occurrence
-capability (gated at the call site and in `availableAnalysis`), so an ordinary `fix`/`format` pays no
-second frontend run. Canonical text is a reprint of an already-elaborated module and elaborates by
-construction; a candidate that fails to re-analyze keeps the source-only findings rather than
-fabricating a fix. -/
-private def ExactRun.reprojectCanonical (run : ExactRun) (snapshot : SourceSnapshot)
-    (analysis : SemanticAnalysis) (captureSemantic captureOccurrences : Bool) : IO SemanticAnalysis := do
-  match analysis.result?.bind (·.canonical?) with
-  | none => return analysis
-  | some canonical =>
-    let reSnapshot := snapshot.withSource canonical.text
-    let reAnalysis ← canonicalAnalysis reSnapshot (renderCanonical := false)
-      (← run.envelope reSnapshot captureSemantic (captureOccurrences := captureOccurrences))
-    match reAnalysis.result? with
-    | some result => return analysis.withCanonical { canonical with findings := result.findings }
-    | none => return analysis
-
+Every finding — source, syntax, and the owned `.semantic` FMT014 rename — is computed once, on the
+**original** projection (`canonicalAnalysis` → `ofEnvelope?`), at the file's own coordinates, and `fix`
+applies it there. `ruff-11c` RDF-IMPL retired `reprojectCanonical`, which re-ran the whole registry over
+the *rendered* text so a fix could land in canonical coordinates: with the layout/fix split, no fix is
+computed or applied at canonical coordinates, so there is nothing to re-project. `captureOccurrences`
+still gates the info-tree fold that supplies FMT014's occurrence at original coordinates (the walk
+already runs here for diagnostics); `captureSemantic` and `validator` are unchanged. -/
 def ExactRun.analyzeSnapshot (run : ExactRun) (snapshot : SourceSnapshot)
-    (renderCanonical : Bool) (needsSyntax := false) (validator := false)
+    (renderCanonical : Bool) (validator := false)
     (captureSemantic : Bool := false) (captureOccurrences : Bool := false) : IO SemanticAnalysis := do
-  let base ← canonicalAnalysis snapshot renderCanonical
+  canonicalAnalysis snapshot renderCanonical
     (← run.envelope snapshot captureSemantic validator captureOccurrences)
-  -- A canonical render that carries a fix — a `.syntax` `.safe` fix or the owned `.semantic` FMT014
-  -- rename — needs it composed from the canonical projection; every other run keeps `base` untouched
-  -- and pays no re-projection. The occurrence fix re-projects with its capability so FMT014 lands at
-  -- canonical coordinates, exactly as a syntax fix re-projects the syntax registry.
-  if renderCanonical && (needsSyntax || captureOccurrences) then
-    run.reprojectCanonical snapshot base captureSemantic captureOccurrences
-  else pure base
 
 /- Bracket a complete exact-analysis run. The capability is constructed only after a real fallback
 or editor request needs it; cache-only and ordinary-evidence batch runs create no temporary state. -/
@@ -485,12 +447,13 @@ private def cacheHitServes (requiredTier : Tier) (demandedCaps : SemanticCaps) (
     (!renderCanonical || result.canonical?.isSome) && result.tier.satisfies requiredTier
       && demandedCaps.subset result.caps
 
-private def availableAnalysis (plan : RulePlan) (renderCanonical : Bool)
+private def availableAnalysis (plan : RulePlan) (renderCanonical applies : Bool)
     (evidence : Project.ModuleEvidence)
     (snapshot : SourceSnapshot) (cached? : Option SemanticAnalysis)
     (officialArtifact? : Option ModuleArtifact) : IO (Option SemanticAnalysis) := do
   if let some analysis := cached? then
-    if cacheHitServes plan.requiredTier (plan.demandedCaps renderCanonical) renderCanonical analysis then
+    if cacheHitServes plan.requiredTier (plan.demandedCaps renderCanonical applies) renderCanonical
+        analysis then
       return some analysis
   if plan.requiredTier == .source && !renderCanonical && evidence == .current
       && !Suppression.mayContainDirective snapshot.source then
@@ -500,22 +463,22 @@ private def availableAnalysis (plan : RulePlan) (renderCanonical : Bool)
     -- no longer decide a rule differently from the artifact path. It used to, by passing a literal
     -- `true` where the artifact path passed the artifact's own flag (`notes/01-rule-facts.md` §2).
     -- Gated on `renderCanonical` because it takes no artifact, and canonical text cannot be
-    -- rendered without the projection an artifact carries. Also gated on the absence of a directive
-    -- sigil: suppression is parsed only from the syntax projection (`ofEnvelope?`), so a
-    -- directive-bearing file must take the artifact path even when its selected rules are all
-    -- source-tier — otherwise its `SuppressionFacts` would default empty and the directive silently
-    -- do nothing. `mayContainDirective` is a superset test, so this over-fetches only on files that
-    -- mention the sigil without a valid directive, never under-fetches.
+    -- rendered without the projection an artifact carries. `check` and — since `ruff-11c` RDF-IMPL —
+    -- `fix` both reach it on a source-only selection: `fix` no longer renders, so a `fix --select FMT005`
+    -- takes the shortcut and applies the dedup at original coordinates without a frontend run. Also
+    -- gated on the absence of a directive sigil: suppression is parsed only from the syntax projection
+    -- (`ofEnvelope?`), so a directive-bearing file must take the artifact path even when its selected
+    -- rules are all source-tier — otherwise its `SuppressionFacts` would default empty and the directive
+    -- silently do nothing. `mayContainDirective` is a superset test, so this over-fetches only on files
+    -- that mention the sigil without a valid directive, never under-fetches.
     let normalized := (LosslessSource.normalize snapshot.source).1
     return some <| SemanticAnalysis.success normalized (runSourceRules normalized)
-  else if renderCanonical && plan.requiredTier == .syntax then
-    -- A canonical-rendering syntax run (`fix`/`format --select FMT01x`) needs its canonical findings
-    -- re-projected from the *rendered* text, which requires an `ExactRun` (`reprojectCanonical`). The
-    -- official artifact projects the *original* source, so `canonicalAnalysis` off it would carry only
-    -- source-rule findings and drop the syntax fix. Force the exact-run path by declining to serve here
-    -- (RYC-IMPL). `check` never renders canonical, so it still takes the artifact path below.
-    return none
   else if let some artifact := officialArtifact? then
+    -- A canonical-rendering syntax run (`format --select FMT01x`) takes this artifact path since
+    -- `ruff-11c` RDF-IMPL: it renders `canonical.text` for layout and reports the artifact projection's
+    -- syntax findings at original coordinates. The old syntax branch that declined here to force an
+    -- `ExactRun` re-projection retired with `reprojectCanonical` — no fix is computed at canonical
+    -- coordinates, so no second frontend run is owed.
     return some (← canonicalAnalysis snapshot renderCanonical { artifact? := some artifact })
   else
     return none
@@ -729,13 +692,12 @@ selection (they are formatter self-diagnostics, always on in v1) — and the sup
 
 Coordinate note: directive scopes index the normalized source, so this projection is exact for the
 **report**, which the user reads against their own unmoved bytes. Suppression shapes only the report;
-it never touches a patch. `format`/`fix` reformat unconditionally — a directive silences a diagnostic
-without changing the bytes a write publishes — so `prepareFile` builds every patch from the
-config-selected findings, suppression-free, and `FMT900`/`FMT901` (themselves report-only, and not
-suppressible) never enter one. This keeps the non-canonical `check` patch and the canonical `fix`
-patch in agreement, and sidesteps the second frontend pass that mapping a normalized-coordinate scope
-onto reflowed canonical offsets would need — the same limit that governs syntax-tier fixes on
-canonical text. An editor may still apply an `FMT900` removal from the report; batch `fix` does not. -/
+it never touches a patch. A directive silences a diagnostic without changing the bytes a write
+publishes — so `prepareFile` builds its patch from the config-selected findings, suppression-free, and
+`FMT900`/`FMT901` (themselves report-only, and not suppressible) never enter one. This keeps `check`'s
+report patch and `fix`'s applied patch in agreement: since `ruff-11c` RDF-IMPL both index the same
+normalized bytes the directive scopes do, so no scope ever has to be mapped onto reflowed canonical
+offsets. An editor may still apply an `FMT900` removal from the report; batch `fix` does not. -/
 private def projectSuppression (result : SemanticResult) (bytes : ByteArray)
     (selected : Array Finding) : Array Finding × Nat :=
   let outcome := Suppression.apply result.suppression bytes selected
@@ -816,59 +778,49 @@ private def computeImportReports (plan : RulePlan) (workspace : Lake.Workspace)
     | none => (#[], 0)
     | some header => importFindingsOfHeader plan closureOf header normalized
 
-/-- FMT005 duplicate-removal edits against `base`, the string the patch indexes. When the patch is
-canonical, the printer reflows the header but does not dedup it, so a duplicate survives into canonical
-text and its fix must be recomputed there — the same reason RuleImpl fixes come from `canonical.findings`
-rather than `result.findings` (`prepareFile`). Only FMT005 is a fix; FMT006/07 are report-only, so the
-patch never carries them. -/
-private def patchDuplicateFindings (plan : RulePlan) (base : String) : IO (Array Finding) := do
-  unless plan.selected.contains "FMT005" do return #[]
-  match ← Imports.parseHeaderModel base with
-  | none => return #[]
-  | some header => return Imports.duplicateFindings header base
+/-- Project one analysis into the edits a preview or write would apply — one of two independent patches,
+keyed on `renderCanonical` (`ruff-11c` RDF-IMPL, `notes/01-model.md` §2):
 
-/-- Project one analysis into the edits a preview or write would apply.
+- **Layout patch** (`format`/`diff`, `renderCanonical`). `base := canonical.text`, the reflowed bytes,
+  and the patch carries **no** rule fix. The render is the whole answer: `format` prints `output`, `diff`
+  diffs `normalized` against it. A rule fix rides `fix`, never layout.
+- **Fix patch** (`fix`; `check` computes it for the report). `base := normalized`, the file's own bytes,
+  and the patch carries the admitted fixes from `selected` at **original** coordinates. `fix` validates
+  and publishes it; it does not reflow. Because layout and fix never share a coordinate system here, the
+  `RFP-SPEC` §6 gap — canonicalizing `namespace     Alpha` deletes four bytes — can no longer move a fix
+  off the bytes it was reported against.
 
-The patch is based on **canonical text** when the mode renders it, and on the file's own normalized
-bytes otherwise. This is the whole of the formatter integration: `format` prints `output`, `diff`
-diffs `normalized` against it, and `fix` validates and publishes it, so basing the patch canonically
-makes all three format without any of them learning that layout exists.
-
-The fixes come from `result.canonical?`'s own findings, never from `result.findings`. Both are the
-same rules; they index different strings. `RFP-SPEC` §6 measured the gap — canonicalizing
-`namespace     Alpha` deletes four bytes — so a `result.findings` fix applied here would land four
-columns off and corrupt the file. `findings` stays original-coordinate because it is what the report
-shows the user, whose file has not moved.
+The report (`findings`) is `result.findings` (joined with `reportImports`) at original coordinates in
+every mode, independent of which patch is built — it is what the user, whose file has not moved, sees.
 
 **Applicability gates the patch, not the report.** Every finding with a fix is reported (with its
 effective applicability, already resolved by `plan.findings`), but only the *admitted* fixes enter the
 patch: a non-admitted fix is stripped to `none` before `preparePatch`, which then only ever assembles
 edits that will actually be published. Admission is `Applicability.admitted unsafeFixes`, the one rule
-`format`/`diff`/`fix` share, so a preview shows exactly what a write would do. -/
+`fix` and its `check` preview share, so a preview shows exactly what a write would do. -/
 private def prepareFile (plan : RulePlan) (renderCanonical unsafeFixes : Bool)
-    (reportImports patchImports : Array Finding) (withheldRedundant : Nat)
+    (reportImports : Array Finding) (withheldRedundant : Nat)
     (snapshot : SourceSnapshot) (analysis : SemanticAnalysis) : Except FileReport PreparedFile := do
   let some result := analysis.result?
     | throw (baseReport snapshot "broken" #[] analysis.diagnostics)
   let (normalized, lineEndings) := LosslessSource.normalize snapshot.source
   -- Import findings (`reportImports`, normalized coordinates) join the engine's findings *before*
-  -- selection, so `--select imports`, per-file ignores, and suppression treat them like any rule.
+  -- selection, so `--select imports`, per-file ignores, and suppression treat them like any rule. FMT005
+  -- rides here at original coordinates and needs no canonical recomputation: the fix patch applies it on
+  -- `normalized`, and the layout patch carries no fix at all.
   let selected := plan.findings snapshot.relativePath (result.findings ++ reportImports)
   let (findings, suppressed) := projectSuppression result normalized.toUTF8 selected
-  -- The patch is built from the config-selected findings *unaffected by suppression*, in both modes.
-  -- Suppression shapes the report (`findings`), never the bytes a write publishes: `format`/`fix`
-  -- reformat unconditionally (`projectSuppression` coordinate note), so a directive silences a
-  -- diagnostic without changing output. Feeding the suppression-projected set here instead would put
-  -- the `FMT900`/`FMT901` removal edits into the non-canonical `check` patch while the canonical
-  -- `fix` patch — drawn from `canonical.findings` — omits them, so `check` would report a change
-  -- `fix` never makes. Both patches now ignore the self-diagnostics, keeping preview and write agreed.
+  -- The fix patch is built from the config-selected findings *unaffected by suppression*: suppression
+  -- shapes the report (`findings`), never the bytes a write publishes, so a directive silences a
+  -- diagnostic without changing output. Feeding the suppression-projected set here would put the
+  -- `FMT900`/`FMT901` removal edits into the patch, so `check` would report a change `fix` never makes;
+  -- both stay agreed by ignoring the self-diagnostics for the patch.
   let (base, baseFindings) :=
     match (if renderCanonical then result.canonical? else none) with
-    -- `patchImports` is FMT005 recomputed against canonical text (the caller's IO), so the auto-fix
-    -- lands at canonical coordinates. The `none` branch's `selected` already carries FMT005 at
-    -- normalized coordinates, so no patch-side recomputation is needed there.
-    | some canonical =>
-      (canonical.text, plan.findings snapshot.relativePath (canonical.findings ++ patchImports))
+    -- Layout patch: reflow only, no rule fix. `canonical?` is populated for any rendering run
+    -- (`cacheHitServes`/`availableAnalysis` guarantee it), so a rendering run never falls to the fix arm.
+    | some canonical => (canonical.text, (#[] : Array Finding))
+    -- Fix patch (`fix`) / report patch (`check`): admitted fixes on the file's own bytes.
     | none => (normalized, selected)
   let admitted := baseFindings.map fun finding =>
     match finding.fix? with
@@ -903,22 +855,10 @@ private def PreviewMode.rendersCanonical : PreviewMode → Bool
   | .check => false
   | .format | .diff => true
 
-/-- The FMT005 findings to merge into a canonical patch: recomputed against canonical text when the
-mode renders it (the printer keeps the duplicate, so the auto-fix must land at canonical coordinates),
-empty otherwise (the normalized `reportImports` already carry it into the non-canonical patch). -/
-private def patchImportsFor (mode : PreviewMode) (plan : RulePlan)
-    (analysis : SemanticAnalysis) : IO (Array Finding) := do
-  if mode.rendersCanonical then
-    match analysis.result?.bind (·.canonical?) with
-    | some canonical => patchDuplicateFindings plan canonical.text
-    | none => pure #[]
-  else pure #[]
-
 private def previewFile (mode : PreviewMode) (plan : RulePlan) (unsafeFixes : Bool)
     (reportImports : Array Finding) (withheldRedundant : Nat)
     (snapshot : SourceSnapshot) (analysis : SemanticAnalysis) : IO FileReport := do
-  let patchImports ← patchImportsFor mode plan analysis
-  match prepareFile plan mode.rendersCanonical unsafeFixes reportImports patchImports
+  match prepareFile plan mode.rendersCanonical unsafeFixes reportImports
       withheldRedundant snapshot analysis with
   | .error report => return report
   | .ok prepared =>
@@ -946,12 +886,10 @@ private def previewFile (mode : PreviewMode) (plan : RulePlan) (unsafeFixes : Bo
 private def fixFile (run : ExactRun) (plan : RulePlan) (unsafeFixes : Bool)
     (reportImports : Array Finding) (withheldRedundant : Nat)
     (snapshot : SourceSnapshot) (analysis : SemanticAnalysis) : IO FileReport := do
-  -- `fix` always renders canonical; FMT005 is recomputed against that text (the `none` branch of
-  -- `prepareFile` falls back to normalized, where `reportImports` already carry FMT005).
-  let patchImports ← match analysis.result?.bind (·.canonical?) with
-    | some canonical => patchDuplicateFindings plan canonical.text
-    | none => pure #[]
-  match prepareFile plan (renderCanonical := true) unsafeFixes reportImports patchImports
+  -- `fix` does not render (`ruff-11c` RDF-IMPL): the patch bases on the file's own `normalized` bytes and
+  -- applies the admitted fixes from `selected` — FMT005 among them — at original coordinates. No reflow,
+  -- no canonical recomputation.
+  match prepareFile plan (renderCanonical := false) unsafeFixes reportImports
       withheldRedundant snapshot analysis with
   | .error report => return report
   | .ok prepared =>
@@ -1056,11 +994,15 @@ def execute (request : RunRequest) : IO RunReport := do
   -- treats it as one. A `check` run caches a result with no canonical text; a later `format` hitting
   -- it would otherwise short-circuit straight to "clean" for every file in the project.
   let renderCanonical := request.mode.rendersCanonical
+  -- The apply signal (`ruff-11c` RDF-IMPL): only `fix` applies rule fixes, so only `fix` demands the
+  -- FMT014 occurrence fold. It is distinct from `renderCanonical` now that layout and fix are split —
+  -- `format`/`diff` render but apply nothing; `fix` applies but no longer renders.
+  let applies := request.mode == .fix
   -- What this run must actually obtain, rules and mode together. `semantic` is reachable only through
   -- the mode: no rule is `semantic`-tier, so a rendering mode is the sole demander of the notation
   -- fact (`RulePlan.demandedTier`). This is the gating seam — capture runs iff `demanded` reaches it.
   let demanded := plan.demandedTier renderCanonical
-  let demandedCaps := plan.demandedCaps renderCanonical
+  let demandedCaps := plan.demandedCaps renderCanonical applies
   let cached := cached.map fun cached? =>
     cached?.filter (cacheHitServes plan.requiredTier demandedCaps renderCanonical)
   if cached.all Option.isSome then
@@ -1091,7 +1033,7 @@ def execute (request : RunRequest) : IO RunReport := do
   recordPhase "official_artifacts" artifactStarted artifactFinished
   let available ← (((snapshots.zip cached).zip evidence).zip artifacts).mapM fun
     | (((snapshot, cached?), sourceEvidence), artifact?) =>
-      availableAnalysis plan renderCanonical sourceEvidence snapshot cached? artifact?
+      availableAnalysis plan renderCanonical applies sourceEvidence snapshot cached? artifact?
   if available.all Option.isSome then
     if let some previewMode := request.mode.preview? then
       let analyses := available.filterMap id
@@ -1110,7 +1052,7 @@ def execute (request : RunRequest) : IO RunReport := do
           | some analysis => pure analysis
           | none =>
             exactRun.analyzeSnapshot snapshot renderCanonical
-              (needsSyntax := plan.requiredTier == .syntax) (captureSemantic := demanded == .semantic)
+              (captureSemantic := demanded == .semantic)
               (captureOccurrences := demandedCaps.occurrences)
         analyses := analyses.push (some analysis)
         let report ← match request.mode with
