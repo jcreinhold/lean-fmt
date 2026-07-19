@@ -38,9 +38,10 @@ envelope remain non-negotiable.
 | 11 | `ruff-11-semantic-rules` | Compiler/elaboration-backed lint rules (consume 05b's semantic tier) | 05, 05b, 06 |
 | 11b | `ruff-11b-owned-semantic-fix` | Owned, fixable deprecation rule (`fix` applies FMT014's unsafe rename via info-tree occurrence capture) and the semantic capability split | 06, 10b, 11 |
 | 11c | `ruff-11c-decouple-fix-format` | Decouple lint-fix from formatting: `format`/`diff` reflow only, `fix`/`check --fix` apply fixes at original coordinates (retires the canonical-coordinate fix composition) | 06, 09, 10b, 11b |
+| 11d | `ruff-11d-format-in-place` | `format` writes canonical layout in place by default (like `ruff format`) via the `ruff-06` guarded publish; `format --check` is the non-writing CI preview | 04, 06, 11c |
 | 12 | `ruff-12-rule-lifecycle` | Stable/preview/deprecated rules, explain, generated docs | 07–11 |
-| 13 | `ruff-13-config-discovery` | Hierarchical config, Git ignores, formatter/linter sections | 04, 12 |
-| 14 | `ruff-14-stream-range` | stdin/stdout and range formatting | 04, 13 |
+| 13 | `ruff-13-config-discovery` | Hierarchical config, Git ignores, formatter/linter sections | 04, 11d, 12 |
+| 14 | `ruff-14-stream-range` | stdin/stdout and range formatting | 04, 11d, 13 |
 | 15 | `ruff-15-reporting` | Concise, GitHub, SARIF, and JUnit reporting | 12, 13 |
 | 16 | `ruff-16-watch-incremental` | Watch and changed-files workflows | 13, 15 |
 | 17 | `ruff-17-lsp` | Native LSP diagnostics, formatting, and code actions | 06, 07, 13, 14 |
