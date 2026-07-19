@@ -1,24 +1,50 @@
 ---
 kind: state
-first_unresolved: 01-schema
+first_unresolved: 02-generation
 ---
 
 # Current state
 
-This stack is planned and has not begun. Its external prerequisite stacks are
-`ruff-07-suppressions`, `ruff-08-source-rules`, `ruff-09-import-rules`, `ruff-10-syntax-rules`, `ruff-11-semantic-rules`. Before starting, confirm those roadmaps are verified and their live
-implementation still matches recorded state.
+**RRL-SPEC is verified** (`results/01-schema.md`; design `notes/01-schema.md`; baseline
+`evidence/01-schema-catalog.md`). The lifecycle model, selector algebra, fixability configuration,
+`explain` surface, generated-doc layout, and build/test-time invariants are frozen precisely enough for
+`RRL-IMPL`, and every current code is mapped without breaking FMT001/FMT002. Following the `*-SPEC`
+convention (`ruff-11` RMR-SPEC), no production Lean interface, rule, or config key ships in this prompt.
+
+Key frozen decisions:
+
+- `Lifecycle = stable | preview | deprecated` on `RuleInfo`, orthogonal to `defaultEnabled`, with
+  `retired` as a reserved-table state (FMT001/FMT002). Current mapping: FMT003–007 stable/default-on;
+  FMT008–017 preview/default-off (no promotion — `RRL-FINAL` decides stability on frozen-sample
+  precision); FMT900/901 meta self-diagnostics.
+- Preview **gates** selection (design B): `all`/`default`/category expand to stable rules only unless
+  `--preview`/`preview = true`; explicit preview-code selection without the gate is a specific error.
+  The gate is a `RulePlan` projection — never `runRules`, the cache key, or fact acquisition.
+- Deterministic precedence = ruff specificity (exact > category > `all`/`default`; tie → ignore).
+  `select`/`extend-select`/`ignore` layered across config/CLI. Every `testConfig` assertion verified to
+  survive; the one changed shape (`--select FMT010 --ignore redundancy`) is untested today and flagged
+  for `RRL-IMPL`.
+- Fixability config (`fixable`/`unfixable`/`extend-fixable`) is a third `RulePlan` axis beside selection
+  and the safe/unsafe applicability overrides.
+- FMT001/FMT002 degrade gracefully: accepted-with-notice as selectors, inert (not FMT900) as
+  suppressions — the non-breaking floor.
+- One metadata source (`RuleInfo` + reserved table) generates `rules`, `explain`, `docs/rules/*`, and
+  `lean-fmt.toml` schema fragments, with a deterministic drift check.
+
+Prerequisite stacks `ruff-07`…`ruff-11` are verified; their live code was re-read for this spec
+(`Rules.lean`, `Config.lean`, `Cli.lean`, `Suppression.lean`, `Application.lean`). If live code
+contradicts a prerequisite result, reopen the owning prerequisite rather than patching around it. Full
+mathlib is not development evidence.
 
 | Prompt | Claim | Status | Depends on |
 | --- | --- | --- | --- |
-| 01-schema | RRL-SPEC | planned | — |
+| 01-schema | RRL-SPEC | verified | — |
 | 02-generation | RRL-IMPL | planned | RRL-SPEC |
 | 03-acceptance | RRL-FINAL | planned | RRL-IMPL |
 
 ## Blockers and prerequisites
 
-- No blocker is currently recorded beyond the named prerequisite stacks.
-- If live code contradicts prerequisite results, reopen the owning prerequisite rather than patching around it.
+- No blocker recorded. `RRL-IMPL` implements `notes/01-schema.md` §12; open questions are in §13.
 - Full mathlib is not development evidence; follow this roadmap's evidence policy.
 
 ## Verification convention

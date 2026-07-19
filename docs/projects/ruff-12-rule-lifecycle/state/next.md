@@ -1,9 +1,9 @@
 # Next Proof Packet
 
 - Stack: ruff-12-rule-lifecycle
-- First unresolved: 01-schema
-- Claim ID: RRL-SPEC
-- Prompt: 01-schema
+- First unresolved: 02-generation
+- Claim ID: RRL-IMPL
+- Prompt: 02-generation
 - Module: (docs only)
 - Target file: (docs only)
 
@@ -17,7 +17,7 @@ Read this file, the target prompt, target files, listed source/template line ran
 
 ## Proof Task
 
-- Deliver **RRL-SPEC**: Specify metadata fields, stable/preview/deprecated transitions, selector prefix/category rules, configuration precedence, `explain`, and generated-doc layout. Map current codes without breaking FMT001/FMT002.
+- Deliver **RRL-IMPL**: Add lifecycle-aware selection, fixability configuration, `explain`, config introspection, generated rule pages/index, and executable examples sourced from the registry.
 - Read `roadmap.md`, its prerequisite stack results, `AGENTS.md`, the current implementation and tests, and the relevant Lean compiler/Lake sources before changing an interface. Write interface comments and characterization tests before implementation where the behavior is not already frozen.
 
 ## Reuse
@@ -30,6 +30,6 @@ Inspect the live goal, search relevant declarations, test plausible proof steps,
 
 ## Stop Rules
 
-- Do not expose execution strategy in metadata.
-- A category prefix must be unambiguous.
+- Generated output must be deterministic and checked for drift.
+- Unknown/deprecated selectors fail or warn exactly as specified.
 - Stop rather than weakening exact semantics, write safety, or the resource envelope.
