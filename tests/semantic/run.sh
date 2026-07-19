@@ -232,6 +232,49 @@ print("occurrence differential: use of", u["declName"].split(".")[-1], "->", u["
       "at byte", r["start"], "(matches Lean); token-1 occurrences null, token-2 present")
 PY
 
+# --- ruff-11b ROS-FINAL: the fixable-occurrence predicate, adversarially ------------------------------
+# The capture-side predicate (`Analysis.occurrenceOfInfo`, `notes/01-model.md` §5) must mark an
+# occurrence `fixable` ONLY when its source spelling is exactly the resolved constant's own full display
+# name — so a whole-span replacement with the new full name re-resolves unambiguously. Every other
+# spelling stays report-only. `Occurrences.lean` is the adversarial fixture; token "2" captures it and
+# we assert the fixable flag per spelling. A regression here is a soundness bug: a wrong `fixable=true`
+# would let `fix --unsafe-fixes` corrupt a dot-notation or `open`-shadowed use.
+occf=tests/semantic/Occurrences.lean
+LEAN_NUM_THREADS=1 lake setup-file "$occf" >"$work/osetup.json"
+LEAN_NUM_THREADS=1 lake env "$application" __analyze-exact \
+  "$work/osetup.json" "$occf" "$occf" "$maxb" 2 >"$work/occ.json"
+python3 - "$work/occ.json" "$occf" <<'PY'
+import json, sys
+sem = json.load(open(sys.argv[1]))["artifact"]["semantic"]
+src = open(sys.argv[2], "rb").read()
+occ = sem["occurrences"]
+# Index every occurrence by its spelled source text (dedup already applied at capture).
+by_spelled = {}
+for o in occ:
+    r = o["range"]
+    by_spelled.setdefault(src[r["start"]:r["stop"]].decode("utf-8"), o)
+
+def check(spelled, want_fixable, want_decl):
+    o = by_spelled.get(spelled)
+    assert o is not None, f"no occurrence spelled {spelled!r} (captured: {sorted(by_spelled)})"
+    assert o["fixable"] is want_fixable, \
+        f"occurrence {spelled!r} (declName {o['declName']}) fixable={o['fixable']}, expected {want_fixable}"
+    assert o["declName"] == want_decl, f"{spelled!r} declName={o['declName']}, expected {want_decl}"
+
+# Fixable: a bare top-level use, and a fully-qualified use whose whole span is the constant's own name.
+check("oldBare", True, "oldBare")            # bare identifier == full name
+check("N.oldNs", True, "N.oldNs")            # fully-qualified use == full name (whole span replaced)
+# Report-only: the spelling is NOT the constant's full name — a rename cannot be proven textually.
+check("oldNs", False, "N.oldNs")             # `open`-shadowed short name (resolves to N.oldNs)
+check("oldGet", False, "Wrap.oldGet")        # dot-notation projection head (`w.oldGet`)
+check("oldNoRepl", False, "oldNoRepl")       # `newName? = none` — nothing to substitute
+# No occurrence is fixable unless it carries a replacement name.
+assert all((not o["fixable"]) or (o.get("newName") is not None) for o in occ), \
+    "an occurrence is fixable without a replacement name"
+print("fixable predicate:", {s: by_spelled[s]["fixable"] for s in
+      ("oldBare", "N.oldNs", "oldNs", "oldGet", "oldNoRepl")})
+PY
+
 # --- ruff-11 RMR-FINAL: end-to-end acceptance -----------------------------------------------------
 # Three product behaviors under a semantic `--select`, proven through the real `check`/`fix` CLI on a
 # throwaway project (a project so error and trailing-whitespace fixtures need not be committed — `git
@@ -359,39 +402,78 @@ f, = r["files"]
 codes = [x["code"] for x in f["findings"]]
 assert "FMT014" not in codes, codes                        # the deprecated use is gone
 PY
+
+# 3c. Idempotence. A second `fix --unsafe-fixes --select FMT014` over the already-renamed file is a
+# no-op: nothing left to rename, so no write and the bytes are unchanged.
+cp "$proj/acc/Mixed.lean" "$work/mixed.fixed"
+check_exit env LEAN_NUM_THREADS=1 "$application" fix --root "$proj" --json --no-cache \
+  --unsafe-fixes --select FMT014 "$proj/acc/Mixed.lean" >"$work/acc-idem.json" 2>/dev/null
+python3 - "$work/acc-idem.json" <<'PY'
+import json, sys
+r = json.load(open(sys.argv[1]))
+assert r["written"] == 0 and r["changed"] == 0, r          # idempotent: the second fix is a no-op
+PY
+cmp -s "$work/mixed.fixed" "$proj/acc/Mixed.lean" \
+  || { echo 'a second FMT014 fix modified an already-renamed file' >&2; exit 1; }
+
+# 3d. Pass-order independence. `--select` order must not change the published bytes: FMT014 (semantic,
+# re-projected) and FMT001 (source, trailing whitespace) compose the same either way. Both orders
+# `fix --unsafe-fixes` a fresh copy of the original and must write byte-identical output.
+cp "$work/mixed.orig" "$proj/acc/OrderA.lean"
+cp "$work/mixed.orig" "$proj/acc/OrderB.lean"
+LEAN_NUM_THREADS=1 "$application" fix --root "$proj" --json --no-cache --unsafe-fixes \
+  --select FMT014 --select FMT001 "$proj/acc/OrderA.lean" >/dev/null 2>&1 || true
+LEAN_NUM_THREADS=1 "$application" fix --root "$proj" --json --no-cache --unsafe-fixes \
+  --select FMT001 --select FMT014 "$proj/acc/OrderB.lean" >/dev/null 2>&1 || true
+cmp -s "$proj/acc/OrderA.lean" "$proj/acc/OrderB.lean" \
+  || { echo 'pass order changed the published bytes (FMT014 vs FMT001 order-dependent)' >&2;
+       diff "$proj/acc/OrderA.lean" "$proj/acc/OrderB.lean" >&2; exit 1; }
+grep -q 'def useOld : Nat := newName' "$proj/acc/OrderA.lean" \
+  || { echo 'order-independent fix did not apply the rename' >&2; exit 1; }
+rm -f "$proj/acc/OrderA.lean" "$proj/acc/OrderB.lean"
 # Restore the fixture for any later reuse.
 cp "$work/mixed.orig" "$proj/acc/Mixed.lean"
 
-# 4. Cost — the diagnostics capture is additive. `$work/don.json` (capture=1) and `$work/doff.json`
-# (capture=0) above already prove the source projection is byte-identical either way; here we measure
-# peak RSS with `/usr/bin/time -l` (Darwin) and assert capture-on stays inside the envelope and does
-# not balloon over capture-off. Best-effort: if the tool/field is unavailable the check is skipped.
+# 4. Cost (`ruff-11b` ROS-FINAL) — the info-tree walk is the demanded delta the capability split bounds.
+# `$work/don.json` (capture=1) and `$work/doff.json` (capture=0) above already prove the source
+# projection is byte-identical either way; here we measure peak RSS AND wall time with `/usr/bin/time -l`
+# (Darwin) across the three capture levels — surfaced-only (token 1, no walk) vs walk-demanded (token 2)
+# vs none (token 0) — and assert the walk-demanded run stays inside the 8 GiB envelope and does not
+# balloon over the surfaced-only run. The info trees are already resident (the `messages` walk holds the
+# same snapshot tree), so the fold is a read, not a second elaboration. Best-effort: skipped if the
+# tool/field is unavailable.
 if /usr/bin/time -l true >/dev/null 2>&1; then
-  rss_of() {  # peak RSS (bytes) of one `__analyze-exact` run at capture flag $1
+  measure() {  # run `__analyze-exact` at capture flag $1, leaving stats in $work/time$1.txt
     /usr/bin/time -l env LEAN_NUM_THREADS=1 lake env "$application" __analyze-exact \
       "$work/dsetup.json" "$diag" "$diag" "$maxb" "$1" >/dev/null 2>"$work/time$1.txt"
-    grep "maximum resident set size" "$work/time$1.txt" | awk '{print $1}'
   }
-  on_rss=$(rss_of 1); off_rss=$(rss_of 0); occ_rss=$(rss_of 2)
-  python3 - "$on_rss" "$off_rss" "$occ_rss" <<'PY'
+  rss_of()  { grep "maximum resident set size" "$work/time$1.txt" | awk '{print $1}'; }
+  real_of() { grep -E "[0-9.]+ real" "$work/time$1.txt" | awk '{print $1}'; }
+  measure 0; measure 1; measure 2
+  off_rss=$(rss_of 0); on_rss=$(rss_of 1); occ_rss=$(rss_of 2)
+  on_real=$(real_of 1); occ_real=$(real_of 2)
+  python3 - "$on_rss" "$off_rss" "$occ_rss" "$on_real" "$occ_real" <<'PY'
 import sys
 on, off, occ = int(sys.argv[1]), int(sys.argv[2]), int(sys.argv[3])
+on_t, occ_t = float(sys.argv[4]), float(sys.argv[5])
 gib = 8 * 1024**3
 assert on < gib, f"capture-on peak RSS {on} exceeds the 8 GiB envelope"
 # Additive: capturing the already-collected MessageLog must not multiply memory. 1.5x is generous
 # headroom over the observed ~parity (both ~636 MiB on the named stress fixture).
 assert on <= off * 3 // 2, f"capture-on RSS {on} ballooned over capture-off {off}"
-# The `occurrences` capability (token "2") adds the whole-file info-tree fold. The info trees are
-# already resident (the `messages` walk holds the same snapshot tree), so folding them is a read, not
-# a second elaboration: its peak must stay inside the envelope and near the diagnostics-only capture,
-# not balloon. This is the cost side of the demand-gating — the walk exists only under this token.
+# The `occurrences` capability (token "2") adds the whole-file info-tree fold over already-resident
+# trees: its peak must stay inside the envelope and near the diagnostics-only capture, not balloon.
+# This is the cost side of the demand-gating — the walk exists only under this token.
 assert occ < gib, f"occurrence-capture peak RSS {occ} exceeds the 8 GiB envelope"
 assert occ <= off * 3 // 2, f"occurrence capture RSS {occ} ballooned over capture-off {off}"
+# Wall time: the fold is a read, so the walk-demanded run stays within a small factor of the
+# surfaced-only run (process startup dominates this fixture). 2x is generous headroom over parity.
+assert occ_t <= on_t * 2 + 0.5, f"occurrence walk wall time {occ_t}s ballooned over surfaced-only {on_t}s"
 print(f"cost: RSS diag-capture {on//1048576} MiB, occ-capture {occ//1048576} MiB "
-      f"vs capture-off {off//1048576} MiB (both additive; info-tree fold is a read)")
+      f"vs off {off//1048576} MiB; wall surfaced {on_t}s vs walk {occ_t}s (fold is a read)")
 PY
 else
-  echo "cost: /usr/bin/time -l unavailable — RSS additivity check skipped"
+  echo "cost: /usr/bin/time -l unavailable — RSS/wall additivity check skipped"
 fi
 
 printf 'lean-fmt semantic differential + demand-gating + RMR-FINAL acceptance tests passed\n'

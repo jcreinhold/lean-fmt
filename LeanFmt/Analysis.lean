@@ -169,15 +169,24 @@ private def occurrenceOfInfo (ci : Lean.Elab.ContextInfo) (info : Lean.Elab.Info
   let start := min r.start.byteIdx sourceBytes
   let stop := min (max r.start.byteIdx r.stop.byteIdx) sourceBytes
   let spelled := String.fromUTF8! (normalized.toUTF8.extract start stop)
+  let displayName := occurrenceDisplay declName
   let newName? := entry.newName?.map occurrenceDisplay
-  let bare := !spelled.isEmpty && spelled.toList.all (fun c => !c.isWhitespace)
+  -- The occurrence is fixable only when its source spelling is *exactly* the resolved constant's own
+  -- full display name (`notes/01-model.md` §5.3-5.4): then replacing that whole span with the
+  -- replacement's full display re-resolves unambiguously to the new constant, independent of `open`/dot
+  -- context. A spelling that differs from the full name — an `open`-shadowed short name (`oldNs`
+  -- resolving to `N.oldNs`), a dot-notation projection head (`x.foo` resolving to `T.foo`), an applied
+  -- receiver with the constant implicit — is *not* a rename we can prove, so it stays report-only and
+  -- the compiler's own FMT014 diagnostic still reports it. Backstopped by the re-elaboration validator
+  -- (§6): even an accepted spelling that fails to resolve is caught before publish, never on disk.
+  let fixable := newName?.isSome && spelled == displayName
   return {
     range := { start, stop }
-    declName := occurrenceDisplay declName
+    declName := displayName
     newName?
     since? := entry.since?
     text? := entry.text?
-    fixable := newName?.isSome && bare
+    fixable
   }
 
 private def captureDeprecatedOccurrences (tree : Lean.Language.SnapshotTree)

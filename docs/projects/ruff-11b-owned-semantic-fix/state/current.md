@@ -1,9 +1,29 @@
 ---
 kind: state
-first_unresolved: 03-final
+first_unresolved: none
 ---
 
 # Current state
+
+**ROS-FINAL verified — the stack is complete (`results/03-final.md`).** The owned, fixable FMT014 and
+the info-tree capability split are accepted adversarially: the rename applies and re-elaborates clean;
+non-qualifying occurrences (`open`-shadowed short names, dot-notation projection heads, no-replacement
+deprecations) stay report-only; unsafe gating, idempotence, and pass-order independence hold; the
+capability demand-gates both directions with a monolithic-era miss; and the info-tree walk is a flat-cost
+read (wall + RSS unchanged vs surfaced-only, inside the envelope).
+
+**Decision changed during ROS-FINAL (recorded in `results/03-final.md` §1):** the adversarial probe
+caught that the ROS-IMPL fixable predicate (`bare := spelled has no whitespace`) was **unsound** — it
+marked the `open`-shadowed bare `oldNs` (→`N.oldNs`) and the dot-notation head `oldGet` (→`Wrap.oldGet`)
+fixable, which `fix --unsafe-fixes` would have corrupted. Tightened to `fixable := newName?.isSome &&
+spelled == occurrenceDisplay declName`: fixable only when the occurrence is spelled by the resolved
+constant's own full display name, so the whole-span replacement re-resolves unambiguously. This resolves
+`notes/01-model.md` §5.3's "prefix must move" concern (no partial replacement leaves a stale prefix)
+rather than narrowing it, and every other spelling falls to report-only backstopped by the validator.
+
+Verified against live code and the full gate set: `lake build`, `lake exe lean-fmt-tests`,
+`tests/{semantic,modes,check,boundary}/run.sh`, the structural checker, `write_next.py --check`, and
+`git diff --check` — all green (`results/03-final.md` §7).
 
 **ROS-IMPL verified — the owned fixable FMT014, the info-tree capability split, and the semantic
 fix's canonical re-projection are shipped (`results/02-impl.md`).** The owned
@@ -77,7 +97,7 @@ seams rather than trusting recorded state.
 | --- | --- | --- | --- |
 | 01-spec | ROS-SPEC | verified | — |
 | 02-impl | ROS-IMPL | verified | ROS-SPEC |
-| 03-final | ROS-FINAL | planned | ROS-IMPL |
+| 03-final | ROS-FINAL | verified | ROS-IMPL |
 
 ## Scope
 
