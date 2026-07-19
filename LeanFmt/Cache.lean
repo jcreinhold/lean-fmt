@@ -255,7 +255,14 @@ def ResultCache.open? (workspace : Lake.Workspace) (application : System.FilePat
   try
     let some environment ← environmentDigest? workspace
       | return none
-    let formatter := Digest.ofBytes (← IO.FS.readBinFile application)
+    -- Formatter identity is the binary's path, size, and modification time, not a content hash of
+    -- its bytes: the executable statically links libleanshared and runs to ~180 MB, and the pure-Lean
+    -- SHA-256 over that dominated every cached invocation (~2.8 s). A rebuild always rewrites the file,
+    -- so (size, mtime) changes exactly when the formatter could behave differently; the toolchain
+    -- revision is already pinned separately via `toolchain` below.
+    let stat ← application.metadata
+    let formatter := Digest.ofString
+      s!"{application} {stat.byteSize} {stat.modified.sec} {stat.modified.nsec}"
     let directoryReady ← IO.mkRef false
     let loadedEntries ← IO.mkRef none
     return some {
