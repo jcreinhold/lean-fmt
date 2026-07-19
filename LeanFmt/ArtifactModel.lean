@@ -81,6 +81,27 @@ structure Finding where
   fix? : Option Fix := none
   deriving Inhabited, BEq, DecidableEq, Repr, Lean.ToJson, Lean.FromJson
 
+/-- One compiler diagnostic the exact frontend emitted, normalized into immutable data a semantic-tier
+rule reads. A *fact*, never a *finding*: only the frontend could produce it (it ran the linters and
+the elaborator), and a reader cannot recompute it from the bytes it holds; the rule that surfaces it
+concludes the lean-fmt code, applicability, and reporting shape. Carried in the artifact only when a
+consumer demanded the `.semantic` tier (`ruff-11` RMR-SPEC `notes/01-authority.md` §4).
+
+- `kind` is the message's top-level tag (`Lean.Message.kind`) — the linter's option name
+  (`linter.unusedVariables`) or the deprecation attribute (`Lean.Linter.deprecatedAttr`). It is the
+  **stable** identity a rule keys on; the message *text* is version-volatile and is preserved as
+  `message` detail, never asserted as the rule's own claim.
+- `range` is normalized-source byte offsets, recovered from the message's `Position` through the exact
+  frontend's `FileMap` (which `mkInputContext` builds on `crlfToLf`-normalized source), so it shares
+  the projection's one coordinate system. Clamped to the module's own byte span at capture, so a
+  macro-reattributed position never yields a finding off the file. -/
+structure Diagnostic where
+  kind : String
+  range : SourceRange
+  severity : Severity
+  message : String
+  deriving Inhabited, BEq, Repr, Lean.ToJson, Lean.FromJson
+
 /-- The declared inter-atom spacing of one notation/atom syntax kind: the untrimmed declared atom
 strings, in source order (`" + "` for infix add, `"-"` for prefix neg). A leading or trailing ASCII
 space in a string is the notation's declared breakable gap on that side; its absence is tight. This
@@ -94,11 +115,19 @@ structure NotationSpacing where
   atoms : Array String
   deriving Inhabited, BEq, Repr, Lean.ToJson, Lean.FromJson
 
-/-- The first semantic fact: declared spacing for every notation kind present in the module, one entry
-per distinct kind (Design B). Immutable data captured from the live `Environment` at the on-demand
-producer; carried in the artifact only when a consumer demanded the `.semantic` tier. -/
+/-- The semantic facts for one module, captured from the live exact frontend and carried in the
+artifact only when a consumer demanded the `.semantic` tier. Two sub-facts, captured together
+(monolithic, `ruff-11` `notes/01-authority.md` §6): a demanded `.semantic` artifact carries both, so
+`Tier.satisfies` stays a sound cache gate and a notations-only entry never silently under-serves a
+rule.
+
+- `notations` (`ruff-05b`, formatter fact): declared spacing for every notation kind present, one
+  entry per distinct kind (Design B).
+- `diagnostics` (`ruff-11`, rule fact, new in `v5`): the compiler's own diagnostics with a stable
+  `kind` tag and exact range, which the semantic-tier rules FMT014–FMT017 surface. -/
 structure SemanticProjection where
   notations : Array NotationSpacing
+  diagnostics : Array Diagnostic := #[]
   deriving Inhabited, BEq, Repr, Lean.ToJson, Lean.FromJson
 
 /- The artifact is stored inside the successful module's `.olean`; exact toolchain, options,
@@ -123,20 +152,25 @@ it does not. -/
 structure ModuleArtifact where
   schema : String
   source : LosslessSource
-  /-- The semantic projection (`v4`): declared notation spacing, `none` unless a consumer demanded it.
-  Optional because the two producers differ — the always-on compiler plugin emits `none` (no capture
-  in an integrated build), and the on-demand `analyzeExact` emits `some` only when the run's tier
-  reaches `.semantic` (a `format` run always does). See `ruff-05b` `notes/01-semantic-facts.md` §1. -/
+  /-- The semantic projection (`v5`): declared notation spacing and normalized compiler diagnostics,
+  `none` unless a consumer demanded it. Optional because the two producers differ — the always-on
+  compiler plugin emits `none` (no capture in an integrated build), and the on-demand `analyzeExact`
+  emits `some` only when the run's tier reaches `.semantic` (a `format` run, or a run selecting a
+  `.semantic` rule). See `ruff-05b` `notes/01-semantic-facts.md` §1, `ruff-11` `notes/01-authority.md`
+  §6. -/
   semantic : Option SemanticProjection := none
   deriving BEq, Repr, Lean.ToJson, Lean.FromJson
 
 /-- Bumped from `v1` when the command-kind/range projection became `LosslessSource`, from `v2` when
-findings and their rule configuration left the artifact, and from `v3` when the optional `semantic`
-projection was added (`ruff-05b` `RSF-IMPL`). A stale payload must miss, not decode: a `v3` payload
-read as `v4` would describe a module whose declared spacing is unknown as if it had been captured and
-found empty, so the schema guard rejects it and forces re-analysis, the same discipline that made
-findings leave the artifact rather than default silently. -/
-def artifactSchema : String := "lean-fmt.module-artifact.v4"
+findings and their rule configuration left the artifact, from `v3` when the optional `semantic`
+projection was added (`ruff-05b` `RSF-IMPL`), and from `v4` when that projection gained `diagnostics`
+(`ruff-11` `RMR-IMPL`). A stale payload must miss, never read as captured-and-empty: a `v4` full
+`semantic` (notations, no `diagnostics` key) does not even decode under `v5` — the derived `FromJson`
+does not default an absent array field, it errors (verified, v4.32.0) — and a `v4` payload without the
+`semantic` key at all decodes with `semantic := none` and is then rejected by the schema guard. Both
+paths are a miss that forces re-analysis; the schema tag is the gate, decode-failure a backstop — the
+same discipline that made findings leave the artifact rather than default silently. -/
+def artifactSchema : String := "lean-fmt.module-artifact.v5"
 
 /-- Build the artifact for one accepted module.
 

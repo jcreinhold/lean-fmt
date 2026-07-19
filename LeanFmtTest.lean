@@ -666,20 +666,21 @@ private def testEngineTiers : IO Unit := do
   let encoded := Lean.toJson probeSyntax
   ensure ((encoded.getObjValAs? String "input").toOption == some "syntax")
     "the rules wire shape does not derive input from the implementation"
-  -- `ruff-10` shipped the first `.syntax`-tier rules (FMT008–FMT013), so the registry is no longer
-  -- uniformly source-tier. The two seams that assumed it was are now both tier-aware: `ofEnvelope?`
-  -- tags its cache entry `.syntax` and the source-only shortcut tags `.source`, and `cacheHitServes`
-  -- serves an entry only when `result.tier.satisfies plan.requiredTier` — so a narrow shortcut entry
-  -- cannot answer a syntax `--select`. This asserts the new shape: syntax rules ship, source rules
-  -- still ship, and nothing reaches `semantic` tier (no rule's facts demand elaboration output).
-  ensure (ruleRegistry.any (·.tier == .syntax) && ruleRegistry.any (·.tier == .source))
-    "ruleRegistry lost its mix of source- and syntax-tier rules (ruff-10 shipped both)"
-  ensure (ruleRegistry.all (·.tier != .semantic))
-    "a semantic-tier rule reached ruleRegistry: the cache tier-gate serves at most `.syntax`"
+  -- `ruff-10` shipped the first `.syntax`-tier rules (FMT008–FMT013) and `ruff-11` the first
+  -- `.semantic`-tier ones (FMT014–FMT017), so the registry now spans the whole lattice. The seams that
+  -- once assumed it was uniformly source-tier are all tier-aware: `ofEnvelope?` tags its cache entry
+  -- with the tier the facts reached (`.semantic` for a demanded artifact, else `.syntax`) and the
+  -- source-only shortcut tags `.source`, and `cacheHitServes` serves an entry only when
+  -- `result.tier.satisfies plan.requiredTier` — so a narrow shortcut entry cannot answer a syntax or
+  -- semantic `--select`. This asserts the shape: all three tiers now ship.
+  ensure (ruleRegistry.any (·.tier == .source) && ruleRegistry.any (·.tier == .syntax) &&
+      ruleRegistry.any (·.tier == .semantic))
+    "ruleRegistry lost a tier: ruff-10 shipped source+syntax, ruff-11 added semantic (FMT014–FMT017)"
 
   -- The lattice gained `semantic` above `syntax` (`ruff-05b`): richer facts serve any cheaper
-  -- requirement, and the cheaper cannot serve the dearer. No shipped rule is `semantic`-tier; the
-  -- formatter demands the fact through the mode (`RulePlan.demandedTier`), exercised below.
+  -- requirement, and the cheaper cannot serve the dearer. `ruff-11`'s FMT014–FMT017 are the first
+  -- shipped `.semantic`-tier rules, so both demanders now reach that tier — a `.semantic`-rule
+  -- selection (below) and the canonical-rendering mode (`RulePlan.demandedTier`).
   ensure (Tier.satisfies .semantic .syntax && Tier.satisfies .semantic .source)
     "semantic facts failed to serve a cheaper requirement"
   ensure (!Tier.satisfies .syntax .semantic && !Tier.satisfies .source .semantic)
@@ -730,17 +731,24 @@ private def testMixedSelection : IO Unit := do
   ensure (ruleRegistry.all (fun rule => ({ selected := #[rule.code], perFileIgnores := #[], extendSafe := #[], extendUnsafe := #[] } : RulePlan).requiredTier == rule.tier))
     "a shipped rule's single selection costs a different tier than the rule's own"
 
-  -- Demand-gating (`ruff-05b`): the mode is the only demander of `semantic`, because no shipped rule
-  -- reaches that tier. A report run (no canonical rendering) stays at its rules' tier; a
+  -- Demand-gating (`ruff-05b`): two demanders now reach `semantic`. A report run (no canonical
+  -- rendering) stays at its rules' tier — so a source-only selection demands only `.source`; a
   -- canonical-rendering run (`format`/`diff`/`fix`) is lifted to `.semantic`, so the declared-spacing
   -- fact is captured then and not on the syntax-only fast path. `demandedTier` folds over the shipped
-  -- registry, so this uses a shipped code rather than a probe.
+  -- registry, so this uses shipped codes rather than probes.
   let shippedPlan : RulePlan :=
     { selected := #["FMT001"], perFileIgnores := #[], extendSafe := #[], extendUnsafe := #[] }
   ensure (shippedPlan.demandedTier false == .source)
     "a non-rendering run demanded more than its rules needed"
   ensure (shippedPlan.demandedTier true == .semantic)
     "a canonical-rendering run did not demand the semantic fact"
+  -- `ruff-11`: selecting a shipped `.semantic`-tier rule demands the semantic fact on its own, with no
+  -- rendering — the second demander the mode is not. This is what makes a `check --select FMT014` run
+  -- capture the compiler diagnostics rather than serve a syntax-only artifact that never held them.
+  let semanticPlan : RulePlan :=
+    { selected := #["FMT014"], perFileIgnores := #[], extendSafe := #[], extendUnsafe := #[] }
+  ensure (semanticPlan.demandedTier false == .semantic)
+    "selecting a semantic rule did not demand the semantic fact without rendering"
 
 private def fixtureArtifact : ModuleArtifact := {
   schema := artifactSchema
@@ -855,45 +863,120 @@ private def testStore : IO Unit := do
   finally
     IO.FS.removeDirAll directory
 
-/-- A `v4` artifact carrying the semantic fact: two notation kinds with their declared spacing. Design
-B keys by `SyntaxNodeKind`, one entry per distinct kind. -/
+/-- A `v5` artifact carrying the full semantic fact: two notation kinds with their declared spacing
+(`ruff-05b`, Design B keys by `SyntaxNodeKind`) and one surfaced compiler diagnostic (`ruff-11`, the
+`v5` addition FMT014–FMT017 key on). Both sub-facts populated, because a demanded `.semantic` artifact
+carries both together (monolithic capture). -/
 private def fixtureSemanticArtifact : ModuleArtifact :=
-  { fixtureArtifact with semantic := some { notations := #[
-      { kind := "«term_+_»", atoms := #[" + "] },
-      { kind := "«term-_»", atoms := #["-"] }] } }
+  { fixtureArtifact with semantic := some {
+      notations := #[
+        { kind := "«term_+_»", atoms := #[" + "] },
+        { kind := "«term-_»", atoms := #["-"] }]
+      diagnostics := #[
+        { kind := "linter.unusedVariables", range := { start := 0, stop := 3 },
+          severity := .warning, message := "unused variable `x`" }] } }
 
-/- The semantic fact is additive and demand-gated: the codec round-trips it, `semantic = none` (the
-always-on plugin's shape) stays valid, and a `v3` payload — including one that predates the field
-entirely — is an ordinary miss under the schema guard rather than a decode crash that would present
-unknown declared spacing as captured-and-empty. `ruff-05b` `RSF-IMPL`. -/
+/- The semantic fact is additive and demand-gated: the codec round-trips both sub-facts, `semantic =
+none` (the always-on plugin's shape) stays valid, and a `v4` payload — including one that predates the
+`diagnostics` field entirely — is an ordinary miss under the schema guard rather than a decode crash
+that would present a module whose diagnostics are unknown as if it had been captured and found empty
+(`ruff-11`). Same discipline as the `v3→v4` notation guard (`ruff-05b` `RSF-IMPL`). -/
 private def testSemanticArtifact : IO Unit := do
   ensure (structurallyValid fixtureSemanticArtifact)
-    "a v4 artifact carrying the semantic fact was rejected"
+    "a v5 artifact carrying the semantic fact was rejected"
   let decoded : Except String ModuleArtifact := Lean.fromJson? (Lean.toJson fixtureSemanticArtifact)
   match decoded with
-  | .ok actual => ensure (actual == fixtureSemanticArtifact) "v4 semantic artifact JSON round trip failed"
-  | .error message => throw <| IO.userError s!"v4 semantic artifact decode failed: {message}"
+  | .ok actual => ensure (actual == fixtureSemanticArtifact) "v5 semantic artifact JSON round trip failed"
+  | .error message => throw <| IO.userError s!"v5 semantic artifact decode failed: {message}"
 
   -- The plugin producer emits `semantic = none`; that shape is valid and round-trips too.
   ensure (fixtureArtifact.semantic.isNone) "the plugin-shaped fixture already carried a semantic fact"
-  ensure (structurallyValid fixtureArtifact) "a v4 artifact with semantic = none was rejected"
+  ensure (structurallyValid fixtureArtifact) "a v5 artifact with semantic = none was rejected"
   let noneDecoded : Except String ModuleArtifact := Lean.fromJson? (Lean.toJson fixtureArtifact)
   match noneDecoded with
-  | .ok actual => ensure (actual == fixtureArtifact) "v4 semantic = none artifact JSON round trip failed"
-  | .error message => throw <| IO.userError s!"v4 semantic = none artifact decode failed: {message}"
+  | .ok actual => ensure (actual == fixtureArtifact) "v5 semantic = none artifact JSON round trip failed"
+  | .error message => throw <| IO.userError s!"v5 semantic = none artifact decode failed: {message}"
 
-  -- A stale `v3` payload is a clean miss, the same discipline as the `v1` miss in `testStore`.
-  ensure (!(structurallyValid { fixtureArtifact with schema := "lean-fmt.module-artifact.v3" }))
-    "a stale v3 artifact was accepted by the current reader"
-  -- Faithful to a payload written before the field existed: no `semantic` key at all. The optional
-  -- field makes the decoder total over it (decodes to `none`), and the schema guard then misses.
-  let v3payload := Lean.Json.mkObj
-    [("schema", "lean-fmt.module-artifact.v3"), ("source", Lean.toJson fixtureLosslessSource)]
-  match (Lean.fromJson? v3payload : Except String ModuleArtifact) with
+  -- A stale `v4` payload is a clean miss, the same discipline as the `v1` miss in `testStore`.
+  ensure (!(structurallyValid { fixtureArtifact with schema := "lean-fmt.module-artifact.v4" }))
+    "a stale v4 artifact was accepted by the current reader"
+  -- Faithful to a `v4` payload with no `semantic` key at all: the `Option` field defaults to `none`
+  -- (Option fields *do* default on a missing key), so it decodes, and the schema guard then misses —
+  -- it never reads as "captured, no diagnostics".
+  let v4none := Lean.Json.mkObj
+    [("schema", "lean-fmt.module-artifact.v4"), ("source", Lean.toJson fixtureLosslessSource)]
+  match (Lean.fromJson? v4none : Except String ModuleArtifact) with
   | .ok actual =>
     ensure (actual.semantic.isNone && !structurallyValid actual)
-      "a fieldless v3 payload did not decode-then-miss cleanly"
-  | .error message => throw <| IO.userError s!"the v4 decoder is not total over a fieldless v3 payload: {message}"
+      "a semantic-less v4 payload did not decode-then-miss cleanly"
+  | .error message => throw <| IO.userError s!"the v5 decoder is not total over a semantic-less v4 payload: {message}"
+  -- Faithful to a `v4` **full**-`semantic` payload written before `diagnostics` existed: a `semantic`
+  -- with `notations` but no `diagnostics` key. Unlike the `Option semantic` field, the inner
+  -- `Array Diagnostic` does *not* default on a missing key — the derived `FromJson` errors (verified,
+  -- v4.32.0) — so this never reads as captured-and-empty. Decode-failure is itself a miss (a foreign
+  -- payload is discarded, not served), the backstop behind the schema tag. Either outcome — a decode
+  -- error, or a decode the schema guard rejects — is "not a valid v5 artifact", which is the invariant.
+  let v4full := Lean.Json.mkObj
+    [("schema", "lean-fmt.module-artifact.v4"), ("source", Lean.toJson fixtureLosslessSource),
+     ("semantic", Lean.Json.mkObj [("notations", Lean.toJson (#[] : Array NotationSpacing))])]
+  match (Lean.fromJson? v4full : Except String ModuleArtifact) with
+  | .ok actual => ensure (!structurallyValid actual) "a diagnostics-less v4 payload decoded as a valid v5 artifact"
+  | .error _ => pure ()  -- decode-failed: also a miss, the backstop the comment above names
+
+/- The shipped semantic-tier rules (`ruff-11` FMT014–FMT017) surface the compiler's own diagnostics:
+each keys on one stable `kind` tag and re-emits it as a report-only finding under its own code,
+preserving the compiler's message, severity, and range. This exercises the whole engine seam over
+`.semantic` facts without the exact frontend — the production `runRulesOf` reads `SemanticFacts`
+built directly, so the mapping is pinned as pure data. `tests/semantic/run.sh` proves the *capture*
+half against Lean's own emission; this proves the *rule* half.
+
+Every assertion is about the shipped `ruleRegistry`, not a probe, because these are real shipped rules
+(the reason `testEngineTiers`' representative rules could not be semantic before). -/
+private def testSemanticRules : IO Unit := do
+  let mkDiag (kind : String) (start stop : Nat) (message : String) : Diagnostic :=
+    { kind, range := { start, stop }, severity := .warning, message }
+  -- One diagnostic per surfaced kind, plus one kind no rule owns. Distinct starts pin byte-ordering.
+  let diagnostics := #[
+    mkDiag "Lean.Linter.deprecatedAttr"       0 4 "`oldName` is deprecated",
+    mkDiag "linter.unusedVariables"           5 6 "unused variable `x`",
+    mkDiag "linter.unusedSectionVars"         7 8 "unused section variable `inst`",
+    mkDiag "linter.constructorNameAsVariable" 9 10 "`true` resembles a constructor",
+    mkDiag "linter.unownedByAnyRule"          2 3 "no rule surfaces this kind"]
+  let facts := Facts.semantic (SemanticFacts.of fixtureSourceText fixtureLosslessSource diagnostics)
+  let findings := runRulesOf ruleRegistry facts
+
+  -- Each surfaced kind maps to exactly its code, preserving the compiler's own range/severity/message.
+  let expect : Array (String × String × Nat × Nat) := #[
+    ("FMT014", "`oldName` is deprecated", 0, 4),
+    ("FMT015", "unused variable `x`", 5, 6),
+    ("FMT016", "unused section variable `inst`", 7, 8),
+    ("FMT017", "`true` resembles a constructor", 9, 10)]
+  for (code, message, start, stop) in expect do
+    match findings.filter (·.code == code) with
+    | #[f] =>
+      ensure (f.message == message) s!"{code} did not preserve the compiler's message"
+      ensure (f.range.start == start && f.range.stop == stop) s!"{code} did not preserve the diagnostic range"
+      ensure (f.severity == .warning) s!"{code} did not preserve the diagnostic severity"
+      ensure (f.fix?.isNone) s!"{code} is report-only but carried a fix"
+    | other => throw <| IO.userError s!"expected exactly one {code} finding, got {other.size}"
+
+  -- A kind no rule owns yields no finding: the rules read only the tags they name, never everything
+  -- the artifact happens to carry. (Capture already filters to `surfacedDiagnosticKinds`; this pins
+  -- that the rule side is closed the same way — an unowned kind fed in directly is still dropped.)
+  ensure (surfacedDiagnosticKinds.size == 4) "surfacedDiagnosticKinds no longer lists exactly the four rules"
+  ensure ((findings.filter (fun f => #["FMT014", "FMT015", "FMT016", "FMT017"].contains f.code)).size == 4)
+    "the surfaced rules produced other than one finding per owned kind (the unowned kind leaked)"
+
+  -- The engine skips semantic rules cleanly when only cheaper facts are on hand — not guessed at, not
+  -- defaulted, not an error — exactly as it skips a syntax rule on source facts. `requiredTierOf` is
+  -- what makes the skip sound (it decided not to obtain these diagnostics), and it reads one registry.
+  let semanticCodes := #["FMT014", "FMT015", "FMT016", "FMT017"]
+  let onSyntax := runRulesOf ruleRegistry (.syntax (SyntaxFacts.of fixtureSourceText fixtureLosslessSource))
+  ensure (onSyntax.all (fun f => !semanticCodes.contains f.code))
+    "a semantic rule fired on syntax facts that never carried a diagnostic"
+  let onSource := runRulesOf ruleRegistry (.source (SourceFacts.of fixtureSourceText))
+  ensure (onSource.all (fun f => !semanticCodes.contains f.code))
+    "a semantic rule fired on source facts that never carried a diagnostic"
 
 /-- Capture a kind's declared atoms exactly as `analyzeExact`'s `captureNotationSpacing` does:
 type-guard to a descriptor, then read it through the **module-safe** compiled meta IR via `evalConst`
@@ -1909,6 +1992,7 @@ public unsafe def main (args : List String) : IO UInt32 := do
     testLosslessSource
     testStore
     testSemanticArtifact
+    testSemanticRules
     testDoc
     testComments
     testSuppression

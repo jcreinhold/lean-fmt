@@ -88,17 +88,37 @@ independent. -/
 def SyntaxFacts.of (normalized : String) (projection : LosslessSource) : SyntaxFacts :=
   { source := SourceFacts.of normalized, projection }
 
-/-- The facts a run actually obtained. `SyntaxFacts` contains `SourceFacts`, so richer facts run
-every cheaper rule too, and one run never needs two fact objects. -/
+/-- What a `semantic`-tier rule may read: the syntax projection plus the exact frontend's normalized
+compiler diagnostics. A semantic rule needs the syntax facts too — its range coordinate system and
+suppression are the projection's — so this nests `SyntaxFacts` rather than restating it, exactly as
+`SyntaxFacts` nests `SourceFacts`. `diagnostics` are the immutable facts (`ArtifactModel.Diagnostic`)
+the surfaced rules FMT014–FMT017 key on; a rule never sees an `Environment`, a `Position`, or a
+`FileMap`, only this data (`ruff-11` `notes/01-authority.md` §7). -/
+structure SemanticFacts where
+  private mk ::
+  «syntax» : SyntaxFacts
+  diagnostics : Array Diagnostic
+
+/-- `normalized` must be the string `projection` indexes, the same contract `SyntaxFacts.of` carries.
+`diagnostics` are the projection's captured `Diagnostic`s, already in normalized-source coordinates. -/
+def SemanticFacts.of (normalized : String) (projection : LosslessSource)
+    (diagnostics : Array Diagnostic) : SemanticFacts :=
+  { «syntax» := SyntaxFacts.of normalized projection, diagnostics }
+
+/-- The facts a run actually obtained. `SyntaxFacts` contains `SourceFacts` and `SemanticFacts`
+contains `SyntaxFacts`, so richer facts run every cheaper rule too, and one run never needs two fact
+objects. -/
 inductive Facts where
   | source (facts : SourceFacts)
   | «syntax» (facts : SyntaxFacts)
+  | semantic (facts : SemanticFacts)
 
 /-- The source facts every set of facts contains. Named for what it returns rather than as
 `Facts.source`, which is the constructor. -/
 def Facts.sourceFacts : Facts → SourceFacts
   | .source facts => facts
   | .syntax facts => facts.source
+  | .semantic facts => facts.syntax.source
 
 /-- A rule's implementation, indexed by the facts it reads.
 
@@ -108,10 +128,12 @@ field it replaces. -/
 inductive RuleImpl where
   | source (run : SourceFacts → Array Finding)
   | «syntax» (run : SyntaxFacts → Array Finding)
+  | semantic (run : SemanticFacts → Array Finding)
 
 def RuleImpl.tier : RuleImpl → Tier
   | .source _ => .source
   | .syntax _ => .syntax
+  | .semantic _ => .semantic
 
 /-- What a rule tells a user about itself. Its tier is not in here: `Rule.tier` derives it from the
 implementation, so the two cannot disagree. -/
@@ -548,6 +570,60 @@ private def redundantNestedParen (facts : SyntaxFacts) : Array Finding := Id.run
         }
   return findings
 
+/-! ## Semantic-tier rules
+
+`FMT014`–`FMT017` **surface** compiler diagnostics the exact frontend already emitted, keyed on each
+message's stable top-level `kind` tag (a linter option name, or the deprecation attribute). They read
+`SemanticFacts.diagnostics` — normalized `Diagnostic`s already in the projection's coordinate system,
+captured from the `MessageLog` in `Analysis.lean` — and conclude a report-only `Finding` that preserves
+the compiler's own message as detail. They re-derive nothing: reconstructing an unused-variable
+diagnostic would mean reimplementing a linter from info trees and the metavariable context, the brittle
+invention the roadmap stop-rule forbids (`ruff-11` `notes/01-authority.md` §§1,3-4).
+
+Every rule is **report-only**: removing a binder or a section variable, or renaming a deprecated
+reference, is not an edit any byte-level or projection fact here can prove safe. The four `kind` strings
+are pinned first-hand to the v4.32.0 compiler in `evidence/01-semantic-diagnostics.txt`; a wrong string
+is a rule that silently never fires, so these are the observed tags, not guesses. A toolchain that stops
+emitting one of these kinds simply yields no findings — the surfaced mechanism only ever reads a tag the
+running compiler actually produced (`notes/01-authority.md` §10). -/
+
+private def kDeprecatedAttr := "Lean.Linter.deprecatedAttr"
+private def kUnusedVariables := "linter.unusedVariables"
+private def kUnusedSectionVars := "linter.unusedSectionVars"
+private def kConstructorNameAsVariable := "linter.constructorNameAsVariable"
+
+/-- The compiler-message `kind` tags the semantic rules surface, the single source of truth the capture
+(`Analysis.lean`) filters by. Capture and rules read one array, so a captured diagnostic always has a
+rule and a rule never keys on a tag the capture drops — the same discipline `runRulesOf` and
+`requiredTierOf` share one registry for. -/
+def surfacedDiagnosticKinds : Array String :=
+  #[kDeprecatedAttr, kUnusedVariables, kUnusedSectionVars, kConstructorNameAsVariable]
+
+/-- Surface every captured diagnostic of one `kind` as a report-only finding under `code`, preserving
+the compiler's original `message`, `severity`, and `range`. No fix: see the section note. -/
+private def surfaceDiagnostics (kind code : String) (facts : SemanticFacts) : Array Finding :=
+  facts.diagnostics.filterMap fun d =>
+    if d.kind == kind then
+      some { code, severity := d.severity, message := d.message, range := d.range, fix? := none }
+    else none
+
+/-- FMT014 — use of a deprecated declaration (`@[deprecated]`), tag `Lean.Linter.deprecatedAttr`. -/
+private def deprecatedUse (facts : SemanticFacts) : Array Finding :=
+  surfaceDiagnostics kDeprecatedAttr "FMT014" facts
+
+/-- FMT015 — unused variable / binder, tag `linter.unusedVariables`. -/
+private def unusedVariable (facts : SemanticFacts) : Array Finding :=
+  surfaceDiagnostics kUnusedVariables "FMT015" facts
+
+/-- FMT016 — automatically-included section variable unused in a theorem, tag
+`linter.unusedSectionVars`. -/
+private def unusedSectionVariable (facts : SemanticFacts) : Array Finding :=
+  surfaceDiagnostics kUnusedSectionVars "FMT016" facts
+
+/-- FMT017 — bound variable resembles a nullary constructor, tag `linter.constructorNameAsVariable`. -/
+private def constructorNameVariable (facts : SemanticFacts) : Array Finding :=
+  surfaceDiagnostics kConstructorNameAsVariable "FMT017" facts
+
 /-- Every rule the product ships, in one static array.
 
 Static, not an attribute or an environment extension. The rule set is compiled and first-party, so
@@ -659,6 +735,46 @@ def ruleRegistry : Array Rule := #[
       defaultEnabled := false
     }
     impl := .syntax redundantNestedParen
+  },
+  {
+    info := {
+      code := "FMT014"
+      category := "deprecation"
+      summary := "report use of a deprecated declaration"
+      fixable := false
+      defaultEnabled := false
+    }
+    impl := .semantic deprecatedUse
+  },
+  {
+    info := {
+      code := "FMT015"
+      category := "unused"
+      summary := "report an unused variable or binder"
+      fixable := false
+      defaultEnabled := false
+    }
+    impl := .semantic unusedVariable
+  },
+  {
+    info := {
+      code := "FMT016"
+      category := "unused"
+      summary := "report a section variable unused in a theorem"
+      fixable := false
+      defaultEnabled := false
+    }
+    impl := .semantic unusedSectionVariable
+  },
+  {
+    info := {
+      code := "FMT017"
+      category := "naming"
+      summary := "report a bound variable that resembles a nullary constructor"
+      fixable := false
+      defaultEnabled := false
+    }
+    impl := .semantic constructorNameVariable
   }
 ]
 
@@ -696,7 +812,11 @@ def runRulesOf (rules : Array Rule) (facts : Facts) : Array Finding :=
     match rule.impl, facts with
     | .source run, _ => findings ++ run facts.sourceFacts
     | .syntax run, .syntax syntaxFacts => findings ++ run syntaxFacts
+    | .syntax run, .semantic semanticFacts => findings ++ run semanticFacts.syntax
     | .syntax _, .source _ => findings
+    | .semantic run, .semantic semanticFacts => findings ++ run semanticFacts
+    | .semantic _, .source _ => findings
+    | .semantic _, .syntax _ => findings
   findings.qsort findingOrder
 
 /-- Every finding the available facts can produce, from every rule the product ships. -/

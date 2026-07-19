@@ -148,8 +148,21 @@ def SemanticAnalysis.ofEnvelope? (raw : String)
       let normalized := (LosslessSource.normalize raw).1
       -- The projection is in hand here (and only here), so this is where directives are parsed:
       -- syntax-tier, exactly like the syntax facts the findings are computed from.
-      some (.success normalized (runRules (.syntax (SyntaxFacts.of normalized artifact.source)))
-        (tier := .syntax) (suppression := Suppression.collect artifact.source normalized))
+      --
+      -- The tier the facts reach is the tier the artifact was captured at. A `.semantic` artifact
+      -- (captured under demand by a render or a `.semantic`-rule selection) carries the compiler
+      -- diagnostics, so the whole registry — including FMT014–FMT017 — runs against `.semantic` facts
+      -- and the result is tagged `.semantic`, complete for any run (monolithic capture, `ruff-11`
+      -- `notes/01-authority.md` §6). An artifact without the projection runs the source/syntax
+      -- registry against `.syntax` facts and is tagged `.syntax`, exactly as before — a `.syntax`
+      -- entry then misses a `.semantic` selection through `cacheHitServes` rather than a false clean.
+      let (facts, tier) := match artifact.semantic with
+        | some projection =>
+          (Facts.semantic (SemanticFacts.of normalized artifact.source projection.diagnostics), Tier.semantic)
+        | none =>
+          (Facts.syntax (SyntaxFacts.of normalized artifact.source), Tier.syntax)
+      some (.success normalized (runRules facts)
+        (tier := tier) (suppression := Suppression.collect artifact.source normalized))
     else
       none
 

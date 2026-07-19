@@ -1,9 +1,26 @@
 ---
 kind: state
-first_unresolved: 02-implementation
+first_unresolved: 03-acceptance
 ---
 
 # Current state
+
+**RMR-IMPL is verified** (`results/02-implementation.md`). The four surfaced semantic-tier rules
+FMT014–FMT017 ship end to end on the `Tier.semantic` / `ModuleArtifact` foundation: `analyzeExact`
+normalizes its own `MessageLog` into immutable byte-range `Diagnostic` facts (`Analysis.lean`
+`captureDiagnostics`), the projection advanced `v4 → v5` with `Diagnostic`/`SemanticProjection.diagnostics`
+(`ArtifactModel.lean`), the engine gained `SemanticFacts`/`Facts.semantic`/`RuleImpl.semantic` and the
+`runRulesOf` rows (`Rules.lean`), and `ofEnvelope?` runs the whole registry against `.semantic` facts
+when the artifact carries the projection (`Semantic.lean`). All four are report-only and default-off.
+The source-only/syntax-only fast paths are byte-for-byte unchanged when no semantic rule is selected and
+nothing renders; `demandedTier` now has two demanders (a `.semantic`-rule selection and the render mode).
+Capture is monolithic (Design A), so `Tier.satisfies`/`cacheHitServes` stay a sound cache gate. The
+`tests/semantic/run.sh` differential proves the captured `(kind, range)` reproduces an independent
+`lean --json` oracle byte for byte; `tests/boundary/run.sh` confirms `LeanFmt.Rules` stays out of the
+plugin closure. One spec assumption was corrected: the derived `FromJson` does **not** default an absent
+array field (a `v4` full-`semantic` payload fails to decode, still a miss); `ArtifactModel.lean` and
+`testSemanticArtifact` now state the verified behavior. The owned/fixable FMT014 autofix and the Design-B
+capability split remain deferred (`notes/01-authority.md` §§8,11).
 
 **RMR-SPEC is verified** (`results/01-authority.md`; design `notes/01-authority.md`; first-hand compiler
 evidence `evidence/01-semantic-diagnostics.txt`). The three prerequisite stacks `ruff-05-rule-engine`,
@@ -29,7 +46,7 @@ together with the Design-B capability split. See `notes/01-authority.md` §§3,6
 | Prompt | Claim | Status | Depends on |
 | --- | --- | --- | --- |
 | 01-authority | RMR-SPEC | verified | — |
-| 02-implementation | RMR-IMPL | planned | RMR-SPEC |
+| 02-implementation | RMR-IMPL | verified | RMR-SPEC |
 | 03-acceptance | RMR-FINAL | planned | RMR-IMPL |
 
 ## Blockers and prerequisites

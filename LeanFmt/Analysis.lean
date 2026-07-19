@@ -101,6 +101,40 @@ private unsafe def captureNotationSpacing (env : Lean.Environment) (options : Le
     | none => acc
   { notations }
 
+private def ofMessageSeverity : Lean.MessageSeverity → Severity
+  | .information => .information
+  | .warning => .warning
+  | .error => .error
+
+/- Normalize the compiler diagnostics the exact frontend emitted into immutable rule facts. Only the
+`kind`s the semantic rules surface (`surfacedDiagnosticKinds`) are kept — one source of truth shared
+with the rules — so the artifact never carries a diagnostic no rule reads. `msg.kind` is the pure
+top-level tag; only matching messages are serialized (`msg.serialize`, which renders `data` and needs
+`BaseIO`). Each message's `Position` is converted to a normalized-source byte offset through the
+frontend's `FileMap` — `mkInputContext` built it on `crlfToLf`-normalized source, so it shares the
+projection's coordinate system — and the range is clamped to `[0, sourceBytes]`, dropping any position
+that a macro reattribution placed outside this module's own bytes (`ruff-11` `notes/01-authority.md`
+§§4-5,12). No `Environment`, `Position`, or `FileMap` crosses into a rule; only this data. -/
+private def captureDiagnostics (fileMap : Lean.FileMap) (sourceBytes : Nat)
+    (messages : Lean.MessageLog) : IO (Array Diagnostic) := do
+  let mut diagnostics := #[]
+  for msg in messages.toArray do
+    if surfacedDiagnosticKinds.contains msg.kind.toString then
+      let start := (fileMap.ofPosition msg.pos).byteIdx
+      let stop := match msg.endPos with
+        | some endPos => (fileMap.ofPosition endPos).byteIdx
+        | none => start
+      if start ≤ sourceBytes then
+        let range : SourceRange := { start := min start sourceBytes, stop := min (max start stop) sourceBytes }
+        let serial ← msg.serialize
+        diagnostics := diagnostics.push {
+          kind := msg.kind.toString
+          range
+          severity := ofMessageSeverity msg.severity
+          message := serial.data
+        }
+  return diagnostics
+
 /- Execute Lean's ordinary header and sequential command frontend under the exact `ModuleSetup`
 owned by the target Lake workspace. The resulting projection is the same one emitted by the
 compiler plugin; no accumulated environment or parser state crosses this process invocation. -/
@@ -133,17 +167,23 @@ unsafe def analyzeExact (setup : Lean.ModuleSetup) (source : String)
   if messages.hasErrors then
     return ← broken messages
   let (commands, terminal?) := processedCommands snapshot
-  -- The semantic projection is captured only under demand (`captureSemantic`, set by a `format`-tier
-  -- run). `commandState.env` is the module's final environment — the parser and notation decls are
-  -- live here and nowhere downstream — so the declared spacing is read into immutable data at this
-  -- one seam. The always-on plugin producer never sets the flag, keeping integrated builds on the
-  -- syntax-only path (`ArtifactModel.lean` `ofParsedModule`).
-  let semantic := if captureSemantic then some (captureNotationSpacing commandState.env options commands) else none
+  -- The semantic projection is captured only under demand (`captureSemantic`, set by a run that
+  -- renders canonical text *or* selects a `.semantic` rule). Both sub-facts are captured together
+  -- (monolithic, `ruff-11` `notes/01-authority.md` §6), so a demanded `.semantic` artifact is complete
+  -- and `Tier.satisfies` stays a sound cache gate. `commandState.env` is the module's final
+  -- environment (parser and notation decls live here and nowhere downstream); `messages` is the
+  -- whole-file diagnostic log already assembled above; `input.fileMap` is normalized-coordinate. The
+  -- always-on plugin producer never sets the flag, keeping integrated builds on the syntax-only path.
+  let normalizedSource := (LosslessSource.normalize source).1
+  let semantic ← if captureSemantic then do
+      let diagnostics ← captureDiagnostics input.fileMap normalizedSource.utf8ByteSize messages
+      pure (some { captureNotationSpacing commandState.env options commands with diagnostics })
+    else pure none
   -- `mkInputContext` normalized `source` before parsing it, so every offset above indexes the
   -- normalized string. Measuring the artifact against `source` itself would mix two coordinate
   -- systems inside one artifact for any file that uses CRLF.
   let artifact := ModuleArtifact.ofParsedModule setup.name.toString
-    (LosslessSource.normalize source).1 commands terminal? semantic
+    normalizedSource commands terminal? semantic
   return { artifact? := some artifact }
 
 /- Extract the compiler-owned payload from one exact module artifact. Process exit remains the

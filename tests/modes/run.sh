@@ -397,6 +397,7 @@ rules = json.load(open(sys.argv[1]))
 assert [r["code"] for r in rules] == \
     ["FMT001", "FMT002", "FMT003", "FMT004",
      "FMT008", "FMT009", "FMT010", "FMT011", "FMT012", "FMT013",
+     "FMT014", "FMT015", "FMT016", "FMT017",
      "FMT005", "FMT006", "FMT007"], [r["code"] for r in rules]
 # The formatting rules are fixable text rules; the source-security rules are report-only and their
 # own category. FMT003/FMT004 flag bytes the formatter cannot express by reformatting. The import
@@ -423,6 +424,15 @@ assert by_code["FMT009"]["category"] == "structure" and not by_code["FMT009"]["f
 assert by_code["FMT012"]["category"] == "debug" and not by_code["FMT012"]["fixable"]
 assert all(by_code[c]["fixable"] and by_code[c]["category"] == "redundancy"
            for c in ("FMT010", "FMT011", "FMT013"))
+# FMT014-017 are the first semantic-tier rules (`ruff-11`): they surface compiler diagnostics, so they
+# ship as preview (off by default), are indexed on the `semantic` tier (`input == "semantic"`), and are
+# report-only — surfacing a deprecation or an unused binder is not an edit any fact here proves safe.
+semantic = ("FMT014", "FMT015", "FMT016", "FMT017")
+assert all((not by_code[c]["defaultEnabled"]) and by_code[c]["input"] == "semantic"
+           and not by_code[c]["fixable"] for c in semantic)
+assert by_code["FMT014"]["category"] == "deprecation"
+assert by_code["FMT015"]["category"] == "unused" and by_code["FMT016"]["category"] == "unused"
+assert by_code["FMT017"]["category"] == "naming"
 PY
 
 run_expect 0 "$work/setup-1.json" "$application" compiler setup --json

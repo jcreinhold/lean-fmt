@@ -19,7 +19,11 @@ work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 
 cd "$repo_root"
-LEAN_NUM_THREADS=1 lake build lean-fmt
+# Build the exe and refresh the Clean fixture's artifact facet: a schema bump (here v4→v5) changes the
+# compiler plugin, so a stale on-disk artifact is correctly rejected by the schema guard. The
+# demand-gating sub-check below needs Clean's facet current, so rebuild it rather than serve a stale
+# artifact the new code (correctly) refuses.
+LEAN_NUM_THREADS=1 lake build lean-fmt Clean:leanFmtArtifact
 application=$(lake -q query lean-fmt --text)
 
 fixture=tests/semantic/Notation.lean
@@ -46,8 +50,8 @@ off = json.load(open(sys.argv[2]))["artifact"]
 on2 = json.load(open(sys.argv[3]))["artifact"]
 emit = open(sys.argv[4]).read().splitlines()
 
-# Both schemas advanced to v4 regardless of capture; only the semantic field differs.
-assert on["schema"] == off["schema"] == "lean-fmt.module-artifact.v4", on["schema"]
+# Both schemas advanced to v5 regardless of capture; only the semantic field differs.
+assert on["schema"] == off["schema"] == "lean-fmt.module-artifact.v5", on["schema"]
 
 # B. Demand-gating: no capture -> semantic is null; capture -> semantic present. The source
 # projection is byte-identical either way, so the fact is purely additive and the syntax-only path is
@@ -111,5 +115,67 @@ if [[ $chk_exit -ne 0 ]]; then
 fi
 grep -q 'infrastructure-failure' "$work/fmt.json" \
   || { echo 'format did not reach the disabled analyzer — it may have accepted the fact-free artifact' >&2; exit 1; }
+
+# --- ruff-11 RMR-IMPL: the surfaced-diagnostics differential --------------------------------------
+# The production capture path (`__analyze-exact ... 1`) normalizes the compiler's own diagnostics into
+# the artifact's `semantic.diagnostics`. Prove the captured `(kind, range)` reproduces what Lean's own
+# `--json` frontend emits on the same fixture — an independent oracle that never touches the capture
+# code — for all four surfaced kinds, and that capture=0 carries no diagnostics (demand-gating).
+diag=tests/semantic/Diagnostics.lean
+LEAN_NUM_THREADS=1 lake setup-file "$diag" >"$work/dsetup.json"
+LEAN_NUM_THREADS=1 lake env "$application" __analyze-exact \
+  "$work/dsetup.json" "$diag" "$diag" "$maxb" 1 >"$work/don.json"
+LEAN_NUM_THREADS=1 lake env "$application" __analyze-exact \
+  "$work/dsetup.json" "$diag" "$diag" "$maxb" 0 >"$work/doff.json"
+LEAN_NUM_THREADS=1 lake env lean --json "$diag" >"$work/doracle.json" 2>/dev/null || true
+
+python3 - "$work/don.json" "$work/doff.json" "$work/doracle.json" "$diag" <<'PY'
+import json, sys
+captured = json.load(open(sys.argv[1]))["artifact"]["semantic"]["diagnostics"]
+off = json.load(open(sys.argv[2]))["artifact"]["semantic"]
+source = open(sys.argv[4], "rb").read()
+
+# Demand-gating: capture=0 carries no semantic fact at all (so no diagnostics either).
+assert off is None, f"captureSemantic=0 still captured diagnostics: {off}"
+
+want = {
+    "Lean.Linter.deprecatedAttr",       # FMT014
+    "linter.unusedVariables",           # FMT015
+    "linter.unusedSectionVars",         # FMT016
+    "linter.constructorNameAsVariable", # FMT017
+}
+got_kinds = {d["kind"] for d in captured}
+assert want <= got_kinds, f"missing surfaced kinds: {want - got_kinds} (got {got_kinds})"
+
+# Only the surfaced kinds are captured — the artifact never carries a diagnostic no rule reads.
+assert got_kinds <= want, f"captured unowned kinds: {got_kinds - want}"
+
+# Every captured range is inside the module's own bytes and well-formed.
+n = len(source)
+for d in captured:
+    r = d["range"]
+    assert 0 <= r["start"] <= r["stop"] <= n, f"range out of bounds: {d}"
+
+# Independent oracle: Lean's own `--json` positions, converted to byte offsets, must match a captured
+# diagnostic of the same kind. This is the "the fact is the compiler's, not ours" differential.
+def byte_offset(line, col):
+    # `--json` gives 1-based line, 0-based utf-8-codepoint column? Lean columns are codepoint indices.
+    lines = source.split(b"\n")
+    off = sum(len(lines[i]) + 1 for i in range(line - 1))
+    # advance `col` codepoints into the line
+    return off + len(lines[line - 1].decode("utf-8")[:col].encode("utf-8"))
+
+oracle = [json.loads(l) for l in open(sys.argv[3]) if l.strip().startswith("{")]
+matched = 0
+for o in oracle:
+    if o.get("kind") not in want:
+        continue
+    start = byte_offset(o["pos"]["line"], o["pos"]["column"])
+    hit = [d for d in captured if d["kind"] == o["kind"] and d["range"]["start"] == start]
+    assert hit, f"no captured diagnostic matches oracle {o['kind']} at byte {start}"
+    matched += 1
+assert matched >= 4, f"oracle matched only {matched} diagnostics"
+print("diagnostics differential: matched", matched, "kinds", sorted(got_kinds))
+PY
 
 printf 'lean-fmt semantic differential + demand-gating tests passed\n'
