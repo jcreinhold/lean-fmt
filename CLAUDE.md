@@ -49,8 +49,10 @@ out of production modules until their owning prompt selects and verifies the int
 - Prefer private deep modules that hide lifecycle and cache sequencing.
 - Keep CLI parsing and rendering in `LeanFmt.Cli`; semantic execution, validation, stale checking, and
   publication belong to `LeanFmt.Application` and its lower capabilities.
-- `check`, `format`, and `diff` never write source. `fix` publishes only a complete, conflict-free
-  patch validated under the exact module setup, after a stale-source check.
+- `check` and `diff` never write source. `format` and `fix` publish only a complete, conflict-free
+  result validated under the exact module setup, after a stale-source check: `format` publishes the
+  canonical layout (no rule fix), `fix` publishes admitted rule fixes at original coordinates.
+  `format --check` and `diff` are the non-writing previews.
 - Rule selection is a projection over canonical results. It must not enter execution strategy or
   result-cache identity.
 - `LeanFmt.Project` owns complete non-`.lake` source selection, exact Lake setup, and one shared typed

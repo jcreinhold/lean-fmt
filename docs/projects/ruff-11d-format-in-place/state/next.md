@@ -1,9 +1,9 @@
 # Next Proof Packet
 
 - Stack: ruff-11d-format-in-place
-- First unresolved: 02-impl
-- Claim ID: FIP-IMPL
-- Prompt: 02-impl
+- First unresolved: 03-final
+- Claim ID: FIP-FINAL
+- Prompt: 03-final
 - Module: (docs only)
 - Target file: (docs only)
 
@@ -17,14 +17,12 @@ Read this file, the target prompt, target files, listed source/template line ran
 
 ## Proof Task
 
-- Deliver **FIP-IMPL**: Make `format` publish the canonical layout in place by default through the `ruff-06` guarded path, add the `format --check` non-writing preview, and migrate every test and doc that assumed `format` prints to stdout / never writes. Implement exactly the interface FIP-SPEC froze in `notes/01-model.md` — no more surface than the reuse inventory names.
+- Deliver **FIP-FINAL**: Accept the in-place default adversarially. `format` writes exactly the canonical bytes and only those; it is idempotent; `--check` never writes; a file that does not elaborate is never written; the lossless write round-trips original line endings and touches no in-string byte; the stale-source check guards format's write as it guards fix's; `check`/`diff` still never write; and the `ruff-11c` format+fix confluence still holds now that `format` writes. Prove it through the product CLI and persistent tests at the owning layer, and by direct inspection.
 
 ## Reuse
 
-- `notes/01-model.md` (FIP-SPEC): the frozen write path, `--check` semantics, exit/report shapes, the invariant change, and the reuse-vs-new inventory.
-- `LeanFmt/Application.lean` — `fixFile`, `previewFile`, `publishAtomic`, the stale-source check, the validator, and the driver seam (`request.mode`, the preview vs. `withExactRun` branches).
-- `LeanFmt/Cli.lean` — the `format` output branch and flag parsing.
-- `tests/modes/run.sh` — every `format` assertion (currently `would-format`, `formatted`, stdout); `tests/check/run.sh`; `tests/lossless/run.sh`.
+- `notes/01-model.md`, `results/01-spec.md`, `results/02-impl.md`; the implementation and `tests/modes`, `tests/check`, `tests/lossless`.
+- `docs/projects/ruff-11c-decouple-fix-format/results/04-final.md` — the confluence and fix-free-format acceptances that must still pass with `format` now writing.
 
 ## Lean Work
 
@@ -32,6 +30,5 @@ Inspect the live goal, search relevant declarations, test plausible proof steps,
 
 ## Stop Rules
 
-- No write that skips a `ruff-06` guard; no partial write; `check`/`diff` still never write.
-- Do not reintroduce rule-fix application into `format`, and do not add config selection or stdin/stdout (owned by `ruff-13`/`ruff-14`).
-- Stop rather than duplicating the publish path — reuse `fix`'s helpers.
+- No write skipping a `ruff-06` guard; no partial write; no in-string byte change; original line endings preserved. `check`/`diff` never write. The `ruff-11c` split and confluence hold.
+- No full mathlib run. Stop rather than weakening a preserved invariant.

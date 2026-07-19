@@ -69,7 +69,7 @@ cmp "$work/artifact-findings.json" "$work/fallback-findings.json"
 # no fix and this file is layout-clean, so it exits 0 while still *reporting* the same finding.
 run_expect 1 "$work/agreement-check.json" "$application" check --root . --json --no-cache \
   tests/check/Findings.lean
-run_expect 0 "$work/agreement-format.json" "$application" format --root . --json --no-cache \
+run_expect 0 "$work/agreement-format.json" "$application" format --check --root . --json --no-cache \
   tests/check/Findings.lean
 python3 - "$work/agreement-check.json" "$work/agreement-format.json" <<'PY'
 import json, sys

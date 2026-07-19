@@ -196,7 +196,7 @@ fix_applies fmt011 Duplicates.lean  FMT011 'deriving Repr, Repr' 'deriving Repr'
 # byte-for-byte, where `fix` above rewrote it to `(1)`. This is the RDF-IMPL decoupling on a syntax-tier
 # `.safe` fix: applied by `fix` at original coordinates, absent from `format`.
 run_expect 0 "$work/fmt013-format.json" \
-  sfmt format --root . --json --no-cache --select FMT013 tests/syntax/NestedParen.lean
+  sfmt format --check --root . --json --no-cache --select FMT013 tests/syntax/NestedParen.lean
 python3 - "$work/fmt013-format.json" <<'PY'
 import json, sys
 file, = json.load(open(sys.argv[1]))["files"]

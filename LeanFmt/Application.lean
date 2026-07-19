@@ -55,11 +55,25 @@ structure RunRequest where
   configPath? : Option FilePath := none
   select : Array String := #[]
   ignore : Array String := #[]
-  /-- Apply unsafe fixes too, not just safe ones. Governs which fixes a rendering mode admits into its
-  patch — so `format`/`diff` preview exactly what `fix` would write — and never relaxes validation or
-  conflict rejection. Display-only fixes are unaffected: nothing applies them. -/
+  /-- Apply unsafe fixes too, not just safe ones. Governs which fixes `fix` admits into its patch (and
+  `check`'s preview of it), never relaxing validation or conflict rejection. Since `ruff-11c` the
+  rendering modes carry no rule fix — `format` publishes only layout (`ruff-11d`), `diff` diffs only
+  layout — so this flag only shapes their reported withheld-unsafe count, not their bytes. Display-only
+  fixes are unaffected: nothing applies them. -/
   unsafeFixes : Bool := false
   validationLevel : ValidationLevel := .syntax
+  /-- `format --check` (`ruff-11d` FIP-IMPL): the non-writing CI preview. Meaningful only for `.format`.
+  When `false` (the default), `format` publishes the canonical layout in place through the `ruff-06`
+  guarded path — the same publisher `fix` uses. When `true`, `format` renders but writes nothing and
+  reports `would-format`/`clean`, exactly the pre-`ruff-11d` default. `check`/`diff`/`fix` ignore it. -/
+  formatCheck : Bool := false
+
+/-- Whether this run publishes source. `fix` always does; `format` does unless `--check` demotes it to a
+preview (`ruff-11d` FIP-IMPL). A writer needs the validator child, so it must fall through to
+`withExactRun` and stay off the cache-only preview fast paths — the one place the `--check` disposition
+reaches the driver, not just `Cli.lean`. `check`/`diff` never write. -/
+def RunRequest.writesFormat (request : RunRequest) : Bool :=
+  request.mode == .format && !request.formatCheck
 
 private abbrev SourceSnapshot := Project.SourceTarget
 
@@ -785,8 +799,9 @@ private def computeImportReports (plan : RulePlan) (workspace : Lake.Workspace)
 keyed on `renderCanonical` (`ruff-11c` RDF-IMPL, `notes/01-model.md` §2):
 
 - **Layout patch** (`format`/`diff`, `renderCanonical`). `base := canonical.text`, the reflowed bytes,
-  and the patch carries **no** rule fix. The render is the whole answer: `format` prints `output`, `diff`
-  diffs `normalized` against it. A rule fix rides `fix`, never layout.
+  and the patch carries **no** rule fix. The render is the whole answer: `format` publishes `output` in
+  place (`ruff-11d`, `formatFile`; `format --check` previews it), `diff` diffs `normalized` against it.
+  A rule fix rides `fix`, never layout.
 - **Fix patch** (`fix`; `check` computes it for the report). `base := normalized`, the file's own bytes,
   and the patch carries the admitted fixes from `selected` at **original** coordinates. `fix` validates
   and publishes it; it does not reflow. Because layout and fix never share a coordinate system here, the
@@ -919,6 +934,47 @@ private def fixFile (run : ExactRun) (plan : RulePlan) (unsafeFixes : Bool)
         written := true
         withheldUnsafe, suppressed, withheldRedundant }
 
+/-- Publish the canonical layout in place (`ruff-11d` FIP-IMPL) — `format`'s default disposition.
+
+Structurally `fixFile` with the *layout* base: it renders the `ruff-11c` layout patch
+(`renderCanonical := true`, so `patch.formatted = canonical.text` and the patch carries no rule fix),
+short-circuits `clean` when the file already is canonical, validates the reflowed bytes under the exact
+module setup, and publishes through `publishAtomic` — the same guarded path (stale-source check + atomic
+lossless write) `fix` and `organize` use. A file that does not elaborate is `broken` and never written;
+a partial write is impossible. `format` applies no rule fix; those ride `fix`. Status `formatted` +
+`written` mirrors `fix`'s `fixed`; the write bytes are `prepared.output`, denormalized to the file's own
+line endings, so a CRLF file stays CRLF. -/
+private def formatFile (run : ExactRun) (plan : RulePlan) (unsafeFixes : Bool)
+    (reportImports : Array Finding) (withheldRedundant : Nat)
+    (snapshot : SourceSnapshot) (analysis : SemanticAnalysis) : IO FileReport := do
+  match prepareFile plan (renderCanonical := true) unsafeFixes reportImports
+      withheldRedundant snapshot analysis with
+  | .error report => return report
+  | .ok prepared =>
+    let findings := prepared.findings
+    let withheldUnsafe := prepared.withheldUnsafe
+    let suppressed := prepared.suppressed
+    let withheldRedundant := prepared.withheldRedundant
+    unless prepared.changed do
+      return { (baseReport snapshot "clean" findings) with withheldUnsafe, suppressed, withheldRedundant }
+    let output := prepared.output
+    -- Validate the reflowed bytes exactly as `fix` validates its fixed bytes: the printer is not proven
+    -- to preserve elaboration (`RLF-REFLOW` moves bytes across lines), so a layout that fails to
+    -- elaborate is rejected, never published. No canonical render — the question is only whether these
+    -- bytes elaborate.
+    let candidate := snapshot.withSource output
+    let validation ← run.analyzeSnapshot candidate (renderCanonical := false) (validator := true)
+    if let some report := validationReport snapshot findings validation then
+      return report
+    match ← publishAtomic snapshot.path snapshot.source output with
+    | .error message => return { (baseReport snapshot "rejected" findings #[message]) with
+        withheldUnsafe, suppressed, withheldRedundant }
+    | .ok _ =>
+      return { (baseReport snapshot "formatted" findings) with
+        formatted := some output
+        written := true
+        withheldUnsafe, suppressed, withheldRedundant }
+
 def ExactRun.checkSnapshot (run : ExactRun) (plan : RulePlan)
     (snapshot : SourceSnapshot) : IO FileReport := do
   let analysis ← run.analyzeSnapshot snapshot (renderCanonical := false)
@@ -934,7 +990,7 @@ private def summarize (modeString : String) (files : Array FileReport)
   let findings := files.foldl (fun total file => total + file.findings.size) 0
   let changed := files.foldl (fun total file =>
     if file.status == "findings" || file.status == "would-format" ||
-        file.status == "would-diff" || file.status == "fixed" ||
+        file.status == "would-diff" || file.status == "fixed" || file.status == "formatted" ||
         file.status == "would-organize" || file.status == "organized" then total + 1 else total) 0
   let written := files.foldl (fun total file => if file.written then total + 1 else total) 0
   let broken := files.foldl (fun total file =>
@@ -1008,7 +1064,10 @@ def execute (request : RunRequest) : IO RunReport := do
   let demandedCaps := plan.demandedCaps renderCanonical applies
   let cached := cached.map fun cached? =>
     cached?.filter (cacheHitServes plan.requiredTier demandedCaps renderCanonical)
-  if cached.all Option.isSome then
+  -- A writing `format` (`ruff-11d`) is not served here: it must reach `withExactRun` for the validator
+  -- child before it publishes, so it is excluded from both cache-only preview fast paths. `format
+  -- --check`, which writes nothing, keeps them.
+  if !request.writesFormat && cached.all Option.isSome then
     if let some previewMode := request.mode.preview? then
       let mut files := #[]
       for ((snapshot, cached?), importReport) in (snapshots.zip cached).zip importReports do
@@ -1037,7 +1096,7 @@ def execute (request : RunRequest) : IO RunReport := do
   let available ← (((snapshots.zip cached).zip evidence).zip artifacts).mapM fun
     | (((snapshot, cached?), sourceEvidence), artifact?) =>
       availableAnalysis plan renderCanonical applies sourceEvidence snapshot cached? artifact?
-  if available.all Option.isSome then
+  if !request.writesFormat && available.all Option.isSome then
     if let some previewMode := request.mode.preview? then
       let analyses := available.filterMap id
       let files ← ((snapshots.zip analyses).zip importReports).mapM fun ((snapshot, analysis), ir) =>
@@ -1061,7 +1120,12 @@ def execute (request : RunRequest) : IO RunReport := do
         let report ← match request.mode with
           | .fix => fixFile exactRun plan request.unsafeFixes ir.1 ir.2 snapshot analysis
           | .check => previewFile .check plan request.unsafeFixes ir.1 ir.2 snapshot analysis
-          | .format => previewFile .format plan request.unsafeFixes ir.1 ir.2 snapshot analysis
+          -- `format` publishes in place by default (`ruff-11d`); `--check` demotes it to the preview.
+          | .format =>
+            if request.formatCheck then
+              previewFile .format plan request.unsafeFixes ir.1 ir.2 snapshot analysis
+            else
+              formatFile exactRun plan request.unsafeFixes ir.1 ir.2 snapshot analysis
           | .diff => previewFile .diff plan request.unsafeFixes ir.1 ir.2 snapshot analysis
         files := files.push report
       catch error =>

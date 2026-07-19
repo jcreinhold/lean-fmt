@@ -414,7 +414,7 @@ PY
 # `newName`. This is the RDF-IMPL decoupling on the FMT014 rename: applied by `fix` at original
 # coordinates, absent from `format`. (`--unsafe-fixes` is a no-op for `format` — it admits nothing to apply.)
 cp "$work/mixed.orig" "$proj/acc/MixedFmt.lean"
-check_exit env LEAN_NUM_THREADS=1 "$application" format --root "$proj" --json --no-cache \
+check_exit env LEAN_NUM_THREADS=1 "$application" format --check --root "$proj" --json --no-cache \
   --unsafe-fixes --select FMT014 "$proj/acc/MixedFmt.lean" >"$work/acc-format.json" 2>/dev/null
 python3 - "$work/acc-format.json" <<'PY'
 import json, sys

@@ -7,7 +7,8 @@ namespace LeanFmt.Internal
 
 /-- A module's canonical layout — the reflowed bytes, and nothing else.
 
-`text` is what `format` prints and what `diff` diffs the file's own bytes against. It carries **no**
+`text` is what `format` publishes in place (`ruff-11d`; `format --check` previews it) and what `diff`
+diffs the file's own bytes against. It carries **no**
 findings: since `ruff-11c` RDF-IMPL the layout patch applies no rule fix (a rule fix lands at the file's
 *original* coordinates through `fix`, never on the moved canonical bytes), so the source-rule surface
 that once re-indexed findings against this text (`renderCanonicalText`'s `runSourceRules`) is retired.

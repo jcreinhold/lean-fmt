@@ -88,15 +88,17 @@ for directory, _, files in os.walk(root):
 PY
 }
 
-# Every preview mode consumes the same result and leaves source bytes, mtimes, and permissions
-# untouched. `Findings.lean` is layout-clean but carries one FMT005 (duplicate import). Since `ruff-11c`
-# RDF-IMPL split layout from fix, `format`/`diff` reflow only and apply **no** rule fix: on a layout-clean
-# file they are `clean` and exit 0 even though `check` still reports the finding — the FMT005 dedup is a
-# fix, not layout, and rides `fix` (exercised below), never `format`.
+# Every non-writing preview — `check`, `format --check` (`ruff-11d`: the opt-in CI preview), and `diff`
+# — consumes the same result and leaves source bytes, mtimes, and permissions untouched. `Findings.lean`
+# is layout-clean but carries one FMT005 (duplicate import). Since `ruff-11c` RDF-IMPL split layout from
+# fix, `format`/`diff` reflow only and apply **no** rule fix: on a layout-clean file they are `clean` and
+# exit 0 even though `check` still reports the finding — the FMT005 dedup is a fix, not layout, and rides
+# `fix` (exercised below), never `format`. (Plain `format` writes in place since `ruff-11d`; these
+# previews use `--check` so the shared `Findings.lean` fixture stays byte-stable for the asserts below.)
 metadata "$source_file" >"$work/source.before"
 run_expect 1 "$work/check.json" "$application" check --root . --json --no-cache \
   tests/check/Findings.lean
-run_expect 0 "$work/format.json" "$application" format --root . --json --no-cache \
+run_expect 0 "$work/format.json" "$application" format --check --root . --json --no-cache \
   tests/check/Findings.lean
 run_expect 0 "$work/diff.txt" "$application" diff --root . --no-cache \
   tests/check/Findings.lean
@@ -126,7 +128,9 @@ PY
 
 # `RFP-IMPL`: **`format` formats.** This was `RFP-SPEC`'s characterization of the opposite — it
 # asserted exit 0 and `clean`, pinning a `format` that previewed lint fixes and never looked at
-# layout. Wiring the printer in flips it, which is what that test existed to force.
+# layout. Wiring the printer in flips it, which is what that test existed to force. Driven through
+# `format --check` (`ruff-11d`) so the render is exercised without writing the tracked fixture; the
+# in-place write of this same reflow is FIP-FINAL's exact-bytes acceptance.
 #
 # `tests/check/Layout.lean` holds `namespace     Alpha` — five spaces where `LeanFmt.Printer` renders
 # exactly one (`Printer.lean:344-348` `wholeSpan?` -> `spaceSeparated`, `:511-515` citing Lean's
@@ -137,7 +141,7 @@ PY
 # makes `patch.changed` — "are there fix edits?" — the wrong question, and it answers `false` here.
 # Had that survived, `format` would report this file clean while printing a different body, and
 # `RFP-SPEC`'s test would have passed as though nothing were wired in at all.
-run_expect 1 "$work/layout-format.json" "$application" format --root . --json --no-cache \
+run_expect 1 "$work/layout-format.json" "$application" format --check --root . --json --no-cache \
   tests/check/Layout.lean
 python3 - "$work/layout-format.json" <<'PY'
 import json, sys
@@ -200,15 +204,18 @@ cp -p "$work/Layout.lean" "$layout_file"
 # Artifact, exact fallback, and semantic-cache hit project to identical formatted output — the reflowed
 # layout. `Layout.lean` reflows (`namespace     Alpha` -> `namespace Alpha`), so unlike the layout-clean
 # `Findings.lean` above (on which `format` is now clean) it exercises a real canonical render across all
-# three paths. The hit remains usable without invoking an analyzer.
-run_expect 1 "$work/format-artifact.json" "$application" format --root . --json \
+# three paths. Driven through `format --check`: the render is the same on every path, and `--check` keeps
+# the cache-only fast path so the semantic-cache hit stays usable WITHOUT invoking an analyzer
+# (`LEAN_FMT_TEST_ANALYZER=/usr/bin/false` proves it) — a writing `format` would need the validator child
+# there and could not be served from cache alone (`ruff-11d` FIP-SPEC §5).
+run_expect 1 "$work/format-artifact.json" "$application" format --check --root . --json \
   tests/check/Layout.lean
 run_expect 1 "$work/format-hit.json" env LEAN_FMT_DISABLE_ARTIFACT=1 \
-  LEAN_FMT_TEST_ANALYZER=/usr/bin/false "$application" format --root . --json \
+  LEAN_FMT_TEST_ANALYZER=/usr/bin/false "$application" format --check --root . --json \
   tests/check/Layout.lean
 cmp "$work/format-artifact.json" "$work/format-hit.json"
 run_expect 1 "$work/format-fallback.json" env LEAN_FMT_DISABLE_ARTIFACT=1 \
-  "$application" format --root . --json --no-cache tests/check/Layout.lean
+  "$application" format --check --root . --json --no-cache tests/check/Layout.lean
 cmp "$work/format-artifact.json" "$work/format-fallback.json"
 rm -rf "$cache_root"
 
@@ -221,7 +228,7 @@ rm -rf "$cache_root"
 # so this pins it. The entry `check` leaves behind is real; only its usefulness to `format` is not.
 rm -rf "$cache_root"
 run_expect 0 "$work/seed-check.json" "$application" check --root . --json tests/check/Layout.lean
-run_expect 1 "$work/after-check-format.json" "$application" format --root . --json \
+run_expect 1 "$work/after-check-format.json" "$application" format --check --root . --json \
   tests/check/Layout.lean
 python3 - "$work/seed-check.json" "$work/after-check-format.json" <<'PY'
 import json, sys
@@ -550,9 +557,10 @@ cmp "$work/source.before" "$work/source.final"
 printf 'module\n\nimport LeanFmt.Basic\nimport LeanFmt.Basic\n\nnamespace     Alpha\n\ndef mixedValue : Nat := 1\n\nend Alpha\n' \
   >"$mixed_fixture"
 
-# `format` reflows the namespace spacing but keeps BOTH imports — the dedup is a fix, not layout — and
-# still reports the FMT005 finding at original coordinates.
-run_expect 1 "$work/mixed-format.json" "$application" format --root . --json --no-cache \
+# `format --check` reflows the namespace spacing but keeps BOTH imports — the dedup is a fix, not layout
+# — and still reports the FMT005 finding at original coordinates. (`--check` so the shared mixed fixture
+# is intact for the `fix` step below, which must see the original both-imports source.)
+run_expect 1 "$work/mixed-format.json" "$application" format --check --root . --json --no-cache \
   tests/modes/.rdf-impl-mixed.lean
 python3 - "$work/mixed-format.json" <<'PY'
 import json, sys
@@ -604,7 +612,7 @@ import json, sys
 f, = json.load(open(sys.argv[1]))["files"]
 assert f["status"] == "clean" and f["findings"] == [], f
 PY
-run_expect 1 "$work/mixed-postfix-format.json" "$application" format --root . --json --no-cache \
+run_expect 1 "$work/mixed-postfix-format.json" "$application" format --check --root . --json --no-cache \
   tests/modes/.rdf-impl-mixed.lean
 python3 - "$work/mixed-postfix-format.json" <<'PY'
 import json, sys
@@ -624,7 +632,7 @@ PY
 #    final newline. The change is pure layout, so `format` carries no findings; `check` (which runs
 #    selected rules, never layout) reports the very same file clean.
 printf 'module\n\ndef alpha : Nat := 1   \n\ndef beta : Nat := 2   ' >"$nosel_fixture"
-run_expect 1 "$work/nosel-format.json" "$application" format --root . --json --no-cache \
+run_expect 1 "$work/nosel-format.json" "$application" format --check --root . --json --no-cache \
   tests/modes/.rdf-layout-nosel.lean
 python3 - "$work/nosel-format.json" <<'PY'
 import json, sys
@@ -651,7 +659,7 @@ PY
 #    clean no-op on this finding-free file and adds no newline, leaving every byte exactly as written.
 #    This is the case the retired FMT001 corrupted (it edited the string's bytes); it now cannot recur.
 printf 'module\n\ndef stringWsValue : String := "alpha   \n  beta"' >"$string_fixture"
-run_expect 1 "$work/string-format.json" "$application" format --root . --json --no-cache \
+run_expect 1 "$work/string-format.json" "$application" format --check --root . --json --no-cache \
   tests/modes/.rdf-layout-string.lean
 python3 - "$work/string-format.json" <<'PY'
 import json, sys
@@ -677,7 +685,7 @@ PY
 #    horizontal whitespace, which is layout the reflow lays down: it is trimmed and the file gains a
 #    final newline. (`#exit` ends the command stream, so everything after it is uninterpreted tail.)
 printf 'module\n\ndef x : Nat := 1\n#exit\ntrailing garbage   ' >"$tail_fixture"
-run_expect 1 "$work/tail-format.json" "$application" format --root . --json --no-cache \
+run_expect 1 "$work/tail-format.json" "$application" format --check --root . --json --no-cache \
   tests/modes/.rdf-layout-tail.lean
 python3 - "$work/tail-format.json" <<'PY'
 import json, sys
@@ -685,57 +693,61 @@ f, = json.load(open(sys.argv[1]))["files"]
 assert f["formatted"] == "module\n\ndef x : Nat := 1\n#exit\ntrailing garbage\n", repr(f["formatted"])
 PY
 
-# --- RDF-FINAL: composition confluence. The two decoupled operations touch disjoint concerns — `fix`
-#     rewrites rule-defect bytes at original coordinates and never reflows; `format` reflows layout and
-#     never applies a fix — so composing them in either order reaches the SAME fixed point. This is a
-#     genuine confluence, not an assumed one: both orders are materialized and their bytes compared.
-#     (`format` is a stdout preview here, never a writer, so order B captures its `formatted` to disk
-#     before the next step. `fix` is the only writer.) ---
+# --- RDF-FINAL / FIP-IMPL: composition confluence with `format` WRITING. The two decoupled operations
+#     touch disjoint concerns — `fix` rewrites rule-defect bytes at original coordinates and never
+#     reflows; `format` reflows layout and never applies a fix — so composing them in either order
+#     reaches the SAME fixed point on disk. Since `ruff-11d`, `format` publishes in place, so both orders
+#     are materialized by the tools themselves (no captured-preview step) and the two files are compared.
+#     `fix` and `format` are both writers now; each still owns only its half. ---
 canonical='module\n\nimport LeanFmt.Basic\n\nnamespace Alpha\n\ndef mixedValue : Nat := 1\n\nend Alpha\n'
 source='module\n\nimport LeanFmt.Basic\nimport LeanFmt.Basic\n\nnamespace     Alpha\n\ndef mixedValue : Nat := 1\n\nend Alpha\n'
 
-# Order A — `fix` then `format`: fix dedups at original coords (layout still dirty), then format reflows.
+# Order A — `fix` then `format`: fix dedups at original coords (layout still dirty), then format reflows
+# and writes it. Both steps write in place; the file on disk is the converged form.
 printf "$source" >"$comp_a_fixture"
 run_expect 0 "$work/comp-a-fix.json" "$application" fix --root . --no-cache tests/modes/.rdf-final-comp-a.lean
-run_expect 1 "$work/comp-a-format.json" "$application" format --root . --json --no-cache \
+run_expect 0 "$work/comp-a-format.json" "$application" format --root . --json --no-cache \
   tests/modes/.rdf-final-comp-a.lean
-
-# Order B — `format` then `fix`: format reflows (both imports kept) to a materialized file, then fix
-# dedups that reflowed file at its own coords. Because format never writes, its preview is captured to
-# disk first; the fixed file is then already layout-canonical.
-printf "$source" >"$comp_b_fixture"
-run_expect 1 "$work/comp-b-format1.json" "$application" format --root . --json --no-cache \
-  tests/modes/.rdf-final-comp-b.lean
-python3 - "$work/comp-b-format1.json" "$comp_b_fixture" <<'PY'
+python3 - "$work/comp-a-format.json" <<'PY'
 import json, sys
 f, = json.load(open(sys.argv[1]))["files"]
-open(sys.argv[2], "w").write(f["formatted"])   # materialize the preview: format never writes on its own
+assert f["status"] == "formatted" and f["written"] is True, ("order A format did not write", f)
+PY
+
+# Order B — `format` then `fix`: format reflows (both imports kept) and writes, then fix dedups that
+# reflowed file at its own coords and writes. No captured-preview step — `format` materializes itself.
+printf "$source" >"$comp_b_fixture"
+run_expect 0 "$work/comp-b-format1.json" "$application" format --root . --json --no-cache \
+  tests/modes/.rdf-final-comp-b.lean
+python3 - "$work/comp-b-format1.json" <<'PY'
+import json, sys
+f, = json.load(open(sys.argv[1]))["files"]
+assert f["status"] == "formatted" and f["written"] is True, ("order B format did not write", f)
 PY
 run_expect 0 "$work/comp-b-fix.json" "$application" fix --root . --no-cache tests/modes/.rdf-final-comp-b.lean
 
-# Both orders converge to the identical canonical bytes. `format` never writes, so order A's converged
-# form is its stdout preview (`formatted`), while order B's is the on-disk file after `format`-materialize
-# then `fix`. Compare the two representations against each other and against the expected canonical bytes.
-CANON="$canonical" python3 - "$work/comp-a-format.json" "$comp_b_fixture" <<'PY'
-import json, os, sys
+# Both orders converge to the identical canonical bytes ON DISK. Compare each written file against the
+# expected canonical bytes and against each other.
+CANON="$canonical" python3 - "$comp_a_fixture" "$comp_b_fixture" <<'PY'
+import os, sys
 canonical = os.environ["CANON"].encode().decode("unicode_escape")
-a, = json.load(open(sys.argv[1]))["files"]
+a_bytes = open(sys.argv[1]).read()
 b_bytes = open(sys.argv[2]).read()
-assert a["formatted"] == canonical, ("order A (fix;format) diverged", repr(a["formatted"]))
+assert a_bytes == canonical, ("order A (fix;format) diverged", repr(a_bytes))
 assert b_bytes == canonical, ("order B (format;fix) diverged", repr(b_bytes))
-assert a["formatted"] == b_bytes, "the two composition orders are not confluent"
+assert a_bytes == b_bytes, "the two composition orders are not confluent"
 PY
-# Order B's converged file is a fixed point of BOTH operations: a fresh `format` is idempotent (clean,
-# nothing to reflow) and a fresh `fix` is idempotent (nothing to apply).
+# Each converged file is a fixed point of BOTH operations: a fresh `format` is idempotent (clean,
+# nothing to reflow, nothing written) and a fresh `fix` is idempotent (nothing to apply).
 run_expect 0 "$work/comp-b-format2.json" "$application" format --root . --json --no-cache \
   tests/modes/.rdf-final-comp-b.lean
 python3 - "$work/comp-b-format2.json" <<'PY'
 import json, sys
 f, = json.load(open(sys.argv[1]))["files"]
-assert f["status"] == "clean" and f["formatted"] is None, ("order B not a format fixed point", f)
+assert f["status"] == "clean" and f["written"] is False and f["formatted"] is None, \
+    ("order B not a format fixed point", f)
 PY
-# Order A's fixed file on disk is deduped-but-layout-dirty; order B's is fully converged. A post-
-# composition `check` of each is clean — no fix remains either way.
+# A post-composition `check` of each converged file is clean — no fix remains either way.
 run_expect 0 "$work/comp-a-check.json" "$application" check --root . --json --no-cache \
   tests/modes/.rdf-final-comp-a.lean
 run_expect 0 "$work/comp-b-check.json" "$application" check --root . --json --no-cache \

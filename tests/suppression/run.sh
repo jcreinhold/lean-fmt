@@ -86,7 +86,7 @@ PY
 cp tests/suppression/Movement.lean "$scratch"
 test "$(grep -c 'lean-fmt: ignore-next' "$scratch")" = 1
 # `format` reflows the item, and the directive survives the movement exactly once.
-run_expect 1 "$work/move-format.json" "$application" format --root . --json --no-cache "$scratch"
+run_expect 1 "$work/move-format.json" "$application" format --check --root . --json --no-cache "$scratch"
 python3 - "$work/move-format.json" <<'PY'
 import json, sys
 file, = json.load(open(sys.argv[1]))["files"]

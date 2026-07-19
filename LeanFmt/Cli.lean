@@ -66,6 +66,7 @@ file options:\n\
   --no-cache           neither read nor write result cache entries\n\
   --max-memory GIB     aggregate operating envelope (default: 8)\n\
   --unsafe-fixes       apply/preview unsafe fixes too (default: safe only)\n\
+  --check              format: report what would change, write nothing (CI preview)\n\
   --check-elab         fix: require elaboration validation"
 
 private def parseFileArgs (mode : RunMode) (args : List String) : Except String FileCommand :=
@@ -90,6 +91,11 @@ private def parseFileArgs (mode : RunMode) (args : List String) : Except String 
         loop rest { command with run := { command.run with validationLevel := .elaboration } }
       else
         .error "--check-elab is valid only for fix"
+    | "--check" :: rest =>
+      if mode == .format then
+        loop rest { command with run := { command.run with formatCheck := true } }
+      else
+        .error "--check is valid only for format"
     | "--unsafe-fixes" :: rest =>
       loop rest { command with run := { command.run with unsafeFixes := true } }
     | "--max-memory" :: value :: rest =>
@@ -161,14 +167,13 @@ private def renderText (report : RunReport) : IO Unit := do
       unless file.status == "clean" do IO.println s!"{file.path}: {file.status}"
       for diagnostic in file.diagnostics do IO.println s!"  {diagnostic}"
   | "format" =>
+    -- `format` publishes in place by default (`ruff-11d`): a concise per-file summary, never the file
+    -- body. `formatted` means written; `would-format` is the `--check` preview of a file that would
+    -- change. A clean file is silent. The full canonical text still rides `--json` (`file.formatted`).
     for file in report.files do
-      if let some formatted := file.formatted then
-        IO.println s!"=== {file.path} ({formatted.utf8ByteSize} bytes) ==="
-        IO.print formatted
-        unless formatted.endsWith "\n" do IO.println ""
-        IO.println s!"=== end {file.path} ==="
+      unless file.status == "clean" do IO.println s!"{file.path}: {file.status}"
       for diagnostic in file.diagnostics do
-        IO.println s!"{file.path}: {file.status}: {diagnostic}"
+        IO.println s!"  {diagnostic}"
   | "diff" =>
     for file in report.files do
       if let some diff := file.diff then IO.print diff
@@ -208,10 +213,14 @@ private def renderStatistics (report : RunReport) : IO Unit :=
     broken={report.broken} rejected={report.rejected} withheld_unsafe={report.withheldUnsafe} \
     suppressed={report.suppressed} infrastructure_failures={report.infrastructureFailures.size}"
 
-private def reportExitCode (mode : RunMode) (report : RunReport) : UInt32 :=
+/-- `writer` is whether this run publishes source (`fix`, or `format` without `--check`). A writer that
+successfully published a change exits 0, like `ruff format`/`ruff check --fix`; a non-writing preview
+(`check`, `diff`, `format --check`) exits 1 when anything would change (the CI code). Both exit 2 on
+infrastructure failure and 1 on a broken/rejected file. -/
+private def reportExitCode (writer : Bool) (report : RunReport) : UInt32 :=
   if !report.infrastructureFailures.isEmpty then 2
   else if report.broken > 0 || report.rejected > 0 then 1
-  else if mode != .fix && report.changed > 0 then 1 else 0
+  else if !writer && report.changed > 0 then 1 else 0
 
 private def renderRules (format : ReportFormat) : IO Unit :=
   match format with
@@ -259,7 +268,7 @@ private unsafe def runFileCommand (mode : RunMode) (args : List String) : IO UIn
     let report ← execute command.run
     renderReport command.outputFormat report
     if command.statistics then renderStatistics report
-    return reportExitCode mode report
+    return reportExitCode (mode == .fix || command.run.writesFormat) report
   catch error =>
     IO.eprintln s!"lean-fmt: {error}"
     return 2

@@ -205,7 +205,7 @@ PY
 # `format` owns the inverse half: it trims the trailing whitespace but applies no FMT005 fix, so both
 # imports survive and the duplicate is reported, not removed.
 seed
-run_expect 1 "$work/format-conflict.json" "${fallback[@]}" "$application" format --root . --json \
+run_expect 1 "$work/format-conflict.json" "${fallback[@]}" "$application" format --check --root . --json \
   --no-cache "$conflict"
 python3 - "$work/format-conflict.json" "$conflict" <<'PY'
 import json, sys
