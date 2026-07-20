@@ -17,52 +17,101 @@ syntax.
 Do not restore the archived Rust workspace, worker protocol, `libleanshared` boundary, or seven-crate
 split. `docs/projects/execution-core-v2/` and its measurements govern architecture work.
 
-## Build
+## Directory guides
+
+Read the nearest guide before working in a directory. A guide may add rules. It may not contradict
+this file.
+
+- `LeanFmt/AGENTS.md` for writing Lean;
+- `docs/projects/AGENTS.md` for prompt stacks.
+
+## Build and checks
 
 ```sh
-lake build
+lake build           # also builds LeanFmtCacheSpec; a broken proof fails the build
 lake exe lean-fmt
 lake exe lean-fmt-tests
-tests/compiler/run.sh
-tests/check/run.sh
-tests/suppression/run.sh
-tests/lossless/run.sh
-tests/modes/run.sh
-tests/scale/run.sh
-tests/service/run.sh
-tests/boundary/run.sh
-tests/syntax/run.sh
-tests/discovery/run.sh
-tests/stream/run.sh
-tests/reporting/run.sh
-tests/watch/run.sh
 ```
+
+Suites live in `tests/*/run.sh`: boundary, cache, catalog, check, compiler, discovery, imports,
+layout, lossless, modes, printer, reporting, scale, semantic, service, stream, suppression, syntax,
+watch.
+
+Match the checks to the change:
+
+- While working, build the modules you touched and read every error.
+- Run the suites that cover what you changed.
+- Before handoff, run `lake build`, `lake exe lean-fmt-tests`, and every suite.
+- `tests/security/bench.sh` measures the linear-time claim. It is a benchmark, not a suite. Run it
+  when you touch the source scans, and record the numbers.
 
 Use the target project's exact Lean toolchain for frontend and plugin experiments. Keep experiments
 out of production modules until their owning prompt selects and verifies the interface.
 
+## Which record wins
+
+- Built code decides what the product does. No record outranks it.
+- `results/` freezes a decision a prompt made, with its evidence. Amend it; do not work around it.
+- `evidence/` and `notes/` are working material. They support a result. They do not stand in for one.
+- `state/current.md` records where a stack stopped and what is unfinished. It does not overrule code
+  or a result.
+- `roadmap.md` orders the work. It does not report status.
+
+If code contradicts a result, reopen the stack that owns the result. Do not patch around it. If two
+records disagree, write down the disagreement and how you settled it.
+
+## Stack order
+
+The number sets the step: finish every stack at a lower number before starting a higher one. A letter
+suffix marks a stack opened against an earlier one, and it runs after the stack it amends.
+
 ## Design constraints
+
+### Scope and language
 
 - Prefer pure Lean. Add another language only for a named capability or a measured speed gain Lean
   cannot reach.
-- Preserve exact ordered imports, search-path precedence, syntax effects, and validation identity.
-- Do not call superset parsing exact.
-- Treat formatter-cache cold, ordinary-project-built, formatter-integrated-built, and cache-warm as
-  distinct workloads.
-- Stop memory experiments at 8 GiB aggregate RSS, abnormal pressure, or 256 MiB new swap.
-- Prefer private deep modules that hide lifecycle and cache sequencing.
-- Keep CLI parsing and rendering in `LeanFmt.Cli`; semantic execution, validation, stale checking, and
-  publication belong to `LeanFmt.Application` and its lower capabilities.
+
+### What the commands do
+
 - `check` and `diff` never write source. `format` and `fix` publish only a complete, conflict-free
   result validated under the exact module setup, after a stale-source check: `format` publishes the
   canonical layout (no rule fix), `fix` publishes admitted rule fixes at original coordinates.
   `format --check` and `diff` are the non-writing previews.
-- Rule selection is a projection over canonical results. It must not enter execution strategy or
-  result-cache identity.
-- `LeanFmt.Project` owns complete non-`.lake` source selection, exact Lake setup, and one shared typed
-  no-build graph. Do not replace it with per-file Lake runs or module-only selection.
 - Path errors name the caller's own argument, as `selected file does not exist: <arg>` does. New
   path-taking CLI surface — ranges, LSP URIs, integration entry points — pre-checks and does the same.
+- Rule selection is a projection over canonical results. It must not enter execution strategy or
+  result-cache identity.
+
+### Module ownership
+
+- Prefer private deep modules that hide lifecycle and cache sequencing.
+- Keep CLI parsing and rendering in `LeanFmt.Cli`; semantic execution, validation, stale checking, and
+  publication belong to `LeanFmt.Application` and its lower capabilities.
+- `LeanFmt.Project` owns complete non-`.lake` source selection, exact Lake setup, and one shared typed
+  no-build graph. Do not replace it with per-file Lake runs or module-only selection.
+- `LeanFmt.Service` owns only private NDJSON framing, normalized path/version state, and capacity-one
+  FIFO sequencing. Unsaved bytes share `Application.ExactRun` with batch fallback, never disk-state
+  evidence or persistent cache entries, and every request gets a fresh bounded child.
+
+### Exactness and coordinates
+
+- Preserve exact ordered imports, search-path precedence, syntax effects, and validation identity.
+- Every compiler-produced offset and digest indexes the normalized source, `raw.crlfToLf`, because
+  `Parser.mkInputContext` normalizes before it assigns any position. Projections, rule findings, and
+  artifact identity share that one coordinate system; a module linter sees already-normalized text and
+  never the raw bytes. Only file read and publish touch raw bytes, through
+  `LosslessSource.normalize`/`denormalize`. Digesting raw bytes against a compiler-produced identity
+  compares two different strings.
+- A `Syntax` leaf walk is not a linear cover of the source. A `choice` node holds several parses of one
+  byte range, so only one alternative spells those bytes; walking all of them reads the tokens out of
+  order. Terminal commands (`eoi`, `#exit`) never appear in the command stream, so the region a
+  projection models ends where the terminal *begins*, and the rest is verbatim tail. Both matter on
+  ordinary files, not just edge cases: `choice` hit 1 of 5 sampled mathlib modules, and `#exit` every
+  file that contains it.
+
+### The module artifact and rule tiers
+
 - A current ordinary `.olean` is successful-compilation evidence for source-tier rules, not a
   serialized syntax projection. Syntax-tier rules need the compiler artifact or the exact frontend.
 - A rule's tier is its `RuleImpl` constructor, never a field; a declared tier field goes unenforced
@@ -77,23 +126,28 @@ out of production modules until their owning prompt selects and verifies the int
   the `.olean` at that size. On the frozen mathlib sample the artifact runs 10.26× the source, 660 KB
   for the largest module. The ratio tracks token density, which varies 16×, so a small source need not
   mean a small artifact.
-- Every compiler-produced offset and digest indexes the normalized source, `raw.crlfToLf`, because
-  `Parser.mkInputContext` normalizes before it assigns any position. Projections, rule findings, and
-  artifact identity share that one coordinate system; a module linter sees already-normalized text and
-  never the raw bytes. Only file read and publish touch raw bytes, through
-  `LosslessSource.normalize`/`denormalize`. Digesting raw bytes against a compiler-produced identity
-  compares two different strings.
-- A `Syntax` leaf walk is not a linear cover of the source. A `choice` node holds several parses of one
-  byte range, so only one alternative spells those bytes; walking all of them reads the tokens out of
-  order. Terminal commands (`eoi`, `#exit`) never appear in the command stream, so the region a
-  projection models ends where the terminal *begins*, and the rest is verbatim tail. Both matter on
-  ordinary files, not just edge cases: `choice` hit 1 of 5 sampled mathlib modules, and `#exit` every
-  file that contains it.
 - Fetch and consume `leanFmtArtifact` inside one private Lake-owning operation. `Lake.Artifact` is a
   public descriptor, not authority by type alone; recompute its content hash and match the module and
   the full source snapshot. Filesystem presence or a raw path is not build validity.
-- `LeanFmt.Service` owns only private NDJSON framing, normalized path/version state, and capacity-one
-  FIFO sequencing. Unsaved bytes share `Application.ExactRun` with batch fallback, never disk-state
-  evidence or persistent cache entries, and every request gets a fresh bounded child.
+
+### Measurement practice
+
+- Do not call superset parsing exact. Say which of the four workloads a speed number came from. A
+  passing test is not a measurement. Keep measured results apart from expected ones, and run the
+  cheap check before you record either.
+- Treat formatter-cache cold, ordinary-project-built, formatter-integrated-built, and cache-warm as
+  distinct workloads.
+- Stop memory experiments at 8 GiB aggregate RSS, abnormal pressure, or 256 MiB new swap.
 - Do not repeatedly run full mathlib during development. Prompt 10 uses the frozen sample and named
   stress cases; save the 8,795-file run for a plausible late candidate.
+
+## Sharing this worktree
+
+An agent may start subagents that edit this worktree at the same time. Keep changes you did not make.
+
+- Do not use `git stash`.
+- Do not revert another session's files.
+- Commit with explicit pathspecs. Do not use a bare `git commit` or `git commit -a`.
+- Do not run a command that rewrites shared state: no `git reset --hard`, no `git checkout .`, no
+  force push, no branch switch.
+- Scope diffs and builds to your own change to tell whether a failure predates it.
