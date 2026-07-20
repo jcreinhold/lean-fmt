@@ -13,10 +13,10 @@ frontend. That is not a preference: `ruff-01`'s roadmap already committed to car
 printing in-frontend would buy free arg order for a median 1.96 s frontend run per file (`RLS-FINAL`).
 
 **What the projection does not carry, measured rather than assumed.** Over all 21 modules of this
-repository (81,115 nodes, `evidence/01-projection-shape.txt`), 28,350 nodes (35.0%) carry no token at
+repository (81,413 nodes, `evidence/01-projection-shape.txt`), 28,439 nodes (34.9%) carry no token at
 all — they are *absent* syntax, the unfilled optional slots of `declModifiers`, `optDeclSig`,
 `Termination.suffix` — and `collect` gives them range `(0,0)` because a node's range is the hull of the
-leaves beneath it and there are none. For 12,862 of them (15.9% of all nodes) the parent also has direct
+leaves beneath it and there are none. For 12,913 of them (15.9% of all nodes) the parent also has direct
 token children, so nothing in the projection says where among its siblings the absent slot belongs.
 `Lean.Syntax` has no position for them either; this is not something the projection dropped.
 
@@ -24,10 +24,10 @@ Two consequences run through everything below:
 
 1. **Node order is index order, never range order.** `collect` pushes a node's placeholder at
    `build.nodes.size` before folding its args left to right, so a parent precedes its children and
-   siblings ascend in arg order. Sorting children by range would be correct for the 65.0% that carry
+   siblings ascend in arg order. Sorting children by range would be correct for the 65.1% that carry
    tokens and silently wrong for the rest.
 2. **The conservative path reads bytes, not the tree.** Empty nodes contribute no bytes, so re-emitting
-   a command's byte extent is unaffected by all 12,862 ambiguous placements. It is the only path whose
+   a command's byte extent is unaffected by all 12,913 ambiguous placements. It is the only path whose
    correctness rests on no claim about any grammar, which is exactly what the roadmap's "unknown
    commands must round-trip conservatively" asks for. Every kind starts here and leaves only when a
    canonical layout for it is cited and pinned by a golden test.
@@ -56,7 +56,7 @@ transport format. This is the view a walk needs, computed once.
 Both child arrays ascend in index order, which **is** arg order by `collect`'s construction. The
 projection retains no other order, so this is not a property that can be checked against its output —
 `evidence/01-projection-shape.txt` checks the observable consequence instead: among a parent's
-token-bearing children, index order agrees with byte order (0 violations over 81,115 nodes). -/
+token-bearing children, index order agrees with byte order (0 violations over 81,413 nodes). -/
 structure Tree where
   source : LosslessSource
   /-- `nodeChildren[i]` are the node-children of node `i`, in arg order. -/
@@ -554,7 +554,7 @@ private def Tree.wholeSpan? (tree : Tree) (normalized : String) (span : CommandS
 
 /-- The first and last token index under `node`'s subtree, or `none` when it carries no token.
 
-`none` is the *absent syntax* case and is the common one: 35.0% of nodes are empty
+`none` is the *absent syntax* case and is the common one: 34.9% of nodes are empty
 (`evidence/01-projection-shape.txt`), because an unfilled optional slot is still a node. Asking this
 question is how a layout distinguishes "the slot is empty" from "the slot is filled", which is
 information the projection carries exactly and positions do not carry at all. -/
@@ -2101,13 +2101,26 @@ private def headerLayout? (normalized : String) (headerStop : Nat) (stx : Lean.S
 The header arrives already laid out because reading it needs `IO` (`headerDoc`) and nothing else here
 does. The tail is `[terminalStop, normalizedBytes)`: empty when the terminal is `eoi`, and `#exit`
 plus Lean's never-parsed remainder otherwise. It is carried verbatim because it is not syntax this
-printer has any claim on. -/
+printer has any claim on.
+
+Each of the three kinds is wrapped in a `mark`, which is what populates the source map (`ruff-14`
+RSF-IMPL). `mark` carries no width and renders exactly as its body (`Doc.lean:78-79`), so this changes
+no output byte — `tests/printer/run.sh`'s byte-for-byte round trip over the corpus is what says so.
+
+The marks are the **layout units** the range surface expands to, and they are deliberately at this
+granularity and no finer: a unit's rendering is independent of what follows it only when it ends in
+newline-bearing trivia, which is a property of a command's extent and not of anything inside one
+(`ruff-14` `notes/01-stream-range.md` §4). Marking sub-expressions would produce ranges no caller may
+safely format in isolation.
+
+No mark nests inside another here, and they close in source order, so `Doc.render`'s completion-order
+array is also source order for this document. `Printer.formatWithMap` relies on that. -/
 def Tree.document (tree : Tree) (normalized : String) (header : Doc) : Doc :=
   let body := tree.commands.foldl
-    (fun acc span => acc ++ tree.command normalized span) (.empty : Doc)
-  let tail : Doc := .verbatim
+    (fun acc span => acc ++ .mark span.extent (tree.command normalized span)) (.empty : Doc)
+  let tail : Doc := .mark ⟨tree.source.terminalStop, tree.source.normalizedBytes⟩ <| .verbatim
     (sliceNormalized normalized tree.source.terminalStop tree.source.normalizedBytes)
-  header ++ body ++ tail
+  .mark ⟨0, tree.source.headerStop⟩ header ++ body ++ tail
 
 namespace Printer
 
@@ -2132,7 +2145,8 @@ def headerDoc (normalized : String) (headerStop : Nat) : IO Doc := do
   return (← headerDoc? normalized headerStop).getD
     (.verbatim (sliceNormalized normalized 0 headerStop))
 
-/-- Format one projected module.
+/-- Format one projected module and keep the source map: one `Mark` per layout unit — the header, each
+command, and the tail — in source order. `format` is the text-only façade over this.
 
 `width` is required rather than defaulted. The margin is configuration, it enters cache identity
 (`RLC-SPEC` §5), and `RLC-FINAL` left the value itself an open language decision — defaulting it here
@@ -2144,11 +2158,35 @@ callers are `IO` already, and the parse reads only `normalized`, which this func
 nothing about what a formatted module *depends on* changed, and the artifact's digest still binds it.
 
 `tests/printer/run.sh` checks the result against real parser output: every module round-trips byte for
-byte, which is what says a layout that ran neither ran long nor stopped short. -/
-def format (source : LosslessSource) (normalized : String) (width : Nat)
-    (semantic : Option SemanticProjection := none) : IO String := do
+byte, which is what says a layout that ran neither ran long nor stopped short.
+
+This is the render; `format` drops the map rather than repeating the work, so there is exactly one
+place a module becomes text and no way for the two to disagree — not a second printer path.
+
+**`normalizeEof` moves the last unit's output end, and only the last unit's.** It trims trailing
+blank content and terminates the file with one `\n` (`normalizeEof`, above), which is a rewrite of the
+output's tail alone: every mark that ended before the trimmed region keeps its offsets exactly. The
+clamp below is therefore a fix-up of the final mark, not a re-derivation of the map — an output range
+running to the old end is re-pointed at the new end, and anything left past it is clipped. Without it a
+caller could slice past the string it was handed. -/
+def formatWithMap (source : LosslessSource) (normalized : String) (width : Nat)
+    (semantic : Option SemanticProjection := none) : IO (String × Array Mark) := do
   let header ← headerDoc normalized source.headerStop
-  return normalizeEof (renderText width ((Tree.ofSource source semantic).document normalized header))
+  let (rendered, marks) := render width ((Tree.ofSource source semantic).document normalized header)
+  let text := normalizeEof rendered
+  let renderedBytes := rendered.utf8ByteSize
+  let bytes := text.utf8ByteSize
+  let marks := marks.map fun mark =>
+    let stop := if mark.output.stop == renderedBytes then bytes else min mark.output.stop bytes
+    { mark with output := ⟨min mark.output.start bytes, max stop (min mark.output.start bytes)⟩ }
+  return (text, marks)
+
+/-- The formatted text, for the callers that do not need the source map — which is every caller
+outside the range surface. Mirrors `Doc.renderText` over `Doc.render`. -/
+def format (source : LosslessSource) (normalized : String) (width : Nat)
+    (semantic : Option SemanticProjection := none) : IO String :=
+  Prod.fst <$> formatWithMap source normalized width semantic
+
 
 end Printer
 

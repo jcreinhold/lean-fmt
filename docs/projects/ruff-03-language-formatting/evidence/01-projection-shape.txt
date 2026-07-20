@@ -1,23 +1,23 @@
-modules_analyzed=24 skipped=0 nodes=81115
+modules_analyzed=24 skipped=0 nodes=81413
 pre_order_contiguity_violations=0
 nonempty_node_children_out_of_source_order=0
-empty_nodes=28350 (35.0% of all nodes)
-empty_nodes_with_ambiguous_placement=12862 (15.9% of all nodes)
+empty_nodes=28439 (34.9% of all nodes)
+empty_nodes_with_ambiguous_placement=12913 (15.9% of all nodes)
 
 # most common empty (absent-syntax) kinds
-25362	null
-1004	Lean.Parser.Term.letConfig
-543	Lean.Parser.Termination.suffix
+25439	null
+1014	Lean.Parser.Term.letConfig
+544	Lean.Parser.Termination.suffix
 476	Lean.Parser.Command.declModifiers
 422	group
-304	Lean.Parser.Term.optEllipsis
+305	Lean.Parser.Term.optEllipsis
 173	Lean.Parser.Command.optDeclSig
 45	Lean.Parser.Command.optDeriving
 19	Lean.Parser.Term.attrKind
 2	Lean.Parser.Term.structInstFields
 
-# command kinds in the corpus (748 commands, 7 distinct kinds)
-645	Lean.Parser.Command.declaration
+# command kinds in the corpus (749 commands, 7 distinct kinds)
+646	Lean.Parser.Command.declaration
 34	Lean.Parser.Command.moduleDoc
 29	Lean.Parser.Command.namespace
 29	Lean.Parser.Command.end
@@ -25,8 +25,8 @@ empty_nodes_with_ambiguous_placement=12862 (15.9% of all nodes)
 1	Lean.Parser.Command.initialize
 1	Lean.Parser.Command.mutual
 
-# what the declaration shell layout can structurally claim (626/645 declarations, 97.1%); runtime guards may still refuse
-626	structurally claimed: shell laid out
+# what the declaration shell layout can structurally claim (627/646 declarations, 97.1%); runtime guards may still refuse
+627	structurally claimed: shell laid out
 19	rejected: shape not read yet
 
 # would a ctor/field shell layout decide anything? a member's shell is its opener, modifiers and
