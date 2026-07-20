@@ -1,43 +1,45 @@
-modules_analyzed=24 skipped=0 nodes=85832
+modules_analyzed=28 skipped=0 nodes=100631
 pre_order_contiguity_violations=0
 nonempty_node_children_out_of_source_order=0
-empty_nodes=29942 (34.9% of all nodes)
-empty_nodes_with_ambiguous_placement=13593 (15.8% of all nodes)
+empty_nodes=34648 (34.4% of all nodes)
+empty_nodes_with_ambiguous_placement=15673 (15.6% of all nodes)
 
 # most common empty (absent-syntax) kinds
-26788	null
-1078	Lean.Parser.Term.letConfig
-564	Lean.Parser.Termination.suffix
-498	Lean.Parser.Command.declModifiers
-444	group
-323	Lean.Parser.Term.optEllipsis
-177	Lean.Parser.Command.optDeclSig
-49	Lean.Parser.Command.optDeriving
-19	Lean.Parser.Term.attrKind
-2	Lean.Parser.Term.structInstFields
+31083	null
+1222	Lean.Parser.Term.letConfig
+678	Lean.Parser.Termination.suffix
+552	Lean.Parser.Command.declModifiers
+468	group
+356	Lean.Parser.Term.optEllipsis
+197	Lean.Parser.Command.optDeclSig
+58	Lean.Parser.Command.optDeriving
+20	Lean.Parser.Term.attrKind
+10	Lean.Parser.Tactic.optConfig
 
-# command kinds in the corpus (776 commands, 7 distinct kinds)
-670	Lean.Parser.Command.declaration
-37	Lean.Parser.Command.moduleDoc
-29	Lean.Parser.Command.namespace
-29	Lean.Parser.Command.end
-9	Lean.Parser.Command.open
+# command kinds in the corpus (953 commands, 9 distinct kinds)
+799	Lean.Parser.Command.declaration
+66	Lean.Parser.Command.moduleDoc
+35	Lean.Parser.Command.end
+33	Lean.Parser.Command.namespace
+12	Lean.Parser.Command.open
+4	Lean.Parser.Command.variable
+2	Lean.Parser.Command.section
 1	Lean.Parser.Command.initialize
 1	Lean.Parser.Command.mutual
 
-# what the declaration shell layout can structurally claim (651/670 declarations, 97.2%); runtime guards may still refuse
-651	structurally claimed: shell laid out
-19	rejected: shape not read yet
+# what the declaration shell layout can structurally claim (779/799 declarations, 97.5%); runtime guards may still refuse
+779	structurally claimed: shell laid out
+20	rejected: shape not read yet
 
 # would a ctor/field shell layout decide anything? a member's shell is its opener, modifiers and
 # name; 'collapsible' counts shells holding horizontal slack a layout could close, which is the
 # only figure that argues for building one. See the script for why the other three cannot.
-403	structure fields (simple): 0 collapsible, 324 one-token, 79 broken by a doc comment, 0 already tight, 0 unexpected shape
-73	inductive constructors: 0 collapsible, 0 one-token, 0 broken by a doc comment, 73 already tight, 0 unexpected shape
-13	structure constructors: 0 collapsible, 0 one-token, 0 broken by a doc comment, 13 already tight, 0 unexpected shape
+466	structure fields (simple): 0 collapsible, 361 one-token, 103 broken by a doc comment, 2 already tight, 0 unexpected shape
+83	inductive constructors: 0 collapsible, 0 one-token, 0 broken by a doc comment, 83 already tight, 0 unexpected shape
+15	structure constructors: 0 collapsible, 0 one-token, 0 broken by a doc comment, 15 already tight, 0 unexpected shape
 
 # of those, how the `instance` shells break down
-19	anonymous (one-token shell)
+20	anonymous (one-token shell)
 
 # shapes rejected only because their grammar has not been read yet
-19	Lean.Parser.Command.instance
+20	Lean.Parser.Command.instance
