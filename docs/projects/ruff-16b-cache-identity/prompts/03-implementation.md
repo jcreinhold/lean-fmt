@@ -1,14 +1,14 @@
 ---
 claim_id: RCI-IMPL
 status: planned
-depends_on: [RCI-SPEC]
+depends_on: [RCI-MODEL]
 ---
 
 # Rekey entries on the import closure
 
 ## Task
 
-Deliver **RCI-IMPL**: Implement the frozen identity in `LeanFmt.Cache`, expose from `LeanFmt.Project`
+Deliver **RCI-IMPL**: Implement the modelled decision in `LeanFmt.Cache`, matching `LeanFmt/Cache/Spec.lean`'s `serves`, expose from `LeanFmt.Project`
 only what supplying the closure requires, land the mutation-checked stale-hit differential, and measure
 one-file-edit invalidation at entry granularity.
 

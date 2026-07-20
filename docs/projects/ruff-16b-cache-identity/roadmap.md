@@ -75,6 +75,11 @@ The design is not obvious and this roadmap deliberately does not fix it:
   alone, it **falsely hits** in exactly the stale case that matters.
 - Comparing each module's trace-recorded own-source hash against disk cheaply identifies which modules
   are stale — but staleness must then propagate to dependents, which is a walk over the trace graph.
+  **Attempting to state this design's theorem refuted it** (`notes/01-what-is-provable.md` §6): edit `A`,
+  `lake build` rebuilds `A` but `B` *fails to build*, and now `A` matches its fresh trace while `B`
+  matches its own stale one — no staleness is detected anywhere, yet `B`'s artifact encodes old-`A`
+  grammar. Per-module self-consistency is insufficient; the check must be graph consistency, comparing
+  `B`'s recorded import hash against `A`'s current recorded value.
 - Tier may change the answer. A `.source` entry is source rules over raw bytes with no projection and
   may need no import coverage at all; a `.syntax` entry, and any entry carrying `canonical?`, certainly
   does.
@@ -115,11 +120,15 @@ measured defect) nor too fine (stale hits).
    answer, state what happens when currency cannot be determined, and specify the notation-based
    differential test. Ship documentation and one characterization test; no production interface, per the
    `*-SPEC` convention.
-2. **RCI-IMPL — Make entry currency precise.** Implement the frozen check in `LeanFmt.Cache`, consuming
+2. **RCI-MODEL — Model the decision and prove it sound and complete.** Express the frozen decision as a
+   pure function over an explicit observation, specify correctness independently of it, and prove both
+   directions under named hypotheses. See `notes/01-what-is-provable.md` for why the direct claim is not
+   a Lean theorem and what is provable instead.
+3. **RCI-IMPL — Make entry currency precise.** Implement the frozen check in `LeanFmt.Cache`, consuming
    Lake's recorded traces rather than reimplementing import resolution, with whatever `LeanFmt.Project`
    must expose. Land the mutation-checked differential test. Measure one-file-edit invalidation at entry
    granularity.
-3. **RCI-FINAL — Audit invalidation and settle the watch workaround.** Adversarial cases: cyclic-looking
+4. **RCI-FINAL — Audit invalidation and settle the watch workaround.** Adversarial cases: cyclic-looking
    import graphs, a module added or deleted mid-closure, config and toolchain changes, a dependency
    rebuild, index accumulation and collection. Decide re-exec on measurement. Verify no stale hit under
    any exercised edit shape.
@@ -138,7 +147,7 @@ and the frozen representative mathlib sample; do not run complete mathlib in thi
 ## Blueprint
 
 This is formatter repository maintenance and introduces no mathematical theorem claim. Therefore this
-roadmap sets `blueprint_tracked: false`.
+roadmap sets `blueprint_tracked: true`.
 
 ## Stop rules
 

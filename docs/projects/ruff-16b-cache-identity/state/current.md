@@ -16,8 +16,9 @@ No prompt has run. Nothing below is verified; it is the diagnosis that motivated
 | Prompt | Claim | Status | Depends on |
 | --- | --- | --- | --- |
 | 01-contract | RCI-SPEC | planned | — |
-| 02-implementation | RCI-IMPL | planned | RCI-SPEC |
-| 03-acceptance | RCI-FINAL | planned | RCI-IMPL |
+| 02-model | RCI-MODEL | planned | RCI-SPEC |
+| 03-implementation | RCI-IMPL | planned | RCI-MODEL |
+| 04-acceptance | RCI-FINAL | planned | RCI-IMPL |
 
 ## The diagnosis this stack starts from
 
@@ -69,6 +70,14 @@ before this diagnosis existed).
   A module's `.trace` records `deps.imports` per-import transitive hashes, its own source hash, and
   `depHash`. `RCI-SPEC` must verify that reading — it comes from sampled trace files, not from the Lake
   sources — before any design depends on it.
+- **This stack carries the repository's first theorem claims.** It still sets
+  `blueprint_tracked: false`: that flag records membership in a blueprint node graph, not the presence
+  of theorems, and `lean-fmt` has no blueprint document. The scope is
+  narrow and stated in `notes/01-what-is-provable.md`: the direct claim "the cache is always valid" is
+  not provable at all, because the decision is `IO` and Lean models no filesystem. What is provable is a
+  soundness/completeness pair for a pure decision function over an explicit observation, under four
+  named hypotheses — digest injectivity, observation faithfulness (**false in general**; a bounded
+  TOCTOU race), Lake trace fidelity, and analysis purity. Enumerating those hypotheses is the point.
 - A module's stored `depHash` records what it was **built against**, not whether that is still true.
   Read alone it falsely hits in exactly the stale case that matters. This is the trap the design
   comparison in `RCI-SPEC` exists to catch.
