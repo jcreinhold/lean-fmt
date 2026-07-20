@@ -48,6 +48,22 @@ Measured there, and design input here rather than trivia to rediscover:
   fixture is the shape of test that catches it. `PositionIndex` is reusable as a *pattern* — resolve
   only the offsets the answer names, in one forward pass — not as an implementation.
 
+## Inherited from `ruff-16-watch-incremental` (verified)
+
+- **`execute` does not reuse the result cache when called twice in one process.** Measured
+  (`ruff-16/results/02-implementation.md`, decision 3): a second in-process `execute` after a
+  one-file edit took **~70 s** — the full cold-cache price — where a *separate* process handling the
+  identical edit took **0.52 s**. A 135× penalty. `ruff-16` routed around it by making every watch
+  generation a fresh child process; nothing fixes it, and the root cause was not investigated because
+  it lives in `Cache`/`Application`.
+
+  **This stack is the one that cannot route around it.** An LSP server is by definition a long-running
+  process answering many requests, so if its request path reaches `execute` it will pay the cold price
+  on every request after the first. `LeanFmt.Service` already avoids this by holding one
+  `Project.load` per session and answering through `Application.ExactRun` rather than `execute`
+  (`ruff-14`) — `01-protocol` should confirm that the LSP path inherits that route and never calls
+  `execute` per request, and should treat any design that does as blocked on the defect above.
+
 ## Blockers and prerequisites
 
 - No blocker is currently recorded beyond the named prerequisite stacks.

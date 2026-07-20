@@ -38,6 +38,23 @@ SARIF is emitted for GitHub code scanning specifically: `columnKind: unicodeCode
 `originalUriBaseIds` with `%SRCROOT%`, percent-encoded `uri`s, and `helpUri` per rule. It validates
 against the vendored 2.1.0 schema in `tests/reporting/`, so a CI example can be checked offline.
 
+## Inherited from `ruff-16-watch-incremental` (verified)
+
+- **`--changed`, `--changed-since REV` and `--staged` shipped and are the CI/pre-commit selection
+  surface.** Provenance (comparison, resolved base, withheld paths, subset disclosure) is announced on
+  **stderr**, not in `RunReport` — `RunReport` is `ruff-15`'s frozen JSON compatibility surface and
+  `ruff-16` declined to break it to carry presentation. An integration that wants provenance
+  machine-readably must parse stderr or ask for a new surface; do not assume the JSON report carries
+  it.
+- **A `--changed` run that selects nothing exits 0 with an explicit notice and never reaches
+  `execute`** — an empty file list means "the whole project" there. Any integration reimplementing
+  selection must preserve that distinction, or a no-op commit reformats the tree.
+- **`--watch` admits only `check`, `diff` and `format --check`.** A writing mode under watch retriggers
+  itself through its own `mtime` changes, so `format`/`fix` are refused rather than looped.
+- **Document formats under `--watch` require `--output-file`** and replace it atomically per
+  generation; they are refused on stdout, because concatenated SARIF/JUnit/JSON documents parse as
+  nothing. A polling CI consumer reads the file.
+
 ## Blockers and prerequisites
 
 - No blocker is currently recorded beyond the named prerequisite stacks.

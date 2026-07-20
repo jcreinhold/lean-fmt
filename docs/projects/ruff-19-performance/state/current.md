@@ -34,6 +34,27 @@ one result changes what to profile:
   clustered at the end of a very large file). The build is one forward pass, O(source bytes) by
   construction, and is unmeasured.
 
+## Inherited from `ruff-16-watch-incremental` (verified)
+
+- **`execute` does not reuse the result cache when called twice in one process.** Measured
+  (`ruff-16/results/02-implementation.md`, decision 3): a second in-process `execute` after a
+  one-file edit took **~70 s** — the full cold-cache price — where a *separate* process handling the
+  identical edit took **0.52 s**. A 135× penalty. `ruff-16` routed around it by making every watch
+  generation a fresh child process; nothing fixes it, and the root cause was not investigated because
+  it lives in `Cache`/`Application`.
+
+  **This stack owns the defect.** `ruff-16` recorded it and explicitly deferred it here: it affects any
+  future caller that runs `execute` more than once per process, not just watch, and root-causing it
+  means going into `Cache`/`Application`. Decide whether to fix it or file it as a defect in its own
+  right; do not leave it living only in a result note.
+
+- **Watch's own costs are measured and small.** The poll walk is 34 ms and per-generation fixed cost is
+  ~400 ms (`workspace_load` 301–344 ms + `discovery` + `cache_epoch`), independent of file count;
+  1 file → 110 files adds ~70 ms warm. Watch parent RSS grew **16 KiB over 13 generations**. If the
+  discovery walk approaches generation cost on the frozen mathlib sample, `ruff-16` `notes` §1's
+  rejection of an event-driven watcher (Lean binds no `uv_fs_event`) should be reopened rather than
+  worked around.
+
 ## Blockers and prerequisites
 
 - No blocker is currently recorded beyond the named prerequisite stacks.
