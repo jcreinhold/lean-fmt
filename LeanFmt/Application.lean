@@ -1337,6 +1337,69 @@ private unsafe def measureCacheEpoch (args : List String) : IO UInt32 := do
   IO.println s!"cache_enabled={cache?.isSome}"
   return if cache?.isSome then 0 else 1
 
+/-- One file's resolved configuration with provenance: which config governs it, what every effective
+setting is and where it came from, which ignore sources are in force, and whether the file would be
+selected — with the deciding gate. `notes/01-discovery.md` §12.
+
+This is read-only and deterministic. It runs the same `Discovery.run` a real run does and asks it the
+same questions, rather than re-deriving selection independently: an introspection command that answers
+from its own model of the rules is worth less than no command, because it agrees with the rules exactly
+until the moment it matters. -/
+structure ConfigSetting where
+  key : String
+  value : String
+  origin : String
+  deriving Lean.ToJson
+
+structure ConfigReport where
+  path : String
+  relativePath : String
+  configFile : String
+  contributingFiles : Array String
+  ignoreSources : Array String
+  settings : Array ConfigSetting
+  notices : Array String
+  gate : Nat
+  gateDescription : String
+  selected : Bool
+  deriving Lean.ToJson
+
+def describeConfig (requestedRoot : FilePath) (configPath? : Option FilePath)
+    (argument : String) : IO ConfigReport := do
+  let root ← IO.FS.realPath requestedRoot
+  let configPath? := configPath?.map fun path =>
+    if path.isAbsolute then path else root / path
+  -- Pre-check by the caller's own argument, as the selection surface does
+  -- (`CLAUDE.md`: path errors name the caller's own argument).
+  unless ← System.FilePath.pathExists (System.FilePath.mk argument) do
+    throw <| IO.userError s!"selected file does not exist: {argument}"
+  let absolute ← IO.FS.realPath (System.FilePath.mk argument)
+  let relative := (Lake.relPathFrom root absolute).toString
+  let discovery ← Discovery.run root configPath?
+  let (key, config) := discovery.governing relative
+  let outsideRoot := absolute != root && !absolute.toString.startsWith
+    (root.toString ++ System.FilePath.pathSeparator.toString)
+  let insideLake := relative == ".lake" || relative.startsWith ".lake/" ||
+    relative.startsWith ".lake\\"
+  let notLean := absolute.extension != some "lean"
+  let gate :=
+    if outsideRoot || insideLake || notLean then Discovery.Gate.floor
+    else discovery.explain relative
+  return {
+    path := absolute.toString
+    relativePath := relative
+    configFile :=
+      if key.isEmpty && config.origins.isEmpty then "(none — built-in defaults)"
+      else if key.isEmpty then "(project root)" else key
+    contributingFiles := config.contributingFiles
+    ignoreSources := if config.respectGitignore then discovery.ignoreSources else #[]
+    settings := config.describe.map fun (key, value, origin) => { key, value, origin }
+    notices := config.notices
+    gate := gate.number
+    gateDescription := gate.describe
+    selected := gate == .selected
+  }
+
 structure CleanReport where
   root : String
   removed : Bool

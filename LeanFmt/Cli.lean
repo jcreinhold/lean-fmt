@@ -58,6 +58,7 @@ usage: lean-fmt {check|format|diff|fix} [OPTIONS] [FILE...]\n\
        lean-fmt docs [--root PATH] [--check]\n\
        lean-fmt clean [--root PATH] [--json]\n\
        lean-fmt compiler {setup|status} [--root PATH] [--json]\n\
+       lean-fmt config show PATH [--root PATH] [--config PATH] [--json]\n\
 \n\
 file options:\n\
   --root PATH          Lake project root (default: .)\n\
@@ -327,6 +328,51 @@ private def renderCompilerStatus (format : ReportFormat) (report : CompilerStatu
       IO.println s!"{item.path}\t{item.module}\t{item.status}"
     IO.println s!"ready={report.ready} missing={report.missing} unbuilt={report.unbuilt}"
 
+private def parseConfigShowArgs (args : List String) :
+    Except String (FilePath × Option FilePath × String × ReportFormat) :=
+  let rec loop (remaining : List String) (root : FilePath) (config? : Option FilePath)
+      (target? : Option String) (format : ReportFormat) :
+      Except String (FilePath × Option FilePath × String × ReportFormat) :=
+    match remaining with
+    | [] =>
+      match target? with
+      | some target => .ok (root, config?, target, format)
+      | none => .error "usage: lean-fmt config show PATH [--root PATH] [--config PATH] [--json]"
+    | "--json" :: rest => loop rest root config? target? .json
+    | "--root" :: dir :: rest => loop rest dir config? target? format
+    | "--config" :: file :: rest => loop rest root (some file) target? format
+    | "--root" :: [] => .error "--root expects a path"
+    | "--config" :: [] => .error "--config expects a path"
+    | option :: rest =>
+      if option.startsWith "-" then .error s!"unknown config option: {option}"
+      else if target?.isSome then .error "config show takes exactly one path"
+      else loop rest root config? (some option) format
+  loop args "." none none .text
+
+/- Text rendering is deliberately one `key = value  (origin)` line per setting with no alignment
+padding: the output is meant to be diffed and grepped between runs, and column padding makes an
+unrelated key's length change every other line. -/
+private def renderConfigShow (format : ReportFormat) (report : ConfigReport) : IO Unit :=
+  match format with
+  | .json => IO.println (Lean.toJson report).compress
+  | .text => do
+    IO.println s!"path: {report.path}"
+    IO.println s!"config: {report.configFile}"
+    if report.contributingFiles.isEmpty then
+      IO.println "contributing files: (none)"
+    else
+      IO.println s!"contributing files: {String.intercalate ", " report.contributingFiles.toList}"
+    if report.ignoreSources.isEmpty then
+      IO.println "ignore sources: (none)"
+    else
+      IO.println s!"ignore sources: {String.intercalate ", " report.ignoreSources.toList}"
+    IO.println s!"selected: {report.selected} ({report.gateDescription})"
+    for notice in report.notices do
+      IO.println s!"notice: {notice}"
+    IO.println "settings:"
+    for setting in report.settings do
+      IO.println s!"  {setting.key} = {setting.value}  ({setting.origin})"
+
 private unsafe def runFileCommand (mode : RunMode) (args : List String) : IO UInt32 := do
   let command ← match parseFileArgs mode args with
     | .ok command => pure command
@@ -347,7 +393,7 @@ unsafe def runCli (arguments : List String) : IO UInt32 := do
   match args with
   | "--help" :: _ => IO.println usage; return 0
   | command :: "--help" :: _ =>
-    if #["check", "format", "diff", "fix", "organize", "serve", "rules", "explain", "docs", "clean", "compiler"].contains command then
+    if #["check", "format", "diff", "fix", "organize", "serve", "rules", "explain", "docs", "clean", "compiler", "config"].contains command then
       IO.println usage
       return 0
     IO.eprintln usage
@@ -405,6 +451,16 @@ unsafe def runCli (arguments : List String) : IO UInt32 := do
       | .error message => IO.eprintln message; return 2
     try
       renderClean command.outputFormat (← clean command.root)
+      return 0
+    catch error =>
+      IO.eprintln s!"lean-fmt: {error}"
+      return 2
+  | "config" :: "show" :: rest =>
+    let (root, config?, target, format) ← match parseConfigShowArgs rest with
+      | .ok parsed => pure parsed
+      | .error message => IO.eprintln message; return 2
+    try
+      renderConfigShow format (← describeConfig root config? target)
       return 0
     catch error =>
       IO.eprintln s!"lean-fmt: {error}"

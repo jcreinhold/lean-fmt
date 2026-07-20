@@ -33,6 +33,11 @@ fin_string_fixture="$repo_root/tests/modes/.fip-final-string.lean"
 fin_stale_fixture="$repo_root/tests/modes/.fip-final-stale.lean"
 fin_incl_fixture="$repo_root/tests/modes/.fip-final-incl.lean"
 fin_excl_fixture="$repo_root/tests/modes/.fip-final-excl.lean"
+# RCD-IMPL (`ruff-13`) write-path fixtures. `rcd_floor_fixture` lives *inside* `.lake` on purpose: gate
+# 1 is the one selection gate no configuration key can lift, and the only honest way to test it is to
+# put a real, writable, layout-dirty Lean file there and confirm every mode refuses it.
+rcd_excl_fixture="$repo_root/tests/modes/.rcd-impl-excluded.lean"
+rcd_floor_fixture="$repo_root/.lake/build/.rcd-impl-floor.lean"
 
 # Both fixtures are edited in place below and both are tracked files, so restoring them is not
 # cleanup — it is the difference between a failing test and a dirty working tree the next run
@@ -48,7 +53,8 @@ restore() {
     "$nosel_fixture" "$string_fixture" "$tail_fixture" "$mixed_fixture" \
     "$comp_a_fixture" "$comp_b_fixture" \
     "$fin_exact_fixture" "$fin_broken_fixture" "$fin_crlf_fixture" "$fin_string_fixture" \
-    "$fin_stale_fixture" "$fin_incl_fixture" "$fin_excl_fixture"
+    "$fin_stale_fixture" "$fin_incl_fixture" "$fin_excl_fixture" \
+    "$rcd_excl_fixture" "$rcd_floor_fixture"
   rm -f "$repo_root"/tests/modes/.fip-final-*.lean.lean-fmt-tmp-*
 }
 trap restore EXIT
@@ -931,5 +937,145 @@ run_expect 1 "$work/fin-nw-diff.txt" "$application" diff --root . --no-cache \
   tests/modes/.fip-final-exact.lean
 metadata "$fin_exact_fixture" >"$work/fin-nw.after"
 cmp "$work/fin-nw.before" "$work/fin-nw.after"   # check and diff wrote nothing
+
+# 9. RCD-IMPL (`ruff-13`) gate 1: a path inside `.lake` is refused by every mode under every
+#    configuration. `.lake` holds Lake's build outputs and vendored dependency sources; before this
+#    stack an explicit `.lake/...` argument was accepted and *written*
+#    (`docs/projects/ruff-13-config-discovery/evidence/01-discovery-baseline.md` §3). The floor is
+#    absolute: no `--config`, no `force-exclude` setting, and no explicit argument lifts it, so each
+#    setting is asserted separately rather than once with the default.
+printf 'module\n\nnamespace     Floor\n\ndef floorValue : Nat := 1\n\nend Floor\n' >"$rcd_floor_fixture"
+cat >"$work/rcd-force-on.toml" <<'EOF'
+force-exclude = true
+EOF
+cat >"$work/rcd-force-off.toml" <<'EOF'
+force-exclude = false
+EOF
+metadata "$rcd_floor_fixture" >"$work/rcd-floor.before"
+for mode in format fix; do
+  run_expect 2 "$work/rcd-floor-$mode.txt" "$application" "$mode" --root . --no-cache \
+    .lake/build/.rcd-impl-floor.lean
+  grep -q 'inside the Lake build directory' "$work/rcd-floor-$mode.txt.stderr"
+  for setting in on off; do
+    run_expect 2 "$work/rcd-floor-$mode-$setting.txt" "$application" "$mode" --root . --no-cache \
+      --config "$work/rcd-force-$setting.toml" .lake/build/.rcd-impl-floor.lean
+    grep -q 'inside the Lake build directory' "$work/rcd-floor-$mode-$setting.txt.stderr"
+  done
+done
+metadata "$rcd_floor_fixture" >"$work/rcd-floor.after"
+cmp "$work/rcd-floor.before" "$work/rcd-floor.after"   # nothing inside .lake was written
+"$application" config show .lake/build/.rcd-impl-floor.lean --root . --json >"$work/rcd-floor.json"
+python3 - "$work/rcd-floor.json" <<'PY'
+import json, sys
+r = json.load(open(sys.argv[1]))
+assert r["selected"] is False and r["gate"] == 1, r
+PY
+
+# 10. Gates 2-4 and `force-exclude`: an *explicit* path bypasses configured exclusion by default (the
+#     user named the file), and `force-exclude = true` is exactly the setting that makes exclusion
+#     apply to explicit paths too. Same file, same argument, same mode - only the setting differs, so
+#     a difference in bytes written is attributable to nothing else.
+printf 'module\n\nnamespace     Excluded\n\ndef excludedValue : Nat := 1\n\nend Excluded\n' \
+  >"$rcd_excl_fixture"
+cat >"$work/rcd-excl.toml" <<'EOF'
+exclude = ["tests/modes/.rcd-impl-excluded.lean"]
+EOF
+cat >"$work/rcd-excl-forced.toml" <<'EOF'
+exclude = ["tests/modes/.rcd-impl-excluded.lean"]
+force-exclude = true
+EOF
+metadata "$rcd_excl_fixture" >"$work/rcd-excl.before"
+run_expect 0 "$work/rcd-excl-forced.json" "$application" format --root . --json --no-cache \
+  --config "$work/rcd-excl-forced.toml" tests/modes/.rcd-impl-excluded.lean
+python3 - "$work/rcd-excl-forced.json" <<'PY'
+import json, sys
+r = json.load(open(sys.argv[1]))
+assert r["files"] == [], ("force-exclude did not remove an explicitly named excluded path", r)
+assert r["written"] == 0, r
+PY
+metadata "$rcd_excl_fixture" >"$work/rcd-excl.forced-after"
+cmp "$work/rcd-excl.before" "$work/rcd-excl.forced-after"   # force-exclude withheld the write
+run_expect 0 "$work/rcd-excl-plain.json" "$application" format --root . --json --no-cache \
+  --config "$work/rcd-excl.toml" tests/modes/.rcd-impl-excluded.lean
+python3 - "$work/rcd-excl-plain.json" <<'PY'
+import json, sys
+r = json.load(open(sys.argv[1]))
+f, = r["files"]
+assert f["status"] == "formatted" and f["written"] is True, \
+    ("an explicit path was not written without force-exclude", r)
+PY
+python3 - "$rcd_excl_fixture" <<'PY'
+import sys
+assert open(sys.argv[1]).read() == \
+    "module\n\nnamespace Excluded\n\ndef excludedValue : Nat := 1\n\nend Excluded\n"
+PY
+
+# 11. `[format] line-width` participates in the result-cache identity and `[lint]` does not
+#     (`notes/01-discovery.md` §9.2), asserted behaviorally with the cache **on**: the width-100 run
+#     is stored, and the width-20 run that follows must not be served from it. A hit counter would
+#     prove less - this asserts the wrong answer cannot be returned, which is the property at stake.
+rm -rf "$cache_root"
+# A layout-clean file at width 100 whose canonical layout at width 20 differs: without a
+# width-sensitive body, both runs are `clean` and the assertion below passes whether or not the
+# cache respects the width.
+printf 'module\n\nnamespace Width\n\ndef widthValue : Nat := 1 + 2 + 3 + 4 + 5 + 6 + 7 + 8 + 9 + 10\n\nend Width\n' \
+  >"$rcd_excl_fixture"
+cat >"$work/rcd-w100.toml" <<'EOF'
+[format]
+line-width = 100
+EOF
+cat >"$work/rcd-w20.toml" <<'EOF'
+[format]
+line-width = 20
+EOF
+cat >"$work/rcd-w100-lint.toml" <<'EOF'
+[format]
+line-width = 100
+[lint]
+select = ["security"]
+EOF
+run_expect 0 "$work/rcd-w100.json" "$application" format --check --root . --json \
+  --config "$work/rcd-w100.toml" tests/modes/.rcd-impl-excluded.lean
+run_expect 0 "$work/rcd-w100b.json" "$application" format --check --root . --json \
+  --config "$work/rcd-w100.toml" tests/modes/.rcd-impl-excluded.lean
+cmp "$work/rcd-w100.json" "$work/rcd-w100b.json"   # a warm identical run is byte-identical
+run_expect 0 "$work/rcd-w100-lint.json" "$application" format --check --root . --json \
+  --config "$work/rcd-w100-lint.toml" tests/modes/.rcd-impl-excluded.lean
+python3 - "$work/rcd-w100.json" "$work/rcd-w100-lint.json" <<'PY'
+import json, sys
+a, b = (json.load(open(p)) for p in sys.argv[1:3])
+assert [f["status"] for f in a["files"]] == [f["status"] for f in b["files"]], (a, b)
+PY
+run_expect 1 "$work/rcd-w20.json" "$application" format --check --root . --json \
+  --config "$work/rcd-w20.toml" tests/modes/.rcd-impl-excluded.lean
+python3 - "$work/rcd-w100.json" "$work/rcd-w20.json" <<'PY'
+import json, sys
+wide, narrow = (json.load(open(p)) for p in sys.argv[1:3])
+assert [f["status"] for f in wide["files"]] == ["clean"], wide
+assert [f["status"] for f in narrow["files"]] == ["would-format"], \
+    ("a width-100 cache entry was served to a width-20 run", narrow)
+PY
+rm -rf "$cache_root"
+
+# 12. `config show` is read-only and deterministic: two invocations agree byte for byte, the source is
+#     untouched, and the provenance names the file and line a setting actually came from.
+metadata "$rcd_excl_fixture" >"$work/rcd-show.before"
+"$application" config show tests/modes/.rcd-impl-excluded.lean --root . --json \
+  --config "$work/rcd-w20.toml" >"$work/rcd-show-a.json"
+"$application" config show tests/modes/.rcd-impl-excluded.lean --root . --json \
+  --config "$work/rcd-w20.toml" >"$work/rcd-show-b.json"
+cmp "$work/rcd-show-a.json" "$work/rcd-show-b.json"
+metadata "$rcd_excl_fixture" >"$work/rcd-show.after"
+cmp "$work/rcd-show.before" "$work/rcd-show.after"   # introspection wrote nothing
+python3 - "$work/rcd-show-a.json" <<'PY'
+import json, sys
+r = json.load(open(sys.argv[1]))
+settings = {s["key"]: s for s in r["settings"]}
+width = settings["format.line-width"]
+assert width["value"] == "20", width
+assert width["origin"].endswith("rcd-w20.toml:2"), width
+assert settings["include"]["origin"] == "default", settings["include"]
+assert r["selected"] is True and r["gate"] == 0, r
+PY
 
 printf 'lean-fmt product mode integration tests passed\n'

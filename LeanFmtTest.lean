@@ -523,6 +523,143 @@ ignore = [\"FMT004\"]\n\
   finally
     IO.FS.removeDirAll directory
 
+/-- Hierarchical configuration discovery (`ruff-13` RCD-IMPL; `notes/01-discovery.md` §3–§12).
+
+Everything here is filesystem-real: a temporary tree with actual config files, actual `.gitignore`
+files, and actual sources, walked by the same `Discovery.run` a real run uses. A unit test that hands a
+hand-built `FormatterConfig` to the matcher would pass while discovery picked the wrong file, which is
+the failure this stack exists to prevent.
+
+`.gitignore` handling is asserted through `Discovery.run` rather than against the pattern compiler
+directly, for the same reason: the compiler being right about `build/` is worth nothing if the walk
+does not prune `build/` — and pruning, not per-file matching, is what git's directory-exclusion rule
+licenses (§10). -/
+private def testDiscovery : IO Unit := do
+  let directory ← IO.FS.createTempDir
+  let root ← IO.FS.realPath directory
+  let write (relative content : String) : IO Unit := do
+    let path := root / System.FilePath.mk relative
+    if let some parent := path.parent then IO.FS.createDirAll parent
+    IO.FS.writeFile path content
+  try
+    -- §3 both recognized names present is a hard error, never a silent precedence win.
+    write ".lean-fmt.toml" "[lint]\nselect = [\"security\"]\n"
+    write "lean-fmt.toml" "[lint]\nselect = [\"all\"]\n"
+    let ambiguous ← try discard <| Discovery.run root none; pure false catch _ => pure true
+    ensure ambiguous "two recognized configuration names in one directory were accepted"
+    IO.FS.removeFile (root / "lean-fmt.toml")
+    -- §5 the closest config wins outright: `sub` does not inherit the root's `exclude`, and the root
+    -- does not acquire `sub`'s width. No implicit merging.
+    write ".lean-fmt.toml" "\
+exclude = [\"skipped\"]\n\
+[format]\n\
+line-width = 60\n"
+    write "sub/.lean-fmt.toml" "[format]\nline-width = 42\n"
+    write "A.lean" "module\n"
+    write "sub/B.lean" "module\n"
+    write "skipped/C.lean" "module\n"
+    write "sub/skipped/D.lean" "module\n"
+    let discovery ← Discovery.run root none
+    ensure ((discovery.configFor "A.lean").format.lineWidth == 60)
+      "the root configuration did not govern a root file"
+    ensure ((discovery.configFor "sub/B.lean").format.lineWidth == 42)
+      "the closest configuration did not govern a nested file"
+    ensure ((discovery.configFor "sub/B.lean").excludePatterns.isEmpty)
+      "the nested configuration inherited the root's exclude — the hierarchy must not merge"
+    ensure (discovery.explain "skipped/C.lean" == .configExclude)
+      "an excluded directory's contents were not reported as configuration-excluded"
+    ensure (discovery.explain "sub/skipped/D.lean" == .selected)
+      "the root's exclude reached a subtree its own configuration governs"
+    ensure (discovery.configKeyFor "A.lean" != discovery.configKeyFor "sub/B.lean")
+      "two distinct effective configurations shared one plan key"
+    -- §6 `extend` composes: scalars and base arrays replace, `extend-*` concatenates, and `extend`
+    -- itself is not inherited. §7 patterns anchor at the *declaring* file's directory.
+    write "base.toml" "\
+[format]\n\
+line-width = 90\n\
+[lint]\n\
+select = [\"security\"]\n\
+extend-select = [\"FMT010\"]\n"
+    write "sub/.lean-fmt.toml" "\
+extend = \"../base.toml\"\n\
+[format]\n\
+line-width = 42\n\
+[lint]\n\
+extend-select = [\"FMT011\"]\n"
+    let extended ← Discovery.run root none
+    let child := extended.configFor "sub/B.lean"
+    ensure (child.format.lineWidth == 42) "the extending file did not win a scalar"
+    ensure (child.selectedSelectors == #["security"]) "the parent's base array was not inherited"
+    ensure (child.extendSelectSelectors == #["FMT010", "FMT011"])
+      "extend-select did not concatenate parent-then-child"
+    ensure (child.contributingFiles.size == 2)
+      "the extend chain did not record both contributing files"
+    -- §6 a cycle terminates as an error rather than a hang or a depth-limit surprise.
+    write "cycle-a.toml" "extend = \"cycle-b.toml\"\n"
+    write "cycle-b.toml" "extend = \"cycle-a.toml\"\n"
+    write "sub/.lean-fmt.toml" "extend = \"../cycle-a.toml\"\n"
+    let cyclic ← try discard <| Discovery.run root none; pure false catch _ => pure true
+    ensure cyclic "an extend cycle was accepted"
+    IO.FS.removeFile (root / "sub" / ".lean-fmt.toml")
+    -- §8.2 migration: a flat linter key still works and says so; setting it in both places is an
+    -- error; `line-width` at the top level is an error rather than a silent no-op.
+    write ".lean-fmt.toml" "select = [\"security\"]\n"
+    let migrated ← Discovery.run root none
+    ensure (migrated.fallback.selectedSelectors == #["security"])
+      "a flat linter key stopped working"
+    ensure (migrated.fallback.notices.any fun notice => (notice.splitOn "select").length > 1)
+      "a flat linter key produced no deprecation notice"
+    write ".lean-fmt.toml" "select = [\"security\"]\n[lint]\nselect = [\"all\"]\n"
+    let both ← try discard <| Discovery.run root none; pure false catch _ => pure true
+    ensure both "the same linter key set flat and under [lint] was accepted"
+    write ".lean-fmt.toml" "line-width = 80\n"
+    let misplaced ← try discard <| Discovery.run root none; pure false catch _ => pure true
+    ensure misplaced "line-width at the top level was accepted"
+    -- §9.3 the width bound is enforced at load, not at render.
+    for width in ["0", "1001"] do
+      write ".lean-fmt.toml" s!"[format]\nline-width = {width}\n"
+      let bounded ← try discard <| Discovery.run root none; pure false catch _ => pure true
+      ensure bounded s!"line-width = {width} was accepted outside 1..1000"
+    -- §10 a `.gitignore` prunes, and a nearer file's negation wins over a farther file's exclusion.
+    write ".lean-fmt.toml" "[format]\nline-width = 100\n"
+    write ".gitignore" "build/\n*.tmp.lean\n"
+    write ".git/HEAD" "ref: refs/heads/main\n"
+    write "build/Generated.lean" "module\n"
+    write "A.tmp.lean" "module\n"
+    write "sub/.gitignore" "!*.tmp.lean\n"
+    write "sub/A.tmp.lean" "module\n"
+    let ignoring ← Discovery.run root none
+    ensure (!ignoring.sources.contains "build/Generated.lean")
+      "an ignored directory was walked"
+    ensure (!ignoring.sources.contains "A.tmp.lean") "an ignored file was discovered"
+    ensure (ignoring.sources.contains "sub/A.tmp.lean")
+      "a nearer .gitignore negation did not re-include a file"
+    ensure (ignoring.ignoreSources.any (·.endsWith ".gitignore"))
+      "the ignore sources were not reported"
+    -- §9.2 the sharp rule, asserted on the identity string itself: a `[format]` key moves it, a
+    -- `[lint]` key never does. This is the whole reason the sections are separate keys and not one
+    -- flat namespace.
+    write ".lean-fmt.toml" "[format]\nline-width = 100\n[lint]\nselect = [\"security\"]\n"
+    let lintOnly ← Discovery.run root none
+    write ".lean-fmt.toml" "[format]\nline-width = 100\n[lint]\nselect = [\"all\"]\n"
+    let lintOther ← Discovery.run root none
+    ensure (lintOnly.fallback.format.identityString == lintOther.fallback.format.identityString)
+      "a [lint] key changed the configuration identity"
+    write ".lean-fmt.toml" "[format]\nline-width = 99\n[lint]\nselect = [\"all\"]\n"
+    let formatOther ← Discovery.run root none
+    ensure (lintOther.fallback.format.identityString != formatOther.fallback.format.identityString)
+      "a [format] key did not change the configuration identity"
+    -- §12 introspection is deterministic and records provenance, not just values.
+    let described := formatOther.fallback.describe
+    ensure (described == formatOther.fallback.describe) "config introspection was not deterministic"
+    ensure (described.any fun (key, value, origin) =>
+        key == "format.line-width" && value == "99" && origin.endsWith ".lean-fmt.toml:2")
+      "config introspection lost a setting's file and line"
+    ensure (described.any fun (key, _, origin) => key == "include" && origin == "default")
+      "an unset setting was not reported as a default"
+  finally
+    IO.FS.removeDirAll directory
+
 /-- Catalog metadata invariants (`ruff-12` RRL-IMPL; `notes/01-schema.md` §10). Pure over the registry:
 unique/well-shaped codes, namespace disjointness, lifecycle/default coherence, and documentation
 presence. The *executable*-example check (each `bad` fires, each fix yields `good?`) runs through the
@@ -2230,6 +2367,7 @@ public unsafe def main (args : List String) : IO UInt32 := do
     testEdits
     testFixAllAdversarial
     testConfig
+    testDiscovery
     testCatalogInvariants
     testApplicability
     testCacheIdentity

@@ -1195,8 +1195,20 @@ key `parseConfig` accepts (`Config.lean:182-201`), with each selector-valued arr
 pages — deterministic, so `docs --check` drift-checks it like every other page. -/
 def catalogSchemaJson : String :=
   let sel := "{ \"type\": \"array\", \"items\": { \"$ref\": \"#/$defs/selector\" } }"
+  let deprecated := "{ \"type\": \"array\", \"items\": { \"$ref\": \"#/$defs/selector\" }, " ++
+    "\"deprecated\": true, \"description\": \"moved to [lint]; still accepted, see $defs/migration\" }"
   let enumBody := String.intercalate ",\n"
     (selectorVocabulary.toList.map fun s => "      \"" ++ s ++ "\"")
+  let lintProperties :=
+    "      \"select\": " ++ sel ++ ",\n" ++
+    "      \"extend-select\": " ++ sel ++ ",\n" ++
+    "      \"ignore\": " ++ sel ++ ",\n" ++
+    "      \"fixable\": " ++ sel ++ ",\n" ++
+    "      \"unfixable\": " ++ sel ++ ",\n" ++
+    "      \"extend-fixable\": " ++ sel ++ ",\n" ++
+    "      \"extend-safe-fixes\": " ++ sel ++ ",\n" ++
+    "      \"extend-unsafe-fixes\": " ++ sel ++ ",\n" ++
+    "      \"per-file-ignores\": { \"type\": \"object\", \"additionalProperties\": " ++ sel ++ " }\n"
   "{\n" ++
   "  \"$schema\": \"http://json-schema.org/draft-07/schema#\",\n" ++
   "  \"$id\": \"lean-fmt.toml\",\n" ++
@@ -1207,18 +1219,40 @@ def catalogSchemaJson : String :=
   "  \"properties\": {\n" ++
   "    \"include\": { \"type\": \"array\", \"items\": { \"type\": \"string\" } },\n" ++
   "    \"exclude\": { \"type\": \"array\", \"items\": { \"type\": \"string\" } },\n" ++
-  "    \"select\": " ++ sel ++ ",\n" ++
-  "    \"extend-select\": " ++ sel ++ ",\n" ++
-  "    \"ignore\": " ++ sel ++ ",\n" ++
-  "    \"fixable\": " ++ sel ++ ",\n" ++
-  "    \"unfixable\": " ++ sel ++ ",\n" ++
-  "    \"extend-fixable\": " ++ sel ++ ",\n" ++
-  "    \"extend-safe-fixes\": " ++ sel ++ ",\n" ++
-  "    \"extend-unsafe-fixes\": " ++ sel ++ ",\n" ++
-  "    \"per-file-ignores\": { \"type\": \"object\", \"additionalProperties\": " ++ sel ++ " },\n" ++
-  "    \"preview\": { \"type\": \"boolean\" }\n" ++
+  "    \"extend\": { \"type\": \"string\" },\n" ++
+  "    \"force-exclude\": { \"type\": \"boolean\" },\n" ++
+  "    \"respect-gitignore\": { \"type\": \"boolean\" },\n" ++
+  "    \"preview\": { \"type\": \"boolean\" },\n" ++
+  "    \"format\": {\n" ++
+  "      \"type\": \"object\",\n" ++
+  "      \"additionalProperties\": false,\n" ++
+  "      \"properties\": {\n" ++
+  "        \"line-width\": { \"type\": \"integer\", \"minimum\": 1, \"maximum\": 1000 }\n" ++
+  "      }\n" ++
+  "    },\n" ++
+  "    \"lint\": {\n" ++
+  "      \"type\": \"object\",\n" ++
+  "      \"additionalProperties\": false,\n" ++
+  "      \"properties\": {\n" ++
+  lintProperties ++
+  "      }\n" ++
+  "    },\n" ++
+  "    \"select\": " ++ deprecated ++ ",\n" ++
+  "    \"extend-select\": " ++ deprecated ++ ",\n" ++
+  "    \"ignore\": " ++ deprecated ++ ",\n" ++
+  "    \"fixable\": " ++ deprecated ++ ",\n" ++
+  "    \"unfixable\": " ++ deprecated ++ ",\n" ++
+  "    \"extend-fixable\": " ++ deprecated ++ ",\n" ++
+  "    \"extend-safe-fixes\": " ++ deprecated ++ ",\n" ++
+  "    \"extend-unsafe-fixes\": " ++ deprecated ++ ",\n" ++
+  "    \"per-file-ignores\": { \"type\": \"object\", \"additionalProperties\": " ++ sel ++ ", " ++
+    "\"deprecated\": true }\n" ++
   "  },\n" ++
   "  \"$defs\": {\n" ++
+  "    \"migration\": {\n" ++
+  "      \"description\": \"A linter key at the top level is the pre-[lint] spelling; it still works \
+    and emits a deprecation notice, and setting the same key in both places is an error.\"\n" ++
+  "    },\n" ++
   "    \"selector\": {\n" ++
   "      \"description\": \"a live rule code, a category, a reserved code, or the words all/default\",\n" ++
   "      \"enum\": [\n" ++

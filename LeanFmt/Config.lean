@@ -562,6 +562,63 @@ def FormatterConfig.load (root : System.FilePath)
     | none => return defaultConfig
     | some path => FormatterConfig.loadFrom root path ""
 
+/-- The `file:line` origins recorded for one key, in composition order. Empty when the setting was
+never written and the default applies. -/
+private def FormatterConfig.originsOf (config : FormatterConfig) (key : String) : Array String :=
+  config.origins.filterMap fun (recorded, file, line) =>
+    if recorded == key then some s!"{file}:{line}" else none
+
+private def renderStrings (values : Array String) : String :=
+  "[" ++ String.intercalate ", " (values.toList.map fun value => "\"" ++ value ++ "\"") ++ "]"
+
+private def renderPatterns (patterns : Array PathPattern) : String :=
+  renderStrings (patterns.map fun pattern =>
+    if pattern.anchor.isEmpty then pattern.source else pattern.anchor ++ "/" ++ pattern.source)
+
+/-- Every effective setting as `(key, rendered value, origin)`, in schema order — the payload
+`config show` presents (`notes/01-discovery.md` §12).
+
+Origin is `default` when nothing wrote the setting, otherwise `file:line`. A setting written by several
+files in one `extend` chain lists **every** contributing origin for the additive `extend-*` keys and the
+winning one for the rest, which is why composition preserves order and duplicates (§6.2).
+
+This lives here rather than in the CLI because `PathPattern` is private to this module: rendering a
+pattern's anchored form is only possible where the anchor is visible, and leaking the type to a
+presenter to avoid that would be the wrong trade. -/
+def FormatterConfig.describe (config : FormatterConfig) : Array (String × String × String) :=
+  let winner := fun (key : String) =>
+    match (config.originsOf key).back? with
+    | some origin => origin
+    | none => "default"
+  let all := fun (key : String) =>
+    let origins := config.originsOf key
+    if origins.isEmpty then "default" else String.intercalate ", " origins.toList
+  #[
+    ("include", renderPatterns config.includePatterns, winner "include"),
+    ("exclude", renderPatterns config.excludePatterns, winner "exclude"),
+    ("force-exclude", toString config.forceExclude, winner "force-exclude"),
+    ("respect-gitignore", toString config.respectGitignore, winner "respect-gitignore"),
+    ("preview", toString config.preview, winner "preview"),
+    ("format.line-width", toString config.format.lineWidth, winner "format.line-width"),
+    ("lint.select", renderStrings config.selectedSelectors, winner "select"),
+    ("lint.extend-select", renderStrings config.extendSelectSelectors, all "extend-select"),
+    ("lint.ignore", renderStrings config.ignoredSelectors, winner "ignore"),
+    ("lint.fixable", renderStrings config.fixableSelectors, winner "fixable"),
+    ("lint.unfixable", renderStrings config.unfixableSelectors, winner "unfixable"),
+    ("lint.extend-fixable", renderStrings config.extendFixableSelectors, all "extend-fixable"),
+    ("lint.extend-safe-fixes", renderStrings config.extendSafeFixes, all "extend-safe-fixes"),
+    ("lint.extend-unsafe-fixes", renderStrings config.extendUnsafeFixes, all "extend-unsafe-fixes"),
+    ("lint.per-file-ignores",
+      renderStrings (config.perFileIgnores.map (·.pattern.source)), all "per-file-ignores")
+  ]
+
+/-- The configuration files that contributed to this value, in composition order: the `extend` chain
+plus the file that started it. Derived from `origins`, so a file that set nothing contributes nothing —
+which is the honest answer for provenance. -/
+def FormatterConfig.contributingFiles (config : FormatterConfig) : Array String :=
+  config.origins.foldl (init := #[]) fun files (_, file, _) =>
+    if files.contains file then files else files.push file
+
 /-- Whether a discovered root-package module survives configured path selection. Empty `include`
 means every root module; excludes always win. Explicit CLI files bypass this predicate. -/
 def FormatterConfig.includesPath (config : FormatterConfig) (path : String) : Bool :=

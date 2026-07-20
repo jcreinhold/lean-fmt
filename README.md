@@ -32,30 +32,59 @@ or scheduling control. Statistics go to stderr so `--json` stdout remains one va
 
 ## Configuration and selection
 
-An explicit `--config PATH` or conventional root `lean-fmt.toml` may contain only:
+Configuration is discovered hierarchically. Walking up from each source file to the project root, the
+**closest** `.lean-fmt.toml` (or `lean-fmt.toml`) governs it; the hierarchy does not merge, so a nested
+config replaces its ancestors for its subtree rather than layering onto them. Both recognized names in
+one directory is an error, not a silent precedence win. `--config PATH` overrides discovery entirely
+and anchors at the project root.
 
 ```toml
+extend = "../shared/lean-fmt.toml"   # the only composition: explicit, one file, cycle-detected
 include = ["LeanFmt/**/*.lean", "Main.lean"]
-exclude = ["LeanFmt/Generated/**"]
+exclude = ["Generated/**"]
+force-exclude = true                 # apply exclude to explicitly named paths too
+respect-gitignore = true             # default
+preview = false
+
+[format]                             # settings that change canonical bytes
+line-width = 100                     # 1..1000
+
+[lint]                               # settings that project over results
 select = ["all"]
 ignore = ["FMT002"]
-
-[per-file-ignores]
-"LeanFmt/Legacy/*.lean" = ["FMT001"]
+per-file-ignores = { "Legacy/*.lean" = ["FMT001"] }
 ```
 
-Path patterns are root-relative: `*` and `?` stay within one path component, while a complete `**`
-component spans zero or more components. Explicit positional files bypass include/exclude but still
-honor rule selection. Repeatable CLI `--select` replaces configured selection when present; CLI
-`--ignore` then wins. Selectors are exact rule codes, `text`, or `all`. Unknown keys, selectors, and
-malformed patterns fail clearly instead of being ignored.
+Linter keys still work at the top level and emit a deprecation notice; setting one in both places is an
+error. `line-width` has no flat spelling. In an `extend` chain scalars and base arrays replace, the
+`extend-*` family concatenates, and `extend` itself is not inherited.
 
-Rule selection is a projection over one canonical semantic result, so changing selection neither
-changes frontend strategy nor creates strategy-specific cache entries. It decides one thing only:
-which fact tier a run must obtain, which is the cheapest tier answering every selected rule.
+Path patterns anchor at the **declaring** config's directory, never the root and never the consuming
+file: `*` and `?` stay within one path component, while a complete `**` component spans zero or more.
+Selection runs as an ordered set of gates — `.lake` first, then git ignore sources, then the config's
+`exclude`, then its `include`. `.lake` is an absolute floor: no key, no `--config`, and no explicitly
+named path lifts it. Ignore sources apply in precedence order (global git ignore, `.git/info/exclude`,
+`.gitignore` outer to inner, `.ignore`) and are read directly rather than by invoking `git`.
 
-Without positional files, selection covers every root-relative `.lean` source outside `.lake`, not
-only library modules. Standalone scripts and nested/root `lakefile.lean` configuration therefore
+Explicit positional files bypass the ignore and `include`/`exclude` gates — you named the file — unless
+`force-exclude = true`, which is precisely the setting that makes exclusion apply to them too. Rule
+selection applies either way. Repeatable CLI `--select` replaces configured selection when present; CLI
+`--ignore` then wins. Unknown keys, selectors, and malformed patterns fail clearly instead of being
+ignored.
+
+`lean-fmt config show PATH [--json]` answers what actually applies to one file: every effective setting
+with the file and line it came from, the `extend` chain, the ignore sources in force, and whether the
+path would be selected with the deciding gate. It is read-only and deterministic.
+
+A `[format]` key enters the result-cache identity; a `[lint]` key never does. That is the same
+discipline stated as a rule you can check by inspection: rule selection is a projection over one
+canonical semantic result, so changing selection neither changes frontend strategy nor creates
+strategy-specific cache entries. It decides one thing only: which fact tier a run must obtain, which is
+the cheapest tier answering every selected rule. Changing `line-width` does change the canonical bytes,
+so it correctly misses a cache entry recorded at another width.
+
+Without positional files, selection covers every root-relative `.lean` source that survives the gates,
+not only library modules. Standalone scripts and nested/root `lakefile.lean` configuration therefore
 receive the same deterministic report and cache semantics as buildable modules.
 
 ## Cache and compiler integration

@@ -1,6 +1,6 @@
 ---
 kind: state
-first_unresolved: 02-implementation
+first_unresolved: 03-acceptance
 ---
 
 # Current state
@@ -45,14 +45,30 @@ Key frozen decisions:
   `Lake.Toml.Value` carries `ref : Syntax`), plus the `extend` chain, ignore sources in precedence
   order, and whether the path would be selected with the deciding gate number.
 
-**Two baseline defects were found while characterizing the boundary, both assigned to `RCD-IMPL`:**
+**RCD-IMPL is verified** (`results/02-implementation.md`). `LeanFmt/Discovery.lean` is the one private
+capability: git-ignore matcher, git-config reading, a single `walkDir` pass, the directory→config map,
+and the selection gates. `LeanFmt/Config.lean` owns the loader half (`PartialConfig`, `loadChain` with
+realpath cycle detection, `[format]`/`[lint]` sections with the §8.2 migration table, `ref`-derived
+provenance, `describe`). `SourceTarget` carries `config`/`configKey`; `execute` memoizes one `RulePlan`
+per distinct `configKey`; `config show PATH [--json]` ships; `schema.json` is sectioned with the flat
+keys retained as `deprecated: true`. The README's configuration section was materially false after the
+change and is rewritten.
 
-- **An explicit path into `.lake` is accepted, and `format` writes it.** Measured: `written=1` and the
+Amendments and deviations recorded in the result note: `--config` anchors at the **project root** (not
+its own directory); the `.lake` error names the resolved path, matching its `snapshotTarget` siblings;
+what a run *obtains* stays one batch decision (union over per-file plans, seeded at `.source`) even
+though selection is per-file; `Discovery.explain` is separate from `gateFor` because a command-line path
+may sit under a directory the walk never entered; the service keeps one root-level plan for its session
+lifetime, with per-file configuration deferred to `ruff-16-watch-incremental`.
+
+**Both baseline defects found while characterizing the boundary are closed by `RCD-IMPL`:**
+
+- **CLOSED — An explicit path into `.lake` was accepted, and `format` wrote it.** Measured: `written=1` and the
   bytes of a vendored dependency changed on disk (`evidence` §3). Discovery filters `.lake`
   (`Project.lean:114`) but the requested-path branch checks only existence, root containment, and
   extension. Since `ruff-11d` made `format` a writer by default this is a write-safety defect. The
   freeze makes `.lake` an absolute selection floor no key or path form can lift (`notes` §11).
-- **`Application.lean:365-382` is stale.** It cites `Digest.ofBytes (← IO.FS.readBinFile application)`
+- **CLOSED — `Application.lean:365-382` was stale.** It cites `Digest.ofBytes (← IO.FS.readBinFile application)`
   at `Cache.lean:258`; commit `62e23fa` replaced that with binary metadata (`Cache.lean:262-264`). The
   conclusion survives, the cited mechanism does not. Rewritten by `RCD-IMPL` in the same commit that
   promotes `line-width`, since that promotion is what invalidates the docstring's argument.
@@ -66,12 +82,15 @@ around it. Full mathlib is not development evidence.
 | Prompt | Claim | Status | Depends on |
 | --- | --- | --- | --- |
 | 01-semantics | RCD-SPEC | verified | — |
-| 02-implementation | RCD-IMPL | planned | RCD-SPEC |
+| 02-implementation | RCD-IMPL | verified | RCD-SPEC |
 | 03-acceptance | RCD-FINAL | planned | RCD-IMPL |
 
 ## Blockers and prerequisites
 
-- No blocker recorded. `RCD-IMPL` implements `notes/01-discovery.md` §14; open questions are in §15.
+- No blocker recorded. `RCD-FINAL` audits `notes/01-discovery.md` §14.1 against live behavior; open
+  questions are in §15. Two measurements it owns and RCD-IMPL did not make: discovery timing on a large
+  tree, and the fuller symlink matrix (symlinked source files, a symlinked config, a target outside the
+  root). A directory symlink loop is already measured as terminating and contributing no paths.
 - Full mathlib is not development evidence; follow this roadmap's evidence policy.
 
 ## Verification convention

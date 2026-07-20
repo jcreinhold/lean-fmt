@@ -107,12 +107,12 @@ private def compileIgnoreLine (base line : String) : Option IgnorePattern :=
     let (negated, body) :=
       if trimmed.startsWith "!" then (true, (trimmed.drop 1).toString) else (false, trimmed)
     let (directoryOnly, body) :=
-      if body.endsWith "/" then (true, body.dropRight 1) else (false, body)
+      if body.endsWith "/" then (true, (body.dropEnd 1).toString) else (false, body)
     if body.isEmpty then none
     else
       -- A leading `/` anchors to the ignore file's own directory; a slash anywhere else also anchors
       -- (git's rule). Otherwise the pattern matches at any depth, spelled here as a leading `**`.
-      let anchored := body.startsWith "/" || (body.dropRight 1).contains '/'
+      let anchored := body.startsWith "/" || (body.dropEnd 1).contains '/'
       let body := if body.startsWith "/" then (body.drop 1).toString else body
       let segments := body.splitOn "/"
       let segments := if anchored then segments else "**" :: segments
@@ -405,6 +405,27 @@ def Discovery.gateFor (discovery : Discovery) (path : String) : Gate :=
   else if !config.includePatterns.isEmpty && !config.includePatterns.any (·.matches path) then
     .configInclude
   else .selected
+
+/-- Selection for an **arbitrary** path, discovered or not — the question `config show` asks
+(`notes/01-discovery.md` §12).
+
+`gateFor` above is only defined on paths the walk produced, so it may assume gates 2 and 3 already
+pruned. This one cannot: it is handed a path from the command line, which may sit under a directory the
+walk never descended into. So it re-asks gate 3 against every ancestor directory as well as the file
+itself, because an `exclude = ["vendor"]` pattern names the directory and never the files beneath it —
+the walk expresses that by pruning, and pruning leaves no per-file record to read back.
+
+Order matters: gate 3 is asked *before* absence-from-`sources`, since a config-excluded directory is
+also absent, and reporting "excluded by a git ignore source" for a path the user's own `exclude` key
+removed would send them to the wrong file to fix it. -/
+def Discovery.explain (discovery : Discovery) (path : String) : Gate :=
+  let config := discovery.configFor path
+  let segments := path.splitOn "/"
+  let ancestors := (List.range segments.length).map fun count =>
+    String.intercalate "/" (segments.take (count + 1))
+  if config.excludePatterns.any (fun pattern => ancestors.any pattern.matches) then .configExclude
+  else if !discovery.sources.contains path then .ignoreSource
+  else discovery.gateFor path
 
 /-- The discovered sources that survive configured selection, root-relative and in walk order. -/
 def Discovery.selectedSources (discovery : Discovery) : Array String :=
