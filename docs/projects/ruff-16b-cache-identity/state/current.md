@@ -56,7 +56,19 @@ before this diagnosis existed).
 
 - None external. `ruff-16-watch-incremental` is `verified` and its shipped surface is what this stack
   re-examines.
-- The naive fix is unsafe and is the stack's central risk: per-entry identity already carries the
-  target's own source digest, so removing project sources from `environment` without replacing them with
-  closure coverage converts whole-project invalidation into **silent stale hits** whenever a module's
-  transitive import changes and its own bytes do not.
+- The naive fix is unsafe and is the stack's central risk, but **not** for the reason first written
+  here. Rules provably cannot read across modules (`Rules.lean:17`: a rule "cannot reach a workspace, a
+  cache, an `Environment`, or `IO` — not by convention but because `run`'s argument type is a fact
+  view"), and the one cross-module rule family is computed outside the cache for that reason
+  (`Application.lean:1286`). The risk is that **the fact view itself is import-derived**: Lean's grammar
+  is open, so a `notation`/`macro`/`syntax` change in `A` changes how `B`'s unchanged bytes parse. A
+  cached analysis of `B` describes a parse produced under `A`'s old grammar, and rendering canonical
+  text from it can change what the code means.
+- The missing check is currency, and Lake already computes it. `validateOleanTrace?` parses only
+  `schemaVersion` and `outputs` (`Cache.lean:14-17`), proving the artifact is intact but never current.
+  A module's `.trace` records `deps.imports` per-import transitive hashes, its own source hash, and
+  `depHash`. `RCI-SPEC` must verify that reading — it comes from sampled trace files, not from the Lake
+  sources — before any design depends on it.
+- A module's stored `depHash` records what it was **built against**, not whether that is still true.
+  Read alone it falsely hits in exactly the stale case that matters. This is the trap the design
+  comparison in `RCI-SPEC` exists to catch.

@@ -36,17 +36,25 @@ characterization tests before implementation where the behavior is not already f
 2. Reproduce the defect as evidence: cold, unchanged re-run, and one-file-edit timings, plus the index
    files in `.lean-fmt-cache/results/` before and after. Record entry-level hit/miss counts, not only
    wall time — instrument if nothing currently reports them.
-3. Determine what the closure must contain. Read how `Project` already resolves imports and whether a
-   usable module graph exists (`LeanFmt.Project` owns "one shared typed no-build graph"). Decide whether
-   source-tier and syntax-tier targets need different closures, given that a source-tier rule reads an
-   ordinary `.olean` and a syntax-tier rule needs the artifact or the exact frontend.
-4. Design the identity twice and compare: closure-digest folded into per-entry `CacheIdentity` against a
-   separate per-module dependency record. Compare caller knowledge, invariants hidden, error surface,
-   exactness, index-file churn, and what each does when the closure is unknown.
-5. Freeze the unknown-closure answer explicitly. A closure that cannot be computed must degrade to a
-   miss, never to a hit.
-6. Specify the differential test precisely enough that `RCI-IMPL` cannot satisfy it accidentally: which
-   module is edited, which is asserted re-analyzed, and how the mutation check is performed.
+3. Characterize what Lake's module traces actually guarantee, from the Lake sources and from real
+   `.trace` files — the `deps.imports` per-import transitive hashes, the recorded own-source path and
+   hash, `depHash`, when each is written, and whether any is absent for a module the cache would serve.
+   The roadmap's reading of these is from sampled files and is itself a claim to verify.
+4. Design the currency check twice and compare, at minimum: recomputing each module's own-source hash
+   against its trace and propagating staleness to dependents over the trace graph, against folding a
+   trace-derived value into per-entry `CacheIdentity`. Compare caller knowledge, invariants hidden,
+   error surface, exactness, cost on a cold and a warm tree, index-file churn, and — decisively — what
+   each does when `A` changes with no rebuild. A design that reads a module's stored `depHash` alone
+   falsely hits in that case; show the chosen design does not.
+5. Decide whether tier changes the answer. A `.source` entry is source rules over raw bytes with no
+   projection and may need no import coverage; a `.syntax` entry, and any entry carrying `canonical?`,
+   is import-derived. Getting this wrong in the permissive direction is a stale hit.
+6. Freeze the undeterminable-currency answer explicitly. Currency that cannot be established must
+   degrade to a miss, never to a hit.
+7. Specify the differential test precisely enough that `RCI-IMPL` cannot satisfy it accidentally: `A`
+   declares a `notation`, `B` uses it, `A`'s notation changes and `B`'s bytes do not, and `B` must be
+   re-analyzed. State which module is edited, which is asserted re-analyzed, how the mutation check is
+   performed, and why an ordinary definition change in `A` would be an insufficient test.
 
 ## Stop
 
