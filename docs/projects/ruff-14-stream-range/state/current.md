@@ -70,6 +70,26 @@ range expansion below the CLI in `LeanFmt.Application`.
 | 02-implementation | RSF-IMPL | planned | RSF-SPEC |
 | 03-acceptance | RSF-FINAL | planned | RSF-IMPL |
 
+## RSF-IMPL in flight
+
+Not yet verified. Landed so far, each with its checks read:
+
+- `1d71424` — the source map is populated. `Tree.document` marks each layout unit;
+  `Printer.formatWithMap` keeps the map and `format` is the text-only façade over it. No output byte
+  moved (`tests/printer/run.sh` round-trips the corpus byte for byte).
+- `fc3d62b` — `Application.sliceRange`: unit selection, the forward extension, the actual range, and
+  the splice, with selection tests on a synthetic map.
+
+Remaining, in order: the filesystem-free `SourceTarget` constructor (`notes` §8.3); the stdin run path
+in `Application`; the `-` / `--stdin-filename` / `--range` / `--range-lines` CLI surface; an owning
+acceptance suite; then `results/02-implementation.md`.
+
+**Standing tax discovered while implementing:** this repository is the printer's own corpus, so every
+production edit shifts `evidence/01-projection-shape.txt` and the 33 prose figures the
+`check-quoted-figures.py` gate holds to it (`ruff-03`). Regenerate with
+`experiments/run-projection-shape.sh` and reconcile before running `tests/printer/run.sh`, or the
+suite fails on stale evidence rather than on anything this stack did.
+
 ## Blockers and prerequisites
 
 - No blocker recorded. Uncertainty carried into `RSF-IMPL` (`results/01-contract.md`): the unit
