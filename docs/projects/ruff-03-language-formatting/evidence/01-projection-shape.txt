@@ -1,42 +1,43 @@
-modules_analyzed=22 skipped=0 nodes=53760
+modules_analyzed=24 skipped=0 nodes=79309
 pre_order_contiguity_violations=0
 nonempty_node_children_out_of_source_order=0
-empty_nodes=19042 (35.4% of all nodes)
-empty_nodes_with_ambiguous_placement=8483 (15.8% of all nodes)
+empty_nodes=27839 (35.1% of all nodes)
+empty_nodes_with_ambiguous_placement=12642 (15.9% of all nodes)
 
 # most common empty (absent-syntax) kinds
-16939	null
-690	Lean.Parser.Term.letConfig
-380	Lean.Parser.Termination.suffix
-368	Lean.Parser.Command.declModifiers
-298	group
-181	Lean.Parser.Term.optEllipsis
-130	Lean.Parser.Command.optDeclSig
-37	Lean.Parser.Command.optDeriving
-17	Lean.Parser.Term.attrKind
+24898	null
+985	Lean.Parser.Term.letConfig
+533	Lean.Parser.Termination.suffix
+461	Lean.Parser.Command.declModifiers
+422	group
+303	Lean.Parser.Term.optEllipsis
+171	Lean.Parser.Command.optDeclSig
+45	Lean.Parser.Command.optDeriving
+19	Lean.Parser.Term.attrKind
 2	Lean.Parser.Term.structInstFields
 
-# command kinds in the corpus (541 commands, 6 distinct kinds)
-468	Lean.Parser.Command.declaration
-27	Lean.Parser.Command.namespace
-27	Lean.Parser.Command.end
-11	Lean.Parser.Command.moduleDoc
-7	Lean.Parser.Command.open
+# command kinds in the corpus (737 commands, 7 distinct kinds)
+634	Lean.Parser.Command.declaration
+34	Lean.Parser.Command.moduleDoc
+29	Lean.Parser.Command.namespace
+29	Lean.Parser.Command.end
+9	Lean.Parser.Command.open
 1	Lean.Parser.Command.initialize
+1	Lean.Parser.Command.mutual
 
-# what the declaration shell layout can structurally claim (451/468 declarations, 96.4%); runtime guards may still refuse
-451	structurally claimed: shell laid out
-17	rejected: shape not read yet
+# what the declaration shell layout can structurally claim (615/634 declarations, 97.0%); runtime guards may still refuse
+615	structurally claimed: shell laid out
+19	rejected: shape not read yet
 
 # would a ctor/field shell layout decide anything? a member's shell is its opener, modifiers and
 # name; 'collapsible' counts shells holding horizontal slack a layout could close, which is the
 # only figure that argues for building one. See the script for why the other three cannot.
-250	structure fields (simple): 0 collapsible, 220 one-token, 30 broken by a doc comment, 0 already tight, 0 unexpected shape
-61	inductive constructors: 0 collapsible, 0 one-token, 0 broken by a doc comment, 61 already tight, 0 unexpected shape
-10	structure constructors: 0 collapsible, 0 one-token, 0 broken by a doc comment, 10 already tight, 0 unexpected shape
+362	structure fields (simple): 0 collapsible, 294 one-token, 68 broken by a doc comment, 0 already tight, 0 unexpected shape
+71	inductive constructors: 0 collapsible, 0 one-token, 0 broken by a doc comment, 71 already tight, 0 unexpected shape
+13	structure constructors: 0 collapsible, 0 one-token, 0 broken by a doc comment, 13 already tight, 0 unexpected shape
 
 # of those, how the `instance` shells break down
-17	anonymous (one-token shell)
+19	anonymous (one-token shell)
 
 # shapes rejected only because their grammar has not been read yet
-17	Lean.Parser.Command.instance
+19	Lean.Parser.Command.instance

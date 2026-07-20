@@ -354,32 +354,27 @@ private def ExactRun.envelope (run : ExactRun)
     if ← setupPath.pathExists then IO.FS.removeFile setupPath
     if ← sourcePath.pathExists then IO.FS.removeFile sourcePath
 
-/-- The margin `Printer.format` is rendered at.
+/- The margin `Printer.format` is rendered at is no longer a constant here.
 
-`RLF-REFLOW` fired the trigger the older wording named: `Printer.termDoc` now emits `group`/`nest`/`line`
-for over-margin applications, so this value *does* change bytes — `Doc.go`'s `.group` fit test
-(`Doc.lean:219-229`) breaks a single-line app onto indented continuation lines exactly when its flat
-width exceeds this margin. The pre-reflow docstring's premise ("emits no `group`, so every margin
-produces identical output") is therefore retired.
+`RLF-REFLOW` made the margin observable: `Printer.termDoc` emits `group`/`nest`/`line` for over-margin
+applications, so `Doc.go`'s `.group` fit test (`Doc.lean:219-229`) breaks a single-line app onto
+indented continuation lines exactly when its flat width exceeds it. `ruff-13` RCD-IMPL then promoted it
+to the runtime key `[format] line-width` (`FormatConfig.lineWidth`, default 100), resolved per file from
+that file's effective configuration.
 
-It stays a compile-time constant rather than a runtime `line-width` configuration key, and cache identity
-stays sound *without* a new component, because the constant is compiled into the application binary and
-the `formatter` cache-identity component already hashes that binary
-(`formatter := Digest.ofBytes (← IO.FS.readBinFile application)`, `Cache.lean:258`). A margin change is
-reachable only by editing this constant and recompiling, which changes the binary, which changes the
-`formatter` digest, which invalidates every cached `CanonicalText` rendered at the old margin. The older
-wording's fear — "stale under an identity that never mentioned it" — was mistaken about the digest's
-scope: the identity mentions the whole binary, this constant included.
+That promotion is precisely what invalidated the old justification for keeping it compiled in. The
+earlier wording argued cache identity stayed sound without a new component because the `formatter`
+component hashes the application binary, so editing the constant and recompiling invalidated every
+cached `CanonicalText`. Two things about that are now wrong. Formatter identity is no longer a content
+hash of the binary — commit `62e23fa` made it `(path, byteSize, mtime)` metadata (`Cache.lean`), which
+still moves on a rebuild, so the *conclusion* held for a constant. But a **runtime** override changes
+output without touching the binary at all, so neither spelling of formatter identity can see it. The
+resolved margin is therefore folded into the `configuration` component instead
+(`Project.configurationIdentity`, via `FormatConfig.identityString`), in the commit that introduced the
+key — the obligation `ruff-13` `notes/01-discovery.md` §9.1 records.
 
-The next trigger, unfired: promoting the margin to a *runtime* project-overridable key (a `line-width`
-TOML value threaded through `FormatterConfig`) would break that argument, because a runtime override
-changes output without changing the binary, so the `formatter` digest would no longer see it. Whoever
-adds that key adds its own cache-identity input — folding the resolved margin into the `configuration`
-digest (`Project.configurationIdentity`, `Cache.lean:207`) — in the same commit. No caller does today:
-`renderCanonicalText` below is the sole production caller and the tests drive width through `format`'s
-required parameter directly, so there is no per-project override to hide and none is added speculatively.
-The value 100 matches mathlib's own text-linter convention and is otherwise arbitrary. -/
-def canonicalWidth : Nat := 100
+The value 100 remains the default; it matches mathlib's own text-linter convention and is otherwise
+arbitrary. -/
 
 /-- Render a validated artifact's projection to canonical layout text — the layout, and only the layout.
 
@@ -391,9 +386,10 @@ canonical-patch, and `ExactRun.reprojectCanonical` — which re-projected the wh
 *rendered* text so a syntax/semantic fix landed in canonical coordinates — retired with it. The
 "re-project, don't translate onto moved bytes" model (`ruff-06-fix-safety/notes/01-model.md` §3) still
 holds; RDF-IMPL satisfies it the other way, by never moving the bytes a fix indexes. -/
-private def renderCanonicalText (raw : String) (artifact : ModuleArtifact) : IO CanonicalText := do
+private def renderCanonicalText (width : Nat) (raw : String) (artifact : ModuleArtifact) :
+    IO CanonicalText := do
   let normalized := (LosslessSource.normalize raw).1
-  let text ← Printer.format artifact.source normalized canonicalWidth artifact.semantic
+  let text ← Printer.format artifact.source normalized width artifact.semantic
   return { text }
 
 private def canonicalAnalysis (snapshot : SourceSnapshot) (renderCanonical : Bool)
@@ -404,7 +400,8 @@ private def canonicalAnalysis (snapshot : SourceSnapshot) (renderCanonical : Boo
     -- known to describe these bytes before anything renders it.
     if renderCanonical then
       if let some artifact := analysis.artifact? then
-        return semantic.withCanonical (← renderCanonicalText snapshot.source artifact)
+        return semantic.withCanonical
+          (← renderCanonicalText snapshot.config.format.lineWidth snapshot.source artifact)
     return semantic
   | none => throw <| IO.userError s!"invalid exact analysis for {snapshot.relativePath}"
 
@@ -782,14 +779,17 @@ private def singleImportReport (plan : RulePlan) (workspace : Lake.Workspace)
 /-- Compute every target's import report in one pass: parse all headers, fetch the union of their
 import closures in a single no-build graph build (FMT006 only), then project per file. Returns one
 `(findings, withheldRedundant)` per snapshot, aligned with `snapshots`. -/
-private def computeImportReports (plan : RulePlan) (workspace : Lake.Workspace)
+private def computeImportReports (plans : Array RulePlan) (workspace : Lake.Workspace)
     (snapshots : Array SourceSnapshot) : IO (Array (Array Finding × Nat)) := do
-  unless anyImportSelected plan do
+  -- Per-file plans, because `ruff-13` made the effective configuration per file: two files in one run
+  -- can disagree about whether an import rule is selected. The shared closure fetch still happens once
+  -- for the whole batch — it is keyed on whether *any* file wants FMT006, never on each file's answer.
+  unless plans.any anyImportSelected do
     return Array.replicate snapshots.size (#[], 0)
   let headers ← snapshots.mapM fun snapshot => do
     let (normalized, _) := LosslessSource.normalize snapshot.source
     return (normalized, ← Imports.parseHeaderModel normalized)
-  let closureOf ← if plan.selected.contains "FMT006" then
+  let closureOf ← if plans.any (·.selected.contains "FMT006") then
       let names := headers.foldl (init := #[]) fun acc (_, header?) =>
         match header? with
         | some header => (headerImportNames header).foldl (init := acc) fun acc name =>
@@ -798,7 +798,7 @@ private def computeImportReports (plan : RulePlan) (workspace : Lake.Workspace)
       let pairs ← Project.importClosures workspace names
       pure fun name => (pairs.find? (·.1 == name)).map (·.2)
     else pure fun _ => none
-  return headers.map fun (normalized, header?) =>
+  return (headers.zip plans).map fun ((normalized, header?), plan) =>
     match header? with
     | none => (#[], 0)
     | some header => importFindingsOfHeader plan closureOf header normalized
@@ -1033,24 +1033,51 @@ def execute (request : RunRequest) : IO RunReport := do
   let root ← IO.FS.realPath request.root
   let configPath? := request.configPath?.map fun path =>
     if path.isAbsolute then path else root / path
-  let config ← FormatterConfig.load root configPath?
-  let plan ← match config.rulePlan {
-      select := request.select, extendSelect := request.extendSelect, ignore := request.ignore,
-      fixable := request.fixable, unfixable := request.unfixable,
-      extendFixable := request.extendFixable, preview := request.preview } with
+  let cli : CliSelection := {
+    select := request.select, extendSelect := request.extendSelect, ignore := request.ignore,
+    fixable := request.fixable, unfixable := request.unfixable,
+    extendFixable := request.extendFixable, preview := request.preview }
+  let discovery ← Discovery.run root configPath?
+  -- The fallback plan is resolved first and unconditionally, so an invalid CLI selector is still a
+  -- hard error on a run that selects no files at all — the behavior before configuration became
+  -- per-file. It is also the strategy plan's seed.
+  let basePlan ← match discovery.fallback.rulePlan cli with
     | .ok plan => pure plan
     | .error message => throw <| IO.userError message
-  for notice in plan.notices do IO.eprintln s!"lean-fmt: {notice}"
-  let project ← Project.load root config request.files
+  let mut announced : Array String := #[]
+  for notice in discovery.fallback.notices ++ basePlan.notices do
+    unless announced.contains notice do
+      announced := announced.push notice
+      IO.eprintln s!"lean-fmt: {notice}"
+  let project ← Project.load root discovery request.files
   recordDuration "workspace_load" project.workspaceLoadNanos
   recordDuration "selection_snapshot" project.selectionNanos
   let snapshots := project.targets
+  -- One `RulePlan` per **distinct effective configuration**, not one per file: `configKey` is the
+  -- directory whose config governs a target, so files sharing a config share a plan and a project with
+  -- one config still resolves exactly one. Selection stays a projection — this changes which findings
+  -- are shown per file, never what a run obtains or what a cache entry is keyed on.
+  let mut planByKey : Std.HashMap String RulePlan := {}
+  let mut plans : Array RulePlan := #[]
+  for target in snapshots do
+    match planByKey[target.configKey]? with
+    | some plan => plans := plans.push plan
+    | none =>
+      let plan ← match target.config.rulePlan cli with
+        | .ok plan => pure plan
+        | .error message => throw <| IO.userError message
+      planByKey := planByKey.insert target.configKey plan
+      plans := plans.push plan
+      for notice in target.config.notices ++ plan.notices do
+        unless announced.contains notice do
+          announced := announced.push notice
+          IO.eprintln s!"lean-fmt: {notice}"
   -- Import findings are computed fresh here, once, before any cache path: FMT005/07 are pure over each
   -- file's header, but FMT006 reads the Lake graph, so none of it is cacheable under a file's own
   -- digest (`computeImportReports`). One shared closure fetch covers every file; the result is threaded
   -- into `previewFile`/`fixFile` so selection and suppression apply to import findings like any rule's.
   let importStarted ← IO.monoNanosNow
-  let importReports ← computeImportReports plan project.workspace snapshots
+  let importReports ← computeImportReports plans project.workspace snapshots
   recordDuration "import_findings" ((← IO.monoNanosNow) - importStarted)
   let application ← IO.appPath
   let epochStarted ← IO.monoNanosNow
@@ -1077,17 +1104,32 @@ def execute (request : RunRequest) : IO RunReport := do
   -- What this run must actually obtain, rules and mode together. `semantic` is reachable only through
   -- the mode: no rule is `semantic`-tier, so a rendering mode is the sole demander of the notation
   -- fact (`RulePlan.demandedTier`). This is the gating seam — capture runs iff `demanded` reaches it.
-  let demanded := plan.demandedTier renderCanonical
-  let demandedCaps := plan.demandedCaps renderCanonical applies
-  let cached := cached.map fun cached? =>
-    cached?.filter (cacheHitServes plan.requiredTier demandedCaps renderCanonical)
+  --
+  -- Selection is per file since `ruff-13`, but what a run must *obtain* is decided once, for the whole
+  -- batch, as the **union** of what any file demands. Two facts force that: the artifact fetch and the
+  -- semantic capture are batch operations, and over-obtaining is only a cost while under-obtaining is a
+  -- wrong answer. The union is seeded at `.source`, not at the fallback plan's tier, so a root config
+  -- that selects syntax rules cannot make a project whose files all override it pay for syntax.
+  let unionRequiredTier := plans.foldl (init := Tier.source) fun tier plan => tier.max plan.requiredTier
+  let demanded := unionRequiredTier.max (if renderCanonical then Tier.semantic else Tier.source)
+  let demandedCaps : SemanticCaps := plans.foldl (init := {}) fun caps plan =>
+    let wanted := plan.demandedCaps renderCanonical applies
+    { notations := caps.notations || wanted.notations
+      diagnostics := caps.diagnostics || wanted.diagnostics
+      occurrences := caps.occurrences || wanted.occurrences }
+  -- Serving a cache entry stays a *per-file* question: it is that file's own required tier that decides
+  -- whether a stored result answers it, never the batch union.
+  let cached := (cached.zip plans).map fun (cached?, plan) =>
+    cached?.filter (cacheHitServes plan.requiredTier (plan.demandedCaps renderCanonical applies)
+      renderCanonical)
   -- A writing `format` (`ruff-11d`) is not served here: it must reach `withExactRun` for the validator
   -- child before it publishes, so it is excluded from both cache-only preview fast paths. `format
   -- --check`, which writes nothing, keeps them.
   if !request.writesFormat && cached.all Option.isSome then
     if let some previewMode := request.mode.preview? then
       let mut files := #[]
-      for ((snapshot, cached?), importReport) in (snapshots.zip cached).zip importReports do
+      for (((snapshot, cached?), importReport), plan) in
+          ((snapshots.zip cached).zip importReports).zip plans do
         if let some analysis := cached? then
           files := files.push (← previewFile previewMode plan request.unsafeFixes
             importReport.1 importReport.2 snapshot analysis)
@@ -1104,20 +1146,21 @@ def execute (request : RunRequest) : IO RunReport := do
   -- both records the gating cost and rejects the `semantic = none` artifact for a `format` run.
   let artifacts ← if demanded == .semantic then
     pure (Array.replicate snapshots.size none)
-  else if plan.requiredTier != .source then
+  else if unionRequiredTier != Tier.source then
     officialArtifacts project.workspace snapshots
   else
     pure (Array.replicate snapshots.size none)
   let artifactFinished ← IO.monoNanosNow
   recordPhase "official_artifacts" artifactStarted artifactFinished
-  let available ← (((snapshots.zip cached).zip evidence).zip artifacts).mapM fun
-    | (((snapshot, cached?), sourceEvidence), artifact?) =>
+  let available ← ((((snapshots.zip cached).zip evidence).zip artifacts).zip plans).mapM fun
+    | ((((snapshot, cached?), sourceEvidence), artifact?), plan) =>
       availableAnalysis plan renderCanonical applies sourceEvidence snapshot cached? artifact?
   if !request.writesFormat && available.all Option.isSome then
     if let some previewMode := request.mode.preview? then
       let analyses := available.filterMap id
-      let files ← ((snapshots.zip analyses).zip importReports).mapM fun ((snapshot, analysis), ir) =>
-        previewFile previewMode plan request.unsafeFixes ir.1 ir.2 snapshot analysis
+      let files ← (((snapshots.zip analyses).zip importReports).zip plans).mapM
+        fun (((snapshot, analysis), ir), plan) =>
+          previewFile previewMode plan request.unsafeFixes ir.1 ir.2 snapshot analysis
       if let some cache := cache? then
         cache.writeAll project snapshots available
       return summarize request.mode.toString files
@@ -1125,7 +1168,8 @@ def execute (request : RunRequest) : IO RunReport := do
     let mut files := #[]
     let mut failures := #[]
     let mut analyses := #[]
-    for ((snapshot, available?), ir) in (snapshots.zip available).zip importReports do
+    for (((snapshot, available?), ir), plan) in
+        ((snapshots.zip available).zip importReports).zip plans do
       try
         let analysis ← match available? with
           | some analysis => pure analysis
@@ -1181,8 +1225,9 @@ def organize (request : OrganizeRequest) : IO RunReport := do
   let root ← IO.FS.realPath request.root
   let configPath? := request.configPath?.map fun path =>
     if path.isAbsolute then path else root / path
-  let config ← FormatterConfig.load root configPath?
-  let project ← Project.load root config request.files
+  let discovery ← Discovery.run root configPath?
+  for notice in discovery.fallback.notices do IO.eprintln s!"lean-fmt: {notice}"
+  let project ← Project.load root discovery request.files
   let snapshots := project.targets
   -- The canonical header rewrite is pure (no graph): compute every candidate first, and only pay for
   -- the validator if some file actually changes.

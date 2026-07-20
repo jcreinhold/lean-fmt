@@ -261,16 +261,24 @@ structure Discovery where
 /-- The configuration governing one root-relative path: the **closest** config at or above its
 directory. Hierarchy does not merge — the nearest config applies whole, and inheritance is explicit
 through `extend` (`notes/01-discovery.md` §5). -/
-def Discovery.configFor (discovery : Discovery) (path : String) : FormatterConfig := Id.run do
-  let mut best := discovery.fallback
+def Discovery.governing (discovery : Discovery) (path : String) :
+    String × FormatterConfig := Id.run do
+  let mut best := ("", discovery.fallback)
   let mut bestDepth := 0
   for (directory, config) in discovery.configs do
-    let governs :=
-      directory.isEmpty || path.startsWith (directory ++ "/")
+    let governs := directory.isEmpty || path.startsWith (directory ++ "/")
     if governs && (directory.length ≥ bestDepth) then
-      best := config
+      best := (directory, config)
       bestDepth := directory.length
   return best
+
+def Discovery.configFor (discovery : Discovery) (path : String) : FormatterConfig :=
+  (discovery.governing path).2
+
+/-- The directory whose configuration governs `path`. Two paths sharing a key share a configuration,
+so a caller can resolve one `RulePlan` per distinct configuration rather than one per file. -/
+def Discovery.configKeyFor (discovery : Discovery) (path : String) : String :=
+  (discovery.governing path).1
 
 private def isLeanSource (path : FilePath) : Bool := path.extension == some "lean"
 

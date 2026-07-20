@@ -2,6 +2,7 @@ module
 
 import all LeanFmt.Config
 import all LeanFmt.Digest
+import all LeanFmt.Discovery
 import Lake.Build.Module
 import all Lake.Build.Run
 import Lake.Config.Env
@@ -20,6 +21,15 @@ structure SourceTarget where
   path : FilePath
   relativePath : String
   source : String
+  /-- The **effective** configuration for this file: the closest recognized config at or above its
+  directory, with its `extend` chain already composed (`ruff-13` `notes/01-discovery.md` §5). Carried
+  per target rather than per run because that is what "for each file, the closest recognized config
+  applies" means — two files in one run can legitimately disagree about `line-width` or `[lint]`. -/
+  config : FormatterConfig
+  /-- The directory whose config governs this file, root-relative. Two targets sharing a key share a
+  configuration, which is what lets the caller resolve one `RulePlan` per distinct config instead of
+  one per file. -/
+  configKey : String
 
 structure Snapshot where
   private mk ::
@@ -102,7 +112,8 @@ private def insideLakeDirectory (relativePath : String) : Bool :=
   relativePath == ".lake" || relativePath.startsWith ".lake/" ||
     relativePath.startsWith ".lake\\"
 
-private def snapshotTarget (workspace : Lake.Workspace) (root path : FilePath) : IO SourceTarget := do
+private def snapshotTarget (workspace : Lake.Workspace) (discovery : Discovery.Discovery)
+    (root path : FilePath) : IO SourceTarget := do
   let path ← IO.FS.realPath path
   unless insideRoot root path do
     throw <| IO.userError s!"selected file is outside the project root: {path}"
@@ -114,28 +125,35 @@ private def snapshotTarget (workspace : Lake.Workspace) (root path : FilePath) :
   -- (`ruff-13-config-discovery/evidence/01-discovery-baseline.md` §3).
   if insideLakeDirectory (Lake.relPathFrom root path).toString then
     throw <| IO.userError s!"selected file is inside the Lake build directory: {path}"
+  let relativePath := (Lake.relPathFrom root path).toString
   return {
     module? := workspace.findModuleBySrc? path
     path
-    relativePath := (Lake.relPathFrom root path).toString
+    relativePath
     source := ← IO.FS.readFile path
+    config := discovery.configFor relativePath
+    configKey := discovery.configKeyFor relativePath
   }
 
-private def discoverPaths (root : FilePath) : IO (Array FilePath) := do
-  let paths ← root.walkDir fun path => pure <| path.fileName != some ".lake"
-  return paths.filter (·.extension == some "lean")
-
 /- Load executable Lake configuration, select every requested source exactly once, and snapshot all
-bytes before analysis. Module/standalone classification is hidden in `SourceTarget`. -/
-def load (requestedRoot : FilePath) (config : FormatterConfig)
+bytes before analysis. Module/standalone classification is hidden in `SourceTarget`.
+
+Selection is now driven by one `Discovery` walk rather than a walk of its own plus a root-only config
+(`ruff-13` `notes/01-discovery.md` §4.2, §11). With no requested files the selected set is exactly
+what discovery kept: the floor, the ignore sources, and each file's *own* effective `include`/`exclude`.
+
+An explicitly named file skips gates 2-4 unless its effective configuration sets `force-exclude`, and
+never consults `include` even then — `include` answers "when I say nothing, format these", and naming
+a path is saying something (§11). Gate 1 is not skippable and lives in `snapshotTarget`, so it covers
+both path forms. -/
+def load (requestedRoot : FilePath) (discovery : Discovery.Discovery)
     (requested : Array FilePath) : IO Snapshot := do
   let root ← IO.FS.realPath requestedRoot
   let workspaceStarted ← IO.monoNanosNow
   let workspace ← loadWorkspace root
   let workspaceFinished ← IO.monoNanosNow
   let paths ← if requested.isEmpty then
-    pure <| (← discoverPaths root).filter fun path =>
-      config.includesPath (Lake.relPathFrom root path).toString
+    discovery.selectedSources.mapM fun relative => IO.FS.realPath (root / FilePath.mk relative)
   else
     requested.mapM fun path => do
       -- Resolve against the root, but report a missing file in the caller's own terms. `realPath` on a
@@ -147,7 +165,14 @@ def load (requestedRoot : FilePath) (config : FormatterConfig)
       unless ← candidate.pathExists do
         throw <| IO.userError s!"selected file does not exist: {path}"
       IO.FS.realPath candidate
-  let targets ← paths.mapM (snapshotTarget workspace root)
+  let targets ← paths.mapM (snapshotTarget workspace discovery root)
+  -- `force-exclude` is evaluated after snapshotting because it reads the file's *own* effective
+  -- configuration, which is a per-file fact. A path discovery dropped is absent from `sources`, so
+  -- reusing that set is exactly the gate-2 answer without a second matcher.
+  let targets ← if requested.isEmpty then pure targets else targets.filterM fun target => do
+    unless target.config.forceExclude do return true
+    if !discovery.sources.contains target.relativePath then return false
+    return discovery.gateFor target.relativePath != .configExclude
   let selectionFinished ← IO.monoNanosNow
   return {
     root
@@ -159,10 +184,12 @@ def load (requestedRoot : FilePath) (config : FormatterConfig)
 
 def loadAll (requestedRoot : FilePath) : IO Snapshot := do
   let root ← IO.FS.realPath requestedRoot
+  let discovery ← Discovery.run root none
   let workspaceStarted ← IO.monoNanosNow
   let workspace ← loadWorkspace root
   let workspaceFinished ← IO.monoNanosNow
-  let targets ← (← discoverPaths root).mapM (snapshotTarget workspace root)
+  let targets ← discovery.sources.mapM fun relative => do
+    snapshotTarget workspace discovery root (root / FilePath.mk relative)
   let selectionFinished ← IO.monoNanosNow
   return {
     root
@@ -313,14 +340,24 @@ def externalConfigurationIdentity (workspace : Lake.Workspace) : Digest :=
     String.intercalate "\u0000" (root.extraDepTargets.map toString).toList
   ]
 
+/- Identify the evaluated setup **and the formatter settings that change canonical bytes**.
+
+The `[format]` fold is what `ruff-13` RCD-IMPL owes the moment `line-width` became a runtime key
+(`notes/01-discovery.md` §9.1). Formatter identity is `(path, byteSize, mtime)` of the executable
+(`Cache.lean`), so editing the old compile-time `canonicalWidth` still invalidated — a rebuild rewrites
+the file. A *runtime* override changes output without touching the binary at all, so without this
+component two projects on one machine at different widths would serve each other's cached
+`CanonicalText`. `[lint]` settings are deliberately absent: they project over an unchanged canonical
+result and must stay out of identity, exactly as `CLAUDE.md` requires of rule selection. -/
 def configurationIdentity (_snapshot : Snapshot) (target : SourceTarget) : IO Digest :=
+  let format := target.config.format.identityString
   match target.module? with
-  | some mod => return Digest.ofString (moduleConfiguration mod)
+  | some mod => return Digest.ofString (moduleConfiguration mod ++ "\u0000" ++ format)
   | none => do
     if target.path.fileName == some "lakefile.lean" then
       return Digest.ofString <| String.intercalate "\u0000"
-        ["lakefile", target.relativePath, Lean.versionString, Lean.githash]
+        ["lakefile", target.relativePath, Lean.versionString, Lean.githash, format]
     return Digest.ofString <| String.intercalate "\u0000"
-      ["external-source", target.relativePath]
+      ["external-source", target.relativePath, format]
 
 end LeanFmt.Internal.Project

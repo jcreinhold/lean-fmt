@@ -171,13 +171,16 @@ def serve (options : ServeOptions) : IO UInt32 := do
   let root ← IO.FS.realPath options.root
   let configPath? := options.configPath?.map fun path =>
     if path.isAbsolute then path else root / path
-  let config ← FormatterConfig.load root configPath?
-  let plan ← match config.rulePlan
+  let discovery ← Discovery.run root configPath?
+  -- The service is capacity-one and holds one plan for its lifetime, so it resolves the *root*
+  -- configuration's plan rather than a per-file one. Its requests name single files that are already
+  -- selected, and re-reading configuration mid-session belongs to `ruff-16-watch-incremental`.
+  let plan ← match discovery.fallback.rulePlan
       { select := options.select, ignore := options.ignore, preview := options.preview } with
     | .ok plan => pure plan
     | .error message => throw <| IO.userError message
-  for notice in plan.notices do IO.eprintln s!"lean-fmt: {notice}"
-  let project ← Project.load root config #[]
+  for notice in discovery.fallback.notices ++ plan.notices do IO.eprintln s!"lean-fmt: {notice}"
+  let project ← Project.load root discovery #[]
   let stdin ← IO.getStdin
   let stdout ← IO.getStdout
   withExactRun project options.maxMemoryGiB fun run =>

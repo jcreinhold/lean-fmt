@@ -6,6 +6,7 @@ import all LeanFmt.Application
 import all LeanFmt.Cache
 import all LeanFmt.Comments
 import all LeanFmt.Config
+import all LeanFmt.Discovery
 import all LeanFmt.Doc
 import all LeanFmt.Edit
 import all LeanFmt.Imports
@@ -1417,8 +1418,8 @@ ever consults the projection, or the shortcut's `normalized` ever drifts from th
 what notices. -/
 private def verifyOfficialFacet (root sourcePath : System.FilePath) : IO Unit := do
   let root ← IO.FS.realPath root
-  let config ← FormatterConfig.load root
-  let project ← Project.load root config #[sourcePath]
+  let discovery ← Discovery.run root none
+  let project ← Project.load root discovery #[sourcePath]
   let some target := project.targets[0]?
     | throw <| IO.userError "official-facet test did not select exactly one source"
   unless project.targets.size == 1 do
