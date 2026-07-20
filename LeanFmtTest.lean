@@ -796,6 +796,7 @@ private def testCacheIdentity : IO Unit := do
     configuration := Digest.ofString "configuration"
     validationLevel := .syntax
     semanticSchema := semanticResultSchema
+    closure := Digest.ofString "closure"
   }
   let original := cacheIdentityDigest base
   let changes := #[
@@ -805,7 +806,11 @@ private def testCacheIdentity : IO Unit := do
     cacheIdentityDigest { base with formatter := Digest.ofString "other-formatter" },
     cacheIdentityDigest { base with configuration := Digest.ofString "other-configuration" },
     cacheIdentityDigest { base with validationLevel := .elaboration },
-    cacheIdentityDigest { base with semanticSchema := "other-semantic-schema" }
+    cacheIdentityDigest { base with semanticSchema := "other-semantic-schema" },
+    -- `ruff-16b` `RCI-IMPL`: the grammar a module was parsed under is an identity component, so a
+    -- change in the import closure's artifacts must move the key on its own. Without this row the
+    -- suite would pass under the naive fix that rekeys on nothing but the module's own bytes.
+    cacheIdentityDigest { base with closure := Digest.ofString "other-closure" }
   ]
   ensure (changes.all (· != original))
     "a semantic cache identity component did not invalidate the key"

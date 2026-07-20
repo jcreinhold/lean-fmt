@@ -81,8 +81,14 @@ run_expect 0 "$work/warm.json" env LEAN_FMT_TEST_DISABLE_MODULE_EVIDENCE=1 \
   "$application" check --root "$project" --json
 cmp "$work/cold.json" "$work/warm.json"
 
-# Source identity independently invalidates the coarse project epoch. The stale ordinary module and
-# standalone source cannot use module evidence; all selected sources remain present in the report.
+# Editing one source invalidates that source's entry and nothing else (`ruff-16b` RCI-IMPL). All
+# selected sources remain present in the report either way.
+#
+# This assertion used to name `scripts/Standalone.lean` alongside `Demo.lean`, because the cache epoch
+# was coarse: it hashed every project source, so editing any one of them invalidated all of them. That
+# is the defect `ruff-16b` removed. `scripts/Standalone.lean` is not a workspace module, so it is keyed
+# by the conservative whole-workspace artifact digest -- and no rebuild has happened here, so its
+# grammar is provably unchanged and it correctly still hits.
 cp -p "$project/Demo.lean" "$work/Demo.lean"
 printf '\n-- stale\n' >>"$project/Demo.lean"
 run_expect 2 "$work/stale.json" env LEAN_FMT_DISABLE_ARTIFACT=1 \
@@ -91,10 +97,10 @@ run_expect 2 "$work/stale.json" env LEAN_FMT_DISABLE_ARTIFACT=1 \
 python3 - "$work/stale.json" <<'PY'
 import json, sys
 r = json.load(open(sys.argv[1]))
-assert len(r["files"]) == 4
+assert len(r["files"]) == 4, r["files"]
 assert [f["path"] for f in r["files"]] == sorted(f["path"] for f in r["files"])
-failed = [f for f in r["files"] if f["status"] == "infrastructure-failure"]
-assert [f["path"] for f in failed] == ["Demo.lean", "scripts/Standalone.lean"]
+failed = [f["path"] for f in r["files"] if f["status"] == "infrastructure-failure"]
+assert failed == ["Demo.lean"], failed
 PY
 cp -p "$work/Demo.lean" "$project/Demo.lean"
 

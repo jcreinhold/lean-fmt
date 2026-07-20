@@ -1,6 +1,6 @@
 ---
 kind: state
-first_unresolved: 03-implementation
+first_unresolved: 04-acceptance
 ---
 
 # Current state
@@ -10,28 +10,36 @@ result-cache finding did not survive reading the code. Its external prerequisite
 `ruff-16-watch-incremental`, which records `first_unresolved: none`. If live code contradicts a
 prerequisite result, reopen the owning prerequisite rather than patching around it.
 
-`RCI-SPEC` and `RCI-MODEL` have run. The diagnosis below is **confirmed** and reproduced at entry
-granularity; the `ruff-16` record is amended everywhere it was asserted; the currency check, the tier
-decision, the undeterminable-currency rule, and the differential test are frozen in
-`results/01-contract.md`; and the decision is modelled and proved sound **and** complete in
+`RCI-SPEC`, `RCI-MODEL`, and `RCI-IMPL` have run. The diagnosis below is **confirmed** and reproduced
+at entry granularity; the `ruff-16` record is amended everywhere it was asserted; the currency check,
+the tier decision, the undeterminable-currency rule, and the differential test are frozen in
+`results/01-contract.md`; the decision is modelled and proved sound **and** complete in
 `LeanFmt/Cache/Spec.lean` under four named hypotheses, depending on `propext` alone
-(`results/02-model.md`).
+(`results/02-model.md`); and it now ships (`results/03-implementation.md`).
 
-What remains is implementation. Nothing in `LeanFmt.Cache` has changed yet — the shipped cache still
-folds every project source into the index filename.
+**The defect is gone.** `CacheIdentity` carries a per-entry `closure` digest — Lake's own
+`importAllArts`, recomputed from each closure member's recorded trace outputs — and
+`environmentDigest?` no longer walks project sources. Warm re-run on this repository is 119/119 at
+0.52 s, and no edit shape produces the old 0/112 collapse. Editing only a `notation` re-analyzes its
+users, whose bytes never changed, and nothing else (`tests/cache/run.sh` §5, mutation-checked at 4
+served versus 3).
+
+What remains is acceptance: adversarial edit shapes, scale, and the watch re-exec decision.
 
 | Prompt | Claim | Status | Depends on |
 | --- | --- | --- | --- |
 | 01-contract | RCI-SPEC | verified | — |
 | 02-model | RCI-MODEL | verified | RCI-SPEC |
-| 03-implementation | RCI-IMPL | planned | RCI-MODEL |
+| 03-implementation | RCI-IMPL | verified | RCI-MODEL |
 | 04-acceptance | RCI-FINAL | planned | RCI-IMPL |
 
-## The diagnosis, now confirmed
+## The diagnosis, now confirmed and fixed
 
-`Cache.environmentDigest?` folds every project source file's bytes into `environment` via
-`sourceRootParts?`; `environment` feeds `baseDigest`; `baseDigest` names the index file through
-`indexPath`. Editing one source therefore changes the index filename and orphans every entry.
+**Historical.** `Cache.environmentDigest?` *folded* every project source file's bytes into
+`environment` via `sourceRootParts?`; `environment` feeds `baseDigest`; `baseDigest` names the index
+file through `indexPath`. Editing one source therefore changed the index filename and orphaned every
+entry. `sourceRootParts?` is deleted as of `RCI-IMPL`; the table below is the measurement that
+established the defect, not current behavior.
 
 Re-measured under `RCI-SPEC` at `60e5da5`, 112 files, with entry-level counts from the profile
 channel (`results/01-contract.md` §2, `evidence/01-invalidation-and-traces.md` §1):
@@ -100,7 +108,15 @@ annotated), the inherited notes in `ruff-17-lsp` and `ruff-19-performance` `stat
   Read alone it falsely hits in exactly the stale case that matters. The frozen design avoids it:
   currency compares `M`'s *recorded expectation* for each import against that import's **current**
   artifacts, and never reads `M`'s own stored `depHash`.
-- **Open for `RCI-IMPL`/`RCI-FINAL`:** index collection. Making the index name independent of project
-  sources removes future accumulation, but no collection path exists at all — the two orphans this
-  repository accumulated during `RCI-SPEC` are still on disk. One of the two later prompts must state
-  whether collection is added or whether a stable name makes it moot.
+- **Settled by `RCI-IMPL`:** index collection. No collection path is added, and a stable name makes it
+  moot for project edits — five rebuild-and-check cycles on the fixture finish with one index file, and
+  this repository holds one across cold and warm (`results/03-implementation.md` §7). The name still
+  moves when the *epoch* moves: a toolchain change, a dependency rebuild, a new `lean-fmt` binary.
+  Those are rare and are not user-facing edit shapes. `RCI-FINAL` owns whether that residual case needs
+  collecting.
+- **Open for `RCI-FINAL`:** three items `RCI-IMPL` measured but did not close. The conservative
+  whole-workspace fallback's blast radius is unmeasured on a mostly-standalone project. Executable
+  roots (`Main`, `LeanFmtTest`, `LeanFmtArtifactExtract`) take that fallback only because
+  `Lake.Workspace.findModule?` searches libraries and not executables; a narrower lookup would give
+  them precise keys, at the cost of widening the Lake surface `Project` exposes. And the watch re-exec
+  decision still owes a measurement.

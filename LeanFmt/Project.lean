@@ -347,6 +347,50 @@ def importClosures (workspace : Lake.Workspace) (names : Array Lean.Name) :
     | .error _ _ => throw <| IO.userError "could not collect import closures"
   return (resolved.zip closures).map fun ((name, _), closure) => (name, closure)
 
+/- The same graph fact as `importClosures`, but with the failure distinguished from the empty answer.
+
+`importClosures` maps a failed fetch to `#[]`, which is exactly right for FMT006: an unresolvable
+closure there loses at most one report-only redundancy finding and can never fabricate one. It is
+**wrong for cache currency**, where the closure decides what must be compared. An empty closure means
+"nothing to check", so swallowing the error into `#[]` would turn an undeterminable answer into a
+*permissive* one — a stale hit, which `RCI-SPEC` §6 froze as the one direction currency must never
+degrade toward.
+
+So this returns `none` for a module whose closure could not be resolved, and the caller misses. The
+two operations are kept separate rather than one being expressed through the other, because the
+difference between them is precisely which failure direction is safe, and that is a per-caller
+judgement that should not be reachable by passing a flag.
+
+A name absent from the workspace is omitted from the result entirely; `closureDigest?` treats a
+missing entry as `none` for the same reason. -/
+def importClosures? (workspace : Lake.Workspace) (names : Array Lean.Name) :
+    IO (Array (Lean.Name × Option (Array Lean.Name))) := do
+  let resolved := names.filterMap fun name =>
+    (workspace.findModule? name).map fun mod => (name, mod)
+  if resolved.isEmpty then return #[]
+  let registeredJobs ← Lake.mkJobQueue
+  let context ← Lake.mkBuildContext' workspace { noBuild := true } registeredJobs
+  let computation : Lake.Job (Lake.Job (Array (Option (Array Lean.Name)))) ←
+    Lake.Workspace.startBuild context do
+      let jobs ← resolved.mapM fun (_, mod) => do
+        let job ← mod.transImports.fetch
+        return job.mapResult fun
+          | .ok mods state => .ok (some (mods.map (·.name))) state
+          | .error _ state => .ok none state
+      return Lake.Job.collectArray jobs "lean-fmt currency closures"
+  let closuresJob ← match ← computation.wait with
+    | .ok job _ => pure job
+    | .error _ _ => throw <| IO.userError "could not construct currency closures"
+  let closures ← match ← closuresJob.wait with
+    | .ok closures _ => pure closures
+    | .error _ _ => throw <| IO.userError "could not collect currency closures"
+  return (resolved.zip closures).map fun ((name, _), closure) => (name, closure)
+
+/-- The trace file Lake writes for a workspace module, or `none` if the name is not a workspace
+module. Cache currency reads recorded trace facts; it does not resolve imports. -/
+def moduleTracePath? (workspace : Lake.Workspace) (name : Lean.Name) : Option FilePath :=
+  (workspace.findModule? name).map (·.traceFile)
+
 def moduleEvidence (snapshot : Snapshot) : IO (Array ModuleEvidence) := do
   if (← IO.getEnv "LEAN_FMT_TEST_DISABLE_MODULE_EVIDENCE") == some "1" then
     return Array.replicate snapshot.targets.size .needsFrontend

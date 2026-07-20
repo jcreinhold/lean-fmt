@@ -255,7 +255,30 @@ cp -p "$work/Findings.lean.backup" tests/check/Findings.lean
 
 trace=.lake/build/lib/lean/Findings.trace
 cp -p "$trace" "$work/Findings.trace.backup"
+
+# The key is what the trace *records* -- the content-addressed output names -- not the trace file's
+# bytes. Whitespace that leaves the recorded outputs identical leaves the grammar identical, so it
+# must still hit. Before `ruff-16b` this forced a miss, because the epoch hashed trace file contents.
 printf '\n' >>"$trace"
+run_expect 1 "$work/cache-trace-whitespace.json" env LEAN_FMT_DISABLE_ARTIFACT=1 LEAN_FMT_TEST_DISABLE_MODULE_EVIDENCE=1 \
+  LEAN_FMT_TEST_ANALYZER=/usr/bin/false "$application" check --root . --json \
+  tests/check/Findings.lean
+cmp "$work/cache-repaired.json" "$work/cache-trace-whitespace.json"
+cp -p "$work/Findings.trace.backup" "$trace"
+
+# A recorded output name that no longer matches must force a miss. This is the assertion the
+# whitespace probe above used to stand in for, and it tests the key that is actually consulted.
+python3 - "$trace" <<'PY'
+import json, sys
+path = sys.argv[1]
+trace = json.load(open(path))
+outputs = trace["outputs"]
+original = outputs["o"][0]
+assert original.endswith(".olean"), original
+outputs["o"][0] = "0000000000000000" + original[16:]
+assert outputs["o"][0] != original
+json.dump(trace, open(path, "w"))
+PY
 run_expect 2 "$work/cache-trace-miss.json" env LEAN_FMT_DISABLE_ARTIFACT=1 LEAN_FMT_TEST_DISABLE_MODULE_EVIDENCE=1 \
   LEAN_FMT_TEST_ANALYZER=/usr/bin/false "$application" check --root . --json \
   tests/check/Findings.lean
@@ -271,15 +294,34 @@ run_expect 1 "$work/cache-restored-identity.json" env LEAN_FMT_DISABLE_ARTIFACT=
   tests/check/Findings.lean
 cmp "$work/cache-repaired.json" "$work/cache-restored-identity.json"
 
-# Compact artifact-cache traces can omit their source inputs. The aggregate cache epoch therefore
-# hashes current source roots independently: changing another project source while leaving every
-# build artifact and trace untouched must still force a miss.
+# Editing an unrelated project source, without rebuilding, does **not** invalidate another file's
+# entry (`ruff-16b` RCI-IMPL). This assertion is the reverse of the one that stood here before, and the
+# reversal is the point of that stack.
+#
+# The old epoch hashed every project source byte into `environment`, and `environment` names the index
+# *file* -- so this edit renamed the index and orphaned all 112 entries, not just this one. `ruff-16b`
+# replaced that with a per-entry `closure` key over the recorded build artifacts.
+#
+# Hitting here is not a weakening. `lean-fmt` fetches its Lake graph with `noBuild := true`; it never
+# builds. So the grammar available to an *uncached* run is the one in the artifacts on disk, which this
+# edit did not touch. The fidelity target is "the cache agrees with the same run without a cache", and
+# the assertion below states exactly that -- the old behavior missed that target by over-invalidating.
+# A grammar change that has actually been built is caught by `tests/cache/run.sh` §5.
+#
+# `LEAN_FMT_TEST_ANALYZER=/usr/bin/false` is what makes this observable: recomputation cannot succeed,
+# so exit 1 means served from cache and exit 2 means it had to recompute.
 project_source=LeanFmt/Cli.lean
 cp -p "$project_source" "$work/Cli.lean.backup"
 printf '\n-- cache-project-source-invalidation\n' >>"$project_source"
-run_expect 2 "$work/cache-dependency-source-miss.json" env LEAN_FMT_DISABLE_ARTIFACT=1 \
+run_expect 1 "$work/cache-dependency-source-hit.json" env LEAN_FMT_DISABLE_ARTIFACT=1 \
   LEAN_FMT_TEST_DISABLE_MODULE_EVIDENCE=1 LEAN_FMT_TEST_ANALYZER=/usr/bin/false \
   "$application" check --root . --json tests/check/Findings.lean
+cmp "$work/cache-repaired.json" "$work/cache-dependency-source-hit.json"
+# The served entry is the one a cacheless run under this same build state produces.
+run_expect 1 "$work/cache-dependency-source-uncached.json" env LEAN_FMT_DISABLE_ARTIFACT=1 \
+  LEAN_FMT_TEST_DISABLE_MODULE_EVIDENCE=1 \
+  "$application" check --root . --json --no-cache tests/check/Findings.lean
+cmp "$work/cache-repaired.json" "$work/cache-dependency-source-uncached.json"
 cp -p "$work/Cli.lean.backup" "$project_source"
 run_expect 1 "$work/cache-dependency-source-restored.json" env LEAN_FMT_DISABLE_ARTIFACT=1 \
   LEAN_FMT_TEST_DISABLE_MODULE_EVIDENCE=1 LEAN_FMT_TEST_ANALYZER=/usr/bin/false \

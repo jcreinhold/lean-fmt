@@ -38,6 +38,23 @@ setup, import artifacts, extra targets, options, plugins, and build dependencies
 epoch. Sources without their own output remain valid inputs to exact analysis, but this coarse cache
 does not claim an identity it cannot prove for them.
 
+> **Amended by `ruff-16b-cache-identity` `RCI-IMPL` (2026-07-20).** Three claims above are no longer
+> current. The aggregate epoch was the defect: it hashed every project source and every workspace
+> `.olean` trace into `environment`, and `environment` *names the index file*, so editing one source
+> renamed the index and orphaned every entry — measured at 0/112 hits after one appended comment.
+>
+> - The epoch now skips the workspace's **own** build directory. Dependency roots, ambient roots,
+>   search-path order, toolchain and shared libraries keep exactly the coverage described above.
+> - Per-module currency moved into a per-entry `CacheIdentity.closure`: Lake's own `importAllArts`,
+>   recomputed from each import-closure member's recorded trace outputs.
+> - A target **without** its own traced `.olean` is no longer excluded from the cache. It is keyed by
+>   the digest of every artifact in the workspace build directory, which *dominates* any per-module
+>   closure digest and is therefore sound, though coarse.
+>
+> The "coarse" framing in the last sentence above was the right instinct applied at the wrong
+> granularity: coarseness belongs in an entry's key, never in the index's name.
+> See `docs/projects/ruff-16b-cache-identity/results/03-implementation.md`.
+
 ## Entry trust and writes
 
 Entries live under `.lean-fmt-cache/results/`, separate from compiler artifacts. Each contains a
