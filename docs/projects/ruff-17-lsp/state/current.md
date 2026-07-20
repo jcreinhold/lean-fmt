@@ -50,6 +50,13 @@ Measured there, and design input here rather than trivia to rediscover:
 
 ## Inherited from `ruff-16-watch-incremental` (verified)
 
+> **[DISPUTED by `ruff-16b-cache-identity`.]** The in-process framing below is likely wrong.
+> `execute` opens a fresh `ResultCache` per call (`Application.lean:1298`), and the compared
+> numbers were different workloads (cold-after-edit versus an unchanged tree). The real defect
+> appears to be that `Cache.environmentDigest?` folds every project source into the index
+> filename, so any edit invalidates the whole project in any process. `RCI-SPEC` owns the
+> amendment; do not act on the paragraph below before reading that stack's `state/current.md`.
+
 - **`execute` does not reuse the result cache when called twice in one process.** Measured
   (`ruff-16/results/02-implementation.md`, decision 3): a second in-process `execute` after a
   one-file edit took **~70 s** — the full cold-cache price — where a *separate* process handling the

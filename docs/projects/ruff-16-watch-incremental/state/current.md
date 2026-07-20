@@ -43,6 +43,13 @@ no torn output.
   compatibility surface, compared byte-for-byte by `tests/check/run.sh`; a new field would break a
   cross-stack contract to carry presentation. Every `--changed` run still states its comparison,
   resolved base, withheld paths, and that it covered a subset.
+> **[DISPUTED by `ruff-16b-cache-identity`.]** The in-process framing below is likely wrong.
+> `execute` opens a fresh `ResultCache` per call (`Application.lean:1298`), and the compared
+> numbers were different workloads (cold-after-edit versus an unchanged tree). The real defect
+> appears to be that `Cache.environmentDigest?` folds every project source into the index
+> filename, so any edit invalidates the whole project in any process. `RCI-SPEC` owns the
+> amendment; do not act on the paragraph below before reading that stack's `state/current.md`.
+
 - **Each generation is a fresh child process, and nothing is retained** (§4, §6) — settled by
   measurement, not preference. `execute` **does not reuse the result cache when called twice in one
   process**: generation 2 in-process took ~70 s (the cold price) where a separate process handling the
