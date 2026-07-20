@@ -1,6 +1,6 @@
 ---
 claim_id: RWI-SPEC
-status: planned
+status: verified
 depends_on: []
 ---
 

@@ -1,9 +1,9 @@
 # Next Proof Packet
 
 - Stack: ruff-16-watch-incremental
-- First unresolved: 01-contract
-- Claim ID: RWI-SPEC
-- Prompt: 01-contract
+- First unresolved: 02-implementation
+- Claim ID: RWI-IMPL
+- Prompt: 02-implementation
 - Module: (docs only)
 - Target file: (docs only)
 
@@ -17,7 +17,7 @@ Read this file, the target prompt, target files, listed source/template line ran
 
 ## Proof Task
 
-- Deliver **RWI-SPEC**: Define event coalescing, generation identity, configuration/Lake change invalidation, output framing, signal handling, Git comparison modes, rename behavior, and failure recovery.
+- Deliver **RWI-IMPL**: Add private filesystem and Git selection adapters, bounded coalescing, generation reporting, graceful shutdown, and focused test hooks while preserving the single semantic engine.
 - Read `roadmap.md`, its prerequisite stack results, `AGENTS.md`, the current implementation and tests, and the relevant Lean compiler/Lake sources before changing an interface. Write interface comments and characterization tests before implementation where the behavior is not already frozen.
 
 ## Reuse
@@ -30,6 +30,6 @@ Inspect the live goal, search relevant declarations, test plausible proof steps,
 
 ## Stop Rules
 
-- Do not make a partial changed-file run look like a complete-project clean result.
-- Git absence is a clear request error.
+- No unbounded event queue or concurrent mutation of one Lean session.
+- Do not add public job controls.
 - Stop rather than weakening exact semantics, write safety, or the resource envelope.
