@@ -8,7 +8,7 @@ depends_on: [RSF-IMPL]
 
 ## Task
 
-Deliver **RSF-FINAL**: Test UTF-8 positions, empty ranges, comments, custom syntax, nested nodes, malformed input, pipes, broken stdout, full-range equivalence, and repeated range idempotence.
+Deliver **RSF-FINAL**: Test UTF-8 positions, empty ranges, comments, custom syntax, nested nodes, malformed input, pipes, broken stdout, full-range equivalence, reflow-expanded ranges (an edit whose enclosing unit rebreaks), and repeated range idempotence.
 
 Read `roadmap.md`, its prerequisite stack results, `AGENTS.md`, the current implementation and tests,
 and the relevant Lean compiler/Lake sources before changing an interface. Write interface comments and

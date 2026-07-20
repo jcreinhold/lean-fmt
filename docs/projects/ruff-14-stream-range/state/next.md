@@ -1,9 +1,9 @@
 # Next Proof Packet
 
 - Stack: ruff-14-stream-range
-- First unresolved: 01-contract
-- Claim ID: RSF-SPEC
-- Prompt: 01-contract
+- First unresolved: 02-implementation
+- Claim ID: RSF-IMPL
+- Prompt: 02-implementation
 - Module: (docs only)
 - Target file: (docs only)
 
@@ -17,7 +17,7 @@ Read this file, the target prompt, target files, listed source/template line ran
 
 ## Proof Task
 
-- Deliver **RSF-SPEC**: Specify CLI forms, filename requirements, position encoding, enclosing-node selection, comment ownership at boundaries, diagnostics, exit codes, and cache/write policy.
+- Deliver **RSF-IMPL**: Reuse snapshot analysis and the layout source map to add stdin/stdout and range formatting, exact validation, actual-range reporting, and deterministic errors.
 - Read `roadmap.md`, its prerequisite stack results, `AGENTS.md`, the current implementation and tests, and the relevant Lean compiler/Lake sources before changing an interface. Write interface comments and characterization tests before implementation where the behavior is not already frozen.
 
 ## Reuse
@@ -30,6 +30,6 @@ Inspect the live goal, search relevant declarations, test plausible proof steps,
 
 ## Stop Rules
 
-- Reject stdin requests that cannot establish exact project identity when selected features require it.
-- Never slice arbitrary bytes and parse them as an exact module.
+- No second formatter or parser path.
+- Unsaved input receives the same resource envelope as service requests.
 - Stop rather than weakening exact semantics, write safety, or the resource envelope.

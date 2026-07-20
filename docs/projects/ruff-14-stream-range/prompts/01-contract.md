@@ -1,6 +1,6 @@
 ---
 claim_id: RSF-SPEC
-status: planned
+status: verified
 depends_on: []
 ---
 

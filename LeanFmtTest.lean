@@ -1720,6 +1720,31 @@ private def testDoc : IO Unit := do
   ensure (spanMarks.size == 1 && slice spanOut spanMarks[0]!.output.start spanMarks[0]!.output.stop == spanOut)
     "a mark spanning a break lost part of its output"
 
+  -- `RSF-SPEC` (`ruff-14`) characterization: **when is a rendered unit's bytes independent of what
+  -- follows it?** Range formatting reports an actual range and promises the text outside it is
+  -- byte-identical, so it may only expand to a unit whose rendering the rest of the document cannot
+  -- re-decide. That is not a property of commands — it is a property of `fits`, which walks the
+  -- *tail* of the work list (`Doc.lean:168-188`). A group at the end of a unit therefore measures
+  -- itself against whatever comes after, unless something between them stops the walk.
+  --
+  -- Exactly one thing does: a `verbatim` holding a newline, which `fits` treats like `hard`
+  -- (`Doc.lean:174-176`). So "ends in trivia containing a newline" is the frozen unit boundary
+  -- condition, and `notes/01-stream-range.md` §4 states it as such.
+  let unitEndingIn (trailing : String) : Doc :=
+    .group (.text "aaaa" ++ .line " " ++ .text "bbbb") ++ .verbatim trailing
+  -- At margin 10 the group is 9 columns and fits flat on its own either way.
+  ensure (renderText 10 (unitEndingIn "\n") == "aaaa bbbb\n") "the newline-terminated unit did not fit flat"
+  ensure (renderText 10 (unitEndingIn " ") == "aaaa bbbb ") "the space-terminated unit did not fit flat"
+  -- Newline-terminated: no tail, however long, can reach back through it.
+  ensure ((renderText 10 (unitEndingIn "\n" ++ .text "yyyyyyyyyyyyyyyy")).startsWith
+      (renderText 10 (unitEndingIn "\n")))
+    "a newline-terminated unit's layout depended on the document after it"
+  -- Not newline-terminated: a one-character tail is enough to rebreak the unit before it. This is
+  -- the same-line case (`def a := 1 def b := 2`), and it is why a range must expand to a newline.
+  ensure (renderText 10 (unitEndingIn " " ++ .text "x") == "aaaa\nbbbb x")
+    "a space-terminated unit was not rebroken by the text after it — the fit walk no longer runs into \
+     the tail, so the range-expansion boundary condition needs restating"
+
   -- Properties over 400 generated documents. The seed is printed on failure, and generation is
   -- deterministic, so a counterexample is reproducible from that number alone.
   let mut seed := 20260716
