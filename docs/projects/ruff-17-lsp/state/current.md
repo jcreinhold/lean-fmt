@@ -35,6 +35,19 @@ Measured there, and design input here rather than trivia to rediscover:
   this stack is small — the actual range must be reported either way — but do not "simplify" the
   expansion rule on the strength of a client never having observed it widening.
 
+## Inherited from `ruff-15-reporting` (verified)
+
+- **`Application.PositionIndex` is not this stack's conversion layer, and reaching for it would be
+  silently wrong.** `ruff-15` added a byte-offset → (line, column) index, but its columns are 1-based
+  **codepoints**, the encoding `ruff-14` froze for `--range-lines`. LSP positions are UTF-16 code
+  units. The two agree on everything in the BMP and disagree outside it, which is why the difference
+  survives casual testing: `ruff-15`'s astral fixture (`𝔘`, 4 bytes / 2 UTF-16 units / 1 codepoint)
+  reports column **34**, where a byte column is 37 and a UTF-16 column is 35
+  (`tests/reporting/run.sh`, "codepoint columns are neither bytes nor UTF-16"). The roadmap already
+  requires "one tested conversion layer"; this is the concrete trap it has to avoid, and the astral
+  fixture is the shape of test that catches it. `PositionIndex` is reusable as a *pattern* — resolve
+  only the offsets the answer names, in one forward pass — not as an implementation.
+
 ## Blockers and prerequisites
 
 - No blocker is currently recorded beyond the named prerequisite stacks.
