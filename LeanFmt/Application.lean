@@ -1835,9 +1835,13 @@ def compilerSetupReport : CompilerSetupReport := {
   facet := "leanFmtArtifact"
   toolchain := s!"Lean {Lean.versionString} ({Lean.githash})"
   guidance := #[
+    "the plugin is optional: without it a syntax-tier rule runs the exact frontend and reports the same finding",
     "add lean-fmt as a Lake dependency using the source and revision you trust",
-    "for dependency alias ALIAS, add `@ALIAS/LeanFmtCompilerPlugin:shared to each formatted lean_lib plugins array",
-    "build +MODULE:leanFmtArtifact when an extracted module artifact is required"
+    "set plugins := #[`@«lean-fmt»/LeanFmtCompilerPlugin:shared] on the package, not on each lean_lib",
+    "the guillemets are required: lean-fmt is not a legal Lean identifier",
+    "for lake lint, set lintDriver := \"«lean-fmt»/«lean-fmt»\" and lintDriverArgs := #[\"check\"]",
+    "build +MODULE:leanFmtArtifact when an extracted module artifact is required",
+    "editing the plugin re-elaborates every module that loads it; that trace edge is what makes the artifact trustworthy"
   ]
 }
 

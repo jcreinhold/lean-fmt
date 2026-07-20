@@ -33,9 +33,9 @@ lake exe lean-fmt
 lake exe lean-fmt-tests
 ```
 
-Suites live in `tests/*/run.sh`: boundary, cache, catalog, check, compiler, discovery, imports,
-layout, lossless, modes, printer, reporting, scale, semantic, service, stream, suppression, syntax,
-watch.
+Suites live in `tests/*/run.sh`: boundary, cache, catalog, check, compiler, discovery, downstream,
+imports, layout, lossless, modes, printer, reporting, scale, semantic, service, stream, suppression,
+syntax, watch.
 
 Match the checks to the change:
 

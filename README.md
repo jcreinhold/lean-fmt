@@ -134,6 +134,58 @@ rewrite arbitrary executable `lakefile.lean`. `compiler status` performs a read-
 audit of exact toolchain compatibility and embedded module-artifact coverage; it neither builds
 modules nor publishes artifacts. `clean` removes only the root `.lean-fmt-cache` and is idempotent.
 
+## Using lean-fmt in another project
+
+There is no prebuilt binary. Lean's ecosystem has no artifact server — Reservoir indexes packages and
+reports build status, it does not serve builds — so a consuming project takes `lean-fmt` as an ordinary
+Lake dependency and builds it from source, the way `doc-gen4` and `lake exe cache` are consumed.
+
+Three levels, each independent of the ones below it. `tests/downstream/run.sh` exercises all three
+against a real two-package workspace.
+
+**Run it.** With `require «lean-fmt» from git "..."` in the lakefile, the executable already resolves:
+Lake searches every package in the workspace for an executable target.
+
+```sh
+lake exe lean-fmt check --root .
+```
+
+**Wire it into `lake lint`.** Lake has a lint-driver protocol, and `leanprover/lean-action` probes
+`lake check-lint` and runs `lake lint` when a driver is configured. Two lines in the consuming package:
+
+```lean
+package myproject where
+  lintDriver := "«lean-fmt»/«lean-fmt»"
+  lintDriverArgs := #["check"]
+```
+
+The guillemets are required in **both** halves. `lean-fmt` is not a legal Lean identifier, and Lake
+resolves a driver spec through `String.toName`, so the bare spelling finds neither the package nor the
+executable. Findings exit 1 and infrastructure failures exit 2, so CI can tell them apart. Note that
+`lake lint MODULE` does not forward `MODULE` to the driver; arguments reach it after `--`.
+
+**Add the compiler plugin.** Optional, and purely a speed measure: without it a syntax-tier rule runs
+the exact frontend and returns the same finding. One line, on the package rather than on each library,
+because `LeanLib.plugins` is the package's plugins followed by the library's own:
+
+```lean
+package myproject where
+  plugins := #[`@«lean-fmt»/LeanFmtCompilerPlugin:shared]
+```
+
+That also reaches the language server, since Lake writes the plugin list into each module's
+`setup.json`. The `leanFmtArtifact` facet needs no declaration on your side: Lake merges every
+dependency's facet declarations into one workspace-global map.
+
+Three costs to weigh. The plugin's shared library enters every consuming module's build trace, so
+editing the plugin re-elaborates every module that loads it — that edge is what makes the artifact
+trustworthy, and `platformIndependent := true` suppresses it only by lying. Loading a plugin runs the
+initializers of the plugin module and all its imports, per module. And on macOS, Lake adds its own
+shared library as a second plugin whenever any plugin is present.
+
+Lake's `plugins` field is still officially experimental and its target-key syntax has been revised
+more than once. Pin the toolchain and re-run `tests/downstream/run.sh` after a bump.
+
 ## Streaming and ranges
 
 `-` is a file target: the buffer arrives on stdin and the answer goes to stdout. It requires

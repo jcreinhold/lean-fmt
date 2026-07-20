@@ -1,0 +1,9 @@
+# The configuration `lake lint` runs under, named explicitly by `lintDriverArgs` in `lakefile.lean`.
+#
+# It exists because this repository is a formatter: `tests/` and `experiments/` hold sources that are
+# deliberately malformed, unparseable, or lint-dirty, and they are fixtures rather than defects. A
+# driver that reported them would fail on a clean tree and teach everyone to ignore it.
+#
+# `--config` overrides discovery outright, so this file governs `lake lint` and nothing else. No other
+# suite passes `--config`, and none of them changes behavior because this file exists.
+include = ["LeanFmt/**/*.lean", "*.lean"]

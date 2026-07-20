@@ -15,8 +15,14 @@ structure AnalysisEnvelope where
   diagnostics : Array String := #[]
   deriving Lean.ToJson, Lean.FromJson
 
+/- Silent messages are carriers, not diagnostics. The compiler plugin writes the module artifact into
+the persistent lint log as a silent `.information` message, so an integrated project's own frontend run
+sees it in the log alongside real errors. Reporting it would print the whole serialized projection as
+a broken-source diagnostic. Found by `tests/downstream/run.sh`: it needs a plugin-enabled project *and*
+a file that elaborates far enough for the module linter to run, which is why no in-repo broken fixture
+caught it — `MalformedHeader` and `UnresolvedImport` both fail before the linter fires. -/
 private def messageStrings (messages : Lean.MessageLog) : IO (Array String) :=
-  messages.toArray.mapM (·.toString true)
+  messages.toArray.filter (!·.isSilent) |>.mapM (·.toString true)
 
 private def broken (messages : Lean.MessageLog) : IO AnalysisEnvelope := do
   return { artifact? := none, diagnostics := ← messageStrings messages }

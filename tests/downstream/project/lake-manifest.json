@@ -1,0 +1,13 @@
+{"version": "1.2.0",
+ "packagesDir": ".lake/packages",
+ "packages":
+ [{"type": "path",
+   "scope": "",
+   "name": "«lean-fmt»",
+   "manifestFile": "lake-manifest.json",
+   "inherited": false,
+   "dir": "../../..",
+   "configFile": "lakefile.lean"}],
+ "name": "consumer",
+ "lakeDir": ".lake",
+ "fixedToolchain": false}

@@ -2,8 +2,19 @@ import Lake
 
 open Lake DSL System
 
+/- The drivers are Lake's own protocol for "run this project's tests" and "run this project's linter".
+Configuring them here means `lake test` and `lake lint` work in this repository, and that a consuming
+project can copy a working example rather than a printed instruction. `leanprover/lean-action` probes
+`lake check-lint` and runs `lake lint` when it succeeds, so this is also the CI integration.
+
+Both driver names need guillemets. `lean-fmt` is not a legal Lean identifier, and Lake resolves a
+driver by `String.toName`, so the bare spelling does not find the executable — `tests/downstream/run.sh`
+§5 pins the consuming form, which needs them in the package half too. -/
 package «lean-fmt» where
   version := v!"0.1.0"
+  testDriver := "lean-fmt-tests"
+  lintDriver := "«lean-fmt»"
+  lintDriverArgs := #["check", "--config", "lint-driver.toml"]
 
 @[default_target]
 lean_exe «lean-fmt» where
