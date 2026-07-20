@@ -92,12 +92,28 @@ private def insideRoot (root path : FilePath) : Bool :=
   path == root || path.toString.startsWith
     (root.toString ++ FilePath.pathSeparator.toString)
 
+/-- Whether a root-relative path lies inside Lake's build directory.
+
+Gate 1 of the selection table (`ruff-13` `notes/01-discovery.md` §11), and an **absolute** floor: no
+configuration key, no `--config`, no explicit path, and no `force-exclude` setting can lift it. `.lake`
+holds Lake's build outputs and vendored dependency sources; writing there corrupts a build the user did
+not ask us to touch. -/
+private def insideLakeDirectory (relativePath : String) : Bool :=
+  relativePath == ".lake" || relativePath.startsWith ".lake/" ||
+    relativePath.startsWith ".lake\\"
+
 private def snapshotTarget (workspace : Lake.Workspace) (root path : FilePath) : IO SourceTarget := do
   let path ← IO.FS.realPath path
   unless insideRoot root path do
     throw <| IO.userError s!"selected file is outside the project root: {path}"
   unless path.extension == some "lean" do
     throw <| IO.userError s!"selected file is not a Lean source: {path}"
+  -- The floor runs here, beside the containment and extension checks, rather than only in
+  -- `discoverPaths`: both path forms reach this operation, and until `ruff-13` only the discovery form
+  -- was filtered — so `format .lake/packages/dep/Dep.lean` wrote a dependency's source
+  -- (`ruff-13-config-discovery/evidence/01-discovery-baseline.md` §3).
+  if insideLakeDirectory (Lake.relPathFrom root path).toString then
+    throw <| IO.userError s!"selected file is inside the Lake build directory: {path}"
   return {
     module? := workspace.findModuleBySrc? path
     path

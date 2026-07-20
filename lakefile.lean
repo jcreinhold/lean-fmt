@@ -36,6 +36,7 @@ lean_lib LeanFmtApplication where
     Glob.one `LeanFmt.Analysis,
     Glob.one `LeanFmt.Cache,
     Glob.one `LeanFmt.Config,
+    Glob.one `LeanFmt.Discovery,
     Glob.one `LeanFmt.Edit,
     Glob.one `LeanFmt.Project,
     Glob.one `LeanFmt.Semantic,

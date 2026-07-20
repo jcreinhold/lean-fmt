@@ -8,15 +8,68 @@ namespace LeanFmt.Internal
 private structure PathPattern where
   source : String
   segments : List String
+  /-- The directory this pattern is anchored at, relative to the project root (`""` is the root
+  itself). A pattern means what its **declaring** config's directory says it means, never what the
+  consuming file's directory does (`notes/01-discovery.md` §7). With one root config the two coincide,
+  which is exactly why this field has to be explicit: a nested config's `exclude = ["Generated/**"]`
+  means `Generated/**` under *that* config's directory, and an `extend`ed pattern keeps its parent's
+  anchor rather than being re-anchored at the inheritor. -/
+  anchor : String := ""
 
 private structure PerFileIgnore where
   pattern : PathPattern
   selectors : Array String
 
+/-- The `[format]` section: settings that change the **canonical bytes** a run produces.
+
+The section split is the cache-identity boundary, not a cosmetic grouping (`notes/01-discovery.md`
+§8.1, §9.2): every field here is folded into `Project.configurationIdentity`, because a cached
+`CanonicalText` rendered under one value must never be served under another. `[lint]` settings are the
+complement — they project over an unchanged canonical result and must stay out of identity, exactly as
+`CLAUDE.md` requires of rule selection. -/
+structure FormatConfig where
+  private mk ::
+  /-- The render margin (`line-width`), default 100.
+
+  Promoting this from the compile-time `Application.canonicalWidth` is what made a new cache-identity
+  input necessary. Formatter identity is `(path, byteSize, mtime)` of the executable
+  (`Cache.lean:262-264`), so editing a *constant* still invalidates — a rebuild rewrites the file — but
+  a *runtime* override changes output without touching the binary at all. Hence `identityString`. -/
+  lineWidth : Nat := 100
+  deriving BEq
+
+/-- The `[format]` settings as one string, for the `configuration` component of the cache identity.
+Kept beside the fields so a new `[format]` key cannot be added without a visible decision about
+identity: forgetting to extend this is the bug §9.1 exists to prevent. -/
+def FormatConfig.identityString (format : FormatConfig) : String :=
+  s!"line-width={format.lineWidth}"
+
 structure FormatterConfig where
   private mk ::
   includePatterns : Array PathPattern
   excludePatterns : Array PathPattern
+  /-- `force-exclude`: apply the ignore sources and `exclude` to **explicitly named** paths too, not
+  only to discovered ones (`notes/01-discovery.md` §11). It exists because `format` writes since
+  `ruff-11d`: a pre-commit hook that passes staged paths explicitly must be able to say "still never
+  write these", and without this it cannot. It never re-enables the `include` whitelist — naming a path
+  is saying something, whereas `include` answers "when I say nothing, format these". -/
+  forceExclude : Bool
+  /-- `respect-gitignore`: honor `.gitignore`, `.ignore`, `.git/info/exclude`, and the global git
+  ignore file when discovering sources. The `.lake` floor is *not* one of these sources and is not
+  disabled with them. -/
+  respectGitignore : Bool
+  /-- The `[format]` section — identity-bearing (`FormatConfig`). -/
+  format : FormatConfig
+  /-- Non-fatal notices raised while **loading** this configuration: a linter key still spelled at the
+  top level (`notes/01-discovery.md` §8.2). They ride the same contract as `RulePlan.notices` — stderr,
+  never changing exit status or which rules run — but cannot live there, because a `[format]` or
+  discovery notice has no plan to hang off. This is the channel widening the freeze named. -/
+  notices : Array String
+  /-- Where each setting came from, in composition order: `(key, file, line)`. For a scalar or base
+  array the **last** entry won; for an additive `extend-*` key every entry contributed, which is why
+  §6.2 preserves order and duplicates. Consumed by `config show` (§12); `Lake.Toml.Value` carries a
+  `ref : Syntax` on every constructor, so the position is recoverable without a second parse. -/
+  origins : Array (String × String × Nat)
   selectedSelectors : Array String
   /-- `extend-select` (`ruff-12` RRL-IMPL): selectors that *add* to the chosen selection without
   replacing it, so a project extends `default` without restating it. -/
@@ -73,14 +126,14 @@ private def validPatternSegment (segment : String) : Bool :=
   !segment.isEmpty && segment != "." && segment != ".." &&
     (!segment.contains "**" || segment == "**")
 
-private def compilePattern (source : String) : Except String PathPattern := do
+private def compilePattern (anchor : String) (source : String) : Except String PathPattern := do
   let normalized := normalizePath source
   unless !normalized.isEmpty && !normalized.startsWith "/" do
     throw s!"invalid path pattern '{source}': expected a nonempty relative pattern"
   let segments := normalized.splitOn "/"
   unless segments.all validPatternSegment do
     throw s!"invalid path pattern '{source}': '**' must be a complete component and '.'/'..' are forbidden"
-  return { source := normalized, segments }
+  return { source := normalized, segments, anchor }
 
 private partial def segmentMatches : List Char → List Char → Bool
   | [], [] => true
@@ -108,8 +161,19 @@ private partial def pathMatches : List String → List String → Bool
     segmentMatches expected.toList actual.toList && pathMatches pattern path
   | _ :: _, [] => false
 
+/-- Strip a pattern's anchor from a root-relative path, or fail when the path lies outside the
+anchoring directory. A file the declaring config does not govern can never match its patterns. -/
+private def stripAnchor (anchor path : String) : Option String :=
+  if anchor.isEmpty then some path
+  else
+    let directory := anchor ++ "/"
+    if path.startsWith directory then some ((path.drop directory.length).toString) else none
+
+/-- Match a root-relative path against an anchored pattern (`notes/01-discovery.md` §7). -/
 private def PathPattern.matches (pattern : PathPattern) (path : String) : Bool :=
-  pathMatches pattern.segments ((normalizePath path).splitOn "/")
+  match stripAnchor pattern.anchor (normalizePath path) with
+  | none => false
+  | some rest => pathMatches pattern.segments (rest.splitOn "/")
 
 private def valueStrings (key : String) : Lake.Toml.Value → Except String (Array String)
   | .array _ values => values.mapM fun
@@ -140,18 +204,125 @@ private def selectorsValid (selectors : Array String) : Except String Unit := do
         allRuleInfos.any (·.code == selector) || isReservedCode selector do
       throw s!"unknown rule selector: {selector}"
 
-private def parsePerFileIgnores (value : Lake.Toml.Value) : Except String (Array PerFileIgnore) := do
+private def parsePerFileIgnores (anchor : String) (value : Lake.Toml.Value) :
+    Except String (Array PerFileIgnore) := do
   let .table _ table := value
     | throw "configuration key 'per-file-ignores' expects a table"
   table.items.mapM fun (key, value) => do
-    let pattern ← compilePattern (keyString key)
+    let pattern ← compilePattern anchor (keyString key)
     let selectors ← valueStrings s!"per-file-ignores.{key}" value
     selectorsValid selectors
     return { pattern, selectors }
 
+/-- One configuration file's contents, before defaults and before composition with an `extend` parent.
+
+Every base setting is an `Option` so that "absent" is distinguishable from "set to the default value" —
+without that distinction `extend` composition cannot tell a child that stays silent from one that
+deliberately restates the default, and the child would clobber its parent either way
+(`notes/01-discovery.md` §6.2). The additive `extend-*` fields are plain arrays because they
+concatenate rather than override, which is the rule those keys already follow within a single file. -/
+private structure PartialConfig where
+  extend? : Option String := none
+  includePatterns? : Option (Array PathPattern) := none
+  excludePatterns? : Option (Array PathPattern) := none
+  forceExclude? : Option Bool := none
+  respectGitignore? : Option Bool := none
+  preview? : Option Bool := none
+  lineWidth? : Option Nat := none
+  selectedSelectors? : Option (Array String) := none
+  ignoredSelectors? : Option (Array String) := none
+  fixableSelectors? : Option (Array String) := none
+  unfixableSelectors? : Option (Array String) := none
+  extendSelectSelectors : Array String := #[]
+  extendFixableSelectors : Array String := #[]
+  extendSafeFixes : Array String := #[]
+  extendUnsafeFixes : Array String := #[]
+  perFileIgnores : Array PerFileIgnore := #[]
+  notices : Array String := #[]
+  origins : Array (String × String × Nat) := #[]
+
+private def orParent (child parent : Option α) : Option α :=
+  match child with
+  | some value => some value
+  | none => parent
+
+/-- Compose a parent configuration with the child that `extend`s it (`notes/01-discovery.md` §6.2).
+
+Scalars and base arrays: the child replaces the parent wholesale — that is what lets a child *narrow*
+a parent at all. The `extend-*` family concatenates parent-then-child, the same additive rule those
+keys already have within one file. `per-file-ignores` merges key-wise with the child winning on an
+identical anchored pattern. `extend` itself is never inherited: each file names only its own parent.
+
+Duplicates and order survive concatenation deliberately. `resolveAxis` folds selector specificity with
+`Nat.max`, so a repeated token is idempotent and neither is observable in the resolved plan — but
+`origins` needs every contributing file to answer `config show`. -/
+private def PartialConfig.compose (parent child : PartialConfig) : PartialConfig where
+  extend? := none
+  includePatterns? := orParent child.includePatterns? parent.includePatterns?
+  excludePatterns? := orParent child.excludePatterns? parent.excludePatterns?
+  forceExclude? := orParent child.forceExclude? parent.forceExclude?
+  respectGitignore? := orParent child.respectGitignore? parent.respectGitignore?
+  preview? := orParent child.preview? parent.preview?
+  lineWidth? := orParent child.lineWidth? parent.lineWidth?
+  selectedSelectors? := orParent child.selectedSelectors? parent.selectedSelectors?
+  ignoredSelectors? := orParent child.ignoredSelectors? parent.ignoredSelectors?
+  fixableSelectors? := orParent child.fixableSelectors? parent.fixableSelectors?
+  unfixableSelectors? := orParent child.unfixableSelectors? parent.unfixableSelectors?
+  extendSelectSelectors := parent.extendSelectSelectors ++ child.extendSelectSelectors
+  extendFixableSelectors := parent.extendFixableSelectors ++ child.extendFixableSelectors
+  extendSafeFixes := parent.extendSafeFixes ++ child.extendSafeFixes
+  extendUnsafeFixes := parent.extendUnsafeFixes ++ child.extendUnsafeFixes
+  perFileIgnores :=
+    (parent.perFileIgnores.filter fun entry =>
+      !child.perFileIgnores.any fun other =>
+        other.pattern.source == entry.pattern.source && other.pattern.anchor == entry.pattern.anchor)
+      ++ child.perFileIgnores
+  notices := parent.notices ++ child.notices
+  origins := parent.origins ++ child.origins
+
+/-- Apply defaults and validate. Selector validation happens here rather than per file so that a
+composed chain is checked once, in its resolved form. -/
+private def PartialConfig.resolve (config : PartialConfig) : Except String FormatterConfig := do
+  let selectedSelectors := config.selectedSelectors?.getD #["default"]
+  let ignoredSelectors := config.ignoredSelectors?.getD #[]
+  let fixableSelectors := config.fixableSelectors?.getD #[]
+  let unfixableSelectors := config.unfixableSelectors?.getD #[]
+  selectorsValid selectedSelectors
+  selectorsValid config.extendSelectSelectors
+  selectorsValid ignoredSelectors
+  selectorsValid config.extendSafeFixes
+  selectorsValid config.extendUnsafeFixes
+  selectorsValid fixableSelectors
+  selectorsValid unfixableSelectors
+  selectorsValid config.extendFixableSelectors
+  return {
+    includePatterns := config.includePatterns?.getD #[]
+    excludePatterns := config.excludePatterns?.getD #[]
+    forceExclude := config.forceExclude?.getD false
+    respectGitignore := config.respectGitignore?.getD true
+    format := { lineWidth := config.lineWidth?.getD 100 }
+    notices := config.notices
+    origins := config.origins
+    selectedSelectors := selectedSelectors
+    extendSelectSelectors := config.extendSelectSelectors
+    ignoredSelectors := ignoredSelectors
+    perFileIgnores := config.perFileIgnores
+    extendSafeFixes := config.extendSafeFixes
+    extendUnsafeFixes := config.extendUnsafeFixes
+    fixableSelectors := fixableSelectors
+    unfixableSelectors := unfixableSelectors
+    extendFixableSelectors := config.extendFixableSelectors
+    preview := config.preview?.getD false
+  }
+
 private def defaultConfig : FormatterConfig := {
   includePatterns := #[]
   excludePatterns := #[]
+  forceExclude := false
+  respectGitignore := true
+  format := {}
+  notices := #[]
+  origins := #[]
   selectedSelectors := #["default"]
   extendSelectSelectors := #[]
   ignoredSelectors := #[]
@@ -164,86 +335,232 @@ private def defaultConfig : FormatterConfig := {
   preview := false
 }
 
-private def parseConfig (table : Lake.Toml.Table) : Except String FormatterConfig := do
-  let mut includePatterns := #[]
-  let mut excludePatterns := #[]
-  let mut selectedSelectors := #["default"]
-  let mut extendSelectSelectors := #[]
-  let mut ignoredSelectors := #[]
-  let mut perFileIgnores := #[]
-  let mut extendSafeFixes := #[]
-  let mut extendUnsafeFixes := #[]
-  let mut fixableSelectors := #[]
-  let mut unfixableSelectors := #[]
-  let mut extendFixableSelectors := #[]
-  let mut preview := false
+/-- The `[lint]` keys, which are also still accepted at the top level for migration
+(`notes/01-discovery.md` §8.2). -/
+private def lintKeys : Array String :=
+  #["select", "extend-select", "ignore", "per-file-ignores", "extend-safe-fixes",
+    "extend-unsafe-fixes", "fixable", "unfixable", "extend-fixable"]
+
+/-- The line a TOML value sits on, for provenance (`config show`, §12) and error messages. Every
+`Lake.Toml.Value` constructor carries a `ref : Syntax`, so the position of the value that won is
+recoverable without parsing the file a second time. -/
+private def valueLine (fileMap : Lean.FileMap) (value : Lake.Toml.Value) : Nat :=
+  match value.ref.getPos? with
+  | some pos => (fileMap.toPosition pos).line
+  | none => 0
+
+/-- Assign one `[lint]` key into a partial configuration. Shared by the `[lint]` section and by the
+deprecated top-level spelling, so the two cannot drift in meaning — only in provenance and notices. -/
+private def assignLintKey (anchor file : String) (fileMap : Lean.FileMap)
+    (config : PartialConfig) (key : String) (value : Lake.Toml.Value) :
+    Except String PartialConfig := do
+  let origins := config.origins.push (key, file, valueLine fileMap value)
+  match key with
+  | "select" => return { config with selectedSelectors? := ← valueStrings key value, origins }
+  | "ignore" => return { config with ignoredSelectors? := ← valueStrings key value, origins }
+  | "fixable" => return { config with fixableSelectors? := ← valueStrings key value, origins }
+  | "unfixable" => return { config with unfixableSelectors? := ← valueStrings key value, origins }
+  | "extend-select" =>
+    return { config with
+      extendSelectSelectors := config.extendSelectSelectors ++ (← valueStrings key value), origins }
+  | "extend-fixable" =>
+    return { config with
+      extendFixableSelectors := config.extendFixableSelectors ++ (← valueStrings key value), origins }
+  | "extend-safe-fixes" =>
+    return { config with
+      extendSafeFixes := config.extendSafeFixes ++ (← valueStrings key value), origins }
+  | "extend-unsafe-fixes" =>
+    return { config with
+      extendUnsafeFixes := config.extendUnsafeFixes ++ (← valueStrings key value), origins }
+  | "per-file-ignores" =>
+    return { config with
+      perFileIgnores := config.perFileIgnores ++ (← parsePerFileIgnores anchor value), origins }
+  | _ => throw s!"unknown configuration key: {key}"
+
+/-- Parse one configuration file into its pre-composition form (`notes/01-discovery.md` §8).
+
+`anchor` is the directory this file's path patterns are anchored at, relative to the project root;
+`file` is its displayed path, used for provenance and diagnostics. -/
+private def parseFile (anchor file : String) (fileMap : Lean.FileMap) (table : Lake.Toml.Table) :
+    Except String PartialConfig := do
+  -- Split the document before interpreting it: a key's *section* decides whether it is identity-bearing
+  -- (§9.2), and the both-set check needs the two key sets in hand at once.
+  let mut topLevel : Array (String × Lake.Toml.Value) := #[]
+  let mut formatSection : Array (String × Lake.Toml.Value) := #[]
+  let mut lintSection : Array (String × Lake.Toml.Value) := #[]
   for (key, value) in table.items do
     match keyString key with
-    | "include" =>
-      let sources ← valueStrings "include" value
-      includePatterns ← sources.mapM compilePattern
-    | "exclude" =>
-      let sources ← valueStrings "exclude" value
-      excludePatterns ← sources.mapM compilePattern
-    | "select" => selectedSelectors ← valueStrings "select" value
-    | "extend-select" => extendSelectSelectors ← valueStrings "extend-select" value
-    | "ignore" => ignoredSelectors ← valueStrings "ignore" value
-    | "per-file-ignores" => perFileIgnores ← parsePerFileIgnores value
-    | "extend-safe-fixes" => extendSafeFixes ← valueStrings "extend-safe-fixes" value
-    | "extend-unsafe-fixes" => extendUnsafeFixes ← valueStrings "extend-unsafe-fixes" value
-    | "fixable" => fixableSelectors ← valueStrings "fixable" value
-    | "unfixable" => unfixableSelectors ← valueStrings "unfixable" value
-    | "extend-fixable" => extendFixableSelectors ← valueStrings "extend-fixable" value
-    | "preview" =>
-      match value with
-      | .boolean _ b => preview := b
-      | _ => throw "configuration key 'preview' expects a boolean"
-    | unknown => throw s!"unknown configuration key: {unknown}"
-  selectorsValid selectedSelectors
-  selectorsValid extendSelectSelectors
-  selectorsValid ignoredSelectors
-  selectorsValid extendSafeFixes
-  selectorsValid extendUnsafeFixes
-  selectorsValid fixableSelectors
-  selectorsValid unfixableSelectors
-  selectorsValid extendFixableSelectors
-  return {
-    includePatterns := includePatterns
-    excludePatterns := excludePatterns
-    selectedSelectors := selectedSelectors
-    extendSelectSelectors := extendSelectSelectors
-    ignoredSelectors := ignoredSelectors
-    perFileIgnores := perFileIgnores
-    extendSafeFixes := extendSafeFixes
-    extendUnsafeFixes := extendUnsafeFixes
-    fixableSelectors := fixableSelectors
-    unfixableSelectors := unfixableSelectors
-    extendFixableSelectors := extendFixableSelectors
-    preview := preview
-  }
+    | "format" =>
+      let .table _ entries := value
+        | throw "configuration section '[format]' expects a table"
+      formatSection := entries.items.map fun (key, value) => (keyString key, value)
+    | "lint" =>
+      let .table _ entries := value
+        | throw "configuration section '[lint]' expects a table"
+      lintSection := entries.items.map fun (key, value) => (keyString key, value)
+    | other => topLevel := topLevel.push (other, value)
+  -- A key set in both places is a contradiction the user can trivially resolve, so it does not resolve
+  -- itself (§8.2, and the same reasoning as `extend-safe-fixes` ∩ `extend-unsafe-fixes` below).
+  for (key, _) in topLevel do
+    if lintSection.any (·.1 == key) then
+      throw s!"configuration key '{key}' is set both at the top level and in [lint]"
+  let mut config : PartialConfig := {}
+  -- Deprecated flat spelling first, so an `extend-*` key set in both a flat parent and a sectioned
+  -- child still concatenates in document order.
+  for (key, value) in topLevel do
+    if lintKeys.contains key then
+      config ← assignLintKey anchor file fileMap config key value
+      let notice :=
+        s!"{file}: configuration key '{key}' at the top level is deprecated; move it into [lint]"
+      config := { config with notices := config.notices.push notice }
+    else
+      let origins := config.origins.push (key, file, valueLine fileMap value)
+      match key with
+      | "extend" =>
+        let .string _ target := value
+          | throw "configuration key 'extend' expects a string"
+        config := { config with extend? := some target, origins }
+      | "include" =>
+        let sources ← valueStrings "include" value
+        config := { config with includePatterns? := ← sources.mapM (compilePattern anchor), origins }
+      | "exclude" =>
+        let sources ← valueStrings "exclude" value
+        config := { config with excludePatterns? := ← sources.mapM (compilePattern anchor), origins }
+      | "force-exclude" =>
+        let .boolean _ flag := value
+          | throw "configuration key 'force-exclude' expects a boolean"
+        config := { config with forceExclude? := some flag, origins }
+      | "respect-gitignore" =>
+        let .boolean _ flag := value
+          | throw "configuration key 'respect-gitignore' expects a boolean"
+        config := { config with respectGitignore? := some flag, origins }
+      | "preview" =>
+        let .boolean _ flag := value
+          | throw "configuration key 'preview' expects a boolean"
+        config := { config with preview? := some flag, origins }
+      -- `line-width` is new, so it has no legacy spelling to protect: a top-level use is an error
+      -- rather than a notice, so the key never acquires an ambiguous section (§8.2).
+      | "line-width" =>
+        throw "configuration key 'line-width' belongs in the [format] section"
+      | unknown => throw s!"unknown configuration key: {unknown}"
+  for (key, value) in formatSection do
+    let origins := config.origins.push (s!"format.{key}", file, valueLine fileMap value)
+    match key with
+    | "line-width" =>
+      let .integer _ width := value
+        | throw "configuration key 'line-width' expects an integer"
+      unless 1 ≤ width && width ≤ 1000 do
+        throw s!"configuration key 'line-width' expects an integer between 1 and 1000, got {width}"
+      config := { config with lineWidth? := some width.toNat, origins }
+    | unknown => throw s!"unknown configuration key: format.{unknown}"
+  for (key, value) in lintSection do
+    unless lintKeys.contains key do
+      throw s!"unknown configuration key: lint.{key}"
+    config ← assignLintKey anchor file fileMap config key value
+  return config
 
-private def loadTable (path : System.FilePath) : IO Lake.Toml.Table := do
+private def loadDocument (path : System.FilePath) : IO (Lake.Toml.Table × Lean.FileMap) := do
   let input ← IO.FS.readFile path
   let context := Lean.Parser.mkInputContext input path.toString
   match ← Lake.Toml.loadToml context |>.toBaseIO with
-  | .ok table => return table
+  | .ok table => return (table, context.fileMap)
   | .error messages =>
     let rendered ← messages.toArray.mapM (·.toString)
     throw <| IO.userError s!"invalid formatter configuration {path}: \
       {String.intercalate "; " rendered.toList}"
 
-/-- Load all formatter policy in one step. An explicit path must exist; an absent conventional
-`lean-fmt.toml` is the default policy rather than an error. -/
-def FormatterConfig.load (root : System.FilePath)
-    (explicit? : Option System.FilePath := none) : IO FormatterConfig := do
-  let path := explicit?.getD (root / "lean-fmt.toml")
-  unless ← path.pathExists do
-    if explicit?.isSome then
-      throw <| IO.userError s!"formatter configuration does not exist: {path}"
-    return defaultConfig
-  match parseConfig (← loadTable path) with
+/-- The directory a config file's patterns anchor at, relative to `root`, or `none` when the file lies
+outside the project entirely (`notes/01-discovery.md` §7). -/
+def anchorFor (root directory : System.FilePath) : IO (Option String) := do
+  let root ← IO.FS.realPath root
+  let directory ← IO.FS.realPath directory
+  if directory == root then return some ""
+  let rootPrefix := root.toString ++ System.FilePath.pathSeparator.toString
+  let text := directory.toString
+  if text.startsWith rootPrefix then
+    return some (normalizePath ((text.drop rootPrefix.length).toString))
+  return none
+
+/-- The maximum `extend` chain length. Cycle detection alone terminates, so this is a resource bound,
+not a correctness one (`notes/01-discovery.md` §6.1). -/
+private def maxExtendDepth : Nat := 32
+
+/-- Load one configuration file and every ancestor it `extend`s, composing parent-first.
+
+Chain members are identified by **realpath**, so a symlinked alias of an ancestor is still caught as a
+cycle. A parent outside the project root keeps the extending file's anchor rather than acquiring one
+outside the tree, which is what makes an out-of-tree shared config usable at all; a parent inside the
+root anchors at its own directory like any discovered config. -/
+private partial def loadChain (root : System.FilePath) (path : System.FilePath) (anchor : String)
+    (seen : Array System.FilePath) : IO PartialConfig := do
+  let resolved ← IO.FS.realPath path
+  if seen.contains resolved then
+    let cycle := (seen.push resolved).map (·.toString)
+    throw <| IO.userError s!"configuration extend cycle: {String.intercalate " -> " cycle.toList}"
+  if seen.size ≥ maxExtendDepth then
+    throw <| IO.userError s!"configuration extend chain exceeds {maxExtendDepth} files: {resolved}"
+  let (table, fileMap) ← loadDocument resolved
+  let child ← match parseFile anchor resolved.toString fileMap table with
+    | .ok config => pure config
+    | .error message =>
+      throw <| IO.userError s!"invalid formatter configuration {resolved}: {message}"
+  match child.extend? with
+  | none => return child
+  | some target =>
+    let directory := resolved.parent.getD root
+    let targetPath := if (System.FilePath.mk target).isAbsolute then System.FilePath.mk target
+      else directory / target
+    unless ← targetPath.pathExists do
+      -- Name the path as written, beside the file that wrote it: the caller's own argument, per the
+      -- `CLAUDE.md` path-error rule.
+      throw <| IO.userError
+        s!"configuration extend target does not exist: {target} (extended by {resolved})"
+    let parentAnchor := (← anchorFor root (targetPath.parent.getD root)).getD anchor
+    let parent ← loadChain root targetPath parentAnchor (seen.push resolved)
+    return parent.compose child
+
+/-- Load the configuration rooted at one file, following its `extend` chain. -/
+def FormatterConfig.loadFrom (root : System.FilePath) (path : System.FilePath) (anchor : String) :
+    IO FormatterConfig := do
+  match (← loadChain root path anchor #[]).resolve with
   | .ok config => return config
   | .error message => throw <| IO.userError s!"invalid formatter configuration {path}: {message}"
+
+/-- The configuration file names this product recognizes, in descending priority
+(`notes/01-discovery.md` §3). -/
+def recognizedConfigNames : Array String := #[".lean-fmt.toml", "lean-fmt.toml"]
+
+/-- The recognized configuration file in one directory, or `none`. Both names present is a hard error
+naming both paths rather than a silent priority win — the same reasoning as every other configuration
+contradiction here. -/
+def recognizedConfigIn? (directory : System.FilePath) : IO (Option System.FilePath) := do
+  let present : Array String ←
+    recognizedConfigNames.filterM fun name => (directory / name).pathExists
+  match present.toList with
+  | [] => return none
+  | [name] => return some (directory / name)
+  | names =>
+    throw <| IO.userError s!"directory {directory} has more than one formatter configuration: \
+      {String.intercalate ", " names}"
+
+/-- Load all formatter policy in one step. An explicit path must exist; an absent conventional
+configuration is the default policy rather than an error.
+
+An explicit `--config` anchors its path patterns at the **project root**, not at its own directory: it
+is a run-wide override rather than a config that governs the subtree it sits in, and anchoring it at
+its own directory would make `include`/`exclude` in a config outside the tree match nothing at all
+(`notes/01-discovery.md` §5.1, §7). A *discovered* config anchors at its own directory. -/
+def FormatterConfig.load (root : System.FilePath)
+    (explicit? : Option System.FilePath := none) : IO FormatterConfig := do
+  match explicit? with
+  | some path =>
+    unless ← path.pathExists do
+      throw <| IO.userError s!"formatter configuration does not exist: {path}"
+    FormatterConfig.loadFrom root path ""
+  | none =>
+    match ← recognizedConfigIn? root with
+    | none => return defaultConfig
+    | some path => FormatterConfig.loadFrom root path ""
 
 /-- Whether a discovered root-package module survives configured path selection. Empty `include`
 means every root module; excludes always win. Explicit CLI files bypass this predicate. -/
