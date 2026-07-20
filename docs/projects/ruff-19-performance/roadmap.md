@@ -28,7 +28,9 @@ Rebaseline the richer formatter/linter, prevent phase regressions, and decide me
   `ruff-10b-syntax-fix-composition/state/current.md`). If graduating syntax rules off preview
   (`ruff-12`) makes that cost material, adopt Design B — a parse-only projection of the rendered text in
   place of full re-elaboration — or record why Design A stays.
-- **Root-cause the in-process result-cache miss `ruff-16` handed forward.** A second `Application.execute`
+- **[DISPUTED — likely superseded by `ruff-16b-cache-identity`; do not act on this bullet without
+  reading that stack's `state/current.md` first. `RCI-SPEC` owns removing or amending it.]**
+  **Root-cause the in-process result-cache miss `ruff-16` handed forward.** A second `Application.execute`
   in one process after a one-file edit pays the full cold price (~70 s versus 0.52 s for the identical
   edit in a fresh process — a 135× penalty; `ruff-16-watch-incremental/results/02-implementation.md`
   decision 3). `ruff-16` routed around it and did not diagnose it: the cause is unknown and lives in
