@@ -4,7 +4,7 @@ Claim: **RSF-FINAL** — test UTF-8 positions, empty ranges, comments, custom sy
 malformed input, pipes, broken stdout, full-range equivalence, reflow-expanded ranges, and repeated
 range idempotence.
 
-Owning suite: `tests/stream/run.sh`, now 58 assertions (30 from `RSF-IMPL`, 28 added here).
+Owning suite: `tests/stream/run.sh`, now 61 assertions (30 from `RSF-IMPL`, 31 added here).
 
 ## Commands
 
@@ -26,7 +26,7 @@ experiments/run-projection-shape.sh && python3 experiments/check-quoted-figures.
 | --- | --- |
 | `lake build` | `Build completed successfully (47 jobs)` |
 | `lean-fmt-tests` | `lean-fmt module-artifact tests passed` |
-| `tests/stream/run.sh` | `failures=0` (58 assertions) |
+| `tests/stream/run.sh` | `failures=0` (61 assertions) |
 | `tests/printer/run.sh` | `failures=0` |
 | `tests/layout/run.sh` | `failures=0` |
 | `tests/check/run.sh` | `lean-fmt check integration tests passed` |
@@ -109,6 +109,14 @@ elaboration rather than layout.
   the layout. It does not, and must not: `fix` publishes admitted rule fixes at *original* coordinates
   (`AGENTS.md`), so a buffer with no admitted fix streams back unchanged. The suite now asserts that.
 
+- **`--range` was accepted and silently disregarded by `check`, `diff`, and `fix`.** The help text
+  already said "format only"; the parser did not enforce it, so `diff - --range 30:49` produced a
+  whole-file diff with no sign the flag had been dropped. `format` is the only mode that emits a
+  layout — `check` reports findings over the whole buffer, `fix` applies admitted fixes at original
+  coordinates — so there is nothing for the others to narrow, and accepting the flag answered a
+  narrower question than the caller asked. `validateStdin` now takes the mode and rejects it. Found by
+  the audit pass, not by any earlier test.
+
 - **Broken stdout is exit 2 with a `broken pipe` diagnostic**, which is what §6's "infrastructure"
   column already says. Characterized rather than changed: with a ~500 KB buffer and a reader that exits
   after one line, the run reports `lean-fmt: resource vanished (error code: 32, broken pipe)` and exits
@@ -119,9 +127,10 @@ elaboration rather than layout.
 
 | File | Change |
 | --- | --- |
-| `LeanFmt/Cli.lean` | explicit stdin decode, so §6's UTF-8 message is the one callers see |
+| `LeanFmt/Cli.lean` | explicit stdin decode for §6's UTF-8 message; `--range` rejected for non-`format` modes |
+| `README.md` | new "Streaming and ranges" section |
 | `LeanFmtTest.lean` | `range-units` census subcommand |
-| `tests/stream/run.sh` | +28 acceptance assertions |
+| `tests/stream/run.sh` | +31 acceptance assertions |
 | `experiments/run-range-unit-census.sh` | new — the frozen-sample census driver |
 | `docs/projects/ruff-14-stream-range/evidence/03-range-unit-census.txt` | new |
 | `docs/projects/ruff-14-stream-range/evidence/03-stream-cost.txt` | new |

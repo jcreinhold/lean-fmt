@@ -307,6 +307,17 @@ check "invalid UTF-8 on stdin is rejected with the frozen message" \
 check "  ... with exit 2" \
   "$(set +e; fmt format - --stdin-filename "$identity" < "$work/binary.lean" >/dev/null 2>&1; printf '%s' "$?")" "2"
 
+printf -- '--- a range names the only mode that can honor it (§2) ---\n'
+# `format` is the only mode that emits a layout, so there is nothing for the others to narrow: `check`
+# reports findings over the whole buffer and `fix` applies admitted fixes at original coordinates.
+# Accepting `--range` and disregarding it would answer a narrower question than the caller asked with
+# no sign that it did -- which is what this surface did until RSF-FINAL measured it.
+for mode in check diff fix; do
+  check "--range is rejected for $mode -" \
+    "$(fmt "$mode" - --stdin-filename "$identity" --range 30:49 < "$dirty" 2>&1 >/dev/null | head -1)" \
+    "--range is valid only with format, not $mode"
+done
+
 printf -- '--- fix - streams like format - (§6) ---\n'
 check "fix - exits 0 having streamed" \
   "$(code fix - --stdin-filename "$identity")" "0"

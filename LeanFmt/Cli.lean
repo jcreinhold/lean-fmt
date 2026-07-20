@@ -235,13 +235,20 @@ Each rejection is a frozen clause of `notes/01-stream-range.md` §2, and the rea
 rather than a fallback is that the quiet alternative is worse: a `-` with no identity would format
 against built-in defaults and silently disagree with the same bytes on disk, and a `--range` without
 `-` would have to mean a partial in-place write, which is a write surface this stack deliberately does
-not build. -/
-private def validateStdin (command : FileCommand) : Except String Unit := do
+not build.
+
+A range is also rejected for a mode that cannot honor it. `format` is the only mode that emits a
+layout, so `check`/`diff`/`fix` have nothing to narrow: `check` reports findings over the whole buffer,
+and `fix` applies admitted rule fixes at original coordinates. Accepting the flag and disregarding it
+would answer a narrower question than the caller asked with no sign that it did. -/
+private def validateStdin (mode : RunMode) (command : FileCommand) : Except String Unit := do
   if command.stdin then
     if command.stdinFilename?.isNone then
       .error "stdin requires --stdin-filename to establish project identity"
     else if !command.run.files.isEmpty then
       .error "- must be the only target"
+    else if command.range?.isSome && !(mode == .format) then
+      .error s!"{command.rangeFlag} is valid only with format, not {mode.toString}"
     else .ok ()
   else if command.stdinFilename?.isSome then
     .error "--stdin-filename is valid only with the - stdin target"
@@ -563,7 +570,7 @@ private unsafe def runFileCommand (mode : RunMode) (args : List String) : IO UIn
   let command ← match parseFileArgs mode args with
     | .ok command => pure command
     | .error message => IO.eprintln message; return 2
-  if let .error message := validateStdin command then
+  if let .error message := validateStdin mode command then
     IO.eprintln message
     return 2
   if let some filename := command.stdinFilename? then

@@ -134,6 +134,32 @@ rewrite arbitrary executable `lakefile.lean`. `compiler status` performs a read-
 audit of exact toolchain compatibility and embedded module-artifact coverage; it neither builds
 modules nor publishes artifacts. `clean` removes only the root `.lean-fmt-cache` and is idempotent.
 
+## Streaming and ranges
+
+`-` is a file target: the buffer arrives on stdin and the answer goes to stdout. It requires
+`--stdin-filename PATH`, which is the buffer's identity rather than its content — the path need not
+exist, but configuration, module resolution, and the exact Lake setup are resolved from where it
+claims to be. Without it a buffer would silently get built-in defaults and answer differently than the
+same bytes on disk. Every gate a file argument passes still applies, and a stdin run never writes
+source and never touches a persistent cache entry.
+
+```sh
+lean-fmt format - --stdin-filename LeanFmt/Basic.lean < buffer.lean
+lean-fmt format - --stdin-filename LeanFmt/Basic.lean --range 120:180 < buffer.lean
+lean-fmt format - --stdin-filename LeanFmt/Basic.lean --range-lines 12:1-18:1 --json < buffer.lean
+```
+
+`--range` takes half-open byte offsets into the normalized source; `--range-lines` takes 1-based lines
+and 1-based codepoint columns. Both require `-`. Formatting is command-granular, so **the range that
+comes back is usually wider than the one you asked for**: the request is widened to the layout units
+it touches, and that actual range is reported on stderr and in `--json` as `actualRange`, alongside a
+`sourceMap` giving each unit's source and output extent. A request naming a few bytes inside a
+declaration formats the whole declaration; a full range is byte-identical to formatting the buffer.
+
+A range is not cheaper than the whole buffer. The cost of a stream request is one exact frontend run
+over everything received, which a range cannot skip without giving up exactness. Ranges control which
+bytes come back changed, not how long the run takes.
+
 ## Editor service
 
 `serve` reads `lean-fmt.service.v1` NDJSON from stdin and writes one compact response per line. It

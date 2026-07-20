@@ -108,7 +108,7 @@ it is not reintroduced.
 it. Regenerate with `experiments/run-projection-shape.sh` and reconcile before `tests/printer/run.sh`,
 or the suite fails on stale evidence rather than on anything this stack did.
 
-**RSF-FINAL is verified** (`results/03-acceptance.md`). `tests/stream/run.sh` is 58 assertions; every
+**RSF-FINAL is verified** (`results/03-acceptance.md`). `tests/stream/run.sh` is 61 assertions; every
 gap `RSF-IMPL` admitted is now fixtured, and two measurements exist that did not.
 
 **The forward extension never fires on the frozen mathlib sample** — 2,854 layout units across 62
@@ -132,7 +132,10 @@ inside a nested node widens to the enclosing command, because the lattice is com
 construction; and the comment written *above* a declaration belongs to the **earlier** unit, so a range
 over that declaration does not include it.
 
-One freeze violation shipped in `RSF-IMPL` and was closed here: invalid UTF-8 on stdin emitted the Lean
+Two defects shipped in `RSF-IMPL` and were closed here. `--range` was accepted and silently
+disregarded by `check`, `diff`, and `fix` — the help already said "format only" but nothing enforced
+it, so `diff - --range` produced a whole-file diff with no sign the flag had been dropped;
+`validateStdin` now takes the mode. And: invalid UTF-8 on stdin emitted the Lean
 runtime's `Tried to read from stream containing non UTF-8 data` rather than §6's
 `stdin is not valid UTF-8`. `runStreamCommand` now decodes explicitly. A diagnostic the contract fixes
 must not be an incidental runtime phrase.
