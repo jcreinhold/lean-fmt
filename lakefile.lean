@@ -71,6 +71,22 @@ lean_lib LeanFmtCore where
     Glob.one `LeanFmt.Printer
   ]
 
+/- The `RCI-MODEL` proof library. It has its own target, and is globbed explicitly and alone, for the
+same reason `LeanFmt.Rules` was removed from the plugin target: Lake links every module a library
+globs, imported or not. Nothing in the shipped binary or the compiler plugin imports
+`LeanFmt.Cache.Spec`, and nothing globs it alongside them, so the model cannot reach either link
+closure. A proof about the cache must not be able to rebuild an integrating project.
+
+It *is* a default target, so `lake build` builds it and the module's `#print axioms` audit runs with
+every ordinary build. A proof library that only builds when someone names it is a proof library that
+silently rots; and the audit's whole purpose is to fail in the change that introduces an assumption,
+which it cannot do if nothing routine builds it. Being a default target does not put it in any link
+closure — that follows the executable's import graph, and nothing imports this. -/
+@[default_target]
+lean_lib LeanFmtCacheSpec where
+  roots := #[`LeanFmt.Cache.Spec]
+  globs := #[Glob.one `LeanFmt.Cache.Spec]
+
 lean_exe «lean-fmt-tests» where
   root := `LeanFmtTest
   supportInterpreter := true

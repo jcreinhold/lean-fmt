@@ -80,6 +80,27 @@ if rg -n 'WorkerFleet|SourceParser|run_project_fleet|FleetPlan|libleanshared|lea
   exit 1
 fi
 
+# The RCI-MODEL proof library must stay out of both link closures. It is a `@[default_target]`, so it
+# builds with every ordinary `lake build` and its `#print axioms` audit runs — but a proof about the
+# cache must never be able to rebuild an integrating project, and Lake links every module a library
+# globs. `LeanFmt.Cache.Spec` is globbed alone, in its own target, and nothing imports it.
+#
+# `LeanFmt_Digest` is the positive control: it is genuinely linked, so a zero count there would mean
+# this check had stopped looking at anything rather than that the boundary held.
+for image in .lake/build/bin/lean-fmt .lake/build/lib/liblean_x2dfmt_LeanFmtCompilerPlugin.dylib; do
+  [[ -e "$image" ]] || continue
+  if [[ $(nm -a "$image" 2>/dev/null | grep -c 'LeanFmt_Internal_Cache_Spec\|LeanFmt_Cache_Spec') -ne 0 ]]; then
+    printf 'proof library entered the link closure of %s\n' "$image" >&2
+    exit 1
+  fi
+done
+if [[ -e .lake/build/bin/lean-fmt ]]; then
+  if [[ $(nm -a .lake/build/bin/lean-fmt 2>/dev/null | grep -c 'LeanFmt_Digest') -eq 0 ]]; then
+    printf 'link-closure probe found no LeanFmt_Digest symbols; the probe itself is broken\n' >&2
+    exit 1
+  fi
+fi
+
 grep -q '^package «lean-fmt» where' lakefile.lean
 grep -q '^lean_exe «lean-fmt» where' lakefile.lean
 

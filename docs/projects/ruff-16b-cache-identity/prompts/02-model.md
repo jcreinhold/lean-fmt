@@ -1,6 +1,6 @@
 ---
 claim_id: RCI-MODEL
-status: planned
+status: verified
 depends_on: [RCI-SPEC]
 ---
 

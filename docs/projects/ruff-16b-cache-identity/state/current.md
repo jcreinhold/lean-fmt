@@ -1,6 +1,6 @@
 ---
 kind: state
-first_unresolved: 02-model
+first_unresolved: 03-implementation
 ---
 
 # Current state
@@ -10,14 +10,20 @@ result-cache finding did not survive reading the code. Its external prerequisite
 `ruff-16-watch-incremental`, which records `first_unresolved: none`. If live code contradicts a
 prerequisite result, reopen the owning prerequisite rather than patching around it.
 
-`RCI-SPEC` has run. The diagnosis below is **confirmed** and reproduced at entry granularity; the
-`ruff-16` record is amended everywhere it was asserted; and the currency check, the tier decision, the
-undeterminable-currency rule, and the differential test are frozen in `results/01-contract.md`.
+`RCI-SPEC` and `RCI-MODEL` have run. The diagnosis below is **confirmed** and reproduced at entry
+granularity; the `ruff-16` record is amended everywhere it was asserted; the currency check, the tier
+decision, the undeterminable-currency rule, and the differential test are frozen in
+`results/01-contract.md`; and the decision is modelled and proved sound **and** complete in
+`LeanFmt/Cache/Spec.lean` under four named hypotheses, depending on `propext` alone
+(`results/02-model.md`).
+
+What remains is implementation. Nothing in `LeanFmt.Cache` has changed yet — the shipped cache still
+folds every project source into the index filename.
 
 | Prompt | Claim | Status | Depends on |
 | --- | --- | --- | --- |
 | 01-contract | RCI-SPEC | verified | — |
-| 02-model | RCI-MODEL | planned | RCI-SPEC |
+| 02-model | RCI-MODEL | verified | RCI-SPEC |
 | 03-implementation | RCI-IMPL | planned | RCI-MODEL |
 | 04-acceptance | RCI-FINAL | planned | RCI-IMPL |
 

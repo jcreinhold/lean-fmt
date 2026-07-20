@@ -1,9 +1,9 @@
 # Next Proof Packet
 
 - Stack: ruff-16b-cache-identity
-- First unresolved: 02-model
-- Claim ID: RCI-MODEL
-- Prompt: 02-model
+- First unresolved: 03-implementation
+- Claim ID: RCI-IMPL
+- Prompt: 03-implementation
 - Module: (docs only)
 - Target file: (docs only)
 
@@ -17,8 +17,8 @@ Read this file, the target prompt, target files, listed source/template line ran
 
 ## Proof Task
 
-- Deliver **RCI-MODEL**: Express the currency decision frozen by `RCI-SPEC` as a pure function over an explicit observation, specify what a correct answer is independently of that function, and prove soundness **and** completeness under hypotheses that name every unprovable step.
-- Read `roadmap.md`, `notes/01-what-is-provable.md`, its prerequisite stack results, `AGENTS.md`, the current implementation and tests, and the relevant Lean compiler/Lake sources before changing an interface. Write interface comments and characterization tests before implementation where the behavior is not already frozen.
+- Deliver **RCI-IMPL**: Implement the modelled decision in `LeanFmt.Cache`, matching `LeanFmt/Cache/Spec.lean`'s `serves`, expose from `LeanFmt.Project` only what supplying the closure requires, land the mutation-checked stale-hit differential, and measure one-file-edit invalidation at entry granularity.
+- Read `roadmap.md`, its prerequisite stack results, `AGENTS.md`, the current implementation and tests, and the relevant Lean compiler/Lake sources before changing an interface. Write interface comments and characterization tests before implementation where the behavior is not already frozen.
 
 ## Reuse
 
@@ -30,8 +30,8 @@ Edit only the records named by the prompt. Do not execute planned mathematical o
 
 ## Stop Rules
 
-- **No `axiom` declarations, no `sorry`, no `native_decide`.** Unprovable steps are theorem hypotheses, so they appear in the type of everything downstream. An assumption that disappears from use sites has defeated the purpose of stating it.
-- **Do not weaken the specification to close a goal.** If `grammar_current` will not go through, the candidate decision is wrong and `RCI-SPEC` reopens — that is the mechanism working, not an obstacle. §6 of the note records this already happening once.
-- Do not let the proof drive the shipped decision toward something easier to verify but weaker in practice; the acceptance measurements in `RCI-FINAL` still bind.
-- Do not introduce proof dependencies into the plugin or the binary's link closure.
+- **A stale hit is a stop.** If any exercised edit shape serves a cached result disagreeing with fresh analysis, stop and reopen `RCI-SPEC`'s identity rather than narrowing the test around it.
+- Do not widen the cache's public surface; `ResultCache` stays constructed only through `open?`.
+- Do not weaken `open?`'s refusal to manufacture a partial epoch to make invalidation cheaper.
+- Do not defer the watch re-exec decision here by removing it opportunistically; `RCI-FINAL` owns it on measurement.
 - Stop rather than weakening exact semantics, write safety, or the resource envelope.
