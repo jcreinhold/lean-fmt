@@ -529,13 +529,30 @@ through `uv run --with`, so RRF-FINAL needs no new system dependency.
 | `json` | `jq` + the recorded golden | parses; byte-identical to the pre-change golden |
 | `sarif` | `uv run --with check-jsonschema` against `sarif-schema-2.1.0.json` | schema conformance |
 | `sarif` | a conformance assertion beyond the schema | `columnKind` present (§3.4), `executionSuccessful` agrees with the exit code, every `ruleId` has a descriptor |
-| `junit` | `xmllint --noout` and `xmllint --schema` against a community XSD | well-formed; conforms to the documented common subset |
+| `junit` | `xmllint --noout`, plus `uv run --with junitparser` | well-formed; an **independent consumer** reads back every suite, case, result type, and count |
 | `github` | a line-grammar parser plus round-trip unescaping | every line re-parses; unescaping `escapeProperty` recovers the exact path |
 | `concise` | a line-grammar parser | every line matches `PATH:LINE:COL: CODE MSG` |
 
 The SARIF schema check alone is **not** sufficient (§3.4): the schema does not encode the `columnKind`
 **SHALL**, so a schema-valid log can still be non-conforming. This is named here so RRF-FINAL does not
 mistake a green `check-jsonschema` for a conformance result.
+
+**Amended during RRF-IMPL — the JUnit gate is a consumer, not an XSD.** The first draft named
+`xmllint --schema` against "a community XSD". Measured against the most-cited one (windyroad
+`JUnit.xsd`, the Apache Ant flavor), our output is rejected:
+
+```
+element testsuite: Schemas validity error : Element 'testsuite': The attribute 'time' is required but missing.
+element testcase: Schemas validity error : Element 'testcase': This element is not expected. Expected is ( properties ).
+```
+
+Both complaints are Ant-flavor requirements, not common-subset ones: that XSD requires a `time`
+attribute and a `<properties>` child that the `testmoapp` reference documents as optional. Since the
+format has **no normative schema** (§7.1), "fails one flavor's XSD" is a flavor difference and not a
+conformance failure — but calling it a pass would be worse. So the gate became what the roadmap
+actually asked for, an *independent parser*: `junitparser` reads the log back and every suite, case,
+result type, and aggregate count round-trips. That is a stronger check than a schema anyway, and it is
+the check a user's CI actually performs. §7.2's refusal to emit a fabricated `time="0"` stands.
 
 ### 8.3 Unicode and stress
 
@@ -568,8 +585,14 @@ stdout silently produce two different artifacts depending on whether the write s
 ### 9.3 Broken pipe
 
 `lean-fmt check … --output-format concise | head -1` closes stdout early. The write raises, and the
-run **exits 0 without a diagnostic** — a downstream `head` is not an error, and the standard shell
-idiom must not print `lean-fmt: broken pipe` into a user's terminal or fail their pipeline.
+run **swallows it without a diagnostic and keeps its own exit code** — a downstream `head` is not an
+error, and the standard shell idiom must not print `lean-fmt: broken pipe` into a user's terminal.
+
+**Amended during RRF-IMPL.** The first draft said the run "exits 0". That was wrong, and the
+implementation is what showed it: exiting 0 would mean `lean-fmt check … | head` reported *success* on
+a run that found a violation, turning the pipe into a way to silence CI. The pipe closing says nothing
+about what the analysis found. So the broken pipe suppresses the *message*, never the *verdict* —
+measured: `check --output-format concise | head -1` exits 1 with the finding, and prints nothing extra.
 
 This is a real gap, not a hypothetical: nothing in `Cli.lean` handles `EPIPE` today, so the current
 behavior is whatever the Lean runtime does with the raised `IO.Error`. RRF-IMPL must establish it

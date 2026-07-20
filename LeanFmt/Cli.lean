@@ -8,9 +8,50 @@ namespace LeanFmt.Internal.Cli
 
 open LeanFmt.Internal LeanFmt.Internal.Application LeanFmt.Internal.Service
 
+/-- How a run's report is rendered (`ruff-15` RRF-IMPL, frozen in `notes/01-report-formats.md` §2).
+
+`text` and `json` are the two that existed before this stack and their bytes are unchanged: `text` is
+**not** renamed to ruff's `full`, because this report renders no source excerpt and the name would
+promise one. The four added formats are pure projections over the finished `RunReport` — they cannot
+trigger analysis, alter rule selection, or reorder results, which is the roadmap's completion
+contract. -/
 private inductive ReportFormat where
   | text
+  | concise
   | json
+  | github
+  | sarif
+  | junit
+  deriving BEq
+
+private def ReportFormat.toWire : ReportFormat → String
+  | .text => "text"
+  | .concise => "concise"
+  | .json => "json"
+  | .github => "github"
+  | .sarif => "sarif"
+  | .junit => "junit"
+
+instance : ToString ReportFormat := ⟨ReportFormat.toWire⟩
+
+private def ReportFormat.ofWire? : String → Option ReportFormat
+  | "text" => some .text
+  | "concise" => some .concise
+  | "json" => some .json
+  | "github" => some .github
+  | "sarif" => some .sarif
+  | "junit" => some .junit
+  | _ => none
+
+/-- Whether this format reports *findings* rather than the mode's own product.
+
+`diff`'s product is a patch and it was measured to carry no findings at all
+(`ruff-15` `evidence/01-report-baseline.md` §3), so these four have nothing to say about it and are
+rejected for it — following `ruff-14`'s precedent of refusing a flag a mode cannot honor rather than
+emitting a well-formed, empty, misleading report. -/
+private def ReportFormat.findingShaped : ReportFormat → Bool
+  | .concise | .github | .sarif | .junit => true
+  | .text | .json => false
 
 /-! ## stdin/stdout and range parsing (`ruff-14` RSF-IMPL)
 
@@ -86,6 +127,14 @@ private def resolveRange (normalized : String) : RangeSpec → Except String Sou
 private structure FileCommand where
   run : RunRequest
   outputFormat : ReportFormat := .text
+  /-- `--json` was typed. Kept beside `outputFormat` rather than folded into it so that
+  `--json --output-format github` can be rejected instead of silently letting one win — which is how a
+  CI pipeline emits the wrong format for a year (`notes/01-report-formats.md` §2.2). -/
+  jsonFlag : Bool := false
+  /-- `--output-format` was typed, and with what. Same reason. -/
+  formatFlag? : Option ReportFormat := none
+  /-- Write the report here instead of stdout, atomically (`notes/01-report-formats.md` §2.4). -/
+  outputFile? : Option String := none
   statistics : Bool := false
   /-- The `-` target was given: read the one source from stdin and stream the answer. -/
   stdin : Bool := false
@@ -148,7 +197,10 @@ file options:\n\
   --unfixable SELECTOR withhold a rule's fix from `fix` (repeatable)\n\
   --extend-fixable SEL add to the fixable set without replacing (repeatable)\n\
   --preview            unlock preview (experimental) rules\n\
-  --json               deterministic JSON output\n\
+  --json               deterministic JSON output (alias for --output-format json)\n\
+  --output-format FMT  text|concise|json|github|sarif|junit (default: text)\n\
+                       concise/github/sarif/junit are unavailable for `diff`\n\
+  --output-file PATH   write the report to PATH atomically instead of stdout\n\
   --statistics         write aggregate statistics to stderr\n\
   --no-cache           neither read nor write result cache entries\n\
   --max-memory GIB     aggregate operating envelope (default: 8)\n\
@@ -161,13 +213,40 @@ stdin options (target `-`; never writes a file or a cache entry):\n\
   --range START:STOP   format only this half-open normalized byte range (format only)\n\
   --range-lines R      format only L:C-L:C (1-based line, 1-based codepoint column)"
 
+/-- Reconcile the two spellings of one choice, and refuse a mode the chosen format cannot describe.
+
+Both checks are deliberately errors rather than precedence rules. A caller who typed two different
+formats does not have a preference for us to guess, and a caller who asked `diff` for SARIF wants
+findings `diff` does not produce. -/
+private def resolveOutputFormat (mode : RunMode) (command : FileCommand) :
+    Except String FileCommand :=
+  let chosen := match command.formatFlag?, command.jsonFlag with
+    | some format, _ => format
+    | none, true => .json
+    | none, false => .text
+  if command.jsonFlag && command.formatFlag?.isSome && chosen != .json then
+    .error s!"--json and --output-format {chosen} disagree; pass only one"
+  else if mode == .diff && chosen.findingShaped then
+    .error s!"--output-format {chosen} is not available for diff; \
+      diff reports a patch, not findings"
+  else
+    .ok { command with outputFormat := chosen }
+
 private def parseFileArgs (mode : RunMode) (args : List String) : Except String FileCommand :=
   let rec loop (remaining : List String) (command : FileCommand) :=
     match remaining with
-    | [] => .ok command
+    | [] => resolveOutputFormat mode command
     | "--root" :: root :: rest =>
       loop rest { command with run := { command.run with root } }
-    | "--json" :: rest => loop rest { command with outputFormat := .json }
+    | "--json" :: rest => loop rest { command with jsonFlag := true }
+    | "--output-format" :: value :: rest =>
+      match ReportFormat.ofWire? value with
+      | some format => loop rest { command with formatFlag? := some format }
+      | none =>
+        .error s!"unknown --output-format: {value} \
+          (expected text, concise, json, github, sarif, or junit)"
+    | "--output-file" :: path :: rest =>
+      loop rest { command with outputFile? := some path }
     | "--no-cache" :: rest => loop rest { command with run := { command.run with cache := false } }
     | "--config" :: path :: rest =>
       loop rest { command with run := { command.run with configPath? := some path } }
@@ -308,31 +387,40 @@ private def parseOrganizeArgs (args : List String) : Except String OrganizeComma
         request := { command.request with files := command.request.files.push option } }
   loop args {}
 
-private def renderText (report : RunReport) : IO Unit := do
+/-! ## Report renderers (`ruff-15` RRF-IMPL)
+
+Every renderer below is a **pure** `RunReport → String` (plus, where it needs line/column, the
+`PositionIndex` execution resolved beside the report). None of them reads a file, runs analysis, or
+touches rule selection, which is what makes them golden-testable and is the roadmap's completion
+contract. `emitReport` is the single IO boundary. -/
+
+private def textReport (report : RunReport) : String := Id.run do
+  let mut out := ""
   match report.mode with
   | "organize" =>
     for file in report.files do
-      unless file.status == "clean" do IO.println s!"{file.path}: {file.status}"
-      for diagnostic in file.diagnostics do IO.println s!"  {diagnostic}"
+      unless file.status == "clean" do out := out ++ s!"{file.path}: {file.status}\n"
+      for diagnostic in file.diagnostics do out := out ++ s!"  {diagnostic}\n"
   | "format" =>
     -- `format` publishes in place by default (`ruff-11d`): a concise per-file summary, never the file
     -- body. `formatted` means written; `would-format` is the `--check` preview of a file that would
     -- change. A clean file is silent. The full canonical text still rides `--json` (`file.formatted`).
     for file in report.files do
-      unless file.status == "clean" do IO.println s!"{file.path}: {file.status}"
+      unless file.status == "clean" do out := out ++ s!"{file.path}: {file.status}\n"
       for diagnostic in file.diagnostics do
-        IO.println s!"  {diagnostic}"
+        out := out ++ s!"  {diagnostic}\n"
   | "diff" =>
     for file in report.files do
-      if let some diff := file.diff then IO.print diff
+      if let some diff := file.diff then out := out ++ diff
       for diagnostic in file.diagnostics do
-        IO.println s!"{file.path}: {file.status}: {diagnostic}"
+        out := out ++ s!"{file.path}: {file.status}: {diagnostic}\n"
   | "fix" =>
     for file in report.files do
-      unless file.status == "clean" do IO.println s!"{file.path}: {file.status}"
-      for diagnostic in file.diagnostics do IO.println s!"  {diagnostic}"
+      unless file.status == "clean" do out := out ++ s!"{file.path}: {file.status}\n"
+      for diagnostic in file.diagnostics do out := out ++ s!"  {diagnostic}\n"
       if file.withheldUnsafe > 0 then
-        IO.println s!"  {file.withheldUnsafe} unsafe fix(es) withheld; rerun with --unsafe-fixes to apply"
+        out := out ++
+          s!"  {file.withheldUnsafe} unsafe fix(es) withheld; rerun with --unsafe-fixes to apply\n"
   | _ =>
     for file in report.files do
       for finding in file.findings do
@@ -341,19 +429,421 @@ private def renderText (report : RunReport) : IO Unit := do
         let fixTag := match finding.fix? with
           | some fix => s!" [{fix.applicability}]"
           | none => ""
-        IO.println s!"{file.path}:{finding.range.start}-{finding.range.stop}: \
-          {finding.code} {finding.message}{fixTag}"
+        out := out ++ s!"{file.path}:{finding.range.start}-{finding.range.stop}: \
+          {finding.code} {finding.message}{fixTag}\n"
       for diagnostic in file.diagnostics do
-        IO.println s!"{file.path}: {file.status}: {diagnostic}"
-  IO.println s!"mode={report.mode} files={report.files.size} findings={report.findings} \
+        out := out ++ s!"{file.path}: {file.status}: {diagnostic}\n"
+  return out ++ s!"mode={report.mode} files={report.files.size} findings={report.findings} \
     changed={report.changed} written={report.written} broken={report.broken} \
     rejected={report.rejected} withheld_unsafe={report.withheldUnsafe} \
-    suppressed={report.suppressed} infrastructure_failures={report.infrastructureFailures.size}"
+    suppressed={report.suppressed} infrastructure_failures={report.infrastructureFailures.size}\n"
+
+/-! ### Shared projections
+
+The four finding-shaped formats disagree about syntax and agree about content. These helpers are that
+content, resolved once, so a change of policy (which statuses report, how a message is flattened)
+cannot land in three formats and miss the fourth. -/
+
+/-- One line/column pair for a finding's start, or `1:1` when the index has no answer.
+
+The fallback is reachable only for a report entry whose source the run never snapshotted, and it is a
+position, not a lie about one: it names the file, which is the part a reader acts on. -/
+private def startPosition (positions : PositionIndex) (path : String) (finding : Finding) :
+    Position :=
+  (positions.position? path finding.range.start).getD ⟨1, 1⟩
+
+private def stopPosition (positions : PositionIndex) (path : String) (finding : Finding) :
+    Position :=
+  (positions.position? path finding.range.stop).getD (startPosition positions path finding)
+
+/-- Collapse a message to one line. No live rule message contains a newline; this is defensive, and
+`tests/reporting` pins it with a synthetic finding rather than trusting the invariant to hold. -/
+private def flattenMessage (message : String) : String :=
+  (message.replace "\r\n" " ").replace "\n" " " |>.replace "\r" " "
+
+/-- The severity a format shows for a file-level status that is not a rule finding.
+
+`format --check` reporting "this file would be reformatted" has no `FMT###` code — there is no rule
+involved — so it needs an identity of its own. `format` is deliberately outside the `FMT` namespace so
+it can never collide with a live, reserved, or retired rule code (`ruff-12`). -/
+private def statusRuleId : String := "format"
+
+/-- Statuses a finding-shaped format reports as a file-level problem, with the message it prints.
+
+A `clean` file and a file whose only news is its findings produce nothing here; the findings speak for
+themselves. -/
+private def statusMessage? (status : String) : Option String :=
+  match status with
+  | "would-format" => some "file would be reformatted"
+  | "would-organize" => some "imports would be reorganized"
+  | "broken" => some "file could not be parsed"
+  | "rejected" => some "result was rejected by validation"
+  | "infrastructure-failure" => some "analysis did not complete"
+  | _ => none
+
+/-- Whether a status is an *infrastructure* problem rather than a finding.
+
+The distinction SARIF draws between a result and a notification (§3.20.21), JUnit draws between
+`<failure>` and `<error>`, and `reportExitCode` already draws between exit 1 and exit 2. One predicate
+so the three cannot drift. -/
+private def statusIsInfrastructure (status : String) : Bool :=
+  status == "broken" || status == "rejected" || status == "infrastructure-failure"
+
+/-! ### `concise`
+
+`PATH:LINE:COLUMN: CODE MESSAGE`, one line per finding, and nothing else — no summary line and no
+applicability tag, because the format exists to be piped into `grep` and editor error-parsers, and a
+trailing line that does not match the grammar is exactly what breaks them
+(`notes/01-report-formats.md` §4). -/
+
+private def conciseReport (positions : PositionIndex) (report : RunReport) : String := Id.run do
+  let mut out := ""
+  for file in report.files do
+    for finding in file.findings do
+      let start := startPosition positions file.path finding
+      out := out ++ s!"{file.path}:{start.line}:{start.column}: {finding.code} \
+        {flattenMessage finding.message}\n"
+    if let some message := statusMessage? file.status then
+      out := out ++ s!"{file.path}:1:1: {statusRuleId} {message}\n"
+    for diagnostic in file.diagnostics do
+      out := out ++ s!"{file.path}:1:1: {statusRuleId} {flattenMessage diagnostic}\n"
+  for failure in report.infrastructureFailures do
+    out := out ++ s!"lean-fmt: {flattenMessage failure}\n"
+  return out
+
+/-! ### `github`
+
+GitHub Actions workflow commands. Escaping is exactly the runner's own
+(`actions/toolkit`, `packages/core/src/command.ts`), and property values are escaped more strictly than
+the message because an unescaped `:` or `,` in a path would terminate the property list. -/
+
+/-- `escapeData` from the toolkit: the message body. `%` first, or the `%` this introduces for
+`\r`/`\n` would be double-escaped on the next pass. -/
+private def githubEscapeData (value : String) : String :=
+  value.replace "%" "%25" |>.replace "\r" "%0D" |>.replace "\n" "%0A"
+
+/-- `escapeProperty` from the toolkit: `escapeData` plus `:` and `,`, which delimit the property list. -/
+private def githubEscapeProperty (value : String) : String :=
+  githubEscapeData value |>.replace ":" "%3A" |>.replace "," "%2C"
+
+private def githubSeverity : Severity → String
+  | .error => "error"
+  | .warning => "warning"
+  | .information => "notice"
+
+/-- One workflow command.
+
+`col`/`endColumn` are omitted whenever the span crosses lines: GitHub rejects the annotation
+otherwise. That constraint is undocumented by GitHub and is recorded in ruff's renderer citing
+`astral-sh/ruff#22074`. Multi-line findings are ordinary here, so this is a common path. -/
+private def githubCommand (severity : String) (path : String) (code : String)
+    (start stop : Position) (message : String) : String :=
+  let location :=
+    if start.line == stop.line then
+      s!",line={start.line},col={start.column},endLine={stop.line},endColumn={stop.column}"
+    else
+      s!",line={start.line},endLine={stop.line}"
+  -- The message repeats the location because an annotation GitHub cannot attach to a file still
+  -- appears in the log, and without the prefix it would name no file at all.
+  s!"::{severity} title=lean-fmt ({githubEscapeProperty code}),\
+    file={githubEscapeProperty path}{location}::\
+    {githubEscapeData s!"{path}:{start.line}:{start.column}: {code} {message}"}"
+
+private def githubReport (positions : PositionIndex) (report : RunReport) : String := Id.run do
+  let mut out := ""
+  for file in report.files do
+    for finding in file.findings do
+      let start := startPosition positions file.path finding
+      let stop := stopPosition positions file.path finding
+      out := out ++ githubCommand (githubSeverity finding.severity) file.path finding.code
+        start stop (flattenMessage finding.message) ++ "\n"
+    if let some message := statusMessage? file.status then
+      let severity := if statusIsInfrastructure file.status then "error" else "warning"
+      out := out ++ githubCommand severity file.path statusRuleId ⟨1, 1⟩ ⟨1, 1⟩ message ++ "\n"
+    for diagnostic in file.diagnostics do
+      out := out ++ githubCommand "error" file.path statusRuleId ⟨1, 1⟩ ⟨1, 1⟩
+        (flattenMessage diagnostic) ++ "\n"
+  for failure in report.infrastructureFailures do
+    out := out ++ s!"::error title=lean-fmt::{githubEscapeData failure}\n"
+  return out
+
+/-! ### `sarif`
+
+SARIF 2.1.0 (OASIS Standard). Section numbers below are that document's.
+
+Regions carry **line/column only**. `charOffset` is a *character* offset (§3.30.9) and `byteOffset`
+indexes the *artifact* (§3.30.11) while ours index the CRLF-normalized source, and §3.30.4 makes a
+region whose text and binary properties disagree invalid rather than merely imprecise. The exact byte
+range rides the region's property bag, which §3.8.1 sanctions. -/
+
+private def sarifLevel : Severity → String
+  | .error => "error"
+  | .warning => "warning"
+  | .information => "note"
+
+/-- One `reportingDescriptor`, projected from the live rule catalog — never re-authored here.
+`docs/adding-a-rule.md` and `ruff-12` make one metadata source the invariant, and a second description
+table in this renderer is exactly the drift that closed. -/
+private def sarifRuleDescriptor (info : RuleInfo) : Lean.Json :=
+  Lean.Json.mkObj <| [
+    ("id", .str info.code),
+    ("name", .str info.code),
+    ("shortDescription", Lean.Json.mkObj [("text", .str info.summary)]),
+    ("fullDescription", Lean.Json.mkObj [("text", .str info.explanation)]),
+    ("properties", Lean.Json.mkObj [
+      ("tags", Lean.Json.arr #[.str info.category]),
+      ("lifecycle", Lean.toJson info.lifecycle),
+      ("fixable", .bool info.fixable)])
+  ]
+
+private def sarifRegion (start stop : Position) (range : SourceRange) : Lean.Json :=
+  Lean.Json.mkObj [
+    ("startLine", Lean.toJson start.line),
+    ("startColumn", Lean.toJson start.column),
+    ("endLine", Lean.toJson stop.line),
+    ("endColumn", Lean.toJson stop.column),
+    ("properties", Lean.Json.mkObj [
+      ("leanFmtNormalizedByteRange", Lean.Json.mkObj [
+        ("start", Lean.toJson range.start), ("stop", Lean.toJson range.stop)])])
+  ]
+
+private def sarifLocation (path : String) (region? : Option Lean.Json) : Lean.Json :=
+  let physical := Lean.Json.mkObj <| [
+    ("artifactLocation", Lean.Json.mkObj [
+      ("uri", .str path), ("uriBaseId", .str "%SRCROOT%")])
+  ] ++ (match region? with | some region => [("region", region)] | none => [])
+  Lean.Json.mkObj [("physicalLocation", physical)]
+
+private def sarifResult (positions : PositionIndex) (path : String) (finding : Finding) :
+    Lean.Json :=
+  let start := startPosition positions path finding
+  let stop := stopPosition positions path finding
+  Lean.Json.mkObj <| [
+    ("ruleId", .str finding.code),
+    ("level", .str (sarifLevel finding.severity)),
+    ("message", Lean.Json.mkObj [("text", .str finding.message)]),
+    ("locations", Lean.Json.arr #[sarifLocation path (some (sarifRegion start stop finding.range))])
+  ] ++ (match finding.fix? with
+    | some fix =>
+      -- Applicability, not `result.fixes`. A SARIF fix names regions in character or line/column
+      -- terms while our edits are normalized byte ranges, and §3.30.4 forbids stating both. Exact
+      -- edits ride `--output-format json` (`notes/01-report-formats.md` §6.4).
+      [("properties", Lean.Json.mkObj [("fixApplicability", .str fix.applicability.toWire)])]
+    | none => [])
+
+/-- A notification, not a result. §3.20.21: an `error` notification "SHALL mean that the run failed",
+and "A SARIF consumer SHALL NOT assume that a failed run contains a complete set of analysis results."
+A `result` cannot say the analysis did not complete, which is precisely what exit code 2 means. -/
+private def sarifNotification (path? : Option String) (message : String) : Lean.Json :=
+  Lean.Json.mkObj <| [
+    ("level", .str "error"),
+    ("message", Lean.Json.mkObj [("text", .str message)])
+  ] ++ (match path? with
+    | some path => [("locations", Lean.Json.arr #[sarifLocation path none])]
+    | none => [])
+
+private def sarifReport (positions : PositionIndex) (root : String) (report : RunReport) : String :=
+  Id.run do
+    let mut results : Array Lean.Json := #[]
+    let mut notifications : Array Lean.Json := #[]
+    let mut codes : Array String := #[]
+    for file in report.files do
+      for finding in file.findings do
+        unless codes.contains finding.code do codes := codes.push finding.code
+        results := results.push (sarifResult positions file.path finding)
+      if let some message := statusMessage? file.status then
+        if statusIsInfrastructure file.status then
+          notifications := notifications.push (sarifNotification (some file.path) message)
+        else
+          results := results.push (Lean.Json.mkObj [
+            ("ruleId", .str statusRuleId),
+            ("level", .str "warning"),
+            ("message", Lean.Json.mkObj [("text", .str message)]),
+            ("locations", Lean.Json.arr #[sarifLocation file.path none])])
+      for diagnostic in file.diagnostics do
+        notifications := notifications.push (sarifNotification (some file.path) diagnostic)
+    for failure in report.infrastructureFailures do
+      notifications := notifications.push (sarifNotification none failure)
+    -- Descriptors for the codes this run actually reported. A descriptor for a rule that could not
+    -- have fired describes a run that did not happen.
+    let descriptors := codes.filterMap fun code =>
+      (ruleInfoByCode? code).map sarifRuleDescriptor
+    let log := Lean.Json.mkObj [
+      ("version", .str "2.1.0"),
+      ("$schema", .str
+        "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json"),
+      ("runs", Lean.Json.arr #[Lean.Json.mkObj [
+        ("tool", Lean.Json.mkObj [("driver", Lean.Json.mkObj [
+          ("name", .str "lean-fmt"),
+          ("informationUri", .str "https://github.com/jcreinhold/lean-fmt"),
+          ("rules", Lean.Json.arr descriptors)])]),
+        -- §3.14.27 makes this a SHALL whenever results are non-empty, and the JSON schema does not
+        -- encode it. `unicodeCodePoints` names the encoding `ruff-14` already froze.
+        ("columnKind", .str "unicodeCodePoints"),
+        ("originalUriBaseIds", Lean.Json.mkObj [
+          ("%SRCROOT%", Lean.Json.mkObj [("uri", .str root)])]),
+        ("invocations", Lean.Json.arr #[Lean.Json.mkObj [
+          ("executionSuccessful", .bool notifications.isEmpty),
+          ("toolExecutionNotifications", Lean.Json.arr notifications)]]),
+        ("results", Lean.Json.arr results),
+        ("properties", Lean.Json.mkObj [
+          ("findings", Lean.toJson report.findings),
+          ("changed", Lean.toJson report.changed),
+          ("written", Lean.toJson report.written),
+          ("broken", Lean.toJson report.broken),
+          ("rejected", Lean.toJson report.rejected),
+          ("withheldUnsafe", Lean.toJson report.withheldUnsafe),
+          ("suppressed", Lean.toJson report.suppressed),
+          ("withheldRedundant", Lean.toJson report.withheldRedundant)])]])
+    ]
+    return log.pretty ++ "\n"
+
+/-! ### `junit`
+
+There is no official JUnit XML specification — `testmoapp/junitxml`, the reference this targets, says
+so in its first paragraph. This renders the documented common subset and claims nothing more. -/
+
+/-- XML escaping for text and attribute values. `&` first, for the same reason `%` goes first in the
+GitHub escaper.
+
+XML 1.0 cannot represent most C0 controls at all, not even escaped, so anything below U+0020 other
+than tab/LF/CR becomes U+FFFD. A rule message cannot contain one today — but a **path** can, and one
+stray control byte in a filename would otherwise make the whole report unparseable. -/
+private def xmlEscape (value : String) : String :=
+  let replaced := value.replace "&" "&amp;" |>.replace "<" "&lt;" |>.replace ">" "&gt;"
+    |>.replace "\"" "&quot;" |>.replace "'" "&apos;"
+  String.ofList <| replaced.toList.map fun c =>
+    if c.val < 0x20 && c != '\t' && c != '\n' && c != '\r' then '�' else c
+
+private structure JUnitCase where
+  name : String
+  message : String
+  type : String
+  detail : String
+  /-- `<error>` rather than `<failure>`: the test could not run, as opposed to an assertion failing.
+  The same distinction §6.5 draws for SARIF and `reportExitCode` draws for exit codes. -/
+  isError : Bool
+
+private def junitCaseXml (classname : String) (case : JUnitCase) : String :=
+  let tag := if case.isError then "error" else "failure"
+  s!"    <testcase name=\"{xmlEscape case.name}\" classname=\"{xmlEscape classname}\">\n"
+    ++ s!"      <{tag} message=\"{xmlEscape case.message}\" type=\"{xmlEscape case.type}\">"
+    ++ s!"{xmlEscape case.detail}</{tag}>\n"
+    ++ "    </testcase>\n"
+
+private def junitReport (positions : PositionIndex) (report : RunReport) : String := Id.run do
+  let mut suites := ""
+  let mut totalTests := 0
+  let mut totalFailures := 0
+  let mut totalErrors := 0
+  for file in report.files do
+    let mut cases : Array JUnitCase := #[]
+    for finding in file.findings do
+      let start := startPosition positions file.path finding
+      let where_ := s!"{file.path}:{start.line}:{start.column}"
+      cases := cases.push {
+        name := s!"{finding.code} {where_}"
+        message := flattenMessage finding.message
+        type := finding.code
+        detail := s!"{where_}: {finding.code} {flattenMessage finding.message}"
+        isError := false }
+    if let some message := statusMessage? file.status then
+      cases := cases.push {
+        name := s!"{statusRuleId} {file.path}", message, type := statusRuleId
+        detail := s!"{file.path}: {message}"
+        isError := statusIsInfrastructure file.status }
+    for diagnostic in file.diagnostics do
+      cases := cases.push {
+        name := s!"{statusRuleId} {file.path}", message := flattenMessage diagnostic
+        type := statusRuleId, detail := flattenMessage diagnostic, isError := true }
+    let failures := cases.foldl (fun total case => if case.isError then total else total + 1) 0
+    let errors := cases.size - failures
+    -- A clean file emits a *passing* case, not an empty suite: a suite with zero cases reads to most
+    -- CI dashboards as "no tests ran", not "nothing wrong".
+    let body :=
+      if cases.isEmpty then
+        s!"    <testcase name=\"{xmlEscape file.path}\" classname=\"{xmlEscape file.path}\" />\n"
+      else
+        cases.foldl (fun acc case => acc ++ junitCaseXml file.path case) ""
+    let tests := max cases.size 1
+    totalTests := totalTests + tests
+    totalFailures := totalFailures + failures
+    totalErrors := totalErrors + errors
+    suites := suites ++ s!"  <testsuite name=\"{xmlEscape file.path}\" tests=\"{tests}\" \
+      failures=\"{failures}\" errors=\"{errors}\">\n{body}  </testsuite>\n"
+  unless report.infrastructureFailures.isEmpty do
+    let body := report.infrastructureFailures.foldl (fun acc failure =>
+      acc ++ junitCaseXml "lean-fmt" {
+        name := s!"{statusRuleId} lean-fmt", message := flattenMessage failure
+        type := statusRuleId, detail := flattenMessage failure, isError := true }) ""
+    let count := report.infrastructureFailures.size
+    totalTests := totalTests + count
+    totalErrors := totalErrors + count
+    suites := suites ++ s!"  <testsuite name=\"lean-fmt\" tests=\"{count}\" failures=\"0\" \
+      errors=\"{count}\">\n{body}  </testsuite>\n"
+  return s!"<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
+    <testsuites name=\"lean-fmt\" tests=\"{totalTests}\" failures=\"{totalFailures}\" \
+      errors=\"{totalErrors}\">\n{suites}</testsuites>\n"
+
+/-- Render one report. Pure: the caller decides where the bytes go. -/
+private def formatReport (format : ReportFormat) (positions : PositionIndex) (root : String)
+    (report : RunReport) : String :=
+  match format with
+  | .text => textReport report
+  | .concise => conciseReport positions report
+  | .json => (Lean.toJson report).compress ++ "\n"
+  | .github => githubReport positions report
+  | .sarif => sarifReport positions root report
+  | .junit => junitReport positions report
+
+/-- Write a rendered report to `path` atomically: a sibling temporary, then `rename`.
+
+A consumer polling the path never observes a truncated SARIF log, and a failed write leaves the
+previous report intact rather than a half-file. -/
+private def writeReportFile (path : String) (contents : String) : IO Unit := do
+  let target := FilePath.mk path
+  let temporary := FilePath.mk (path ++ ".lean-fmt-tmp")
+  try
+    IO.FS.writeFile temporary contents
+    IO.FS.rename temporary target
+  catch error =>
+    if ← temporary.pathExists then IO.FS.removeFile temporary
+    throw error
+
+/-- Emit a report to stdout or to `--output-file`.
+
+**A closed stdout is not an error.** `lean-fmt check … | head -1` is the standard idiom, and a
+`lean-fmt: broken pipe` in the user's terminal — or a failed pipeline — would be the wrong answer to
+it. Nothing handled `EPIPE` before this stack; the hole predates the new formats and is closed here
+for all six. A failure to write an `--output-file` is a different case entirely and stays fatal
+(§9.2): it is silent data loss otherwise. -/
+private def emitReport (outputFile? : Option String) (contents : String) : IO Unit :=
+  match outputFile? with
+  | some path => writeReportFile path contents
+  | none => try IO.print contents; (← IO.getStdout).flush catch _ => pure ()
 
 private def renderReport (format : ReportFormat) (report : RunReport) : IO Unit :=
-  match format with
-  | .text => renderText report
-  | .json => IO.println (Lean.toJson report).compress
+  emitReport none (formatReport format PositionIndex.empty "" report)
+
+/-- Reject an `--output-file` this run could not write, **before** the run happens.
+
+A four-minute analysis that then cannot write its report has wasted the four minutes. The message
+names the caller's own argument, as every other path-taking surface here does. -/
+private def validateOutputFile (path : String) : IO (Except String Unit) := do
+  let target := FilePath.mk path
+  if ← target.isDir then
+    return .error s!"--output-file is a directory: {path}"
+  match target.parent with
+  | some parent =>
+    if parent.toString.isEmpty || (← parent.pathExists) then return .ok ()
+    return .error s!"--output-file directory does not exist: {path}"
+  | none => return .ok ()
+
+/-- The absolute `file://` URI SARIF's `%SRCROOT%` resolves relative paths against, with the trailing
+slash the base of a relative reference needs. -/
+private def rootUri (root : FilePath) : IO String := do
+  let absolute ← try IO.FS.realPath root catch _ => pure root
+  return s!"file://{absolute}/"
 
 private def renderStatistics (report : RunReport) : IO Unit :=
   IO.eprintln s!"lean-fmt statistics: mode={report.mode} files={report.files.size} \
@@ -373,7 +863,7 @@ private def reportExitCode (writer : Bool) (report : RunReport) : UInt32 :=
 private def renderRules (format : ReportFormat) : IO Unit :=
   match format with
   | .json => IO.println (Lean.toJson allRulesJson).compress
-  | .text =>
+  | _ =>
     for info in allRuleInfos do
       let fix := if info.fixable then "fixable" else "report-only"
       let enabled := if info.defaultEnabled then "default" else "optional"
@@ -387,7 +877,7 @@ private def renderExplain (format : ReportFormat) (code : String) : IO UInt32 :=
   | some info =>
     match format with
     | .json => IO.println (ruleInfoJson info (tierWireOf info.code)).compress
-    | .text => IO.print (explainText info)
+    | _ => IO.print (explainText info)
     return 0
   | none =>
     match reservedDisposition? code with
@@ -395,7 +885,7 @@ private def renderExplain (format : ReportFormat) (code : String) : IO UInt32 :=
       match format with
       | .json => IO.println (Lean.Json.mkObj
           [("code", .str code), ("lifecycle", .str "retired"), ("disposition", .str disposition)]).compress
-      | .text => IO.println s!"{code}  [retired]\n  {disposition}"
+      | _ => IO.println s!"{code}  [retired]\n  {disposition}"
       return 0
     | none =>
       IO.eprintln s!"unknown rule: {code}"
@@ -427,7 +917,7 @@ private def runDocs (root : FilePath) (check : Bool) : IO UInt32 := do
 private def renderClean (format : ReportFormat) (report : CleanReport) : IO Unit :=
   match format with
   | .json => IO.println (Lean.toJson report).compress
-  | .text =>
+  | _ =>
     let cache := FilePath.mk report.root / ".lean-fmt-cache"
     if report.removed then IO.println s!"removed {cache}"
     else IO.println s!"cache already absent: {cache}"
@@ -436,7 +926,7 @@ private def renderCompilerSetup (format : ReportFormat) : IO Unit := do
   let report := compilerSetupReport
   match format with
   | .json => IO.println (Lean.toJson report).compress
-  | .text => do
+  | _ => do
     IO.println s!"schema: {report.schema}"
     IO.println s!"package: {report.package}"
     IO.println s!"plugin target: {report.plugin}"
@@ -448,7 +938,7 @@ private def renderCompilerSetup (format : ReportFormat) : IO Unit := do
 private def renderCompilerStatus (format : ReportFormat) (report : CompilerStatusReport) : IO Unit :=
   match format with
   | .json => IO.println (Lean.toJson report).compress
-  | .text => do
+  | _ => do
     for item in report.modules do
       IO.println s!"{item.path}\t{item.module}\t{item.status}"
     IO.println s!"ready={report.ready} missing={report.missing} unbuilt={report.unbuilt}"
@@ -480,7 +970,7 @@ unrelated key's length change every other line. -/
 private def renderConfigShow (format : ReportFormat) (report : ConfigReport) : IO Unit :=
   match format with
   | .json => IO.println (Lean.toJson report).compress
-  | .text => do
+  | _ => do
     IO.println s!"path: {report.path}"
     IO.println s!"config: {report.configFile}"
     if report.contributingFiles.isEmpty then
@@ -498,6 +988,20 @@ private def renderConfigShow (format : ReportFormat) (report : ConfigReport) : I
     for setting in report.settings do
       IO.println s!"  {setting.key} = {setting.value}  ({setting.origin})"
 
+/-- One stream answer viewed as a one-file run report, so the four finding-shaped renderers serve the
+stdin surface without a second implementation of any of them. -/
+private def streamAsRunReport (mode : RunMode) (report : StreamReport) : RunReport :=
+  { mode := mode.toString
+    files := #[{ path := report.path, status := report.status,
+                 findings := report.findings, diagnostics := report.diagnostics }]
+    findings := report.findings.size
+    changed := if report.changed then 1 else 0
+    written := 0
+    broken := if report.status == "broken" then 1 else 0
+    rejected := if report.status == "rejected" then 1 else 0
+    withheldUnsafe := 0, suppressed := 0, withheldRedundant := 0
+    infrastructureFailures := #[] }
+
 /-- Render one stream answer.
 
 **stdout carries the result and nothing else** — bytes for `format`/`fix`, a unified diff for `diff`,
@@ -508,7 +1012,8 @@ source map included, on stdout instead, because a machine consumer asked for str
 The reported actual range is printed even when it is wider than the request: that widening is the one
 thing a caller cannot infer for itself, and hiding it would make the "outside this range is untouched"
 promise unverifiable. -/
-private def renderStream (format : ReportFormat) (report : StreamReport) : IO Unit := do
+private def renderStream (mode : RunMode) (format : ReportFormat) (outputFile? : Option String)
+    (positions : PositionIndex) (root : String) (report : StreamReport) : IO Unit := do
   match format with
   | .json => IO.println report.toJson.compress
   | .text =>
@@ -521,6 +1026,16 @@ private def renderStream (format : ReportFormat) (report : StreamReport) : IO Un
       IO.eprintln s!"{report.path}: {report.status}: {diagnostic}"
     if let some actual := report.actual? then
       IO.eprintln s!"{report.path}: formatted range {actual.start}-{actual.stop}"
+  | _ =>
+    -- stdout still carries the result and nothing else (`ruff-14` §5.1), so a finding-shaped report
+    -- goes to stderr — beside where text mode already puts findings — unless the caller named a file
+    -- for it. Putting it on stdout would corrupt the bytes a `format -` consumer is piping.
+    if let some diff := report.diff then IO.print diff
+    if let some output := report.output then IO.print output
+    let rendered := formatReport format positions root (streamAsRunReport mode report)
+    match outputFile? with
+    | some path => writeReportFile path rendered
+    | none => IO.eprint rendered
 
 /-- Exit code for a stream answer.
 
@@ -563,7 +1078,11 @@ private unsafe def runStreamCommand (mode : RunMode) (command : FileCommand)
     unsafeFixes := command.run.unsafeFixes
     formatCheck := command.run.formatCheck
   }
-  renderStream command.outputFormat report
+  -- The buffer never became a project snapshot, so the CLI that decoded it is the only holder of the
+  -- bytes a line/column resolution needs.
+  let positions := PositionIndex.ofSource report.path normalized report.findings
+  renderStream mode command.outputFormat command.outputFile? positions
+    (← rootUri command.run.root) report
   return streamExitCode (mode == .fix || command.run.writesFormat) report
 
 private unsafe def runFileCommand (mode : RunMode) (args : List String) : IO UInt32 := do
@@ -573,6 +1092,10 @@ private unsafe def runFileCommand (mode : RunMode) (args : List String) : IO UIn
   if let .error message := validateStdin mode command then
     IO.eprintln message
     return 2
+  if let some path := command.outputFile? then
+    if let .error message := ← validateOutputFile path then
+      IO.eprintln message
+      return 2
   if let some filename := command.stdinFilename? then
     try
       return ← runStreamCommand mode command filename
@@ -580,10 +1103,12 @@ private unsafe def runFileCommand (mode : RunMode) (args : List String) : IO UIn
       IO.eprintln s!"lean-fmt: {error}"
       return 2
   try
-    let report ← execute command.run
-    renderReport command.outputFormat report
-    if command.statistics then renderStatistics report
-    return reportExitCode (mode == .fix || command.run.writesFormat) report
+    let outcome ← execute command.run
+    emitReport command.outputFile?
+      (formatReport command.outputFormat outcome.positions (← rootUri command.run.root)
+        outcome.report)
+    if command.statistics then renderStatistics outcome.report
+    return reportExitCode (mode == .fix || command.run.writesFormat) outcome.report
   catch error =>
     IO.eprintln s!"lean-fmt: {error}"
     return 2

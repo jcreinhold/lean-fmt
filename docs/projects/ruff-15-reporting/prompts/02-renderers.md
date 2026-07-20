@@ -1,6 +1,6 @@
 ---
 claim_id: RRF-IMPL
-status: planned
+status: verified
 depends_on: [RRF-SPEC]
 ---
 

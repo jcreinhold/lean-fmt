@@ -34,6 +34,7 @@ tests/boundary/run.sh
 tests/syntax/run.sh
 tests/discovery/run.sh
 tests/stream/run.sh
+tests/reporting/run.sh
 ```
 
 Use the target project's exact Lean toolchain for frontend and plugin experiments. Keep experiments

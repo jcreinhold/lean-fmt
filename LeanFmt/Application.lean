@@ -1112,6 +1112,110 @@ private def summarize (modeString : String) (files : Array FileReport)
   { mode := modeString, files, findings, changed, written, broken, rejected, withheldUnsafe,
     suppressed, withheldRedundant, infrastructureFailures := failures }
 
+/-! ## Report positions (`ruff-15` RRF-IMPL)
+
+Every offset in this product is a normalized-source **byte** offset, but a compiler-style line, a
+GitHub annotation, a SARIF region, and a JUnit case name all want a line and a column. That conversion
+needs the source text, and `RunReport` deliberately does not carry it.
+
+Re-reading each file inside the renderer was rejected: it would put IO inside a renderer the roadmap
+requires to be pure, and — worse — it would race the run itself. `fix` and `format` publish in place,
+so by the time a renderer ran, the bytes on disk would be the *rewritten* ones while every finding
+still indexes the original coordinates. Every position in the report would be silently wrong exactly
+on the runs that changed something.
+
+Adding the positions to `FileReport` was also rejected: that structure is the canonical report and its
+derived `ToJson` is a compatibility surface (`ruff-15` `notes/01-report-formats.md` §8.1). A rendering
+aid does not belong in it.
+
+So execution — which holds the original bytes and nothing else does — resolves exactly the offsets the
+finished report mentions, and hands them to presentation beside the report. Allocation is bounded by
+the **number of findings**, not by project size: a clean file contributes nothing, and a file with one
+finding stores two positions rather than a line table for its whole source. -/
+
+/-- 1-based line, 1-based **codepoint** column. The encoding `ruff-14` froze for `--range-lines`
+(`Cli.offsetOfLineColumn`), so what a caller sends and what a report returns are one encoding. -/
+structure Position where
+  line : Nat
+  column : Nat
+  deriving Inhabited, BEq, Repr
+
+/-- Line/column for exactly the normalized byte offsets a report mentions, keyed by report path.
+
+Deliberately not a line table. A consumer can only ask about an offset the report already named, which
+is what keeps this bounded — and an offset the report never named has no answer to give. -/
+structure PositionIndex where
+  private mk ::
+  private entries : Std.HashMap String (Std.HashMap Nat Position)
+
+/-- The index for a report with no positions to resolve — `organize`, and any caller rendering a
+format that needs none. -/
+def PositionIndex.empty : PositionIndex := ⟨{}⟩
+
+def PositionIndex.position? (index : PositionIndex) (path : String) (offset : Nat) : Option Position := do
+  let file ← index.entries[path]?
+  file[offset]?
+
+/-- Resolve a set of normalized byte offsets in one forward pass.
+
+Offsets are sorted so the walk is linear in the source rather than one walk per offset: a file with a
+hundred findings is read once, not two hundred times. An offset past the end clamps to the end, for the
+same reason `offsetOfLineColumn` clamps — an end-of-file position is a legitimate thing for a
+zero-width finding to name, and failing on it would be worse than pointing at the last character. -/
+private def positionsOf (normalized : String) (offsets : Array Nat) : Std.HashMap Nat Position :=
+  Id.run do
+    let sorted := offsets.qsort (· < ·)
+    let bytes := normalized.toUTF8
+    let mut resolved : Std.HashMap Nat Position := {}
+    let mut index := 0
+    let mut offset := 0
+    let mut line := 1
+    let mut column := 1
+    while index < sorted.size do
+      let target := sorted[index]!
+      if target ≤ offset || offset ≥ bytes.size then
+        resolved := resolved.insert target ⟨line, column⟩
+        index := index + 1
+      else if bytes[offset]! == 10 then
+        line := line + 1
+        column := 1
+        offset := offset + 1
+      else
+        column := column + 1
+        offset := offset + 1
+        -- Advance past this codepoint's continuation bytes (0b10xxxxxx), so a column counts code
+        -- points and not bytes. The inverse of `Cli.offsetOfLineColumn`'s own inner walk.
+        while offset < bytes.size && bytes[offset]! &&& 0xC0 == 0x80 do
+          offset := offset + 1
+    return resolved
+
+/-- Resolve every finding position in a finished report against the sources the run actually read.
+
+`snapshots` hold the bytes as they were *before* any publication, which is the coordinate system every
+finding indexes. Files with no findings are skipped entirely. -/
+private def resolvePositions (snapshots : Array SourceSnapshot) (files : Array FileReport) :
+    PositionIndex := Id.run do
+  let mut entries : Std.HashMap String (Std.HashMap Nat Position) := {}
+  for file in files do
+    if file.findings.isEmpty then continue
+    let some snapshot := snapshots.find? (·.relativePath == file.path) | continue
+    let offsets := file.findings.flatMap fun finding => #[finding.range.start, finding.range.stop]
+    let (normalized, _) := LosslessSource.normalize snapshot.source
+    entries := entries.insert file.path (positionsOf normalized offsets)
+  return ⟨entries⟩
+
+/-- The index for one buffer whose bytes the caller already holds.
+
+The stdin surface needs this: its source never became a project snapshot, so `resolvePositions` has
+nothing to look it up in, and the CLI that decoded the bytes is the only holder. `normalized` must be
+the normalized form, since that is what findings index. -/
+def PositionIndex.ofSource (path : String) (normalized : String) (findings : Array Finding) :
+    PositionIndex :=
+  if findings.isEmpty then .empty
+  else
+    let offsets := findings.flatMap fun finding => #[finding.range.start, finding.range.stop]
+    ⟨Std.HashMap.emptyWithCapacity.insert path (positionsOf normalized offsets)⟩
+
 private def recordPhase (name : String) (started finished : Nat) : IO Unit := do
   if (← IO.getEnv "LEAN_FMT_PROFILE_PHASES") == some "1" then
     IO.eprintln s!"phase.{name}_ms={(finished - started) / 1000000}"
@@ -1120,10 +1224,18 @@ private def recordDuration (name : String) (nanos : Nat) : IO Unit := do
   if (← IO.getEnv "LEAN_FMT_PROFILE_PHASES") == some "1" then
     IO.eprintln s!"phase.{name}_ms={nanos / 1000000}"
 
+/-- What one run produced: the canonical report, and the line/column resolution presentation needs to
+render it. Two values rather than one enriched report, because `RunReport` is a compatibility surface
+and `PositionIndex` is a rendering aid — folding the second into the first would put presentation data
+in the canonical semantic report. -/
+structure RunOutcome where
+  report : RunReport
+  positions : PositionIndex
+
 /- Execute one immutable user request. This operation owns workspace discovery, exact module
 selection, source snapshots, trusted-artifact validation, fallback, deterministic aggregation, and
 resource intent. No caller can sequence or retain those mechanisms independently. -/
-def execute (request : RunRequest) : IO RunReport := do
+def execute (request : RunRequest) : IO RunOutcome := do
   if request.maxMemoryGiB == 0 then
     throw <| IO.userError "--max-memory must provide a nonzero operating envelope"
   let root ← IO.FS.realPath request.root
@@ -1234,7 +1346,8 @@ def execute (request : RunRequest) : IO RunReport := do
         if let some analysis := cached? then
           files := files.push (← previewFile previewMode plan request.unsafeFixes
             importReport.1 importReport.2 snapshot analysis)
-      return summarize request.mode.toString files
+      return { report := summarize request.mode.toString files
+               positions := resolvePositions snapshots files }
   let evidenceStarted ← IO.monoNanosNow
   let evidence ← Project.moduleEvidence project
   let evidenceFinished ← IO.monoNanosNow
@@ -1264,7 +1377,8 @@ def execute (request : RunRequest) : IO RunReport := do
           previewFile previewMode plan request.unsafeFixes ir.1 ir.2 snapshot analysis
       if let some cache := cache? then
         cache.writeAll project snapshots available
-      return summarize request.mode.toString files
+      return { report := summarize request.mode.toString files
+               positions := resolvePositions snapshots files }
   withExactRun project request.maxMemoryGiB fun exactRun => do
     let mut files := #[]
     let mut failures := #[]
@@ -1301,7 +1415,8 @@ def execute (request : RunRequest) : IO RunReport := do
         }
     if let some cache := cache? then
       cache.writeAll project snapshots analyses
-    return summarize request.mode.toString files failures
+    return { report := summarize request.mode.toString files failures
+             positions := resolvePositions snapshots files }
 
 /-! ## The stdin/stdout stream surface
 

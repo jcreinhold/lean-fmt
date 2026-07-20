@@ -1,9 +1,9 @@
 # Next Proof Packet
 
 - Stack: ruff-15-reporting
-- First unresolved: 02-renderers
-- Claim ID: RRF-IMPL
-- Prompt: 02-renderers
+- First unresolved: 03-acceptance
+- Claim ID: RRF-FINAL
+- Prompt: 03-acceptance
 - Module: (docs only)
 - Target file: (docs only)
 
@@ -17,7 +17,7 @@ Read this file, the target prompt, target files, listed source/template line ran
 
 ## Proof Task
 
-- Deliver **RRF-IMPL**: Add `--output-format`, optional output files with atomic replacement, format-specific golden tests, and rule metadata embedding without adding branches to application execution.
+- Deliver **RRF-FINAL**: Parse SARIF/JUnit/JSON outputs using independent validators, inspect GitHub commands and concise paths, test Unicode and failures, and benchmark large synthetic reports.
 - Read `roadmap.md`, its prerequisite stack results, `AGENTS.md`, the current implementation and tests, and the relevant Lean compiler/Lake sources before changing an interface. Write interface comments and characterization tests before implementation where the behavior is not already frozen.
 
 ## Reuse
@@ -30,6 +30,5 @@ Inspect the live goal, search relevant declarations, test plausible proof steps,
 
 ## Stop Rules
 
-- Text/JSON defaults remain compatible.
-- Renderer allocation must be bounded for project-scale reports.
+- No full mathlib analysis; saved canonical reports may drive renderer scale tests.
 - Stop rather than weakening exact semantics, write safety, or the resource envelope.
