@@ -4,6 +4,7 @@ import all LeanFmt.ArtifactStore
 import all LeanFmt.Analysis
 import all LeanFmt.Application
 import all LeanFmt.Cache
+import all LeanFmt.Cli
 import all LeanFmt.Comments
 import all LeanFmt.Config
 import all LeanFmt.Discovery
@@ -2461,6 +2462,80 @@ private def docBench : IO UInt32 := do
     benchOne "marked-call-args" n (markedCallArgs n)
   return 0
 
+/-! ## Report renderer scale (`ruff-15` RRF-FINAL)
+
+`evidence/02-renderer-cost.md` measured the six renderers at 109 findings and the append pattern in
+isolation, and recorded what neither covered: `Lean.Json.pretty`, SARIF's serializer, at scale. This
+is that measurement. It is synthetic on purpose — the point is to vary report size by three orders of
+magnitude while holding everything else fixed, which no real project offers.
+
+The fixture is built and forced *before* the clock starts, and so is the `PositionIndex`: both belong
+to `LeanFmt.Application`, and billing them to a renderer would report the wrong thing. -/
+
+section ReportBench
+open LeanFmt.Internal.Application LeanFmt.Internal.Cli
+
+private def benchLine : String := "theorem synthetic_placeholder : True := trivial\n"
+
+/-- `count` findings over a synthetic file whose lines are all `benchLine`, so finding `i` sits on
+line `i + 1` at a known byte offset. The codes cycle through four live rules, which is what makes the
+SARIF descriptor set and its `codes.contains` scan realistic rather than singular. -/
+private def benchFile (index : Nat) (count : Nat) : FileReport × String := Id.run do
+  let width := benchLine.utf8ByteSize
+  let codes := #["FMT003", "FMT004", "FMT010", "FMT013"]
+  let mut source := ""
+  let mut findings : Array Finding := #[]
+  for i in [0:count] do
+    source := source ++ benchLine
+    findings := findings.push {
+      code := codes[i % codes.size]!
+      severity := if i % 3 == 0 then .error else .warning
+      message := s!"synthetic finding {i} in file {index}"
+      range := { start := i * width, stop := i * width + 7 }
+      fix? := if i % 2 == 0 then some { applicability := .safe, edits := #[] } else none }
+  return ({ path := s!"synthetic/File{index}.lean", status := "findings", findings }, source)
+
+/-- `PositionIndex.ofSource` is a one-file constructor, because the one production caller that needs it
+is the single-buffer stdin surface. A multi-file synthetic report needs the union, which `import all`
+makes reachable here without widening the production interface for a benchmark. -/
+private def mergePositions (index : PositionIndex) (path : String) (source : String)
+    (findings : Array Finding) : PositionIndex :=
+  ⟨(PositionIndex.ofSource path source findings).entries.fold
+    (init := index.entries) fun acc key value => acc.insert key value⟩
+
+private def reportBench : IO UInt32 := do
+  for n in [100, 1000, 10000, 100000] do
+    -- ~500 findings per file, so the file loop and the per-file work scale with the report too
+    -- rather than degenerating to one enormous file.
+    let perFile := 500
+    let fileCount := max 1 ((n + perFile - 1) / perFile)
+    let mut files : Array FileReport := #[]
+    let mut positions := PositionIndex.empty
+    let mut emitted := 0
+    for f in [0:fileCount] do
+      let count := min perFile (n - emitted)
+      emitted := emitted + count
+      let (file, source) := benchFile f count
+      files := files.push file
+      positions := mergePositions positions file.path source file.findings
+    let report : RunReport := {
+      mode := "check", files, findings := n, changed := 0, written := 0, broken := 0, rejected := 0,
+      withheldUnsafe := 0, suppressed := 0, withheldRedundant := 0, infrastructureFailures := #[] }
+    -- Force the fixture and the index before any clock starts.
+    if report.files.size + positions.entries.size == 999999999 then
+      throw (IO.userError "impossible")
+    for format in ([.text, .concise, .json, .github, .sarif, .junit] : List ReportFormat) do
+      let start ← IO.monoNanosNow
+      let out := formatReport format positions "file:///synthetic/" report
+      -- `utf8ByteSize` is O(1) and forces the render.
+      if out.utf8ByteSize == 999999999 then throw (IO.userError "impossible")
+      let stop ← IO.monoNanosNow
+      IO.println s!"report-bench format={format} findings={n} files={fileCount} \
+ms={(Float.ofNat (stop - start)) / 1000000.0} out_bytes={out.utf8ByteSize}"
+  return 0
+
+end ReportBench
+
 public unsafe def main (args : List String) : IO UInt32 := do
   match args with
   | ["attach-report", envelopePath, sourcePath] => attachReport envelopePath sourcePath
@@ -2474,6 +2549,7 @@ public unsafe def main (args : List String) : IO UInt32 := do
   | ["range-units", envelopePath, sourcePath, width] => rangeUnits envelopePath sourcePath width
   | ["printer-node-kinds", envelopePath, sourcePath] => printerNodeKinds envelopePath sourcePath
   | ["doc-bench"] => docBench
+  | ["report-bench"] => reportBench
   | ["doc-dump"] => docDump
   | ["security-bench"] => securityBench
   | [] =>

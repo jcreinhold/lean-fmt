@@ -636,3 +636,31 @@ Broken pipe on `--output-file` is not the same case and is §9.2.
 - **Pretty-printed SARIF byte stability.** `Lean.Json`'s pretty printer is the renderer of record; if
   its output is not stable across toolchain bumps, the SARIF golden becomes a toolchain tripwire.
   RRF-IMPL should record whether it pins the rendering itself.
+
+## 12. How §11 closed (`RRF-FINAL`)
+
+Recorded here rather than only in `results/`, so the freeze is not left describing questions that are
+answered.
+
+- **Where the conversion lives.** Design C: `Application.execute` returns a `PositionIndex` beside the
+  report, resolving exactly the offsets the finished report names. The two alternatives §11 posed were
+  both rejected with reasons — re-reading races `fix` publishing in place; a `FileReport` field is the
+  JSON compatibility surface. `results/02-renderers.md` records the comparison on the prompt's axes.
+- **The `format` pseudo-rule id.** No collision, and now asserted rather than argued: `tests/reporting/run.sh`
+  reads `lean-fmt rules --json` and checks that `format` is absent from the live registry.
+- **`helpUri`.** `docs/rules/` was re-verified to hold a page for every live code, import family
+  included, so the descriptor emits
+  `https://github.com/jcreinhold/lean-fmt/blob/main/docs/rules/<CODE>.md` — the same host
+  `informationUri` already names. The suite does not assert the string; it extracts every emitted
+  `helpUri` and checks the file it names exists in this repository, so a rule page deleted or renamed
+  fails the suite rather than shipping a dead link.
+- **Pretty-printed SARIF byte stability is deliberately not pinned.** Byte stability is promised for
+  `--output-format json` alone (§8.1), which uses `Lean.Json.compress` and is pinned to a golden by
+  `tests/check/run.sh`. SARIF and JUnit promise *parse* stability, and the suite asserts them through
+  independent parsers for exactly that reason. A byte golden over `Lean.Json.pretty` would encode that
+  serializer's layout as a contract this stack does not make, and would fail on a toolchain bump that
+  broke nothing a consumer can observe. The risk accepted, and named: a reflow that keeps the document
+  valid passes silently. That is the correct outcome for a format defined by its schema.
+- **URI encoding.** §6.4's RFC 3986 requirement ships as `uriPathEncode`, applied to both a result's
+  `uri` and `originalUriBaseIds`' root. The character set is §3.3 `pchar` plus `/`; everything else is
+  percent-encoded over UTF-8 bytes.

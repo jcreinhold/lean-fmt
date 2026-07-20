@@ -329,6 +329,85 @@ printf 'module\r\n\r\nimport LeanFmt.Basic\r\nimport LeanFmt.Basic\r\n' >"$work/
 crlf=$(fmt check - --stdin-filename tests/reporting/Buffer.lean --output-format concise <"$work/crlf.lean" 2>&1 >/dev/null || true)
 check "a CRLF buffer resolves to the same line and column as its LF twin" "$crlf" "$stream_stderr"
 
+printf -- '--- URI encoding, help links, and the pseudo-rule id (§6.2, §6.4) ---\n'
+
+# §6.4 — a SARIF `uri` is a URI reference, not a filesystem path. The four characters below are the
+# ones that actually break: a space is forbidden outright, `#` starts a fragment, `%` makes whatever
+# follows look like an escape, and a non-ASCII character has no representation except its UTF-8 bytes.
+# `--stdin-filename` supplies the path, since no filesystem has to accept this one for the encoder to
+# be the thing under test.
+uri_out=$(fmt check - --stdin-filename 'src/my dir/Ä#b%c.lean' --output-format sarif \
+  <"$work/dup.lean" 2>&1 >/dev/null || true)
+contains "a SARIF uri percent-encodes space, '#', '%', and UTF-8 bytes" "$uri_out" \
+  '"uri": "src/my%20dir/%C3%84%23b%25c.lean"'
+# And the result is a *parseable* URI reference, checked by a parser that is not ours. `urlsplit`
+# would surface a fragment if `#` had leaked through, and `unquote` must round-trip to the original.
+uri_value=$(printf '%s' "$uri_out" | python3 -c '
+import json, sys, urllib.parse
+log = json.load(sys.stdin)
+uri = log["runs"][0]["results"][0]["locations"][0]["physicalLocation"]["artifactLocation"]["uri"]
+parts = urllib.parse.urlsplit(uri)
+assert parts.fragment == "" and parts.query == "", f"leaked delimiter in {uri}"
+print(urllib.parse.unquote(parts.path))')
+check "  ... and an independent URI parser decodes it back to the path" \
+  "$uri_value" 'src/my dir/Ä#b%c.lean'
+
+# §6.2 — `helpUri`. RRF-IMPL omitted it rather than risk linking at a page that does not exist;
+# RRF-FINAL verified `docs/rules/` covers every live code, so it ships. The assertion is not that the
+# string is present but that the file it names is in this repository — a link checked by construction.
+help_uri=$({ fmt check "$findings" --output-format sarif 2>/dev/null || true; } | python3 -c '
+import json, sys
+log = json.load(sys.stdin)
+print(" ".join(r["helpUri"] for r in log["runs"][0]["tool"]["driver"]["rules"]))')
+if [[ -z "$help_uri" ]]; then
+  fail "no rule descriptor carried a helpUri"
+else
+  missing=""
+  for uri in $help_uri; do
+    page="docs/rules/${uri##*/}"
+    [[ "$uri" == https://github.com/jcreinhold/lean-fmt/blob/main/docs/rules/* ]] || missing="$missing $uri"
+    [[ -f "$page" ]] || missing="$missing $page"
+  done
+  check "every helpUri names a rule page that exists in this repository" "$missing" ""
+fi
+
+# The `format` pseudo-rule id (§6.3, §7.2) stands in for a per-file status that no rule produced. It
+# must not collide with anything the registry can emit — checked here rather than left to the
+# observation that it is outside the `FMT` namespace.
+collision=$({ fmt rules --json 2>/dev/null || true; } | python3 -c '
+import json, sys
+codes = {r["code"] for r in json.load(sys.stdin)}
+print("format" if "format" in codes else "")')
+check "the 'format' pseudo-rule id collides with no registered rule" "$collision" ""
+
+printf -- '--- codepoint columns are neither bytes nor UTF-16 (§3.1) ---\n'
+
+# `Unicode.lean` distinguishes codepoints from bytes with 2-byte characters. An astral-plane character
+# is 4 bytes and 2 UTF-16 code units, so it separates all three encodings at once: the reported column
+# below is 34, where a byte column would be 37 and a UTF-16 column 35. Nothing in the BMP can tell the
+# second two apart.
+printf 'module\n\nimport LeanFmt.Basic\n\n/- \xf0\x9d\x94\x98 -/ def astralValue : Nat := ((1))\n' \
+  >"$work/astral.lean"
+astral=$(fmt check - --stdin-filename tests/reporting/Astral.lean --select FMT013 --preview \
+  --output-format concise <"$work/astral.lean" 2>&1 >/dev/null || true)
+check "an astral-plane character advances the column by one, not two or four" "$astral" \
+  "tests/reporting/Astral.lean:5:34: FMT013 redundant nested parentheses"
+
+printf -- '--- GitHub property round-trip (§5.2) ---\n'
+
+# §5.2 escapes `%`, CR, LF, `:`, and `,` in the property list. The suite already asserts the escaped
+# bytes; this asserts the other half of the contract — that a consumer applying the documented inverse
+# recovers the path exactly. An escaper that is merely self-consistent passes the first and fails this.
+gh_round=$({ fmt check - --stdin-filename 'weird,path:with%signs/A.lean' --output-format github \
+  <"$work/dup.lean" 2>&1 >/dev/null || true; } | python3 -c '
+import re, sys
+line = sys.stdin.readline()
+file = re.search(r"file=([^,]*)", line).group(1)
+for token, char in (("%3A", ":"), ("%2C", ","), ("%0D", "\r"), ("%0A", "\n")):
+    file = file.replace(token, char)
+print(file.replace("%25", "%"))')
+check "a GitHub property survives the documented unescaping" "$gh_round" 'weird,path:with%signs/A.lean'
+
 if [[ $failures -ne 0 ]]; then
   printf 'lean-fmt reporting tests failed (%s)\n' "$failures" >&2
   exit 1

@@ -5,7 +5,7 @@ format-specific golden tests, and rule metadata embedding without adding branche
 execution.
 
 Freeze: `notes/01-report-formats.md`. Cost evidence: `evidence/02-renderer-cost.md`, probe
-`evidence/02-append-growth-probe.lean`. Suite: `tests/reporting/run.sh` (50 cases).
+`evidence/02-append-growth-probe.lean`. Suite: `tests/reporting/run.sh` (58 assertions; recorded as "50 cases" here originally, which counted call sites rather than the assertions the loops emit — corrected by `RRF-FINAL`).
 
 ## Commands
 
@@ -36,7 +36,7 @@ uv run --with pyyaml .claude/skills/lean-plan/scripts/write_next.py <workspace> 
 | --- | --- |
 | `lake build` | `Build completed successfully` |
 | `lean-fmt-tests` | `lean-fmt module-artifact tests passed` |
-| `tests/reporting/run.sh` | `lean-fmt reporting format tests passed` (50 cases, 0 failures) |
+| `tests/reporting/run.sh` | `lean-fmt reporting format tests passed` (58 assertions, 0 failures) |
 | `tests/check/run.sh` | `lean-fmt check integration tests passed` |
 | `tests/modes/run.sh` | `lean-fmt product mode integration tests passed` |
 | `tests/suppression/run.sh` | `lean-fmt suppression acceptance tests passed` |

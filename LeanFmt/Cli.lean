@@ -590,11 +590,41 @@ private def sarifRuleDescriptor (info : RuleInfo) : Lean.Json :=
     ("name", .str info.code),
     ("shortDescription", Lean.Json.mkObj [("text", .str info.summary)]),
     ("fullDescription", Lean.Json.mkObj [("text", .str info.explanation)]),
+    -- The generated rule page. `docs/rules/` was verified to cover every live code, import family
+    -- included (`ruff-15` RRF-FINAL), so this cannot link at a page that does not exist. The host is
+    -- the repository's own remote, the same one `informationUri` names.
+    ("helpUri", .str
+      s!"https://github.com/jcreinhold/lean-fmt/blob/main/docs/rules/{info.code}.md"),
     ("properties", Lean.Json.mkObj [
       ("tags", Lean.Json.arr #[.str info.category]),
       ("lifecycle", Lean.toJson info.lifecycle),
       ("fixable", .bool info.fixable)])
   ]
+
+/-- Percent-encode a filesystem path into the path component of a URI reference
+(`notes/01-report-formats.md` §6.4).
+
+The character set is RFC 3986 §3.3 `pchar` exactly — unreserved, sub-delims, `:`, `@` — plus `/`, kept
+because it is the segment separator this path already uses and not a character inside a segment.
+Everything else becomes `%XX` over the **UTF-8 bytes**, which is what §2.5 requires of a non-ASCII
+character: there is no such thing as percent-encoding a codepoint.
+
+The characters this actually rescues are not exotic. A space is forbidden in a URI outright; `#` would
+truncate the reference at a fragment; `?` would start a query; `%` would make any following pair look
+like an escape the consumer must decode. `lean-fmt` accepts whatever path the caller selects, so none
+of these are hypothetical — they are ordinary macOS and Windows filenames. -/
+private def uriPathEncode (path : String) : String := Id.run do
+  let hexDigit (n : Nat) : Char :=
+    if n < 10 then Char.ofNat ('0'.toNat + n) else Char.ofNat ('A'.toNat + (n - 10))
+  let mut out := ""
+  for byte in path.toUTF8 do
+    let value := byte.toNat
+    let c := Char.ofNat value
+    if value < 0x80 && (c.isAlphanum || "-._~!$&'()*+,;=:@/".contains c) then
+      out := out.push c
+    else
+      out := ((out.push '%').push (hexDigit (value >>> 4))).push (hexDigit (value &&& 0xF))
+  return out
 
 private def sarifRegion (start stop : Position) (range : SourceRange) : Lean.Json :=
   Lean.Json.mkObj [
@@ -610,7 +640,7 @@ private def sarifRegion (start stop : Position) (range : SourceRange) : Lean.Jso
 private def sarifLocation (path : String) (region? : Option Lean.Json) : Lean.Json :=
   let physical := Lean.Json.mkObj <| [
     ("artifactLocation", Lean.Json.mkObj [
-      ("uri", .str path), ("uriBaseId", .str "%SRCROOT%")])
+      ("uri", .str (uriPathEncode path)), ("uriBaseId", .str "%SRCROOT%")])
   ] ++ (match region? with | some region => [("region", region)] | none => [])
   Lean.Json.mkObj [("physicalLocation", physical)]
 
@@ -840,10 +870,13 @@ private def validateOutputFile (path : String) : IO (Except String Unit) := do
   | none => return .ok ()
 
 /-- The absolute `file://` URI SARIF's `%SRCROOT%` resolves relative paths against, with the trailing
-slash the base of a relative reference needs. -/
+slash the base of a relative reference needs.
+
+The root is percent-encoded by the same rule as a result's path: a checkout under `~/My Projects/` is
+not a corner case, and a space here would break every URI in the run rather than one. -/
 private def rootUri (root : FilePath) : IO String := do
   let absolute ← try IO.FS.realPath root catch _ => pure root
-  return s!"file://{absolute}/"
+  return s!"file://{uriPathEncode absolute.toString}/"
 
 private def renderStatistics (report : RunReport) : IO Unit :=
   IO.eprintln s!"lean-fmt statistics: mode={report.mode} files={report.files.size} \
