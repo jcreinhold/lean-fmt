@@ -151,6 +151,11 @@ measuring it, both in this prompt:
   imports it. Memoized per module name (`artifactHashByModule`): 4,125 distinct traces read instead of
   ~124,000.
 
+**This repository, re-measured after those two fixes**, since they changed the code that produced
+`RCI-IMPL` §2's numbers: 130 targets (up from 119 — this prompt added `Cache/Decision.lean` and the
+`tests/cache` fixtures), cold 0 / 130 at 65.63 s, warm **130 / 130 at 0.56 s**, one index file. The
+12 `broken=` targets are the deliberately-uncompilable fixtures; `infrastructure_failures=0`.
+
 Wall time on this workload is unusually page-cache sensitive — the first warm run after a rebuild
 measured 10.9 s in `closureDigests` where the steady-state run measures 3.6 s, reading the same 4,125
 trace files. The `index_hits` counts do not move. This is the same confound that produced the original

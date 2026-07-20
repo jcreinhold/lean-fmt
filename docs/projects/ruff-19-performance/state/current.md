@@ -86,6 +86,32 @@ one result changes what to profile:
   rejection of an event-driven watcher (Lean binds no `uv_fs_event`) should be reopened rather than
   worked around.
 
+## Inherited from `ruff-16b-cache-identity` (verified)
+
+Measured in `RCI-FINAL` (`results/04-acceptance.md` §2), on the frozen mathlib sample. Design input
+for this stack rather than trivia to rediscover:
+
+- **On a large project, warm is bounded by fixed per-run cost, not by cache hits.** 62 / 62 entries
+  served and the run still takes 6.3 s: discovery over 8,795 files, workspace load, epoch computation,
+  and closure digests for closures thousands of members deep do not shrink when entries hit. Warm is
+  2.3× cold there, against ~100× on a small fixture. Any speedup target for the cached path has to
+  name which of those it attacks; serving more entries cannot help.
+- **Two eager-work defects were found and fixed by measuring that, and the pattern is worth
+  suspecting again.** The conservative whole-workspace fallback was computed on every run (~10 s on
+  mathlib) for a value nothing reads when every closure resolves, and `importAllArts` was recomputed
+  per (module, closure member) pair across closures that overlap almost entirely. Both were invisible
+  on the fixture and neither showed up as a wrong answer.
+- **Wall time on this workload is strongly page-cache sensitive.** The first warm run after a rebuild
+  measured 10.9 s inside `closureDigests` where the steady-state run measures 3.6 s, reading the same
+  4,125 trace files. `index_hits` does not move between them. This is the same confound that produced
+  the original `ruff-16` misreading; a wall-time-only comparison here is not evidence.
+- **There is no diagnostic that says the cache is disabled, or why.** `ResultCache.open?` returning
+  `none` is a supported outcome and reports nothing, so a project running with the cache entirely off
+  is externally indistinguishable from one running cold. `RCI-FINAL` found exactly that on mathlib —
+  zero entries ever written, caused by one absent search-path directory — and fixed that one cause
+  while leaving the class open: any `IO.FS.realPath` or trace-validation failure inside `open?`'s
+  catch-all still disables the cache silently. Observability for this belongs to this stack.
+
 ## Blockers and prerequisites
 
 - No blocker is currently recorded beyond the named prerequisite stacks.

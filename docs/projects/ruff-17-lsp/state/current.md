@@ -89,6 +89,14 @@ Measured there, and design input here rather than trivia to rediscover:
 > `LeanFmt.Service`'s route stays the right one for *unsaved* buffers, which is a different problem:
 > disk-state evidence cannot answer for bytes that are not on disk. Confirm that, not the cache.
 
+> **One thing to carry from `RCI-FINAL` (2026-07-20).** `ResultCache.open?` returning `none` is a
+> supported outcome that reports nothing, so a project running with the cache entirely disabled looks
+> from the outside exactly like one running cold. On mathlib that was the real state of the world —
+> zero entries ever written, because of one absent search-path directory — and nothing said so. A
+> long-running server multiplies the cost of that silence across every request of a session, and
+> `ruff-19-performance` owns the diagnostic. This stack should at least not *assume* the cache is
+> live when reasoning about request cost.
+
 ## Blockers and prerequisites
 
 - No blocker is currently recorded beyond the named prerequisite stacks.
