@@ -1,20 +1,55 @@
 ---
 kind: state
-first_unresolved: 01-protocol
+first_unresolved: 02-documents
 ---
 
 # Current state
 
-This stack is planned and has not begun. Its external prerequisite stacks are
-`ruff-06-fix-safety`, `ruff-07-suppressions`, `ruff-13-config-discovery`, `ruff-14-stream-range`. Before starting, confirm those roadmaps are verified and their live
-implementation still matches recorded state.
+**`RLP-PROTOCOL` is verified** (`results/01-protocol.md`; freeze `notes/01-protocol.md`; baseline
+`evidence/01-lsp-baseline.md`; probe `evidence/01-position-probe.{lean,txt}`). Following the `*-SPEC`
+convention it shipped no production interface — the capability and state model, its measurements, and
+one characterization test (`LeanFmtTest.lean`, `testLspPositions`).
+
+Its external prerequisite stacks are `ruff-06-fix-safety`, `ruff-07-suppressions`,
+`ruff-13-config-discovery`, `ruff-14-stream-range`; all four record `first_unresolved: none`, and the
+live code the freeze depends on was re-read rather than trusted (`Service.lean`, `Application.lean`,
+`Project.lean`, `Discovery.lean`, `Cli.lean`, plus the toolchain's `Lean/Data/Lsp/`,
+`Lean/Server/Utils.lean`, `Lean/Server/Watchdog.lean`, `Init/System/Uri.lean` at `v4.33.0-rc1`). If
+live code contradicts a prerequisite result, reopen the owning prerequisite rather than patching
+around it.
 
 | Prompt | Claim | Status | Depends on |
 | --- | --- | --- | --- |
-| 01-protocol | RLP-PROTOCOL | planned | — |
+| 01-protocol | RLP-PROTOCOL | verified | — |
 | 02-documents | RLP-DOCUMENTS | planned | RLP-PROTOCOL |
 | 03-features | RLP-FEATURES | planned | RLP-DOCUMENTS |
 | 04-acceptance | RLP-FINAL | planned | RLP-FEATURES |
+
+## What `01-protocol` froze, for the prompts that consume it
+
+The freeze is `notes/01-protocol.md`; these are the clauses a later prompt is most likely to
+rediscover the hard way.
+
+- **The position layer is `Lean.FileMap` over the *normalized* document**, and it is a conversion, not
+  a validator. Measured: LSP `(0,9999)` in a 43-byte document answers byte **10003**; a byte offset
+  interior to a codepoint answers a silently wrong column; a column splitting a surrogate pair snaps
+  *forward* past the whole character. Nothing raises. The server clamps every inbound position itself
+  (§4, obligation 1).
+- **`Application.PositionIndex` is not that layer.** At byte 24 of the astral fixture the three
+  spellings are codepoint column **19**, UTF-16 column **20**, byte column **25**. One astral character
+  is not enough to tell the first two apart — at byte 16 both answer 14 — so the test uses two.
+- **Text sync is incremental (kind 2)**, because sync payload is per keystroke and analysis is per
+  debounced request. The differential test against full replacement is obligation 2 and is the one
+  obligation whose failure corrupts a user's file.
+- **Document admission adds a `force-exclude` clause** that `Application.stream` does not have (§5,
+  obligation 4). `Discovery.explain` already answers it.
+- **`ExactRun` has no cancellation input today** — `monitorChild` polls `child.tryWait` every 50 ms and
+  checks only memory (`Application.lean:266-289`). Obligation 3 adds a token to that same poll.
+- **There is no capability contention with Lean's own server**: `Lean.Lsp.ServerCapabilities` has no
+  formatting provider among its 18 fields, and no formatting method is implemented anywhere in
+  `Lean/Server/`. lean-fmt therefore declares its own formatting capability and params DTOs (§2, §12).
+- **`Lean.Server.*` stays out of production imports** (it drags `Lean.Server.InfoUtils`);
+  `Lean.Data.Lsp` is taken wholesale, and `Lean.Data.Lsp.Ipc` is RLP-FINAL's client harness.
 
 ## Inherited from `ruff-14-stream-range` (verified)
 

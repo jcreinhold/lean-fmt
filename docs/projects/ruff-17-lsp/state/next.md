@@ -1,9 +1,9 @@
 # Next Proof Packet
 
 - Stack: ruff-17-lsp
-- First unresolved: 01-protocol
-- Claim ID: RLP-PROTOCOL
-- Prompt: 01-protocol
+- First unresolved: 02-documents
+- Claim ID: RLP-DOCUMENTS
+- Prompt: 02-documents
 - Module: (docs only)
 - Target file: (docs only)
 
@@ -17,19 +17,19 @@ Read this file, the target prompt, target files, listed source/template line ran
 
 ## Proof Task
 
-- Deliver **RLP-PROTOCOL**: Specify capabilities, initialization options, workspace roots, text synchronization, UTF-16 conversion, diagnostic ownership, cancellation, dynamic config, error codes, and coexistence with Lean language servers.
+- Deliver **RLP-DOCUMENTS**: Add Content-Length framing, initialize/shutdown, bounded document store, didOpen/didChange/didClose, versions, cancellation tokens, configuration reload, health/logging, and malformed-message recovery.
 - Read `roadmap.md`, its prerequisite stack results, `AGENTS.md`, the current implementation and tests, and the relevant Lean compiler/Lake sources before changing an interface. Write interface comments and characterization tests before implementation where the behavior is not already frozen.
 
 ## Reuse
 
 - see the target prompt's Read section
 
-## Lean Work
+## Documentation Work
 
-Inspect the live goal, search relevant declarations, test plausible proof steps, and verify completed declarations.
+Edit only the records named by the prompt. Do not execute planned mathematical or Lean prompts.
 
 ## Stop Rules
 
-- Do not advertise unsupported incremental semantics.
-- Keep protocol DTOs at the boundary.
+- No unbounded request queue or buffer history.
+- A closed/stale document cannot publish diagnostics.
 - Stop rather than weakening exact semantics, write safety, or the resource envelope.

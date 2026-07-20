@@ -1,0 +1,33 @@
+astral: bytes=43 utf16=39 codepoints=37
+-- utf8PosToLspPos: byte offset -> LSP position
+  utf8 0 -> lsp (0,0)
+  utf8 12 -> lsp (0,12)
+  utf8 16 -> lsp (0,14)
+  utf8 20 -> lsp (0,39)
+  utf8 24 -> lsp (0,20)
+  utf8 25 -> lsp (0,21)
+  utf8 9999 -> lsp (2,9956)
+-- lspPosToUtf8Pos: LSP position -> byte offset
+  lsp (0,0) -> utf8 0
+  lsp (0,12) -> utf8 12
+  lsp (0,14) -> utf8 16
+  lsp (0,16) -> utf8 18
+  lsp (0,9999) -> utf8 10003
+  lsp (99,0) -> utf8 43
+-- columns interior to a surrogate pair (𝔘 at bytes 9-12, columns 9-10)
+  lsp (0,9) -> utf8 9
+  lsp (0,10) -> utf8 13
+  lsp (0,11) -> utf8 13
+  lsp (0,12) -> utf8 14
+-- CRLF document against its normalized twin
+  crlf bytes=24 normalized bytes=22
+  crlf utf8 10 -> lsp (0,10)
+  crlf utf8 11 -> lsp (0,11)
+  crlf utf8 12 -> lsp (1,0)
+  lsp (0,10) -> crlf utf8 10, normalized utf8 10
+  lsp (0,11) -> crlf utf8 11, normalized utf8 11
+  lsp (1,0) -> crlf utf8 12, normalized utf8 11
+-- document URI conversion
+  file:///tmp/a%20b/X.lean -> some "/tmp/a b/X.lean"
+  untitled:Untitled-1     -> none
+  pathToUri /tmp/a b/X.lean -> file:///tmp/a%20b/X.lean

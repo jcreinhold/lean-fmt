@@ -15,6 +15,7 @@ import all LeanFmt.Printer
 import all LeanFmt.Rules
 import all LeanFmt.Service
 import all LeanFmt.Suppression
+import Lean.Data.Lsp
 
 open LeanFmt LeanFmt.Internal LeanFmt.Internal.Service
 
@@ -266,6 +267,73 @@ private def testServiceProtocol : IO Unit := do
   ensure (!(versionAccepted (some 3) 2)) "service accepted an older version"
   ensure ((Lean.Json.parse "{\"id\":1,\"method\":\"unknown\"}" |>.toOption.bind fun json =>
     decodeRequest json |>.toOption).isNone) "service accepted an unknown method"
+
+/-- `ruff-17` RLP-PROTOCOL, `notes/01-protocol.md` §4: the LSP position layer, characterized before
+anything is built on it.
+
+Two claims, both of which survive casual testing if they go untested. First, LSP columns are UTF-16
+code units and `Application.PositionIndex`'s are codepoints, so the two disagree outside the BMP and
+only outside it — reaching for `PositionIndex` in the server would be silently wrong on exactly the
+inputs nobody types by hand. Second, `Lean.FileMap`'s conversion is a conversion and not a validator:
+an out-of-range position produces an offset past the end of the document rather than an error, so the
+server clamps every inbound position itself.
+
+`𝔘` (U+1D518) is 4 UTF-8 bytes, 2 UTF-16 code units, and 1 codepoint, so one character separates all
+three encodings. It is the same fixture `ruff-15` used for the reporting columns
+(`tests/reporting/run.sh`, "codepoint columns are neither bytes nor UTF-16"). -/
+private def testLspPositions : IO Unit := do
+  let source := "theorem t : 𝔘 = 𝔘 := rfl\nsecond line\n"
+  let fileMap := Lean.FileMap.ofString source
+  ensure (source.utf8ByteSize == 43 && Lean.String.utf16Length source == 39 && source.length == 37)
+    "the astral fixture no longer separates bytes, UTF-16 units, and codepoints"
+
+  -- Byte 24 is the `:` of `:=`, with *two* astral characters before it on the line. One astral
+  -- character is not enough to separate the two encodings here — at byte 16 both spellings answer 14,
+  -- because 1-based codepoints and 0-based UTF-16 units differ by one in the other direction. Two are.
+  let afterAstral := fileMap.utf8PosToLspPos ⟨24⟩
+  ensure (afterAstral.line == 0 && afterAstral.character == 20)
+    "the UTF-16 column after two astral characters moved"
+  let codepointIndex := Application.PositionIndex.ofSource "A.lean" source
+    #[{ code := "TEST", severity := .warning, message := "probe",
+        range := { start := 24, stop := 25 }, fix? := none }]
+  match (Application.PositionIndex.position? codepointIndex "A.lean" 24 :
+      Option Application.Position) with
+  | some reported =>
+    -- Three distinct numbers for one offset: codepoint column 19 (what we report), UTF-16 column 20
+    -- (what LSP means), byte column 25 (what neither means).
+    ensure (reported.line == 1 && reported.column == 19)
+      "the reported codepoint column moved"
+    ensure (reported.column != afterAstral.character)
+      "codepoint and UTF-16 columns agree here, so this fixture no longer pins the difference"
+  | none => throw <| IO.userError "PositionIndex did not resolve an offset it was given"
+
+  -- Not a validator. A 43-byte document answers a column of 9999 with an offset of 10003.
+  let overrun := fileMap.lspPosToUtf8Pos ⟨0, 9999⟩
+  ensure (overrun.byteIdx > source.utf8ByteSize)
+    "out-of-range LSP columns are now clamped; the server's own clamp may be redundant"
+  let pastEnd := fileMap.lspPosToUtf8Pos ⟨99, 0⟩
+  ensure (pastEnd.byteIdx == source.utf8ByteSize)
+    "an out-of-range line no longer saturates at the end of the document"
+
+  -- A column interior to a surrogate pair snaps forward past the whole character rather than landing
+  -- inside it. `def x := ` is 9 bytes, so `𝔘` is bytes 9-12 and columns 9-10.
+  let small := Lean.FileMap.ofString "def x := 𝔘\n"
+  ensure ((small.lspPosToUtf8Pos ⟨0, 9⟩).byteIdx == 9)
+    "the column at an astral character no longer names its first byte"
+  ensure ((small.lspPosToUtf8Pos ⟨0, 10⟩).byteIdx == 13)
+    "a column splitting a surrogate pair no longer snaps forward past the character"
+
+  -- Line starts diverge between raw CRLF and normalized text, which is why the document the server
+  -- converts against is the normalized one (`CLAUDE.md`: every compiler-produced offset indexes
+  -- `raw.crlfToLf`).
+  let crlf := "def a := 1\r\ndef b := 2\r\n"
+  let rawMap := Lean.FileMap.ofString crlf
+  let (normalized, _) := LosslessSource.normalize crlf
+  let normalizedMap := Lean.FileMap.ofString normalized
+  ensure ((rawMap.lspPosToUtf8Pos ⟨1, 0⟩).byteIdx == 12)
+    "the raw CRLF line start moved"
+  ensure ((normalizedMap.lspPosToUtf8Pos ⟨1, 0⟩).byteIdx == 11)
+    "the normalized line start moved"
 
 private def findingWithEdit (range : SourceRange) (replacement : String)
     (applicability : Applicability := .safe) (code : String := "TEST") : Finding := {
@@ -2679,6 +2747,7 @@ public unsafe def main (args : List String) : IO UInt32 := do
     testEngineTiers
     testMixedSelection
     testServiceProtocol
+    testLspPositions
     testEdits
     testFixAllAdversarial
     testConfig

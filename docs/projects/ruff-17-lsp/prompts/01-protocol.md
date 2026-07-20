@@ -1,6 +1,6 @@
 ---
 claim_id: RLP-PROTOCOL
-status: planned
+status: verified
 depends_on: []
 ---
 
