@@ -1774,6 +1774,67 @@ private def testDoc : IO Unit := do
     ensure (lineCount text <= Doc.size wrapped + 1)
       s!"document {i} (seed {seed}) produced more lines than it has nodes"
 
+/-- `ruff-14` RSF-IMPL: unit selection and splicing over a layout source map.
+
+Driven with a hand-built map rather than a real render, because the questions here are about the
+selection algebra — which units a request reaches, when the forward extension fires, what the actual
+range is, and whether the splice keeps the caller's bytes — and a synthetic map states each case in
+one line. `tests/modes/run.sh` drives the same code through the real printer. -/
+private def testRangeSelection : IO Unit := do
+  -- Three units over a 24-byte source. Unit 1's *output* does not end in a newline, which is the
+  -- same-line-commands shape (`def a := 1 def b := 2`) the forward extension exists for.
+  --   source:   [0,8) [8,16) [16,24)
+  --   rendered: [0,8) [8,15) [15,23)
+  let normalized := "AAAAAAA\nBBBBBBB\nCCCCCCC\n"
+  let rendered := "aaaaaaa\n" ++ "bbbbbb " ++ "ccccccc\n"
+  let marks : Array Mark := #[
+    { source := ⟨0, 8⟩,   output := ⟨0, 8⟩ },
+    { source := ⟨8, 16⟩,  output := ⟨8, 15⟩ },
+    { source := ⟨16, 24⟩, output := ⟨15, 23⟩ }]
+  let run (start stop : Nat) : Option Application.RangeResult :=
+    Application.sliceRange normalized rendered marks ⟨start, stop⟩
+
+  -- A request inside unit 0 formats unit 0 and nothing else: its output ends in a newline, so the
+  -- extension does not fire, and units 1-2 keep their source bytes verbatim.
+  let some first := run 2 4 | ensure false "a request inside unit 0 selected no unit"; return
+  ensure (first.actual == ⟨0, 8⟩) s!"unit 0 request reported actual range {repr first.actual}"
+  ensure (first.text == "aaaaaaa\nBBBBBBB\nCCCCCCC\n")
+    s!"unit 0 splice did not keep the later units' source bytes: {repr first.text}"
+
+  -- A request inside unit 1 must drag unit 2 in: unit 1's output ends in a space, so its layout was
+  -- decided by what follows it, and reporting `[8,16)` would be a promise the bytes do not keep.
+  let some second := run 9 10 | ensure false "a request inside unit 1 selected no unit"; return
+  ensure (second.actual == ⟨8, 24⟩)
+    s!"the forward extension did not fire on a unit ending mid-line: {repr second.actual}"
+  ensure (second.text == "AAAAAAA\nbbbbbb ccccccc\n")
+    s!"unit 1-2 splice is wrong: {repr second.text}"
+
+  -- Full range reproduces the whole render byte for byte. This is the roadmap's whole-file /
+  -- full-range equivalence, stated where the splice can be held to it.
+  let some whole := run 0 24 | ensure false "the full range selected no unit"; return
+  ensure (whole.text == rendered) s!"full range did not reproduce the render: {repr whole.text}"
+  ensure (whole.actual == ⟨0, 24⟩) s!"full range reported {repr whole.actual}"
+
+  -- An empty request is a cursor position: it selects the unit holding that offset. On a boundary it
+  -- takes the unit that *starts* there, not the one that ends there.
+  let some empty := run 3 3 | ensure false "an empty request selected no unit"; return
+  ensure (empty.actual == ⟨0, 8⟩) s!"an empty request in unit 0 reported {repr empty.actual}"
+  let some boundary := run 8 8 | ensure false "a boundary request selected no unit"; return
+  ensure (boundary.actual == ⟨8, 24⟩)
+    s!"an empty request on the 0/1 boundary did not take the unit starting there: {repr boundary.actual}"
+  -- At end of file there is no unit starting there, so the last one answers.
+  let some eof := run 24 24 | ensure false "an end-of-file request selected no unit"; return
+  ensure (eof.actual == ⟨16, 24⟩) s!"an end-of-file request reported {repr eof.actual}"
+
+  -- Reported output ranges must index the text the caller was handed, not the pre-splice render.
+  ensure (second.marks.size == 2) s!"the 1-2 request reported {second.marks.size} units"
+  let body := second.marks[0]!
+  ensure (slice second.text body.output.start second.marks[1]!.output.stop == "bbbbbb ccccccc\n")
+    "the re-based output ranges do not bound the formatted text"
+
+  -- A map with no units at all cannot answer, and says so rather than inventing an empty range.
+  ensure ((Application.sliceRange normalized rendered #[] ⟨0, 4⟩).isNone) "an empty source map produced a result"
+
 private def testComments : IO Unit := do
   -- `def x := 1  -- why\n-- next\ndef y := 2\n`
   --  0123456789...
@@ -2403,6 +2464,7 @@ public unsafe def main (args : List String) : IO UInt32 := do
     testOwnedDeprecationFix
     testSemanticCaps
     testDoc
+    testRangeSelection
     testComments
     testSuppression
     IO.println "lean-fmt module-artifact tests passed"

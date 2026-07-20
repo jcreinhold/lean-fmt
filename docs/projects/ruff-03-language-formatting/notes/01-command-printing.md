@@ -24,8 +24,8 @@ property (`evidence/01-projection-shape.txt`):
 | --- | --- |
 | subtree of node *j* is a contiguous index range | **0 violations** |
 | among a parent's token-bearing node-children, index order agrees with byte order | **0 violations** |
-| nodes whose subtree contains no token at all | **28,439 — 34.9%** |
-| …of those, whose parent also has direct token children | **12,913 — 15.9% of all nodes** |
+| nodes whose subtree contains no token at all | **28,696 — 35.0%** |
+| …of those, whose parent also has direct token children | **13,043 — 15.9% of all nodes** |
 
 The first two are not luck. `LosslessSource.collect` pushes a node's placeholder at
 `build.nodes.size` *before* folding its args left to right, so children of one parent necessarily have
@@ -57,7 +57,7 @@ The last two decide the interface:
   the projection dropped — `Lean.Syntax` has none either. An empty `null` node genuinely has no
   position, and `Syntax.getPos?` returns `none` for it.
 
-**Therefore arg order cannot be recovered from positions.** For 12,913 of 81,413 nodes, an empty
+**Therefore arg order cannot be recovered from positions.** For 13,043 of 82,102 nodes, an empty
 node-child sits among direct token-children of the same parent and nothing in the projection says
 whether it came before or after them. That is a seventh of the tree, not an edge case, and no amount
 of care with ranges fixes it: the information is absent from `Lean.Syntax` upward.
@@ -144,7 +144,7 @@ grammar belongs.
   declaration it mirrors, and a golden fixture pins it. An uncited shape is an unsourced claim.
 - **The conservative fallback reads tokens, not the tree.** This is the load-bearing consequence of
   §2: empty nodes contribute no bytes, so a printer that re-emits a subtree's tokens in source order
-  with their trivia is unaffected by all 12,913 ambiguous placements. Unknown syntax round-trips
+  with their trivia is unaffected by all 13,043 ambiguous placements. Unknown syntax round-trips
   through the one path that does not depend on the information the projection lacks. The roadmap's
   "unknown commands must round-trip conservatively" and this measurement point the same way — the
   fallback is not a concession, it is the only path whose correctness does not rest on a grammar
@@ -155,12 +155,12 @@ grammar belongs.
 The roadmap requires "every supported parser category has an explicit ownership table and formatter
 fallback". The table is built from what the corpus actually contains, not from what I remember Lean
 having: `experiments/run-projection-shape.sh` censuses command kinds, and this repository yields
-**749 commands in 6 distinct kinds** (`evidence/01-projection-shape.txt`; the counts below move as the
+**755 commands in 6 distinct kinds** (`evidence/01-projection-shape.txt`; the counts below move as the
 project grows and are re-read from the probe rather than maintained by hand).
 
 | kind | count | owner |
 | --- | --- | --- |
-| `Lean.Parser.Command.declaration` | 646 | `RLF-COMMANDS` — the shell and its members; see below |
+| `Lean.Parser.Command.declaration` | 651 | `RLF-COMMANDS` — the shell and its members; see below |
 | `Lean.Parser.Command.namespace` | 25 | `RLF-COMMANDS` |
 | `Lean.Parser.Command.end` | 25 | `RLF-COMMANDS` |
 | `Lean.Parser.Command.moduleDoc` | 11 | `RLF-COMMANDS` |
@@ -178,7 +178,7 @@ and still owns it.
 **This table is built from the corpus, and the corpus is not Lean.** Every count above is a fact about
 code I wrote, and "everything else | 0 here" is the line that should have been suspicious: it is not
 evidence that nothing else exists, only that I never wrote it. `experiments/run-printer-sample.sh` runs
-the same census over the frozen mathlib sample — 2734 commands against this repository's 749 — and the
+the same census over the frozen mathlib sample — 2734 commands against this repository's 755 — and the
 kinds it refuses are a different list:
 
 | kind | count | owner |
@@ -199,7 +199,7 @@ the reconciliation.
 Two things fall out of it that the corpus could not have said:
 
 **`section` is named by this prompt's task line, and this corpus has none of them.** "namespaces/
-sections" is in `prompts/01-commands.md`; the census above shows 0 in 749 commands here and 181 in the
+sections" is in `prompts/01-commands.md`; the census above shows 0 in 755 commands here and 181 in the
 sample. It and `universe` are now claimed — both are flat runs of a keyword and identifiers, which is
 `spaceSeparated`'s exact shape. The one hazard is `sectionHeader`'s first slot (`:288-292`):
 `optional ("@[" >> nonReservedSymbol "expose" >> "] ")` is *bracketed*, and `@[` and `]` are separate

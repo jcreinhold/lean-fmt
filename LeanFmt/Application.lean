@@ -392,6 +392,102 @@ private def renderCanonicalText (width : Nat) (raw : String) (artifact : ModuleA
   let text ← Printer.format artifact.source normalized width artifact.semantic
   return { text }
 
+/-! ## Range formatting — unit selection over the layout source map
+
+`ruff-14` RSF-IMPL. The freeze is `docs/projects/ruff-14-stream-range/notes/01-stream-range.md`; §4 is
+the part that matters here. Everything below is pure and operates on one whole-file render plus its
+source map, which is what keeps the promise cheap to state: the bytes emitted for a selected unit are
+**the bytes whole-file `format` produced for it**, spliced out, never a separate rendering of a slice.
+That is why "never slice arbitrary bytes and parse them as an exact module" is not merely obeyed but
+unreachable — nothing here parses. -/
+
+/-- Byte `stop - 1` of `text`, or `none` when the range is empty or out of bounds. -/
+private def byteBefore? (bytes : ByteArray) (stop : Nat) : Option UInt8 :=
+  if stop == 0 || stop > bytes.size then none else bytes[stop - 1]?
+
+/-- Does this unit's *rendered* output end at a line boundary?
+
+This is the reflow-stability test, and it is asked of the **output** rather than the source because the
+mechanism is `Doc.fits` walking the tail of the work list: a unit whose rendering ends in a break
+(`hard`, a broken `line`, or a newline-bearing `verbatim` — `Doc.lean:174-188`) stops that walk, so
+nothing after it can re-decide its layout. Measured in `ruff-14` `evidence/01-stream-range-baseline.md`
+§3: a unit that is *not* so terminated is rebroken by a one-character tail. -/
+private def unitEndsAtLineBoundary (rendered : ByteArray) (mark : Mark) : Bool :=
+  byteBefore? rendered mark.output.stop == some 10  -- '\n'
+
+/-- The inclusive index run of layout units a request expands to, or `none` when there are no units.
+
+The three steps are `notes/01-stream-range.md` §4.2:
+
+1. every unit the request intersects — the units tile the source gap-free, so this is a contiguous run;
+2. an **empty** request selects the single unit containing its offset, the one starting there if it
+   sits exactly on a boundary, and the last unit when it is at end of file;
+3. **extend forward while the last selected unit does not end at a line boundary.** Step 3 is the
+   whole reason a range surface can promise anything about the text outside it. Without it,
+   `def a := 1 def b := 2` lets a request rewrite the first command with bytes whose layout was decided
+   by the second — so re-running the formatter would move them again, and the reported actual range
+   would have been a lie. It terminates: the tail is last and `normalizeEof` leaves the output ending
+   in a newline. -/
+private def selectUnits (rendered : ByteArray) (marks : Array Mark)
+    (requested : SourceRange) : Option (Nat × Nat) := Id.run do
+  if marks.isEmpty then return none
+  let final := marks.size - 1
+  -- Step 1/2: the first unit whose extent reaches past the request start.
+  let mut first := final
+  for index in [0:marks.size] do
+    if marks[index]!.source.stop > requested.start then
+      first := index
+      break
+  let mut last := first
+  if requested.stop > requested.start then
+    for index in [0:marks.size] do
+      if marks[index]!.source.start < requested.stop then last := max last index
+  -- Step 3.
+  while last < final && !unitEndsAtLineBoundary rendered marks[last]! do
+    last := last + 1
+  return some (first, last)
+
+/-- One range request's answer: the spliced text and the range it actually formatted. -/
+structure RangeResult where
+  /-- Normalized text: the source outside the actual range, with the rendered units inside it. -/
+  text : String
+  requested : SourceRange
+  /-- The hull of the selected units. **May span lines the caller did not edit** — that is the stated
+  consequence of reflow, and `selectUnits` step 3 is where it comes from. -/
+  actual : SourceRange
+  /-- The selected units' source-map entries, `output` re-based onto `text`. -/
+  marks : Array Mark
+
+/-- Splice one whole-file render down to the units a request expands to.
+
+`normalized` and `rendered` are the same file before and after layout; `marks` is the source map
+`Printer.formatWithMap` produced. The result is
+
+    normalized[0, actual.start)  ++  rendered[out.start, out.stop)  ++  normalized[actual.stop, end)
+
+so every byte outside the actual range is the caller's own, unmoved. Selecting every unit reproduces
+`rendered` exactly, which is the roadmap's whole-file/full-range equivalence — `RSF-FINAL` tests it
+rather than trusting this sentence. -/
+def sliceRange (normalized rendered : String) (marks : Array Mark)
+    (requested : SourceRange) : Option RangeResult := Id.run do
+  let renderedBytes := rendered.toUTF8
+  let some (first, last) := selectUnits renderedBytes marks requested
+    | return none
+  let actual : SourceRange := ⟨marks[first]!.source.start, marks[last]!.source.stop⟩
+  let output : SourceRange := ⟨marks[first]!.output.start, marks[last]!.output.stop⟩
+  let normalizedBytes := normalized.toUTF8
+  let slice (bytes : ByteArray) (range : SourceRange) : String :=
+    (String.fromUTF8? (bytes.extract range.start range.stop)).getD ""
+  let before := slice normalizedBytes ⟨0, actual.start⟩
+  let body := slice renderedBytes output
+  let after := slice normalizedBytes ⟨actual.stop, normalizedBytes.size⟩
+  -- Output offsets are re-based onto the spliced text: the body starts where `before` ends.
+  let shift := before.utf8ByteSize
+  let selected := (marks.extract first (last + 1)).map fun mark =>
+    { mark with output := ⟨mark.output.start - output.start + shift,
+        mark.output.stop - output.start + shift⟩ }
+  return some { text := before ++ body ++ after, requested, actual, marks := selected }
+
 private def canonicalAnalysis (snapshot : SourceSnapshot) (renderCanonical : Bool)
     (analysis : AnalysisEnvelope) : IO SemanticAnalysis := do
   match SemanticAnalysis.ofEnvelope? snapshot.source analysis with
