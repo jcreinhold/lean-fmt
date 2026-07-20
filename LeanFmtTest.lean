@@ -2208,6 +2208,40 @@ private def printerFormat (envelopePath sourcePath widthText : String) : IO UInt
   IO.print (← Printer.format projection normalized width artifact.semantic)
   return 0
 
+/- Census the layout units of one module: how many there are, and how many do **not** end at a line
+boundary in the rendered output — the `RSF-FINAL` question.
+
+A unit that does not end in a newline is exactly a unit whose trailing group `Doc.fits` can rebreak
+from the tail that follows it (`notes/01-stream-range.md` §4), so a range stopping there must extend
+forward and will report bytes the caller did not ask for. `RSF-IMPL` reasoned that clause from a
+measured `Doc` probe and pinned it with a synthetic selection test; nobody had counted how often it
+fires on foreign Lean. This reads the count off the same `Printer.formatWithMap` the product uses —
+not a reimplementation of the rule — so a drift in the printer moves this number too.
+
+`extending` counts units 0..n-2 (the final unit has nothing to extend into, so it can never fire). -/
+private def rangeUnits (envelopePath sourcePath widthText : String) : IO UInt32 := do
+  let .ok json := Lean.Json.parse (← IO.FS.readFile envelopePath)
+    | throw <| IO.userError s!"{envelopePath} is not JSON"
+  let .ok (envelope : AnalysisEnvelope) := Lean.fromJson? json
+    | throw <| IO.userError s!"{envelopePath} is not an analysis envelope"
+  let some artifact := envelope.artifact?
+    | throw <| IO.userError s!"{sourcePath} produced no artifact: {envelope.diagnostics}"
+  let some width := widthText.toNat?
+    | throw <| IO.userError s!"WIDTH must be a natural number, got {widthText}"
+  let raw ← IO.FS.readFile sourcePath
+  let normalized := (LosslessSource.normalize raw).1
+  ensure (artifact.source.validFor raw) s!"{sourcePath}: the projection does not match its own source"
+  let (rendered, marks) ← Printer.formatWithMap artifact.source normalized width artifact.semantic
+  let bytes := rendered.toUTF8
+  let mut extending := 0
+  for index in [0:marks.size] do
+    if index + 1 == marks.size then continue
+    let stop := marks[index]!.output.stop
+    unless stop != 0 && stop ≤ bytes.size && bytes[stop - 1]! == 10 do
+      extending := extending + 1
+  IO.println s!"units={marks.size} extending={extending}"
+  return 0
+
 /- Re-indent the fixture's one offside block to `base` and print the whole module — the `RLF-OFFSIDE`
 capability driven in isolation. The block is auto-detected (`firstIndentedBlock`: first line-starting
 token indented past column 0, through the last token), re-indented (`reindentBlock`, uniform Δ shift),
@@ -2437,6 +2471,7 @@ public unsafe def main (args : List String) : IO UInt32 := do
   | ["printer-format", envelopePath, sourcePath, width] => printerFormat envelopePath sourcePath width
   | ["printer-reindent", envelopePath, sourcePath, base] => printerReindent envelopePath sourcePath base
   | ["printer-unclaimed", envelopePath, sourcePath] => printerUnclaimed envelopePath sourcePath
+  | ["range-units", envelopePath, sourcePath, width] => rangeUnits envelopePath sourcePath width
   | ["printer-node-kinds", envelopePath, sourcePath] => printerNodeKinds envelopePath sourcePath
   | ["doc-bench"] => docBench
   | ["doc-dump"] => docDump

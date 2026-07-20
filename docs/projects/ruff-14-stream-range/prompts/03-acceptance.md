@@ -1,6 +1,6 @@
 ---
 claim_id: RSF-FINAL
-status: planned
+status: verified
 depends_on: [RSF-IMPL]
 ---
 

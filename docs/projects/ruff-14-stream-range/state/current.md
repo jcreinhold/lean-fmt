@@ -1,6 +1,6 @@
 ---
 kind: state
-first_unresolved: 03-acceptance
+first_unresolved: none
 ---
 
 # Current state
@@ -68,7 +68,7 @@ range expansion below the CLI in `LeanFmt.Application`.
 | --- | --- | --- | --- |
 | 01-contract | RSF-SPEC | verified | — |
 | 02-implementation | RSF-IMPL | verified | RSF-SPEC |
-| 03-acceptance | RSF-FINAL | planned | RSF-IMPL |
+| 03-acceptance | RSF-FINAL | verified | RSF-IMPL |
 
 **RSF-IMPL is verified** (`results/02-implementation.md`). Four pieces, in dependency order:
 
@@ -108,13 +108,44 @@ it is not reintroduced.
 it. Regenerate with `experiments/run-projection-shape.sh` and reconcile before `tests/printer/run.sh`,
 or the suite fails on stale evidence rather than on anything this stack did.
 
+**RSF-FINAL is verified** (`results/03-acceptance.md`). `tests/stream/run.sh` is 58 assertions; every
+gap `RSF-IMPL` admitted is now fixtured, and two measurements exist that did not.
+
+**The forward extension never fires on the frozen mathlib sample** — 2,854 layout units across 62
+modules, 0 extending (`evidence/03-range-unit-census.txt`). Keep the clause anyway, and keep the
+reasoning with it: the census says idiomatic Lean never leaves a unit ending mid-line, so the clause
+costs nothing on real source *and* the only inputs that reach it are ones nobody writes and nobody
+would think to test — exactly where dropping it would silently rewrite bytes the range reported as
+untouched. It is now fixtured on real source (`def a := 1 def b := 2`, `8:18` → `8-30`) rather than on
+a `Doc` probe alone, and the census instrument reads its count off the product's own
+`Printer.formatWithMap`.
+
+**A range costs what the whole buffer costs** (`evidence/03-stream-cost.txt`). One exact frontend run
+over the whole buffer is the cost, and a range cannot avoid it without giving up exactness. Range
+formatting is a precision feature, not a speed one — do not let the product or its documentation imply
+otherwise. A stream request costs about what a cache-cleared single-file batch run costs.
+
+Acceptance findings worth carrying: custom syntax declared *outside* a range is still in scope for the
+command inside it; the `#exit` tail is a unit like any other and streams verbatim; `normalizeEof`
+applies at the tail and only there; an empty range is a cursor selecting its containing unit; a range
+inside a nested node widens to the enclosing command, because the lattice is command-granular by
+construction; and the comment written *above* a declaration belongs to the **earlier** unit, so a range
+over that declaration does not include it.
+
+One freeze violation shipped in `RSF-IMPL` and was closed here: invalid UTF-8 on stdin emitted the Lean
+runtime's `Tried to read from stream containing non UTF-8 data` rather than §6's
+`stdin is not valid UTF-8`. `runStreamCommand` now decodes explicitly. A diagnostic the contract fixes
+must not be an incidental runtime phrase.
+
 ## Blockers and prerequisites
 
-- No blocker recorded. Uncertainty carried into `RSF-FINAL` (`results/02-implementation.md`): the
-  forward extension has not been observed firing on real code and is uncounted on the frozen sample;
-  `normalizeEof`-at-the-tail is argued but unfixtured; no custom-syntax or `#exit`-tail fixture goes
-  through the range path; header-only ranges on a non-parsing header are unfixtured; and a stdin
-  request has not been timed against the batch path.
+- No blocker recorded; the stack is closed. Residual uncertainty, none of it load-bearing for this
+  stack (`results/03-acceptance.md`): the census is one corpus at one width (80), and the driver takes
+  the width as an argument so a narrower margin is re-run rather than reasoned about; it counts unit
+  boundaries where the extension *could* fire, not requests, and no real request traffic exists until
+  `ruff-17-lsp`; UTF-16 positions belong to `ruff-17-lsp` and have no code path here to test; the
+  timings are single-machine, three runs, wall clock — the right shape for "a range is not cheaper" and
+  too coarse for anything finer.
 - Full mathlib is not development evidence; follow this roadmap's evidence policy.
 
 ## Verification convention

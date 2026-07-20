@@ -526,7 +526,12 @@ private def streamExitCode (writer : Bool) (report : StreamReport) : UInt32 :=
 
 private unsafe def runStreamCommand (mode : RunMode) (command : FileCommand)
     (filename : String) : IO UInt32 := do
-  let raw ← (← IO.getStdin).readToEnd
+  -- Read bytes and decode here rather than through `IO.FS.Stream.readToEnd`, which throws its own
+  -- wording ("Tried to read from stream containing non UTF-8 data"). §6 names the message a caller
+  -- sees, and a diagnostic the contract fixes must not be the runtime's incidental phrasing.
+  let bytes ← (← IO.getStdin).readBinToEnd
+  let some raw := String.fromUTF8? bytes
+    | IO.eprintln "lean-fmt: stdin is not valid UTF-8"; return 2
   -- Ranges index the normalized source, the one coordinate system every offset in this product uses.
   let (normalized, _) := LosslessSource.normalize raw
   let range? ← match command.range? with
