@@ -1,9 +1,9 @@
 # Next Proof Packet
 
 - Stack: ruff-15-reporting
-- First unresolved: 01-schema
-- Claim ID: RRF-SPEC
-- Prompt: 01-schema
+- First unresolved: 02-renderers
+- Claim ID: RRF-IMPL
+- Prompt: 02-renderers
 - Module: (docs only)
 - Target file: (docs only)
 
@@ -17,7 +17,7 @@ Read this file, the target prompt, target files, listed source/template line ran
 
 ## Proof Task
 
-- Deliver **RRF-SPEC**: Specify concise, GitHub, SARIF 2.1.0, and JUnit mappings; line/column encoding; artifact URIs; rule metadata; run failures; stdout/file behavior; and schema compatibility.
+- Deliver **RRF-IMPL**: Add `--output-format`, optional output files with atomic replacement, format-specific golden tests, and rule metadata embedding without adding branches to application execution.
 - Read `roadmap.md`, its prerequisite stack results, `AGENTS.md`, the current implementation and tests, and the relevant Lean compiler/Lake sources before changing an interface. Write interface comments and characterization tests before implementation where the behavior is not already frozen.
 
 ## Reuse
@@ -30,6 +30,6 @@ Inspect the live goal, search relevant declarations, test plausible proof steps,
 
 ## Stop Rules
 
-- Do not invent semantic fields unavailable in the canonical report.
-- Escape paths and messages according to each format.
+- Text/JSON defaults remain compatible.
+- Renderer allocation must be bounded for project-scale reports.
 - Stop rather than weakening exact semantics, write safety, or the resource envelope.

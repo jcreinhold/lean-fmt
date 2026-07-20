@@ -55,6 +55,16 @@ run_expect 1 "$work/fallback-findings.json" env LEAN_FMT_DISABLE_ARTIFACT=1 LEAN
   "$application" check --root . --json --no-cache tests/check/Findings.lean
 cmp "$work/artifact-findings.json" "$work/fallback-findings.json"
 
+# `--json` is byte-stable across the reporting stack (`ruff-15` RRF-SPEC `notes/01-report-formats.md`
+# §8.1). The golden was recorded from this exact invocation *before* `ruff-15` shipped any renderer, so
+# it is evidence and not a restatement of current behavior: `--output-format json` and `--json` must
+# still reproduce it field for field, key order included, once the four new formats exist.
+#
+# A field added to `RunReport` or `FileReport` breaks this `cmp`. That is the point — it is the only
+# thing standing between "we kept the JSON backward-compatible" and an assertion nobody checked.
+cmp "$work/artifact-findings.json" \
+  docs/projects/ruff-15-reporting/evidence/01-json-golden-check.json
+
 # `check` and `format` must never disagree about one unchanged file — the invariant
 # `notes/01-rule-facts.md` §2 caught the product violating. The trigger it used is gone (there is no
 # `leanFmt.trailingWhitespace` to turn off any more), so this asserts the invariant itself rather than
