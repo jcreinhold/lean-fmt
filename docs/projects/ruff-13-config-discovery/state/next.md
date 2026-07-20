@@ -1,9 +1,9 @@
 # Next Proof Packet
 
 - Stack: ruff-13-config-discovery
-- First unresolved: 01-semantics
-- Claim ID: RCD-SPEC
-- Prompt: 01-semantics
+- First unresolved: 02-implementation
+- Claim ID: RCD-IMPL
+- Prompt: 02-implementation
 - Module: (docs only)
 - Target file: (docs only)
 
@@ -17,7 +17,7 @@ Read this file, the target prompt, target files, listed source/template line ran
 
 ## Proof Task
 
-- Deliver **RCD-SPEC**: Specify recognized filenames, root boundaries, closest-config selection, `extend`, path resolution, ignore precedence, explicit-path behavior, and flat-config migration with a truth table.
+- Deliver **RCD-IMPL**: Add one private discovery capability, Git ignore matcher, inheritance loader, formatter/linter sections, provenance, config-show command, and cache invalidation over effective values.
 - Read `roadmap.md`, its prerequisite stack results, `AGENTS.md`, the current implementation and tests, and the relevant Lean compiler/Lake sources before changing an interface. Write interface comments and characterization tests before implementation where the behavior is not already frozen.
 
 ## Reuse
@@ -30,6 +30,6 @@ Inspect the live goal, search relevant declarations, test plausible proof steps,
 
 ## Stop Rules
 
-- Executable Lake configuration remains separately evaluated; TOML config cannot stand in for project semantics.
-- Cycles and unknown keys are hard errors.
+- Do not perform repeated filesystem walks per file.
+- Rule selection remains a result projection.
 - Stop rather than weakening exact semantics, write safety, or the resource envelope.
