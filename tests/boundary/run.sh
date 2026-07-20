@@ -81,12 +81,26 @@ if rg -n 'WorkerFleet|SourceParser|run_project_fleet|FleetPlan|libleanshared|lea
 fi
 
 # The RCI-MODEL proof library must stay out of both link closures. It is a `@[default_target]`, so it
-# builds with every ordinary `lake build` and its `#print axioms` audit runs — but a proof about the
-# cache must never be able to rebuild an integrating project, and Lake links every module a library
-# globs. `LeanFmt.Cache.Spec` is globbed alone, in its own target, and nothing imports it.
+# builds with every ordinary `lake build`, so a proof that stops compiling fails that build — but a
+# proof about the cache must never be able to rebuild an integrating project, and Lake links every
+# module a library globs. `LeanFmt.Cache.Spec` is globbed alone, in its own target, and nothing imports it.
+#
+# `LeanFmt.Cache.Decision` is the opposite case and is checked below: it holds the currency decision
+# the proof is *about*, `LeanFmt.Cache` and `LeanFmt.Application` call it, so it must be linked. The
+# split is the whole point — if the proved function were not in the binary, the proof would again be
+# about something other than what runs.
 #
 # `LeanFmt_Digest` is the positive control: it is genuinely linked, so a zero count there would mean
 # this check had stopped looking at anything rather than that the boundary held.
+# The decision must be in the binary: the production path calls it.
+if [[ -e .lake/build/bin/lean-fmt ]]; then
+  if [[ $(nm -a .lake/build/bin/lean-fmt 2>/dev/null \
+      | grep -c 'LeanFmt_Internal_Cache_Decision') -eq 0 ]]; then
+    printf 'the shared currency decision is not linked into the binary; the proof is about dead code\n' >&2
+    exit 1
+  fi
+fi
+
 for image in .lake/build/bin/lean-fmt .lake/build/lib/liblean_x2dfmt_LeanFmtCompilerPlugin.dylib; do
   [[ -e "$image" ]] || continue
   if [[ $(nm -a "$image" 2>/dev/null | grep -c 'LeanFmt_Internal_Cache_Spec\|LeanFmt_Cache_Spec') -ne 0 ]]; then

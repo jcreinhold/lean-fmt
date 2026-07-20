@@ -63,6 +63,22 @@ one result changes what to profile:
   optimizing: a cache that misses when it should hit is a correctness bug wearing a performance
   costume. If it is fixed, the contract also asks whether watch's re-exec workaround comes out.
 
+> **Discharged by `ruff-16b-cache-identity` (2026-07-20).** Both halves are answered; this is no longer
+> `ruff-19`'s to own.
+>
+> The inference was wrong — `execute` opens a fresh `ResultCache` per call and retains nothing, so
+> there is no per-process penalty for any caller. The real defect was one layer down: `environment`
+> folded every project source into the index *filename*. It is fixed, keyed per entry on the import
+> closure's build artifacts (`RCI-IMPL`). "A correctness bug wearing a performance costume" was the
+> right instinct and the right words for it.
+>
+> **The re-exec workaround stays**, decided on measurement rather than inherited justification
+> (`RCI-FINAL` §4): spawning is 24 ms of a 490 ms warm generation, the ~400 ms fixed cost is workspace
+> load and epoch computation that an in-process generation also pays, and retaining the workspace to
+> avoid it would reintroduce exactly the staleness `RCI-IMPL` removed. Parent RSS is now flat at
+> 51,488 KiB across 15 generations — better than the 16 KiB growth recorded below, which was measured
+> before this stack.
+
 - **Watch's own costs are measured and small.** The poll walk is 34 ms and per-generation fixed cost is
   ~400 ms (`workspace_load` 301–344 ms + `discovery` + `cache_epoch`), independent of file count;
   1 file → 110 files adds ~70 ms warm. Watch parent RSS grew **16 KiB over 13 generations**. If the

@@ -141,23 +141,34 @@ hypotheses cannot be jointly satisfied, and every check the prompt does name wou
 
 ## 5. Axiom audit
 
-`#print axioms` runs **inside the module**, not once by hand. The prompt's stop rule is "no `axiom`
-declarations, no `sorry`, no `native_decide`", and a check that runs only when someone remembers to
-run it does not enforce that. `LeanFmtCacheSpec` is a `@[default_target]`, so the audit runs on every
-ordinary `lake build` — which is also why the target had to be a default one. Verbatim:
+> **Amended under `RCI-FINAL`.** This section originally reported the audit as eleven `#print axioms`
+> statements left **inside** `Spec.lean`, running on every ordinary `lake build`. Those statements were
+> removed on instruction: build-time `info:` output is not something to commit. The audit is now a
+> manual step, and its recorded output below is a snapshot rather than a continuously enforced
+> invariant. That is a real loss — an assumption introduced later will not announce itself in the build
+> that introduced it — and it is recorded here rather than glossed. Re-run `#print axioms` before
+> marking any claim about these theorems verified. The reading below was re-taken under `RCI-FINAL`
+> against the *current* `Spec.lean` — the one that proves about `LeanFmt.Cache.Decision` — by adding
+> the statements, building, and reverting. `tier_adequate` appears as `demand_met`: the theorem was
+> renamed when the demand grew the `caps` and `renderCanonical` fields the shipped gate already
+> required.
+
+`LeanFmtCacheSpec` is a `@[default_target]`, so every `lake build` still *compiles* the proofs; a proof
+that stops typechecking fails the build that broke it. What is no longer automatic is the axiom
+reading. Verbatim, at the line numbers the statements temporarily occupied:
 
 ```
-info: LeanFmt/Cache/Spec.lean:346:0: '….schema_current' depends on axioms: [propext]
-info: LeanFmt/Cache/Spec.lean:347:0: '….source_current' depends on axioms: [propext]
-info: LeanFmt/Cache/Spec.lean:348:0: '….grammar_current' depends on axioms: [propext]
-info: LeanFmt/Cache/Spec.lean:349:0: '….tier_adequate' depends on axioms: [propext]
-info: LeanFmt/Cache/Spec.lean:350:0: '….serves_sound' depends on axioms: [propext]
-info: LeanFmt/Cache/Spec.lean:351:0: '….serves_complete' depends on axioms: [propext]
-info: LeanFmt/Cache/Spec.lean:352:0: '….stale_grammar_refused' depends on axioms: [propext]
-info: LeanFmt/Cache/Spec.lean:353:0: '….stale_source_refused' depends on axioms: [propext]
-info: LeanFmt/Cache/Spec.lean:354:0: '….serves_hits_somewhere' depends on axioms: [propext]
-info: LeanFmt/Cache/Spec.lean:355:0: '….witness_sound_is_inhabited' depends on axioms: [propext]
-info: LeanFmt/Cache/Spec.lean:356:0: '….witness_stale_is_refused' depends on axioms: [propext]
+info: LeanFmt/Cache/Spec.lean:324:0: '….schema_current' depends on axioms: [propext]
+info: LeanFmt/Cache/Spec.lean:325:0: '….source_current' depends on axioms: [propext]
+info: LeanFmt/Cache/Spec.lean:326:0: '….grammar_current' depends on axioms: [propext]
+info: LeanFmt/Cache/Spec.lean:327:0: '….demand_met' depends on axioms: [propext]
+info: LeanFmt/Cache/Spec.lean:328:0: '….serves_sound' depends on axioms: [propext]
+info: LeanFmt/Cache/Spec.lean:329:0: '….serves_complete' depends on axioms: [propext]
+info: LeanFmt/Cache/Spec.lean:330:0: '….stale_grammar_refused' depends on axioms: [propext]
+info: LeanFmt/Cache/Spec.lean:331:0: '….stale_source_refused' depends on axioms: [propext]
+info: LeanFmt/Cache/Spec.lean:332:0: '….serves_hits_somewhere' depends on axioms: [propext]
+info: LeanFmt/Cache/Spec.lean:333:0: '….witness_sound_is_inhabited' depends on axioms: [propext]
+info: LeanFmt/Cache/Spec.lean:334:0: '….witness_stale_is_refused' depends on axioms: [propext]
 ```
 
 (Names elided at `…` are `_private.LeanFmt.Cache.Spec.0.LeanFmt.Internal.Cache.Spec.<name>`; the
@@ -238,11 +249,19 @@ too-loose `Cache_Spec` pattern. The shipped probe anchors on `LeanFmt_`.
 
 ## 9. Remaining uncertainty
 
-- **No one has proved `LeanFmt.Cache` instantiates this model.** §6 is a review by reading, not a
-  typechecked correspondence. This is the largest gap in the stack, and it is structural: the shipped
-  decision is `IO` and the model is pure, so the connection cannot be a theorem. `RCI-IMPL` should
-  narrow it by making the implementation's currency function a thin `IO` wrapper around a pure
-  function with this model's shape, so the gap is one visible adapter rather than diffuse.
+- **No one has proved `LeanFmt.Cache` instantiates this model.** ~~This is the largest gap in the
+  stack~~ — **closed under `RCI-FINAL`, in the stronger direction than the one proposed here.** This
+  bullet asked for a thin `IO` wrapper around a pure function "with this model's shape". What shipped
+  instead is `LeanFmt.Cache.Decision`: the model's `Obs`, `Entry`, `identityCurrent` and `serves` moved
+  *out* of `Spec.lean` into a production module that `LeanFmt.Cache` and `LeanFmt.Application` call and
+  `Spec.lean` imports. There is no lookalike left to drift, so §6's review-by-reading is no longer what
+  carries the correspondence for the decision itself. Two residues remain: the theorems still quantify
+  over abstract digest types, so A1 is still a hypothesis, and `Provided.meets` runs in `Application`
+  while `identityCurrent` runs in `Cache`, so *that* the two halves are both applied is checked by
+  `tests/cache/run.sh`, not by a type. Also note the drift this closure exposed: the model as written
+  here checked schema, source, closure and tier, while the shipped gate additionally required canonical
+  text and semantic caps — so the completeness theorem had been about a strictly more permissive
+  decision than the one running. `Demand`/`Provided` in `Decision.lean` carry those fields now.
 - **A2 is false in general and unmitigated.** The filesystem can change between observing a trace and
   serving the entry. Nothing here narrows that window; it is accepted as a bounded TOCTOU race, and it
   is a hypothesis rather than an `axiom` so that it appears in the type of everything downstream.

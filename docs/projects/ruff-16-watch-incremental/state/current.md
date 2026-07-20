@@ -57,11 +57,19 @@ no torn output.
   permitted, and it keeps watch inside the observer layer rather than reworking cache lifecycle in
   `LeanFmt.Application`.
 
-**A defect was found and deliberately not fixed.** The in-process cache limitation above affects any
+**A defect was found and deliberately not fixed.** ~~The in-process cache limitation above affects any
 future caller that runs `execute` more than once per process, not just watch. Watch routes around it;
 nothing fixes it. Root-causing it means going into `Cache`/`Application`, below this stack's layer, and
 the roadmap forbids building a second execution path to compensate. `RWI-FINAL` should decide whether
-it warrants a defect report of its own.
+it warrants a defect report of its own.~~
+
+> **Struck by `ruff-16b-cache-identity` (2026-07-20).** There was no in-process cache limitation. A
+> defect *was* real, but one layer down and with a different shape: `Cache.environmentDigest?` folded
+> every project source into the index *filename*, so any edit invalidated the whole project in any
+> process. `ruff-16b` root-caused and fixed it — entries are now keyed per file on their import
+> closure's build artifacts. Re-exec is retained on independent grounds (`RCI-FINAL` §4); the instinct
+> to route around rather than root-cause was right for this stack's layer, and the routing turned out
+> to be worth keeping for a reason nobody had measured yet.
 
 **RWI-FINAL is verified** (`results/03-acceptance.md`; stress evidence `evidence/03-acceptance-stress.md`).
 Every clause of the roadmap's completion contract has evidence: 10 rapid edits coalesce into one

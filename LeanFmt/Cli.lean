@@ -1293,17 +1293,24 @@ private unsafe def runFileCommand (mode : RunMode) (args : List String) : IO UIn
       -- already supplies the incrementality, per file and keyed on content.
       -- **Each generation is a fresh child process**, not a second in-process `execute`.
       --
-      -- Measured, and it reversed the plan: a second `execute` in one process does not reuse the
-      -- result cache. Generation 1 ran warm and generation 2 took ~70 s — the cold-cache price —
-      -- while a *separate* process handling the identical edit took 0.52 s, a 135× difference
-      -- (`results/02-implementation.md`, decisions changed). The cross-process cache path is the one
-      -- that works, so watch uses it rather than reaching into `LeanFmt.Application` to make the
-      -- in-process path re-entrant, which is a lower layer this stack does not own.
+      -- The reason first written here was wrong and is corrected (`ruff-16b` RCI-FINAL). It claimed a
+      -- second `execute` in one process cannot reuse the result cache, from a 70 s versus 0.52 s
+      -- comparison. `execute` opens a fresh `ResultCache` per call and there is no retained in-process
+      -- state to go stale; the two numbers were different workloads — cold-after-edit against an
+      -- unchanged tree — and the 70 s was the whole-project cache invalidation `ruff-16b` then removed.
       --
-      -- Re-execing is exactly "no workspace retention", which `notes` §6 already permitted; the
-      -- ~400 ms fixed cost per generation is the price the freeze accounted for. The child inherits
-      -- this process's stdout and stderr, so framing (§7) is unchanged, and a generation that dies
-      -- cannot take the session with it.
+      -- Re-exec stays, on its own measurement rather than that one. Spawning costs 24 ms against a
+      -- 490 ms warm generation, about 5%. The ~400 ms fixed cost is workspace load, discovery and epoch
+      -- computation — which an in-process generation pays too, *unless* it retains the workspace across
+      -- generations. Retention is the whole prize, and it is the thing not to buy: deciding a
+      -- generation against build state observed before the edit is exactly the staleness class
+      -- `ruff-16b` exists to remove, and it would need `open?`'s refusal to manufacture a partial epoch
+      -- weakened to be worth anything.
+      --
+      -- What re-exec buys is exact: parent RSS is flat across 15 generations, 51,488 KiB throughout.
+      -- That is "no workspace retention" as `notes` §6 permitted, now measured rather than assumed. The
+      -- child inherits this process's stdout and stderr, so framing (§7) is unchanged, and a generation
+      -- that dies cannot take the session with it.
       let self ← IO.appPath
       Watch.run { root := command.run.root, configPath? := command.run.configPath?,
                   pollMillis := command.pollMillis } fun counter => do

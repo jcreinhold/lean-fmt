@@ -1,6 +1,6 @@
 module
 
-import all LeanFmt.Rules
+import all LeanFmt.Cache.Decision
 
 /-!
 # The result cache's currency decision, as a pure model
@@ -49,17 +49,30 @@ worthless, and `serves_complete` is not a bonus theorem — it is half the conte
 
 ## Correspondence to the shipped decision
 
-The model is deliberately generic: `Mod`, `Source`, `Grammar`, `Analysis` and the digest types are
-type variables, and the shipped cache is one instantiation. `Tier` is the **real** production type,
-imported rather than restated, so `tier_adequate` is about the actual tier chain.
+**The decision proved here is the decision that runs.** `serves`, `Entry`, `Obs`, `Demand` and
+`Provided` are imported from `LeanFmt.Cache.Decision`, and `LeanFmt.Cache.readAll` and
+`LeanFmt.Application` call those same definitions. There is no second copy to drift.
 
-Everything else is a correspondence claim that is *reviewed*, not typechecked: no one has proved that
-`LeanFmt.Cache` instantiates this model. `results/02-model.md` §6 records that review, and it is the
-stack's largest remaining gap. A closed goal shows a term typechecks; it does not show the
-specification says the right thing.
+`RCI-MODEL` shipped without that, and `results/02-model.md` §6 recorded the gap: the model defined its
+own `serves`, the production path re-implemented the idea across two modules, and nothing forced them
+to agree. They had already diverged — the model checked schema, source, closure and tier, while the
+shipped gate also required canonical text when the run renders it and demanded semantic sub-facts. So
+`serves_complete` was proved about a decision strictly more permissive than the one running, which is
+the direction that makes a completeness theorem worthless. `RCI-FINAL` closed it by moving the
+decision into a module both sides import.
+
+What remains reviewed rather than typechecked is narrower and named: that the *instantiation* is
+right — that `Cache.readAll` builds its `Obs` from digests that really do observe the current world.
+The four hypotheses below are exactly where that is carried, and A2 is the one known to be false in
+general.
+
+The model stays generic in `Mod`, `Source`, `Grammar`, `Analysis` and the digest types because the
+proofs quantify over them. `Tier` and `SemanticCaps` are the **real** production types.
 -/
 
 namespace LeanFmt.Internal.Cache.Spec
+
+open LeanFmt.Internal.Cache.Decision
 
 /-! ## Objects
 
@@ -80,47 +93,12 @@ structure World (Mod Grammar Source Schema : Type) where
   grammar : Mod → Grammar
   source : Mod → Source
 
-/-- What the cache can observe **without running the frontend**: the deserializer's own schema, and,
-per module, a source digest and a closure digest recomputed from Lake's recorded traces.
-
-`closureDigest` is where `RCI-SPEC`'s correction lives. It is derived from each import's
-`X:importAllArts`, recomputed from `X`'s own trace outputs — *not* from `X transitive imports (all)`,
-which excludes `X` itself and would have made the whole exercise pass on the stale case it exists to
-catch. -/
-structure Obs (Mod SDigest GDigest Schema : Type) where
-  schema : Schema
-  sourceDigest : Mod → SDigest
-  closureDigest : Mod → GDigest
-
-/-- One cached entry: what it is for, what it was built under, and what it will serve. -/
-structure Entry (Mod Analysis SDigest GDigest Schema : Type) where
-  mod : Mod
-  schema : Schema
-  tier : Tier
-  sourceDigest : SDigest
-  closureDigest : GDigest
-  analysis : Analysis
-
 variable [DecidableEq SDigest] [DecidableEq GDigest] [DecidableEq Schema]
 
-/-! ## The decision -/
+/-! ## The specification, stated independently of the decision
 
-/-- The currency decision, pure. This is `RCI-SPEC` §4 Design B: an entry serves when the schema is
-this binary's, the module's own bytes are unchanged, the grammar it was parsed under is unchanged,
-and its tier answers what the run demands.
-
-Note what is **absent**: the entry's own stored `depHash`. Read alone that records what the module was
-*built against*, not whether that is still true, and it falsely hits in exactly the stale case that
-matters. Currency here compares the entry's recorded expectation against the **currently observed**
-value. -/
-def serves (e : Entry Mod Analysis SDigest GDigest Schema)
-    (o : Obs Mod SDigest GDigest Schema) (demanded : Tier) : Bool :=
-  decide (e.schema = o.schema) &&
-  decide (e.sourceDigest = o.sourceDigest e.mod) &&
-  decide (e.closureDigest = o.closureDigest e.mod) &&
-  e.tier.satisfies demanded
-
-/-! ## The specification, stated independently of the decision -/
+`Entry`, `Obs`, `Demand`, `Provided` and `serves` are **not** defined here. They are
+`LeanFmt.Cache.Decision`'s, the ones the shipped cache calls. -/
 
 /-- What it means for an entry to be a correct answer for this world and this demand.
 
@@ -128,8 +106,8 @@ This mentions `serves` nowhere. That is the point: it is the standard the decisi
 not a restatement of it. -/
 def Valid (analyze : Grammar → Source → Analysis)
     (e : Entry Mod Analysis SDigest GDigest Schema)
-    (w : World Mod Grammar Source Schema) (demanded : Tier) : Prop :=
-  e.analysis = analyze (w.grammar e.mod) (w.source e.mod) ∧ e.tier.satisfies demanded = true
+    (w : World Mod Grammar Source Schema) (demand : Demand) : Prop :=
+  e.analysis = analyze (w.grammar e.mod) (w.source e.mod) ∧ e.provided.meets demand = true
 
 /-- What it means for an entry to be a faithful record of *some* past world: its digests are the
 digests of the grammar and source it was built under, and its analysis is what analysis of those
@@ -158,19 +136,19 @@ tactic that closes it. They are independent: any one can fail while the others h
 
 variable {analyze : Grammar → Source → Analysis} {sd : Source → SDigest} {gd : Grammar → GDigest}
   {e : Entry Mod Analysis SDigest GDigest Schema} {o : Obs Mod SDigest GDigest Schema}
-  {w : World Mod Grammar Source Schema} {demanded : Tier} {g : Grammar} {s : Source}
+  {w : World Mod Grammar Source Schema} {demand : Demand} {g : Grammar} {s : Source}
 
-private theorem serves_conjuncts (h : serves e o demanded = true) :
+private theorem serves_conjuncts (h : serves e o demand = true) :
     e.schema = o.schema ∧ e.sourceDigest = o.sourceDigest e.mod ∧
-      e.closureDigest = o.closureDigest e.mod ∧ e.tier.satisfies demanded = true := by
-  simp only [serves, Bool.and_eq_true, decide_eq_true_eq] at h
+      e.closureDigest = o.closureDigest e.mod ∧ e.provided.meets demand = true := by
+  simp only [serves, Entry.identityCurrent, Bool.and_eq_true, decide_eq_true_eq] at h
   exact ⟨h.1.1.1, h.1.1.2, h.1.2, h.2⟩
 
 /-- **`schema_current`** — the entry's on-disk shape is the one this binary deserializes.
 
 Not new work: this formalizes the versioning discipline `Semantic.lean` already documents at `v2`-`v5`,
 where each bump exists because a defaulted field would have read as a false fact. -/
-theorem schema_current (hobs : Faithful sd gd o w) (h : serves e o demanded = true) :
+theorem schema_current (hobs : Faithful sd gd o w) (h : serves e o demand = true) :
     e.schema = w.schema :=
   (serves_conjuncts h).1.trans hobs.1
 
@@ -180,7 +158,7 @@ Uses **A1** (digest injectivity on the values compared) and **A2**. A1 is crypto
 collision freedom — not provable in Lean and standard to assume; it is stated once, here, as an
 injectivity hypothesis on `sd`. -/
 theorem source_current (hsd : Function.Injective sd) (hobs : Faithful sd gd o w)
-    (hbuilt : BuiltFrom analyze sd gd e g s) (h : serves e o demanded = true) :
+    (hbuilt : BuiltFrom analyze sd gd e g s) (h : serves e o demand = true) :
     s = w.source e.mod := by
   have hdig : sd s = sd (w.source e.mod) := by
     rw [← hbuilt.1, (serves_conjuncts h).2.1, hobs.2.1 e.mod]
@@ -201,17 +179,22 @@ from Lake's traces. It is a claim about *Lake's implementation*, verified by rea
 `computeExportInfo`, confirmed numerically, and pinned by `testLakeTraceCharacterization` — but still
 a hypothesis, not a theorem. -/
 theorem grammar_current (hgd : Function.Injective gd) (hobs : Faithful sd gd o w)
-    (hbuilt : BuiltFrom analyze sd gd e g s) (h : serves e o demanded = true) :
+    (hbuilt : BuiltFrom analyze sd gd e g s) (h : serves e o demand = true) :
     g = w.grammar e.mod := by
   have hdig : gd g = gd (w.grammar e.mod) := by
     rw [← hbuilt.2.1, (serves_conjuncts h).2.2.1, hobs.2.2 e.mod]
   exact hgd hdig
 
-/-- **`tier_adequate`** — a `.source` entry never serves a selection requiring a syntax rule.
+/-- **`demand_met`** — a served entry answered what the run actually asked.
+
+Covers all three of the shipped gate's clauses at once, because `Provided.meets` is the shipped gate:
+a `.source` entry never serves a selection requiring a syntax rule, an entry that computed no
+canonical text never serves a run that renders it, and an entry that captured fewer semantic sub-facts
+than the run demanded never serves it.
 
 Needs no assumption at all: it is a projection of the decision. That it is free is worth noticing,
-because it is the one of the four obstacles that is entirely within this repository's control. -/
-theorem tier_adequate (h : serves e o demanded = true) : e.tier.satisfies demanded = true :=
+because it is the one of the four obstacles entirely within this repository's control. -/
+theorem demand_met (h : serves e o demand = true) : e.provided.meets demand = true :=
   (serves_conjuncts h).2.2.2
 
 /-! ## Soundness -/
@@ -226,9 +209,9 @@ by `analyze`'s type). `hbuilt` is not an assumption about the world — every en
 satisfies it by construction. -/
 theorem serves_sound (hsd : Function.Injective sd) (hgd : Function.Injective gd)
     (hobs : Faithful sd gd o w) (hbuilt : BuiltFrom analyze sd gd e g s)
-    (h : serves e o demanded = true) :
-    Valid analyze e w demanded := by
-  refine ⟨?_, tier_adequate h⟩
+    (h : serves e o demand = true) :
+    Valid analyze e w demand := by
+  refine ⟨?_, demand_met h⟩
   rw [hbuilt.2.2, source_current hsd hobs hbuilt h, grammar_current hgd hobs hbuilt h]
 
 /-! ## Completeness
@@ -244,10 +227,10 @@ since a digest collision causes a wrong answer and never a spurious recomputatio
 theorem serves_complete (hobs : Faithful sd gd o w)
     (hschema : e.schema = w.schema)
     (hbuilt : BuiltFrom analyze sd gd e (w.grammar e.mod) (w.source e.mod))
-    (htier : e.tier.satisfies demanded = true) :
-    serves e o demanded = true := by
-  simp only [serves, Bool.and_eq_true, decide_eq_true_eq]
-  refine ⟨⟨⟨hschema.trans hobs.1.symm, ?_⟩, ?_⟩, htier⟩
+    (hmeets : e.provided.meets demand = true) :
+    serves e o demand = true := by
+  simp only [serves, Entry.identityCurrent, Bool.and_eq_true, decide_eq_true_eq]
+  refine ⟨⟨⟨hschema.trans hobs.1.symm, ?_⟩, ?_⟩, hmeets⟩
   · rw [hbuilt.1, hobs.2.1 e.mod]
   · rw [hbuilt.2.1, hobs.2.2 e.mod]
 
@@ -264,16 +247,16 @@ This is the stale-parse hazard in one line. Lean's grammar is open: a `notation`
 denote — and canonical text rendered from it can change what the code means. -/
 theorem stale_grammar_refused (hgd : Function.Injective gd) (hobs : Faithful sd gd o w)
     (hbuilt : BuiltFrom analyze sd gd e g s) (hstale : g ≠ w.grammar e.mod) :
-    serves e o demanded = false := by
-  cases h : serves e o demanded with
+    serves e o demand = false := by
+  cases h : serves e o demand with
   | false => rfl
   | true => exact absurd (grammar_current hgd hobs hbuilt h) hstale
 
 /-- **An entry built from bytes that are no longer on disk is never served.** -/
 theorem stale_source_refused (hsd : Function.Injective sd) (hobs : Faithful sd gd o w)
     (hbuilt : BuiltFrom analyze sd gd e g s) (hstale : s ≠ w.source e.mod) :
-    serves e o demanded = false := by
-  cases h : serves e o demanded with
+    serves e o demand = false := by
+  cases h : serves e o demand with
   | false => rfl
   | true => exact absurd (source_current hsd hobs hbuilt h) hstale
 
@@ -285,8 +268,10 @@ has to follow. This is the same fact with nothing to follow: an entry exists tha
 /-- The decision is not identically `false`. -/
 theorem serves_hits_somewhere
     (o : Obs Mod SDigest GDigest Schema) (m : Mod) (a : Analysis) :
-    serves ⟨m, o.schema, .semantic, o.sourceDigest m, o.closureDigest m, a⟩ o .source = true := by
-  simp [serves, Tier.satisfies]
+    serves ⟨m, o.schema, o.sourceDigest m, o.closureDigest m,
+            ⟨false, .semantic, ⟨true, true, true⟩, true⟩, a⟩ o
+      ⟨.source, {}, false⟩ = true := by
+  simp [serves, Entry.identityCurrent, Provided.meets, Tier.satisfies, SemanticCaps.subset]
 
 end
 
@@ -306,13 +291,17 @@ private abbrev O : Obs Unit Bool Bool Unit := ⟨(), fun _ => true, fun _ => tru
 private abbrev A : Bool → Bool → Bool × Bool := fun g s => (g, s)
 
 /-- An entry built under the *current* grammar (`true`). -/
+private abbrev Provides : Provided := ⟨false, .semantic, ⟨true, true, true⟩, true⟩
+
+private abbrev Asks : Demand := ⟨.source, {}, false⟩
+
 private abbrev Fresh : Entry Unit (Bool × Bool) Bool Bool Unit :=
-  ⟨(), (), .semantic, true, true, (true, true)⟩
+  ⟨(), (), true, true, Provides, (true, true)⟩
 
 /-- The same entry built under the *old* grammar (`false`) — the stale-parse case. Note its analysis
 differs, which is exactly why serving it would be wrong. -/
 private abbrev Stale : Entry Unit (Bool × Bool) Bool Bool Unit :=
-  ⟨(), (), .semantic, true, false, (false, true)⟩
+  ⟨(), (), true, false, Provides, (false, true)⟩
 
 private theorem witness_faithful : Faithful id id O W := ⟨rfl, fun _ => rfl, fun _ => rfl⟩
 
@@ -322,37 +311,13 @@ private theorem witness_stale_built : BuiltFrom A id id Stale false true := ⟨r
 
 /-- Every hypothesis of `serves_sound` holds here, and the conclusion is non-trivial. -/
 theorem witness_sound_is_inhabited :
-    Valid A Fresh W .source := by
+    Valid A Fresh W Asks := by
   refine serves_sound (fun _ _ h => h) (fun _ _ h => h) witness_faithful witness_fresh_built ?_
   decide
 
 /-- ...and in the same fixture, the stale entry is refused rather than served. -/
-theorem witness_stale_is_refused : serves Stale O .source = false := by
+theorem witness_stale_is_refused : serves Stale O Asks = false := by
   refine stale_grammar_refused (fun _ _ h => h) witness_faithful witness_stale_built ?_
   decide
-
-/-! ## Axiom audit
-
-These are left in the module rather than run once and pasted into a result note. The prompt's stop
-rule is "no `axiom` declarations, no `sorry`, no `native_decide`", and a check that runs only when
-someone remembers to run it does not enforce that. Here, the audit is part of building the module, so
-a later edit that introduces an assumption shows up in the build output of the change that introduced
-it.
-
-The expected output is Lean's own three — `propext`, `Classical.choice`, `Quot.sound` — and nothing
-else. In particular `Lean.ofReduceBool` would mean `native_decide` had appeared, and `sorryAx` would
-mean a hole. -/
-
-#print axioms schema_current
-#print axioms source_current
-#print axioms grammar_current
-#print axioms tier_adequate
-#print axioms serves_sound
-#print axioms serves_complete
-#print axioms stale_grammar_refused
-#print axioms stale_source_refused
-#print axioms serves_hits_somewhere
-#print axioms witness_sound_is_inhabited
-#print axioms witness_stale_is_refused
 
 end LeanFmt.Internal.Cache.Spec

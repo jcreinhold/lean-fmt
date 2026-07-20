@@ -1,6 +1,6 @@
 ---
 claim_id: RCI-FINAL
-status: planned
+status: verified
 depends_on: [RCI-IMPL]
 ---
 

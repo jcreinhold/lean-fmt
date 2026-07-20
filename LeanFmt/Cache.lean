@@ -1,5 +1,6 @@
 module
 
+import all LeanFmt.Cache.Decision
 import all LeanFmt.Project
 import all LeanFmt.Semantic
 import Lake.Build.Trace
@@ -55,8 +56,31 @@ private structure CacheEntry where
   schema : String
   identity : Digest
   payload : Digest
+  /-- The module's own source digest, recorded separately from the bundled `identity`.
+
+  `identity` is the *index key*: one digest over every identity field, which is what makes lookup a
+  hash probe instead of a scan. It is not the decision. `sourceDigest` and `closureDigest` are here so
+  the accept can be `Cache.Decision.Entry.identityCurrent` — literally the function `LeanFmt.Cache.Spec`
+  proves about — rather than a bundled comparison that only *stands for* it under A1. -/
+  sourceDigest : Digest
+  /-- The grammar-currency digest of the module's import closure. See `sourceDigest`. -/
+  closureDigest : Digest
   analysis : SemanticAnalysis
   deriving Lean.ToJson, Lean.FromJson
+
+/-- What an entry's analysis can answer, in the shared decision's vocabulary.
+
+Derived from the analysis rather than stored beside it, deliberately: a stored copy could disagree
+with the analysis it describes, and that disagreement would be exactly a stale hit. There is one
+source of truth per entry. -/
+def providedOf (analysis : SemanticAnalysis) : Cache.Decision.Provided :=
+  match analysis.result? with
+  | none => { broken := true, tier := .source, caps := {}, hasCanonical := false }
+  | some result =>
+    { broken := false
+      tier := result.tier
+      caps := result.caps
+      hasCanonical := result.canonical?.isSome }
 
 private structure CacheIndex where
   schema : String
@@ -82,8 +106,19 @@ structure ResultCache where
   Without this the same batch would fetch twice per run. Memoizing per *name* rather than per batch
   keeps it correct when the two calls are handed different target arrays. -/
   closureDigestsByModule : IO.Ref (Std.HashMap String (Option Digest))
+  /-- Memoized `importAllArts` per module, keyed by module name.
 
-def resultCacheSchema : String := "lean-fmt.result-cache.v2"
+  A closure digest reads one trace file per closure *member*, and closures overlap almost completely
+  on a real project -- so without this the same trace is read and JSON-parsed once for every module
+  that transitively imports it. Measured under `RCI-FINAL` on 62 mathlib modules whose closures run to
+  thousands of members each: `cache_lookup` was 14.9 s of a 15.6 s warm run, nearly all of it re-reads.
+
+  Memoizing per run, not per batch, is the same scope `closureDigestsByModule` already takes: a trace
+  changing mid-run is A2 (observation faithfulness), which is a named hypothesis and false in general
+  either way. -/
+  artifactHashByModule : IO.Ref (Std.HashMap String (Option Lake.Hash))
+
+def resultCacheSchema : String := "lean-fmt.result-cache.v3"
 
 private def digestParts (parts : Array String) : Digest :=
   Digest.ofString (String.intercalate "\u0000" parts.toList)
@@ -237,18 +272,48 @@ This degrades **one entry**, not the cache. That is deliberately finer than `env
 which disables everything when it returns `none` -- correctly, because that is a property of the epoch
 rather than of an entry. -/
 private def closureDigest? (workspace : Lake.Workspace)
+    (memo : IO.Ref (Std.HashMap String (Option Lake.Hash)))
     (closure : Option (Array Lean.Name)) : IO (Option Digest) := do
   let some members := closure
     | return none
   let ordered := members.qsort (·.toString < ·.toString)
   let mut parts := #[]
   for name in ordered do
-    let some tracePath := Project.moduleTracePath? workspace name
-      | return none
-    let some hash ← moduleArtifactHash? tracePath
+    let key := name.toString
+    let hash? ← do
+      if let some hit := (← memo.get)[key]? then
+        pure hit
+      else
+        let computed ← match Project.moduleTracePath? workspace name with
+          | none => pure none
+          | some tracePath => moduleArtifactHash? tracePath
+        memo.modify (·.insert key computed)
+        pure computed
+    let some hash := hash?
       | return none
     parts := parts.push s!"closure {name} {hash}"
   return some (digestParts parts)
+
+/-- `realPath` for a configured search-path root that may not exist.
+
+Lake puts a directory on the search path whether or not anything has built there yet, so an absent
+root is ordinary rather than suspicious. `IO.FS.realPath` throws on one, and that exception used to
+escape this function into `ResultCache.open?`'s catch-all and disable the cache for the **whole
+project** -- silently, since a disabled cache is a supported outcome. Measured under `RCI-FINAL` on
+mathlib: one absent root, and not a single entry was ever written on a project with 8,276 built
+modules.
+
+Absence is recorded as its own part rather than skipped, so that the root later appearing with
+artifacts moves `environment`. This does not weaken `open?`'s refusal to manufacture a partial epoch:
+a directory that does not exist holds no artifacts to be partial about, and a root that exists but
+whose artifacts do not validate still returns `none` for the whole cache. -/
+private def realPathIfDir? (path : System.FilePath) : IO (Option System.FilePath) := do
+  try
+    unless ← path.isDir do
+      return none
+    return some (← IO.FS.realPath path)
+  catch _ =>
+    return none
 
 private def environmentDigest? (workspace : Lake.Workspace) : IO (Option Digest) := do
   let toolchain ← IO.FS.realPath workspace.lakeEnv.lean.sysroot
@@ -272,15 +337,19 @@ private def environmentDigest? (workspace : Lake.Workspace) : IO (Option Digest)
   -- stack to project-source coverage, and a dependency's artifacts are an epoch property: they change
   -- when the manifest or a dependency build changes, not when the user edits their own file.
   let ownLibDir ← try IO.FS.realPath workspace.root.leanLibDir catch _ => pure workspace.root.leanLibDir
-  for root in roots do
-    let root ← IO.FS.realPath root
+  for rawRoot in roots do
+    let some root ← realPathIfDir? rawRoot
+      | parts := parts.push s!"lean-path-absent\u0000{rawRoot}"
+        continue
     if insideToolchain toolchain root || root == ownLibDir then
       continue
     let some rootParts ← rootTraceParts? root
       | return none
     parts := parts ++ rootParts
-  for root in workspace.augmentedSharedLibPath do
-    let root ← IO.FS.realPath root
+  for rawRoot in workspace.augmentedSharedLibPath do
+    let some root ← realPathIfDir? rawRoot
+      | parts := parts.push s!"shared-path-absent\u0000{rawRoot}"
+        continue
     if insideToolchain toolchain root then
       continue
     let some rootParts ← sharedTraceParts? root
@@ -353,7 +422,13 @@ standalone file gets `workspaceArtifactsDigest`, which is coarse but sound. -/
 private def ResultCache.closureDigests (cache : ResultCache) (project : Project.Snapshot)
     (targets : Array Project.SourceTarget) : IO (Array (Option Digest)) := do
   try
-    let fallback ← cache.workspaceArtifactsDigest project.workspace
+    -- The fallback is computed **on demand**, not up front. It digests every artifact in the
+    -- workspace's build directory, which on mathlib is 8,276 modules' outputs and ~10 s -- and on a
+    -- project where every target is a workspace module whose closure resolves, it is never used.
+    -- Computing it eagerly made a warm run's `cache_lookup` 14.2 s of a 15.9 s run, for a value
+    -- nothing read (`RCI-FINAL` section 2). `workspaceArtifactsDigest` memoizes, so this stays at most
+    -- one walk per run.
+    let fallback : IO (Option Digest) := cache.workspaceArtifactsDigest project.workspace
     let known ← cache.closureDigestsByModule.get
     let wanted := targets.filterMap fun target => target.module?.map (·.name)
     let missing := wanted.filter fun name => !known.contains name.toString
@@ -369,13 +444,19 @@ private def ResultCache.closureDigests (cache : ResultCache) (project : Project.
         let closure := (byName[name.toString]?.getD none).map (·.push name)
         -- Precise when the closure resolves and every member's trace reads; otherwise the
         -- conservative whole-workspace digest rather than a permanent miss. See `fallback` below.
-        let digest? ← closureDigest? project.workspace closure
-        known := known.insert name.toString (digest?.orElse fun _ => fallback)
+        let digest? ← closureDigest? project.workspace cache.artifactHashByModule closure
+        let resolved ← match digest? with
+          | some digest => pure (some digest)
+          | none => fallback
+        known := known.insert name.toString resolved
       cache.closureDigestsByModule.set known
-    return targets.map fun target =>
+    targets.mapM fun target => do
       match target.module? with
       | none => fallback
-      | some mod => known[mod.name.toString]?.getD fallback
+      | some mod =>
+        match known[mod.name.toString]? with
+        | some digest? => pure digest?
+        | none => fallback
   catch _ =>
     return Array.replicate targets.size none
 
@@ -407,6 +488,52 @@ private def temporaryPath (target : System.FilePath) : IO System.FilePath := do
   let nonce ← IO.monoNanosNow
   return System.FilePath.mk s!"{target}.tmp-{pid}-{nonce}"
 
+/-- How many index files a project keeps besides the one currently in use.
+
+The index name is a digest of the *epoch* -- toolchain, search-path order, dependency roots, validation
+level, and the formatter binary's own identity. `ruff-16b` made project edits stop moving it, but an
+epoch change still does, and each change orphans the previous index with nothing collecting it.
+Measured before this: three simulated formatter rebuilds left four index files, growing without bound.
+
+Not zero, deliberately. Two `lean-fmt` builds can share one project -- an editor holding an older
+binary while the CLI runs a newer one -- and each is a distinct epoch. At zero retention they would
+delete each other's index on every run and neither would ever hit. Retaining a few makes that case
+cost disk instead of correctness, while still bounding the directory. -/
+private def indexRetention : Nat := 3
+
+/-- Delete all but the `indexRetention` most recently modified indexes other than the live one.
+
+Best-effort by construction. A concurrent run may unlink a file between the listing and the delete, or
+own a directory this process cannot write; either way the collection is skipped and the run proceeds.
+An uncollected index costs disk, never correctness -- entries are keyed by content and validated on
+read, so a stale index is unreachable rather than wrong. -/
+private def modifiedSeconds? (path : System.FilePath) : IO (Option Int) := do
+  try
+    return some (← path.metadata).modified.sec
+  catch _ =>
+    return none
+
+private def removeQuietly (path : System.FilePath) : IO Unit := do
+  try
+    IO.FS.removeFile path
+  catch _ =>
+    pure ()
+
+private def collectStaleIndexes (cache : ResultCache) : IO Unit := do
+  try
+    let live := indexPath cache
+    let candidates := (← (resultDirectory cache).readDir).filter fun entry =>
+      entry.path.extension == some "json" && entry.path.toString != live.toString
+    let mut dated := #[]
+    for candidate in candidates do
+      if let some seconds ← modifiedSeconds? candidate.path then
+        dated := dated.push (seconds, candidate.path)
+    let ordered := dated.qsort fun a b => a.1 > b.1
+    for (_, path) in ordered.extract indexRetention ordered.size do
+      removeQuietly path
+  catch _ =>
+    pure ()
+
 private def writeIndexAtomic (path : System.FilePath) (index : CacheIndex) : IO Unit := do
   let temporary ← temporaryPath path
   try
@@ -437,6 +564,7 @@ def ResultCache.open? (workspace : Lake.Workspace) (application : System.FilePat
     let loadedEntries ← IO.mkRef none
     let workspaceArtifacts ← IO.mkRef none
     let closureDigestsByModule ← IO.mkRef {}
+    let artifactHashByModule ← IO.mkRef {}
     return some {
       root := workspace.root.dir / ".lean-fmt-cache"
       toolchain := s!"{Lean.versionString}\u0000{workspace.lakeEnv.lean.githash}"
@@ -447,6 +575,7 @@ def ResultCache.open? (workspace : Lake.Workspace) (application : System.FilePat
       loadedEntries
       workspaceArtifacts
       closureDigestsByModule
+      artifactHashByModule
     }
   catch _ =>
     return none
@@ -473,6 +602,31 @@ private def ResultCache.loadEntries (cache : ResultCache) : IO (Std.HashMap Stri
 
 /- Read an ordered batch from one environment-scoped index. Individual schema, identity, payload,
 and source failures remain ordinary per-target misses; a corrupt index is an empty cache. -/
+/-- The current observation for one target, in the shared decision's vocabulary.
+
+`Mod` is instantiated at `Unit`: the decision for one entry consults only that entry's module, so the
+per-module functions are constant. Instantiating at a module name would make them partial in a way
+nothing here needs.
+
+**This is where A2 lives.** These digests are read from the filesystem before the analysis is served,
+and nothing prevents the tree changing in between. `LeanFmt.Cache.Spec` carries that as a hypothesis
+rather than proving it away; this is the line the hypothesis is about. -/
+private def observation (target : Project.SourceTarget) (closure : Digest) :
+    Cache.Decision.Obs Unit Digest Digest String :=
+  { schema := resultCacheSchema
+    sourceDigest := fun _ => Digest.ofString target.source
+    closureDigest := fun _ => closure }
+
+/-- A stored entry in the shared decision's vocabulary. -/
+private def entryDecision (entry : CacheEntry) :
+    Cache.Decision.Entry Unit SemanticAnalysis Digest Digest String :=
+  { mod := ()
+    schema := entry.schema
+    sourceDigest := entry.sourceDigest
+    closureDigest := entry.closureDigest
+    provided := providedOf entry.analysis
+    analysis := entry.analysis }
+
 def ResultCache.readAll (cache : ResultCache) (project : Project.Snapshot)
     (targets : Array Project.SourceTarget) : IO (Array (Option SemanticAnalysis)) := do
   let entries ← cache.loadEntries
@@ -489,8 +643,15 @@ def ResultCache.readAll (cache : ResultCache) (project : Project.Snapshot)
       let digest := cacheIdentityDigest expected
       let some entry := entries.get? (toString digest)
         | return none
-      unless entry.schema == resultCacheSchema && entry.identity == digest &&
-          entry.payload == analysisDigest entry.analysis && validAnalysis target entry.analysis do
+      -- Integrity of the record, which is not currency: the payload digest and `validAnalysis` catch a
+      -- truncated or mismatched entry, and `identity` confirms the hash probe landed where it meant to.
+      unless entry.identity == digest && entry.payload == analysisDigest entry.analysis &&
+          validAnalysis target entry.analysis do
+        return none
+      -- Currency is `Cache.Decision.Entry.identityCurrent`, the function `LeanFmt.Cache.Spec` proves
+      -- `serves_sound` and `serves_complete` about. The other half of `Decision.serves` --
+      -- `Provided.meets` -- runs in `LeanFmt.Application`, which is where the rule plan is known.
+      unless (entryDecision entry).identityCurrent (observation target closure) do
         return none
       return some entry.analysis
     catch _ =>
@@ -525,6 +686,8 @@ def ResultCache.writeAll (cache : ResultCache) (project : Project.Snapshot)
         schema := resultCacheSchema
         identity := digest
         payload := analysisDigest analysis
+        sourceDigest := expected.source
+        closureDigest := expected.closure
         analysis
       }
       entries := entries.insert (toString digest) entry
@@ -537,6 +700,7 @@ def ResultCache.writeAll (cache : ResultCache) (project : Project.Snapshot)
       entries := ordered
     }
     writeIndexAtomic (indexPath cache) index
+    collectStaleIndexes cache
     cache.loadedEntries.set (some entries)
   catch _ =>
     return

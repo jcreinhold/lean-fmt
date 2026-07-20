@@ -537,30 +537,20 @@ def withExactRun (project : Project.Snapshot) (maxMemoryGiB : Nat)
   }
   try action run finally IO.FS.removeDirAll temporary
 
-/-- Whether a cached answer can serve this run.
+/-- The demand half of the shared currency decision.
 
-A `broken` entry always can: it records that the file did not analyze, which no amount of canonical
-text would change. A successful entry cannot serve a rendering mode unless it carries the canonical
-text that mode must print — a `check` run caches an entry with `canonical? := none`, and treating that
-as a hit for `format` would report every file clean. Insufficient is a miss, not an answer. -/
+This *is* `Cache.Decision.Provided.meets`, the function `LeanFmt.Cache.Spec` proves `demand_met`
+about. It used to be an independent reimplementation living here, and the model knew nothing of two of
+its three clauses -- so `serves_complete` was proved about a decision strictly more permissive than the
+one running. The clauses are documented on `Provided.meets` itself now, next to the definition rather
+than next to one of its callers.
+
+The other half, `Entry.identityCurrent`, runs in `LeanFmt.Cache`, which is where digests can be
+observed. `Cache.Decision.serves` is their conjunction and is the whole decision. -/
 private def cacheHitServes (requiredTier : Tier) (demandedCaps : SemanticCaps) (renderCanonical : Bool)
     (analysis : SemanticAnalysis) : Bool :=
-  match analysis.result? with
-  | none => true
-  | some result =>
-    -- Tier gate: a `.source` shortcut entry computed no syntax findings, so it cannot serve a run that
-    -- selects a syntax rule. A `.syntax` entry (whole registry over the projection) serves everything.
-    -- A `broken` entry (`none`) serves any run — a file that did not analyze did not analyze at any
-    -- tier. Without this clause, shipping the first syntax rule would let a source-only `check` poison
-    -- a later `--select FMT010` into a persisted false clean.
-    --
-    -- Caps gate (`ruff-11b` Design B): orthogonal to the tier, a `.semantic` entry serves a run only
-    -- when it captured every sub-fact the run demanded. `demandedCaps` is `{}` for a source/syntax run
-    -- (subset of anything), so this only ever adds a miss: a fixable-FMT014 demand
-    -- (`demandedCaps.occurrences`) against a monolithic-era `.semantic` entry (`caps.occurrences =
-    -- false`) misses and recomputes rather than serving a false clean.
-    (!renderCanonical || result.canonical?.isSome) && result.tier.satisfies requiredTier
-      && demandedCaps.subset result.caps
+  (providedOf analysis).meets
+    { tier := requiredTier, caps := demandedCaps, renderCanonical := renderCanonical }
 
 private def availableAnalysis (plan : RulePlan) (renderCanonical applies : Bool)
     (evidence : Project.ModuleEvidence)

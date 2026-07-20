@@ -189,9 +189,11 @@ tests/{compiler,check,suppression,lossless,modes,scale,service,boundary,syntax,d
                                               all PASS
 ```
 
-The proof library's `#print axioms` block reports `propext` alone on all eleven theorems, on every
-build, because `LeanFmtCacheSpec` is a `@[default_target]`. `tests/boundary/run.sh` confirms it stays
-out of both the binary and the plugin dylib link closures.
+`LeanFmtCacheSpec` is a `@[default_target]`, so every `lake build` compiles the proofs and a broken one
+fails the build that broke it. The `#print axioms` audit is a manual step whose output is recorded in
+`results/02-model.md`, not a block left in the module; re-run it before marking a claim verified.
+`tests/boundary/run.sh` confirms the proof library stays out of both the binary and the plugin dylib
+link closures, and that the decision it proves about *is* linked.
 
 ## 9. Remaining uncertainty
 

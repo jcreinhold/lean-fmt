@@ -1,6 +1,6 @@
 ---
 kind: state
-first_unresolved: 04-acceptance
+first_unresolved: none
 ---
 
 # Current state
@@ -10,7 +10,7 @@ result-cache finding did not survive reading the code. Its external prerequisite
 `ruff-16-watch-incremental`, which records `first_unresolved: none`. If live code contradicts a
 prerequisite result, reopen the owning prerequisite rather than patching around it.
 
-`RCI-SPEC`, `RCI-MODEL`, and `RCI-IMPL` have run. The diagnosis below is **confirmed** and reproduced
+**The stack is complete.** `RCI-SPEC`, `RCI-MODEL`, `RCI-IMPL`, and `RCI-FINAL` have all run. The diagnosis below is **confirmed** and reproduced
 at entry granularity; the `ruff-16` record is amended everywhere it was asserted; the currency check,
 the tier decision, the undeterminable-currency rule, and the differential test are frozen in
 `results/01-contract.md`; the decision is modelled and proved sound **and** complete in
@@ -24,14 +24,24 @@ the tier decision, the undeterminable-currency rule, and the differential test a
 users, whose bytes never changed, and nothing else (`tests/cache/run.sh` §5, mutation-checked at 4
 served versus 3).
 
-What remains is acceptance: adversarial edit shapes, scale, and the watch re-exec decision.
+Acceptance found no stale hit under nine adversarial edit and graph shapes, each checked against the
+`--no-cache` answer rather than counted (`results/04-acceptance.md` §1). It also found a defect the
+fixture structurally could not see: **on mathlib the cache had never written a single entry**, because
+one absent search-path directory (`Cli`, required and imported by nothing, so Lake never builds its
+library) made `IO.FS.realPath` throw into `ResultCache.open?`'s catch-all. Fixed, and the shape is now
+permanent fixture geometry (`tests/cache/dep`) so every section of `tests/cache/run.sh` runs with an
+absent root. Index collection is added and bounded at the live index plus three. Watch's re-exec stays
+on its own measurement: 24 ms against a 490 ms generation, parent RSS flat across 15 generations.
+
+On the frozen mathlib sample, a comment appended to a widely-imported module without a rebuild now
+costs **1 of 62** entries where it would once have cost all 62.
 
 | Prompt | Claim | Status | Depends on |
 | --- | --- | --- | --- |
 | 01-contract | RCI-SPEC | verified | — |
 | 02-model | RCI-MODEL | verified | RCI-SPEC |
 | 03-implementation | RCI-IMPL | verified | RCI-MODEL |
-| 04-acceptance | RCI-FINAL | planned | RCI-IMPL |
+| 04-acceptance | RCI-FINAL | verified | RCI-IMPL |
 
 ## The diagnosis, now confirmed and fixed
 
@@ -108,15 +118,16 @@ annotated), the inherited notes in `ruff-17-lsp` and `ruff-19-performance` `stat
   Read alone it falsely hits in exactly the stale case that matters. The frozen design avoids it:
   currency compares `M`'s *recorded expectation* for each import against that import's **current**
   artifacts, and never reads `M`'s own stored `depHash`.
-- **Settled by `RCI-IMPL`:** index collection. No collection path is added, and a stable name makes it
-  moot for project edits — five rebuild-and-check cycles on the fixture finish with one index file, and
-  this repository holds one across cold and warm (`results/03-implementation.md` §7). The name still
-  moves when the *epoch* moves: a toolchain change, a dependency rebuild, a new `lean-fmt` binary.
-  Those are rare and are not user-facing edit shapes. `RCI-FINAL` owns whether that residual case needs
-  collecting.
-- **Open for `RCI-FINAL`:** three items `RCI-IMPL` measured but did not close. The conservative
-  whole-workspace fallback's blast radius is unmeasured on a mostly-standalone project. Executable
-  roots (`Main`, `LeanFmtTest`, `LeanFmtArtifactExtract`) take that fallback only because
-  `Lake.Workspace.findModule?` searches libraries and not executables; a narrower lookup would give
-  them precise keys, at the cost of widening the Lake surface `Project` exposes. And the watch re-exec
-  decision still owes a measurement.
+- **Closed by `RCI-FINAL`:** index collection. `writeAll` now calls `collectStaleIndexes`, which keeps
+  the three most recently modified indexes besides the live one. Seven epoch changes leave four files
+  (`tests/cache/run.sh` §8); before, three left four and it kept climbing. Three rather than zero
+  because an epoch change is often temporary — a branch switch, a dependency rebuild and revert — and
+  the recovered index is worth more than the disk. Removal is best-effort and cannot fail a run.
+- **Carried past this stack, not closed.** The conservative whole-workspace fallback's blast radius is
+  still unmeasured on a mostly-standalone project; `RCI-FINAL` made it *lazy* (it was costing ~10 s per
+  mathlib run for a value nothing read) but did not narrow what it covers. Executable roots (`Main`,
+  `LeanFmtTest`, `LeanFmtArtifactExtract`) still take it, only because `Lake.Workspace.findModule?`
+  searches libraries and not executables. And the general shape of the mathlib defect survives its one
+  fixed instance: other `IO.FS.realPath` calls inside `open?`'s catch-all can still disable the cache
+  silently, and **there is no diagnostic that says the cache is off and why** — from the outside, a
+  broken epoch is indistinguishable from a cold one.

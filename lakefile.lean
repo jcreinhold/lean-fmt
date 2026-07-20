@@ -35,6 +35,10 @@ lean_lib LeanFmtApplication where
     Glob.one `LeanFmt.ArtifactStore,
     Glob.one `LeanFmt.Analysis,
     Glob.one `LeanFmt.Cache,
+    -- The currency decision `LeanFmt.Cache` and `LeanFmt.Application` both call, and
+    -- `LeanFmt.Cache.Spec` proves about. It is here, not in `LeanFmtCacheSpec`, because it is
+    -- production code: the proof library stays out of the binary, the decision does not.
+    Glob.one `LeanFmt.Cache.Decision,
     Glob.one `LeanFmt.Config,
     Glob.one `LeanFmt.Discovery,
     Glob.one `LeanFmt.Edit,
@@ -77,11 +81,15 @@ globs, imported or not. Nothing in the shipped binary or the compiler plugin imp
 `LeanFmt.Cache.Spec`, and nothing globs it alongside them, so the model cannot reach either link
 closure. A proof about the cache must not be able to rebuild an integrating project.
 
-It *is* a default target, so `lake build` builds it and the module's `#print axioms` audit runs with
-every ordinary build. A proof library that only builds when someone names it is a proof library that
-silently rots; and the audit's whole purpose is to fail in the change that introduces an assumption,
-which it cannot do if nothing routine builds it. Being a default target does not put it in any link
-closure — that follows the executable's import graph, and nothing imports this. -/
+It *is* a default target, so `lake build` builds it and a proof that stops compiling fails the build
+that broke it. A proof library that only builds when someone names it is a proof library that silently
+rots. Being a default target does not put it in any link closure — that follows the executable's
+import graph, and nothing imports this.
+
+The `#print axioms` audit is **not** in the module; its output is recorded in `results/02-model.md`
+and re-running it is a manual step before marking a claim verified. That is a real reduction in
+enforcement over keeping it inline: an assumption introduced later will not announce itself in the
+build that introduced it. -/
 @[default_target]
 lean_lib LeanFmtCacheSpec where
   roots := #[`LeanFmt.Cache.Spec]

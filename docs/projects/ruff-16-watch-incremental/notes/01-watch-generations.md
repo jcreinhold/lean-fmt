@@ -164,6 +164,22 @@ retention paid. Retention within a sequential poll loop is not concurrency and d
 > `RWI-FINAL` should measure whether the in-process cache limitation is worth reporting upstream as a
 > defect in its own right.
 
+> **Amended by `ruff-16b-cache-identity` (2026-07-20). The blockquote above is `[REFUTED]` in its
+> reasoning and `[UPHELD]` in its conclusion.** `RCI-SPEC` missed this site when it amended the other
+> five; `RCI-FINAL` found it.
+>
+> There is no "in-process cache limitation". `execute` opens a fresh `ResultCache` per call and retains
+> nothing between calls, so no in-process state could go stale. The ~70 s / 0.52 s pair compared
+> *different workloads* — a run after an edit against a run on an unchanged tree — and the ~70 s was
+> the whole-project cache invalidation `ruff-16b` has since removed. Nothing needs reporting upstream.
+>
+> **Re-exec stays**, re-decided on its own measurement (`ruff-16b/results/04-acceptance.md` §4):
+> spawning costs 24 ms against a 490 ms warm generation, about 5%. The ~400 ms fixed cost is workspace
+> load, discovery and epoch computation, which an in-process generation pays too unless it *retains*
+> the workspace across generations — and retention would mean deciding a generation against build state
+> observed before the edit, the staleness class `ruff-16b` exists to remove. What re-exec buys is
+> measured: parent RSS flat at 51,488 KiB across 15 generations.
+
 ## 7. Output framing is a per-format decision, and document formats do not concatenate
 
 `ruff-15` shipped six `--output-format` values that do not frame alike, and the inherited state note

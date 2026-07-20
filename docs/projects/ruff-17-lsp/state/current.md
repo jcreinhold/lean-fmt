@@ -78,6 +78,17 @@ Measured there, and design input here rather than trivia to rediscover:
   (`ruff-14`) — `01-protocol` should confirm that the LSP path inherits that route and never calls
   `execute` per request, and should treat any design that does as blocked on the defect above.
 
+> **Unblocked by `ruff-16b-cache-identity` `RCI-IMPL` (2026-07-20).** The underlying defect is fixed,
+> not merely re-attributed. Entries are keyed per file on their import closure's build artifacts, so an
+> edit invalidates that file and its dependents instead of the whole project, in any process. On this
+> repository a warm re-run serves 119/119 in 0.52 s, and editing one file leaves every unrelated entry
+> hitting.
+>
+> There was never an in-process penalty to inherit — `execute` opens a fresh `ResultCache` per call —
+> so an LSP path that reaches `execute` is no longer choosing between correctness and the cold price.
+> `LeanFmt.Service`'s route stays the right one for *unsaved* buffers, which is a different problem:
+> disk-state evidence cannot answer for bytes that are not on disk. Confirm that, not the cache.
+
 ## Blockers and prerequisites
 
 - No blocker is currently recorded beyond the named prerequisite stacks.
