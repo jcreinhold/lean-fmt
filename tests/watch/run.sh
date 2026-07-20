@@ -292,6 +292,34 @@ if [[ "$changed_output" != *"not the whole project"* ]]; then
 fi
 restore_clean
 
+# ---------------------------------------------------------------------------
+# §9.5 Regression: an untracked non-Lean file must not abort a --changed run.
+#
+# RWI-FINAL found this against a fixture repository and it would hit almost every real user. The
+# freeze assumed handing git's paths to `execute` as the request's file list would let the ordinary
+# gates drop non-`.lean` and `.lake` paths. It does not: an *explicitly named* file deliberately
+# bypasses gates 2-4, and the floor it cannot skip is a hard error. So an ordinary untracked
+# `README.md` -- or a `.lake` tree in a repository that does not ignore it -- aborted the entire run
+# with `selected file is not a Lean source`. The adapter now applies the floor itself.
+# ---------------------------------------------------------------------------
+untracked_marker="$repo_root/tests/watch/.regression-untracked.md"
+printf 'not a lean source\n' >"$untracked_marker"
+cleanup_untracked() { rm -f "$untracked_marker"; }
+trap 'rm -rf "$work"; restore_clean; cleanup_untracked' EXIT
+
+set +e
+untracked_output=$("$application" check --changed --root . 2>&1 >/dev/null)
+untracked_code=$?
+set -e
+if [[ "$untracked_output" == *"is not a Lean source"* ]]; then
+  fail "an untracked non-Lean file aborted --changed: $untracked_output"
+fi
+if [[ $untracked_code -ne 0 && $untracked_code -ne 1 ]]; then
+  fail "--changed with an untracked non-Lean file exited $untracked_code: $untracked_output"
+fi
+cleanup_untracked
+trap 'rm -rf "$work"; restore_clean' EXIT
+
 # §9.7's other half — that a missing binary surfaces as `IO.Process.output` returning exit 255 rather
 # than throwing — is deliberately **not** asserted here. It is a fact about Lean's spawn path, and the
 # nearest shell equivalent (127 from `env PATH=/nonexistent git`) is a different number produced by a

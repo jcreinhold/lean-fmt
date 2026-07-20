@@ -1,6 +1,6 @@
 ---
 claim_id: RWI-FINAL
-status: planned
+status: verified
 depends_on: [RWI-IMPL]
 ---
 

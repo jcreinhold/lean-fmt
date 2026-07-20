@@ -205,6 +205,24 @@ private def includesUntracked : Comparison → Bool
   | .base _ => false
   | .staged => false
 
+/-- Whether a path git named is even a candidate for formatting: gate 1, the floor.
+
+**The adapter must apply this itself.** `notes` §9.5 step 3 assumed the ordinary selection would drop
+non-`.lean` and `.lake` paths once they were handed to `execute` as the request's file list. It does
+not: an *explicitly named* file deliberately bypasses discovery's gates 2–4 — "naming a path is saying
+something" (`ruff-13` `notes/01-discovery.md` §11) — and the floor it cannot skip is reported as a hard
+error, `selected file is not a Lean source`. Since **git** named these paths and the user did not, an
+error is the wrong answer: an ordinary untracked `README.md`, or the `.lake` build tree in a repository
+that does not ignore it, would abort the whole run. Measured on a fixture repository, and it aborted
+`--changed` completely (`results/03-acceptance.md`).
+
+Dropped silently rather than disclosed. §9.6 reports paths withheld "for a reason the caller would want
+to know"; that a `README.md` is not a Lean source is not such a reason, and git names all manner of
+files. Configured `include`/`exclude` still belong to `Discovery` and are not duplicated here. -/
+private def isCandidate (relative : String) : Bool :=
+  let components := relative.splitOn "/"
+  (FilePath.mk relative).extension == some "lean" && !components.contains ".lake"
+
 /-- Resolve a repository-relative path against the toplevel and confine it to `root`.
 
 Returns `none` for a path outside the root: a repository can hold several projects, and formatting a
@@ -276,6 +294,8 @@ def select (root : FilePath) (comparison : Comparison) : IO (Except String Selec
   let mut paths : Array FilePath := #[]
   let mut seen : Array String := #[]
   for relative in candidates do
+    unless isCandidate relative do
+      continue
     match ← confine toplevel root relative with
     | none =>
       -- Distinguish "git named a path outside the root" from "the path is gone": the first is a

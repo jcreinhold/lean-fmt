@@ -271,9 +271,19 @@ Git returns paths relative to the repository toplevel, which need not be `--root
 1. Resolve each path against the repository toplevel.
 2. **Drop anything outside `--root`** — a repository can hold several projects, and formatting a
    sibling because it shares a repository would violate the root contract.
-3. Apply the ordinary `LeanFmt.Project` selection and `ruff-13` discovery exclusions unchanged:
-   non-`.lean` paths, `.lake` paths, and configured exclusions drop here, through the existing code
-   rather than a Git-specific reimplementation.
+3. Apply gate 1 — the floor — **in the adapter**: drop anything that is not a `.lean` source and
+   anything inside `.lake`. Configured `include`/`exclude` still belong to `Discovery` and are not
+   duplicated here.
+
+   > **Amended by `RWI-FINAL`.** This step originally read "apply the ordinary `LeanFmt.Project`
+   > selection and `ruff-13` discovery exclusions unchanged … through the existing code rather than a
+   > Git-specific reimplementation." That assumption is false, and shipping on it was a bug. An
+   > *explicitly named* file deliberately bypasses discovery's gates 2–4 — "naming a path is saying
+   > something" (`ruff-13` `notes/01-discovery.md` §11) — and the floor it cannot skip is reported as
+   > a **hard error**, `selected file is not a Lean source`. Because git names these paths and the
+   > user does not, an error is the wrong answer: measured on a fixture repository, an ordinary
+   > untracked `README.md` (and the `.lake` tree, in a repository that does not ignore it) aborted the
+   > entire `--changed` run. Regression-tested in `tests/watch/run.sh`.
 4. Deduplicate and order exactly as an ordinary run orders its targets, so a `--changed` run and a
    full run agree on the relative order of the files they share.
 

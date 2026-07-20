@@ -1,6 +1,6 @@
 ---
 kind: state
-first_unresolved: 03-acceptance
+first_unresolved: none
 ---
 
 # Current state
@@ -24,7 +24,7 @@ documentation is one characterization suite, `tests/watch/run.sh`, registered in
 | --- | --- | --- | --- |
 | 01-contract | RWI-SPEC | verified | — |
 | 02-implementation | RWI-IMPL | verified | RWI-SPEC |
-| 03-acceptance | RWI-FINAL | planned | RWI-IMPL |
+| 03-acceptance | RWI-FINAL | verified | RWI-IMPL |
 
 **RWI-IMPL is verified** (`results/02-implementation.md`). `LeanFmt/Watch.lean` (private poll observer)
 and `LeanFmt/GitSelection.lean` (private `-z` changed-file adapter) ship, both importing only
@@ -55,6 +55,25 @@ future caller that runs `execute` more than once per process, not just watch. Wa
 nothing fixes it. Root-causing it means going into `Cache`/`Application`, below this stack's layer, and
 the roadmap forbids building a second execution path to compensate. `RWI-FINAL` should decide whether
 it warrants a defect report of its own.
+
+**RWI-FINAL is verified** (`results/03-acceptance.md`; stress evidence `evidence/03-acceptance-stress.md`).
+Every clause of the roadmap's completion contract has evidence: 10 rapid edits coalesce into one
+generation; config creation, `lean-toolchain`, source creation and deletion each fire while an
+unrelated `.txt` does not; `--staged`/`--changed`/`--changed-since` distinguish index, worktree and
+merge-base on one tree; a rename selects the new path with the old path and the delete both disclosed;
+a broken file reports `broken=1` without ending the session and recovers on repair; an identical tree
+produces byte-identical output three generations apart; and parent RSS grew **16 KiB over 13
+generations**. `SIGTERM` exits 143 with no torn output and no orphaned temporary.
+
+**RWI-FINAL found and fixed a shipped bug.** An untracked non-Lean file — an ordinary `README.md`, or
+an unignored `.lake` tree — aborted every `--changed` run with `selected file is not a Lean source`.
+Freeze §9.5 step 3 had assumed handing git's paths to `execute` would let the ordinary gates drop
+non-sources; it does not, because an explicitly named file bypasses gates 2–4 and the floor it cannot
+skip is a hard error. Those gates are calibrated for paths *the user typed*, and under `--changed` the
+paths come from git. The adapter now applies the floor itself. Freeze §9.5 amended; regression-tested
+in `tests/watch/run.sh` and mutation-checked. The class was invisible against this repository — which
+ignores `.lake` and carries no stray untracked files — and only appeared against a purpose-built
+fixture repository.
 
 Key frozen decisions:
 
