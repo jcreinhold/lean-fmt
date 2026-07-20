@@ -1,9 +1,9 @@
 # Next Proof Packet
 
 - Stack: ruff-14-stream-range
-- First unresolved: 02-implementation
-- Claim ID: RSF-IMPL
-- Prompt: 02-implementation
+- First unresolved: 03-acceptance
+- Claim ID: RSF-FINAL
+- Prompt: 03-acceptance
 - Module: (docs only)
 - Target file: (docs only)
 
@@ -17,7 +17,7 @@ Read this file, the target prompt, target files, listed source/template line ran
 
 ## Proof Task
 
-- Deliver **RSF-IMPL**: Reuse snapshot analysis and the layout source map to add stdin/stdout and range formatting, exact validation, actual-range reporting, and deterministic errors.
+- Deliver **RSF-FINAL**: Test UTF-8 positions, empty ranges, comments, custom syntax, nested nodes, malformed input, pipes, broken stdout, full-range equivalence, reflow-expanded ranges (an edit whose enclosing unit rebreaks), and repeated range idempotence.
 - Read `roadmap.md`, its prerequisite stack results, `AGENTS.md`, the current implementation and tests, and the relevant Lean compiler/Lake sources before changing an interface. Write interface comments and characterization tests before implementation where the behavior is not already frozen.
 
 ## Reuse
@@ -30,6 +30,6 @@ Inspect the live goal, search relevant declarations, test plausible proof steps,
 
 ## Stop Rules
 
-- No second formatter or parser path.
-- Unsaved input receives the same resource envelope as service requests.
+- No persistent cache or source writes for stdin.
+- No full mathlib run.
 - Stop rather than weakening exact semantics, write safety, or the resource envelope.

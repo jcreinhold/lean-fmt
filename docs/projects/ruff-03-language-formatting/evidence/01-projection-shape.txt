@@ -1,39 +1,39 @@
-modules_analyzed=24 skipped=0 nodes=82102
+modules_analyzed=24 skipped=0 nodes=85778
 pre_order_contiguity_violations=0
 nonempty_node_children_out_of_source_order=0
-empty_nodes=28696 (35.0% of all nodes)
-empty_nodes_with_ambiguous_placement=13043 (15.9% of all nodes)
+empty_nodes=29934 (34.9% of all nodes)
+empty_nodes_with_ambiguous_placement=13590 (15.8% of all nodes)
 
 # most common empty (absent-syntax) kinds
-25657	null
-1028	Lean.Parser.Term.letConfig
-548	Lean.Parser.Termination.suffix
-477	Lean.Parser.Command.declModifiers
-438	group
-307	Lean.Parser.Term.optEllipsis
-174	Lean.Parser.Command.optDeclSig
-46	Lean.Parser.Command.optDeriving
+26781	null
+1077	Lean.Parser.Term.letConfig
+564	Lean.Parser.Termination.suffix
+498	Lean.Parser.Command.declModifiers
+444	group
+323	Lean.Parser.Term.optEllipsis
+177	Lean.Parser.Command.optDeclSig
+49	Lean.Parser.Command.optDeriving
 19	Lean.Parser.Term.attrKind
 2	Lean.Parser.Term.structInstFields
 
-# command kinds in the corpus (755 commands, 7 distinct kinds)
-651	Lean.Parser.Command.declaration
-35	Lean.Parser.Command.moduleDoc
+# command kinds in the corpus (776 commands, 7 distinct kinds)
+670	Lean.Parser.Command.declaration
+37	Lean.Parser.Command.moduleDoc
 29	Lean.Parser.Command.namespace
 29	Lean.Parser.Command.end
 9	Lean.Parser.Command.open
 1	Lean.Parser.Command.initialize
 1	Lean.Parser.Command.mutual
 
-# what the declaration shell layout can structurally claim (632/651 declarations, 97.1%); runtime guards may still refuse
-632	structurally claimed: shell laid out
+# what the declaration shell layout can structurally claim (651/670 declarations, 97.2%); runtime guards may still refuse
+651	structurally claimed: shell laid out
 19	rejected: shape not read yet
 
 # would a ctor/field shell layout decide anything? a member's shell is its opener, modifiers and
 # name; 'collapsible' counts shells holding horizontal slack a layout could close, which is the
 # only figure that argues for building one. See the script for why the other three cannot.
-379	structure fields (simple): 0 collapsible, 308 one-token, 71 broken by a doc comment, 0 already tight, 0 unexpected shape
-71	inductive constructors: 0 collapsible, 0 one-token, 0 broken by a doc comment, 71 already tight, 0 unexpected shape
+403	structure fields (simple): 0 collapsible, 324 one-token, 79 broken by a doc comment, 0 already tight, 0 unexpected shape
+73	inductive constructors: 0 collapsible, 0 one-token, 0 broken by a doc comment, 73 already tight, 0 unexpected shape
 13	structure constructors: 0 collapsible, 0 one-token, 0 broken by a doc comment, 13 already tight, 0 unexpected shape
 
 # of those, how the `instance` shells break down

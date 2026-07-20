@@ -135,6 +135,58 @@ private def snapshotTarget (workspace : Lake.Workspace) (discovery : Discovery.D
     configKey := discovery.configKeyFor relativePath
   }
 
+/-- Resolve `.` and `..` without touching the filesystem.
+
+`FilePath.normalize` only canonicalizes separators (`Init/System/FilePath.lean:83-89`), and `realPath`
+is unavailable to us here by construction: an unsaved buffer's path need not exist. So the traversal is
+done lexically over `components`. A `..` that would escape an absolute root is dropped rather than
+allowed to climb past it, which keeps `insideRoot` below meaningful on a path like `<root>/../etc`. -/
+private def resolveLexically (path : FilePath) : FilePath :=
+  let leadingSlash := path.toString.startsWith FilePath.pathSeparator.toString
+  let resolved := path.components.foldl (init := ([] : List String)) fun acc component =>
+    if component == "" || component == "." then acc
+    else if component == ".." then acc.dropLast
+    else acc ++ [component]
+  let joined := String.intercalate FilePath.pathSeparator.toString resolved
+  FilePath.mk (if leadingSlash then FilePath.pathSeparator.toString ++ joined else joined)
+
+/-- One **unsaved** buffer as a target: bytes and an identity, with no filesystem read for content.
+
+`ruff-14` RSF-IMPL, `notes/01-stream-range.md` §2. This is the one place the stdin surface cannot reuse
+`snapshotTarget`, which calls `realPath` and `readFile` — an editor formatting a buffer that has never
+been saved has a path with nothing behind it. Every *gate* `snapshotTarget` applies still applies here,
+in the same order and with the same messages, and each names `argument`, the string the caller wrote,
+as `CLAUDE.md` requires of path-taking surface.
+
+The `.lake` floor is gate 1 and is not liftable by this path any more than by an explicit file argument
+— that was `ruff-13`'s closed write-safety defect, and arriving through a pipe does not reopen it. The
+stdin path never publishes, so this is defence in depth rather than the only guard; it is here because
+a floor that some entry points skip is not a floor.
+
+`module?` is resolved from the *real* path when the file happens to exist, so a saved-but-modified
+buffer keeps the module identity its on-disk twin has and gets the same exact Lake setup. A path with
+nothing behind it resolves to `none` and takes the standalone route `diagnosticSetup` already serves. -/
+def unsavedTarget (workspace : Lake.Workspace) (discovery : Discovery.Discovery)
+    (root : FilePath) (argument : String) (source : String) : IO SourceTarget := do
+  let written := FilePath.mk argument
+  let candidate := resolveLexically (if written.isAbsolute then written else root / written)
+  unless insideRoot root candidate do
+    throw <| IO.userError s!"selected file is outside the project root: {argument}"
+  unless candidate.extension == some "lean" do
+    throw <| IO.userError s!"selected file is not a Lean source: {argument}"
+  let relativePath := (Lake.relPathFrom root candidate).toString
+  if insideLakeDirectory relativePath then
+    throw <| IO.userError s!"selected file is inside the Lake build directory: {argument}"
+  let path ← if ← candidate.pathExists then IO.FS.realPath candidate else pure candidate
+  return {
+    module? := workspace.findModuleBySrc? path
+    path
+    relativePath
+    source
+    config := discovery.configFor relativePath
+    configKey := discovery.configKeyFor relativePath
+  }
+
 /- Load executable Lake configuration, select every requested source exactly once, and snapshot all
 bytes before analysis. Module/standalone classification is hidden in `SourceTarget`.
 
@@ -180,6 +232,30 @@ def load (requestedRoot : FilePath) (discovery : Discovery.Discovery)
     targets := deduplicate (targets.qsort relativeLess)
     workspaceLoadNanos := workspaceFinished - workspaceStarted
     selectionNanos := selectionFinished - workspaceFinished
+  }
+
+/-- The Lake workspace alone, selecting nothing.
+
+`ruff-14` RSF-IMPL. A stdin request formats exactly the bytes it was handed, so it must not pay to
+select the project: `load` snapshots every discovered source, which is the right cost for a batch run
+over a tree and the wrong cost for one buffer an editor is waiting on. `ExactRun` reads only
+`workspace` and `root` from a `Snapshot` — `targets` is never consulted by `envelope`/`exactSetup` —
+so an empty selection is a complete capability here rather than a stub.
+
+The service takes the other trade deliberately (`Service.lean`: `Project.load root discovery #[]`,
+once per session, because it answers many requests and wants `findTarget?`). A one-shot CLI invocation
+has no session to amortize against. -/
+def loadWorkspaceOnly (requestedRoot : FilePath) : IO Snapshot := do
+  let root ← IO.FS.realPath requestedRoot
+  let workspaceStarted ← IO.monoNanosNow
+  let workspace ← loadWorkspace root
+  let workspaceFinished ← IO.monoNanosNow
+  return {
+    root
+    workspace
+    targets := #[]
+    workspaceLoadNanos := workspaceFinished - workspaceStarted
+    selectionNanos := 0
   }
 
 def loadAll (requestedRoot : FilePath) : IO Snapshot := do

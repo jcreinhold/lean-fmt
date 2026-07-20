@@ -12,10 +12,87 @@ private inductive ReportFormat where
   | text
   | json
 
+/-! ## stdin/stdout and range parsing (`ruff-14` RSF-IMPL)
+
+Presentation only: this file decides what the caller typed and how to print the answer.
+`Application.stream` owns identity, configuration, execution, expansion, and the splice. -/
+
+/-- A `--range`/`--range-lines` argument, before it is resolved against the received bytes.
+
+Line/column is kept symbolic until the source is in hand because a column is a **codepoint** offset
+into a line and cannot become a byte offset without the line (`notes/01-stream-range.md` §3). Byte
+form is already the internal encoding and passes straight through. -/
+private inductive RangeSpec where
+  | bytes (start stop : Nat)
+  | lineColumn (startLine startColumn stopLine stopColumn : Nat)
+
+private def parseNat? (value : String) : Option Nat := value.toNat?
+
+/-- `START:STOP`, half-open normalized byte offsets. -/
+private def parseByteRange? (value : String) : Option RangeSpec := do
+  let [start, stop] := value.splitOn ":" | none
+  return .bytes (← parseNat? start) (← parseNat? stop)
+
+/-- `LINE:COL-LINE:COL`, 1-based line and 1-based codepoint column. -/
+private def parseLineRange? (value : String) : Option RangeSpec := do
+  let [start, stop] := value.splitOn "-" | none
+  let [startLine, startColumn] := start.splitOn ":" | none
+  let [stopLine, stopColumn] := stop.splitOn ":" | none
+  return .lineColumn (← parseNat? startLine) (← parseNat? startColumn)
+    (← parseNat? stopLine) (← parseNat? stopColumn)
+
+/-- Byte offset of a 1-based (line, codepoint column) position in `normalized`, clamped to the end.
+
+Clamping rather than failing is deliberate: an editor's end-of-selection routinely sits one past the
+last character of a line, and a formatter that rejected that would be unusable. A position past the
+file end resolves to the file end, which selects the final unit. -/
+private def offsetOfLineColumn (normalized : String) (line column : Nat) : Nat := Id.run do
+  let bytes := normalized.toUTF8
+  let mut offset := 0
+  let mut currentLine := 1
+  -- Walk to the start of `line`.
+  while currentLine < line && offset < bytes.size do
+    if bytes[offset]! == 10 then currentLine := currentLine + 1
+    offset := offset + 1
+  -- Then `column - 1` codepoints into it, stopping at the newline that ends the line.
+  let mut remaining := column - min column 1
+  while remaining > 0 && offset < bytes.size && bytes[offset]! != 10 do
+    -- Advance one UTF-8 codepoint: skip the lead byte, then every continuation byte (0b10xxxxxx).
+    offset := offset + 1
+    while offset < bytes.size && bytes[offset]! &&& 0xC0 == 0x80 do
+      offset := offset + 1
+    remaining := remaining - 1
+  return offset
+
+/-- Resolve a spec against the received bytes, or say why it cannot be. -/
+private def resolveRange (normalized : String) : RangeSpec → Except String SourceRange
+  | .bytes start stop =>
+    let size := normalized.utf8ByteSize
+    if stop < start then .error s!"--range start {start} is past its stop {stop}"
+    else if stop > size then
+      .error s!"--range stop {stop} is past the end of the received source ({size} bytes)"
+    else .ok ⟨start, stop⟩
+  | .lineColumn startLine startColumn stopLine stopColumn =>
+    if startLine == 0 || stopLine == 0 || startColumn == 0 || stopColumn == 0 then
+      .error "--range-lines uses 1-based lines and columns"
+    else
+      let start := offsetOfLineColumn normalized startLine startColumn
+      let stop := offsetOfLineColumn normalized stopLine stopColumn
+      if stop < start then
+        .error s!"--range-lines start {startLine}:{startColumn} is past its stop \
+          {stopLine}:{stopColumn}"
+      else .ok ⟨start, stop⟩
+
 private structure FileCommand where
   run : RunRequest
   outputFormat : ReportFormat := .text
   statistics : Bool := false
+  /-- The `-` target was given: read the one source from stdin and stream the answer. -/
+  stdin : Bool := false
+  stdinFilename? : Option String := none
+  range? : Option RangeSpec := none
+  /-- Which spelling the caller used, so a diagnostic names the flag they typed. -/
+  rangeFlag : String := "--range"
 
 private structure RootCommand where
   root : FilePath := "."
@@ -49,6 +126,7 @@ private def parseServeArgs (args : List String) : Except String ServeOptions :=
 
 private def usage : String := "\
 usage: lean-fmt {check|format|diff|fix} [OPTIONS] [FILE...]\n\
+       lean-fmt {check|format|diff|fix} - --stdin-filename PATH [--range S:E]\n\
        lean-fmt serve [--root PATH] [--config PATH] [--select SELECTOR]\n\
                       [--ignore SELECTOR] [--max-memory GIB]\n\
        lean-fmt organize [--root PATH] [--config PATH] [--check] [--json]\n\
@@ -76,7 +154,12 @@ file options:\n\
   --max-memory GIB     aggregate operating envelope (default: 8)\n\
   --unsafe-fixes       apply/preview unsafe fixes too (default: safe only)\n\
   --check              format: report what would change, write nothing (CI preview)\n\
-  --check-elab         fix: require elaboration validation"
+  --check-elab         fix: require elaboration validation\n\
+\n\
+stdin options (target `-`; never writes a file or a cache entry):\n\
+  --stdin-filename P   required with `-`: the buffer's identity for config/module resolution\n\
+  --range START:STOP   format only this half-open normalized byte range (format only)\n\
+  --range-lines R      format only L:C-L:C (1-based line, 1-based codepoint column)"
 
 private def parseFileArgs (mode : RunMode) (args : List String) : Except String FileCommand :=
   let rec loop (remaining : List String) (command : FileCommand) :=
@@ -126,10 +209,45 @@ private def parseFileArgs (mode : RunMode) (args : List String) : Except String 
       | some amount =>
         loop rest { command with run := { command.run with maxMemoryGiB := amount } }
       | none => .error "--max-memory expects a whole number of GiB"
+    -- `-` is a *target*, not an option, so it is matched before the `startsWith "-"` catch-all below.
+    | "-" :: rest => loop rest { command with stdin := true }
+    | "--stdin-filename" :: path :: rest =>
+      loop rest { command with stdinFilename? := some path }
+    | "--range" :: value :: rest =>
+      match parseByteRange? value with
+      | some spec => loop rest { command with range? := some spec, rangeFlag := "--range" }
+      | none => .error s!"--range expects START:STOP byte offsets, got: {value}"
+    | "--range-lines" :: value :: rest =>
+      match parseLineRange? value with
+      | some spec => loop rest { command with range? := some spec, rangeFlag := "--range-lines" }
+      | none => .error s!"--range-lines expects LINE:COL-LINE:COL, got: {value}"
+    | "--stdin-filename" :: [] => .error "--stdin-filename expects a path"
+    | "--range" :: [] => .error "--range expects START:STOP byte offsets"
+    | "--range-lines" :: [] => .error "--range-lines expects LINE:COL-LINE:COL"
     | option :: rest =>
       if option.startsWith "-" then .error s!"unknown option: {option}"
       else loop rest { command with run := { command.run with files := command.run.files.push option } }
   loop args { run := { mode, root := ".", files := #[] } }
+
+/-- The stdin form's own consistency, checked once after parsing rather than at each use.
+
+Each rejection is a frozen clause of `notes/01-stream-range.md` §2, and the reason each is an error
+rather than a fallback is that the quiet alternative is worse: a `-` with no identity would format
+against built-in defaults and silently disagree with the same bytes on disk, and a `--range` without
+`-` would have to mean a partial in-place write, which is a write surface this stack deliberately does
+not build. -/
+private def validateStdin (command : FileCommand) : Except String Unit := do
+  if command.stdin then
+    if command.stdinFilename?.isNone then
+      .error "stdin requires --stdin-filename to establish project identity"
+    else if !command.run.files.isEmpty then
+      .error "- must be the only target"
+    else .ok ()
+  else if command.stdinFilename?.isSome then
+    .error "--stdin-filename is valid only with the - stdin target"
+  else if command.range?.isSome then
+    .error s!"{command.rangeFlag} is valid only with the - stdin target"
+  else .ok ()
 
 private def parseRootArgs (args : List String) : Except String RootCommand :=
   let rec loop (remaining : List String) (command : RootCommand) :=
@@ -373,10 +491,82 @@ private def renderConfigShow (format : ReportFormat) (report : ConfigReport) : I
     for setting in report.settings do
       IO.println s!"  {setting.key} = {setting.value}  ({setting.origin})"
 
+/-- Render one stream answer.
+
+**stdout carries the result and nothing else** — bytes for `format`/`fix`, a unified diff for `diff`,
+nothing for `check`/`format --check`. Findings and the range report go to stderr in text mode so a
+pipe consumer needs no framing (`notes/01-stream-range.md` §5.1). `--json` puts the whole answer,
+source map included, on stdout instead, because a machine consumer asked for structure.
+
+The reported actual range is printed even when it is wider than the request: that widening is the one
+thing a caller cannot infer for itself, and hiding it would make the "outside this range is untouched"
+promise unverifiable. -/
+private def renderStream (format : ReportFormat) (report : StreamReport) : IO Unit := do
+  match format with
+  | .json => IO.println report.toJson.compress
+  | .text =>
+    if let some diff := report.diff then IO.print diff
+    if let some output := report.output then IO.print output
+    for finding in report.findings do
+      IO.eprintln s!"{report.path}:{finding.range.start}-{finding.range.stop}: \
+        {finding.code} {finding.message}"
+    for diagnostic in report.diagnostics do
+      IO.eprintln s!"{report.path}: {report.status}: {diagnostic}"
+    if let some actual := report.actual? then
+      IO.eprintln s!"{report.path}: formatted range {actual.start}-{actual.stop}"
+
+/-- Exit code for a stream answer.
+
+The file-target rule (`reportExitCode`) with one substitution: a stdin mode that **emits** its result
+is the writer, so `format -` and `fix -` exit 0 having streamed, exactly as their file-target twins
+exit 0 having published. `check`, `diff`, and `format --check` stay previews and keep the CI code. -/
+private def streamExitCode (writer : Bool) (report : StreamReport) : UInt32 :=
+  if report.status == "broken" || report.status == "rejected" then 1
+  else if !writer && report.changed then 1 else 0
+
+private unsafe def runStreamCommand (mode : RunMode) (command : FileCommand)
+    (filename : String) : IO UInt32 := do
+  let raw ← (← IO.getStdin).readToEnd
+  -- Ranges index the normalized source, the one coordinate system every offset in this product uses.
+  let (normalized, _) := LosslessSource.normalize raw
+  let range? ← match command.range? with
+    | none => pure none
+    | some spec =>
+      match resolveRange normalized spec with
+      | .ok range => pure (some range)
+      | .error message => IO.eprintln message; return 2
+  let report ← stream {
+    mode
+    root := command.run.root
+    filename
+    source := raw
+    range?
+    maxMemoryGiB := command.run.maxMemoryGiB
+    configPath? := command.run.configPath?
+    selection := {
+      select := command.run.select, extendSelect := command.run.extendSelect,
+      ignore := command.run.ignore, fixable := command.run.fixable,
+      unfixable := command.run.unfixable, extendFixable := command.run.extendFixable,
+      preview := command.run.preview }
+    unsafeFixes := command.run.unsafeFixes
+    formatCheck := command.run.formatCheck
+  }
+  renderStream command.outputFormat report
+  return streamExitCode (mode == .fix || command.run.writesFormat) report
+
 private unsafe def runFileCommand (mode : RunMode) (args : List String) : IO UInt32 := do
   let command ← match parseFileArgs mode args with
     | .ok command => pure command
     | .error message => IO.eprintln message; return 2
+  if let .error message := validateStdin command then
+    IO.eprintln message
+    return 2
+  if let some filename := command.stdinFilename? then
+    try
+      return ← runStreamCommand mode command filename
+    catch error =>
+      IO.eprintln s!"lean-fmt: {error}"
+      return 2
   try
     let report ← execute command.run
     renderReport command.outputFormat report

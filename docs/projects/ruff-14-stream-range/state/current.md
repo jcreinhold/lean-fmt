@@ -1,6 +1,6 @@
 ---
 kind: state
-first_unresolved: 02-implementation
+first_unresolved: 03-acceptance
 ---
 
 # Current state
@@ -67,35 +67,54 @@ range expansion below the CLI in `LeanFmt.Application`.
 | Prompt | Claim | Status | Depends on |
 | --- | --- | --- | --- |
 | 01-contract | RSF-SPEC | verified | — |
-| 02-implementation | RSF-IMPL | planned | RSF-SPEC |
+| 02-implementation | RSF-IMPL | verified | RSF-SPEC |
 | 03-acceptance | RSF-FINAL | planned | RSF-IMPL |
 
-## RSF-IMPL in flight
+**RSF-IMPL is verified** (`results/02-implementation.md`). Four pieces, in dependency order:
 
-Not yet verified. Landed so far, each with its checks read:
+- `Tree.document` marks each layout unit and `Printer.formatWithMap` keeps the map; `format` is the
+  text-only façade over it. One render, two accessors — not a second printer path. No output byte moved
+  (`tests/printer/run.sh` round-trips the corpus byte for byte).
+- `Application.sliceRange` — unit selection, the forward extension, the actual range, the splice.
+  Nothing in it parses: a unit's emitted bytes are the bytes whole-file `format` produced for it, cut
+  out of one whole-file render, so "never slice arbitrary bytes and parse them as an exact module" is
+  unreachable rather than merely obeyed.
+- `Project.unsavedTarget` / `loadWorkspaceOnly` — bytes and a path in, `SourceTarget` out, every
+  `snapshotTarget` gate applied with the same messages naming the caller's own argument, and no
+  filesystem read for content. A one-shot request does not pay to select the project.
+- `Application.stream` plus the `-` / `--stdin-filename` / `--range` / `--range-lines` CLI surface. A
+  separate operation from `execute`, because nearly every clause of a batch run is wrong for one
+  unsaved buffer.
 
-- `1d71424` — the source map is populated. `Tree.document` marks each layout unit;
-  `Printer.formatWithMap` keeps the map and `format` is the text-only façade over it. No output byte
-  moved (`tests/printer/run.sh` round-trips the corpus byte for byte).
-- `fc3d62b` — `Application.sliceRange`: unit selection, the forward extension, the actual range, and
-  the splice, with selection tests on a synthetic map.
+`tests/stream/run.sh` is the owning suite: 30 assertions over usage rejections, the identity gates
+through the pipe, the write/cache prohibitions, all four modes, range expansion, full-range
+equivalence, idempotence, UTF-8 columns, CRLF, and the JSON shape.
 
-Remaining, in order: the filesystem-free `SourceTarget` constructor (`notes` §8.3); the stdin run path
-in `Application`; the `-` / `--stdin-filename` / `--range` / `--range-lines` CLI surface; an owning
-acceptance suite; then `results/02-implementation.md`.
+Amendments recorded in the result note: `--json` gained `formatted`/`diff` (a JSON consumer was getting
+a source map for text it had not been given); `module?` resolves from the real path when the file
+happens to exist, so a saved-but-edited buffer keeps its twin's exact Lake setup; `resolveLexically`
+drops a `..` that would escape an absolute root, keeping `insideRoot` meaningful without a `realPath`
+an unsaved path cannot have.
 
-**Standing tax discovered while implementing:** this repository is the printer's own corpus, so every
-production edit shifts `evidence/01-projection-shape.txt` and the 33 prose figures the
-`check-quoted-figures.py` gate holds to it (`ruff-03`). Regenerate with
-`experiments/run-projection-shape.sh` and reconcile before running `tests/printer/run.sh`, or the
-suite fails on stale evidence rather than on anything this stack did.
+**The suite caught a false assertion on its first run, and the freeze had already called it.**
+Re-running the *requested* range over the output is not a fixed point — formatting changes the unit's
+length, so the same byte offsets name a different region and reach into the next command. Idempotence
+holds in *output* coordinates: re-running the range the source map says the unit now occupies, which is
+what an editor holding that map would send. The suite asserts that and documents the wrong version so
+it is not reintroduced.
+
+**Standing tax:** this repository is the printer's own corpus, so every production edit shifts
+`ruff-03/evidence/01-projection-shape.txt` and the 33 prose figures `check-quoted-figures.py` holds to
+it. Regenerate with `experiments/run-projection-shape.sh` and reconcile before `tests/printer/run.sh`,
+or the suite fails on stale evidence rather than on anything this stack did.
 
 ## Blockers and prerequisites
 
-- No blocker recorded. Uncertainty carried into `RSF-IMPL` (`results/01-contract.md`): the unit
-  lattice's byte-for-byte reconstruction has not been re-measured on the frozen sample for range
-  purposes; how often the forward-extension clause fires is uncounted; `normalizeEof`-at-the-tail is a
-  frozen decision with no current caller to characterize against.
+- No blocker recorded. Uncertainty carried into `RSF-FINAL` (`results/02-implementation.md`): the
+  forward extension has not been observed firing on real code and is uncounted on the frozen sample;
+  `normalizeEof`-at-the-tail is argued but unfixtured; no custom-syntax or `#exit`-tail fixture goes
+  through the range path; header-only ranges on a non-parsing header are unfixtured; and a stdin
+  request has not been timed against the batch path.
 - Full mathlib is not development evidence; follow this roadmap's evidence policy.
 
 ## Verification convention

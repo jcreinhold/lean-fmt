@@ -13,10 +13,10 @@ frontend. That is not a preference: `ruff-01`'s roadmap already committed to car
 printing in-frontend would buy free arg order for a median 1.96 s frontend run per file (`RLS-FINAL`).
 
 **What the projection does not carry, measured rather than assumed.** Over all 21 modules of this
-repository (81,413 nodes, `evidence/01-projection-shape.txt`), 28,439 nodes (34.9%) carry no token at
+repository (85,778 nodes, `evidence/01-projection-shape.txt`), 29,934 nodes (34.9%) carry no token at
 all — they are *absent* syntax, the unfilled optional slots of `declModifiers`, `optDeclSig`,
 `Termination.suffix` — and `collect` gives them range `(0,0)` because a node's range is the hull of the
-leaves beneath it and there are none. For 12,913 of them (15.9% of all nodes) the parent also has direct
+leaves beneath it and there are none. For 13,590 of them (15.8% of all nodes) the parent also has direct
 token children, so nothing in the projection says where among its siblings the absent slot belongs.
 `Lean.Syntax` has no position for them either; this is not something the projection dropped.
 
@@ -27,7 +27,7 @@ Two consequences run through everything below:
    siblings ascend in arg order. Sorting children by range would be correct for the 65.1% that carry
    tokens and silently wrong for the rest.
 2. **The conservative path reads bytes, not the tree.** Empty nodes contribute no bytes, so re-emitting
-   a command's byte extent is unaffected by all 12,913 ambiguous placements. It is the only path whose
+   a command's byte extent is unaffected by all 13,590 ambiguous placements. It is the only path whose
    correctness rests on no claim about any grammar, which is exactly what the roadmap's "unknown
    commands must round-trip conservatively" asks for. Every kind starts here and leaves only when a
    canonical layout for it is cited and pinned by a golden test.
@@ -56,7 +56,7 @@ transport format. This is the view a walk needs, computed once.
 Both child arrays ascend in index order, which **is** arg order by `collect`'s construction. The
 projection retains no other order, so this is not a property that can be checked against its output —
 `evidence/01-projection-shape.txt` checks the observable consequence instead: among a parent's
-token-bearing children, index order agrees with byte order (0 violations over 81,413 nodes). -/
+token-bearing children, index order agrees with byte order (0 violations over 85,778 nodes). -/
 structure Tree where
   source : LosslessSource
   /-- `nodeChildren[i]` are the node-children of node `i`, in arg order. -/
@@ -940,7 +940,7 @@ private def Tree.parts (tree : Tree) (node : Nat) : Array Part := Id.run do
   -- Tokens are indexed in source order, so ordering by `first` is ordering by position. Empty
   -- node-children are dropped rather than placed: they contribute no bytes, and nothing in the
   -- projection says where among its siblings an absent slot belongs (`evidence/01-projection-shape.txt`
-  -- measures 15.9% of nodes to be exactly that ambiguous).
+  -- measures 15.8% of nodes to be exactly that ambiguous).
   return parts.qsort (·.first < ·.first)
 
 /-- An `app`'s parts: its function, and its arguments lifted out of the `null` that holds them.

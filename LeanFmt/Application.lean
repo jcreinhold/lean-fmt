@@ -1303,6 +1303,182 @@ def execute (request : RunRequest) : IO RunReport := do
       cache.writeAll project snapshots analyses
     return summarize request.mode.toString files failures
 
+/-! ## The stdin/stdout stream surface
+
+`ruff-14` RSF-IMPL, frozen in `notes/01-stream-range.md`. This is the raw-bytes-to-stdout path
+`ruff-11d` deliberately left unbuilt when it made file-target `format` write in place. It is a separate
+operation from `execute` rather than a flag on it, because almost every clause of a batch run is wrong
+here: there is no selection to discover, no cache to consult, no file to publish, and exactly one
+target. Threading that through `execute` would put a `stdin?` conditional on each of those decisions;
+keeping them apart lets each one state its own invariant once. -/
+
+structure StreamRequest where
+  mode : RunMode
+  root : FilePath
+  /-- The caller's own `--stdin-filename` argument, verbatim. It is an identity, **never** a
+  destination: nothing in this operation can write it, and it need not exist. Errors name this string
+  rather than a resolved path, as every other path-taking surface does. -/
+  filename : String
+  /-- The buffer, already decoded from stdin. -/
+  source : String
+  /-- A normalized-source byte range to format, or the whole buffer. Meaningful only for a rendering
+  mode; `notes/01-stream-range.md` §7.4 confines it to this operation. -/
+  range? : Option SourceRange := none
+  maxMemoryGiB : Nat := 8
+  configPath? : Option FilePath := none
+  selection : CliSelection := {}
+  unsafeFixes : Bool := false
+  formatCheck : Bool := false
+
+structure StreamReport where
+  path : String
+  status : String
+  findings : Array Finding := #[]
+  diagnostics : Array String := #[]
+  /-- The bytes to stream, in the buffer's own line-ending form. `none` for a non-emitting mode
+  (`check`, `format --check`) and for a buffer that did not analyze — a broken buffer streams nothing
+  rather than echoing its input, so a shell redirect cannot write it back over a good file. -/
+  output : Option String := none
+  diff : Option String := none
+  /-- Set only for a range request. `actual` is the hull of the selected layout units and may span
+  lines the caller did not edit. -/
+  requested? : Option SourceRange := none
+  actual? : Option SourceRange := none
+  /-- The selected units' source map, indexing `output`. -/
+  sourceMap : Array Mark := #[]
+  changed : Bool := false
+
+private def rangeJson (range : SourceRange) : Lean.Json :=
+  Lean.Json.mkObj [("start", Lean.toJson range.start), ("stop", Lean.toJson range.stop)]
+
+/-- `Mark` is `LeanFmt.Doc`'s, and `Doc` has no business knowing about JSON — the encoder lives here,
+beside the one surface that reports a source map. -/
+private def markJson (mark : Mark) : Lean.Json :=
+  Lean.Json.mkObj [("source", rangeJson mark.source), ("output", rangeJson mark.output)]
+
+def StreamReport.toJson (report : StreamReport) : Lean.Json :=
+  Lean.Json.mkObj <| [
+    ("schema", Lean.Json.str "lean-fmt.stream.v1"),
+    ("path", Lean.Json.str report.path),
+    ("status", Lean.Json.str report.status),
+    ("changed", Lean.Json.bool report.changed),
+    ("findings", Lean.toJson report.findings),
+    ("diagnostics", Lean.toJson report.diagnostics)
+  ] ++ (match report.output with
+    -- The bytes ride the JSON too. Text mode puts them on stdout bare; a `--json` caller asked for one
+    -- structured document and must not have to run the command twice to get the result out of it.
+    -- Named `formatted` to match the file-target report's `FileReport.formatted`.
+    | some output => [("formatted", Lean.Json.str output)] | none => [])
+    ++ (match report.diff with
+    | some diff => [("diff", Lean.Json.str diff)] | none => [])
+    ++ (match report.requested? with
+    | some range => [("requestedRange", rangeJson range)] | none => [])
+    ++ (match report.actual? with
+    | some range => [("actualRange", rangeJson range)] | none => [])
+    ++ (if report.sourceMap.isEmpty then []
+        else [("sourceMap", Lean.Json.arr (report.sourceMap.map markJson))])
+
+/-- Format, check, diff, or fix one unsaved buffer and stream the answer.
+
+Every clause the freeze fixes is enforced here rather than documented and hoped for:
+
+- **No write.** `publishAtomic` is not reachable from this operation. `fix`/`format` return their bytes
+  in `output` for the caller to redirect; the file, if there even is one, is untouched.
+- **No persistent cache.** `ResultCache` is never opened. A cache entry is keyed on a digest bound to a
+  file on disk, and unsaved bytes have no disk state to bind — the same rule the service follows.
+- **The service's envelope.** One `withExactRun`, a fresh bounded child, the `--max-memory` aggregate
+  limit. Not a second execution path: it is the same `ExactRun` batch fallback and `serve` use.
+- **Identity is required.** `Project.unsavedTarget` applies every gate the file path applies, including
+  the `.lake` floor, and resolves the effective configuration from the buffer's location, so the same
+  bytes get the same answer whether they arrive by path or by pipe.
+
+The range render is taken with the map (`Printer.formatWithMap`) instead of through
+`canonicalAnalysis`'s render, which would drop it — one render either way, not two. `CanonicalText`
+deliberately does not grow a `marks` field: it is a cached value, and the map is needed only by this
+surface. -/
+def stream (request : StreamRequest) : IO StreamReport := do
+  unless request.maxMemoryGiB > 0 do
+    throw <| IO.userError "--max-memory must provide a nonzero operating envelope"
+  let root ← IO.FS.realPath request.root
+  let configPath? := request.configPath?.map fun path =>
+    if path.isAbsolute then path else root / path
+  let discovery ← Discovery.run root configPath?
+  let project ← Project.loadWorkspaceOnly root
+  let target ← Project.unsavedTarget project.workspace discovery root request.filename request.source
+  let plan ← match target.config.rulePlan request.selection with
+    | .ok plan => pure plan
+    | .error message => throw <| IO.userError message
+  for notice in target.config.notices ++ plan.notices do
+    IO.eprintln s!"lean-fmt: {notice}"
+  let renderCanonical := request.mode.rendersCanonical
+  let applies := request.mode == .fix
+  let demandedCaps := plan.demandedCaps renderCanonical applies
+  let demanded := plan.requiredTier.max (if renderCanonical then Tier.semantic else Tier.source)
+  withExactRun project request.maxMemoryGiB fun run => do
+    let envelope ← run.envelope target (captureSemantic := demanded == .semantic)
+      (captureOccurrences := demandedCaps.occurrences)
+    -- Rendered here rather than inside `canonicalAnalysis` so the source map survives the trip.
+    let base ← canonicalAnalysis target (renderCanonical := false) envelope
+    let (analysis, marks) ←
+      match renderCanonical, envelope.artifact?, base.result? with
+      | true, some artifact, some _ =>
+        let (normalized, _) := LosslessSource.normalize target.source
+        let (text, marks) ← Printer.formatWithMap artifact.source normalized
+          target.config.format.lineWidth artifact.semantic
+        pure (base.withCanonical { text }, marks)
+      | _, _, _ => pure (base, #[])
+    let (normalized, _) := LosslessSource.normalize target.source
+    let (reportImports, withheldRedundant) ← singleImportReport plan project.workspace normalized
+    match prepareFile plan renderCanonical request.unsafeFixes reportImports
+        withheldRedundant target analysis with
+    | .error report =>
+      return {
+        path := report.path
+        status := report.status
+        findings := report.findings
+        diagnostics := report.diagnostics
+      }
+    | .ok prepared =>
+      let findings := prepared.findings
+      let base : StreamReport := { path := target.relativePath, status := "clean", findings }
+      match request.mode with
+      | .check =>
+        return { base with
+          status := if findings.isEmpty then "clean" else "findings"
+          changed := !findings.isEmpty }
+      | .diff =>
+        unless prepared.changed do return base
+        return { base with
+          status := "would-diff"
+          changed := true
+          diff := some (unifiedDiff target.relativePath prepared.normalized prepared.patch.formatted) }
+      | .fix =>
+        -- `fix` streams; it does not validate by re-elaboration, because it publishes nothing. The
+        -- caller reads the bytes and decides. `format` below is the same.
+        unless prepared.changed do return { base with output := some prepared.output }
+        return { base with
+          status := "fixed"
+          changed := true
+          output := some prepared.output }
+      | .format =>
+        -- A range narrows the *published* bytes to the layout units it expands to; the report's
+        -- findings are unchanged, because they index the caller's own unmoved coordinates.
+        let sliced? := request.range?.bind fun range =>
+          sliceRange prepared.normalized prepared.patch.formatted marks range
+        let (text, requested?, actual?, sourceMap) := match sliced? with
+          | some result => (result.text, some result.requested, some result.actual, result.marks)
+          | none => (prepared.patch.formatted, none, none, marks)
+        let output := LosslessSource.denormalize text prepared.lineEndings
+        let changed := text != prepared.normalized
+        if request.formatCheck then
+          return { base with
+            status := if changed then "would-format" else "clean"
+            changed, requested?, actual?, sourceMap }
+        return { base with
+          status := if changed then "formatted" else "clean"
+          output := some output
+          changed, requested?, actual?, sourceMap }
+
 structure OrganizeRequest where
   root : FilePath
   files : Array FilePath
