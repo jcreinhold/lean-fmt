@@ -28,22 +28,19 @@ Rebaseline the richer formatter/linter, prevent phase regressions, and decide me
   `ruff-10b-syntax-fix-composition/state/current.md`). If graduating syntax rules off preview
   (`ruff-12`) makes that cost material, adopt Design B — a parse-only projection of the rendered text in
   place of full re-elaboration — or record why Design A stays.
-- **[DISPUTED — likely superseded by `ruff-16b-cache-identity`; do not act on this bullet without
-  reading that stack's `state/current.md` first. `RCI-SPEC` owns removing or amending it.]**
-  **Root-cause the in-process result-cache miss `ruff-16` handed forward.** A second `Application.execute`
-  in one process after a one-file edit pays the full cold price (~70 s versus 0.52 s for the identical
-  edit in a fresh process — a 135× penalty; `ruff-16-watch-incremental/results/02-implementation.md`
-  decision 3). `ruff-16` routed around it and did not diagnose it: the cause is unknown and lives in
-  `Cache`/`Application`, so it is not established which callers are affected beyond the measured one.
-  Diagnose it first, then either fix it or record why the miss is correct. If it is fixed, **decide
-  whether watch's per-generation re-exec comes out** — measure the in-process generation against the
-  ~400 ms child-process fixed cost and remove the workaround only if in-process wins, since re-exec also
-  buys the flat retention `ruff-16` measured (16 KiB over 13 generations).
+- **[REMOVED by `ruff-16b-cache-identity` `RCI-SPEC`, 2026-07-20.]** This bullet asked this stack to
+  root-cause an in-process result-cache miss. That defect does not exist — `execute` opens a fresh
+  `ResultCache` per call and retains nothing between calls; the ~70 s / 0.52 s pair compared a run
+  after an edit against a run on an unchanged tree. The real defect is process-independent
+  whole-project cache-key invalidation, now owned end to end by `ruff-16b-cache-identity`, which also
+  owns the re-exec decision (`RCI-FINAL`). **Nothing here remains for `ruff-19`**; the stub is kept
+  rather than deleted because the bullet was cited from this stack's work order and from
+  `state/current.md`.
 
 ## Work order
 
 1. **RPR-SPEC — Freeze feature-complete workloads and budgets.** Record machine/toolchain/commit, fixture manifests, cache/build states, binary digest, phase schema, expected output digests, latency/RSS/pressure/swap gates, and stop rules.
-2. **RPR-IMPL — Remove repeated work and measure private concurrency.** Profile representation, layout, rule tiers, validation, rendering, watch, and LSP. Optimize proven critical paths, including the three revisits the completion contract inherits — the `ruff-01` artifact-size/node-table granularity, the `ruff-10b` syntax-fix re-projection (Design A vs parse-only Design B), and the `ruff-16` in-process result-cache miss (**disputed — see the completion-contract bullet and `ruff-16b-cache-identity` before acting on it**). Only after single-session work, test exactly two isolated sessions under the adoption rule.
+2. **RPR-IMPL — Remove repeated work and measure private concurrency.** Profile representation, layout, rule tiers, validation, rendering, watch, and LSP. Optimize proven critical paths, including the three revisits the completion contract inherits — the `ruff-01` artifact-size/node-table granularity, the `ruff-10b` syntax-fix re-projection (Design A vs parse-only Design B), and and — **no longer applicable** — the `ruff-16` in-process result-cache miss, which `RCI-SPEC` refuted and reassigned to `ruff-16b-cache-identity` (see the struck completion-contract bullet). Only after single-session work, test exactly two isolated sessions under the adoption rule.
 3. **RPR-FINAL — Install durable performance gates.** Add fast per-commit micro/representative checks, scheduled heavier sample checks, saved raw profiles, digest reuse, variance policy, and a result note accepting or rejecting concurrency.
 
 ## Evidence and verification

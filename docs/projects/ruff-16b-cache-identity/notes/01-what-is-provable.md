@@ -102,6 +102,28 @@ constructed from the trace format as sampled, not from Lake's implementation.
 That refutation is the argument for doing this work at all: the design survived review, and did not
 survive an attempt to state its theorem.
 
+**Amended (`RCI-SPEC`). The counterexample above stands. The repair proposed in its last paragraph
+does not.** Measurement (`results/01-contract.md` §3, `evidence/01-invalidation-and-traces.md` §3.1)
+showed that `["A transitive imports (all)", h]` hashes the closure of **`A`'s imports and excludes
+`A` itself**: adding a declaration to `A` changed nothing under that key in any dependent. So the
+"graph consistency" check as written would have passed on exactly the stale case this section
+constructs — the same failure, one level further in.
+
+The key that carries `A`'s own artifacts is the sibling `["A:importAllArts", h]`, and it is exactly
+recomputable from `A`'s own trace `outputs` (Lake mixes `Hash.nil` with `A`'s olean, olean.server,
+olean.private, ir.sig, and ir). `grammar_current` and hypothesis A3 should therefore be stated over
+`importAllArts`, not over `transitive imports (all)`.
+
+A3's status also improves. It was recorded above as "a claim about Lake's implementation; testable
+against Lake's sources". It has now been read from Lake's sources, confirmed numerically to the
+digit, and pinned by `testLakeTraceCharacterization`, which recomputes the identity for every
+(importer, importee) pair in the built tree and is mutation-checked. That is as strong as a claim
+about another program's implementation gets; it remains a hypothesis, not a theorem.
+
+Note what this episode is: the design that replaced the refuted one was itself refuted, by
+measurement rather than by proof-writing, before any of it was implemented. Both refutations came
+from insisting on a statement precise enough to be wrong.
+
 ## 7. Where the module goes
 
 Not a single top-level `Proofs.lean`. It would import most of the tree, inverting the dependency
@@ -117,6 +139,15 @@ them their own `lean_lib` and glob it explicitly.
 ## 8. Consequence for the roadmaps
 
 Every `ruff-*` roadmap sets `blueprint_tracked: false` on the grounds that the work "introduces no
-mathematical theorem claim". This stack would introduce one. That flag should be flipped deliberately
-for this stack, with the scope stated — a soundness/completeness pair for one decision function, not a
-verified formatter — rather than left stale.
+mathematical theorem claim". This stack would introduce one, so the flag should not be left to inertia;
+it should be decided deliberately, with the scope stated — a soundness/completeness pair for one
+decision function, not a verified formatter.
+
+**Amended (`RCI-SPEC`).** Decided: the flag stays `false`, and the stated ground changes. Reading
+`lean-plan/SKILL.md` and `check_stack.py`, `blueprint_tracked` records membership in the KanProofs
+blueprint node graph — the `\notready` / `\uses{}` LaTeX document — not the presence of theorems.
+`lean-fmt` has no blueprint document, so there is no node for a `true` value to point at, and the
+checker only requires that a `false` value be explained under `## Blueprint`. The original grounds
+("introduces no theorem claim") *were* stale for this stack and the roadmap now states the correct
+ones. `roadmap.md`'s Blueprint section carried a literal contradiction — prose asserting `true` over
+frontmatter `false` — and was corrected in the same change.

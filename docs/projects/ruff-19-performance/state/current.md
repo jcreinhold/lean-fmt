@@ -36,12 +36,19 @@ one result changes what to profile:
 
 ## Inherited from `ruff-16-watch-incremental` (verified)
 
-> **[DISPUTED by `ruff-16b-cache-identity`.]** The in-process framing below is likely wrong.
-> `execute` opens a fresh `ResultCache` per call (`Application.lean:1298`), and the compared
-> numbers were different workloads (cold-after-edit versus an unchanged tree). The real defect
-> appears to be that `Cache.environmentDigest?` folds every project source into the index
-> filename, so any edit invalidates the whole project in any process. `RCI-SPEC` owns the
-> amendment; do not act on the paragraph below before reading that stack's `state/current.md`.
+> **[REFUTED by `ruff-16b-cache-identity` `RCI-SPEC`, 2026-07-20. The in-process framing below is
+> wrong; do not act on it.]** There is no in-process cache-reuse defect. `execute` opens a fresh
+> `ResultCache` per call (`Application.lean:1298`) and `loadedEntries` is created inside `open?`
+> (`Cache.lean:267`), so nothing is retained between calls to go stale. The compared numbers were
+> different workloads: cold-after-edit against an unchanged tree.
+>
+> The confirmed defect is whole-project cache-key invalidation, and it is **process-independent**.
+> `Cache.environmentDigest?` folds every project source's bytes into `environment`, which feeds
+> `baseDigest`, which names the index file — so one edit renames the index and orphans every entry,
+> in a fresh process just as much as a reused one. Reproduced at entry granularity: after appending
+> one comment to one file, **0 of 112 entries hit**, not 111
+> (`ruff-16b-cache-identity/results/01-contract.md`). The 135× figure below is real; its
+> attribution is not.
 
 - **`execute` does not reuse the result cache when called twice in one process.** Measured
   (`ruff-16/results/02-implementation.md`, decision 3): a second in-process `execute` after a

@@ -1224,6 +1224,15 @@ private def recordDuration (name : String) (nanos : Nat) : IO Unit := do
   if (← IO.getEnv "LEAN_FMT_PROFILE_PHASES") == some "1" then
     IO.eprintln s!"phase.{name}_ms={nanos / 1000000}"
 
+/- Entry-level cache accounting on the existing profile channel. Wall time alone cannot distinguish
+"the cache worked" from "the OS page cache was warm", which is exactly how `ruff-16` misread a
+whole-project invalidation as an in-process reuse defect (`ruff-16b` `RCI-SPEC`). Every claim about
+invalidation is reported as counts. This is a diagnostic channel, not a reporting surface: it is gated
+on the same environment variable as `phase.*`, writes to stderr, and never enters `RunReport`. -/
+private def recordCount (name : String) (value : Nat) : IO Unit := do
+  if (← IO.getEnv "LEAN_FMT_PROFILE_PHASES") == some "1" then
+    IO.eprintln s!"cache.{name}={value}"
+
 /-- What one run produced: the canonical report, and the line/column resolution presentation needs to
 render it. Two values rather than one enriched report, because `RunReport` is a compatibility surface
 and `PositionIndex` is a rendering aid — folding the second into the first would put presentation data
@@ -1332,9 +1341,16 @@ def execute (request : RunRequest) : IO RunOutcome := do
       occurrences := caps.occurrences || wanted.occurrences }
   -- Serving a cache entry stays a *per-file* question: it is that file's own required tier that decides
   -- whether a stored result answers it, never the batch union.
+  let indexHits := cached.foldl (init := 0) fun n c? => if c?.isSome then n + 1 else n
   let cached := (cached.zip plans).map fun (cached?, plan) =>
     cached?.filter (cacheHitServes plan.requiredTier (plan.demandedCaps renderCanonical applies)
       renderCanonical)
+  -- `index_hits` counts entries the index answered with; `served` counts those that survived the
+  -- tier/caps demotion above. They differ exactly when a stored result cannot answer this run's mode,
+  -- so reporting both separates "the entry was invalidated" from "the entry was inadequate".
+  recordCount "targets" snapshots.size
+  recordCount "index_hits" indexHits
+  recordCount "served" (cached.foldl (init := 0) fun n c? => if c?.isSome then n + 1 else n)
   -- A writing `format` (`ruff-11d`) is not served here: it must reach `withExactRun` for the validator
   -- child before it publishes, so it is excluded from both cache-only preview fast paths. `format
   -- --check`, which writes nothing, keeps them.

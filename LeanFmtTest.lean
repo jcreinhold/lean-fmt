@@ -894,6 +894,119 @@ private def probeTie : Rule := {
   }]
 }
 
+/- Characterization of the Lake module trace facts `ruff-16b` `RCI-IMPL` will consume.
+
+This test exists because the currency design rests on a reading of Lake's trace format that is not
+documented and was, in this stack's first draft, **wrong**. The roadmap and
+`notes/01-what-is-provable.md` both described the check as comparing `B`'s recorded
+`["A transitive imports (all)", h]` against `A`'s current value. Measurement refuted that: editing `A`
+so its `.olean` changed left every `"A transitive imports (all)"` entry in `A`'s own dependents
+untouched, because that key hashes the closure of `A`'s *imports* and excludes `A` itself. The key
+that carries `A`'s own artifacts is the sibling `["A:importAllArts", h]`.
+
+`Lake/Build/Module.lean` `computeExportInfo` defines it as
+
+    allArtsTrace := BuildTrace.nil "{mod.name}:importAllArts"
+      |>.mix olean |>.mix oleanServer |>.mix oleanPrivate |>.mix irSig |>.mix ir
+
+with `BuildTrace.nil`'s hash being `Hash.nil` and the caption not entering the hash. Each mixed value
+is the content hash Lake also writes as the leading 16 hex digits of the corresponding entry in that
+module's own `outputs`. So a dependent's recorded expectation for `A` is recomputable from `A`'s own
+trace file alone — no import resolution and no closure walk, which is what this stack's stop rules
+forbid.
+
+The assertion runs over every (importer, importee) pair the build tree actually contains, so it does
+not encode one hard-coded pair that a refactor would silently drop. If Lake changes the mix, its
+order, or the `outputs` shape, this fails here rather than as a stale hit in the cache. -/
+private structure TraceFacts where
+  moduleName : String
+  /-- Content hashes of this module's own artifacts, in Lake's mix order: `o…`, then `rs`, then `r`. -/
+  artifactHashes : Array Lake.Hash
+  /-- Recorded `"X:importAllArts"` expectations, one per direct in-workspace import. -/
+  importAllArts : Array (String × Lake.Hash)
+  deriving Inhabited
+
+private def parseTraceFacts? (json : Lean.Json) : Option TraceFacts := do
+  let outputs ← (json.getObjVal? "outputs").toOption
+  let hashOf (value : Lean.Json) : Option Lake.Hash := do
+    let text ← value.getStr?.toOption
+    Lake.Hash.ofString? (text.take 16).toString
+  let mut artifactHashes := #[]
+  -- `o` is `[olean]` for a legacy module and `[olean, olean.server, olean.private]` under the module
+  -- system; `rs`/`r` are absent in the legacy case. Folding whatever is present, in this order,
+  -- reproduces both branches of `computeExportInfo`.
+  if let some oleans := (outputs.getObjVal? "o").toOption then
+    let some entries := oleans.getArr?.toOption | none
+    for entry in entries do
+      artifactHashes := artifactHashes.push (← hashOf entry)
+  for key in ["rs", "r"] do
+    if let some value := (outputs.getObjVal? key).toOption then
+      artifactHashes := artifactHashes.push (← hashOf value)
+  let some inputs := (json.getObjVal? "inputs").toOption | none
+  let some inputEntries := inputs.getArr?.toOption | none
+  let mut moduleName := ""
+  let mut importAllArts := #[]
+  for input in inputEntries do
+    let some pair := input.getArr?.toOption | none
+    unless pair.size == 2 do continue
+    let some key := pair[0]!.getStr?.toOption | none
+    if let some suffix := key.dropPrefix? "Module.name: " then
+      moduleName := suffix.toString
+    if key == "deps" then
+      -- `deps` is a list of named groups; `imports` is an array of pairs when the module has
+      -- in-workspace imports and the scalar nil hash when it has none. Both shapes occur in this
+      -- repository (`LeanFmt.Digest` has no project import), so a consumer must tolerate both.
+      let some groups := pair[1]!.getArr?.toOption | none
+      for group in groups do
+        let some groupPair := group.getArr?.toOption | none
+        unless groupPair.size == 2 do continue
+        unless (groupPair[0]!.getStr?.toOption) == some "imports" do continue
+        let some recorded := groupPair[1]!.getArr?.toOption | continue
+        for entry in recorded do
+          let some entryPair := entry.getArr?.toOption | none
+          unless entryPair.size == 2 do continue
+          let some entryKey := entryPair[0]!.getStr?.toOption | none
+          let some importee := entryKey.dropSuffix? ":importAllArts" | continue
+          let some text := entryPair[1]!.getStr?.toOption | none
+          let some hash := Lake.Hash.ofString? text | none
+          importAllArts := importAllArts.push (importee.toString, hash)
+  guard <| !moduleName.isEmpty
+  return { moduleName, artifactHashes, importAllArts }
+
+private def recomputeImportAllArts (facts : TraceFacts) : Lake.Hash :=
+  facts.artifactHashes.foldl (init := Lake.Hash.nil) Lake.Hash.mix
+
+private def testLakeTraceCharacterization : IO Unit := do
+  let root : System.FilePath := ".lake" / "build" / "lib" / "lean"
+  unless ← root.isDir do
+    throw <| IO.userError s!"characterization needs a built tree; run `lake build` from the repository \
+      root before `lake exe lean-fmt-tests` (missing {root})"
+  let traces := (← root.walkDir).filter (·.extension == some "trace")
+  let mut byName : Std.HashMap String TraceFacts := {}
+  for path in traces do
+    let contents ← IO.FS.readFile path
+    let .ok json := Lean.Json.parse contents | continue
+    let some facts := parseTraceFacts? json | continue
+    byName := byName.insert facts.moduleName facts
+  ensure (byName.size > 1)
+    "no module traces parsed; the Lake trace shape this stack consumes may have changed"
+  let mut checked := 0
+  for (_, importer) in byName do
+    for (importee, recorded) in importer.importAllArts do
+      -- Only in-workspace modules get a trace here; toolchain imports (`Lake.*`, `Lean.*`) are absent
+      -- from `deps.imports` entirely and are covered by the separate `"Lean <version>, commit …"`
+      -- input instead. That absence is itself part of what this test pins down.
+      let some importeeFacts := byName[importee]? | continue
+      ensure (!importeeFacts.artifactHashes.isEmpty)
+        s!"{importee} recorded no artifact hashes in its own trace outputs"
+      ensure (recomputeImportAllArts importeeFacts == recorded)
+        s!"Lake's importAllArts mix no longer reproduces from the importee's own trace outputs: \
+          {importer.moduleName} records {recorded} for {importee}, recomputed \
+          {recomputeImportAllArts importeeFacts}"
+      checked := checked + 1
+  ensure (checked > 0)
+    "no (importer, importee) pair was checked; the deps.imports shape may have changed"
+
 private def testEngineTiers : IO Unit := do
   let normalized := fixtureSourceText
   let projection := fixtureLosslessSource
@@ -2568,6 +2681,7 @@ public unsafe def main (args : List String) : IO UInt32 := do
     testCatalogInvariants
     testApplicability
     testCacheIdentity
+    testLakeTraceCharacterization
     testLosslessSource
     testStore
     testSemanticArtifact

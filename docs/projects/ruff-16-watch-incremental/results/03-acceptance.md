@@ -133,12 +133,20 @@ generation with the session alive, and `broken=0` on the generation after it was
   generation cost come from `RWI-SPEC` on this 110-file repository; neither was re-measured on the
   frozen mathlib sample, where both are larger. If the walk approaches generation cost there, `notes`
   §1's rejection of an event-driven watcher should be reopened.
-- **The in-process cache defect from RWI-IMPL remains unfixed and unreported upstream.** `execute` does
+- ~~**The in-process cache defect from RWI-IMPL remains unfixed and unreported upstream.** `execute` does
   not reuse the result cache when called twice in one process (~70 s versus 0.52 s). Watch routes
   around it by re-execing. It affects any future caller that runs `execute` more than once per
   process, and root-causing it means going into `Cache`/`Application` — below this stack's layer. It
   should be carried into `ruff-19-performance` or raised as its own defect rather than left in a
-  result note.
+  result note.~~
+  **Amended by `ruff-16b-cache-identity` `RCI-SPEC` (2026-07-20): this entry is struck as
+  misdiagnosed.** There is no in-process reuse defect — `execute` opens a fresh `ResultCache` per call
+  and retains nothing between calls. The ~70 s / 0.52 s pair compared a run *after an edit* against a
+  run on an *unchanged tree*. The real defect is that the result-cache index is keyed on a digest of
+  every project source, so one edit orphans the whole index in any process; `ruff-16b-cache-identity`
+  owns it and reproduced it at entry granularity (0 of 112 entries hit after a one-comment edit).
+  The recommendation to carry it into `ruff-19-performance` is superseded: it went to `ruff-16b`
+  instead.
 - **Nanosecond `mtime` remains Darwin/APFS-measured**, unchanged since `RWI-SPEC`. Linux/ext4 and
   network filesystems are unverified.
 - **`--changed` was not exercised against a repository with a conflicted (`U`) file.** The drop is

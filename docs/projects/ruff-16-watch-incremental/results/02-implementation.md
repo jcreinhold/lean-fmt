@@ -101,6 +101,27 @@ provenance is emitted as `lean-fmt:` notices beside the ones configuration alrea
 `--changed` run still states its comparison, its resolved base, every path it withheld and why, and
 that it covered a subset. Freeze §9.6 amended; the honesty requirement is unchanged and still met.
 
+> **Amended by `ruff-16b-cache-identity` `RCI-SPEC` (2026-07-20). The diagnosis in this decision is
+> wrong; the shipped behavior is retained and is still justified, but not for the reason given here.**
+>
+> There is no in-process cache-reuse defect. `execute` opens a fresh `ResultCache` per call
+> (`Application.lean:1298`) and `loadedEntries` is created inside `open?` (`Cache.lean:267`), so no
+> in-process state survives between calls to go stale. What the table below actually compares is two
+> *different workloads*: generation 2 ran **after an edit**, and every generation-1 row ran against an
+> **unchanged tree**.
+>
+> The real defect is whole-project cache-key invalidation, and it is process-independent.
+> `Cache.environmentDigest?` folds every project source's bytes into `environment` via
+> `sourceRootParts?`; `environment` feeds `baseDigest`; `baseDigest` names the index file. One edit
+> anywhere renames the index and orphans every entry. `RCI-SPEC` reproduced this at entry granularity
+> — after appending one comment to one file, 0 of 112 entries hit, not 111 — which the wall-time
+> comparison here could not have distinguished from a warm page cache. See
+> `ruff-16b-cache-identity/results/01-contract.md`.
+>
+> This decision is amended rather than deleted deliberately: the measurement that misled is the
+> evidence for why the roadmaps now require entry-level hit/miss counts for any invalidation claim.
+> Whether re-exec should come out is `RCI-FINAL`'s to settle on measurement.
+
 **3. Each generation is a fresh child process — measured, and it reversed the plan.** §4 froze "every
 generation runs the complete project through the ordinary `execute`", and I implemented that as a
 second in-process call. It does not work: **`execute` does not reuse the result cache when called
@@ -149,6 +170,11 @@ project load — so the suite needs no Lake project and no warm cache, and stays
 own dynamics belong to `RWI-FINAL`, which owns the event-storm work.
 
 ## A defect this prompt found and did not fix
+
+> **Amended by `ruff-16b` `RCI-SPEC`.** The defect described here is misattributed, but a defect is
+> genuinely present and is worse than stated: it is not that a *second in-process* caller pays the cold
+> price, it is that **any** caller — in any process — pays the cold price for the whole project after
+> any single-file edit. `ruff-16b-cache-identity` owns it.
 
 The in-process cache behavior of decision 3 is a real limitation, not merely an inconvenience for
 watch: any future caller that runs `execute` more than once in a process will silently pay the cold
