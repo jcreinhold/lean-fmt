@@ -43,10 +43,11 @@ one result changes what to profile:
   generation a fresh child process; nothing fixes it, and the root cause was not investigated because
   it lives in `Cache`/`Application`.
 
-  **This stack owns the defect.** `ruff-16` recorded it and explicitly deferred it here: it affects any
-  future caller that runs `execute` more than once per process, not just watch, and root-causing it
-  means going into `Cache`/`Application`. Decide whether to fix it or file it as a defect in its own
-  right; do not leave it living only in a result note.
+  **This stack owns it, per the completion-contract bullet added for it** — `ruff-16` recorded the
+  measurement but never diagnosed the cause, so "affects any caller that runs `execute` more than once
+  per process" is an inference from one measurement, not an established fact. Diagnose before
+  optimizing: a cache that misses when it should hit is a correctness bug wearing a performance
+  costume. If it is fixed, the contract also asks whether watch's re-exec workaround comes out.
 
 - **Watch's own costs are measured and small.** The poll walk is 34 ms and per-generation fixed cost is
   ~400 ms (`workspace_load` 301–344 ms + `discovery` + `cache_epoch`), independent of file count;
