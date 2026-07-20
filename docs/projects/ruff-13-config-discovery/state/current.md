@@ -1,6 +1,6 @@
 ---
 kind: state
-first_unresolved: 03-acceptance
+first_unresolved: none
 ---
 
 # Current state
@@ -73,6 +73,28 @@ lifetime, with per-file configuration deferred to `ruff-16-watch-incremental`.
   conclusion survives, the cited mechanism does not. Rewritten by `RCD-IMPL` in the same commit that
   promotes `line-width`, since that promotion is what invalidates the docstring's argument.
 
+**RCD-FINAL is verified** (`results/03-acceptance.md`). `tests/discovery/run.sh` is the owning
+acceptance suite: 30 assertions over synthetic Lake projects covering nested workspaces, `extend`
+composition and per-setting provenance, cycles, the symlink matrix, all four ignore sources, explicit
+paths with `force-exclude`, migration warnings, deterministic introspection, and discovery timing at
+1,200 files.
+
+It found a defect RCD-IMPL shipped: **the walk followed directory symlinks.** It presented as right
+answers at enormous cost, because every duplicate realpaths back onto a file already found and is
+collapsed by `Project.deduplicate` — measured at **68,420 ms** of discovery on a 1,200-file tree with
+one loop in it, against **11 ms** after the fix. The walk now classifies entries with
+`symlinkMetadata`, which does not follow links. A symlinked source whose target leaves the project is
+dropped by discovery (gate 1, like `.lake`); one inside the tree resolves to its target and is reported
+once, not twice. A claim in `results/02-implementation.md` that reasoned from this behavior's *output*
+to a mechanism it had not observed is corrected inline there.
+
+Discovery is now timed as its own phase (`phase.discovery_ms`) in both `execute` and `describeConfig`.
+Timing is taken through `config show`, which runs discovery and nothing else: a `check` over the same
+tree takes ~7 minutes, of which 13 ms is the walk — the rest is the cold per-file pipeline, a workload
+`CLAUDE.md` names separately and this stack does not own. That ~7 minutes for 1,000 trivial files is
+recorded as an observation with a number attached, undiagnosed and unfixed, and is the most concrete
+lead this stack leaves behind.
+
 Prerequisite stacks `ruff-04-formatter-product`, `ruff-11d-format-in-place`, and
 `ruff-12-rule-lifecycle` are verified; their live code was re-read for this spec (`Config.lean`,
 `Project.lean`, `Cache.lean`, `Application.lean`, `Cli.lean`, `Rules.lean`, `LeanFmtTest.lean`). If
@@ -83,14 +105,14 @@ around it. Full mathlib is not development evidence.
 | --- | --- | --- | --- |
 | 01-semantics | RCD-SPEC | verified | — |
 | 02-implementation | RCD-IMPL | verified | RCD-SPEC |
-| 03-acceptance | RCD-FINAL | planned | RCD-IMPL |
+| 03-acceptance | RCD-FINAL | verified | RCD-IMPL |
 
 ## Blockers and prerequisites
 
-- No blocker recorded. `RCD-FINAL` audits `notes/01-discovery.md` §14.1 against live behavior; open
-  questions are in §15. Two measurements it owns and RCD-IMPL did not make: discovery timing on a large
-  tree, and the fuller symlink matrix (symlinked source files, a symlinked config, a target outside the
-  root). A directory symlink loop is already measured as terminating and contributing no paths.
+- No blocker recorded. The stack is complete. Uncovered cases named in `results/03-acceptance.md`: a
+  symlinked *config* file (the realpath cycle mechanism exists, the fixture does not), and
+  case-insensitive filesystems. `notes/01-discovery.md` §15's open questions remain open; none blocked
+  this stack.
 - Full mathlib is not development evidence; follow this roadmap's evidence policy.
 
 ## Verification convention

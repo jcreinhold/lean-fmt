@@ -142,4 +142,11 @@ config, no sections, no hierarchy, and a `text` selector retired in `ruff-11c`. 
   exactly `a/A.lean` and `lakefile.lean`, so a symlink loop neither hangs nor duplicates. What is *not*
   yet measured is symlinked source files, a symlinked config file, and a symlink whose target lies
   outside the project root — RCD-FINAL owns that matrix.
+
+  > **Superseded by RCD-FINAL.** The observation above was correct and the inference from it was wrong.
+  > The walk *did* descend into the loop; the duplicates were invisible only because they realpath back
+  > onto files already found and were collapsed downstream. `results/03-acceptance.md` measures the
+  > actual cost — 68,420 ms on a 1,200-file tree with one loop in it — and fixes the walk. A result that
+  > reasons from an output to a mechanism it did not observe is exactly the kind of claim this note
+  > should not have made.
 - `notes` §15's open questions are untouched and remain open.

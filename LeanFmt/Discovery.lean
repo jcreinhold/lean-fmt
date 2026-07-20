@@ -312,14 +312,31 @@ private partial def walkDirectory (root : FilePath) (explicit? : Option Formatte
   let mut subdirectories : Array (FilePath × String) := #[]
   for entry in entries do
     let childRelative := if relative.isEmpty then entry.fileName else relative ++ "/" ++ entry.fileName
-    if ← entry.path.isDir then
+    -- `isDir` follows symlinks; this does not. A symlinked directory is classified by the link itself,
+    -- so the walk never descends through one. That is git's own work-tree rule, and it is what makes
+    -- the walk finite: `dir/loop -> ..` otherwise recurses until the operating system refuses the path,
+    -- and the redundant results are invisible afterwards because they realpath back onto files already
+    -- found. Measured before the fix: 40 ms of discovery on a three-file project
+    -- (`ruff-13` `results/03-acceptance.md`).
+    let linkType := (← entry.path.symlinkMetadata).type
+    if linkType == .dir then
       -- Gate 1 floor: `.lake` is never descended into and never selected, by any path form.
       if entry.fileName == ".lake" || entry.fileName == ".git" then continue
       if current.respectGitignore && ignored layers childRelative true then continue
       if current.excludePatterns.any (·.matches childRelative) then continue
       subdirectories := subdirectories.push (entry.path, childRelative)
+    else if linkType == .symlink && (← entry.path.isDir) then
+      continue
     else if isLeanSource entry.path then
       if current.respectGitignore && ignored layers childRelative false then continue
+      -- A symlinked source whose target leaves the project is gate 1 as much as a `.lake` path is:
+      -- discovery must not hand the writer a file outside the tree it was pointed at. An *explicitly*
+      -- named out-of-root path still errors in `Project.snapshotTarget` — the user named that one.
+      if linkType == .symlink then
+        let resolved ← IO.FS.realPath entry.path
+        unless resolved == root || resolved.toString.startsWith
+            (root.toString ++ System.FilePath.pathSeparator.toString) do
+          continue
       accumulated := { accumulated with sources := accumulated.sources.push childRelative }
   for (path, childRelative) in subdirectories do
     accumulated ← walkDirectory root explicit? path childRelative current layers accumulated

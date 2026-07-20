@@ -1037,7 +1037,12 @@ def execute (request : RunRequest) : IO RunReport := do
     select := request.select, extendSelect := request.extendSelect, ignore := request.ignore,
     fixable := request.fixable, unfixable := request.unfixable,
     extendFixable := request.extendFixable, preview := request.preview }
+  -- Discovery is timed separately from the workspace load and the selection snapshot because it is
+  -- the one phase this feature added to every run's critical path: a single tree walk. Folding it into
+  -- an existing phase would hide exactly the cost `ruff-13` RCD-FINAL is obliged to measure.
+  let discoveryStarted ← IO.monoNanosNow
   let discovery ← Discovery.run root configPath?
+  recordDuration "discovery" ((← IO.monoNanosNow) - discoveryStarted)
   -- The fallback plan is resolved first and unconditionally, so an invalid CLI selector is still a
   -- hard error on a run that selects no files at all — the behavior before configuration became
   -- per-file. It is also the strategy plan's seed.
@@ -1375,7 +1380,12 @@ def describeConfig (requestedRoot : FilePath) (configPath? : Option FilePath)
     throw <| IO.userError s!"selected file does not exist: {argument}"
   let absolute ← IO.FS.realPath (System.FilePath.mk argument)
   let relative := (Lake.relPathFrom root absolute).toString
+  -- Timed here as well as in `execute`, and for the same reason: this is the one entry point that runs
+  -- discovery and nothing else, so it is how the walk's cost is measured without the per-file pipeline
+  -- on top of it (`ruff-13` `results/03-acceptance.md`).
+  let discoveryStarted ← IO.monoNanosNow
   let discovery ← Discovery.run root configPath?
+  recordDuration "discovery" ((← IO.monoNanosNow) - discoveryStarted)
   let (key, config) := discovery.governing relative
   let outsideRoot := absolute != root && !absolute.toString.startsWith
     (root.toString ++ System.FilePath.pathSeparator.toString)

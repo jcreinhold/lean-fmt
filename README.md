@@ -66,6 +66,10 @@ Selection runs as an ordered set of gates — `.lake` first, then git ignore sou
 named path lifts it. Ignore sources apply in precedence order (global git ignore, `.git/info/exclude`,
 `.gitignore` outer to inner, `.ignore`) and are read directly rather than by invoking `git`.
 
+Directory symlinks are not followed, so a link that points at its own ancestor cannot make the walk
+loop. A symlinked source inside the project resolves to its target and is reported once under the
+target's path; one whose target lies outside the project is not discovered at all.
+
 Explicit positional files bypass the ignore and `include`/`exclude` gates — you named the file — unless
 `force-exclude = true`, which is precisely the setting that makes exclusion apply to them too. Rule
 selection applies either way. Repeatable CLI `--select` replaces configured selection when present; CLI
