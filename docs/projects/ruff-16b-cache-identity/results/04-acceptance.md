@@ -251,8 +251,14 @@ lake exe lean-fmt-tests                       lean-fmt module-artifact tests pas
 tests/{compiler,check,suppression,lossless,modes,scale,service,boundary,syntax,discovery,
        stream,reporting,watch,cache}/run.sh   all PASS
 git diff --check                              clean
-check_stack.py / write_next.py --check        <!--CHECKS-->
+check_stack.py                                OK: 4 prompt(s), no errors
+write_next.py --check                         OK: matches first_unresolved='none'
 ```
+
+`check_stack.py` reports nine warnings, all of the form "state/next.md missing heading". They are the
+generator's own output: with every prompt verified, `write_next.py` writes a four-line "no unresolved
+prompt" file rather than a packet, and the checker still looks for packet headings. Recorded rather
+than suppressed.
 
 ## 7. Remaining uncertainty
 
