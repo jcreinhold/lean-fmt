@@ -146,8 +146,11 @@ and the frozen representative mathlib sample; do not run complete mathlib in thi
 
 ## Blueprint
 
-This is formatter repository maintenance and introduces no mathematical theorem claim. Therefore this
-roadmap sets `blueprint_tracked: true`.
+This is formatter repository maintenance. Unlike every prior `ruff-*` stack it *does* carry theorem
+claims — `RCI-MODEL` proves a soundness/completeness pair for the currency decision — but
+`blueprint_tracked` records membership in a blueprint node graph, not the presence of theorems, and
+`lean-fmt` has no blueprint document. Therefore this roadmap sets `blueprint_tracked: false`, matching
+the frontmatter and the reasoning in `state/current.md`.
 
 ## Stop rules
 
