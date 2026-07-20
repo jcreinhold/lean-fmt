@@ -38,9 +38,11 @@ lean_lib LeanFmtApplication where
     Glob.one `LeanFmt.Config,
     Glob.one `LeanFmt.Discovery,
     Glob.one `LeanFmt.Edit,
+    Glob.one `LeanFmt.GitSelection,
     Glob.one `LeanFmt.Project,
     Glob.one `LeanFmt.Semantic,
     Glob.one `LeanFmt.Service,
+    Glob.one `LeanFmt.Watch,
     Glob.one `LeanFmt.Application,
     Glob.one `LeanFmt.Cli
   ]

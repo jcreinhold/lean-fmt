@@ -189,7 +189,108 @@ if [[ "$diff_lines" -lt 10 ]]; then
   fail "git diff outside a repository no longer dumps usage ($diff_lines lines); revisit RWI-SPEC §9.7"
 fi
 
+# ---------------------------------------------------------------------------
+# The CLI surface RWI-IMPL shipped.
+#
+# These run against the real binary. They are all *rejections* and *error paths*, which are checked
+# before any project load, so none of them needs a Lake project or a warm cache — they stay fast. The
+# watch loop's own behavior (generations, coalescing, invalidation) is exercised by RWI-FINAL, which
+# owns the event-storm work.
+# ---------------------------------------------------------------------------
 cd "$repo_root"
+LEAN_NUM_THREADS=1 lake build lean-fmt >/dev/null
+application=$(lake -q query lean-fmt --text)
+
+expect_rejection() {
+  local what=$1 expected_fragment=$2
+  shift 2
+  set +e
+  local output
+  output=$("$application" "$@" 2>&1 >/dev/null)
+  local code=$?
+  set -e
+  if [[ $code -ne 2 ]]; then
+    fail "$what: expected exit 2, got $code (output: $output)"
+  fi
+  if [[ "$output" != *"$expected_fragment"* ]]; then
+    printf 'tests/watch: %s\n  expected to mention: %s\n  actual: %s\n' \
+      "$what" "$expected_fragment" "$output" >&2
+    exit 1
+  fi
+}
+
+# §10 A writing mode under watch publishes source, which changes the mtimes the poll observes, which
+# triggers the next generation. Self-sustaining by construction, so both writers are refused.
+expect_rejection "fix --watch"    "not available for fix"    fix --watch
+expect_rejection "format --watch" "not available for format" format --watch
+
+# §7 A stream of documents is not a document, so json/sarif/junit need a destination to replace.
+expect_rejection "sarif on stdout under watch" "requires --output-file" \
+  check --watch --output-format sarif
+expect_rejection "junit on stdout under watch" "requires --output-file" \
+  check --watch --output-format junit
+expect_rejection "json on stdout under watch" "requires --output-file" \
+  format --check --watch --output-format json
+
+# §2 Watch observes disk; a buffer on stdin has no mtime to poll.
+expect_rejection "watch with stdin target" "stdin target" \
+  check --watch - --stdin-filename x.lean
+
+# A tunable that only means something under --watch is refused elsewhere, rather than silently
+# ignored -- the ruff-14/ruff-15 precedent for a flag a mode cannot honor.
+expect_rejection "poll interval without watch" "valid only with --watch" check --poll-interval 50
+
+# §9 Naming files and asking git to name them are two answers to one question.
+expect_rejection "changed plus explicit files" "do not also name them" \
+  check --changed LeanFmt/Doc.lean
+expect_rejection "changed-since without a revision" "expects a revision" check --changed-since
+
+# §9.7 An unknown revision names what the caller typed, distinctly from "not a repository".
+expect_rejection "unknown revision" "unknown revision: definitely-not-a-ref" \
+  check --changed-since definitely-not-a-ref
+
+# §9.7 Outside a repository, the diagnostic is the one clean rev-parse line -- not git diff's usage
+# dump, and not a Lean exception.
+outside_repo="$work/outside-repo"
+mkdir -p "$outside_repo"
+set +e
+outside_output=$(cd "$outside_repo" && "$application" check --changed --root . 2>&1 >/dev/null)
+outside_code=$?
+set -e
+expect_eq "changed outside a repository exits 2" "2" "$outside_code"
+if [[ "$outside_output" != *"requires a git repository"* ]]; then
+  fail "expected a git-repository diagnostic outside a repository, got: $outside_output"
+fi
+if [[ "$outside_output" == *"--no-index"* ]]; then
+  fail "the non-repository diagnostic leaked git diff's usage text; §9.7 probes with rev-parse"
+fi
+
+# §9.6 A selection of zero files is a success with an explicit notice -- never a silent clean report,
+# and never the whole project. An empty file list means "everything" to `execute`, so this is the
+# assertion that stands between "nothing changed" and "reformat the entire tree".
+set +e
+staged_output=$("$application" check --staged --root . 2>&1 >/dev/null)
+staged_code=$?
+set -e
+expect_eq "an empty staged selection succeeds" "0" "$staged_code"
+if [[ "$staged_output" != *"no changed Lean sources"* ]]; then
+  fail "an empty --staged selection did not say so explicitly: $staged_output"
+fi
+
+# §9.6 A non-empty selection discloses that it covers a subset.
+printf '\n' >>tests/check/Clean.lean
+restore_clean() { cd "$repo_root" && git checkout -- tests/check/Clean.lean 2>/dev/null || true; }
+trap 'rm -rf "$work"; restore_clean' EXIT
+set +e
+changed_output=$("$application" check --changed --root . 2>&1 >/dev/null)
+set -e
+if [[ "$changed_output" != *"changed-file selection: worktree vs HEAD"* ]]; then
+  fail "a --changed run did not report its comparison: $changed_output"
+fi
+if [[ "$changed_output" != *"not the whole project"* ]]; then
+  fail "a --changed run did not disclose that it covers a subset: $changed_output"
+fi
+restore_clean
 
 # §9.7's other half — that a missing binary surfaces as `IO.Process.output` returning exit 255 rather
 # than throwing — is deliberately **not** asserted here. It is a fact about Lean's spawn path, and the

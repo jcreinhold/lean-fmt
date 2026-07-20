@@ -1,9 +1,9 @@
 # Next Proof Packet
 
 - Stack: ruff-16-watch-incremental
-- First unresolved: 02-implementation
-- Claim ID: RWI-IMPL
-- Prompt: 02-implementation
+- First unresolved: 03-acceptance
+- Claim ID: RWI-FINAL
+- Prompt: 03-acceptance
 - Module: (docs only)
 - Target file: (docs only)
 
@@ -17,7 +17,7 @@ Read this file, the target prompt, target files, listed source/template line ran
 
 ## Proof Task
 
-- Deliver **RWI-IMPL**: Add private filesystem and Git selection adapters, bounded coalescing, generation reporting, graceful shutdown, and focused test hooks while preserving the single semantic engine.
+- Deliver **RWI-FINAL**: Test rapid edits, config/lakefile changes, rename/delete, branch/index/worktree states, signals, analysis failures, stale generations, memory retention, and deterministic final output.
 - Read `roadmap.md`, its prerequisite stack results, `AGENTS.md`, the current implementation and tests, and the relevant Lean compiler/Lake sources before changing an interface. Write interface comments and characterization tests before implementation where the behavior is not already frozen.
 
 ## Reuse
@@ -30,6 +30,5 @@ Inspect the live goal, search relevant declarations, test plausible proof steps,
 
 ## Stop Rules
 
-- No unbounded event queue or concurrent mutation of one Lean session.
-- Do not add public job controls.
+- No full mathlib run; use synthetic event storms and frozen sample.
 - Stop rather than weakening exact semantics, write safety, or the resource envelope.

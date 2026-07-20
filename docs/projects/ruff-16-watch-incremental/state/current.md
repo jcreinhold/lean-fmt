@@ -1,6 +1,6 @@
 ---
 kind: state
-first_unresolved: 02-implementation
+first_unresolved: 03-acceptance
 ---
 
 # Current state
@@ -23,8 +23,38 @@ documentation is one characterization suite, `tests/watch/run.sh`, registered in
 | Prompt | Claim | Status | Depends on |
 | --- | --- | --- | --- |
 | 01-contract | RWI-SPEC | verified | — |
-| 02-implementation | RWI-IMPL | planned | RWI-SPEC |
+| 02-implementation | RWI-IMPL | verified | RWI-SPEC |
 | 03-acceptance | RWI-FINAL | planned | RWI-IMPL |
+
+**RWI-IMPL is verified** (`results/02-implementation.md`). `LeanFmt/Watch.lean` (private poll observer)
+and `LeanFmt/GitSelection.lean` (private `-z` changed-file adapter) ship, both importing only
+`LeanFmt.Discovery` and both producing observations rather than findings. `LeanFmt/Cli.lean` gained
+`--watch`, `--poll-interval`, `--changed`, `--changed-since`, `--staged`, their rejections, and the
+provenance notices. Verified by hand on a two-module fixture: one generation per edit, **10 rapid
+edits coalesced into exactly one generation**, config creation / `lean-toolchain` / source creation /
+source deletion each firing, an unrelated `.txt` correctly not firing, and `SIGTERM` exiting 143 with
+no torn output.
+
+`RWI-IMPL` amended the freeze in three places, each marked in `notes/01-watch-generations.md`:
+
+- **`--changed BASE` became `--changed-since REV`** (§9.1). An optional-argument flag cannot be told
+  from a file target; `check --changed main` is ambiguous and guessing formats the wrong set.
+- **Provenance goes to stderr, not into `RunReport`** (§9.6). `RunReport` is `ruff-15`'s frozen JSON
+  compatibility surface, compared byte-for-byte by `tests/check/run.sh`; a new field would break a
+  cross-stack contract to carry presentation. Every `--changed` run still states its comparison,
+  resolved base, withheld paths, and that it covered a subset.
+- **Each generation is a fresh child process, and nothing is retained** (§4, §6) — settled by
+  measurement, not preference. `execute` **does not reuse the result cache when called twice in one
+  process**: generation 2 in-process took ~70 s (the cold price) where a separate process handling the
+  identical edit took 0.52 s, a 135× difference. Re-exec is the "no retention" option §6 already
+  permitted, and it keeps watch inside the observer layer rather than reworking cache lifecycle in
+  `LeanFmt.Application`.
+
+**A defect was found and deliberately not fixed.** The in-process cache limitation above affects any
+future caller that runs `execute` more than once per process, not just watch. Watch routes around it;
+nothing fixes it. Root-causing it means going into `Cache`/`Application`, below this stack's layer, and
+the roadmap forbids building a second execution path to compensate. `RWI-FINAL` should decide whether
+it warrants a defect report of its own.
 
 Key frozen decisions:
 
@@ -61,21 +91,23 @@ Key frozen decisions:
   construction.
 - **Git selection uses `-z` always.** Default output C-quotes non-ASCII and `core.quotePath=false`
   still quotes an embedded double quote, so only `-z` is byte-exact; its rename records carry three
-  NUL-terminated fields against two for every other status. `--changed BASE` uses **three-dot**
+  NUL-terminated fields against two for every other status. `--changed-since REV` uses **three-dot**
   merge-base (measured: two-dot reported ten paths including a deletion the branch never made, against
   three-dot's two). Untracked files are unioned in from `ls-files --others --exclude-standard`,
   because `git diff` never reports them. Deletes and unmerged paths drop; renames select the new path;
   out-of-root paths drop and are reported.
-- **A `--changed` run reports that it is partial** — selection provenance in the report, dropped paths
-  surfaced, and a zero-selection run is an explicit notice rather than a silent clean report.
+- **A `--changed` run reports that it is partial** — comparison, resolved base, and every withheld
+  path announced on stderr (not in `RunReport`, per the amendment above), and a zero-selection run is
+  an explicit notice that never reaches `execute`: an empty file list means "the whole project" there,
+  so passing one through would format everything.
 - **Git absence and non-repositories are request errors, exit 2.** Probe with
   `git rev-parse --show-toplevel` (exit 128, one clean line), never `git diff` (exit 129 plus a
   ~90-line usage dump). A missing binary must be detected from `IO.Process.output`'s `exitCode = 255`
   — it does **not** throw.
-- **Workspace retention across generations is permitted, not mandated.** The ~590 ms → ~250 ms gain is
-  projected, not measured. If `RWI-IMPL` retains, `notes` §6's invalidation table (config files,
-  `lakefile.*`, `lake-manifest.json`, `lean-toolchain`, the executable) is mandatory and `RWI-FINAL`
-  must measure whether it paid.
+- **Nothing is retained: each generation is a fresh child process** (resolved by `RWI-IMPL`, see the
+  amendment above). `notes` §6's invalidation set — config files, `lakefile.*`, `lake-manifest.json`,
+  `lean-toolchain` — is still what the observer watches, since a change to any of them must start a
+  generation whether or not a workspace is held.
 
 ## Inherited from `ruff-15-reporting` (verified, now resolved)
 

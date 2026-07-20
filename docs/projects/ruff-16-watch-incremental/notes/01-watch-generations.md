@@ -146,6 +146,24 @@ or retain; if it retains, the invalidation table is mandatory and `RWI-FINAL` mu
 retention paid. Retention within a sequential poll loop is not concurrency and does not touch the
 "no concurrent mutation of one Lean session" stop rule.
 
+> **Resolved by `RWI-IMPL`: nothing is retained, and each generation is a fresh child process.** The
+> choice this section left open was settled by measurement rather than preference. A second `execute`
+> **in the same process does not reuse the result cache**: generation 1 ran warm and generation 2 took
+> ~70 s — the full cold-cache price — while a *separate* process handling the identical edit took
+> 0.52 s. That is a 135× difference, and it makes in-process retention not merely unprofitable but
+> unusable.
+>
+> So a generation is a child `lean-fmt` invocation with the watch flags stripped. This keeps watch
+> inside the observer layer: making the in-process path re-entrant would mean reworking cache
+> lifecycle in `LeanFmt.Application`, a lower layer this stack does not own, to reach a path that
+> already works correctly across processes. The ~400 ms fixed cost per generation is exactly the price
+> §4 already accounted for.
+>
+> The child inherits stdout and stderr, so §7's framing is unchanged; it also means a generation that
+> dies cannot take the session with it, which is the failure-recovery property the roadmap asks for.
+> `RWI-FINAL` should measure whether the in-process cache limitation is worth reporting upstream as a
+> defect in its own right.
+
 ## 7. Output framing is a per-format decision, and document formats do not concatenate
 
 `ruff-15` shipped six `--output-format` values that do not frame alike, and the inherited state note
@@ -201,8 +219,14 @@ to report on — which is a deliberate difference from batch `check` and must be
 | Spelling | Question | Command |
 | --- | --- | --- |
 | `--changed` | what differs from `HEAD` in my worktree | `git diff --name-status -z HEAD` **plus** untracked (§9.4) |
-| `--changed BASE` | what my branch changed since it left `BASE` | `git diff --name-status -z BASE...HEAD` (three-dot) |
+| `--changed-since REV` | what my branch changed since it left `REV` | `git diff --name-status -z REV...HEAD` (three-dot) |
 | `--staged` | what I am about to commit | `git diff --cached --name-status -z HEAD` |
+
+> **Amended by `RWI-IMPL`.** This section originally spelled the second form `--changed BASE`, with an
+> optional argument. That cannot be parsed unambiguously beside a file target: `check --changed main`
+> could mean "compare against `main`" or "compare the worktree, and check the file `main`", and
+> resolving it by guessing is how a caller silently formats a set they did not intend. The three
+> comparisons are three separate flags. `results/02-implementation.md` records the change.
 
 Three-dot for the `BASE` form is measured, not stylistic (`evidence` §8): on a fixture where `main`
 and `feature` diverged, two-dot `main..feature` reported ten paths — including `MainOnly.lean` as a
@@ -260,9 +284,16 @@ of what a path *means* stays where it already lives.
 
 The stop rule is explicit. A `--changed` report is a report about a **selected subset**, and:
 
-- The report carries its selection provenance — the comparison mode and the resolved base commit —
-  and the renderers surface it. A `text` run prints the mode and the file count; the document formats
-  carry it as a field rather than leaving a machine consumer to infer completeness.
+- The run announces its selection provenance — the comparison mode, the resolved base commit, and the
+  count — on **stderr**, for every format, as a `lean-fmt:` notice beside the ones configuration
+  already emits.
+
+  > **Amended by `RWI-IMPL`.** This originally said the *report* carries provenance and that "the
+  > document formats carry it as a field". It cannot: `RunReport` is `ruff-15`'s frozen JSON
+  > compatibility surface, compared byte-for-byte against `evidence/01-json-golden-check.json` by
+  > `tests/check/run.sh`. Adding a field would break a frozen cross-stack contract in order to carry
+  > presentation, so provenance goes where the product's other run-level notices already go. The
+  > honesty requirement is unchanged and still met — every `--changed` run says what it covered.
 - Paths dropped for a *reason the caller would want to know* are reported: unmerged files (§9.3), and
   paths that Git named but that fell outside `--root` (§9.5 step 2). Silent dropping is what makes a
   partial run look complete.

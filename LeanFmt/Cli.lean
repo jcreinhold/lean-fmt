@@ -1,6 +1,8 @@
 module
 
+import all LeanFmt.GitSelection
 import all LeanFmt.Service
+import all LeanFmt.Watch
 
 open System
 
@@ -142,6 +144,14 @@ private structure FileCommand where
   range? : Option RangeSpec := none
   /-- Which spelling the caller used, so a diagnostic names the flag they typed. -/
   rangeFlag : String := "--range"
+  /-- `--watch` (`ruff-16` RWI-IMPL, `notes/01-watch-generations.md` §1). -/
+  watch : Bool := false
+  /-- Poll interval for `--watch`, milliseconds (§1). -/
+  pollMillis : Nat := 200
+  /-- Which version-control comparison selects the files, if any (§9.1). -/
+  changed? : Option GitSelection.Comparison := none
+  /-- Which spelling asked for it, so a diagnostic names the flag the caller typed. -/
+  changedFlag : String := "--changed"
 
 private structure RootCommand where
   root : FilePath := "."
@@ -202,6 +212,12 @@ file options:\n\
                        concise/github/sarif/junit are unavailable for `diff`\n\
   --output-file PATH   write the report to PATH atomically instead of stdout\n\
   --statistics         write aggregate statistics to stderr\n\
+  --watch              re-run on every change until interrupted (previews only)\n\
+                       json/sarif/junit require --output-file under --watch\n\
+  --poll-interval MS   how often --watch looks for changes (default: 200)\n\
+  --changed            select only files differing from HEAD, plus untracked\n\
+  --changed-since REV  select only files this branch changed since REV\n\
+  --staged             select only files staged for commit\n\
   --no-cache           neither read nor write result cache entries\n\
   --max-memory GIB     aggregate operating envelope (default: 8)\n\
   --unsafe-fixes       apply/preview unsafe fixes too (default: safe only)\n\
@@ -271,6 +287,28 @@ private def parseFileArgs (mode : RunMode) (args : List String) : Except String 
     | "--preview" :: rest =>
       loop rest { command with run := { command.run with preview := true } }
     | "--statistics" :: rest => loop rest { command with statistics := true }
+    | "--watch" :: rest => loop rest { command with watch := true }
+    | "--poll-interval" :: value :: rest =>
+      match value.toNat? with
+      | some amount =>
+        if amount == 0 then .error "--poll-interval expects a nonzero interval in milliseconds"
+        else loop rest { command with pollMillis := amount }
+      | none => .error "--poll-interval expects a whole number of milliseconds"
+    -- Three separate spellings rather than one `--changed [BASE]` with an optional argument. An
+    -- optional-argument flag cannot be told from a file target — `check --changed main` would be
+    -- ambiguous between "compare against main" and "compare the worktree, and format `main`" — and
+    -- resolving that by guessing is how a caller silently formats the wrong set
+    -- (`results/02-implementation.md`, decisions changed).
+    | "--changed" :: rest =>
+      loop rest { command with changed? := some .worktree, changedFlag := "--changed" }
+    | "--changed-since" :: revision :: rest =>
+      loop rest { command with
+        changed? := some (.base revision), changedFlag := "--changed-since" }
+    | "--staged" :: rest =>
+      loop rest { command with changed? := some .staged, changedFlag := "--staged" }
+    | "--changed-since" :: [] => .error "--changed-since expects a revision"
+    | "--poll-interval" :: [] =>
+      .error "--poll-interval expects a whole number of milliseconds"
     | "--check-elab" :: rest =>
       if mode == .fix then
         loop rest { command with run := { command.run with validationLevel := .elaboration } }
@@ -334,6 +372,54 @@ private def validateStdin (mode : RunMode) (command : FileCommand) : Except Stri
   else if command.range?.isSome then
     .error s!"{command.rangeFlag} is valid only with the - stdin target"
   else .ok ()
+
+/-- Whether this format is a self-contained document rather than a line stream.
+
+`json`, `sarif` and `junit` each emit **one complete document per run** — a SARIF log has a single
+`runs` array and a JUnit file a single root element — so a stream of generations concatenated onto
+stdout is something no parser accepts (`notes/01-watch-generations.md` §7). -/
+private def ReportFormat.documentShaped : ReportFormat → Bool
+  | .json | .sarif | .junit => true
+  | .text | .concise | .github => false
+
+/-- The watch and changed-file forms' own consistency, checked once after parsing.
+
+Each rejection follows the `ruff-14`/`ruff-15` precedent of refusing a flag a mode cannot honor rather
+than emitting well-formed misleading output. -/
+private def validateWatch (mode : RunMode) (command : FileCommand) : Except String Unit := do
+  if command.watch then
+    -- §10. A writing mode under watch publishes source, which changes the very `mtime`/`byteSize`
+    -- tuples the poll observes, which triggers the next generation, which publishes again. The loop
+    -- is self-sustaining by construction — not a race, a certainty.
+    if mode == .fix then
+      .error "--watch is not available for fix; watch runs previews, and a writing mode retriggers itself"
+    else if command.run.writesFormat then
+      .error "--watch is not available for format; pass --check to preview, \
+        or a writing mode retriggers itself"
+    else if command.stdin then
+      .error "--watch is not available for the - stdin target; watch observes files on disk"
+    -- §7. One complete document per generation, replacing the previous, needs a destination that can
+    -- be replaced.
+    else if command.outputFormat.documentShaped && command.outputFile?.isNone then
+      .error s!"--output-format {command.outputFormat} requires --output-file with --watch; \
+        a stream of {command.outputFormat} documents is not a {command.outputFormat} document"
+    else .ok ()
+  else if command.pollMillis != 200 then
+    .error "--poll-interval is valid only with --watch"
+  else .ok ()
+
+private def validateChanged (command : FileCommand) : Except String Unit := do
+  match command.changed? with
+  | none => .ok ()
+  | some _ =>
+    if command.stdin then
+      .error s!"{command.changedFlag} is not available for the - stdin target; \
+        version control selects files on disk"
+    else if !command.run.files.isEmpty then
+      -- Naming files and asking git to name them are two answers to one question, and silently
+      -- letting one win is how a caller formats a set they did not intend.
+      .error s!"{command.changedFlag} selects the files; do not also name them"
+    else .ok ()
 
 private def parseRootArgs (args : List String) : Except String RootCommand :=
   let rec loop (remaining : List String) (command : RootCommand) :=
@@ -1118,11 +1204,74 @@ private unsafe def runStreamCommand (mode : RunMode) (command : FileCommand)
     (← rootUri command.run.root) report
   return streamExitCode (mode == .fix || command.run.writesFormat) report
 
+/-- Run one request and emit one report. Shared by the single-shot and watch paths so that a
+generation is *the same thing* a plain run is — there is no second execution or rendering path
+(`notes/01-watch-generations.md` §3, §4). -/
+private unsafe def runOneGeneration (command : FileCommand) : IO UInt32 := do
+  let outcome ← execute command.run
+  emitReport command.outputFile?
+    (formatReport command.outputFormat outcome.positions (← rootUri command.run.root)
+      outcome.report)
+  if command.statistics then renderStatistics outcome.report
+  return reportExitCode (command.run.mode == .fix || command.run.writesFormat) outcome.report
+
+/-- Resolve a `--changed` selection into the request's file list.
+
+Returns `none` when version control selected nothing, which is a **success that must not run**: an
+empty `files` array means "the whole project" to `execute`, so passing an empty selection through
+would format everything — the exact inversion of what the caller asked for. §9.6 requires this be an
+explicit notice rather than a silent clean report, and the two facts ("nothing changed" and "the
+project is clean") are different things a CI log must be able to tell apart. -/
+private def resolveChanged (command : FileCommand) (comparison : GitSelection.Comparison) :
+    IO (Except String (Option FileCommand)) := do
+  match ← GitSelection.select command.run.root comparison with
+  | .error message => return .error message
+  | .ok selection =>
+    -- Provenance goes to stderr rather than into `RunReport`. `RunReport` is `ruff-15`'s frozen JSON
+    -- compatibility surface, compared byte-for-byte against `01-json-golden-check.json`; adding a
+    -- field would break that contract to carry presentation (`results/02-implementation.md`).
+    IO.eprintln s!"lean-fmt: changed-file selection: {selection.comparison.describe}"
+    if let some resolved := selection.resolvedBase? then
+      IO.eprintln s!"lean-fmt: resolved base: {resolved}"
+    -- Every withheld path git named, because silent dropping is what makes a partial run look
+    -- complete (§9.6).
+    for drop in selection.dropped do
+      IO.eprintln s!"lean-fmt: not selected: {drop.describe}"
+    if selection.paths.isEmpty then
+      IO.eprintln s!"lean-fmt: no changed Lean sources under {command.run.root}"
+      return .ok none
+    IO.eprintln s!"lean-fmt: {selection.paths.size} changed path(s) selected; \
+      this run covers that subset, not the whole project"
+    return .ok (some { command with run := { command.run with files := selection.paths } })
+
+/-- The child argv for one watch generation: the caller's own arguments with the watch flags removed.
+
+Rebuilt from the raw argument list rather than re-rendered from the parsed `FileCommand`, so a child
+runs *exactly* what the user asked for. Re-rendering would mean maintaining a second, silently
+diverging spelling of every flag — and a divergence there means the watched run and the plain run
+disagree about what they analyze. -/
+private def generationArgs (mode : RunMode) (args : List String) : Array String := Id.run do
+  let mut out : Array String := #[mode.toString]
+  let mut remaining := args
+  while true do
+    match remaining with
+    | [] => break
+    | "--watch" :: rest => remaining := rest
+    | "--poll-interval" :: _ :: rest => remaining := rest
+    | argument :: rest => out := out.push argument; remaining := rest
+  return out
+
 private unsafe def runFileCommand (mode : RunMode) (args : List String) : IO UInt32 := do
   let command ← match parseFileArgs mode args with
     | .ok command => pure command
     | .error message => IO.eprintln message; return 2
   if let .error message := validateStdin mode command then
+    IO.eprintln message
+    return 2
+  if let .error message := validateWatch mode command then
+    IO.eprintln message
+    return 2
+  if let .error message := validateChanged command then
     IO.eprintln message
     return 2
   if let some path := command.outputFile? then
@@ -1136,12 +1285,55 @@ private unsafe def runFileCommand (mode : RunMode) (args : List String) : IO UIn
       IO.eprintln s!"lean-fmt: {error}"
       return 2
   try
-    let outcome ← execute command.run
-    emitReport command.outputFile?
-      (formatReport command.outputFormat outcome.positions (← rootUri command.run.root)
-        outcome.report)
-    if command.statistics then renderStatistics outcome.report
-    return reportExitCode (mode == .fix || command.run.writesFormat) outcome.report
+    if command.watch then
+      -- Each generation is a complete `execute` over the whole project, not a changed-file subset:
+      -- fixed per-run cost (~400 ms of workspace load, discovery and cache epoch) is independent of
+      -- file count, and 1 file to 110 files adds only ~70 ms warm. Selecting a subset would save ~12%
+      -- and forfeit the completeness guarantee (`notes` §4, `evidence` §3). The aggregate result cache
+      -- already supplies the incrementality, per file and keyed on content.
+      -- **Each generation is a fresh child process**, not a second in-process `execute`.
+      --
+      -- Measured, and it reversed the plan: a second `execute` in one process does not reuse the
+      -- result cache. Generation 1 ran warm and generation 2 took ~70 s — the cold-cache price —
+      -- while a *separate* process handling the identical edit took 0.52 s, a 135× difference
+      -- (`results/02-implementation.md`, decisions changed). The cross-process cache path is the one
+      -- that works, so watch uses it rather than reaching into `LeanFmt.Application` to make the
+      -- in-process path re-entrant, which is a lower layer this stack does not own.
+      --
+      -- Re-execing is exactly "no workspace retention", which `notes` §6 already permitted; the
+      -- ~400 ms fixed cost per generation is the price the freeze accounted for. The child inherits
+      -- this process's stdout and stderr, so framing (§7) is unchanged, and a generation that dies
+      -- cannot take the session with it.
+      let self ← IO.appPath
+      Watch.run { root := command.run.root, configPath? := command.run.configPath?,
+                  pollMillis := command.pollMillis } fun counter => do
+        -- The banner goes to stderr so a line-oriented consumer's stdout stays uncontaminated, and a
+        -- document-format consumer is reading `--output-file` anyway (§7).
+        IO.eprintln s!"lean-fmt: generation {counter}"
+        try
+          let child ← IO.Process.spawn {
+            cmd := self.toString
+            args := generationArgs mode args
+          }
+          let code ← child.wait
+          if code != 0 && code != 1 then
+            IO.eprintln s!"lean-fmt: generation {counter} exited {code}"
+        catch error =>
+          -- One generation's failure must not end the session: the user's next edit is very often the
+          -- fix. Report it and keep watching (roadmap: "failure recovery").
+          IO.eprintln s!"lean-fmt: generation {counter} failed: {error}"
+      -- `Watch.run` does not return; a signal ends the session. Exit 0 because asking a long-running
+      -- service to stop is not a failure, and because every write is atomic temp-then-rename, an
+      -- abrupt exit cannot leave a torn report (§8).
+      return 0
+    let command ← match command.changed? with
+      | none => pure command
+      | some comparison =>
+        match ← resolveChanged command comparison with
+        | .error message => IO.eprintln s!"lean-fmt: {message}"; return 2
+        | .ok none => return 0
+        | .ok (some resolved) => pure resolved
+    runOneGeneration command
   catch error =>
     IO.eprintln s!"lean-fmt: {error}"
     return 2
