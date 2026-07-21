@@ -47,7 +47,7 @@ Beyond the eight `RPR-SPEC` froze (`notes/01-phase-schema.md` §2), all still sp
 | `phase.closure_resolve_ms` | **sub-phase**: `Project.importClosures?`, the no-build closure fetch | `Cache.lean`, `closureDigests` |
 | `phase.closure_hash_ms` | **sub-phase**: one target's per-member trace reads | `Cache.lean`, `closureDigests` |
 | `phase.workspace_artifacts_ms` | **sub-phase**: the whole-workspace fallback digest, at most once per run | `Cache.lean`, `workspaceArtifactsDigest` |
-| `phase.positions_ms` | `resolvePositions` — the `PositionIndex` **build** | `Application.lean`, `profiledPositions` |
+| `phase.positions_ms` | `resolvePositions` — the `PositionIndex` **build**. Forced with `IO.lazyPure`; see below | `Application.lean`, `profiledPositions` |
 | `phase.render_report_ms` | `formatReport` | `Cli.lean`, `runOneGeneration` |
 
 Sub-phases are excluded from the accounted sum, per `notes/01-phase-schema.md` §5.1.
@@ -128,8 +128,15 @@ line.
 `setup_probe`/`setup_build`, `envelope_decode`, `child_encode`, and the four closure brackets above. All three exist because §4 of the
 baseline note assigned phases to sites and these turned out to be the sites that mattered:
 `setup_probe` is where the duplicate traversal was found, and `envelope_decode` (20–27 ms for 34
-modules) and `child_encode` (0 ms) are how the suspicion that a ~10× projection was expensive to
-serialize was *retired* rather than acted on.
+modules) and `child_encode` are how the suspicion that a ~10× projection was expensive to serialize was
+*retired* rather than acted on.
+
+**`child_encode` was first recorded here as 0 ms, and that was a measurement defect, not a result.**
+A pure value bound inside a `withPhase` block can be floated out of the action's closure by the
+compiler, so the bracket times nothing; see `results/02-optimize.md` for how `phase.positions_ms`
+exposed it. Forced with `IO.lazyPure`, `child_encode` reads **17 ms across 8 files, about 2 ms each**.
+The conclusion is unchanged — 2 ms against 180 ms of elaboration in the same child is not worth acting
+on — but it now rests on a number that was actually measured.
 
 ## 4. What the schema now accounts for
 

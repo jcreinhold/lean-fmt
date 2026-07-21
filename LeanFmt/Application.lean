@@ -1321,7 +1321,16 @@ Lean is strict, so binding the result inside the phase evaluates it inside the p
 relies on the caller forcing it. -/
 private def profiledPositions (snapshots : Array SourceSnapshot) (files : Array FileReport) :
     IO PositionIndex :=
-  withPhase "positions" <| pure (resolvePositions snapshots files)
+  withPhase "positions" do
+    -- `withPhase "positions" <| pure (resolvePositions ..)` is what stood here, and it measured
+    -- nothing: Lean is strict, so the argument to `pure` is evaluated to build the closure *before*
+    -- `withPhase` starts its timer. The phase read 0 ms on every workload including a 4 MB file with
+    -- its only finding at the last byte, which is what exposed it. Under a `do` the index is built
+    -- when the action runs, inside the bracket.
+    -- `IO.lazyPure`, not a `let`: Lean's compiler is free to float a pure computation that does not
+    -- depend on the action's state out of the closure, and a plain `let` here still read 0 ms. A
+    -- thunk is forced when the action runs, which is inside the bracket by construction.
+    IO.lazyPure fun _ => resolvePositions snapshots files
 
 /-- What one run produced: the canonical report, and the line/column resolution presentation needs to
 render it. Two values rather than one enriched report, because `RunReport` is a compatibility surface
@@ -1864,7 +1873,10 @@ private unsafe def runAnalyzeChild (args : List String) : IO UInt32 := do
       (captureSemantic := captureSemantic == "1" || captureSemantic == "2")
       (captureOccurrences := captureSemantic == "2")
   let encoded ← withPhase "child_encode" do
-    let encoded := (Lean.toJson envelope).compress
+    -- `IO.lazyPure` for the reason `profiledPositions` documents: a plain `let` of a pure value can be
+    -- floated out of the action's closure, and then the bracket times nothing. The `utf8ByteSize`
+    -- check below is not sufficient on its own -- it forces the value, but not necessarily *here*.
+    let encoded ← IO.lazyPure fun _ => (Lean.toJson envelope).compress
     -- `utf8ByteSize` is O(1) and forces the encoding inside the phase rather than at the `IO.println`
     -- below, where it would be attributed to nothing. An empty encoding is also not a thing a real
     -- envelope produces, so the check is worth its line independent of the timing.

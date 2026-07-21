@@ -105,10 +105,35 @@ discarded. The first attempt at the split above measured nothing and looked like
 sub-phases are timed with `IO.monoNanosNow` and reported in the `finally` after the streams are
 restored.
 
-**Still open in this prompt.** The adversarial `PositionIndex`-build fixture; a
-`formatter-integrated-built` workload; and the two-session concurrency test, which the work order puts
-after all single-session work. Watch mode needs no separate profiling: a generation runs the same
-`execute` path the batch modes do, and `render_report` already brackets its per-generation rendering.
+**A phase measured nothing, and finding that out corrected two records.**
+`withPhase "positions" <| pure (resolvePositions ..)` evaluates its argument before the bracket is
+entered — Lean is strict — so `phase.positions_ms` read **0 ms on every workload in this stack** while
+timing an already-computed value. A plain `let` inside a `do` does not fix it either; the compiler
+floats a pure computation out of the action's closure. `IO.lazyPure` does. **Every `positions_ms`
+figure recorded before this is void**, and `child_encode` — recorded in `notes/02-instrumentation.md`
+as "0 ms" and used to retire the JSON-serialization suspicion — actually reads 17 ms across 8 files,
+about 2 ms each. That suspicion stays retired; the number it rested on did not.
+
+**`ruff-15`'s handoff is discharged, and its guess was right where my reading of the code was wrong.**
+`experiments/run-positions-bench.sh` generates four shapes into the excluded `tests/reporting/` tree.
+At 4 MB: `early` 4 ms, `late` 30 ms, `many` 43 ms, `oneline` 28 ms — **7.5× between a finding at the
+start and one at the end of the same file**. I had reasoned from `positionsOf` being one linear pass
+that position could not matter; it matters because the pass *stops at the last offset it needs*. The
+`early` row is the floor paid by any file with a finding: `normalize` plus `toUTF8` over the whole
+source. At 16 MB: 12 / 105 / 178 / 212 ms, so `oneline` is 2× `late` there and 1× at smaller sizes —
+one sample, flagged rather than explained.
+
+**Still open in this prompt.** A `formatter-integrated-built` workload; and the two-session
+concurrency test, which the work order puts after all single-session work. Watch mode needs no
+separate profiling: a generation runs the same `execute` path the batch modes do, and `render_report`
+already brackets its per-generation rendering.
+
+**`tests/cache/run.sh` is unverified again, same environmental signature.** Killed by the OS
+(`Killed: 9`, exit 137) at two different lines across four attempts, while another session held a
+3.9 GiB Python process and load average sat at 13. The same `lean-fmt check` on the same fixture
+project passes standalone at **697 MB peak RSS**, which is inside the recorded 441–864 MiB envelope.
+Every other suite that was re-run after this change passed. Not attributable to the change, and not
+re-run clean.
 
 **The unverified check is now verified, and the environmental diagnosis held.** `tests/cache/run.sh`
 had been killed by the OS (`Killed: 9`, exit 137) at three different points across four attempts while

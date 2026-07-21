@@ -243,6 +243,69 @@ went into the buffer and was discarded with it.** The two sub-phases are therefo
 `IO.monoNanosNow` and reported by `recordDuration` in the `finally`, after the streams are restored.
 Worth knowing before someone instruments in there again and reads the silence as zero cost.
 
+## A phase that measured nothing, and what it voided
+
+`ruff-15` handed this stack an unmeasured claim: `report-bench` builds its `PositionIndex` *outside*
+the clock, so index build — the one part of rendering that is O(source bytes) rather than O(findings)
+— had never been measured. `phase.positions_ms` was added for it and read **0 ms on every workload in
+this stack**. That reading was wrong, and the fixture below is what exposed it: a 4 MB file whose only
+finding sits at the last byte still reported 0 ms, which is not a believable number for a full
+normalize, a `toUTF8` copy, and a byte walk.
+
+The site was:
+
+```lean
+withPhase "positions" <| pure (resolvePositions snapshots files)
+```
+
+**Lean is strict, so the argument to `pure` is evaluated to build the closure before `withPhase` is
+ever entered.** The bracket timed an already-computed value. Rewriting it as `withPhase "positions" do
+let index := resolvePositions ..; return index` did *not* fix it — the compiler is free to float a pure
+computation that does not depend on the action's state out of the closure, and it still read 0 ms. Only
+`IO.lazyPure fun _ => ..` forces the work inside the bracket, because a thunk is forced when the action
+runs.
+
+### What this voids, and what it corrects
+
+- **Every `positions_ms` reading in this stack is void.** The real numbers are below.
+- **`child_encode` was under-measured too.** `notes/02-instrumentation.md` §3.6 recorded it as "0 ms"
+  and used that to retire the suspicion that a ~10×-source projection was expensive to serialize. With
+  the same `IO.lazyPure` treatment it reads **17 ms across 8 files, about 2 ms each**. The suspicion is
+  still retired — 2 ms against 180 ms of elaboration in the same child — but the number it was retired
+  against was wrong, and the note now says so.
+- No other phase is affected: every other bracket wraps a genuinely effectful action, which cannot be
+  floated.
+
+## The `PositionIndex` fixture, and `ruff-15`'s guess
+
+`experiments/run-positions-bench.sh` generates four shapes at one size into `tests/reporting/`, which
+`lean-fmt.toml` excludes, so they never enter the lint corpus or the printer's shape evidence. They are
+generated and removed rather than committed. The finding is `FMT003` (forbidden control byte): it fires
+anywhere in the source, needs no frontend, and is report-only.
+
+| shape | 1 MB | 4 MB | 16 MB |
+| --- | ---: | ---: | ---: |
+| `early` — one finding a few bytes in | 0 ms | 4 ms | 12 ms |
+| `late` — one finding a few bytes from the end | 6 ms | 30 ms | 105 ms |
+| `many` — findings spread evenly | 8 ms | 43 ms | 178 ms |
+| `oneline` — whole body on one line, finding at the end | 6 ms | 28 ms | **212 ms** |
+
+**`ruff-15` guessed the adversarial shape correctly and I had reasoned it wrong.** Reading
+`positionsOf` — a single linear pass over *sorted* offsets — I concluded that position could not
+matter and that only size could. The walk does stop at the last offset it needs, which is exactly why
+position matters: a finding at the end costs a full pass and one at the start costs almost none.
+**7.5× between `early` and `late` at the same 4 MB.** The `early` row is the floor that is paid
+regardless — `LosslessSource.normalize` plus `toUTF8` over the whole file, for any file with at least
+one finding.
+
+The half of the guess that does *not* hold at ordinary sizes is the enormous line: at 1 MB and 4 MB
+`oneline` matches `late`, so the column counter costs nothing extra. At 16 MB it is 2× `late`, which is
+one sample at one size and is flagged rather than explained.
+
+This is linear in the size that matters and modest in absolute terms — 105 ms for a 16 MB file is not a
+defect. It is recorded so that a future change that makes it quadratic has a number to be caught
+against, which is what `ruff-15` asked for.
+
 ## Still open under this claim
 
 - Watch and LSP profiling.
