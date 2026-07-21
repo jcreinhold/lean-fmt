@@ -112,6 +112,32 @@ for this stack rather than trivia to rediscover:
   while leaving the class open: any `IO.FS.realPath` or trace-validation failure inside `open?`'s
   catch-all still disables the cache silently. Observability for this belongs to this stack.
 
+## Inherited from `ruff-17-lsp` (verified)
+
+Handed here because this stack's work order opens `LeanFmt/LanguageServer.lean` anyway — RPR-IMPL
+profiles LSP latency, and the completion contract owns the aggregate envelope these sit inside.
+
+- **One unbounded collection survives a session, and this stack owns closing it.** `Session.cancelled`
+  is a `Std.HashSet RequestID` that `serveCancellable` erases from after every request it brackets —
+  which covers every id the server actually serves. A `$/cancelRequest` naming an id the server never
+  sees (a stray, a cancelled notification, a client bug) is recorded and never removed. It is a few
+  dozen bytes per stray message and no mainstream client emits one, so it is not a defect anyone will
+  hit; it is the one entry in `notes/01-protocol.md` §13's bounded-resource list that `ruff-17` left
+  without an actual bound. The hundred-request stability run cannot see it, because that run sends no
+  stray cancellations (`ruff-17-lsp/results/04-acceptance.md`). Close it by bounding or expiring the
+  set, not by asserting clients behave.
+- **Debounce is a default nobody measured.** 150 ms, chosen in `RLP-FEATURES` and never validated
+  against real editing; `tests/lsp/run.sh` drives it at 1 ms and 80 ms only to make timing
+  deterministic. `notes/01-protocol.md` §14 explicitly declines to decide the value and §12 assigns
+  the duplicated-elaboration cost of two servers on one document here. The two are one measurement:
+  what a keystroke costs decides what the quiet interval should be.
+- **A measured floor for that work.** Formatting `LeanFmt/Application.lean` (1,700 lines) as an unsaved
+  buffer costs 3,637 ms end to end, and in-flight cancellation returns in 470 ms with the child killed
+  at `monitorChild`'s 50 ms poll. Session subtree RSS was flat across 100 requests: 682,880 KiB after
+  the first, 690,640 KiB peak, 685,840 KiB after the hundredth (Darwin arm64, `v4.33.0-rc1`, commit
+  `b37846e`). Sampled from `ps` over the server *and its descendants*, because the exact frontend child
+  is the server's child.
+
 ## Blockers and prerequisites
 
 - No blocker is currently recorded beyond the named prerequisite stacks.

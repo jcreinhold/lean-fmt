@@ -159,7 +159,8 @@ at its new size and still agrees exactly (71 = 71).
   bound is asserted in `tests/lsp/run.sh` instead, and separately.
 - **`ContentModified` (-32801) is still unreachable**, for the reason `results/03-features.md` gives:
   no request this server implements carries a client-stated version. Unchanged here.
-- **A cancellation for an id that is never served is never forgotten.** `serveCancellable` erases the
+- **A cancellation for an id that is never served is never forgotten.** *(Owned by
+  `ruff-19-performance`, recorded in its `state/current.md`.)* `serveCancellable` erases the
   id after every request it brackets, which covers every id the server actually sees. A client that
   cancels ids it never sent — or that cancels a notification — leaves an entry in the `cancelled` set
   for the life of the session. It is a few dozen bytes per stray message and no client does it, but it

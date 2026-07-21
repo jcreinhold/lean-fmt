@@ -44,6 +44,9 @@ Match the checks to the change:
 - Before handoff, run `lake build`, `lake exe lean-fmt-tests`, and every suite.
 - `tests/security/bench.sh` measures the linear-time claim. It is a benchmark, not a suite. Run it
   when you touch the source scans, and record the numbers.
+- `tests/watch/run.sh` §9.6 runs `check --staged` against *this* repository, so it fails whenever a
+  `.lean` file is staged. That is a defect in the suite, not in your change; re-run it with a clean
+  index. `ruff-20-acceptance` owns the repair (move the assertion to a fixture repository).
 - `tests/lsp/acceptance.sh` drives the language server with the toolchain's own LSP client
   (`Lean.Data.Lsp.Ipc`) and measures cancellation latency and hundred-request memory stability. It
   costs about 90 s, so it is not in the `tests/*/run.sh` sweep. Run it when you touch

@@ -27,6 +27,16 @@ implementation still matches recorded state.
   aborted every `--changed` run, invisible because this repository ignores `.lake` and carries no
   stray untracked files. It surfaced only against a purpose-built fixture repository. Prefer fixture
   repositories over the project's own tree when auditing selection.
+- **The same lesson, unfixed, is still in `tests/watch/run.sh`, and repairing it is this stack's.**
+  §9.6's "an empty staged selection succeeds" runs `check --staged --root .` after `cd "$repo_root"`
+  (`tests/watch/run.sh:200,272`) — against the real repository — and requires the output to say "no
+  changed Lean sources". Stage any `.lean` file and the selection is no longer empty and the suite
+  fails. The assertion it wants is about *zero selected files*, which a fixture repository can
+  guarantee and the project's own index cannot; the bullet above already says so, and this is the case
+  that did not get moved. It is the one suite in the sweep whose result depends on ambient state, so it
+  is also the one whose failure is most likely to be *waived* rather than read — which RCP-SPEC's
+  "repair root causes rather than waive failures" is exactly about. Reported by `ruff-17-lsp`, which
+  hit it while committing (`ruff-17-lsp/state/current.md`).
 
 ## Blockers and prerequisites
 

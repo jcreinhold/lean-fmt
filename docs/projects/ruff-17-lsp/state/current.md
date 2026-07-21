@@ -40,10 +40,16 @@ thread while the worker is busy, configuration reload, health, and malformed-mes
   because `replaceLspRange` does not clamp, not because of `Lean.Server.InfoUtils`, which
   `LeanFmt/Analysis.lean:6` already imports legitimately.
 - **Two suite couplings a later prompt will meet.** `tests/watch/run.sh` asserts `check --staged`
-  against the *real* repository, so it fails whenever anything is staged; and this repository is the
+  against the *real* repository, so it fails whenever a `.lean` file is staged; and this repository is the
   printer's own corpus, so adding a production module moves every figure
   `experiments/check-quoted-figures.py` gates — the module must be `git add`ed before
   `experiments/run-projection-shape.sh` (which selects with `git ls-files`) can see it.
+- **Both of this stack's carried items now have owners.** The unbounded `Session.cancelled` set went
+  to `ruff-19-performance` (it opens `LanguageServer.lean` for LSP profiling and owns the envelope);
+  `tests/watch/run.sh`'s staged-selection coupling went to `ruff-20-acceptance`, whose RCP-SPEC remit
+  is "repair root causes rather than waive failures" and which already carries the fixture-repository
+  lesson the fix applies. `CLAUDE.md` carries the operational form of the second so it is not
+  re-diagnosed mid-run.
 
 **`RLP-FEATURES` is verified** (`results/03-features.md`). The server answers
 `textDocument/formatting`, `textDocument/rangeFormatting`, and `textDocument/codeAction`, and publishes
