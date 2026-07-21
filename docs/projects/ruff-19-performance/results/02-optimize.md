@@ -195,6 +195,54 @@ have, which `CLAUDE.md` forbids under "preserve exact ordered imports … and va
 a persistent worker is the archived worker protocol, which `CLAUDE.md` forbids restoring. This is
 recorded as a floor, not as an open optimization.
 
+## The language server, profiled — and one floor found rather than removed
+
+The server was uninstrumented, but it needed no new phases of its own: every answer is
+`Application.ExactRun.streamSnapshot` over one document, so the existing schema already covers a
+request end to end. Running `tests/lsp/acceptance.sh` under `LEAN_FMT_PROFILE_PHASES=1` — 165 requests
+across its sessions — gives the first per-request breakdown this project has had:
+
+| Phase | Total | Calls | Mean |
+| --- | ---: | ---: | ---: |
+| `exact_child` | 46,681 ms | 165 | 282 ms |
+| `child_analyze` (sub-phase) | 29,792 ms | 164 | 181 ms |
+| `exact_setup` | 17,290 ms | 165 | **105 ms** |
+| `envelope_decode` | 6 ms | 164 | 0 ms |
+
+**Every request pays a full Lake no-build graph traversal, and it is 27% of request latency**
+(105 of roughly 390 ms). `ExactRun.primeSetups` cannot help: a request analyzes one document, and
+priming returns immediately below two targets.
+
+### Why it is not cached, with the measurement that settles it
+
+The obvious fix is to reuse the setup across a session's requests, keyed on the import header rather
+than the whole source, so typing in the body does not invalidate it. That is unsound, and splitting
+the probe says exactly why:
+
+| Sub-phase | Mean over 165 requests |
+| --- | ---: |
+| `nobuild_context` — `mkJobQueue`, `mkMonitorContext`, `mkBuildContext'` | **0 ms** |
+| `nobuild_fetch` — `startBuild` and `monitorBuild` | **104 ms** |
+
+None of the cost is context construction, so building the context once per session saves nothing. All
+of it is the fetch, and **the fetch is the currency check** — it reads the artifacts on disk *now*.
+A session that cached its result would keep elaborating against artifacts a `lake build` in another
+terminal has already replaced, which is the exact failure `noBuildValue?` exists to catch and which
+`CLAUDE.md` forbids approximating: "Filesystem presence or a raw path is not build validity."
+
+So this is recorded as a floor. Removing it needs a *cheaper currency signal*, not a cache — a watch
+on the build directory that invalidates the session's setups — which is a design change with its own
+correctness surface, not an optimization, and it is named in `state/current.md` for whoever takes it.
+
+### A defect in the profile channel, found by using it
+
+The first attempt to measure this split emitted nothing at all. `noBuildValue?` redirects both stdout
+and stderr into its own buffer for its whole duration — deliberately, so Lake's monitor cannot draw a
+spinner over our stderr — and `withPhase` writes to stderr. **Any phase bracketed inside that function
+went into the buffer and was discarded with it.** The two sub-phases are therefore timed with
+`IO.monoNanosNow` and reported by `recordDuration` in the `finally`, after the streams are restored.
+Worth knowing before someone instruments in there again and reads the silence as zero cost.
+
 ## Still open under this claim
 
 - Watch and LSP profiling.

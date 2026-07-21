@@ -84,9 +84,31 @@ claim rests on phases (`cache_write` 9,827 → 1,365; `workspace_artifacts` 7,01
 do not move with the page cache. **`RPR-FINAL` must build its gates from growth ratios and phase
 values, not wall times.**
 
-**Still open in this prompt.** Watch and LSP profiling; the adversarial `PositionIndex`-build fixture;
-a `formatter-integrated-built` workload; and the two-session concurrency test, which the work order
-puts after all single-session work.
+**The language server is profiled, and its largest single cost is a floor.** It needed no phases of
+its own — every answer is `ExactRun.streamSnapshot` over one document, so the existing schema covers a
+request end to end. Over `tests/lsp/acceptance.sh`'s 165 requests: `exact_child` 282 ms mean,
+`child_analyze` 181 ms, and **`exact_setup` 105 ms — 27% of request latency, a full Lake no-build
+traversal on every keystroke-driven request.** `primeSetups` cannot help; a request has one document.
+
+Caching it across a session is unsound, and the split says why: `nobuild_context` is **0 ms** and
+`nobuild_fetch` is **104 ms**, so none of the cost is context construction and all of it is the fetch
+— and the fetch *is* the currency check, reading the artifacts on disk now. A cached setup would
+elaborate against artifacts a `lake build` in another terminal has already replaced.
+
+**Named for whoever takes it:** removing this needs a cheaper currency *signal*, not a cache — a watch
+on the build directory that invalidates a session's setups. That is a design change with its own
+correctness surface, not an optimization, and it is out of scope here.
+
+**A profile-channel defect, found by using it.** `noBuildValue?` redirects stdout and stderr into its
+own buffer for its whole duration, so a `withPhase` bracketed inside it emits into that buffer and is
+discarded. The first attempt at the split above measured nothing and looked like zero cost. The two
+sub-phases are timed with `IO.monoNanosNow` and reported in the `finally` after the streams are
+restored.
+
+**Still open in this prompt.** The adversarial `PositionIndex`-build fixture; a
+`formatter-integrated-built` workload; and the two-session concurrency test, which the work order puts
+after all single-session work. Watch mode needs no separate profiling: a generation runs the same
+`execute` path the batch modes do, and `render_report` already brackets its per-generation rendering.
 
 **The unverified check is now verified, and the environmental diagnosis held.** `tests/cache/run.sh`
 had been killed by the OS (`Killed: 9`, exit 137) at three different points across four attempts while

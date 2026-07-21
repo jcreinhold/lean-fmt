@@ -30,6 +30,8 @@ Beyond the eight `RPR-SPEC` froze (`notes/01-phase-schema.md` §2), all still sp
 | --- | --- | --- |
 | `phase.exact_setup_ms` | resolving one module's Lake setup and writing the child's inputs | `Application.lean`, `ExactRun.envelope` |
 | `phase.setup_probe_ms` | **sub-phase**: `Project.noBuildValue?`, the no-build graph traversal | `Project.lean`, `exactSetup` |
+| `phase.nobuild_context_ms` | **sub-phase**: Lake job queue, monitor and build context construction | `Project.lean`, `noBuildValue?` |
+| `phase.nobuild_fetch_ms` | **sub-phase**: `startBuild` and `monitorBuild` — the currency check itself | `Project.lean`, `noBuildValue?` |
 | `phase.setup_build_ms` | **sub-phase**: the building fallback, when the probe says stale | `Project.lean`, `exactSetup` |
 | `phase.setup_prime_ms` | one batched no-build traversal resolving every frontend-bound target's setup | `Application.lean`, `ExactRun.primeSetups` |
 | `phase.exact_child_ms` | the exact frontend round trip: spawn, run, collect | `Application.lean`, `ExactRun.envelope` |
@@ -49,6 +51,12 @@ Beyond the eight `RPR-SPEC` froze (`notes/01-phase-schema.md` §2), all still sp
 | `phase.render_report_ms` | `formatReport` | `Cli.lean`, `runOneGeneration` |
 
 Sub-phases are excluded from the accounted sum, per `notes/01-phase-schema.md` §5.1.
+
+**Two phases inside `noBuildValue?` are timed, not bracketed.** That function redirects stdout and
+stderr into its own buffer for its whole duration, so Lake's monitor cannot draw over ours — which
+means `withPhase`, which writes to stderr, emits into that buffer and is discarded with it. Nothing in
+there can report on itself through the normal path. `nobuild_context` and `nobuild_fetch` read
+`IO.monoNanosNow` and call `recordDuration` in the `finally`, after the streams are restored.
 
 **The child's records cross the process boundary on stderr.** The exact frontend runs in another
 process; its stdout is the envelope and takes no passengers. The parent forwards any `phase.` line it

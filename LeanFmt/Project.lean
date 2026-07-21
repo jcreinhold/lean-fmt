@@ -496,19 +496,35 @@ def noBuildValue? {α : Type} (workspace : Lake.Workspace)
   let buffer ← IO.mkRef { : IO.FS.Stream.Buffer }
   let stdout ← IO.setStdout (.ofBuffer buffer)
   let stderr ← IO.setStderr (.ofBuffer buffer)
+  -- The two halves are timed rather than bracketed, and reported after the streams are restored.
+  -- `withPhase` writes to stderr, and stderr is this operation's own buffer for its whole duration --
+  -- a phase emitted in here goes into the buffer and is discarded with it. Nothing inside this
+  -- function can report on itself.
+  let contextNanos ← IO.mkRef 0
+  let fetchNanos ← IO.mkRef 0
   try
     let cfg : Lake.BuildConfig := { noBuild := true, verbosity := .quiet }
+    -- Split because the two halves have different lifetimes. Context construction depends on the
+    -- workspace only, so a long-lived session could in principle build it once; the fetch reads the
+    -- artifacts on disk *now*, which is the whole point of the probe and cannot be reused across a
+    -- rebuild. Which half the 105 ms per LSP request lives in decides whether that is worth doing.
+    let contextStarted ← IO.monoNanosNow
     let jobs ← Lake.mkJobQueue
     let mctx ← Lake.mkMonitorContext cfg jobs
     let bctx ← Lake.mkBuildContext' workspace cfg jobs
+    let fetchStarted ← IO.monoNanosNow
+    contextNanos.set (fetchStarted - contextStarted)
     let job ← Lake.Workspace.startBuild bctx build
     let result ← Lake.monitorBuild mctx job
+    fetchNanos.set ((← IO.monoNanosNow) - fetchStarted)
     -- `finalizeBuild` is deliberately not called: it is the one that turns a stale `noBuild` into
     -- `IO.Process.exit` (`:367-368`). Staleness is a `none` here, and the caller builds.
     return result.out.toOption
   finally
     discard <| IO.setStdout stdout
     discard <| IO.setStderr stderr
+    recordDuration "nobuild_context" (← contextNanos.get)
+    recordDuration "nobuild_fetch" (← fetchNanos.get)
 
 /-- Exact Lake setups for a whole batch, from **one** no-build graph traversal.
 
