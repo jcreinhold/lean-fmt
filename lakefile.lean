@@ -56,7 +56,6 @@ lean_lib LeanFmtApplication where
     Glob.one `LeanFmt.GitSelection,
     Glob.one `LeanFmt.Project,
     Glob.one `LeanFmt.Semantic,
-    Glob.one `LeanFmt.Service,
     Glob.one `LeanFmt.LanguageServer,
     Glob.one `LeanFmt.Watch,
     Glob.one `LeanFmt.Application,
@@ -115,6 +114,15 @@ lean_exe artifactExtractor where
   root := `LeanFmtArtifactExtract
   exeName := "lean-fmt-artifact-extract"
   supportInterpreter := true
+
+/- Structural checks on this package's own module layout. Deliberately not a default target: it reads
+the workspace and never contributes to it, so an ordinary `lake build` must not pay for it. -/
+lean_exe «check-modules» where
+  srcDir := "scripts"
+  root := `CheckModules
+  supportInterpreter := true
+  -- Executables that import Lake must link it explicitly, as `lean-fmt` does.
+  weakLinkArgs := #["-lLake"]
 
 private def artifactFile (mod : Module) : FilePath :=
   Lean.modToFilePath (mod.pkg.buildDir / "lean-fmt-artifacts") mod.name "json"
