@@ -30,6 +30,7 @@ this file.
 lake build           # also builds LeanFmtCacheSpec; a broken proof fails the build
 lake exe lean-fmt
 lake exe lean-fmt-tests
+lake lint            # the formatter on itself, under lean-fmt.toml; this is what CI runs
 ```
 
 Suites live in `tests/*/run.sh`: boundary, cache, catalog, check, compiler, discovery, downstream,
@@ -40,7 +41,10 @@ Match the checks to the change:
 
 - While working, build the modules you touched and read every error.
 - Run the suites that cover what you changed.
-- Before handoff, run `lake build`, `lake exe lean-fmt-tests`, and every suite.
+- Before handoff, run `lake build`, `lake lint`, `lake exe lean-fmt-tests`, and every suite.
+- `lean-fmt.toml` is this repository's own discovered configuration, and `lake lint` runs the
+  formatter under it with no `--config`. Its `exclude` list keeps the fixture trees out; anything
+  absent from that list is linted, so a new directory is covered until someone says otherwise.
 - `tests/security/bench.sh` measures the linear-time claim. It is a benchmark, not a suite. Run it
   when you touch the source scans, and record the numbers.
 - `tests/watch/run.sh` §9.6 runs `check --staged` against *this* repository, so it fails whenever a

@@ -43,6 +43,15 @@ private `organize` command. The external prerequisite stacks `ruff-01-lossless-s
 - On the 75-module project tree: FMT007×16, FMT005×1, FMT006×1 reported, **withheldRedundant = 18**
   (`import all` / `meta` / re-export candidates the conservative rule declines). Whole-project scan
   3.63 s / ≈1.0 GiB, import layer negligible (one shared graph fetch, no per-file subprocess).
+- **2026-07-21: the tree's own FMT007 count is now zero, and the rule was not touched.** The 19 that
+  had accumulated were all one shape — an `import all LeanFmt.*` block sitting in the same group as
+  the upstream `Lake`/`Lean`/`Std` imports below it, with no blank line to separate them. The repo
+  now writes that blank line, so the two groups are separate and each sorts on its own;
+  `lean-fmt organize` did the six residual moves inside a group. FMT007's frozen semantics stand:
+  the modifier stays a passenger, and grouping stays the author's, expressed by a blank line
+  (`notes/01-semantics.md` §3). Making `importAll` a sort key was considered and rejected — it would
+  need an invented rank, and `Project.lean` already sorts `import all Lake.*` among plain `Lake.*`
+  by name, so there was no consistent convention for it to protect.
 
 ## Notes recorded during the stack
 
