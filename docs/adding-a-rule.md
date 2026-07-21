@@ -85,10 +85,17 @@ Every fix declares how safe it is to apply, following ruff's `Applicability`:
 | `.displayOnly` | illustrates the finding; never meant to be applied | never |
 
 "Safe" is a claim under your rule's evidence and is tied to its tier — never merely "it reparses". A
-`.source`-tier rule editing trivia the lexer cannot see (FMT001/FMT002 edit whitespace) is safe by
-that argument; a `.syntax`-tier rewrite that moves tokens is not safe unless the projection proves the
-meaning is preserved. When in doubt, choose `.unsafe`: a user opts into it, and a later rule revision
-can promote it once the evidence exists.
+`.syntax`-tier rewrite that moves tokens is not safe unless the projection proves the meaning is
+preserved. When in doubt, choose `.unsafe`: a user opts into it, and a later rule revision can promote
+it once the evidence exists.
+
+The retired FMT001 is the warning here, and it argued exactly the way a new rule will want to. It
+edited "trivia the lexer cannot see", which sounds safe and is not: a per-line trailing-whitespace
+scan reaches inside a multi-line string literal, where those bytes are program data
+(`ruff-11c evidence/01-fusion-and-subsumption.md`, probe 4/6). Line-boundary and final-newline
+normalization moved into canonical formatting and both codes are retired and reserved — `check` says
+so if you select one. Before calling a fix safe, name the bytes it can reach, not the bytes you meant
+it to reach.
 
 Set applicability on the `Fix` you emit; do **not** read configuration to decide it. `extend-safe-fixes`
 and `extend-unsafe-fixes` reclassify per rule, but that is resolved in `RulePlan.effectiveApplicability`

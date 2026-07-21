@@ -17,7 +17,7 @@
 #
 # and read `canonical=` per module out of `tests/printer/run.sh`'s corpus section.
 
-printer_total=938   probe_total=937   modules_compared=28
+printer_total=914   probe_total=913   modules_compared=27
 
 # modules where the two disagree (printer canonical, probe claimable+namespace+end+open)
 LeanFmt/Cache/Decision.lean   printer=11  probe=10

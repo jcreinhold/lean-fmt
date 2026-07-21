@@ -337,7 +337,12 @@ restore_fixture
 expect_eq "warm before the epoch moves" "$TOTAL" "$(served)"
 
 # A formatter rebuild is an epoch change: `formatter` is the binary's path, size, and mtime.
-touch -m -t 203001010000 "$fmt"
+#
+# Touch to *now*, not to a fixed stamp. A fixed stamp is idempotent, so a second run of this file
+# against a binary nobody rebuilt in between leaves the mtime where the first run put it, the epoch
+# never moves, and the assertion below reports a cache defect that is really a rerun. Now is always
+# later than the last run left it, and it also leaves the binary with an honest mtime.
+touch -m "$fmt"
 probe "formatter rebuild"
 expect_eq "a formatter rebuild invalidates every entry" 0 "$SERVED"
 
