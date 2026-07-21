@@ -1,3 +1,9 @@
+/-
+Copyright (c) 2026 Jacob Reinhold. All rights reserved.
+Released under Apache 2.0 license as described in the file LICENSE.
+Authors: Jacob Reinhold
+-/
+
 module
 
 /- Turn one projected module back into text.
@@ -33,8 +39,8 @@ Two consequences run through everything below:
 The module is named `Printer` on purpose. `Format` would collide with `Std.Format` and `Lean.Format`,
 which `RLC-SPEC` already had to work through. -/
 
-import all LeanFmt.LosslessSource
 import all LeanFmt.Doc
+import all LeanFmt.LosslessSource
 -- The notation-spacing fact (`ruff-05b`): pure immutable data, defined beside the projection in the
 -- same `LeanFmtCore` library. This is the only thing the printer consumes to give operators their
 -- declared spacing — it reads the fact, never an `Environment` or a frontend object.

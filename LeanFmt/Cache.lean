@@ -1,8 +1,15 @@
+/-
+Copyright (c) 2026 Jacob Reinhold. All rights reserved.
+Released under Apache 2.0 license as described in the file LICENSE.
+Authors: Jacob Reinhold
+-/
+
 module
 
 import all LeanFmt.Cache.Decision
 import all LeanFmt.Project
 import all LeanFmt.Semantic
+
 import Lake.Build.Trace
 import Lake.Config.Workspace
 
@@ -555,7 +562,7 @@ def ResultCache.open? (workspace : Lake.Workspace) (application : System.FilePat
     -- the toolchain revision separately.
     let stat ← application.metadata
     let formatter := Digest.ofString
-      s!"{application} {stat.byteSize} {stat.modified.sec} {stat.modified.nsec}"
+      s!"{application}\u0000{stat.byteSize}\u0000{stat.modified.sec}\u0000{stat.modified.nsec}"
     let directoryReady ← IO.mkRef false
     let loadedEntries ← IO.mkRef none
     let workspaceArtifacts ← IO.mkRef none

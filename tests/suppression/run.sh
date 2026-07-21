@@ -164,7 +164,7 @@ PY
 #     directive naming FMT005 suppresses nothing and is itself unused: the RUF100 analog composes with
 #     config. ---
 run_expect 1 "$work/perfile.json" "$application" check --root . --json --no-cache \
-  --config tests/suppression/lean-fmt.toml tests/suppression/PerFile.lean
+  --config tests/suppression/per-file-ignores.toml tests/suppression/PerFile.lean
 python3 - "$work/perfile.json" <<'PY'
 import json, sys
 file, = json.load(open(sys.argv[1]))["files"]

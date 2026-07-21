@@ -1,8 +1,7 @@
 module
 
-
-import Lean.Data.Lsp.Ipc
 import Lean.Data.Lsp.CodeActions
+import Lean.Data.Lsp.Ipc
 
 /-!
 # `ruff-17` RLP-FINAL — protocol acceptance, driven by a client we did not write

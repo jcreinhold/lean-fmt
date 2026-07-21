@@ -1,9 +1,37 @@
-# The configuration `lake lint` runs under, named explicitly by `lintDriverArgs` in `lakefile.lean`.
+# The formatter's own configuration, under the name every project uses. `lake lint` and a bare
+# `lean-fmt check` both find it here by discovery; no `--config` stands between them.
 #
-# It exists because this repository is a formatter: `tests/` and `experiments/` hold sources that are
-# deliberately malformed, unparseable, or lint-dirty, and they are fixtures rather than defects. A
-# driver that reported them would fail on a clean tree and teach everyone to ignore it.
+# The excluded trees hold fixtures: sources that are deliberately malformed, unparseable, or
+# lint-dirty, because the tests need something to fail on. A driver that reported them would be red
+# on a clean tree, and everyone would learn to ignore it.
 #
-# `--config` overrides discovery outright, so this file governs `lake lint` and nothing else. No other
-# suite passes `--config`, and none of them changes behavior because this file exists.
-include = ["LeanFmt/**/*.lean", "*.lean"]
+# `exclude` prunes. The walk never enters these directories, so it reads neither their sources nor a
+# config file sitting in one. An `include` list stood here before, and it only filtered files, so
+# every new directory started life unlinted: that is how `scripts/CheckModules.lean` arrived
+# invisible on the day it was written. Anything absent from this list is linted.
+#
+# `tests/lsp` is absent on purpose. It holds harness code, not fixtures.
+#
+# Do not add `force-exclude` here. It applies exclusion to explicitly named paths, and the suites
+# name fixture paths on purpose.
+exclude = [
+  "docs/**",
+  "experiments/**",
+  "tests/cache/**",
+  "tests/check/**",
+  "tests/compiler/**",
+  "tests/downstream/**",
+  "tests/imports/**",
+  "tests/reporting/**",
+  "tests/semantic/**",
+  "tests/suppression/**",
+  "tests/syntax/**",
+]
+
+# Settings that change the bytes a run writes. Every key here is part of the cache identity.
+[format]
+line-width = 100
+
+# Settings that filter results. None of them is part of the cache identity.
+[lint]
+select = ["default"]

@@ -1,3 +1,9 @@
+/-
+Copyright (c) 2026 Jacob Reinhold. All rights reserved.
+Released under Apache 2.0 license as described in the file LICENSE.
+Authors: Jacob Reinhold
+-/
+
 module
 
 /- The lossless module-header model and the import rules that read it.
@@ -26,6 +32,7 @@ Everything here indexes the normalized source (`raw.crlfToLf`), the one coordina
 finding, projection, and digest in the product shares (`AGENTS.md`). -/
 
 import all LeanFmt.ArtifactModel
+
 import Lean.Parser.Module
 
 namespace LeanFmt.Internal.Imports

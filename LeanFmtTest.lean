@@ -1,20 +1,21 @@
 module
 
-import all LeanFmt.ArtifactStore
 import all LeanFmt.Analysis
 import all LeanFmt.Application
+import all LeanFmt.ArtifactStore
 import all LeanFmt.Cache
 import all LeanFmt.Cli
 import all LeanFmt.Comments
 import all LeanFmt.Config
 import all LeanFmt.Discovery
-import all LeanFmt.LanguageServer
 import all LeanFmt.Doc
 import all LeanFmt.Edit
 import all LeanFmt.Imports
+import all LeanFmt.LanguageServer
 import all LeanFmt.Printer
 import all LeanFmt.Rules
 import all LeanFmt.Suppression
+
 import Lean.Data.Lsp
 
 open LeanFmt LeanFmt.Internal

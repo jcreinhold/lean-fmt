@@ -1,0 +1,5 @@
+# A fixture, named by `--config` at `run.sh:167`. It is not called `lean-fmt.toml` on purpose: the
+# root config excludes this directory, so the walk never enters it and nothing here can be
+# discovered. A discovery-recognized name would promise otherwise.
+[per-file-ignores]
+"**/PerFile.lean" = ["FMT005"]

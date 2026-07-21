@@ -6,6 +6,7 @@ Authors: Yaël Dillies, Damiano Testa, Jacob Reinhold
 module
 
 import all LeanFmt.Project
+
 import Lake.Config.Package
 import Lake.Load.Workspace
 import Lean.Elab.ParseImportsFast

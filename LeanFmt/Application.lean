@@ -1,3 +1,9 @@
+/-
+Copyright (c) 2026 Jacob Reinhold. All rights reserved.
+Released under Apache 2.0 license as described in the file LICENSE.
+Authors: Jacob Reinhold
+-/
+
 module
 
 import all LeanFmt.Cache
@@ -8,13 +14,14 @@ import all LeanFmt.Printer
 import all LeanFmt.Project
 import all LeanFmt.Semantic
 import all LeanFmt.Suppression
+
 import Lake.Build.Module
 import Lake.Build.Run
 import Lake.Config.Env
 import Lake.Config.InstallPath
 import Lake.Load.Workspace
-import Lean.Util.Diff
 import all Lean.Shell
+import Lean.Util.Diff
 import Std.Sync.CancellationToken
 
 open System

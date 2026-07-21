@@ -1,8 +1,15 @@
+/-
+Copyright (c) 2026 Jacob Reinhold. All rights reserved.
+Released under Apache 2.0 license as described in the file LICENSE.
+Authors: Jacob Reinhold
+-/
+
 module
 
 import all LeanFmt.Config
 import all LeanFmt.Digest
 import all LeanFmt.Discovery
+
 import Lake.Build.Module
 import all Lake.Build.Run
 import Lake.Config.Env

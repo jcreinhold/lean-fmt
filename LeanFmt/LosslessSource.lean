@@ -1,3 +1,9 @@
+/-
+Copyright (c) 2026 Jacob Reinhold. All rights reserved.
+Released under Apache 2.0 license as described in the file LICENSE.
+Authors: Jacob Reinhold
+-/
+
 module
 
 /- The immutable lossless projection of one accepted Lean module and its codec.
@@ -12,6 +18,7 @@ The design comparison behind this shape is `docs/projects/ruff-01-lossless-sourc
 -/
 
 import all LeanFmt.Digest
+
 import Lean
 
 namespace LeanFmt.Internal

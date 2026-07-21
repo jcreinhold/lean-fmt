@@ -1,7 +1,14 @@
+/-
+Copyright (c) 2026 Jacob Reinhold. All rights reserved.
+Released under Apache 2.0 license as described in the file LICENSE.
+Authors: Jacob Reinhold
+-/
+
 module
 
 import all LeanFmt.Application
 import all LeanFmt.LosslessSource
+
 import Lean.Data.Lsp
 import Std.Sync.Channel
 import Std.Sync.Mutex
