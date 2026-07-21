@@ -473,6 +473,33 @@ a cleaner effect in either direction. What it could not plausibly do is turn a m
 a sustained 0.80. `RPR-FINAL` records the rejection; whoever reopens it should re-run this same
 script on an idle machine and say so.
 
+## Checks, and one that cannot pass here
+
+`LEAN_NUM_THREADS=1 lake build` (54 jobs, clean), `tests/boundary/run.sh` (passed), `lake lint`
+(35 files, 0 findings), `git diff --check` (clean), and the suite sweep.
+
+**The generic stack structural checker reports 5 errors, and they are not this stack's.**
+`check_stack.py` fails with `route-missing`, `route-status`, `route-summary`, `route-evidence`, and
+`route-fingerprint-format`, all demanding an `implementation_route` block in `roadmap.md`. That block
+is governed by `docs/projects/formalization-policy.yml`, and `_implementation_route_errors` resolves
+that path from a hardcoded repository root — **kan-proofs', not lean-fmt's**. This repository has no
+such policy and has never adopted the route concept. `write_next.py --check` says so in as many
+words:
+
+```
+error: no formalization policy above .../docs/projects/ruff-19-performance
+```
+
+The completed `ruff-16-watch-incremental` stack fails with the same five errors, which confirms this
+is a cross-repository policy mismatch rather than something `RPR-IMPL` introduced.
+
+It is left failing on purpose. Satisfying it would mean inventing an `implementation_route` status,
+summary, evidence note, and a `reviewed_fingerprint` — a sha256 attesting review under a policy that
+does not exist in this repository. A fabricated fingerprint is a fake shim, and passing a check by
+manufacturing the evidence it exists to verify is worse than recording that the check does not apply.
+Whoever wants these stacks to satisfy the generic checker should adopt the policy repository-wide as
+its own change.
+
 ## Still open under this claim
 
 Nothing in `RPR-IMPL`'s contract. `RPR-FINAL` inherits the durable gates, the scheduled sample

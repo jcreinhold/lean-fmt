@@ -146,7 +146,18 @@ atomic and safe but **last-writer-wins**, so a concurrent pair leaves roughly ha
 Measured under load 7.9-8.9 with another session holding 4.0 GiB; the conditions are recorded in the
 result so the rejection can be reopened honestly on an idle machine.
 
-**`RPR-IMPL` has nothing open in its contract.** `RPR-FINAL` is next. Watch mode needs no separate profiling: a generation runs the same
+**`RPR-IMPL` has nothing open in its contract, and is verified.** `LEAN_NUM_THREADS=1 lake build`
+(54 jobs), `lake lint` (35 files, 0 findings), `lake exe lean-fmt-tests`, `git diff --check`, and all
+19 suites in `tests/*/run.sh` pass -- including `cache`, whose earlier kills were environmental.
+
+**The generic structural checker's 5 errors are left failing, deliberately.** They demand an
+`implementation_route` block governed by a `formalization-policy.yml` that `check_stack.py` resolves
+out of *kan-proofs*, not this repository; `write_next.py --check` reports "no formalization policy
+above" this stack. The completed `ruff-16` stack fails identically. Passing them would mean
+fabricating a `reviewed_fingerprint` attesting review under a policy lean-fmt has never adopted --
+a fake shim. Adopting the policy repository-wide is someone's separate change.
+
+`RPR-FINAL` is next. Watch mode needs no separate profiling: a generation runs the same
 `execute` path the batch modes do, and `render_report` already brackets its per-generation rendering.
 
 **The `formatter-integrated-built` workload is closed** (`evidence/01-workloads.md` §3.1,
