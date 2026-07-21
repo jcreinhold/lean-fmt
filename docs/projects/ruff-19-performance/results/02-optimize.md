@@ -306,9 +306,56 @@ This is linear in the size that matters and modest in absolute terms — 105 ms 
 defect. It is recorded so that a future change that makes it quadratic has a number to be caught
 against, which is what `ruff-15` asked for.
 
+**Watch mode is not on this list.** A watch generation runs the same `Application.execute` path the
+batch modes do and `render_report` already brackets its per-generation rendering, so the `self` warm
+baselines are the watch numbers; there is nothing separate to profile.
+
+## The compiler integration, measured for the first time
+
+`evidence/01-workloads.md` named `formatter-integrated-built` as a state and then said no frozen
+workload was in it. It now has one: four modules this repository builds *with*
+`LeanFmtCompilerPlugin` (`tests/compiler/LocalSyntax.lean`, `tests/check/{Clean,Findings,Layout}.lean`),
+so each `.olean` carries a `leanFmtArtifact`.
+
+**Getting into the state is most of the finding.** Two of the three obvious commands do not exercise
+the artifact path at all:
+
+| Command on the integrated modules | `official_artifacts` | `exact_child` |
+| --- | ---: | ---: |
+| `check` (source tier only) | 0 ms | never runs — nothing above source is demanded |
+| `format --check` | **absent** | 4 runs, 1,186 ms — the semantic demand skips the facet entirely |
+| `check --preview --select FMT012` (syntax tier) | **105 ms** | never runs |
+
+Only a syntax-tier selection sits in the band where the artifact is both sufficient and necessary,
+and that is the comparison. The same command over four *ordinary-built* modules (`LeanFmt/Digest.lean`,
+`Profile.lean`, `Config.lean`, `Doc.lean`):
+
+| State | `official_artifacts` | `exact_child` | `setup_prime` |
+| --- | ---: | ---: | ---: |
+| `formatter-integrated-built` | 105 ms | **never runs** | — |
+| `ordinary-built` | 101 ms (finds nothing) | 2,058 + 370 + 634 + 221 = **3,283 ms** | 100 ms |
+
+**One Lake traversal replaces four frontend child processes — about 820 ms per module.** That is the
+claim the compiler plugin was built on, and until now it was an argument rather than a number.
+
+Two things this measurement is not. It is not a speed benchmark: four small fixture modules are not a
+project, and the per-module frontend cost above is dominated by the first child's 2,058 ms of
+process and import startup, which the later three do not pay. And it does not say the integration is
+free — building with the plugin costs artifact-sized `.olean` growth that `docs/adding-a-rule.md`
+already quantifies at ~25 B per element.
+
+### A cost the ordinary-built column exposes
+
+`official_artifacts` costs **101 ms on a workspace that cannot possibly have an artifact**, and it
+pays that before finding nothing. The magnitude is unsurprising — it is the same no-build graph
+traversal as `setup_prime` at 100 ms, and Optimization 3 already showed that one traversal is the
+unit of cost here. But a workspace where no module declares the plugin can never produce an artifact,
+and that is decidable from the workspace configuration without traversing anything.
+
+It is not fixed here. It is one traversal per run, not per module, so it does not grow with the
+workload, and this stack's remaining work is the concurrency test and the durable gates. It is
+recorded so it is a choice with a reason rather than something nobody looked at.
+
 ## Still open under this claim
 
-- Watch and LSP profiling.
-- The adversarial `PositionIndex`-build fixture inherited from `ruff-15`.
-- A `formatter-integrated-built` workload.
 - The two-session concurrency test, only after all single-session work.

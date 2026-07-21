@@ -32,7 +32,7 @@ The four states `CLAUDE.md` names, made concrete:
 | State | Means |
 | --- | --- |
 | `ordinary-built` | the target project's `.lake/build` is current; no formatter plugin in its build |
-| `formatter-integrated-built` | the target project builds with `LeanFmtCompilerPlugin`, so `leanFmtArtifact` is available. Reachable only in this repository's own fixture libraries (`CompilerFixtures`, `CheckFixtures`); no frozen workload below is in this state, and `RPR-IMPL` owns adding one if it profiles the artifact path |
+| `formatter-integrated-built` | the target project builds with `LeanFmtCompilerPlugin`, so `leanFmtArtifact` is available. Reachable only in this repository's own fixture libraries (`CompilerFixtures`, `CheckFixtures`). `RPR-IMPL` added the workload; see § 3.1 |
 | `formatter-cache-cold` | the target project's `.lean-fmt-cache` directory is absent |
 | `formatter-cache-warm` | the cache was populated by an immediately preceding identical run |
 
@@ -71,12 +71,50 @@ The consequence is recorded rather than glossed: an explicit-path run still perf
 walk (`Discovery.run` walks the root regardless), but it does not measure discovery *as selection*. On
 `mathlib-sample`, `phase.discovery_ms` is the 8,795-file walk and shows up as 368–420 ms.
 
+### 3.1 `integrated` — the workload this manifest first left open
+
+`RPR-IMPL`. Four modules that this repository builds *with* `LeanFmtCompilerPlugin`, so each one's
+`.olean` carries a `leanFmtArtifact` the formatter can read instead of re-running the frontend:
+
+| Id | Modules | How to reach it |
+| --- | --- | --- |
+| `integrated` | `tests/compiler/LocalSyntax.lean`, `tests/check/{Clean,Findings,Layout}.lean` | `lake build CompilerFixtures CheckFixtures`, then pass the four paths explicitly |
+
+It is the only state in which `phase.official_artifacts_ms` does any work. It is deliberately small:
+its purpose is to exercise a path no other workload reaches, not to be a speed benchmark, and its
+fixtures are owned by the suites that already maintain them.
+
+**A syntax-tier rule is what separates the two states.** Source-tier rules need no artifact at all,
+and a semantic-tier demand skips the facet and goes to the frontend regardless — `format --check` on
+these same four modules records no `official_artifacts` phase and four `exact_child` runs. So the
+comparison has to be a syntax-tier selection, here `check --preview --select FMT012`, four modules
+each:
+
+| State | `official_artifacts` | `exact_child` |
+| --- | ---: | ---: |
+| `formatter-integrated-built` (`integrated`) | 105 ms | **never runs** |
+| `ordinary-built` (four `LeanFmt/` modules) | 101 ms | 2,058 + 370 + 634 + 221 = **3,283 ms** |
+
+One Lake traversal replaces four frontend child processes, about 820 ms per module. That is what the
+compiler integration exists to do, and this is the first measurement of it in this project rather
+than an argument for it.
+
+**And a cost it exposes.** On `ordinary-built` the facet fetch still runs and still costs 101 ms
+before finding nothing — the same order as every other no-build traversal here (`setup_prime`,
+100 ms). It has to look in order to know. But a workspace where no module declares the plugin can
+never produce an artifact, and that is decidable from the workspace alone without a traversal. 101 ms
+once per run is too small to spend this stack's remaining work on; it is written down so that it is a
+choice rather than an oversight.
+
 **Not yet frozen, and named so it is not mistaken for covered.** The completion contract asks for
 adversarial files, and one specific adversarial shape is inherited from `ruff-15`: a pathological
-`PositionIndex` **build** — one enormous line, findings clustered at the end of a very large file. No
-such fixture exists and none is frozen here, because the phase that would measure it
-(`phase.positions_ms`, `notes/01-phase-schema.md` §4) does not exist yet either. `RPR-IMPL` adds both
-or records why not.
+`PositionIndex` **build** — one enormous line, findings clustered at the end of a very large file.
+
+`RPR-IMPL` discharged it, by generating rather than freezing: `experiments/run-positions-bench.sh`
+writes four shapes into the `tests/reporting/` tree `lean-fmt.toml` already excludes and removes them
+on exit, because they are megabytes of filler the script reproduces exactly. `phase.positions_ms`
+exists now too, and the first thing the fixture found was that the phase had been measuring nothing
+(`results/02-optimize.md`).
 
 ## 4. Baselines
 

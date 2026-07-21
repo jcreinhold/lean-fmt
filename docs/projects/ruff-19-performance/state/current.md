@@ -123,10 +123,18 @@ that position could not matter; it matters because the pass *stops at the last o
 source. At 16 MB: 12 / 105 / 178 / 212 ms, so `oneline` is 2× `late` there and 1× at smaller sizes —
 one sample, flagged rather than explained.
 
-**Still open in this prompt.** A `formatter-integrated-built` workload; and the two-session
-concurrency test, which the work order puts after all single-session work. Watch mode needs no
-separate profiling: a generation runs the same `execute` path the batch modes do, and `render_report`
-already brackets its per-generation rendering.
+**Still open in this prompt.** Only the two-session concurrency test, which the work order puts
+after all single-session work. Watch mode needs no separate profiling: a generation runs the same
+`execute` path the batch modes do, and `render_report` already brackets its per-generation rendering.
+
+**The `formatter-integrated-built` workload is closed** (`evidence/01-workloads.md` §3.1,
+`results/02-optimize.md`). Four modules built with `LeanFmtCompilerPlugin`, and a syntax-tier
+selection is the only command that reaches the artifact path — `check` demands nothing above source
+and `format --check` skips the facet for the frontend. On that command the integrated build reads
+`official_artifacts` = **105 ms with no `exact_child` at all**, against **3,283 ms of four frontend
+children** for the same rule on ordinary-built modules. First measurement of the plugin's reason to
+exist in this project. It also exposed that `official_artifacts` costs 101 ms on a workspace that
+cannot have an artifact; recorded, not fixed, with the reason in the result.
 
 **`tests/cache/run.sh` is unverified again, same environmental signature.** Killed by the OS
 (`Killed: 9`, exit 137) at two different lines across four attempts, while another session held a
