@@ -125,23 +125,13 @@ def build_checks(f: dict[str, int]) -> list[tuple[str, str, str]]:
     Every regex must match at least once, and every match must equal the expectation.
     """
     nodes, empty, ambig = f["nodes"], f["empty"], f["ambiguous"]
-    printer = "LeanFmt/Printer.lean"
     notes = "docs/projects/ruff-03-language-formatting/notes/01-command-printing.md"
     state = "docs/projects/ruff-03-language-formatting/state/current.md"
 
+    # `LeanFmt/Printer.lean` is no longer gated. Its docstrings used to quote these figures and
+    # went stale on every edit to `LeanFmt/`; they now name the evidence file and describe the
+    # shape in words. The figures themselves live here, in the notes, and in the state file.
     return [
-        # --- Printer.lean's module docstring: the projection's shape ---
-        (printer, r"repository \(([\d,]+) nodes, `evidence/01-projection-shape\.txt`\)", commas(nodes)),
-        (printer, r"`evidence/01-projection-shape\.txt`\), ([\d,]+) nodes \(\d+\.\d+%\) carry no token", commas(empty)),
-        (printer, r"([\d,]+) nodes \(\d+\.\d+%\) carry no token at\n", commas(empty)),
-        (printer, r"nodes \((\d+\.\d+)%\) carry no token at", pct(empty, nodes)),
-        (printer, r"For ([\d,]+) of them \(\d+\.\d+% of all nodes\)", commas(ambig)),
-        (printer, r"For [\d,]+ of them \((\d+\.\d+)% of all nodes\)", pct(ambig, nodes)),
-        (printer, r"correct for the (\d+\.\d+)% that carry", pct(nodes - empty, nodes)),
-        (printer, r"unaffected by all ([\d,]+) ambiguous placements", commas(ambig)),
-        (printer, r"the common one: (\d+\.\d+)% of nodes are empty", pct(empty, nodes)),
-        (printer, r"measures (\d+\.\d+)% of nodes to be exactly that ambiguous", pct(ambig, nodes)),
-        (printer, r"index order agrees with byte order \(0 violations over ([\d,]+) nodes\)", commas(nodes)),
         # --- notes/01: the design note's census ---
         (notes, r"\| nodes whose subtree contains no token at all \| \*\*([\d,]+) — \d+\.\d+%\*\* \|", commas(empty)),
         (notes, r"\| nodes whose subtree contains no token at all \| \*\*[\d,]+ — (\d+\.\d+)%\*\* \|", pct(empty, nodes)),

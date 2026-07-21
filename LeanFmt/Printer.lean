@@ -2,38 +2,36 @@ module
 
 /- Turn one projected module back into text.
 
-This is the first consumer of `LeanFmt.Doc`. `RLC-FINAL` closed the layout stack with the standing
-caveat that nothing consumed it, so every claim about realistic documents rested on fixtures written
-against the engine; this module is where that changes.
+This is the first consumer of `LeanFmt.Doc`.
 
-**Where the tree comes from, and why.** `notes/01-command-printing.md` designs this interface twice and
-decides the printer reads the `LosslessSource` projection rather than `Lean.Syntax` inside the
-frontend. That is not a preference: `ruff-01`'s roadmap already committed to carrying structure
-"without exposing Lean frontend objects to product callers", the artifact is already the cache key, and
-printing in-frontend would buy free arg order for a median 1.96 s frontend run per file (`RLS-FINAL`).
+**Where the tree comes from.** `notes/01-command-printing.md` decides the printer reads the
+`LosslessSource` projection rather than `Lean.Syntax` inside the frontend. `ruff-01`'s roadmap
+committed to carrying structure "without exposing Lean frontend objects to product callers", the
+artifact is already the cache key, and printing inside the frontend would cost a frontend run per
+file.
 
-**What the projection does not carry, measured rather than assumed.** Over all 21 modules of this
-repository (110,558 nodes, `evidence/01-projection-shape.txt`), 37,477 nodes (33.9%) carry no token at
-all — they are *absent* syntax, the unfilled optional slots of `declModifiers`, `optDeclSig`,
-`Termination.suffix` — and `collect` gives them range `(0,0)` because a node's range is the hull of the
-leaves beneath it and there are none. For 16,912 of them (15.3% of all nodes) the parent also has direct
-token children, so nothing in the projection says where among its siblings the absent slot belongs.
-`Lean.Syntax` has no position for them either; this is not something the projection dropped.
+**What the projection does not carry.** Measured over this repository
+(`evidence/01-projection-shape.txt`), about a third of all nodes carry no token at all — they are
+*absent* syntax, the unfilled optional slots of `declModifiers`, `optDeclSig`, `Termination.suffix` —
+and `collect` gives them range `(0,0)`, because a node's range is the hull of the leaves beneath it
+and there are none. For about half of those the parent also has direct token children, so nothing in
+the projection says where among its siblings the absent slot belongs. `Lean.Syntax` has no position
+for them either; the projection did not drop it.
 
 Two consequences run through everything below:
 
 1. **Node order is index order, never range order.** `collect` pushes a node's placeholder at
    `build.nodes.size` before folding its args left to right, so a parent precedes its children and
-   siblings ascend in arg order. Sorting children by range would be correct for the 66.1% that carry
+   siblings ascend in arg order. Sorting children by range would be right for the nodes that carry
    tokens and silently wrong for the rest.
-2. **The conservative path reads bytes, not the tree.** Empty nodes contribute no bytes, so re-emitting
-   a command's byte extent is unaffected by all 16,912 ambiguous placements. It is the only path whose
-   correctness rests on no claim about any grammar, which is exactly what the roadmap's "unknown
+2. **The conservative path reads bytes, not the tree.** Empty nodes contribute no bytes, so
+   re-emitting a command's byte extent does not depend on any ambiguous placement. It is the only
+   path whose correctness rests on no claim about any grammar, which is what the roadmap's "unknown
    commands must round-trip conservatively" asks for. Every kind starts here and leaves only when a
    canonical layout for it is cited and pinned by a golden test.
 
-The module is deliberately named `Printer`. `Format` would collide with `Std.Format` and `Lean.Format`,
-which this project already had to reason about carefully in `RLC-SPEC`. -/
+The module is named `Printer` on purpose. `Format` would collide with `Std.Format` and `Lean.Format`,
+which `RLC-SPEC` already had to work through. -/
 
 import all LeanFmt.LosslessSource
 import all LeanFmt.Doc
@@ -54,9 +52,9 @@ namespace LeanFmt.Internal
 transport format. This is the view a walk needs, computed once.
 
 Both child arrays ascend in index order, which **is** arg order by `collect`'s construction. The
-projection retains no other order, so this is not a property that can be checked against its output —
-`evidence/01-projection-shape.txt` checks the observable consequence instead: among a parent's
-token-bearing children, index order agrees with byte order (0 violations over 110,558 nodes). -/
+projection retains no other order, so nothing can check this property against its output —
+`evidence/01-projection-shape.txt` checks the visible consequence instead: among a parent's
+token-bearing children, index order agrees with byte order, and it finds no violation. -/
 structure Tree where
   source : LosslessSource
   /-- `nodeChildren[i]` are the node-children of node `i`, in arg order. -/
@@ -70,10 +68,10 @@ structure Tree where
   rootOf : Array Nat
   /-- Node `i`'s subtree is exactly the index range `[i, subtreeEnd[i])`.
 
-  This is not the measured contiguity property being smuggled in as an assumption: it is computed as
-  the max of the children's ends, which is the subtree's extent whether or not the indices happen to
-  be contiguous. `evidence/01-projection-shape.txt` reports 0 contiguity violations over 41,340 nodes,
-  so the range is also gap-free in practice — but nothing below depends on that. -/
+  This does not assume the measured contiguity property. It is the max of the children's ends, which
+  is the subtree's extent whether or not the indices run contiguously.
+  `evidence/01-projection-shape.txt` reports no contiguity violation, so the range has no gaps in
+  practice — but nothing below depends on that. -/
   subtreeEnd : Array Nat
   /-- The `ruff-05b` notation-spacing fact, indexed for lookup: `notationSpacing[kind]` is the declared
   untrimmed atom strings for that `SyntaxNodeKind`, in source order (`«term_+_» ↦ #[" + "]`). Empty when
@@ -554,10 +552,10 @@ private def Tree.wholeSpan? (tree : Tree) (normalized : String) (span : CommandS
 
 /-- The first and last token index under `node`'s subtree, or `none` when it carries no token.
 
-`none` is the *absent syntax* case and is the common one: 33.9% of nodes are empty
-(`evidence/01-projection-shape.txt`), because an unfilled optional slot is still a node. Asking this
-question is how a layout distinguishes "the slot is empty" from "the slot is filled", which is
-information the projection carries exactly and positions do not carry at all. -/
+`none` is the *absent syntax* case, and it is common: about a third of all nodes are empty
+(`evidence/01-projection-shape.txt`), because an unfilled optional slot is still a node. This is how
+a layout tells "the slot is empty" from "the slot is filled" — which the projection carries exactly
+and positions do not carry at all. -/
 private def Tree.subtreeTokens (tree : Tree) (node : Nat) : Option (Nat × Nat) := Id.run do
   let some stop := tree.subtreeEnd[node]? | return none
   let mut bounds : Option (Nat × Nat) := none
@@ -939,8 +937,8 @@ private def Tree.parts (tree : Tree) (node : Nat) : Array Part := Id.run do
       parts := parts.push { first, last, child := some child }
   -- Tokens are indexed in source order, so ordering by `first` is ordering by position. Empty
   -- node-children are dropped rather than placed: they contribute no bytes, and nothing in the
-  -- projection says where among its siblings an absent slot belongs (`evidence/01-projection-shape.txt`
-  -- measures 15.3% of nodes to be exactly that ambiguous).
+  -- projection says where among its siblings an absent slot belongs; `evidence/01-projection-shape.txt`
+  -- measures how many nodes are ambiguous that way.
   return parts.qsort (·.first < ·.first)
 
 /-- An `app`'s parts: its function, and its arguments lifted out of the `null` that holds them.

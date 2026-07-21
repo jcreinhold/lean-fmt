@@ -1,7 +1,7 @@
 # lean-fmt
 
-A native Lean formatter and linter for Lean 4. Every compiled source uses Lean 4.32's module
-system; `lakefile.lean` is executable configuration and is the repository exception.
+A native Lean formatter and linter for Lean 4. Every compiled source uses Lean's module system;
+`lakefile.lean` is executable configuration and is the one exception.
 
 ## Commands
 
@@ -63,45 +63,44 @@ error. `line-width` has no flat spelling. In an `extend` chain scalars and base 
 Path patterns anchor at the **declaring** config's directory, never the root and never the consuming
 file: `*` and `?` stay within one path component, while a complete `**` component spans zero or more.
 Selection runs as an ordered set of gates — `.lake` first, then git ignore sources, then the config's
-`exclude`, then its `include`. `.lake` is an absolute floor: no key, no `--config`, and no explicitly
-named path lifts it. Ignore sources apply in precedence order (global git ignore, `.git/info/exclude`,
-`.gitignore` outer to inner, `.ignore`) and are read directly rather than by invoking `git`.
+`exclude`, then its `include`. Nothing selects inside `.lake`: no key, no `--config`, and no named
+path lifts that. Ignore sources apply in order (global git ignore, `.git/info/exclude`, `.gitignore`
+outer to inner, `.ignore`), and lean-fmt reads them directly rather than running `git`.
 
 Directory symlinks are not followed, so a link that points at its own ancestor cannot make the walk
 loop. A symlinked source inside the project resolves to its target and is reported once under the
 target's path; one whose target lies outside the project is not discovered at all.
 
-Explicit positional files bypass the ignore and `include`/`exclude` gates — you named the file — unless
-`force-exclude = true`, which is precisely the setting that makes exclusion apply to them too. Rule
-selection applies either way. Repeatable CLI `--select` replaces configured selection when present; CLI
-`--ignore` then wins. Unknown keys, selectors, and malformed patterns fail clearly instead of being
-ignored.
+Named files skip the ignore and `include`/`exclude` gates — you named the file — unless
+`force-exclude = true`, which is the setting that applies exclusion to them too. Rule selection
+applies either way. Repeatable CLI `--select` replaces configured selection when present; CLI
+`--ignore` then wins. Unknown keys, selectors, and malformed patterns fail clearly instead of passing
+unnoticed.
 
 `lean-fmt config show PATH [--json]` answers what actually applies to one file: every effective setting
 with the file and line it came from, the `extend` chain, the ignore sources in force, and whether the
 path would be selected with the deciding gate. It is read-only and deterministic.
 
-A `[format]` key enters the result-cache identity; a `[lint]` key never does. That is the same
-discipline stated as a rule you can check by inspection: rule selection is a projection over one
-canonical semantic result, so changing selection neither changes frontend strategy nor creates
-strategy-specific cache entries. It decides one thing only: which fact tier a run must obtain, which is
-the cheapest tier answering every selected rule. Changing `line-width` does change the canonical bytes,
-so it correctly misses a cache entry recorded at another width.
+A `[format]` key enters the result-cache identity; a `[lint]` key never does. Rule selection is a
+projection over one canonical semantic result, so changing selection changes neither the frontend
+strategy nor the cache entries. It decides one thing: which fact tier a run needs, the cheapest tier
+that answers every selected rule. Changing `line-width` does change the canonical bytes, so it
+rightly misses an entry recorded at another width.
 
-Without positional files, selection covers every root-relative `.lean` source that survives the gates,
-not only library modules. Standalone scripts and nested/root `lakefile.lean` configuration therefore
-receive the same deterministic report and cache semantics as buildable modules.
+Without named files, selection covers every root-relative `.lean` source that survives the gates, not
+only library modules. Standalone scripts and nested or root `lakefile.lean` configuration get the
+same report and cache behavior as buildable modules.
 
 ## Cache and compiler integration
 
-Successful semantic results are cached under `.lean-fmt-cache/` by default. One environment-scoped,
-atomically replaced index holds the per-source results, avoiding thousands of filesystem probes and
-writes. Each entry still validates the exact source, target toolchain, evaluated source/module
-configuration, ordered Lake environment, dependency trace content, formatter runtime, validation
-level, and semantic-result schema. The environment epoch also hashes current project and dependency
-sources because compact downloaded traces do not necessarily enumerate every source input. Missing,
-stale, or corrupt indexes and entries are ordinary misses. `--no-cache` performs neither cache reads
-nor writes.
+lean-fmt caches successful semantic results under `.lean-fmt-cache/` by default. One
+environment-scoped index, replaced atomically, holds the per-source results, which saves one
+filesystem probe and write per source. Each entry still validates the exact source, target toolchain,
+evaluated source and module configuration, ordered Lake environment, dependency trace content,
+formatter runtime, validation level, and semantic-result schema. The environment epoch also hashes
+current project and dependency sources, because compact downloaded traces need not name every source
+input. Missing, stale, or corrupt indexes and entries are ordinary misses. `--no-cache` neither reads
+nor writes the cache.
 
 A warm run still evaluates the Lake workspace because `lakefile.lean` is executable configuration;
 skipping that step cannot be sound for general projects. Once its epoch is validated, an all-hit run
@@ -122,13 +121,10 @@ instead of being rebuilt during a check. Every path produces the same canonical 
 projection. The CLI resolves the target root's Lean and Lake installation itself, so normal use does
 not wrap the binary in a second `lake env` process.
 
-On the recorded Apple-silicon machine, the final release candidate checked an already ordinarily
-built mathlib revision `783ccda4` with 8,795 selected sources and a cold formatter cache in 136.549
-seconds. Peak aggregate RSS was 1,316,240 KiB, memory pressure remained normal, and swap did not grow.
-The subsequent all-hit check took 23.012 seconds with module evidence, artifacts, and the analyzer all
-forcibly disabled; it returned byte-identical output without starting a frontend or extractor.
-These measurements exclude the prerequisite mathlib build and apply to the recorded binary and
-workload digests; full details are in the execution-core evidence.
+On a mathlib-sized project the cached check runs several times faster than the cold one and returns
+byte-identical output without starting a frontend or extractor. Timings, memory, and the exact
+workload digests live in the execution-core evidence, not here, because they belong to one machine
+and one revision.
 
 `compiler setup` prints versioned integration identifiers and guidance. It deliberately does not
 rewrite arbitrary executable `lakefile.lean`. `compiler status` performs a read-only, path-sorted
@@ -179,10 +175,10 @@ That also reaches the language server, since Lake writes the plugin list into ea
 dependency's facet declarations into one workspace-global map.
 
 Three costs to weigh. The plugin's shared library enters every consuming module's build trace, so
-editing the plugin re-elaborates every module that loads it — that edge is what makes the artifact
-trustworthy, and `platformIndependent := true` suppresses it only by lying. Loading a plugin runs the
-initializers of the plugin module and all its imports, per module. And on macOS, Lake adds its own
-shared library as a second plugin whenever any plugin is present.
+editing the plugin re-elaborates every module that loads it — that dependency is what makes the
+artifact trustworthy, and `platformIndependent := true` hides it by stating something untrue. Loading
+a plugin runs the initializers of the plugin module and all its imports, once per module. And on
+macOS, Lake adds its own shared library as a second plugin whenever any plugin is present.
 
 Lake's `plugins` field is still officially experimental and its target-key syntax has been revised
 more than once. Pin the toolchain and re-run `tests/downstream/run.sh` after a bump.
@@ -258,9 +254,9 @@ anything needs two of these.
 
 **Removal plan.** `serve` is removed once (1) `lsp` has been exercised by a real editor rather than
 only by protocol harnesses, and (2) one release has shipped with this notice, so a consumer has had a
-version to migrate against. Neither has happened yet, so it stays and stays supported. It gains no new
-capability in the meantime: `preview`, `unsafeFixes`, code actions, and range formatting are `lsp`'s
-and are not being back-ported.
+version to migrate against. Neither has happened yet, so it stays, and it stays supported. It gains no
+new capability meanwhile: `preview`, `unsafeFixes`, code actions, and range formatting belong to
+`lsp`, and nothing back-ports them.
 
 ## Architecture and verification
 

@@ -5,20 +5,20 @@ module
 `RLC-SPEC` chose this model by building both candidates and measuring them; the reasoning, the
 numbers, and the rejected alternatives are in `docs/projects/ruff-02-layout-core/notes/01-layout-design.md`
 and reproducible with `experiments/layout-core/run.sh`. This module implements the contract that note
-froze. The comments here say what the code cannot; they do not re-argue the choice.
+froze.
 
-Two facts from that note are load-bearing here and are not obvious:
+Two facts from that note matter here and are not obvious:
 
 * **The renderer is part of the contract, not an implementation detail.** Wadler's `best`/`fits` is
   linear only because Haskell is lazy: `better` compares two *unevaluated* renderings and forces only
-  the prefix that fits. Lean is strict, so a transliteration builds both alternatives in full and is
-  **Θ(φⁿ)** in sibling groups — measured, 161006 steps to emit 180 bytes at n=20. `render` below is a
-  bounded work list, which is exactly `18n-1` steps on the same document. Lean core's `Std.Format.be`
-  is a work list for the same reason.
+  the prefix that fits. Lean is strict, so a transliteration builds both alternatives in full and
+  takes time exponential in the number of sibling groups. `render` below is a bounded work list, and
+  its step count grows linearly in the size of the document. Lean core's `Std.Format.be` is a work
+  list for the same reason.
 * **`Std.Format` is not reusable here.** It is core's own Wadler algebra, but `Format` is a closed
   inductive and its `line` flattens to `" "` and nothing else. A `do` block needs a separator that is
   `"; "` flat and *nothing* broken; core and Oppen both strand the semicolon (measured). `line` below
-  carries its flat text, which is the one generalization the whole choice turned on.
+  carries its flat text, and that generalization decided the choice.
 
 Units differ on purpose and the difference is not a bug: **columns are codepoints, ranges are bytes.**
 Columns are compared against the margin, and codepoints are what `Std.Format` counts
@@ -51,7 +51,7 @@ inductive Doc where
   | text (s : String)
   /-- A break opportunity carrying the text it becomes when its group is flat.
   `line " "` is Wadler's `line`, `line ""` is Leijen's `softline`, and `line "; "` is a `do` block's
-  separator. Broken, it emits a newline and the current indentation — the flat text is dropped. -/
+  separator. Broken, it emits a newline and the current indentation, dropping the flat text. -/
   | line (flat : String)
   /-- An unconditional newline plus the current indentation. A group containing one can never be
   flat. A line comment must be followed by one: `--` swallows the rest of its line, so a comment a
@@ -59,9 +59,9 @@ inductive Doc where
   | hard
   /-- Literal text that may span lines, emitted exactly as given.
 
-  Its interior is **never re-indented**, which is the entire reason it exists and the one thing
-  `text`+`hard` cannot express: `hard` applies the current indentation to the next line, and a block
-  comment or a multi-line string literal that gets re-indented has had its *content* rewritten.
+  Its interior is **never re-indented**, which is why it exists and what `text`+`hard` cannot
+  express: `hard` applies the current indentation to the next line, and re-indenting a block comment
+  or a multi-line string literal rewrites its *content*.
   `Std.Format` re-indents such text (`Basic.lean:269-276`); for a comment body that is a defect, not
   a feature. A multi-line `verbatim` can never be flat. Discovered by `RLC-IMPL`; see
   `results/02-engine.md`. -/
@@ -87,11 +87,11 @@ namespace Doc
 
 /-- Column width of a fragment, in codepoints. See the module comment on units.
 
-This is the policy `Std.Format` uses, and it is a compromise recorded rather than hidden: it is right
-for the notation Lean is written in (`→`, `α`, `x₁` measure 1, 1, 2) and wrong for CJK and emoji,
-which display twice as wide as they measure. It is also not normalization-stable — `é` measures 1
-column precomposed and 2 decomposed. UAX#11 East Asian Width would need a table core does not have
-and would put this formatter's column count at odds with every other Lean tool. -/
+This is the policy `Std.Format` uses, and it is a recorded compromise: it is right for the notation
+Lean is written in (`→`, `α`, `x₁` measure 1, 1, 2) and wrong for CJK and emoji, which display twice
+as wide as they measure. It also depends on normalization — `é` measures 1 column precomposed and 2
+decomposed. UAX#11 East Asian Width would need a table core does not have, and would put this
+formatter's column count at odds with every other Lean tool. -/
 def width (s : String) : Nat := s.length
 
 /-- Text after the last newline, which is where the column stands once `verbatim` has been emitted. -/
@@ -122,8 +122,8 @@ def size : Doc → Nat
 
 end Doc
 
-/-- One entry of the source map: the input range a fragment came from, and the output range it landed
-in. `output` is a byte range into the rendered string; `source` is a byte range into the normalized
+/-- One entry of the source map: the input range a fragment came from, and the output range it
+occupies. `output` is a byte range into the rendered string; `source` is a byte range into the normalized
 source, the same coordinate system `LosslessSource` uses.
 
 Range formatting needs this, and so does any caller that must map a finding back to what it edited. -/
@@ -150,18 +150,19 @@ private def newlineIndent (indent : Nat) : String :=
 /-- Does the undecided document still fit on this line?
 
 `remaining` is columns left. The walk stops at the first break-mode `line`, because everything after
-it is on another line and cannot affect this one — that bound is what makes the renderer linear
-rather than Wadler's Θ(φⁿ), and it is why no alternative rendering is ever built.
+it is on another line and cannot affect this one — that bound keeps the renderer linear instead of
+exponential, and it is why no alternative rendering is ever built.
 
-`z`, the work list *after* the group, is deliberately included by the caller. A group that fits on its
-own may still not fit once what follows it before the next break is counted, so a margin is a promise
-about lines, not about groups. `Std.Format.pushGroup` carries the remainder for the same reason.
+The caller deliberately includes `z`, the work list *after* the group. A group that fits on its own
+may still not fit once what follows it before the next break is counted, so a margin promises
+something about lines, not about groups. `Std.Format.pushGroup` carries the remainder for the same
+reason.
 
-**Known hole, owned by `RLC-FINAL`.** This is bounded in columns of *text*, not in nodes between
-columns: `empty`, `nest`, `group`, `mark`, and `closeMark` consume no width, so a document that nests
-them deeply between text could walk arbitrarily far — O(n·w), and O(n²) in the limit. Every shape
-measured in `RLC-SPEC` is linear, and any printer emitting text at bounded node-distance stays linear.
-It is not demonstrated for an adversarial zero-width document. -/
+**Known hole, owned by `RLC-FINAL`.** The bound counts columns of *text*, not nodes between columns:
+`empty`, `nest`, `group`, `mark`, and `closeMark` consume no width, so a document that nests them
+deeply between text could walk arbitrarily far — O(n·w), and O(n²) in the limit. Every shape
+`RLC-SPEC` measured is linear, and any printer emitting text at bounded node-distance stays linear.
+No one has shown the bound for an adversarial zero-width document. -/
 private partial def fits (remaining : Int) : List Cmd → Bool
   | [] => remaining >= 0
   | cmd :: z =>
@@ -191,10 +192,9 @@ private partial def fits (remaining : Int) : List Cmd → Bool
 
 `out` is threaded rather than accumulated into an `Array` and joined. That is the measured choice, not
 the intuitive one: Lean's runtime mutates a string in place when its reference is unique, so `out ++ s`
-here is linear and beats `Array` + `String.join` by ~3x (200000 fragments: 1.148 ms against 3.373 ms).
-The roadmap's "repeated string concatenation" stop rule is about accumulators that are *shared*, which
-this one is not — it is dead the moment it is passed on. `tests/layout/run.sh` measures the growth so
-the claim cannot rot silently. -/
+here is linear and beats `Array` + `String.join`. The roadmap's "repeated string concatenation" stop
+rule is about accumulators that are *shared*, which this one is not — it dies the moment it is passed
+on. `tests/layout/run.sh` measures the growth, so the claim cannot rot silently. -/
 private partial def go (w : Nat) : List Cmd → Nat → Nat → String → Array Mark → String × Array Mark
   | [], _, _, out, marks => (out, marks)
   | .closeMark source outStart :: z, col, outBytes, out, marks =>
@@ -219,10 +219,10 @@ private partial def go (w : Nat) : List Cmd → Nat → Nat → String → Array
     | .group d => match m with
       -- Already flat: the enclosing group's fit test *pushed this group as `.doc i .flat d`* to reach
       -- its answer, so re-testing here can only re-derive the answer that authorized it — and if it
-      -- ever derived a different one, `go` would emit a break inside a group that `fits` had certified
-      -- as flat. Honoring `m` is what keeps the two functions the same function. It is also the
-      -- difference between linear and quadratic on nested groups: without it every one of `n` nested
-      -- groups re-walks the tail. Measured, `evidence/03-layout-bench.txt`.
+      -- ever derived a different one, `go` would emit a break inside a group `fits` had certified as
+      -- flat. Honoring `m` keeps the two functions in step. It is also the difference between linear
+      -- and quadratic on nested groups: without it every one of `n` nested groups re-walks the tail.
+      -- Measured, `evidence/03-layout-bench.txt`.
       | .flat => go w (.doc i .flat d :: z) col outBytes out marks
       | .brk =>
         let mode := if fits (Int.ofNat w - Int.ofNat col) (.doc i .flat d :: z) then Mode.flat else Mode.brk
@@ -234,9 +234,9 @@ private partial def go (w : Nat) : List Cmd → Nat → Nat → String → Array
 unsatisfiable constraint. That is a property of the constructor set, not a claim about this function.
 
 **A margin is not a guarantee.** The renderer never breaks a `text` and never invents a break
-opportunity, so a document whose atoms exceed `w` produces lines wider than `w` — measured: `) => tail`
-is atomic, and at margins 8, 6, and 5 it still renders 9 columns. Indentation is likewise unclamped:
-`nest` depth d at unit u indents d·u whatever `w` is. Both are inherent to the model rather than
+opportunity, so a document whose atoms exceed `w` produces lines wider than `w`: an atom such as
+`) => tail` renders at its own width however small the margin. Indentation is likewise unclamped:
+`nest` depth d at unit u indents d·u whatever `w` is. Both follow from the model rather than being
 defects in it, and clamping is a language decision `RLC-FINAL` owns.
 
 Marks are recorded when their subdocument completes, so an inner `mark` precedes the outer `mark` that

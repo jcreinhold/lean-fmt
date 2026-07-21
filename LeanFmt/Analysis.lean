@@ -9,7 +9,7 @@ import Lean.Linter.Deprecated
 namespace LeanFmt.Internal
 
 /- The process response is deliberately semantic. It contains neither setup paths nor execution
-strategy, so the parent cannot accidentally key reporting on how analysis was obtained. -/
+strategy, so the parent cannot accidentally key reporting on how it obtained the analysis. -/
 structure AnalysisEnvelope where
   artifact? : Option ModuleArtifact
   diagnostics : Array String := #[]
@@ -149,7 +149,7 @@ stripped to what the source writes (`foo`, or a qualified `Foo.bar`). Pure on `N
 private def occurrenceDisplay (n : Lean.Name) : String := (Lean.privateToUserName n).toString
 
 /- Re-derive the owned deprecation-occurrence facts from the whole-file info trees. This is the fold
-`ruff-11b` `ROS-SPEC` proved reachable through the very snapshot tree `analyzeExact` already walks for
+`ruff-11b` `ROS-SPEC` proved reachable through the same snapshot tree `analyzeExact` already walks for
 the message log (`notes/01-model.md` §2, `evidence/infotree_probe.lean`): every command's info tree
 lives on its `Snapshot.infoTree?`, so `tree.getAll.filterMap (·.infoTree?)` — a *consumer-side* fold,
 not a producer change — surfaces the whole file, avoiding the per-command info reset that would limit
@@ -161,7 +161,7 @@ that carries `@[deprecated]`, and which is a use rather than the declaration bin
 occurrence is recorded. Ranges come straight from `Info.range?` — already normalized-source byte
 offsets (the parser positions index the string `mkInputContext` normalized), so unlike a diagnostic's
 `Position` they need no `FileMap` round-trip — clamped to the module's byte span. Each use-site emits
-its `TermInfo` more than once, so the result is deduplicated by range. `fixable` is decided here
+its `TermInfo` more than once, so this deduplicates by range. `fixable` is decided here
 (`notes/01-model.md` §5): a `newName?` must exist and the occurrence must spell a single bare
 identifier token, the conservative predicate a textual rename preserves; everything else is
 report-only and the output re-elaboration validator backstops the rest. -/

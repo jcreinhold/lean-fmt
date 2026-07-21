@@ -26,7 +26,7 @@ implements them (`notes/01-discovery.md` §7, §10). -/
 
 private structure IgnorePattern where
   /-- Pattern components, `/`-separated. A non-anchored pattern is stored with a leading `**`, which
-  is exactly git's "a pattern with no slash matches at any depth". -/
+  is git's rule that a pattern with no slash matches at any depth. -/
   segments : List String
   /-- A `!` prefix: re-includes a path an earlier pattern excluded. -/
   negated : Bool
@@ -90,7 +90,7 @@ private partial def pathMatches : List String → List String → Bool
   | _ :: _, [] => false
 
 /-- A pattern matches a *prefix* of the path when it names an ancestor directory. Git's rule that an
-excluded directory cannot have its contents re-included is what makes this the right test: once a
+excluded directory cannot have its contents re-included is why this is the right test: once a
 directory matches, everything beneath it is excluded, so a directory-only pattern must match a file
 by matching one of its ancestors. -/
 private partial def prefixMatches (pattern path : List String) : Bool :=
@@ -157,10 +157,10 @@ private def ignored (layers : Array IgnoreLayer) (path : String) (isDirectory : 
 
 /-! ## Git configuration, without spawning `git`
 
-Reading `core.excludesFile` by parsing git's own configuration files keeps `git` off the critical
-path: lean-fmt does not require it on `PATH` to format a repository, and discovery pays no process
-spawn. This is deliberately **partial** — `include`/`includeIf` directives are not followed, so a
-global ignore file reachable only through a conditional include is not applied
+Reading `core.excludesFile` from git's own configuration files keeps `git` out of discovery:
+lean-fmt does not need it on `PATH` to format a repository, and discovery spawns no process. This is
+deliberately **partial** — it does not follow `include`/`includeIf` directives, so it never applies a
+global ignore file reachable only through a conditional include
 (`notes/01-discovery.md` §10.2, open question 5). -/
 
 private def expandHome (path : String) : IO String := do
@@ -240,7 +240,7 @@ private def repositoryExclude? (repository : FilePath) : IO (Option FilePath) :=
 
 /-! ## The walk -/
 
-/-- The result of one discovery walk: every candidate source that survived the floor and the ignore
+/-- The result of one discovery walk: every candidate source that survived gate 1 and the ignore
 sources, and the configuration governing each directory that declared one.
 
 `configs` is keyed by the **root-relative directory** the config governs, so resolving a file is a
@@ -284,9 +284,9 @@ private def isLeanSource (path : FilePath) : Bool := path.extension == some "lea
 
 /-- Walk the project once, collecting sources, configurations, and ignore state together.
 
-The single walk is the shape `RCD-IMPL`'s stop rule demands: a per-file filesystem ascent is what this
-structure exists to avoid. Pruning is sound precisely because git's directory-exclusion rule holds — a
-directory that is ignored can contain no re-included file, so not descending into it cannot lose one
+The single walk is the shape `RCD-IMPL`'s stop rule demands: this structure exists to avoid a
+per-file filesystem ascent. Pruning is sound because git's directory-exclusion rule holds — an
+ignored directory can hold no re-included file, so not descending into it cannot lose one
 (`notes/01-discovery.md` §4.2, §10.1). -/
 private partial def walkDirectory (root : FilePath) (explicit? : Option FormatterConfig)
     (directory : FilePath) (relative : String) (current : FormatterConfig)
@@ -312,15 +312,15 @@ private partial def walkDirectory (root : FilePath) (explicit? : Option Formatte
   let mut subdirectories : Array (FilePath × String) := #[]
   for entry in entries do
     let childRelative := if relative.isEmpty then entry.fileName else relative ++ "/" ++ entry.fileName
-    -- `isDir` follows symlinks; this does not. A symlinked directory is classified by the link itself,
-    -- so the walk never descends through one. That is git's own work-tree rule, and it is what makes
-    -- the walk finite: `dir/loop -> ..` otherwise recurses until the operating system refuses the path,
-    -- and the redundant results are invisible afterwards because they realpath back onto files already
-    -- found. Measured before the fix: 40 ms of discovery on a three-file project
-    -- (`ruff-13` `results/03-acceptance.md`).
+    -- `isDir` follows symlinks; this does not. The link itself, not its target, decides whether an
+    -- entry is a directory, so the walk never descends through one. That is git's own work-tree rule,
+    -- and it is what keeps the walk finite: `dir/loop -> ..` otherwise recurses until the operating
+    -- system refuses the path, and the extra results hide afterwards because they realpath back onto
+    -- files already found. Before the fix, discovery on a three-file project took far longer than the
+    -- project warranted (`ruff-13` `results/03-acceptance.md`).
     let linkType := (← entry.path.symlinkMetadata).type
     if linkType == .dir then
-      -- Gate 1 floor: `.lake` is never descended into and never selected, by any path form.
+      -- Gate 1: `.lake` is never descended into and never selected, by any path form.
       if entry.fileName == ".lake" || entry.fileName == ".git" then continue
       if current.respectGitignore && ignored layers childRelative true then continue
       if current.excludePatterns.any (·.matches childRelative) then continue

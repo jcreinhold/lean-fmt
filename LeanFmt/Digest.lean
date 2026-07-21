@@ -123,12 +123,12 @@ private def appendWordHex (output : String) (word : UInt32) : String := Id.run d
     result := result.push (Nat.digitChar nibble.toNat)
   return result
 
-/-- Hash an exact byte sequence. No filesystem metadata participates. -/
+/-- Hash an exact byte sequence. Only the bytes; no filesystem metadata. -/
 def ofBytes (bytes : ByteArray) : Digest :=
   let hex := (hashBytes bytes).foldl appendWordHex ""
   .mk hex
 
-/-- Hash exact UTF-8 source bytes. No newline normalization participates. -/
+/-- Hash exact UTF-8 source bytes. No newline normalization happens first. -/
 def ofString (source : String) : Digest :=
   ofBytes source.toUTF8
 

@@ -9,9 +9,9 @@ namespace LeanFmt.Internal
 
 `text` is what `format` publishes in place (`ruff-11d`; `format --check` previews it) and what `diff`
 diffs the file's own bytes against. It carries **no**
-findings: since `ruff-11c` RDF-IMPL the layout patch applies no rule fix (a rule fix lands at the file's
-*original* coordinates through `fix`, never on the moved canonical bytes), so the source-rule surface
-that once re-indexed findings against this text (`renderCanonicalText`'s `runSourceRules`) is retired.
+findings: since `ruff-11c` RDF-IMPL the layout patch applies no rule fix (`fix` applies a rule fix at
+the file's *original* coordinates, never on the moved canonical bytes), so the source-rule surface
+that once re-indexed findings against this text (`renderCanonicalText`'s `runSourceRules`) is gone.
 `format`/`diff` render this text; the report they show is still `result.findings` at original
 coordinates, drawn one level up in `prepareFile` and independent of this structure.
 
@@ -42,7 +42,7 @@ structure SemanticResult where
   An entry serves a run only when `tier.satisfies plan.requiredTier` (`cacheHitServes`): a `.source`
   entry is complete for a source-only selection but **not** for one that selects a syntax rule, whose
   findings it never computed. Before any syntax rule shipped this was moot — "source findings" was
-  "all findings" — and shipping FMT008–FMT013 is exactly what makes it load-bearing. Defaults `.source`
+  "all findings" — and shipping FMT008–FMT013 is what made the distinction matter. Defaults `.source`
   (the narrow value); the schema bump below makes every pre-tier entry miss rather than read as this
   default and get mis-served. -/
   tier : Tier := .source
@@ -75,7 +75,7 @@ because it read "not in the artifact" as "not serialized"; the result cache is t
 `v4` (`RSP-IMPL`): adds `suppression`. A `v3` entry read as `v4` would default `suppression := {}` and
 read as "this file has no directives", which for a directive-bearing file is the stale-suppression
 bug — so the schema guard makes every `v3` entry miss, the same discipline that versioned `canonical?`.
-The default stays safe only for shortcut entries, which by construction have no directives.
+The default stays safe only for shortcut entries, which have no directives.
 
 `v5` (`RYR-IMPL`): adds `tier`. A `v4` entry read as `v5` would default `tier := .source` and, if it
 had been a full artifact-path entry, read as "source findings only" — narrowing a complete entry, which
@@ -89,7 +89,7 @@ clean), the safe direction; the schema bump makes it a clean miss rather than a 
 so no `v6` `.semantic` entry serves a fixable-FMT014 demand it never captured occurrences for.
 
 `v8` (`ruff-11c` RDF-IMPL): `CanonicalText` drops its `findings` array — the canonical layout carries no
-rule fix now that `format`/`diff` reflow only and every fix lands at original coordinates. A `v7`
+rule fix now that `format`/`diff` reflow only and every fix applies at original coordinates. A `v7`
 `canonical` object has an extra `findings` field the `v8` shape ignores, but a `v7` entry read as `v8`
 would also be serving canonical text whose findings the new code no longer folds into any patch; the
 schema bump makes it a clean miss instead. -/
@@ -154,9 +154,9 @@ more. A rule is a pure total function of its facts, and `validFor` on the line a
 this artifact describes exactly these bytes, so there is one input and one function and no second
 opinion available to have.
 
-The empirical version is shorter. Carrying findings in the artifact did not prevent disagreement; it
-caused the one `notes/01-rule-facts.md` §2 measured, where `check` reported a rule the artifact said
-was off. Two deciders disagreed, so there is now one. -/
+Empirically: carrying findings in the artifact did not prevent disagreement; it caused the one
+`notes/01-rule-facts.md` §2 measured, where `check` reported a rule the artifact said was off. Two
+deciders disagreed, so there is now one. -/
 def SemanticAnalysis.ofEnvelope? (raw : String)
     (envelope : AnalysisEnvelope) : Option SemanticAnalysis :=
   match envelope.artifact? with

@@ -19,10 +19,10 @@ What is statable, and what this module does: make the currency decision a pure f
 observation, specify what a correct answer is *independently* of that function, and prove both
 directions **under hypotheses that name every unprovable step**.
 
-The value is not the QED. It is that A1-A4 below must be enumerated, so "we think the cache is safe"
-becomes "the cache is safe exactly if A1-A4 hold", and each can then be argued, tested, or rejected
-on its own. A2 is *false in general* and is being accepted as a bounded race; that is precisely the
-kind of fact this exercise is for.
+The value is not the proof. It is that A1-A4 below must be listed, so "we think the cache is safe"
+becomes "the cache is safe if and only if A1-A4 hold", and each can then be argued, tested, or
+rejected on its own. A2 is *false in general* and is accepted as a bounded race; that is the kind of
+fact this exercise is for.
 
 ## Why `analyze` is a parameter, not a definition
 
@@ -57,9 +57,9 @@ worthless, and `serves_complete` is not a bonus theorem — it is half the conte
 own `serves`, the production path re-implemented the idea across two modules, and nothing forced them
 to agree. They had already diverged — the model checked schema, source, closure and tier, while the
 shipped gate also required canonical text when the run renders it and demanded semantic sub-facts. So
-`serves_complete` was proved about a decision strictly more permissive than the one running, which is
-the direction that makes a completeness theorem worthless. `RCI-FINAL` closed it by moving the
-decision into a module both sides import.
+`serves_complete` was proved about a decision more permissive than the one running, which is the
+direction that makes a completeness theorem worthless. `RCI-FINAL` closed it by moving the decision
+into a module both sides import.
 
 What remains reviewed rather than typechecked is narrower and named: that the *instantiation* is
 right — that `Cache.readAll` builds its `Obs` from digests that really do observe the current world.
@@ -77,10 +77,10 @@ open LeanFmt.Internal.Cache.Decision
 /-! ## Objects
 
 `Source` is normalized module text (`raw.crlfToLf`, the repository's one coordinate system).
-`Grammar` is the syntax environment a module is parsed under — abstract, and the whole reason this
-stack exists: Lean's grammar is open, so a `notation` in `A` changes how `B`'s *unchanged bytes*
-parse. `Analysis` stands for `SemanticAnalysis`; comparison is `=` on it, because it is data with no
-quotient and no chosen representative, so `≃` would be affectation. -/
+`Grammar` is the syntax environment a module is parsed under — abstract, and why this stack exists:
+Lean's grammar is open, so a `notation` in `A` changes how `B`'s *unchanged bytes* parse. `Analysis`
+stands for `SemanticAnalysis`; comparison is `=` on it, because it is data with no quotient and no
+chosen representative. -/
 
 section
 
@@ -111,7 +111,7 @@ def Valid (analyze : Grammar → Source → Analysis)
 
 /-- What it means for an entry to be a faithful record of *some* past world: its digests are the
 digests of the grammar and source it was built under, and its analysis is what analysis of those
-produces. Any entry the cache itself wrote satisfies this by construction. -/
+produces. Any entry the cache itself wrote satisfies this. -/
 def BuiltFrom (analyze : Grammar → Source → Analysis)
     (sd : Source → SDigest) (gd : Grammar → GDigest)
     (e : Entry Mod Analysis SDigest GDigest Schema) (g : Grammar) (s : Source) : Prop :=
@@ -121,8 +121,8 @@ def BuiltFrom (analyze : Grammar → Source → Analysis)
 
 **This is the weakest link and it is false in general.** The filesystem can change between the moment
 the cache reads a trace and the moment it serves the entry; nothing in the model, and nothing in the
-implementation, closes that window. It is carried as a hypothesis rather than an `axiom` precisely so
-it appears in the type of everything that depends on it. -/
+implementation, closes that window. It is a hypothesis rather than an `axiom` so that it appears in
+the type of everything that depends on it. -/
 def Faithful (sd : Source → SDigest) (gd : Grammar → GDigest)
     (o : Obs Mod SDigest GDigest Schema) (w : World Mod Grammar Source Schema) : Prop :=
   o.schema = w.schema ∧
@@ -167,17 +167,17 @@ theorem source_current (hsd : Function.Injective sd) (hobs : Faithful sd gd o w)
 /-- **`grammar_current`** — the entry's artifact was built under `g`; establish `g` is the grammar the
 module is under *now*.
 
-This is the lemma the whole stack turns on, and stating it has already refuted two designs. It refuted
+This is the lemma the stack depends on, and stating it has already refuted two designs. It refuted
 per-module self-consistency (`notes/01-what-is-provable.md` §6: edit `A`, `A` rebuilds, `B` fails to
 build, and nothing is detected anywhere). Then `RCI-SPEC` refuted that note's proposed repair by
 measurement — `X transitive imports (all)` excludes `X`, so comparing it would have passed on the
 stale grammar case.
 
-Uses **A1/A3** as injectivity of `gd`. That injectivity is doing heavy lifting and deserves its name:
-it says a change in the grammar a module was parsed under always changes the closure digest derived
-from Lake's traces. It is a claim about *Lake's implementation*, verified by reading
-`computeExportInfo`, confirmed numerically, and pinned by `testLakeTraceCharacterization` — but still
-a hypothesis, not a theorem. -/
+Uses **A1/A3** as injectivity of `gd`. That injectivity is a strong assumption: it says a change in
+the grammar a module was parsed under always changes the closure digest derived from Lake's traces.
+It is a claim about *Lake's implementation*, checked by reading `computeExportInfo`, confirmed by
+measurement, and pinned by `testLakeTraceCharacterization` — but still a hypothesis, not a
+theorem. -/
 theorem grammar_current (hgd : Function.Injective gd) (hobs : Faithful sd gd o w)
     (hbuilt : BuiltFrom analyze sd gd e g s) (h : serves e o demand = true) :
     g = w.grammar e.mod := by
@@ -192,8 +192,8 @@ a `.source` entry never serves a selection requiring a syntax rule, an entry tha
 canonical text never serves a run that renders it, and an entry that captured fewer semantic sub-facts
 than the run demanded never serves it.
 
-Needs no assumption at all: it is a projection of the decision. That it is free is worth noticing,
-because it is the one of the four obstacles entirely within this repository's control. -/
+Needs no assumption at all: it is a projection of the decision. It comes free because it is the one of
+the four obstacles wholly within this repository's control. -/
 theorem demand_met (h : serves e o demand = true) : e.provided.meets demand = true :=
   (serves_conjuncts h).2.2.2
 
@@ -206,7 +206,7 @@ analyses. All the content is in the three lemmas above and the hypotheses they c
 
 Depends on **A1** (`hsd`, `hgd`), **A2** (`hobs`), **A3** (folded into `hgd`), and **A4** (discharged
 by `analyze`'s type). `hbuilt` is not an assumption about the world — every entry the cache wrote
-satisfies it by construction. -/
+satisfies it. -/
 theorem serves_sound (hsd : Function.Injective sd) (hgd : Function.Injective gd)
     (hobs : Faithful sd gd o w) (hbuilt : BuiltFrom analyze sd gd e g s)
     (h : serves e o demand = true) :
@@ -220,10 +220,10 @@ Without this, `serves := fun _ _ _ => false` would satisfy everything above. -/
 
 /-- **An entry genuinely built from the current world is served.**
 
-Note the asymmetry with soundness: this needs **no injectivity**. Soundness needs digests to separate
-distinct values; completeness needs only that they are *functions*. So A1 and A3 are load-bearing for
-"never serve a stale result" and irrelevant to "do not needlessly miss" — which is the right shape,
-since a digest collision causes a wrong answer and never a spurious recomputation. -/
+Note the difference from soundness: this needs **no injectivity**. Soundness needs digests to separate
+distinct values; completeness needs only that they are *functions*. So A1 and A3 matter for "never
+serve a stale result" and not at all for "do not needlessly miss", which is right: a digest collision
+causes a wrong answer, never a spurious recomputation. -/
 theorem serves_complete (hobs : Faithful sd gd o w)
     (hschema : e.schema = w.schema)
     (hbuilt : BuiltFrom analyze sd gd e (w.grammar e.mod) (w.source e.mod))
@@ -236,9 +236,9 @@ theorem serves_complete (hobs : Faithful sd gd o w)
 
 /-! ## What the stack exists to prevent, stated directly
 
-`grammar_current` and `source_current` are the lemmas the assembly needs. These two are the same facts
-turned around to say what a reviewer actually wants checked, and they are worth naming because they
-are the completion contract's first bullet rather than a proof step. -/
+`grammar_current` and `source_current` are the lemmas the assembly needs. These two state the same
+facts the other way round, as a reviewer wants them checked. They are named because they are the
+completion contract's first bullet rather than a proof step. -/
 
 /-- **An entry built under a grammar that is no longer current is never served.**
 
@@ -281,10 +281,10 @@ end
 `serves_sound`'s *hypotheses* can all hold at once — and a theorem whose hypotheses are contradictory
 is true for a reason that has nothing to do with caches.
 
-So here is a witness, in a model with **two distinct grammars**, which is the least degenerate case
-that can still exhibit the hazard. `Grammar := Bool` stands for "before and after the `notation`
-edit"; `sd` and `gd` are `id`, which is injective, so A1/A3 hold on the nose. The same fixture then
-shows the stale entry being refused, so the two theorems are not agreeing by accident. -/
+So here is a witness, in a model with **two distinct grammars**, the smallest case that can still show
+the hazard. `Grammar := Bool` stands for "before and after the `notation` edit"; `sd` and `gd` are
+`id`, which is injective, so A1/A3 hold outright. The same fixture then shows the stale entry being
+refused, so the two theorems are not agreeing by accident. -/
 
 private abbrev W : World Unit Bool Bool Unit := ⟨(), fun _ => true, fun _ => true⟩
 private abbrev O : Obs Unit Bool Bool Unit := ⟨(), fun _ => true, fun _ => true⟩

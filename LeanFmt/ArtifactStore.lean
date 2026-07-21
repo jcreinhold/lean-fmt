@@ -9,9 +9,9 @@ namespace LeanFmt.Internal
 /-- Structural validity, checkable without the source.
 
 This used to also bound every finding's range by the projection's byte count. There are no findings
-in an artifact any more, and nothing was lost with that check: a finding is now computed by the
-process that reports it, from facts `validFor` has already matched to the bytes in hand, so its range
-is in range by construction rather than by audit. -/
+in an artifact any more, and dropping that check lost nothing: the process that reports a finding now
+computes it, from facts `validFor` has already matched to the bytes in hand, so its range fits those
+bytes without a separate audit. -/
 def structurallyValid (artifact : ModuleArtifact) : Bool :=
   artifact.schema == artifactSchema && artifact.source.structurallyValid
 

@@ -22,8 +22,8 @@ lake build
 Every option except `--root` and `--max-memory` can also be sent as `initializationOptions`
 (`configPath`, `select`, `ignore`, `preview`, `unsafeFixes`, `debounceMs`), and a client that sends
 neither is configured exactly as the process was started. `--root` and `--max-memory` are fixed when
-the session opens: one Lake workspace and one envelope. A client that asks to move either is told to
-restart rather than quietly half-served.
+the session opens: one Lake workspace and one envelope. A client that asks to change either is told
+to restart, rather than served from a setup it did not ask for.
 
 ## Two things that look like bugs and are not
 

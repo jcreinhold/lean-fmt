@@ -22,9 +22,9 @@ about — add an entry to `ruleRegistry` and you are done.
 ```
 
 `Rule.tier` derives from `impl`, so there is no tier field to keep in sync and no way to declare one
-tier and read another. This is deliberate: the field that used to do this job (`RuleInfo.input`) was a
-claim nothing had to honor, and it was wrong for the product's entire life without anything noticing.
-The constructor cannot be wrong, because it is what hands you your argument.
+tier and read another. That is on purpose: the field that used to do this job (`RuleInfo.input`) was
+a claim nothing had to honor, and it stayed wrong for years unnoticed. The constructor cannot be
+wrong, because it is what gives you your argument.
 
 ## Picking a tier
 
@@ -32,14 +32,17 @@ The constructor cannot be wrong, because it is what hands you your argument.
 | --- | --- | --- |
 | `.source` | `SourceFacts` | nothing — the file was read to get here |
 | `.syntax` | `SyntaxFacts` | the exact frontend's projection: a current `.olean` and its facet, or a frontend invocation |
+| `.semantic` | `SemanticFacts` | the projection plus the elaborator's diagnostics |
 
 Pick the cheapest one that can answer your question. `RulePlan.requiredTier` folds `Tier.max` over
 whatever the user selected, so a single `.syntax` rule in a selection makes the whole batch pay for
 a projection. That is the only thing selection is allowed to decide — it never picks a worker, a
 cache identity, or a schedule.
 
-There is no `.semantic` tier yet. When elaboration evidence is needed, it arrives with its facts,
-its producer, and its first rule together.
+`SemanticFacts` carries the `SyntaxFacts`, the captured `Diagnostic`s in normalized-source
+coordinates, and `occurrences`, the deprecation-occurrence facts of `ruff-11b`. `occurrences` is
+empty unless the run demanded that capability, and an empty array means *no fix to offer*, so a
+semantic rule must stay report-only on empty rather than treat it as "nothing found".
 
 ## Coordinates
 
@@ -52,9 +55,9 @@ Do not measure against the file's bytes. Reading a file and publishing one are t
 that touch raw bytes, and they go through `LosslessSource.normalize`/`denormalize`.
 
 A `fix?` is a `Fix`: one `applicability` and an array of `edits`, each a byte range and a replacement
-in those same coordinates. `preparePatch` rejects ranges that are out of bounds, land inside a UTF-8
-scalar, or conflict with another fix — as a unit, so a bad fix cannot half-apply, and a conflict names
-both rules and both finding ranges rather than an array index.
+in those same coordinates. `preparePatch` rejects ranges that are out of bounds, split a UTF-8 scalar,
+or conflict with another fix — as a unit, so a bad fix cannot half-apply, and a conflict names both
+rules and both finding ranges rather than an array index.
 
 ## Report-only rules
 
@@ -89,9 +92,9 @@ can promote it once the evidence exists.
 
 Set applicability on the `Fix` you emit; do **not** read configuration to decide it. `extend-safe-fixes`
 and `extend-unsafe-fixes` reclassify per rule, but that is resolved in `RulePlan.effectiveApplicability`
-as a projection over your emitted value — the same discipline that keeps a rule from reading its own
-enablement. `.displayOnly` is a floor configuration cannot lift: a rule that declined to make an edit
-applicable cannot be argued into it.
+as a projection over your emitted value — the same rule that stops a rule from reading its own
+enablement. No configuration lifts `.displayOnly`: a rule that declined to make an edit applicable
+stays declined.
 
 ## Ordering
 
@@ -120,9 +123,8 @@ integrates the formatter, so anything reachable from it is in that project's bui
 rules were reachable, editing one rule's message string invalidated every integrated module's Lake
 trace and changed the compiled bytes of any module that had a finding.
 
-So: the compiler projects, and rules decide, outside it, from the projection. If you find yourself
-wanting the plugin to know about your rule, that is the boundary talking. `tests/boundary/run.sh`
-will stop you, and it is right to.
+So the compiler projects, and rules decide outside it, from the projection. If you want the plugin to
+know about your rule, you have crossed the boundary. `tests/boundary/run.sh` will stop you.
 
 ## Testing it
 
@@ -132,21 +134,18 @@ will stop you, and it is right to.
   comments, byte-exact ranges (including multibyte marks), and the TAB/LF/DEL boundary. Model a
   report-only rule's tests on it. `testConfig` asserts category selectors (`--select security`) and
   `testSuppression` that the codes project through suppression like any other.
-- `testApplicability` covers admission, per-rule reclassification, the display-only floor, and conflict
-  provenance. If your rule ships an `.unsafe` or `.displayOnly` fix, assert its applicability there and
+- `testApplicability` covers admission, per-rule reclassification, the display-only limit, and where a
+  conflict came from. If your rule ships an `.unsafe` or `.displayOnly` fix, assert its applicability there and
   add a `--unsafe-fixes` case to `tests/modes/run.sh`.
-- The `.syntax` tier is live: `ruff-10` shipped FMT008–FMT013 (all `preview`). A `.syntax` rule is
-  reported by `check` and its `.safe` fix is expressed on original coordinates, but
-  `Application.renderCanonicalText` still runs only `runSourceRules`, so `format`/`fix` do not yet
-  re-flag or apply a syntax fix against canonical text — `ruff-06`'s RFX-SPEC froze the model
-  (re-project canonical text) and the successor stack `ruff-10b-syntax-fix-composition` owns wiring it.
-  `SemanticResult.tier` and `cacheHitServes` gate the result cache so a source-only shortcut entry
-  never serves a `.syntax` selection a false negative. `testEngineTiers` asserts the registry holds
-  both tiers and no `.semantic` rule; adding a `.semantic` rule is the case that still has more work
-  than this document covers.
+- All three tiers ship: `ruff-10` added the first `.syntax` rules (FMT008–FMT013) and `ruff-11` the
+  first `.semantic` ones (FMT014–FMT017). `check` reports a rule of any tier, and `fix` applies a
+  syntax fix by re-projecting the canonical text — the model `ruff-06`'s RFX-SPEC froze and
+  `ruff-10b-syntax-fix-composition` finished. `SemanticResult.tier` and `cacheHitServes` gate the
+  result cache, so a source-only shortcut entry never answers a `.syntax` or `.semantic` selection
+  with a false negative. `testEngineTiers` asserts that the registry still holds all three.
 - `testEngineTiers` and `testMixedSelection` exercise the engine itself through `runRulesOf` and
   `requiredTierOf`, which take a rule array so the tests can register probe rules without shipping
-  fake ones. Use that seam for engine behavior; use `ruleRegistry` for your rule's behavior.
+  fake ones. Test engine behavior through that array; test your rule through `ruleRegistry`.
 
 ## Where the reasoning lives
 

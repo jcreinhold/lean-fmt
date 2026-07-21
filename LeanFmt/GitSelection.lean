@@ -15,7 +15,7 @@ partial run must report. It does not decide what a path means: `.lean`-ness, `.l
 configured `include`/`exclude`, ordering, and snapshotting all stay in `LeanFmt.Project` and
 `LeanFmt.Discovery`, reached through the ordinary `execute` (§9.5 steps 3–4).
 
-Two measured facts shape everything here, both recorded in `evidence/01-watch-baseline.md`:
+Two observed facts shape everything here, both recorded in `evidence/01-watch-baseline.md`:
 
 * Only `-z` yields byte-exact paths. Default `git diff` C-quotes non-ASCII into octal escapes, and
   `core.quotePath=false` fixes that case while **still** quoting an embedded double quote. A
@@ -46,10 +46,10 @@ def Comparison.describe : Comparison → String
 
 /-- Why a path git named was not selected (§9.6).
 
-Silent dropping is what makes a partial run look complete, so every reason a caller would want to
-know is carried out of the adapter rather than discarded inside it. Paths dropped by the *ordinary*
-selection gates — not `.lean`, inside `.lake`, configured `exclude` — are not listed here: those are
-`Discovery`'s answer to give, and duplicating them would be a second matcher. -/
+Dropping a path silently is what makes a partial run look complete, so the adapter carries out every
+reason a caller would want to know rather than discarding it inside. Paths the *ordinary* selection
+gates drop — not `.lean`, inside `.lake`, configured `exclude` — are not listed here: `Discovery`
+gives that answer, and repeating it would mean a second matcher. -/
 inductive Dropped where
   /-- The file no longer exists: a delete, or a rename's old path. -/
   | deleted (path : String)
@@ -95,9 +95,9 @@ private def runGit (cwd : FilePath) (args : Array String) : IO GitOutput := do
 
 /-- The first line of git's stderr, which is the whole diagnostic for the commands used here.
 
-`git diff` outside a repository exits 129 after printing ~90 lines of option usage, which is why §9.7
-probes with `rev-parse` instead; this keeps a surprising failure from pasting a manual into the
-user's terminal. -/
+`git diff` outside a repository exits 129 after printing its whole option usage, which is why §9.7
+probes with `rev-parse` instead; a surprising failure should not fill the user's terminal with a
+manual. -/
 private def firstLine (text : String) : String :=
   match (text.trimAscii.toString.splitOn "\n").head? with
   | some line => line.trimAscii.toString
@@ -140,8 +140,8 @@ first rename and mis-assigns every path after it, so the arity is read from the 
 
 /-- Split a NUL-terminated stream into its fields, discarding the empty tail after the final NUL.
 
-`String.splitOn` is used rather than a line reader precisely because the payload may contain newlines:
-a filename is allowed to, and `-z` exists so that it can. -/
+This splits on NUL rather than reading lines because the payload may contain newlines: a filename is
+allowed to, and `-z` exists so that it can. -/
 private def nulFields (stream : String) : Array String :=
   let parts := stream.splitOn "\x00"
   (parts.filter (!·.isEmpty)).toArray
@@ -182,9 +182,9 @@ private def parseNameStatus (stream : String) : Array Record := Id.run do
 
 private def diffArguments : Comparison → Array String
   | .worktree => #["diff", "--name-status", "-z", "--find-renames", "HEAD"]
-  -- Three-dot, measured: two-dot reported ten paths on a diverged fixture — including a deletion the
-  -- branch never performed — where three-dot reported the two files it actually touched
-  -- (`evidence` §8). "What did my branch change" is the merge-base question.
+  -- Three-dot, from the evidence: on a diverged fixture, two-dot reported paths the branch never
+  -- touched — including a deletion it never performed — where three-dot reported only the files it
+  -- changed (`evidence` §8). "What did my branch change" is the merge-base question.
   | .base revision =>
     #["diff", "--name-status", "-z", "--find-renames", revision ++ "...HEAD"]
   | .staged => #["diff", "--cached", "--name-status", "-z", "--find-renames", "HEAD"]
@@ -205,20 +205,20 @@ private def includesUntracked : Comparison → Bool
   | .base _ => false
   | .staged => false
 
-/-- Whether a path git named is even a candidate for formatting: gate 1, the floor.
+/-- Whether a path git named is even a candidate for formatting: gate 1.
 
 **The adapter must apply this itself.** `notes` §9.5 step 3 assumed the ordinary selection would drop
 non-`.lean` and `.lake` paths once they were handed to `execute` as the request's file list. It does
 not: an *explicitly named* file deliberately bypasses discovery's gates 2–4 — "naming a path is saying
-something" (`ruff-13` `notes/01-discovery.md` §11) — and the floor it cannot skip is reported as a hard
+something" (`ruff-13` `notes/01-discovery.md` §11) — and the one gate it cannot skip raises a hard
 error, `selected file is not a Lean source`. Since **git** named these paths and the user did not, an
 error is the wrong answer: an ordinary untracked `README.md`, or the `.lake` build tree in a repository
-that does not ignore it, would abort the whole run. Measured on a fixture repository, and it aborted
-`--changed` completely (`results/03-acceptance.md`).
+that does not ignore it, would abort the whole run. A fixture repository showed it aborting `--changed`
+outright (`results/03-acceptance.md`).
 
 Dropped silently rather than disclosed. §9.6 reports paths withheld "for a reason the caller would want
 to know"; that a `README.md` is not a Lean source is not such a reason, and git names all manner of
-files. Configured `include`/`exclude` still belong to `Discovery` and are not duplicated here. -/
+files. Configured `include`/`exclude` still belong to `Discovery` and are not repeated here. -/
 private def isCandidate (relative : String) : Bool :=
   let components := relative.splitOn "/"
   (FilePath.mk relative).extension == some "lean" && !components.contains ".lake"

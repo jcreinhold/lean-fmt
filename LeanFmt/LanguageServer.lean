@@ -11,17 +11,16 @@ open System
 /- The Language Server Protocol surface.
 
 `ruff-17` RLP-DOCUMENTS and RLP-FEATURES. The capability and state model is frozen in
-`docs/projects/ruff-17-lsp/notes/01-protocol.md`; this module is all of it — the transport and document
+`docs/projects/ruff-17-lsp/notes/01-protocol.md`; this module is all of it: the transport and document
 store, and the diagnostics, formatting, and code actions served from them.
 
 It computes nothing itself. Every answer is `Application.ExactRun.streamSnapshot` over the whole
-buffer, which is the same operation `--stdin` enters, so an editor and a pipe cannot disagree about
-the same bytes. What is *here* rather than there is the protocol: client coordinates, document
-lifetime, which fixes may be offered, and when an analysis is worth running.
+buffer, the same operation `--stdin` enters, so an editor and a pipe give the same answer for the
+same bytes. What this module adds is the protocol: client coordinates, document lifetime, which fixes
+may be offered, and when to run an analysis.
 
-The namespace is `LanguageServer` and not `Lsp` because `Lean.Lsp` is opened throughout and a
-namespace of the same name would make every `Lsp.Position` ambiguous at the one boundary that must
-never guess which position type it means. -/
+The namespace is `LanguageServer` and not `Lsp` because `Lean.Lsp` is opened throughout, and a
+namespace of the same name would make every `Lsp.Position` ambiguous. -/
 
 namespace LeanFmt.Internal.LanguageServer
 
@@ -30,8 +29,8 @@ open Lean Lean.JsonRpc
 
 /-! ## Bounds
 
-Every bound is a refusal, never a truncation: exceeding one produces an error response and leaves the
-session running. `notes/01-protocol.md` §6, §9, §13. -/
+Exceeding a bound produces an error response and leaves the session running. Nothing is truncated.
+`notes/01-protocol.md` §6, §9, §13. -/
 
 /-- The largest framed message body accepted, matching `serve`'s line bound (`Service.lean:13`). -/
 def maxMessageBytes : Nat := 32 * 1024 * 1024
@@ -39,8 +38,7 @@ def maxMessageBytes : Nat := 32 * 1024 * 1024
 /-- The largest document body accepted, matching `serve`'s source bound (`Service.lean:15`). -/
 def maxDocumentBytes : Nat := 16 * 1024 * 1024
 
-/-- How many documents may be open at once. A client that opens more has stopped closing them; an
-editor with a hundred tabs is unusual, and this is two hundred and fifty-six. -/
+/-- How many documents may be open at once. A client that opens more has stopped closing them. -/
 def maxOpenDocuments : Nat := 256
 
 /-- How many messages may wait behind the one being served. The queue is bounded because the reader
@@ -57,10 +55,9 @@ structure ServerOptions where
   /-- Offer unsafe fixes as code actions. A withheld fix produces no action rather than a disabled one:
   `CodeActionDisabled` would advertise a fix the product has decided not to apply (`notes` §8). -/
   unsafeFixes : Bool := false
-  /-- Quiet interval before a changed document is analyzed. A keystroke is not a request for analysis;
-  a pause is. Every analysis is one exact frontend run over the whole buffer (`ruff-14`
-  `evidence/03-stream-cost.txt`), so this is the difference between one run per pause and one per
-  character. -/
+  /-- Quiet interval before a changed document is analyzed. Every analysis is one exact frontend run
+  over the whole buffer (`ruff-14` `evidence/03-stream-cost.txt`), so this is the difference between
+  one run per pause and one run per character. -/
   debounceMs : Nat := 150
 
 /-- The rule selection every document's plan is resolved against. -/
@@ -69,9 +66,8 @@ def ServerOptions.selection (options : ServerOptions) : CliSelection :=
 
 /-! ## Frames
 
-The reply side is Lean's (`Lean.IO.FS.Stream.writeSerializedLspMessage`, whose single `putStr` is what
-makes a write from the reader safe alongside one from the worker). The read side is ours, for two
-reasons measured rather than assumed:
+The reply side is Lean's `Lean.IO.FS.Stream.writeSerializedLspMessage`; its single `putStr` makes a
+write from the reader safe alongside one from the worker. The read side is ours, for two reasons:
 
 - `Lean.IO.FS.Stream.readLspMessage` collapses end-of-input, a malformed header, and an unparseable
   body into one `IO.userError` string (`Lean/Data/Lsp/Communication.lean:52-53, 76-81`). A server
@@ -82,14 +78,14 @@ reasons measured rather than assumed:
   read.
 
 The same split governs `Lean.Server.Utils`, whose `replaceLspRange` would otherwise be `applyChange`
-below: it converts both endpoints with `lspPosToUtf8Pos` and clamps neither, and an unclamped client
-position resolves *past the end of the buffer* (§4). Fifteen lines are cheaper than that defect.
+below: it converts both endpoints with `lspPosToUtf8Pos` and clamps neither, so an unclamped client
+position resolves past the end of the buffer (§4).
 
 `notes/01-protocol.md` §2 named Lean's reader as the framing layer; this is the amendment, and
 `results/02-documents.md` records it. -/
 
 inductive Frame where
-  /-- A framed body that parsed as JSON. Whether it is a valid message is the dispatcher's question. -/
+  /-- A framed body that parsed as JSON. The dispatcher decides whether it is a valid message. -/
   | message (json : Json)
   /-- Framed, but the body was not JSON, or the header was not a header. The session continues. -/
   | malformed (detail : String)
@@ -114,11 +110,11 @@ rather than being skipped: a client that emits one has lost frame sync, and cont
 interpret its body as headers. -/
 partial def readFrame (stream : IO.FS.Stream) : IO Frame := do
   -- `length?` and `seen` are separate because a header block that ends without a `Content-Length` is
-  -- a malformed *message*, not end of input. Collapsing the two is how a server recovering from one
-  -- bad header silently stops reading: the blank line that follows it looks exactly like EOF.
+  -- a malformed message, not end of input. If the two were collapsed, a server recovering from one
+  -- bad header would stop reading: the blank line after it looks like EOF.
   -- A bad field does not return immediately: the rest of the header block is drained first, so the
-  -- next read starts at the next frame instead of at this block's leftovers. Returning early is how
-  -- one malformed header becomes a run of them.
+  -- next read starts at the next frame instead of at this block's leftovers. Returning early would
+  -- turn one malformed header into a run of them.
   let rec headers (length? : Option Nat) (error? : Option String) (seen : Bool) :
       IO (Except String (Option Nat)) := do
     let line ← stream.getLine
@@ -157,8 +153,8 @@ partial def readFrame (stream : IO.FS.Stream) : IO Frame := do
     | .ok json => return .message json
     | .error detail => return .malformed s!"message body is not valid JSON: {detail}"
 
-/-- Serialized output, serialized. One `Std.Mutex` so a notification written while a response is being
-written cannot interleave with it. -/
+/-- One `Std.Mutex`, so a notification written while a response is being written cannot interleave
+with it. -/
 structure Sink where
   private mk ::
   private stream : Std.Mutex IO.FS.Stream
@@ -193,7 +189,7 @@ One layer, over the **normalized** document. `notes/01-protocol.md` §4. -/
 
 /-- The index of the last addressable LSP line.
 
-**Not** `FileMap.getLastLine`, and the difference is a real off-by-one rather than a naming preference.
+Not `FileMap.getLastLine`: the difference is an off-by-one.
 `positions` holds one entry per line start *plus* a final end-of-string entry, so its size is the line
 count plus one — and when the document ends in a newline that final entry repeats the last line start
 (`Lean/Data/Position.lean:41-44`). A document of three LSP lines therefore has four entries, and
@@ -202,9 +198,8 @@ def lastLine (text : FileMap) : Nat := text.positions.size - 2
 
 /-- The half-open byte range of an LSP line, excluding its terminator.
 
-The terminator between line `n` and line `n+1` is exactly the byte before `positions[n+1]`. That
-"exactly one byte" is a property of the *normalized* text, and it is the reason this operation is only
-ever applied to normalized text. -/
+The terminator between line `n` and line `n+1` is the byte before `positions[n+1]`. That single byte
+holds only for *normalized* text, which is the only text this operation is applied to. -/
 def lineBytes (text : FileMap) (line : Nat) : Nat × Nat :=
   let last := lastLine text
   let line := min line last
@@ -216,10 +211,10 @@ def lineBytes (text : FileMap) (line : Nat) : Nat × Nat :=
 
 /-- Bring a client position inside the document.
 
-This is not defensive coding around a rare input; it is the correction for a measured behavior.
-`FileMap.lspPosToUtf8Pos` does not validate: on a 43-byte document, LSP `(0,9999)` answers byte
-**10003** (`evidence/01-position-probe.txt`). Every position that arrives from a client passes through
-here before it is converted, so no offset derived from a client position can leave the buffer. -/
+`FileMap.lspPosToUtf8Pos` does not validate: a client position past the end of a line answers a byte
+offset past the end of the document (`evidence/01-position-probe.txt`). Every position that arrives
+from a client passes through here before it is converted, so no offset derived from a client position
+can leave the buffer. -/
 def clampPosition (text : FileMap) (position : Lsp.Position) : Lsp.Position :=
   let line := min position.line (lastLine text)
   let (start, stop) := lineBytes text line
@@ -232,9 +227,9 @@ def offsetOf (text : FileMap) (position : Lsp.Position) : Nat :=
 
 /-- A byte offset in the normalized document as a client position.
 
-The offset must lie on a codepoint boundary: byte 20 of the astral fixture, interior to a character,
-answers column 39 rather than an error (`evidence/01-position-probe.txt`). Every offset this server
-converts outward comes from the compiler or from a layout mark, both of which are boundaries. -/
+The offset must lie on a codepoint boundary: an offset interior to a character answers a column rather
+than an error (`evidence/01-position-probe.txt`). Every offset this server converts outward comes from
+the compiler or from a layout mark, both of which are boundaries. -/
 def positionOf (text : FileMap) (offset : Nat) : Lsp.Position :=
   text.utf8PosToLspPos ⟨min offset text.source.utf8ByteSize⟩
 
@@ -274,7 +269,7 @@ structure Session where
   private mk ::
   /-- The options the process started with. `root` and `maxMemoryGiB` are read from here and only from
   here: one Lake workspace and one aggregate envelope are fixed when the session opens, and a client
-  that asks to move either is told to restart rather than quietly half-served (§3, §10). -/
+  that asks to move either is told to restart (§3, §10). -/
   options : ServerOptions
   /-- The options a client may still change: rule selection, preview, unsafe fixes, the quiet interval,
   and the configuration path. Written by `initialize` from `initializationOptions`, and read per
@@ -283,16 +278,16 @@ structure Session where
   root : FilePath
   project : Project.Snapshot
   /-- One exact capability for the session, as `Service.serve` holds one (`Service.lean:186`). Each
-  analysis still gets a fresh bounded child; what is *not* paid per request is the workspace load, the
-  discovery walk, and the temporary-directory bracket. -/
+  analysis still gets a fresh bounded child; the workspace load, the discovery walk, and the
+  temporary-directory bracket are not paid per request. -/
   run : Application.ExactRun
   sink : Sink
   /-- Replaced wholesale on `workspace/didChangeConfiguration`; never mutated in place. -/
   discovery : IO.Ref Discovery.Discovery
   documents : IO.Ref (Std.HashMap String Document)
   /-- Documents the server has refused, with the reason. Kept so a refusal is explained once and its
-  later requests are answered without re-deriving it — and so a refused document is never mistaken for
-  an absent one, which would be answered "unknown document". -/
+  later requests are answered without re-deriving it, and so a refused document is never mistaken for
+  an unopened one. -/
   refusals : IO.Ref (Std.HashMap String Rejection)
   /-- Request ids the client has cancelled. Written by the reader, read by the worker, so it is a
   mutex and not a ref. -/
@@ -301,16 +296,16 @@ structure Session where
 
   A cancellation for a *queued* request is answered out of `cancelled` when the worker reaches it. A
   cancellation for the request already running has nothing to check it: the worker is inside
-  `monitorChild`. So the reader reaches in here and cancels the token directly, and
-  `Application.monitorChild` kills the child at its next 50 ms poll. -/
+  `monitorChild`. So the reader cancels the token here directly, and `Application.monitorChild` kills
+  the child at its next 50 ms poll. -/
   inFlight : Std.Mutex (Option (RequestID × Std.CancellationToken))
-  /-- The findings last computed for a document, with the version they describe. Not an incremental
-  cache and not a substitute for analysis: an entry is *only* ever read for the version it names, and a
-  `didChange` supersedes it. It exists because an editor asks for code actions on cursor movement, and
-  the alternative is one exact frontend run per cursor movement over bytes that did not change. -/
+  /-- The findings last computed for a document, with the version they describe. An entry is only ever
+  read for the version it names, and a `didChange` supersedes it. It exists because an editor asks for
+  code actions on cursor movement, and the alternative is one exact frontend run per cursor movement
+  over bytes that did not change. -/
   analyses : IO.Ref (Std.HashMap String (Int × Array Finding))
-  /-- Ask for a debounced analysis of one document version. A handler sees a function, not the queue:
-  the queue is the loop's, and a handler that could reach it could also reorder it. -/
+  /-- Ask for a debounced analysis of one document version. A handler sees a function, not the queue,
+  so no handler can reorder the queue. -/
   schedule : String → Int → IO Unit
   initialized : IO.Ref Bool
   shuttingDown : IO.Ref Bool
@@ -326,7 +321,7 @@ def Session.forgetCancellation (session : Session) (id : RequestID) : IO Unit :=
   session.cancelled.atomically do modify (·.erase id)
 
 /-- Cancel the in-flight request if it is this one. Called by the reader, so it must not block on
-anything the worker holds — reading the in-flight slot and cancelling a token are both wait-free. -/
+anything the worker holds. Reading the in-flight slot and cancelling a token are both wait-free. -/
 def Session.cancelInFlight (session : Session) (id : RequestID) : IO Unit := do
   if let some (running, token) ← session.inFlight.atomically do get then
     if running == id then token.cancel
@@ -365,15 +360,14 @@ def Session.serveCancellable (session : Session) (id : RequestID)
 
 The order is the frozen one, and each clause names the URI the client sent:
 
-1. not a `file:` URI — `untitled:` buffers land here, and they land here because they have no location,
-   therefore no closest configuration, therefore no answer this server could give that would agree with
-   the answer the same bytes get on disk;
+1. not a `file:` URI. An `untitled:` buffer has no location, so no closest configuration, so no answer
+   this server could give that would agree with the answer the same bytes get on disk;
 2. every gate `Project.unsavedTarget` applies — inside the root, `.lean`, and the `.lake` floor;
 3. `force-exclude`, which `unsavedTarget` does not evaluate and `Project.load` does for explicitly
    named paths (`Project.lean:221-226`). An editor opening whatever the user clicked is not the
    deliberate act of typing a path: if `lean-fmt format` reports nothing for a vendored file, the
-   editor must report nothing for the same bytes, or the editor has become a second configuration path
-   answering differently than the command line. -/
+   editor must report nothing for the same bytes, or configuration answers differently in the editor
+   than on the command line. -/
 def admit (session : Session) (uri : String) :
     IO (Except Rejection (FilePath × String)) := do
   let some path := System.Uri.fileUriToPath? uri
@@ -404,14 +398,14 @@ def Session.targetOf (session : Session) (document : Document) : IO Project.Sour
 
 /-! ## Text synchronization
 
-Incremental, and the whole of it is `applyChange`. `notes/01-protocol.md` §6. -/
+Incremental; `applyChange` is all of it. `notes/01-protocol.md` §6. -/
 
 /-- Apply one content change to a normalized document.
 
 Both endpoints are clamped before conversion (§4) and the result is re-ordered, so an inverted or
 out-of-range range from a client deletes a well-defined region of the buffer instead of an arbitrary
 one. Inserted text is normalized on the way in for the same reason the document is: one coordinate
-system, and it is the compiler's. -/
+system, the compiler's. -/
 def applyChange (text : FileMap) : Lsp.TextDocumentContentChangeEvent → FileMap
   | .rangeChange range newText =>
     let start := offsetOf text range.start
@@ -426,9 +420,9 @@ def applyChanges (text : FileMap) (changes : Array Lsp.TextDocumentContentChange
 
 /-! ## Capabilities
 
-Ours, because the toolchain has none for formatting: `Lean.Lsp.ServerCapabilities` has eighteen fields
-and no formatting provider, and no formatting method is implemented anywhere in `Lean/Server/`
-(`evidence/01-lsp-baseline.md` §3-§4). So there is nothing to contend with either. -/
+Ours, because the toolchain has none for formatting: `Lean.Lsp.ServerCapabilities` has no formatting
+provider, and no formatting method is implemented anywhere in `Lean/Server/`
+(`evidence/01-lsp-baseline.md` §3-§4). So there is nothing to contend with. -/
 
 def serverCapabilities : Json :=
   Json.mkObj [
@@ -455,8 +449,7 @@ private def documentOf? (session : Session) (uri : String) : IO (Option Document
 
 /-- Answer a request that names a document the server cannot serve.
 
-A refused document and an unopened one are different errors, and saying so is the difference between
-a user fixing their configuration and a user filing a bug. -/
+A refused document and an unopened one are different errors, and the message says which. -/
 private def failForDocument (session : Session) (id : RequestID) (uri : String) : IO Unit := do
   match (← session.refusals.get).get? uri with
   | some reason => session.sink.fail id .invalidParams reason
@@ -467,21 +460,20 @@ private def publishEmpty (session : Session) (uri : String) : IO Unit :=
     (Json.mkObj [("uri", uri), ("diagnostics", Json.arr #[])])
 
 /-- `initialize`. The workspace root is resolved here and never again: a `lakefile` change invalidates
-the exact setup, and the honest answer to that is a restart, not a silently different workspace. -/
+the exact setup, and the answer to that is a restart, not a different workspace. -/
 private def handleInitialize (session : Session) (id : RequestID) (params : Json) : IO Unit := do
   if ← session.initialized.get then
     session.sink.fail id .invalidRequest "initialize was already answered"
     return
   -- One root is served. A client offering several gets the one it asked for first and is told which
-  -- ones it is not getting, rather than being quietly half-served (`notes` §10).
+  -- ones it is not getting (`notes` §10).
   let folders := (params.getObjValAs? (Array Json) "workspaceFolders").toOption.getD #[]
   if folders.size > 1 then
     let names := folders.filterMap fun folder => (folder.getObjValAs? String "uri").toOption
     session.sink.show 2 s!"lean-fmt serves one workspace root ({session.root}); \
       not serving: {String.intercalate ", " (names.toList.drop 1)}"
   -- `initializationOptions` (§10). Absent keys keep the command line's value, so a client that sends
-  -- `{}` is configured exactly as the process was started — the two are one setting each, not two
-  -- competing sources.
+  -- `{}` is configured as the process was started.
   if let .ok initialization := params.getObjVal? "initializationOptions" then
     let str? (key : String) := (initialization.getObjValAs? String key).toOption
     let strings (key : String) (fallback : Array String) :=
@@ -491,8 +483,8 @@ private def handleInitialize (session : Session) (id : RequestID) (params : Json
     let nat (key : String) (fallback : Nat) :=
       (initialization.getObjValAs? Nat key).toOption.getD fallback
     let current ← session.settings.get
-    -- Named, not silently dropped. A client that asks to move the root or the envelope is asking for a
-    -- different session; saying so is the difference between a puzzling answer and a restart.
+    -- Named, not silently dropped: a client that asks to move the root or the envelope is asking for
+    -- a different session.
     for fixed in [("rootUri", (str? "root").isSome), ("maxMemoryGiB",
         (initialization.getObjVal? "maxMemoryGiB").toOption.isSome)] do
       if fixed.2 then
@@ -566,7 +558,7 @@ private def handleDidChange (session : Session) (params : Json) : IO Unit := do
   let text := applyChanges document.text changes
   if text.source.utf8ByteSize > maxDocumentBytes then
     -- The document is closed rather than left at a stale version: continuing to answer from bytes the
-    -- client has since edited past is exactly the stale publication the freeze forbids.
+    -- client has since edited past is the stale publication the freeze forbids.
     session.documents.modify (·.erase uri)
     let reason := s!"document grew past {maxDocumentBytes} bytes and is no longer served: {uri}"
     session.refusals.modify (·.insert uri reason)
@@ -581,8 +573,8 @@ private def handleDidClose (session : Session) (params : Json) : IO Unit := do
   let .ok uri := identifier.getObjValAs? String "uri" | return
   session.documents.modify (·.erase uri)
   session.refusals.modify (·.erase uri)
-  -- Clearing is not optional: a client keeps the last published set until told otherwise, so a closed
-  -- document would keep showing diagnostics for bytes nobody holds.
+  -- A client keeps the last published set until told otherwise, so without this a closed document
+  -- keeps showing diagnostics for bytes nobody holds.
   publishEmpty session uri
 
 /-- `workspace/didChangeConfiguration`. Re-runs discovery and re-admits every open document.
@@ -606,10 +598,9 @@ private def handleDidChangeConfiguration (session : Session) : IO Unit := do
   for (uri, document) in documents.toList do
     match ← admit session uri with
     | .ok _ =>
-      -- Re-analyzed, not merely re-admitted. This is the roadmap's requirement that a `line-width`
-      -- change re-formats affected open documents rather than serving output rendered at the old
-      -- margin: the margin is `FormatConfig.lineWidth`, it is resolved per document from discovery,
-      -- and nothing else would notice that it moved.
+      -- Re-analyzed, not merely re-admitted. The roadmap requires a `line-width` change to re-format
+      -- affected open documents rather than serve output rendered at the old margin. The margin is
+      -- `FormatConfig.lineWidth`, resolved per document from discovery.
       session.schedule uri document.version
     | .error reason =>
       session.documents.modify (·.erase uri)
@@ -618,8 +609,8 @@ private def handleDidChangeConfiguration (session : Session) : IO Unit := do
       session.sink.show 2 s!"lean-fmt: {reason}"
   session.sink.log 3 "lean-fmt: configuration reloaded"
 
-/-- `$/lean-fmt/health`. The same question `serve`'s `health` answers, plus what only a long-running
-session can be asked: how much it is holding. -/
+/-- `$/lean-fmt/health`. The same question `serve`'s `health` answers, plus how much the session is
+holding. -/
 private def handleHealth (session : Session) (id : RequestID) : IO Unit := do
   let documents ← session.documents.get
   let bytes := documents.fold (init := (0 : Nat)) fun total _ document =>
@@ -668,8 +659,8 @@ private def severityJson : Severity → Nat
   -- as errors would gate the user's workflow on layout (§7).
   | _ => 2
 
-/-- One finding as a published diagnostic. `source` is what tells a user which tool to argue with —
-LSP scopes published sets per server per URI, so this never contends with the Lean server's own. -/
+/-- One finding as a published diagnostic. `source` names the tool. LSP scopes published sets per
+server per URI, so this never contends with the Lean server's own. -/
 private def diagnosticJson (text : FileMap) (finding : Finding) : Json :=
   Json.mkObj [
     ("range", Lean.toJson (lspRangeOf text finding.range)),
@@ -692,9 +683,8 @@ private def publishFindings (session : Session) (document : Document)
 
 /-- Run one analysis, or reuse the one already computed for exactly this version.
 
-The memo is keyed on the version the client stated, so reuse is not a judgement about whether the bytes
-"probably" changed — a changed document has a new version by protocol, and a new version never matches
-a stored one. -/
+The memo is keyed on the version the client stated. A changed document has a new version by protocol,
+and a new version never matches a stored one. -/
 private def findingsFor (session : Session) (document : Document)
     (cancel? : Option Std.CancellationToken := none) :
     IO (Except String (Array Finding)) := do
@@ -706,15 +696,15 @@ private def findingsFor (session : Session) (document : Document)
     try
       let report ← session.run.streamSnapshot target plan .check (cancel? := cancel?)
       -- A buffer that did not analyze reports its diagnostics as a log line, not as findings: it is
-      -- mid-keystroke and painting it red is wrong (§7). It is also not memoized, because the next
-      -- request should try again.
+      -- mid-keystroke, and reporting that as a finding is wrong (§7). It is also not memoized,
+      -- because the next request should try again.
       if report.status == "broken" then
         return .error (String.intercalate "; " report.diagnostics.toList)
       session.analyses.modify (·.insert document.uri (document.version, report.findings))
       return .ok report.findings
     catch error =>
-      -- A cancelled child is not a broken buffer. Reporting it as one would memoize nothing and log a
-      -- failure the client caused on purpose; it belongs to whoever answers the request.
+      -- A cancelled child is not a broken buffer. Reporting it as one would log a failure the client
+      -- asked for; whoever answers the request answers this.
       if Application.cancelled? error then throw error
       return .error s!"{error}"
 
@@ -787,12 +777,12 @@ private def handleFormatting (session : Session) (id : RequestID) (params : Json
         return
       match report.actual?, report.sourceMap[0]?, report.sourceMap.back? with
       | some actual, some first, some last =>
-        -- `stream`'s ranged output is the **whole** document with the selected units reformatted in
-        -- place: a shell redirect must write a complete file. An editor wants the opposite — the
-        -- narrowest edit that does the same thing, so the client's undo stack and cursor survive it.
-        -- The source map is what makes that conversion a lookup rather than a second range
-        -- computation: `sliceRange` re-bases each mark onto the spliced text, so the marks' hull *is*
-        -- the body that replaced `actual` (`Application.lean`, `sliceRange`).
+        -- `stream`'s ranged output is the whole document with the selected units reformatted in
+        -- place, because a shell redirect must write a complete file. An editor wants the narrowest
+        -- edit that does the same thing, so its undo stack and cursor survive. The source map makes
+        -- that conversion a lookup rather than a second range computation: `sliceRange` re-bases each
+        -- mark onto the spliced text, so the marks' hull is the body that replaced `actual`
+        -- (`Application.lean`, `sliceRange`).
         let (spliced, _) := LosslessSource.normalize output
         let body := String.Pos.Raw.extract spliced ⟨first.output.start⟩ ⟨last.output.stop⟩
         session.sink.respond id (Json.arr #[Lean.toJson
@@ -807,8 +797,8 @@ private def handleFormatting (session : Session) (id : RequestID) (params : Json
 
 /-- A `WorkspaceEdit` in `documentChanges` form, so it names the version it was computed against.
 
-The version is the protocol's own staleness mechanism and the reason this server needs no separate
-one: if the buffer moved between the action being offered and applied, the client rejects the edit. -/
+The version is the protocol's staleness check, so this server needs no separate one: if the buffer
+moved between the action being offered and applied, the client rejects the edit. -/
 private def workspaceEdit (document : Document) (edits : Array Json) : Json :=
   Json.mkObj [("documentChanges", Json.arr #[Json.mkObj [
     ("textDocument", Json.mkObj [("uri", document.uri), ("version", Lean.toJson document.version)]),
@@ -824,13 +814,12 @@ private def codeAction (title kind : String) (edit : Json)
 /-- `textDocument/codeAction`. One quickfix per admitted fix overlapping the cursor, one `source.fixAll`,
 one `source.organizeImports`.
 
-Applicability is exposed rather than hidden: a withheld fix produces *no* action. `Application.admittedFix?`
-is the one admission rule, shared with the patch a write would publish, so an editor never offers a
-quickfix `lean-fmt fix` would refuse.
+A withheld fix produces no action. `Application.admittedFix?` is the one admission rule, shared with
+the patch a write would publish, so an editor never offers a quickfix `lean-fmt fix` would refuse.
 
-`fixAll` and `organizeImports` each cost one exact run and are computed only when the client's requested
-kinds ask for them — an editor that asks for quickfixes on every cursor movement must not pay for two
-whole-document rewrites each time. -/
+`fixAll` and `organizeImports` each cost one exact run, and are computed only when the client's
+requested kinds ask for them: an editor that asks for quickfixes on every cursor movement must not pay
+for two whole-document rewrites each time. -/
 private def handleCodeAction (session : Session) (id : RequestID) (params : Json)
     (cancel : Std.CancellationToken) : IO Unit := do
   let .ok identifier := params.getObjVal? "textDocument"
@@ -984,9 +973,9 @@ private inductive Work where
   | message (json : Json)
   | malformed (detail : String)
   /-- A debounced analysis, scheduled by `didOpen`/`didChange` and dropped by the worker if the
-  document has moved past `version` in the meantime (§9). It rides the same queue as everything else so
-  that analysis and message handling are the one FIFO the freeze specifies — never two things touching
-  a document at once. -/
+  document has moved past `version` in the meantime (§9). It goes on the same queue as everything
+  else, so analysis and message handling share the single FIFO the freeze specifies and nothing
+  touches a document concurrently. -/
   | analyze (uri : String) (version : Int)
   deriving Inhabited
 
@@ -1009,12 +998,12 @@ private partial def readLoop (session : Session) (input : IO.FS.Stream)
   | .message json =>
     let method? := (json.getObjValAs? String "method").toOption
     if method? == some "$/cancelRequest" then
-      -- Applied here, not queued. Queuing a cancellation behind the request it cancels would make it
-      -- arrive exactly too late, every time.
+      -- Applied here, not queued: a cancellation queued behind the request it cancels arrives too
+      -- late.
       if let some id := ((json.getObjVal? "params").toOption.bind idOf?) then
         session.recordCancellation id
-        -- And if it is the one already running, reach into its child. Recording first is what makes
-        -- the pair race-free: `serveCancellable` installs the token and then re-reads this set.
+        -- If it is the request already running, cancel its token. Recording first makes the pair
+        -- race-free: `serveCancellable` installs the token and then re-reads this set.
         session.cancelInFlight id
       readLoop session input queue
     else if method? == some "exit" then
@@ -1088,10 +1077,9 @@ def serveLanguageServer (options : ServerOptions) : IO UInt32 := do
       cancelled := ← Std.Mutex.new {}
       inFlight := ← Std.Mutex.new none
       analyses := ← IO.mkRef {}
-      -- The quiet interval is a wait, not a poll: one task per scheduled version, which either finds
-      -- the document still at that version and enqueues, or finds it moved and enqueues anyway — the
-      -- worker is the one that drops a superseded analysis, because only the worker's ordering is
-      -- authoritative about what "current" means.
+      -- The quiet interval is a wait, not a poll: one task per scheduled version, which enqueues
+      -- either way. The worker drops a superseded analysis, because only the worker's ordering says
+      -- which version is current.
       schedule := fun uri version => discard <| IO.asTask do
         IO.sleep (← settings.get).debounceMs.toUInt32
         discard <| queue.trySend (Work.analyze uri version)
@@ -1101,8 +1089,8 @@ def serveLanguageServer (options : ServerOptions) : IO UInt32 := do
     let input ← IO.getStdin
     let reader ← IO.asTask (prio := .dedicated) (readLoop session input queue)
     let code ← workLoop session queue
-    -- The reader is already finished whenever the queue closed; waiting is what makes that true rather
-    -- than probable, and it is what stops a half-read frame from outliving the session.
+    -- The reader has finished whenever the queue closed; waiting makes that certain, and stops a
+    -- half-read frame from outliving the session.
     discard <| IO.wait reader
     return code
 

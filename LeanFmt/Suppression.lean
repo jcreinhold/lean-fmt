@@ -211,7 +211,7 @@ The header is not in the trivia projection — "a module linter never receives t
 `ignore-file`, would otherwise be silently dropped: no suppression and, worse, no diagnostic. This
 recovers those comments so they parse like any other.
 
-A dedicated scanner is safe here precisely because the header grammar is so small. In the module
+A dedicated scanner is safe here because the header grammar is so small. In the module
 system, the header holds only the `module` marker, `import` statements, and interspersed whitespace
 and comments: `headerStop` is the *first command's* leading start (`LosslessSource.lean`
 `firstLeadingStart?`), and module/doc docstrings parse as commands, so they sit past `headerStop`,

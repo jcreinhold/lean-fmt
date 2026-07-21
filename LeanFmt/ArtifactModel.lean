@@ -19,7 +19,7 @@ structure Edit where
   or intent. Shown by default; applied only under explicit opt-in (`--unsafe-fixes`, or a per-rule
   `extend-safe-fixes` promotion).
 - `displayOnly`: never applied. It illustrates the finding for a reader or an editor; configuration
-  cannot promote it, because a rule that declined to make an edit applicable cannot be argued into it.
+  cannot promote it, because the rule itself declined to make the edit applicable.
 
 "Safe" is a claim under the rule's evidence and is tied to the rule's tier — never merely "it
 reparses". See `docs/projects/ruff-06-fix-safety/notes/01-model.md` §1. -/
@@ -57,7 +57,7 @@ instance : Lean.FromJson Applicability := ⟨fun json => do
 
 /-- A proposed transformation attached to a finding: one applicability governing the whole edit set.
 
-Several edits form one atomic fix — disjoint by construction — so applicability is a property of the
+Several edits form one atomic fix — they never overlap — so applicability is a property of the
 fix and not of any single `Edit`, which is a byte fact carrying no judgment. `notes/01-model.md` §1
 records why this is a structure rather than a field on `Edit` or on `Finding`. -/
 structure Fix where
@@ -167,10 +167,10 @@ structure NotationSpacing where
   deriving Inhabited, BEq, Repr, Lean.ToJson, Lean.FromJson
 
 /-- The semantic facts for one module, captured from the live exact frontend and carried in the
-artifact only when a consumer demanded the `.semantic` tier. Two sub-facts, captured together
-(monolithic, `ruff-11` `notes/01-authority.md` §6): a demanded `.semantic` artifact carries both, so
-`Tier.satisfies` stays a sound cache gate and a notations-only entry never silently under-serves a
-rule.
+artifact only when a consumer demanded the `.semantic` tier. `notations` and `diagnostics` are
+captured together (monolithic, `ruff-11` `notes/01-authority.md` §6): a demanded `.semantic` artifact
+carries both, so `Tier.satisfies` stays a sound cache gate and a notations-only entry never silently
+under-serves a rule.
 
 - `notations` (`ruff-05b`, formatter fact): declared spacing for every notation kind present, one
   entry per distinct kind (Design B).
@@ -211,8 +211,8 @@ projection — and nothing a reader could derive from bytes it already holds. It
 have the two measured defects that made it. The short version is that a conclusion in here is a
 second decider: `check` never reads an artifact, so it decided FMT001 for itself and disagreed. The
 long version is that the rules were in the compiler plugin's import closure, which put one lint
-rule's message text inside every module's compiled bytes. Both are gone by construction now, because
-there is nothing here to disagree with and no reason for the plugin to link a rule.
+rule's message text inside every module's compiled bytes. Both are gone: there is nothing here to
+disagree with, and the plugin has no reason to link a rule.
 
 `ruff-11` adds further semantic facts beside `source`. They are facts too, and the same rule applies:
 elaboration evidence belongs here because only the frontend can make it; what a rule concludes from
@@ -257,9 +257,8 @@ This is the only artifact producer. Exact analysis and the compiler plugin reach
 arguments, so they cannot drift into emitting different artifacts for the same module — which is
 what makes the facet a sound cache of the exact frontend rather than a second opinion.
 
-It takes no rule configuration, and that is the point rather than an omission: an artifact is a
-function of the module and its source alone, so turning a rule on cannot rebuild or re-elaborate
-anything. The optional `semantic` projection is likewise a function of the module and its environment;
+It takes no rule configuration, deliberately: an artifact is a function of the module and its source
+alone, so turning a rule on cannot rebuild or re-elaborate anything. The optional `semantic` projection is likewise a function of the module and its environment;
 it defaults to `none` so the always-on plugin producer stays on the syntax-only path, and only
 `analyzeExact` passes `some` under demand. -/
 def ModuleArtifact.ofParsedModule (mainModule normalized : String)

@@ -7,14 +7,14 @@ import all LeanFmt.Rules
 
 This is the decision itself — one executable definition, generic in the types the cache instantiates.
 `LeanFmt.Cache` and `LeanFmt.Application` **call** these functions; `LeanFmt.Cache.Spec` **proves**
-about them. That sharing is the point, and it is why this module exists separately from either.
+about them. This module exists separately from either so that both use one definition.
 
 Before it, `Spec` defined its own `serves` and the production path re-implemented the same idea across
-two modules. Nothing forced them to agree, so a proof about `Spec.serves` constrained the shipped
-cache not at all — and they had in fact already drifted: the model checked schema, source, closure and
-tier, while the shipped gate also required the entry to carry canonical text when the run renders it
-and to have captured every semantic sub-fact the run demands. The model's completeness theorem was
-therefore about a decision strictly more permissive than the one running.
+two modules. Nothing forced them to agree, so a proof about `Spec.serves` said nothing about the
+shipped cache — and they had already drifted: the model checked schema, source, closure and tier,
+while the shipped gate also required the entry to carry canonical text when the run renders it and to
+have captured every semantic sub-fact the run demands. The model's completeness theorem was therefore
+about a decision more permissive than the one running.
 
 Generic in `Mod`, `SDigest`, `GDigest`, `Schema` and `Analysis` because the proofs quantify over them;
 `Tier` and `SemanticCaps` are the **real** production types, imported rather than restated.
@@ -63,10 +63,10 @@ structure Provided where
 /-- Does what the entry captured answer what the run asked?
 
 A `.source` shortcut entry computed no syntax findings, so it cannot serve a run selecting a syntax
-rule; without the tier clause, shipping the first syntax rule would let a source-only `check` poison a
-later `--select FMT010` into a persisted false clean. The caps clause is orthogonal: a `.semantic`
-entry serves only when it captured every sub-fact demanded, so a fixable-`FMT014` demand against a
-monolithic-era entry misses and recomputes rather than serving a false clean. -/
+rule; without the tier clause, shipping the first syntax rule would let a source-only `check` turn a
+later `--select FMT010` into a stored false clean. The caps clause is separate: a `.semantic` entry
+serves only when it captured every sub-fact demanded, so a fixable-`FMT014` demand against an entry
+from the monolithic era misses and recomputes rather than serving a false clean. -/
 def Provided.meets (p : Provided) (d : Demand) : Bool :=
   p.broken ||
     ((!d.renderCanonical || p.hasCanonical) && p.tier.satisfies d.tier && d.caps.subset p.caps)
@@ -76,10 +76,9 @@ def Provided.meets (p : Provided) (d : Demand) : Bool :=
 /-- What the cache can observe **without running the frontend**: the deserializer's own schema, and,
 per module, a source digest and a closure digest recomputed from Lake's recorded traces.
 
-`closureDigest` is where `RCI-SPEC`'s correction lives. It is derived from each import's
-`X:importAllArts`, recomputed from `X`'s own trace outputs — *not* from `X transitive imports (all)`,
-which excludes `X` itself and would have made the whole exercise pass on the stale case it exists to
-catch. -/
+`closureDigest` carries `RCI-SPEC`'s correction. It is derived from each import's `X:importAllArts`,
+recomputed from `X`'s own trace outputs — **not** from `X transitive imports (all)`, which excludes
+`X` itself and would have passed on the stale case the check exists to catch. -/
 structure Obs (Mod SDigest GDigest Schema : Type) where
   schema : Schema
   sourceDigest : Mod → SDigest
@@ -104,10 +103,9 @@ variable {Mod Analysis SDigest GDigest Schema : Type}
 The schema is this binary's, the module's own bytes are unchanged, and the grammar it was parsed under
 is unchanged.
 
-Note what is **absent**: the entry's own stored `depHash`. Read alone that records what the module was
-*built against*, not whether that is still true, and it falsely hits in exactly the stale case that
-matters. Currency here compares the entry's recorded expectation against the **currently observed**
-value. -/
+Note what is **absent**: the entry's own stored `depHash`. Read alone it records what the module was
+*built against*, not whether that is still true, and it hits falsely on the stale case that matters.
+Currency here compares the entry's recorded expectation against the **currently observed** value. -/
 def Entry.identityCurrent (e : Entry Mod Analysis SDigest GDigest Schema)
     (o : Obs Mod SDigest GDigest Schema) : Bool :=
   decide (e.schema = o.schema) &&

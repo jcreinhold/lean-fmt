@@ -7,16 +7,14 @@ namespace LeanFmt.Internal
 
 /-! # The rule engine
 
-A rule declares what it needs to decide, and gets exactly that and nothing else. The declaration is
-`RuleImpl`'s constructor rather than a field, because a field is what drifted: `RuleInfo.input` used
-to be a claim no code had to honor, and `RulePlan.requiresSyntax` answered `false` for the product's
-whole life as a result. `notes/01-rule-facts.md` §1 and §7 are the argument; the shape is Lean's own
-`Linter` (`Lean/Elab/Command.lean:64-70`) minus the mutable ref it needs for plugin loading and this
-does not.
+A rule declares what it needs to decide, and gets that and nothing more. The declaration is
+`RuleImpl`'s constructor rather than a field, because the field drifted: `RuleInfo.input` was a claim
+no code had to honor, and `RulePlan.requiresSyntax` answered `false` for the product's whole life as a
+result. `notes/01-rule-facts.md` §1 and §7 give the argument; the shape is Lean's own `Linter`
+(`Lean/Elab/Command.lean:64-70`) without the mutable ref that plugin loading needs and this does not.
 
 Rules run **outside** the compiler, against immutable facts. A rule cannot reach a workspace, a
-cache, an `Environment`, or `IO` — not by convention but because `run`'s argument type is a fact view
-and its result is an `Array Finding`. -/
+cache, an `Environment`, or `IO`: `run` takes a fact view and returns an `Array Finding`. -/
 
 /-- What a rule needs in order to decide, ordered by what it costs to obtain.
 
@@ -25,13 +23,12 @@ selects any `syntax` rule needs a current `.olean` and its facet, or a frontend 
 facts also need the exact frontend, but additionally read the module's `Environment` — the parser and
 notation declarations — which the projection does not otherwise carry.
 
-The `semantic` case is added by `ruff-05b` (`RSF-IMPL`), which supplies all three things `ruff-05`
-required before a tier may exist — a producer, a consumer, and a test — so this is not the empty tier
-`RuleInfo.input` rotted into. Its producer is `analyzeExact`, which captures the declared notation
-spacing from the live `Environment` (`Analysis.lean`); its consumer is the **formatter** (not a rule
-yet — `ruff-11` adds semantic rules later, and only then do `Facts`/`RuleImpl` gain a `semantic`
-case); and it is exercised through the demand-gating seam (`RulePlan.demandedTier`) and the artifact
-round-trip tests. A `format` run demands this tier; a source/syntax-only run never does. -/
+`ruff-05b` (`RSF-IMPL`) added the `semantic` case with the producer, consumer, and test `ruff-05`
+required before a tier may exist, so it is not the empty tier `RuleInfo.input` rotted into. The
+producer is `analyzeExact`, which captures the declared notation spacing from the live `Environment`
+(`Analysis.lean`); the first consumer was the **formatter** rather than a rule, and `ruff-11` added
+semantic rules after. `RulePlan.demandedTier` and the artifact round-trip tests exercise it. A
+`format` run demands this tier; a source/syntax-only run never does. -/
 inductive Tier where
   | source
   | «syntax»
@@ -61,9 +58,9 @@ compiler-produced offset indexes `raw.crlfToLf`; a finding measured against the 
 a projection measured against the normalized string are two coordinate systems in one artifact. Only
 reading a file and publishing one may touch raw bytes.
 
-`bytes` is derived, and derived once. Every source rule wants UTF-8 — they are byte-level by nature —
-and computing `normalized.toUTF8` inside each rule would walk the source once per rule. Sharing the
-derivation is why this is a structure rather than a bare `String`. -/
+`bytes` is derived once. Source rules work on bytes, and computing `normalized.toUTF8` inside each
+rule would walk the source once per rule. Sharing that derivation is why this is a structure rather
+than a bare `String`. -/
 structure SourceFacts where
   private mk ::
   normalized : String
@@ -81,16 +78,15 @@ structure SyntaxFacts where
   source : SourceFacts
   projection : LosslessSource
 
-/-- `normalized` must be the string `projection` indexes, which `LosslessSource.validFor` is what
-proves. This does not re-check that: every caller reaches here past a `validFor`, and re-deriving the
-projection's own validity from inside the fact view would make the check circular rather than
-independent. -/
+/-- `normalized` must be the string `projection` indexes, which `LosslessSource.validFor` proves.
+This does not re-check it: every caller passes a `validFor` first, and re-deriving the projection's
+own validity inside the fact view would make the check circular rather than independent. -/
 def SyntaxFacts.of (normalized : String) (projection : LosslessSource) : SyntaxFacts :=
   { source := SourceFacts.of normalized, projection }
 
 /-- What a `semantic`-tier rule may read: the syntax projection plus the exact frontend's normalized
 compiler diagnostics. A semantic rule needs the syntax facts too — its range coordinate system and
-suppression are the projection's — so this nests `SyntaxFacts` rather than restating it, exactly as
+suppression are the projection's — so this nests `SyntaxFacts` rather than restating it, as
 `SyntaxFacts` nests `SourceFacts`. `diagnostics` are the immutable facts (`ArtifactModel.Diagnostic`)
 the surfaced rules FMT014–FMT017 key on; a rule never sees an `Environment`, a `Position`, or a
 `FileMap`, only this data (`ruff-11` `notes/01-authority.md` §7). -/
@@ -129,8 +125,8 @@ def Facts.sourceFacts : Facts → SourceFacts
 /-- A rule's implementation, indexed by the facts it reads.
 
 The constructor *is* the tier declaration. A rule cannot claim one tier and read another, because
-the tier determines the argument type — which is the whole difference between this and the `input`
-field it replaces. -/
+the tier decides the argument type — the difference between this and the `input` field it
+replaces. -/
 inductive RuleImpl where
   | source (run : SourceFacts → Array Finding)
   | «syntax» (run : SyntaxFacts → Array Finding)
@@ -179,8 +175,8 @@ instance : Lean.FromJson Lifecycle := ⟨fun j => do
 `bad` is source the rule must flag; `good?` is the post-fix source for a fixable rule and `none` for a
 report-only one. The catalog-invariant test runs each `bad` through the rule (source-tier in process;
 syntax/semantic through the real-frontend harnesses) and, for a fixable rule, asserts the emitted fix
-turns `bad` into `good?`. So an example that does not actually fire, or a fix that does not produce the
-stated `good`, fails the build — the "invalid examples" detection. -/
+turns `bad` into `good?`. So an example that does not fire, or a fix that does not produce the stated
+`good`, fails the build — the "invalid examples" detection. -/
 structure RuleExample where
   bad : String
   good? : Option String := none
@@ -208,10 +204,11 @@ structure RuleInfo where
   replacement? : Option String := none
   /-- Whether this rule's fix reads the owned deprecation-occurrence fact (`ruff-11b`). It governs
   *capture cost only*: `RulePlan.demandedCaps` sets the `occurrences` capability — and pays the
-  whole-file info-tree fold — exactly when a selected rule declares this in a rendering mode. A wrong
-  value never corrupts a file (the fix rides the output re-elaboration validator); it only over- or
-  under-captures. Unlike a tier field, it is not a claim the tier system enforces, so a test pins that
-  a `needsOccurrences` rule is `.semantic` and that its fix appears iff occurrences were captured. -/
+  whole-file info-tree fold — when and only when a selected rule declares this in a rendering mode. A
+  wrong value never corrupts a file, since the output re-elaboration validator still checks the fix;
+  it only over- or under-captures. Unlike a tier field, the tier system does not enforce it, so a test
+  pins that a `needsOccurrences` rule is `.semantic` and that its fix appears iff occurrences were
+  captured. -/
   needsOccurrences : Bool := false
   deriving BEq
 
@@ -241,10 +238,10 @@ instance : Lean.ToJson Rule where
 `FMT003` and `FMT004` flag bytes that survive into accepted source only inside a string literal or a
 comment: a bare control byte or bidirectional mark in the command stream is a hard parse error, so a
 file carrying one in code is not accepted source and no source rule runs on it
-(`notes/01-catalog.md` §2). The parser's acceptance is therefore the token context these rules would
-otherwise need — they scan bytes, and every byte they can see is already in a string or comment. Both
-are **report-only**: the byte is inside string data or a human-read comment, so deleting it is not a
-change a byte-level argument can call safe (`notes/01-catalog.md` §3). -/
+(`notes/01-catalog.md` §2). The parser's acceptance therefore supplies the token context these rules
+would otherwise need: they scan bytes, and every byte they can see already sits in a string or
+comment. Both are **report-only**: deleting the byte would change string data or comment text, which
+no byte-level argument can call safe (`notes/01-catalog.md` §3). -/
 
 private def hexDigit (n : Nat) : Char :=
   if n < 10 then Char.ofNat (n + '0'.toNat) else Char.ofNat (n - 10 + 'A'.toNat)
@@ -317,8 +314,8 @@ private def bidiControl (facts : SourceFacts) : Array Finding :=
 strings**, child/token adjacency, and leaf source text. None reads `Lean.Syntax`, precedence (the
 projection carries none), or `choice` alternatives (only the first survives). Every kind string is
 cited to the pinned v4.32.0 compiler in `docs/projects/ruff-10-syntax-rules/notes/01-catalog.md` §2 and
-was read off real projections in that stack's `evidence/01-catalog.md` §1 — a wrong kind string is a
-rule that silently never fires, so these are the census's strings, not guesses. -/
+was read off real projections in that stack's `evidence/01-catalog.md` §1. A wrong kind string is a
+rule that silently never fires, so these come from the census, not from memory. -/
 
 private def kModuleDoc := "Lean.Parser.Command.moduleDoc"
 private def kDeclaration := "Lean.Parser.Command.declaration"
@@ -371,7 +368,7 @@ private def moduleDocRequired (facts : SyntaxFacts) : Array Finding := Id.run do
 /-! ### FMT009 — unclosed `section` or `namespace`
 
 Matching is a name stack over the top-level command stream, as `notes/01-catalog.md` §2 specifies and
-`Lean.Elab.Command`'s scope stack does. `namespace Foo` pushes the name `Foo`; `section` pushes an
+as `Lean.Elab.Command`'s scope stack works. `namespace Foo` pushes the name `Foo`; `section` pushes an
 anonymous scope; `section Bar` pushes `Bar`. A bare `end` pops one scope (the innermost, an anonymous
 section in accepted source). An `end Foo` pops the scopes whose names, concatenated outer→inner with
 `.`, spell `Foo` — so **one** `end A.B` closes both a single `namespace A.B` (one scope named `A.B`)
@@ -391,7 +388,7 @@ private structure OpenScope where
   deriving Inhabited
 
 /-- The whitespace-delimited words of a top-level scope command's node text. The node range is the leaf
-hull (trivia excluded), so this is exactly the keyword, any modifiers, and the scope name — e.g.
+hull (trivia excluded), so these words are the keyword, any modifiers, and the scope name — e.g.
 `["noncomputable", "section", "Foo"]`, `["namespace", "A.B"]`, or `["end", "A.B"]`. Splitting on
 whitespace rather than on the keyword substring avoids mis-parsing a name that contains the keyword
 (e.g. a `Legendre` namespace). -/
@@ -498,8 +495,8 @@ private def duplicateAttribute (facts : SyntaxFacts) : Array Finding := Id.run d
   let mut findings := #[]
   -- `attributes` is `"@[" >> sepBy1 attrInstance ", " >> "]"`, and `sepBy1` inserts a null group node,
   -- so the `attrInstance`s are children of that group, not of `attributes` directly. Grouping by the
-  -- actual parent (any node with `attrInstance` children) is robust to that intermediate, exactly as
-  -- FMT011 does for `derivingClass`.
+  -- actual parent (any node with `attrInstance` children) survives that intermediate, as FMT011 does
+  -- for `derivingClass`.
   for i in [0:projection.nodes.size] do
     if projection.inQuotation i then
       continue
@@ -602,19 +599,19 @@ invention the roadmap stop-rule forbids (`ruff-11` `notes/01-authority.md` §§1
 
 Every rule is **report-only**: removing a binder or a section variable, or renaming a deprecated
 reference, is not an edit any byte-level or projection fact here can prove safe. The four `kind` strings
-are pinned first-hand to the v4.32.0 compiler in `evidence/01-semantic-diagnostics.txt`; a wrong string
-is a rule that silently never fires, so these are the observed tags, not guesses. A toolchain that stops
-emitting one of these kinds simply yields no findings — the surfaced mechanism only ever reads a tag the
-running compiler actually produced (`notes/01-authority.md` §10). -/
+were read first-hand off the v4.32.0 compiler and recorded in `evidence/01-semantic-diagnostics.txt`; a
+wrong string is a rule that silently never fires. A toolchain that stops emitting one of these kinds
+yields no findings, because surfacing only ever reads a tag the running compiler produced
+(`notes/01-authority.md` §10). -/
 
 private def kDeprecatedAttr := "Lean.Linter.deprecatedAttr"
 private def kUnusedVariables := "linter.unusedVariables"
 private def kUnusedSectionVars := "linter.unusedSectionVars"
 private def kConstructorNameAsVariable := "linter.constructorNameAsVariable"
 
-/-- The compiler-message `kind` tags the semantic rules surface, the single source of truth the capture
+/-- The compiler-message `kind` tags the semantic rules surface, and the list the capture
 (`Analysis.lean`) filters by. Capture and rules read one array, so a captured diagnostic always has a
-rule and a rule never keys on a tag the capture drops — the same discipline `runRulesOf` and
+rule and a rule never keys on a tag the capture drops — the discipline `runRulesOf` and
 `requiredTierOf` share one registry for. -/
 def surfacedDiagnosticKinds : Array String :=
   #[kDeprecatedAttr, kUnusedVariables, kUnusedSectionVars, kConstructorNameAsVariable]
@@ -663,12 +660,11 @@ private def constructorNameVariable (facts : SemanticFacts) : Array Finding :=
 
 /-- Every rule the product ships, in one static array.
 
-Static, not an attribute or an environment extension. The rule set is compiled and first-party, so
-dynamism would buy nothing and cost determinism: `lean-fmt rules` output and pre-sort finding order
-would depend on import order. Lean stores its own linters in a mutable ref for one stated reason —
-"Linters should be loadable as plugins" (`Lean/Elab/Command.lean:108-109`) — and a public runtime
-plugin ABI is exactly what this product does not have. `notes/01-rule-facts.md` §7 compares the four
-designs.
+Static, not an attribute or an environment extension. The rule set is compiled and first-party, so a
+dynamic table would buy nothing and cost determinism: `lean-fmt rules` output and pre-sort finding
+order would depend on import order. Lean stores its own linters in a mutable ref for one stated reason
+— "Linters should be loadable as plugins" (`Lean/Elab/Command.lean:108-109`) — and this product has
+no public runtime plugin interface. `notes/01-rule-facts.md` §7 compares the four designs.
 
 Accepted source cannot contain an isolated `\r`, so after normalization no carriage return survives
 for a line-oriented rule to consider. -/
@@ -886,11 +882,11 @@ variable. Report-only."
 
 /-- Findings sort by position, then by code.
 
-Concatenating each rule's output in registry order used to be enough back when the default rules were
-all `source`-tier and their findings happened to fall in position order. That was an accident and does
-not survive a fold over mixed tiers: a `syntax` rule's findings would otherwise land after every
-`source` rule's regardless of where in the file they are. Sorting on the code breaks ties inside one
-position so that registry order — which is not meaningful — cannot decide output. -/
+Concatenating each rule's output in registry order was once enough, because the default rules were all
+`source`-tier and their findings happened to come out in position order. That was an accident, and it
+does not survive a fold over mixed tiers: a `syntax` rule's findings would otherwise follow every
+`source` rule's, wherever in the file they sit. Sorting on the code breaks ties inside one position, so
+registry order — which means nothing — cannot decide output. -/
 private def findingOrder (left right : Finding) : Bool :=
   if left.range.start != right.range.start then left.range.start < right.range.start
   else if left.range.stop != right.range.stop then left.range.stop < right.range.stop
@@ -898,23 +894,21 @@ private def findingOrder (left right : Finding) : Bool :=
 
 /-- Every finding the available facts can produce, from `rules`, deterministically ordered.
 
-**Selection is not applied here**, and must not be. `RulePlan.findings` projects afterwards, which is
-what lets one cache entry serve any `--select` and what keeps a rule's enablement out of every
-identity in the product. A rule whose tier the facts cannot serve is skipped: that is not a silent
-omission, because `RulePlan.requiredTierOf` is what decided which facts to obtain, and it derives the
-answer from the same array.
+**Selection is not applied here**, and must not be. `RulePlan.findings` projects afterwards, which
+lets one cache entry serve any `--select` and keeps a rule's enablement out of every identity in the
+product. A rule whose tier the facts cannot serve is skipped. That is not a silent omission:
+`RulePlan.requiredTierOf` decided which facts to obtain, and it reads the same array.
 
-The registry is a parameter here and fixed in `runRules`. That is the whole substitution seam, and it
-exists for one reason: the engine's tier behavior — skipping, mixed-tier ordering, tie-breaking —
-cannot be tested through `ruleRegistry`, because every rule the product ships is `source`-tier and
-the roadmap forbids shipping a fake one for coverage. Tests pass their own array. No production
-caller does, and none should: a rule set chosen per call site is a rule set that can differ per call
-site, which is the class of defect this whole stack exists to close. -/
+The registry is a parameter here and fixed in `runRules`, so that a test can substitute one. The
+engine's tier behavior — skipping, mixed-tier ordering, tie-breaking — is hard to exercise through
+`ruleRegistry`, and the roadmap forbids shipping a fake rule for coverage, so tests pass their own
+array. No production caller does, and none should: a rule set chosen per call site can differ per call
+site, the defect this stack exists to close. -/
 def runRulesOf (rules : Array Rule) (facts : Facts) : Array Finding :=
   let findings := rules.foldl (init := #[]) fun findings rule =>
     -- The skip is the third case, not a guard. A `facts.tier.satisfies rule.tier` test here would
-    -- be exactly redundant with this match and could drift from it; the match cannot drift, because
-    -- the constructor pair is what decides, and it is total.
+    -- duplicate this match and could drift from it; the match cannot drift, because the constructor
+    -- pair decides and the match is total.
     match rule.impl, facts with
     | .source run, _ => findings ++ run facts.sourceFacts
     | .syntax run, .syntax syntaxFacts => findings ++ run syntaxFacts
@@ -935,16 +929,16 @@ def runSourceRules (normalized : String) : Array Finding :=
 /-! ## Import rules — declared here, produced elsewhere
 
 The import family (`FMT005` duplicate, `FMT006` redundant, `FMT007` order/grouping) is **not** in
-`ruleRegistry`, because it is not part of the linear-tier `RuleImpl` engine. Header facts are orthogonal
-to the `source ≤ syntax ≤ semantic` chain — the syntax projection drops the header
-(`LosslessSource.lean:185-187`) — and redundancy needs the Lake graph, which a pure `RuleImpl` cannot
-fetch (`Rules.lean:17-19`). Their findings are produced by `LeanFmt.Internal.Imports` and the
-`Project` graph operation and merged into the report stream (`RIR-IMPL`).
+`ruleRegistry`, because it is not part of the linear-tier `RuleImpl` engine. Header facts sit outside
+the `source ≤ syntax ≤ semantic` chain — the syntax projection drops the header — and redundancy needs
+the Lake graph, which a `RuleImpl` cannot fetch (see the module note above). `LeanFmt.Internal.Imports`
+and the `Project` graph operation produce their findings and merge them into the report stream
+(`RIR-IMPL`).
 
-But their *identities* — code, category, summary, fixability, default — belong with every other rule's,
-so selection, `--select imports`, suppression, and `lean-fmt rules` all treat them uniformly and cannot
-drift. They are declared here as `RuleInfo`s and unioned into `allRuleInfos`, which is what
-`Config`'s selectors and the `rules` command read, rather than `ruleRegistry` alone. -/
+Their *identities* — code, category, summary, fixability, default — belong with every other rule's, so
+that selection, `--select imports`, suppression, and `lean-fmt rules` treat them the same way and
+cannot drift. They are declared here as `RuleInfo`s and added to `allRuleInfos`, which `Config`'s
+selectors and the `rules` command read in place of `ruleRegistry` alone. -/
 def importRuleInfos : Array RuleInfo := #[
   {
     code := "FMT005"
@@ -1027,10 +1021,10 @@ def isImportCode (code : String) : Bool := importRuleInfos.any (·.code == code)
 
 /-- The `lean-fmt rules` wire shape for the whole catalog: every engine rule with its derived `input`
 tier, then every import rule. An import rule's per-file read is the surface header — a **source**-level
-fact — so it projects onto `source`, the cheapest tier; the module graph FMT006 also consults is
-orthogonal to the `source ≤ syntax ≤ semantic` chain (`Imports`), a run-level input, not a deeper
-frontend tier, so it is not a higher `input`. This is the single array `rules --json` prints, so an
-import rule is as visible and selectable as any other. -/
+fact — so it projects onto `source`, the cheapest tier. The module graph FMT006 also consults sits
+outside the `source ≤ syntax ≤ semantic` chain (`Imports`): it is a run-level input, not a deeper
+frontend tier, so it does not raise `input`. This is the one array `rules --json` prints, so an import
+rule is as visible and selectable as any other. -/
 def allRulesJson : Array Lean.Json :=
   ruleRegistry.map Lean.toJson ++ importRuleInfos.map fun info =>
     Lean.Json.mkObj [
@@ -1078,9 +1072,9 @@ def ruleInfoByCode? (code : String) : Option RuleInfo := allRuleInfos.find? (·.
 
 `explain`, the generated rule pages, and the `lean-fmt.toml` schema are **projections over the same
 `RuleInfo`** (`notes/01-schema.md` §3, §8, §9). Keeping the pure string-building here, beside
-`allRulesJson`, is what makes them impossible to disagree — and it is safe against the compiler-plugin
-boundary, because `LeanFmt.Rules` is not in the plugin closure (`docs/adding-a-rule.md`). `LeanFmt.Cli`
-does the IO (printing, writing, drift-checking); it adds no content of its own. -/
+`allRulesJson`, stops them disagreeing, and it costs nothing at the compiler-plugin boundary, because
+`LeanFmt.Rules` is not in the plugin closure (`docs/adding-a-rule.md`). `LeanFmt.Cli` does the IO
+(printing, writing, drift-checking); it adds no content of its own. -/
 
 private def lifecycleLabel : Lifecycle → String
   | .stable => "stable"
@@ -1117,10 +1111,10 @@ def explainText (info : RuleInfo) : String := Id.run do
 private def fence (body : String) : String := "```lean\n" ++ body.trimAsciiEnd.copy ++ "\n```\n"
 
 /-- One rule's generated markdown page (`docs/rules/FMT###.md`, §9). Deterministic: pure over `info`.
-Opens with a YAML frontmatter block carrying the machine-readable axes (code, category, tier,
-lifecycle, fix, default, replacement) so a tool — the executable-example harness among them — parses
-the catalog straight from the pages without re-deriving them (`notes/01-schema.md` §9). The visible
-body below repeats the same facts for a human reader. -/
+Opens with a YAML frontmatter block carrying the machine-readable fields (code, category, tier,
+lifecycle, fix, default, replacement), so a tool — the executable-example harness among them — reads
+the catalog straight from the pages without re-deriving it (`notes/01-schema.md` §9). The body below
+repeats the same facts for a human reader. -/
 def rulePageMarkdown (info : RuleInfo) : String := Id.run do
   let tier := tierWireOf info.code
   let mut out := "---\n"
@@ -1190,7 +1184,7 @@ def selectorVocabulary : Array String :=
   #["all", "default"] ++ categories ++ codes ++ reserved
 
 /-- The generated JSON-schema fragment for `lean-fmt.toml` (`notes/01-schema.md` §9, §11): every config
-key `parseConfig` accepts (`Config.lean:182-201`), with each selector-valued array constrained to
+key `Config.lean`'s `parseFile` accepts, with each selector-valued array constrained to
 `selectorVocabulary` and `preview` to a boolean. Built as a byte-stable pretty string beside the rule
 pages — deterministic, so `docs --check` drift-checks it like every other page. -/
 def catalogSchemaJson : String :=

@@ -20,8 +20,8 @@ structure ServeOptions where
   configPath? : Option FilePath := none
   select : Array String := #[]
   ignore : Array String := #[]
-  /-- Preview mode for the service session (`ruff-12`), unlocking preview rules exactly as `--preview`
-  does for a batch run. -/
+  /-- Preview mode for the service session (`ruff-12`), unlocking preview rules as `--preview` does
+  for a batch run. -/
   preview : Bool := false
 
 inductive Request where
@@ -162,9 +162,9 @@ private partial def loop (run : ExactRun) (project : Project.Snapshot) (plan : R
   if step.shutdown then return 0
   loop run project plan stdin stdout step.versions
 
-/- Start one capacity-one NDJSON service. Project/configuration state and only latest versions are
-retained; source bodies and reports are released after each flushed response. The persistent result
-cache and all source-writing capabilities are absent from this operation. -/
+/- Start one capacity-one NDJSON service. It keeps project and configuration state and the latest
+version per file, and releases source bodies and reports after each flushed response. It has no
+persistent result cache and no source-writing capability. -/
 def serve (options : ServeOptions) : IO UInt32 := do
   unless options.maxMemoryGiB > 0 do
     throw <| IO.userError "--max-memory must provide a nonzero operating envelope"
@@ -172,9 +172,9 @@ def serve (options : ServeOptions) : IO UInt32 := do
   let configPath? := options.configPath?.map fun path =>
     if path.isAbsolute then path else root / path
   let discovery ← Discovery.run root configPath?
-  -- The service is capacity-one and holds one plan for its lifetime, so it resolves the *root*
+  -- The service is capacity-one and holds one plan for its lifetime, so it resolves the root
   -- configuration's plan rather than a per-file one. Its requests name single files that are already
-  -- selected, and re-reading configuration mid-session belongs to `ruff-16-watch-incremental`.
+  -- selected. Re-reading configuration mid-session belongs to `ruff-16-watch-incremental`.
   let plan ← match discovery.fallback.rulePlan
       { select := options.select, ignore := options.ignore, preview := options.preview } with
     | .ok plan => pure plan

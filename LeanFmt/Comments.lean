@@ -11,11 +11,11 @@ shipping toolchain rather than reading it off a docstring.
 (`Lean/Syntax.lean:304`) is documented to split a token's trailing run at the first newline via
 `chooseNiceTrailStop` "so that e.g. comments are associated to the (intuitively) correct token", and
 its own docstring states "after parsing, all `SourceInfo.leading` fields are empty". It has **no
-caller in the 4.32 tree**. Measured over 56 leaves: `nonempty_leading=0`, `comment_in_leading=0`,
-`comment_in_trailing=6`, `verdict=trailing-greedy`. One trailing run routinely holds a trailing
-comment, a blank line, and the next declaration's leading comments together. So the split is ours, and
-this module adopts `chooseNiceTrailStop`'s rule — split at the first newline — with one correction
-forced by preservation; see `splitPoint`.
+caller in the 4.32 tree**. Measuring the leaves of a parsed module confirms it: leading runs are
+empty, comments appear only in trailing runs, and the parser is trailing-greedy. One trailing run
+routinely holds a trailing comment, a blank line, and the next declaration's leading comments
+together. So the split is ours, and this module adopts `chooseNiceTrailStop`'s rule — split at the
+first newline — with one correction that preservation forces; see `splitPoint`.
 
 `leading` is handled anyway rather than assumed empty. The projection permits a non-empty leading run,
 and a rule that is only correct because of a fact measured on one toolchain should not also be
@@ -49,14 +49,14 @@ has no third place to hide a comment, and a formatter that discovers these late 
 
 * `header` — `[0, headerStop)`, the module header. Not attachable, and its comments are not even in
   this projection: the trivia tiling *begins* at `headerStop`, so there is nothing here to enumerate.
-  It is reported as a region rather than as comments for exactly that reason. A module linter never
-  receives the header. Measured: the fixture's `header_stop=331`, and its one header leaf carries both
-  the module docstring and the first declaration's leading comment.
+  That is why it names a region rather than comments. A module linter never receives the header.
+  Measured: one header leaf carries both the module docstring and the first declaration's leading
+  comment.
 * `trailer` — after the last token's split point, out to `terminalStop`. These are the genuinely
   *dangling* comments: the first-newline rule assigns them to "the next token", and at end of file
   there is none. AST formatters meet this case inside empty constructs and invent a "dangling"
-  category for it; in a token model it arises exactly once, at the end, and it is structural rather
-  than a heuristic.
+  category for it; in a token model it arises once, at the end, and it is structural, not a
+  heuristic.
 
 `tokens` is index-aligned with `LosslessSource.tokens`. -/
 structure Attachment where
@@ -67,8 +67,8 @@ structure Attachment where
 
 namespace Attachment
 
-/-- Every comment this attachment owns, in source order. The header region is not included: it holds
-no attachable comment by construction. -/
+/-- Every comment this attachment owns, in source order. The header region is left out: the trivia
+tiling starts after it, so it holds no attachable comment. -/
 def all (a : Attachment) : Array Comment := Id.run do
   let mut out := #[]
   for tc in a.tokens do
@@ -101,8 +101,7 @@ not: it attaches whole comments by range, so a comment straddling the split woul
 side and be lost. "Preserve every comment exactly once" is a roadmap stop rule, not a preference.
 
 So the split is the first newline **outside any comment** — equivalently, the first newline inside a
-`whitespace` trivia. That is not a heuristic bolted on: a line comment provably cannot contain a
-newline (`LosslessSource.scanTrivia` records "`--` runs to, but does not include, the newline;
+`whitespace` trivia. That is not a heuristic: a line comment cannot contain a newline (`LosslessSource.scanTrivia` records "`--` runs to, but does not include, the newline;
 `whitespace` takes the newline itself"), so the only comment a raw scan can tear is a block one, and
 the projection already tells us which trivia is which. A multi-line block comment therefore stays whole
 and belongs to the token whose line it starts on.
@@ -121,7 +120,7 @@ private def splitPoint (source : String) (run : Array Trivia) (start stop : Nat)
 /-- Comments of one trivia run lying within `[lo, hi)`.
 
 The run tiles `[start, ...)` in order and stores only stops, so each trivia's start is its
-predecessor's stop. `lo`/`hi` clip the run rather than partition it, because the split point can land
+predecessor's stop. `lo`/`hi` clip the run rather than partition it, because the split point can fall
 inside a whitespace trivia — `"\n\n"` is one trivia — and, by `splitPoint`, never inside a comment. -/
 private def commentsIn (run : Array Trivia) (start lo hi : Nat) : Array Comment := Id.run do
   let mut out := #[]

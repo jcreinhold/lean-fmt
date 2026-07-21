@@ -2,13 +2,13 @@ module
 
 /- The immutable lossless projection of one accepted Lean module and its codec.
 
-Every offset in this module indexes the *normalized* source: `raw.crlfToLf`, which is the string
-`Lean.Parser.mkInputContext` actually parses. No offset the compiler produces indexes the bytes on
-disk. `LosslessSource.ofSource` is the only supported way to obtain both forms together, so a caller
-cannot accidentally mix them.
+Every offset in this module indexes the *normalized* source: `raw.crlfToLf`, the string
+`Lean.Parser.mkInputContext` parses. No offset the compiler produces indexes the bytes on disk.
+`LosslessSource.ofSource` is the only supported way to get both forms together, so a caller cannot
+mix them by accident.
 
 The design comparison behind this shape is `docs/projects/ruff-01-lossless-source/notes/
-02-projection-interface.md`; the measured parser facts it relies on are in `01-source-authority.md`.
+02-projection-interface.md`; the parser facts it relies on are in `01-source-authority.md`.
 -/
 
 import all LeanFmt.Digest
@@ -33,9 +33,9 @@ inductive LineEndings where
   | crlf
   deriving Inhabited, BEq, DecidableEq, Repr, Lean.ToJson, Lean.FromJson
 
-/-- Trivia is exactly what `Lean.Parser.whitespace` consumes. Doc comments are absent on purpose:
+/-- Trivia is what `Lean.Parser.whitespace` consumes. Doc comments are absent on purpose:
 `Lean/Parser/Basic.lean:584` records that doc-comment and module-doc openers are real tokens, so
-they arrive as syntax nodes and are distinguished by kind. -/
+they arrive as syntax nodes and are told apart by kind. -/
 inductive TriviaKind where
   | whitespace
   | lineComment
@@ -49,7 +49,7 @@ structure Trivia where
   deriving Inhabited, BEq, DecidableEq, Repr
 
 /-- How the parser recorded a leaf. Parsed command syntax is `original` throughout; the other two
-are carried so a future producer cannot silently smuggle in fabricated positions. -/
+are carried so a later producer cannot pass off fabricated positions as real ones. -/
 inductive LeafInfo where
   | original
   | synthetic
@@ -88,11 +88,10 @@ structure Node where
 /-! ## Wire format
 
 `Trivia`, `Token`, and `Node` are the only things in an artifact whose count grows with the file, so
-they are the only things whose encoding matters. Derived field-name objects cost more than the
-source they describe — measured at 12.2x on the local-syntax fixture, where `{"kind":"whitespace",
-"stop":4}` spends 24 of its 29 bytes restating the schema. Each is written as a fixed-shape array
-instead. The decoders below are total and reject anything that is not exactly that shape; a
-projection that fails to decode is an ordinary miss. -/
+they are the only things whose encoding matters. Derived field-name objects cost several times the
+source they describe: most of each object restates the schema, as `{"kind":"whitespace","stop":4}`
+does. Each is written as a fixed-shape array instead. The decoders below are total and reject any
+other shape; a projection that fails to decode is an ordinary miss. -/
 
 private def TriviaKind.toIndex : TriviaKind → Nat
   | .whitespace => 0
@@ -171,9 +170,9 @@ instance : Lean.FromJson Node where
 
 Identity binds the normalized string and the module, and nothing else. It records no property of the
 file on disk on purpose: a module linter is handed `fileMap.source`, which is already normalized, so
-raw byte identity is unobservable from inside the compiler. A schema carrying it could not be
-produced by both mandated producers, and the two would disagree on exactly the CRLF files that miss
-today. A consumer holds the file, so it can recover line endings itself.
+raw byte identity cannot be seen from inside the compiler. A schema carrying it could not be produced
+by both mandated producers, and the two would disagree on the CRLF files that miss today. A consumer
+holds the file, so it can recover line endings itself.
 
 A consumer that holds a source file can check every claim here without a frontend and without
 trusting the producer. -/
@@ -298,11 +297,11 @@ private partial def collect (source : String) (parent : Option Nat) (stx : Lean.
     let build := { build with nodes := build.nodes.push placeholder }
     -- A `choice` node holds several parses of *one* byte range, so walking every alternative would
     -- emit those bytes once per alternative and the token stream would run backwards. Only the
-    -- first contributes; the `choice` node itself stays, so the ambiguity is visible rather than
-    -- silently resolved. `Parser/Basic.lean:1418-1440` is what licenses picking any one of them:
+    -- first contributes; the `choice` node itself stays, so the ambiguity stays visible rather than
+    -- silently resolved. `Parser/Basic.lean:1418-1440` licenses picking any one of them:
     -- `longestMatchStep` restores each alternative to the same `startPos` and keeps it only when
     -- its score ties, whose first component is the stop position. Equal start, equal stop, one
-    -- tokenizer: the alternatives differ in tree shape alone and spell identical text.
+    -- tokenizer: the alternatives differ in tree shape alone and spell the same text.
     let args := if kind == Lean.choiceKind then args.extract 0 1 else args
     let (span, build) := args.foldl (init := (none, build)) fun (span, build) arg =>
       let (argSpan, build) := collect source (some index) arg build
@@ -402,9 +401,9 @@ private def triviaTiles (runs : Array Trivia) (start stop : Nat) : Bool := Id.ru
 
 /-- Structural validity, independent of any source.
 
-The load-bearing clause is the tiling: token spans and their trivia must cover `[headerStop,
-terminalStop)` exactly once, contiguously, with no gap and no overlap. That is the invariant
-`RLS-SPEC` measured and the reason this projection is lossless rather than merely plausible. -/
+The tiling clause carries the weight: token spans and their trivia must cover `[headerStop,
+terminalStop)` once each, contiguously, with no gap and no overlap. `RLS-SPEC` checked that
+invariant, and it is what makes this projection lossless rather than merely plausible. -/
 def structurallyValid (source : LosslessSource) : Bool := Id.run do
   unless source.schema == losslessSourceSchema do
     return false
@@ -438,9 +437,9 @@ def structurallyValid (source : LosslessSource) : Bool := Id.run do
 
 /-- Validity against a concrete on-disk source.
 
-`raw` is the file's bytes as the caller read them; normalizing here is the whole point. A caller that
-digested `raw` directly and compared it to a compiler-produced identity would be comparing two
-different strings, which is why every CRLF file misses today. -/
+`raw` is the file's bytes as the caller read them, and normalizing them here is the point of this
+operation. A caller that digested `raw` directly and compared it to a compiler-produced identity
+would compare two different strings, which is why every CRLF file misses today. -/
 def validFor (source : LosslessSource) (raw : String) : Bool :=
   let normalized := (normalize raw).1
   structurallyValid source &&
@@ -453,12 +452,12 @@ A `.syntax`-tier rule reads the parse through these, never through `Lean.Syntax`
 as strings** and children/tokens as indices into the arrays it already holds. Every helper is total —
 an out-of-range index is silence, never a panic — because a rule is `Facts → Array Finding` with no
 error channel. `structurallyValid` (checked before any rule runs) guarantees `node.kind <
-kinds.size` and `token.node < nodes.size`, so the `getD` fallbacks below never actually fire on a
-validated projection; they exist so the type, not a convention, keeps a rule total.
+kinds.size` and `token.node < nodes.size`, so the `getD` fallbacks below never fire on a validated
+projection; they exist so the type, not a convention, keeps a rule total.
 
-The adjacency builders are one O(n) pass each and are meant to be called **once** per rule invocation,
-not per node — a rule that scans many nodes (FMT013 over every `paren`) builds the map first and then
-does O(1) lookups, keeping the whole scan linear. -/
+The adjacency builders are one O(n) pass each and are meant to be called **once** per rule
+invocation, not per node — a rule that scans many nodes (FMT013 over every `paren`) builds the map
+first and then does O(1) lookups, so the whole scan stays linear. -/
 
 /-- Kind string of node `i`. -/
 def kindOf (source : LosslessSource) (i : Nat) : String :=
@@ -486,8 +485,8 @@ def tokensByNode (source : LosslessSource) : Array (Array Token) := Id.run do
   return adjacency
 
 /-- Indices of the top-level command nodes (`parent = none`), in source order. These are the command
-stream the projection models — the header and the terminal are excluded by construction
-(`headerStop`/`terminalStop`), so a rule that folds over this sees exactly the non-terminal commands. -/
+stream the projection models: `headerStop` and `terminalStop` keep the header and the terminal out,
+so a rule folding over this sees the non-terminal commands and nothing else. -/
 def topLevelNodes (source : LosslessSource) : Array Nat := Id.run do
   let mut out := #[]
   for i in [0:source.nodes.size] do
@@ -499,9 +498,9 @@ def topLevelNodes (source : LosslessSource) : Array Nat := Id.run do
 `Term.dynamicQuot` (`` `(cat| …) ``), `Command.quot`, `Tactic.quotSeq`, and the antiquotation kinds.
 The interior of one of these is parsed with the ordinary grammar, so `paren`/`attributes`/`set_option`
 nodes appear inside it byte-for-byte as in code — but they are *data* a macro constructs, not code the
-author wrote to run. Every such kind carries the substring `quot`, and no non-quotation kind in the
-v4.32.0 grammar does (checked against the `Lean.Parser.*` node-kind names), which is what makes this
-substring test exact rather than a heuristic. -/
+author wrote to run. Every such kind carries the substring `quot`, and no other kind in the v4.32.0
+grammar does (checked against the `Lean.Parser.*` node-kind names), so this substring test is exact
+rather than a guess. -/
 private def isQuotationKind (kind : String) : Bool :=
   (kind.toLower.splitOn "quot").length > 1
 

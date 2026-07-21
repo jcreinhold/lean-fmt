@@ -14,28 +14,27 @@ debouncing, and the two retained snapshots that make coalescing bounded — and 
 runs an analysis, never renders, and never decides what a generation *does*: the caller supplies that
 as an action, so execution stays in `LeanFmt.Application` and rendering in `LeanFmt.Cli`.
 
-**Why polling.** Lean 4.33's `Std.Internal.UV` binds Signal, Timer, TCP, UDP, DNS and System, and not
+**Why polling.** `Std.Internal.UV` binds Signal, Timer, TCP, UDP, DNS and System, and not
 `uv_fs_event`/`uv_fs_poll`; no `inotify`/`FSEvents`/`kqueue` appears anywhere in `Init/` or `Std/`
-(`evidence/01-watch-baseline.md` §1). The gap is a missing binding rather than a missing platform
-capability, so no amount of `Std.Async` reaches it. An external watcher was considered and rejected:
-`CLAUDE.md` requires a *measured* benefit and there is none to cite — the walk is 34 ms against a
-~600 ms generation (§1).
+(`evidence/01-watch-baseline.md` §1). The binding is missing, not the platform capability, so no
+amount of `Std.Async` reaches it. We considered an external watcher and rejected it: `CLAUDE.md`
+requires a *measured* benefit, and the walk costs a small fraction of a generation (§1).
 
 **Why this is bounded without a queue.** There is no event queue to overflow. The observer holds two
-values: the snapshot a generation last ran on, and the latest snapshot observed. An event storm
-collapses into one differing snapshot and produces exactly one following generation, so the retained
-state is O(selected files) — the project itself — with no bound to tune, no drop policy, and no
-backpressure rule (§5).
+values: the snapshot a generation last ran on, and the latest snapshot observed. A burst of events
+collapses into one differing snapshot and produces one following generation, so the retained state is
+O(selected files) — the project itself — with no bound to tune, no drop policy, and no backpressure
+rule (§5).
 -/
 
 /-! ## The change signal
 
-`(relative path, byteSize, mtime.sec, mtime.nsec)` over exactly the files `LeanFmt.Project` already
-selects, plus the control files of §6.
+`(relative path, byteSize, mtime.sec, mtime.nsec)` over the files `LeanFmt.Project` selects, plus the
+control files of §6.
 
-Nanoseconds are populated: twelve writes inside one wall-clock second produced twelve distinct stamps
-50–120 µs apart, and a same-size rewrite stayed distinguishable (`evidence` §2). So no content digest
-is needed *for detection*.
+Nanoseconds carry real values: repeated writes inside one wall-clock second produce distinct stamps,
+and a same-size rewrite stays distinguishable (`evidence` §2). Detection therefore needs no content
+digest.
 
 **This bounds latency, never correctness.** On a filesystem with coarse `mtime` granularity a
 same-second same-size edit can produce an identical tuple and be missed by that poll. A generation
@@ -107,10 +106,10 @@ private def ancestors (path : String) : Array String := Id.run do
 
 /-- The complete set of root-relative paths one observation covers.
 
-Deliberately recomputed from a fresh `Discovery.run` on every poll rather than cached: the selected
-set is itself a function of the tree, so a new file, a new config, or a changed `exclude` must be able
-to change what is watched. The walk was measured at 34 ms against a ~600 ms generation (§1), which is
-what makes recomputing it affordable. -/
+Recomputed from a fresh `Discovery.run` on every poll rather than cached: the selected set is itself
+a function of the tree, so a new file, a new config, or a changed `exclude` has to be able to change
+what we watch. The walk costs a small fraction of a generation (§1), which is what makes recomputing
+it affordable. -/
 private def observedPaths (root : FilePath) (configPath? : Option FilePath) :
     IO (Array String) := do
   let discovery ← Discovery.run root configPath?
@@ -147,9 +146,9 @@ def observe (root : FilePath) (configPath? : Option FilePath) : IO Snapshot := d
 structure Options where
   root : FilePath
   configPath? : Option FilePath := none
-  /-- Poll interval. The default sits above the 34 ms discovery walk — so polling never occupies a
-  meaningful fraction of a core — and well below the ~600 ms generation, so it is never the dominant
-  term in observed latency. Polling faster cannot make feedback faster; the generation does (§1). -/
+  /-- Poll interval. The default sits above the discovery walk, so polling never occupies much of a
+  core, and well below a generation, so it never dominates observed latency. Polling faster cannot
+  make feedback faster; only a faster generation can (§1). -/
   pollMillis : Nat := 200
 
 /-- Run `generation` once immediately, then once after each settled change, forever.

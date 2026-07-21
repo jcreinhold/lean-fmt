@@ -10,10 +10,10 @@ private structure PathPattern where
   segments : List String
   /-- The directory this pattern is anchored at, relative to the project root (`""` is the root
   itself). A pattern means what its **declaring** config's directory says it means, never what the
-  consuming file's directory does (`notes/01-discovery.md` §7). With one root config the two coincide,
-  which is exactly why this field has to be explicit: a nested config's `exclude = ["Generated/**"]`
-  means `Generated/**` under *that* config's directory, and an `extend`ed pattern keeps its parent's
-  anchor rather than being re-anchored at the inheritor. -/
+  consuming file's directory does (`notes/01-discovery.md` §7). With one root config the two agree, so
+  the field has to be explicit to keep them apart: a nested config's `exclude = ["Generated/**"]` means
+  `Generated/**` under *that* config's directory, and an `extend`ed pattern keeps its parent's anchor
+  rather than being re-anchored at the inheritor. -/
   anchor : String := ""
 
 private structure PerFileIgnore where
@@ -22,19 +22,19 @@ private structure PerFileIgnore where
 
 /-- The `[format]` section: settings that change the **canonical bytes** a run produces.
 
-The section split is the cache-identity boundary, not a cosmetic grouping (`notes/01-discovery.md`
+The section split marks the cache-identity boundary, not a cosmetic grouping (`notes/01-discovery.md`
 §8.1, §9.2): every field here is folded into `Project.configurationIdentity`, because a cached
 `CanonicalText` rendered under one value must never be served under another. `[lint]` settings are the
-complement — they project over an unchanged canonical result and must stay out of identity, exactly as
+complement — they project over an unchanged canonical result and must stay out of identity, as
 `CLAUDE.md` requires of rule selection. -/
 structure FormatConfig where
   private mk ::
   /-- The render margin (`line-width`), default 100.
 
-  Promoting this from the compile-time `Application.canonicalWidth` is what made a new cache-identity
-  input necessary. Formatter identity is `(path, byteSize, mtime)` of the executable
-  (`Cache.lean:262-264`), so editing a *constant* still invalidates — a rebuild rewrites the file — but
-  a *runtime* override changes output without touching the binary at all. Hence `identityString`. -/
+  Promoting this from the compile-time `Application.canonicalWidth` required a new cache-identity
+  input. Formatter identity is `(path, byteSize, mtime)` of the executable, so editing a *constant*
+  still invalidates — a rebuild rewrites the file — but a *runtime* override changes output without
+  touching the binary. Hence `identityString`. -/
   lineWidth : Nat := 100
   deriving BEq
 
@@ -50,20 +50,20 @@ structure FormatterConfig where
   excludePatterns : Array PathPattern
   /-- `force-exclude`: apply the ignore sources and `exclude` to **explicitly named** paths too, not
   only to discovered ones (`notes/01-discovery.md` §11). It exists because `format` writes since
-  `ruff-11d`: a pre-commit hook that passes staged paths explicitly must be able to say "still never
-  write these", and without this it cannot. It never re-enables the `include` whitelist — naming a path
-  is saying something, whereas `include` answers "when I say nothing, format these". -/
+  `ruff-11d`: a pre-commit hook that passes staged paths must be able to say "still never write
+  these". It never re-enables the `include` list — naming a path is a statement, whereas `include`
+  answers "when I name nothing, format these". -/
   forceExclude : Bool
   /-- `respect-gitignore`: honor `.gitignore`, `.ignore`, `.git/info/exclude`, and the global git
-  ignore file when discovering sources. The `.lake` floor is *not* one of these sources and is not
-  disabled with them. -/
+  ignore file when discovering sources. The `.lake` exclusion is *not* one of these sources and does
+  not turn off with them. -/
   respectGitignore : Bool
   /-- The `[format]` section — identity-bearing (`FormatConfig`). -/
   format : FormatConfig
   /-- Non-fatal notices raised while **loading** this configuration: a linter key still spelled at the
-  top level (`notes/01-discovery.md` §8.2). They ride the same contract as `RulePlan.notices` — stderr,
-  never changing exit status or which rules run — but cannot live there, because a `[format]` or
-  discovery notice has no plan to hang off. This is the channel widening the freeze named. -/
+  top level (`notes/01-discovery.md` §8.2). They follow the same contract as `RulePlan.notices` —
+  stderr, never changing exit status or which rules run — but cannot live there, because a `[format]`
+  or discovery notice has no plan to hang off. The freeze named this widening of the channel. -/
   notices : Array String
   /-- Where each setting came from, in composition order: `(key, file, line)`. For a scalar or base
   array the **last** entry won; for an additive `extend-*` key every entry contributed, which is why
@@ -94,13 +94,13 @@ structure RulePlan where
   selected : Array String
   /-- Codes whose fixes `fix` may apply — the fix-selection axis resolved over the selected set
   (`fixable`/`unfixable`/`extend-fixable`, `notes/01-schema.md` §6). A selected code absent here is
-  reported but its fix is withheld from the patch, exactly as an unadmitted unsafe fix is. -/
+  reported but its fix is withheld from the patch, as an unadmitted unsafe fix is. -/
   fixableSelected : Array String := #[]
   perFileIgnores : Array PerFileIgnore
   /-- Rule codes whose fixes are promoted to safe, and demoted to unsafe. Resolved from
   `extend-safe-fixes`/`extend-unsafe-fixes`; a code in both is rejected at plan construction, so the
-  two arrays are disjoint by the time they land here. Display-only is never in either — it is a floor
-  configuration cannot lift (`notes/01-model.md` §2). -/
+  two arrays here are disjoint. Display-only is never in either — it is a limit configuration cannot
+  lift (`notes/01-model.md` §2). -/
   extendSafe : Array String
   extendUnsafe : Array String
   /-- Non-fatal notices raised while resolving selectors — a retired/reserved code named in a selector,
@@ -189,7 +189,7 @@ private def keyString : Lean.Name → String
 identity set (`allRuleInfos` = engine rules + import rules), never a hardcoded list: a new category
 (`security`, `imports`) becomes selectable the moment a rule carries it, and
 `expandSelector`/`selectorsValid` cannot drift apart. Reading `allRuleInfos` rather than `ruleRegistry`
-is what makes `--select imports` and FMT005/6/7 selectable even though those rules live outside the
+keeps `--select imports` and FMT005/6/7 selectable even though those rules live outside the
 linear-tier engine. -/
 private def isCategory (selector : String) : Bool :=
   allRuleInfos.any (·.category == selector)
@@ -216,11 +216,11 @@ private def parsePerFileIgnores (anchor : String) (value : Lake.Toml.Value) :
 
 /-- One configuration file's contents, before defaults and before composition with an `extend` parent.
 
-Every base setting is an `Option` so that "absent" is distinguishable from "set to the default value" —
-without that distinction `extend` composition cannot tell a child that stays silent from one that
-deliberately restates the default, and the child would clobber its parent either way
-(`notes/01-discovery.md` §6.2). The additive `extend-*` fields are plain arrays because they
-concatenate rather than override, which is the rule those keys already follow within a single file. -/
+Every base setting is an `Option` so that "absent" differs from "set to the default value". Without
+that split, `extend` composition cannot tell a silent child from one that restates the default, and
+the child would clobber its parent either way (`notes/01-discovery.md` §6.2). The additive `extend-*`
+fields are plain arrays because they concatenate rather than override, the rule those keys already
+follow within a single file. -/
 private structure PartialConfig where
   extend? : Option String := none
   includePatterns? : Option (Array PathPattern) := none
@@ -248,14 +248,14 @@ private def orParent (child parent : Option α) : Option α :=
 
 /-- Compose a parent configuration with the child that `extend`s it (`notes/01-discovery.md` §6.2).
 
-Scalars and base arrays: the child replaces the parent wholesale — that is what lets a child *narrow*
-a parent at all. The `extend-*` family concatenates parent-then-child, the same additive rule those
-keys already have within one file. `per-file-ignores` merges key-wise with the child winning on an
-identical anchored pattern. `extend` itself is never inherited: each file names only its own parent.
+Scalars and base arrays: the child replaces the parent whole, which is what lets a child *narrow* a
+parent. The `extend-*` family concatenates parent-then-child, the same additive rule those keys have
+within one file. `per-file-ignores` merges key-wise, the child winning on an identical anchored
+pattern. `extend` itself is never inherited: each file names only its own parent.
 
-Duplicates and order survive concatenation deliberately. `resolveAxis` folds selector specificity with
-`Nat.max`, so a repeated token is idempotent and neither is observable in the resolved plan — but
-`origins` needs every contributing file to answer `config show`. -/
+Duplicates and order survive concatenation on purpose. `resolveAxis` folds selector specificity with
+`Nat.max`, so a repeated token is idempotent and neither duplicates nor order show up in the resolved
+plan — but `origins` needs every contributing file to answer `config show`. -/
 private def PartialConfig.compose (parent child : PartialConfig) : PartialConfig where
   extend? := none
   includePatterns? := orParent child.includePatterns? parent.includePatterns?
@@ -399,8 +399,8 @@ private def parseFile (anchor file : String) (fileMap : Lean.FileMap) (table : L
         | throw "configuration section '[lint]' expects a table"
       lintSection := entries.items.map fun (key, value) => (keyString key, value)
     | other => topLevel := topLevel.push (other, value)
-  -- A key set in both places is a contradiction the user can trivially resolve, so it does not resolve
-  -- itself (§8.2, and the same reasoning as `extend-safe-fixes` ∩ `extend-unsafe-fixes` below).
+  -- A key set in both places is a contradiction the user can resolve in one edit, so it does not
+  -- resolve itself (§8.2, as with `extend-safe-fixes` ∩ `extend-unsafe-fixes` below).
   for (key, _) in topLevel do
     if lintSection.any (·.1 == key) then
       throw s!"configuration key '{key}' is set both at the top level and in [lint]"
@@ -548,7 +548,7 @@ configuration is the default policy rather than an error.
 
 An explicit `--config` anchors its path patterns at the **project root**, not at its own directory: it
 is a run-wide override rather than a config that governs the subtree it sits in, and anchoring it at
-its own directory would make `include`/`exclude` in a config outside the tree match nothing at all
+its own directory would make `include`/`exclude` in a config outside the tree match nothing
 (`notes/01-discovery.md` §5.1, §7). A *discovered* config anchors at its own directory. -/
 def FormatterConfig.load (root : System.FilePath)
     (explicit? : Option System.FilePath := none) : IO FormatterConfig := do
@@ -582,9 +582,9 @@ Origin is `default` when nothing wrote the setting, otherwise `file:line`. A set
 files in one `extend` chain lists **every** contributing origin for the additive `extend-*` keys and the
 winning one for the rest, which is why composition preserves order and duplicates (§6.2).
 
-This lives here rather than in the CLI because `PathPattern` is private to this module: rendering a
-pattern's anchored form is only possible where the anchor is visible, and leaking the type to a
-presenter to avoid that would be the wrong trade. -/
+This lives here rather than in the CLI because `PathPattern` is private to this module: only code that
+can see the anchor can render a pattern's anchored form, and leaking the type to a presenter would be
+the wrong trade. -/
 def FormatterConfig.describe (config : FormatterConfig) : Array (String × String × String) :=
   let winner := fun (key : String) =>
     match (config.originsOf key).back? with
@@ -657,7 +657,7 @@ private def selectorSpecificity (selector : String) : Nat :=
 /-- Whether `selector` names live rule `info`, honoring the **preview gate** (§5.3): `all` and a
 category expand to stable rules only unless `preview` is on (then their preview rules too); `default`
 follows `defaultEnabled` (only stable rules are default-on); a deprecated rule is reached only by its
-exact code; an exact-code selector names exactly its own code. -/
+exact code; an exact-code selector names only its own code. -/
 private def selectorMentions (preview : Bool) (selector : String) (info : RuleInfo) : Bool :=
   let gated := info.lifecycle == .stable || (info.lifecycle == .preview && preview)
   if selector == "all" then gated
@@ -745,9 +745,9 @@ private def ignoredForPath (plan : RulePlan) (path code : String) : Bool :=
   plan.perFileIgnores.any fun entry =>
     entry.pattern.matches path && (expandSelectors entry.selectors).contains code
 
-/-- The effective applicability of `code`'s fix, after per-rule reclassification. Display-only is a
-floor no promotion can lift; otherwise `extend-safe-fixes` promotes and `extend-unsafe-fixes` demotes.
-The two lists are disjoint (checked at plan construction), so the order of these tests is immaterial.
+/-- The effective applicability of `code`'s fix, after per-rule reclassification. No promotion lifts
+display-only; otherwise `extend-safe-fixes` promotes and `extend-unsafe-fixes` demotes. The two lists
+are disjoint (checked at plan construction), so the order of these tests does not matter.
 
 A projection, never read by a rule: like selection, reclassification lives in the plan so that turning
 a fix safe cannot re-elaborate anything and a rule cannot decide its own admission. -/

@@ -11,11 +11,11 @@ namespace LeanFmt.Internal.CompilerPlugin
 linked into every compilation of every module of any project that integrates the formatter, so
 whatever is in its import closure is in the target project's build graph. While the rules were in
 here, editing one rule's message text invalidated every module's Lake trace and changed the compiled
-bytes of any module that had a finding — measured, `notes/01-rule-facts.md` §3. A rule's prose has no
-business in an `.olean`.
+bytes of any module that had a finding — measured, `notes/01-rule-facts.md` §3. A rule's prose does
+not belong in an `.olean`.
 
-What belongs here is the one thing a later reader cannot recompute: the exact frontend's projection.
-Findings are computed outside, from these facts, by whoever holds them. -/
+What belongs here is what a later reader cannot recompute: the exact frontend's projection. Whoever
+holds these facts computes the findings outside. -/
 
 /- A module linter receives the non-terminal command stream and runs at the terminal command, which
 is `getRef` here. The terminal is what ends the parsed region — `eoi` ordinarily, `#exit` for a file
