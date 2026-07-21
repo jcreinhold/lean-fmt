@@ -44,8 +44,16 @@ spacing: `1+2` → `1 + 2`, `8  +  9` → `8 + 9`, and the corpus notation `3⊗
 that the separator is **per-gap, not per-node**: the corpus's own `" ⊗"` atom declares space-left/tight-
 right, so a uniform one-space rule would emit the wrong `3 ⊗ 4`. Atoms are emitted verbatim; only the
 gaps between parts are chosen, and a gap with no bounding atom (or holding a comment, or a `sepBy`
-count mismatch, or a `v3` artifact) keeps its bytes — the phase-1 conservative contract, with one new
-way *in* to the declared path. Gates: golden diff, conservative-fallback (`captureSemantic=0` →
+mismatch, or a `v3` artifact) keeps its bytes — the phase-1 conservative contract, with one new
+way *in* to the declared path. **2026-07-21: the `sepBy` guard was a count alone, and a count is not
+enough.** `#[n]` printed as `#[n ]`. `liftedParts` lifts the `sepBy`'s null, so the element arrives as
+an atom-part — a token the node owns — and with one element those parts number exactly the three
+declared atoms, so the count agreed and the identifier `n` was handed the separator `", "`, whose
+trailing space opened the gap before `]`. `#[1]` declined only because its parts happened to count
+differently. `declaredSpacing?` now also requires each atom-part to *spell* the atom it was handed,
+which an operand never does; the docstring had claimed that invariant since the guard was written.
+Pinned by two golden lines in `tests/printer/run.sh`. Gates: golden diff, conservative-fallback
+(`captureSemantic=0` →
 byte-identical), parse-preservation (same token count), and idempotence, the last two on the fact path
 specifically. The boundary gate also forced a one-line `ruff-05b` repair — `tests/semantic/Emit.lean`
 now begins with `module` like its sibling oracle, verified still-emitting.

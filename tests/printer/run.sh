@@ -1223,6 +1223,15 @@ fi
 #                          notation.
 #   `notation:65 ... => Prod.mk a b`  the declaration itself is a `notation` command on the conservative
 #                          path -- no fact keys it -- so it and its `" ⊗"` atom string keep every byte.
+#   `#[add]` and `[add]`   a one-element collection, UNCHANGED. It is here because it once printed as
+#                          `#[add ]`. `liftedParts` lifts the `sepBy`'s null, so the element arrives as
+#                          an atom-part -- "a token this node owns", indistinguishable by shape from a
+#                          declared atom -- and with one element the count of those parts equals the
+#                          three declared atoms `#[`, `, `, `]`. The count guard saw nothing wrong and
+#                          handed `add` the separator `", "`, whose trailing space opened the gap before
+#                          `]`. A literal number declined only because `#[1]`'s parts happened to count
+#                          differently. So `declaredSpacing?` now also requires each atom-part to spell
+#                          the atom it was handed, and an operand never does.
 printf -- '--- notation spacing, from the ruff-05b semantic fact ---\n'
 cat >"$work/notation.lean" <<'FIXTURE'
 module
@@ -1234,6 +1243,8 @@ def prec : Nat := 1+2*3
 def slack : Nat := 8  +  9
 def asym : Nat × Nat := 3⊗4
 def commented : Nat := 6 /- keep -/ + 7
+def singletonArray : Array Nat := #[add]
+def singletonList : List Nat := [add]
 FIXTURE
 # captureSemantic=1: the fact is captured and carried in the artifact the printer reads.
 LEAN_NUM_THREADS=1 lake env "$application" __analyze-exact \
@@ -1249,6 +1260,8 @@ def prec : Nat := 1 + 2 * 3
 def slack : Nat := 8 + 9
 def asym : Nat × Nat := 3 ⊗4
 def commented : Nat := 6 /- keep -/ + 7
+def singletonArray : Array Nat := #[add]
+def singletonList : List Nat := [add]
 GOLDEN
 if diff -u "$work/notation.golden" "$work/notation.out" >"$work/notation.diff" 2>&1; then
   printf '  ok   the notation layout matches the golden file\n'

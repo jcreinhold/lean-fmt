@@ -1214,19 +1214,30 @@ string, and each gap is then spaced by the declared strings that bound it: `some
 atom declares a space on that side, `some ""` when the bounding atoms are tight. A gap between two
 operands — neither side a declared atom — is `none`, keeping its bytes.
 
-The count guard is the whole safety of the positional map. `ruff-05b` captures one atom per distinct
-declared symbol, so a `sepBy` notation's repeated separator is captured once while the node repeats it
-per element; the atom-part count then disagrees with the fact and the whole node degrades to `keep`.
-That is conservative by construction: a mismatch never mis-assigns a declared string, it declines the
-node. -/
-private def Tree.declaredSpacing? (tree : Tree) (node : Nat) (parts : Array Part) : Option Spacing :=
-  Id.run do
+Two guards make the positional map safe, and both are needed. `ruff-05b` captures one atom per
+distinct declared symbol, so a `sepBy` notation's repeated separator is captured once while the node
+repeats it per element; usually the atom-part count then disagrees with the fact and the whole node
+degrades to `keep`. But an atom-part is only "a token this node owns", and `liftedParts` lifts a
+`sepBy`'s null, so the elements themselves arrive as atom-parts too. In `#[n]` that turns three
+declared atoms into three atom-parts and the counts agree by accident, handing the identifier `n` the
+separator `", "` and printing `#[n ]`. So each atom-part must also *spell* the atom it was handed
+(trailing and leading declared spaces are the gap, not the symbol). Together the two guards deliver
+what only the first one used to claim: a mismatch never mis-assigns a declared string, it declines
+the node. -/
+private def Tree.declaredSpacing? (tree : Tree) (normalized : String) (node : Nat)
+    (parts : Array Part) : Option Spacing := Id.run do
   let some atoms := tree.declaredAtoms? node | return none
   let mut declaredOf : Array (Option String) := #[]
   let mut cursor := 0
   for part in parts do
     if part.child.isNone then
-      declaredOf := declaredOf.push atoms[cursor]?
+      -- The atom-part must be the declared symbol itself, not an operand that happens to sit where one
+      -- would. An operand token spells something else, so the node is declined.
+      let some atom := atoms[cursor]? | return none
+      let symbol :=
+        String.ofList ((atom.toList.dropWhile (· == ' ')).reverse.dropWhile (· == ' ')).reverse
+      if tree.tokenText normalized part.first != symbol then return none
+      declaredOf := declaredOf.push (some atom)
       cursor := cursor + 1
     else
       declaredOf := declaredOf.push none
@@ -1249,9 +1260,10 @@ A node the fact covers is laid out from its declared spacing (or declined to `ke
 mismatch); every other node falls back to `spacingOf`, exactly as before the fact existed. `keep` reads
 `parts` rather than `liftedParts` because a conservative node lifts nothing — it only recurses to find
 laid-out descendants. -/
-private def Tree.nodeSpacing (tree : Tree) (node : Nat) : Spacing × Array Part :=
+private def Tree.nodeSpacing (tree : Tree) (normalized : String) (node : Nat) :
+    Spacing × Array Part :=
   let lifted := tree.liftedParts node
-  match tree.declaredSpacing? node lifted with
+  match tree.declaredSpacing? normalized node lifted with
   | some spacing => (spacing, lifted)
   | none =>
     let spacing := spacingOf (tree.kindOf node)
@@ -1266,7 +1278,7 @@ every byte no layout claimed survives untouched. A node with no parts contribute
 the absent-syntax case. -/
 private partial def Tree.termDoc (tree : Tree) (normalized : String) (mayCollapse : Bool)
     (node : Nat) (breakRecord : Bool := false) : Doc := Id.run do
-  let (spacing, parts) := tree.nodeSpacing node
+  let (spacing, parts) := tree.nodeSpacing normalized node
   -- A notation/operator node — the ones the `ruff-05b` fact covers, which cannot be named by kind
   -- (`«term_+_»`, every user mixfix); `RLF-OPERATOR-BREAK` gates the break on this (`notes/09` §3).
   let isDeclared := match spacing with | .declared _ => true | _ => false
