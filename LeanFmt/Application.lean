@@ -15,6 +15,7 @@ import Lake.Config.InstallPath
 import Lake.Load.Workspace
 import Lean.Util.Diff
 import all Lean.Shell
+import Std.Sync.CancellationToken
 
 open System
 
@@ -263,10 +264,29 @@ private def awaitRead (task : Task (Except IO.Error String)) : IO String := do
   | .ok contents => return contents
   | .error error => throw error
 
+/-- The message a cancelled exact child raises, and the only way a caller can tell cancellation apart
+from a genuine failure.
+
+A string marker rather than an error constructor because `IO.Error` is Lean's and this is the one
+distinction lean-fmt needs from it. `cancelled?` below is the reader; nothing should match the text by
+hand. -/
+def cancellationMessage : String := "exact frontend child cancelled by request"
+
+/-- Whether an error is this operation's cancellation, as opposed to a failure worth reporting. -/
+def cancelled? (error : IO.Error) : Bool :=
+  ((toString error).splitOn cancellationMessage).length > 1
+
+/- The poll that already enforces the memory envelope is also where cancellation lands.
+
+`ruff-17` RLP-PROTOCOL `notes/01-protocol.md` §9 obligation 3: a long-running server must be able to
+abandon an in-flight request, and the only thing there is to abandon is this child. Adding the check
+here rather than building a second supervision path means cancellation reuses the kill/drain sequence
+the envelope-exhaustion branch already proved out, and bounds cancellation latency at one poll — 50 ms
+— without polling any faster. A batch run passes `none` and pays nothing. -/
 private partial def monitorChild (child : IO.Process.Child {
       stdin := .inherit, stdout := .piped, stderr := .piped })
     (stdoutTask stderrTask : Task (Except IO.Error String))
-    (maxBytes peakKiB : Nat) : IO ChildOutput := do
+    (maxBytes peakKiB : Nat) (cancel? : Option Std.CancellationToken) : IO ChildOutput := do
   match ← child.tryWait with
   | some exitCode =>
     return {
@@ -276,20 +296,26 @@ private partial def monitorChild (child : IO.Process.Child {
       peakAggregateRssKiB := peakKiB
     }
   | none =>
-    let aggregateKiB := (← residentKiB) + (← processGroupRssKiB child.pid)
-    let peakKiB := max peakKiB aggregateKiB
-    if aggregateKiB * 1024 > maxBytes then
+    let abandon : IO Unit := do
       try child.kill catch _ => pure ()
       discard child.wait
       discard <| awaitRead stdoutTask
       discard <| awaitRead stderrTask
+    if let some token := cancel? then
+      if ← token.isCancelled then
+        abandon
+        throw <| IO.userError cancellationMessage
+    let aggregateKiB := (← residentKiB) + (← processGroupRssKiB child.pid)
+    let peakKiB := max peakKiB aggregateKiB
+    if aggregateKiB * 1024 > maxBytes then
+      abandon
       throw <| IO.userError s!"resource envelope exhausted during exact frontend child \
         ({aggregateKiB} KiB > {maxBytes / 1024} KiB)"
     IO.sleep 50
-    monitorChild child stdoutTask stderrTask maxBytes peakKiB
+    monitorChild child stdoutTask stderrTask maxBytes peakKiB cancel?
 
 private def runBounded (arguments : IO.Process.SpawnArgs)
-    (maxBytes : Nat) : IO ChildOutput := do
+    (maxBytes : Nat) (cancel? : Option Std.CancellationToken := none) : IO ChildOutput := do
   let child ← IO.Process.spawn {
     cmd := arguments.cmd
     args := arguments.args
@@ -303,14 +329,15 @@ private def runBounded (arguments : IO.Process.SpawnArgs)
   }
   let stdoutTask ← IO.asTask child.stdout.readToEnd
   let stderrTask ← IO.asTask child.stderr.readToEnd
-  monitorChild child stdoutTask stderrTask maxBytes 0
+  monitorChild child stdoutTask stderrTask maxBytes 0 cancel?
 
 private def ExactRun.nextPathIndex (run : ExactRun) : IO Nat :=
   run.nextIndex.modifyGet fun index => (index, index + 1)
 
 private def ExactRun.envelope (run : ExactRun)
     (snapshot : SourceSnapshot) (captureSemantic : Bool) (validator := false)
-    (captureOccurrences : Bool := false) : IO AnalysisEnvelope := do
+    (captureOccurrences : Bool := false)
+    (cancel? : Option Std.CancellationToken := none) : IO AnalysisEnvelope := do
   let index ← run.nextPathIndex
   let setupResult ← exactSetupResult run.project snapshot
   let setup := match setupResult with
@@ -335,7 +362,7 @@ private def ExactRun.envelope (run : ExactRun)
         snapshot.path.toString, toString run.maxBytes,
         if captureOccurrences then "2" else if captureSemantic then "1" else "0"]
       env := run.project.workspace.augmentedEnvVars.push ⟨"LEAN_NUM_THREADS", some "1"⟩
-    } run.maxBytes
+    } run.maxBytes cancel?
     unless output.exitCode == 0 do
       throw <| IO.userError s!"exact frontend child failed for {snapshot.relativePath}: \
         {output.stderr.trimAscii}"
@@ -513,9 +540,10 @@ still gates the info-tree fold that supplies FMT014's occurrence at original coo
 already runs here for diagnostics); `captureSemantic` and `validator` are unchanged. -/
 def ExactRun.analyzeSnapshot (run : ExactRun) (snapshot : SourceSnapshot)
     (renderCanonical : Bool) (validator := false)
-    (captureSemantic : Bool := false) (captureOccurrences : Bool := false) : IO SemanticAnalysis := do
+    (captureSemantic : Bool := false) (captureOccurrences : Bool := false)
+    (cancel? : Option Std.CancellationToken := none) : IO SemanticAnalysis := do
   canonicalAnalysis snapshot renderCanonical
-    (← run.envelope snapshot captureSemantic validator captureOccurrences)
+    (← run.envelope snapshot captureSemantic validator captureOccurrences cancel?)
 
 /- Bracket a complete exact-analysis run. The capability is constructed only after a real fallback
 or editor request needs it; cache-only and ordinary-evidence batch runs create no temporary state. -/

@@ -1,6 +1,6 @@
 ---
 kind: state
-first_unresolved: 02-documents
+first_unresolved: 03-features
 ---
 
 # Current state
@@ -21,9 +21,31 @@ around it.
 | Prompt | Claim | Status | Depends on |
 | --- | --- | --- | --- |
 | 01-protocol | RLP-PROTOCOL | verified | — |
-| 02-documents | RLP-DOCUMENTS | planned | RLP-PROTOCOL |
+| 02-documents | RLP-DOCUMENTS | verified | RLP-PROTOCOL |
 | 03-features | RLP-FEATURES | planned | RLP-DOCUMENTS |
 | 04-acceptance | RLP-FINAL | planned | RLP-FEATURES |
+
+**`RLP-DOCUMENTS` is verified** (`results/02-documents.md`). `LeanFmt/LanguageServer.lean` (694 lines)
+is live behind `lean-fmt lsp`: our own Content-Length reader over Lean's writer, initialize/shutdown/exit,
+a bounded document store (32 MiB message, 16 MiB document, 256 documents, 64 queued messages),
+incremental sync with version ordering, three-clause admission, `$/cancelRequest` applied by the reader
+thread while the worker is busy, configuration reload, health, and malformed-message recovery.
+`tests/lsp/run.sh` drives a live server through 39 checks.
+
+- **All four of `01-protocol`'s obligations are discharged** — clamping, the differential splice test
+  (6 documents × 9 change sequences against an independent implementation), a cancellation token in
+  `ExactRun`'s existing 50 ms child poll, and the `force-exclude` admission clause.
+- **The freeze was amended twice**, once for the framing split (the read half is ours; the write half is
+  Lean's) and once to replace a source-false justification: `Lean.Server.*` stays out of *this* module
+  because `replaceLspRange` does not clamp, not because of `Lean.Server.InfoUtils`, which
+  `LeanFmt/Analysis.lean:6` already imports legitimately.
+- **No feature answers a formatting request yet.** The capability set is advertised and
+  `RLP-FEATURES` implements it; a client calling `textDocument/formatting` today gets MethodNotFound.
+- **Two suite couplings a later prompt will meet.** `tests/watch/run.sh` asserts `check --staged`
+  against the *real* repository, so it fails whenever anything is staged; and this repository is the
+  printer's own corpus, so adding a production module moves every figure
+  `experiments/check-quoted-figures.py` gates — the module must be `git add`ed before
+  `experiments/run-projection-shape.sh` (which selects with `git ls-files`) can see it.
 
 ## What `01-protocol` froze, for the prompts that consume it
 

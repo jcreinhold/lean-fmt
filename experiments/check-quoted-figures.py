@@ -62,15 +62,53 @@ def read_evidence(path: pathlib.Path) -> dict[str, int]:
     namespaces = grab(r"^(\d+)\tLean\.Parser\.Command\.namespace$")
     ends = grab(r"^(\d+)\tLean\.Parser\.Command\.end$")
     opens = grab(r"^(\d+)\tLean\.Parser\.Command\.open$")
+    # The addends of that identity are quoted too, and they drifted once while the sum was still
+    # being checked: the prose read `779 + 25 + 25 + 7`, which is 836, not the 859 it claimed.
+    # Nothing caught it because the three small numbers were baked into this file's regexes as
+    # literals. They are read from the probe now, and checked where the prose spells them.
+    kinds = grab(r"^# command kinds in the corpus \(\d+ commands, (\d+) distinct kinds\)$")
+    sections = grab(r"^(\d+)\tLean\.Parser\.Command\.section$")
     return {
+        "sections": sections,
         "nodes": nodes,
         "empty": empty,
         "ambiguous": ambiguous,
         "commands": commands,
+        "kinds": kinds,
         "declarations": declarations,
         "claimable": claimable,
+        "namespaces": namespaces,
+        "ends": ends,
+        "opens": opens,
         "canonical": claimable + namespaces + ends + opens,
     }
+
+
+AGREEMENT = STACK / "evidence/01-coverage-agreement.txt"
+
+
+def read_agreement(path: pathlib.Path, probe_canonical: int) -> dict[str, int]:
+    """The printer's own coverage count, which the shape probe cannot derive.
+
+    `canonical=` is what the printer laid out; the probe's formula is what the *structure* allows,
+    and the two are not the same number (`evidence/01-coverage-agreement.txt`: the formula omits
+    `section`, and the printer refuses one shell at a runtime guard). The prose quotes both, so both
+    need a source. The consistency check below is the point: if the shape probe is regenerated and
+    this file is not, the pair of evidence files disagrees and that is a failure, not a figure to
+    average -- it is exactly the drift that let 859 == 859 read as agreement for two prompts.
+    """
+    text = path.read_text()
+    m = re.search(r"^printer_total=(\d+) +probe_total=(\d+) ", text, re.M)
+    if not m:
+        sys.exit(f"FAIL {path} has no printer_total/probe_total line; the comparison's format changed.")
+    printer_total, probe_total = int(m.group(1)), int(m.group(2))
+    if probe_total != probe_canonical:
+        sys.exit(
+            f"FAIL {path} records probe_total={probe_total}, but the shape probe now implies "
+            f"{probe_canonical}.\n    The two evidence files were regenerated apart. Re-run the "
+            f"per-module comparison the file documents."
+        )
+    return {"printer_total": printer_total}
 
 
 def commas(n: int) -> str:
@@ -112,31 +150,43 @@ def build_checks(f: dict[str, int]) -> list[tuple[str, str, str]]:
         (notes, r"For ([\d,]+) of [\d,]+ nodes, an empty", commas(ambig)),
         (notes, r"For [\d,]+ of ([\d,]+) nodes, an empty", commas(nodes)),
         (notes, r"unaffected by all ([\d,]+) ambiguous placements", commas(ambig)),
-        (notes, r"\*\*(\d+) commands in 6 distinct kinds\*\*", str(f["commands"])),
+        (notes, r"\*\*(\d+) commands in \d+ distinct kinds\*\*", str(f["commands"])),
+        (notes, r"\*\*\d+ commands in (\d+) distinct kinds\*\*", str(f["kinds"])),
         (notes, r"\| `Lean\.Parser\.Command\.declaration` \| (\d+) \|", str(f["declarations"])),
         (notes, r"2734 commands against this repository's (\d+)", str(f["commands"])),
         (notes, r"the census above shows 0 in (\d+) commands here and 181", str(f["commands"])),
         # --- state/current.md: the live state ---
-        (state, r"\*\*(\d+) of the corpus's \d+ commands take a cited", str(f["canonical"])),
+        (state, r"\*\*(\d+) of the corpus's \d+ commands take a cited", str(f["printer_total"])),
         (state, r"\*\*\d+ of the corpus's (\d+) commands take a cited", str(f["commands"])),
-        (state, r"the shell of (\d+) of \d+\ndeclarations", str(f["claimable"])),
-        (state, r"the shell of \d+ of (\d+)\ndeclarations", str(f["declarations"])),
-        (state, r"floors the corpus total: \*\*(\d+) of \d+\*\*", str(f["canonical"])),
+        (state, r"`open` \(\d+\), (\d+) `section`", str(f["sections"])),
+        (state, r"the shell of (\d+) of\n\d+ declarations", str(f["claimable"])),
+        (state, r"the shell of \d+ of\n(\d+) declarations", str(f["declarations"])),
+        (state, r"floors the corpus total: \*\*(\d+) of \d+\*\*", str(f["printer_total"])),
         (state, r"floors the corpus total: \*\*\d+ of (\d+)\*\*", str(f["commands"])),
-        (state, r"finds (\d+) of \d+ declarations claimable", str(f["claimable"])),
-        (state, r"finds \d+ of (\d+) declarations claimable", str(f["declarations"])),
-        (state, r"counts (\d+) = \d+ \+ 25 `namespace` \+ 25 `end` \+ 7 `open`", str(f["canonical"])),
-        (state, r"counts \d+ = (\d+) \+ 25 `namespace` \+ 25 `end` \+ 7 `open`", str(f["claimable"])),
-        (state, r"\*\*That (\d+) commands take the layout", str(f["canonical"])),
+        (state, r"finds (\d+) of \d+\n\s*declarations claimable", str(f["claimable"])),
+        (state, r"finds \d+ of (\d+)\n\s*declarations claimable", str(f["declarations"])),
+        (state, r"`namespace` \((\d+)\), `end` \(\d+\), `open` \(\d+\)", str(f["namespaces"])),
+        (state, r"`namespace` \(\d+\), `end` \((\d+)\), `open` \(\d+\)", str(f["ends"])),
+        (state, r"`namespace` \(\d+\), `end` \(\d+\), `open` \((\d+)\)", str(f["opens"])),
+        (state, r"the printer, in Lean, lays out (\d+)", str(f["printer_total"])),
+        (state, r"exactly (\d+) and the printer lays out both", str(f["sections"])),
+        (state, r"counts (\d+) = \d+ \+ \d+ `namespace` \+ \d+ `end` \+ \d+ `open`", str(f["canonical"])),
+        (state, r"counts \d+ = (\d+) \+ \d+ `namespace` \+ \d+ `end` \+ \d+ `open`", str(f["claimable"])),
+        (state, r"counts \d+ = \d+ \+ (\d+) `namespace` \+ \d+ `end` \+ \d+ `open`", str(f["namespaces"])),
+        (state, r"counts \d+ = \d+ \+ \d+ `namespace` \+ (\d+) `end` \+ \d+ `open`", str(f["ends"])),
+        (state, r"counts \d+ = \d+ \+ \d+ `namespace` \+ \d+ `end` \+ (\d+) `open`", str(f["opens"])),
+        (state, r"\*\*That (\d+) commands take the layout", str(f["printer_total"])),
     ]
 
 
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--evidence", default=str(EVIDENCE))
+    parser.add_argument("--agreement", default=str(AGREEMENT))
     args = parser.parse_args()
 
     figures = read_evidence(pathlib.Path(args.evidence))
+    figures.update(read_agreement(pathlib.Path(args.agreement), figures["canonical"]))
     failures: list[str] = []
     checked = 0
 

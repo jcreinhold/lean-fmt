@@ -1,0 +1,44 @@
+# Do the two coverage measurements agree, and why?
+#
+# `state/current.md` claimed they "agree exactly, and keep agreeing as it grows": the Python probe's
+# `claimable + namespace + end + open` equalled the printer's `canonical=` at 859. When a new
+# production module (`LeanFmt/LanguageServer.lean`, `ruff-17` `RLP-DOCUMENTS`) grew the corpus, the
+# aggregates parted: probe 917, printer 918. This file is the per-module comparison that says why.
+#
+# Method. `experiments/run-projection-shape.sh` selects its corpus with `git ls-files`; copy it into
+# `experiments/` (the script derives the repo root from its own path, so it must run from there) with
+# the module list replaced by one file, and run it once per module:
+#
+#   sed 's|^modules=$(git ls-files.*|modules="$LFMOD"|' experiments/run-projection-shape.sh \
+#     > experiments/.probe-one.sh
+#   for m in $(git ls-files 'LeanFmt/*.lean' 'LeanFmt.lean' 'Main.lean'); do
+#     LFMOD=$m bash experiments/.probe-one.sh /tmp/one.txt
+#   done
+#
+# and read `canonical=` per module out of `tests/printer/run.sh`'s corpus section.
+
+printer_total=918   probe_total=917   modules_compared=28
+
+# modules where the two disagree (printer canonical, probe claimable+namespace+end+open)
+LeanFmt/Cache/Decision.lean   printer=11  probe=10
+LeanFmt/Cache/Spec.lean       printer=31  probe=30
+LeanFmt/Imports.lean          printer=20  probe=21
+
+# Every other module agrees, including the new one: LeanFmt/LanguageServer.lean printer=55 probe=55
+# (50 declarations, all structurally claimable, + 1 namespace + 1 end + 3 open).
+
+# Two causes, in opposite directions.
+#
+# 1. The probe's canonical formula omits `Lean.Parser.Command.section`, and the printer lays sections
+#    out. This corpus has exactly 2, one in each `Cache/` module (Decision.lean:97, Spec.lean:85).
+#    `state/current.md` said "this corpus contains none of either [`section` or `universe`]"; that was
+#    already false when written -- the probe's own command census has listed `2 Lean.Parser.Command.section`
+#    throughout.
+#
+# 2. The printer refuses one command in Imports.lean that the probe counts as structurally claimable.
+#    That direction is the expected one and the probe documents it: the probe models structure only,
+#    the printer also applies runtime guards (clean trivia, newline-free flat run, column 0).
+#
+# So the aggregate is +2 -1 = +1. The old exact agreement at 859 was +2 -2: two offsetting errors
+# summing to zero, not two measurements confirming each other. A total-only comparison could not see
+# that, and did not. The per-module comparison is the check that can.

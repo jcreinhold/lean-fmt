@@ -74,6 +74,19 @@ fi
 grep -qx 'import all LeanFmt.Cli' Main.lean
 grep -qx 'import all LeanFmt.Service' LeanFmt/Cli.lean
 grep -qx 'import all LeanFmt.Application' LeanFmt/Service.lean
+grep -qx 'import all LeanFmt.Application' LeanFmt/LanguageServer.lean
+
+# The language server takes the toolchain's LSP *data* — DTOs, UTF-16 conversion, JSON-RPC — and none
+# of Lean's own server. The rule is scoped to this module on purpose: `LeanFmt/Analysis.lean` imports
+# `Lean.Server.InfoUtils` and should, because the info-tree walk is what the semantic occurrence fold
+# needs. What must not come back is `Lean.Server.Utils`, whose `applyDocumentChange`/`replaceLspRange`
+# convert client positions **without clamping** them — and an unclamped LSP position resolves past the
+# end of the buffer, measured (`ruff-17` `evidence/01-position-probe.txt`; `notes/01-protocol.md` §4).
+# Reusing those fifteen lines would reintroduce exactly the defect the position layer exists to close.
+if rg -n '^import (all )?Lean\.Server' LeanFmt/LanguageServer.lean >/dev/null; then
+  printf 'the language server imports Lean.Server; its position layer must clamp\n' >&2
+  exit 1
+fi
 if rg -n 'WorkerFleet|SourceParser|run_project_fleet|FleetPlan|libleanshared|lean-fmt-check-artifacts|--pinned|--jobs' \
     LeanFmt Main.lean lakefile.lean >/dev/null; then
   printf 'legacy execution architecture returned to active production\n' >&2

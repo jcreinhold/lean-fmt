@@ -30,6 +30,16 @@ The toolchain ships the protocol plumbing (`evidence/01-lsp-baseline.md` §3). T
 - **Framing** is `Lean.IO.FS.Stream.readLspMessage` / `writeLspMessage`. We do not write a second
   `Content-Length` parser. Its atomic-`putStr` property (`Communication.lean:110-121`) is the reason a
   notification emitted from a background context cannot interleave with a response.
+
+  > **Amended by `RLP-DOCUMENTS` (2026-07-20): the read half is ours; the write half is Lean's.**
+  > Two measured reasons, both in `results/02-documents.md`. `readLspMessage` collapses end of input,
+  > a malformed header, and an unparseable body into one `IO.userError` string
+  > (`Communication.lean:52-53, 76-81`), so a server required to recover from a malformed message and
+  > to exit cleanly at end of input would have to match on error text to tell them apart. And
+  > `readJson`/`readUTF8` issue a single `h.read n` (`Json/Stream.lean:21-30`), which may return fewer
+  > bytes than asked — a 16 MiB `didOpen` over a pipe does not arrive in one read. `readFrame`
+  > (`LeanFmt/LanguageServer.lean`) is the replacement; `writeLspMessage` is unchanged and still the
+  > reason concurrent writes are safe.
 - **Message algebra** is `Lean.JsonRpc`.
 - **Position conversion** is `Lean.Data.Lsp.Utf16` over `Lean.FileMap`. §4.
 - **DTOs** are `Lean.Lsp`'s wherever `Lean.Lsp` has them.
@@ -37,12 +47,22 @@ The toolchain ships the protocol plumbing (`evidence/01-lsp-baseline.md` §3). T
 
 Three deliberate exceptions:
 
-1. **`Lean.Server.*` is not imported into production.** `Lean.Server.Utils` — where
-   `applyDocumentChange` lives — transitively imports `Lean.Server.InfoUtils`, which is the elaborator's
-   info-tree machinery. `replaceLspRange` is fifteen lines (`Server/Utils.lean:111-126`) and
-   RLP-DOCUMENTS reimplements it over our own document record rather than dragging the language
-   server's internals into a formatter. `Lean.Data.Lsp.Ipc` is different: it is data-side, and it is the
-   acceptance harness RLP-FINAL drives the server with.
+1. **`Lean.Server.Utils` is not imported by the language server.** `replaceLspRange` — the fifteen
+   lines that would otherwise be our `applyChange` (`Server/Utils.lean:111-126`) — is reimplemented over
+   our own document record. `Lean.Data.Lsp.Ipc` is different: it is data-side, and it is the acceptance
+   harness RLP-FINAL drives the server with.
+
+   > **Corrected by `RLP-DOCUMENTS` (2026-07-20).** This clause first said "`Lean.Server.*` is not
+   > imported into production", on the grounds that `Lean.Server.Utils` drags in
+   > `Lean.Server.InfoUtils`. That is source-false: `LeanFmt/Analysis.lean:6` already imports
+   > `Lean.Server.InfoUtils` and should, because the info-tree walk is what the semantic occurrence
+   > fold needs. The weight was already paid, so it was never the reason.
+   >
+   > The real reason is measured. `replaceLspRange` converts both endpoints with `lspPosToUtf8Pos` and
+   > clamps neither, and an unclamped client position resolves **past the end of the buffer** —
+   > LSP `(0,9999)` in a 43-byte document answers byte 10003 (§4). Reusing it would reintroduce
+   > precisely the defect the position layer exists to close. `tests/boundary/run.sh` now pins the
+   > narrow rule and states that reason.
 2. **Formatting capabilities are ours to define.** `Lean.Lsp.ServerCapabilities` has eighteen fields and
    no formatting provider, no `executeCommandProvider`, and there is no `DocumentFormattingParams` or
    `FormattingOptions` in the toolchain at all (`evidence/01-lsp-baseline.md` §3). So `LeanFmt.Lsp`

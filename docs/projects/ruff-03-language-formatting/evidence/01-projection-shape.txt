@@ -1,42 +1,42 @@
-modules_analyzed=28 skipped=0 nodes=100631
+modules_analyzed=29 skipped=0 nodes=106760
 pre_order_contiguity_violations=0
 nonempty_node_children_out_of_source_order=0
-empty_nodes=34648 (34.4% of all nodes)
-empty_nodes_with_ambiguous_placement=15673 (15.6% of all nodes)
+empty_nodes=36510 (34.2% of all nodes)
+empty_nodes_with_ambiguous_placement=16441 (15.4% of all nodes)
 
 # most common empty (absent-syntax) kinds
-31083	null
-1222	Lean.Parser.Term.letConfig
-678	Lean.Parser.Termination.suffix
-552	Lean.Parser.Command.declModifiers
-468	group
-356	Lean.Parser.Term.optEllipsis
-197	Lean.Parser.Command.optDeclSig
-58	Lean.Parser.Command.optDeriving
+32771	null
+1283	Lean.Parser.Term.letConfig
+727	Lean.Parser.Termination.suffix
+587	Lean.Parser.Command.declModifiers
+472	group
+368	Lean.Parser.Term.optEllipsis
+205	Lean.Parser.Command.optDeclSig
+63	Lean.Parser.Command.optDeriving
 20	Lean.Parser.Term.attrKind
 10	Lean.Parser.Tactic.optConfig
 
-# command kinds in the corpus (953 commands, 9 distinct kinds)
-799	Lean.Parser.Command.declaration
-66	Lean.Parser.Command.moduleDoc
-35	Lean.Parser.Command.end
-33	Lean.Parser.Command.namespace
-12	Lean.Parser.Command.open
+# command kinds in the corpus (1022 commands, 9 distinct kinds)
+852	Lean.Parser.Command.declaration
+77	Lean.Parser.Command.moduleDoc
+36	Lean.Parser.Command.end
+34	Lean.Parser.Command.namespace
+15	Lean.Parser.Command.open
 4	Lean.Parser.Command.variable
 2	Lean.Parser.Command.section
 1	Lean.Parser.Command.initialize
 1	Lean.Parser.Command.mutual
 
-# what the declaration shell layout can structurally claim (779/799 declarations, 97.5%); runtime guards may still refuse
-779	structurally claimed: shell laid out
+# what the declaration shell layout can structurally claim (832/852 declarations, 97.7%); runtime guards may still refuse
+832	structurally claimed: shell laid out
 20	rejected: shape not read yet
 
 # would a ctor/field shell layout decide anything? a member's shell is its opener, modifiers and
 # name; 'collapsible' counts shells holding horizontal slack a layout could close, which is the
 # only figure that argues for building one. See the script for why the other three cannot.
-466	structure fields (simple): 0 collapsible, 361 one-token, 103 broken by a doc comment, 2 already tight, 0 unexpected shape
-83	inductive constructors: 0 collapsible, 0 one-token, 0 broken by a doc comment, 83 already tight, 0 unexpected shape
-15	structure constructors: 0 collapsible, 0 one-token, 0 broken by a doc comment, 15 already tight, 0 unexpected shape
+490	structure fields (simple): 0 collapsible, 377 one-token, 110 broken by a doc comment, 3 already tight, 0 unexpected shape
+88	inductive constructors: 0 collapsible, 0 one-token, 0 broken by a doc comment, 88 already tight, 0 unexpected shape
+17	structure constructors: 0 collapsible, 0 one-token, 0 broken by a doc comment, 17 already tight, 0 unexpected shape
 
 # of those, how the `instance` shells break down
 20	anonymous (one-token shell)

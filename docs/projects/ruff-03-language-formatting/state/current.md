@@ -228,11 +228,12 @@ evidence for it — kept intact because it is the citation base phase 2 builds a
 ## Phase 1 record (conservative subset — verified)
 
 `RLF-COMMANDS` is **verified** (`results/01-commands.md`): the printer is live and proven lossless on
-this repository *and* on 62 modules of foreign Lean, **859 of the corpus's 953 commands take a cited
-canonical layout** — `namespace` (33), `end` (35), `open` (12), and the shell of 779 of 799
-declarations — **all 27 module headers take theirs**, and **100 constructor and field shells** are
-claimed inside those declarations. `section` and `universe` have layouts too; this corpus contains
-none of either, so only the fixtures and the sample exercise them. Its external prerequisite stack
+this repository *and* on 62 modules of foreign Lean, **918 of the corpus's 1022 commands take a cited
+canonical layout** — `namespace` (34), `end` (36), `open` (15), 2 `section`, and the shell of 832 of
+852 declarations, less the one shell in `Imports.lean` the runtime guards refuse — **all 28 module
+headers take theirs**, and **108 constructor and field shells** are claimed inside those declarations.
+`universe` has a layout too and this corpus contains none of it, so only the fixtures and the sample
+exercise it. Its external prerequisite stack
 `ruff-02-layout-core` is verified and its live implementation still matches recorded state.
 
 **The corpus's 95% is 57.8% on real Lean, and that is the honest number.** Coverage is measured on the
@@ -748,21 +749,27 @@ recover a collapse that fires zero times.
   every command — the printer would fall back to bytes and be the identity function it was before any
   layout existed. This repository also writes its declarations the way the layout writes them, so even
   a layout that runs changes nothing here. `printer-roundtrip` therefore reports `canonical=`, the
-  commands actually laid out, and `tests/printer/run.sh` floors the corpus total: **859 of 953**, and `members=` the shells claimed
-  inside them, floored at 50 (**57**) because `canonical=` cannot see them — a command counts once
+  commands actually laid out, and `tests/printer/run.sh` floors the corpus total: **918 of 1022**, and `members=` the shells claimed
+  inside them, floored at 50 (**108**) because `canonical=` cannot see them — a command counts once
   whether it claims one region or six. The
   header gets the same treatment for the same reason, but as an exact count rather than a floor
   (`headers_canonical=20` of 20): a module has exactly one header, and the layout declines per group
   and per gap, so there is no header shape here it should refuse outright. The golden fixtures pin
   *what* the layouts produce; these pin *that* they run, on real code, at scale.
-- **Two independent measurements of coverage agree exactly, and keep agreeing as it grows.**
-  `experiments/run-projection-shape.sh` re-implements the structural half of the printer's predicate in
-  Python against the same projection and finds 779 of 799 declarations claimable; the printer, in Lean,
-  counts 859 = 779 + 25 `namespace` + 25 `end` + 7 `open`. So on this corpus every
-  structurally-claimable declaration also passes the runtime guards the probe cannot model (clean
-  trivia, newline-free flat run, column 0). The probe over-counts by construction and says so;
-  `canonical=` is the honest figure.
-- **That 859 commands take the layout and all 20 modules stay byte-identical is what proves the shell
+- **Two independent measurements of coverage differ by one, and the per-module comparison says why —
+  the aggregates agreeing was a coincidence.** `experiments/run-projection-shape.sh` re-implements the
+  structural half of the printer's predicate in Python against the same projection and finds 832 of 852
+  declarations claimable; its formula counts 917 = 832 + 34 `namespace` + 36 `end` + 15 `open`, while
+  the printer, in Lean, lays out 918. Two causes in opposite directions, measured per module in
+  `evidence/01-coverage-agreement.txt`: the probe's formula omits `section`, of which this corpus has
+  exactly 2 and the printer lays out both; and the printer refuses one structurally-claimable shell in
+  `Imports.lean` at a runtime guard the probe cannot model (clean trivia, newline-free flat run,
+  column 0). +2 −1 = +1. **This is what a totals-only comparison hid.** At the earlier corpus size the
+  two totals were both 859 and the record called that exact agreement between independent
+  measurements; it was +2 −2, two offsetting errors summing to zero. The per-module comparison is the
+  check that can see the difference, and it is the one to run. The probe over-counts declarations by
+  construction and says so; `canonical=` remains the honest figure for what runs.
+- **That 918 commands take the layout and all 20 modules stay byte-identical is what proves the shell
   is a prefix.** A shell that ran past the name, or stopped short, would duplicate or drop bytes on
   real code. The same round-trip is the only thing asserting that the header layout's claim ends
   exactly at `headerStop` — that the parser's idea of where the header stops and the projection's agree

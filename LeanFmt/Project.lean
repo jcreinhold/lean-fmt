@@ -165,18 +165,26 @@ a floor that some entry points skip is not a floor.
 
 `module?` is resolved from the *real* path when the file happens to exist, so a saved-but-modified
 buffer keeps the module identity its on-disk twin has and gets the same exact Lake setup. A path with
-nothing behind it resolves to `none` and takes the standalone route `diagnosticSetup` already serves. -/
+nothing behind it resolves to `none` and takes the standalone route `diagnosticSetup` already serves.
+
+`spelling?` exists because "the string the caller wrote" and "the path to resolve" stopped being the
+same string when `ruff-17` added a caller that speaks URIs. A language-server client names a document
+`file:///…`, and an error naming the decoded path would be naming something the client never sent. The
+gates are unchanged and there is still one implementation of them; only the noun in the message moves.
+Every path-taking caller passes `none` and reads exactly as before. -/
 def unsavedTarget (workspace : Lake.Workspace) (discovery : Discovery.Discovery)
-    (root : FilePath) (argument : String) (source : String) : IO SourceTarget := do
+    (root : FilePath) (argument : String) (source : String)
+    (spelling? : Option String := none) : IO SourceTarget := do
   let written := FilePath.mk argument
+  let spelling := spelling?.getD argument
   let candidate := resolveLexically (if written.isAbsolute then written else root / written)
   unless insideRoot root candidate do
-    throw <| IO.userError s!"selected file is outside the project root: {argument}"
+    throw <| IO.userError s!"selected file is outside the project root: {spelling}"
   unless candidate.extension == some "lean" do
-    throw <| IO.userError s!"selected file is not a Lean source: {argument}"
+    throw <| IO.userError s!"selected file is not a Lean source: {spelling}"
   let relativePath := (Lake.relPathFrom root candidate).toString
   if insideLakeDirectory relativePath then
-    throw <| IO.userError s!"selected file is inside the Lake build directory: {argument}"
+    throw <| IO.userError s!"selected file is inside the Lake build directory: {spelling}"
   let path ← if ← candidate.pathExists then IO.FS.realPath candidate else pure candidate
   return {
     module? := workspace.findModuleBySrc? path
