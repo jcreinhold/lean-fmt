@@ -54,10 +54,26 @@ check("advertises documentRangeFormattingProvider", caps.documentRangeFormatting
 check("advertises codeActionProvider", caps.codeActionProvider ~= nil)
 check("advertises no hover (it does not duplicate Lean's server)", caps.hoverProvider == nil)
 
+-- Find the landmarks; do not count lines. This file carries a copyright header above
+-- its `module` marker, and how long that header is has nothing to do with this test.
+local module_line, code_line
+for i, l in ipairs(original) do
+  if l == "module" then module_line = i break end
+end
+check("the buffer has a module marker to edit after", module_line ~= nil)
+if not module_line then
+  print(("\nchecks: %d ok, %d failed"):format(ok_count, fail_count))
+  vim.cmd("cquit 1")
+end
+for i = module_line + 1, #original do
+  if original[i] ~= "" then code_line = i break end
+end
+
 -- Trailing whitespace is a formatting difference, not a reported rule, so it
 -- publishes nothing. Introduce a duplicate import instead: FMT005 is stable,
 -- default-enabled, and fixable.
-vim.api.nvim_buf_set_lines(buf, 1, 1, false, { "", "import LeanFmt.Digest", "import LeanFmt.Digest" })
+vim.api.nvim_buf_set_lines(buf, module_line, module_line, false,
+  { "", "import LeanFmt.Digest", "import LeanFmt.Digest" })
 check("buffer is dirty and unsaved", vim.bo[buf].modified)
 
 local function lf_diags()
@@ -89,8 +105,7 @@ end
 -- Undo the edit so the formatting comparison below starts from the real file.
 vim.api.nvim_buf_set_lines(buf, 0, -1, false, original)
 vim.wait(2000, function() return false end, 100)
-local wsline = original[6]
-vim.api.nvim_buf_set_lines(buf, 5, 6, false, { wsline .. "   " })
+vim.api.nvim_buf_set_lines(buf, code_line - 1, code_line, false, { original[code_line] .. "   " })
 
 -- Format through neovim's own request path.
 local before = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
@@ -98,8 +113,8 @@ vim.lsp.buf.format({ name = "lean-fmt", bufnr = buf, timeout_ms = 60000 })
 local after = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
 
 check("formatting changed the buffer", not vim.deep_equal(before, after))
-check("formatting removed the trailing whitespace", after[6] == original[6],
-  ("got %q want %q"):format(after[6] or "<nil>", original[6]))
+check("formatting removed the trailing whitespace", after[code_line] == original[code_line],
+  ("got %q want %q"):format(after[code_line] or "<nil>", original[code_line]))
 check("formatting left every other line alone", vim.deep_equal(after, original))
 
 -- The server must not have touched disk.

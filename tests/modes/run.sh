@@ -530,6 +530,18 @@ assert "findings" not in artifact, artifact.keys()
 assert artifact["source"]["tokens"], "the downstream projection recorded no tokens"
 PY
 
+# `compiler status` on a project that really is plugin-integrated. This is the only place a `ready`
+# is genuinely earned: the audit at the repository root below reports on lean-fmt's own modules,
+# which nothing builds with the plugin, so every one of them is `missing` or `unbuilt`.
+run_expect 0 "$work/status-downstream.json" "$application" compiler status \
+  --root "$work/downstream" --json
+python3 - "$work/status-downstream.json" <<'PY'
+import json, sys
+r = json.load(open(sys.argv[1]))
+assert r["ready"] >= 1, r
+assert [m["status"] for m in r["modules"]] == ["ready"], r["modules"]
+PY
+
 if [[ -d $artifact_root ]]; then
   tree_metadata "$artifact_root" >"$work/artifacts.before"
 else
@@ -551,7 +563,12 @@ import json, sys
 r = json.load(open(sys.argv[1]))
 paths = [m["path"] for m in r["modules"]]
 assert paths == sorted(paths)
-assert r["ready"] >= 2 and r["ready"] + r["missing"] + r["unbuilt"] == len(paths)
+# Every module lands in exactly one bucket. Not `ready >= 2`: this repository's own modules are
+# not built with the plugin, so a `ready` here would have to come from a fixture the configuration
+# excludes -- and `exclude` prunes the walk, so the audit no longer sees one. The earned `ready`
+# is asserted against the downstream project above.
+assert r["ready"] + r["missing"] + r["unbuilt"] == len(paths)
+assert set(m["status"] for m in r["modules"]) <= {"ready", "missing", "unbuilt"}
 PY
 
 # Clean removes exactly the project result cache, is idempotent, and leaves source/build artifacts.
