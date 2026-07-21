@@ -6,8 +6,9 @@ modules live under `LeanFmt`.
 ## Current state
 
 The production tree is a native `lake init` project on Lean's private-by-default module system. Every
-compiled production, entry-point, test, and fixture source begins with `module`; only the
-`lakefile.lean` is exempt. The product has one private intent-to-report operation, an atomic aggregate
+compiled production, entry-point, test, and fixture source opens with `module` as its first token —
+a copyright block or other comment may precede it, exactly as Lean allows; only the `lakefile.lean` is
+exempt. The product has one private intent-to-report operation, an atomic aggregate
 semantic-result cache, preview/fix modes, read-only compiler-integration audit, and a language
 server. A compiler plugin writes a silent formatter record into the successful module `.olean`; a Lake module facet extracts it into a compact content-addressed sidecar. The application
 reads that facet through one private no-build Lake operation, and only when a selected rule needs

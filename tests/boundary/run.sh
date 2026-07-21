@@ -7,6 +7,7 @@ git rev-parse --is-inside-work-tree >/dev/null
 
 # Native source boundary: lakefiles are executable configuration; every compiled Lean source uses
 # private-by-default modules. No Rust workspace, cache, build output, or generated binary is tracked.
+sources=()
 while IFS= read -r source; do
   case "$source" in
   lakefile.lean | */lakefile.lean) continue ;;
@@ -15,12 +16,51 @@ while IFS= read -r source; do
   # RIR-SPEC probe exercises `parseImports'`, which is `meta`-gated under the module system.
   docs/*) continue ;;
   esac
-  first=$(awk 'NF {print $1; exit}' "$source")
-  if [[ $first != module ]]; then
-    printf '%s does not begin with module\n' "$source" >&2
-    exit 1
-  fi
+  sources+=("$source")
 done < <(git ls-files '*.lean')
+
+# `module` must be the first *token*, which is not the first line: Lean lets whitespace and comments
+# precede the header, and every source here carries a copyright block above it. So the check skips
+# what Lean skips — nestable `/- -/` and `--` to end of line — and then demands `module`. Matching on
+# the first non-blank line instead would forbid a header Lean accepts, and the gate exists to pin the
+# module system, not a comment style.
+python3 - "${sources[@]}" <<'PY'
+import sys
+
+def first_token(text):
+    i, depth = 0, 0
+    while i < len(text):
+        c = text[i]
+        if depth > 0:
+            if text.startswith("/-", i):
+                depth += 1; i += 2
+            elif text.startswith("-/", i):
+                depth -= 1; i += 2
+            else:
+                i += 1
+        elif text.startswith("/-", i):
+            depth = 1; i += 2
+        elif text.startswith("--", i):
+            end = text.find("\n", i)
+            i = len(text) if end < 0 else end + 1
+        elif c.isspace():
+            i += 1
+        else:
+            end = i
+            while end < len(text) and not text[end].isspace():
+                end += 1
+            return text[i:end]
+    return ""
+
+failed = False
+for path in sys.argv[1:]:
+    with open(path, encoding="utf-8") as handle:
+        token = first_token(handle.read())
+    if token != "module":
+        print(f"{path} does not begin with module (first token: {token!r})", file=sys.stderr)
+        failed = True
+sys.exit(1 if failed else 0)
+PY
 
 if git ls-files | grep -Eq '(^|/)(Cargo\.toml|Cargo\.lock|[^/]+\.rs|target|\.lake|\.lean-fmt-cache)(/|$)'; then
   printf 'tracked Rust, cache, or build artifact crossed the native source boundary\n' >&2

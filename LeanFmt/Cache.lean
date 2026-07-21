@@ -556,7 +556,7 @@ def ResultCache.open? (workspace : Lake.Workspace) (application : System.FilePat
     let some environment ← environmentDigest? workspace
       | return none
     -- Formatter identity is the binary's path, size, and modification time, not a content hash of
-    -- its bytes: the executable statically links libleanshared and is large, and the pure-Lean
+    -- its bytes: the executable statically links Lean's own shared runtime, so it is large, and the pure-Lean
     -- SHA-256 over it dominated every cached invocation. A rebuild always rewrites the file, so
     -- (size, mtime) changes whenever the formatter could behave differently; `toolchain` below pins
     -- the toolchain revision separately.

@@ -1,6 +1,6 @@
 /-
 Copyright (c) 2024 Yaël Dillies, Damiano Testa. All rights reserved.
-Released under Apache 2.0 license as described in the file LICENSE-APACHE.
+Released under Apache 2.0 license as described in the file LICENSE.
 Authors: Yaël Dillies, Damiano Testa, Jacob Reinhold
 -/
 module
