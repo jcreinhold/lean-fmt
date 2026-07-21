@@ -35,7 +35,7 @@ assert_growth() {
   local t_lo t_hi ratio
   t_lo=$(ms_at "$label" "$lo")
   t_hi=$(ms_at "$label" "$hi")
-  if [[ -z "$t_lo" || -z "$t_hi" ]]; then
+  if [[ -z $t_lo || -z $t_hi ]]; then
     printf 'FAIL %s: no measurement at n=%s or n=%s\n' "$label" "$lo" "$hi" >&2
     failures=$((failures + 1))
     return

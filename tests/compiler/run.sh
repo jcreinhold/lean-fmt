@@ -65,7 +65,7 @@ LEAN_NUM_THREADS=1 lake exe lean-fmt-tests verify-official-facet \
 
 # The extractor must use the exact `.olean` returned by the facet even when ambient `LEAN_PATH`
 # contains a different module with the same name first.
-printf 'module\n\ndef shadow : Nat := 1\n' > "$shadow_dir/LocalSyntax.lean"
+printf 'module\n\ndef shadow : Nat := 1\n' >"$shadow_dir/LocalSyntax.lean"
 plugin=$(lake -q query LeanFmtCompilerPlugin:shared --text)
 extractor=$(lake -q query artifactExtractor --text)
 lean_bin=$(lake env which lean)
@@ -116,11 +116,11 @@ PY
 LEAN_NUM_THREADS=1 lake build +LocalSyntax:leanFmtArtifact
 rules_trace=$(python3 -c \
   'import json; print(json.load(open(".lake/build/lib/lean/LocalSyntax.trace"))["depHash"])')
-if [[ "$enabled_trace" != "$rules_trace" ]]; then
+if [[ $enabled_trace != "$rules_trace" ]]; then
   printf 'editing a rule invalidated the owning Lake module trace\n' >&2
   exit 1
 fi
-if [[ "$enabled_olean" != "$(shasum -a 256 "$olean" | cut -d' ' -f1)" ]]; then
+if [[ $enabled_olean != "$(shasum -a 256 "$olean" | cut -d' ' -f1)" ]]; then
   printf 'editing a rule changed the compiled bytes of an unrelated module\n' >&2
   exit 1
 fi
@@ -146,7 +146,7 @@ LEAN_NUM_THREADS=1 lake build +LocalSyntax:leanFmtArtifact
 plugin_trace=$(python3 -c \
   'import json; print(json.load(open(".lake/build/lib/lean/LocalSyntax.trace"))["depHash"])')
 verify_artifacts
-if [[ "$enabled_trace" == "$plugin_trace" ]]; then
+if [[ $enabled_trace == "$plugin_trace" ]]; then
   printf 'plugin change did not invalidate the owning Lake module trace\n' >&2
   exit 1
 fi
@@ -154,7 +154,7 @@ cp "$plugin_backup" "$plugin_source"
 LEAN_NUM_THREADS=1 lake build +LocalSyntax:leanFmtArtifact
 
 # Source changes and corrupt output cannot survive the module boundary as apparent hits.
-printf '\n-- source-invalidation-probe\n' >> "$source_file"
+printf '\n-- source-invalidation-probe\n' >>"$source_file"
 LEAN_NUM_THREADS=1 lake build +LocalSyntax:leanFmtArtifact
 verify_artifacts
 cp "$fixture_backup" "$source_file"
@@ -164,17 +164,17 @@ LEAN_NUM_THREADS=1 lake build +LocalSyntax:leanFmtArtifact
 # Lake reproduce it from the exact module-owned payload.
 trusted_artifact_hash=$(LEAN_NUM_THREADS=1 lake exe lean-fmt-tests print-lake-hash "$artifact")
 rm -f "$artifact"
-printf '{"partial":' > "$artifact"
+printf '{"partial":' >"$artifact"
 if LEAN_NUM_THREADS=1 lake exe lean-fmt-tests \
-    verify-facet-artifact "$artifact" tests/compiler/LocalSyntax.lean \
-    "$trusted_artifact_hash"; then
+  verify-facet-artifact "$artifact" tests/compiler/LocalSyntax.lean \
+  "$trusted_artifact_hash"; then
   printf 'corrupt facet artifact was accepted\n' >&2
   exit 1
 fi
 # The production consumer runs the registered job in no-build mode rather than trusting presence or
 # launching an extractor. Corruption is a miss until the explicit facet prerequisite is rebuilt.
 if LEAN_NUM_THREADS=1 lake exe lean-fmt-tests verify-official-facet \
-    . tests/compiler/LocalSyntax.lean; then
+  . tests/compiler/LocalSyntax.lean; then
   printf 'corrupt official facet was consumed without an explicit rebuild\n' >&2
   exit 1
 fi
@@ -185,9 +185,9 @@ LEAN_NUM_THREADS=1 lake exe lean-fmt-tests verify-official-facet \
 verify_artifacts
 
 rm -f "$olean"
-printf 'corrupt' > "$olean"
+printf 'corrupt' >"$olean"
 if LEAN_NUM_THREADS=1 lake exe lean-fmt-tests \
-    verify-plugin-artifact LocalSyntax tests/compiler/LocalSyntax.lean; then
+  verify-plugin-artifact LocalSyntax tests/compiler/LocalSyntax.lean; then
   printf 'corrupt module artifact was accepted\n' >&2
   exit 1
 fi
@@ -204,9 +204,9 @@ rm -f "$artifact" "$artifact.hash"
 LAKE_CACHE_DIR="$cache_dir" LAKE_ARTIFACT_CACHE=true LEAN_NUM_THREADS=1 \
   lake -v build +LocalSyntax:leanFmtArtifact >"$cache_log" 2>&1
 if ! grep -q 'found artifact in cache:' "$cache_log" ||
-    ! grep -q 'restored artifact from cache to:' "$cache_log" ||
-    ! grep -q 'Replayed .*LocalSyntax:leanFmtArtifact' "$cache_log" ||
-    grep -q 'Built .*LocalSyntax:leanFmtArtifact' "$cache_log"; then
+  ! grep -q 'restored artifact from cache to:' "$cache_log" ||
+  ! grep -q 'Replayed .*LocalSyntax:leanFmtArtifact' "$cache_log" ||
+  grep -q 'Built .*LocalSyntax:leanFmtArtifact' "$cache_log"; then
   printf 'Lake did not restore the declared facet artifact from its isolated cache\n' >&2
   cat "$cache_log" >&2
   exit 1
@@ -219,11 +219,11 @@ if LEAN_NUM_THREADS=1 lake build +Broken:leanFmtArtifact; then
   printf 'broken module unexpectedly published a lean-fmt module artifact\n' >&2
   exit 1
 fi
-if [[ -e "$broken_olean" ]]; then
+if [[ -e $broken_olean ]]; then
   printf 'failed compiler published a lean-fmt module artifact\n' >&2
   exit 1
 fi
-if [[ -e "$broken_artifact" ]]; then
+if [[ -e $broken_artifact ]]; then
   printf 'failed compiler published a lean-fmt facet artifact\n' >&2
   exit 1
 fi

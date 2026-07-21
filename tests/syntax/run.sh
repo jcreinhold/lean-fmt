@@ -55,7 +55,7 @@ expect_codes() {
   local label=$1 fixture=$2 expected=$3
   shift 3
   local exit_code=0
-  [[ -n "$expected" ]] && exit_code=1
+  [[ -n $expected ]] && exit_code=1
   run_expect "$exit_code" "$work/$label.json" \
     sfmt check --root . --json --no-cache --preview "$@" "tests/syntax/$fixture"
   EXPECTED="$expected" LABEL="$label" python3 - "$work/$label.json" <<'PY'
@@ -72,16 +72,16 @@ PY
 }
 
 # --- Positives: each defect fires exactly its own rule -----------------------------------------
-expect_codes fmt008-pos NoModuleDoc.lean  "FMT008" --select FMT008
-expect_codes fmt009-pos Unclosed.lean     "FMT009" --select FMT009
-expect_codes fmt010-pos Duplicates.lean   "FMT010" --select FMT010
-expect_codes fmt011-pos Duplicates.lean   "FMT011" --select FMT011
-expect_codes fmt012-pos DevOption.lean    "FMT012" --select FMT012
+expect_codes fmt008-pos NoModuleDoc.lean "FMT008" --select FMT008
+expect_codes fmt009-pos Unclosed.lean "FMT009" --select FMT009
+expect_codes fmt010-pos Duplicates.lean "FMT010" --select FMT010
+expect_codes fmt011-pos Duplicates.lean "FMT011" --select FMT011
+expect_codes fmt012-pos DevOption.lean "FMT012" --select FMT012
 # FMT012 (RYR-FINAL scope decision): the inline `set_option pp.all true in <decl>` scoped form is the
 # same `set_option` command node, so a committed dev option fires whether standalone or `… in`-scoped.
 # Report-only, so the scoped boundary raises no byte-safety question -- reporting both is uniform.
 expect_codes fmt012-scoped-in ScopedInOption.lean "FMT012" --select FMT012
-expect_codes fmt013-pos NestedParen.lean  "FMT013" --select FMT013
+expect_codes fmt013-pos NestedParen.lean "FMT013" --select FMT013
 
 # The three fixable rules carry a `.safe` fix whose edits are expressed in original-source
 # coordinates (`Application.renderCanonicalText` docstring). Pin the applicability and the byte spans
@@ -110,23 +110,23 @@ expect_codes clean Clean.lean "" "${all_six[@]}"
 
 # --- Near-misses: each rule's documented exclusion (catalog 01 §5) stays silent under all six ------
 # FMT008: a module with no `declaration` node (a section-only re-export/config module) is not undoc.
-expect_codes near-008 NearNoDecl.lean     "" "${all_six[@]}"
+expect_codes near-008 NearNoDecl.lean "" "${all_six[@]}"
 # FMT009: an outermost `noncomputable section` left open is the whole-file idiom, not an unclosed one.
 expect_codes near-009 NearOpenSection.lean "" "${all_six[@]}"
 # FMT009 regression (RYR-FINAL frozen-sample false positive): one `end Alpha.Beta` closes both a
 # `namespace Alpha` and a `namespace Beta` -- the name stack must pop the group the dotted name spells,
 # not one scope per `end`. `ScopesBalanced` adds a dotted namespace and a named section closed normally.
-expect_codes near-009-dotted EndDotted.lean      "" "${all_six[@]}"
+expect_codes near-009-dotted EndDotted.lean "" "${all_six[@]}"
 expect_codes near-009-nested ScopesBalanced.lean "" "${all_six[@]}"
 # FMT010: `@[local simp, simp]` differs by `attrKind`; comparison is byte-exact, so no duplicate.
-expect_codes near-010 NearAttr.lean       "" "${all_six[@]}"
+expect_codes near-010 NearAttr.lean "" "${all_six[@]}"
 # FMT011: `deriving Repr, BEq` are distinct classes, not a repeat.
-expect_codes near-011 NearDeriving.lean   "" "${all_six[@]}"
+expect_codes near-011 NearDeriving.lean "" "${all_six[@]}"
 # FMT012: `set_option maxHeartbeats` is a proof-scaling knob, outside the four debug roots.
-expect_codes near-012 NearOption.lean     "" "${all_six[@]}"
+expect_codes near-012 NearOption.lean "" "${all_six[@]}"
 # FMT013: a tuple `(1, 2)`, a type ascription `(1 : Nat)`, and a cdot `(· + 1)` are each a distinct
 # node kind, none a `paren` wrapping a `paren`.
-expect_codes near-013 NearParen.lean      "" "${all_six[@]}"
+expect_codes near-013 NearParen.lean "" "${all_six[@]}"
 
 # --- Comments: a defect named only inside a line or block comment is trivia, absent from the leaf
 # walk, and must not fire. `Comment.lean` buries a dev `set_option`, a redundant `((paren))`, a
@@ -136,7 +136,7 @@ expect_codes comment Comment.lean "" "${all_six[@]}"
 # --- Quotation / generated syntax: a defect *inside* `` `(…) `` is data, not code, and must not fire.
 # `macro "myone" : term => `(((1)))` has a nested paren; `mydef` quotes `@[simp, simp]`.
 expect_codes quote-paren QuoteParen.lean "" "${all_six[@]}"
-expect_codes quote-attr  QuoteAttr.lean  "" "${all_six[@]}"
+expect_codes quote-attr QuoteAttr.lean "" "${all_six[@]}"
 
 # --- Custom syntax reusing `(`: a `syntax "wrap(" term ")"` declaration is preserved and ignored. ---
 expect_codes custom-syntax CustomSyntax.lean "" "${all_six[@]}"
@@ -188,8 +188,8 @@ PY
 
 # FMT013 deletes the outer pair (`((1))` -> `(1)`); FMT010/011 drop the duplicate `simp` / `Repr`.
 fix_applies fmt013 NestedParen.lean FMT013 '((1))' '(1)'
-fix_applies fmt010 Duplicates.lean  FMT010 '@[simp, simp]' '@[simp]'
-fix_applies fmt011 Duplicates.lean  FMT011 'deriving Repr, Repr' 'deriving Repr'
+fix_applies fmt010 Duplicates.lean FMT010 '@[simp, simp]' '@[simp]'
+fix_applies fmt011 Duplicates.lean FMT011 'deriving Repr, Repr' 'deriving Repr'
 
 # The inverse half of the split: `format` applies no syntax fix. On the same FMT013 fixture — already
 # layout-canonical — `format --select FMT013` *reports* the redundant-paren finding but leaves `((1))`
@@ -254,7 +254,10 @@ run_expect 0 "$work/order-a.json" \
   sfmt fix --root . --json --no-cache --preview --select FMT010 --select FMT013 "$order_a"
 run_expect 0 "$work/order-b.json" \
   sfmt fix --root . --json --no-cache --preview --select FMT013 --select FMT010 "$order_b"
-cmp "$order_a" "$order_b" || { echo "pass-order changed the composed bytes" >&2; exit 1; }
+cmp "$order_a" "$order_b" || {
+  echo "pass-order changed the composed bytes" >&2
+  exit 1
+}
 rm -f "$order_a" "$order_b"
 
 echo "lean-fmt syntax-tier rule integration tests passed"

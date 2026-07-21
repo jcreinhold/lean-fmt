@@ -25,8 +25,8 @@ cd "$repo_root"
 LEAN_NUM_THREADS=1 lake build lean-fmt >/dev/null
 application="$repo_root/.lake/build/bin/lean-fmt"
 
-preview=(--select FMT008 --select FMT009 --select FMT010 --select FMT011 --select FMT012 \
-         --select FMT013 --select FMT014 --select FMT015 --select FMT016 --select FMT017)
+preview=(--select FMT008 --select FMT009 --select FMT010 --select FMT011 --select FMT012
+  --select FMT013 --select FMT014 --select FMT015 --select FMT016 --select FMT017)
 
 findings_tsv="$result_root/findings.tsv"
 printf 'module\tcode\tstart\tstop\tmessage\tslice\n' >"$findings_tsv"
@@ -35,7 +35,7 @@ printf 'index\tmodule\tseconds\tfindings\tbroken\tinfra\n' >"$status_tsv"
 
 index=0
 while IFS= read -r module; do
-  [[ -z "$module" ]] && continue
+  [[ -z $module ]] && continue
   index=$((index + 1))
   report="$result_root/reports/$index.json"
   t0=$(python3 -c 'import time; print(time.monotonic())')

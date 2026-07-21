@@ -113,8 +113,14 @@ PY
 # spacing and all — is written zero times and left byte-for-byte. This is the split: `format` above
 # would move these bytes; `fix` must not.
 run_expect 0 "$work/move-fix.txt" "$application" fix --root . --no-cache "$scratch"
-grep -q 'written=0' "$work/move-fix.txt" || { echo "fix wrote a finding-free file" >&2; exit 1; }
-grep -q '^namespace     Beta$' "$scratch" || { echo "fix reflowed the item — it must not" >&2; exit 1; }
+grep -q 'written=0' "$work/move-fix.txt" || {
+  echo "fix wrote a finding-free file" >&2
+  exit 1
+}
+grep -q '^namespace     Beta$' "$scratch" || {
+  echo "fix reflowed the item — it must not" >&2
+  exit 1
+}
 test "$(grep -c 'lean-fmt: ignore-next' "$scratch")" = 1
 # The directive is unused (its item carries no finding): check reports a lone FMT900.
 run_expect 1 "$work/move-recheck.json" "$application" check --root . --json --no-cache \

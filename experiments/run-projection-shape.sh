@@ -55,7 +55,7 @@ for source in $modules; do
     continue
   fi
   if ! LEAN_NUM_THREADS=1 lake env "$application" __analyze-exact \
-      "$setup" "$source" "$source" 8589934592 >"$envelope" 2>"$scratch/analyze.err"; then
+    "$setup" "$source" "$source" 8589934592 >"$envelope" 2>"$scratch/analyze.err"; then
     skipped=$((skipped + 1))
     rm -f "$envelope"
     continue

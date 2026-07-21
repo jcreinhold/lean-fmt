@@ -9,14 +9,14 @@ git rev-parse --is-inside-work-tree >/dev/null
 # private-by-default modules. No Rust workspace, cache, build output, or generated binary is tracked.
 while IFS= read -r source; do
   case "$source" in
-    lakefile.lean|*/lakefile.lean) continue ;;
-    # Evidence probes under docs/ are run by hand (`lake env lean <file>`) and never globbed into the
-    # package, so they are not compiled sources. Some are legacy (non-`module`) on purpose — e.g. the
-    # RIR-SPEC probe exercises `parseImports'`, which is `meta`-gated under the module system.
-    docs/*) continue ;;
+  lakefile.lean | */lakefile.lean) continue ;;
+  # Evidence probes under docs/ are run by hand (`lake env lean <file>`) and never globbed into the
+  # package, so they are not compiled sources. Some are legacy (non-`module`) on purpose — e.g. the
+  # RIR-SPEC probe exercises `parseImports'`, which is `meta`-gated under the module system.
+  docs/*) continue ;;
   esac
   first=$(awk 'NF {print $1; exit}' "$source")
-  if [[ "$first" != module ]]; then
+  if [[ $first != module ]]; then
     printf '%s does not begin with module\n' "$source" >&2
     exit 1
   fi
@@ -39,7 +39,7 @@ if rg -n '^public ' LeanFmt >/dev/null; then
 fi
 public_entries=$(rg -l '^public (unsafe )?def main' Main.lean LeanFmtArtifactExtract.lean LeanFmtTest.lean | LC_ALL=C sort)
 expected_entries=$'LeanFmtArtifactExtract.lean\nLeanFmtTest.lean\nMain.lean'
-if [[ "$public_entries" != "$expected_entries" ]]; then
+if [[ $public_entries != "$expected_entries" ]]; then
   printf 'active public entry-point set changed\n%s\n' "$public_entries" >&2
   exit 1
 fi
@@ -52,7 +52,7 @@ fi
 # compiled bytes of any module that had a finding (`notes/01-rule-facts.md` §3). The plugin projects;
 # findings are computed outside it by whoever holds the facts.
 plugin_imports=$(sed -n 's/^import all LeanFmt\.//p' LeanFmt/CompilerPlugin.lean | LC_ALL=C sort)
-if [[ "$plugin_imports" != "ArtifactModel" ]]; then
+if [[ $plugin_imports != "ArtifactModel" ]]; then
   printf 'compiler plugin import boundary changed\n%s\n' "$plugin_imports" >&2
   exit 1
 fi
@@ -65,7 +65,7 @@ plugin_globs=$(awk '
   inside && /^  ]/ { exit }
 ' lakefile.lean)
 if grep -Eq 'LeanFmt\.(Application|Cache|Cli|Config|Edit|Project|Rules|Semantic|Service)' \
-    <<<"$plugin_globs"; then
+  <<<"$plugin_globs"; then
   printf 'compiler plugin Lake target includes rule or application modules\n' >&2
   exit 1
 fi
@@ -88,7 +88,7 @@ if rg -n '^import (all )?Lean\.Server' LeanFmt/LanguageServer.lean >/dev/null; t
   exit 1
 fi
 if rg -n 'WorkerFleet|SourceParser|run_project_fleet|FleetPlan|libleanshared|lean-fmt-check-artifacts|--pinned|--jobs' \
-    LeanFmt Main.lean lakefile.lean >/dev/null; then
+  LeanFmt Main.lean lakefile.lean >/dev/null; then
   printf 'legacy execution architecture returned to active production\n' >&2
   exit 1
 fi
@@ -107,15 +107,15 @@ fi
 # this check had stopped looking at anything rather than that the boundary held.
 # The decision must be in the binary: the production path calls it.
 if [[ -e .lake/build/bin/lean-fmt ]]; then
-  if [[ $(nm -a .lake/build/bin/lean-fmt 2>/dev/null \
-      | grep -c 'LeanFmt_Internal_Cache_Decision') -eq 0 ]]; then
+  if [[ $(nm -a .lake/build/bin/lean-fmt 2>/dev/null |
+    grep -c 'LeanFmt_Internal_Cache_Decision') -eq 0 ]]; then
     printf 'the shared currency decision is not linked into the binary; the proof is about dead code\n' >&2
     exit 1
   fi
 fi
 
 for image in .lake/build/bin/lean-fmt .lake/build/lib/liblean_x2dfmt_LeanFmtCompilerPlugin.dylib; do
-  [[ -e "$image" ]] || continue
+  [[ -e $image ]] || continue
   if [[ $(nm -a "$image" 2>/dev/null | grep -c 'LeanFmt_Internal_Cache_Spec\|LeanFmt_Cache_Spec') -ne 0 ]]; then
     printf 'proof library entered the link closure of %s\n' "$image" >&2
     exit 1

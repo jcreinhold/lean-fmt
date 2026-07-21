@@ -174,8 +174,11 @@ assert r["files"][0]["formatted"] == \
     "module\n\nnamespace Alpha\n\ndef layoutValue : Nat := 1\n\nend Alpha\n", \
     repr(r["files"][0]["formatted"])
 PY
-grep -q 'namespace     Alpha' tests/check/Layout.lean \
-  || { echo 'fixture lost its non-canonical spacing; the check above proves nothing' >&2; exit 1; }
+grep -q 'namespace     Alpha' tests/check/Layout.lean ||
+  {
+    echo 'fixture lost its non-canonical spacing; the check above proves nothing' >&2
+    exit 1
+  }
 
 # `check` does not move, and that is the roadmap's first bullet rather than an optimization:
 # formatting is a canonical transformation, not a selectable rule, so it cannot enter rule selection
@@ -527,7 +530,7 @@ assert "findings" not in artifact, artifact.keys()
 assert artifact["source"]["tokens"], "the downstream projection recorded no tokens"
 PY
 
-if [[ -d "$artifact_root" ]]; then
+if [[ -d $artifact_root ]]; then
   tree_metadata "$artifact_root" >"$work/artifacts.before"
 else
   : >"$work/artifacts.before"
@@ -535,7 +538,7 @@ fi
 run_expect 0 "$work/status-1.json" "$application" compiler status --root . --json
 run_expect 0 "$work/status-2.json" "$application" compiler status --root . --json
 cmp "$work/status-1.json" "$work/status-2.json"
-if [[ -d "$artifact_root" ]]; then
+if [[ -d $artifact_root ]]; then
   tree_metadata "$artifact_root" >"$work/artifacts.after"
 else
   : >"$work/artifacts.after"
@@ -820,7 +823,7 @@ metadata "$fin_exact_fixture" >"$work/fin-check.before"
 run_expect 1 "$work/fin-check.json" "$application" format --check --root . --json --no-cache \
   tests/modes/.fip-final-exact.lean
 metadata "$fin_exact_fixture" >"$work/fin-check.after"
-cmp "$work/fin-check.before" "$work/fin-check.after"   # --check wrote nothing at all
+cmp "$work/fin-check.before" "$work/fin-check.after" # --check wrote nothing at all
 python3 - "$work/fin-check.json" <<'PY'
 import json, sys
 f, = json.load(open(sys.argv[1]))["files"]
@@ -852,7 +855,8 @@ f, = r["files"]
 assert f["status"] == "broken" and r["broken"] == 1 and r["written"] == 0, f
 PY
 if compgen -G "$repo_root/tests/modes/.fip-final-broken.lean.lean-fmt-tmp-*" >/dev/null; then
-  echo 'a broken format orphaned a temp file at the target' >&2; exit 1
+  echo 'a broken format orphaned a temp file at the target' >&2
+  exit 1
 fi
 
 # 5a. CRLF write round-trip. A CRLF file formatted in place keeps CRLF endings (denormalized on write):
@@ -926,7 +930,7 @@ import sys
 assert open(sys.argv[1]).read() == "module\n\nnamespace Incl\n\ndef inclValue : Nat := 1\n\nend Incl\n"
 PY
 metadata "$fin_excl_fixture" >"$work/fin-excl.after"
-cmp "$work/fin-excl.before" "$work/fin-excl.after"   # the excluded sibling was never touched
+cmp "$work/fin-excl.before" "$work/fin-excl.after" # the excluded sibling was never touched
 
 # 8. `check`/`diff` still never write — on a fresh dirty fixture, both leave it byte-identical.
 printf 'module\n\nnamespace     Zeta\n\ndef neverValue : Nat := 1\n\nend Zeta\n' >"$fin_exact_fixture"
@@ -936,7 +940,7 @@ run_expect 0 "$work/fin-nw-check.json" "$application" check --root . --json --no
 run_expect 1 "$work/fin-nw-diff.txt" "$application" diff --root . --no-cache \
   tests/modes/.fip-final-exact.lean
 metadata "$fin_exact_fixture" >"$work/fin-nw.after"
-cmp "$work/fin-nw.before" "$work/fin-nw.after"   # check and diff wrote nothing
+cmp "$work/fin-nw.before" "$work/fin-nw.after" # check and diff wrote nothing
 
 # 9. RCD-IMPL (`ruff-13`) gate 1: a path inside `.lake` is refused by every mode under every
 #    configuration. `.lake` holds Lake's build outputs and vendored dependency sources; before this
@@ -963,7 +967,7 @@ for mode in format fix; do
   done
 done
 metadata "$rcd_floor_fixture" >"$work/rcd-floor.after"
-cmp "$work/rcd-floor.before" "$work/rcd-floor.after"   # nothing inside .lake was written
+cmp "$work/rcd-floor.before" "$work/rcd-floor.after" # nothing inside .lake was written
 "$application" config show .lake/build/.rcd-impl-floor.lean --root . --json >"$work/rcd-floor.json"
 python3 - "$work/rcd-floor.json" <<'PY'
 import json, sys
@@ -994,7 +998,7 @@ assert r["files"] == [], ("force-exclude did not remove an explicitly named excl
 assert r["written"] == 0, r
 PY
 metadata "$rcd_excl_fixture" >"$work/rcd-excl.forced-after"
-cmp "$work/rcd-excl.before" "$work/rcd-excl.forced-after"   # force-exclude withheld the write
+cmp "$work/rcd-excl.before" "$work/rcd-excl.forced-after" # force-exclude withheld the write
 run_expect 0 "$work/rcd-excl-plain.json" "$application" format --root . --json --no-cache \
   --config "$work/rcd-excl.toml" tests/modes/.rcd-impl-excluded.lean
 python3 - "$work/rcd-excl-plain.json" <<'PY'
@@ -1038,7 +1042,7 @@ run_expect 0 "$work/rcd-w100.json" "$application" format --check --root . --json
   --config "$work/rcd-w100.toml" tests/modes/.rcd-impl-excluded.lean
 run_expect 0 "$work/rcd-w100b.json" "$application" format --check --root . --json \
   --config "$work/rcd-w100.toml" tests/modes/.rcd-impl-excluded.lean
-cmp "$work/rcd-w100.json" "$work/rcd-w100b.json"   # a warm identical run is byte-identical
+cmp "$work/rcd-w100.json" "$work/rcd-w100b.json" # a warm identical run is byte-identical
 run_expect 0 "$work/rcd-w100-lint.json" "$application" format --check --root . --json \
   --config "$work/rcd-w100-lint.toml" tests/modes/.rcd-impl-excluded.lean
 python3 - "$work/rcd-w100.json" "$work/rcd-w100-lint.json" <<'PY'
@@ -1066,7 +1070,7 @@ metadata "$rcd_excl_fixture" >"$work/rcd-show.before"
   --config "$work/rcd-w20.toml" >"$work/rcd-show-b.json"
 cmp "$work/rcd-show-a.json" "$work/rcd-show-b.json"
 metadata "$rcd_excl_fixture" >"$work/rcd-show.after"
-cmp "$work/rcd-show.before" "$work/rcd-show.after"   # introspection wrote nothing
+cmp "$work/rcd-show.before" "$work/rcd-show.after" # introspection wrote nothing
 python3 - "$work/rcd-show-a.json" <<'PY'
 import json, sys
 r = json.load(open(sys.argv[1]))

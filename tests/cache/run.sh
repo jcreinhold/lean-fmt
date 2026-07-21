@@ -36,7 +36,6 @@ other="$project/Fixture/Other.lean"
 # rather than three named files.
 pristine=$(mktemp -d)
 cp -R "$project/Fixture" "$pristine/Fixture"
-notation_backup="$pristine/Fixture/Notation.lean"
 wide_backup="$pristine/Fixture/Wide.lean"
 leaf_backup="$pristine/Fixture/Leaf.lean"
 
@@ -49,17 +48,20 @@ cleanup() {
 }
 trap cleanup EXIT
 
-fail() { printf 'tests/cache: %s\n' "$1" >&2; exit 1; }
+fail() {
+  printf 'tests/cache: %s\n' "$1" >&2
+  exit 1
+}
 
 expect_eq() {
   local what=$1 expected=$2 actual=$3
-  if [[ "$expected" != "$actual" ]]; then
+  if [[ $expected != "$actual" ]]; then
     printf 'tests/cache: %s\n  expected: %s\n  actual:   %s\n' "$what" "$expected" "$actual" >&2
     exit 1
   fi
 }
 
-[[ -x "$fmt" ]] || fail "lean-fmt binary not built; run 'lake build' first"
+[[ -x $fmt ]] || fail "lean-fmt binary not built; run 'lake build' first"
 
 # The fixture needs its own `lean-toolchain` -- `lean-fmt` reads one from the project root -- but a
 # committed copy would drift from the repository's. Generate it instead, so there is one source of
@@ -143,7 +145,7 @@ probe() {
   local uncached_exit=$?
   set -e
   SERVED=$(sed -n 's/^cache\.served=//p' "$work/cached.err")
-  if [[ "$cached_exit" != "$uncached_exit" ]]; then
+  if [[ $cached_exit != "$uncached_exit" ]]; then
     printf 'tests/cache: %s: cached exit %s, --no-cache exit %s\n' \
       "$label" "$cached_exit" "$uncached_exit" >&2
     exit 1
@@ -160,7 +162,7 @@ rebuild
 rm -rf "$project/.lean-fmt-cache"
 TOTAL=$(targets)
 rm -rf "$project/.lean-fmt-cache"
-[[ "$TOTAL" -ge 8 ]] || fail "fixture lost targets: discovered only $TOTAL"
+[[ $TOTAL -ge 8 ]] || fail "fixture lost targets: discovered only $TOTAL"
 
 # ---------------------------------------------------------------------------
 # §1 Cold populates, warm serves everything.
@@ -346,7 +348,7 @@ for stamp in 203001010001 203001010002 203001010003 203001010004 203001010005 20
   served >/dev/null
 done
 bounded=$(index_count)
-if [[ "$bounded" -gt 4 ]]; then
+if [[ $bounded -gt 4 ]]; then
   fail "index files are not bounded: $bounded after seven epoch changes"
 fi
 expect_eq "the survivors are the live index plus the retained three" 4 "$bounded"

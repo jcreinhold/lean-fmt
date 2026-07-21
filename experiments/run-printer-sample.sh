@@ -47,7 +47,7 @@ scratch=$(mktemp -d)
 trap 'rm -rf "$scratch"' EXIT
 
 for binary in "$application" "$tests"; do
-  if [[ ! -x "$binary" ]]; then
+  if [[ ! -x $binary ]]; then
     printf 'missing %s; run `LEAN_NUM_THREADS=1 lake build lean-fmt lean-fmt-tests` first\n' \
       "$binary" >&2
     exit 1
@@ -82,7 +82,7 @@ field() {
 
 cd "$mathlib_root"
 while read -r source; do
-  [[ -n "$source" ]] || continue
+  [[ -n $source ]] || continue
   setup="$scratch/setup.json"
 
   if ! LEAN_NUM_THREADS=1 lake setup-file "$source" >"$setup" 2>"$scratch/err"; then
@@ -91,7 +91,7 @@ while read -r source; do
     continue
   fi
   if ! LEAN_NUM_THREADS=1 lake env "$application" __analyze-exact \
-      "$setup" "$source" "$source" 8589934592 >"$scratch/env1.json" 2>"$scratch/err"; then
+    "$setup" "$source" "$source" 8589934592 >"$scratch/env1.json" 2>"$scratch/err"; then
     skipped=$((skipped + 1))
     printf 'skipped\t%s\tanalyze failed\n' "$source" >>"$report"
     continue
@@ -109,7 +109,7 @@ while read -r source; do
 
   # Pass two, on the output of pass one, with the same setup borrowed.
   if ! LEAN_NUM_THREADS=1 lake env "$application" __analyze-exact \
-      "$setup" "$scratch/out1.lean" "$source" 8589934592 >"$scratch/env2.json" 2>"$scratch/err"; then
+    "$setup" "$scratch/out1.lean" "$source" 8589934592 >"$scratch/env2.json" 2>"$scratch/err"; then
     failures=$((failures + 1))
     printf 'FAIL\t%s\tformatted output does not analyze\n' "$source" >>"$report"
     continue
@@ -127,7 +127,7 @@ while read -r source; do
     printf 'FAIL\t%s\t%s\n' "$source" "$loss" >>"$report"
     verdict=bad
   fi
-  [[ "$verdict" == ok ]] || continue
+  [[ $verdict == ok ]] || continue
 
   analyzed=$((analyzed + 1))
   # Which kinds the layouts refused. `canonical` counts the claims; on this sample it is about half of
@@ -234,7 +234,7 @@ inventory="$repo_root/experiments/kind-inventory.txt"
 sed -nE 's/^(guard|core|corpus)[[:space:]]+//p' "$inventory" | sort -u >"$scratch/owned"
 sort -u "$scratch/unclaimed" >"$scratch/present"
 
-if ! unowned=$(comm -23 "$scratch/present" "$scratch/owned") || [[ -n "$unowned" ]]; then
+if ! unowned=$(comm -23 "$scratch/present" "$scratch/owned") || [[ -n $unowned ]]; then
   printf '\nFAIL unowned syntax kind in the frozen corpus (RLF-FINAL stop rule).\n' >&2
   printf 'These kinds are refused by the printer and named nowhere in %s:\n' "$inventory" >&2
   printf '%s\n' "$unowned" | sed 's/^/  /' >&2
@@ -242,11 +242,11 @@ if ! unowned=$(comm -23 "$scratch/present" "$scratch/owned") || [[ -n "$unowned"
   failures=$((failures + 1))
 fi
 
-if ! dead=$(comm -13 "$scratch/present" "$scratch/owned") || [[ -n "$dead" ]]; then
+if ! dead=$(comm -13 "$scratch/present" "$scratch/owned") || [[ -n $dead ]]; then
   printf '\nFAIL %s claims a kind the frozen corpus does not contain:\n' "$inventory" >&2
   printf '%s\n' "$dead" | sed 's/^/  /' >&2
   printf 'The inventory is a claim about this sample. Remove the entry or explain the drift.\n' >&2
   failures=$((failures + 1))
 fi
 
-[[ "$failures" -eq 0 ]]
+[[ $failures -eq 0 ]]

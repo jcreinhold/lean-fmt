@@ -19,7 +19,7 @@ maxb=$7
 index=0
 captured_total=0
 while IFS= read -r source; do
-  [[ -n "$source" ]] || continue
+  [[ -n $source ]] || continue
   index=$((index + 1))
   setup="$setup_dir/$index.setup.json"
   out=$(LEAN_PATH="$mathlib_lean_path" LEAN_NUM_THREADS=1 \

@@ -40,7 +40,7 @@ scratch=$(mktemp -d)
 trap 'rm -rf "$scratch"' EXIT
 
 for binary in "$application" "$tests"; do
-  if [[ ! -x "$binary" ]]; then
+  if [[ ! -x $binary ]]; then
     printf 'missing %s; run `LEAN_NUM_THREADS=1 lake build lean-fmt lean-fmt-tests` first\n' \
       "$binary" >&2
     exit 1
@@ -54,7 +54,7 @@ skipped=0
 
 cd "$mathlib_root"
 while read -r source; do
-  [[ -n "$source" ]] || continue
+  [[ -n $source ]] || continue
   setup="$scratch/setup.json"
 
   if ! LEAN_NUM_THREADS=1 lake setup-file "$source" >"$setup" 2>"$scratch/err"; then
@@ -62,12 +62,12 @@ while read -r source; do
     continue
   fi
   if ! LEAN_NUM_THREADS=1 lake env "$application" __analyze-exact \
-      "$setup" "$source" "$source" 8589934592 >"$scratch/env.json" 2>"$scratch/err"; then
+    "$setup" "$source" "$source" 8589934592 >"$scratch/env.json" 2>"$scratch/err"; then
     skipped=$((skipped + 1))
     continue
   fi
   if ! "$tests" printer-node-kinds "$scratch/env.json" "$source" >>"$scratch/kinds" \
-      2>"$scratch/err"; then
+    2>"$scratch/err"; then
     skipped=$((skipped + 1))
     continue
   fi

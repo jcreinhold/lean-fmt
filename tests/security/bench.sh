@@ -35,7 +35,7 @@ t_lo=$(field clean-1x ms)
 t_hi=$(field clean-8x ms)
 b_lo=$(field clean-1x bytes)
 b_hi=$(field clean-8x bytes)
-if [[ -z "$t_lo" || -z "$t_hi" ]]; then
+if [[ -z $t_lo || -z $t_hi ]]; then
   printf 'FAIL: missing clean-1x or clean-8x measurement\n' >&2
   failures=$((failures + 1))
 else
@@ -59,7 +59,7 @@ for label in clean-1x clean-2x clean-4x clean-8x; do
   bytes=$(field "$label" bytes)
   ns=$(awk -v ms="$ms" -v b="$bytes" 'BEGIN { printf "%.3f", (ms * 1000000) / b }')
   printf '  info %-12s %s ns/byte\n' "$label" "$ns"
-  if [[ -n "$prev" ]] && awk -v a="$prev" -v b="$ns" 'BEGIN { exit !(b > a * 1.6) }'; then
+  if [[ -n $prev ]] && awk -v a="$prev" -v b="$ns" 'BEGIN { exit !(b > a * 1.6) }'; then
     printf 'FAIL %s: per-byte cost jumped %sx from the previous size — a superlinear kink\n' \
       "$label" "$(awk -v a="$prev" -v b="$ns" 'BEGIN { printf "%.2f", b / a }')" >&2
     failures=$((failures + 1))
@@ -73,7 +73,7 @@ done
 printf -- '--- findings fire at scale (worker-free), reported, not timed ---\n'
 dense_findings=$(printf '%s\n' "$output" | sed -n 's/^dense .* findings=\([0-9]*\).*/\1/p')
 dense_bytes=$(field dense bytes)
-if [[ -z "$dense_findings" || "$dense_findings" -eq 0 ]]; then
+if [[ -z $dense_findings || $dense_findings -eq 0 ]]; then
   printf 'FAIL: the dense input produced no findings; the scans did not fire at scale\n' >&2
   failures=$((failures + 1))
 else

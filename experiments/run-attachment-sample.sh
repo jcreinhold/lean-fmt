@@ -35,7 +35,7 @@ printf 'path\tcomments\tleading\ttrailing\tdangling\theader_bytes\ttokens\n' >"$
 
 cd "$mathlib_root"
 while IFS= read -r source; do
-  [[ -n "$source" ]] || continue
+  [[ -n $source ]] || continue
   setup="$scratch/setup.json"
   envelope="$scratch/envelope.json"
 

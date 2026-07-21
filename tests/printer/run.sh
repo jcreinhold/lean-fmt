@@ -60,7 +60,7 @@ for module in $(find LeanFmt -name '*.lean' | LC_ALL=C sort) Main.lean; do
   check_module "$module"
 done
 
-modules_checked=$(( $(find LeanFmt -name '*.lean' | wc -l | tr -d ' ') + 1 ))
+modules_checked=$(($(find LeanFmt -name '*.lean' | wc -l | tr -d ' ') + 1))
 printf -- '--- corpus ---\n'
 printf 'modules_checked=%s commands=%s canonical=%s headers_canonical=%s members=%s failures=%s\n' \
   "$modules_checked" "$total_commands" "$total_canonical" "$total_header_canonical" \
@@ -71,7 +71,7 @@ printf 'modules_checked=%s commands=%s canonical=%s headers_canonical=%s members
 # this repository it should refuse outright. A refusal is a claim that the header parse and the
 # projection disagree about what this file is, which is worth failing over rather than tracking as a
 # statistic.
-if [[ "$total_header_canonical" -ne "$modules_checked" ]]; then
+if [[ $total_header_canonical -ne $modules_checked ]]; then
   printf 'FAIL only %s of %s headers took the canonical layout; the header layout is not running\n' \
     "$total_header_canonical" "$modules_checked" >&2
   failures=$((failures + 1))
@@ -89,7 +89,7 @@ fi
 # count: it tracks the corpus as the project grows, and only a guard that stopped firing drives it
 # down. The golden fixture below is what pins *what* the layouts produce; this pins *that* they run,
 # on real code, at scale.
-if [[ "$total_canonical" -lt 350 ]]; then
+if [[ $total_canonical -lt 350 ]]; then
   printf 'FAIL only %s of %s commands took a canonical layout; the layouts are not running\n' \
     "$total_canonical" "$total_commands" >&2
   failures=$((failures + 1))
@@ -101,7 +101,7 @@ fi
 # member layout — `evidence/01-projection-shape.txt` measures that no constructor or field in this
 # repository holds collapsible slack, so laying them out reproduces their bytes exactly and the
 # round-trip is blind to it. The wonky fixture below is what pins that it changes anything at all.
-if [[ "$total_members" -lt 50 ]]; then
+if [[ $total_members -lt 50 ]]; then
   printf 'FAIL only %s member shells were claimed; the ctor/field layout is not running\n' \
     "$total_members" >&2
   failures=$((failures + 1))
@@ -110,7 +110,7 @@ fi
 # A corpus whose modules all projected to zero commands would pass every assertion above while
 # testing nothing. A floor rather than an exact count: it rises as the project grows, and only a
 # broken walk drives it toward zero.
-if [[ "$total_commands" -lt 100 ]]; then
+if [[ $total_commands -lt 100 ]]; then
   printf 'FAIL corpus produced only %s commands; the walk is not finding them\n' "$total_commands" >&2
   failures=$((failures + 1))
 fi
@@ -137,7 +137,7 @@ fi
 # committed evidence file reports. Re-run `experiments/run-projection-shape.sh` when it fires.
 shape_evidence="$repo_root/docs/projects/ruff-03-language-formatting/evidence/01-projection-shape.txt"
 evidence_commands=$(sed -nE 's/^# command kinds in the corpus \(([0-9]+) commands.*/\1/p' "$shape_evidence")
-if [[ "$evidence_commands" != "$total_commands" ]]; then
+if [[ $evidence_commands != "$total_commands" ]]; then
   printf 'FAIL the shape evidence is stale: it reports %s commands, the live corpus has %s.\n' \
     "$evidence_commands" "$total_commands" >&2
   printf '     Re-run experiments/run-projection-shape.sh; every figure quoted from it is now wrong.\n' >&2
@@ -197,13 +197,13 @@ else
   #   header_bytes the module header is non-empty, so the `[0, headerStop)` split is exercised too.
   tail_bytes=$(field tail_bytes "$hostile")
   header_bytes=$(field header_bytes "$hostile")
-  if [[ "$tail_bytes" -lt 1 ]]; then
+  if [[ $tail_bytes -lt 1 ]]; then
     printf 'FAIL the #exit tail is empty; the terminal path was not exercised\n' >&2
     failures=$((failures + 1))
   else
     printf '  ok   the #exit tail round-trips (%s bytes)\n' "$tail_bytes"
   fi
-  if [[ "$header_bytes" -lt 1 ]]; then
+  if [[ $header_bytes -lt 1 ]]; then
     printf 'FAIL the module header is empty; the header split was not exercised\n' >&2
     failures=$((failures + 1))
   else
@@ -763,9 +763,9 @@ fi
 # This is `RLF-COMMANDS`'s lesson applied before the fact rather than after: its `misordered=0` was a
 # number no input could have contradicted, and it took a mutation to notice.
 expected_slack=7
-actual_slack=$("$tests" printer-report "$work/wonky.json" "$work/wonky.lean" \
-  | tr ' ' '\n' | sed -n 's/^app_slack=\([0-9]*\)$/\1/p')
-if [[ "$actual_slack" == "$expected_slack" ]]; then
+actual_slack=$("$tests" printer-report "$work/wonky.json" "$work/wonky.lean" |
+  tr ' ' '\n' | sed -n 's/^app_slack=\([0-9]*\)$/\1/p')
+if [[ $actual_slack == "$expected_slack" ]]; then
   printf '  ok   app_slack counts the fixture'\''s %s application gaps (so 0 on mathlib is a fact)\n' \
     "$expected_slack"
 else
@@ -788,9 +788,9 @@ fi
 # one's). `binderCommented` is three: its commented gap is skipped by the same spaces-only predicate
 # the layout refuses on, and the three behind it still count. Fifteen.
 expected_binder_slack=15
-actual_binder_slack=$("$tests" printer-report "$work/wonky.json" "$work/wonky.lean" \
-  | tr ' ' '\n' | sed -n 's/^binder_slack=\([0-9]*\)$/\1/p')
-if [[ "$actual_binder_slack" == "$expected_binder_slack" ]]; then
+actual_binder_slack=$("$tests" printer-report "$work/wonky.json" "$work/wonky.lean" |
+  tr ' ' '\n' | sed -n 's/^binder_slack=\([0-9]*\)$/\1/p')
+if [[ $actual_binder_slack == "$expected_binder_slack" ]]; then
   printf '  ok   binder_slack counts the fixture'\''s %s binder gaps (so 0 on mathlib is a fact)\n' \
     "$expected_binder_slack"
 else
@@ -807,9 +807,9 @@ fi
 # the gap whose bytes are not spaces-only -- the comment in one, the newline in the other -- which is
 # the same predicate the layout refuses on. Twenty-two.
 expected_match_slack=22
-actual_match_slack=$("$tests" printer-report "$work/wonky.json" "$work/wonky.lean" \
-  | tr ' ' '\n' | sed -n 's/^match_slack=\([0-9]*\)$/\1/p')
-if [[ "$actual_match_slack" == "$expected_match_slack" ]]; then
+actual_match_slack=$("$tests" printer-report "$work/wonky.json" "$work/wonky.lean" |
+  tr ' ' '\n' | sed -n 's/^match_slack=\([0-9]*\)$/\1/p')
+if [[ $actual_match_slack == "$expected_match_slack" ]]; then
   printf '  ok   match_slack counts the fixture'\''s %s alternative gaps (so 0 on mathlib is a fact)\n' \
     "$expected_match_slack"
 else
@@ -883,7 +883,7 @@ LEAN_NUM_THREADS=1 lake env "$application" __analyze-exact \
 tactic_report=$("$tests" printer-report "$work/tactic.json" "$work/tactic.lean")
 expected_blank_gaps=3
 actual_blank_gaps=$(field tactic_blank_gaps "$tactic_report")
-if [[ "$actual_blank_gaps" == "$expected_blank_gaps" ]]; then
+if [[ $actual_blank_gaps == "$expected_blank_gaps" ]]; then
   printf '  ok   tactic_blank_gaps counts the fixture'\''s %s blank gaps (so 0 on mathlib is a fact)\n' \
     "$expected_blank_gaps"
 else
@@ -900,7 +900,7 @@ fi
 # the sample a measurement rather than a guess.
 expected_tactic_blocks=10
 actual_tactic_blocks=$(field tactic_blocks "$tactic_report")
-if [[ "$actual_tactic_blocks" == "$expected_tactic_blocks" ]]; then
+if [[ $actual_tactic_blocks == "$expected_tactic_blocks" ]]; then
   printf '  ok   tactic_blocks finds the fixture'\''s %s blocks\n' "$expected_tactic_blocks"
 else
   printf 'FAIL tactic_blocks reported %s on the tactic fixture, expected %s\n' \
@@ -937,8 +937,8 @@ expected_at_two=4
 actual_ownable=$(field tactic_ownable "$tactic_report")
 actual_own_line=$(field tactic_ownable_own_line "$tactic_report")
 actual_at_two=$(field tactic_ownable_at_two "$tactic_report")
-if [[ "$actual_ownable" == "$expected_ownable" && "$actual_own_line" == "$expected_own_line" &&
-      "$actual_at_two" == "$expected_at_two" ]]; then
+if [[ $actual_ownable == "$expected_ownable" && $actual_own_line == "$expected_own_line" &&
+  $actual_at_two == "$expected_at_two" ]]; then
   printf '  ok   tactic_ownable=%s own_line=%s at_two=%s; all three buckets are reached\n' \
     "$expected_ownable" "$expected_own_line" "$expected_at_two"
 else
@@ -1000,7 +1000,7 @@ else
 fi
 
 if grep -qF 'theorem tB : (id True) := by trivial' "$work/coleq.out" &&
-   grep -qF 'def dC : Nat := (id 1)' "$work/coleq.out"; then
+  grep -qF 'def dC : Nat := (id 1)' "$work/coleq.out"; then
   printf '  ok   apps with no later line to break still collapse\n'
 else
   printf 'FAIL the guard refused tB or dC; nothing on their lines is measured across a break:\n' >&2
@@ -1036,7 +1036,7 @@ LEAN_NUM_THREADS=1 lake env "$application" __analyze-exact \
   "$work/borrowed.setup.json" "$work/inline.lean" "inline.lean" 8589934592 >"$work/inline.json"
 "$tests" printer-format "$work/inline.json" "$work/inline.lean" 200 >"$work/inline.out"
 if grep -qF 'def inlineMatch (x : Nat) : Nat := match x with | 0 => 1 | n => n' "$work/inline.out" &&
-   grep -qF 'def inlineAlts : Nat → Nat | 0 => 1 | n => n' "$work/inline.out"; then
+  grep -qF 'def inlineAlts : Nat → Nat | 0 => 1 | n => n' "$work/inline.out"; then
   printf '  ok   a one-line match still collapses; matchAlt is not dead code\n'
 else
   printf 'FAIL a one-line match did not collapse, so spacingOf'\''s matchAlt entry is unreachable:\n' >&2
@@ -1076,9 +1076,9 @@ fi
 # formatter's output parses. `__analyze-exact` emits no artifact for a module with parse errors, so
 # this fails loudly rather than silently comparing bytes that were never Lean.
 if LEAN_NUM_THREADS=1 lake env "$application" __analyze-exact \
-     "$work/borrowed.setup.json" "$work/coleq.out" "coleq.out.lean" 8589934592 \
-     >"$work/coleq.out.json" 2>"$work/coleq.out.err" &&
-   grep -qF '"artifact"' "$work/coleq.out.json"; then
+  "$work/borrowed.setup.json" "$work/coleq.out" "coleq.out.lean" 8589934592 \
+  >"$work/coleq.out.json" 2>"$work/coleq.out.err" &&
+  grep -qF '"artifact"' "$work/coleq.out.json"; then
   printf '  ok   the formatted output still parses\n'
 else
   printf 'FAIL the printer emitted Lean it cannot re-read:\n' >&2
@@ -1114,8 +1114,8 @@ module
 def wrong : Nat := := 1
 FIXTURE
 if LEAN_NUM_THREADS=1 lake env "$application" __analyze-exact \
-     "$work/borrowed.setup.json" "$work/broken.lean" "broken.lean" 8589934592 \
-     >"$work/broken.json" 2>"$work/broken.err"; then
+  "$work/borrowed.setup.json" "$work/broken.lean" "broken.lean" 8589934592 \
+  >"$work/broken.json" 2>"$work/broken.err"; then
   if grep -qF '"artifact"' "$work/broken.json"; then
     printf 'FAIL __analyze-exact emitted an artifact for source that does not parse.\n' >&2
     printf '     Every `"artifact"` check in this file is therefore vacuous.\n' >&2
@@ -1165,8 +1165,8 @@ LEAN_NUM_THREADS=1 lake env "$application" __analyze-exact \
 "$tests" printer-format "$work/ext.json" "$work/ext.lean" 100 >"$work/ext.out"
 
 if grep -qF 'def usesTwice : Nat × Nat := twice (id 1)' "$work/ext.out" &&
-   grep -qF 'def usesScoped : Nat × Nat := (id 1) oplus (id 2)' "$work/ext.out" &&
-   grep -qF 'def mixed : Nat × Nat := twice (id (1 + 2))' "$work/ext.out"; then
+  grep -qF 'def usesScoped : Nat × Nat := (id 1) oplus (id 2)' "$work/ext.out" &&
+  grep -qF 'def mixed : Nat × Nat := twice (id (1 + 2))' "$work/ext.out"; then
   printf '  ok   the walk descends through custom syntax and lays out the built-ins inside it\n'
 else
   printf 'FAIL a `.keep` kind stopped the walk; the fallback is meant to recurse, not to wall off:\n' >&2
@@ -1177,8 +1177,8 @@ fi
 # The custom heads themselves are never respaced -- there is no grammar here this printer can read,
 # so `twice `, ` oplus ` and the quotation keep every byte they were written with.
 if grep -qF 'scoped notation:65 a " oplus " b => (a, b)' "$work/ext.out" &&
-   grep -qF 'def quoted (stx : Term) : MacroM Term := `($stx + $stx)' "$work/ext.out" &&
-   grep -qF 'macro_rules | `(twice $x) => `(($x, $x))' "$work/ext.out"; then
+  grep -qF 'def quoted (stx : Term) : MacroM Term := `($stx + $stx)' "$work/ext.out" &&
+  grep -qF 'macro_rules | `(twice $x) => `(($x, $x))' "$work/ext.out"; then
   printf '  ok   custom heads, scoped notation and quotations keep their bytes\n'
 else
   printf 'FAIL the printer respaced syntax whose declaration it cannot read:\n' >&2
@@ -1187,9 +1187,9 @@ else
 fi
 
 if LEAN_NUM_THREADS=1 lake env "$application" __analyze-exact \
-     "$work/borrowed.setup.json" "$work/ext.out" "ext.out.lean" 8589934592 \
-     >"$work/ext.out.json" 2>"$work/ext.out.err" &&
-   grep -qF '"artifact"' "$work/ext.out.json"; then
+  "$work/borrowed.setup.json" "$work/ext.out" "ext.out.lean" 8589934592 \
+  >"$work/ext.out.json" 2>"$work/ext.out.err" &&
+  grep -qF '"artifact"' "$work/ext.out.json"; then
   printf '  ok   the formatted extension module still parses\n'
 else
   printf 'FAIL formatting a module of custom syntax produced Lean that does not parse:\n' >&2
@@ -1288,9 +1288,9 @@ fi
 # move whitespace and nothing else -- no token added, dropped, or merged. The comment's survival is
 # pinned by the golden line above.
 if LEAN_NUM_THREADS=1 lake env "$application" __analyze-exact \
-     "$work/borrowed.setup.json" "$work/notation.out" "notation.out.lean" 8589934592 1 \
-     >"$work/notation.out.json" 2>"$work/notation.out.err" &&
-   grep -qF '"artifact"' "$work/notation.out.json"; then
+  "$work/borrowed.setup.json" "$work/notation.out" "notation.out.lean" 8589934592 1 \
+  >"$work/notation.out.json" 2>"$work/notation.out.err" &&
+  grep -qF '"artifact"' "$work/notation.out.json"; then
   if python3 -c "
 import json, sys
 a = json.load(open('$work/notation.json'))['artifact']['source']['tokens']
@@ -1379,8 +1379,8 @@ else
 fi
 
 # ...and the off-anchor bases actually moved bytes, or the property above is vacuous.
-if diff -q "$work/offside.lean" "$work/offside.2.lean" >/dev/null 2>&1 \
-   || diff -q "$work/offside.lean" "$work/offside.6.lean" >/dev/null 2>&1; then
+if diff -q "$work/offside.lean" "$work/offside.2.lean" >/dev/null 2>&1 ||
+  diff -q "$work/offside.lean" "$work/offside.6.lean" >/dev/null 2>&1; then
   printf 'FAIL an off-anchor base did not change the block; the re-indent is doing nothing\n' >&2
   failures=$((failures + 1))
 else
@@ -1568,9 +1568,9 @@ if python3 "$work/reflow_verify.py" "$work" "$reflow_margins"; then :; else fail
 
 # checkColGt made concrete: at margin 40 the wide value hangs on its own line, its head `target` at
 # column 2 and every argument strictly right of it at column 4 -- the relationship the reparse depends on.
-if grep -qE '^def wide : Nat :=$' "$work/reflow.40.out" && \
-   grep -qE '^  target$' "$work/reflow.40.out" && \
-   grep -qE '^    1111111111$' "$work/reflow.40.out"; then
+if grep -qE '^def wide : Nat :=$' "$work/reflow.40.out" &&
+  grep -qE '^  target$' "$work/reflow.40.out" &&
+  grep -qE '^    1111111111$' "$work/reflow.40.out"; then
   printf '  ok   at margin 40 the value hangs: head at column 2, arguments at column 4 (checkColGt)\n'
 else
   printf 'FAIL at margin 40 the wide value did not hang with the head left of its arguments\n' >&2
@@ -1591,7 +1591,7 @@ for w in $reflow_margins; do
     reflow_idem=1
   fi
 done
-if [[ -z "$reflow_idem" ]]; then
+if [[ -z $reflow_idem ]]; then
   printf '  ok   reflow: formatting twice is byte-identical at every margin (%s)\n' "$reflow_margins"
 fi
 
@@ -1655,23 +1655,23 @@ fi
 op_pp=
 for w in $op_margins; do
   if ! python3 "$repo_root/experiments/compare_tokens.py" \
-       "$work/opbreak.json" "$work/opbreak.$w.json" "$work/opbreak.lean" "$work/opbreak.$w.out" \
-       >"$work/opbreak.$w.pp" 2>&1; then
+    "$work/opbreak.json" "$work/opbreak.$w.json" "$work/opbreak.lean" "$work/opbreak.$w.out" \
+    >"$work/opbreak.$w.pp" 2>&1; then
     printf 'FAIL operator break at margin %s changed the parse: %s\n' "$w" "$(cat "$work/opbreak.$w.pp")" >&2
     failures=$((failures + 1))
     op_pp=1
   fi
 done
-if [[ -z "$op_pp" ]]; then
+if [[ -z $op_pp ]]; then
   printf '  ok   every margin (%s) reparses to the input token stream AND tree (no re-association)\n' "$op_margins"
 fi
 
 # op_lead made concrete: at margin 40 the operator leads each continuation at column 4, strictly right of
 # the head at column 2 -- the same relationship app's checkColGt needs, though operators impose no such
 # check (notes/09 §1.1), which is why the head hangs left of its operands and still reparses.
-if grep -qE '^def opchain : Nat :=$' "$work/opbreak.40.out" && \
-   grep -qE '^  1111111111 ' "$work/opbreak.40.out" && \
-   grep -qE '^    \+ 4444444444$' "$work/opbreak.40.out"; then
+if grep -qE '^def opchain : Nat :=$' "$work/opbreak.40.out" &&
+  grep -qE '^  1111111111 ' "$work/opbreak.40.out" &&
+  grep -qE '^    \+ 4444444444$' "$work/opbreak.40.out"; then
   printf '  ok   at margin 40 the chain breaks op_lead: head at column 2, `+ operand` at column 4\n'
 else
   printf 'FAIL at margin 40 the operator chain did not break op_lead\n' >&2
@@ -1689,7 +1689,7 @@ for w in $op_margins; do
     op_cmt=1
   fi
 done
-if [[ -z "$op_cmt" ]]; then
+if [[ -z $op_cmt ]]; then
   printf '  ok   the /- keep -/ comment survives at every margin (the clean guard keeps its node flat)\n'
 fi
 
@@ -1713,7 +1713,7 @@ for w in $op_margins; do
     op_idem=1
   fi
 done
-if [[ -z "$op_idem" ]]; then
+if [[ -z $op_idem ]]; then
   printf '  ok   operator break: formatting twice is byte-identical at every margin (%s)\n' "$op_margins"
 fi
 
@@ -1768,23 +1768,23 @@ fi
 bind_pp=
 for w in $bind_margins; do
   if ! python3 "$repo_root/experiments/compare_tokens.py" \
-       "$work/binder.json" "$work/binder.$w.json" "$work/binder.lean" "$work/binder.$w.out" \
-       >"$work/binder.$w.pp" 2>&1; then
+    "$work/binder.json" "$work/binder.$w.json" "$work/binder.lean" "$work/binder.$w.out" \
+    >"$work/binder.$w.pp" 2>&1; then
     printf 'FAIL binder break at margin %s changed the parse: %s\n' "$w" "$(cat "$work/binder.$w.pp")" >&2
     failures=$((failures + 1))
     bind_pp=1
   fi
 done
-if [[ -z "$bind_pp" ]]; then
+if [[ -z $bind_pp ]]; then
   printf '  ok   every margin (%s) reparses to the input token stream AND tree (no colGt to violate)\n' "$bind_margins"
 fi
 
 # The head binder stays on the `def name` line; every following binder hangs one per line at column 2.
 # explicit `(...)`, implicit `{...}`, and instance `[...]` binders all break the same way.
-if grep -qE '^def sig \(aaaaaa : Nat\)$' "$work/binder.40.out" && \
-   grep -qE '^  \(bbbbbb : Nat\)$' "$work/binder.40.out" && \
-   grep -qE '^  \{bbbbbb : Type\}$' "$work/binder.40.out" && \
-   grep -qE '^  \[Add Nat\]$' "$work/binder.40.out"; then
+if grep -qE '^def sig \(aaaaaa : Nat\)$' "$work/binder.40.out" &&
+  grep -qE '^  \(bbbbbb : Nat\)$' "$work/binder.40.out" &&
+  grep -qE '^  \{bbbbbb : Type\}$' "$work/binder.40.out" &&
+  grep -qE '^  \[Add Nat\]$' "$work/binder.40.out"; then
   printf '  ok   at margin 40 binders hang one per line at column 2 (explicit, implicit, instance)\n'
 else
   printf 'FAIL at margin 40 the signature did not break one binder per line\n' >&2
@@ -1812,7 +1812,7 @@ for w in $bind_margins; do
     bind_cmt=1
   fi
 done
-if [[ -z "$bind_cmt" ]]; then
+if [[ -z $bind_cmt ]]; then
   printf '  ok   a comment between binders survives at every margin (its signature stays flat)\n'
 fi
 if grep -qE '^def bcomment .* /- keep -/ .*: Nat := aaaaaa$' "$work/binder.40.out"; then
@@ -1848,7 +1848,7 @@ for w in $bind_margins; do
     bind_idem=1
   fi
 done
-if [[ -z "$bind_idem" ]]; then
+if [[ -z $bind_idem ]]; then
   printf '  ok   binder break: formatting twice is byte-identical at every margin (%s)\n' "$bind_margins"
 fi
 
@@ -1922,22 +1922,22 @@ fi
 rec_pp=
 for w in $rec_margins; do
   if ! python3 "$repo_root/experiments/compare_tokens.py" \
-       "$work/records.json" "$work/records.$w.json" "$work/records.lean" "$work/records.$w.out" \
-       >"$work/records.$w.pp" 2>&1; then
+    "$work/records.json" "$work/records.$w.json" "$work/records.lean" "$work/records.$w.out" \
+    >"$work/records.$w.pp" 2>&1; then
     printf 'FAIL record break at margin %s changed the parse: %s\n' "$w" "$(cat "$work/records.$w.pp")" >&2
     failures=$((failures + 1))
     rec_pp=1
   fi
 done
-if [[ -z "$rec_pp" ]]; then
+if [[ -z $rec_pp ]]; then
   printf '  ok   every margin (%s) reparses to the input token stream AND tree (checkColGe held)\n' "$rec_margins"
 fi
 
 # A1 made concrete: at margin 40 the value hangs (`{` at column 2), field1 lands right after `{ ` at
 # column 4, and every continuation lands at that same column 4 -- the shared column sepByIndent accepts.
-if grep -qE '^def wide : P :=$' "$work/records.40.out" && \
-   grep -qE '^  \{ x := 111111111,$' "$work/records.40.out" && \
-   grep -qE '^    z := 333333333 \}$' "$work/records.40.out"; then
+if grep -qE '^def wide : P :=$' "$work/records.40.out" &&
+  grep -qE '^  \{ x := 111111111,$' "$work/records.40.out" &&
+  grep -qE '^    z := 333333333 \}$' "$work/records.40.out"; then
   printf '  ok   at margin 40 the record breaks A1: `{` at column 2, fields at column 4 (checkColEq)\n'
 else
   printf 'FAIL at margin 40 the record did not break A1 with fields at a shared column\n' >&2
@@ -1965,7 +1965,7 @@ for w in $rec_margins; do
     rec_cmt=1
   fi
 done
-if [[ -z "$rec_cmt" ]]; then
+if [[ -z $rec_cmt ]]; then
   printf '  ok   the /- keep -/ comment survives at every margin (the clean guard keeps the record flat)\n'
 fi
 
@@ -1989,7 +1989,7 @@ for w in $rec_margins; do
     rec_idem=1
   fi
 done
-if [[ -z "$rec_idem" ]]; then
+if [[ -z $rec_idem ]]; then
   printf '  ok   record break: formatting twice is byte-identical at every margin (%s)\n' "$rec_margins"
 fi
 
@@ -2062,10 +2062,11 @@ for w in $block_margins; do
   if ! diff -q "$work/blocks.0.out" "$work/blocks.$w.out" >/dev/null 2>&1; then
     printf 'FAIL RLF-BLOCKS output depends on the margin (%s differs from 0); re-index leaked a width\n' "$w" >&2
     diff -u "$work/blocks.0.out" "$work/blocks.$w.out" >&2
-    failures=$((failures + 1)); blocks_width=1
+    failures=$((failures + 1))
+    blocks_width=1
   fi
 done
-[[ -z "$blocks_width" ]] && printf '  ok   every margin (%s) produces identical output (re-index is width-independent)\n' "$block_margins"
+[[ -z $blocks_width ]] && printf '  ok   every margin (%s) produces identical output (re-index is width-independent)\n' "$block_margins"
 
 # Parse-preservation: every output reparses to the SAME token stream as the input. A shift that broke a
 # checkColEq between two tactics would fail to reparse or reparse to a different stream.
@@ -2096,8 +2097,8 @@ if python3 "$work/blocks_verify.py" "$work" "$block_margins"; then :; else failu
 # first tactic lands at column 2; the nested block's bullets share column 2 and their continuation lands
 # at column 4 (colGt the bullet), the uniform shift preserving the offside relationships.
 out="$work/blocks.100.out"
-if grep -qxE '  skip' "$out" && grep -qxE '  trivial' "$out" && grep -qxE '  constructor' "$out" \
-   && grep -qxE '  · skip' "$out" && grep -qxE '    trivial' "$out"; then
+if grep -qxE '  skip' "$out" && grep -qxE '  trivial' "$out" && grep -qxE '  constructor' "$out" &&
+  grep -qxE '  · skip' "$out" && grep -qxE '    trivial' "$out"; then
   printf '  ok   every block sits at column 2; nested bullets at 2, their continuations at 4 (colEq/colGt)\n'
 else
   printf 'FAIL a re-indexed block did not land at its canonical column:\n' >&2
@@ -2142,10 +2143,11 @@ for w in $block_margins; do
   if ! diff -q "$work/blocks.$w.out" "$work/blocks.$w.out2" >/dev/null 2>&1; then
     printf 'FAIL RLF-BLOCKS: formatting is not idempotent at margin %s:\n' "$w" >&2
     diff -u "$work/blocks.$w.out" "$work/blocks.$w.out2" >&2
-    failures=$((failures + 1)); blocks_idem=1
+    failures=$((failures + 1))
+    blocks_idem=1
   fi
 done
-[[ -z "$blocks_idem" ]] && printf '  ok   RLF-BLOCKS: formatting twice is byte-identical at every margin (%s)\n' "$block_margins"
+[[ -z $blocks_idem ]] && printf '  ok   RLF-BLOCKS: formatting twice is byte-identical at every margin (%s)\n' "$block_margins"
 
 # --- do blocks: the same capability over `Term.do`, and the base formula's two hard cases ---
 #
@@ -2199,10 +2201,11 @@ do_width=
 for w in $block_margins; do
   if ! diff -q "$work/doblocks.0.out" "$work/doblocks.$w.out" >/dev/null 2>&1; then
     printf 'FAIL do-block re-index depends on the margin (%s differs from 0)\n' "$w" >&2
-    failures=$((failures + 1)); do_width=1
+    failures=$((failures + 1))
+    do_width=1
   fi
 done
-[[ -z "$do_width" ]] && printf '  ok   every margin (%s) produces identical output (width-independent)\n' "$block_margins"
+[[ -z $do_width ]] && printf '  ok   every margin (%s) produces identical output (width-independent)\n' "$block_margins"
 
 # Parse-preservation across margins: same token stream as the input.
 python3 - "$work" "$block_margins" <<'PY'
@@ -2231,8 +2234,8 @@ if [[ $? -ne 0 ]]; then failures=$((failures + 1)); fi
 # command's offside child), and `wrapped` proves the base is NOT the keyword line's indent+2 (=6);
 # `keptHead`'s body is left at its non-canonical column 8 (conservative fallback, bytes kept).
 do_out="$work/doblocks.100.out"
-if grep -qxE '  let x := 1' "$do_out" && grep -qxE '  pure x' "$do_out" \
-   && grep -qxE '  pure \(a \+ b \+ c\)' "$do_out"; then
+if grep -qxE '  let x := 1' "$do_out" && grep -qxE '  pure x' "$do_out" &&
+  grep -qxE '  pure \(a \+ b \+ c\)' "$do_out"; then
   printf '  ok   direct and wrapped-signature do bodies land at column 2 (offside parent = command, not keyword line)\n'
 else
   printf 'FAIL a do body did not land at its canonical column 2:\n' >&2
@@ -2254,10 +2257,11 @@ for w in $block_margins; do
   if ! diff -q "$work/doblocks.$w.out" "$work/doblocks.$w.out2" >/dev/null 2>&1; then
     printf 'FAIL do-block re-index is not idempotent at margin %s:\n' "$w" >&2
     diff -u "$work/doblocks.$w.out" "$work/doblocks.$w.out2" >&2
-    failures=$((failures + 1)); do_idem=1
+    failures=$((failures + 1))
+    do_idem=1
   fi
 done
-[[ -z "$do_idem" ]] && printf '  ok   do blocks: formatting twice is byte-identical at every margin (%s)\n' "$block_margins"
+[[ -z $do_idem ]] && printf '  ok   do blocks: formatting twice is byte-identical at every margin (%s)\n' "$block_margins"
 
 # --- match arms: offside re-index of a `by` block that is a match arm's RHS (RLF-OPERATOR-BREAK) ---
 #
@@ -2297,10 +2301,10 @@ done
 
 # The over-indented `by` under `| 0 =>` re-indexes to arm-col+2 = 4; the pure-term arm and the `|`
 # columns are untouched. The re-index is width-independent, so every margin produces the same output.
-if grep -qE '^  \| 0 => by$' "$work/matcharm.100.out" && \
-   grep -qE '^    skip$' "$work/matcharm.100.out" && \
-   grep -qE '^    trivial$' "$work/matcharm.100.out" && \
-   grep -qE '^  \| _ => n$' "$work/matcharm.100.out"; then
+if grep -qE '^  \| 0 => by$' "$work/matcharm.100.out" &&
+  grep -qE '^    skip$' "$work/matcharm.100.out" &&
+  grep -qE '^    trivial$' "$work/matcharm.100.out" &&
+  grep -qE '^  \| _ => n$' "$work/matcharm.100.out"; then
   printf '  ok   a `by` block inside a match arm re-indexes to arm-col+2; the pure-term arm is kept\n'
 else
   printf 'FAIL the match-arm block did not re-index to arm-col+2 (or the term arm was touched)\n' >&2
@@ -2313,14 +2317,14 @@ fi
 marm_pp=
 for w in $marm_margins; do
   if ! python3 "$repo_root/experiments/compare_tokens.py" \
-       "$work/matcharm.json" "$work/matcharm.$w.json" "$work/matcharm.lean" "$work/matcharm.$w.out" \
-       >"$work/matcharm.$w.pp" 2>&1; then
+    "$work/matcharm.json" "$work/matcharm.$w.json" "$work/matcharm.lean" "$work/matcharm.$w.out" \
+    >"$work/matcharm.$w.pp" 2>&1; then
     printf 'FAIL match arm at margin %s changed the parse: %s\n' "$w" "$(cat "$work/matcharm.$w.pp")" >&2
     failures=$((failures + 1))
     marm_pp=1
   fi
 done
-if [[ -z "$marm_pp" ]]; then
+if [[ -z $marm_pp ]]; then
   printf '  ok   every margin (%s) reparses to the input token stream AND tree (no re-association)\n' "$marm_margins"
 fi
 
@@ -2331,10 +2335,11 @@ for w in $marm_margins; do
   if ! diff -q "$work/matcharm.$w.out" "$work/matcharm.$w.out2" >/dev/null 2>&1; then
     printf 'FAIL match arm: formatting is not idempotent at margin %s:\n' "$w" >&2
     diff -u "$work/matcharm.$w.out" "$work/matcharm.$w.out2" >&2
-    failures=$((failures + 1)); marm_idem=1
+    failures=$((failures + 1))
+    marm_idem=1
   fi
 done
-[[ -z "$marm_idem" ]] && printf '  ok   match arm: formatting twice is byte-identical at every margin (%s)\n' "$marm_margins"
+[[ -z $marm_idem ]] && printf '  ok   match arm: formatting twice is byte-identical at every margin (%s)\n' "$marm_margins"
 
 # --- non-vacuity: the parse-preservation gate rejects a re-association (RLF-ACCEPT) ---
 #
@@ -2376,7 +2381,7 @@ for v in good bad; do
     >"$work/reassoc_$v.json" 2>/dev/null
 done
 # 1. The tokens are identical — a token-only gate cannot tell these two apart.
-if python3 - "$work" <<'PY'
+if python3 - "$work" <<'PY'; then :; else failures=$((failures + 1)); fi
 import json, sys
 work = sys.argv[1]
 def stream(v):
@@ -2390,11 +2395,10 @@ if g == b:
 print(f"FAIL the fixtures differ in tokens ({g} vs {b}); the non-vacuity premise does not hold", file=sys.stderr)
 sys.exit(1)
 PY
-then :; else failures=$((failures + 1)); fi
 # 2. The tree gate REJECTS the re-association (must exit nonzero).
 if python3 "$repo_root/experiments/compare_tokens.py" \
-     "$work/reassoc_good.json" "$work/reassoc_bad.json" \
-     "$work/reassoc_good.lean" "$work/reassoc_bad.lean" >"$work/reassoc.out" 2>&1; then
+  "$work/reassoc_good.json" "$work/reassoc_bad.json" \
+  "$work/reassoc_good.lean" "$work/reassoc_bad.lean" >"$work/reassoc.out" 2>&1; then
   printf 'FAIL the parse-preservation gate accepted a re-association; it is vacuous:\n' >&2
   cat "$work/reassoc.out" >&2
   failures=$((failures + 1))
@@ -2409,8 +2413,8 @@ else
 fi
 # 3. Sanity: the gate ACCEPTS an identical pair (no false positive on a real no-op).
 if python3 "$repo_root/experiments/compare_tokens.py" \
-     "$work/reassoc_good.json" "$work/reassoc_good.json" \
-     "$work/reassoc_good.lean" "$work/reassoc_good.lean" >/dev/null 2>&1; then
+  "$work/reassoc_good.json" "$work/reassoc_good.json" \
+  "$work/reassoc_good.lean" "$work/reassoc_good.lean" >/dev/null 2>&1; then
   printf '  ok   the gate accepts an identical pair (no false positive)\n'
 else
   printf 'FAIL the gate rejected an identical pair; it would reject legitimate no-op reformats\n' >&2
@@ -2443,4 +2447,4 @@ check_idempotent header "$work/header.out"
 
 printf -- '--- result ---\n'
 printf 'failures=%s\n' "$failures"
-[[ "$failures" -eq 0 ]]
+[[ $failures -eq 0 ]]

@@ -13,11 +13,14 @@ repo_root=$(cd "$(dirname "$0")/../.." && pwd)
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 
-fail() { printf 'tests/watch: %s\n' "$1" >&2; exit 1; }
+fail() {
+  printf 'tests/watch: %s\n' "$1" >&2
+  exit 1
+}
 
 expect_eq() {
   local what=$1 expected=$2 actual=$3
-  if [[ "$expected" != "$actual" ]]; then
+  if [[ $expected != "$actual" ]]; then
     printf 'tests/watch: %s\n  expected: %s\n  actual:   %s\n' "$what" "$expected" "$actual" >&2
     exit 1
   fi
@@ -37,7 +40,7 @@ printf 'BBBB' >"$probe"
 second_ns=$(python3 -c 'import os,sys; print(os.stat(sys.argv[1]).st_mtime_ns)' "$probe")
 first_size=$(python3 -c 'import os,sys; print(os.stat(sys.argv[1]).st_size)' "$probe")
 
-if [[ "$first_ns" == "$second_ns" ]]; then
+if [[ $first_ns == "$second_ns" ]]; then
   fail "same-size rewrite produced an identical mtime ($first_ns); RWI-SPEC §2 assumed sub-second granularity"
 fi
 expect_eq "same-size rewrite kept its size (that is the point)" "4" "$first_size"
@@ -103,8 +106,8 @@ delete_index=-1
 i=0
 while [[ $i -lt ${#fields[@]} ]]; do
   case "${fields[$i]}" in
-    R*) [[ $rename_index -lt 0 ]] && rename_index=$i ;;
-    D)  [[ $delete_index -lt 0 ]] && delete_index=$i ;;
+  R*) [[ $rename_index -lt 0 ]] && rename_index=$i ;;
+  D) [[ $delete_index -lt 0 ]] && delete_index=$i ;;
   esac
   i=$((i + 1))
 done
@@ -158,7 +161,7 @@ fi
 if ! git diff --name-status -z main..feature | tr '\0' '\n' | grep -q '^MainOnly\.lean$'; then
   fail "two-dot diff did not report MainOnly.lean; RWI-SPEC §9.1 rejected two-dot for exactly that noise"
 fi
-if [[ "$three_dot" -ge "$two_dot" ]]; then
+if [[ $three_dot -ge $two_dot ]]; then
   fail "three-dot ($three_dot) did not select fewer paths than two-dot ($two_dot)"
 fi
 
@@ -181,11 +184,11 @@ expect_eq "rev-parse outside a repository exits 128" "128" "$rev_parse_code"
 rev_parse_lines=$(printf '%s\n' "$rev_parse_out" | wc -l | tr -d ' ')
 expect_eq "rev-parse outside a repository says one thing" "1" "$rev_parse_lines"
 
-if [[ "$diff_code" -eq 128 ]]; then
+if [[ $diff_code -eq 128 ]]; then
   fail "git diff now exits 128 outside a repository; RWI-SPEC §9.7 chose rev-parse on the assumption it does not"
 fi
 diff_lines=$(printf '%s\n' "$diff_out" | wc -l | tr -d ' ')
-if [[ "$diff_lines" -lt 10 ]]; then
+if [[ $diff_lines -lt 10 ]]; then
   fail "git diff outside a repository no longer dumps usage ($diff_lines lines); revisit RWI-SPEC §9.7"
 fi
 
@@ -212,7 +215,7 @@ expect_rejection() {
   if [[ $code -ne 2 ]]; then
     fail "$what: expected exit 2, got $code (output: $output)"
   fi
-  if [[ "$output" != *"$expected_fragment"* ]]; then
+  if [[ $output != *"$expected_fragment"* ]]; then
     printf 'tests/watch: %s\n  expected to mention: %s\n  actual: %s\n' \
       "$what" "$expected_fragment" "$output" >&2
     exit 1
@@ -221,7 +224,7 @@ expect_rejection() {
 
 # §10 A writing mode under watch publishes source, which changes the mtimes the poll observes, which
 # triggers the next generation. Self-sustaining by construction, so both writers are refused.
-expect_rejection "fix --watch"    "not available for fix"    fix --watch
+expect_rejection "fix --watch" "not available for fix" fix --watch
 expect_rejection "format --watch" "not available for format" format --watch
 
 # §7 A stream of documents is not a document, so json/sarif/junit need a destination to replace.
@@ -258,10 +261,10 @@ outside_output=$(cd "$outside_repo" && "$application" check --changed --root . 2
 outside_code=$?
 set -e
 expect_eq "changed outside a repository exits 2" "2" "$outside_code"
-if [[ "$outside_output" != *"requires a git repository"* ]]; then
+if [[ $outside_output != *"requires a git repository"* ]]; then
   fail "expected a git-repository diagnostic outside a repository, got: $outside_output"
 fi
-if [[ "$outside_output" == *"--no-index"* ]]; then
+if [[ $outside_output == *"--no-index"* ]]; then
   fail "the non-repository diagnostic leaked git diff's usage text; §9.7 probes with rev-parse"
 fi
 
@@ -273,7 +276,7 @@ staged_output=$("$application" check --staged --root . 2>&1 >/dev/null)
 staged_code=$?
 set -e
 expect_eq "an empty staged selection succeeds" "0" "$staged_code"
-if [[ "$staged_output" != *"no changed Lean sources"* ]]; then
+if [[ $staged_output != *"no changed Lean sources"* ]]; then
   fail "an empty --staged selection did not say so explicitly: $staged_output"
 fi
 
@@ -284,10 +287,10 @@ trap 'rm -rf "$work"; restore_clean' EXIT
 set +e
 changed_output=$("$application" check --changed --root . 2>&1 >/dev/null)
 set -e
-if [[ "$changed_output" != *"changed-file selection: worktree vs HEAD"* ]]; then
+if [[ $changed_output != *"changed-file selection: worktree vs HEAD"* ]]; then
   fail "a --changed run did not report its comparison: $changed_output"
 fi
-if [[ "$changed_output" != *"not the whole project"* ]]; then
+if [[ $changed_output != *"not the whole project"* ]]; then
   fail "a --changed run did not disclose that it covers a subset: $changed_output"
 fi
 restore_clean
@@ -311,7 +314,7 @@ set +e
 untracked_output=$("$application" check --changed --root . 2>&1 >/dev/null)
 untracked_code=$?
 set -e
-if [[ "$untracked_output" == *"is not a Lean source"* ]]; then
+if [[ $untracked_output == *"is not a Lean source"* ]]; then
   fail "an untracked non-Lean file aborted --changed: $untracked_output"
 fi
 if [[ $untracked_code -ne 0 && $untracked_code -ne 1 ]]; then

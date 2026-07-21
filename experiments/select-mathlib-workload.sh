@@ -12,39 +12,39 @@ expected_sample_digest=1936bdb60e01c14fdc986a535ef9317d63775506708e35f4155a9c4c5
 
 actual_revision=$(git -C "$mathlib_root" rev-parse HEAD)
 actual_toolchain=$(<"$mathlib_root/lean-toolchain")
-if [[ "$actual_revision" != "$expected_revision" ]]; then
-	printf 'mathlib revision mismatch: expected %s, got %s\n' \
-		"$expected_revision" "$actual_revision" >&2
-	exit 2
+if [[ $actual_revision != "$expected_revision" ]]; then
+  printf 'mathlib revision mismatch: expected %s, got %s\n' \
+    "$expected_revision" "$actual_revision" >&2
+  exit 2
 fi
-if [[ "$actual_toolchain" != "$expected_toolchain" ]]; then
-	printf 'mathlib toolchain mismatch: expected %s, got %s\n' \
-		"$expected_toolchain" "$actual_toolchain" >&2
-	exit 2
+if [[ $actual_toolchain != "$expected_toolchain" ]]; then
+  printf 'mathlib toolchain mismatch: expected %s, got %s\n' \
+    "$expected_toolchain" "$actual_toolchain" >&2
+  exit 2
 fi
 
 case "$selection" in
 full)
-	find "$mathlib_root" -path '*/.lake' -prune -o -type f -name '*.lean' -print |
-		LC_ALL=C sort |
-		sed "s#^$mathlib_root/##"
-	;;
+  find "$mathlib_root" -path '*/.lake' -prune -o -type f -name '*.lean' -print |
+    LC_ALL=C sort |
+    sed "s#^$mathlib_root/##"
+  ;;
 sample)
-	find "$mathlib_root/Mathlib" "$mathlib_root/Archive" \
-		"$mathlib_root/Counterexamples" -type f -name '*.lean' -print |
-		LC_ALL=C sort |
-		awk 'NR % 137 == 1' |
-		sed "s#^$mathlib_root/##"
-	;;
+  find "$mathlib_root/Mathlib" "$mathlib_root/Archive" \
+    "$mathlib_root/Counterexamples" -type f -name '*.lean' -print |
+    LC_ALL=C sort |
+    awk 'NR % 137 == 1' |
+    sed "s#^$mathlib_root/##"
+  ;;
 *)
-	printf 'usage: %s [MATHLIB_ROOT] [full|sample]\n' "$0" >&2
-	exit 2
-	;;
+  printf 'usage: %s [MATHLIB_ROOT] [full|sample]\n' "$0" >&2
+  exit 2
+  ;;
 esac |
-awk -v selection="$selection" \
-	-v expected_full="$expected_file_count" \
-	-v expected_sample="$expected_sample_count" \
-	-v expected_digest="$expected_sample_digest" '
+  awk -v selection="$selection" \
+    -v expected_full="$expected_file_count" \
+    -v expected_sample="$expected_sample_count" \
+    -v expected_digest="$expected_sample_digest" '
   { lines[NR] = $0 }
   END {
     expected = selection == "full" ? expected_full : expected_sample
@@ -55,16 +55,16 @@ awk -v selection="$selection" \
     for (i = 1; i <= NR; i++) print lines[i]
   }
 ' |
-if [[ "$selection" == sample ]]; then
-	tmp=$(mktemp)
-	trap 'rm -f "$tmp"' EXIT
-	tee "$tmp"
-	digest=$(shasum -a 256 "$tmp" | awk '{print $1}')
-	if [[ "$digest" != "$expected_sample_digest" ]]; then
-		printf 'sample digest mismatch: expected %s, got %s\n' \
-			"$expected_sample_digest" "$digest" >&2
-		exit 2
-	fi
-else
-	cat
-fi
+  if [[ $selection == sample ]]; then
+    tmp=$(mktemp)
+    trap 'rm -f "$tmp"' EXIT
+    tee "$tmp"
+    digest=$(shasum -a 256 "$tmp" | awk '{print $1}')
+    if [[ $digest != "$expected_sample_digest" ]]; then
+      printf 'sample digest mismatch: expected %s, got %s\n' \
+        "$expected_sample_digest" "$digest" >&2
+      exit 2
+    fi
+  else
+    cat
+  fi

@@ -30,7 +30,7 @@ printf 'index\tmodule\tseconds\tfindings\tbroken\tinfra\n' >"$status_tsv"
 
 index=0
 while IFS= read -r module; do
-  [[ -z "$module" ]] && continue
+  [[ -z $module ]] && continue
   index=$((index + 1))
   report="$result_root/reports/$index.json"
   t0=$(python3 -c 'import time; print(time.monotonic())')

@@ -18,17 +18,25 @@ cleanup() { rm -rf "$work" "$repo_root/.lean-fmt-cache"; }
 trap cleanup EXIT
 
 failures=0
-ok()   { printf '  ok   %s\n' "$1"; }
-fail() { printf '  FAIL %s\n' "$1" >&2; failures=$((failures + 1)); }
-check() { if [[ "$2" == "$3" ]]; then ok "$1"; else fail "$1: expected [$3], got [$2]"; fi; }
+ok() { printf '  ok   %s\n' "$1"; }
+fail() {
+  printf '  FAIL %s\n' "$1" >&2
+  failures=$((failures + 1))
+}
+check() { if [[ $2 == "$3" ]]; then ok "$1"; else fail "$1: expected [$3], got [$2]"; fi; }
 contains() {
-  if [[ "$2" == *"$3"* ]]; then ok "$1"; else fail "$1: [$2] does not contain [$3]"; fi
+  if [[ $2 == *"$3"* ]]; then ok "$1"; else fail "$1: [$2] does not contain [$3]"; fi
 }
 
 LEAN_NUM_THREADS=1 lake build lean-fmt >/dev/null
 application=$(lake -q query lean-fmt --text)
 fmt() { "$application" "$@"; }
-code() { set +e; fmt "$@" >/dev/null 2>&1; printf '%s' "$?"; set -e; }
+code() {
+  set +e
+  fmt "$@" >/dev/null 2>&1
+  printf '%s' "$?"
+  set -e
+}
 
 findings=tests/check/Findings.lean
 unicode=tests/reporting/Unicode.lean
@@ -93,7 +101,7 @@ check "the grammar is PATH:LINE:COL: CODE MESSAGE" "$concise" \
   "tests/check/Findings.lean:4:1: FMT005 duplicate import of LeanFmt.Basic"
 # `text` prints ` [safe]`; `concise` must not — an applicability tag is machine data and breaks an
 # editor error-parser reading the line for a file:line:col jump.
-if [[ "$concise" == *"[safe]"* ]]; then
+if [[ $concise == *"[safe]"* ]]; then
   fail "concise leaked the applicability tag"
 else
   ok "concise omits the applicability tag"
@@ -132,7 +140,7 @@ contains "the message half is not property-escaped" "$hostile_out" \
 printf 'module\n\nimport LeanFmt.Basic\n\ndef spanning : Nat := ((\n  1\n  ))\n' >"$work/multiline.lean"
 multi=$(fmt check - --stdin-filename "tests/reporting/Multiline.lean" --select FMT013 --preview \
   --output-format github <"$work/multiline.lean" 2>&1 >/dev/null || true)
-if [[ "$multi" == *"col="* ]]; then
+if [[ $multi == *"col="* ]]; then
   fail "a multi-line annotation kept col=, which GitHub rejects: $multi"
 else
   ok "a multi-line annotation omits col/endColumn"
@@ -145,7 +153,7 @@ fmt check "$findings" --output-format sarif >"$work/report.sarif" 2>/dev/null ||
 
 # An independent validator, not our own string matching.
 if uv run --with check-jsonschema --quiet check-jsonschema \
-    --schemafile tests/reporting/sarif-schema-2.1.0.json "$work/report.sarif" >"$work/sarif.log" 2>&1; then
+  --schemafile tests/reporting/sarif-schema-2.1.0.json "$work/report.sarif" >"$work/sarif.log" 2>&1; then
   ok "the SARIF log validates against the 2.1.0 JSON schema"
 else
   fail "SARIF schema validation failed: $(tail -3 "$work/sarif.log")"
@@ -197,7 +205,8 @@ check "a rule descriptor matches the catalog's own summary" "$described" "$summa
 LEAN_FMT_DISABLE_ARTIFACT=1 LEAN_FMT_TEST_DISABLE_MODULE_EVIDENCE=1 \
   LEAN_FMT_TEST_ANALYZER=/usr/bin/false fmt check --root . --no-cache \
   --output-format sarif tests/check/Clean.lean >"$work/failed.sarif" 2>/dev/null || true
-failed_assert=$(uv run --quiet python3 - "$work/failed.sarif" <<'PY'
+failed_assert=$(
+  uv run --quiet python3 - "$work/failed.sarif" <<'PY'
 import json, sys
 run, = json.load(open(sys.argv[1]))["runs"]
 invocation, = run["invocations"]
@@ -230,7 +239,8 @@ fi
 # An independent JUnit *consumer*, which is what a CI system actually runs. §8.2 records why this
 # replaced an XSD check: the format has no normative schema, and the most-cited XSD is one flavor
 # that requires a `time` this report has no measurement for.
-junit_assert=$(uv run --with junitparser --quiet python3 - "$work/report.xml" <<'PY'
+junit_assert=$(
+  uv run --with junitparser --quiet python3 - "$work/report.xml" <<'PY'
 import sys
 from junitparser import JUnitXml
 xml = JUnitXml.fromfile(sys.argv[1])
@@ -246,7 +256,8 @@ check "an independent JUnit parser reads it back" "$junit_assert" "ok"
 # A clean file emits a *passing* case, not an empty suite: a suite with zero cases reads to most CI
 # dashboards as "no tests ran" rather than "nothing wrong".
 fmt check tests/check/Clean.lean --output-format junit >"$work/clean.xml" 2>/dev/null || true
-clean_assert=$(uv run --with junitparser --quiet python3 - "$work/clean.xml" <<'PY'
+clean_assert=$(
+  uv run --with junitparser --quiet python3 - "$work/clean.xml" <<'PY'
 import sys
 from junitparser import JUnitXml
 xml = JUnitXml.fromfile(sys.argv[1])
@@ -280,7 +291,7 @@ check "a directory --output-file is rejected" \
 stdout_bytes=$(fmt check "$findings" --output-file "$work/out.sarif" --output-format sarif 2>/dev/null | wc -c | tr -d ' ' || true)
 check "--output-file leaves stdout empty" "$stdout_bytes" "0"
 if uv run --with check-jsonschema --quiet check-jsonschema \
-    --schemafile tests/reporting/sarif-schema-2.1.0.json "$work/out.sarif" >/dev/null 2>&1; then
+  --schemafile tests/reporting/sarif-schema-2.1.0.json "$work/out.sarif" >/dev/null 2>&1; then
   ok "  ... and the file holds the complete report"
 else
   fail "--output-file wrote an invalid report"
@@ -303,10 +314,13 @@ printf -- '--- broken pipe (§9.3) ---\n'
 for format in text concise json github sarif junit; do
   set +e
   pipe_err=$(fmt check "$findings" --output-format "$format" 2>&1 >/dev/null | head -1)
-  producer=$( { fmt check "$findings" --output-format "$format" 2>/dev/null | head -1 >/dev/null; } ; echo "${PIPESTATUS[0]}")
+  producer=$(
+    { fmt check "$findings" --output-format "$format" 2>/dev/null | head -1 >/dev/null; }
+    echo "${PIPESTATUS[0]}"
+  )
   set -e
   check "$format survives a closed pipe with its own exit code" "$producer" "1"
-  if [[ -n "$pipe_err" ]]; then
+  if [[ -n $pipe_err ]]; then
     fail "$format printed a diagnostic on a closed pipe: $pipe_err"
   else
     ok "  ... and prints no diagnostic"
@@ -359,14 +373,14 @@ help_uri=$({ fmt check "$findings" --output-format sarif 2>/dev/null || true; } 
 import json, sys
 log = json.load(sys.stdin)
 print(" ".join(r["helpUri"] for r in log["runs"][0]["tool"]["driver"]["rules"]))')
-if [[ -z "$help_uri" ]]; then
+if [[ -z $help_uri ]]; then
   fail "no rule descriptor carried a helpUri"
 else
   missing=""
   for uri in $help_uri; do
     page="docs/rules/${uri##*/}"
-    [[ "$uri" == https://github.com/jcreinhold/lean-fmt/blob/main/docs/rules/* ]] || missing="$missing $uri"
-    [[ -f "$page" ]] || missing="$missing $page"
+    [[ $uri == https://github.com/jcreinhold/lean-fmt/blob/main/docs/rules/* ]] || missing="$missing $uri"
+    [[ -f $page ]] || missing="$missing $page"
   done
   check "every helpUri names a rule page that exists in this repository" "$missing" ""
 fi

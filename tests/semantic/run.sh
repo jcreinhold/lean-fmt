@@ -113,8 +113,11 @@ if [[ $chk_exit -ne 0 ]]; then
   cat "$work/chk.json" >&2
   exit 1
 fi
-grep -q 'infrastructure-failure' "$work/fmt.json" \
-  || { echo 'format did not reach the disabled analyzer — it may have accepted the fact-free artifact' >&2; exit 1; }
+grep -q 'infrastructure-failure' "$work/fmt.json" ||
+  {
+    echo 'format did not reach the disabled analyzer — it may have accepted the fact-free artifact' >&2
+    exit 1
+  }
 
 # --- ruff-11 RMR-IMPL: the surfaced-diagnostics differential --------------------------------------
 # The production capture path (`__analyze-exact ... 1`) normalizes the compiler's own diagnostics into
@@ -324,8 +327,11 @@ LEAN
 } >"$proj/acc/Mixed.lean"
 LEAN_NUM_THREADS=1 lake -d "$proj" build Demo >/dev/null
 
-check_exit() {  # run a command, capture its exit code into $ACC_EXIT (never aborts the harness)
-  set +e; "$@"; ACC_EXIT=$?; set -e
+check_exit() { # run a command, capture its exit code into $ACC_EXIT (never aborts the harness)
+  set +e
+  "$@"
+  ACC_EXIT=$?
+  set -e
 }
 
 # 1. Silent-omission-on-error. A semantic selection over a file that fails to elaborate reports the
@@ -334,7 +340,8 @@ check_exit env LEAN_NUM_THREADS=1 "$application" check --root "$proj" --json --n
   --select FMT014 "$proj/acc/Broken.lean" >"$work/acc-broken.json" 2>/dev/null
 if [[ $ACC_EXIT -ne 1 ]]; then
   printf 'check over a broken file under a semantic selection: expected exit 1, got %s\n' "$ACC_EXIT" >&2
-  cat "$work/acc-broken.json" >&2; exit 1
+  cat "$work/acc-broken.json" >&2
+  exit 1
 fi
 python3 - "$work/acc-broken.json" <<'PY'
 import json, sys
@@ -375,8 +382,11 @@ r = json.load(open(sys.argv[1]))
 assert r["written"] == 0 and r["changed"] == 0, r          # unadmitted: nothing published
 assert r["withheldUnsafe"] >= 1, r                         # ...but the fix exists and was withheld
 PY
-cmp -s "$work/mixed.orig" "$proj/acc/Mixed.lean" \
-  || { echo 'fix withholding an unsafe owned fix modified the source' >&2; exit 1; }
+cmp -s "$work/mixed.orig" "$proj/acc/Mixed.lean" ||
+  {
+    echo 'fix withholding an unsafe owned fix modified the source' >&2
+    exit 1
+  }
 
 # 3b. Admitted owned fix applies a real rename. Since `ruff-11c` RDF-IMPL `fix` applies the FMT014
 # occurrence edit at its original-source coordinates and owns no reflow (the retired `reprojectCanonical`
@@ -391,10 +401,15 @@ r = json.load(open(sys.argv[1]))
 assert r["written"] == 1 and r["changed"] == 1, r          # admitted: the rename is published
 assert r["rejected"] == 0, r                               # a `written` fix already passed the validator
 PY
-grep -q 'def useOld : Nat := newName' "$proj/acc/Mixed.lean" \
-  || { echo 'admitted owned fix did not rename oldName -> newName' >&2; cat "$proj/acc/Mixed.lean" >&2; exit 1; }
+grep -q 'def useOld : Nat := newName' "$proj/acc/Mixed.lean" ||
+  {
+    echo 'admitted owned fix did not rename oldName -> newName' >&2
+    cat "$proj/acc/Mixed.lean" >&2
+    exit 1
+  }
 if grep 'useOld' "$proj/acc/Mixed.lean" | grep -q 'oldName'; then
-  echo 'the deprecated name survives on the use line after the fix' >&2; exit 1
+  echo 'the deprecated name survives on the use line after the fix' >&2
+  exit 1
 fi
 # The rename re-elaborates (the exact frontend runs fresh under `--no-cache`) and leaves no deprecated
 # use: a fresh check of FMT014 is clean.
@@ -423,8 +438,11 @@ out = f["formatted"]
 assert out is None or ("oldName" in out and "def useOld : Nat := newName" not in out), \
   ("format applied the FMT014 rename — it must not", repr(out))
 PY
-grep -q 'def useOld : Nat := oldName' "$proj/acc/MixedFmt.lean" \
-  || { echo 'format mutated the deprecated use — it must not write, let alone rename' >&2; exit 1; }
+grep -q 'def useOld : Nat := oldName' "$proj/acc/MixedFmt.lean" ||
+  {
+    echo 'format mutated the deprecated use — it must not write, let alone rename' >&2
+    exit 1
+  }
 rm -f "$proj/acc/MixedFmt.lean"
 
 # 3c. Idempotence. A second `fix --unsafe-fixes --select FMT014` over the already-renamed file is a
@@ -437,8 +455,11 @@ import json, sys
 r = json.load(open(sys.argv[1]))
 assert r["written"] == 0 and r["changed"] == 0, r          # idempotent: the second fix is a no-op
 PY
-cmp -s "$work/mixed.fixed" "$proj/acc/Mixed.lean" \
-  || { echo 'a second FMT014 fix modified an already-renamed file' >&2; exit 1; }
+cmp -s "$work/mixed.fixed" "$proj/acc/Mixed.lean" ||
+  {
+    echo 'a second FMT014 fix modified an already-renamed file' >&2
+    exit 1
+  }
 
 # 3d. Pass-order independence. `--select` order must not change the published bytes: FMT014 (semantic
 # occurrence rename) and FMT013 (syntax, safe paren removal), both at original-source coordinates,
@@ -450,11 +471,17 @@ LEAN_NUM_THREADS=1 "$application" fix --root "$proj" --json --no-cache --preview
   --select FMT014 --select FMT013 "$proj/acc/OrderA.lean" >/dev/null 2>&1 || true
 LEAN_NUM_THREADS=1 "$application" fix --root "$proj" --json --no-cache --preview --unsafe-fixes \
   --select FMT013 --select FMT014 "$proj/acc/OrderB.lean" >/dev/null 2>&1 || true
-cmp -s "$proj/acc/OrderA.lean" "$proj/acc/OrderB.lean" \
-  || { echo 'pass order changed the published bytes (FMT014 vs FMT013 order-dependent)' >&2;
-       diff "$proj/acc/OrderA.lean" "$proj/acc/OrderB.lean" >&2; exit 1; }
-grep -q 'def useOld : Nat := newName' "$proj/acc/OrderA.lean" \
-  || { echo 'order-independent fix did not apply the rename' >&2; exit 1; }
+cmp -s "$proj/acc/OrderA.lean" "$proj/acc/OrderB.lean" ||
+  {
+    echo 'pass order changed the published bytes (FMT014 vs FMT013 order-dependent)' >&2
+    diff "$proj/acc/OrderA.lean" "$proj/acc/OrderB.lean" >&2
+    exit 1
+  }
+grep -q 'def useOld : Nat := newName' "$proj/acc/OrderA.lean" ||
+  {
+    echo 'order-independent fix did not apply the rename' >&2
+    exit 1
+  }
 rm -f "$proj/acc/OrderA.lean" "$proj/acc/OrderB.lean"
 # Restore the fixture for any later reuse.
 cp "$work/mixed.orig" "$proj/acc/Mixed.lean"
@@ -468,15 +495,20 @@ cp "$work/mixed.orig" "$proj/acc/Mixed.lean"
 # same snapshot tree), so the fold is a read, not a second elaboration. Best-effort: skipped if the
 # tool/field is unavailable.
 if /usr/bin/time -l true >/dev/null 2>&1; then
-  measure() {  # run `__analyze-exact` at capture flag $1, leaving stats in $work/time$1.txt
+  measure() { # run `__analyze-exact` at capture flag $1, leaving stats in $work/time$1.txt
     /usr/bin/time -l env LEAN_NUM_THREADS=1 lake env "$application" __analyze-exact \
       "$work/dsetup.json" "$diag" "$diag" "$maxb" "$1" >/dev/null 2>"$work/time$1.txt"
   }
-  rss_of()  { grep "maximum resident set size" "$work/time$1.txt" | awk '{print $1}'; }
+  rss_of() { grep "maximum resident set size" "$work/time$1.txt" | awk '{print $1}'; }
   real_of() { grep -E "[0-9.]+ real" "$work/time$1.txt" | awk '{print $1}'; }
-  measure 0; measure 1; measure 2
-  off_rss=$(rss_of 0); on_rss=$(rss_of 1); occ_rss=$(rss_of 2)
-  on_real=$(real_of 1); occ_real=$(real_of 2)
+  measure 0
+  measure 1
+  measure 2
+  off_rss=$(rss_of 0)
+  on_rss=$(rss_of 1)
+  occ_rss=$(rss_of 2)
+  on_real=$(real_of 1)
+  occ_real=$(real_of 2)
   python3 - "$on_rss" "$off_rss" "$occ_rss" "$on_real" "$occ_real" <<'PY'
 import sys
 on, off, occ = int(sys.argv[1]), int(sys.argv[2]), int(sys.argv[3])

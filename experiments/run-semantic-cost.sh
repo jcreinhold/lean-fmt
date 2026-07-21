@@ -30,7 +30,7 @@ mathlib_lean_path=$(lake env printenv LEAN_PATH)
 # Pre-generate setups once, outside the profiled region, so both passes reuse identical inputs.
 index=0
 while IFS= read -r source; do
-  [[ -n "$source" ]] || continue
+  [[ -n $source ]] || continue
   index=$((index + 1))
   LEAN_NUM_THREADS=1 lake setup-file "$source" >"$setup_dir/$index.setup.json" 2>/dev/null
 done <"$sources"

@@ -16,7 +16,7 @@ cp "$sources" "$result_root/sources.txt"
 restore_module_outputs() {
   local index
   for index in "${!active_paths[@]}"; do
-    if [[ -e "${active_backups[$index]}" ]]; then
+    if [[ -e ${active_backups[$index]} ]]; then
       cp -p "${active_backups[$index]}" "${active_paths[$index]}"
     else
       rm -f "${active_paths[$index]}"
@@ -29,7 +29,7 @@ restore_module_outputs() {
 cleanup() {
   status=$?
   restore_module_outputs
-  if [[ "$status" -ne 0 ]]; then
+  if [[ $status -ne 0 ]]; then
     cp -R "$scratch" "$result_root/failure"
   fi
   rm -rf "$scratch"
@@ -60,7 +60,7 @@ elapsed_ms() {
 index=0
 while IFS= read -r source; do
   index=$((index + 1))
-  if [[ -n "${LEAN_FMT_SAMPLE_LIMIT:-}" && "$index" -gt "$LEAN_FMT_SAMPLE_LIMIT" ]]; then
+  if [[ -n ${LEAN_FMT_SAMPLE_LIMIT:-} && $index -gt $LEAN_FMT_SAMPLE_LIMIT ]]; then
     break
   fi
   case_dir="$scratch/$index"
@@ -83,7 +83,7 @@ while IFS= read -r source; do
       backup="$case_dir/original/olean${suffix:-.main}"
       active_paths+=("$path")
       active_backups+=("$backup")
-      if [[ -e "$path" ]]; then
+      if [[ -e $path ]]; then
         cp -p "$path" "$backup"
       fi
     done
@@ -91,7 +91,7 @@ while IFS= read -r source; do
     backup="$case_dir/original/module.ir"
     active_paths+=("$path")
     active_backups+=("$backup")
-    if [[ -e "$path" ]]; then
+    if [[ -e $path ]]; then
       cp -p "$path" "$backup"
     fi
   }

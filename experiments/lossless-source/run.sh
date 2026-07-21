@@ -25,18 +25,18 @@ cd "$here"
 work=${1:-$(mktemp -d)}
 mkdir -p "$work"
 
-printf 'module\r\n\r\ndef crlf : Nat := 0\r\n' > "$work/Crlf.lean"
-printf 'module\n\ndef noFinalNewline : Nat := 0' > "$work/NoFinalNewline.lean"
-printf 'module\n\ndef trailingSpace : Nat := 0   \n   \n\n' > "$work/TrailingSpace.lean"
-printf 'module\n' > "$work/HeaderOnly.lean"
-printf 'module\n\n-- only a comment, no command\n' > "$work/CommentOnly.lean"
-printf 'module\n\ndef trailingBlankLines : Nat := 0\n\n\n\n' > "$work/TrailingBlankLines.lean"
+printf 'module\r\n\r\ndef crlf : Nat := 0\r\n' >"$work/Crlf.lean"
+printf 'module\n\ndef noFinalNewline : Nat := 0' >"$work/NoFinalNewline.lean"
+printf 'module\n\ndef trailingSpace : Nat := 0   \n   \n\n' >"$work/TrailingSpace.lean"
+printf 'module\n' >"$work/HeaderOnly.lean"
+printf 'module\n\n-- only a comment, no command\n' >"$work/CommentOnly.lean"
+printf 'module\n\ndef trailingBlankLines : Nat := 0\n\n\n\n' >"$work/TrailingBlankLines.lean"
 # `#exit` is a terminal command: the frontend stops there and never parses the remaining bytes.
-printf 'module\n\ndef before : Nat := 0\n#exit\nnot lean at all !!!\n' > "$work/Exit.lean"
+printf 'module\n\ndef before : Nat := 0\n#exit\nnot lean at all !!!\n' >"$work/Exit.lean"
 # Rejected by the parser: recorded so the boundary of "accepted source" stays evidence, not belief.
-printf 'module\n\ndef tabIndent : Nat :=\n\t0\n' > "$work/Tabs.lean"
-printf '\xef\xbb\xbfmodule\n\ndef bom : Nat := 0\n' > "$work/Bom.lean"
-printf 'module\n\ndef loneCr : Nat := 0\rdef after : Nat := 1\n' > "$work/LoneCr.lean"
+printf 'module\n\ndef tabIndent : Nat :=\n\t0\n' >"$work/Tabs.lean"
+printf '\xef\xbb\xbfmodule\n\ndef bom : Nat := 0\n' >"$work/Bom.lean"
+printf 'module\n\ndef loneCr : Nat := 0\rdef after : Nat := 1\n' >"$work/LoneCr.lean"
 
 lake build round-trip >/dev/null
 
@@ -63,12 +63,12 @@ for entry in "${cases[@]}"; do
   status=0
   lake exe round-trip "$file" || status=$?
   case $status in
-    0) actual=accept ;;
-    1) actual=truncate ;;
-    3) actual=reject ;;
-    *) actual=error ;;
+  0) actual=accept ;;
+  1) actual=truncate ;;
+  3) actual=reject ;;
+  *) actual=error ;;
   esac
-  if [[ "$actual" != "$expected" ]]; then
+  if [[ $actual != "$expected" ]]; then
     printf '  UNEXPECTED: %s expected=%s actual=%s (exit %d)\n' \
       "$file" "$expected" "$actual" "$status" >&2
     failures=$((failures + 1))

@@ -59,7 +59,7 @@ printf 'modules_checked=%s comments_attached=%s dangling=%s failures=%s\n' \
 # A corpus that attached no comment would pass every assertion above while testing nothing. A floor
 # rather than an exact count: the number rises as the project is commented, and only a broken walk
 # drives it toward zero.
-if [[ "$total_comments" -lt 25 ]]; then
+if [[ $total_comments -lt 25 ]]; then
   printf 'FAIL corpus attached only %s comments; the walk is not finding them\n' "$total_comments" >&2
   failures=$((failures + 1))
 fi
@@ -100,7 +100,7 @@ printf '%-34s %s\n' "positions.lean" "$positions"
 #   dangling=1  nothing follows the last token to lead.
 expect() {
   local label=$1 expected=$2
-  if [[ "$positions" != *"$expected"* ]]; then
+  if [[ $positions != *"$expected"* ]]; then
     printf 'FAIL %s: expected %s in: %s\n' "$label" "$expected" "$positions" >&2
     failures=$((failures + 1))
   else

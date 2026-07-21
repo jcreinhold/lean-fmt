@@ -34,7 +34,7 @@ scratch=$(mktemp -d)
 trap 'rm -rf "$scratch"' EXIT
 
 for binary in "$application" "$tests"; do
-  if [[ ! -x "$binary" ]]; then
+  if [[ ! -x $binary ]]; then
     printf 'missing %s; run `LEAN_NUM_THREADS=1 lake build lean-fmt lean-fmt-tests` first\n' \
       "$binary" >&2
     exit 1
@@ -55,7 +55,7 @@ field() { printf '%s' "$2" | tr ' ' '\n' | sed -n "s/^$1=\([0-9]*\)$/\1/p"; }
 
 cd "$mathlib_root"
 while read -r source; do
-  [[ -n "$source" ]] || continue
+  [[ -n $source ]] || continue
   setup="$scratch/setup.json"
 
   if ! LEAN_NUM_THREADS=1 lake setup-file "$source" >"$setup" 2>"$scratch/err"; then
@@ -64,7 +64,7 @@ while read -r source; do
     continue
   fi
   if ! LEAN_NUM_THREADS=1 lake env "$application" __analyze-exact \
-      "$setup" "$source" "$source" 8589934592 >"$scratch/env.json" 2>"$scratch/err"; then
+    "$setup" "$source" "$source" 8589934592 >"$scratch/env.json" 2>"$scratch/err"; then
     skipped=$((skipped + 1))
     printf 'skipped\t%s\tanalyze failed\n' "$source" >>"$report"
     continue
@@ -80,7 +80,7 @@ while read -r source; do
   analyzed=$((analyzed + 1))
   total_units=$((total_units + units))
   total_extending=$((total_extending + extending))
-  [[ "$extending" -eq 0 ]] || modules_with_extension=$((modules_with_extension + 1))
+  [[ $extending -eq 0 ]] || modules_with_extension=$((modules_with_extension + 1))
   printf 'ok\t%s\t%s\n' "$source" "$line" >>"$report"
 done <"$sources"
 

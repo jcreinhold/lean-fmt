@@ -13,7 +13,10 @@ cd "$project"
 # The fixture tracks no toolchain of its own: a stale pin would test the wrong compiler.
 cp "$repo_root/lean-toolchain" "$project/lean-toolchain"
 
-fail() { printf '%s\n' "$1" >&2; exit 1; }
+fail() {
+  printf '%s\n' "$1" >&2
+  exit 1
+}
 
 # 1. The package-level `plugins` entry reaches every module without naming a single `lean_lib`, and
 # the cross-package key literal needs guillemets because `lean-fmt` is not a legal Lean identifier.
@@ -38,8 +41,8 @@ set -e
 [ "$check_status" -eq 1 ] ||
   fail "cross-package check returned $check_status; the fixture has findings, so it must be 1"
 case "$check_out" in
-  *"mode=check"*) ;;
-  *) fail "cross-package check produced no report: $check_out" ;;
+*"mode=check"*) ;;
+*) fail "cross-package check produced no report: $check_out" ;;
 esac
 
 # 4. The plugin is an optimization, never an authority. A syntax-tier rule must return the same
@@ -54,8 +57,8 @@ set -e
 [ "$served" = "$fallback" ] ||
   fail "artifact and frontend disagree downstream: '$served' vs '$fallback'"
 case "$served" in
-  *FMT012*) ;;
-  *) fail "syntax-tier rule did not fire downstream: $served" ;;
+*FMT012*) ;;
+*) fail "syntax-tier rule did not fire downstream: $served" ;;
 esac
 
 # 5. `lake lint` drives the formatter through Lake's own lint-driver protocol, which is what
@@ -82,11 +85,11 @@ set +e
 broken=$(lake exe lean-fmt check --root . Standalone/Broken.lean 2>&1)
 set -e
 case "$broken" in
-  *lean-fmt.module-artifact*) fail 'the module artifact leaked into a broken-source diagnostic' ;;
+*lean-fmt.module-artifact*) fail 'the module artifact leaked into a broken-source diagnostic' ;;
 esac
 case "$broken" in
-  *"Unknown identifier"*) ;;
-  *) fail "the real error stopped being reported: $broken" ;;
+*"Unknown identifier"*) ;;
+*) fail "the real error stopped being reported: $broken" ;;
 esac
 
 printf 'downstream integration ok\n'

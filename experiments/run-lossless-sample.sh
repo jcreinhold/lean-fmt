@@ -31,7 +31,7 @@ elapsed_ms() { awk -v a="$1" -v b="$2" 'BEGIN { printf "%.3f", (b - a) / 1000000
 
 cd "$mathlib_root"
 while IFS= read -r source; do
-  [[ -n "$source" ]] || continue
+  [[ -n $source ]] || continue
   setup="$scratch/setup.json"
   envelope="$scratch/envelope.json"
 

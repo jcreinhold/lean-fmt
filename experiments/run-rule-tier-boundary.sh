@@ -68,10 +68,10 @@ print("  findings=%s status=%-13s codes=%s"
 echo "commit=$(git -C "$repo_root" rev-parse --short HEAD)  toolchain=$(cat "$repo_root/lean-toolchain")"
 echo
 
-echo "=== 1. how many spellings of \"turn FMT001 off\" are there? ==="
+echo '=== 1. how many spellings of "turn FMT001 off" are there? ==='
 echo '$ grep -rn "leanFmt.trailingWhitespace\|trailingWhitespaceEnabled" LeanFmt lakefile.lean'
-grep -rn 'leanFmt\.trailingWhitespace\|trailingWhitespaceEnabled' LeanFmt lakefile.lean \
-  || echo '  (no match: the traced-option spelling is gone; `--ignore` is the only one left)'
+grep -rn 'leanFmt\.trailingWhitespace\|trailingWhitespaceEnabled' LeanFmt lakefile.lean ||
+  echo '  (no match: the traced-option spelling is gone; `--ignore` is the only one left)'
 add_trailing_whitespace
 LEAN_NUM_THREADS=1 lake -R build lean-fmt +LocalSyntax:leanFmtArtifact >/dev/null 2>&1
 echo
@@ -117,12 +117,12 @@ after_trace=$(python3 -c \
 echo "LocalSyntax.olean      after  = $after"
 echo "LocalSyntax.trace hash after  = $after_trace"
 echo
-[[ "$before_trace" != "$after_trace" ]] \
-  && echo "trace:  INVALIDATED -- the module is re-elaborated" \
-  || echo "trace:  unchanged -- editing a rule does not rebuild the target project"
-[[ "$before" != "$after" ]] \
-  && echo "olean:  BYTES CHANGED -- the rule's message is inside an unrelated module's .olean" \
-  || echo "olean:  bytes unchanged -- the rule's message is not in the module's compiled bytes"
+[[ $before_trace != "$after_trace" ]] &&
+  echo "trace:  INVALIDATED -- the module is re-elaborated" ||
+  echo "trace:  unchanged -- editing a rule does not rebuild the target project"
+[[ $before != "$after" ]] &&
+  echo "olean:  BYTES CHANGED -- the rule's message is inside an unrelated module's .olean" ||
+  echo "olean:  bytes unchanged -- the rule's message is not in the module's compiled bytes"
 
 # A rule edit changing nothing is only meaningful next to a projection edit changing something;
 # `tests/compiler/run.sh` runs that control as a permanent gate.

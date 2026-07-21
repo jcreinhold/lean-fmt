@@ -148,7 +148,7 @@ explain_expect() {
     printf 'explain %s: expected exit %s, got %s\n%s\n' "$code" "$expect" "$actual" "$out" >&2
     exit 1
   fi
-  if [[ -n "$needle" && "$out" != *"$needle"* ]]; then
+  if [[ -n $needle && $out != *"$needle"* ]]; then
     printf 'explain %s: output missing %q\n%s\n' "$code" "$needle" "$out" >&2
     exit 1
   fi

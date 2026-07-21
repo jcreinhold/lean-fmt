@@ -20,11 +20,14 @@ toolchain="$repo_root/lean-toolchain"
 
 failures=0
 ok() { printf '  ok   %s\n' "$1"; }
-bad() { printf '  FAIL %s\n' "$1" >&2; failures=$((failures + 1)); }
+bad() {
+  printf '  FAIL %s\n' "$1" >&2
+  failures=$((failures + 1))
+}
 # Assert on a value rather than on an exit status, so a failure prints what it actually saw.
 expect() {
   local label=$1 expected=$2 actual=$3
-  if [[ "$expected" == "$actual" ]]; then ok "$label"; else
+  if [[ $expected == "$actual" ]]; then ok "$label"; else
     bad "$label"
     printf '       expected: %s\n       actual:   %s\n' "$expected" "$actual" >&2
   fi
@@ -148,10 +151,10 @@ new_project "$sym"
 mkdir -p "$sym/real" "$sym/dir"
 printf 'module\n' >"$sym/real/Real.lean"
 printf 'module\n' >"$sym/dir/Dir.lean"
-ln -s ../real/Real.lean "$sym/dir/Link.lean"     # a symlinked *file* inside the tree
-ln -s .. "$sym/dir/loop"                          # a directory symlink pointing at its own ancestor
+ln -s ../real/Real.lean "$sym/dir/Link.lean" # a symlinked *file* inside the tree
+ln -s .. "$sym/dir/loop"                     # a directory symlink pointing at its own ancestor
 printf 'module\n' >"$work/outside.lean"
-ln -s "$work/outside.lean" "$sym/Outside.lean"    # a symlink whose target is outside the root
+ln -s "$work/outside.lean" "$sym/Outside.lean" # a symlink whose target is outside the root
 sym_selected=$(selected "$sym")
 # The walk does not descend into directory symlinks, so a loop terminates and contributes nothing.
 # That is the property worth pinning: not that symlinks are "handled", but that the walk is finite.
@@ -188,7 +191,10 @@ printf '!*.tmp.lean\n' >"$ign/keep/.gitignore"
 expect "a nearer .gitignore negation re-includes a file the outer one excluded" \
   "keep/Keep.lean keep/Scratch.tmp.lean lakefile.lean" "$(selected "$ign")"
 expect "respect-gitignore = false turns every git source off at once" "6" \
-  "$(printf 'respect-gitignore = false\n' >"$ign/.lean-fmt.toml"; selected "$ign" | wc -w | tr -d ' ')"
+  "$(
+    printf 'respect-gitignore = false\n' >"$ign/.lean-fmt.toml"
+    selected "$ign" | wc -w | tr -d ' '
+  )"
 rm "$ign/.lean-fmt.toml"
 ign_show=$(show "$ign" "$ign/keep/Keep.lean")
 if printf '%s' "$ign_show" | python3 -c '
@@ -284,18 +290,18 @@ expect "the walk reaches the deepest directory of a 1,200-file tree" "0" \
 # directory *list* instead of the path's own ancestry would show up here and nowhere else.
 expect "a directory with its own config uses it" "80" \
   "$("$application" config show "$big/pkg04/mod090/F0.lean" --root "$big" --json 2>/dev/null |
-     python3 -c 'import json,sys; print(next(s["value"] for s in json.load(sys.stdin)["settings"] if s["key"]=="format.line-width"))')"
+    python3 -c 'import json,sys; print(next(s["value"] for s in json.load(sys.stdin)["settings"] if s["key"]=="format.line-width"))')"
 expect "a sibling directory without one falls back to the root, not to its neighbor" "100" \
   "$(printf '%s' "$deep" | python3 -c 'import json,sys; print(next(s["value"] for s in json.load(sys.stdin)["settings"] if s["key"]=="format.line-width"))')"
 expect "the ignored 200-file subtree is pruned at scale" "2" \
   "$("$application" config show "$big/ignored/I0.lean" --root "$big" --json 2>/dev/null |
-     python3 -c 'import json,sys; print(json.load(sys.stdin)["gate"])')"
+    python3 -c 'import json,sys; print(json.load(sys.stdin)["gate"])')"
 discovery_ms=$(sed -nE 's/^phase\.discovery_ms=([0-9]+)$/\1/p' "$work/big.err")
 printf '  info discovery over 1,200 files with 10 nested configs: %s ms\n' "$discovery_ms"
 # A bound, not a benchmark. The claim RCD-FINAL owes is that one walk is not on the critical path; a
 # walk per file would be. The threshold is loose so this fails on a design regression rather than on a
 # slow machine -- per-file walking would put this in the tens of seconds, not near the bound.
-if [[ "$discovery_ms" -lt 2000 ]]; then
+if [[ $discovery_ms -lt 2000 ]]; then
   ok "discovery stays well under the 2s design bound"
 else
   bad "discovery took ${discovery_ms}ms over 1,200 files -- suspect a walk per file"
@@ -306,7 +312,7 @@ ln -s .. "$big/pkg04/loop"
 loop_ms=$(LEAN_FMT_PROFILE_PHASES=1 "$application" config show "$big/pkg04/mod099/F9.lean" \
   --root "$big" --json 2>&1 >/dev/null | sed -nE 's/^phase\.discovery_ms=([0-9]+)$/\1/p')
 printf '  info discovery over the same tree with a symlink loop in it: %s ms\n' "$loop_ms"
-if [[ "$loop_ms" -lt 2000 ]]; then
+if [[ $loop_ms -lt 2000 ]]; then
   ok "a symlink loop inside a large tree does not multiply the walk"
 else
   bad "a symlink loop multiplied the walk (${loop_ms}ms) -- directory symlinks are being followed"
@@ -314,5 +320,5 @@ fi
 
 printf -- '--- result ---\n'
 printf 'failures=%s\n' "$failures"
-[[ "$failures" -eq 0 ]] || exit 1
+[[ $failures -eq 0 ]] || exit 1
 printf 'lean-fmt configuration discovery acceptance tests passed\n'
