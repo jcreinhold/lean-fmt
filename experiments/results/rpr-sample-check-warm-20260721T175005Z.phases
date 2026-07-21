@@ -1,0 +1,9 @@
+phase.discovery_ms=301
+phase.workspace_load_ms=585
+phase.selection_snapshot_ms=4
+phase.import_findings_ms=772
+phase.cache_epoch_ms=575
+phase.cache_lookup_ms=8819
+cache.targets=62
+cache.index_hits=62
+cache.served=62

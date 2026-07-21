@@ -7,7 +7,8 @@ usage: profile-run.sh --name NAME --project-root ROOT --build-state STATE
   --cache-state STATE --sources FILE [--output-dir DIR] -- COMMAND [ARG...]
 
 The command must process exactly the sorted, duplicate-free source manifest. It may emit
-`phase.<name>_ms=<integer>` lines; those lines are retained separately as phase evidence.
+`phase.<name>_ms=<integer>` and `cache.<name>=<integer>` lines; those lines are retained separately
+as phase evidence.
 EOF
 }
 
@@ -195,9 +196,14 @@ swap_delta_kib=$((swap_after_kib - swap_before_kib))
 pressure_level_after=$(pressure_level)
 pressure_after=$(memory_pressure -Q 2>/dev/null | tail -1 || true)
 output_digest=$(shasum -a 256 "$stdout_file" | awk '{print $1}')
+# `cache.<name>=<count>` lines are retained alongside `phase.<name>_ms`. Wall time cannot separate
+# "the cache served the run" from "the page cache was warm" — the confound that made `ruff-16` read a
+# whole-project invalidation as an in-process reuse defect (`ruff-16b` `RCI-SPEC`). A profile that
+# keeps the timings and drops the counts preserves exactly that ambiguity, so both channels are
+# evidence here.
 {
-  grep -E '^phase\.[A-Za-z0-9_.-]+_ms=[0-9]+$' "$stdout_file" || true
-  grep -E '^phase\.[A-Za-z0-9_.-]+_ms=[0-9]+$' "$stderr_file" || true
+  grep -E '^(phase\.[A-Za-z0-9_.-]+_ms|cache\.[A-Za-z0-9_.-]+)=[0-9]+$' "$stdout_file" || true
+  grep -E '^(phase\.[A-Za-z0-9_.-]+_ms|cache\.[A-Za-z0-9_.-]+)=[0-9]+$' "$stderr_file" || true
 } >"$phases_file"
 {
   printf 'exit_status=%s\n' "$status"

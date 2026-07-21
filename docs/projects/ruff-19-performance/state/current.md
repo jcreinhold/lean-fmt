@@ -1,19 +1,46 @@
 ---
 kind: state
-first_unresolved: 01-baseline
+first_unresolved: 02-optimize
 ---
 
 # Current state
 
-This stack is planned and has not begun. Its external prerequisite stacks are
-`ruff-04-formatter-product`, `ruff-12-rule-lifecycle`, `ruff-17-lsp`. Before starting, confirm those roadmaps are verified and their live
-implementation still matches recorded state.
+`RPR-SPEC` is verified. The workloads, states, gates, and phase schema are frozen at `369057d`
+(`results/01-baseline.md`). Its external prerequisite stacks are `ruff-04-formatter-product`,
+`ruff-12-rule-lifecycle`, `ruff-17-lsp`; `ruff-17`'s recorded LSP numbers were re-measured live during
+`01-baseline` and hold within 1.5%.
 
 | Prompt | Claim | Status | Depends on |
 | --- | --- | --- | --- |
-| 01-baseline | RPR-SPEC | planned | — |
+| 01-baseline | RPR-SPEC | verified | — |
 | 02-optimize | RPR-IMPL | planned | RPR-SPEC |
 | 03-regressions | RPR-FINAL | planned | RPR-IMPL |
+
+## What `01-baseline` froze, and the one thing it found
+
+`evidence/01-workloads.md` holds environment, five workloads, build/cache states, baselines, six
+gates, and the measurement practice. `notes/01-phase-schema.md` holds the profile channel's schema.
+The finding that shaped both:
+
+- **The phase schema explains fast runs and says nothing about slow ones.** Accounted fraction —
+  emitted `phase.*` values against wall time — is 97.3% on `mathlib-sample` warm and **0.9%** on `self`
+  `format --check` cold (43,506 ms). Every cold run's missing time sits in one unbracketed region,
+  `withExactRun` and the per-snapshot loop (`Application.lean:1431-1468`), which holds the exact
+  frontend, every rule tier above import, layout, validation, and cache writes.
+- So the schema is a specification with a test, not a list: thirteen names are assigned to sites that
+  exist today, and **G3 requires the accounted fraction to reach 90% on every frozen workload**.
+  `RPR-IMPL` closes G3 before optimizing anything cold — until then there is nothing to attribute a
+  win to.
+- **Warm on a large project is `cache_lookup`**: 8,187–8,994 ms of 10,863–11,706 with 62/62 entries
+  already served. `ruff-16b`'s inherited result, reproduced. Serving more entries cannot help.
+- **The envelope has 9.7× headroom.** Worst peak aggregate RSS 864,032 KiB = 0.82 GiB; zero swap;
+  pressure never left 1.
+- **"~61.7 MiB" in the completion contract is the isolated printer's envelope, not the
+  application's.** Re-measured at 64.6 MiB (source grew 7.5%, toolchain moved). The application's peak
+  is 441–864 MiB. Do not merge them.
+- Two open items are carried, not closed: no workload is in the `formatter-integrated-built` state,
+  and the adversarial `PositionIndex`-build fixture `ruff-15` asked for does not exist, because the
+  phase that would measure it does not exist either. Both are `RPR-IMPL`'s.
 
 ## Inherited from `ruff-15-reporting` (verified)
 

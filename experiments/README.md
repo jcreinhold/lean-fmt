@@ -20,5 +20,11 @@ experiments/profile-run.sh \
 ```
 
 The wrapper always sets `LEAN_NUM_THREADS=1`. Its default hard stops are 8 GiB aggregate RSS and
-256 MiB new swap. A command may print `phase.<name>_ms=<integer>` lines to make its internal phase
-times separately inspectable; the full command output remains authoritative.
+256 MiB new swap. A command may print `phase.<name>_ms=<integer>` and `cache.<name>=<integer>` lines to make its
+internal phase times and cache accounting separately inspectable; the full command output remains
+authoritative. `lean-fmt` emits both under `LEAN_FMT_PROFILE_PHASES=1`, which the wrapper does not
+set for you — a profile of the phase schema has to ask for it.
+
+`docs/projects/ruff-19-performance/notes/01-phase-schema.md` is the schema those names belong to, and
+`evidence/01-workloads.md` in the same stack is the frozen workload set this repository measures
+against.
