@@ -1215,7 +1215,10 @@ private def testLakeTraceCharacterization : IO Unit := do
       ensure (recomputeImportAllArts importeeFacts == recorded)
         s!"Lake's importAllArts mix no longer reproduces from the importee's own trace outputs: \
           {importer.moduleName} records {recorded} for {importee}, recomputed \
-          {recomputeImportAllArts importeeFacts}"
+          {recomputeImportAllArts importeeFacts}. A **stale trace** says this too: `lake build` \
+          skips non-default targets, so editing a module that `check-modules` imports leaves its \
+          old trace on disk and this walk reads it. Run `lake build check-modules` and retry before \
+          concluding Lake's trace shape changed."
       checked := checked + 1
   ensure (checked > 0)
     "no (importer, importee) pair was checked; the deps.imports shape may have changed"

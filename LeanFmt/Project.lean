@@ -9,6 +9,7 @@ module
 import all LeanFmt.Config
 import all LeanFmt.Digest
 import all LeanFmt.Discovery
+import all LeanFmt.Profile
 
 import Lake.Build.Module
 import all Lake.Build.Run
@@ -21,6 +22,8 @@ import all Lake.Load.Workspace
 open System
 
 namespace LeanFmt.Internal.Project
+
+open LeanFmt.Internal.Profile
 
 structure SourceTarget where
   private mk ::
@@ -461,13 +464,47 @@ private def setupJob (target : SourceTarget) : Lake.FetchM (Lake.Job Lean.Module
   let header ← Lean.parseImports' target.source target.relativePath
   Lake.setupServerModule target.relativePath target.path (some header)
 
+/- Ask `isCurrent`'s question and keep the answer's *value*.
+
+`checkNoBuild` computes the build and returns whether it succeeded, discarding what it produced
+(`Lake/Build/Run.lean:405-414`); `BuildResult.isOk` is definitionally `out.isOk` (`:320-321`), so the
+`Bool` it returns is exactly "`out` was `.ok`". Every caller that then wants the value has to run the
+identical graph a second time to get it.
+
+`RPR-IMPL` measured that second traversal: over 34 modules, the probe cost 3,676 ms and the build that
+repeated it 3,663 ms — the same work, twice, for 16% of a cold run
+(`docs/projects/ruff-19-performance/results/02-optimize.md` §2). This returns `out` itself, so the
+up-to-date case traverses once.
+
+It is written out rather than delegated to `checkNoBuild` because there is nothing to delegate to:
+Lake exposes the decision or the value, never both. The pieces below are Lake's own, reached through
+the exact-toolchain `import all` boundary, exactly as `batchModuleStatuses` reaches them. The buffer
+swap is `isCurrent`'s, for `isCurrent`'s reason: this builds its own monitor from a hardcoded
+`noBuild` config and would otherwise redraw a spinner over our stderr. -/
+def noBuildValue? {α : Type} (workspace : Lake.Workspace)
+    (build : Lake.FetchM (Lake.Job α)) : IO (Option α) := do
+  let buffer ← IO.mkRef { : IO.FS.Stream.Buffer }
+  let stdout ← IO.setStdout (.ofBuffer buffer)
+  let stderr ← IO.setStderr (.ofBuffer buffer)
+  try
+    let cfg : Lake.BuildConfig := { noBuild := true, verbosity := .quiet }
+    let jobs ← Lake.mkJobQueue
+    let mctx ← Lake.mkMonitorContext cfg jobs
+    let bctx ← Lake.mkBuildContext' workspace cfg jobs
+    let job ← Lake.Workspace.startBuild bctx build
+    let result ← Lake.monitorBuild mctx job
+    -- `finalizeBuild` is deliberately not called: it is the one that turns a stale `noBuild` into
+    -- `IO.Process.exit` (`:367-368`). Staleness is a `none` here, and the caller builds.
+    return result.out.toOption
+  finally
+    discard <| IO.setStdout stdout
+    discard <| IO.setStderr stderr
+
 def exactSetup (snapshot : Snapshot) (target : SourceTarget) : IO Lean.ModuleSetup := do
-  let current ← isCurrent snapshot.workspace (setupJob target)
-  if current then
-    snapshot.workspace.runBuild (cfg := { noBuild := true, verbosity := .quiet })
-      (setupJob target)
-  else
-    snapshot.workspace.runBuild (cfg := { verbosity := .quiet }) (setupJob target)
+  match ← withPhase "setup_probe" <| noBuildValue? snapshot.workspace (setupJob target) with
+  | some setup => return setup
+  | none => withPhase "setup_build" <|
+      snapshot.workspace.runBuild (cfg := { verbosity := .quiet }) (setupJob target)
 
 private def moduleConfiguration (mod : Lake.Module) : String :=
   String.intercalate "\u0000" [

@@ -110,7 +110,19 @@ rather than O(findings) — has never been measured at all.
    before picture; this is the after. Below 90%, the schema is not finished regardless of how many
    names it has.
 
-## 6. Rejected: a `--profile` flag
+## 6. Revised by `RPR-IMPL`
+
+§4's name list is the specification this note froze; it is **not** what was built, and
+`notes/02-instrumentation.md` is the built schema. Four names in §4 do not exist, each retired against
+a measurement rather than a preference — the three rule-tier phases (the whole registry is 11 ms),
+`layout_fit` (`LeanFmt.Doc` is pure, and making it `IO` for a timer costs more than the timer is
+worth), `config` (5 ms on this repository), and `parse`/`capture` (not separable inside the child).
+Three names §4 did not anticipate do exist, and one of them is where the optimization was found.
+
+§5's invariants and the 90% gate survive unchanged, and the gate is met: 90.6% and 94.8% on the two
+cold workloads, from 0.9% and 46.1%.
+
+## 7. Rejected: a `--profile` flag
 
 Considered and not adopted. A CLI flag would make phase timing a public surface with a compatibility
 obligation, and `roadmap.md`'s stop rules forbid exposing execution strategy through the CLI at all —

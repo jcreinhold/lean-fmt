@@ -13,8 +13,47 @@ first_unresolved: 02-optimize
 | Prompt | Claim | Status | Depends on |
 | --- | --- | --- | --- |
 | 01-baseline | RPR-SPEC | verified | — |
-| 02-optimize | RPR-IMPL | planned | RPR-SPEC |
+| 02-optimize | RPR-IMPL | in progress | RPR-SPEC |
 | 03-regressions | RPR-FINAL | planned | RPR-IMPL |
+
+## `RPR-IMPL` progress (not yet verified)
+
+Instrumentation is built and the first optimization landed. `notes/02-instrumentation.md` is the
+schema as built, including four names `RPR-SPEC` specified that measurement retired.
+
+**Done.**
+
+- **G3 is met.** Accounted fraction went 0.9% → **90.6%** on `self` `format --check` cold and
+  46.1% → **94.8%** on `mathlib-sample` `check` cold. The profile channel moved to its own leaf module
+  `LeanFmt/Profile.lean` so it could bracket `Project.exactSetup`, which `Application` imports.
+- **One duplicate traversal removed.** `Project.exactSetup` ran the module's Lake setup graph twice per
+  file — `isCurrent` computed the value and returned a `Bool`, then `runBuild` recomputed it.
+  `Project.noBuildValue?` returns what the probe already built. `exact_setup` **7,272 ± 100 ms →
+  3,612 ± 55 ms** over 34 modules, a 50.3% cut. The same duplication in `officialArtifacts` is
+  removed the same way, and `withoutProcessOutput` went with it.
+- **The probe cannot simply be dropped**, and Lake's source says why: under `noBuild`, a stale target
+  makes `finalizeBuild` call `IO.Process.exit` (`Lake/Build/Run.lean:367-368`). `noBuildValue?` stops
+  short of `finalizeBuild`, so staleness is a `none` instead of a dead process.
+- **Two suspicions retired by measuring.** JSON round-tripping a ~10×-source projection costs
+  `envelope_decode` 20–27 ms and `child_encode` 0 ms across 34 modules. The rule registry above the
+  import tier is 11 ms across 34 files and 1 ms across 62. Neither is worth touching.
+
+**Found, not yet acted on.** On `mathlib-sample` `check` cold, the two largest phases are
+`cache_write` **9,909 ms (38% of the run)** and `module_evidence` **6,393 ms (25%)** — 63% of a cold
+`check` on a real project, both invisible before this prompt. `exact_child` is 3,227 ms there, because
+61 of 62 files never reach the frontend.
+
+**Still open in this prompt.** The `cache_write`/`module_evidence` pair; watch and LSP profiling; the
+adversarial `PositionIndex`-build fixture; a `formatter-integrated-built` workload; and the two-session
+concurrency test, which the work order puts after all single-session work.
+
+**One check is unverified, for an environmental reason.** `tests/cache/run.sh` was killed by the OS
+(`Killed: 9`, exit 137) at three different points across four attempts, while the machine sat at
+8.7 GiB of 10 GiB swap with another session's `lean` holding 1.9 GiB. `tests/compiler` and
+`tests/downstream` showed the identical signature and passed on retry; the same `lean-fmt check`
+invocation passes standalone every time. Not attributable to this change, and not yet re-run clean.
+Every profiled run reported a swap delta of 0 and peak RSS ≤ 0.85 GiB, so no measurement in this stack
+breached the envelope.
 
 ## What `01-baseline` froze, and the one thing it found
 

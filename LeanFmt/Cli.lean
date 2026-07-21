@@ -14,7 +14,7 @@ open System
 
 namespace LeanFmt.Internal.Cli
 
-open LeanFmt.Internal LeanFmt.Internal.Application
+open LeanFmt.Internal LeanFmt.Internal.Application LeanFmt.Internal.Profile
 
 /-- How a run's report is rendered (`ruff-15` RRF-IMPL, frozen in `notes/01-report-formats.md` §2).
 
@@ -1218,9 +1218,14 @@ generation is *the same thing* a plain run is — there is no second execution o
 (`notes/01-watch-generations.md` §3, §4). -/
 private unsafe def runOneGeneration (command : FileCommand) : IO UInt32 := do
   let outcome ← execute command.run
-  emitReport command.outputFile?
-    (formatReport command.outputFormat outcome.positions (← rootUri command.run.root)
+  -- The one presentation phase on the profile channel. `ruff-15` measured rendering as linear in
+  -- report size and *not* a scale risk, so this exists to keep the accounted fraction honest rather
+  -- than because it is suspected — a phase schema that omits a step because someone expects it to be
+  -- cheap cannot notice the day it stops being cheap.
+  let rendered ← withPhase "render_report" <|
+    pure (formatReport command.outputFormat outcome.positions (← rootUri command.run.root)
       outcome.report)
+  emitReport command.outputFile? rendered
   if command.statistics then renderStatistics outcome.report
   return reportExitCode (command.run.mode == .fix || command.run.writesFormat) outcome.report
 

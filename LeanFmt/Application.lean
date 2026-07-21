@@ -11,6 +11,7 @@ import all LeanFmt.Config
 import all LeanFmt.Edit
 import all LeanFmt.Imports
 import all LeanFmt.Printer
+import all LeanFmt.Profile
 import all LeanFmt.Project
 import all LeanFmt.Semantic
 import all LeanFmt.Suppression
@@ -27,6 +28,8 @@ import Std.Sync.CancellationToken
 open System
 
 namespace LeanFmt.Internal.Application
+
+open LeanFmt.Internal.Profile
 
 inductive RunMode where
   | check
@@ -161,26 +164,21 @@ private def decodeFacetDescriptor? (encoded : String) : Option Lake.Artifact := 
     mtime := 0
   }
 
-private def withoutProcessOutput (action : IO α) : IO α := do
-  let buffer ← IO.mkRef { : IO.FS.Stream.Buffer }
-  let stdout ← IO.setStdout (.ofBuffer buffer)
-  let stderr ← IO.setStderr (.ofBuffer buffer)
-  try action finally
-    discard <| IO.setStdout stdout
-    discard <| IO.setStderr stderr
-
 /- Fetch the target workspace's registered formatter facet jobs together under Lake's no-build
 policy. Returned descriptors never escape this operation: every content hash is recomputed and
 every payload is matched to its immutable module/source snapshot. A missing, stale, corrupt, or
 failing facet is an ordered miss, never an extractor launch or a partial batch failure.
 
-**`Project.isCurrent` before `runBuild`, and the `catch` cannot replace it.** Under `noBuild`, a target
-that is out of date makes `finalizeBuild` call `IO.Process.exit noBuildCode` — `Lake/Build/Run.lean:368`,
-and `noBuildCode` is 3 (`:275`). That is a process exit, not an exception: nothing below catches it,
-`withoutProcessOutput` is still holding stdout and stderr in a buffer that is never flushed, and the
-run dies silently mid-batch. `isCurrent` asks the same question and returns a `Bool`, so it is the only
-safe way to reach `runBuild` here. It runs outside `withoutProcessOutput`, which now covers only the
-`runBuild` whose failure reports this operation treats as a miss.
+**`Project.noBuildValue?`, and a `catch` cannot replace it.** Under `noBuild`, a target that is out of
+date makes `finalizeBuild` call `IO.Process.exit noBuildCode` — `Lake/Build/Run.lean:367-368`, and
+`noBuildCode` is 3 (`:275`). That is a process exit, not an exception: nothing below catches it and the
+run dies silently mid-batch. `noBuildValue?` stops short of `finalizeBuild`, so staleness reaches this
+operation as a `none` — an ordered miss like any other — and it owns the output buffering the Lake
+monitor needs.
+
+This asked `Project.isCurrent` and then re-ran the identical graph under `runBuild`, because the probe
+returns a `Bool` and threw the built value away. `RPR-IMPL` measured the same duplication on the module
+setup path at 3.7 s per cold 34-module run and removed both.
 
 This operation once asked Lake directly and could not have been caught doing it: every registry rule
 was `input := .source`, so `RulePlan.requiresSyntax` was always `false` and no product path called this
@@ -203,18 +201,19 @@ def officialArtifacts (workspace : Lake.Workspace)
           | .error _ state => .ok none state
     return Lake.Job.collectArray jobs "lean-fmt official artifacts"
   try
-    unless ← Project.isCurrent workspace build do
-      return Array.replicate snapshots.size none
-    withoutProcessOutput do
-      let encoded ← workspace.runBuild (cfg := { noBuild := true, verbosity := .quiet }) build
-      (snapshots.zip encoded).mapM fun (snapshot, encoded?) => do
-        let some mod := snapshot.module?
-          | return none
-        let some encoded := encoded?
-          | return none
-        let some facet := decodeFacetDescriptor? encoded
-          | return none
-        readFacet? facet mod.name snapshot.source
+    -- One traversal, not two. This asked `isCurrent` and then re-ran the identical graph under
+    -- `runBuild` to get the value the probe had already computed and discarded; `noBuildValue?`
+    -- returns that value, and `none` is the staleness the `unless` used to catch (`RPR-IMPL`).
+    let some encoded ← Project.noBuildValue? workspace build
+      | return Array.replicate snapshots.size none
+    (snapshots.zip encoded).mapM fun (snapshot, encoded?) => do
+      let some mod := snapshot.module?
+        | return none
+      let some encoded := encoded?
+        | return none
+      let some facet := decodeFacetDescriptor? encoded
+        | return none
+      readFacet? facet mod.name snapshot.source
   catch _ =>
     return Array.replicate snapshots.size none
 
@@ -345,20 +344,27 @@ private def ExactRun.envelope (run : ExactRun)
     (captureOccurrences : Bool := false)
     (cancel? : Option Std.CancellationToken := none) : IO AnalysisEnvelope := do
   let index ← run.nextPathIndex
-  let setupResult ← exactSetupResult run.project snapshot
-  let setup := match setupResult with
-    | .ok setup => setup
-    | .error _ => diagnosticSetup snapshot
-  let setupPath ← writeSetup run.temporary index setup
-  let sourcePath := run.temporary / s!"{index}.lean"
-  IO.FS.writeFile sourcePath snapshot.source
+  -- Three phases, because `RPR-SPEC` found this operation reported as one unnamed 43-second gap and
+  -- the three do entirely different work: `exact_setup` resolves the module's Lake setup in *this*
+  -- process, `exact_child` is the frontend round trip in another one, and `envelope_decode` parses
+  -- what came back. Only the middle one is elaboration; the outer two are this process's own cost and
+  -- are the ones an optimization here could remove.
+  let (setupResult, setupPath, sourcePath) ← withPhase "exact_setup" do
+    let setupResult ← exactSetupResult run.project snapshot
+    let setup := match setupResult with
+      | .ok setup => setup
+      | .error _ => diagnosticSetup snapshot
+    let setupPath ← writeSetup run.temporary index setup
+    let sourcePath := run.temporary / s!"{index}.lean"
+    IO.FS.writeFile sourcePath snapshot.source
+    pure (setupResult, setupPath, sourcePath)
   try
     if (← residentKiB) * 1024 >= run.maxBytes then
       throw <| IO.userError s!"resource envelope exhausted before exact frontend child \
         (limit {run.maxBytes} bytes)"
     let overrideName := if validator then "LEAN_FMT_TEST_VALIDATOR" else "LEAN_FMT_TEST_ANALYZER"
     let analyzer := (← IO.getEnv overrideName).map FilePath.mk |>.getD run.application
-    let output ← runBounded {
+    let output ← withPhase "exact_child" <| runBounded {
       cmd := analyzer.toString
       -- The trailing capture token encodes the demanded semantic capabilities: "0" none, "1" the two
       -- cheap sub-facts (notations + diagnostics), "2" those plus the info-tree occurrence fold. A
@@ -372,12 +378,20 @@ private def ExactRun.envelope (run : ExactRun)
     unless output.exitCode == 0 do
       throw <| IO.userError s!"exact frontend child failed for {snapshot.relativePath}: \
         {output.stderr.trimAscii}"
-    let .ok json := Lean.Json.parse output.stdout
-      | throw <| IO.userError s!"exact frontend child returned invalid JSON for \
-        {snapshot.relativePath}"
-    let .ok envelope := Lean.fromJson? json
-      | throw <| IO.userError s!"exact frontend child returned an invalid result for \
-        {snapshot.relativePath}"
+    -- The child's own phase records ride back on its stderr, which is captured rather than inherited.
+    -- Forwarding them here is what makes the elaboration/encode split visible from a parent profile;
+    -- without it the child's internal cost is a single opaque `exact_child`.
+    if ← Profile.enabled then
+      for line in output.stderr.splitOn "\n" do
+        if line.startsWith "phase." then IO.eprintln line
+    let envelope ← withPhase "envelope_decode" do
+      let .ok json := Lean.Json.parse output.stdout
+        | throw <| IO.userError s!"exact frontend child returned invalid JSON for \
+          {snapshot.relativePath}"
+      let .ok envelope := Lean.fromJson? json
+        | throw <| IO.userError s!"exact frontend child returned an invalid result for \
+          {snapshot.relativePath}"
+      pure (envelope : AnalysisEnvelope)
     if let .error setupError := setupResult then
       if envelope.artifact?.isSome then
         throw <| IO.userError s!"could not establish the exact Lake setup for \
@@ -526,8 +540,14 @@ private def canonicalAnalysis (snapshot : SourceSnapshot) (renderCanonical : Boo
     -- known to describe these bytes before anything renders it.
     if renderCanonical then
       if let some artifact := analysis.artifact? then
+        -- `layout` is the whole render: `LeanFmt.Printer` building the document and `LeanFmt.Doc`
+        -- laying it out, including the phase-2 reflow fit tests. It is not split further here
+        -- because `Doc` is pure and reading a clock inside it would make it `IO`; the fit-test
+        -- sub-phase is measured out-of-production by `tests/layout/bench.sh` instead
+        -- (`notes/02-instrumentation.md` §3).
         return semantic.withCanonical
-          (← renderCanonicalText snapshot.config.format.lineWidth snapshot.source artifact)
+          (← withPhase "layout" <|
+            renderCanonicalText snapshot.config.format.lineWidth snapshot.source artifact)
     return semantic
   | none => throw <| IO.userError s!"invalid exact analysis for {snapshot.relativePath}"
 
@@ -1064,7 +1084,8 @@ private def fixFile (run : ExactRun) (plan : RulePlan) (unsafeFixes : Bool)
     -- no canonical text: the question is whether these bytes elaborate, and rendering a layout for a
     -- candidate nothing will print is wasted work.
     let candidate := snapshot.withSource output
-    let validation ← run.analyzeSnapshot candidate (renderCanonical := false) (validator := true)
+    let validation ← withPhase "validation" <|
+      run.analyzeSnapshot candidate (renderCanonical := false) (validator := true)
     if let some report := validationReport snapshot findings validation then
       return report
     match ← publishAtomic snapshot.path snapshot.source output with
@@ -1105,7 +1126,8 @@ private def formatFile (run : ExactRun) (plan : RulePlan) (unsafeFixes : Bool)
     -- elaborate is rejected, never published. No canonical render — the question is only whether these
     -- bytes elaborate.
     let candidate := snapshot.withSource output
-    let validation ← run.analyzeSnapshot candidate (renderCanonical := false) (validator := true)
+    let validation ← withPhase "validation" <|
+      run.analyzeSnapshot candidate (renderCanonical := false) (validator := true)
     if let some report := validationReport snapshot findings validation then
       return report
     match ← publishAtomic snapshot.path snapshot.source output with
@@ -1249,22 +1271,18 @@ def PositionIndex.ofSource (path : String) (normalized : String) (findings : Arr
     let offsets := findings.flatMap fun finding => #[finding.range.start, finding.range.stop]
     ⟨Std.HashMap.emptyWithCapacity.insert path (positionsOf normalized offsets)⟩
 
-private def recordPhase (name : String) (started finished : Nat) : IO Unit := do
-  if (← IO.getEnv "LEAN_FMT_PROFILE_PHASES") == some "1" then
-    IO.eprintln s!"phase.{name}_ms={(finished - started) / 1000000}"
+/-- `resolvePositions` under the `positions` phase.
 
-private def recordDuration (name : String) (nanos : Nat) : IO Unit := do
-  if (← IO.getEnv "LEAN_FMT_PROFILE_PHASES") == some "1" then
-    IO.eprintln s!"phase.{name}_ms={nanos / 1000000}"
+`ruff-15` measured the index's *lookups* and explicitly left its **build** unmeasured — `report-bench`
+constructs the index before any clock starts (`LeanFmtTest.lean`). The build is the one part of
+rendering that is O(source bytes) rather than O(findings), so it is the part a pathological source
+could make expensive, and it had never been timed. This is where.
 
-/- Entry-level cache accounting on the existing profile channel. Wall time alone cannot distinguish
-"the cache worked" from "the OS page cache was warm", which is how `ruff-16` misread a
-whole-project invalidation as an in-process reuse defect (`ruff-16b` `RCI-SPEC`). Every claim about
-invalidation is reported as counts. This is a diagnostic channel, not a reporting surface: it is gated
-on the same environment variable as `phase.*`, writes to stderr, and never enters `RunReport`. -/
-private def recordCount (name : String) (value : Nat) : IO Unit := do
-  if (← IO.getEnv "LEAN_FMT_PROFILE_PHASES") == some "1" then
-    IO.eprintln s!"cache.{name}={value}"
+Lean is strict, so binding the result inside the phase evaluates it inside the phase; nothing here
+relies on the caller forcing it. -/
+private def profiledPositions (snapshots : Array SourceSnapshot) (files : Array FileReport) :
+    IO PositionIndex :=
+  withPhase "positions" <| pure (resolvePositions snapshots files)
 
 /-- What one run produced: the canonical report, and the line/column resolution presentation needs to
 render it. Two values rather than one enriched report, because `RunReport` is a compatibility surface
@@ -1393,10 +1411,10 @@ def execute (request : RunRequest) : IO RunOutcome := do
       for (((snapshot, cached?), importReport), plan) in
           ((snapshots.zip cached).zip importReports).zip plans do
         if let some analysis := cached? then
-          files := files.push (← previewFile previewMode plan request.unsafeFixes
-            importReport.1 importReport.2 snapshot analysis)
-      return { report := summarize request.mode.toString files
-               positions := resolvePositions snapshots files }
+          files := files.push (← withPhase "rules" <| previewFile previewMode plan
+            request.unsafeFixes importReport.1 importReport.2 snapshot analysis)
+      let positions ← profiledPositions snapshots files
+      return { report := summarize request.mode.toString files, positions }
   let evidenceStarted ← IO.monoNanosNow
   let evidence ← Project.moduleEvidence project
   let evidenceFinished ← IO.monoNanosNow
@@ -1425,9 +1443,9 @@ def execute (request : RunRequest) : IO RunOutcome := do
         fun (((snapshot, analysis), ir), plan) =>
           previewFile previewMode plan request.unsafeFixes ir.1 ir.2 snapshot analysis
       if let some cache := cache? then
-        cache.writeAll project snapshots available
-      return { report := summarize request.mode.toString files
-               positions := resolvePositions snapshots files }
+        withPhase "cache_write" <| cache.writeAll project snapshots available
+      let positions ← profiledPositions snapshots files
+      return { report := summarize request.mode.toString files, positions }
   withExactRun project request.maxMemoryGiB fun exactRun => do
     let mut files := #[]
     let mut failures := #[]
@@ -1442,7 +1460,7 @@ def execute (request : RunRequest) : IO RunOutcome := do
               (captureSemantic := demanded == .semantic)
               (captureOccurrences := demandedCaps.occurrences)
         analyses := analyses.push (some analysis)
-        let report ← match request.mode with
+        let report ← withPhase "rules" <| match request.mode with
           | .fix => fixFile exactRun plan request.unsafeFixes ir.1 ir.2 snapshot analysis
           | .check => previewFile .check plan request.unsafeFixes ir.1 ir.2 snapshot analysis
           -- `format` publishes in place by default (`ruff-11d`); `--check` demotes it to the preview.
@@ -1463,9 +1481,9 @@ def execute (request : RunRequest) : IO RunOutcome := do
           diagnostics := #[message]
         }
     if let some cache := cache? then
-      cache.writeAll project snapshots analyses
-    return { report := summarize request.mode.toString files failures
-             positions := resolvePositions snapshots files }
+      withPhase "cache_write" <| cache.writeAll project snapshots analyses
+    let positions ← profiledPositions snapshots files
+    return { report := summarize request.mode.toString files failures, positions }
 
 /-! ## The stdin/stdout stream surface
 
@@ -1782,10 +1800,25 @@ private unsafe def runAnalyzeChild (args : List String) : IO UInt32 := do
     | throw <| IO.userError "invalid ModuleSetup payload"
   let source ← IO.FS.readFile snapshotPath
   -- "0" none, "1" semantic (notations + diagnostics), "2" semantic + the info-tree occurrence fold.
-  let envelope ← analyzeExact setup source displayPath
-    (captureSemantic := captureSemantic == "1" || captureSemantic == "2")
-    (captureOccurrences := captureSemantic == "2")
-  IO.println (Lean.toJson envelope).compress
+  --
+  -- Two phases, on this side of the process boundary where the parent cannot see: `child_analyze` is
+  -- the frontend itself, `child_encode` is turning its result into the JSON the parent reads back. A
+  -- projection runs about 10x the size of its source (`ruff-01`), so the second is not obviously
+  -- small, and the parent's `exact_child` covers both without distinguishing them. These records go
+  -- to stderr, which the parent captures and forwards; stdout is the envelope and takes no passengers.
+  let envelope ← withPhase "child_analyze" <|
+    analyzeExact setup source displayPath
+      (captureSemantic := captureSemantic == "1" || captureSemantic == "2")
+      (captureOccurrences := captureSemantic == "2")
+  let encoded ← withPhase "child_encode" do
+    let encoded := (Lean.toJson envelope).compress
+    -- `utf8ByteSize` is O(1) and forces the encoding inside the phase rather than at the `IO.println`
+    -- below, where it would be attributed to nothing. An empty encoding is also not a thing a real
+    -- envelope produces, so the check is worth its line independent of the timing.
+    if encoded.utf8ByteSize == 0 then
+      throw <| IO.userError "exact frontend produced an empty analysis encoding"
+    pure encoded
+  IO.println encoded
   return 0
 
 private unsafe def runExtractChild (args : List String) : IO UInt32 := do

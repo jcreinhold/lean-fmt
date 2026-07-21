@@ -54,7 +54,15 @@ its baseline and its comparison is measuring that, not the change.
 frozen rather than whatever discovery finds on the day. Equality with live discovery was checked, not
 assumed — `lean-fmt check --output-format json` over this repository reports exactly these 34 paths,
 so freezing the list changed nothing about what is measured. A future directory that discovery starts
-selecting will show up as a diff against this manifest, which is the point of writing it down. It is deliberately run through
+selecting will show up as a diff against this manifest, which is the point of writing it down.
+
+**It happened immediately, and the manifest is deliberately not being regenerated.** `RPR-IMPL` added
+`LeanFmt/Profile.lean`, so `lake lint` now selects 35 files where this manifest names 34. The workload
+stays at 34: every run goes through `run-check-workload.sh`, which passes the manifest's paths
+explicitly, so the corpus growing did not change what any baseline measured and the before/after
+numbers in `results/02-optimize.md` are comparisons of the same work. Regenerating the manifest would
+silently make them not that. Whoever widens the workload should do it as its own change, with a
+re-baseline, and say so. It is deliberately run through
 `experiments/run-check-workload.sh`, which passes every path explicitly: `profile-run.sh` requires the
 command to process exactly its manifest and cannot check that, so explicit paths are how the
 requirement is met literally.
