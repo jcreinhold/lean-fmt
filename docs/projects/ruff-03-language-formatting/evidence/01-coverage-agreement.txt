@@ -17,7 +17,7 @@
 #
 # and read `canonical=` per module out of `tests/printer/run.sh`'s corpus section.
 
-printer_total=921   probe_total=920   modules_compared=28
+printer_total=925   probe_total=924   modules_compared=28
 
 # modules where the two disagree (printer canonical, probe claimable+namespace+end+open)
 LeanFmt/Cache/Decision.lean   printer=11  probe=10
@@ -32,6 +32,12 @@ LeanFmt/Imports.lean          printer=20  probe=21
 # over 27 modules became 921/920 over 28. The same three modules disagree, by the same amounts, and
 # the gap is still exactly +1 -- the new module is structurally claimable throughout and moves both
 # totals together, which is what this file exists to be able to say.
+#
+# Re-run again later in RPR-IMPL, which added declarations to `LeanFmt/Cache.lean` and
+# `LeanFmt/Project.lean` while removing the whole-workspace fallback digest from a cold run: 921/920
+# became 925/924 over the same 28 modules. Both edited modules were re-probed individually rather
+# than assumed -- Cache.lean 49/49, Project.lean 35/35 -- so neither joined the disagreement list and
+# the gap is still +1 for the two reasons below.
 
 # Two causes, in opposite directions.
 #

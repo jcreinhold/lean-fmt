@@ -39,6 +39,10 @@ Beyond the eight `RPR-SPEC` froze (`notes/01-phase-schema.md` §2), all still sp
 | `phase.rules_ms` | one file's report: every rule tier, suppression, fix composition | `Application.lean`, `execute` (three sites) |
 | `phase.validation_ms` | **sub-phase**: the validator child a writing `format`/`fix` must pass | `Application.lean`, `formatFile`/`fixFile` |
 | `phase.cache_write_ms` | `cache.writeAll` | `Application.lean`, `execute` (two sites) |
+| `phase.write_closures_ms` | **sub-phase**: the batch's closure digests, inside `writeAll` | `Cache.lean`, `ResultCache.writeAll` |
+| `phase.closure_resolve_ms` | **sub-phase**: `Project.importClosures?`, the no-build closure fetch | `Cache.lean`, `closureDigests` |
+| `phase.closure_hash_ms` | **sub-phase**: one target's per-member trace reads | `Cache.lean`, `closureDigests` |
+| `phase.workspace_artifacts_ms` | **sub-phase**: the whole-workspace fallback digest, at most once per run | `Cache.lean`, `workspaceArtifactsDigest` |
 | `phase.positions_ms` | `resolvePositions` — the `PositionIndex` **build** | `Application.lean`, `profiledPositions` |
 | `phase.render_report_ms` | `formatReport` | `Cli.lean`, `runOneGeneration` |
 
@@ -92,9 +96,17 @@ the 8,795-file walk rather than by config resolution. Splitting config out of a 
 nothing; on the workload where it is large, the walk is the cost, and that is already the phase's
 name. Left as one.
 
-### 3.5 New names the schema did not anticipate
+### 3.5 Four brackets inside `writeAll` that measured nothing, and were removed
 
-`setup_probe`/`setup_build`, `envelope_decode`, `child_encode`. All three exist because §4 of the
+`write_load`, `write_order`, `write_serialize`, `write_collect` were added to attribute a 9,827 ms
+`cache_write` and each read **0 ms** on a 62-module cold run. The suspicion they tested — that
+serializing an index holding 62 full `SemanticAnalysis` values was the cost — is retired by that, and
+the brackets are gone rather than kept as five zeros in every profile. `write_closures`, the one that
+held 9,799 of the 9,827 ms, stayed and now has two sub-phases of its own.
+
+### 3.6 New names the schema did not anticipate
+
+`setup_probe`/`setup_build`, `envelope_decode`, `child_encode`, and the four closure brackets above. All three exist because §4 of the
 baseline note assigned phases to sites and these turned out to be the sites that mattered:
 `setup_probe` is where the duplicate traversal was found, and `envelope_decode` (20–27 ms for 34
 modules) and `child_encode` (0 ms) are how the suspicion that a ~10× projection was expensive to
@@ -106,6 +118,8 @@ serialize was *retired* rather than acted on.
 | --- | ---: | ---: | ---: |
 | `self` `format --check`, cache-cold | 50,284 ms | 90.6% | 0.9% |
 | `mathlib-sample` `check`, cache-cold | 25,991 ms | 94.8% | 46.1% |
+| `mathlib-sample` `check`, cache-cold, after `results/02-optimize.md` | 7,099 ms | 95.1% | — |
+| `mathlib-sample` `check`, cache-warm, after `results/02-optimize.md` | 3,543 ms | 97.2% | 97.3% |
 
 G3 (`evidence/01-workloads.md` §5) is met on both. The residual is process startup, CLI parsing, and
 report writing — 23 ms of startup measured directly, the rest under the sampler's resolution.

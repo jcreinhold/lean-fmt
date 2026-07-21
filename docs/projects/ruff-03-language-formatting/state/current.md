@@ -236,9 +236,9 @@ evidence for it — kept intact because it is the citation base phase 2 builds a
 ## Phase 1 record (conservative subset — verified)
 
 `RLF-COMMANDS` is **verified** (`results/01-commands.md`): the printer is live and proven lossless on
-this repository *and* on 62 modules of foreign Lean, **921 of the corpus's 1029 commands take a cited
-canonical layout** — `namespace` (34), `end` (36), `open` (15), 2 `section`, and the shell of 835 of
-855 declarations, less the one shell in `Imports.lean` the runtime guards refuse — **all 28 module
+this repository *and* on 62 modules of foreign Lean, **925 of the corpus's 1033 commands take a cited
+canonical layout** — `namespace` (34), `end` (36), `open` (16), 2 `section`, and the shell of 838 of
+858 declarations, less the one shell in `Imports.lean` the runtime guards refuse — **all 28 module
 headers take theirs**, and **108 constructor and field shells** are claimed inside those declarations.
 `universe` has a layout too and this corpus contains none of it, so only the fixtures and the sample
 exercise it. Its external prerequisite stack
@@ -757,7 +757,7 @@ recover a collapse that fires zero times.
   every command — the printer would fall back to bytes and be the identity function it was before any
   layout existed. This repository also writes its declarations the way the layout writes them, so even
   a layout that runs changes nothing here. `printer-roundtrip` therefore reports `canonical=`, the
-  commands actually laid out, and `tests/printer/run.sh` floors the corpus total: **921 of 1029**, and `members=` the shells claimed
+  commands actually laid out, and `tests/printer/run.sh` floors the corpus total: **925 of 1033**, and `members=` the shells claimed
   inside them, floored at 50 (**108**) because `canonical=` cannot see them — a command counts once
   whether it claims one region or six. The
   header gets the same treatment for the same reason, but as an exact count rather than a floor
@@ -766,9 +766,9 @@ recover a collapse that fires zero times.
   *what* the layouts produce; these pin *that* they run, on real code, at scale.
 - **Two independent measurements of coverage differ by one, and the per-module comparison says why —
   the aggregates agreeing was a coincidence.** `experiments/run-projection-shape.sh` re-implements the
-  structural half of the printer's predicate in Python against the same projection and finds 835 of 855
-  declarations claimable; its formula counts 920 = 835 + 34 `namespace` + 36 `end` + 15 `open`, while
-  the printer, in Lean, lays out 921. Two causes in opposite directions, measured per module in
+  structural half of the printer's predicate in Python against the same projection and finds 838 of 858
+  declarations claimable; its formula counts 924 = 838 + 34 `namespace` + 36 `end` + 16 `open`, while
+  the printer, in Lean, lays out 925. Two causes in opposite directions, measured per module in
   `evidence/01-coverage-agreement.txt`: the probe's formula omits `section`, of which this corpus has
   exactly 2 and the printer lays out both; and the printer refuses one structurally-claimable shell in
   `Imports.lean` at a runtime guard the probe cannot model (clean trivia, newline-free flat run,
@@ -777,7 +777,7 @@ recover a collapse that fires zero times.
   measurements; it was +2 −2, two offsetting errors summing to zero. The per-module comparison is the
   check that can see the difference, and it is the one to run. The probe over-counts declarations by
   construction and says so; `canonical=` remains the honest figure for what runs.
-- **That 921 commands take the layout and all 20 modules stay byte-identical is what proves the shell
+- **That 925 commands take the layout and all 20 modules stay byte-identical is what proves the shell
   is a prefix.** A shell that ran past the name, or stopped short, would duplicate or drop bytes on
   real code. The same round-trip is the only thing asserting that the header layout's claim ends
   exactly at `headerStop` — that the parser's idea of where the header stops and the projection's agree

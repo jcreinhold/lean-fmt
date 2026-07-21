@@ -7,6 +7,7 @@ Authors: Jacob Reinhold
 module
 
 import all LeanFmt.Cache.Decision
+import all LeanFmt.Profile
 import all LeanFmt.Project
 import all LeanFmt.Semantic
 
@@ -14,6 +15,8 @@ import Lake.Build.Trace
 import Lake.Config.Workspace
 
 namespace LeanFmt.Internal
+
+open LeanFmt.Internal.Profile
 
 private structure TraceOutputs where
   o : Array String
@@ -93,6 +96,22 @@ private structure CacheIndex where
   entries : Array CacheEntry
   deriving Lean.ToJson, Lean.FromJson
 
+/-- What one closure member's compiled output turned out to be.
+
+The distinction `unbuilt` draws from `unreadable` is the whole point. A module Lake knows about but
+has never built has no `.olean` in any form and no trace: it contributed no grammar to anything, so it
+is a *fact* about the closure and belongs in the digest as one. A module whose output exists but whose
+trace is absent, unparseable, or of an unrecognized schema is an *unknown*, and `RCI-SPEC` froze which
+way an unknown degrades -- toward a miss, never a hit. -/
+private inductive MemberFact where
+  /-- The module's recomputed `importAllArts`. -/
+  | hash (value : Lake.Hash)
+  /-- No compiled output of any form on disk. -/
+  | unbuilt
+  /-- Output may exist; currency cannot be recomputed from it. -/
+  | unreadable
+  deriving Inhabited
+
 structure ResultCache where
   private mk ::
   root : System.FilePath
@@ -121,7 +140,7 @@ structure ResultCache where
   Memoizing per run, not per batch, is the scope `closureDigestsByModule` already takes: a trace
   changing mid-run is A2 (observation faithfulness), a named hypothesis and false in general either
   way. -/
-  artifactHashByModule : IO.Ref (Std.HashMap String (Option Lake.Hash))
+  artifactHashByModule : IO.Ref (Std.HashMap String MemberFact)
 
 def resultCacheSchema : String := "lean-fmt.result-cache.v3"
 
@@ -264,6 +283,27 @@ private def moduleArtifactHash? (tracePath : System.FilePath) : IO (Option Lake.
   catch _ =>
     return none
 
+/-- What Lake's recorded outputs say about one closure member.
+
+`unreadable` is the degradation `RCI-SPEC` froze; `unbuilt` is not a degradation at all but a fact,
+and the difference is worth a filesystem check. On mathlib, one unbuilt module in a 62-file batch used
+to send every closure through the whole-workspace fallback digest: 7,018 ms, 30% of a cold `check`
+(`results/02-optimize.md`). -/
+private def memberFact (workspace : Lake.Workspace) (name : Lean.Name) : IO MemberFact := do
+  let some tracePath := Project.moduleTracePath? workspace name
+    | return .unreadable
+  if let some hash ← moduleArtifactHash? tracePath then
+    return .hash hash
+  -- The trace did not yield a hash. Absence of *every* output Lake would write is the one case that
+  -- is a fact rather than an unknown, and it is checked here rather than inferred from the trace
+  -- alone: an `.olean` sitting next to a missing trace is output whose currency is unknown.
+  let some outputs := Project.moduleOutputPaths? workspace name
+    | return .unreadable
+  for output in outputs do
+    if ← output.pathExists then
+      return .unreadable
+  return .unbuilt
+
 /-- The grammar-currency digest for one target: its transitive import closure, each member paired
 with its module artifacts as they are on disk **right now**.
 
@@ -277,7 +317,7 @@ This degrades **one entry**, not the cache, which is finer than `environmentDige
 disables everything when it returns `none`, correctly, because it reports a property of the epoch
 rather than of an entry. -/
 private def closureDigest? (workspace : Lake.Workspace)
-    (memo : IO.Ref (Std.HashMap String (Option Lake.Hash)))
+    (memo : IO.Ref (Std.HashMap String MemberFact))
     (closure : Option (Array Lean.Name)) : IO (Option Digest) := do
   let some members := closure
     | return none
@@ -285,18 +325,17 @@ private def closureDigest? (workspace : Lake.Workspace)
   let mut parts := #[]
   for name in ordered do
     let key := name.toString
-    let hash? ← do
+    let fact ← do
       if let some hit := (← memo.get)[key]? then
         pure hit
       else
-        let computed ← match Project.moduleTracePath? workspace name with
-          | none => pure none
-          | some tracePath => moduleArtifactHash? tracePath
+        let computed ← memberFact workspace name
         memo.modify (·.insert key computed)
         pure computed
-    let some hash := hash?
-      | return none
-    parts := parts.push s!"closure {name} {hash}"
+    match fact with
+    | .hash hash => parts := parts.push s!"closure {name} {hash}"
+    | .unbuilt => parts := parts.push s!"closure {name} unbuilt"
+    | .unreadable => return none
   return some (digestParts parts)
 
 /-- `realPath` for a configured search-path root that may not exist.
@@ -408,13 +447,14 @@ private def ResultCache.workspaceArtifactsDigest (cache : ResultCache)
     (workspace : Lake.Workspace) : IO (Option Digest) := do
   if let some digest ← cache.workspaceArtifacts.get then
     return digest
-  let digest ← try
-    let root ← IO.FS.realPath workspace.root.leanLibDir
-    match ← rootTraceParts? root with
-    | some parts => pure (some (digestParts parts))
-    | none => pure none
-  catch _ =>
-    pure none
+  let digest ← withPhase "workspace_artifacts" do
+    try
+      let root ← IO.FS.realPath workspace.root.leanLibDir
+      match ← rootTraceParts? root with
+      | some parts => pure (some (digestParts parts))
+      | none => pure none
+    catch _ =>
+      pure none
   cache.workspaceArtifacts.set (some digest)
   return digest
 
@@ -437,7 +477,7 @@ private def ResultCache.closureDigests (cache : ResultCache) (project : Project.
     let missing := wanted.filter fun name => !known.contains name.toString
     let mut known := known
     if !missing.isEmpty then
-      let resolved ← Project.importClosures? project.workspace missing
+      let resolved ← withPhase "closure_resolve" <| Project.importClosures? project.workspace missing
       let byName := resolved.foldl (init := Std.HashMap.emptyWithCapacity resolved.size)
         fun map (name, closure) => map.insert name.toString closure
       for name in missing do
@@ -447,7 +487,8 @@ private def ResultCache.closureDigests (cache : ResultCache) (project : Project.
         let closure := (byName[name.toString]?.getD none).map (·.push name)
         -- Precise when the closure resolves and every member's trace reads; otherwise the
         -- conservative whole-workspace digest rather than a permanent miss. See `fallback` below.
-        let digest? ← closureDigest? project.workspace cache.artifactHashByModule closure
+        let digest? ← withPhase "closure_hash" <|
+          closureDigest? project.workspace cache.artifactHashByModule closure
         let resolved ← match digest? with
           | some digest => pure (some digest)
           | none => fallback
@@ -672,7 +713,7 @@ def ResultCache.writeAll (cache : ResultCache) (project : Project.Snapshot)
     (analyses : Array (Option SemanticAnalysis)) : IO Unit := do
   try
     let mut entries ← cache.loadEntries
-    let closures ← cache.closureDigests project targets
+    let closures ← withPhase "write_closures" <| cache.closureDigests project targets
     for ((target, analysis?), closure?) in (targets.zip analyses).zip closures do
       let some analysis := analysis?
         | continue

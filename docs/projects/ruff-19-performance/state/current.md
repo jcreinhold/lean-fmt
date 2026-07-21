@@ -38,20 +38,38 @@ schema as built, including four names `RPR-SPEC` specified that measurement reti
   `envelope_decode` 20–27 ms and `child_encode` 0 ms across 34 modules. The rule registry above the
   import tier is 11 ms across 34 files and 1 ms across 62. Neither is worth touching.
 
-**Found, not yet acted on.** On `mathlib-sample` `check` cold, the two largest phases are
-`cache_write` **9,909 ms (38% of the run)** and `module_evidence` **6,393 ms (25%)** — 63% of a cold
-`check` on a real project, both invisible before this prompt. `exact_child` is 3,227 ms there, because
-61 of 62 files never reach the frontend.
+**Acted on, and the largest win in this stack so far** (`results/02-optimize.md`). `cache_write` was
+9,827 ms on a cold `mathlib-sample` `check`, 38% of the run. Bracketing inside it put 7,018 ms in one
+call to `workspaceArtifactsDigest` — the whole-workspace fallback, reached because **one of the 62
+files, `Archive/Arithcc.lean`, is not built in this mathlib checkout**, so its precise closure digest
+failed and every entry paid for a walk of mathlib's entire build directory. `closureDigest?` now
+distinguishes `unbuilt` (none of the four outputs Lake writes exist — a fact about the closure, and a
+checked one) from `unreadable` (currency genuinely unknown — still the fallback, still `RCI-SPEC`'s
+frozen direction). Cold **24,696 → 7,099 ms (−71%)**, warm **10,863 → 3,543 ms (−67%)**, output digest
+`c0dc55c3…` unchanged on every row. Accounted fraction 95.1% cold, 97.2% warm.
 
-**Still open in this prompt.** The `cache_write`/`module_evidence` pair; watch and LSP profiling; the
-adversarial `PositionIndex`-build fixture; a `formatter-integrated-built` workload; and the two-session
-concurrency test, which the work order puts after all single-session work.
+`module_evidence` fell 5,938 → 1,606 ms with it, without any code in it changing; that is the page
+cache, not a second optimization, and it is recorded as such.
 
-**One check is unverified, for an environmental reason.** `tests/cache/run.sh` was killed by the OS
-(`Killed: 9`, exit 137) at three different points across four attempts, while the machine sat at
-8.7 GiB of 10 GiB swap with another session's `lean` holding 1.9 GiB. `tests/compiler` and
-`tests/downstream` showed the identical signature and passed on retry; the same `lean-fmt check`
-invocation passes standalone every time. Not attributable to this change, and not yet re-run clean.
+**Four brackets removed for measuring zero.** `write_load`, `write_order`, `write_serialize`,
+`write_collect` each read 0 ms, which retires the suspicion that serializing an index of 62 full
+`SemanticAnalysis` values was the cost.
+
+**Still open in this prompt.** `exact_child`/`child_analyze`, which dominates every cold run and has
+not been attacked; watch and LSP profiling; the adversarial `PositionIndex`-build fixture; a
+`formatter-integrated-built` workload; and the two-session concurrency test, which the work order puts
+after all single-session work.
+
+**The unverified check is now verified, and the environmental diagnosis held.** `tests/cache/run.sh`
+had been killed by the OS (`Killed: 9`, exit 137) at three different points across four attempts while
+the machine sat at 8.7 GiB of 10 GiB swap with another session's `lean` holding 1.9 GiB. It passes,
+as do all twenty suites, `lake lint`, and `lean-fmt-tests`.
+
+**One measurement was discarded rather than reported.** The `self` `format --check` cold run taken
+after the fix read 97,434 ms against a 43,506 ms baseline, at load average 25 with five other `lean`
+processes holding 1.3–1.6 GiB each. It is elaboration-bound (`child_analyze` 79 s of it) and the
+change is a no-op on `self` by construction — `write_closures` there is 46 ms — so the note says that
+instead of re-measuring under load.
 Every profiled run reported a swap delta of 0 and peak RSS ≤ 0.85 GiB, so no measurement in this stack
 breached the envelope.
 

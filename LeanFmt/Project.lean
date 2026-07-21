@@ -432,6 +432,16 @@ module. Cache currency reads recorded trace facts; it does not resolve imports. 
 def moduleTracePath? (workspace : Lake.Workspace) (name : Lean.Name) : Option FilePath :=
   (workspace.findModule? name).map (·.traceFile)
 
+/-- Every path Lake would write compiled output to for a workspace module: the three `.olean` forms
+and the trace. `none` if the name is not a workspace module.
+
+Cache currency uses this to tell *unbuilt* from *unreadable*. A module with none of these files on
+disk has no compiled output, so it contributed no grammar to anything; a module missing only its
+trace has output whose currency cannot be recomputed, which is a different answer. -/
+def moduleOutputPaths? (workspace : Lake.Workspace) (name : Lean.Name) : Option (Array FilePath) :=
+  (workspace.findModule? name).map fun mod =>
+    #[mod.oleanFile, mod.oleanServerFile, mod.oleanPrivateFile, mod.traceFile]
+
 def moduleEvidence (snapshot : Snapshot) : IO (Array ModuleEvidence) := do
   if (← IO.getEnv "LEAN_FMT_TEST_DISABLE_MODULE_EVIDENCE") == some "1" then
     return Array.replicate snapshot.targets.size .needsFrontend

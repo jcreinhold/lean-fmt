@@ -1,41 +1,41 @@
-modules_analyzed=29 skipped=0 nodes=108856
+modules_analyzed=29 skipped=0 nodes=109119
 pre_order_contiguity_violations=0
 nonempty_node_children_out_of_source_order=0
-empty_nodes=36877 (33.9% of all nodes)
-empty_nodes_with_ambiguous_placement=16677 (15.3% of all nodes)
+empty_nodes=36970 (33.9% of all nodes)
+empty_nodes_with_ambiguous_placement=16710 (15.3% of all nodes)
 
 # most common empty (absent-syntax) kinds
-33121	null
-1323	Lean.Parser.Term.letConfig
-732	Lean.Parser.Termination.suffix
-570	Lean.Parser.Command.declModifiers
+33205	null
+1324	Lean.Parser.Term.letConfig
+734	Lean.Parser.Termination.suffix
+573	Lean.Parser.Command.declModifiers
 474	group
 360	Lean.Parser.Term.optEllipsis
-202	Lean.Parser.Command.optDeclSig
+205	Lean.Parser.Command.optDeclSig
 60	Lean.Parser.Command.optDeriving
 20	Lean.Parser.Term.attrKind
 10	Lean.Parser.Tactic.optConfig
 
-# command kinds in the corpus (1029 commands, 9 distinct kinds)
-855	Lean.Parser.Command.declaration
+# command kinds in the corpus (1033 commands, 9 distinct kinds)
+858	Lean.Parser.Command.declaration
 81	Lean.Parser.Command.moduleDoc
 36	Lean.Parser.Command.end
 34	Lean.Parser.Command.namespace
-15	Lean.Parser.Command.open
+16	Lean.Parser.Command.open
 4	Lean.Parser.Command.variable
 2	Lean.Parser.Command.section
 1	Lean.Parser.Command.initialize
 1	Lean.Parser.Command.mutual
 
-# what the declaration shell layout can structurally claim (835/855 declarations, 97.7%); runtime guards may still refuse
-835	structurally claimed: shell laid out
+# what the declaration shell layout can structurally claim (838/858 declarations, 97.7%); runtime guards may still refuse
+838	structurally claimed: shell laid out
 20	rejected: shape not read yet
 
 # would a ctor/field shell layout decide anything? a member's shell is its opener, modifiers and
 # name; 'collapsible' counts shells holding horizontal slack a layout could close, which is the
 # only figure that argues for building one. See the script for why the other three cannot.
 487	structure fields (simple): 0 collapsible, 368 one-token, 116 broken by a doc comment, 3 already tight, 0 unexpected shape
-86	inductive constructors: 0 collapsible, 0 one-token, 0 broken by a doc comment, 86 already tight, 0 unexpected shape
+89	inductive constructors: 0 collapsible, 0 one-token, 0 broken by a doc comment, 89 already tight, 0 unexpected shape
 17	structure constructors: 0 collapsible, 0 one-token, 0 broken by a doc comment, 17 already tight, 0 unexpected shape
 
 # of those, how the `instance` shells break down
