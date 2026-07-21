@@ -1,9 +1,9 @@
 # Next Proof Packet
 
 - Stack: ruff-17-lsp
-- First unresolved: 03-features
-- Claim ID: RLP-FEATURES
-- Prompt: 03-features
+- First unresolved: 04-acceptance
+- Claim ID: RLP-FINAL
+- Prompt: 04-acceptance
 - Module: (docs only)
 - Target file: (docs only)
 
@@ -17,7 +17,7 @@ Read this file, the target prompt, target files, listed source/template line ran
 
 ## Proof Task
 
-- Deliver **RLP-FEATURES**: Connect exact unsaved analysis, whole/range formatting, individual safe fixes, fix-all, organize imports, and workspace edits with version checks and applicability exposure.
+- Deliver **RLP-FINAL**: Use an independent LSP client harness for lifecycle, concurrent cancellation, Unicode positions, dynamic config, malformed messages, code actions, and 100-request memory stability. Document VS Code/Neovim/Emacs setup inputs.
 - Read `roadmap.md`, its prerequisite stack results, `AGENTS.md`, the current implementation and tests, and the relevant Lean compiler/Lake sources before changing an interface. Write interface comments and characterization tests before implementation where the behavior is not already frozen.
 
 ## Reuse
@@ -30,6 +30,6 @@ Edit only the records named by the prompt. Do not execute planned mathematical o
 
 ## Stop Rules
 
-- Unsafe fixes require explicit client intent.
-- All edits use the checked patch/source-map capabilities.
+- No full mathlib run.
+- The old NDJSON service may remain only as a private compatibility adapter with a removal plan.
 - Stop rather than weakening exact semantics, write safety, or the resource envelope.

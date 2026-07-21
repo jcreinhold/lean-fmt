@@ -3,7 +3,7 @@
 # `state/current.md` claimed they "agree exactly, and keep agreeing as it grows": the Python probe's
 # `claimable + namespace + end + open` equalled the printer's `canonical=` at 859. When a new
 # production module (`LeanFmt/LanguageServer.lean`, `ruff-17` `RLP-DOCUMENTS`) grew the corpus, the
-# aggregates parted: probe 917, printer 918. This file is the per-module comparison that says why.
+# aggregates parted: probe 934, printer 935. This file is the per-module comparison that says why.
 #
 # Method. `experiments/run-projection-shape.sh` selects its corpus with `git ls-files`; copy it into
 # `experiments/` (the script derives the repo root from its own path, so it must run from there) with
@@ -17,15 +17,15 @@
 #
 # and read `canonical=` per module out of `tests/printer/run.sh`'s corpus section.
 
-printer_total=918   probe_total=917   modules_compared=28
+printer_total=935   probe_total=934   modules_compared=28
 
 # modules where the two disagree (printer canonical, probe claimable+namespace+end+open)
 LeanFmt/Cache/Decision.lean   printer=11  probe=10
 LeanFmt/Cache/Spec.lean       printer=31  probe=30
 LeanFmt/Imports.lean          printer=20  probe=21
 
-# Every other module agrees, including the new one: LeanFmt/LanguageServer.lean printer=55 probe=55
-# (50 declarations, all structurally claimable, + 1 namespace + 1 end + 3 open).
+# Every other module agrees, including the new one: LeanFmt/LanguageServer.lean
+# (its declaration count moves with the module; every one of them is structurally claimable).
 
 # Two causes, in opposite directions.
 #

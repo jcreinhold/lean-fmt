@@ -1,6 +1,6 @@
 ---
 claim_id: RLP-FEATURES
-status: planned
+status: verified
 depends_on: [RLP-DOCUMENTS]
 ---
 

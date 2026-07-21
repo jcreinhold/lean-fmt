@@ -1,11 +1,17 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# `ruff-17` RLP-DOCUMENTS: the Language Server Protocol transport and document lifecycle, exercised
-# against the real binary over a real pipe. The unit tests in `LeanFmtTest.lean` cover the position
-# layer and frame reader in isolation; this suite covers what only a process can show — lifecycle
-# ordering, recovery that leaves the session usable, refusal of a document with no project location,
-# cancellation delivered while the server is busy, and a bounded store that refuses rather than grows.
+# `ruff-17` RLP-DOCUMENTS and RLP-FEATURES: the Language Server Protocol surface, exercised against
+# the real binary over a real pipe. The unit tests in `LeanFmtTest.lean` cover the position layer and
+# frame reader in isolation; this suite covers what only a process can show — lifecycle ordering,
+# recovery that leaves the session usable, refusal of a document with no project location,
+# cancellation delivered while the server is busy, and a bounded store that refuses rather than grows,
+# then diagnostics, formatting, and code actions over a live client.
+#
+# The two halves are fed differently on purpose. Lifecycle and recovery write the whole session in one
+# go and read what comes back, which is the strongest way to assert ordering. Diagnostics cannot be
+# tested that way at all: they are published after a quiet interval, and `exit` closes the queue before
+# the timer fires. So the feature half drives a `Client` that writes, reads, and waits.
 
 repo_root=$(cd "$(dirname "$0")/../.." && pwd)
 work=$(mktemp -d)
@@ -18,6 +24,7 @@ application=$(lake -q query lean-fmt --text)
 python3 - "$application" "$repo_root" <<'PY'
 import json
 import os
+import select
 import subprocess
 import sys
 
@@ -275,9 +282,268 @@ check("an oversized document is refused", answers[2]["result"]["openDocuments"],
 check_that("and the refusal says so", any("exceeds" in m for m in shown), shown)
 check("the session continues", code, 0)
 
+# --- features ----------------------------------------------------------------------------------
+# `RLP-FEATURES`. Everything above feeds the whole session in one write and reads what comes back;
+# diagnostics cannot be tested that way, because they are published after a quiet interval and `exit`
+# closes the queue before the timer fires. So the features run against a live client that writes,
+# reads, and waits -- which is also what `RLP-FINAL`'s acceptance harness needs.
+
+class Client:
+    """A live LSP session: write a message, read frames until the one you asked for arrives."""
+
+    def __init__(self, options=None, extra_args=()):
+        env = os.environ.copy()
+        env["LEAN_NUM_THREADS"] = "1"
+        self.proc = subprocess.Popen(
+            [application, "lsp", "--root", root, "--debounce-ms", "1", *extra_args],
+            cwd=root, env=env,
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        self.pending = []
+        params = {} if options is None else {"initializationOptions": options}
+        self.request("initialize", params, id=1000)
+        self.send({"jsonrpc": "2.0", "method": "initialized", "params": {}})
+
+    def send(self, obj):
+        self.proc.stdin.write(frame(obj))
+        self.proc.stdin.flush()
+
+    def read_frame(self, timeout=300):
+        """One message off the wire. Blocking, with a deadline enforced by the caller's timeout."""
+        if not select.select([self.proc.stdout], [], [], timeout)[0]:
+            raise AssertionError("server sent nothing within the timeout")
+        header = b""
+        while not header.endswith(b"\r\n\r\n"):
+            byte = self.proc.stdout.read(1)
+            if not byte:
+                raise AssertionError("server closed the stream")
+            header += byte
+        length = None
+        for line in header.decode().split("\r\n"):
+            name, _, value = line.partition(": ")
+            if name.lower() == "content-length":
+                length = int(value)
+        body = self.proc.stdout.read(length)
+        return json.loads(body)
+
+    def request(self, method, params=None, id=None, timeout=300):
+        identifier = id if id is not None else len(self.pending) + 1
+        self.send({"jsonrpc": "2.0", "id": identifier, "method": method, "params": params or {}})
+        while True:
+            message = self.read_frame(timeout)
+            if message.get("id") == identifier:
+                return message
+            self.pending.append(message)
+
+    def await_notification(self, method, predicate=lambda m: True, timeout=300):
+        for message in list(self.pending):
+            if message.get("method") == method and predicate(message):
+                self.pending.remove(message)
+                return message
+        while True:
+            message = self.read_frame(timeout)
+            if message.get("method") == method and predicate(message):
+                return message
+            self.pending.append(message)
+
+    def open(self, uri, text, version=1):
+        self.send({"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {
+            "textDocument": {"uri": uri, "languageId": "lean", "version": version, "text": text}}})
+
+    def close(self):
+        try:
+            self.request("shutdown", timeout=60)
+            self.send({"jsonrpc": "2.0", "method": "exit"})
+            return self.proc.wait(timeout=60)
+        finally:
+            self.proc.stdout.close()
+            self.proc.stderr.close()
+
+
+findings_uri = "file://" + os.path.join(root, "tests/check/Findings.lean")
+layout_uri = "file://" + os.path.join(root, "tests/check/Layout.lean")
+clean_uri = "file://" + os.path.join(root, "tests/check/Clean.lean")
+findings_source = open(os.path.join(root, "tests/check/Findings.lean")).read()
+layout_source = open(os.path.join(root, "tests/check/Layout.lean")).read()
+clean_source = open(os.path.join(root, "tests/check/Clean.lean")).read()
+
+# --- diagnostics ---
+client = Client()
+client.open(findings_uri, findings_source)
+published = client.await_notification(
+    "textDocument/publishDiagnostics", lambda m: m["params"]["uri"] == findings_uri)
+diagnostics = published["params"]["diagnostics"]
+check_that("a document publishes its findings", len(diagnostics) == 1, diagnostics)
+first = diagnostics[0]
+check("the diagnostic is ours", first["source"], "lean-fmt")
+check("it carries the rule code", first["code"], "FMT005")
+check("a formatter finding is a warning, not an error", first["severity"], 2)
+check_that("and points at its rule's documentation",
+           first["codeDescription"]["href"].endswith("/docs/rules/FMT005.md"), first)
+check("the publication names the version it describes", published["params"]["version"], 1)
+
+# The whole point of the position layer: a byte range became a UTF-16 range on the right line. The
+# duplicate is the *second* `import`, which is line 3 counting from zero.
+check("the diagnostic's range is a client range", first["range"]["start"]["line"], 3)
+
+# A clean document publishes an empty set -- which is a claim, not an absence.
+client.open(clean_uri, clean_source)
+published = client.await_notification(
+    "textDocument/publishDiagnostics", lambda m: m["params"]["uri"] == clean_uri)
+check("a clean document publishes nothing to report", published["params"]["diagnostics"], [])
+
+# --- formatting ---
+answer = client.request("textDocument/formatting",
+                        {"textDocument": {"uri": clean_uri}, "options": {}})
+check("a canonical document needs no edits", answer["result"], [])
+
+client.open(layout_uri, layout_source)
+answer = client.request("textDocument/formatting",
+                        {"textDocument": {"uri": layout_uri}, "options": {}})
+edits = answer["result"]
+check_that("a non-canonical document gets exactly one edit", len(edits) == 1, edits)
+check_that("the edit replaces the whole document",
+           edits[0]["range"]["start"] == {"line": 0, "character": 0}, edits[0])
+check_that("and it is the canonical bytes",
+           "namespace Alpha" in edits[0]["newText"], edits[0]["newText"])
+check_that("which is not what the client already had",
+           edits[0]["newText"] != layout_source, "formatting returned the input")
+
+# Range formatting answers over the *actual* range: the hull of the layout units the selection
+# expands to, which is the range a client must send back to re-format the same unit.
+answer = client.request("textDocument/rangeFormatting", {
+    "textDocument": {"uri": layout_uri},
+    "range": {"start": {"line": 2, "character": 0}, "end": {"line": 2, "character": 5}},
+    "options": {}})
+edits = answer["result"]
+check_that("a range request is answered with an edit", len(edits) == 1, edits)
+check_that("the actual range is not the requested one",
+           edits[0]["range"]["end"] != {"line": 2, "character": 5}, edits[0])
+check_that("and the replacement is only the selected unit",
+           "def layoutValue" not in edits[0]["newText"], edits[0]["newText"])
+
+def apply_edit(text, edit):
+    """Apply one TextEdit the way a client would. ASCII fixtures, so a character is a code unit."""
+    lines = text.split("\n")
+    def offset(position):
+        return sum(len(line) + 1 for line in lines[:position["line"]]) + position["character"]
+    start, stop = offset(edit["range"]["start"]), offset(edit["range"]["end"])
+    return text[:start] + edit["newText"] + text[stop:]
+
+# The narrow edit and the whole-document edit must agree. They did not: `stream`'s ranged output is
+# the *whole* document with the unit reformatted in place, so serving it as the replacement for the
+# actual range duplicated the file. Only this assertion could see that -- the range was right, the
+# text was right, and the pair was wrong.
+whole = client.request("textDocument/formatting",
+                       {"textDocument": {"uri": layout_uri}, "options": {}})["result"]
+check("the narrow edit does what the whole-document edit does",
+      apply_edit(layout_source, edits[0]), whole[0]["newText"])
+
+# --- code actions ---
+actions = client.request("textDocument/codeAction", {
+    "textDocument": {"uri": findings_uri},
+    "range": {"start": {"line": 3, "character": 0}, "end": {"line": 3, "character": 0}},
+    "context": {"diagnostics": []}})["result"]
+kinds = sorted({action["kind"] for action in actions})
+# All three: the fixture has a duplicate import, which FMT005 quickfixes, fix-all applies, and
+# organize-imports removes as part of canonicalizing the header.
+check("every advertised kind is offered", kinds,
+      ["quickfix", "source.fixAll", "source.organizeImports"])
+quickfix = next(a for a in actions if a["kind"] == "quickfix")
+check_that("the quickfix names its rule", quickfix["title"].startswith("FMT005"), quickfix["title"])
+changes = quickfix["edit"]["documentChanges"]
+check_that("the edit names one document", len(changes) == 1, changes)
+check("computed against a stated version", changes[0]["textDocument"]["version"], 1)
+check("for the document the action was asked about", changes[0]["textDocument"]["uri"], findings_uri)
+check_that("and it deletes rather than rewrites", changes[0]["edits"][0]["newText"] == "",
+           changes[0]["edits"])
+
+fix_all = next(a for a in actions if a["kind"] == "source.fixAll")
+check_that("fix-all rewrites the whole document",
+           fix_all["edit"]["documentChanges"][0]["edits"][0]["range"]["start"]
+           == {"line": 0, "character": 0}, fix_all)
+
+# `only` is honored, and honoring it is what stops an editor asking on every cursor movement from
+# paying for two whole-document rewrites it did not ask for.
+actions = client.request("textDocument/codeAction", {
+    "textDocument": {"uri": findings_uri},
+    "range": {"start": {"line": 3, "character": 0}, "end": {"line": 3, "character": 0}},
+    "context": {"diagnostics": [], "only": ["source.organizeImports"]}})["result"]
+check("only is honored", [a["kind"] for a in actions], ["source.organizeImports"])
+
+# A cursor away from every finding gets no quickfix, and still gets the source actions.
+actions = client.request("textDocument/codeAction", {
+    "textDocument": {"uri": clean_uri},
+    "range": {"start": {"line": 0, "character": 0}, "end": {"line": 0, "character": 0}},
+    "context": {"diagnostics": []}})["result"]
+check("a clean document offers no quickfix",
+      [a for a in actions if a["kind"] == "quickfix"], [])
+
+check("the session ends cleanly", client.close(), 0)
+
+# --- selection through initializationOptions ---
+# The client's own configuration reaches the rule plan: ignoring FMT005 leaves the same bytes with
+# nothing to report, which is the check that the option is read rather than accepted and dropped.
+client = Client(options={"ignore": ["FMT005"]})
+client.open(findings_uri, findings_source)
+published = client.await_notification(
+    "textDocument/publishDiagnostics", lambda m: m["params"]["uri"] == findings_uri)
+check("an ignored rule reports nothing", published["params"]["diagnostics"], [])
+actions = client.request("textDocument/codeAction", {
+    "textDocument": {"uri": findings_uri},
+    "range": {"start": {"line": 3, "character": 0}, "end": {"line": 3, "character": 0}},
+    "context": {"diagnostics": []}})["result"]
+check("and offers no quickfix for it", [a for a in actions if a["kind"] == "quickfix"], [])
+check("the configured session ends cleanly", client.close(), 0)
+
+# --- applicability is exposed, not hidden ---
+# `extend-unsafe-fixes` demotes FMT005 to unsafe (`tests/modes/run.sh` §"extend-unsafe-fixes"). A
+# demoted fix is still *reported* -- the finding does not go away -- but the product will not apply it
+# without explicit intent, so no quickfix is offered. Turning `--unsafe-fixes` on brings it back. Two
+# sessions over the same bytes, differing only in whether the user asked for unsafe fixes.
+import tempfile
+
+config = os.path.join(tempfile.mkdtemp(), "lean-fmt.toml")
+open(config, "w").write('[lint]\nextend-unsafe-fixes = ["FMT005"]\n')
+
+def quickfixes(extra_args):
+    session = Client(extra_args=("--config", config, *extra_args))
+    session.open(findings_uri, findings_source)
+    reported = session.await_notification(
+        "textDocument/publishDiagnostics", lambda m: m["params"]["uri"] == findings_uri)
+    offered = session.request("textDocument/codeAction", {
+        "textDocument": {"uri": findings_uri},
+        "range": {"start": {"line": 3, "character": 0}, "end": {"line": 3, "character": 0}},
+        "context": {"diagnostics": []}})["result"]
+    session.close()
+    return len(reported["params"]["diagnostics"]), [a["kind"] for a in offered]
+
+reported, offered = quickfixes(())
+check("a demoted fix is still reported", reported, 1)
+check_that("but no quickfix is offered for it", "quickfix" not in offered, offered)
+reported, offered = quickfixes(("--unsafe-fixes",))
+check("the same document reports the same finding", reported, 1)
+check_that("and the quickfix returns under explicit intent", "quickfix" in offered, offered)
+
+# --- superseded analyses ---
+# Three edits in a row must not publish three times for the versions that were passed through: a
+# publication for version 1 after version 3 has arrived describes bytes the client has edited past.
+client = Client(extra_args=("--debounce-ms", "80"))
+client.open(layout_uri, layout_source)
+for version in (2, 3, 4):
+    client.send({"jsonrpc": "2.0", "method": "textDocument/didChange", "params": {
+        "textDocument": {"uri": layout_uri, "version": version},
+        "contentChanges": [{"range": {"start": {"line": 4, "character": 0},
+                                      "end": {"line": 4, "character": 0}},
+                            "text": "-- %d\n" % version}]}})
+published = client.await_notification(
+    "textDocument/publishDiagnostics",
+    lambda m: m["params"]["uri"] == layout_uri and m["params"].get("version") == 4)
+check("the surviving publication is the newest version", published["params"]["version"], 4)
+check("the superseding session ends cleanly", client.close(), 0)
+
 if failures:
     print(f"\n{len(failures)} check(s) failed: {failures}")
     sys.exit(1)
 PY
 
-printf 'lean-fmt language server transport and document lifecycle passed\n'
+printf 'lean-fmt language server transport, documents, and features passed\n'

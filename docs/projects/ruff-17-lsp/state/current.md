@@ -1,6 +1,6 @@
 ---
 kind: state
-first_unresolved: 03-features
+first_unresolved: 04-acceptance
 ---
 
 # Current state
@@ -22,7 +22,7 @@ around it.
 | --- | --- | --- | --- |
 | 01-protocol | RLP-PROTOCOL | verified | — |
 | 02-documents | RLP-DOCUMENTS | verified | RLP-PROTOCOL |
-| 03-features | RLP-FEATURES | planned | RLP-DOCUMENTS |
+| 03-features | RLP-FEATURES | verified | RLP-DOCUMENTS |
 | 04-acceptance | RLP-FINAL | planned | RLP-FEATURES |
 
 **`RLP-DOCUMENTS` is verified** (`results/02-documents.md`). `LeanFmt/LanguageServer.lean` (694 lines)
@@ -39,13 +39,38 @@ thread while the worker is busy, configuration reload, health, and malformed-mes
   Lean's) and once to replace a source-false justification: `Lean.Server.*` stays out of *this* module
   because `replaceLspRange` does not clamp, not because of `Lean.Server.InfoUtils`, which
   `LeanFmt/Analysis.lean:6` already imports legitimately.
-- **No feature answers a formatting request yet.** The capability set is advertised and
-  `RLP-FEATURES` implements it; a client calling `textDocument/formatting` today gets MethodNotFound.
 - **Two suite couplings a later prompt will meet.** `tests/watch/run.sh` asserts `check --staged`
   against the *real* repository, so it fails whenever anything is staged; and this repository is the
   printer's own corpus, so adding a production module moves every figure
   `experiments/check-quoted-figures.py` gates — the module must be `git add`ed before
   `experiments/run-projection-shape.sh` (which selects with `git ls-files`) can see it.
+
+**`RLP-FEATURES` is verified** (`results/03-features.md`). The server answers
+`textDocument/formatting`, `textDocument/rangeFormatting`, and `textDocument/codeAction`, and publishes
+diagnostics after a quiet interval. `tests/lsp/run.sh` now runs 75 checks, 36 of them over a live
+`Client` that writes, reads, and waits — the harness `RLP-FINAL` needs.
+
+- **The LSP surface enters the same operation `--stdin` enters.** `Application.stream` was split:
+  `ExactRun.streamSnapshot` is everything below root/discovery/workspace resolution, and `stream` is
+  the resolving wrapper. `serveLanguageServer` brackets the session in one `withExactRun`, as
+  `Service.serve` does, so no request pays a workspace load; each analysis still gets a fresh bounded
+  child.
+- **`Application.admittedFix?` is the one fix-admission rule**, shared by the patch a write publishes
+  and the quickfixes an editor is offered. Do not re-derive it: an editor offering a fix
+  `lean-fmt fix` would refuse is the same defect as an editor reporting a finding the command line
+  does not.
+- **A ranged format's `output` is the whole document.** `stream` splices the reformatted units back in
+  because a shell redirect must write a complete file. The narrow LSP edit is cut from it with the
+  `sourceMap`, whose marks `sliceRange` re-bases onto the spliced text. Serving `output` directly as
+  the replacement for the actual range duplicates the file, and only an assertion that *applies* the
+  edit can see it — `tests/lsp/run.sh` has one.
+- **`ContentModified` (-32801) is unreachable on the current request set**, because no implemented
+  request carries a client-stated version and the worker is capacity-one FIFO. Staleness is enforced
+  where the protocol puts it: the `WorkspaceEdit`'s stated version. Do not manufacture a use for the
+  code.
+- **Cancellation is still unobserved at the child.** Requests now start exact children, but the suite
+  proves only that a cancelled request is answered `RequestCancelled` exactly once. `RLP-FINAL`'s
+  concurrent-cancellation case is what can show the token shortening a running frontend.
 
 ## What `01-protocol` froze, for the prompts that consume it
 

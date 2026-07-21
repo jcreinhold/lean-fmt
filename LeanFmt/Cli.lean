@@ -202,6 +202,10 @@ private def parseLspArgs (args : List String) : Except String LanguageServer.Ser
       match value.toNat? with
       | some amount => loop rest { options with maxMemoryGiB := amount }
       | none => .error "--max-memory expects a whole number of GiB"
+    | "--debounce-ms" :: value :: rest =>
+      match value.toNat? with
+      | some amount => loop rest { options with debounceMs := amount }
+      | none => .error "--debounce-ms expects a whole number of milliseconds"
     | option :: _ => .error s!"unknown lsp option: {option}"
   loop args {}
 
@@ -212,7 +216,7 @@ usage: lean-fmt {check|format|diff|fix} [OPTIONS] [FILE...]\n\
                       [--ignore SELECTOR] [--max-memory GIB]\n\
        lean-fmt lsp [--root PATH] [--config PATH] [--select SELECTOR]\n\
                     [--ignore SELECTOR] [--preview] [--unsafe-fixes]\n\
-                    [--max-memory GIB]\n\
+                    [--max-memory GIB] [--debounce-ms MS]\n\
        lean-fmt organize [--root PATH] [--config PATH] [--check] [--json]\n\
                          [--max-memory GIB] [FILE...]\n\
        lean-fmt rules [--json]\n\

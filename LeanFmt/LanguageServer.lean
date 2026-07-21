@@ -10,10 +10,14 @@ open System
 
 /- The Language Server Protocol surface.
 
-`ruff-17` RLP-DOCUMENTS. The capability and state model this implements is frozen in
-`docs/projects/ruff-17-lsp/notes/01-protocol.md`; this module is the transport and document lifecycle
-half of it, and computes no findings and renders no text — `RLP-FEATURES` adds those on top of the
-document store below.
+`ruff-17` RLP-DOCUMENTS and RLP-FEATURES. The capability and state model is frozen in
+`docs/projects/ruff-17-lsp/notes/01-protocol.md`; this module is all of it — the transport and document
+store, and the diagnostics, formatting, and code actions served from them.
+
+It computes nothing itself. Every answer is `Application.ExactRun.streamSnapshot` over the whole
+buffer, which is the same operation `--stdin` enters, so an editor and a pipe cannot disagree about
+the same bytes. What is *here* rather than there is the protocol: client coordinates, document
+lifetime, which fixes may be offered, and when an analysis is worth running.
 
 The namespace is `LanguageServer` and not `Lsp` because `Lean.Lsp` is opened throughout and a
 namespace of the same name would make every `Lsp.Position` ambiguous at the one boundary that must
@@ -50,9 +54,18 @@ structure ServerOptions where
   select : Array String := #[]
   ignore : Array String := #[]
   preview : Bool := false
-  /-- Offer unsafe fixes as code actions. Consumed by `RLP-FEATURES`; carried here because it is an
-  initialization option and initialization is this prompt's. -/
+  /-- Offer unsafe fixes as code actions. A withheld fix produces no action rather than a disabled one:
+  `CodeActionDisabled` would advertise a fix the product has decided not to apply (`notes` §8). -/
   unsafeFixes : Bool := false
+  /-- Quiet interval before a changed document is analyzed. A keystroke is not a request for analysis;
+  a pause is. Every analysis is one exact frontend run over the whole buffer (`ruff-14`
+  `evidence/03-stream-cost.txt`), so this is the difference between one run per pause and one per
+  character. -/
+  debounceMs : Nat := 150
+
+/-- The rule selection every document's plan is resolved against. -/
+def ServerOptions.selection (options : ServerOptions) : CliSelection :=
+  { select := options.select, ignore := options.ignore, preview := options.preview }
 
 /-! ## Frames
 
@@ -259,9 +272,20 @@ abbrev Rejection := String
 
 structure Session where
   private mk ::
+  /-- The options the process started with. `root` and `maxMemoryGiB` are read from here and only from
+  here: one Lake workspace and one aggregate envelope are fixed when the session opens, and a client
+  that asks to move either is told to restart rather than quietly half-served (§3, §10). -/
   options : ServerOptions
+  /-- The options a client may still change: rule selection, preview, unsafe fixes, the quiet interval,
+  and the configuration path. Written by `initialize` from `initializationOptions`, and read per
+  request — so a setting is never captured into a closure that outlives it. -/
+  settings : IO.Ref ServerOptions
   root : FilePath
   project : Project.Snapshot
+  /-- One exact capability for the session, as `Service.serve` holds one (`Service.lean:186`). Each
+  analysis still gets a fresh bounded child; what is *not* paid per request is the workspace load, the
+  discovery walk, and the temporary-directory bracket. -/
+  run : Application.ExactRun
   sink : Sink
   /-- Replaced wholesale on `workspace/didChangeConfiguration`; never mutated in place. -/
   discovery : IO.Ref Discovery.Discovery
@@ -273,6 +297,14 @@ structure Session where
   /-- Request ids the client has cancelled. Written by the reader, read by the worker, so it is a
   mutex and not a ref. -/
   cancelled : Std.Mutex (Std.HashSet RequestID)
+  /-- The findings last computed for a document, with the version they describe. Not an incremental
+  cache and not a substitute for analysis: an entry is *only* ever read for the version it names, and a
+  `didChange` supersedes it. It exists because an editor asks for code actions on cursor movement, and
+  the alternative is one exact frontend run per cursor movement over bytes that did not change. -/
+  analyses : IO.Ref (Std.HashMap String (Int × Array Finding))
+  /-- Ask for a debounced analysis of one document version. A handler sees a function, not the queue:
+  the queue is the loop's, and a handler that could reach it could also reorder it. -/
+  schedule : String → Int → IO Unit
   initialized : IO.Ref Bool
   shuttingDown : IO.Ref Bool
 
@@ -408,6 +440,39 @@ private def handleInitialize (session : Session) (id : RequestID) (params : Json
     let names := folders.filterMap fun folder => (folder.getObjValAs? String "uri").toOption
     session.sink.show 2 s!"lean-fmt serves one workspace root ({session.root}); \
       not serving: {String.intercalate ", " (names.toList.drop 1)}"
+  -- `initializationOptions` (§10). Absent keys keep the command line's value, so a client that sends
+  -- `{}` is configured exactly as the process was started — the two are one setting each, not two
+  -- competing sources.
+  if let .ok initialization := params.getObjVal? "initializationOptions" then
+    let str? (key : String) := (initialization.getObjValAs? String key).toOption
+    let strings (key : String) (fallback : Array String) :=
+      (initialization.getObjValAs? (Array String) key).toOption.getD fallback
+    let bool (key : String) (fallback : Bool) :=
+      (initialization.getObjValAs? Bool key).toOption.getD fallback
+    let nat (key : String) (fallback : Nat) :=
+      (initialization.getObjValAs? Nat key).toOption.getD fallback
+    let current ← session.settings.get
+    -- Named, not silently dropped. A client that asks to move the root or the envelope is asking for a
+    -- different session; saying so is the difference between a puzzling answer and a restart.
+    for fixed in [("rootUri", (str? "root").isSome), ("maxMemoryGiB",
+        (initialization.getObjVal? "maxMemoryGiB").toOption.isSome)] do
+      if fixed.2 then
+        session.sink.show 3 s!"lean-fmt fixes {fixed.1} at startup; restart the server to change it"
+    session.settings.set { current with
+      configPath? := (str? "configPath").map FilePath.mk |>.orElse fun _ => current.configPath?
+      select := strings "select" current.select
+      ignore := strings "ignore" current.ignore
+      preview := bool "preview" current.preview
+      unsafeFixes := bool "unsafeFixes" current.unsafeFixes
+      debounceMs := nat "debounceMs" current.debounceMs
+    }
+    -- A `configPath` from the client names a different configuration than the one discovery already
+    -- walked, so discovery is re-run rather than left describing the old one.
+    if (str? "configPath").isSome then
+      let settings ← session.settings.get
+      let configPath? := settings.configPath?.map fun path =>
+        if path.isAbsolute then path else session.root / path
+      session.discovery.set (← Discovery.run session.root configPath?)
   session.initialized.set true
   session.sink.respond id (Json.mkObj [
     ("capabilities", serverCapabilities),
@@ -443,6 +508,7 @@ private def handleDidOpen (session : Session) (params : Json) : IO Unit := do
       uri, path, relativePath, lineEndings, version
       text := FileMap.ofString normalized
     })
+    session.schedule uri version
 
 private def handleDidChange (session : Session) (params : Json) : IO Unit := do
   let .ok identifier := params.getObjVal? "textDocument" | return
@@ -469,6 +535,7 @@ private def handleDidChange (session : Session) (params : Json) : IO Unit := do
     session.sink.show 2 reason
     return
   session.documents.modify (·.insert uri { document with text, version })
+  session.schedule uri version
 
 private def handleDidClose (session : Session) (params : Json) : IO Unit := do
   let .ok identifier := params.getObjVal? "textDocument" | return
@@ -486,16 +553,25 @@ are resolved against the old configuration. A document that the new configuratio
 and its diagnostics cleared; one that a previous configuration excluded is not reopened, because the
 server does not hold the bytes of a document it refused — the client resends them on the next open. -/
 private def handleDidChangeConfiguration (session : Session) : IO Unit := do
-  let configPath? := session.options.configPath?.map fun path =>
+  let configPath? := (← session.settings.get).configPath?.map fun path =>
     if path.isAbsolute then path else session.root / path
   let discovery ← Discovery.run session.root configPath?
   session.discovery.set discovery
   for notice in discovery.fallback.notices do
     session.sink.log 3 s!"lean-fmt: {notice}"
   let documents ← session.documents.get
-  for (uri, _) in documents.toList do
+  -- Every memoized analysis was computed against the old configuration and is now describing rules,
+  -- selections, or a margin that no longer apply. Dropped wholesale rather than compared: a memo whose
+  -- key does not mention the configuration cannot be checked against a new one.
+  session.analyses.set {}
+  for (uri, document) in documents.toList do
     match ← admit session uri with
-    | .ok _ => pure ()
+    | .ok _ =>
+      -- Re-analyzed, not merely re-admitted. This is the roadmap's requirement that a `line-width`
+      -- change re-formats affected open documents rather than serving output rendered at the old
+      -- margin: the margin is `FormatConfig.lineWidth`, it is resolved per document from discovery,
+      -- and nothing else would notice that it moved.
+      session.schedule uri document.version
     | .error reason =>
       session.documents.modify (·.erase uri)
       session.refusals.modify (·.insert uri reason)
@@ -518,6 +594,259 @@ private def handleHealth (session : Session) (id : RequestID) : IO Unit := do
     ("openDocumentBytes", bytes),
     ("refusedDocuments", (← session.refusals.get).size)
   ])
+
+/-! ## Analysis
+
+`notes/01-protocol.md` §7. Every answer below is one `ExactRun.streamSnapshot` over the whole buffer:
+there is no incremental analysis here and none is advertised. -/
+
+/-- The document's identity and the rule plan that identity resolves.
+
+Both come from the *buffer's location*, never its content, which is why a document with no location
+cannot be served at all (§5). The plan is per document rather than per session because two files in one
+project can legitimately disagree about `line-width` or `[lint]` (`ruff-13`). -/
+private def resolve (session : Session) (document : Document) :
+    IO (Except String (Project.SourceTarget × RulePlan)) := do
+  try
+    let target ← session.targetOf document
+    match target.config.rulePlan (← session.settings.get).selection with
+    | .ok plan => return .ok (target, plan)
+    | .error message => return .error message
+  catch error => return .error s!"{error}"
+
+/-- Byte range in the normalized document → LSP range. Both ends convert through the same `FileMap`
+the client's own positions convert through, so a round trip is the identity on positions that name a
+character boundary. -/
+private def lspRangeOf (text : FileMap) (range : SourceRange) : Lsp.Range :=
+  { start := positionOf text range.start, «end» := positionOf text range.stop }
+
+private def sourceRangeOf (text : FileMap) (range : Lsp.Range) : SourceRange :=
+  let start := offsetOf text range.start
+  { start, stop := max start (offsetOf text range.end) }
+
+private def severityJson : Severity → Nat
+  -- Warning. A formatter finding is not an error: the file compiles, and a client that treated these
+  -- as errors would gate the user's workflow on layout (§7).
+  | _ => 2
+
+/-- One finding as a published diagnostic. `source` is what tells a user which tool to argue with —
+LSP scopes published sets per server per URI, so this never contends with the Lean server's own. -/
+private def diagnosticJson (text : FileMap) (finding : Finding) : Json :=
+  Json.mkObj [
+    ("range", Lean.toJson (lspRangeOf text finding.range)),
+    ("severity", severityJson finding.severity),
+    ("code", finding.code),
+    ("codeDescription", Json.mkObj [
+      ("href", s!"https://github.com/jcreinhold/lean-fmt/blob/main/docs/rules/{finding.code}.md")
+    ]),
+    ("source", "lean-fmt"),
+    ("message", finding.message)
+  ]
+
+private def publishFindings (session : Session) (document : Document)
+    (findings : Array Finding) : IO Unit :=
+  session.sink.notify "textDocument/publishDiagnostics" (Json.mkObj [
+    ("uri", document.uri),
+    ("version", Lean.toJson document.version),
+    ("diagnostics", Json.arr (findings.map (diagnosticJson document.text)))
+  ])
+
+/-- Run one analysis, or reuse the one already computed for exactly this version.
+
+The memo is keyed on the version the client stated, so reuse is not a judgement about whether the bytes
+"probably" changed — a changed document has a new version by protocol, and a new version never matches
+a stored one. -/
+private def findingsFor (session : Session) (document : Document) :
+    IO (Except String (Array Finding)) := do
+  if let some (version, findings) := (← session.analyses.get).get? document.uri then
+    if version == document.version then return .ok findings
+  match ← resolve session document with
+  | .error message => return .error message
+  | .ok (target, plan) =>
+    try
+      let report ← session.run.streamSnapshot target plan .check
+      -- A buffer that did not analyze reports its diagnostics as a log line, not as findings: it is
+      -- mid-keystroke and painting it red is wrong (§7). It is also not memoized, because the next
+      -- request should try again.
+      if report.status == "broken" then
+        return .error (String.intercalate "; " report.diagnostics.toList)
+      session.analyses.modify (·.insert document.uri (document.version, report.findings))
+      return .ok report.findings
+    catch error => return .error s!"{error}"
+
+/-- Analyze and publish, or say why not and publish nothing.
+
+An analysis failure is a `window/logMessage`, not a diagnostic and not an empty publish: an empty set
+reads as "clean", and a broken buffer mid-keystroke is the normal state of editing. -/
+private def analyzeAndPublish (session : Session) (uri : String) (version : Int) : IO Unit := do
+  let some document ← documentOf? session uri | return
+  -- Superseded: a newer version arrived while this analysis waited its turn. Publishing now would
+  -- describe bytes the client has already edited past, which is the stale publication §6 forbids.
+  unless document.version == version do return
+  match ← findingsFor session document with
+  | .error message => session.sink.log 3 s!"lean-fmt could not analyze {uri}: {message}"
+  | .ok findings => publishFindings session document findings
+
+/-! ## Formatting -/
+
+/-- A whole-document replacement, in the document's own line endings.
+
+`Lsp.TextEdit`'s range is in client coordinates, so the replaced span is the whole buffer as the
+*client* measures it — `wholeDocument`, not a byte count. -/
+private def wholeEdit (document : Document) (output : String) : Json :=
+  Lean.toJson ({ range := wholeDocument document.text, newText := output } : Lsp.TextEdit)
+
+/-- `textDocument/formatting` and `textDocument/rangeFormatting`.
+
+One operation, because they are one operation below: `streamSnapshot .format` with or without a range.
+A range answer replaces the **actual** range — the hull of the layout units the selection expands to —
+not the range the client asked for, because reflow can rebreak the enclosing unit past the selection
+(`ruff-14`, §8). Clients that re-format are expected to send back the range the unit now occupies;
+repeated range formatting is a fixed point only in output coordinates. -/
+private def handleFormatting (session : Session) (id : RequestID) (params : Json)
+    (ranged : Bool) : IO Unit := do
+  let .ok identifier := params.getObjVal? "textDocument"
+    | session.sink.fail id .invalidParams "formatting request has no textDocument"
+      return
+  let .ok uri := identifier.getObjValAs? String "uri"
+    | session.sink.fail id .invalidParams "formatting request has no document uri"
+      return
+  let some document ← documentOf? session uri
+    | failForDocument session id uri
+      return
+  let range? ← if ranged then
+      match params.getObjValAs? Lsp.Range "range" with
+      | .ok range => pure (some (sourceRangeOf document.text range))
+      | .error _ =>
+        session.sink.fail id .invalidParams s!"range formatting request has no range: {uri}"
+        return
+    else pure none
+  match ← resolve session document with
+  | .error message => session.sink.fail id .invalidParams message
+  | .ok (target, plan) =>
+    let report ←
+      try session.run.streamSnapshot target plan .format (range? := range?)
+      catch error =>
+        session.sink.fail id .internalError s!"lean-fmt could not format {uri}: {error}"
+        return
+    match report.output with
+    | none =>
+      -- The buffer did not analyze. Answering "no edits" would claim it is already canonical.
+      session.sink.fail id .internalError
+        s!"lean-fmt could not format {uri}: {String.intercalate "; " report.diagnostics.toList}"
+    | some output =>
+      unless report.changed do
+        session.sink.respond id (Json.arr #[])
+        return
+      match report.actual?, report.sourceMap[0]?, report.sourceMap.back? with
+      | some actual, some first, some last =>
+        -- `stream`'s ranged output is the **whole** document with the selected units reformatted in
+        -- place: a shell redirect must write a complete file. An editor wants the opposite — the
+        -- narrowest edit that does the same thing, so the client's undo stack and cursor survive it.
+        -- The source map is what makes that conversion a lookup rather than a second range
+        -- computation: `sliceRange` re-bases each mark onto the spliced text, so the marks' hull *is*
+        -- the body that replaced `actual` (`Application.lean`, `sliceRange`).
+        let (spliced, _) := LosslessSource.normalize output
+        let body := String.Pos.Raw.extract spliced ⟨first.output.start⟩ ⟨last.output.stop⟩
+        session.sink.respond id (Json.arr #[Lean.toJson
+          ({ range := lspRangeOf document.text actual
+             newText := LosslessSource.denormalize body document.lineEndings } : Lsp.TextEdit)])
+      | _, _, _ => session.sink.respond id (Json.arr #[wholeEdit document output])
+
+/-! ## Code actions
+
+`notes/01-protocol.md` §8. Every action carries its own `WorkspaceEdit` against a stated version; no
+`executeCommandProvider` is advertised, because nothing here needs a round trip through the client. -/
+
+/-- A `WorkspaceEdit` in `documentChanges` form, so it names the version it was computed against.
+
+The version is the protocol's own staleness mechanism and the reason this server needs no separate
+one: if the buffer moved between the action being offered and applied, the client rejects the edit. -/
+private def workspaceEdit (document : Document) (edits : Array Json) : Json :=
+  Json.mkObj [("documentChanges", Json.arr #[Json.mkObj [
+    ("textDocument", Json.mkObj [("uri", document.uri), ("version", Lean.toJson document.version)]),
+    ("edits", Json.arr edits)
+  ]])]
+
+private def codeAction (title kind : String) (edit : Json)
+    (diagnostics : Array Json := #[]) : Json :=
+  Json.mkObj <|
+    [("title", Json.str title), ("kind", Json.str kind), ("edit", edit)]
+    ++ (if diagnostics.isEmpty then [] else [("diagnostics", Json.arr diagnostics)])
+
+/-- `textDocument/codeAction`. One quickfix per admitted fix overlapping the cursor, one `source.fixAll`,
+one `source.organizeImports`.
+
+Applicability is exposed rather than hidden: a withheld fix produces *no* action. `Application.admittedFix?`
+is the one admission rule, shared with the patch a write would publish, so an editor never offers a
+quickfix `lean-fmt fix` would refuse.
+
+`fixAll` and `organizeImports` each cost one exact run and are computed only when the client's requested
+kinds ask for them — an editor that asks for quickfixes on every cursor movement must not pay for two
+whole-document rewrites each time. -/
+private def handleCodeAction (session : Session) (id : RequestID) (params : Json) : IO Unit := do
+  let .ok identifier := params.getObjVal? "textDocument"
+    | session.sink.fail id .invalidParams "code action request has no textDocument"
+      return
+  let .ok uri := identifier.getObjValAs? String "uri"
+    | session.sink.fail id .invalidParams "code action request has no document uri"
+      return
+  let some document ← documentOf? session uri
+    | failForDocument session id uri
+      return
+  let selected := match params.getObjValAs? Lsp.Range "range" with
+    | .ok range => sourceRangeOf document.text range
+    | .error _ => { start := 0, stop := document.source.utf8ByteSize }
+  -- An absent `only` means "everything you have", which is what a client asking on a keystroke sends.
+  let only? := ((params.getObjVal? "context").toOption.bind fun context =>
+    (context.getObjValAs? (Array String) "only").toOption)
+  let wants (kind : String) : Bool := match only? with
+    | none => true
+    | some kinds => kinds.any fun asked => kind == asked || kind.startsWith (asked ++ ".")
+  match ← resolve session document with
+  | .error message =>
+    session.sink.fail id .invalidParams message
+    return
+  | .ok (target, plan) =>
+  let unsafeFixes := (← session.settings.get).unsafeFixes
+  let mut actions : Array Json := #[]
+  if wants "quickfix" then
+    match ← findingsFor session document with
+    | .error message => session.sink.log 3 s!"lean-fmt could not analyze {uri}: {message}"
+    | .ok findings =>
+      for finding in findings do
+        -- Overlap, not containment: a client sends the cursor as an empty range, and an empty range is
+        -- contained in nothing.
+        if finding.range.start < selected.stop && selected.start < finding.range.stop ||
+            finding.range.start == selected.start then
+          if let some fix := Application.admittedFix? plan unsafeFixes finding then
+            let edits := fix.edits.map fun edit => Lean.toJson
+              ({ range := lspRangeOf document.text edit.range, newText := edit.replacement }
+                : Lsp.TextEdit)
+            actions := actions.push (codeAction s!"{finding.code}: {finding.message}" "quickfix"
+              (workspaceEdit document edits) #[diagnosticJson document.text finding])
+  if wants "source.fixAll" then
+    let fixed? ←
+      try
+        let report ← session.run.streamSnapshot target plan .fix
+          (unsafeFixes := unsafeFixes)
+        pure (some report)
+      catch error =>
+        session.sink.log 3 s!"lean-fmt could not compute fix-all for {uri}: {error}"
+        pure none
+    if let some report := fixed? then
+      if report.changed then
+        if let some output := report.output then
+          actions := actions.push (codeAction "lean-fmt: fix all" "source.fixAll"
+            (workspaceEdit document #[wholeEdit document output]))
+  if wants "source.organizeImports" then
+    match ← (try session.run.organizeSnapshot target catch error => pure (.error s!"{error}")) with
+    | .error message => session.sink.log 3 s!"lean-fmt: {message}"
+    | .ok none => pure ()
+    | .ok (some output) =>
+      actions := actions.push (codeAction "lean-fmt: organize imports" "source.organizeImports"
+        (workspaceEdit document #[wholeEdit document output]))
+  session.sink.respond id (Json.arr actions)
 
 /-! ## Dispatch -/
 
@@ -578,6 +907,11 @@ def dispatch (session : Session) (json : Json) : IO Bool := do
       session.sink.respond id Json.null
       return false
     | "$/lean-fmt/health" => handleHealth session id; return false
+    | "textDocument/formatting" =>
+      handleFormatting session id params (ranged := false); return false
+    | "textDocument/rangeFormatting" =>
+      handleFormatting session id params (ranged := true); return false
+    | "textDocument/codeAction" => handleCodeAction session id params; return false
     | _ =>
       session.sink.fail id .methodNotFound s!"lean-fmt does not implement {method}"
       return false
@@ -593,6 +927,11 @@ reader owns the stream, applies cancellation immediately, and hands everything e
 private inductive Work where
   | message (json : Json)
   | malformed (detail : String)
+  /-- A debounced analysis, scheduled by `didOpen`/`didChange` and dropped by the worker if the
+  document has moved past `version` in the meantime (§9). It rides the same queue as everything else so
+  that analysis and message handling are the one FIFO the freeze specifies — never two things touching
+  a document at once. -/
+  | analyze (uri : String) (version : Int)
   deriving Inhabited
 
 /-- Extract a request id without committing to the message being well formed. -/
@@ -644,6 +983,10 @@ private partial def workLoop (session : Session) (queue : Std.CloseableChannel.S
     -- told. There is no id to answer, because there was no parseable message.
     session.sink.fail .null .parseError s!"lean-fmt could not read a message: {detail}"
     workLoop session queue
+  | some (Work.analyze uri version) =>
+    try analyzeAndPublish session uri version
+    catch error => session.sink.log 1 s!"lean-fmt: {error}"
+    workLoop session queue
   | some (Work.message json) =>
     let stop ←
       try dispatch session json
@@ -670,25 +1013,37 @@ def serveLanguageServer (options : ServerOptions) : IO UInt32 := do
   let discovery ← Discovery.run root configPath?
   let project ← Project.loadWorkspaceOnly root
   let sink ← Sink.of (← IO.getStdout)
-  let session : Session := {
-    options, root, project, sink
-    discovery := ← IO.mkRef discovery
-    documents := ← IO.mkRef {}
-    refusals := ← IO.mkRef {}
-    cancelled := ← Std.Mutex.new {}
-    initialized := ← IO.mkRef false
-    shuttingDown := ← IO.mkRef false
-  }
   for notice in discovery.fallback.notices do
     sink.log 3 s!"lean-fmt: {notice}"
-  let queue : Std.CloseableChannel.Sync Work ←
-    Std.CloseableChannel.Sync.new (capacity := some maxQueuedMessages)
-  let input ← IO.getStdin
-  let reader ← IO.asTask (prio := .dedicated) (readLoop session input queue)
-  let code ← workLoop session queue
-  -- The reader is already finished whenever the queue closed; waiting is what makes that true rather
-  -- than probable, and it is what stops a half-read frame from outliving the session.
-  discard <| IO.wait reader
-  return code
+  -- The exact capability brackets the whole session, as `serve`'s does (`Service.lean:186`), so its
+  -- temporary storage is created and removed once rather than per request.
+  Application.withExactRun project options.maxMemoryGiB fun run => do
+    let queue : Std.CloseableChannel.Sync Work ←
+      Std.CloseableChannel.Sync.new (capacity := some maxQueuedMessages)
+    let settings ← IO.mkRef options
+    let session : Session := {
+      options, settings, root, project, run, sink
+      discovery := ← IO.mkRef discovery
+      documents := ← IO.mkRef {}
+      refusals := ← IO.mkRef {}
+      cancelled := ← Std.Mutex.new {}
+      analyses := ← IO.mkRef {}
+      -- The quiet interval is a wait, not a poll: one task per scheduled version, which either finds
+      -- the document still at that version and enqueues, or finds it moved and enqueues anyway — the
+      -- worker is the one that drops a superseded analysis, because only the worker's ordering is
+      -- authoritative about what "current" means.
+      schedule := fun uri version => discard <| IO.asTask do
+        IO.sleep (← settings.get).debounceMs.toUInt32
+        discard <| queue.trySend (Work.analyze uri version)
+      initialized := ← IO.mkRef false
+      shuttingDown := ← IO.mkRef false
+    }
+    let input ← IO.getStdin
+    let reader ← IO.asTask (prio := .dedicated) (readLoop session input queue)
+    let code ← workLoop session queue
+    -- The reader is already finished whenever the queue closed; waiting is what makes that true rather
+    -- than probable, and it is what stops a half-read frame from outliving the session.
+    discard <| IO.wait reader
+    return code
 
 end LeanFmt.Internal.LanguageServer

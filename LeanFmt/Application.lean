@@ -917,6 +917,21 @@ private def computeImportReports (plans : Array RulePlan) (workspace : Lake.Work
     | none => (#[], 0)
     | some header => importFindingsOfHeader plan closureOf header normalized
 
+/-- The fix this product would actually apply for a finding, or `none`.
+
+Two independent conditions, and both are easy to forget one of. The rule must be *fix*-selected — the
+`fixable`/`unfixable` axis (`ruff-12`), which is not the same axis as being reported — and the fix's
+effective applicability must be admitted under this run's `--unsafe-fixes`.
+
+It is a named function because it has more than one caller and they must not drift: `prepareFile`
+decides which edits a write publishes, and the language server decides which code actions it offers.
+An editor offering a quickfix the command line would refuse is the same defect as an editor reporting a
+finding the command line does not — a second answer for the same bytes. -/
+def admittedFix? (plan : RulePlan) (unsafeFixes : Bool) (finding : Finding) : Option Fix := do
+  let fix ← finding.fix?
+  guard <| plan.fixableSelected.contains finding.code && fix.applicability.admitted unsafeFixes
+  return fix
+
 /-- Project one analysis into the edits a preview or write would apply — one of two independent patches,
 keyed on `renderCanonical` (`ruff-11c` RDF-IMPL, `notes/01-model.md` §2):
 
@@ -966,11 +981,8 @@ private def prepareFile (plan : RulePlan) (renderCanonical unsafeFixes : Bool)
   -- *and* its applicability is admitted. A selected-but-unfixable rule is still reported (its finding is
   -- in `findings`); only the patch drops the fix — the same shape as a withheld unsafe fix.
   let admitted := baseFindings.map fun finding =>
-    match finding.fix? with
-    | some fix =>
-      if plan.fixableSelected.contains finding.code && fix.applicability.admitted unsafeFixes then finding
-      else { finding with fix? := none }
-    | none => finding
+    if (admittedFix? plan unsafeFixes finding).isSome then finding
+    else { finding with fix? := none }
   let patch ← match preparePatch base admitted with
     | .ok patch => pure patch
     | .error error =>
@@ -1527,6 +1539,92 @@ def StreamReport.toJson (report : StreamReport) : Lean.Json :=
     ++ (if report.sourceMap.isEmpty then []
         else [("sourceMap", Lean.Json.arr (report.sourceMap.map markJson))])
 
+/-- The exact half of `stream`, against a run the caller already holds.
+
+`stream` resolves a root, a discovery, a workspace, and an envelope on every call, which is right for
+a one-shot pipe and wrong for a session: a language server holds all four for its lifetime and would
+otherwise pay `Project.loadWorkspaceOnly` per keystroke. Everything below the resolution is identical,
+so it lives here and `stream` is the resolving wrapper.
+
+This is what "no second formatter" means concretely (`ruff-17` roadmap): the LSP surface enters *here*,
+not through a parallel rendering path, so a range answer served to an editor and the same range piped
+through `--stdin` are the same bytes computed by the same code.
+
+`cancel?` is threaded to the child poll, so a client's `$/cancelRequest` kills the frontend run rather
+than waiting for it (`ruff-17` `notes/01-protocol.md` §9). -/
+def ExactRun.streamSnapshot (run : ExactRun) (target : Project.SourceTarget) (plan : RulePlan)
+    (mode : RunMode) (range? : Option SourceRange := none) (unsafeFixes : Bool := false)
+    (formatCheck : Bool := false) (cancel? : Option Std.CancellationToken := none) :
+    IO StreamReport := do
+  let project := run.project
+  let renderCanonical := mode.rendersCanonical
+  let applies := mode == .fix
+  let demandedCaps := plan.demandedCaps renderCanonical applies
+  let demanded := plan.requiredTier.max (if renderCanonical then Tier.semantic else Tier.source)
+  let envelope ← run.envelope target (captureSemantic := demanded == .semantic)
+    (captureOccurrences := demandedCaps.occurrences) (cancel? := cancel?)
+  -- Rendered here rather than inside `canonicalAnalysis` so the source map survives the trip.
+  let base ← canonicalAnalysis target (renderCanonical := false) envelope
+  let (analysis, marks) ←
+    match renderCanonical, envelope.artifact?, base.result? with
+    | true, some artifact, some _ =>
+      let (normalized, _) := LosslessSource.normalize target.source
+      let (text, marks) ← Printer.formatWithMap artifact.source normalized
+        target.config.format.lineWidth artifact.semantic
+      pure (base.withCanonical { text }, marks)
+    | _, _, _ => pure (base, #[])
+  let (normalized, _) := LosslessSource.normalize target.source
+  let (reportImports, withheldRedundant) ← singleImportReport plan project.workspace normalized
+  match prepareFile plan renderCanonical unsafeFixes reportImports
+      withheldRedundant target analysis with
+  | .error report =>
+    return {
+      path := report.path
+      status := report.status
+      findings := report.findings
+      diagnostics := report.diagnostics
+    }
+  | .ok prepared =>
+    let findings := prepared.findings
+    let base : StreamReport := { path := target.relativePath, status := "clean", findings }
+    match mode with
+    | .check =>
+      return { base with
+        status := if findings.isEmpty then "clean" else "findings"
+        changed := !findings.isEmpty }
+    | .diff =>
+      unless prepared.changed do return base
+      return { base with
+        status := "would-diff"
+        changed := true
+        diff := some (unifiedDiff target.relativePath prepared.normalized prepared.patch.formatted) }
+    | .fix =>
+      -- `fix` streams; it does not validate by re-elaboration, because it publishes nothing. The
+      -- caller reads the bytes and decides. `format` below is the same.
+      unless prepared.changed do return { base with output := some prepared.output }
+      return { base with
+        status := "fixed"
+        changed := true
+        output := some prepared.output }
+    | .format =>
+      -- A range narrows the *published* bytes to the layout units it expands to; the report's
+      -- findings are unchanged, because they index the caller's own unmoved coordinates.
+      let sliced? := range?.bind fun range =>
+        sliceRange prepared.normalized prepared.patch.formatted marks range
+      let (text, requested?, actual?, sourceMap) := match sliced? with
+        | some result => (result.text, some result.requested, some result.actual, result.marks)
+        | none => (prepared.patch.formatted, none, none, marks)
+      let output := LosslessSource.denormalize text prepared.lineEndings
+      let changed := text != prepared.normalized
+      if formatCheck then
+        return { base with
+          status := if changed then "would-format" else "clean"
+          changed, requested?, actual?, sourceMap }
+      return { base with
+        status := if changed then "formatted" else "clean"
+        output := some output
+        changed, requested?, actual?, sourceMap }
+
 /-- Format, check, diff, or fix one unsaved buffer and stream the answer.
 
 Every clause the freeze fixes is enforced here rather than documented and hoped for:
@@ -1559,74 +1657,40 @@ def stream (request : StreamRequest) : IO StreamReport := do
     | .error message => throw <| IO.userError message
   for notice in target.config.notices ++ plan.notices do
     IO.eprintln s!"lean-fmt: {notice}"
-  let renderCanonical := request.mode.rendersCanonical
-  let applies := request.mode == .fix
-  let demandedCaps := plan.demandedCaps renderCanonical applies
-  let demanded := plan.requiredTier.max (if renderCanonical then Tier.semantic else Tier.source)
-  withExactRun project request.maxMemoryGiB fun run => do
-    let envelope ← run.envelope target (captureSemantic := demanded == .semantic)
-      (captureOccurrences := demandedCaps.occurrences)
-    -- Rendered here rather than inside `canonicalAnalysis` so the source map survives the trip.
-    let base ← canonicalAnalysis target (renderCanonical := false) envelope
-    let (analysis, marks) ←
-      match renderCanonical, envelope.artifact?, base.result? with
-      | true, some artifact, some _ =>
-        let (normalized, _) := LosslessSource.normalize target.source
-        let (text, marks) ← Printer.formatWithMap artifact.source normalized
-          target.config.format.lineWidth artifact.semantic
-        pure (base.withCanonical { text }, marks)
-      | _, _, _ => pure (base, #[])
-    let (normalized, _) := LosslessSource.normalize target.source
-    let (reportImports, withheldRedundant) ← singleImportReport plan project.workspace normalized
-    match prepareFile plan renderCanonical request.unsafeFixes reportImports
-        withheldRedundant target analysis with
-    | .error report =>
-      return {
-        path := report.path
-        status := report.status
-        findings := report.findings
-        diagnostics := report.diagnostics
-      }
-    | .ok prepared =>
-      let findings := prepared.findings
-      let base : StreamReport := { path := target.relativePath, status := "clean", findings }
-      match request.mode with
-      | .check =>
-        return { base with
-          status := if findings.isEmpty then "clean" else "findings"
-          changed := !findings.isEmpty }
-      | .diff =>
-        unless prepared.changed do return base
-        return { base with
-          status := "would-diff"
-          changed := true
-          diff := some (unifiedDiff target.relativePath prepared.normalized prepared.patch.formatted) }
-      | .fix =>
-        -- `fix` streams; it does not validate by re-elaboration, because it publishes nothing. The
-        -- caller reads the bytes and decides. `format` below is the same.
-        unless prepared.changed do return { base with output := some prepared.output }
-        return { base with
-          status := "fixed"
-          changed := true
-          output := some prepared.output }
-      | .format =>
-        -- A range narrows the *published* bytes to the layout units it expands to; the report's
-        -- findings are unchanged, because they index the caller's own unmoved coordinates.
-        let sliced? := request.range?.bind fun range =>
-          sliceRange prepared.normalized prepared.patch.formatted marks range
-        let (text, requested?, actual?, sourceMap) := match sliced? with
-          | some result => (result.text, some result.requested, some result.actual, result.marks)
-          | none => (prepared.patch.formatted, none, none, marks)
-        let output := LosslessSource.denormalize text prepared.lineEndings
-        let changed := text != prepared.normalized
-        if request.formatCheck then
-          return { base with
-            status := if changed then "would-format" else "clean"
-            changed, requested?, actual?, sourceMap }
-        return { base with
-          status := if changed then "formatted" else "clean"
-          output := some output
-          changed, requested?, actual?, sourceMap }
+  withExactRun project request.maxMemoryGiB fun run =>
+    run.streamSnapshot target plan request.mode (range? := request.range?)
+      (unsafeFixes := request.unsafeFixes) (formatCheck := request.formatCheck)
+
+/-- Organize one unsaved buffer's imports, validated and returned rather than written.
+
+`organize` below is the batch operation: it walks a selection, validates, and publishes atomically. An
+editor cannot use it — the bytes belong to a buffer that may never have been saved, and the client, not
+this process, applies the edit. What the two must not disagree about is *which* rewrite happens and
+whether it is allowed to happen, so both call `Imports.parseHeaderModel` + `Imports.organize` for the
+candidate and `analyzeSnapshot (validator := true)` for the verdict. Only the last step differs:
+`publishAtomic` there, a returned `String` here.
+
+Validation is not optional just because this path does not write. The reorder is observable to
+elaboration (`notes/01-semantics.md` §2) — that is the whole reason it is opt-in — so a header that
+stops elaborating must be refused before it reaches the user's buffer, exactly as it is refused before
+it reaches their file.
+
+`none` means the header is already canonical. An `.error` names why the rewrite was refused. -/
+def ExactRun.organizeSnapshot (run : ExactRun) (target : Project.SourceTarget)
+    (cancel? : Option Std.CancellationToken := none) : IO (Except String (Option String)) := do
+  let (normalized, lineEndings) := LosslessSource.normalize target.source
+  let some header ← Imports.parseHeaderModel normalized
+    | return .ok none
+  let output := LosslessSource.denormalize (Imports.organize header normalized) lineEndings
+  if output == target.source then return .ok none
+  let validation ← run.analyzeSnapshot (target.withSource output) (renderCanonical := false)
+    (validator := true) (cancel? := cancel?)
+  match validation.result? with
+  | none =>
+    let detail := if validation.diagnostics.isEmpty then "the organized header did not elaborate"
+      else String.intercalate "; " validation.diagnostics.toList
+    return .error s!"organize imports was refused: {detail}"
+  | some _ => return .ok (some output)
 
 structure OrganizeRequest where
   root : FilePath
