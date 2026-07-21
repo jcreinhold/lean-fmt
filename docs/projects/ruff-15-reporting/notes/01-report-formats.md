@@ -409,8 +409,10 @@ level `"none"` is never emitted: it means a trace notification, which no finding
   converting every edit range through the same conversion and re-deriving replacement text against the
   artifact's on-disk encoding — a second write-shaped surface with its own correctness burden and no
   named consumer. `--output-format json` already carries exact edits for anyone who wants them.
-  Recorded as a deliberate narrowing, not an oversight. `ruff-18-integrations` is where a consumer for
-  SARIF fixes would appear.
+  Recorded as a deliberate narrowing, not an oversight. It stands until a consumer for SARIF fixes is
+  named. `ruff-18-integrations` was that stack; its 2026-07-21 narrowing to CI recipes and installation
+  documentation gives it no editor or tooling deliverable that would want them, so reopening this needs
+  a new stack and a real consumer.
 - Suppressed findings do not appear. They are not in the canonical report (`FileReport.suppressed` is a
   count, not a list), so SARIF's `suppressions` property (§3.35) has no data to carry and stating one
   would be inventing a field the report does not have — a stop rule of this prompt. The count travels

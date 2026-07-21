@@ -1,6 +1,6 @@
 ---
 kind: state
-first_unresolved: 01-contract
+first_unresolved: 01-recipes
 ---
 
 # Current state
@@ -11,9 +11,26 @@ implementation still matches recorded state.
 
 | Prompt | Claim | Status | Depends on |
 | --- | --- | --- | --- |
-| 01-contract | RDI-SPEC | planned | — |
-| 02-assets | RDI-IMPL | planned | RDI-SPEC |
-| 03-acceptance | RDI-FINAL | planned | RDI-IMPL |
+| 01-recipes | RDI-RECIPES | planned | — |
+| 02-acceptance | RDI-FINAL | planned | RDI-RECIPES |
+
+## Narrowed to two deliverables — 2026-07-21
+
+The stack carried five: shell completions, pre-commit hooks, CI recipes, first-party editor packages,
+and installation documentation. It now carries two — **CI recipes and installation/upgrade
+documentation**. `roadmap.md` §"Scope" records what was cut and why; the short version is that
+completions are the largest unbuilt piece and are not needed to use the product, pre-commit is a thin
+wrapper over `--staged`, and `ruff-17` already answered the editor question in documentation.
+
+Three prompts became two. There is no separate `*-SPEC` prompt any more: `ruff-15` and `ruff-16` froze
+the surface this stack documents, and the sections below are that freeze in the form this stack needs,
+so a prompt whose only job was to write it down would be writing it twice.
+
+The prompt files also lost their inherited template text — the "private intent-to-report architecture"
+and "design the interface twice" language belongs to a stack that ships Lean modules, and the Check
+sections named a tool environment (`write_next.py`, a "generic stack structural checker") that does not
+exist in this repository, alongside a mathlib gate keyed to `RCP-ACCEPT`, a claim ID from another
+stack. None of it was reachable instruction.
 
 ## Inherited from `ruff-15-reporting` (verified)
 
@@ -54,6 +71,21 @@ against the vendored 2.1.0 schema in `tests/reporting/`, so a CI example can be 
 - **Document formats under `--watch` require `--output-file`** and replace it atomically per
   generation; they are refused on stdout, because concatenated SARIF/JUnit/JSON documents parse as
   nothing. A polling CI consumer reads the file.
+
+## Inherited from `ruff-17-lsp` (verified)
+
+This is what closed the editor deliverable, and it is why the remaining scope is CI and installation.
+
+- **`docs/editor-setup.md` carries working VS Code, Neovim, and Emacs configuration**, and
+  `tests/lsp/editor.sh` runs the Neovim stanza through Neovim's own LSP client — 15 checks covering
+  attach, diagnostics on unsaved bytes, code actions, in-memory formatting, and an untouched file on
+  disk. The Emacs and VS Code stanzas are derived from documented schemas and have not been run; say so
+  rather than implying all three are tested.
+- **The server advertises formatting, range formatting, and code actions, and deliberately no hover.**
+  A recipe or document may not promise an editor feature beyond that set.
+- `tests/lsp/editor.sh` and `tests/lsp/acceptance.sh` are outside the `tests/*/run.sh` sweep — the
+  first needs Neovim 0.11+, the second costs about 90 s. A CI recipe that claims to run "the suites"
+  should be explicit about whether it runs these.
 
 ## Blockers and prerequisites
 

@@ -45,7 +45,7 @@ envelope remain non-negotiable.
 | 15 | `ruff-15-reporting` | Concise, GitHub, SARIF, and JUnit reporting | 12, 13 |
 | 16 | `ruff-16-watch-incremental` | Watch and changed-files workflows | 13, 15 |
 | 17 | `ruff-17-lsp` | Native LSP diagnostics, formatting, and code actions | 06, 07, 13, 14 |
-| 18 | `ruff-18-integrations` | Shell completions, pre-commit, CI and editor setup | 15–17 |
+| 18 | `ruff-18-integrations` | CI recipes and clean install/upgrade documentation (completions, pre-commit, and first-party editor packages cut 2026-07-21; see its roadmap §Scope) | 15–17 |
 | 19 | `ruff-19-performance` | Regression budgets and measured private concurrency decision (also owns the `ruff-01` artifact-granularity and `ruff-10b` re-projection-cost revisits) | 01, 04, 10b, 12, 17 |
 | 20 | `ruff-20-acceptance` | Fresh Ruff-class product, architecture, and mathlib audit | 18, 19 |
 

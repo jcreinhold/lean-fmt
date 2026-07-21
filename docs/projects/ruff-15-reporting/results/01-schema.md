@@ -147,8 +147,10 @@ Each is quoted verbatim in the freeze with its section number; none is paraphras
   regions in character or line/column terms, our edits are normalized byte ranges, and §3.30.4 forbids
   the mixed region that would let us state both. Emitting them correctly means re-deriving replacement
   text against the artifact's on-disk encoding — a second write-shaped surface with no named consumer,
-  when `--output-format json` already carries exact edits. Recorded as a narrowing with
-  `ruff-18-integrations` as the stack that would reopen it.
+  when `--output-format json` already carries exact edits. Recorded as a narrowing. It named
+  `ruff-18-integrations` as the stack that would reopen it; that stack was narrowed to CI recipes and
+  installation documentation on 2026-07-21 and no longer has a deliverable that would consume SARIF
+  fixes, so reopening this needs a new stack with a named consumer.
 
 - **Suppressed findings do not appear in SARIF.** SARIF has a `suppressions` property (§3.35) and it
   looks like the right home. But the canonical report carries `FileReport.suppressed` as a **count**,
