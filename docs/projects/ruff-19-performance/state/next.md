@@ -18,6 +18,9 @@ Read this file, the target prompt, target files, listed source/template line ran
 ## Proof Task
 
 - Deliver **RPR-IMPL**: Profile representation, layout, rule tiers, validation, rendering, watch, and LSP. Optimize proven critical paths. Only after single-session work, test exactly two isolated sessions under the adoption rule.
+- **Done and committed** (`results/02-optimize.md`): the phase schema closed to 95.1% / 97.2% accounted; a doubled Lake traversal in `exactSetup` removed (-50.3% on `exact_setup`); and the whole-workspace fallback digest removed from a cold `mathlib-sample` `check` (-71% cold, -67% warm, output digest unchanged).
+- **Remaining, in order.** (1) `exact_child` / `child_analyze`, which is 79-84% of every cold run and is still one child process per file. (2) Watch and LSP profiling. (3) The adversarial `PositionIndex`-build fixture inherited from `ruff-15`, and `phase.positions_ms` measured against it -- it reads 0 ms on every workload so far. (4) A `formatter-integrated-built` workload. (5) The two-session concurrency test, last.
+- **Do not re-measure under load.** `results/02-optimize.md` discards one run taken at load average 25 with five other `lean` processes resident. Check `uptime` and `ps -Ao rss,comm` before trusting a timing.
 - Read `roadmap.md`, its prerequisite stack results, `AGENTS.md`, the current implementation and tests, and the relevant Lean compiler/Lake sources before changing an interface. Write interface comments and characterization tests before implementation where the behavior is not already frozen.
 
 ## Reuse
