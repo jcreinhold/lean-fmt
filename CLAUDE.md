@@ -34,7 +34,7 @@ lake exe lean-fmt-tests
 lake lint            # the formatter on itself, under lean-fmt.toml; this is what CI runs
 ```
 
-Suites live in `tests/*/run.sh`: boundary, cache, catalog, check, compiler, discovery, downstream,
+Suites live in `tests/*/run.sh`: boundary, cache, catalog, check, ci, compiler, discovery, downstream,
 imports, layout, lossless, modes, printer, reporting, scale, semantic, stream, suppression, syntax,
 watch.
 
@@ -48,6 +48,12 @@ Match the checks to the change:
   absent from that list is linted, so a new directory is covered until someone says otherwise.
 - `tests/security/bench.sh` measures the linear-time claim. It is a benchmark, not a suite. Run it
   when you touch the source scans, and record the numbers.
+- `tests/ci/run.sh` gates `docs/ci.md`: it builds a consuming project that takes lean-fmt as a git
+  dependency and runs all four published recipes, the cache instruction, and a `git archive` install.
+  It costs about 90 s because it clones and builds the dependency twice. It reads **committed** state
+  only — a `file://` clone at `HEAD` and `git archive` — so commit before running it, or it tests the
+  previous commit and passes while your change is broken. Run it when you touch `docs/ci.md`, the
+  reporting formats, changed-file selection, or cache identity.
 - `tests/watch/run.sh` §9.6 runs `check --staged` against *this* repository, so it fails whenever a
   `.lean` file is staged. That is a defect in the suite, not in your change; re-run it with a clean
   index. `ruff-20-acceptance` owns the repair (move the assertion to a fixture repository).

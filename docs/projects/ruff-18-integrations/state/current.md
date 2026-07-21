@@ -1,13 +1,27 @@
 ---
 kind: state
-first_unresolved: 02-acceptance
+first_unresolved: none
 ---
 
 # Current state
 
-`01-recipes` is verified. `docs/ci.md` carries the exit-code contract, four CI recipes, the cache
-policy, and pinning/upgrade documentation; `README.md` links it from §"Using lean-fmt in another
-project". `02-acceptance` remains, and it is the prompt that tests all of it from clean sources.
+**This stack is complete.** Both claims are verified and no prompt remains.
+
+`docs/ci.md` carries the exit-code contract, four CI recipes, the cache policy, and pinning/upgrade
+documentation; `README.md` links it from §"Using lean-fmt in another project". `tests/ci/run.sh`
+gates all of it — 16 checks, ~91 s — against a generated consuming project that takes lean-fmt as a
+git dependency with real commit history, plus a `git archive` install from committed state alone.
+
+The gate is the part worth knowing about. `docs/ci.md` tells CI to cache `.lake` and
+`.lean-fmt-cache` under one key, which is correct only because cache identity takes the formatter
+binary's `(path, size, mtime)`. A total cache miss is indistinguishable from a warm cache that is
+merely slow, so nothing else in the repository would have noticed that instruction going stale. The
+suite asserts both directions: an mtime-preserving restore hits, a touched binary misses.
+
+Two limitations are standing, not open questions. No recipe has run on a GitHub runner — every
+command inside the workflows is tested, the YAML around them is reviewed against `action.yml` — and
+closing that needs a code-scanning upload this stack's stop rules forbid. And `tests/ci/run.sh` reads
+committed state only, so it must be run after committing, not before.
 
 The external prerequisite stacks are `ruff-15-reporting`, `ruff-16-watch-incremental`, `ruff-17-lsp`.
 Their recorded surfaces were re-checked live during `01-recipes` and all held: exit codes, format/mode
@@ -17,7 +31,7 @@ the "Inherited from" sections below record them.
 | Prompt | Claim | Status | Depends on |
 | --- | --- | --- | --- |
 | 01-recipes | RDI-RECIPES | verified (`results/01-recipes.md`) | — |
-| 02-acceptance | RDI-FINAL | planned | RDI-RECIPES |
+| 02-acceptance | RDI-FINAL | verified (`results/02-acceptance.md`) | RDI-RECIPES |
 
 ## Narrowed to two deliverables — 2026-07-21
 

@@ -1,63 +1,36 @@
 # Next Proof Packet
 
 - Stack: ruff-18-integrations
-- First unresolved: 02-acceptance
-- Claim ID: RDI-FINAL
-- Prompt: 02-acceptance
-- Module: (no production Lean interface; a test harness may be added)
-- Target file: `tests/downstream/run.sh` (extend) and `results/02-acceptance.md`
+- First unresolved: **none — this stack is complete**
+- Claim ID: (both verified: RDI-RECIPES, RDI-FINAL)
 
-## Target Declarations
+## Nothing to run
 
-- No production decls. If a gate is added, it belongs in a `tests/*/run.sh`, not in `LeanFmt/`.
+Both prompts are verified. `results/01-recipes.md` and `results/02-acceptance.md` carry the evidence,
+and `state/current.md` records what shipped and what stayed limited.
 
-## Read Before Editing
+Do not open a new prompt in this stack to chase the two standing limitations. Neither is unfinished
+work:
 
-- `results/01-recipes.md` — the recipes under test, the transcripts they were written from, and its
-  §"Remaining uncertainty", which names exactly what this prompt can and cannot close.
-- `docs/ci.md` — the published text. Every command in it is under test.
-- `tests/downstream/run.sh` — the existing clean-workspace harness. Extend it rather than writing a
-  second one, unless the shapes genuinely differ.
+- **No recipe has run on a GitHub runner.** Closing it requires a code-scanning upload — remote state
+  this stack's stop rules forbid. It is recorded as a limitation, not a gap.
+- **`actions/cache` mtime preservation is inferred one step** from its use of `tar`. Same blocker.
 
-## Proof Task
+## If you are here because something broke
 
-- Deliver **RDI-FINAL**: run every published recipe against a scratch git repository with real
-  commits, and smoke-test installation from a clean `git archive` unpacked in a temporary directory.
-- Fix in `docs/ci.md` every gap between what a recipe says and what it does. A recipe that needed a
-  fix is this prompt's most valuable output.
-- Leave a persistent gate for whatever a future change could silently break, or say why a check
-  cannot reasonably be automated.
+`tests/ci/run.sh` is the gate. It reads **committed** state only, so commit first. It fails when:
 
-## Carried Over From `01-recipes`
+- a published recipe in `docs/ci.md` stops working;
+- a clean run stops writing a SARIF log, or an exit-2 run starts writing one;
+- `--changed-since` loses its subset behavior or its empty-selection notice;
+- cache identity changes such that an mtime-preserving restore no longer hits, which would make
+  `docs/ci.md`'s caching instruction silently wrong;
+- `git archive` stops carrying something a build needs.
 
-Three items, already recorded, that this prompt should either close or restate as standing:
+Fix `docs/ci.md` and the suite together. The document and the suite are one artifact.
 
-- **`lake update` against a git dependency is untested.** `01-recipes` used a path `require`. If this
-  prompt builds a git-dependency workspace, it closes; otherwise the observation stays labeled.
-- **No recipe has run on a GitHub runner**, and the stop rules forbid the remote state change that
-  would test one. Expect to record this as a standing limitation, not to narrow the claim to what
-  passed.
-- **`--root` on a missing directory reports a raw IO error** rather than the repository's path-error
-  shape. Exit code and named path are both correct; this is an observation, not this stack's defect.
+## What was cut, and where it would go
 
-## Reuse
-
-- The scratch-repository recipe from `results/01-recipes.md` §"The scratch repository" — lakefile,
-  `lintDriver`, one clean module, one FMT005 module — rebuilt with a git `require` this time.
-- `tests/reporting/run.sh`'s SARIF validation (`check-jsonschema` against the vendored 2.1.0 schema).
-
-## Stop Rules
-
-- Do not require full mathlib.
-- No remote publishing, credentials, or state changes: no code-scanning upload, no release, no push.
-- Record platform and tool limitations honestly rather than narrowing the claim to what passed.
-- Stop rather than weakening exact semantics, write safety, or the resource envelope.
-
-## Checks
-
-- `LEAN_NUM_THREADS=1 lake build`, `lake lint`, `lake exe lean-fmt-tests`, and every `tests/*/run.sh`.
-- `tests/boundary/run.sh`.
-- The scratch-repository and `git archive` runs, with exit codes recorded.
-- `git diff --check`, read in full, before marking RDI-FINAL verified.
-- `tests/watch/run.sh` §9.6 fails whenever a `.lean` file is staged (`CLAUDE.md`); re-run it with a
-  clean index rather than treating it as a regression.
+`roadmap.md` §"Scope" cut shell completions, pre-commit manifests, and first-party editor packages.
+Reopening any of them is a **new stack**, not an amendment here. Completions are the largest unbuilt
+piece: a command model, four emitters, and a drift test.

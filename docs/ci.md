@@ -7,6 +7,17 @@ what may be cached between runs, and what pinning and upgrading change.
 Every command quoted here was executed against a scratch consuming repository before it was written
 down; the transcripts are in `docs/projects/ruff-18-integrations/results/01-recipes.md`.
 
+`tests/ci/run.sh` keeps it honest. It builds a consuming project that takes lean-fmt as a git
+dependency, with real commit history, and runs all four recipes, the cache instruction, and a
+`git archive` install against it. If a recipe here stops working, that suite fails.
+
+What that does **not** cover: the workflow YAML around the commands. Every `lean-fmt` and `lake`
+invocation below is executed by that suite, but the step ordering, `hashFiles`, `$GITHUB_OUTPUT`,
+`permissions`, and the `actions/cache` key are checked against `lean-action`'s `action.yml` and
+GitHub's documented syntax rather than by running them on a runner — uploading to code scanning is
+remote state this repository's test suite will not touch. Treat the shell as tested and the YAML as
+reviewed.
+
 ## Exit codes are the whole interface
 
 ```
@@ -269,8 +280,10 @@ that one dependency and rewrite the manifest; bare `lake update` re-resolves eve
 records the package under its guillemeted name, which is the spelling to pass.
 
 Read the manifest diff afterwards rather than trusting the command's exit code. `lake update` accepts
-a package name it does not recognize and exits 0 without doing anything — observed here against a
-path dependency, so a typo reports success. `git diff lake-manifest.json` is the check.
+a package name it does not recognize and exits 0 without doing anything, so a typo reports success
+and changes nothing. A bad *revision* does fail loudly — `lake update` exits 1 when the pinned commit
+cannot be read — so the hazard is specifically the package name, not resolution in general.
+`git diff lake-manifest.json` is the check.
 
 Expect three things to change:
 

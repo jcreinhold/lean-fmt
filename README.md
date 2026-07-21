@@ -250,4 +250,5 @@ tests/lossless/run.sh
 tests/modes/run.sh
 tests/scale/run.sh
 tests/boundary/run.sh
+tests/ci/run.sh
 ```
