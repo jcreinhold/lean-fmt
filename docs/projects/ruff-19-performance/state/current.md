@@ -55,10 +55,38 @@ cache, not a second optimization, and it is recorded as such.
 `write_collect` each read 0 ms, which retires the suspicion that serializing an index of 62 full
 `SemanticAnalysis` values was the cost.
 
-**Still open in this prompt.** `exact_child`/`child_analyze`, which dominates every cold run and has
-not been attacked; watch and LSP profiling; the adversarial `PositionIndex`-build fixture; a
-`formatter-integrated-built` workload; and the two-session concurrency test, which the work order puts
-after all single-session work.
+**Third optimization: 34 traversals of one Lake graph.** `exact_setup` was 3,531 ms on a cold `self`
+`format --check`, one full no-build context/start/monitor cycle per target over the same graph.
+`Project.exactSetups?` collects every frontend-bound target's setup job into one `startBuild` — the
+shape `importClosures?` already used — and `ExactRun.primeSetups` fills a per-run map before the
+analysis loop. `exact_setup` **3,531 ms over 34 probes → 0 ms over 34 hits**, `setup_prime` 105 ms
+once; wall 42,676 → 36,196–38,369 ms (−13%), digest `e3b0c442…` unchanged.
+
+Two things make it safe rather than merely fast. It is primed with the **frontend-bound subset**, not
+the selection: 34 of 34 on `self`, 1 of 62 on `mathlib-sample`, where it therefore does nothing. And
+the map is keyed on the **source bytes**, not the path, because `fix` and `organize` hand the frontend
+a rewritten snapshot at the same path and a setup carries the header's imports — a path-keyed map
+would have validated a rewritten file against imports it no longer has.
+
+**`exact_child` is a floor, not an open target.** It is 85% of a cold `self` run after the above, and
+`child_analyze` is 91% of that — the Lean frontend elaborating. The 84 ms/file around it was
+attributed, not guessed: `child_setup` (the child's `ModuleSetup` read and parse) is **0 ms on all 34
+files**, and bare `lean-fmt --version` startup is 42–71 ms for a 175 MB binary. The two structural
+ways to remove it are both closed by `CLAUDE.md` — a shared environment would elaborate a file against
+imports it does not have, and a persistent worker is the archived worker protocol.
+
+**A variance finding that qualifies every wall-clock number in this stack.** `module_evidence` swings
+**1,687–5,916 ms on page-cache state alone**, no code change, same digest. The first cold
+`mathlib-sample` run after the build directory ages out is 14,028 ms; three back-to-back runs after it
+are 8,136 / 7,597 / 7,610. The `RPR-SPEC` 24,696 ms baseline was itself a first-run-after-idle
+measurement, so the honest comparison is 24,696 → 7,597–8,136 warm-page-cache, 14,028 cold. The −71%
+claim rests on phases (`cache_write` 9,827 → 1,365; `workspace_artifacts` 7,018 → not reached), which
+do not move with the page cache. **`RPR-FINAL` must build its gates from growth ratios and phase
+values, not wall times.**
+
+**Still open in this prompt.** Watch and LSP profiling; the adversarial `PositionIndex`-build fixture;
+a `formatter-integrated-built` workload; and the two-session concurrency test, which the work order
+puts after all single-session work.
 
 **The unverified check is now verified, and the environmental diagnosis held.** `tests/cache/run.sh`
 had been killed by the OS (`Killed: 9`, exit 137) at three different points across four attempts while

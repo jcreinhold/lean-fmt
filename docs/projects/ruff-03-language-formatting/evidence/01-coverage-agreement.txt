@@ -17,7 +17,7 @@
 #
 # and read `canonical=` per module out of `tests/printer/run.sh`'s corpus section.
 
-printer_total=925   probe_total=924   modules_compared=28
+printer_total=927   probe_total=926   modules_compared=28
 
 # modules where the two disagree (printer canonical, probe claimable+namespace+end+open)
 LeanFmt/Cache/Decision.lean   printer=11  probe=10
@@ -38,6 +38,10 @@ LeanFmt/Imports.lean          printer=20  probe=21
 # became 925/924 over the same 28 modules. Both edited modules were re-probed individually rather
 # than assumed -- Cache.lean 49/49, Project.lean 35/35 -- so neither joined the disagreement list and
 # the gap is still +1 for the two reasons below.
+#
+# And again for the batched setup probe in the same prompt, which added declarations to
+# `LeanFmt/Application.lean` and `LeanFmt/Project.lean`: 925/924 became 927/926. Both were re-probed
+# individually -- Application.lean 112/112, Project.lean 36/36 -- and again neither disagrees.
 
 # Two causes, in opposite directions.
 #

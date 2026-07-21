@@ -146,6 +146,20 @@ structure ExactRun where
   temporary : FilePath
   maxBytes : Nat
   nextIndex : IO.Ref Nat
+  /-- Setups already resolved for this run: root-relative path to the **source they were resolved
+  from** and the setup itself.
+
+  `Project.exactSetups?` fills this in one graph traversal for the files a run has decided will reach
+  the frontend; `exactSetupResult` reads it and falls back to the per-target `exactSetup` on a miss.
+  Empty is always correct -- it just means every target pays for its own traversal, which is what
+  happened before `RPR-IMPL`.
+
+  **The source is stored and compared, not just the path.** A setup carries the header's imports
+  (`setupJob` parses them out of the target's own bytes), and this run's writing modes hand the
+  frontend a *rewritten* snapshot at the same path: `fix` may reorder or drop an import (FMT006,
+  FMT007) and `organize` exists to. Keying on the path alone would validate a rewritten file against
+  the imports it no longer has, which is precisely the check those modes are performing. -/
+  setups : IO.Ref (Std.HashMap String (String × Lean.ModuleSetup))
 
 private structure FacetDescriptor where
   hash : String
@@ -234,7 +248,11 @@ private def diagnosticSetup (snapshot : SourceSnapshot) : Lean.ModuleSetup :=
   | none => { name := `_unknown }
 
 private def exactSetupResult (project : Project.Snapshot)
-    (snapshot : SourceSnapshot) : IO (Except IO.Error Lean.ModuleSetup) :=
+    (setups : Std.HashMap String (String × Lean.ModuleSetup))
+    (snapshot : SourceSnapshot) : IO (Except IO.Error Lean.ModuleSetup) := do
+  if let some (source, setup) := setups[snapshot.relativePath]? then
+    if source == snapshot.source then
+      return Except.ok setup
   try
     return Except.ok (← Project.exactSetup project snapshot)
   catch error =>
@@ -339,6 +357,25 @@ private def runBounded (arguments : IO.Process.SpawnArgs)
 private def ExactRun.nextPathIndex (run : ExactRun) : IO Nat :=
   run.nextIndex.modifyGet fun index => (index, index + 1)
 
+/-- Resolve these targets' Lake setups in one graph traversal, before any of them is analyzed.
+
+Called with exactly the files a run has already decided will reach the frontend -- never the whole
+selection. The distinction is the whole point: on this repository all 34 targets reach it and one
+traversal replaces 34, but on a large project where the cache and the source tier answer almost
+everything, priming the whole selection would resolve setups nothing asks for. On the frozen
+`mathlib-sample`, 1 of 62 targets reaches the frontend.
+
+Best effort by construction. Anything this fails to resolve is simply absent from the map, and
+`exactSetupResult` falls back to the per-target path that builds. -/
+private def ExactRun.primeSetups (run : ExactRun) (targets : Array SourceSnapshot) : IO Unit := do
+  if targets.size < 2 then return
+  let resolved ← withPhase "setup_prime" <| Project.exactSetups? run.project targets
+  run.setups.modify fun map =>
+    (targets.zip resolved).foldl (init := map) fun map (target, setup?) =>
+      match setup? with
+      | some setup => map.insert target.relativePath (target.source, setup)
+      | none => map
+
 private def ExactRun.envelope (run : ExactRun)
     (snapshot : SourceSnapshot) (captureSemantic : Bool) (validator := false)
     (captureOccurrences : Bool := false)
@@ -350,7 +387,7 @@ private def ExactRun.envelope (run : ExactRun)
   -- what came back. Only the middle one is elaboration; the outer two are this process's own cost and
   -- are the ones an optimization here could remove.
   let (setupResult, setupPath, sourcePath) ← withPhase "exact_setup" do
-    let setupResult ← exactSetupResult run.project snapshot
+    let setupResult ← exactSetupResult run.project (← run.setups.get) snapshot
     let setup := match setupResult with
       | .ok setup => setup
       | .error _ => diagnosticSetup snapshot
@@ -579,12 +616,14 @@ def withExactRun (project : Project.Snapshot) (maxMemoryGiB : Nat)
     |>.getD configuredMaxBytes
   let temporary ← IO.FS.createTempDir
   let nextIndex ← IO.mkRef 0
+  let setups ← IO.mkRef {}
   let run : ExactRun := {
     project
     application := ← IO.appPath
     temporary
     maxBytes
     nextIndex
+    setups
   }
   try action run finally IO.FS.removeDirAll temporary
 
@@ -1447,6 +1486,10 @@ def execute (request : RunRequest) : IO RunOutcome := do
       let positions ← profiledPositions snapshots files
       return { report := summarize request.mode.toString files, positions }
   withExactRun project request.maxMemoryGiB fun exactRun => do
+    -- Exactly the files the decisions above left unanswered, which is exactly the set that will
+    -- spawn a frontend child and so need a Lake setup.
+    exactRun.primeSetups <| (snapshots.zip available).filterMap fun (snapshot, available?) =>
+      if available?.isNone then some snapshot else none
     let mut files := #[]
     let mut failures := #[]
     let mut analyses := #[]
@@ -1755,6 +1798,9 @@ def organize (request : OrganizeRequest) : IO RunReport := do
       baseReport snapshot (if candidate?.isSome then "would-organize" else "clean")
     return summarize "organize" files
   withExactRun project request.maxMemoryGiB fun exactRun => do
+    -- Only a snapshot with a candidate rewrite is validated, so only those reach the frontend.
+    exactRun.primeSetups <| (snapshots.zip candidates).filterMap fun (snapshot, candidate?) =>
+      if candidate?.isSome then some snapshot else none
     let mut files := #[]
     let mut failures := #[]
     for (snapshot, candidate?) in snapshots.zip candidates do
@@ -1794,11 +1840,18 @@ private unsafe def runAnalyzeChild (args : List String) : IO UInt32 := do
   let some maxBytes := maxBytes.toNat?
     | return 2
   Lean.Internal.setMaxMemory maxBytes.toUSize
-  let .ok setupJson := Lean.Json.parse (← IO.FS.readFile setupPath)
-    | throw <| IO.userError "invalid ModuleSetup JSON"
-  let .ok setup := Lean.fromJson? setupJson
-    | throw <| IO.userError "invalid ModuleSetup payload"
-  let source ← IO.FS.readFile snapshotPath
+  -- The parent's `exact_child` minus the child's `child_analyze` left about 170 ms per file
+  -- unattributed, and this is the half of it the child can see. A `ModuleSetup` names an artifact
+  -- path for every module in the closure, so on a deep closure the JSON is large and parsing it is
+  -- not free; the remainder outside this bracket is process spawn and binary load, which the child
+  -- cannot measure from inside itself.
+  let (setup, source) ← withPhase "child_setup" do
+    let .ok setupJson := Lean.Json.parse (← IO.FS.readFile setupPath)
+      | throw <| IO.userError "invalid ModuleSetup JSON"
+    let .ok (setup : Lean.ModuleSetup) := Lean.fromJson? setupJson
+      | throw <| IO.userError "invalid ModuleSetup payload"
+    let source ← IO.FS.readFile snapshotPath
+    pure (setup, source)
   -- "0" none, "1" semantic (notations + diagnostics), "2" semantic + the info-tree occurrence fold.
   --
   -- Two phases, on this side of the process boundary where the parent cannot see: `child_analyze` is

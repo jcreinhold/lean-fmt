@@ -10,8 +10,8 @@ status: in-progress
 
 `LeanFmt/Profile.lean` and thirteen new phase names (`notes/02-instrumentation.md`), which took the
 accounted fraction on the two cold workloads from 0.9% and 46.1% to over 90% and so met G3
-(`evidence/01-workloads.md` §5). Two optimizations found by reading the phases the instrumentation
-produced, both verified against an unchanged output digest.
+(`evidence/01-workloads.md` §5). Three optimizations found by reading the phases the instrumentation
+produced, each verified against an unchanged output digest.
 
 ## Optimization 1 — a doubled Lake graph traversal in `exactSetup`
 
@@ -81,9 +81,10 @@ Phase-level, on the cold run:
 | `workspace_artifacts` (sub-phase) | 7,018 ms | not reached |
 | `module_evidence` | 5,938 ms | 1,606 ms |
 
-`module_evidence` was never the target and no code in it changed. It fell with the walk, which is what
-a 7-second traversal of a large build directory does to everything sharing the machine's page cache —
-recorded here rather than claimed as a second optimization.
+`module_evidence` was never the target and no code in it changed. It is page-cache-bound, and the
+section below measures it swinging 1,687–5,916 ms with no code change at all — so this row is not a
+second optimization and the 5,938 → 1,606 figure is not a result. It is here because leaving it out
+of the table would make the `cache_write` row look like less of the total than it is.
 
 Accounted fraction after: **95.1%** cold, **97.2%** warm.
 
@@ -116,9 +117,86 @@ runs that located the cost are `rpr-cachewrite-cold-*`, `rpr-closure-cold-*`, an
 `rpr-fallback-cold-*`; those were taken without `--output-format concise`, so their output digest is
 `17d744ae…` rather than `c0dc55c3…` — the same report in the default format, not a different result.
 
+## The variance that qualifies both numbers above
+
+Re-measuring the cold `mathlib-sample` run four times exposed a confound worth naming before it
+misleads someone:
+
+| Cold `mathlib-sample` `check` | Wall | `phase.module_evidence_ms` |
+| --- | ---: | ---: |
+| first run after the build directory fell out of the page cache | 14,028 ms | 5,916 ms |
+| three back-to-back runs after it | 8,136 / 7,597 / 7,610 ms | 2,226 / 1,687 / 1,697 ms |
+
+**`module_evidence` swings 1,687–5,916 ms on page-cache state alone**, with no code change and the
+same output digest, and it carries most of the wall difference between those two conditions. The
+24,696 ms `RPR-SPEC` baseline was itself a first-run-after-idle measurement, so the honest form of the
+comparison is: cold `mathlib-sample` `check` went from **24,696 ms to 7,597–8,136 ms page-cache-warm
+and 14,028 ms page-cache-cold**.
+
+The −71% headline is not weakened by this, because the thing it claims is a *phase*, measured
+directly: `cache_write` 9,827 → 1,365 ms, and `workspace_artifacts` 7,018 ms → never reached. Those do
+not move with the page cache. What the confound does weaken is any attempt to read a wall-clock delta
+here as a per-commit gate, which is why `RPR-FINAL`'s gates should be growth ratios and phase values
+rather than wall times — the convention `tests/layout/bench.sh` already follows.
+
+## Optimization 3 — 34 traversals of one Lake graph
+
+`phase.exact_setup_ms` was 3,531 ms on a cold `self` `format --check`, of which `setup_probe` was
+3,528: `Project.exactSetup` constructs a Lake build context, starts a build and monitors it **once per
+target**, and the graph it walks is the same graph every time.
+
+`Project.exactSetups?` collects every target's setup job into a single `startBuild` — the shape
+`Project.importClosures?` already uses for currency closures — and `ExactRun.primeSetups` fills a
+per-run map from it before the analysis loop begins.
+
+**It is primed with the frontend-bound subset, never the whole selection.** The set is already known
+at both batch call sites: in `execute` it is the snapshots the cache and the source tier left
+unanswered, and in `organize` it is the snapshots that have a candidate rewrite. On `self` all 34
+reach the frontend and one traversal replaces 34; on `mathlib-sample` exactly **1 of 62** does, so
+priming the whole selection would resolve 61 setups nothing asks for. `primeSetups` returns
+immediately below two targets, which is why the sample's numbers above are unchanged by this
+optimization.
+
+**The map is keyed on the source bytes, not the path.** A setup carries the header's imports, and this
+run's writing modes hand the frontend a *rewritten* snapshot at the same path: `fix` may reorder or
+drop an import (FMT006, FMT007) and `organize` exists to. A path-keyed map would have validated a
+rewritten file against imports it no longer has — precisely the check those modes perform. The stored
+source is compared on every hit, and a mismatch falls through to the per-target path.
+
+Nothing about this batches a *decision*. `exactSetups?` degrades to all-`none` on any failure, and a
+`none` sends that target to `exactSetup`, which builds. It is an optimization over the probe only.
+
+### Measured
+
+`self`, `format --check`, cache-cold, `--output-format concise`, output digest `e3b0c442…` (the empty
+string — this repository is lint-clean and canonically formatted) on every row.
+
+| | Before | After |
+| --- | ---: | ---: |
+| Wall | 42,676 ms | 36,747 / 38,369 / 36,196 ms (**−13%**) |
+| `exact_setup` | 3,531 ms over 34 probes | **0 ms** over 34 hits |
+| `setup_prime` | — | **105 ms**, once |
+
+### What is left in `exact_child`, and why it is not pursued
+
+After this, `exact_child` is 31,236 ms of a 36,747 ms run — **85%** — and `child_analyze` is 28,381 of
+that. The remaining 2,855 ms is 84 ms per file of process overhead, and it was attributed rather than
+guessed at:
+
+- `child_setup`, a new bracket around the child's `ModuleSetup` read and parse, reads **0 ms on all 34
+  files**. The suspicion that a deep closure's setup JSON was expensive to parse is retired.
+- Bare `lean-fmt --version` startup is 42–71 ms measured directly, for a 175 MB binary. That is most
+  of the 84 ms and it is dyld mapping the executable.
+
+So `exact_child` is 91% the Lean frontend elaborating the module, and the overhead around it is
+dominated by loading a binary that must contain the frontend. The two structural ways to remove it are
+both closed: sharing one environment across files would elaborate a file against imports it does not
+have, which `CLAUDE.md` forbids under "preserve exact ordered imports … and validation identity"; and
+a persistent worker is the archived worker protocol, which `CLAUDE.md` forbids restoring. This is
+recorded as a floor, not as an open optimization.
+
 ## Still open under this claim
 
-- `phase.exact_child_ms` / `child_analyze` dominates every cold run and has not been attacked.
 - Watch and LSP profiling.
 - The adversarial `PositionIndex`-build fixture inherited from `ruff-15`.
 - A `formatter-integrated-built` workload.

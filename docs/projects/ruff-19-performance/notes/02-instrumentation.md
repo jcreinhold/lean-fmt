@@ -31,7 +31,9 @@ Beyond the eight `RPR-SPEC` froze (`notes/01-phase-schema.md` §2), all still sp
 | `phase.exact_setup_ms` | resolving one module's Lake setup and writing the child's inputs | `Application.lean`, `ExactRun.envelope` |
 | `phase.setup_probe_ms` | **sub-phase**: `Project.noBuildValue?`, the no-build graph traversal | `Project.lean`, `exactSetup` |
 | `phase.setup_build_ms` | **sub-phase**: the building fallback, when the probe says stale | `Project.lean`, `exactSetup` |
+| `phase.setup_prime_ms` | one batched no-build traversal resolving every frontend-bound target's setup | `Application.lean`, `ExactRun.primeSetups` |
 | `phase.exact_child_ms` | the exact frontend round trip: spawn, run, collect | `Application.lean`, `ExactRun.envelope` |
+| `phase.child_setup_ms` | **sub-phase, emitted by the child**: reading and parsing the `ModuleSetup` | `Application.lean`, `runAnalyzeChild` |
 | `phase.child_analyze_ms` | **sub-phase, emitted by the child**: `analyzeExact` itself | `Application.lean`, `runAnalyzeChild` |
 | `phase.child_encode_ms` | **sub-phase, emitted by the child**: encoding the envelope to JSON | `Application.lean`, `runAnalyzeChild` |
 | `phase.envelope_decode_ms` | parsing the child's JSON back into an `AnalysisEnvelope` | `Application.lean`, `ExactRun.envelope` |
@@ -104,7 +106,16 @@ serializing an index holding 62 full `SemanticAnalysis` values was the cost — 
 the brackets are gone rather than kept as five zeros in every profile. `write_closures`, the one that
 held 9,799 of the 9,827 ms, stayed and now has two sub-phases of its own.
 
-### 3.6 New names the schema did not anticipate
+### 3.6 `child_setup` measures zero, and is kept anyway
+
+Unlike the four `writeAll` brackets, this one stays. It reads **0 ms on all 34 files** of a cold
+`self` run, which is what retires the suspicion that a deep closure's `ModuleSetup` JSON was expensive
+to parse — but it is also the only bracket that can see inside the 84 ms per file of process overhead
+between the parent's `exact_child` and the child's `child_analyze`. A zero here is the load-bearing
+half of the claim that the remainder is binary load (`results/02-optimize.md`), so it is worth its
+line.
+
+### 3.7 New names the schema did not anticipate
 
 `setup_probe`/`setup_build`, `envelope_decode`, `child_encode`, and the four closure brackets above. All three exist because §4 of the
 baseline note assigned phases to sites and these turned out to be the sites that mattered:
