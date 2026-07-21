@@ -35,8 +35,8 @@ lake lint            # the formatter on itself, under lean-fmt.toml; this is wha
 ```
 
 Suites live in `tests/*/run.sh`: boundary, cache, catalog, check, ci, compiler, discovery, downstream,
-imports, layout, lossless, modes, printer, reporting, scale, semantic, stream, suppression, syntax,
-watch.
+imports, layout, lossless, modes, performance, printer, reporting, scale, semantic, stream,
+suppression, syntax, watch.
 
 Match the checks to the change:
 
@@ -46,6 +46,12 @@ Match the checks to the change:
 - `lean-fmt.toml` is this repository's own discovered configuration, and `lake lint` runs the
   formatter under it with no `--config`. Its `exclude` list keeps the fixture trees out; anything
   absent from that list is linted, so a new directory is covered until someone says otherwise.
+- `tests/performance/run.sh` is the durable performance gate. It asserts **counts, ratios, and
+  digests only** -- never a wall time, because the same binary over the same warm corpus measured
+  3,977 ms and 19,968 ms depending only on machine load. It primes its own cache in-run, so it does
+  not care that editing any `LeanFmt/*.lean` renames the index. Its §0 runs `negative.sh`, which
+  proves each gate can fail before the suite reports that none did. Add a gate here when you
+  optimize something, and state it as a quantity that does not move when the machine gets slower.
 - `tests/security/bench.sh` measures the linear-time claim. It is a benchmark, not a suite. Run it
   when you touch the source scans, and record the numbers.
 - `tests/ci/run.sh` gates `docs/ci.md`: it builds a consuming project that takes lean-fmt as a git

@@ -61,15 +61,10 @@ bad() {
   failures=$((failures + 1))
 }
 
-# The 17 top-level phase names. Sub-phases are excluded from the accounted sum -- they are nested
-# inside a top-level bracket and counting both double-counts the same milliseconds.
-# `docs/projects/ruff-19-performance/notes/01-phase-schema.md` §5.1 and `notes/02-instrumentation.md`
-# are the source; that table marks every sub-phase in bold, and this list is the complement.
-top_level=(
-  discovery workspace_load selection_snapshot cache_epoch cache_lookup module_evidence
-  official_artifacts import_findings exact_setup setup_prime exact_child envelope_decode
-  layout rules cache_write positions render_report
-)
+# The gate predicates. `tests/performance/negative.sh` proves each one can fail by calling these
+# same functions on crafted profile output, which is why they are a sourced library and not inline.
+# shellcheck source=tests/performance/gates.sh
+source "$repo_root/tests/performance/gates.sh"
 
 # Run the workload, capturing the report on stdout and the profile channel on stderr.
 profile_run() {
@@ -78,13 +73,23 @@ profile_run() {
     >"$stdout_path" 2>"$stderr_path" || true
 }
 
-counter() { sed -n "s/^$1=\([0-9-]*\)$/\1/p" "$2" | tail -1; }
-phase_sum() { sed -n "s/^phase\.$1_ms=\([0-9]*\)$/\1/p" "$2" | awk '{n+=$1} END {print n+0}'; }
-phase_count() { grep -c "^phase\.$1_ms=" "$2" || true; }
-
 printf 'tests/performance: durable gates, no wall-time thresholds\n\n'
 
-printf -- '--- §1 a warm run is fully cache-served ---\n'
+printf -- '--- §0 the gates themselves discriminate ---\n'
+
+# Before trusting four "ok" lines, check that they are capable of not being "ok". `negative.sh`
+# feeds every predicate in `gates.sh` both input it must accept and input it must reject; a gate
+# that cannot fail would report a healthy tree exactly as convincingly as `return 0` does. It runs
+# first because an instrument is checked before it is read, and it is pure text handling, so it
+# costs milliseconds.
+if bash "$repo_root/tests/performance/negative.sh" >"$scratch/negative.log" 2>&1; then
+  ok "$(tail -1 "$scratch/negative.log" | sed 's/^tests.performance negative: ok //;s/[()]//g')"
+else
+  bad "the gate predicates do not discriminate; see below"
+  sed 's/^/    /' "$scratch/negative.log" >&2
+fi
+
+printf -- '\n--- §1 a warm run is fully cache-served ---\n'
 
 # Prime. The first run may be cold for any reason -- a rebuilt binary, a fresh checkout, another
 # suite having cleaned -- and that is not what this section measures.
@@ -92,37 +97,28 @@ profile_run "$scratch/prime.out" "$scratch/prime.err"
 
 profile_run "$scratch/warm.out" "$scratch/warm.err"
 
-targets=$(counter cache.targets "$scratch/warm.err")
-hits=$(counter cache.index_hits "$scratch/warm.err")
-served=$(counter cache.served "$scratch/warm.err")
+targets=$(gate_counter cache.targets "$scratch/warm.err")
+hits=$(gate_counter cache.index_hits "$scratch/warm.err")
+served=$(gate_counter cache.served "$scratch/warm.err")
 
-if [[ $targets == "$expected_targets" ]]; then
+if gate_targets_match "$scratch/warm.err" "$expected_targets"; then
   ok "the manifest's $expected_targets files are the targets"
 else
   bad "expected $expected_targets targets, got '${targets:-<none>}'"
 fi
 
-if [[ $hits == "$targets" && $served == "$targets" ]]; then
+if gate_fully_served "$scratch/warm.err"; then
   ok "every target is an index hit and is served ($hits/$targets)"
 else
-  bad "warm run not fully served: targets=$targets hits=${hits:-<none>} served=${served:-<none>}"
+  bad "warm run not fully served: targets=${targets:-<none>} hits=${hits:-<none>} served=${served:-<none>}"
 fi
 
-# The strongest single gate in this suite. A cache-served run must never reach the exact frontend;
-# if it does, some identity input started moving that should not, which is the `ruff-16b` defect
-# class. It is a count, so it holds on any machine.
-child_runs=$(phase_count exact_child "$scratch/warm.err")
-if [[ $child_runs == 0 ]]; then
-  ok "the exact frontend never runs on a fully served workload"
+child_runs=$(gate_phase_count exact_child "$scratch/warm.err")
+setup_runs=$(gate_phase_count exact_setup "$scratch/warm.err")
+if gate_no_frontend_work "$scratch/warm.err"; then
+  ok "neither the exact frontend nor per-target setup runs on a served workload"
 else
-  bad "warm run spawned $child_runs exact-frontend children; expected 0"
-fi
-
-setup_runs=$(phase_count exact_setup "$scratch/warm.err")
-if [[ $setup_runs == 0 ]]; then
-  ok "no per-target Lake setup resolution on a fully served workload"
-else
-  bad "warm run resolved $setup_runs per-target setups; expected 0"
+  bad "warm run did frontend work: $child_runs children, $setup_runs setup resolutions; expected 0 and 0"
 fi
 
 printf -- '\n--- §2 no work outside the top-level phases (gate G3) ---\n'
@@ -144,10 +140,7 @@ with open(out_path, "wb") as out, open(err_path, "wb") as err:
 TIMED
 )
 
-accounted=0
-for name in "${top_level[@]}"; do
-  accounted=$((accounted + $(phase_sum "$name" "$scratch/g3.err")))
-done
+accounted=$(gate_accounted "$scratch/g3.err")
 
 # `RPR-SPEC` states G3 as a percentage -- 90% accounted -- and measured 95.1% and 97.2% on
 # `mathlib-sample`. On this workload the same binary accounts for only 89.0%, and calibrating that
@@ -166,12 +159,13 @@ done
 # bound is 250 ms, about 5x the observed constant and above the 67 ms seen when wall spiked 2.7x
 # under load. It fires when a genuinely unbracketed region of *work* appears -- which is the
 # regression G3 exists to catch -- and not when the machine is busy.
+GATE_REMAINDER_BOUND_MS=250
 fraction=$(python3 -c "print(round(100.0 * $accounted / max($wall, 1), 1))")
 unaccounted=$((wall - accounted))
-if ((unaccounted <= 250)); then
-  ok "unaccounted remainder ${unaccounted} ms of ${wall} ms (${fraction}% accounted, bound 250 ms)"
+if gate_remainder_within "$scratch/g3.err" "$wall" "$GATE_REMAINDER_BOUND_MS"; then
+  ok "unaccounted remainder ${unaccounted} ms of ${wall} ms (${fraction}% accounted, bound ${GATE_REMAINDER_BOUND_MS} ms)"
 else
-  bad "unaccounted remainder ${unaccounted} ms of ${wall} ms exceeds the 250 ms startup bound: work is happening outside every top-level phase"
+  bad "unaccounted remainder ${unaccounted} ms of ${wall} ms exceeds the ${GATE_REMAINDER_BOUND_MS} ms startup bound: work is happening outside every top-level phase"
 fi
 
 printf -- '\n--- §3 no top-level phase silently measures nothing ---\n'
@@ -199,17 +193,13 @@ LEAN_FMT_PROFILE_PHASES=1 "$fmt" check --output-format concise --root "$repo_roo
   "$fixture_dir/Late.lean" >"$scratch/pos.out" 2>"$scratch/pos.err" || true
 rm -rf "$fixture_dir"
 
-positions_emitted=$(phase_count positions "$scratch/pos.err")
-positions_ms=$(phase_sum positions "$scratch/pos.err")
+positions_emitted=$(gate_phase_count positions "$scratch/pos.err")
+positions_ms=$(gate_phase_sum positions "$scratch/pos.err")
 
-if [[ $positions_emitted -gt 0 ]]; then
-  ok "phase.positions_ms is emitted for a file with findings"
-else
-  bad "phase.positions_ms was never emitted; the bracket is gone or the finding did not fire"
-fi
-
-if [[ $positions_ms -gt 0 ]]; then
+if gate_phase_measures "$scratch/pos.err" positions; then
   ok "the PositionIndex build measures itself (${positions_ms} ms over 2 MB)"
+elif ((positions_emitted == 0)); then
+  bad "phase.positions_ms was never emitted; the bracket is gone or the finding did not fire"
 else
   bad "phase.positions_ms read 0 ms over 2 MB: the bracket is timing an already-evaluated value"
 fi
@@ -219,7 +209,7 @@ printf -- '\n--- §4 digest reuse: cold and warm agree byte for byte ---\n'
 # A performance change that alters the report is not a performance change. Comparing the primed run's
 # report against the warm run's is the cheapest possible correctness anchor for everything above:
 # every gate here is satisfiable by doing less work *and* getting it wrong, except this one.
-if cmp -s "$scratch/prime.out" "$scratch/warm.out"; then
+if gate_reports_identical "$scratch/prime.out" "$scratch/warm.out"; then
   ok "the served report is identical to the report that populated the cache"
 else
   bad "cold and warm reports differ; the cache is not serving what it stored"
