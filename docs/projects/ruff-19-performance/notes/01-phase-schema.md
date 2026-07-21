@@ -110,6 +110,16 @@ rather than O(findings) — has never been measured at all.
    before picture; this is the after. Below 90%, the schema is not finished regardless of how many
    names it has.
 
+   **Qualified by `RPR-FINAL`, which had to apply it to a new workload.** The unaccounted time is a
+   *constant* — process startup and teardown that no phase brackets, measured at 51/51/67/51/50 ms
+   across walls of 453–1,225 ms. So the percentage this invariant states is workload-length
+   dependent: a fixed 51 ms is 0.5% of a 10.9 s `mathlib-sample` run and 11% of a 450 ms `self` run,
+   and the 90.6%/94.8% recorded above are exactly what that constant predicts on workloads of their
+   length. Nothing here was wrong. But 90% cannot be carried to a shorter workload unchanged, and
+   `tests/performance/run.sh` therefore gates the **remainder** (≤ 250 ms) rather than the fraction.
+   Read the invariant as: *no work happens outside the top-level phases*, of which 90% was one
+   correct expression at the length it was measured. `results/03-regressions.md` has the derivation.
+
 ## 6. Revised by `RPR-IMPL`
 
 §4's name list is the specification this note froze; it is **not** what was built, and
