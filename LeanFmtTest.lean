@@ -14,11 +14,10 @@ import all LeanFmt.Edit
 import all LeanFmt.Imports
 import all LeanFmt.Printer
 import all LeanFmt.Rules
-import all LeanFmt.Service
 import all LeanFmt.Suppression
 import Lean.Data.Lsp
 
-open LeanFmt LeanFmt.Internal LeanFmt.Internal.Service
+open LeanFmt LeanFmt.Internal
 
 private def ensure (condition : Bool) (message : String) : IO Unit :=
   unless condition do
@@ -247,28 +246,6 @@ private def testImports : IO Unit := do
   ensure (prelude.hasPrelude && prelude.imports.map (·.module) == #[`Foo.A])
     "the prelude header model does not match the written imports"
 
-private def testServiceProtocol : IO Unit := do
-  let health := Lean.Json.parse
-    "{\"id\":{\"client\":1},\"method\":\"health\"}" |>.toOption.bind fun json =>
-      decodeRequest json |>.toOption
-  match health with
-  | some (.health (.obj id)) =>
-    ensure (((id.get? "client").bind fun value => (Lean.Json.getNat? value).toOption) == some 1)
-      "service changed an object request id"
-  | _ => throw <| IO.userError "service rejected a valid health request"
-  let analyze := Lean.Json.parse
-    "{\"id\":2,\"method\":\"analyze\",\"path\":\"A.lean\",\"version\":3,\"source\":\"module\\n\"}"
-    |>.toOption.bind fun json => decodeRequest json |>.toOption
-  match analyze with
-  | some (.analyze (.num _) "A.lean" 3 "module\n") => pure ()
-  | _ => throw <| IO.userError "service rejected a valid analyze request"
-  ensure (versionAccepted none 0) "service rejected the first version"
-  ensure (versionAccepted (some 3) 4) "service rejected a newer version"
-  ensure (!(versionAccepted (some 3) 3)) "service accepted a duplicate version"
-  ensure (!(versionAccepted (some 3) 2)) "service accepted an older version"
-  ensure ((Lean.Json.parse "{\"id\":1,\"method\":\"unknown\"}" |>.toOption.bind fun json =>
-    decodeRequest json |>.toOption).isNone) "service accepted an unknown method"
-
 /-- `ruff-17` RLP-PROTOCOL, `notes/01-protocol.md` §4: the LSP position layer, characterized before
 anything is built on it.
 
@@ -455,8 +432,8 @@ private def testLanguageServerDocuments : IO Unit := do
   let replaced := applyChange (Lean.FileMap.ofString "old\n") (.fullChange "a\r\nb\r\n")
   ensure (replaced.source == "a\nb\n") "a full change no longer normalizes its payload"
 
-/-- Frame reading, over a buffer stream: the recovery behavior `serve`'s line reader never needed and
-an editor session cannot do without. -/
+/-- Frame reading, over a buffer stream: the recovery behavior a line reader never needed and an
+editor session cannot do without. -/
 private def testLanguageServerFrames : IO Unit := do
   let framesOf (input : String) : IO (Array String) := do
     let buffer ← IO.mkRef { data := input.toUTF8, pos := 0 : IO.FS.Stream.Buffer }
@@ -2908,7 +2885,6 @@ public unsafe def main (args : List String) : IO UInt32 := do
     testImports
     testEngineTiers
     testMixedSelection
-    testServiceProtocol
     testLspPositions
     testLanguageServerDocuments
     testLanguageServerFrames

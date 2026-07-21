@@ -8,9 +8,8 @@ modules live under `LeanFmt`.
 The production tree is a native `lake init` project on Lean's private-by-default module system. Every
 compiled production, entry-point, test, and fixture source begins with `module`; only the
 `lakefile.lean` is exempt. The product has one private intent-to-report operation, an atomic aggregate
-semantic-result cache, preview/fix modes, read-only compiler-integration audit, and a capacity-one
-exact editor service. A compiler plugin writes a silent formatter record into the successful module
-`.olean`; a Lake module facet extracts it into a compact content-addressed sidecar. The application
+semantic-result cache, preview/fix modes, read-only compiler-integration audit, and a language
+server. A compiler plugin writes a silent formatter record into the successful module `.olean`; a Lake module facet extracts it into a compact content-addressed sidecar. The application
 reads that facet through one private no-build Lake operation, and only when a selected rule needs
 syntax.
 
@@ -34,8 +33,8 @@ lake exe lean-fmt-tests
 ```
 
 Suites live in `tests/*/run.sh`: boundary, cache, catalog, check, compiler, discovery, downstream,
-imports, layout, lossless, modes, printer, reporting, scale, semantic, service, stream, suppression,
-syntax, watch.
+imports, layout, lossless, modes, printer, reporting, scale, semantic, stream, suppression, syntax,
+watch.
 
 Match the checks to the change:
 
@@ -51,6 +50,9 @@ Match the checks to the change:
   (`Lean.Data.Lsp.Ipc`) and measures cancellation latency and hundred-request memory stability. It
   costs about 90 s, so it is not in the `tests/*/run.sh` sweep. Run it when you touch
   `LeanFmt/LanguageServer.lean`, and record the numbers.
+- `tests/lsp/editor.sh` drives the same server with Neovim's own LSP client, through the stanza
+  `docs/editor-setup.md` hands users. It needs Neovim 0.11 or newer and skips without it, so it is
+  also outside the sweep. Run it when you touch `LeanFmt/LanguageServer.lean` or the editor setup.
 
 Use the target project's exact Lean toolchain for frontend and plugin experiments. Keep experiments
 out of production modules until their owning prompt selects and verifies the interface.
@@ -97,9 +99,10 @@ suffix marks a stack opened against an earlier one, and it runs after the stack 
   publication belong to `LeanFmt.Application` and its lower capabilities.
 - `LeanFmt.Project` owns complete non-`.lake` source selection, exact Lake setup, and one shared typed
   no-build graph. Do not replace it with per-file Lake runs or module-only selection.
-- `LeanFmt.Service` owns only private NDJSON framing, normalized path/version state, and capacity-one
-  FIFO sequencing. Unsaved bytes share `Application.ExactRun` with batch fallback, never disk-state
-  evidence or persistent cache entries, and every request gets a fresh bounded child.
+- `LeanFmt.LanguageServer` owns only the protocol: JSON-RPC framing, clamped client coordinates,
+  document lifetime, and when to analyze. Unsaved bytes share `Application.ExactRun` with batch
+  fallback, never disk-state evidence or persistent cache entries, and every request gets a fresh
+  bounded child.
 
 ### Exactness and coordinates
 

@@ -1628,9 +1628,9 @@ Every clause the freeze fixes is enforced here:
 - **No write.** `publishAtomic` is not reachable from this operation. `fix`/`format` return their bytes
   in `output` for the caller to redirect; the file, if there even is one, is untouched.
 - **No persistent cache.** `ResultCache` is never opened. A cache entry is keyed on a digest bound to a
-  file on disk, and unsaved bytes have no disk state to bind — the same rule the service follows.
-- **The service's envelope.** One `withExactRun`, a fresh bounded child, the `--max-memory` aggregate
-  limit. Not a second execution path: it is the same `ExactRun` batch fallback and `serve` use.
+  file on disk, and unsaved bytes have no disk state to bind — the same rule an editor session follows.
+- **The editor envelope.** One `withExactRun`, a fresh bounded child, the `--max-memory` aggregate
+  limit. Not a second execution path: it is the same `ExactRun` the batch fallback uses.
 - **Identity is required.** `Project.unsavedTarget` applies every gate the file path applies, including
   the `.lake` floor, and resolves the effective configuration from the buffer's location, so the same
   bytes get the same answer whether they arrive by path or by pipe.

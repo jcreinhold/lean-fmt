@@ -102,10 +102,16 @@ the VS Code, Neovim, and Emacs inputs.
 - **The session does not grow.** 100 alternating formatting/code-action requests: subtree RSS
   682,880 KiB after the first, 690,640 KiB peak, 685,840 KiB after the hundredth. The measurement sums
   the server *and its descendants*, because the exact frontend child is the server's child.
-- **`serve` is now a compatibility adapter with a removal plan** (`README.md`), gated on a real editor
-  session against `lsp` plus one shipped release carrying the notice. It gains no new capability.
-- **No editor has actually run this.** The setup file is derived from each client's documented schema,
-  not from a session anyone opened. That gap is what `serve`'s removal is waiting on.
+- **`serve` is removed** (2026-07-21; `results/04-acceptance.md` decision 4, amended). Its removal
+  waited on a real editor session against `lsp`, and `tests/lsp/editor.sh` is that session. No release
+  ever shipped carrying the removal notice, so no consumer had a version to migrate against.
+  `LeanFmt/Service.lean` and `tests/service/run.sh` are gone; `README.md` keeps one paragraph mapping
+  each `serve` request to its LSP counterpart.
+- **One editor has now run this.** `tests/lsp/editor.sh` starts the server from the
+  `docs/editor-setup.md` Neovim stanza under `nvim --headless --clean -u NONE`: 14 checks, covering
+  attachment, capabilities, a diagnostic for an unsaved edit, a code action, in-buffer formatting, and
+  an untouched file on disk. It skips without Neovim 0.11+, so it is outside the `tests/*/run.sh`
+  sweep. The Emacs and VS Code inputs are still derived from documented schemas, not run.
 
 ## What `01-protocol` froze, for the prompts that consume it
 

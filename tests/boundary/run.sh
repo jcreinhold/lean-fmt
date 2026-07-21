@@ -72,8 +72,7 @@ fi
 
 # Common callers see only the deepest operation appropriate to their layer.
 grep -qx 'import all LeanFmt.Cli' Main.lean
-grep -qx 'import all LeanFmt.Service' LeanFmt/Cli.lean
-grep -qx 'import all LeanFmt.Application' LeanFmt/Service.lean
+grep -qx 'import all LeanFmt.LanguageServer' LeanFmt/Cli.lean
 grep -qx 'import all LeanFmt.Application' LeanFmt/LanguageServer.lean
 
 # The language server takes the toolchain's LSP *data* — DTOs, UTF-16 conversion, JSON-RPC — and none

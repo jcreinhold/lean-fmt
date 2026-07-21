@@ -2,14 +2,13 @@ module
 
 import all LeanFmt.GitSelection
 import all LeanFmt.LanguageServer
-import all LeanFmt.Service
 import all LeanFmt.Watch
 
 open System
 
 namespace LeanFmt.Internal.Cli
 
-open LeanFmt.Internal LeanFmt.Internal.Application LeanFmt.Internal.Service
+open LeanFmt.Internal LeanFmt.Internal.Application
 
 /-- How a run's report is rendered (`ruff-15` RRF-IMPL, frozen in `notes/01-report-formats.md` §2).
 
@@ -164,26 +163,6 @@ private structure OrganizeCommand where
   request : OrganizeRequest := { root := ".", files := #[] }
   outputFormat : ReportFormat := .text
 
-private def parseServeArgs (args : List String) : Except String ServeOptions :=
-  let rec loop (remaining : List String) (options : ServeOptions) :=
-    match remaining with
-    | [] => .ok options
-    | "--root" :: root :: rest => loop rest { options with root }
-    | "--config" :: path :: rest => loop rest { options with configPath? := some path }
-    | "--select" :: selector :: rest =>
-      loop rest { options with select := options.select.push selector }
-    | "--ignore" :: selector :: rest =>
-      loop rest { options with ignore := options.ignore.push selector }
-    | "--preview" :: rest => loop rest { options with preview := true }
-    | "--max-memory" :: value :: rest =>
-      match value.toNat? with
-      | some amount => loop rest { options with maxMemoryGiB := amount }
-      | none => .error "--max-memory expects a whole number of GiB"
-    | option :: _ => .error s!"unknown serve option: {option}"
-  loop args {}
-
-/-- `lsp` takes `serve`'s options plus what only an editor session needs. The two surfaces resolve
-the same project the same way; the difference is the protocol, not the configuration. -/
 private def parseLspArgs (args : List String) : Except String LanguageServer.ServerOptions :=
   let rec loop (remaining : List String) (options : LanguageServer.ServerOptions) :=
     match remaining with
@@ -210,8 +189,6 @@ private def parseLspArgs (args : List String) : Except String LanguageServer.Ser
 private def usage : String := "\
 usage: lean-fmt {check|format|diff|fix} [OPTIONS] [FILE...]\n\
        lean-fmt {check|format|diff|fix} - --stdin-filename PATH [--range S:E]\n\
-       lean-fmt serve [--root PATH] [--config PATH] [--select SELECTOR]\n\
-                      [--ignore SELECTOR] [--max-memory GIB]\n\
        lean-fmt lsp [--root PATH] [--config PATH] [--select SELECTOR]\n\
                     [--ignore SELECTOR] [--preview] [--unsafe-fixes]\n\
                     [--max-memory GIB] [--debounce-ms MS]\n\
@@ -1378,7 +1355,7 @@ unsafe def runCli (arguments : List String) : IO UInt32 := do
   match args with
   | "--help" :: _ => IO.println usage; return 0
   | command :: "--help" :: _ =>
-    if #["check", "format", "diff", "fix", "organize", "serve", "lsp", "rules", "explain", "docs", "clean", "compiler", "config"].contains command then
+    if #["check", "format", "diff", "fix", "organize", "lsp", "rules", "explain", "docs", "clean", "compiler", "config"].contains command then
       IO.println usage
       return 0
     IO.eprintln usage
@@ -1407,15 +1384,6 @@ unsafe def runCli (arguments : List String) : IO UInt32 := do
       | .error message => IO.eprintln message; return 2
     try
       LanguageServer.serveLanguageServer options
-    catch error =>
-      IO.eprintln s!"lean-fmt: {error}"
-      return 2
-  | "serve" :: rest =>
-    let options ← match parseServeArgs rest with
-      | .ok options => pure options
-      | .error message => IO.eprintln message; return 2
-    try
-      serve options
     catch error =>
       IO.eprintln s!"lean-fmt: {error}"
       return 2

@@ -103,6 +103,14 @@ pressure were observed; the run never approached the 8 GiB envelope.
    a real editor session against `lsp`, and one release shipped carrying the notice. It is frozen
    rather than starved — no new capability is being back-ported to it — and it keeps its suite.
 
+   **Amended 2026-07-21: `serve` is removed.** Gate 1 closed — `tests/lsp/editor.sh` drives `lsp`
+   with Neovim's own client through the `docs/editor-setup.md` stanza, 14 checks. Gate 2 did not
+   apply: no release ever shipped carrying the notice, so no consumer had a version to migrate
+   against, and there was nothing for the notice to protect. Removed with it: `LeanFmt/Service.lean`,
+   `tests/service/run.sh`, the `serve` parser and dispatch, `testServiceProtocol`, the `LeanFmt.Service`
+   glob, and the `README.md` section. `README.md` keeps one paragraph mapping each `serve` request to
+   its LSP counterpart.
+
 ## Freeze clauses discharged
 
 - **§15.8 — drive the server with `Lean.Data.Lsp.Ipc`.** Done. `tests/lsp/Acceptance.lean` writes with
@@ -145,11 +153,12 @@ at its new size and still agrees exactly (71 = 71).
 
 ## Remaining uncertainty
 
-- **The editor configurations are unrun.** They are derived from each client's documented schema —
-  `vim.lsp.config`, `lsp-register-client`, a generic VS Code LSP client — not from a session anyone
-  opened. Everything the protocol side of them depends on is asserted by the harness; the mapping from
-  those inputs to a working editor is not. `serve`'s removal is gated on closing exactly this gap, so
-  it is tracked rather than merely admitted.
+- **Two of the three editor configurations are unrun.** *(Amended 2026-07-21.)* The Neovim stanza is
+  now run: `tests/lsp/editor.sh` starts `lean-fmt lsp` from that exact stanza under
+  `nvim --headless --clean -u NONE` and asserts attachment, the advertised capabilities, a published
+  diagnostic for an unsaved edit, a code action carrying its rule code, in-buffer formatting, and an
+  untouched file on disk. The Emacs and VS Code inputs remain derived from each client's documented
+  schema rather than from a session anyone opened.
 - **RSS is sampled, not integrated.** `ps` after each response sees the aggregate at that instant. A
   transient peak between two samples is invisible. `monitorChild`'s own 50 ms poll is the enforcement
   mechanism and it is not sampling-based, so the envelope is not what this measurement protects — this

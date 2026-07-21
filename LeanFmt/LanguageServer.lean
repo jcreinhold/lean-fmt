@@ -32,10 +32,10 @@ open Lean Lean.JsonRpc
 Exceeding a bound produces an error response and leaves the session running. Nothing is truncated.
 `notes/01-protocol.md` §6, §9, §13. -/
 
-/-- The largest framed message body accepted, matching `serve`'s line bound (`Service.lean:13`). -/
+/-- The largest framed message body accepted. -/
 def maxMessageBytes : Nat := 32 * 1024 * 1024
 
-/-- The largest document body accepted, matching `serve`'s source bound (`Service.lean:15`). -/
+/-- The largest document body accepted. -/
 def maxDocumentBytes : Nat := 16 * 1024 * 1024
 
 /-- How many documents may be open at once. A client that opens more has stopped closing them. -/
@@ -277,7 +277,7 @@ structure Session where
   settings : IO.Ref ServerOptions
   root : FilePath
   project : Project.Snapshot
-  /-- One exact capability for the session, as `Service.serve` holds one (`Service.lean:186`). Each
+  /-- One exact capability for the session. Each
   analysis still gets a fresh bounded child; the workspace load, the discovery walk, and the
   temporary-directory bracket are not paid per request. -/
   run : Application.ExactRun
@@ -546,8 +546,7 @@ private def handleDidChange (session : Session) (params : Json) : IO Unit := do
   let .ok uri := identifier.getObjValAs? String "uri" | return
   let some document ← documentOf? session uri | return
   let version := (identifier.getObjValAs? Int "version").toOption.getD document.version
-  -- Strictly increasing, as the session rule already is for `serve` (`Service.lean:50-51`). An equal
-  -- or older version is a client bug; applying it would move the buffer under a request in flight.
+  -- Strictly increasing. An equal or older version is a client bug; applying it would move the buffer under a request in flight.
   if version <= document.version then
     session.sink.log 2
       s!"ignoring a document change at version {version}, not newer than {document.version}: {uri}"
@@ -1063,8 +1062,8 @@ def serveLanguageServer (options : ServerOptions) : IO UInt32 := do
   let sink ← Sink.of (← IO.getStdout)
   for notice in discovery.fallback.notices do
     sink.log 3 s!"lean-fmt: {notice}"
-  -- The exact capability brackets the whole session, as `serve`'s does (`Service.lean:186`), so its
-  -- temporary storage is created and removed once rather than per request.
+  -- The exact capability brackets the whole session, so its temporary storage is created and
+  -- removed once rather than per request.
   Application.withExactRun project options.maxMemoryGiB fun run => do
     let queue : Std.CloseableChannel.Sync Work ←
       Std.CloseableChannel.Sync.new (capacity := some maxQueuedMessages)

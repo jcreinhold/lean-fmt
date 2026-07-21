@@ -12,7 +12,6 @@ lake build
 .lake/build/bin/lean-fmt diff --root . LeanFmt/Basic.lean
 .lake/build/bin/lean-fmt fix --root . LeanFmt/Basic.lean
 .lake/build/bin/lean-fmt lsp --root .
-.lake/build/bin/lean-fmt serve --root .
 .lake/build/bin/lean-fmt rules --json
 .lake/build/bin/lean-fmt compiler setup
 .lake/build/bin/lean-fmt compiler status --root . --json
@@ -52,8 +51,8 @@ line-width = 100                     # 1..1000
 
 [lint]                               # settings that project over results
 select = ["all"]
-ignore = ["FMT002"]
-per-file-ignores = { "Legacy/*.lean" = ["FMT001"] }
+ignore = ["FMT006"]
+per-file-ignores = { "Legacy/*.lean" = ["FMT007"] }
 ```
 
 Linter keys still work at the top level and emit a deprecation notice; setting one in both places is an
@@ -225,38 +224,9 @@ One workspace root per session, one exact frontend child per request, no writes:
 touches a `.lean` file or the result cache. `--max-memory` bounds the session and its children
 together.
 
-### The NDJSON service, and when it goes
-
-`serve` predates `lsp` and is now a compatibility adapter. It reads `lean-fmt.service.v1` NDJSON from stdin and writes one compact response per line. It
-supports `health`, exact unsaved-source `analyze`, and `shutdown` requests with arbitrary JSON IDs.
-Analyze requests name an existing selected project source and carry a strictly increasing per-path
-version plus replacement source bytes. Unsaved bytes always run through a fresh exact-context child;
-ordinary outputs, compiler artifacts, and the persistent result cache describe disk state and are
-never reused for editor snapshots.
-
-The service processes exactly one request at a time and flushes its response before reading the next,
-giving FIFO behavior and bounded stream backpressure without a concurrent queue. Malformed requests,
-stale versions, invalid paths, child failures, and resource exhaustion are structured responses and
-do not terminate the service. Request lines are limited to 32 MiB and sources to 16 MiB. The service
-never writes source or `.lean-fmt-cache` state.
-
-```json
-{"id":1,"method":"health"}
-{"id":2,"method":"analyze","path":"LeanFmt/Basic.lean","version":1,"source":"module\n"}
-{"id":3,"method":"shutdown"}
-```
-
-Everything `serve` does, `lsp` does through a protocol editors already speak: `health` is
-`$/lean-fmt/health`, `analyze` is `textDocument/didOpen`/`didChange` plus published diagnostics, and
-`shutdown` is `shutdown`. `serve`'s string error codes are its own; `lsp` uses the JSON-RPC integers.
-It is kept because it is a published interface with its own suite (`tests/service/`), not because
-anything needs two of these.
-
-**Removal plan.** `serve` is removed once (1) `lsp` has been exercised by a real editor rather than
-only by protocol harnesses, and (2) one release has shipped with this notice, so a consumer has had a
-version to migrate against. Neither has happened yet, so it stays, and it stays supported. It gains no
-new capability meanwhile: `preview`, `unsafeFixes`, code actions, and range formatting belong to
-`lsp`, and nothing back-ports them.
+`lsp` replaces `serve`, the NDJSON service earlier releases shipped. Every request `serve` answered
+has an LSP counterpart: `health` is `$/lean-fmt/health`, `analyze` is
+`textDocument/didOpen`/`didChange` plus published diagnostics, and `shutdown` is `shutdown`.
 
 ## Architecture and verification
 
@@ -276,6 +246,5 @@ tests/check/run.sh
 tests/lossless/run.sh
 tests/modes/run.sh
 tests/scale/run.sh
-tests/service/run.sh
 tests/boundary/run.sh
 ```

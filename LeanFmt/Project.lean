@@ -250,9 +250,8 @@ tree and the wrong cost for one buffer an editor is waiting on. `ExactRun` reads
 `root` from a `Snapshot` — `envelope` and `exactSetup` never consult `targets` — so an empty selection
 is a complete capability here rather than a stub.
 
-The service takes the other trade deliberately (`Service.lean`: `Project.load root discovery #[]`,
-once per session, because it answers many requests and wants `findTarget?`). A one-shot CLI invocation
-has no session to spread that cost over. -/
+A long-lived session takes the other trade deliberately: it loads once and answers many requests, so
+it wants `findTarget?`. A one-shot CLI invocation has no session to spread that cost over. -/
 def loadWorkspaceOnly (requestedRoot : FilePath) : IO Snapshot := do
   let root ← IO.FS.realPath requestedRoot
   let workspaceStarted ← IO.monoNanosNow
