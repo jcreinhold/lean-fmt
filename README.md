@@ -182,6 +182,9 @@ macOS, Lake adds its own shared library as a second plugin whenever any plugin i
 Lake's `plugins` field is still officially experimental and its target-key syntax has been revised
 more than once. Pin the toolchain and re-run `tests/downstream/run.sh` after a bump.
 
+`docs/ci.md` carries the rest: CI recipes for GitHub Actions and generic runners, what may be cached
+between runs and what invalidates it, and how to pin and upgrade a revision.
+
 ## Streaming and ranges
 
 `-` is a file target: the buffer arrives on stdin and the answer goes to stdout. It requires

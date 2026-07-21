@@ -1,17 +1,22 @@
 ---
 kind: state
-first_unresolved: 01-recipes
+first_unresolved: 02-acceptance
 ---
 
 # Current state
 
-This stack is planned and has not begun. Its external prerequisite stacks are
-`ruff-15-reporting`, `ruff-16-watch-incremental`, `ruff-17-lsp`. Before starting, confirm those roadmaps are verified and their live
-implementation still matches recorded state.
+`01-recipes` is verified. `docs/ci.md` carries the exit-code contract, four CI recipes, the cache
+policy, and pinning/upgrade documentation; `README.md` links it from §"Using lean-fmt in another
+project". `02-acceptance` remains, and it is the prompt that tests all of it from clean sources.
+
+The external prerequisite stacks are `ruff-15-reporting`, `ruff-16-watch-incremental`, `ruff-17-lsp`.
+Their recorded surfaces were re-checked live during `01-recipes` and all held: exit codes, format/mode
+rejection, `--output-file` pre-check, stderr provenance, and the empty-selection notice all behaved as
+the "Inherited from" sections below record them.
 
 | Prompt | Claim | Status | Depends on |
 | --- | --- | --- | --- |
-| 01-recipes | RDI-RECIPES | planned | — |
+| 01-recipes | RDI-RECIPES | verified (`results/01-recipes.md`) | — |
 | 02-acceptance | RDI-FINAL | planned | RDI-RECIPES |
 
 ## Narrowed to two deliverables — 2026-07-21

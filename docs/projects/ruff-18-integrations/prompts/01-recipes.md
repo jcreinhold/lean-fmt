@@ -1,6 +1,6 @@
 ---
 claim_id: RDI-RECIPES
-status: planned
+status: verified
 depends_on: []
 ---
 
