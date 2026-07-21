@@ -157,7 +157,36 @@ above" this stack. The completed `ruff-16` stack fails identically. Passing them
 fabricating a `reviewed_fingerprint` attesting review under a policy lean-fmt has never adopted --
 a fake shim. Adopting the policy repository-wide is someone's separate change.
 
-`RPR-FINAL` is next. Watch mode needs no separate profiling: a generation runs the same
+**`RPR-FINAL` is delivered and verified** (`results/03-regressions.md`).
+
+- **Fast half**: `tests/performance/run.sh`, in the `tests/*/run.sh` sweep, about a second. Gates on
+  counts, ratios, and digests only -- never a wall time, because the same binary over the same warm
+  corpus measured 3,977 ms and 19,968 ms. Primes its own cache in-run, so a rebuilt binary renaming
+  the index does not fail it.
+- **Gate G3 recalibrated, and the correction is real.** The unaccounted remainder is a *constant*
+  ~51 ms (51/51/67/51/50 across walls of 453-1,225 ms) -- process startup nothing brackets. So G3 as
+  a bare percentage is workload-length-dependent (0.5% of mathlib-sample, 11% of self), and the
+  published 95.1%/97.2% are exactly what that constant predicts. The gate bounds the remainder at
+  250 ms instead. A harness defect surfaced en route: two `python3` timestamps around the run put
+  both interpreter startups in the denominator, 68 ms the formatter never spent.
+- **Every gate is proven able to fail.** `tests/performance/gates.sh` holds the predicates;
+  `negative.sh` feeds each one input it must accept and input it must reject, 16 cases, including
+  the exact `positions emitted but 0 ms` signature. §0 runs that proof before the suite reports that
+  nothing failed.
+- **Heavy half**: `experiments/run-scheduled-gates.sh` -- cold, 62-file scale, digest reuse against
+  `experiments/gates/expected-digests.txt`, and saved raw profiles through `profile-run.sh`. Its
+  recorded digest `c0dc55c3...` **matches the frozen baseline in `evidence/01-workloads.md`
+  exactly**, three optimizations later, and late/early reproduced at 7.7x against 7.5x. The digest
+  gate was verified to fail on a planted mismatch.
+- **Variance policy** lives in the scheduled runner's header: never gate on wall time, median of at
+  least three and never the first, print the spread beside the median, record machine conditions.
+- **Concurrency**: rejected, per `results/02-optimize.md`.
+
+**Checks**: `lake build` (54 jobs), `lake lint` (35 files, 0 findings), `lake exe lean-fmt-tests`,
+`git diff --check`, and all 21 suites. `cache` and `compiler` were killed once each at exit **137 =
+SIGKILL** while another session held 4.0 GiB, and both passed on retry once that process exited --
+the third confirmation of that environmental signature, this time with the mechanism visible in the
+exit code. Watch mode needs no separate profiling: a generation runs the same
 `execute` path the batch modes do, and `render_report` already brackets its per-generation rendering.
 
 **The `formatter-integrated-built` workload is closed** (`evidence/01-workloads.md` §3.1,

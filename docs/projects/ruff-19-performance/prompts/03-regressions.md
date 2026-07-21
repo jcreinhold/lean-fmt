@@ -1,6 +1,6 @@
 ---
 claim_id: RPR-FINAL
-status: planned
+status: verified
 depends_on: [RPR-IMPL]
 ---
 
