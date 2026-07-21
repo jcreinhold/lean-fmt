@@ -123,6 +123,19 @@ that position could not matter; it matters because the pass *stops at the last o
 source. At 16 MB: 12 / 105 / 178 / 212 ms, so `oneline` is 2× `late` there and 1× at smaller sizes —
 one sample, flagged rather than explained.
 
+**The two revisits `roadmap.md` inherits are settled, and neither became work.** `ruff-10b`'s
+Design B named its own trigger — a syntax rule graduating to default — and every syntax-tier rule
+(FMT009–FMT014) is still `defaultEnabled := false, lifecycle := .preview`; the integrated-workload
+measurement shows the default `check` recording `official_artifacts` = 0 ms and never entering the
+syntax path, so there is nothing for Design B to be cheaper than. `ruff-01`'s node-table granularity
+question rested on "read by nothing but the probe differential", and that premise is refuted by code
+written after it: `LeanFmt/Printer.lean` walks the table end to end and follows `parent` to arbitrary
+ancestors, and all six syntax rules index it. `Node` is three fields and the printer reads all three.
+The one remaining lever — pruning to the 33 kinds the printer dispatches on — is refused because a
+kind-pruned artifact encodes formatter implementation knowledge and would make a printer edit
+invalidate every integrated module's Lake trace, which is the exact coupling this project already
+removed once.
+
 **Still open in this prompt.** Only the two-session concurrency test, which the work order puts
 after all single-session work. Watch mode needs no separate profiling: a generation runs the same
 `execute` path the batch modes do, and `render_report` already brackets its per-generation rendering.

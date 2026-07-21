@@ -356,6 +356,59 @@ It is not fixed here. It is one traversal per run, not per module, so it does no
 workload, and this stack's remaining work is the concurrency test and the durable gates. It is
 recorded so it is a choice with a reason rather than something nobody looked at.
 
+## The two revisits the roadmap inherits
+
+`roadmap.md` line 43 assigns `RPR-IMPL` two named optimization revisits from earlier stacks. Both are
+settled here, and neither turns into work — for opposite reasons.
+
+### `ruff-10b` Design B (parse-only re-projection): the trigger has not fired
+
+`ruff-10b` rejected Design B for v1 and named its revisit condition exactly: *"if a syntax rule
+graduates to default and the gated re-projection lands on the default run cost budget"*
+(`ruff-10b/results/03-final.md`).
+
+It has not. Every syntax-tier rule in `LeanFmt/Rules.lean` — FMT009 through FMT014 — carries
+`defaultEnabled := false` and `lifecycle := .preview`. The re-projection is still behind a gate no
+default run opens.
+
+And this stack can now say that as a measurement rather than a reading of the source. On the
+`integrated` modules, a plain `check` records `phase.official_artifacts_ms` = **0 ms** and never
+enters the syntax path at all; the same modules under `check --preview --select FMT012` record
+105 ms. The default run cost budget does not contain the re-projection, so there is nothing for
+Design B to be cheaper than.
+
+### `ruff-01`'s node table: the premise was overtaken by the code
+
+`ruff-01` handed this forward as an open question with a price on it: the node table is **45.6% of a
+real artifact** (187,902 B of 411,671 B) and is *"read by nothing but the probe differential"*, so
+whether the full flattened tree is the right granularity was unmeasured
+(`ruff-01/results/03-acceptance.md`, `ruff-01/state/current.md`).
+
+**That premise is now false, and built code is what decides.** `LeanFmt/Printer.lean` — the canonical
+printer, the product's central feature, which did not exist when `ruff-01` wrote that — walks the
+node table end to end (`for node in [0:tree.source.nodes.size]`), resolves kinds through
+`Tree.kindOf`, and follows `parent` chains to arbitrary ancestors. All six syntax-tier rules index it
+for ranges and child adjacency. The table is load-bearing, not dead weight.
+
+There is also no field-level fat left to trim. `LosslessSource.Node` is three fields — `kind`,
+`parent`, `range` — and the printer reads all three.
+
+So the granularity question narrows to one lever: **prune the tree to the node kinds the formatter
+actually dispatches on.** The printer matches 33 distinct kind strings and the rules two more, a
+fixed and enumerable set, so this is mechanically possible with parent re-linking.
+
+**It is refused, on a constraint this project already paid to establish.** A kind-pruned artifact
+encodes formatter implementation knowledge — it would hold what the current printer happens to match,
+which is a step toward findings and away from facts, against `CLAUDE.md`'s "the module artifact holds
+the projection and nothing else — facts, never findings." The concrete cost is the one already
+learned once: editing the printer's kind list would invalidate every integrated module's Lake trace,
+the same coupling that was removed when the rules were made unreachable from the plugin. Trading a
+rebuild of every downstream module for at most 45.6% of an `.olean` section is the wrong side of that
+trade, and it is the trade the project has already made in the other direction deliberately.
+
+Recorded as settled rather than deferred: the question `ruff-01` could not answer was "does anything
+read it," and the answer is now yes, decisively.
+
 ## Still open under this claim
 
 - The two-session concurrency test, only after all single-session work.
