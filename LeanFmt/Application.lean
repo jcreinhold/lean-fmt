@@ -167,16 +167,17 @@ policy. Returned descriptors never escape this operation: every content hash is 
 every payload is matched to its immutable module/source snapshot. A missing, stale, corrupt, or
 failing facet is an ordered miss, never an extractor launch or a partial batch failure.
 
-**`checkNoBuild` before `runBuild`, and the `catch` cannot replace it.** Under `noBuild`, a target
+**`Project.isCurrent` before `runBuild`, and the `catch` cannot replace it.** Under `noBuild`, a target
 that is out of date makes `finalizeBuild` call `IO.Process.exit noBuildCode` — `Lake/Build/Run.lean:368`,
 and `noBuildCode` is 3 (`:275`). That is a process exit, not an exception: nothing below catches it,
 `withoutProcessOutput` is still holding stdout and stderr in a buffer that is never flushed, and the
-run dies silently mid-batch. `checkNoBuild` asks the same question and returns a `Bool` (`:405-414`),
-so it is the only safe way to reach `runBuild` here. `Project.exactSetup` and `compilerStatus` already
-guard this way; this operation did not, and could not have been caught doing it: every registry rule
-is `input := .source`, so `RulePlan.requiresSyntax` was always `false` and no product path ever called
-this with a stale module until `RFP-IMPL` made rendering modes need a projection. The claim above was
-false all along, and nothing tested it. -/
+run dies silently mid-batch. `isCurrent` asks the same question and returns a `Bool`, so it is the only
+safe way to reach `runBuild` here. It runs outside `withoutProcessOutput`, which now covers only the
+`runBuild` whose failure reports this operation treats as a miss.
+
+This operation once asked Lake directly and could not have been caught doing it: every registry rule
+was `input := .source`, so `RulePlan.requiresSyntax` was always `false` and no product path called this
+with a stale module until `RFP-IMPL` made rendering modes need a projection. -/
 def officialArtifacts (workspace : Lake.Workspace)
     (snapshots : Array SourceSnapshot) : IO (Array (Option ModuleArtifact)) := do
   if (← IO.getEnv "LEAN_FMT_DISABLE_ARTIFACT") == some "1" then
@@ -195,9 +196,9 @@ def officialArtifacts (workspace : Lake.Workspace)
           | .error _ state => .ok none state
     return Lake.Job.collectArray jobs "lean-fmt official artifacts"
   try
+    unless ← Project.isCurrent workspace build do
+      return Array.replicate snapshots.size none
     withoutProcessOutput do
-      unless ← workspace.checkNoBuild build do
-        return Array.replicate snapshots.size none
       let encoded ← workspace.runBuild (cfg := { noBuild := true, verbosity := .quiet }) build
       (snapshots.zip encoded).mapM fun (snapshot, encoded?) => do
         let some mod := snapshot.module?
@@ -1951,7 +1952,7 @@ private def inspectCompilerArtifact (workspace : Lake.Workspace) (application : 
     (maxBytes : Nat) (snapshot : SourceSnapshot) : IO String := do
   let some mod := snapshot.module?
     | return "unbuilt"
-  unless ← withoutProcessOutput <| workspace.checkNoBuild (do mod.olean.fetch) do
+  unless ← Project.isCurrent workspace (do mod.olean.fetch) do
     return "unbuilt"
   let output ← runBounded {
     cmd := application.toString

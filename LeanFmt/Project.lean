@@ -300,6 +300,32 @@ def Snapshot.findTarget? (snapshot : Snapshot) (requested : FilePath) : IO (Opti
 def SourceTarget.withSource (target : SourceTarget) (source : String) : SourceTarget :=
   { target with source }
 
+/- Can Lake validate `build` without building anything? Asked silently.
+
+Every caller wants both halves, so both live here rather than at each call site.
+
+**Why `checkNoBuild` and not `runBuild`.** Under `noBuild`, an out-of-date target makes `finalizeBuild`
+call `IO.Process.exit noBuildCode` (`Lake/Build/Run.lean:368`). That is a process exit, not an
+exception, so no `catch` below it runs. `checkNoBuild` asks the same question and returns a `Bool`
+(`:405-414`).
+
+**Why the buffer swap.** `checkNoBuild` is the one Lake entry point a caller cannot quiet. It builds
+its own monitor from a hardcoded `{noBuild := true}`, leaving `verbosity` at `.normal`, so
+`BuildConfig.showProgress` is true and Lake redraws a spinner over our stderr whenever that is a
+terminal. `runBuild` takes a config and `startBuild` runs no monitor at all; this one takes nothing.
+Buffering is safe only because `checkNoBuild` returns rather than exits: the same buffer around a
+call that exits would hold the unflushed report while the process died. -/
+def isCurrent {α : Type} (workspace : Lake.Workspace)
+    (build : Lake.FetchM (Lake.Job α)) : IO Bool := do
+  let buffer ← IO.mkRef { : IO.FS.Stream.Buffer }
+  let stdout ← IO.setStdout (.ofBuffer buffer)
+  let stderr ← IO.setStderr (.ofBuffer buffer)
+  try
+    workspace.checkNoBuild build
+  finally
+    discard <| IO.setStdout stdout
+    discard <| IO.setStderr stderr
+
 /- Run one shared Lake no-build graph and recover one status per module. Lake's public runner only
 returns aggregate success; the exact-toolchain `import all` boundary lets this private capability
 await the typed jobs without parsing monitor output or showing callers a lifecycle. -/
@@ -430,7 +456,7 @@ private def setupJob (target : SourceTarget) : Lake.FetchM (Lake.Job Lean.Module
   Lake.setupServerModule target.relativePath target.path (some header)
 
 def exactSetup (snapshot : Snapshot) (target : SourceTarget) : IO Lean.ModuleSetup := do
-  let current ← snapshot.workspace.checkNoBuild (setupJob target)
+  let current ← isCurrent snapshot.workspace (setupJob target)
   if current then
     snapshot.workspace.runBuild (cfg := { noBuild := true, verbosity := .quiet })
       (setupJob target)
