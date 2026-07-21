@@ -136,12 +136,13 @@ children** for the same rule on ordinary-built modules. First measurement of the
 exist in this project. It also exposed that `official_artifacts` costs 101 ms on a workspace that
 cannot have an artifact; recorded, not fixed, with the reason in the result.
 
-**`tests/cache/run.sh` is unverified again, same environmental signature.** Killed by the OS
-(`Killed: 9`, exit 137) at two different lines across four attempts, while another session held a
-3.9 GiB Python process and load average sat at 13. The same `lean-fmt check` on the same fixture
-project passes standalone at **697 MB peak RSS**, which is inside the recorded 441–864 MiB envelope.
-Every other suite that was re-run after this change passed. Not attributable to the change, and not
-re-run clean.
+**`tests/cache/run.sh` is verified, and the environmental diagnosis held a second time.** It had
+been killed by the OS (`Killed: 9`, exit 137) at varying lines across roughly six attempts while
+another session held a 3.9 GiB Python process at load average 13, and it passed clean on the next
+attempt at load 8.7 with no change to the cache path in between. Throughout, the same `lean-fmt
+check` on the same fixture project passed standalone at **697 MB peak RSS**, inside the recorded
+441–864 MiB envelope. Twice now this signature has been OS memory reclamation and not a defect;
+the rule that follows is to re-run before diagnosing, not to grow the envelope.
 
 **The unverified check is now verified, and the environmental diagnosis held.** `tests/cache/run.sh`
 had been killed by the OS (`Killed: 9`, exit 137) at three different points across four attempts while
