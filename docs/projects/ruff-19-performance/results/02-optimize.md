@@ -409,6 +409,72 @@ trade, and it is the trade the project has already made in the other direction d
 Recorded as settled rather than deferred: the question `ruff-01` could not answer was "does anything
 read it," and the answer is now yes, decisively.
 
+## Two isolated sessions: rejected, on its own rule
+
+The roadmap sets the bar before the measurement, which is the only reason this section can be short:
+*"at most two isolated sessions only if it improves end-to-end release time by at least 20% within
+8 GiB, normal pressure, and 256 MiB swap"* (`roadmap.md` line 19). So arm B must come in at **0.80×
+arm A or better**, and this is a decision procedure, not an optimization.
+
+`experiments/run-two-session-concurrency.sh`, `mathlib-sample` (62 files) warm, split 31/31. Arm A is
+one process over all 62; arm B is two processes started together, wall taken as the max of the pair.
+The cache is re-primed before every repetition so both arms start from the same full-hit state, and
+the arms are interleaved so that adjacent pairs meet the same machine.
+
+| Rep | A wall | B wall | **B/A** | A peak RSS | B aggregate peak RSS |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 1 (n=3 batch) | 4,437 ms | 4,302 ms | 0.970 | 828 MiB | 1,609 MiB |
+| 2 | 11,190 ms | 8,045 ms | 0.719 | 817 MiB | 1,587 MiB |
+| 3 | 6,833 ms | 4,995 ms | 0.731 | 824 MiB | 1,603 MiB |
+| 4 (n=6 batch) | 19,968 ms | 14,549 ms | 0.729 | 701 MiB | 1,376 MiB |
+| 5 | 6,367 ms | 6,705 ms | 1.053 | 829 MiB | 1,595 MiB |
+| 6 | 5,270 ms | 7,155 ms | 1.358 | 772 MiB | 1,586 MiB |
+| 7 | 5,766 ms | 5,501 ms | 0.954 | 817 MiB | 1,553 MiB |
+| 8 | 5,269 ms | 4,946 ms | 0.939 | 823 MiB | 1,627 MiB |
+| 9 | 3,977 ms | 5,462 ms | 1.373 | 821 MiB | 1,608 MiB |
+
+**Median B/A = 0.954. Concurrency is rejected.** Not one repetition after the first batch reached
+0.80, four of nine were outright slower, and the spread crosses 1.0 in both directions — which is
+the signature of a null result under a noisy machine, not of a real effect this test failed to
+resolve. Arm A's own wall swings 3,977–19,968 ms with no code change, so the noise floor is larger
+than the 20% effect the rule asks about; a design that needed nine paired repetitions to *not*
+demonstrate 20% has not earned a public flag.
+
+**And the rule's other two columns are not free.** Aggregate peak RSS roughly doubles, 820 MiB to
+1.6 GiB, exactly as two processes should. That is comfortably inside the 8 GiB stop — the stop was
+never the binding constraint — but it is the price actually being offered in exchange for a median
+4.6% *slowdown*.
+
+### The correctness cost, which would have mattered even if the timing had passed
+
+Two sessions publishing the same project index are **safe but lossy**. `writeIndexAtomic` writes to a
+`{target}.tmp-{pid}-{nonce}` path and renames, so there is no corruption and no cross-session
+deletion. But each session builds its index from the snapshot it read at start, so the second to
+publish clobbers the first's entries: a concurrent pair leaves the cache holding roughly half of what
+the same work would have left sequentially, and the next run pays those misses.
+
+That erodes the benefit being claimed, and it is the reason this test re-primes between repetitions —
+otherwise arm B would have been measured against a cache it had itself degraded, which flatters
+nothing and confuses two questions. It is recorded here because a future reader who revisits
+concurrency on faster hardware needs to know that the timing bar is not the only bar.
+
+### One harness limitation, stated
+
+The `swap_mib` column reads system-wide `vm.swapusage`, so it measures the machine and not the run —
+six of nine deltas are *negative*, which is the OS releasing swap under another session's activity.
+It cannot attribute swap to either arm, and it is reported rather than quietly dropped. The RSS
+column is what actually governs the resource half of the rule, and it is unambiguous.
+
+### Conditions, so the rejection can be reopened honestly
+
+Measured at load average 7.9–8.9 with another session holding a 4.0 GiB process. That load is why
+arm A varies 5×, and it is a real limitation of this rejection: a quiet machine could plausibly show
+a cleaner effect in either direction. What it could not plausibly do is turn a median of 0.954 into
+a sustained 0.80. `RPR-FINAL` records the rejection; whoever reopens it should re-run this same
+script on an idle machine and say so.
+
 ## Still open under this claim
 
-- The two-session concurrency test, only after all single-session work.
+Nothing in `RPR-IMPL`'s contract. `RPR-FINAL` inherits the durable gates, the scheduled sample
+checks, the saved raw profiles, the variance policy, and the concurrency accept/reject note — which
+this result supplies as **reject**.

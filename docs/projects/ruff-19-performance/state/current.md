@@ -136,8 +136,17 @@ kind-pruned artifact encodes formatter implementation knowledge and would make a
 invalidate every integrated module's Lake trace, which is the exact coupling this project already
 removed once.
 
-**Still open in this prompt.** Only the two-session concurrency test, which the work order puts
-after all single-session work. Watch mode needs no separate profiling: a generation runs the same
+**Two isolated sessions are rejected, on the roadmap's own rule.** Nine paired repetitions of
+`experiments/run-two-session-concurrency.sh` on `mathlib-sample` warm, split 31/31, cache re-primed
+before each: median B/A = **0.954** against a bar of 0.80, four of nine slower than sequential, and
+aggregate peak RSS roughly doubles (820 MiB to 1.6 GiB, never near the 8 GiB stop). Arm A alone
+swings 3,977-19,968 ms with no code change, so the noise floor exceeds the 20% effect the rule asks
+about. Separately and independently disqualifying: two sessions publishing one project index are
+atomic and safe but **last-writer-wins**, so a concurrent pair leaves roughly half a cache behind.
+Measured under load 7.9-8.9 with another session holding 4.0 GiB; the conditions are recorded in the
+result so the rejection can be reopened honestly on an idle machine.
+
+**`RPR-IMPL` has nothing open in its contract.** `RPR-FINAL` is next. Watch mode needs no separate profiling: a generation runs the same
 `execute` path the batch modes do, and `render_report` already brackets its per-generation rendering.
 
 **The `formatter-integrated-built` workload is closed** (`evidence/01-workloads.md` §3.1,
