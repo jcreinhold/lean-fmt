@@ -14,7 +14,7 @@ package «lean-fmt» where
   version := v!"0.1.0"
   testDriver := "lean-fmt-tests"
   lintDriver := "«lean-fmt»"
-  lintDriverArgs := #["check", "--config", "lint-driver.toml"]
+  lintDriverArgs := #["check", "--config", "lean-fmt.toml"]
 
 @[default_target]
 lean_exe «lean-fmt» where
