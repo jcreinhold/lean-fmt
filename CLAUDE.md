@@ -44,6 +44,10 @@ Match the checks to the change:
 - Before handoff, run `lake build`, `lake exe lean-fmt-tests`, and every suite.
 - `tests/security/bench.sh` measures the linear-time claim. It is a benchmark, not a suite. Run it
   when you touch the source scans, and record the numbers.
+- `tests/lsp/acceptance.sh` drives the language server with the toolchain's own LSP client
+  (`Lean.Data.Lsp.Ipc`) and measures cancellation latency and hundred-request memory stability. It
+  costs about 90 s, so it is not in the `tests/*/run.sh` sweep. Run it when you touch
+  `LeanFmt/LanguageServer.lean`, and record the numbers.
 
 Use the target project's exact Lean toolchain for frontend and plugin experiments. Keep experiments
 out of production modules until their owning prompt selects and verifies the interface.

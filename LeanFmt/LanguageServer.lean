@@ -297,6 +297,13 @@ structure Session where
   /-- Request ids the client has cancelled. Written by the reader, read by the worker, so it is a
   mutex and not a ref. -/
   cancelled : Std.Mutex (Std.HashSet RequestID)
+  /-- The request being served right now, with the token its exact child polls (§9).
+
+  A cancellation for a *queued* request is answered out of `cancelled` when the worker reaches it. A
+  cancellation for the request already running has nothing to check it: the worker is inside
+  `monitorChild`. So the reader reaches in here and cancels the token directly, and
+  `Application.monitorChild` kills the child at its next 50 ms poll. -/
+  inFlight : Std.Mutex (Option (RequestID × Std.CancellationToken))
   /-- The findings last computed for a document, with the version they describe. Not an incremental
   cache and not a substitute for analysis: an entry is *only* ever read for the version it names, and a
   `didChange` supersedes it. It exists because an editor asks for code actions on cursor movement, and
@@ -317,6 +324,38 @@ def Session.recordCancellation (session : Session) (id : RequestID) : IO Unit :=
 
 def Session.forgetCancellation (session : Session) (id : RequestID) : IO Unit :=
   session.cancelled.atomically do modify (·.erase id)
+
+/-- Cancel the in-flight request if it is this one. Called by the reader, so it must not block on
+anything the worker holds — reading the in-flight slot and cancelling a token are both wait-free. -/
+def Session.cancelInFlight (session : Session) (id : RequestID) : IO Unit := do
+  if let some (running, token) ← session.inFlight.atomically do get then
+    if running == id then token.cancel
+
+/-- Serve one request under a fresh cancellation token, and answer `RequestCancelled` if it is used.
+
+Install-then-check is the order that closes the race with the reader. The reader records the id in
+`cancelled` and *then* reads the in-flight slot; this installs the slot and *then* reads `cancelled`.
+Whichever runs first, the other sees its write, so a cancellation arriving in the window between the
+worker's admission check and the child starting is never lost.
+
+The body raises `Application.cancellationMessage` when the child was killed by the token, which is a
+cancelled request rather than a failed one, and gets the code the specification assigns it. Every other
+error is the caller's to answer. -/
+def Session.serveCancellable (session : Session) (id : RequestID)
+    (body : Std.CancellationToken → IO Unit) : IO Unit := do
+  let token ← Std.CancellationToken.new
+  session.inFlight.atomically do set (some (id, token) : Option (RequestID × Std.CancellationToken))
+  if ← session.cancelled? id then token.cancel
+  try
+    body token
+  catch error =>
+    if Application.cancelled? error then
+      session.sink.fail id .requestCancelled "the request was cancelled"
+    else
+      throw error
+  finally
+    session.inFlight.atomically do set (none : Option (RequestID × Std.CancellationToken))
+    session.forgetCancellation id
 
 /-! ## Admission
 
@@ -656,7 +695,8 @@ private def publishFindings (session : Session) (document : Document)
 The memo is keyed on the version the client stated, so reuse is not a judgement about whether the bytes
 "probably" changed — a changed document has a new version by protocol, and a new version never matches
 a stored one. -/
-private def findingsFor (session : Session) (document : Document) :
+private def findingsFor (session : Session) (document : Document)
+    (cancel? : Option Std.CancellationToken := none) :
     IO (Except String (Array Finding)) := do
   if let some (version, findings) := (← session.analyses.get).get? document.uri then
     if version == document.version then return .ok findings
@@ -664,7 +704,7 @@ private def findingsFor (session : Session) (document : Document) :
   | .error message => return .error message
   | .ok (target, plan) =>
     try
-      let report ← session.run.streamSnapshot target plan .check
+      let report ← session.run.streamSnapshot target plan .check (cancel? := cancel?)
       -- A buffer that did not analyze reports its diagnostics as a log line, not as findings: it is
       -- mid-keystroke and painting it red is wrong (§7). It is also not memoized, because the next
       -- request should try again.
@@ -672,7 +712,11 @@ private def findingsFor (session : Session) (document : Document) :
         return .error (String.intercalate "; " report.diagnostics.toList)
       session.analyses.modify (·.insert document.uri (document.version, report.findings))
       return .ok report.findings
-    catch error => return .error s!"{error}"
+    catch error =>
+      -- A cancelled child is not a broken buffer. Reporting it as one would memoize nothing and log a
+      -- failure the client caused on purpose; it belongs to whoever answers the request.
+      if Application.cancelled? error then throw error
+      return .error s!"{error}"
 
 /-- Analyze and publish, or say why not and publish nothing.
 
@@ -704,7 +748,7 @@ not the range the client asked for, because reflow can rebreak the enclosing uni
 (`ruff-14`, §8). Clients that re-format are expected to send back the range the unit now occupies;
 repeated range formatting is a fixed point only in output coordinates. -/
 private def handleFormatting (session : Session) (id : RequestID) (params : Json)
-    (ranged : Bool) : IO Unit := do
+    (ranged : Bool) (cancel : Std.CancellationToken) : IO Unit := do
   let .ok identifier := params.getObjVal? "textDocument"
     | session.sink.fail id .invalidParams "formatting request has no textDocument"
       return
@@ -725,8 +769,11 @@ private def handleFormatting (session : Session) (id : RequestID) (params : Json
   | .error message => session.sink.fail id .invalidParams message
   | .ok (target, plan) =>
     let report ←
-      try session.run.streamSnapshot target plan .format (range? := range?)
+      try session.run.streamSnapshot target plan .format (range? := range?) (cancel? := some cancel)
       catch error =>
+        -- A cancellation is not a formatting failure, and saying so here would report the client's own
+        -- `$/cancelRequest` back to it as an internal error. `serveCancellable` answers it.
+        if Application.cancelled? error then throw error
         session.sink.fail id .internalError s!"lean-fmt could not format {uri}: {error}"
         return
     match report.output with
@@ -784,7 +831,8 @@ quickfix `lean-fmt fix` would refuse.
 `fixAll` and `organizeImports` each cost one exact run and are computed only when the client's requested
 kinds ask for them — an editor that asks for quickfixes on every cursor movement must not pay for two
 whole-document rewrites each time. -/
-private def handleCodeAction (session : Session) (id : RequestID) (params : Json) : IO Unit := do
+private def handleCodeAction (session : Session) (id : RequestID) (params : Json)
+    (cancel : Std.CancellationToken) : IO Unit := do
   let .ok identifier := params.getObjVal? "textDocument"
     | session.sink.fail id .invalidParams "code action request has no textDocument"
       return
@@ -811,7 +859,7 @@ private def handleCodeAction (session : Session) (id : RequestID) (params : Json
   let unsafeFixes := (← session.settings.get).unsafeFixes
   let mut actions : Array Json := #[]
   if wants "quickfix" then
-    match ← findingsFor session document with
+    match ← findingsFor session document (cancel? := some cancel) with
     | .error message => session.sink.log 3 s!"lean-fmt could not analyze {uri}: {message}"
     | .ok findings =>
       for finding in findings do
@@ -829,9 +877,10 @@ private def handleCodeAction (session : Session) (id : RequestID) (params : Json
     let fixed? ←
       try
         let report ← session.run.streamSnapshot target plan .fix
-          (unsafeFixes := unsafeFixes)
+          (unsafeFixes := unsafeFixes) (cancel? := some cancel)
         pure (some report)
       catch error =>
+        if Application.cancelled? error then throw error
         session.sink.log 3 s!"lean-fmt could not compute fix-all for {uri}: {error}"
         pure none
     if let some report := fixed? then
@@ -840,7 +889,10 @@ private def handleCodeAction (session : Session) (id : RequestID) (params : Json
           actions := actions.push (codeAction "lean-fmt: fix all" "source.fixAll"
             (workspaceEdit document #[wholeEdit document output]))
   if wants "source.organizeImports" then
-    match ← (try session.run.organizeSnapshot target catch error => pure (.error s!"{error}")) with
+    match ← (try session.run.organizeSnapshot target (cancel? := some cancel)
+        catch error =>
+          if Application.cancelled? error then throw error
+          pure (.error s!"{error}")) with
     | .error message => session.sink.log 3 s!"lean-fmt: {message}"
     | .ok none => pure ()
     | .ok (some output) =>
@@ -908,10 +960,14 @@ def dispatch (session : Session) (json : Json) : IO Bool := do
       return false
     | "$/lean-fmt/health" => handleHealth session id; return false
     | "textDocument/formatting" =>
-      handleFormatting session id params (ranged := false); return false
+      session.serveCancellable id (handleFormatting session id params (ranged := false))
+      return false
     | "textDocument/rangeFormatting" =>
-      handleFormatting session id params (ranged := true); return false
-    | "textDocument/codeAction" => handleCodeAction session id params; return false
+      session.serveCancellable id (handleFormatting session id params (ranged := true))
+      return false
+    | "textDocument/codeAction" =>
+      session.serveCancellable id (handleCodeAction session id params)
+      return false
     | _ =>
       session.sink.fail id .methodNotFound s!"lean-fmt does not implement {method}"
       return false
@@ -957,6 +1013,9 @@ private partial def readLoop (session : Session) (input : IO.FS.Stream)
       -- arrive exactly too late, every time.
       if let some id := ((json.getObjVal? "params").toOption.bind idOf?) then
         session.recordCancellation id
+        -- And if it is the one already running, reach into its child. Recording first is what makes
+        -- the pair race-free: `serveCancellable` installs the token and then re-reads this set.
+        session.cancelInFlight id
       readLoop session input queue
     else if method? == some "exit" then
       discard <| queue.trySend (Work.message json)
@@ -1027,6 +1086,7 @@ def serveLanguageServer (options : ServerOptions) : IO UInt32 := do
       documents := ← IO.mkRef {}
       refusals := ← IO.mkRef {}
       cancelled := ← Std.Mutex.new {}
+      inFlight := ← Std.Mutex.new none
       analyses := ← IO.mkRef {}
       -- The quiet interval is a wait, not a poll: one task per scheduled version, which either finds
       -- the document still at that version and enqueues, or finds it moved and enqueues anyway — the

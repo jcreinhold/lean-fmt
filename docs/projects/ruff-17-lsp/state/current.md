@@ -1,6 +1,6 @@
 ---
 kind: state
-first_unresolved: 04-acceptance
+first_unresolved: none
 ---
 
 # Current state
@@ -23,9 +23,9 @@ around it.
 | 01-protocol | RLP-PROTOCOL | verified | — |
 | 02-documents | RLP-DOCUMENTS | verified | RLP-PROTOCOL |
 | 03-features | RLP-FEATURES | verified | RLP-DOCUMENTS |
-| 04-acceptance | RLP-FINAL | planned | RLP-FEATURES |
+| 04-acceptance | RLP-FINAL | verified | RLP-FEATURES |
 
-**`RLP-DOCUMENTS` is verified** (`results/02-documents.md`). `LeanFmt/LanguageServer.lean` (694 lines)
+**`RLP-DOCUMENTS` is verified** (`results/02-documents.md`). `LeanFmt/LanguageServer.lean`
 is live behind `lean-fmt lsp`: our own Content-Length reader over Lean's writer, initialize/shutdown/exit,
 a bounded document store (32 MiB message, 16 MiB document, 256 documents, 64 queued messages),
 incremental sync with version ordering, three-clause admission, `$/cancelRequest` applied by the reader
@@ -68,9 +68,38 @@ diagnostics after a quiet interval. `tests/lsp/run.sh` now runs 75 checks, 36 of
   request carries a client-stated version and the worker is capacity-one FIFO. Staleness is enforced
   where the protocol puts it: the `WorkspaceEdit`'s stated version. Do not manufacture a use for the
   code.
-- **Cancellation is still unobserved at the child.** Requests now start exact children, but the suite
-  proves only that a cancelled request is answered `RequestCancelled` exactly once. `RLP-FINAL`'s
-  concurrent-cancellation case is what can show the token shortening a running frontend.
+- **Cancellation was still unobserved at the child here**; `RLP-FINAL` both built and measured it.
+
+**`RLP-FINAL` is verified** (`results/04-acceptance.md`). `tests/lsp/acceptance.sh` runs 41 checks
+against the server through `Lean.Data.Lsp.Ipc` — the client the Lean team wrote for its own server —
+covering lifecycle, malformed-message recovery, Unicode positions, dynamic reconfiguration, code
+actions, concurrent cancellation, and a hundred-request stability run. `docs/editor-setup.md` carries
+the VS Code, Neovim, and Emacs inputs.
+
+- **In-flight cancellation is real, and it had to be built here.** `RLP-DOCUMENTS` put a token in
+  `ExactRun`'s child poll; nothing in the server ever created one, so `$/cancelRequest` only removed
+  *queued* requests. `Session.inFlight` now holds the running request's id and token, the reader
+  cancels it directly, and `Session.serveCancellable` brackets every request that can start a child.
+  **Install-then-check, never check-then-install**: the reader records into `cancelled` and then reads
+  `inFlight`; `serveCancellable` installs `inFlight` and then re-reads `cancelled`. Reverse either and
+  a cancellation arriving in that window is lost. Measured: formatting `LeanFmt/Application.lean` costs
+  3,637 ms, and the same request cancelled at 400 ms returns in 470 ms.
+- **`Lean.JsonRpc` cannot decode a spec-conforming parse-error response.** JSON-RPC 2.0 §5 requires
+  `"id": null` when no id could be recovered, and `RequestID`'s decoder accepts only a number or a
+  string, so `Ipc.readMessage` throws on it. The server was **not** changed — real clients accept it
+  and the specification mandates it. `Acceptance.lean` reads that one frame at the JSON level and says
+  why. Do not "fix" this by emitting a non-null id.
+- **A cancellation check that asserts only the response code proves nothing.** The first measurement
+  read 3,714 ms uncancelled against 3,501 ms cancelled and still returned `RequestCancelled`: the
+  request had never begun, because `didOpen`'s debounced analysis of the same module was ahead of it in
+  the FIFO. Any timing against this server must first drain the debounced analysis.
+- **The session does not grow.** 100 alternating formatting/code-action requests: subtree RSS
+  682,880 KiB after the first, 690,640 KiB peak, 685,840 KiB after the hundredth. The measurement sums
+  the server *and its descendants*, because the exact frontend child is the server's child.
+- **`serve` is now a compatibility adapter with a removal plan** (`README.md`), gated on a real editor
+  session against `lsp` plus one shipped release carrying the notice. It gains no new capability.
+- **No editor has actually run this.** The setup file is derived from each client's documented schema,
+  not from a session anyone opened. That gap is what `serve`'s removal is waiting on.
 
 ## What `01-protocol` froze, for the prompts that consume it
 
@@ -96,7 +125,8 @@ rediscover the hard way.
   formatting provider among its 18 fields, and no formatting method is implemented anywhere in
   `Lean/Server/`. lean-fmt therefore declares its own formatting capability and params DTOs (§2, §12).
 - **`Lean.Server.*` stays out of production imports** (it drags `Lean.Server.InfoUtils`);
-  `Lean.Data.Lsp` is taken wholesale, and `Lean.Data.Lsp.Ipc` is RLP-FINAL's client harness.
+  `Lean.Data.Lsp` is taken wholesale, and `Lean.Data.Lsp.Ipc` is RLP-FINAL's client harness
+  (`tests/lsp/Acceptance.lean`).
 
 ## Inherited from `ruff-14-stream-range` (verified)
 

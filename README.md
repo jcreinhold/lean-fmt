@@ -11,6 +11,7 @@ lake build
 .lake/build/bin/lean-fmt format --root . --json LeanFmt/Basic.lean
 .lake/build/bin/lean-fmt diff --root . LeanFmt/Basic.lean
 .lake/build/bin/lean-fmt fix --root . LeanFmt/Basic.lean
+.lake/build/bin/lean-fmt lsp --root .
 .lake/build/bin/lean-fmt serve --root .
 .lake/build/bin/lean-fmt rules --json
 .lake/build/bin/lean-fmt compiler setup
@@ -212,9 +213,25 @@ A range is not cheaper than the whole buffer. The cost of a stream request is on
 over everything received, which a range cannot skip without giving up exactness. Ranges control which
 bytes come back changed, not how long the run takes.
 
-## Editor service
+## Editors
 
-`serve` reads `lean-fmt.service.v1` NDJSON from stdin and writes one compact response per line. It
+`lsp` is the editor entry point. It speaks the Language Server Protocol over stdio and offers
+formatting, range formatting, formatting-derived code actions (quickfix, fix-all, organize imports),
+and diagnostics. It runs alongside Lean's own language server, which offers no formatting at all.
+`docs/editor-setup.md` has the VS Code, Neovim, and Emacs inputs, and the two behaviors — widened
+ranges and trailing-comment ownership — that otherwise get reported as bugs.
+
+```sh
+lean-fmt lsp --root . --debounce-ms 150
+```
+
+One workspace root per session, one exact frontend child per request, no writes: the server never
+touches a `.lean` file or the result cache. `--max-memory` bounds the session and its children
+together.
+
+### The NDJSON service, and when it goes
+
+`serve` predates `lsp` and is now a compatibility adapter. It reads `lean-fmt.service.v1` NDJSON from stdin and writes one compact response per line. It
 supports `health`, exact unsaved-source `analyze`, and `shutdown` requests with arbitrary JSON IDs.
 Analyze requests name an existing selected project source and carry a strictly increasing per-path
 version plus replacement source bytes. Unsaved bytes always run through a fresh exact-context child;
@@ -232,6 +249,18 @@ never writes source or `.lean-fmt-cache` state.
 {"id":2,"method":"analyze","path":"LeanFmt/Basic.lean","version":1,"source":"module\n"}
 {"id":3,"method":"shutdown"}
 ```
+
+Everything `serve` does, `lsp` does through a protocol editors already speak: `health` is
+`$/lean-fmt/health`, `analyze` is `textDocument/didOpen`/`didChange` plus published diagnostics, and
+`shutdown` is `shutdown`. `serve`'s string error codes are its own; `lsp` uses the JSON-RPC integers.
+It is kept because it is a published interface with its own suite (`tests/service/`), not because
+anything needs two of these.
+
+**Removal plan.** `serve` is removed once (1) `lsp` has been exercised by a real editor rather than
+only by protocol harnesses, and (2) one release has shipped with this notice, so a consumer has had a
+version to migrate against. Neither has happened yet, so it stays and stays supported. It gains no new
+capability in the meantime: `preview`, `unsafeFixes`, code actions, and range formatting are `lsp`'s
+and are not being back-ported.
 
 ## Architecture and verification
 
