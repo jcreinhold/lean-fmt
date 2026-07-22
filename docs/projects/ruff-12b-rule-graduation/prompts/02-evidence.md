@@ -1,6 +1,6 @@
 ---
 claim_id: RGR-EVIDENCE
-status: planned
+status: verified
 depends_on: [RGR-SPEC]
 ---
 

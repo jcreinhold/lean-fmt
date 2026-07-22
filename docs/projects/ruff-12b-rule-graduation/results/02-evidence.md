@@ -1,7 +1,7 @@
 ---
 claim_id: RGR-EVIDENCE
 prompt: 02-evidence
-status: in-progress
+status: verified
 ---
 
 # RGR-EVIDENCE — Measure all ten preview rules against the frozen criteria
@@ -216,14 +216,106 @@ cold report. A cache that had dropped the tier would have emitted nothing.
 So graduating a rule of any tier does not threaten `ruff-19`'s warm gates, and §5.2's escape hatch is
 not needed.
 
-### CP-2 (§5.3) — the cold path
+### CP-2 (§5.3) — the cold path: **failed by 26×**
 
-*(measurement in progress; `experiments/run-cp2-cold-cost.sh`)*
+`experiments/run-cp2-cold-cost.sh`, 62-module frozen sample, mathlib built **without**
+`LeanFmtCompilerPlugin` (the definition of `ordinary-built`), `--no-cache` so every repetition is cold,
+one `check` invocation per repetition so per-process and per-workspace setup amortizes exactly once.
+`ruff-19`'s variance policy: 4 repetitions, first discarded, median of 3, spread reported.
+
+| Arm | wall median | spread | `exact_child` count | `exact_child` ms | per module |
+| --- | ---: | --- | ---: | ---: | ---: |
+| baseline (default, 5 rules) | **9,068 ms** | 8,179–13,656 | **1** | 2,648 | 146 ms |
+| + FMT013 (one syntax rule) | **299,608 ms** | 296,800–317,446 | **62** | 280,101 | 4,832 ms |
+
+**Ratio: 33.0×. The §5.3 budget is 1.25×.** CP-2 fails by a factor of 26.
+
+The count is the durable part, per `tests/performance/run.sh`'s rule that a gate must be a count, a
+ratio, or a digest. **The baseline spawns 1 frontend child across 62 modules; adding one syntax-tier
+rule spawns 62 — one per module.** The baseline's single child is a *fixed* cost (it does not scale
+with the manifest), while the graduated arm's is *linear in modules*. That structural difference, not
+the wall time, is why this is not a tuning problem: there is no machine on which 62 frontend children
+cost what 1 costs.
+
+Validity cross-check: the baseline arm emits **27 findings**, exactly reproducing `ruff-19`'s recorded
+baseline finding count for this workload, so the two arms are measuring the workload `ruff-19` defined.
+
+### §5.3's projection was wrong by ~11×, and the correction is recorded rather than absorbed
+
+`results/01-criteria.md` §5.3 projected ~408 ms marginal per module from `ruff-19`'s four-module
+fixture measurement, and predicted a graduated syntax rule would roughly **double** a cold run — about
+8× over budget. Measured on real mathlib modules the marginal cost is **4,832 ms per module**, and the
+result is **33×**, not 2×.
+
+`ruff-19` attached the warning to its own number — *"It is not a speed benchmark: four small fixture
+modules are not a project, and the per-module frontend cost above is dominated by the first child's
+2,058 ms of process and import startup"* — and §5.3 carried the number forward anyway. That was the
+error, and it is worth naming precisely: **the budget (1.25×) is unchanged and was not the mistake; the
+projection built on it was a separate claim and it was wrong.** §"Criteria that were not revised" above
+holds.
+
+The correction strengthens rather than weakens every verdict: no rule was going to graduate on exposure
+grounds regardless, and CP-2 now independently forecloses `default` for all six syntax-tier rules and
+all four semantic-tier rules on any `ordinary-built` project.
+
+### CP-4 (§5.5) — the predicted tax **did not materialize**
+
+§5.5 predicted `official_artifacts` would cost ~101 ms on a workspace that cannot hold an artifact,
+citing `ruff-19`. Measured here on ordinary-built mathlib, in both arms:
+**`phase.official_artifacts_ms = 0`.**
+
+Recorded as a correction, not quietly dropped: on this workload the facet lookup is free, so CP-4's
+"tax on projects that cannot benefit" is not a real cost here and must not be cited as one. Whether
+that is because the phase short-circuits when no Lake formatter facet is configured, or because
+`ruff-19`'s 101 ms was specific to its four-module workspace, is **not established by this
+measurement** and this note does not claim it.
+
+### CP-3 (§5.4) — not measured
+
+The integrated arm was not run. It is not needed for any verdict: no rule reaches `default`, so no rule
+puts a tier above source on the default path, so CP-3 binds nothing. Recorded as an explicit gap rather
+than silently skipped — `RGR-FINAL` should either run it or record the same reasoning.
+
+## What this means for `ruff-10b` Design B
+
+The trigger stays unfired (no syntax rule reaches `default`), but this stack can now say what `ruff-19`
+could not: **had it fired, Design A would have failed the budget by 26×.** A parse instead of a full
+re-elaboration would have to remove essentially all of the 4,832 ms per module to bring 33× under
+1.25×. That is a far stronger statement than `ruff-19`'s "the trigger has not fired", and `RGR-IMPL`
+should record it in place of a bare re-check.
 
 ## Checks read
 
-*(pending)*
+| Check | Result |
+| --- | --- |
+| `LEAN_NUM_THREADS=1 lake build` | exit 0 |
+| `experiments/run-lifecycle-precision-sample.sh` (62 modules) | 1 finding, 0 broken, 0 infra |
+| same, 23 stress/batch/remainder modules | 1 finding, 0 broken, 0 infra |
+| `experiments/run-fix-audit.sh` | 10 cases, 0 assertion failures |
+| `experiments/run-cp1-warm-serve.sh` | 5 arms, `ruff-19` §1a/§1b/§1c pass on all |
+| `experiments/run-cp2-cold-cost.sh` | baseline 9,068 ms / +FMT013 299,608 ms (medians of 3) |
+| baseline `check --json` over the sample | 27 findings, 0 broken, 0 infrastructure failures |
+| `git diff --check` | clean |
+| structural checkers | same 5 pre-existing `implementation_route` failures as every lean-fmt stack |
+
+No production module changed in this prompt, so `tests/boundary/run.sh` has no new boundary to inspect;
+it belongs to `RGR-IMPL`.
 
 ## Remaining uncertainty
 
-*(pending)*
+- **The baseline's single `exact_child` is unexplained.** It is 1 across 62 modules, so it is a fixed
+  cost rather than a per-module escalation, and the run reports 0 broken and 0 infrastructure failures —
+  so it is not an error path. Beyond that this note does not claim a mechanism, because it did not
+  establish one. It does not affect any verdict (the ratio is driven by 62 vs 1), but someone should
+  find out what it is.
+- **CP-4's 0 ms is a measurement, not an explanation** (above). Do not convert it into a claim that the
+  facet lookup is always free.
+- **My baseline wall median (9,068 ms) is well under `ruff-19`'s recorded 24,696 ms** for nominally the
+  same workload. Different mathlib revision, different machine state, and `ruff-19` itself records the
+  same binary and corpus varying 3,977–19,968 ms on load alone. The finding count matching at 27 is the
+  reason to trust the arm; the *ratio* is the quantity to carry forward, not either absolute.
+- **Eight rules have zero evidence about their precision**, and that is a durable gap this stack cannot
+  close — closing it needs a corpus that is not mathlib. Each §1.5 condition names the corpus that would
+  close it, which is the most this stack can honestly do.
+- **The opinionation category (§2.1) got one hard case** (FMT009) and it was genuinely hard. The
+  distinction between "false positive" and "true but unwanted" held up, but one case is not a test of it.

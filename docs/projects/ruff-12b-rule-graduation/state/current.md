@@ -1,6 +1,6 @@
 ---
 kind: state
-first_unresolved: 02-evidence
+first_unresolved: 03-graduate
 ---
 
 # Current state
@@ -16,15 +16,15 @@ change the shape of the remaining work:
   unoccupied. It is the landing spot for a rule that is correct but too expensive for the default path.
 - **"Default when integrated, optional otherwise" is refused** (§1.4), because it would make findings
   depend on build state the user cannot see and would make the catalog unprintable without a workspace.
-- **CP-2 (§5.3) is expected to bind.** At `ruff-19`'s measured ~408 ms marginal per module, one
-  syntax-tier rule on the default path would roughly double a cold 62-module `check` — about 8× the
-  1.25× budget. `RGR-EVIDENCE` measures rather than assuming this, but the projection is on record.
+- **CP-2 (§5.3) was expected to bind, and it does — far harder than projected.** §5.3 predicted ~2×
+  from `ruff-19`'s ~408 ms/module. `RGR-EVIDENCE` measured **33×** (4,832 ms/module on real mathlib
+  modules). The projection was wrong by ~11×; the 1.25× budget itself is unchanged.
 
 `results/01-criteria.md` §0 discloses that its author had already read `ruff-12`'s aggregate firing
 count (ten preview rules, 62 modules, one true-positive FMT013, zero false positives) and names
 §2.2's exposure threshold as the criterion that exposure could have contaminated.
 
-**RGR-EVIDENCE is in progress.** Verdicts and CP-1 are final; CP-2 is still measuring. What is settled:
+**RGR-EVIDENCE is verified.** What it established:
 
 - **85 real mathlib modules produced 2 findings.** Both true positives, zero false positives, zero
   broken modules, zero infrastructure failures. Eight of the ten rules never fired at all.
@@ -39,8 +39,15 @@ count (ten preview rules, 62 modules, one true-positive FMT013, zero false posit
 - **CP-1 holds and its untested prediction is now tested** (`evidence/02-cp1-warm-serve.md`): the
   content-keyed cache does serve a tier above source on a warm hit. Shown non-vacuously — the all-ten
   arm emitted 17 findings on a warm, fully-served, zero-`exact_child` run, byte-identical to cold.
+- **CP-2 fails by 26×** (`results/02-evidence.md`): baseline 9,068 ms median vs 299,608 ms with one
+  syntax rule, **1 frontend child vs 62** — a fixed cost against a per-module linear one. That
+  structural difference, not the wall time, is why it is not a tuning problem. CP-4's predicted 101 ms
+  tax measured **0 ms** and is corrected rather than dropped; CP-3 was not measured and is recorded as
+  an explicit gap, since no rule reaches default and nothing binds it.
 - **`ruff-10b` Design B does not fire.** Its trigger needs a syntax rule at *default*; `stable-optional`
-  is off the default path by construction.
+  is off the default path by construction. But this stack can now say what `ruff-19` could not: **had
+  it fired, Design A would have missed the budget by 26×**, so `RGR-IMPL` records that measurement in
+  place of a bare re-check.
 
 Two defects recorded for later owners, not repaired here (prompt 02 forbids repairing a rule to make
 it pass): FMT009 does not carve out a whole-file *named* namespace though it carves out the whole-file
@@ -60,7 +67,7 @@ verified.
 | Prompt | Claim | Status | Depends on |
 | --- | --- | --- | --- |
 | 01-criteria | RGR-SPEC | **verified** (`results/01-criteria.md`) | — |
-| 02-evidence | RGR-EVIDENCE | in progress (`results/02-evidence.md`) | RGR-SPEC |
+| 02-evidence | RGR-EVIDENCE | **verified** (`results/02-evidence.md`) | RGR-SPEC |
 | 03-graduate | RGR-IMPL | planned | RGR-EVIDENCE |
 | 04-final | RGR-FINAL | planned | RGR-IMPL |
 
