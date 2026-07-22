@@ -15,8 +15,11 @@ in that state would have accepted a linter with two thirds of its rules gated of
 each one's fate first, so this stack audits the catalog as intended.
 
 **`ruff-12b` has since decided them, and the count above is now nine, not ten** (updated by `ruff-12b`
-`RGR-FINAL`'s repository-wide count audit). Only `FMT013` left preview, and it did **not** become
+`RGR-FINAL`'s repository-wide count audit). Only one rule left preview, and it did **not** become
 default: it is `lifecycle := .stable` with `defaultEnabled := false`, the `stable-optional` outcome.
+It is `FMT011` under the current numbering and was `FMT013` when `ruff-12b` decided it; the catalog
+was renumbered to start at `FMT001` afterwards (`docs/rules/MIGRATION.md`), so this stack must audit
+against live `lean-fmt rules` output and not against any code quoted in a `ruff-12b` result note.
 So the concern this paragraph raised is *not* resolved — nine rules remain gated off by default, and
 the default set is still the same five source/import-tier rules. What changed is that the gating is
 now a recorded decision with a stated condition for revisiting, rather than an unexamined default.

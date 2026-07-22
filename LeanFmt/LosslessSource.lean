@@ -463,7 +463,7 @@ kinds.size` and `token.node < nodes.size`, so the `getD` fallbacks below never f
 projection; they exist so the type, not a convention, keeps a rule total.
 
 The adjacency builders are one O(n) pass each and are meant to be called **once** per rule
-invocation, not per node — a rule that scans many nodes (FMT013 over every `paren`) builds the map
+invocation, not per node — a rule that scans many nodes (FMT011 over every `paren`) builds the map
 first and then does O(1) lookups, so the whole scan stays linear. -/
 
 /-- Kind string of node `i`. -/

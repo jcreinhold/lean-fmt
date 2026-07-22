@@ -6,6 +6,13 @@ depends_on: [RGR-IMPL]
 
 # RGR-FINAL — the catalog `ruff-20` accepts
 
+> **Amendment — the codes below are pre-renumbering.** After this note was verified, the live catalog
+> was renumbered to start at `FMT001` (`docs/rules/MIGRATION.md`); every code shifted down by two, so
+> `FMT013` here is `FMT011` today and `FMT003` here is `FMT001`. The tables are left as they were
+> because they record what the catalog was when this stack decided it — the *decisions* are unchanged,
+> only the labels moved. `ruff-20` should audit against live `lean-fmt rules` output, using the
+> migration table to map anything quoted here.
+
 This note is the catalog as shipped. It is written to be read **without** the three result notes
 before it, because `ruff-20-acceptance` audits against this table and a table that only makes sense
 with three other documents open is a table nobody will check.

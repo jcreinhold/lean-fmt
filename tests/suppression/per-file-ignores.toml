@@ -2,4 +2,4 @@
 # root config excludes this directory, so the walk never enters it and nothing here can be
 # discovered. A discovery-recognized name would promise otherwise.
 [per-file-ignores]
-"**/PerFile.lean" = ["FMT005"]
+"**/PerFile.lean" = ["FMT003"]

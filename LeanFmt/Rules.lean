@@ -95,7 +95,7 @@ def SyntaxFacts.of (normalized : String) (projection : LosslessSource) : SyntaxF
 compiler diagnostics. A semantic rule needs the syntax facts too — its range coordinate system and
 suppression are the projection's — so this nests `SyntaxFacts` rather than restating it, as
 `SyntaxFacts` nests `SourceFacts`. `diagnostics` are the immutable facts (`ArtifactModel.Diagnostic`)
-the surfaced rules FMT014–FMT017 key on; a rule never sees an `Environment`, a `Position`, or a
+the surfaced rules FMT012–FMT015 key on; a rule never sees an `Environment`, a `Position`, or a
 `FileMap`, only this data (`ruff-11` `notes/01-authority.md` §7). -/
 structure SemanticFacts where
   private mk ::
@@ -155,7 +155,7 @@ def RuleImpl.tier : RuleImpl → Tier
 - `deprecated` — superseded (by another rule, or by canonical formatting); still resolves for
   back-compat, carries a `replacement?`, and is never default-enabled.
 
-`retired` is deliberately absent: a retired code (FMT001/FMT002) has no `RuleImpl` and no `RuleInfo`, so
+`retired` is deliberately absent: a retired code has no `RuleImpl` and no `RuleInfo`, so
 it lives in `reservedCodes`, not here. The three constructors plus the reserved table partition every
 non-meta code. -/
 inductive Lifecycle where
@@ -256,7 +256,7 @@ instance : Lean.ToJson Rule where
 
 /-! ## Source-security rules
 
-`FMT003` and `FMT004` flag bytes that survive into accepted source only inside a string literal or a
+`FMT001` and `FMT002` flag bytes that survive into accepted source only inside a string literal or a
 comment: a bare control byte or bidirectional mark in the command stream is a hard parse error, so a
 file carrying one in code is not accepted source and no source rule runs on it
 (`notes/01-catalog.md` §2). The parser's acceptance therefore supplies the token context these rules
@@ -273,7 +273,7 @@ private def hex4 (n : Nat) : String :=
   String.ofList [hexDigit (n / 4096 % 16), hexDigit (n / 256 % 16), hexDigit (n / 16 % 16),
     hexDigit (n % 16)]
 
-/-- The `FMT003` set: C0 controls except TAB (`0x09`) and LF (`0x0A`), plus DEL (`0x7F`). CR (`0x0D`)
+/-- The `FMT001` set: C0 controls except TAB (`0x09`) and LF (`0x0A`), plus DEL (`0x7F`). CR (`0x0D`)
 is unreachable — it cannot survive into accepted normalized source — so its inclusion is moot. TAB is
 excluded: it is legitimate string content and its bare form is a read-boundary rejection, never a
 lint concern here. -/
@@ -282,7 +282,7 @@ private def isForbiddenControl (byte : UInt8) : Bool :=
 
 private def controlFinding (start : Nat) (codepoint : Nat) : Finding :=
   {
-    code := "FMT003"
+    code := "FMT001"
     severity := .warning
     message := s!"forbidden control byte U+{hex4 codepoint}"
     range := { start, stop := start + 1 }
@@ -302,7 +302,7 @@ private def forbiddenControlByte (facts : SourceFacts) : Array Finding := Id.run
       findings := findings.push (controlFinding index byte.toNat)
   return findings
 
-/-- The `FMT004` set: the twelve Unicode bidirectional formatting controls of the Trojan-Source
+/-- The `FMT002` set: the twelve Unicode bidirectional formatting controls of the Trojan-Source
 attack (CVE-2021-42574). -/
 private def isBidiControl (c : Char) : Bool :=
   let n := c.toNat
@@ -311,11 +311,11 @@ private def isBidiControl (c : Char) : Bool :=
 
 private def bidiFinding (start width codepoint : Nat) : Finding :=
   {
-    code := "FMT004"
+    code := "FMT002"
     severity := .warning
     message := s!"suspicious bidirectional control U+{hex4 codepoint}"
     range := { start, stop := start + width }
-    -- Report-only for the same reason as `FMT003`: the mark is string data or comment text.
+    -- Report-only for the same reason as `FMT001`: the mark is string data or comment text.
     fix? := none
   }
 
@@ -331,7 +331,7 @@ private def bidiControl (facts : SourceFacts) : Array Finding :=
 
 /-! ## Syntax-tier rules
 
-`FMT008`–`FMT013` read the exact frontend's projection through `SyntaxFacts`: node **kinds as
+`FMT006`–`FMT011` read the exact frontend's projection through `SyntaxFacts`: node **kinds as
 strings**, child/token adjacency, and leaf source text. None reads `Lean.Syntax`, precedence (the
 projection carries none), or `choice` alternatives (only the first survives). Every kind string is
 cited to the pinned v4.32.0 compiler in `docs/projects/ruff-10-syntax-rules/notes/01-catalog.md` §2 and
@@ -355,7 +355,7 @@ this is exact; an invalid slice (never produced by a validated projection) decod
 private def rangeText (bytes : ByteArray) (start stop : Nat) : String :=
   (String.fromUTF8? (bytes.extract start stop)).getD ""
 
-/-! ### FMT008 — module lacks a module docstring
+/-! ### FMT006 — module lacks a module docstring
 
 Fires when the module has at least one `declaration` command but no `moduleDoc` (`/-! … -/`) node. A
 declaration-level `/-- … -/` is a `docComment` inside `declModifiers`, a different kind, so it does not
@@ -379,14 +379,14 @@ private def moduleDocRequired (facts : SyntaxFacts) : Array Finding := Id.run do
     return #[]
   let insertion := projection.headerStop
   return #[{
-    code := "FMT008"
+    code := "FMT006"
     severity := .warning
     message := "module has declarations but no module docstring"
     range := { start := insertion, stop := insertion }
     fix? := none
   }]
 
-/-! ### FMT009 — unclosed `section` or `namespace`
+/-! ### FMT007 — unclosed `section` or `namespace`
 
 Matching is a name stack over the top-level command stream, as `notes/01-catalog.md` §2 specifies and
 as `Lean.Elab.Command`'s scope stack works. `namespace Foo` pushes the name `Foo`; `section` pushes an
@@ -471,14 +471,14 @@ private def unclosedScopes (facts : SyntaxFacts) : Array Finding := Id.run do
   let range := projection.nodes[scope.opener]!.range
   let what := if scope.isSection then "section" else "namespace"
   return #[{
-    code := "FMT009"
+    code := "FMT007"
     severity := .warning
     message := s!"unclosed {what}"
     range
     fix? := none
   }]
 
-/-- Duplicate detection shared by FMT010/FMT011: among sibling nodes of one `owner` kind, an entry
+/-- Duplicate detection shared by FMT008/FMT009: among sibling nodes of one `owner` kind, an entry
 whose byte-identical text already appeared earlier in the same list is a duplicate. The fix deletes the
 duplicate together with its preceding `", "` separator — `[previous sibling stop, duplicate stop)` — so
 `@[simp, simp]` becomes `@[simp]` and `deriving Repr, Repr` becomes `deriving Repr`. Safe: an exact
@@ -507,7 +507,7 @@ private def duplicateSiblings (bytes : ByteArray) (projection : LosslessSource)
     texts := texts.push text
   return findings
 
-/-! ### FMT010 — duplicate attribute in one `@[…]` list. ### FMT011 — duplicate `deriving` class.
+/-! ### FMT008 — duplicate attribute in one `@[…]` list. ### FMT009 — duplicate `deriving` class.
 Both are `duplicateSiblings` over the relevant owner/member kinds. -/
 private def duplicateAttribute (facts : SyntaxFacts) : Array Finding := Id.run do
   let projection := facts.projection
@@ -516,14 +516,14 @@ private def duplicateAttribute (facts : SyntaxFacts) : Array Finding := Id.run d
   let mut findings := #[]
   -- `attributes` is `"@[" >> sepBy1 attrInstance ", " >> "]"`, and `sepBy1` inserts a null group node,
   -- so the `attrInstance`s are children of that group, not of `attributes` directly. Grouping by the
-  -- actual parent (any node with `attrInstance` children) survives that intermediate, as FMT011 does
+  -- actual parent (any node with `attrInstance` children) survives that intermediate, as FMT009 does
   -- for `derivingClass`.
   for i in [0:projection.nodes.size] do
     if projection.inQuotation i then
       continue
     if (childAdjacency[i]!).any fun j => projection.kindOf j == kAttrInstance then
       findings := findings ++ duplicateSiblings bytes projection childAdjacency
-        kAttrInstance "FMT010" "duplicate attribute in attribute list" i
+        kAttrInstance "FMT008" "duplicate attribute in attribute list" i
   return findings
 
 private def duplicateDerivingClass (facts : SyntaxFacts) : Array Finding := Id.run do
@@ -539,10 +539,10 @@ private def duplicateDerivingClass (facts : SyntaxFacts) : Array Finding := Id.r
       continue
     if (childAdjacency[i]!).any fun j => projection.kindOf j == kDerivingClass then
       findings := findings ++ duplicateSiblings bytes projection childAdjacency
-        kDerivingClass "FMT011" "duplicate deriving class" i
+        kDerivingClass "FMT009" "duplicate deriving class" i
   return findings
 
-/-! ### FMT012 — development-only `set_option`
+/-! ### FMT010 — development-only `set_option`
 
 Fires on a `set_option` command whose option name root is `debug`, `pp`, `profiler`, or `trace` — the
 exact set of Mathlib's `linter.style.setOption`. Matching the `set_option` **node** (not the string)
@@ -568,7 +568,7 @@ private def developmentSetOption (facts : SyntaxFacts) : Array Finding := Id.run
         let name := rangeText bytes nameToken.start nameToken.stop
         if isDevelopmentOption name then
           findings := findings.push {
-            code := "FMT012"
+            code := "FMT010"
             severity := .warning
             message := s!"development-only option '{name}' set in committed source"
             range := { start := projection.nodes[i]!.range.start, stop := nameToken.stop }
@@ -576,7 +576,7 @@ private def developmentSetOption (facts : SyntaxFacts) : Array Finding := Id.run
           }
   return findings
 
-/-! ### FMT013 — redundant nested parentheses
+/-! ### FMT011 — redundant nested parentheses
 
 Fires on a `paren` node whose only child **node** is itself a `paren` — `((e))`. The inner `(e)` is a
 complete atomic term, so dropping the outer pair cannot regroup anything; no precedence is consulted
@@ -598,7 +598,7 @@ private def redundantNestedParen (facts : SyntaxFacts) : Array Finding := Id.run
         let outer := projection.nodes[i]!.range
         let inner := projection.nodes[inner[0]!]!.range
         findings := findings.push {
-          code := "FMT013"
+          code := "FMT011"
           severity := .warning
           message := "redundant nested parentheses"
           range := outer
@@ -610,7 +610,7 @@ private def redundantNestedParen (facts : SyntaxFacts) : Array Finding := Id.run
 
 /-! ## Semantic-tier rules
 
-`FMT014`–`FMT017` **surface** compiler diagnostics the exact frontend already emitted, keyed on each
+`FMT012`–`FMT015` **surface** compiler diagnostics the exact frontend already emitted, keyed on each
 message's stable top-level `kind` tag (a linter option name, or the deprecation attribute). They read
 `SemanticFacts.diagnostics` — normalized `Diagnostic`s already in the projection's coordinate system,
 captured from the `MessageLog` in `Analysis.lean` — and conclude a report-only `Finding` that preserves
@@ -645,7 +645,7 @@ private def surfaceDiagnostics (kind code : String) (facts : SemanticFacts) : Ar
       some { code, severity := d.severity, message := d.message, range := d.range, fix? := none }
     else none
 
-/-- FMT014 — use of a deprecated declaration (`@[deprecated]`), tag `Lean.Linter.deprecatedAttr`.
+/-- FMT012 — use of a deprecated declaration (`@[deprecated]`), tag `Lean.Linter.deprecatedAttr`.
 
 The **report** is surfaced from the compiler diagnostic — unchanged, always available, cheap. The
 **unsafe rename fix** is attached from the owned occurrence fact only when it was captured (`ruff-11b`):
@@ -656,7 +656,7 @@ is report-only, byte-identical to the surfaced-only behavior. The fix is `unsafe
 is plausibly intended but unproven, applied only under `--unsafe-fixes` and backstopped by the output
 re-elaboration validator (`ruff-06` `notes/01-model.md` §1, `ruff-11b` `notes/01-model.md` §6). -/
 private def deprecatedUse (facts : SemanticFacts) : Array Finding :=
-  (surfaceDiagnostics kDeprecatedAttr "FMT014" facts).map fun finding =>
+  (surfaceDiagnostics kDeprecatedAttr "FMT012" facts).map fun finding =>
     match facts.occurrences.find? (fun o => o.fixable && o.range == finding.range) with
     | some occ =>
       match occ.newName? with
@@ -666,18 +666,18 @@ private def deprecatedUse (facts : SemanticFacts) : Array Finding :=
       | none => finding
     | none => finding
 
-/-- FMT015 — unused variable / binder, tag `linter.unusedVariables`. -/
+/-- FMT013 — unused variable / binder, tag `linter.unusedVariables`. -/
 private def unusedVariable (facts : SemanticFacts) : Array Finding :=
-  surfaceDiagnostics kUnusedVariables "FMT015" facts
+  surfaceDiagnostics kUnusedVariables "FMT013" facts
 
-/-- FMT016 — automatically-included section variable unused in a theorem, tag
+/-- FMT014 — automatically-included section variable unused in a theorem, tag
 `linter.unusedSectionVars`. -/
 private def unusedSectionVariable (facts : SemanticFacts) : Array Finding :=
-  surfaceDiagnostics kUnusedSectionVars "FMT016" facts
+  surfaceDiagnostics kUnusedSectionVars "FMT014" facts
 
-/-- FMT017 — bound variable resembles a nullary constructor, tag `linter.constructorNameAsVariable`. -/
+/-- FMT015 — bound variable resembles a nullary constructor, tag `linter.constructorNameAsVariable`. -/
 private def constructorNameVariable (facts : SemanticFacts) : Array Finding :=
-  surfaceDiagnostics kConstructorNameAsVariable "FMT017" facts
+  surfaceDiagnostics kConstructorNameAsVariable "FMT015" facts
 
 /-- Every rule the product ships, in one static array.
 
@@ -692,7 +692,7 @@ for a line-oriented rule to consider. -/
 def ruleRegistry : Array Rule := #[
   {
     info := {
-      code := "FMT003"
+      code := "FMT001"
       category := "security"
       summary := "reject forbidden control bytes in source"
       fixable := false
@@ -713,7 +713,7 @@ NUL is flagged at the NUL."
   },
   {
     info := {
-      code := "FMT004"
+      code := "FMT002"
       category := "security"
       summary := "flag suspicious bidirectional controls in source"
       fixable := false
@@ -733,7 +733,7 @@ ending in a right-to-left override U+202E is flagged at the mark."
   },
   {
     info := {
-      code := "FMT008"
+      code := "FMT006"
       category := "docs"
       summary := "require a module docstring when a module declares anything"
       fixable := false
@@ -756,7 +756,7 @@ follow it."
   },
   {
     info := {
-      code := "FMT009"
+      code := "FMT007"
       category := "structure"
       summary := "report an unclosed section or namespace"
       fixable := false
@@ -781,7 +781,7 @@ freeze, which is what `stable` would promise."
   },
   {
     info := {
-      code := "FMT010"
+      code := "FMT008"
       category := "redundancy"
       summary := "remove a duplicate attribute in an attribute list"
       fixable := true
@@ -804,7 +804,7 @@ mathlib modules including `Mathlib/Data/Finset/Attr.lean`, which was chosen for 
   },
   {
     info := {
-      code := "FMT011"
+      code := "FMT009"
       category := "redundancy"
       summary := "remove a duplicate deriving class"
       fixable := true
@@ -813,9 +813,9 @@ mathlib modules including `Mathlib/Data/Finset/Attr.lean`, which was chosen for 
       explanation := "\
 A `deriving` clause names the same class twice. The safe fix deletes the later instance and its \
 separator, so `deriving Repr, Repr` becomes `deriving Repr`. Safe for the same idempotence reason as \
-FMT010."
+FMT008."
       previewPath? := "\
-Graduates on the same condition as FMT010, for duplicate `deriving` classes: at least 10 audited true \
+Graduates on the same condition as FMT008, for duplicate `deriving` classes: at least 10 audited true \
 positives with zero false positives on a corpus that is not attribute-reviewed. Its fix passes the same \
 audit; it found nothing across 85 mathlib modules."
       examples := #[{ bad := "inductive Color where\n  | red\n  deriving Repr, Repr\n"
@@ -825,7 +825,7 @@ audit; it found nothing across 85 mathlib modules."
   },
   {
     info := {
-      code := "FMT012"
+      code := "FMT010"
       category := "debug"
       summary := "report a development-only set_option left in source"
       fixable := false
@@ -847,7 +847,7 @@ modules says what mathlib already enforces and nothing about whether this rule i
   },
   {
     info := {
-      code := "FMT013"
+      code := "FMT011"
       category := "redundancy"
       summary := "remove redundant nested parentheses"
       fixable := true
@@ -866,7 +866,7 @@ complete atomic term, so dropping the outer pair cannot regroup anything; only t
 is answered, because the projection carries no precedence. The safe fix deletes the outer pair.\n\n\
 This rule is stable but off by default. It is syntax tier, so running it on a project not built with \
 the lean-fmt compiler plugin costs one compiler frontend run per module; select it with \
-`--select FMT013`, or `--select redundancy`, or enable it in `lean-fmt.toml`."
+`--select FMT011`, or `--select redundancy`, or enable it in `lean-fmt.toml`."
       examples := #[{ bad := "def twice : Nat := ((1))\n"
                       good? := "def twice : Nat := (1)\n" }]
     }
@@ -874,7 +874,7 @@ the lean-fmt compiler plugin costs one compiler frontend run per module; select 
   },
   {
     info := {
-      code := "FMT014"
+      code := "FMT012"
       category := "deprecation"
       summary := "report use of a deprecated declaration"
       fixable := true
@@ -898,7 +898,7 @@ plausibly intended but unproven — so graduation would enable the report, never
   },
   {
     info := {
-      code := "FMT015"
+      code := "FMT013"
       category := "unused"
       summary := "report an unused variable or binder"
       fixable := false
@@ -918,7 +918,7 @@ evidence: the zero this rule scored across 85 mathlib modules measures mathlib's
   },
   {
     info := {
-      code := "FMT016"
+      code := "FMT014"
       category := "unused"
       summary := "report a section variable unused in a theorem"
       fixable := false
@@ -926,9 +926,9 @@ evidence: the zero this rule scored across 85 mathlib modules measures mathlib's
       lifecycle := .preview
       explanation := "\
 An automatically-included section `variable` is unused in a theorem, surfaced from the compiler's \
-`linter.unusedSectionVars` diagnostic. Report-only, for the same reason as FMT015."
+`linter.unusedSectionVars` diagnostic. Report-only, for the same reason as FMT013."
       previewPath? := "\
-Graduates on the same condition as FMT015, for section variables: at least 10 audited true positives \
+Graduates on the same condition as FMT013, for section variables: at least 10 audited true positives \
 with zero false positives on a corpus that does not already run `linter.unusedSectionVars`."
       examples := #[{ bad := "section\nvariable {α : Type} [inst : Inhabited α]\ntheorem refl_eq (a : α) : a = a := rfl\nend\n" }]
     }
@@ -936,7 +936,7 @@ with zero false positives on a corpus that does not already run `linter.unusedSe
   },
   {
     info := {
-      code := "FMT017"
+      code := "FMT015"
       category := "naming"
       summary := "report a bound variable that resembles a nullary constructor"
       fixable := false
@@ -1006,7 +1006,7 @@ def runSourceRules (normalized : String) : Array Finding :=
 
 /-! ## Import rules — declared here, produced elsewhere
 
-The import family (`FMT005` duplicate, `FMT006` redundant, `FMT007` order/grouping) is **not** in
+The import family (`FMT003` duplicate, `FMT004` redundant, `FMT005` order/grouping) is **not** in
 `ruleRegistry`, because it is not part of the linear-tier `RuleImpl` engine. Header facts sit outside
 the `source ≤ syntax ≤ semantic` chain — the syntax projection drops the header — and redundancy needs
 the Lake graph, which a `RuleImpl` cannot fetch (see the module note above). `LeanFmt.Internal.Imports`
@@ -1019,7 +1019,7 @@ cannot drift. They are declared here as `RuleInfo`s and added to `allRuleInfos`,
 selectors and the `rules` command read in place of `ruleRegistry` alone. -/
 def importRuleInfos : Array RuleInfo := #[
   {
-    code := "FMT005"
+    code := "FMT003"
     category := "imports"
     summary := "remove a duplicate import"
     fixable := true
@@ -1032,7 +1032,7 @@ repeat imports nothing new, so removing it preserves the module's environment an
                     good? := "import Lean\n" }]
   },
   {
-    code := "FMT006"
+    code := "FMT004"
     category := "imports"
     summary := "report an import made redundant by another import's transitive closure"
     fixable := false
@@ -1049,7 +1049,7 @@ flags the redundant one."
     examples := #[]
   },
   {
-    code := "FMT007"
+    code := "FMT005"
     category := "imports"
     summary := "report imports out of canonical order within a group"
     fixable := false
@@ -1067,13 +1067,23 @@ namespace forever, so a future rule never silently reuses one and a legacy confi
 still names one degrades gracefully rather than breaking (`notes/01-schema.md` §7). Each maps to a
 one-line disposition shown by a retirement notice and by `explain`.
 
+**This table is empty, and that is a deliberate state, not a cleared one.** It held `FMT001` and
+`FMT002` — the retired line-boundary and trailing-newline rules — until the pre-release renumbering
+(`docs/rules/MIGRATION.md`) shifted the live catalog down to start at `FMT001`. That renumbering
+*reuses* two retired codes, which is exactly what this table exists to prevent; it was allowed once,
+knowingly, because the package had no users and therefore no config or suppression comment anywhere
+could be pointing at the old meanings. It is not a precedent. Once a real user exists, a retired code
+is permanent again.
+
+Consequence worth stating where someone will read it: with no entry here, the reserved branches in
+`Config.selectorsValid` and `Suppression.apply` are live production code with **no test instance**.
+They were covered by `FMT001` before, and inventing a placeholder retired rule to keep those tests
+green would be a fake fixture proving nothing. They stay untested until a rule genuinely retires.
+
 FMT900/FMT901 are **meta** self-diagnostics of the suppression engine (`Suppression.lean`), always
 active and never selectable; they are not in this table but §10 invariant 1 forbids any live rule from
 reusing them. -/
-def reservedCodes : Array (String × String) := #[
-  ("FMT001", "retired: line-boundary normalization is now part of canonical formatting; run `format`"),
-  ("FMT002", "retired: trailing-newline normalization is now part of canonical formatting; run `format`")
-]
+def reservedCodes : Array (String × String) := #[]
 
 /-- Whether `code` names a reserved/retired code (§7). -/
 def isReservedCode (code : String) : Bool := reservedCodes.any (·.1 == code)
@@ -1105,11 +1115,11 @@ def metaDescription? (code : String) : Option String :=
   (metaCodes.find? (·.1 == code)).map (·.2)
 
 /-- Rules exempt from the "≥1 executable example" invariant (§10 invariant 5/6), each for a stated
-structural reason: FMT003/FMT004 flag an invisible/dangerous byte that cannot be embedded verbatim in
-documentation, and FMT006 flags a cross-module graph fact that has no self-contained single-file
+structural reason: FMT001/FMT002 flag an invisible/dangerous byte that cannot be embedded verbatim in
+documentation, and FMT004 flags a cross-module graph fact that has no self-contained single-file
 snippet. Their `explanation` carries an escaped/illustrative example instead. Every other live rule
 must ship at least one executable example. -/
-def exampleExemptCodes : Array String := #["FMT003", "FMT004", "FMT006"]
+def exampleExemptCodes : Array String := #["FMT001", "FMT002", "FMT004"]
 
 /-- Every rule identity the product ships: the linear-tier engine's rules plus the import rules. This is
 the single source `Config` selection and the `rules` command read, so a rule cannot be selectable in one
@@ -1121,7 +1131,7 @@ def isImportCode (code : String) : Bool := importRuleInfos.any (·.code == code)
 
 /-- The `lean-fmt rules` wire shape for the whole catalog: every engine rule with its derived `input`
 tier, then every import rule. An import rule's per-file read is the surface header — a **source**-level
-fact — so it projects onto `source`, the cheapest tier. The module graph FMT006 also consults sits
+fact — so it projects onto `source`, the cheapest tier. The module graph FMT004 also consults sits
 outside the `source ≤ syntax ≤ semantic` chain (`Imports`): it is a run-level input, not a deeper
 frontend tier, so it does not raise `input`. This is the one array `rules --json` prints, so an import
 rule is as visible and selectable as any other. -/

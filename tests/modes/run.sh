@@ -15,7 +15,7 @@ nosel_fixture="$repo_root/tests/modes/.rdf-layout-nosel.lean"
 string_fixture="$repo_root/tests/modes/.rdf-layout-string.lean"
 tail_fixture="$repo_root/tests/modes/.rdf-layout-tail.lean"
 # The RDF-IMPL mixed fixture carries both a layout defect (`namespace␣␣␣␣␣Alpha`) and an admitted fix (a
-# duplicate import, FMT005). It imports `LeanFmt.Basic`, so it must live under the lake root; `fix`
+# duplicate import, FMT003). It imports `LeanFmt.Basic`, so it must live under the lake root; `fix`
 # mutates it, so it is a fresh scratch, untracked, removed by the trap.
 mixed_fixture="$repo_root/tests/modes/.rdf-impl-mixed.lean"
 # RDF-FINAL confluence fixtures: two scratch copies of the mixed source driven through the two
@@ -110,9 +110,9 @@ PY
 
 # Every non-writing preview — `check`, `format --check` (`ruff-11d`: the opt-in CI preview), and `diff`
 # — consumes the same result and leaves source bytes, mtimes, and permissions untouched. `Findings.lean`
-# is layout-clean but carries one FMT005 (duplicate import). Since `ruff-11c` RDF-IMPL split layout from
+# is layout-clean but carries one FMT003 (duplicate import). Since `ruff-11c` RDF-IMPL split layout from
 # fix, `format`/`diff` reflow only and apply **no** rule fix: on a layout-clean file they are `clean` and
-# exit 0 even though `check` still reports the finding — the FMT005 dedup is a fix, not layout, and rides
+# exit 0 even though `check` still reports the finding — the FMT003 dedup is a fix, not layout, and rides
 # `fix` (exercised below), never `format`. (Plain `format` writes in place since `ruff-11d`; these
 # previews use `--check` so the shared `Findings.lean` fixture stays byte-stable for the asserts below.)
 metadata "$source_file" >"$work/source.before"
@@ -132,14 +132,14 @@ formatted = json.load(open(sys.argv[2]))
 diff = open(sys.argv[3]).read()
 # `check` reports the finding and its safe fix; it changes nothing on disk.
 assert check["mode"] == "check" and check["changed"] == 1 and check["written"] == 0
-assert [f["code"] for f in check["files"][0]["findings"]] == ["FMT005"]
+assert [f["code"] for f in check["files"][0]["findings"]] == ["FMT003"]
 # `format` applies no rule fix and the file is layout-clean, so it is `clean` — but it still reports the
 # finding at original coordinates (`notes/01-model.md` §4: the report survives the patch split).
 assert formatted["mode"] == "format" and formatted["changed"] == 0
 assert formatted["files"][0]["status"] == "clean"
 assert formatted["files"][0]["formatted"] is None
-assert [f["code"] for f in formatted["files"][0]["findings"]] == ["FMT005"]
-# `diff` likewise shows no layout change — an empty diff body, `changed=0`, the FMT005 dedup withheld
+assert [f["code"] for f in formatted["files"][0]["findings"]] == ["FMT003"]
+# `diff` likewise shows no layout change — an empty diff body, `changed=0`, the FMT003 dedup withheld
 # from the layout preview. The stats line still reports the finding.
 assert "@@" not in diff, repr(diff)
 assert diff == ("mode=diff files=1 findings=1 changed=0 written=0 broken=0 rejected=0 "
@@ -197,7 +197,7 @@ PY
 # drops it, so "end Alpha\n" and "end Alpha" both project to the line "end Alpha". A diff over bare
 # strings pairs them as unchanged and emits an empty hunk list — reporting `changed=1` above a diff
 # showing nothing, for the single edit the formatter's final-newline normalization makes (a layout
-# concern since `ruff-11c` RDF-LAYOUT, no longer the retired FMT002). `DiffLine` carries the terminator
+# concern since `ruff-11c` RDF-LAYOUT, no longer the retired final-newline rule). `DiffLine` carries the terminator
 # into the compared element to keep them unequal, and this test is why that type is not over-engineering.
 printf 'module\n\nnamespace Alpha\n\ndef layoutValue : Nat := 1\n\nend Alpha' >"$layout_file"
 run_expect 1 "$work/layout-nonl.diff" "$application" diff --root . --no-cache \
@@ -269,7 +269,7 @@ rm -rf "$cache_root"
 cat >"$work/per-file.toml" <<'EOF'
 select = ["default"]
 [per-file-ignores]
-"tests/check/Findings.lean" = ["FMT005"]
+"tests/check/Findings.lean" = ["FMT003"]
 EOF
 run_expect 0 "$work/projected-hit.json" env LEAN_FMT_DISABLE_ARTIFACT=1 \
   LEAN_FMT_TEST_ANALYZER=/usr/bin/false "$application" check --root . --json \
@@ -280,7 +280,7 @@ r = json.load(open(sys.argv[1]))
 assert r["findings"] == r["changed"] == 0 and r["files"][0]["status"] == "clean"
 PY
 
-# Applicability travels on the finding's fix. `Findings.lean`'s one FMT005 is safe (an exact duplicate
+# Applicability travels on the finding's fix. `Findings.lean`'s one FMT003 is safe (an exact duplicate
 # import is idempotent — removing it preserves what the elaborator records), so `check` reports it with
 # an edit and nothing is withheld.
 run_expect 1 "$work/applic-check.json" "$application" check --root . --json --no-cache \
@@ -294,14 +294,14 @@ assert fix["edits"] and "range" in fix["edits"][0], fix
 assert r["withheldUnsafe"] == 0, r
 PY
 
-# `extend-unsafe-fixes` demotes FMT005 as a plan projection no rule reads (`notes/01-model.md` §2).
+# `extend-unsafe-fixes` demotes FMT003 as a plan projection no rule reads (`notes/01-model.md` §2).
 # The reported finding now says `unsafe`; default `fix` withholds it with no write; `--unsafe-fixes`
 # opts in and applies it. The one admission rule governs preview and write alike, so `check` above and
-# `fix` here agree on what would apply. The file is layout-clean, so a withheld FMT005 leaves the
+# `fix` here agree on what would apply. The file is layout-clean, so a withheld FMT003 leaves the
 # canonical reflow with nothing to change — the write comes only from the admitted fix.
 cat >"$work/demote.toml" <<'EOF'
 select = ["default"]
-extend-unsafe-fixes = ["FMT005"]
+extend-unsafe-fixes = ["FMT003"]
 EOF
 run_expect 1 "$work/demote-check.json" "$application" check --root . --json --no-cache \
   --config "$work/demote.toml" tests/check/Findings.lean
@@ -333,8 +333,8 @@ cp -p "$work/Findings.lean" "$source_file"
 
 # A rule in both extend lists is a config contradiction, rejected before any file is read.
 cat >"$work/both-lists.toml" <<'EOF'
-extend-safe-fixes = ["FMT005"]
-extend-unsafe-fixes = ["FMT005"]
+extend-safe-fixes = ["FMT003"]
+extend-unsafe-fixes = ["FMT003"]
 EOF
 run_expect 2 "$work/both-lists.out" "$application" check --root . --json --no-cache \
   --config "$work/both-lists.toml" tests/check/Findings.lean
@@ -356,12 +356,12 @@ PY
 
 cat >"$work/ignore.toml" <<'EOF'
 select = ["default"]
-ignore = ["FMT005"]
+ignore = ["FMT003"]
 EOF
 run_expect 0 "$work/config-ignore.json" "$application" check --root . --json --no-cache \
   --config "$work/ignore.toml" tests/check/Findings.lean
 run_expect 1 "$work/cli-select.json" "$application" check --root . --json --no-cache \
-  --config "$work/ignore.toml" --select FMT005 tests/check/Findings.lean
+  --config "$work/ignore.toml" --select FMT003 tests/check/Findings.lean
 
 printf 'unknown = true\n' >"$work/unknown.toml"
 run_expect 2 "$work/unknown.out" "$application" check --root . --json --no-cache \
@@ -441,47 +441,47 @@ python3 - "$work/rules.json" <<'PY'
 import json, sys
 rules = json.load(open(sys.argv[1]))
 assert [r["code"] for r in rules] == \
-    ["FMT003", "FMT004",
-     "FMT008", "FMT009", "FMT010", "FMT011", "FMT012", "FMT013",
-     "FMT014", "FMT015", "FMT016", "FMT017",
-     "FMT005", "FMT006", "FMT007"], [r["code"] for r in rules]
-# The source-security rules are report-only and their own category: FMT003/FMT004 flag bytes the
+    ["FMT001", "FMT002",
+     "FMT006", "FMT007", "FMT008", "FMT009", "FMT010", "FMT011",
+     "FMT012", "FMT013", "FMT014", "FMT015",
+     "FMT003", "FMT004", "FMT005"], [r["code"] for r in rules]
+# The source-security rules are report-only and their own category: FMT001/FMT002 flag bytes the
 # formatter cannot express by reformatting. Trailing-whitespace/final-newline normalization is the
 # formatter's layout since `ruff-11c` RDF-LAYOUT, not a rule, so no `text`-category rule remains. The
-# import family is its own `imports` category: FMT005 (duplicate) carries a safe fix, FMT006
-# (redundant, graph-derived) and FMT007 (order/grouping) are report-only.
+# import family is its own `imports` category: FMT003 (duplicate) carries a safe fix, FMT004
+# (redundant, graph-derived) and FMT005 (order/grouping) are report-only.
 by_code = {r["code"]: r for r in rules}
 assert all((not by_code[c]["fixable"]) and by_code[c]["category"] == "security"
-           for c in ("FMT003", "FMT004"))
-assert by_code["FMT005"]["fixable"] and by_code["FMT005"]["category"] == "imports"
+           for c in ("FMT001", "FMT002"))
+assert by_code["FMT003"]["fixable"] and by_code["FMT003"]["category"] == "imports"
 assert all((not by_code[c]["fixable"]) and by_code[c]["category"] == "imports"
-           for c in ("FMT006", "FMT007"))
-# FMT003/004 (source-security) and FMT005-007 (imports) are the default-enabled, source-tier rules:
-# reported at source coordinates and projected onto the `source` tier for the wire shape.
-source_default = ("FMT003", "FMT004", "FMT005", "FMT006", "FMT007")
+           for c in ("FMT004", "FMT005"))
+# FMT001/FMT002 (source-security) and FMT003-FMT005 (imports) are the default-enabled, source-tier
+# rules: reported at source coordinates and projected onto the `source` tier for the wire shape.
+source_default = ("FMT001", "FMT002", "FMT003", "FMT004", "FMT005")
 assert all(by_code[c]["defaultEnabled"] and by_code[c]["input"] == "source" for c in source_default)
-# FMT008-013 are the first syntax-tier rules and ship as preview: off by default, indexed on the
+# FMT006-013 are the first syntax-tier rules and ship as preview: off by default, indexed on the
 # compiler projection (`input == "syntax"`), opted into only by an explicit `--select`. Their
-# categories name what each reports; FMT010/011/013 carry redundancy fixes, the rest are report-only.
-preview = ("FMT008", "FMT009", "FMT010", "FMT011", "FMT012", "FMT013")
+# categories name what each reports; FMT008/011/013 carry redundancy fixes, the rest are report-only.
+preview = ("FMT006", "FMT007", "FMT008", "FMT009", "FMT010", "FMT011")
 assert all((not by_code[c]["defaultEnabled"]) and by_code[c]["input"] == "syntax" for c in preview)
-assert by_code["FMT008"]["category"] == "docs" and not by_code["FMT008"]["fixable"]
-assert by_code["FMT009"]["category"] == "structure" and not by_code["FMT009"]["fixable"]
-assert by_code["FMT012"]["category"] == "debug" and not by_code["FMT012"]["fixable"]
+assert by_code["FMT006"]["category"] == "docs" and not by_code["FMT006"]["fixable"]
+assert by_code["FMT007"]["category"] == "structure" and not by_code["FMT007"]["fixable"]
+assert by_code["FMT010"]["category"] == "debug" and not by_code["FMT010"]["fixable"]
 assert all(by_code[c]["fixable"] and by_code[c]["category"] == "redundancy"
-           for c in ("FMT010", "FMT011", "FMT013"))
-# FMT014-017 are semantic-tier rules (`ruff-11`): they surface compiler diagnostics, so they ship as
-# preview (off by default) and are indexed on the `semantic` tier (`input == "semantic"`). FMT015-017
+           for c in ("FMT008", "FMT009", "FMT011"))
+# FMT012-017 are semantic-tier rules (`ruff-11`): they surface compiler diagnostics, so they ship as
+# preview (off by default) and are indexed on the `semantic` tier (`input == "semantic"`). FMT013-017
 # stay report-only — an unused binder or a name resemblance is not an edit any fact here proves safe.
-# FMT014 is the one owned, fixable semantic rule (`ruff-11b`): its unsafe rename of a deprecated
+# FMT012 is the one owned, fixable semantic rule (`ruff-11b`): its unsafe rename of a deprecated
 # reference to its replacement makes it `fixable`, though the fix is withheld unless `--unsafe-fixes`.
-semantic = ("FMT014", "FMT015", "FMT016", "FMT017")
+semantic = ("FMT012", "FMT013", "FMT014", "FMT015")
 assert all((not by_code[c]["defaultEnabled"]) and by_code[c]["input"] == "semantic" for c in semantic)
-assert by_code["FMT014"]["fixable"]
-assert all(not by_code[c]["fixable"] for c in ("FMT015", "FMT016", "FMT017"))
-assert by_code["FMT014"]["category"] == "deprecation"
-assert by_code["FMT015"]["category"] == "unused" and by_code["FMT016"]["category"] == "unused"
-assert by_code["FMT017"]["category"] == "naming"
+assert by_code["FMT012"]["fixable"]
+assert all(not by_code[c]["fixable"] for c in ("FMT013", "FMT014", "FMT015"))
+assert by_code["FMT012"]["category"] == "deprecation"
+assert by_code["FMT013"]["category"] == "unused" and by_code["FMT014"]["category"] == "unused"
+assert by_code["FMT015"]["category"] == "naming"
 PY
 
 run_expect 0 "$work/setup-1.json" "$application" compiler setup --json
@@ -590,7 +590,7 @@ metadata "$source_file" >"$work/source.final"
 cmp "$work/source.before" "$work/source.final"
 
 # --- RDF-IMPL: layout and fix are decoupled. On a fixture with **both** a layout defect
-#     (`namespace␣␣␣␣␣Alpha`) and an admitted fixable finding (a duplicate import, FMT005), `format`
+#     (`namespace␣␣␣␣␣Alpha`) and an admitted fixable finding (a duplicate import, FMT003), `format`
 #     reflows the layout and leaves the finding, while `fix` applies the finding at original coordinates
 #     and does **not** reflow. A user composes them as `fix` then `format`, like `ruff check --fix` then
 #     `ruff format`. ---
@@ -598,7 +598,7 @@ printf 'module\n\nimport LeanFmt.Basic\nimport LeanFmt.Basic\n\nnamespace     Al
   >"$mixed_fixture"
 
 # `format --check` reflows the namespace spacing but keeps BOTH imports — the dedup is a fix, not layout
-# — and still reports the FMT005 finding at original coordinates. (`--check` so the shared mixed fixture
+# — and still reports the FMT003 finding at original coordinates. (`--check` so the shared mixed fixture
 # is intact for the `fix` step below, which must see the original both-imports source.)
 run_expect 1 "$work/mixed-format.json" "$application" format --check --root . --json --no-cache \
   tests/modes/.rdf-impl-mixed.lean
@@ -608,7 +608,7 @@ r = json.load(open(sys.argv[1]))
 assert r["mode"] == "format" and r["changed"] == 1, r
 f, = r["files"]
 assert f["status"] == "would-format", f
-assert [x["code"] for x in f["findings"]] == ["FMT005"], f          # finding survives format
+assert [x["code"] for x in f["findings"]] == ["FMT003"], f          # finding survives format
 assert f["formatted"] == \
     "module\n\nimport LeanFmt.Basic\nimport LeanFmt.Basic\n\nnamespace Alpha\n\n" \
     "def mixedValue : Nat := 1\n\nend Alpha\n", repr(f["formatted"])  # reflowed, NOT deduped
@@ -627,7 +627,7 @@ assert diff.rstrip().endswith("findings=1 changed=1 written=0 broken=0 rejected=
     "withheld_unsafe=0 suppressed=0 infrastructure_failures=0"), repr(diff)
 PY
 
-# `fix` applies the FMT005 dedup at original coordinates and does NOT reflow: the bad namespace spacing
+# `fix` applies the FMT003 dedup at original coordinates and does NOT reflow: the bad namespace spacing
 # is preserved byte-for-byte, exactly one import remains, and the file is written.
 run_expect 0 "$work/mixed-fix.json" "$application" fix --root . --json --no-cache \
   tests/modes/.rdf-impl-mixed.lean
@@ -664,7 +664,7 @@ assert f["formatted"] == \
 PY
 
 # --- RDF-LAYOUT: the canonical reflow is the sole, sound owner of trailing-horizontal-whitespace and
-#     final-newline normalization. `ruff-11c` retired FMT001 (trailing whitespace) and FMT002 (final
+#     final-newline normalization. `ruff-11c` retired the trailing-whitespace rule and the final
 #     newline) as rules and folded the normalization into `LeanFmt.Printer`, mirroring `ruff format`.
 #     Three persistent regressions pin what that ownership means. ---
 
@@ -697,7 +697,8 @@ PY
 #    construction: the string value survives byte-for-byte and no rule reports it. `format` adds the
 #    missing final newline as layout; `fix` — which since RDF-IMPL applies rule fixes, not layout — is a
 #    clean no-op on this finding-free file and adds no newline, leaving every byte exactly as written.
-#    This is the case the retired FMT001 corrupted (it edited the string's bytes); it now cannot recur.
+#    This is the case the retired trailing-whitespace rule corrupted (it edited the string's bytes);
+#    it now cannot recur.
 printf 'module\n\ndef stringWsValue : String := "alpha   \n  beta"' >"$string_fixture"
 run_expect 1 "$work/string-format.json" "$application" format --check --root . --json --no-cache \
   tests/modes/.rdf-layout-string.lean
@@ -893,7 +894,7 @@ PY
 
 # 5b. In-string trailing whitespace round-trip. `format` adds the missing final newline (layout) but the
 #     string value "alpha   " survives byte-for-byte — the trivia-only trim cannot reach token content,
-#     so the write cannot corrupt a string the way the retired FMT001 once did.
+#     so the write cannot corrupt a string the way the retired trailing-whitespace rule once did.
 printf 'module\n\ndef stringVal : String := "alpha   \n  beta"' >"$fin_string_fixture"
 run_expect 0 "$work/fin-string.json" "$application" format --root . --json --no-cache \
   tests/modes/.fip-final-string.lean

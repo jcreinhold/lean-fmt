@@ -65,7 +65,7 @@ def wrap(body):
     return "module\n" + body.rstrip("\n") + "\n"
 
 rules = json.load(open(os.path.join(work, "rules.json")))
-exempt = {"FMT003", "FMT004", "FMT006"}  # findings not expressible as a self-contained snippet (§10)
+exempt = {"FMT001", "FMT002", "FMT004"}  # findings not expressible as a self-contained snippet (§10)
 tested = 0
 
 for rule in sorted(rules, key=lambda r: r["code"]):
@@ -106,7 +106,7 @@ for rule in sorted(rules, key=lambda r: r["code"]):
         if info["fixable"]:
             # `fix` rewrites `bad` into `good`, byte-for-byte after the shared `module` wrap.
             # `--unsafe-fixes` admits both safe and unsafe fixes, so an example's `good` is the fully
-            # fixed form regardless of the rule's applicability (FMT014's rename is unsafe; FMT013's
+            # fixed form regardless of the rule's applicability (FMT012's rename is unsafe; FMT011's
             # paren deletion is safe — both reach their documented `good` here).
             run(["fix", "--root", ".", "--json", "--no-cache", "--unsafe-fixes"] + preview
                 + ["--select", code, rel], expect=0)
@@ -134,8 +134,7 @@ PY
 
 # --- CLI lifecycle contract: `explain` across the code classes ------------------------------------
 # `explain` answers for every class of code the product can print (`notes/01-schema.md` §8): a live
-# rule explains with exit 0; a retired code explains its reserved-table disposition (exit 0) though it
-# names no live rule; a meta self-diagnostic (FMT900/FMT901) explains its description (exit 0) though
+# rule explains with exit 0; a meta self-diagnostic (FMT900/FMT901) explains its description (exit 0) though
 # it is in neither table, because it is never selectable. Only a code the product could never have
 # emitted is an error — FMT999, never assigned, exit 2.
 #
@@ -158,8 +157,7 @@ explain_expect() {
     exit 1
   fi
 }
-explain_expect FMT003 0 "FMT003"
-explain_expect FMT001 0 "retired"
+explain_expect FMT001 0 "FMT001"
 explain_expect FMT900 0 "suppressed nothing"
 explain_expect FMT901 0 "does not parse as a directive"
 explain_expect FMT999 2 ""

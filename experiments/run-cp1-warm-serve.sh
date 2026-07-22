@@ -62,9 +62,9 @@ printf 'CP-1 probe: does a warm run stay fully cache-served with a tier above so
 printf 'workload=lean-fmt-self (%d files)  gates=ruff-19 §1a/§1b/§1c (counts only)\n\n' "${#files[@]}"
 
 run_arm "baseline (default, 5 rules)"
-run_arm "+FMT012 (syntax tier)"   --preview --select default --select FMT012
-run_arm "+FMT013 (syntax, fixable)" --preview --select default --select FMT013
-run_arm "+FMT015 (semantic tier)" --preview --select default --select FMT015
-run_arm "+all ten preview"        --preview --select default --select FMT008 --select FMT009 \
-  --select FMT010 --select FMT011 --select FMT012 --select FMT013 --select FMT014 \
-  --select FMT015 --select FMT016 --select FMT017
+run_arm "+FMT010 (syntax tier)"   --preview --select default --select FMT010
+run_arm "+FMT011 (syntax, fixable)" --preview --select default --select FMT011
+run_arm "+FMT013 (semantic tier)" --preview --select default --select FMT013
+run_arm "+all ten preview"        --preview --select default --select FMT006 --select FMT007 \
+  --select FMT008 --select FMT009 --select FMT010 --select FMT011 --select FMT012 \
+  --select FMT013 --select FMT014 --select FMT015

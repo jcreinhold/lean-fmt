@@ -8,7 +8,7 @@
 #   default          the five source/import-tier default rules. Unchanged by `ruff-12b`, so this arm
 #                    is the control: it must reproduce CP-2's baseline (27 findings).
 #   all              `--select all` with NO `--preview`. Before `ruff-12b` this equalled `default`,
-#                    because every stable rule was default-on. It must now be default + FMT013 --
+#                    because every stable rule was default-on. It must now be default + FMT011 --
 #                    that difference IS the stable-optional outcome, observed end to end.
 #   all --preview    every live rule. Must reproduce `RGR-EVIDENCE`'s 2 findings; a change here means
 #                    something moved between measuring the catalog and shipping it.

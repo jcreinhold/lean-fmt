@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
-# RRL-FINAL frozen-sample precision review (ruff-12). Runs ALL ten preview rules FMT008-FMT017 over the
+# RRL-FINAL frozen-sample precision review (ruff-12). Runs ALL ten preview rules FMT006-FMT015 over the
 # frozen 62-module mathlib sample through lean-fmt's exact frontend, so RRL-FINAL's promotion decision
 # ("does any preview rule graduate to stable/default-on?") rests on measured false-positive evidence,
-# not assumption. Extends `run-syntax-rule-sample.sh` (RYR-FINAL's FMT008-013 review) with the four
-# semantic rules FMT014-017 and the `--preview` gate the rules now sit behind (ruff-12 RRL-IMPL).
+# not assumption. Extends `run-syntax-rule-sample.sh` (RYR-FINAL's FMT006-013 review) with the four
+# semantic rules FMT012-017 and the `--preview` gate the rules now sit behind (ruff-12 RRL-IMPL).
 #
 # The fixtures are unbuilt mathlib modules (no formatter facet in their `.olean`s); disabling the
 # artifact forces the exact frontend, which re-elaborates each module against mathlib's prebuilt deps in
 # ~1-3s and is the only path that projects a syntax rule and elaborates a semantic one. Each finding is
 # recorded with module, code, byte range, message, and the exact normalized source slice, so it can be
-# adjudicated true/false positive by eye. mathlib is heavily self-linted for the FMT008-012 and
-# FMT014-017 equivalents (expected near-zero); FMT013 (redundant nested parens) has no mathlib linter.
+# adjudicated true/false positive by eye. mathlib is heavily self-linted for the FMT006-012 and
+# FMT012-017 equivalents (expected near-zero); FMT011 (redundant nested parens) has no mathlib linter.
 set -euo pipefail
 
 repo_root=$(cd "$(dirname "$0")/.." && pwd)
@@ -25,8 +25,8 @@ cd "$repo_root"
 LEAN_NUM_THREADS=1 lake build lean-fmt >/dev/null
 application="$repo_root/.lake/build/bin/lean-fmt"
 
-preview=(--select FMT008 --select FMT009 --select FMT010 --select FMT011 --select FMT012
-  --select FMT013 --select FMT014 --select FMT015 --select FMT016 --select FMT017)
+preview=(--select FMT006 --select FMT007 --select FMT008 --select FMT009 --select FMT010
+  --select FMT011 --select FMT012 --select FMT013 --select FMT014 --select FMT015)
 
 findings_tsv="$result_root/findings.tsv"
 printf 'module\tcode\tstart\tstop\tmessage\tslice\n' >"$findings_tsv"

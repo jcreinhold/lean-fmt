@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# RGR-EVIDENCE §3 fix audit (`ruff-12b`). Exercises every fixable rule under judgement — FMT010,
-# FMT011, FMT013 (syntax) and FMT014 (semantic) — against `results/01-criteria.md` §3.
+# RGR-EVIDENCE §3 fix audit (`ruff-12b`). Exercises every fixable rule under judgement — FMT008,
+# FMT009, FMT011 (syntax) and FMT012 (semantic) — against `results/01-criteria.md` §3.
 #
 # `tests/syntax/run.sh`'s `fix_applies` already covers FX-3 (convergence: a re-`check` of the written
-# file reports nothing) for FMT010/011/013. It does NOT cover:
+# file reports nothing) for FMT008/011/013. It does NOT cover:
 #
 #   FX-2  true byte idempotence — `fix` twice equals `fix` once, compared with `cmp`. The existing
 #         test infers this from "the re-check found nothing", which assumes no findings implies no
@@ -11,7 +11,7 @@
 #         stop assuming.
 #   FX-4  the fixed file still parses and elaborates under the exact module setup.
 #
-# and it does not cover FMT014 at all (that fix is `.unsafe` and lives in `tests/semantic/run.sh`).
+# and it does not cover FMT012 at all (that fix is `.unsafe` and lives in `tests/semantic/run.sh`).
 #
 # This harness closes those gaps. It is an audit, not a suite: it prints a table and exits non-zero
 # only if an assertion it makes actually fails.
@@ -78,18 +78,18 @@ printf 'RGR-EVIDENCE §3 fix audit — FX-2 (byte idempotence), FX-3 (convergenc
 printf 'wrote=N/M is files written by the first / second `fix`; M must be 0 for a converged fix.\n\n'
 
 printf -- '--- fixtures ---\n'
-audit fmt013-nested   tests/syntax/NestedParen.lean       FMT013
-audit fmt013-triple   tests/syntax/NestedParenTriple.lean FMT013
-audit fmt013-utf8     tests/syntax/NestedParenUtf8.lean   FMT013
-audit fmt013-comment  tests/syntax/Comment.lean           FMT013
-audit fmt010-dup      tests/syntax/Duplicates.lean        FMT010
-audit fmt011-dup      tests/syntax/Duplicates.lean        FMT011
-audit fmt010-quote    tests/syntax/QuoteAttr.lean         FMT010
-audit fmt013-quote    tests/syntax/QuoteParen.lean        FMT013
-audit fmt013-attr     tests/syntax/AttrThenParen.lean     FMT013
+audit fmt013-nested   tests/syntax/NestedParen.lean       FMT011
+audit fmt013-triple   tests/syntax/NestedParenTriple.lean FMT011
+audit fmt013-utf8     tests/syntax/NestedParenUtf8.lean   FMT011
+audit fmt013-comment  tests/syntax/Comment.lean           FMT011
+audit fmt010-dup      tests/syntax/Duplicates.lean        FMT008
+audit fmt011-dup      tests/syntax/Duplicates.lean        FMT009
+audit fmt010-quote    tests/syntax/QuoteAttr.lean         FMT008
+audit fmt013-quote    tests/syntax/QuoteParen.lean        FMT011
+audit fmt013-attr     tests/syntax/AttrThenParen.lean     FMT011
 
 printf -- '\n--- FX-6 composition: the three safe fixes selected together ---\n'
-audit compose-all     tests/syntax/Duplicates.lean        FMT010 --select FMT011 --select FMT013
+audit compose-all     tests/syntax/Duplicates.lean        FMT008 --select FMT009 --select FMT011
 
 printf '\n'
 if ((failures)); then

@@ -113,10 +113,10 @@ structure Diagnostic where
 elaborator recorded the resolved constant at each source occurrence. A *fact*, never a *finding*: only
 the frontend, having elaborated the module, knows which constant a bare identifier resolved to; a
 reader holding only bytes cannot. Carried in the artifact only when a run demanded the **occurrences**
-capability (a rendering mode selecting the owned FMT014 rule), so the whole-file info-tree fold is paid
+capability (a rendering mode selecting the owned FMT012 rule), so the whole-file info-tree fold is paid
 only when the fix is asked for (`ruff-11b` `notes/01-model.md` §§2-5).
 
-The owned analog of `Diagnostic`: FMT014's report is a `Diagnostic` (surfaced, always cheap), but its
+The owned analog of `Diagnostic`: FMT012's report is a `Diagnostic` (surfaced, always cheap), but its
 `unsafe` rename fix needs the *resolved constant and its replacement*, which only the info tree carries.
 
 - `range` is normalized-source byte offsets of the occurrence identifier token, from
@@ -145,7 +145,7 @@ Design B adds beside the tier (`ruff-11` `notes/01-authority.md` §6, `ruff-11b`
 whenever `.semantic` is demanded (Design A for those two, unchanged); `occurrences` is the one
 info-tree-backed sub-fact captured only on demand, so the walk is not forced onto every render. A
 cached `.semantic` entry serves a demand only when `demanded.subset provided` — a monolithic-era entry
-without the occurrence cap therefore misses a fixable-FMT014 demand rather than serving a false clean. -/
+without the occurrence cap therefore misses a fixable-FMT012 demand rather than serving a false clean. -/
 structure SemanticCaps where
   notations : Bool := false
   diagnostics : Bool := false
@@ -182,7 +182,7 @@ under-serves a rule.
 - `notations` (`ruff-05b`, formatter fact): declared spacing for every notation kind present, one
   entry per distinct kind (Design B).
 - `diagnostics` (`ruff-11`, rule fact, new in `v5`): the compiler's own diagnostics with a stable
-  `kind` tag and exact range, which the semantic-tier rules FMT014–FMT017 surface.
+  `kind` tag and exact range, which the semantic-tier rules FMT012–FMT015 surface.
 - `occurrences?` (`ruff-11b`, fix fact, new in `v6`): the owned deprecation-occurrence facts, present
   (`some`, possibly empty) only when the run demanded the **occurrences** capability, and `none`
   otherwise. `none` means *not captured* (a demand for it must miss the cache); `some #[]` means
@@ -216,7 +216,8 @@ name or source digest beside it: a duplicate identity is one that can disagree w
 projection — and nothing a reader could derive from bytes it already holds. It held `findings` and a
 `trailingWhitespace` flag until `RRE-IMPL`; `notes/01-rule-facts.md` §6 has the argument and §2-3
 have the two measured defects that made it. The short version is that a conclusion in here is a
-second decider: `check` never reads an artifact, so it decided FMT001 for itself and disagreed. The
+second decider: `check` never reads an artifact, so it decided the trailing-whitespace question for
+itself and disagreed. The
 long version is that the rules were in the compiler plugin's import closure, which put one lint
 rule's message text inside every module's compiled bytes. Both are gone: there is nothing here to
 disagree with, and the plugin has no reason to link a rule.

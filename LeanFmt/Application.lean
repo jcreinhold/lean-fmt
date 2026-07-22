@@ -110,7 +110,7 @@ structure FileReport where
   /-- Findings this file's source-suppression directives removed from the report. A nonzero count
   with an empty finding list means the file is clean only because a directive said so. -/
   suppressed : Nat := 0
-  /-- Redundant-import (FMT006) candidates *withheld* from the report because a modifier or role
+  /-- Redundant-import (FMT004) candidates *withheld* from the report because a modifier or role
   reachability cannot reason about (`import all`, `meta import`, a re-exported `public import`) makes
   them unsafe even to name. Recorded, never silent — `RIR-FINAL` audits this count. -/
   withheldRedundant : Nat := 0
@@ -156,8 +156,8 @@ structure ExactRun where
 
   **The source is stored and compared, not just the path.** A setup carries the header's imports
   (`setupJob` parses them out of the target's own bytes), and this run's writing modes hand the
-  frontend a *rewritten* snapshot at the same path: `fix` may reorder or drop an import (FMT006,
-  FMT007) and `organize` exists to. Keying on the path alone would validate a rewritten file against
+  frontend a *rewritten* snapshot at the same path: `fix` may reorder or drop an import (FMT004,
+  FMT005) and `organize` exists to. Keying on the path alone would validate a rewritten file against
   the imports it no longer has, which is precisely the check those modes are performing. -/
   setups : IO.Ref (Std.HashMap String (String × Lean.ModuleSetup))
 
@@ -591,12 +591,12 @@ private def canonicalAnalysis (snapshot : SourceSnapshot) (renderCanonical : Boo
 /-- Analyze one snapshot: build the exact envelope the plan demanded and project it, rendering canonical
 layout when `renderCanonical`.
 
-Every finding — source, syntax, and the owned `.semantic` FMT014 rename — is computed once, on the
+Every finding — source, syntax, and the owned `.semantic` FMT012 rename — is computed once, on the
 **original** projection (`canonicalAnalysis` → `ofEnvelope?`), at the file's own coordinates, and `fix`
 applies it there. `ruff-11c` RDF-IMPL retired `reprojectCanonical`, which re-ran the whole registry over
 the *rendered* text so a fix could land in canonical coordinates: with the layout/fix split, no fix is
 computed or applied at canonical coordinates, so there is nothing to re-project. `captureOccurrences`
-still gates the info-tree fold that supplies FMT014's occurrence at original coordinates (the walk
+still gates the info-tree fold that supplies FMT012's occurrence at original coordinates (the walk
 already runs here for diagnostics); `captureSemantic` and `validator` are unchanged. -/
 def ExactRun.analyzeSnapshot (run : ExactRun) (snapshot : SourceSnapshot)
     (renderCanonical : Bool) (validator := false)
@@ -659,7 +659,7 @@ private def availableAnalysis (plan : RulePlan) (renderCanonical applies : Bool)
     -- `true` where the artifact path passed the artifact's own flag (`notes/01-rule-facts.md` §2).
     -- Gated on `renderCanonical` because it takes no artifact, and canonical text cannot be
     -- rendered without the projection an artifact carries. `check` and — since `ruff-11c` RDF-IMPL —
-    -- `fix` both reach it on a source-only selection: `fix` no longer renders, so a `fix --select FMT005`
+    -- `fix` both reach it on a source-only selection: `fix` no longer renders, so a `fix --select FMT003`
     -- takes the shortcut and applies the dedup at original coordinates without a frontend run. Also
     -- gated on the absence of a directive sigil: suppression is parsed only from the syntax projection
     -- (`ofEnvelope?`), so a directive-bearing file must take the artifact path even when its selected
@@ -698,7 +698,7 @@ private def diffSource (source : String) : DiffSource :=
 The flag is part of the line's **identity**, not decoration, which is why this type exists.
 `diffSource` reads the terminator into `finalNewline` and drops it from `lines`, so `"a\n"` and `"a"`
 both project to `["a"]`. A diff over bare strings would pair them as unchanged and print nothing — for
-the one edit `FMT002` exists to make. Carrying the flag into the compared element makes those two lines
+the one edit the retired final-newline rule existed to make. Carrying the flag into the compared element makes those two lines
 unequal, so the edit appears. It also places the `\ No newline` marker correctly: the marker belongs to
 whichever side holds the flag. -/
 private abbrev DiffLine := String × Bool
@@ -719,7 +719,7 @@ script with `-`/`+`/` ` markers and no `@@` headers, which is not a format any t
 This replaced a `unifiedDiff` that was not a diff: it emitted every old line as `-` and every new line
 as `+` under one synthesized header, having never looked for a common line. That was correct output —
 applying it reproduces the file — and useless, because a one-line change reprinted the file. It only
-ever ran on `FMT001`/`FMT002` fixes, so it was tolerable; `RFP-IMPL` points `diff` at canonical layout
+ever ran on the retired trailing-whitespace / final-newline fixes, so it was tolerable; `RFP-IMPL` points `diff` at canonical layout
 and makes it the surface on which formatting is reviewed, where a whole-file rewrite defeats the mode's
 only purpose. The roadmap names `diffs` in this claim's contract, so it is fixed here. -/
 private def unifiedDiff (path before after : String) : String := Id.run do
@@ -857,7 +857,7 @@ private structure PreparedFile where
   withheldUnsafe : Nat
   /-- How many config-selected findings a source directive suppressed. -/
   suppressed : Nat
-  /-- FMT006 candidates withheld by exposure-changing modifiers (see `FileReport.withheldRedundant`). -/
+  /-- FMT004 candidates withheld by exposure-changing modifiers (see `FileReport.withheldRedundant`). -/
   withheldRedundant : Nat
 
 /-- The formatted text in the file's own line-ending form, i.e. what a write would produce. -/
@@ -904,8 +904,8 @@ private def projectSuppression (result : SemanticResult) (bytes : ByteArray)
 
 /-! ## Import findings — computed fresh in IO, merged pre-selection
 
-The import family (FMT005/06/07) is not in the `RuleImpl` engine, so it is not stored in the cached
-`SemanticResult`. FMT005/07 are pure over the file's own header, but FMT006 depends on *other* files
+The import family (FMT003/06/07) is not in the `RuleImpl` engine, so it is not stored in the cached
+`SemanticResult`. FMT003/07 are pure over the file's own header, but FMT004 depends on *other* files
 through the Lake graph, so **none** of it enters the source-digest result cache — caching a graph fact
 under a single file's digest would serve a stale answer the moment an unrelated import changed. Import
 findings are recomputed every run here and merged into the report before selection (`plan.findings`),
@@ -915,29 +915,29 @@ private def anyImportSelected (plan : RulePlan) : Bool :=
   importRuleInfos.any (plan.selected.contains ·.code)
 
 /-- The import findings for one already-parsed header at `normalized`'s coordinates, plus the
-withheld-redundant count. Each rule is gated on selection so an unselected FMT006 never consults the
+withheld-redundant count. Each rule is gated on selection so an unselected FMT004 never consults the
 graph closure. Pure — the caller did the IO (header parse, closure fetch). -/
 private def importFindingsOfHeader (plan : RulePlan)
     (closureOf : Lean.Name → Option (Array Lean.Name))
     (header : Imports.HeaderModel) (normalized : String) : Array Finding × Nat := Id.run do
   let mut findings : Array Finding := #[]
   let mut withheld := 0
-  if plan.selected.contains "FMT005" then
+  if plan.selected.contains "FMT003" then
     findings := findings ++ Imports.duplicateFindings header normalized
-  if plan.selected.contains "FMT007" then
+  if plan.selected.contains "FMT005" then
     findings := findings ++ Imports.orderFindings header normalized
-  if plan.selected.contains "FMT006" then
+  if plan.selected.contains "FMT004" then
     let (redundant, w) := Imports.redundantFindings header closureOf
     findings := findings ++ redundant
     withheld := w
   return (findings, withheld)
 
-/-- The distinct written import module names of `header`, the keys FMT006's closure fetch needs. -/
+/-- The distinct written import module names of `header`, the keys FMT004's closure fetch needs. -/
 private def headerImportNames (header : Imports.HeaderModel) : Array Lean.Name :=
   header.imports.foldl (init := #[]) fun acc stmt =>
     if acc.contains stmt.module then acc else acc.push stmt.module
 
-/-- Build a closure lookup for `names` (empty unless FMT006 is selected), then compute one file's
+/-- Build a closure lookup for `names` (empty unless FMT004 is selected), then compute one file's
 import report. Used by the single-file editor path; the batch `execute` path shares one closure fetch
 across all files instead (`computeImportReports`). -/
 private def singleImportReport (plan : RulePlan) (workspace : Lake.Workspace)
@@ -946,26 +946,26 @@ private def singleImportReport (plan : RulePlan) (workspace : Lake.Workspace)
   match ← Imports.parseHeaderModel normalized with
   | none => return (#[], 0)
   | some header =>
-    let closureOf ← if plan.selected.contains "FMT006" then
+    let closureOf ← if plan.selected.contains "FMT004" then
         let pairs ← Project.importClosures workspace (headerImportNames header)
         pure fun name => (pairs.find? (·.1 == name)).map (·.2)
       else pure fun _ => none
     return importFindingsOfHeader plan closureOf header normalized
 
 /-- Compute every target's import report in one pass: parse all headers, fetch the union of their
-import closures in a single no-build graph build (FMT006 only), then project per file. Returns one
+import closures in a single no-build graph build (FMT004 only), then project per file. Returns one
 `(findings, withheldRedundant)` per snapshot, aligned with `snapshots`. -/
 private def computeImportReports (plans : Array RulePlan) (workspace : Lake.Workspace)
     (snapshots : Array SourceSnapshot) : IO (Array (Array Finding × Nat)) := do
   -- Per-file plans, because `ruff-13` made the effective configuration per file: two files in one run
   -- can disagree about whether an import rule is selected. The shared closure fetch still happens once
-  -- for the whole batch — it is keyed on whether *any* file wants FMT006, never on each file's answer.
+  -- for the whole batch — it is keyed on whether *any* file wants FMT004, never on each file's answer.
   unless plans.any anyImportSelected do
     return Array.replicate snapshots.size (#[], 0)
   let headers ← snapshots.mapM fun snapshot => do
     let (normalized, _) := LosslessSource.normalize snapshot.source
     return (normalized, ← Imports.parseHeaderModel normalized)
-  let closureOf ← if plans.any (·.selected.contains "FMT006") then
+  let closureOf ← if plans.any (·.selected.contains "FMT004") then
       let names := headers.foldl (init := #[]) fun acc (_, header?) =>
         match header? with
         | some header => (headerImportNames header).foldl (init := acc) fun acc name =>
@@ -1022,7 +1022,7 @@ private def prepareFile (plan : RulePlan) (renderCanonical unsafeFixes : Bool)
     | throw (baseReport snapshot "broken" #[] analysis.diagnostics)
   let (normalized, lineEndings) := LosslessSource.normalize snapshot.source
   -- Import findings (`reportImports`, normalized coordinates) join the engine's findings *before*
-  -- selection, so `--select imports`, per-file ignores, and suppression treat them like any rule. FMT005
+  -- selection, so `--select imports`, per-file ignores, and suppression treat them like any rule. FMT003
   -- applies at original coordinates and needs no canonical recomputation: the fix patch applies it on
   -- `normalized`, and the layout patch carries no fix at all.
   let selected := plan.findings snapshot.relativePath (result.findings ++ reportImports)
@@ -1106,7 +1106,7 @@ private def fixFile (run : ExactRun) (plan : RulePlan) (unsafeFixes : Bool)
     (reportImports : Array Finding) (withheldRedundant : Nat)
     (snapshot : SourceSnapshot) (analysis : SemanticAnalysis) : IO FileReport := do
   -- `fix` does not render (`ruff-11c` RDF-IMPL): the patch bases on the file's own `normalized` bytes and
-  -- applies the admitted fixes from `selected` — FMT005 among them — at original coordinates. No reflow,
+  -- applies the admitted fixes from `selected` — FMT003 among them — at original coordinates. No reflow,
   -- no canonical recomputation.
   match prepareFile plan (renderCanonical := false) unsafeFixes reportImports
       withheldRedundant snapshot analysis with
@@ -1393,8 +1393,8 @@ def execute (request : RunRequest) : IO RunOutcome := do
         unless announced.contains notice do
           announced := announced.push notice
           IO.eprintln s!"lean-fmt: {notice}"
-  -- Import findings are computed fresh here, once, before any cache path: FMT005/07 are pure over each
-  -- file's header, but FMT006 reads the Lake graph, so none of it is cacheable under a file's own
+  -- Import findings are computed fresh here, once, before any cache path: FMT003/07 are pure over each
+  -- file's header, but FMT004 reads the Lake graph, so none of it is cacheable under a file's own
   -- digest (`computeImportReports`). One shared closure fetch covers every file; the result is threaded
   -- into `previewFile`/`fixFile` so selection and suppression apply to import findings like any rule's.
   let importStarted ← IO.monoNanosNow
@@ -1419,7 +1419,7 @@ def execute (request : RunRequest) : IO RunOutcome := do
   -- it would otherwise short-circuit straight to "clean" for every file in the project.
   let renderCanonical := request.mode.rendersCanonical
   -- The apply signal (`ruff-11c` RDF-IMPL): only `fix` applies rule fixes, so only `fix` demands the
-  -- FMT014 occurrence fold. It is distinct from `renderCanonical` now that layout and fix are split —
+  -- FMT012 occurrence fold. It is distinct from `renderCanonical` now that layout and fix are split —
   -- `format`/`diff` render but apply nothing; `fix` applies but no longer renders.
   let applies := request.mode == .fix
   -- What this run must actually obtain, rules and mode together. `semantic` is reachable only through
@@ -1775,9 +1775,9 @@ structure OrganizeRequest where
 
 /-- The opt-in "organize imports" capability the roadmap owes CLI and LSP, exposing no graph internals
 — text in, text out. It rewrites each target's surface header to canonical form: duplicates removed
-(FMT005's safe edit) and each blank-line/comment group sorted by module name (FMT007's reorder). The
+(FMT003's safe edit) and each blank-line/comment group sorted by module name (FMT005's reorder). The
 reorder is *observable to elaboration* (`notes/01-semantics.md` §2), which is why it is opt-in and never
-part of unattended `fix`; redundant imports (FMT006) are report-only and are **not** removed here.
+part of unattended `fix`; redundant imports (FMT004) are report-only and are **not** removed here.
 
 Every rewrite that changes a file is validated by re-elaboration before it is written — the same
 trusted-artifact discipline `fix` uses (`fixFile`) — so an organized header that fails to elaborate is

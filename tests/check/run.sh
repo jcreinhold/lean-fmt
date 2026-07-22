@@ -182,7 +182,7 @@ run_expect 1 "$work/cache-fallback.json" env LEAN_FMT_DISABLE_ARTIFACT=1 LEAN_FM
   "$application" check --root . --json tests/check/Findings.lean
 fallback_entry=$(find "$cache_root/results" -type f -name '*.json' -print)
 # The shortcut wrote the source-tier subset; the exact frontend wrote the syntax-tier superset. The
-# superset adds the preview syntax finding (FMT008) that the default report projects back out.
+# superset adds the preview syntax finding (FMT006) that the default report projects back out.
 python3 - "$work/module-cache-entry.json" "$fallback_entry" <<'PY'
 import json, sys
 def result(path):
@@ -194,7 +194,7 @@ assert full["tier"] == "syntax", full["tier"]
 short_codes = {f["code"] for f in short["findings"]}
 full_codes = {f["code"] for f in full["findings"]}
 assert short_codes < full_codes, (short_codes, full_codes)
-assert "FMT008" in full_codes - short_codes, (short_codes, full_codes)
+assert "FMT006" in full_codes - short_codes, (short_codes, full_codes)
 PY
 cmp "$work/cache-artifact.json" "$work/cache-fallback.json"
 
@@ -217,7 +217,7 @@ run_expect 1 "$work/select-all.json" "$application" check --root . --json \
   tests/check/Findings.lean
 run_expect 0 "$work/select-fmt004.json" env LEAN_FMT_DISABLE_ARTIFACT=1 \
   LEAN_FMT_TEST_DISABLE_MODULE_EVIDENCE=1 LEAN_FMT_TEST_ANALYZER=/usr/bin/false \
-  "$application" check --root . --json --select FMT004 tests/check/Findings.lean
+  "$application" check --root . --json --select FMT002 tests/check/Findings.lean
 test "$(find "$cache_root/results" -type f -name '*.json' | wc -l | tr -d ' ')" = 1
 python3 - "$work/select-all.json" "$work/select-fmt004.json" <<'PY'
 import json, sys
@@ -225,11 +225,11 @@ def codes(path):
     file, = json.load(open(path))["files"]
     return [f["code"] for f in file["findings"]]
 every, selected = codes(sys.argv[0 + 1]), codes(sys.argv[2])
-# FMT004 is a source-tier rule that does not fire on this fixture (no bidi mark), so it forces a
-# cache read yet projects nothing — the collision the test needs. FMT005 (the duplicate import) is
+# FMT002 is a source-tier rule that does not fire on this fixture (no bidi mark), so it forces a
+# cache read yet projects nothing — the collision the test needs. FMT003 (the duplicate import) is
 # the default finding the unselected run keeps.
-assert "FMT005" in every, f"the selection fixture lost its unselected rule: {every}"
-assert selected == [], f"--select FMT004 reported something else: {selected}"
+assert "FMT003" in every, f"the selection fixture lost its unselected rule: {every}"
+assert selected == [], f"--select FMT002 reported something else: {selected}"
 PY
 
 # Corrupt committed entries are misses. A stray partial temporary file cannot shadow a valid entry.
@@ -372,8 +372,8 @@ assert file["status"] == "findings", file["status"]
 findings = [(f["code"], f["range"]["start"], f["range"]["stop"], f["message"]) for f in file["findings"]]
 # Position-sorted (`findingOrder`): the comment mark precedes the string byte.
 assert findings == [
-    ("FMT004", 17, 20, "suspicious bidirectional control U+202E"),
-    ("FMT003", 45, 46, "forbidden control byte U+0000"),
+    ("FMT002", 17, 20, "suspicious bidirectional control U+202E"),
+    ("FMT001", 45, 46, "forbidden control byte U+0000"),
 ], findings
 # Report-only: neither security finding carries a fix, and nothing is withheld as unsafe.
 assert all("fix" not in f for f in file["findings"]), file["findings"]
@@ -385,14 +385,14 @@ PY
 #     that reaches the frontend surfaces exactly one infrastructure failure, a run that does not stays
 #     green. `--no-cache` throughout so a cache hit never masks the path under test. ---
 
-# (a) `fix` on a source-only selection (FMT005, the duplicate import) takes the source shortcut in
+# (a) `fix` on a source-only selection (FMT003, the duplicate import) takes the source shortcut in
 #     `availableAnalysis`: module evidence is current, no directive sigil, so the fix is served from the
 #     normalized string and applied at original coordinates with NO frontend child and NO artifact. With
 #     both the analyzer and the artifact disabled the fix still succeeds — proof it consulted neither.
 cp -p tests/check/Findings.lean "$work/Findings.effbak"
 run_expect 0 "$work/eff-fix-shortcut.json" env LEAN_FMT_DISABLE_ARTIFACT=1 \
   LEAN_FMT_TEST_ANALYZER=/usr/bin/false "$application" fix --root . --json --no-cache \
-  --select FMT005 tests/check/Findings.lean
+  --select FMT003 tests/check/Findings.lean
 python3 - "$work/eff-fix-shortcut.json" <<'PY'
 import json, sys
 r = json.load(open(sys.argv[1]))
@@ -406,10 +406,10 @@ cp -p "$work/Findings.effbak" tests/check/Findings.lean
 #     canonical coordinates (it applies no fix). `format` still owes its single `analyzeExact` run — it
 #     demands `.semantic` for notation-aware layout, which the plugin artifact never carries — but that
 #     run is the SAME one whether or not a syntax rule is selected: plain `format` and `format --select
-#     FMT013` each reach the frontend exactly once (one infrastructure failure), never twice.
+#     FMT011` each reach the frontend exactly once (one infrastructure failure), never twice.
 for label in plain fmt013; do
   args=(format --root . --json --no-cache)
-  [ "$label" = fmt013 ] && args+=(--preview --select FMT013)
+  [ "$label" = fmt013 ] && args+=(--preview --select FMT011)
   run_expect 2 "$work/eff-format-$label.json" env LEAN_FMT_TEST_ANALYZER=/usr/bin/false \
     "$application" "${args[@]}" tests/check/Findings.lean
   python3 - "$work/eff-format-$label.json" "$label" <<'PY'

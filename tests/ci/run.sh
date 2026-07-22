@@ -96,7 +96,7 @@ set -e
 [ "$status" -eq 0 ] || fail "lake lint on a clean tree returned $status, expected 0"
 ok 'lake lint exits 0 on a clean tree'
 
-# Now give it something to find. FMT005 is a duplicate import: stable, safe-fixable, and it does not
+# Now give it something to find. FMT003 is a duplicate import: stable, safe-fixable, and it does not
 # depend on line width or preview status.
 cat > Demo/Dirty.lean <<'EOF'
 module
@@ -115,7 +115,7 @@ lake lint >"$work/lint-dirty.log" 2>&1
 status=$?
 set -e
 [ "$status" -eq 1 ] || fail "lake lint with findings returned $status, expected 1"
-grep -q 'FMT005 duplicate import' "$work/lint-dirty.log" ||
+grep -q 'FMT003 duplicate import' "$work/lint-dirty.log" ||
   fail 'lake lint did not carry the driver output through'
 ok 'lake lint exits 1 and reports findings through the driver'
 

@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# RYR-FINAL differential + false-positive review. Runs the six syntax-tier rules FMT008-FMT013 over
+# RYR-FINAL differential + false-positive review. Runs the six syntax-tier rules FMT006-FMT011 over
 # the frozen 62-module mathlib sample through lean-fmt's exact frontend (the fixtures are unbuilt
 # mathlib modules, so there is no formatter facet in their `.olean`s; disabling the artifact forces
 # the exact frontend, which re-elaborates the single module against mathlib's prebuilt deps in ~1-3s).
 #
 # For every finding it records the module, code, byte range, message, and the exact normalized source
 # slice the range names -- so each finding can be reviewed by eye as a true or false positive. mathlib
-# is heavily self-linted for the FMT008/009/010/011/012 equivalents, so those are expected near-zero;
-# FMT013 (redundant nested parens) has no mathlib linter and is the rule whose true tree-shape rate
+# is heavily self-linted for the FMT006/009/010/011/012 equivalents, so those are expected near-zero;
+# FMT011 (redundant nested parens) has no mathlib linter and is the rule whose true tree-shape rate
 # this run measures. Writes an evidence dir under experiments/results; captures stdout for the summary.
 set -euo pipefail
 
@@ -36,7 +36,7 @@ while IFS= read -r module; do
   t0=$(python3 -c 'import time; print(time.monotonic())')
   set +e
   env LEAN_FMT_DISABLE_ARTIFACT=1 "$application" check --root "$mathlib_root" --json --no-cache \
-    --select FMT008 --select FMT009 --select FMT010 --select FMT011 --select FMT012 --select FMT013 \
+    --select FMT006 --select FMT007 --select FMT008 --select FMT009 --select FMT010 --select FMT011 \
     "$module" >"$report" 2>"$report.err"
   set -e
   t1=$(python3 -c 'import time; print(time.monotonic())')
@@ -83,7 +83,7 @@ broken = [s for s in status if s["broken"] not in ("0", "?")]
 infra = [s for s in status if s["infra"] not in ("0", "?")]
 print(f"modules={len(status)}")
 print(f"total_findings={len(findings)}")
-for code in ("FMT008", "FMT009", "FMT010", "FMT011", "FMT012", "FMT013"):
+for code in ("FMT006", "FMT007", "FMT008", "FMT009", "FMT010", "FMT011"):
     print(f"  {code}={by_code.get(code, 0)}")
 print(f"broken_modules={len(broken)}: {[s['module'] for s in broken]}")
 print(f"infra_failures={len(infra)}: {[s['module'] for s in infra]}")

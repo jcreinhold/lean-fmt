@@ -351,17 +351,17 @@ private def reconfiguration (h : Harness) : IO Unit := do
     | some diagnostics =>
       let codes := diagnostics.filterMap fun d => (d.getObjValAs? String "code").toOption
       h.check "the duplicate import is reported under the client's configuration"
-        (codes.contains "FMT005") s!"{codes}"
+        (codes.contains "FMT003") s!"{codes}"
     | none =>
       h.check "the duplicate import is reported under the client's configuration" false "none arrived"
     IO.FS.writeFile configuration
-      "include = [\"**/*.lean\"]\n[per-file-ignores]\n\"**/Findings.lean\" = [\"FMT005\"]\n"
+      "include = [\"**/*.lean\"]\n[per-file-ignores]\n\"**/Findings.lean\" = [\"FMT003\"]\n"
     notify "workspace/didChangeConfiguration" (Json.mkObj [("settings", Json.mkObj [])])
     match ← awaitDiagnostics uri with
     | some diagnostics =>
       let codes := diagnostics.filterMap fun d => (d.getObjValAs? String "code").toOption
       h.check "and it stops being reported when the file says to ignore it"
-        (!codes.contains "FMT005") s!"{codes}"
+        (!codes.contains "FMT003") s!"{codes}"
     | none =>
       h.check "and it stops being reported when the file says to ignore it" false "none arrived"
     Ipc.shutdown 9

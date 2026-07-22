@@ -98,7 +98,7 @@ printf -- '--- concise (§4) ---\n'
 concise=$(fmt check "$findings" --output-format concise 2>/dev/null || true)
 check "one line per finding, no summary line" "$(printf '%s\n' "$concise" | wc -l | tr -d ' ')" "1"
 check "the grammar is PATH:LINE:COL: CODE MESSAGE" "$concise" \
-  "tests/check/Findings.lean:4:1: FMT005 duplicate import of LeanFmt.Basic"
+  "tests/check/Findings.lean:4:1: FMT003 duplicate import of LeanFmt.Basic"
 # `text` prints ` [safe]`; `concise` must not — an applicability tag is machine data and breaks an
 # editor error-parser reading the line for a file:line:col jump.
 if [[ $concise == *"[safe]"* ]]; then
@@ -114,13 +114,13 @@ printf -- '--- columns count code points, not bytes (§3.1) ---\n'
 # reports 27. This is the case that would silently pass if the conversion counted bytes.
 unicode_concise=$(fmt check "$unicode" --select all --preview --output-format concise 2>/dev/null || true)
 contains "a codepoint column is reported, not a byte column" "$unicode_concise" \
-  "tests/reporting/Unicode.lean:8:27: FMT013"
+  "tests/reporting/Unicode.lean:8:27: FMT011"
 
 printf -- '--- github (§5) ---\n'
 
 github=$(fmt check "$findings" --output-format github 2>/dev/null || true)
 check "one workflow command per finding" "$github" \
-  "::warning title=lean-fmt (FMT005),file=tests/check/Findings.lean,line=4,col=1,endLine=4,endColumn=21::tests/check/Findings.lean:4:1: FMT005 duplicate import of LeanFmt.Basic"
+  "::warning title=lean-fmt (FMT003),file=tests/check/Findings.lean,line=4,col=1,endLine=4,endColumn=21::tests/check/Findings.lean:4:1: FMT003 duplicate import of LeanFmt.Basic"
 
 # §5.3 — property values escape `:` and `,` beyond what the message escapes, because either would
 # otherwise terminate the property list. `--stdin-filename` is an identity that need not exist
@@ -133,12 +133,12 @@ contains "a path's ':' and ',' are escaped in the property list" "$hostile_out" 
 # The message half uses the laxer `escapeData`, which leaves `:` and `,` alone. Both halves of the
 # same line, escaped by different rules, is the behavior the runner actually specifies.
 contains "the message half is not property-escaped" "$hostile_out" \
-  "::dir,with:punct/Buffer.lean:4:1: FMT005"
+  "::dir,with:punct/Buffer.lean:4:1: FMT003"
 
 # §5.2 — GitHub rejects an annotation carrying col/endColumn when line != endLine. A multi-line
-# finding must therefore drop them. FMT013's range spans the parenthesized expression.
+# finding must therefore drop them. FMT011's range spans the parenthesized expression.
 printf 'module\n\nimport LeanFmt.Basic\n\ndef spanning : Nat := ((\n  1\n  ))\n' >"$work/multiline.lean"
-multi=$(fmt check - --stdin-filename "tests/reporting/Multiline.lean" --select FMT013 --preview \
+multi=$(fmt check - --stdin-filename "tests/reporting/Multiline.lean" --select FMT011 --preview \
   --output-format github <"$work/multiline.lean" 2>&1 >/dev/null || true)
 if [[ $multi == *"col="* ]]; then
   fail "a multi-line annotation kept col=, which GitHub rejects: $multi"
@@ -193,7 +193,7 @@ PY
 check "the SARIF log conforms beyond the schema" "$(sarif_assert)" "ok"
 
 # The descriptor text is projected from the live rule catalog, never re-authored in the renderer.
-summary=$(fmt explain FMT005 --json 2>/dev/null | uv run --quiet python3 -c \
+summary=$(fmt explain FMT003 --json 2>/dev/null | uv run --quiet python3 -c \
   'import json,sys; print(json.load(sys.stdin)["summary"])' || true)
 described=$(uv run --quiet python3 -c \
   'import json,sys; log=json.load(open(sys.argv[1])); r,=log["runs"]; print(r["tool"]["driver"]["rules"][0]["shortDescription"]["text"])' \
@@ -246,7 +246,7 @@ from junitparser import JUnitXml
 xml = JUnitXml.fromfile(sys.argv[1])
 cases = [(suite.name, case.name, [r.type for r in case.result]) for suite in xml for case in suite]
 assert cases == [("tests/check/Findings.lean",
-                  "FMT005 tests/check/Findings.lean:4:1", ["FMT005"])], cases
+                  "FMT003 tests/check/Findings.lean:4:1", ["FMT003"])], cases
 assert (xml.tests, xml.failures, xml.errors) == (1, 1, 0), (xml.tests, xml.failures, xml.errors)
 print("ok")
 PY
@@ -335,7 +335,7 @@ stream_stdout=$(fmt check - --stdin-filename tests/reporting/Buffer.lean --outpu
 check "a stdin report does not reach stdout" "$stream_stdout" ""
 stream_stderr=$(fmt check - --stdin-filename tests/reporting/Buffer.lean --output-format concise <"$work/dup.lean" 2>&1 >/dev/null || true)
 check "a stdin report reaches stderr with resolved positions" "$stream_stderr" \
-  "tests/reporting/Buffer.lean:4:1: FMT005 duplicate import of LeanFmt.Basic"
+  "tests/reporting/Buffer.lean:4:1: FMT003 duplicate import of LeanFmt.Basic"
 
 # CRLF: every offset indexes the CRLF-normalized source, so a line/column resolved from it must match
 # the LF twin exactly. Delivered through stdin because git would not keep a CRLF fixture on disk.
@@ -402,10 +402,10 @@ printf -- '--- codepoint columns are neither bytes nor UTF-16 (§3.1) ---\n'
 # second two apart.
 printf 'module\n\nimport LeanFmt.Basic\n\n/- \xf0\x9d\x94\x98 -/ def astralValue : Nat := ((1))\n' \
   >"$work/astral.lean"
-astral=$(fmt check - --stdin-filename tests/reporting/Astral.lean --select FMT013 --preview \
+astral=$(fmt check - --stdin-filename tests/reporting/Astral.lean --select FMT011 --preview \
   --output-format concise <"$work/astral.lean" 2>&1 >/dev/null || true)
 check "an astral-plane character advances the column by one, not two or four" "$astral" \
-  "tests/reporting/Astral.lean:5:34: FMT013 redundant nested parentheses"
+  "tests/reporting/Astral.lean:5:34: FMT011 redundant nested parentheses"
 
 printf -- '--- GitHub property round-trip (§5.2) ---\n'
 

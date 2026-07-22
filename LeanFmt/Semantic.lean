@@ -48,7 +48,7 @@ structure SemanticResult where
   An entry serves a run only when `tier.satisfies plan.requiredTier` (`cacheHitServes`): a `.source`
   entry is complete for a source-only selection but **not** for one that selects a syntax rule, whose
   findings it never computed. Before any syntax rule shipped this was moot — "source findings" was
-  "all findings" — and shipping FMT008–FMT013 is what made the distinction matter. Defaults `.source`
+  "all findings" — and shipping FMT006–FMT011 is what made the distinction matter. Defaults `.source`
   (the narrow value); the schema bump below makes every pre-tier entry miss rather than read as this
   default and get mis-served. -/
   tier : Tier := .source
@@ -57,7 +57,7 @@ structure SemanticResult where
   `.semantic` entry (`notations` and `diagnostics` always, `occurrences` only when the info-tree fold
   ran). `cacheHitServes` serves a `.semantic` run only when `demandedCaps.subset caps`, so a
   monolithic-era `.semantic` entry — captured without the `occurrences` capability — misses a
-  fixable-FMT014 demand rather than serving a false clean. Defaults `{}`; the schema bump below makes
+  fixable-FMT012 demand rather than serving a false clean. Defaults `{}`; the schema bump below makes
   every pre-caps entry miss rather than read as this default. -/
   caps : SemanticCaps := {}
   deriving BEq, Lean.ToJson, Lean.FromJson
@@ -92,7 +92,7 @@ would only *under*-serve (a miss, never a false clean), but the same schema disc
 `caps`. A `v6` entry read as `v7` would default `caps := {}` and, if it had been a `.semantic` entry,
 read as "captured no sub-facts" — which *under*-serves every `.semantic` demand (a miss, never a false
 clean), the safe direction; the schema bump makes it a clean miss rather than a silent reinterpretation
-so no `v6` `.semantic` entry serves a fixable-FMT014 demand it never captured occurrences for.
+so no `v6` `.semantic` entry serves a fixable-FMT012 demand it never captured occurrences for.
 
 `v8` (`ruff-11c` RDF-IMPL): `CanonicalText` drops its `findings` array — the canonical layout carries no
 rule fix now that `format`/`diff` reflow only and every fix applies at original coordinates. A `v7`
@@ -177,14 +177,14 @@ def SemanticAnalysis.ofEnvelope? (raw : String)
       --
       -- The tier the facts reach is the tier the artifact was captured at. A `.semantic` artifact
       -- (captured under demand by a render or a `.semantic`-rule selection) carries the compiler
-      -- diagnostics, so the whole registry — including FMT014–FMT017 — runs against `.semantic` facts
+      -- diagnostics, so the whole registry — including FMT012–FMT015 — runs against `.semantic` facts
       -- and the result is tagged `.semantic`, complete for any run (monolithic capture, `ruff-11`
       -- `notes/01-authority.md` §6). An artifact without the projection runs the source/syntax
       -- registry against `.syntax` facts and is tagged `.syntax`, exactly as before — a `.syntax`
       -- entry then misses a `.semantic` selection through `cacheHitServes` rather than a false clean.
       -- The caps a `.semantic` entry provides are the projection's own (`notations`/`diagnostics`
       -- always, `occurrences` iff the info-tree fold ran); a syntax entry provides none. `occurrences`
-      -- flow into the facts so the owned FMT014 rule can attach its rename fix — empty when the
+      -- flow into the facts so the owned FMT012 rule can attach its rename fix — empty when the
       -- capability was not demanded, keeping the report byte-identical to the surfaced-only path.
       let (facts, tier, caps) := match artifact.semantic with
         | some projection =>

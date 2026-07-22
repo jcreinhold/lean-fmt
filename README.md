@@ -51,8 +51,8 @@ line-width = 100                     # 1..1000
 
 [lint]                               # settings that project over results
 select = ["all"]
-ignore = ["FMT006"]
-per-file-ignores = { "Legacy/*.lean" = ["FMT007"] }
+ignore = ["FMT004"]
+per-file-ignores = { "Legacy/*.lean" = ["FMT005"] }
 ```
 
 Linter keys still work at the top level and emit a deprecation notice; setting one in both places is an

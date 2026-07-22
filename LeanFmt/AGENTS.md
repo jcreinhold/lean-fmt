@@ -32,7 +32,7 @@ construction, name the construction.
 
 ## Options and unsafe
 
-Do not commit a `set_option` in a production module. FMT012 reports them in the code we format, and
+Do not commit a `set_option` in a production module. FMT010 reports them in the code we format, and
 the rule holds here too.
 
 `unsafe` is confined to `LeanFmt/Analysis.lean`, where the frontend requires it. A new `unsafe`

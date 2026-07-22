@@ -190,7 +190,7 @@ private def occurrenceOfInfo (ci : Lean.Elab.ContextInfo) (info : Lean.Elab.Info
   -- context. A spelling that differs from the full name — an `open`-shadowed short name (`oldNs`
   -- resolving to `N.oldNs`), a dot-notation projection head (`x.foo` resolving to `T.foo`), an applied
   -- receiver with the constant implicit — is *not* a rename we can prove, so it stays report-only and
-  -- the compiler's own FMT014 diagnostic still reports it. Backstopped by the re-elaboration validator
+  -- the compiler's own FMT012 diagnostic still reports it. Backstopped by the re-elaboration validator
   -- (§6): even an accepted spelling that fails to resolve is caught before publish, never on disk.
   let fixable := newName?.isSome && spelled == displayName
   return {
@@ -251,7 +251,7 @@ unsafe def analyzeExact (setup : Lean.ModuleSetup) (source : String)
   -- `diagnostics` — are captured together (`ruff-11` `notes/01-authority.md` §6); the one expensive
   -- sub-fact, the whole-file info-tree occurrence fold, is captured only under the *separate*
   -- `captureOccurrences` capability (`ruff-11b` Design B, `notes/01-model.md` §4), so a plain `format`
-  -- or a `check --select FMT015` never pays the walk. `occurrences? := none` records *not captured* (a
+  -- or a `check --select FMT013` never pays the walk. `occurrences? := none` records *not captured* (a
   -- fixable demand must miss the cache); `some` records captured-possibly-empty. `commandState.env` is
   -- the module's final environment; `messages` is the whole-file diagnostic log; `input.fileMap` is
   -- normalized-coordinate; `tree` is the same snapshot tree walked for `messages`. The always-on plugin

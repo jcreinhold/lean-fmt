@@ -166,7 +166,7 @@ def parseHeaderModel (normalized : String) : IO (Option HeaderModel) := do
     }
   return some { hasModule, hasPrelude, imports, headerStop }
 
-/-! ## FMT005 — duplicate import -/
+/-! ## FMT003 — duplicate import -/
 
 /-- Whether two written imports are the same statement: same module and the same exposure. A differing
 `all`/`meta`/exported flag makes them distinct imports that expose different data, never duplicates
@@ -182,7 +182,7 @@ private def lineIsSolelyImport (normalized : String) (stmt : ImportStmt) : Bool 
   let after := slice normalized stmt.range.stop stmt.lineRange.stop
   before.all (·.isWhitespace) && after.all (·.isWhitespace)
 
-/-- FMT005: each written import after the first occurrence of the same statement is a duplicate.
+/-- FMT003: each written import after the first occurrence of the same statement is a duplicate.
 
 The fix deletes the *later* line (`.safe`) — the surviving first occurrence keeps the exact ordered
 header the environment replays, and a repeated identical import is an elaboration no-op (measured,
@@ -203,7 +203,7 @@ def duplicateFindings (header : HeaderModel) (normalized : String) : Array Findi
           some { applicability := .safe, edits := #[{ range := stmt.lineRange, replacement := "" }] }
         else none
       findings := findings.push {
-        code := "FMT005"
+        code := "FMT003"
         severity := .warning
         message := s!"duplicate import of {stmt.module}"
         range := stmt.range
@@ -211,7 +211,7 @@ def duplicateFindings (header : HeaderModel) (normalized : String) : Array Findi
       }
   return findings
 
-/-! ## FMT007 — non-canonical import order within a group -/
+/-! ## FMT005 — non-canonical import order within a group -/
 
 /-- Whether two adjacent imports are separated by a blank line or a comment in `normalized` — the
 boundary between two organization *groups*, which the canonical order never crosses
@@ -221,7 +221,7 @@ private def groupBreakBetween (normalized : String) (a b : ImportStmt) : Bool :=
   let newlines := gap.foldl (fun n c => if c == '\n' then n + 1 else n) 0
   newlines > 1 || gap.any (fun c => !c.isWhitespace)
 
-/-- FMT007: within a maximal run of imports uninterrupted by a blank line or comment, the module names
+/-- FMT005: within a maximal run of imports uninterrupted by a blank line or comment, the module names
 are not in ascending order. Reported at the first out-of-order import; report-only, because reordering
 imports is observable to elaboration (`notes/01-semantics.md` §2) — the canonical rewrite is delivered
 only through the opt-in organizer, never an unattended `fix`. -/
@@ -232,7 +232,7 @@ def orderFindings (header : HeaderModel) (normalized : String) : Array Finding :
     let cur := header.imports[i]!
     if !groupBreakBetween normalized prev cur && cur.module.toString < prev.module.toString then
       findings := findings.push {
-        code := "FMT007"
+        code := "FMT005"
         severity := .warning
         message := s!"import {cur.module} is out of order (after {prev.module})"
         range := cur.range
@@ -240,7 +240,7 @@ def orderFindings (header : HeaderModel) (normalized : String) : Array Finding :
       }
   return findings
 
-/-! ## FMT006 — redundant import (graph-validated, report-only, withholding)
+/-! ## FMT004 — redundant import (graph-validated, report-only, withholding)
 
 The transitive closure is supplied by the caller (`Project`), which fetched it from the shared no-build
 Lake graph. It maps each written import's module to the set of modules that import transitively pulls
@@ -253,10 +253,10 @@ are eligible. -/
 def redundancyEligible (header : HeaderModel) (stmt : ImportStmt) : Bool :=
   !stmt.importAll && !stmt.isMeta && !(header.hasModule && stmt.isExported)
 
-/-- FMT006: a plain written import whose module is in the transitive closure of *another* written
+/-- FMT004: a plain written import whose module is in the transitive closure of *another* written
 import is a redundancy candidate. `closureOf name` returns the modules `name` transitively imports (or
 `none` if the graph could not resolve it). Report-only always — reachability is necessary, not
-sufficient, for safe removal. Duplicates are excluded (they are FMT005's). Returns the findings and the
+sufficient, for safe removal. Duplicates are excluded (they are FMT003's). Returns the findings and the
 withheld count (candidates skipped by `redundancyEligible`), which `RIR-FINAL` records. -/
 def redundantFindings (header : HeaderModel) (closureOf : Lean.Name → Option (Array Lean.Name)) :
     Array Finding × Nat := Id.run do
@@ -264,7 +264,7 @@ def redundantFindings (header : HeaderModel) (closureOf : Lean.Name → Option (
   let mut withheld := 0
   for h : i in [0:header.imports.size] do
     let stmt := header.imports[i]
-    -- Skip a literal duplicate: FMT005 owns it, not redundancy.
+    -- Skip a literal duplicate: FMT003 owns it, not redundancy.
     let isDup := (List.range i).any fun j =>
       match header.imports[j]? with
       | some earlier => sameImport earlier stmt
@@ -281,7 +281,7 @@ def redundantFindings (header : HeaderModel) (closureOf : Lean.Name → Option (
     | some j =>
       if redundancyEligible header stmt then
         findings := findings.push {
-          code := "FMT006"
+          code := "FMT004"
           severity := .warning
           message := s!"import {stmt.module} is redundant: transitively available via \
             {header.imports[j]!.module}; verify before removing"
@@ -299,7 +299,7 @@ comment-delimited group's imports sorted by module name, everything else — the
 `prelude`, modifiers, comments, and group boundaries — preserved. This is the one operation the CLI and
 LSP "organize imports" capability calls; it exposes no graph internals, only text in, text out.
 
-Redundancy (FMT006) is **not** removed here — it is report-only, so the organizer surfaces candidates
+Redundancy (FMT004) is **not** removed here — it is report-only, so the organizer surfaces candidates
 through `redundantFindings` but never deletes them (`notes/01-semantics.md` §4). -/
 def organize (header : HeaderModel) (normalized : String) : String := Id.run do
   if header.imports.isEmpty then return normalized

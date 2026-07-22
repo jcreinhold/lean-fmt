@@ -5,13 +5,13 @@ set -euo pipefail
 # opt-in organizer, on committed module fixtures rather than runtime-crafted strings. The unit and
 # characterization tests in `LeanFmtTest.lean` (`testImports`) pin the pure header rules and the
 # organizer function; this pins the whole CLI path — read, normalize, parse the surface header, merge
-# fresh import findings (FMT006 via the live Lake graph), select, report, and — for the organizer and
+# fresh import findings (FMT004 via the live Lake graph), select, report, and — for the organizer and
 # `fix` — validate the rewrite by re-elaboration before writing.
 #
-# Import findings are computed fresh every run and never cached (FMT005/07 are pure over the file, but
-# FMT006 reads *other* files through the graph), so these fixtures use the exact-frontend fallback
+# Import findings are computed fresh every run and never cached (FMT003/07 are pure over the file, but
+# FMT004 reads *other* files through the graph), so these fixtures use the exact-frontend fallback
 # (`LEAN_FMT_DISABLE_ARTIFACT` + `LEAN_FMT_TEST_DISABLE_MODULE_EVIDENCE`): the analyzer runs, but the
-# import layer is orthogonal to it. FMT006 still resolves through the real workspace.
+# import layer is orthogonal to it. FMT004 still resolves through the real workspace.
 
 repo_root=$(cd "$(dirname "$0")/../.." && pwd)
 work=$(mktemp -d)
@@ -58,7 +58,7 @@ run_expect() {
   fi
 }
 
-# FMT005: an exact duplicate fires once with a safe fix; nothing is withheld.
+# FMT003: an exact duplicate fires once with a safe fix; nothing is withheld.
 run_expect 1 "$work/duplicate.json" "${fallback[@]}" "$application" check --root . --json \
   --no-cache --select imports tests/imports/Duplicate.lean
 python3 - "$work/duplicate.json" <<'PY'
@@ -66,21 +66,21 @@ import json, sys
 file, = json.load(open(sys.argv[1]))["files"]
 assert file["status"] == "findings", file["status"]
 codes = [(f["code"], f.get("fix", {}).get("applicability")) for f in file["findings"]]
-assert codes == [("FMT005", "safe")], codes
+assert codes == [("FMT003", "safe")], codes
 PY
 
-# FMT007: two imports out of order in one group; report-only (no fix in the finding).
+# FMT005: two imports out of order in one group; report-only (no fix in the finding).
 run_expect 1 "$work/ordering.json" "${fallback[@]}" "$application" check --root . --json \
   --no-cache --select imports tests/imports/Ordering.lean
 python3 - "$work/ordering.json" <<'PY'
 import json, sys
 file, = json.load(open(sys.argv[1]))["files"]
 codes = [f["code"] for f in file["findings"]]
-assert codes == ["FMT007"], codes
+assert codes == ["FMT005"], codes
 assert all("fix" not in f for f in file["findings"]), file["findings"]
 PY
 
-# FMT006: `LeanFmt.Rules` is in `LeanFmt.Config`'s transitive closure, fetched from the live Lake
+# FMT004: `LeanFmt.Rules` is in `LeanFmt.Config`'s transitive closure, fetched from the live Lake
 # graph, so the plain `import LeanFmt.Rules` is a redundancy candidate. Report-only; nothing withheld.
 run_expect 1 "$work/redundant.json" "${fallback[@]}" "$application" check --root . --json \
   --no-cache --select imports tests/imports/Redundant.lean
@@ -89,15 +89,15 @@ import json, sys
 report = json.load(open(sys.argv[1]))
 file, = report["files"]
 codes = [f["code"] for f in file["findings"]]
-assert codes == ["FMT006"], codes
+assert codes == ["FMT004"], codes
 assert all("fix" not in f for f in file["findings"]), file["findings"]
 assert report["withheldRedundant"] == 0, report["withheldRedundant"]
 PY
 
-# Selection is honored: `--select FMT005` on the out-of-order fixture reports nothing (FMT007 is not
+# Selection is honored: `--select FMT003` on the out-of-order fixture reports nothing (FMT005 is not
 # selected), proving import codes flow through the same selection projection as any rule.
 run_expect 0 "$work/select-fmt005.json" "${fallback[@]}" "$application" check --root . --json \
-  --no-cache --select FMT005 tests/imports/Ordering.lean
+  --no-cache --select FMT003 tests/imports/Ordering.lean
 python3 - "$work/select-fmt005.json" <<'PY'
 import json, sys
 file, = json.load(open(sys.argv[1]))["files"]
@@ -134,7 +134,7 @@ assert imports == ["import LeanFmt.Basic", "import LeanFmt.Digest"], imports
 PY
 cp -p "$work/Ordering.backup" tests/imports/Ordering.lean
 
-# `fix` applies the FMT005 safe dedup through the canonical patch (the printer keeps the duplicate, so
+# `fix` applies the FMT003 safe dedup through the canonical patch (the printer keeps the duplicate, so
 # the fix is recomputed at canonical coordinates), validated and written; then restore.
 cp -p tests/imports/Duplicate.lean "$work/Duplicate.backup"
 run_expect 0 "$work/fix.json" "$application" fix --root . --json --no-cache \
@@ -154,7 +154,7 @@ cp -p "$work/Duplicate.backup" tests/imports/Duplicate.lean
 
 # RIR-FINAL differentials, run as persistent guards.
 
-# Suppression composes with the import layer: a trailing `ignore[FMT005]` on the duplicate line
+# Suppression composes with the import layer: a trailing `ignore[FMT003]` on the duplicate line
 # suppresses the import finding through the same post-cache projection every rule flows through, so the
 # file reports clean with the suppression counted (an import finding is not special to suppression).
 run_expect 0 "$work/suppressed.json" "${fallback[@]}" "$application" check --root . --json \
@@ -167,7 +167,7 @@ assert file["status"] == "clean" and file["findings"] == [], file
 assert report["suppressed"] == 1, report["suppressed"]
 PY
 
-# Order is elaboration-significant, so the default `fix` must NEVER reorder a header — FMT007 carries
+# Order is elaboration-significant, so the default `fix` must NEVER reorder a header — FMT005 carries
 # no fix, and only the explicit `organize` command rewrites. `fix` on the out-of-order fixture leaves
 # the written order untouched.
 cp -p tests/imports/Ordering.lean "$work/Ordering.fixbackup"
@@ -180,7 +180,7 @@ assert imports == ["import LeanFmt.Digest", "import LeanFmt.Basic"], imports
 PY
 cp -p "$work/Ordering.fixbackup" tests/imports/Ordering.lean
 
-# The split, on the load-bearing FMT005 regression: a file with a duplicate import (FMT005) AND trailing
+# The split, on the load-bearing FMT003 regression: a file with a duplicate import (FMT003) AND trailing
 # whitespace. Since `ruff-11c` RDF-IMPL `fix` applies rule fixes at original coordinates and owns no
 # layout, while `format` owns layout and applies no fix — the decoupling `tests/modes` proves end to end.
 # So on this one file the two modes touch disjoint bytes. Built at runtime under the root (so the
@@ -199,10 +199,10 @@ file, = report["files"]
 assert file["status"] == "fixed" and report["written"] == 1, report
 text = open(sys.argv[2]).read()
 imports = [l for l in text.splitlines() if l.startswith("import ")]
-assert imports == ["import LeanFmt.Basic"], imports          # FMT005 fix applied at original coords
+assert imports == ["import LeanFmt.Basic"], imports          # FMT003 fix applied at original coords
 assert text.endswith("0  \n"), repr(text)                    # trailing whitespace UNTOUCHED — layout is format's
 PY
-# `format` owns the inverse half: it trims the trailing whitespace but applies no FMT005 fix, so both
+# `format` owns the inverse half: it trims the trailing whitespace but applies no FMT003 fix, so both
 # imports survive and the duplicate is reported, not removed.
 seed
 run_expect 1 "$work/format-conflict.json" "${fallback[@]}" "$application" format --check --root . --json \
@@ -215,7 +215,7 @@ out = file["formatted"]
 imports = [l for l in out.splitlines() if l.startswith("import ")]
 assert imports == ["import LeanFmt.Basic", "import LeanFmt.Basic"], imports  # NO fix — duplicate kept
 assert "  \n" not in out and not out.rstrip("\n").endswith(" "), repr(out)   # layout trimmed
-assert "FMT005" in [f["code"] for f in file["findings"]], file["findings"]   # reported, not removed
+assert "FMT003" in [f["code"] for f in file["findings"]], file["findings"]   # reported, not removed
 PY
 rm -f "$conflict"
 

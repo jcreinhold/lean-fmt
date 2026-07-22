@@ -46,7 +46,7 @@ you is a default: when more than one server is attached to a language, most clie
 formats. Pick `lean-fmt`.
 
 Both servers answer `textDocument/codeAction` and the client concatenates the menus. `lean-fmt`'s
-entries are titled with the rule code they come from (`FMT005: ...`), so a menu entry is
+entries are titled with the rule code they come from (`FMT003: ...`), so a menu entry is
 attributable. Its diagnostics carry `source: "lean-fmt"` for the same reason.
 
 ## Configuration changes

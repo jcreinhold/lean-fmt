@@ -41,7 +41,7 @@ run_expect() {
 # as the suite reads them.
 
 # --- Doc comments and module docstrings are tokens, not comments: directive text in them is inert. ---
-# The RSP-SPEC stop rule ("a directive is a comment, nothing else"), over the real parser. The FMT005
+# The RSP-SPEC stop rule ("a directive is a comment, nothing else"), over the real parser. The FMT003
 # duplicate-import finding must still report; suppressed stays 0.
 run_expect 1 "$work/doc.json" "$application" check --root . --json --no-cache \
   tests/suppression/DocComment.lean
@@ -49,30 +49,28 @@ python3 - "$work/doc.json" <<'PY'
 import json, sys
 file, = json.load(open(sys.argv[1]))["files"]
 codes = [f["code"] for f in file["findings"]]
-assert "FMT005" in codes, f"a docstring silenced a real finding: {codes}"
+assert "FMT003" in codes, f"a docstring silenced a real finding: {codes}"
 assert not any(c in ("FMT900", "FMT901") for c in codes), f"docstring text parsed as a directive: {codes}"
 assert file["suppressed"] == 0, f"a docstring suppressed something: {file['suppressed']}"
 PY
 
-# --- Retired-only suppression is inert (`ruff-12` §7 non-breaking floor). `RetiredInert.lean` names a
-#     retired code (FMT001) in a directive over a file with a real duplicate-import finding (FMT005).
-#     The directive suppresses nothing and, crucially, is NOT flagged unused (FMT900) — a legacy config
-#     that still names a retired code keeps working silently. FMT005 reports; suppressed stays 0. ---
-run_expect 1 "$work/retired.json" "$application" check --root . --json --no-cache \
-  tests/suppression/RetiredInert.lean
-python3 - "$work/retired.json" <<'PY'
-import json, sys
-file, = json.load(open(sys.argv[1]))["files"]
-codes = [f["code"] for f in file["findings"]]
-assert codes == ["FMT005"], f"a retired-only suppression was not inert: {codes}"
-assert file["suppressed"] == 0, f"a retired-only directive suppressed something: {file['suppressed']}"
-PY
+# --- Retired-only suppression is inert (`ruff-12` §7 non-breaking floor) -- REMOVED, not disabled.
+#     This case ran `RetiredInert.lean`, whose directive named the retired FMT001 over a file with a
+#     real duplicate-import finding, and asserted the directive suppressed nothing AND was not flagged
+#     unused. The pre-release renumbering (`docs/rules/MIGRATION.md`) made FMT001 a live security rule
+#     and emptied `reservedCodes`, so the directive now names a live-but-not-firing code -- which
+#     correctly DOES raise FMT900, the opposite of what this case asserted.
+#
+#     The fixture went with it. Keeping a fixture whose whole premise is a code class that no longer
+#     has members would leave a file whose name promises coverage nobody is getting. The production
+#     branch is untested until a rule genuinely retires; `reservedCodes`' docstring records that at
+#     the definition rather than here, where only someone already reading this suite would find it. ---
 
 # --- Nested syntax: ignore-next inside a namespace suppresses the inner finding. The finding is a
-#     redundant nested paren (FMT013, a syntax rule opted into with `--select`), since after RDF-LAYOUT
+#     redundant nested paren (FMT011, a syntax rule opted into with `--select`), since after RDF-LAYOUT
 #     no default finding lands on a `def` inside a namespace — the retired FMT001 used to. ---
 run_expect 0 "$work/nested.json" "$application" check --root . --json --no-cache \
-  --preview --select FMT013 tests/suppression/Nested.lean
+  --preview --select FMT011 tests/suppression/Nested.lean
 python3 - "$work/nested.json" <<'PY'
 import json, sys
 file, = json.load(open(sys.argv[1]))["files"]
@@ -160,8 +158,8 @@ assert find["fix"]["applicability"] == "display-only", f"FMT901 is not display-o
 assert "ignor" in find["message"], f"FMT901 did not name the bad verb: {find['message']}"
 PY
 
-# --- Per-file config composition. The config already ignores FMT005 for this glob, so the trailing
-#     directive naming FMT005 suppresses nothing and is itself unused: the RUF100 analog composes with
+# --- Per-file config composition. The config already ignores FMT003 for this glob, so the trailing
+#     directive naming FMT003 suppresses nothing and is itself unused: the RUF100 analog composes with
 #     config. ---
 run_expect 1 "$work/perfile.json" "$application" check --root . --json --no-cache \
   --config tests/suppression/per-file-ignores.toml tests/suppression/PerFile.lean

@@ -23,7 +23,7 @@ set -euo pipefail
 #   oneline the whole body on a single line, one finding at the end -- the column counter's worst
 #           case, since every byte increments `column` and none resets it
 #
-# The finding is FMT003 (forbidden control byte), which fires anywhere in the source, needs no
+# The finding is FMT001 (forbidden control byte), which fires anywhere in the source, needs no
 # frontend, and is report-only, so nothing here writes.
 #
 # Fixtures are generated into `tests/reporting/` -- excluded from `lean-fmt.toml`, so they never
@@ -53,7 +53,7 @@ import pathlib, sys
 fixtures = pathlib.Path(sys.argv[1])
 body_bytes = int(sys.argv[2])
 
-# A comment body, so the control byte is comment text: FMT003 is report-only there and the file still
+# A comment body, so the control byte is comment text: FMT001 is report-only there and the file still
 # parses. Line length is 80 so the multi-line shapes have a realistic line count.
 header = "/-\nCopyright (c) 2026 Jacob Reinhold. All rights reserved.\n-/\n\nmodule\n\n/-\n"
 footer = "\n-/\n"

@@ -195,7 +195,7 @@ line rules robust against findings whose range ends on a line boundary or is emp
 range ends at the trailing newline still anchors on its line, and a zero-width `[eof, eof]` finding
 anchors at end of file. The empty-finding clause admits a zero-width finding sitting exactly on the
 scope's upper bound, which is how an end-of-file finding is caught by a `file`- or last-line-`line`-scoped
-directive. (The retired FMT001/FMT002 were the original line-boundary and eof examples.) -/
+directive. (The retired line-boundary and final-newline rules were the original examples.) -/
 def inScope (scope : SourceRange) (finding : Finding) : Bool :=
   scope.start ≤ finding.range.start &&
     (finding.range.start < scope.stop ||

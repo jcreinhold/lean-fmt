@@ -358,13 +358,13 @@ private def batchModuleStatuses (workspace : Lake.Workspace)
 
 /- For each name in `names` that resolves to a workspace module, the set of module names it
 transitively imports, fetched from one shared no-build Lake graph — never one build context per file.
-This is the graph fact FMT006 (redundant import) consumes; a `RuleImpl` cannot fetch it
+This is the graph fact FMT004 (redundant import) consumes; a `RuleImpl` cannot fetch it
 (`Rules.lean:17-19`), so this produces it and the application threads it into the finding set.
 
 The `startBuild`/`wait` pattern matches `batchModuleStatuses`: it is *not* `runBuild`, so an out-of-date
 target cannot trigger the `noBuild` process-exit (`finalizeBuild` → `IO.Process.exit`, which only fires
 under `runBuild`). A fetch that errors under `noBuild` — the closure would need a build to resolve —
-maps to the empty closure, a graceful miss: FMT006 then never reports a redundancy *through* that
+maps to the empty closure, a graceful miss: FMT004 then never reports a redundancy *through* that
 import. That can only lose a report (report-only anyway), never fabricate one. A name absent from the
 workspace is simply omitted. -/
 def importClosures (workspace : Lake.Workspace) (names : Array Lean.Name) :
@@ -392,7 +392,7 @@ def importClosures (workspace : Lake.Workspace) (names : Array Lean.Name) :
 
 /- The same graph fact as `importClosures`, but with the failure distinguished from the empty answer.
 
-`importClosures` maps a failed fetch to `#[]`, which is right for FMT006: an unresolvable closure
+`importClosures` maps a failed fetch to `#[]`, which is right for FMT004: an unresolvable closure
 there loses at most one report-only redundancy finding and can never fabricate one. It is **wrong for
 cache currency**, where the closure decides what must be compared. An empty closure means "nothing to
 check", so folding the error into `#[]` would turn an unknown answer into a *permissive* one — a

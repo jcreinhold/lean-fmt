@@ -1,5 +1,11 @@
 # Prompt stacks
 
+> **Rule codes in stack records predate the renumbering.** The live catalog was renumbered to start at
+> `FMT001` (`docs/rules/MIGRATION.md`); every code shifted down by two. `results/`, `notes/`, and
+> `evidence/` across every stack keep the codes that were current when they were written, because they
+> are frozen records of decisions and rewriting them would misreport what was decided. Map through the
+> migration table, and treat live `lean-fmt rules` output as the authority on what a code means today.
+
 One directory per stack, named `ruff-NN-topic`. Each holds:
 
 - `roadmap.md` — goal, defect, and plan. Frontmatter names the stack's `main_results` and

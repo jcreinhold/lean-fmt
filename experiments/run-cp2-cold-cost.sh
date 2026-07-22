@@ -68,4 +68,4 @@ printf 'corpus=%s (%d modules)  root=%s  reps=%d (first discarded)\n' \
 printf 'mathlib is built WITHOUT LeanFmtCompilerPlugin, so this is the ordinary-built state.\n\n'
 
 arm "baseline (default, 5 rules)"
-arm "+FMT013 (syntax tier)" --preview --select default --select FMT013
+arm "+FMT011 (syntax tier)" --preview --select default --select FMT011

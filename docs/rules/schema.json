@@ -62,6 +62,8 @@
       "security",
       "structure",
       "unused",
+      "FMT001",
+      "FMT002",
       "FMT003",
       "FMT004",
       "FMT005",
@@ -74,11 +76,7 @@
       "FMT012",
       "FMT013",
       "FMT014",
-      "FMT015",
-      "FMT016",
-      "FMT017",
-      "FMT001",
-      "FMT002"
+      "FMT015"
       ]
     }
   }

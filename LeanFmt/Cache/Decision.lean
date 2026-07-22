@@ -70,8 +70,8 @@ structure Provided where
 
 A `.source` shortcut entry computed no syntax findings, so it cannot serve a run selecting a syntax
 rule; without the tier clause, shipping the first syntax rule would let a source-only `check` turn a
-later `--select FMT010` into a stored false clean. The caps clause is separate: a `.semantic` entry
-serves only when it captured every sub-fact demanded, so a fixable-`FMT014` demand against an entry
+later `--select FMT008` into a stored false clean. The caps clause is separate: a `.semantic` entry
+serves only when it captured every sub-fact demanded, so a fixable-`FMT012` demand against an entry
 from the monolithic era misses and recomputes rather than serving a false clean. -/
 def Provided.meets (p : Provided) (d : Demand) : Bool :=
   p.broken ||

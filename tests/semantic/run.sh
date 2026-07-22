@@ -142,10 +142,10 @@ source = open(sys.argv[4], "rb").read()
 assert off is None, f"captureSemantic=0 still captured diagnostics: {off}"
 
 want = {
-    "Lean.Linter.deprecatedAttr",       # FMT014
-    "linter.unusedVariables",           # FMT015
-    "linter.unusedSectionVars",         # FMT016
-    "linter.constructorNameAsVariable", # FMT017
+    "Lean.Linter.deprecatedAttr",       # FMT012
+    "linter.unusedVariables",           # FMT013
+    "linter.unusedSectionVars",         # FMT014
+    "linter.constructorNameAsVariable", # FMT015
 }
 got_kinds = {d["kind"] for d in captured}
 assert want <= got_kinds, f"missing surfaced kinds: {want - got_kinds} (got {got_kinds})"
@@ -312,11 +312,11 @@ module
 
 def bad : Nat := true
 LEAN
-# Mixed-tier fixture: a deprecated use (FMT014, semantic) on the `useOld` line AND a redundant nested
-# paren (FMT013, syntax) on the `parened` line. Before `ruff-11c` RDF-LAYOUT this paired FMT014 with a
-# trailing-whitespace FMT001; that source rule retired into the formatter's layout, so a genuine
-# syntax-tier rule (FMT013) now stands in — still a strictly cheaper tier than the semantic FMT014, so
-# `max` still lands on `.semantic`, and FMT013 also carries a safe fix for the pass-order case below.
+# Mixed-tier fixture: a deprecated use (FMT012, semantic) on the `useOld` line AND a redundant nested
+# paren (FMT011, syntax) on the `parened` line. Before `ruff-11c` RDF-LAYOUT this paired FMT012 with a
+# the trailing-whitespace rule; that source rule retired into the formatter's layout, so a genuine
+# syntax-tier rule (FMT011) now stands in — still a strictly cheaper tier than the semantic FMT012, so
+# `max` still lands on `.semantic`, and FMT011 also carries a safe fix for the pass-order case below.
 {
   printf 'module\n\n'
   printf 'def newName : Nat := 1\n'
@@ -337,7 +337,7 @@ check_exit() { # run a command, capture its exit code into $ACC_EXIT (never abor
 # 1. Silent-omission-on-error. A semantic selection over a file that fails to elaborate reports the
 # file `broken` (exit 1, `broken == 1`), never dropping it from `files`.
 check_exit env LEAN_NUM_THREADS=1 "$application" check --root "$proj" --json --no-cache --preview \
-  --select FMT014 "$proj/acc/Broken.lean" >"$work/acc-broken.json" 2>/dev/null
+  --select FMT012 "$proj/acc/Broken.lean" >"$work/acc-broken.json" 2>/dev/null
 if [[ $ACC_EXIT -ne 1 ]]; then
   printf 'check over a broken file under a semantic selection: expected exit 1, got %s\n' "$ACC_EXIT" >&2
   cat "$work/acc-broken.json" >&2
@@ -351,31 +351,31 @@ assert files == {"acc/Broken.lean": "broken"}, files       # present and broken,
 assert r["broken"] == 1 and not r["infrastructureFailures"], r
 PY
 
-# 2. Mixed-tier selection. `--select FMT013 --select FMT014` demands `.semantic` (the max of the two
+# 2. Mixed-tier selection. `--select FMT011 --select FMT012` demands `.semantic` (the max of the two
 # tiers), runs the whole registry over the semantic facts, and reports both a semantic and a syntax
 # finding on the one file — byte-sorted, independent of registry order.
 check_exit env LEAN_NUM_THREADS=1 "$application" check --root "$proj" --json --no-cache --preview \
-  --select FMT013 --select FMT014 "$proj/acc/Mixed.lean" >"$work/acc-mixed.json" 2>/dev/null
+  --select FMT011 --select FMT012 "$proj/acc/Mixed.lean" >"$work/acc-mixed.json" 2>/dev/null
 python3 - "$work/acc-mixed.json" <<'PY'
 import json, sys
 r = json.load(open(sys.argv[1]))
 f, = r["files"]
 codes = [x["code"] for x in f["findings"]]
-assert "FMT014" in codes, codes    # deprecated use — the semantic tier
-assert "FMT013" in codes, codes    # redundant nested paren — the syntax tier, in the same report
+assert "FMT012" in codes, codes    # deprecated use — the semantic tier
+assert "FMT011" in codes, codes    # redundant nested paren — the syntax tier, in the same report
 # The semantic finding preserves the compiler's own deprecation message.
-dep = next(x for x in f["findings"] if x["code"] == "FMT014")
+dep = next(x for x in f["findings"] if x["code"] == "FMT012")
 assert "deprecated" in dep["message"].lower(), dep
 print("mixed-tier: one run reported", sorted(set(codes)))
 PY
 
-# 3. Withheld (unadmitted) owned fix. FMT014's rename is `.unsafe` (`ruff-11b`): without `--unsafe-fixes`
+# 3. Withheld (unadmitted) owned fix. FMT012's rename is `.unsafe` (`ruff-11b`): without `--unsafe-fixes`
 # it is *withheld*, so a `fix` selecting only it publishes no patch — the file is byte-identical
 # afterward, the report shows no write, and the withheld-unsafe count records the omission (so the
 # report never reads as "clean, nothing to fix" for a file that has a fix nobody admitted).
 cp "$proj/acc/Mixed.lean" "$work/mixed.orig"
 check_exit env LEAN_NUM_THREADS=1 "$application" fix --root "$proj" --json --no-cache --preview \
-  --select FMT014 "$proj/acc/Mixed.lean" >"$work/acc-fix.json" 2>/dev/null
+  --select FMT012 "$proj/acc/Mixed.lean" >"$work/acc-fix.json" 2>/dev/null
 python3 - "$work/acc-fix.json" <<'PY'
 import json, sys
 r = json.load(open(sys.argv[1]))
@@ -388,13 +388,13 @@ cmp -s "$work/mixed.orig" "$proj/acc/Mixed.lean" ||
     exit 1
   }
 
-# 3b. Admitted owned fix applies a real rename. Since `ruff-11c` RDF-IMPL `fix` applies the FMT014
+# 3b. Admitted owned fix applies a real rename. Since `ruff-11c` RDF-IMPL `fix` applies the FMT012
 # occurrence edit at its original-source coordinates and owns no reflow (the retired `reprojectCanonical`
-# canonical-coordinate path is gone). `fix --unsafe-fixes --select FMT014` publishes the rename
-# `oldName -> newName`: the file changes, the written use reads `newName`, and a re-`check` of FMT014 is
+# canonical-coordinate path is gone). `fix --unsafe-fixes --select FMT012` publishes the rename
+# `oldName -> newName`: the file changes, the written use reads `newName`, and a re-`check` of FMT012 is
 # clean because the only deprecated use is gone.
 check_exit env LEAN_NUM_THREADS=1 "$application" fix --root "$proj" --json --no-cache --preview \
-  --unsafe-fixes --select FMT014 "$proj/acc/Mixed.lean" >"$work/acc-apply.json" 2>/dev/null
+  --unsafe-fixes --select FMT012 "$proj/acc/Mixed.lean" >"$work/acc-apply.json" 2>/dev/null
 python3 - "$work/acc-apply.json" <<'PY'
 import json, sys
 r = json.load(open(sys.argv[1]))
@@ -412,31 +412,31 @@ if grep 'useOld' "$proj/acc/Mixed.lean" | grep -q 'oldName'; then
   exit 1
 fi
 # The rename re-elaborates (the exact frontend runs fresh under `--no-cache`) and leaves no deprecated
-# use: a fresh check of FMT014 is clean.
+# use: a fresh check of FMT012 is clean.
 check_exit env LEAN_NUM_THREADS=1 "$application" check --root "$proj" --json --no-cache --preview \
-  --select FMT014 "$proj/acc/Mixed.lean" >"$work/acc-recheck.json" 2>/dev/null
+  --select FMT012 "$proj/acc/Mixed.lean" >"$work/acc-recheck.json" 2>/dev/null
 python3 - "$work/acc-recheck.json" <<'PY'
 import json, sys
 r = json.load(open(sys.argv[1]))
 f, = r["files"]
 codes = [x["code"] for x in f["findings"]]
-assert "FMT014" not in codes, codes                        # the deprecated use is gone
+assert "FMT012" not in codes, codes                        # the deprecated use is gone
 PY
 
 # 3b'. The inverse half of the split, on the owned semantic fix. `format` owns no rule fix: on a fresh
-# copy of the original (deprecated `oldName` use intact), `format --unsafe-fixes --select FMT014` renders
+# copy of the original (deprecated `oldName` use intact), `format --unsafe-fixes --select FMT012` renders
 # layout only and never renames — `useOld := oldName` survives byte-for-byte, where `fix` above published
-# `newName`. This is the RDF-IMPL decoupling on the FMT014 rename: applied by `fix` at original
+# `newName`. This is the RDF-IMPL decoupling on the FMT012 rename: applied by `fix` at original
 # coordinates, absent from `format`. (`--unsafe-fixes` is a no-op for `format` — it admits nothing to apply.)
 cp "$work/mixed.orig" "$proj/acc/MixedFmt.lean"
 check_exit env LEAN_NUM_THREADS=1 "$application" format --check --root "$proj" --json --no-cache --preview \
-  --unsafe-fixes --select FMT014 "$proj/acc/MixedFmt.lean" >"$work/acc-format.json" 2>/dev/null
+  --unsafe-fixes --select FMT012 "$proj/acc/MixedFmt.lean" >"$work/acc-format.json" 2>/dev/null
 python3 - "$work/acc-format.json" <<'PY'
 import json, sys
 f, = json.load(open(sys.argv[1]))["files"]
 out = f["formatted"]
 assert out is None or ("oldName" in out and "def useOld : Nat := newName" not in out), \
-  ("format applied the FMT014 rename — it must not", repr(out))
+  ("format applied the FMT012 rename — it must not", repr(out))
 PY
 grep -q 'def useOld : Nat := oldName' "$proj/acc/MixedFmt.lean" ||
   {
@@ -445,11 +445,11 @@ grep -q 'def useOld : Nat := oldName' "$proj/acc/MixedFmt.lean" ||
   }
 rm -f "$proj/acc/MixedFmt.lean"
 
-# 3c. Idempotence. A second `fix --unsafe-fixes --select FMT014` over the already-renamed file is a
+# 3c. Idempotence. A second `fix --unsafe-fixes --select FMT012` over the already-renamed file is a
 # no-op: nothing left to rename, so no write and the bytes are unchanged.
 cp "$proj/acc/Mixed.lean" "$work/mixed.fixed"
 check_exit env LEAN_NUM_THREADS=1 "$application" fix --root "$proj" --json --no-cache --preview \
-  --unsafe-fixes --select FMT014 "$proj/acc/Mixed.lean" >"$work/acc-idem.json" 2>/dev/null
+  --unsafe-fixes --select FMT012 "$proj/acc/Mixed.lean" >"$work/acc-idem.json" 2>/dev/null
 python3 - "$work/acc-idem.json" <<'PY'
 import json, sys
 r = json.load(open(sys.argv[1]))
@@ -457,23 +457,23 @@ assert r["written"] == 0 and r["changed"] == 0, r          # idempotent: the sec
 PY
 cmp -s "$work/mixed.fixed" "$proj/acc/Mixed.lean" ||
   {
-    echo 'a second FMT014 fix modified an already-renamed file' >&2
+    echo 'a second FMT012 fix modified an already-renamed file' >&2
     exit 1
   }
 
-# 3d. Pass-order independence. `--select` order must not change the published bytes: FMT014 (semantic
-# occurrence rename) and FMT013 (syntax, safe paren removal), both at original-source coordinates,
+# 3d. Pass-order independence. `--select` order must not change the published bytes: FMT012 (semantic
+# occurrence rename) and FMT011 (syntax, safe paren removal), both at original-source coordinates,
 # compose the same either way. Both orders
 # `fix --unsafe-fixes` a fresh copy of the original and must write byte-identical output.
 cp "$work/mixed.orig" "$proj/acc/OrderA.lean"
 cp "$work/mixed.orig" "$proj/acc/OrderB.lean"
 LEAN_NUM_THREADS=1 "$application" fix --root "$proj" --json --no-cache --preview --unsafe-fixes \
-  --select FMT014 --select FMT013 "$proj/acc/OrderA.lean" >/dev/null 2>&1 || true
+  --select FMT012 --select FMT011 "$proj/acc/OrderA.lean" >/dev/null 2>&1 || true
 LEAN_NUM_THREADS=1 "$application" fix --root "$proj" --json --no-cache --preview --unsafe-fixes \
-  --select FMT013 --select FMT014 "$proj/acc/OrderB.lean" >/dev/null 2>&1 || true
+  --select FMT011 --select FMT012 "$proj/acc/OrderB.lean" >/dev/null 2>&1 || true
 cmp -s "$proj/acc/OrderA.lean" "$proj/acc/OrderB.lean" ||
   {
-    echo 'pass order changed the published bytes (FMT014 vs FMT013 order-dependent)' >&2
+    echo 'pass order changed the published bytes (FMT012 vs FMT011 order-dependent)' >&2
     diff "$proj/acc/OrderA.lean" "$proj/acc/OrderB.lean" >&2
     exit 1
   }

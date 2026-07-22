@@ -5,6 +5,10 @@ first_unresolved: none
 
 # Current state
 
+> **The rule codes in this file and in this stack's result notes are pre-renumbering.** The catalog
+> was renumbered to start at `FMT001` after `RGR-FINAL` was verified (`docs/rules/MIGRATION.md`):
+> subtract two from every code below. `FMT013`, this stack's one graduation, is `FMT011` today.
+
 **RGR-SPEC is verified.** `results/01-criteria.md` freezes the criteria: four outcomes (§1),
 the false-positive budget and audit method (§2), the fix standard (§3), the documentation standard
 (§4), the default-path cost policy (§5), and the named corpus (§6). Three things it decided that

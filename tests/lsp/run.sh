@@ -375,10 +375,10 @@ diagnostics = published["params"]["diagnostics"]
 check_that("a document publishes its findings", len(diagnostics) == 1, diagnostics)
 first = diagnostics[0]
 check("the diagnostic is ours", first["source"], "lean-fmt")
-check("it carries the rule code", first["code"], "FMT005")
+check("it carries the rule code", first["code"], "FMT003")
 check("a formatter finding is a warning, not an error", first["severity"], 2)
 check_that("and points at its rule's documentation",
-           first["codeDescription"]["href"].endswith("/docs/rules/FMT005.md"), first)
+           first["codeDescription"]["href"].endswith("/docs/rules/FMT003.md"), first)
 check("the publication names the version it describes", published["params"]["version"], 1)
 
 # The whole point of the position layer: a byte range became a UTF-16 range on the right line. The
@@ -444,12 +444,12 @@ actions = client.request("textDocument/codeAction", {
     "range": {"start": {"line": 3, "character": 0}, "end": {"line": 3, "character": 0}},
     "context": {"diagnostics": []}})["result"]
 kinds = sorted({action["kind"] for action in actions})
-# All three: the fixture has a duplicate import, which FMT005 quickfixes, fix-all applies, and
+# All three: the fixture has a duplicate import, which FMT003 quickfixes, fix-all applies, and
 # organize-imports removes as part of canonicalizing the header.
 check("every advertised kind is offered", kinds,
       ["quickfix", "source.fixAll", "source.organizeImports"])
 quickfix = next(a for a in actions if a["kind"] == "quickfix")
-check_that("the quickfix names its rule", quickfix["title"].startswith("FMT005"), quickfix["title"])
+check_that("the quickfix names its rule", quickfix["title"].startswith("FMT003"), quickfix["title"])
 changes = quickfix["edit"]["documentChanges"]
 check_that("the edit names one document", len(changes) == 1, changes)
 check("computed against a stated version", changes[0]["textDocument"]["version"], 1)
@@ -481,9 +481,9 @@ check("a clean document offers no quickfix",
 check("the session ends cleanly", client.close(), 0)
 
 # --- selection through initializationOptions ---
-# The client's own configuration reaches the rule plan: ignoring FMT005 leaves the same bytes with
+# The client's own configuration reaches the rule plan: ignoring FMT003 leaves the same bytes with
 # nothing to report, which is the check that the option is read rather than accepted and dropped.
-client = Client(options={"ignore": ["FMT005"]})
+client = Client(options={"ignore": ["FMT003"]})
 client.open(findings_uri, findings_source)
 published = client.await_notification(
     "textDocument/publishDiagnostics", lambda m: m["params"]["uri"] == findings_uri)
@@ -496,14 +496,14 @@ check("and offers no quickfix for it", [a for a in actions if a["kind"] == "quic
 check("the configured session ends cleanly", client.close(), 0)
 
 # --- applicability is exposed, not hidden ---
-# `extend-unsafe-fixes` demotes FMT005 to unsafe (`tests/modes/run.sh` §"extend-unsafe-fixes"). A
+# `extend-unsafe-fixes` demotes FMT003 to unsafe (`tests/modes/run.sh` §"extend-unsafe-fixes"). A
 # demoted fix is still *reported* -- the finding does not go away -- but the product will not apply it
 # without explicit intent, so no quickfix is offered. Turning `--unsafe-fixes` on brings it back. Two
 # sessions over the same bytes, differing only in whether the user asked for unsafe fixes.
 import tempfile
 
 config = os.path.join(tempfile.mkdtemp(), "lean-fmt.toml")
-open(config, "w").write('[lint]\nextend-unsafe-fixes = ["FMT005"]\n')
+open(config, "w").write('[lint]\nextend-unsafe-fixes = ["FMT003"]\n')
 
 def quickfixes(extra_args):
     session = Client(extra_args=("--config", config, *extra_args))

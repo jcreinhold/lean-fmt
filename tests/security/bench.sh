@@ -3,8 +3,8 @@ set -euo pipefail
 
 # Source-security scan cost, asserted rather than asserted-about (`RSR-FINAL`).
 #
-# The roadmap requires the source rules "remain linear in source size". `FMT003` is one pass over the
-# byte array and `FMT004` one fold over the codepoints carrying a running offset, so each is O(n) by
+# The roadmap requires the source rules "remain linear in source size". `FMT001` is one pass over the
+# byte array and `FMT002` one fold over the codepoints carrying a running offset, so each is O(n) by
 # construction — but a note cannot notice a regression, and this can. `LeanFmtTest.lean`'s
 # `security-bench` mode times `runSourceRules` on scan-clean inputs of doubling size, where the shared
 # O(m log m) finding-sort contributes nothing and the number is the scan itself.

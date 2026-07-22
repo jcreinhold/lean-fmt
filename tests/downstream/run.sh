@@ -50,14 +50,14 @@ esac
 # Every command below reports findings by exiting 1, which `set -e` with `pipefail` would treat as a
 # script failure. Findings are the expected result here, so status is checked explicitly instead.
 set +e
-served=$(lake exe lean-fmt check --root . --preview --select FMT012 Consumer/Syntax.lean 2>&1 | head -1)
-fallback=$(LEAN_FMT_DISABLE_ARTIFACT=1 lake exe lean-fmt check --root . --preview --select FMT012 \
+served=$(lake exe lean-fmt check --root . --preview --select FMT010 Consumer/Syntax.lean 2>&1 | head -1)
+fallback=$(LEAN_FMT_DISABLE_ARTIFACT=1 lake exe lean-fmt check --root . --preview --select FMT010 \
   Consumer/Syntax.lean 2>&1 | head -1)
 set -e
 [ "$served" = "$fallback" ] ||
   fail "artifact and frontend disagree downstream: '$served' vs '$fallback'"
 case "$served" in
-*FMT012*) ;;
+*FMT010*) ;;
 *) fail "syntax-tier rule did not fire downstream: $served" ;;
 esac
 
@@ -73,7 +73,7 @@ lint_status=$?
 set -e
 [ "$lint_status" -eq 1 ] ||
   fail "lake lint returned $lint_status; the fixture has a finding, so the driver must exit 1"
-grep -q 'FMT005 duplicate import' /tmp/lean-fmt-downstream-lint.txt ||
+grep -q 'FMT003 duplicate import' /tmp/lean-fmt-downstream-lint.txt ||
   fail 'lake lint did not carry the driver output through'
 
 # 6. Regression: a silent message is a carrier, not a diagnostic. The plugin writes the artifact into

@@ -196,14 +196,14 @@ private def keyString : Lean.Name → String
 identity set (`allRuleInfos` = engine rules + import rules), never a hardcoded list: a new category
 (`security`, `imports`) becomes selectable the moment a rule carries it, and
 `expandSelector`/`selectorsValid` cannot drift apart. Reading `allRuleInfos` rather than `ruleRegistry`
-keeps `--select imports` and FMT005/6/7 selectable even though those rules live outside the
+keeps `--select imports` and FMT003/6/7 selectable even though those rules live outside the
 linear-tier engine. -/
 private def isCategory (selector : String) : Bool :=
   allRuleInfos.any (·.category == selector)
 
 /-- A selector token is valid if it is a meta selector, a category, a live code, or a **reserved/retired
 code** (`notes/01-schema.md` §7). Reserved codes are accepted rather than rejected so a legacy config
-that still names FMT001/FMT002 keeps loading; they resolve to no live rule and raise a notice at plan
+that still names a retired code keeps loading; it resolves to no live rule and raises a notice at plan
 time (`rulePlan`). -/
 private def selectorsValid (selectors : Array String) : Except String Unit := do
   for selector in selectors do
@@ -688,7 +688,7 @@ private def resolveAxis (pool : Array RuleInfo) (preview : Bool)
 /-- Resolve CLI/config selection into a `RulePlan` (`notes/01-schema.md` §5–§6). A nonempty CLI
 `--select` replaces configured `select` and its configured ignores; `extend-select` always adds;
 ignores within the chosen layer always apply. Resolution is by specificity (`resolveAxis`), not flat
-subtraction: `--select FMT010 --ignore redundancy` keeps FMT010, because an exact selector outranks a
+subtraction: `--select FMT008 --ignore redundancy` keeps FMT008, because an exact selector outranks a
 category. The preview gate (§5.3) errors on an explicit preview-code selection when preview is off, and
 raises a non-fatal notice for a reserved/retired or deprecated code named in a selector. -/
 def FormatterConfig.rulePlan (config : FormatterConfig) (cli : CliSelection) :
@@ -829,12 +829,12 @@ Design B). Non-empty only when the demanded tier reaches `.semantic`:
 - `notations` when a rendering mode needs the layout fact (`format`/`diff`; `fix` does not reflow);
 - `diagnostics` when a selected rule reads the compiler diagnostics (the tier reached `.semantic`
   through a rule) — always satisfied by any `.semantic` entry, which captures it monolithically;
-- `occurrences` when a run that **applies** fixes selects an occurrence-fix rule (FMT014's rename) — the
+- `occurrences` when a run that **applies** fixes selects an occurrence-fix rule (FMT012's rename) — the
   one capability that gates the whole-file info-tree fold.
 
 The `occurrences` demand keys off `applies` (true only for `fix`), not off `renderCanonical`, since
 `ruff-11c` RDF-IMPL split layout from fix: `format`/`diff` render (`renderCanonical`) but apply no fix,
-so they must not pay the info-tree fold, while `fix` applies the FMT014 rename but no longer renders. A
+so they must not pay the info-tree fold, while `fix` applies the FMT012 rename but no longer renders. A
 `check` neither renders nor applies, so it demands neither `notations` nor `occurrences`. `cacheHitServes`
 serves a `.semantic` entry only when `demandedCaps.subset entry.caps`, so a fix's `occurrences` demand
 misses a monolithic-era entry that never captured it. -/

@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# The first `syntax`-tier rules (FMT008-FMT013) run against the compiler projection, not the raw
+# The first `syntax`-tier rules (FMT006-FMT011) run against the compiler projection, not the raw
 # bytes. These fixtures are deliberately *not* built modules: there is no `.olean`, no module
 # evidence, and no artifact for them, so the exact frontend is the only path that can project them.
 # `check` on a current built module takes the source-only shortcut and never reaches a syntax rule;
-# forcing the exact frontend here is what exercises FMT008-FMT013 at all. Disabling the artifact and
+# forcing the exact frontend here is what exercises FMT006-FMT011 at all. Disabling the artifact and
 # module evidence makes that explicit rather than dependent on whatever the build tree happens to
 # hold, and matches how `tests/check/run.sh` reaches the same fallback.
 
@@ -46,9 +46,9 @@ run_expect() {
 
 # `select` is one selector per flag; the six syntax-tier rules are named explicitly so a negative
 # fixture is measured against every rule at once, not just the one it is a near-miss for. Five are
-# preview and FMT013 is `stable` with default off (`ruff-12b`), so `--preview` is not what makes the
+# preview and FMT011 is `stable` with default off (`ruff-12b`), so `--preview` is not what makes the
 # set reachable; naming each code is.
-all_six=(--select FMT008 --select FMT009 --select FMT010 --select FMT011 --select FMT012 --select FMT013)
+all_six=(--select FMT006 --select FMT007 --select FMT008 --select FMT009 --select FMT010 --select FMT011)
 
 # Assert the exact ordered list of finding codes a single-file `check` reports, and that nothing
 # failed infrastructurally. `$1` label, `$2` fixture, `$3` space-separated expected codes (empty for
@@ -74,20 +74,20 @@ PY
 }
 
 # --- Positives: each defect fires exactly its own rule -----------------------------------------
-expect_codes fmt008-pos NoModuleDoc.lean "FMT008" --select FMT008
-expect_codes fmt009-pos Unclosed.lean "FMT009" --select FMT009
-expect_codes fmt010-pos Duplicates.lean "FMT010" --select FMT010
-expect_codes fmt011-pos Duplicates.lean "FMT011" --select FMT011
-expect_codes fmt012-pos DevOption.lean "FMT012" --select FMT012
-# FMT012 (RYR-FINAL scope decision): the inline `set_option pp.all true in <decl>` scoped form is the
+expect_codes fmt008-pos NoModuleDoc.lean "FMT006" --select FMT006
+expect_codes fmt009-pos Unclosed.lean "FMT007" --select FMT007
+expect_codes fmt010-pos Duplicates.lean "FMT008" --select FMT008
+expect_codes fmt011-pos Duplicates.lean "FMT009" --select FMT009
+expect_codes fmt012-pos DevOption.lean "FMT010" --select FMT010
+# FMT010 (RYR-FINAL scope decision): the inline `set_option pp.all true in <decl>` scoped form is the
 # same `set_option` command node, so a committed dev option fires whether standalone or `… in`-scoped.
 # Report-only, so the scoped boundary raises no byte-safety question -- reporting both is uniform.
-expect_codes fmt012-scoped-in ScopedInOption.lean "FMT012" --select FMT012
-expect_codes fmt013-pos NestedParen.lean "FMT013" --select FMT013
+expect_codes fmt012-scoped-in ScopedInOption.lean "FMT010" --select FMT010
+expect_codes fmt013-pos NestedParen.lean "FMT011" --select FMT011
 
 # The three fixable rules carry a `.safe` fix whose edits are expressed in original-source
 # coordinates (`Application.renderCanonicalText` docstring). Pin the applicability and the byte spans
-# the edits delete: FMT010/011 drop the duplicate instance and its `", "` separator; FMT013 deletes
+# the edits delete: FMT008/011 drop the duplicate instance and its `", "` separator; FMT011 deletes
 # just the outer parenthesis pair and leaves the inner `(1)`.
 python3 - "$work/fmt010-pos.json" "$work/fmt011-pos.json" "$work/fmt013-pos.json" <<'PY'
 import json, sys
@@ -111,22 +111,22 @@ PY
 expect_codes clean Clean.lean "" "${all_six[@]}"
 
 # --- Near-misses: each rule's documented exclusion (catalog 01 §5) stays silent under all six ------
-# FMT008: a module with no `declaration` node (a section-only re-export/config module) is not undoc.
+# FMT006: a module with no `declaration` node (a section-only re-export/config module) is not undoc.
 expect_codes near-008 NearNoDecl.lean "" "${all_six[@]}"
-# FMT009: an outermost `noncomputable section` left open is the whole-file idiom, not an unclosed one.
+# FMT007: an outermost `noncomputable section` left open is the whole-file idiom, not an unclosed one.
 expect_codes near-009 NearOpenSection.lean "" "${all_six[@]}"
-# FMT009 regression (RYR-FINAL frozen-sample false positive): one `end Alpha.Beta` closes both a
+# FMT007 regression (RYR-FINAL frozen-sample false positive): one `end Alpha.Beta` closes both a
 # `namespace Alpha` and a `namespace Beta` -- the name stack must pop the group the dotted name spells,
 # not one scope per `end`. `ScopesBalanced` adds a dotted namespace and a named section closed normally.
 expect_codes near-009-dotted EndDotted.lean "" "${all_six[@]}"
 expect_codes near-009-nested ScopesBalanced.lean "" "${all_six[@]}"
-# FMT010: `@[local simp, simp]` differs by `attrKind`; comparison is byte-exact, so no duplicate.
+# FMT008: `@[local simp, simp]` differs by `attrKind`; comparison is byte-exact, so no duplicate.
 expect_codes near-010 NearAttr.lean "" "${all_six[@]}"
-# FMT011: `deriving Repr, BEq` are distinct classes, not a repeat.
+# FMT009: `deriving Repr, BEq` are distinct classes, not a repeat.
 expect_codes near-011 NearDeriving.lean "" "${all_six[@]}"
-# FMT012: `set_option maxHeartbeats` is a proof-scaling knob, outside the four debug roots.
+# FMT010: `set_option maxHeartbeats` is a proof-scaling knob, outside the four debug roots.
 expect_codes near-012 NearOption.lean "" "${all_six[@]}"
-# FMT013: a tuple `(1, 2)`, a type ascription `(1 : Nat)`, and a cdot `(· + 1)` are each a distinct
+# FMT011: a tuple `(1, 2)`, a type ascription `(1 : Nat)`, and a cdot `(· + 1)` are each a distinct
 # node kind, none a `paren` wrapping a `paren`.
 expect_codes near-013 NearParen.lean "" "${all_six[@]}"
 
@@ -188,21 +188,21 @@ PY
   rm -f "$probe"
 }
 
-# FMT013 deletes the outer pair (`((1))` -> `(1)`); FMT010/011 drop the duplicate `simp` / `Repr`.
-fix_applies fmt013 NestedParen.lean FMT013 '((1))' '(1)'
-fix_applies fmt010 Duplicates.lean FMT010 '@[simp, simp]' '@[simp]'
-fix_applies fmt011 Duplicates.lean FMT011 'deriving Repr, Repr' 'deriving Repr'
+# FMT011 deletes the outer pair (`((1))` -> `(1)`); FMT008/011 drop the duplicate `simp` / `Repr`.
+fix_applies fmt013 NestedParen.lean FMT011 '((1))' '(1)'
+fix_applies fmt010 Duplicates.lean FMT008 '@[simp, simp]' '@[simp]'
+fix_applies fmt011 Duplicates.lean FMT009 'deriving Repr, Repr' 'deriving Repr'
 
-# The inverse half of the split: `format` applies no syntax fix. On the same FMT013 fixture — already
-# layout-canonical — `format --select FMT013` *reports* the redundant-paren finding but leaves `((1))`
+# The inverse half of the split: `format` applies no syntax fix. On the same FMT011 fixture — already
+# layout-canonical — `format --select FMT011` *reports* the redundant-paren finding but leaves `((1))`
 # byte-for-byte, where `fix` above rewrote it to `(1)`. This is the RDF-IMPL decoupling on a syntax-tier
 # `.safe` fix: applied by `fix` at original coordinates, absent from `format`.
 run_expect 0 "$work/fmt013-format.json" \
-  sfmt format --check --root . --json --no-cache --preview --select FMT013 tests/syntax/NestedParen.lean
+  sfmt format --check --root . --json --no-cache --preview --select FMT011 tests/syntax/NestedParen.lean
 python3 - "$work/fmt013-format.json" <<'PY'
 import json, sys
 file, = json.load(open(sys.argv[1]))["files"]
-assert "FMT013" in [f["code"] for f in file["findings"]], ("format dropped the report", file)
+assert "FMT011" in [f["code"] for f in file["findings"]], ("format dropped the report", file)
 out = file["formatted"]
 assert out is None or "((1))" in out, ("format applied the syntax fix — it must not", repr(out))
 PY
@@ -212,20 +212,20 @@ PY
 # indexes the normalized bytes, so dropping the outer parens of `((ϕ))` must land on the `(`/`)`
 # boundaries and leave `ϕ` intact. This is the frozen-sample `((ϕ i x))` shape (NoncommPiCoprod) in a
 # writable miniature.
-fix_applies fmt013-utf8 NestedParenUtf8.lean FMT013 '((' '(ϕ)'
+fix_applies fmt013-utf8 NestedParenUtf8.lean FMT011 '((' '(ϕ)'
 
-# Multi-edit over nested defects: `(((1)))` yields two FMT013 findings whose point-deletions are
+# Multi-edit over nested defects: `(((1)))` yields two FMT011 findings whose point-deletions are
 # distinct bytes; they compose in one transaction to `(1)` with no false conflict.
-fix_applies fmt013-triple NestedParenTriple.lean FMT013 '((' '(1)'
+fix_applies fmt013-triple NestedParenTriple.lean FMT011 '((' '(1)'
 
-# Multi-rule composition: FMT010 drops the duplicate `, simp` and FMT013 drops an outer paren pair in
+# Multi-rule composition: FMT008 drops the duplicate `, simp` and FMT011 drops an outer paren pair in
 # the same file. Since RDF-IMPL both edits are expressed in original-source coordinates (no reflow, no
 # reprojection) and applied as one atomic transaction, so the two non-overlapping deletions compose
 # exactly -- neither shifts the other's bytes, and the write carries both fixes and no layout change.
 probe="tests/syntax/.ryc-fix-mover.lean"
 cp tests/syntax/AttrThenParen.lean "$probe"
 run_expect 0 "$work/mover-fix.json" \
-  sfmt fix --root . --json --no-cache --preview --select FMT010 --select FMT013 "$probe"
+  sfmt fix --root . --json --no-cache --preview --select FMT008 --select FMT011 "$probe"
 PROBE="$probe" python3 - "$work/mover-fix.json" <<'PY'
 import json, os, sys
 data = json.load(open(sys.argv[1]))
@@ -236,7 +236,7 @@ assert "(1)" in got and "@[simp]" in got, ("mover lost a fix", repr(got))
 PY
 # Idempotence: a second `fix` on the written file is a no-op -- nothing is left to change.
 run_expect 0 "$work/mover-refix.json" \
-  sfmt fix --root . --json --no-cache --preview --select FMT010 --select FMT013 "$probe"
+  sfmt fix --root . --json --no-cache --preview --select FMT008 --select FMT011 "$probe"
 python3 - "$work/mover-refix.json" <<'PY'
 import json, sys
 data = json.load(open(sys.argv[1]))
@@ -253,9 +253,9 @@ order_b="tests/syntax/.ryc-fix-orderb.lean"
 cp tests/syntax/AttrThenParen.lean "$order_a"
 cp tests/syntax/AttrThenParen.lean "$order_b"
 run_expect 0 "$work/order-a.json" \
-  sfmt fix --root . --json --no-cache --preview --select FMT010 --select FMT013 "$order_a"
+  sfmt fix --root . --json --no-cache --preview --select FMT008 --select FMT011 "$order_a"
 run_expect 0 "$work/order-b.json" \
-  sfmt fix --root . --json --no-cache --preview --select FMT013 --select FMT010 "$order_b"
+  sfmt fix --root . --json --no-cache --preview --select FMT011 --select FMT008 "$order_b"
 cmp "$order_a" "$order_b" || {
   echo "pass-order changed the composed bytes" >&2
   exit 1

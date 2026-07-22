@@ -221,7 +221,7 @@ bodies. Soundness is by construction, not by a byte scan of the final string: th
 the printer's inter-token, leading, and trailing trivia slices (`Tree.gapDoc`, `Tree.command`), each of
 which is exactly what `Lean.Parser.whitespace` consumes (`LosslessSource.scanTrivia`) — whitespace runs
 interleaved with `--` line comments and `/- -/` block comments. A naive per-line `String` trim over the
-whole rendered output would re-commit the retired FMT001 defect, which deleted trailing whitespace
+whole rendered output would re-commit the retired trailing-whitespace rule's defect, which deleted
 *inside* a multi-line string literal (`docs/.../evidence/01-fusion-and-subsumption.md`, probe 4/6); a
 kind-aware pass over trivia-only slices cannot reach a token's bytes.
 
@@ -254,7 +254,8 @@ mutual
 
   -- A line comment runs to (not including) the newline. Its own trailing horizontal whitespace before
   -- that newline is not meaningful text, so it is trimmed too — the sound part of what the retired
-  -- FMT001 did (`ruff format` trims trailing whitespace after a comment). A block comment's interior is
+  -- the retired trailing-whitespace rule did (`ruff format` trims trailing whitespace after a
+  -- comment). A block comment's interior is
   -- left untouched (`copyBlockCommentWs`), because its whitespace can be deliberate content.
   private partial def copyLineCommentWs (cs : Array Char) (i : Nat) (pending out : String) : String :=
     if i ≥ cs.size then out ++ pending
@@ -1916,7 +1917,8 @@ def Tree.command (tree : Tree) (normalized : String) (span : CommandSpan) : Doc 
     let gap := sliceNormalized normalized cursor start
     -- Emitted verbatim, *not* trimmed: an inter-claim gap can hold the command's own unclaimed tail
     -- tokens (a `def`'s value, say), so a blanket whitespace trim here would reach token bytes — the
-    -- retired FMT001's exact unsoundness. Only slices proven pure trivia are trimmed: `gapDoc`'s
+    -- the retired trailing-whitespace rule's exact unsoundness. Only slices proven pure trivia are
+    -- trimmed: `gapDoc`'s
     -- inter-token runs and the after-last-token trailing run below.
     let gapDoc : Doc := match claim.leadFlat, claim.leadReindent with
       | some ws, _ => .verbatim (String.ofList (gap.toList.take (gap.length - ws.length)))

@@ -56,16 +56,20 @@ private def testRules : IO Unit := do
     "normalization is not idempotent"
 
   -- Trailing-whitespace and final-newline normalization is the **formatter's** layout, not a lint rule
-  -- (`ruff-11c` RDF-LAYOUT): FMT001/FMT002 are retired, so the source rules are silent on both, even on
+  -- (`ruff-11c` RDF-LAYOUT): both rules were retired, so the source rules are silent on both, even on
   -- this trailing-whitespace, no-final-newline fixture. The printer owns the normalization; that it does
   -- so soundly (never touching a string literal's interior) is proved in `tests/printer`/`tests/modes`.
+  --
+  -- This once named the retired codes FMT001/FMT002 explicitly, in a `f.code != …` guard. The
+  -- renumbering (`docs/rules/MIGRATION.md`) reassigned both codes to the live security rules, which
+  -- would have turned that guard into "the security rules never fire" -- vacuously true on this
+  -- fixture, and a silent hole exactly where the strongest rules are. The by-name guard is gone; the
+  -- emptiness assertion below is what the case was always really claiming.
   let findings := runSourceRules normalized
-  ensure (findings.all fun f => f.code != "FMT001" && f.code != "FMT002")
-    "a retired whitespace/newline rule (FMT001/FMT002) still fires"
   ensure (findings.isEmpty)
     "the default source rules should be silent on trailing whitespace and a missing final newline"
 
-/-- `FMT003`/`FMT004`: forbidden control bytes and suspicious bidirectional controls. A control byte
+/-- `FMT001`/`FMT002`: forbidden control bytes and suspicious bidirectional controls. A control byte
 or bidi mark only reaches accepted source inside a string literal or comment (bare occurrences are
 parse errors, `notes/01-catalog.md` §2), so those are the positions exercised here; ranges are
 byte-exact in normalized coordinates and both rules are report-only. -/
@@ -73,33 +77,33 @@ private def testSourceSecurityRules : IO Unit := do
   let ctl (n : Nat) : String := String.ofList [Char.ofNat n]
   -- NUL inside a string literal, RLO (U+202E) inside a line comment.
   let src := "def s := \"a" ++ ctl 0x00 ++ "b\"\n-- x" ++ ctl 0x202e ++ "y\n"
-  let security := (runSourceRules src).filter fun f => f.code == "FMT003" || f.code == "FMT004"
-  ensure (security.map (·.code) == #["FMT003", "FMT004"])
+  let security := (runSourceRules src).filter fun f => f.code == "FMT001" || f.code == "FMT002"
+  ensure (security.map (·.code) == #["FMT001", "FMT002"])
     "control/bidi coverage or sort order changed"
   ensure (security.all fun f => f.fix?.isNone)
     "a source-security rule produced a fix; both are report-only by construction"
   ensure (security.all fun f => f.severity == .warning) "source-security severity changed"
   ensure (security[0]!.range == { start := 11, stop := 12 } &&
       security[0]!.message == "forbidden control byte U+0000")
-    "FMT003 range or message is not byte-exact"
+    "FMT001 range or message is not byte-exact"
   ensure (security[1]!.range == { start := 19, stop := 22 } &&
       security[1]!.message == "suspicious bidirectional control U+202E")
-    "FMT004 range is not the mark's exact three-byte span, or its message changed"
+    "FMT002 range is not the mark's exact three-byte span, or its message changed"
   -- A two-byte mark (ALM U+061C) gets a two-byte range: width is the scalar's, not a constant.
-  let alm := (runSourceRules ("-- " ++ ctl 0x061c ++ "\n")).filter (·.code == "FMT004")
+  let alm := (runSourceRules ("-- " ++ ctl 0x061c ++ "\n")).filter (·.code == "FMT002")
   ensure (alm.size == 1 && alm[0]!.range == { start := 3, stop := 5 } &&
       alm[0]!.message == "suspicious bidirectional control U+061C")
-    "FMT004 width or zero-padded hex is wrong for a two-byte mark"
+    "FMT002 width or zero-padded hex is wrong for a two-byte mark"
   -- DEL (0x7F) is forbidden; TAB (0x09) and LF (0x0A) are not.
-  ensure (((runSourceRules ("-- " ++ ctl 0x7f ++ "\n")).filter (·.code == "FMT003")).size == 1)
+  ensure (((runSourceRules ("-- " ++ ctl 0x7f ++ "\n")).filter (·.code == "FMT001")).size == 1)
     "DEL (0x7F) was not flagged as a forbidden control byte"
-  ensure ((runSourceRules "def a := 1\n\tx := 2\n").all fun f => f.code != "FMT003" && f.code != "FMT004")
+  ensure ((runSourceRules "def a := 1\n\tx := 2\n").all fun f => f.code != "FMT001" && f.code != "FMT002")
     "TAB or LF was flagged as a forbidden control byte"
 
 /- Property/fuzz boundary test for the two source-security scans.
 
-The live scans are checked differentially against an *independent* oracle: FMT003 by an explicit byte
-predicate, FMT004 by explicit codepoint-list membership — neither reuses `Rules.lean`'s private
+The live scans are checked differentially against an *independent* oracle: FMT001 by an explicit byte
+predicate, FMT002 by explicit codepoint-list membership — neither reuses `Rules.lean`'s private
 `isForbiddenControl`/`isBidiControl`, so a drift in either the byte set or the offset arithmetic fails
 here. The oracle sorts by the same (start, stop, code) key `findingOrder` uses, so the comparison also
 pins the sort. Inputs are generated by a deterministic LCG over a pool that mixes forbidden controls,
@@ -111,15 +115,15 @@ private def testSourceSecurityProperties : IO Unit := do
   let forbidden (n : Nat) : Bool := (n < 0x20 && n != 0x09 && n != 0x0a) || n == 0x7f
   let bidiSet : List Nat :=
     [0x061c, 0x200e, 0x200f, 0x202a, 0x202b, 0x202c, 0x202d, 0x202e, 0x2066, 0x2067, 0x2068, 0x2069]
-  -- Independent expectation: FMT003 per forbidden byte, FMT004 per bidi scalar, in findingOrder.
+  -- Independent expectation: FMT001 per forbidden byte, FMT002 per bidi scalar, in findingOrder.
   let oracle (s : String) : Array (String × Nat × Nat) := Id.run do
     let mut acc : Array (String × Nat × Nat) := #[]
     let bytes := s.toUTF8
     for i in [0:bytes.size] do
-      if forbidden (bytes.get! i).toNat then acc := acc.push ("FMT003", i, i + 1)
+      if forbidden (bytes.get! i).toNat then acc := acc.push ("FMT001", i, i + 1)
     let mut pos := 0
     for c in s.toList do
-      if bidiSet.contains c.toNat then acc := acc.push ("FMT004", pos, pos + c.utf8Size)
+      if bidiSet.contains c.toNat then acc := acc.push ("FMT002", pos, pos + c.utf8Size)
       pos := pos + c.utf8Size
     return acc.qsort fun a b =>
       if a.2.1 != b.2.1 then a.2.1 < b.2.1
@@ -127,13 +131,13 @@ private def testSourceSecurityProperties : IO Unit := do
       else a.1 < b.1
   let actual (s : String) : Array (String × Nat × Nat) :=
     (runSourceRules s).filterMap fun f =>
-      if f.code == "FMT003" || f.code == "FMT004" then some (f.code, f.range.start, f.range.stop)
+      if f.code == "FMT001" || f.code == "FMT002" then some (f.code, f.range.start, f.range.stop)
       else none
   let check (s : String) : IO Unit := do
     ensure (actual s == oracle s)
       "a source-security scan disagreed with the independent oracle on a generated input"
     ensure ((runSourceRules s).all fun f =>
-        (f.code != "FMT003" && f.code != "FMT004") || f.fix?.isNone)
+        (f.code != "FMT001" && f.code != "FMT002") || f.fix?.isNone)
       "a source-security rule emitted a fix on a generated input; both are report-only"
   -- Pool: forbidden controls, allowed controls, every bidi width, safe ASCII, safe 2/3/4-byte scalars.
   let pool : Array Nat :=
@@ -162,7 +166,7 @@ private def parseHeader! (source : String) : IO Imports.HeaderModel := do
   | some header => return header
   | none => throw <| IO.userError s!"header did not parse: {source}"
 
-/-- `FMT005`/`FMT006`/`FMT007` and the organizer, tested directly — import rules live outside the
+/-- `FMT003`/`FMT004`/`FMT005` and the organizer, tested directly — import rules live outside the
 `RuleImpl` engine (`notes/01-semantics.md` §1b, §7), so the `runRulesOf` seam does not reach them; the
 header rules are pure functions of the parsed surface header, and `redundantFindings` is pure over the
 header plus a caller-supplied closure that stands in for the Lake graph. -/
@@ -171,7 +175,7 @@ private def testImports : IO Unit := do
   -- `import A` are distinct statements, so neither is the other's duplicate (`notes` §3).
   let dup ← parseHeader! "import Foo.A\nimport Foo.A\n"
   let dupFindings := Imports.duplicateFindings dup "import Foo.A\nimport Foo.A\n"
-  ensure (dupFindings.map (·.code) == #["FMT005"]) "exact duplicate did not fire FMT005 exactly once"
+  ensure (dupFindings.map (·.code) == #["FMT003"]) "exact duplicate did not fire FMT003 exactly once"
   ensure (dupFindings[0]!.fix?.map (·.applicability) == some .safe)
     "the duplicate-removal fix is not safe"
   -- The safe fix deletes the *later* whole line (the second `import Foo.A`, bytes [13, 26)).
@@ -188,25 +192,25 @@ private def testImports : IO Unit := do
   -- injects that a surface rule can never see, not a written one (`notes` §1a).
   let dupInit ← parseHeader! "import Init\nimport Init\n"
   ensure ((Imports.duplicateFindings dupInit "import Init\nimport Init\n").size == 1)
-    "a literal repeated `import Init` did not fire FMT005"
+    "a literal repeated `import Init` did not fire FMT003"
 
-  -- FMT007 fires within one group; a blank line is a group boundary the canonical order never crosses.
+  -- FMT005 fires within one group; a blank line is a group boundary the canonical order never crosses.
   let unordered ← parseHeader! "import Foo.B\nimport Foo.A\n"
-  ensure ((Imports.orderFindings unordered "import Foo.B\nimport Foo.A\n").map (·.code) == #["FMT007"])
-    "out-of-order imports in one group did not fire FMT007"
+  ensure ((Imports.orderFindings unordered "import Foo.B\nimport Foo.A\n").map (·.code) == #["FMT005"])
+    "out-of-order imports in one group did not fire FMT005"
   ensure ((Imports.orderFindings unordered "import Foo.B\nimport Foo.A\n")[0]!.fix?.isNone)
-    "FMT007 must be report-only (no fix)"
+    "FMT005 must be report-only (no fix)"
   let grouped ← parseHeader! "import Foo.B\n\nimport Foo.A\n"
   ensure (Imports.orderFindings grouped "import Foo.B\n\nimport Foo.A\n").isEmpty
     "imports in different blank-line groups were wrongly reported out of order"
 
-  -- FMT006: `Foo.B` is reachable via `Foo.A`'s closure, so the plain `import Foo.B` is a candidate.
+  -- FMT004: `Foo.B` is reachable via `Foo.A`'s closure, so the plain `import Foo.B` is a candidate.
   let redundant ← parseHeader! "import Foo.A\nimport Foo.B\n"
   let closure : Lean.Name → Option (Array Lean.Name) := fun name =>
     if name == `Foo.A then some #[`Foo.B] else none
   let (redFindings, redWithheld) := Imports.redundantFindings redundant closure
-  ensure (redFindings.map (·.code) == #["FMT006"]) "a transitively-covered import did not fire FMT006"
-  ensure (redFindings[0]!.fix?.isNone) "FMT006 must be report-only (no fix)"
+  ensure (redFindings.map (·.code) == #["FMT004"]) "a transitively-covered import did not fire FMT004"
+  ensure (redFindings[0]!.fix?.isNone) "FMT004 must be report-only (no fix)"
   ensure (redWithheld == 0) "a plain covered import was wrongly withheld"
 
   -- Withholding: `import all Foo.B` under a `module` marker exposes data reachability cannot reason
@@ -600,18 +604,18 @@ private def testFixAllAdversarial : IO Unit := do
     ensure (left == "MULTI" && right == "MULTI") "an intra-fix conflict lost the fix's own provenance"
   | _ => throw <| IO.userError "overlapping edits within one fix were accepted"
 
-  -- Mixed-tier conflict (`RYC-FINAL`): the conflict path carries no tier. A syntax-rule fix (`FMT013`)
-  -- and an import-rule fix (`FMT005`) that overlap on the same original bytes reject and name BOTH
+  -- Mixed-tier conflict (`RYC-FINAL`): the conflict path carries no tier. A syntax-rule fix (`FMT011`)
+  -- and an import-rule fix (`FMT003`) that overlap on the same original bytes reject and name BOTH
   -- rules. No file drives this — the shipped fixes are disjoint by design (the syntax `.safe` fixes edit
-  -- paren/attribute ranges, FMT005 edits an import line, FMT014 renames a deprecated ident; none
+  -- paren/attribute ranges, FMT003 edits an import line, FMT012 renames a deprecated ident; none
   -- intersect), so the composition is exercised here at `preparePatch`, its owning layer. (After
   -- `ruff-11c` RDF-LAYOUT there is no source-tier fixable rule — trailing whitespace and the final
-  -- newline are the formatter's layout, not FMT001/FMT002.)
+  -- newline are the formatter's layout, not lint rules.)
   match preparePatch "abc" #[
-      findingWithEdit { start := 0, stop := 2 } "" .safe "FMT013",
-      findingWithEdit { start := 1, stop := 3 } "" .safe "FMT005"] with
+      findingWithEdit { start := 0, stop := 2 } "" .safe "FMT011",
+      findingWithEdit { start := 1, stop := 3 } "" .safe "FMT003"] with
   | .error (.conflict left right _ _) =>
-    ensure (#[left, right].qsort (· < ·) == #["FMT005", "FMT013"])
+    ensure (#[left, right].qsort (· < ·) == #["FMT003", "FMT011"])
       "a mixed-tier syntax/import conflict did not name both rules distinctly"
   | _ => throw <| IO.userError "an overlapping syntax/import fix pair was accepted"
 
@@ -625,9 +629,9 @@ private def testFixAllAdversarial : IO Unit := do
 private def testConfig : IO Unit := do
   let directory ← IO.FS.createTempDir
   let configPath := directory / "lean-fmt.toml"
-  -- Category/selector machinery is exercised on the source-tier `security` category (FMT003 control
-  -- byte, FMT004 bidi mark), the sole source-tier vehicle after `ruff-11c` RDF-LAYOUT retired the
-  -- `text` category (FMT001/FMT002) into the formatter. `redundancy` (FMT010/11/13, syntax) is the
+  -- Category/selector machinery is exercised on the source-tier `security` category (FMT001 control
+  -- byte, FMT002 bidi mark), the sole source-tier vehicle after `ruff-11c` RDF-LAYOUT retired the
+  -- `text` category (FMT001/FMT002) into the formatter. `redundancy` (FMT008/11/13, syntax) is the
   -- disjoint category that must select none of these findings.
   let ctl (n : Nat) : String := String.ofList [Char.ofNat n]
   let secBytes := "def s := \"a" ++ ctl 0x00 ++ "b\"\n-- x" ++ ctl 0x202e ++ "y\n"
@@ -636,9 +640,9 @@ private def testConfig : IO Unit := do
 include = [\"LeanFmt/**/*.lean\", \"Main.lean\"]\n\
 exclude = [\"LeanFmt/Generated/**\"]\n\
 select = [\"security\"]\n\
-ignore = [\"FMT004\"]\n\
+ignore = [\"FMT002\"]\n\
 [per-file-ignores]\n\
-\"LeanFmt/Legacy/*.lean\" = [\"FMT003\"]\n"
+\"LeanFmt/Legacy/*.lean\" = [\"FMT001\"]\n"
     let config ← FormatterConfig.load directory
     ensure (config.includesPath "LeanFmt/Internal/File.lean")
       "recursive include pattern did not match"
@@ -648,18 +652,18 @@ ignore = [\"FMT004\"]\n\
     ensure (!(config.includesPath "Other.lean")) "unmatched path was included"
     let .ok plan := config.rulePlan {}
       | throw <| IO.userError "valid configured selectors were rejected"
-    -- Specificity precedence (`ruff-12`): config `ignore = [FMT004]` (exact) outranks `select = [security]`
-    -- (category), so only FMT003 survives.
+    -- Specificity precedence (`ruff-12`): config `ignore = [FMT002]` (exact) outranks `select = [security]`
+    -- (category), so only FMT001 survives.
     ensure (plan.activeCount == 1) "configured ignore did not win"
     let findings := runSourceRules secBytes
-    ensure ((plan.findings "LeanFmt/File.lean" findings).map (·.code) == #["FMT003"])
+    ensure ((plan.findings "LeanFmt/File.lean" findings).map (·.code) == #["FMT001"])
       "configured selector projection was wrong"
     ensure ((plan.findings "LeanFmt/Legacy/File.lean" findings).isEmpty)
       "per-file ignore did not win"
-    let .ok cliPlan := config.rulePlan { select := #["FMT004"], ignore := #["FMT003"] }
+    let .ok cliPlan := config.rulePlan { select := #["FMT002"], ignore := #["FMT001"] }
       | throw <| IO.userError "valid CLI selectors were rejected"
     ensure (cliPlan.activeCount == 1 &&
-      (cliPlan.findings "Main.lean" findings).map (·.code) == #["FMT004"])
+      (cliPlan.findings "Main.lean" findings).map (·.code) == #["FMT002"])
       "CLI selection did not replace config selection or ignore precedence changed"
     ensure (match config.rulePlan { select := #["UNKNOWN"] } with | .error _ => true | .ok _ => false)
       "unknown CLI selector was accepted"
@@ -667,63 +671,64 @@ ignore = [\"FMT004\"]\n\
     -- list. All security rules are stable, so no preview gate is needed to select them.
     let .ok secPlan := config.rulePlan { select := #["security"] }
       | throw <| IO.userError "the 'security' category selector was rejected"
-    ensure ((secPlan.findings "A.lean" findings).map (·.code) == #["FMT003", "FMT004"])
+    ensure ((secPlan.findings "A.lean" findings).map (·.code) == #["FMT001", "FMT002"])
       "the security category did not select both control-byte rules"
     -- Preview gate on a category selector (`ruff-12`), now over a MIXED category: `redundancy` holds
-    -- FMT010 and FMT011 (preview) and FMT013 (stable, default-off — the `ruff-12b` "stable-optional"
+    -- FMT008 and FMT009 (preview) and FMT011 (stable, default-off — the `ruff-12b` "stable-optional"
     -- outcome). So the category resolves to exactly the stable member without preview mode, and to all
     -- three with it. The mixed case is the interesting one and did not exist before `ruff-12b`.
     let .ok gated := config.rulePlan { select := #["redundancy"] }
       | throw <| IO.userError "a partly-preview category was rejected"
-    ensure (gated.selected == #["FMT013"])
+    ensure (gated.selected == #["FMT011"])
       "the redundancy category did not resolve to exactly its stable member without preview mode"
     let .ok previewed := config.rulePlan { select := #["redundancy"], preview := true }
       | throw <| IO.userError "the preview category was rejected under preview mode"
     ensure (previewed.activeCount == 3) "preview mode did not unlock the redundancy category"
-    -- `stable-optional`, stated directly (`ruff-12b` RGR-SPEC §1.1). FMT013 is reachable by `all`, by
+    -- `stable-optional`, stated directly (`ruff-12b` RGR-SPEC §1.1). FMT011 is reachable by `all`, by
     -- its category, and by its exact code with NO preview gate, and is absent from `default`. That
     -- combination is the whole outcome: promoted out of preview on correctness, kept off the default
     -- path on cost.
-    ensure (match config.rulePlan { select := #["FMT013"] } with
-      | .ok p => p.selected == #["FMT013"] | .error _ => false)
+    ensure (match config.rulePlan { select := #["FMT011"] } with
+      | .ok p => p.selected == #["FMT011"] | .error _ => false)
       "a stable default-off rule was not selectable by its exact code without preview mode"
     let .ok allSel := config.rulePlan { select := #["all"] }
       | throw <| IO.userError "the 'all' selector was rejected"
-    ensure (allSel.selected.contains "FMT013")
+    ensure (allSel.selected.contains "FMT011")
       "'all' did not reach a stable default-off rule without preview mode"
     let .ok defSel := config.rulePlan { select := #["default"] }
       | throw <| IO.userError "the 'default' selector was rejected"
-    ensure (!defSel.selected.contains "FMT013")
+    ensure (!defSel.selected.contains "FMT011")
       "a stable default-off rule leaked into the default set"
     -- Explicit preview-code selection is still an error without preview mode, and succeeds with it.
-    -- FMT010 carries this now that FMT013 is stable.
-    ensure (match config.rulePlan { select := #["FMT010"] } with | .error _ => true | .ok _ => false)
+    -- FMT008 carries this now that FMT011 is stable.
+    ensure (match config.rulePlan { select := #["FMT008"] } with | .error _ => true | .ok _ => false)
       "an explicit preview-code selection was accepted without preview mode"
-    ensure (match config.rulePlan { select := #["FMT010"], preview := true } with
-      | .ok p => p.selected == #["FMT010"] | .error _ => false)
+    ensure (match config.rulePlan { select := #["FMT008"], preview := true } with
+      | .ok p => p.selected == #["FMT008"] | .error _ => false)
       "preview mode did not admit an explicit preview-code selection"
     -- Specificity keeps an exact select over a category ignore (the case flat subtraction dropped).
-    let .ok keep := config.rulePlan { select := #["FMT013"], ignore := #["redundancy"] }
+    let .ok keep := config.rulePlan { select := #["FMT011"], ignore := #["redundancy"] }
       | throw <| IO.userError "exact-vs-category precedence rejected a valid plan"
-    ensure (keep.selected == #["FMT013"]) "an exact select did not outrank a category ignore"
-    -- A retired code is accepted (non-breaking), selects no rule, and raises a notice.
-    let .ok retired := config.rulePlan { select := #["FMT001"] }
-      | throw <| IO.userError "a retired selector was rejected instead of accepted with a notice"
-    ensure (retired.activeCount == 0 && !retired.notices.isEmpty)
-      "a retired selector did not degrade to an empty selection with a notice"
+    ensure (keep.selected == #["FMT011"]) "an exact select did not outrank a category ignore"
+    -- A retired code is accepted (non-breaking), selects no rule, and raises a notice -- REMOVED with
+    -- the rest of the retired-code coverage (`docs/rules/MIGRATION.md`). It selected FMT001, which the
+    -- renumbering turned into a live default security rule, so the case would now assert that
+    -- selecting a live rule yields an empty plan. There is no code left that can exercise this path:
+    -- with `reservedCodes` empty, `selectorsValid` rejects anything that is not live, so "accepted
+    -- with a notice" has no possible input until a rule retires.
     -- Fixability axis: a selected rule made unfixable is still selected, but out of `fixableSelected`.
-    let .ok unfix := config.rulePlan { select := #["FMT013"], unfixable := #["FMT013"] }
+    let .ok unfix := config.rulePlan { select := #["FMT011"], unfixable := #["FMT011"] }
       | throw <| IO.userError "the unfixable axis rejected a valid plan"
-    ensure (unfix.selected == #["FMT013"] && unfix.fixableSelected.isEmpty)
-      "unfixable did not withhold FMT013's fix while keeping it selected"
+    ensure (unfix.selected == #["FMT011"] && unfix.fixableSelected.isEmpty)
+      "unfixable did not withhold FMT011's fix while keeping it selected"
     -- RRL-FINAL precedence matrix — the remaining lattice edges beyond the cases above.
     -- (a) Tie → ignore: an exact select and an exact ignore of the same code are equal specificity, so
     -- ignore wins and the rule is dropped.
-    let .ok tie := config.rulePlan { select := #["FMT004"], ignore := #["FMT004"] }
+    let .ok tie := config.rulePlan { select := #["FMT002"], ignore := #["FMT002"] }
       | throw <| IO.userError "an exact select/ignore tie was rejected"
     ensure (tie.activeCount == 0) "an exact select/ignore tie did not resolve to ignore"
     -- (b) `all` expands to the stable set; `default` expands to the default-ON set. Since `ruff-12b`
-    -- these DIFFER — FMT013 is stable and default-off — and that divergence is the point of the
+    -- these DIFFER — FMT011 is stable and default-off — and that divergence is the point of the
     -- `stable-optional` outcome, so it is asserted rather than assumed away. Neither admits a preview
     -- rule without the gate; `all` + preview unlocks the whole registry.
     let stableCount := (allRuleInfos.filter (·.lifecycle == .stable)).size
@@ -743,11 +748,11 @@ ignore = [\"FMT004\"]\n\
     ensure (allPreview.activeCount == allRuleInfos.size)
       "'all' under preview did not unlock the whole registry"
     -- (c) `extend-select` always adds, across the CLI-owns-selection boundary: with no CLI `select`, the
-    -- config selection (security minus the config's exact `ignore = [FMT004]`) still applies, and a CLI
-    -- extend-select adds FMT013 on top (no preview gate needed since `ruff-12b`). Result: FMT003 + FMT013.
-    let .ok extended := config.rulePlan { extendSelect := #["FMT013"] }
+    -- config selection (security minus the config's exact `ignore = [FMT002]`) still applies, and a CLI
+    -- extend-select adds FMT011 on top (no preview gate needed since `ruff-12b`). Result: FMT001 + FMT011.
+    let .ok extended := config.rulePlan { extendSelect := #["FMT011"] }
       | throw <| IO.userError "extend-select over the config selection was rejected"
-    ensure (extended.selected == #["FMT003", "FMT013"])
+    ensure (extended.selected == #["FMT001", "FMT011"])
       "extend-select did not add to the config selection while keeping the config ignore"
     IO.FS.writeFile configPath "unknown = true\n"
     let rejected ← try
@@ -814,18 +819,18 @@ line-width = 60\n"
 line-width = 90\n\
 [lint]\n\
 select = [\"security\"]\n\
-extend-select = [\"FMT010\"]\n"
+extend-select = [\"FMT008\"]\n"
     write "sub/.lean-fmt.toml" "\
 extend = \"../base.toml\"\n\
 [format]\n\
 line-width = 42\n\
 [lint]\n\
-extend-select = [\"FMT011\"]\n"
+extend-select = [\"FMT009\"]\n"
     let extended ← Discovery.run root none
     let child := extended.configFor "sub/B.lean"
     ensure (child.format.lineWidth == 42) "the extending file did not win a scalar"
     ensure (child.selectedSelectors == #["security"]) "the parent's base array was not inherited"
-    ensure (child.extendSelectSelectors == #["FMT010", "FMT011"])
+    ensure (child.extendSelectSelectors == #["FMT008", "FMT009"])
       "extend-select did not concatenate parent-then-child"
     ensure (child.contributingFiles.size == 2)
       "the extend chain did not record both contributing files"
@@ -957,11 +962,21 @@ private def testCatalogInvariants : IO Unit := do
       else
         ensure (info.examples.all (·.good?.isNone))
           s!"report-only rule {info.code} has a `good` example but nothing to fix"
-  -- 5. Reserved integrity: FMT001/FMT002 are reserved and not live.
-  ensure (isReservedCode "FMT001" && isReservedCode "FMT002")
-    "FMT001/FMT002 are no longer reserved"
-  ensure (!codes.contains "FMT001" && !codes.contains "FMT002")
-    "a retired code reappeared as a live rule"
+  -- 5. Reserved integrity. `reservedCodes` is EMPTY after the pre-release renumbering
+  -- (`docs/rules/MIGRATION.md`), which reused the retired FMT001/FMT002. So the old form of this
+  -- check -- "FMT001 and FMT002 are reserved and not live" -- is not merely failing, it asserts the
+  -- opposite of what now holds, and it is gone rather than adjusted.
+  --
+  -- What survives is the invariant that does not depend on the table having entries: whatever is in
+  -- it is disjoint from the live catalog. That is vacuously true today. It is asserted anyway, so the
+  -- day a rule genuinely retires, the check is already here and already correct.
+  --
+  -- Deliberately NOT done: adding a placeholder retired code so this has something to bite on. A
+  -- fixture invented to keep a test green proves the fixture exists, not that the machinery works.
+  -- The reserved branches in `Config.selectorsValid` and `Suppression.apply` are untested until a
+  -- real retirement, and `reservedCodes`' own docstring says so where someone will read it.
+  for (code, _) in reservedCodes do
+    ensure (!codes.contains code) s!"reserved code {code} reappeared as a live rule"
   -- 6. Generated docs are nonempty and one per live rule plus an index and the config schema (drift is
   -- checked in the harness). The schema enumerates exactly the selector vocabulary `selectorsValid` accepts.
   ensure (catalogDocs.size == infos.size + 2) "generated docs count does not match the catalog"
@@ -994,20 +1009,20 @@ private def testApplicability : IO Unit := do
     | .error _ => true | _ => false) "an unknown applicability wire value was accepted"
 
   -- Per-rule reclassification, resolved as a plan projection. Codes are opaque to `effectiveApplicability`;
-  -- surviving fixable rules (`FMT013` syntax, `FMT014` semantic) stand in for the retired FMT001/FMT002.
-  let plan : RulePlan := { selected := #["FMT013", "FMT014"], perFileIgnores := #[], extendSafe := #["FMT013"], extendUnsafe := #["FMT014"] }
-  ensure (plan.effectiveApplicability "FMT013" .unsafe == .safe) "extend-safe-fixes did not promote"
-  ensure (plan.effectiveApplicability "FMT013" .safe == .safe) "promotion changed an already-safe fix"
-  ensure (plan.effectiveApplicability "FMT014" .safe == .unsafe) "extend-unsafe-fixes did not demote"
+  -- surviving fixable rules (`FMT011` syntax, `FMT012` semantic) stand in for the retired FMT001/FMT002.
+  let plan : RulePlan := { selected := #["FMT011", "FMT012"], perFileIgnores := #[], extendSafe := #["FMT011"], extendUnsafe := #["FMT012"] }
+  ensure (plan.effectiveApplicability "FMT011" .unsafe == .safe) "extend-safe-fixes did not promote"
+  ensure (plan.effectiveApplicability "FMT011" .safe == .safe) "promotion changed an already-safe fix"
+  ensure (plan.effectiveApplicability "FMT012" .safe == .unsafe) "extend-unsafe-fixes did not demote"
   ensure (plan.effectiveApplicability "FMT999" .safe == .safe) "an unlisted rule was reclassified"
   -- Display-only is a floor no promotion can lift.
-  ensure (plan.effectiveApplicability "FMT013" .displayOnly == .displayOnly)
+  ensure (plan.effectiveApplicability "FMT011" .displayOnly == .displayOnly)
     "extend-safe-fixes promoted a display-only fix"
 
   -- `RulePlan.findings` carries the effective applicability onto the reported fix. Driven by a synthetic
   -- `.safe` fix (no source-tier fixable rule survives RDF-LAYOUT), which `extend-unsafe-fixes` demotes.
-  let demote : RulePlan := { selected := #["FMT013"], perFileIgnores := #[], extendSafe := #[], extendUnsafe := #["FMT013"] }
-  let projected := demote.findings "A.lean" #[findingWithEdit { start := 0, stop := 1 } "" .safe "FMT013"]
+  let demote : RulePlan := { selected := #["FMT011"], perFileIgnores := #[], extendSafe := #[], extendUnsafe := #["FMT011"] }
+  let projected := demote.findings "A.lean" #[findingWithEdit { start := 0, stop := 1 } "" .safe "FMT011"]
   ensure (projected.size == 1 && (projected[0]!.fix?.map (·.applicability)) == some .unsafe)
     "the findings projection did not demote a safe fix"
 
@@ -1026,7 +1041,7 @@ private def testApplicability : IO Unit := do
   let directory ← IO.FS.createTempDir
   try
     let configPath := directory / "lean-fmt.toml"
-    IO.FS.writeFile configPath "extend-safe-fixes = [\"FMT013\"]\nextend-unsafe-fixes = [\"FMT013\"]\n"
+    IO.FS.writeFile configPath "extend-safe-fixes = [\"FMT011\"]\nextend-unsafe-fixes = [\"FMT011\"]\n"
     let config ← FormatterConfig.load directory
     ensure (match config.rulePlan {} with | .error _ => true | _ => false)
       "a rule in both extend lists was accepted"
@@ -1296,8 +1311,8 @@ private def testEngineTiers : IO Unit := do
   let encoded := Lean.toJson probeSyntax
   ensure ((encoded.getObjValAs? String "input").toOption == some "syntax")
     "the rules wire shape does not derive input from the implementation"
-  -- `ruff-10` shipped the first `.syntax`-tier rules (FMT008–FMT013) and `ruff-11` the first
-  -- `.semantic`-tier ones (FMT014–FMT017), so the registry now spans the whole lattice. The seams that
+  -- `ruff-10` shipped the first `.syntax`-tier rules (FMT006–FMT011) and `ruff-11` the first
+  -- `.semantic`-tier ones (FMT012–FMT015), so the registry now spans the whole lattice. The seams that
   -- once assumed it was uniformly source-tier are all tier-aware: `ofEnvelope?` tags its cache entry
   -- with the tier the facts reached (`.semantic` for a demanded artifact, else `.syntax`) and the
   -- source-only shortcut tags `.source`, and `cacheHitServes` serves an entry only when
@@ -1305,10 +1320,10 @@ private def testEngineTiers : IO Unit := do
   -- semantic `--select`. This asserts the shape: all three tiers now ship.
   ensure (ruleRegistry.any (·.tier == .source) && ruleRegistry.any (·.tier == .syntax) &&
       ruleRegistry.any (·.tier == .semantic))
-    "ruleRegistry lost a tier: ruff-10 shipped source+syntax, ruff-11 added semantic (FMT014–FMT017)"
+    "ruleRegistry lost a tier: ruff-10 shipped source+syntax, ruff-11 added semantic (FMT012–FMT015)"
 
   -- The lattice gained `semantic` above `syntax` (`ruff-05b`): richer facts serve any cheaper
-  -- requirement, and the cheaper cannot serve the dearer. `ruff-11`'s FMT014–FMT017 are the first
+  -- requirement, and the cheaper cannot serve the dearer. `ruff-11`'s FMT012–FMT015 are the first
   -- shipped `.semantic`-tier rules, so both demanders now reach that tier — a `.semantic`-rule
   -- selection (below) and the canonical-rendering mode (`RulePlan.demandedTier`).
   ensure (Tier.satisfies .semantic .syntax && Tier.satisfies .semantic .source)
@@ -1367,16 +1382,16 @@ private def testMixedSelection : IO Unit := do
   -- fact is captured then and not on the syntax-only fast path. `demandedTier` folds over the shipped
   -- registry, so this uses shipped codes rather than probes.
   let shippedPlan : RulePlan :=
-    { selected := #["FMT003"], perFileIgnores := #[], extendSafe := #[], extendUnsafe := #[] }
+    { selected := #["FMT001"], perFileIgnores := #[], extendSafe := #[], extendUnsafe := #[] }
   ensure (shippedPlan.demandedTier false == .source)
     "a non-rendering run demanded more than its rules needed"
   ensure (shippedPlan.demandedTier true == .semantic)
     "a canonical-rendering run did not demand the semantic fact"
   -- `ruff-11`: selecting a shipped `.semantic`-tier rule demands the semantic fact on its own, with no
-  -- rendering — the second demander the mode is not. This is what makes a `check --select FMT014` run
+  -- rendering — the second demander the mode is not. This is what makes a `check --select FMT012` run
   -- capture the compiler diagnostics rather than serve a syntax-only artifact that never held them.
   let semanticPlan : RulePlan :=
-    { selected := #["FMT014"], perFileIgnores := #[], extendSafe := #[], extendUnsafe := #[] }
+    { selected := #["FMT012"], perFileIgnores := #[], extendSafe := #[], extendUnsafe := #[] }
   ensure (semanticPlan.demandedTier false == .semantic)
     "selecting a semantic rule did not demand the semantic fact without rendering"
 
@@ -1495,7 +1510,7 @@ private def testStore : IO Unit := do
 
 /-- A `v5` artifact carrying the full semantic fact: two notation kinds with their declared spacing
 (`ruff-05b`, Design B keys by `SyntaxNodeKind`) and one surfaced compiler diagnostic (`ruff-11`, the
-`v5` addition FMT014–FMT017 key on). Both sub-facts populated, because a demanded `.semantic` artifact
+`v5` addition FMT012–FMT015 key on). Both sub-facts populated, because a demanded `.semantic` artifact
 carries both together (monolithic capture). -/
 private def fixtureSemanticArtifact : ModuleArtifact :=
   { fixtureArtifact with semantic := some {
@@ -1553,7 +1568,7 @@ private def testSemanticArtifact : IO Unit := do
   | .ok actual => ensure (!structurallyValid actual) "a diagnostics-less v4 payload decoded as a valid v5 artifact"
   | .error _ => pure ()  -- decode-failed: also a miss, the backstop the comment above names
 
-/- The shipped semantic-tier rules (`ruff-11` FMT014–FMT017) surface the compiler's own diagnostics:
+/- The shipped semantic-tier rules (`ruff-11` FMT012–FMT015) surface the compiler's own diagnostics:
 each keys on one stable `kind` tag and re-emits it as a report-only finding under its own code,
 preserving the compiler's message, severity, and range. This exercises the whole engine seam over
 `.semantic` facts without the exact frontend — the production `runRulesOf` reads `SemanticFacts`
@@ -1577,10 +1592,10 @@ private def testSemanticRules : IO Unit := do
 
   -- Each surfaced kind maps to exactly its code, preserving the compiler's own range/severity/message.
   let expect : Array (String × String × Nat × Nat) := #[
-    ("FMT014", "`oldName` is deprecated", 0, 4),
-    ("FMT015", "unused variable `x`", 5, 6),
-    ("FMT016", "unused section variable `inst`", 7, 8),
-    ("FMT017", "`true` resembles a constructor", 9, 10)]
+    ("FMT012", "`oldName` is deprecated", 0, 4),
+    ("FMT013", "unused variable `x`", 5, 6),
+    ("FMT014", "unused section variable `inst`", 7, 8),
+    ("FMT015", "`true` resembles a constructor", 9, 10)]
   for (code, message, start, stop) in expect do
     match findings.filter (·.code == code) with
     | #[f] =>
@@ -1594,13 +1609,13 @@ private def testSemanticRules : IO Unit := do
   -- the artifact happens to carry. (Capture already filters to `surfacedDiagnosticKinds`; this pins
   -- that the rule side is closed the same way — an unowned kind fed in directly is still dropped.)
   ensure (surfacedDiagnosticKinds.size == 4) "surfacedDiagnosticKinds no longer lists exactly the four rules"
-  ensure ((findings.filter (fun f => #["FMT014", "FMT015", "FMT016", "FMT017"].contains f.code)).size == 4)
+  ensure ((findings.filter (fun f => #["FMT012", "FMT013", "FMT014", "FMT015"].contains f.code)).size == 4)
     "the surfaced rules produced other than one finding per owned kind (the unowned kind leaked)"
 
   -- The engine skips semantic rules cleanly when only cheaper facts are on hand — not guessed at, not
   -- defaulted, not an error — exactly as it skips a syntax rule on source facts. `requiredTierOf` is
   -- what makes the skip sound (it decided not to obtain these diagnostics), and it reads one registry.
-  let semanticCodes := #["FMT014", "FMT015", "FMT016", "FMT017"]
+  let semanticCodes := #["FMT012", "FMT013", "FMT014", "FMT015"]
   let onSyntax := runRulesOf ruleRegistry (.syntax (SyntaxFacts.of fixtureSourceText fixtureLosslessSource))
   ensure (onSyntax.all (fun f => !semanticCodes.contains f.code))
     "a semantic rule fired on syntax facts that never carried a diagnostic"
@@ -1608,7 +1623,7 @@ private def testSemanticRules : IO Unit := do
   ensure (onSource.all (fun f => !semanticCodes.contains f.code))
     "a semantic rule fired on source facts that never carried a diagnostic"
 
-/- The owned FMT014 rename fix (`ruff-11b`, ROS-IMPL). The report is surfaced from the diagnostic
+/- The owned FMT012 rename fix (`ruff-11b`, ROS-IMPL). The report is surfaced from the diagnostic
 (unchanged, always cheap); the `unsafe` rename fix is attached from the owned occurrence fact — and
 only when a *fixable* occurrence sits at the surfaced finding's own range with a `newName?`. This pins
 the rule half as pure data: the report never changes across the occurrence cases, only `fix?` does, so
@@ -1620,17 +1635,17 @@ private def testOwnedDeprecationFix : IO Unit := do
     { kind := "Lean.Linter.deprecatedAttr", range := depRange, severity := .warning,
       message := "`oldName` is deprecated" }
   -- Run the shipped registry over `.semantic` facts carrying one deprecation diagnostic and a chosen
-  -- set of occurrences; return the single FMT014 finding (there is exactly one surfaced diagnostic).
+  -- set of occurrences; return the single FMT012 finding (there is exactly one surfaced diagnostic).
   let fmt014 (occurrences : Array DeprecatedOccurrence) : IO Finding := do
     let facts := Facts.semantic
       (SemanticFacts.of fixtureSourceText fixtureLosslessSource #[diag] occurrences)
-    match (runRulesOf ruleRegistry facts).filter (·.code == "FMT014") with
+    match (runRulesOf ruleRegistry facts).filter (·.code == "FMT012") with
     | #[f] => return f
-    | other => throw <| IO.userError s!"expected exactly one FMT014 finding, got {other.size}"
+    | other => throw <| IO.userError s!"expected exactly one FMT012 finding, got {other.size}"
   -- The report an occurrence set must never perturb: same code/severity/message/range every time.
   let reportUnchanged (f : Finding) (label : String) : IO Unit := do
     ensure (f.severity == .warning && f.message == "`oldName` is deprecated" && f.range == depRange)
-      s!"FMT014 report was perturbed by the {label} occurrence set"
+      s!"FMT012 report was perturbed by the {label} occurrence set"
 
   let fixable : DeprecatedOccurrence :=
     { range := depRange, declName := "oldName", newName? := some "newName",
@@ -1642,39 +1657,39 @@ private def testOwnedDeprecationFix : IO Unit := do
   reportUnchanged a "fixable"
   match a.fix? with
   | some fix =>
-    ensure (fix.applicability == .unsafe) "FMT014 rename fix must be unsafe (unproven textual swap)"
+    ensure (fix.applicability == .unsafe) "FMT012 rename fix must be unsafe (unproven textual swap)"
     ensure (fix.edits == #[{ range := depRange, replacement := "newName" }])
-      "FMT014 fix did not replace the occurrence range with the deprecation's newName"
+      "FMT012 fix did not replace the occurrence range with the deprecation's newName"
   | none => throw <| IO.userError "a fixable deprecation occurrence attached no fix"
 
   -- B. A non-bare occurrence (`fixable := false`) stays report-only — the capture-side predicate, not
   -- the rule, decides bareness, and the rule offers no fix without it.
   let b ← fmt014 #[{ fixable with fixable := false }]
   reportUnchanged b "non-fixable"
-  ensure (b.fix?.isNone) "FMT014 attached a fix to a non-fixable (non-bare-identifier) occurrence"
+  ensure (b.fix?.isNone) "FMT012 attached a fix to a non-fixable (non-bare-identifier) occurrence"
 
   -- C. A `newName? = none` occurrence (deprecation with no replacement) stays report-only: there is no
   -- name to substitute, so no rename can be offered even though the use is bare.
   let c ← fmt014 #[{ fixable with newName? := none }]
   reportUnchanged c "no-replacement"
-  ensure (c.fix?.isNone) "FMT014 attached a fix to a deprecation with no replacement name"
+  ensure (c.fix?.isNone) "FMT012 attached a fix to a deprecation with no replacement name"
 
   -- D. An occurrence at a *different* range does not match the surfaced finding — the fix attaches by
   -- range identity, never by position or count, so a stray occurrence cannot mis-fix another finding.
   let d ← fmt014 #[{ fixable with range := { start := 100, stop := 104 } }]
   reportUnchanged d "range-mismatch"
-  ensure (d.fix?.isNone) "FMT014 attached a fix from an occurrence at a different range"
+  ensure (d.fix?.isNone) "FMT012 attached a fix from an occurrence at a different range"
 
   -- E. No occurrences (the `check` path, or any run that did not demand the capability): report-only,
-  -- byte-identical to the surfaced-only behavior FMT014 shipped with in `ruff-11`.
+  -- byte-identical to the surfaced-only behavior FMT012 shipped with in `ruff-11`.
   let e ← fmt014 #[]
   reportUnchanged e "empty"
-  ensure (e.fix?.isNone) "FMT014 was not report-only when no occurrences were captured"
+  ensure (e.fix?.isNone) "FMT012 was not report-only when no occurrences were captured"
   ensure (e == { a with fix? := none })
-    "the surfaced-only FMT014 finding is not the fixable one minus its fix (report drifted)"
+    "the surfaced-only FMT012 finding is not the fixable one minus its fix (report drifted)"
 
 /- `SemanticCaps.subset` (Design B) and the `needsOccurrences`↔tier invariant. The subset gate is what
-makes a monolithic-era `.semantic` cache entry miss a fixable-FMT014 demand rather than serve a false
+makes a monolithic-era `.semantic` cache entry miss a fixable-FMT012 demand rather than serve a false
 clean; the invariant is what keeps the capability from rotting into an unenforced field. -/
 private def testSemanticCaps : IO Unit := do
   let all : SemanticCaps := { notations := true, diagnostics := true, occurrences := true }
@@ -1687,19 +1702,19 @@ private def testSemanticCaps : IO Unit := do
   -- The load-bearing miss: an occurrences demand against a monolithic-era entry (cheap sub-facts only,
   -- no occurrence cap) is NOT a subset, so `cacheHitServes` recomputes rather than serving a false clean.
   ensure (!SemanticCaps.subset occ cheap && !SemanticCaps.subset occ {})
-    "a fixable-FMT014 demand was (wrongly) served by an entry that captured no occurrences"
+    "a fixable-FMT012 demand was (wrongly) served by an entry that captured no occurrences"
   -- The cheap demand is served by an occurrence-bearing entry (superset), orthogonal to the tier.
   ensure (SemanticCaps.subset cheap all) "the cheap sub-facts are not a subset of the full capability set"
 
   -- The invariant: a `needsOccurrences` rule is `.semantic` (its fix reads an info-tree fact), and only
-  -- FMT014 declares it today. A declared-but-unenforced capability would rot exactly as a tier field
+  -- FMT012 declares it today. A declared-but-unenforced capability would rot exactly as a tier field
   -- would; this ties it to the tier the registry actually derives from the constructor.
   for rule in ruleRegistry do
     if rule.info.needsOccurrences then
       ensure (rule.tier == .semantic)
         s!"{rule.info.code} needs occurrences but is not a semantic-tier rule"
-  ensure ((ruleRegistry.filter (·.info.needsOccurrences)).map (·.info.code) == #["FMT014"])
-    "exactly FMT014 must declare needsOccurrences (a new owner needs its own capture + tests)"
+  ensure ((ruleRegistry.filter (·.info.needsOccurrences)).map (·.info.code) == #["FMT012"])
+    "exactly FMT012 must declare needsOccurrences (a new owner needs its own capture + tests)"
 
 /-- Capture a kind's declared atoms exactly as `analyzeExact`'s `captureNotationSpacing` does:
 type-guard to a descriptor, then read it through the **module-safe** compiled meta IR via `evalConst`
@@ -2338,8 +2353,8 @@ private def testSuppression : IO Unit := do
   -- Synthetic findings drive the code-agnostic suppression machinery. `f013` is a line-range finding;
   -- `f014` is an empty range on the file's upper bound (the shape a rule can still produce, e.g. an
   -- end-of-file diagnostic), kept to prove an empty finding on a scope boundary is caught.
-  let f013 := mkFinding "FMT013" 42 44
-  let f014 := mkFinding "FMT014" 44 44
+  let f013 := mkFinding "FMT011" 42 44
+  let f014 := mkFinding "FMT012" 44 44
   let mkDir (scope : DirectiveScope) (codes? : Option (Array String))
       (scopeRange : SourceRange) : Directive :=
     { scope, codes?, scopeRange, commentRange := ⟨7, 31⟩ }
@@ -2351,19 +2366,19 @@ private def testSuppression : IO Unit := do
     "file blanket did not suppress every finding"
 
   -- Code selector suppresses only the named code; the other survives.
-  let named := Suppression.apply (facts #[mkDir .file (some #["FMT013"]) ⟨0, bytes.size⟩]) bytes #[f013, f014]
-  ensure (named.kept.map (·.code) == #["FMT014"] && named.suppressed == 1 && named.unused.isEmpty)
+  let named := Suppression.apply (facts #[mkDir .file (some #["FMT011"]) ⟨0, bytes.size⟩]) bytes #[f013, f014]
+  ensure (named.kept.map (·.code) == #["FMT012"] && named.suppressed == 1 && named.unused.isEmpty)
     "code selector suppressed the wrong set"
 
   -- Suppression is a projection over codes, so the source-security codes flow through it like any
-  -- other. A report-only FMT004 finding is suppressed by a directive that names it.
-  let f004 := mkFinding "FMT004" 42 45
-  let bidiSuppressed := Suppression.apply (facts #[mkDir .file (some #["FMT004"]) ⟨0, bytes.size⟩]) bytes #[f004]
+  -- other. A report-only FMT002 finding is suppressed by a directive that names it.
+  let f004 := mkFinding "FMT002" 42 45
+  let bidiSuppressed := Suppression.apply (facts #[mkDir .file (some #["FMT002"]) ⟨0, bytes.size⟩]) bytes #[f004]
   ensure (bidiSuppressed.kept.isEmpty && bidiSuppressed.suppressed == 1)
-    "a directive naming FMT004 did not suppress the report-only security finding"
+    "a directive naming FMT002 did not suppress the report-only security finding"
 
   -- A directive whose scope holds no matching finding is unused: FMT900 with a safe removal fix.
-  let dead := Suppression.apply (facts #[mkDir .line (some #["FMT013"]) ⟨7, 31⟩]) bytes #[f013]
+  let dead := Suppression.apply (facts #[mkDir .line (some #["FMT011"]) ⟨7, 31⟩]) bytes #[f013]
   ensure (dead.kept.size == 1 && dead.suppressed == 0) "an out-of-scope directive still suppressed"
   ensure (dead.unused.map (·.code) == #["FMT900"]) "an unused directive did not emit FMT900"
   ensure (dead.unused[0]!.fix?.map (·.applicability) == some .safe) "the FMT900 removal fix is not safe"
@@ -2375,31 +2390,24 @@ private def testSuppression : IO Unit := do
     "the FMT900 removal fix does not delete exactly the directive line and its newline"
 
   -- A list with one live and one dead code suppresses the live one and reports the dead one.
-  let mixed := Suppression.apply (facts #[mkDir .file (some #["FMT013", "FMT999"]) ⟨0, bytes.size⟩]) bytes #[f013]
+  let mixed := Suppression.apply (facts #[mkDir .file (some #["FMT011", "FMT999"]) ⟨0, bytes.size⟩]) bytes #[f013]
   ensure (mixed.suppressed == 1 && mixed.unused.map (·.code) == #["FMT900"])
     "a mixed live/dead code list did not both suppress and report"
 
-  -- `ruff-12` §7 non-breaking floor: a retired/reserved code is inert in a suppression — it suppresses
-  -- nothing but is never flagged unused. A retired-ONLY directive raises no FMT900 at all (it is
-  -- silently accepted), where a genuinely-unknown code (FMT999 above) would.
-  let retiredOnly := Suppression.apply (facts #[mkDir .file (some #["FMT001"]) ⟨0, bytes.size⟩]) bytes #[f013]
-  ensure (retiredOnly.kept.map (·.code) == #["FMT013"] && retiredOnly.suppressed == 0
-      && retiredOnly.unused.isEmpty)
-    "a retired-only suppression was not inert (should suppress nothing and raise no FMT900)"
-
-  -- A directive mixing a retired code with a live one that FIRES: the live code suppresses, the retired
-  -- code stays inert, and nothing is flagged unused (no dead live code).
-  let retiredLive := Suppression.apply (facts #[mkDir .file (some #["FMT001", "FMT013"]) ⟨0, bytes.size⟩]) bytes #[f013]
-  ensure (retiredLive.suppressed == 1 && retiredLive.unused.isEmpty)
-    "a retired+live directive that fired still flagged something unused"
-
-  -- A directive mixing a retired code with a live one that is DEAD (out of scope): normal per-code
-  -- analysis reports only the live dead code, never the inert retired one.
-  let retiredDead := Suppression.apply (facts #[mkDir .line (some #["FMT001", "FMT013"]) ⟨7, 31⟩]) bytes #[f013]
-  ensure (retiredDead.unused.map (·.code) == #["FMT900"]) "a retired+dead directive did not flag the dead live code"
-  ensure ((retiredDead.unused[0]!.message.splitOn "FMT013").length == 2
-      && (retiredDead.unused[0]!.message.splitOn "FMT001").length == 1)
-    "the unused report must name the dead live code (FMT013) and never the inert retired one (FMT001)"
+  -- `ruff-12` §7's non-breaking floor -- a retired/reserved code is inert in a suppression: it
+  -- suppresses nothing but is never flagged unused, unlike a genuinely-unknown code (FMT999 above,
+  -- which does raise FMT900) -- HAD three cases here. They used FMT001 as their retired instance.
+  --
+  -- The pre-release renumbering (`docs/rules/MIGRATION.md`) made FMT001 a *live* security rule and
+  -- emptied `reservedCodes`, so those three cases would have kept running and kept passing while
+  -- testing something else entirely: a live rule that happened not to fire. A test that still passes
+  -- after its subject has been redefined underneath it is worse than a deleted one, so they are
+  -- deleted rather than repointed.
+  --
+  -- The production branches they covered are still there and still reachable the moment a rule
+  -- retires. They are currently UNTESTED, which `reservedCodes`' docstring states at the definition.
+  -- Restoring coverage needs a real retirement, not a placeholder entry invented to have something to
+  -- assert against.
 
   -- The empty finding sits exactly on a file scope's upper bound and must still be caught.
   let eof := Suppression.apply (facts #[mkDir .file none ⟨0, 44⟩]) bytes #[f014]
@@ -2757,8 +2765,8 @@ private def docDump : IO UInt32 := do
 
 /-! ## Source-security microbenchmark (`RSR-FINAL`)
 
-The two source-security scans are linear in source size: `FMT003` is one pass over the byte array,
-`FMT004` one fold over the codepoints carrying a running offset. This measures that claim the way
+The two source-security scans are linear in source size: `FMT001` is one pass over the byte array,
+`FMT002` one fold over the codepoints carrying a running offset. This measures that claim the way
 `docBench` measures the printer — by growth *ratio* over doubling inputs, not a wall-clock budget,
 because linear and quadratic differ by the size step (here 8×) and mean the same thing on any machine.
 `tests/security/bench.sh` asserts the ratios.
@@ -2766,7 +2774,7 @@ because linear and quadratic differ by the size step (here 8×) and mean the sam
 The measured input is scan-clean — no control or bidi byte — so the shared post-scan `qsort` over
 findings (`Rules.findingOrder`), which every rule pays and is O(m log m) in the finding count m rather
 than anything new to these rules, contributes nothing and the number reported is the scan cost itself.
-The block carries three-byte CJK scalars so the `FMT004` fold's per-character `utf8Size` offset
+The block carries three-byte CJK scalars so the `FMT002` fold's per-character `utf8Size` offset
 arithmetic is exercised across widths, not just one-byte ASCII. A separate dense input confirms the
 scans still produce findings at scale. This runs in the single test process — there is no worker, no
 child, and no project setup, because a source-tier rule reads only the string it is handed. -/
@@ -2849,7 +2857,7 @@ line `i + 1` at a known byte offset. The codes cycle through four live rules, wh
 SARIF descriptor set and its `codes.contains` scan realistic rather than singular. -/
 private def benchFile (index : Nat) (count : Nat) : FileReport × String := Id.run do
   let width := benchLine.utf8ByteSize
-  let codes := #["FMT003", "FMT004", "FMT010", "FMT013"]
+  let codes := #["FMT001", "FMT002", "FMT008", "FMT011"]
   let mut source := ""
   let mut findings : Array Finding := #[]
   for i in [0:count] do

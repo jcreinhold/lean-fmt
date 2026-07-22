@@ -34,7 +34,7 @@ about — add an entry to `ruleRegistry` and you are done.
 | `.preview` | `false` | not yet judged on corpus evidence | its code, its category, `all` — **only under `--preview`** |
 | `.deprecated` | either | on its way out | its code |
 
-`.stable` with `defaultEnabled := false` is not a contradiction. `FMT013` is the live instance: its
+`.stable` with `defaultEnabled := false` is not a contradiction. `FMT011` is the live instance: its
 correctness earned `.stable`, and its cost — one compiler frontend run per module on a project not
 built with the plugin, measured at 33× the default-run budget — kept it off the default path
 (`docs/projects/ruff-12b-rule-graduation/results/03-graduate.md`). Do not make a rule `.preview`
@@ -98,7 +98,7 @@ rules and both finding ranges rather than an array index.
 
 A rule need not carry a fix. `fixable := false` and `impl := .source fun facts => #[…]` with every
 finding's `fix? := none` ships a **report-only** rule: it names a problem the formatter cannot correct
-by reformatting. `FMT003` (forbidden control byte) and `FMT004` (suspicious bidirectional control) are
+by reformatting. `FMT001` (forbidden control byte) and `FMT002` (suspicious bidirectional control) are
 the shipped examples — both scan bytes in the `security` category. Report-only is the honest choice
 when the offending byte is inside a string literal or a comment: deleting it changes program data or
 human-read text, which is not a change a byte-level safety argument can call safe
@@ -179,8 +179,8 @@ know about your rule, you have crossed the boundary. `tests/boundary/run.sh` wil
 - `testApplicability` covers admission, per-rule reclassification, the display-only limit, and where a
   conflict came from. If your rule ships an `.unsafe` or `.displayOnly` fix, assert its applicability there and
   add a `--unsafe-fixes` case to `tests/modes/run.sh`.
-- All three tiers ship: `ruff-10` added the first `.syntax` rules (FMT008–FMT013) and `ruff-11` the
-  first `.semantic` ones (FMT014–FMT017). `check` reports a rule of any tier, and `fix` applies a
+- All three tiers ship: `ruff-10` added the first `.syntax` rules (FMT006–FMT011) and `ruff-11` the
+  first `.semantic` ones (FMT012–FMT015). `check` reports a rule of any tier, and `fix` applies a
   syntax fix by re-projecting the canonical text — the model `ruff-06`'s RFX-SPEC froze and
   `ruff-10b-syntax-fix-composition` finished. `SemanticResult.tier` and `cacheHitServes` gate the
   result cache, so a source-only shortcut entry never answers a `.syntax` or `.semantic` selection

@@ -182,7 +182,7 @@ fixture_dir="$repo_root/tests/reporting/performance-gate"
 mkdir -p "$fixture_dir"
 python3 - "$fixture_dir/Late.lean" <<'PY'
 import sys, pathlib
-# A control byte (FMT003) inside a comment: it fires anywhere, needs no frontend, is report-only, and
+# A control byte (FMT001) inside a comment: it fires anywhere, needs no frontend, is report-only, and
 # leaves the file parseable. Placed at the end, so `positionsOf` must walk the whole source to reach it.
 header = "/-\nCopyright (c) 2026 Jacob Reinhold. All rights reserved.\n-/\n\nmodule\n\n/-\n"
 body = ("x" * 79 + "\n") * (2_000_000 // 80)

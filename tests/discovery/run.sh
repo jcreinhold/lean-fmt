@@ -97,21 +97,21 @@ cat >"$ext/shared/base.toml" <<'EOF'
 line-width = 90
 [lint]
 select = ["security"]
-extend-select = ["FMT010"]
+extend-select = ["FMT008"]
 EOF
 cat >"$ext/pkg/.lean-fmt.toml" <<'EOF'
 extend = "../shared/base.toml"
 [format]
 line-width = 42
 [lint]
-extend-select = ["FMT011"]
+extend-select = ["FMT009"]
 EOF
 ext_show=$(show "$ext" "$ext/pkg/Pkg.lean")
 expect "the extending file wins a scalar" "42" \
   "$(printf '%s' "$ext_show" | python3 -c 'import json,sys; print(next(s["value"] for s in json.load(sys.stdin)["settings"] if s["key"]=="format.line-width"))')"
 expect "the parent's base array is inherited" '["security"]' \
   "$(printf '%s' "$ext_show" | python3 -c 'import json,sys; print(next(s["value"] for s in json.load(sys.stdin)["settings"] if s["key"]=="lint.select"))')"
-expect "extend-select concatenates parent then child" '["FMT010", "FMT011"]' \
+expect "extend-select concatenates parent then child" '["FMT008", "FMT009"]' \
   "$(printf '%s' "$ext_show" | python3 -c 'import json,sys; print(next(s["value"] for s in json.load(sys.stdin)["settings"] if s["key"]=="lint.extend-select"))')"
 expect "both contributing files are reported, parent first" "shared/base.toml pkg/.lean-fmt.toml" \
   "$(printf '%s' "$ext_show" | python3 -c '
