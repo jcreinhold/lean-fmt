@@ -26,7 +26,7 @@ inductive CommentKind where
   | line
   | block
   | doc
-  deriving Inhabited, BEq, DecidableEq, Repr
+  deriving Inhabited, BEq, DecidableEq, Repr, Lean.ToJson, Lean.FromJson
 
 structure Comment where
   kind : CommentKind
@@ -38,18 +38,19 @@ inductive CommentPlacement where
   | leading
   | trailing
   | dangling
-  deriving Inhabited, BEq, DecidableEq, Repr
+  deriving Inhabited, BEq, DecidableEq, Repr, Lean.ToJson, Lean.FromJson
 
 private structure Site where
   stx : Lean.Syntax
   range : SourceRange
   depth : Nat
+  path : Array Nat
   leaf : Bool
   spelling : String
   deriving Inhabited
 
 private inductive Owner where
-  | node (value : Lean.Syntax)
+  | node (value : Lean.Syntax) (path : Array Nat)
   | file
 
 private structure Assignment where
@@ -70,6 +71,15 @@ structure CommentSummary where
   suppressed : Nat
   payloadDigest : String
   valid : Bool
+  deriving Inhabited, BEq, Repr, Lean.ToJson, Lean.FromJson
+
+structure CommentContractEntry where
+  kind : CommentKind
+  placement : CommentPlacement
+  ownerKind : String
+  ownerPath : Array Nat
+  payload : String
+  suppressed : Bool
   deriving Inhabited, BEq, Repr, Lean.ToJson, Lean.FromJson
 
 namespace Comments
@@ -96,26 +106,31 @@ private def containsRange (outer inner : SourceRange) : Bool :=
   outer.start <= inner.start && inner.stop <= outer.stop
 
 private partial def collectSitesFrom (bytes : ByteArray) (stx : Lean.Syntax) (depth : Nat)
+    (path : Array Nat)
     (sites : Array Site) (comments : Array Comment) : Array Site × Array Comment :=
   match stx with
   | .node _ kind args =>
     if kind == Lean.choiceKind then
       match args[0]? with
-      | some selected => collectSitesFrom bytes selected depth sites comments
+      | some selected => collectSitesFrom bytes selected depth (path.push 0) sites comments
       | none => (sites, comments)
     else
       let sites := match sourceRange? stx with
-        | some range => sites.push { stx, range, depth, leaf := false, spelling := "" }
+        | some range => sites.push { stx, range, depth, path, leaf := false, spelling := "" }
         | none => sites
-      args.foldl (init := (sites, comments)) fun (sites, comments) child =>
-        collectSitesFrom bytes child (depth + 1) sites comments
+      let (sites, comments, _) := args.foldl (init := (sites, comments, 0))
+        fun (sites, comments, index) child =>
+          let (sites, comments) := collectSitesFrom bytes child (depth + 1)
+            (path.push index) sites comments
+          (sites, comments, index + 1)
+      (sites, comments)
   | .atom info _ | .ident info .. =>
     match sourceRange? stx with
     | none => (sites, comments)
     | some range =>
       let spelling := slice bytes range
       let sites := if isDocSpelling spelling then sites else
-        sites.push { stx, range, depth, leaf := true, spelling }
+        sites.push { stx, range, depth, path, leaf := true, spelling }
       let comments := if isDocSpelling spelling then
           comments.push { kind := .doc, range }
         else comments
@@ -159,8 +174,11 @@ where
     return result
 
 private def collectSites (bytes : ByteArray) (roots : Array Lean.Syntax) : Array Site × Array Comment :=
-  roots.foldl (init := (#[], #[])) fun (sites, comments) root =>
-    collectSitesFrom bytes root 0 sites comments
+  let (sites, comments, _) := roots.foldl (init := (#[], #[], 0))
+    fun (sites, comments, index) root =>
+      let (sites, comments) := collectSitesFrom bytes root 0 #[index] sites comments
+      (sites, comments, index + 1)
+  (sites, comments)
 
 private def commentOrder (left right : Comment) : Bool :=
   left.range.start < right.range.start ||
@@ -202,7 +220,7 @@ private def enclosingDelimiter? (sites : Array Site) (left right : Site) : Optio
               current.range.stop - current.range.start) then some site else selected
 
 private def syntaxOwner (site : Site) (placement : CommentPlacement) (comment : Comment) : Assignment :=
-  { comment, placement, owner := .node site.stx }
+  { comment, placement, owner := .node site.stx site.path }
 
 private def assignWithNeighbors (bytes : ByteArray) (sites : Array Site) (comment : Comment)
     (previous following : Option Site) : Assignment :=
@@ -267,7 +285,7 @@ private def forSyntax (ownership : CommentOwnership) (stx : Lean.Syntax)
     (placement : CommentPlacement) : Array Comment :=
   ownership.assignments.filterMap fun assignment =>
     match assignment.owner with
-    | .node owner =>
+    | .node owner _ =>
       if assignment.placement == placement && sameSyntax owner stx then some assignment.comment else none
     | .file => none
 
@@ -284,7 +302,7 @@ def fileDangling (ownership : CommentOwnership) : Array Comment :=
   ownership.assignments.filterMap fun assignment =>
     match assignment.owner with
     | .file => some assignment.comment
-    | .node _ => none
+    | .node _ _ => none
 
 def all (ownership : CommentOwnership) : Array Comment := ownership.extracted
 
@@ -297,10 +315,26 @@ def subtree (ownership : CommentOwnership) (stx : Lean.Syntax) : Array Comment :
   | some root => ownership.assignments.filterMap fun assignment =>
     match assignment.owner with
     | .file => none
-    | .node owner =>
+    | .node owner _ =>
       match sourceRange? owner with
       | some range => if containsRange root range then some assignment.comment else none
       | none => if sameSyntax owner stx then some assignment.comment else none
+
+/-- Stable validation input: exact payload and logical owner path, excluding source positions that
+layout necessarily changes. -/
+def contract (normalized : String) (ownership : CommentOwnership) : Array CommentContractEntry :=
+  let bytes := normalized.toUTF8
+  ownership.assignments.map fun assignment =>
+    let (ownerKind, ownerPath) := match assignment.owner with
+      | .file => ("file", #[])
+      | .node stx path => (stx.getKind.toString, path)
+    {
+      kind := assignment.comment.kind
+      placement := assignment.placement
+      ownerKind
+      ownerPath
+      payload := slice bytes assignment.comment.range
+      suppressed := assignment.comment.suppressed }
 
 private def assignmentComments (ownership : CommentOwnership) : Array Comment :=
   ownership.assignments.map (·.comment)
@@ -335,7 +369,7 @@ def summary (normalized : String) (ownership : CommentOwnership) : CommentSummar
     if assignment.comment.suppressed then suppressed := suppressed + 1
     let owner := match assignment.owner with
       | .file => "file"
-      | .node stx =>
+      | .node stx _ =>
         match sourceRange? stx with
         | some range => s!"{stx.getKind}:{range.start}:{range.stop}"
         | none => s!"{stx.getKind}:none"

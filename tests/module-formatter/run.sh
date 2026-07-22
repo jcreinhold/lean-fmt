@@ -13,7 +13,7 @@ LEAN_NUM_THREADS=1 lake build lean-fmt FormatterAdapterFixtures CompilerFixtures
 application=$(lake -q query lean-fmt --text)
 
 analyze() {
-  local setup=$1 source=$2 output=$3 mode=${4:-4}
+  local setup=$1 source=$2 output=$3 mode=${4:-draft}
   LEAN_NUM_THREADS=1 lake env "$application" __analyze-exact \
     "$setup" "$source" "$source" 8589934592 "$mode" >"$output"
 }
@@ -32,8 +32,8 @@ descriptor_command beforeExit := twice(1)
 verbatim tail λ that must not be parsed
 LEAN
 LEAN_NUM_THREADS=1 lake setup-file "$work/Terminal.lean" >"$work/terminal-setup.json"
-analyze "$work/terminal-setup.json" "$work/Terminal.lean" "$work/terminal-a.json" 4:72
-analyze "$work/terminal-setup.json" "$work/Terminal.lean" "$work/terminal-b.json" 4:72
+analyze "$work/terminal-setup.json" "$work/Terminal.lean" "$work/terminal-a.json" draft:72
+analyze "$work/terminal-setup.json" "$work/Terminal.lean" "$work/terminal-b.json" draft:72
 
 python3 - "$work/Terminal.lean" "$work/terminal-a.json" "$work/terminal-b.json" <<'PY'
 import json, pathlib, sys
@@ -85,7 +85,7 @@ pathlib.Path(sys.argv[3]).write_bytes(text.replace("\n", "\r\n").encode())
 PY
 LEAN_NUM_THREADS=1 lake setup-file "$work/LineEnd.lean" >"$work/line-setup.json"
 for name in LineEnd NoFinal CRLF; do
-  analyze "$work/line-setup.json" "$work/$name.lean" "$work/$name.json" 4:40
+  analyze "$work/line-setup.json" "$work/$name.lean" "$work/$name.json" draft:40
 done
 python3 - "$work/LineEnd.json" "$work/NoFinal.json" "$work/CRLF.json" <<'PY'
 import json, sys

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Actual imported syntax through the live whole-module draft. Mode 4 is a private audit transport;
-# product callers cannot select it.
+# Actual imported syntax through the deliberately unvalidated whole-module draft. Production layout
+# consumes only the separate structurally and idempotently admitted result.
 
 repo_root=$(cd "$(dirname "$0")/../.." && pwd)
 work=$(mktemp -d)
@@ -36,7 +36,7 @@ LEAN
 LEAN_NUM_THREADS=1 lake setup-file "$work/AdapterInput.lean" >"$work/setup.json"
 for width in 32 100; do
   LEAN_NUM_THREADS=1 lake env "$application" __analyze-exact \
-    "$work/setup.json" "$work/AdapterInput.lean" "AdapterInput.lean" 8589934592 "4:$width" \
+    "$work/setup.json" "$work/AdapterInput.lean" "AdapterInput.lean" 8589934592 "draft:$width" \
     >"$work/envelope-$width.json"
 done
 
@@ -110,7 +110,7 @@ LEAN
 
 LEAN_NUM_THREADS=1 lake setup-file "$work/Throwing.lean" >"$work/throwing-setup.json"
 LEAN_NUM_THREADS=1 lake env "$application" __analyze-exact \
-  "$work/throwing-setup.json" "$work/Throwing.lean" "Throwing.lean" 8589934592 4 \
+  "$work/throwing-setup.json" "$work/Throwing.lean" "Throwing.lean" 8589934592 draft \
   >"$work/throwing.json"
 
 python3 - "$work/throwing.json" <<'PY'

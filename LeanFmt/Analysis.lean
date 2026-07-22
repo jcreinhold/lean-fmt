@@ -11,6 +11,7 @@ import all LeanFmt.Comments
 import all LeanFmt.Formatter
 import all LeanFmt.Rules
 import all LeanFmt.Suppression
+import all LeanFmt.Validator
 
 import Lean.Elab.Frontend
 import Lean.Linter.Deprecated
@@ -25,8 +26,19 @@ structure AnalysisEnvelope where
   commentSummary? : Option CommentSummary := none
   formatDraft? : Option FormatDraft := none
   formatFailure? : Option FormatterFailure := none
+  canonical? : Option CanonicalLayout := none
+  validationFailure? : Option ValidationFailure := none
   diagnostics : Array String := #[]
   deriving Lean.ToJson, Lean.FromJson
+
+structure CandidateValidationEnvelope where
+  canonical? : Option CanonicalLayout := none
+  failure? : Option ValidationFailure := none
+  deriving Lean.ToJson, Lean.FromJson
+
+private def candidateFailure (gate : ValidationGate) (detail : String) :
+    CandidateValidationEnvelope :=
+  { failure? := some { gate, detail } }
 
 /- Silent messages are carriers, not diagnostics. The compiler plugin writes the module artifact into
 the persistent lint log as a silent `.information` message, so an integrated project's own frontend run
@@ -127,6 +139,7 @@ private def buildFormatDraft (normalized : String) (source : LosslessSource)
   return .ok {
     text := rendered.text
     sourceMap := rendered.sourceMap
+    commentContract := Comments.contract normalized ownership
     metrics := {
       frontendRuns := 1
       commands := commands.size
@@ -304,13 +317,15 @@ compiler plugin; no accumulated environment or parser state crosses this process
 unsafe def analyzeExact (setup : Lean.ModuleSetup) (source : String)
     (sourcePath : System.FilePath) (captureSemantic : Bool := false)
     (captureOccurrences : Bool := false) (captureComments : Bool := false)
-    (captureFormatDraft : Bool := false) (formatWidth : Nat := 100) : IO AnalysisEnvelope := do
+    (captureFormatDraft : Bool := false) (validateFormatDraft : Bool := false)
+    (formatWidth : Nat := 100) (loadDynlibs : Bool := true) : IO AnalysisEnvelope := do
   Lean.initSearchPath (← Lean.findSysroot)
   Lean.enableInitializersExecution
   let input := Lean.Parser.mkInputContext source sourcePath.toString
   let options := Lean.Elab.async.setIfNotSet setup.options.toOptions true
   let setupImports (header : Lean.Elab.HeaderSyntax) := do
-    liftM <| setup.dynlibs.forM Lean.loadDynlib
+    if loadDynlibs then
+      liftM <| setup.dynlibs.forM Lean.loadDynlib
     return .ok {
       mainModuleName := setup.name
       package? := setup.package?
@@ -357,14 +372,15 @@ unsafe def analyzeExact (setup : Lean.ModuleSetup) (source : String)
   -- systems inside one artifact for any file that uses CRLF.
   let artifact := ModuleArtifact.ofParsedModule setup.name.toString
     normalizedSource commands terminal? semantic
-  let ownership? := if captureComments || captureFormatDraft then
+  let needsDraft := captureFormatDraft || validateFormatDraft
+  let ownership? := if captureComments || needsDraft then
       let suppressed := (Suppression.collect artifact.source normalizedSource).directives.map (·.scopeRange)
       some <| Comments.build normalizedSource snapshot.stx commands terminal? suppressed
     else none
   let commentSummary? := if captureComments then
       ownership?.map (Comments.summary normalizedSource)
     else none
-  let (formatDraft?, formatFailure?) ← if captureFormatDraft then do
+  let (firstDraft?, formatFailure?) ← if needsDraft then do
       let some ownership := ownership?
         | throw <| IO.userError "format draft has no comment ownership"
       match ← buildFormatDraft normalizedSource artifact.source sourcePath input.fileMap ownership
@@ -372,7 +388,72 @@ unsafe def analyzeExact (setup : Lean.ModuleSetup) (source : String)
       | .ok draft => pure (some draft, none)
       | .error failure => pure (none, some failure)
     else pure (none, none)
-  return { artifact? := some artifact, commentSummary?, formatDraft?, formatFailure? }
+  let (canonical?, validationFailure?) ← if validateFormatDraft then do
+      let some first := firstDraft?
+        | match formatFailure? with
+          | some failure => pure (none, some {
+              gate := .formatter
+              detail := failure.detail })
+          | none => pure (none, some {
+              gate := .formatter
+              detail := "format draft was not produced" })
+      let candidate ← analyzeExact setup first.text sourcePath
+        (captureFormatDraft := true) (formatWidth := formatWidth) (loadDynlibs := false)
+      if !candidate.diagnostics.isEmpty then
+        pure (none, some {
+          gate := .diagnostics
+          detail := String.intercalate "\n" candidate.diagnostics.toList })
+      else match candidate.artifact?, candidate.formatDraft?, candidate.formatFailure? with
+        | some candidateArtifact, some second, none =>
+          match Validator.admit normalizedSource artifact.source first candidateArtifact.source second with
+          | .ok layout => pure (some layout, none)
+          | .error failure => pure (none, some failure)
+        | _, _, some failure => pure (none, some { gate := .formatter, detail := failure.detail })
+        | _, _, _ => pure (none, some {
+            gate := .structure
+            detail := "candidate frontend returned no artifact or second draft" })
+    else pure (none, none)
+  let formatDraft? := if captureFormatDraft then firstDraft? else none
+  return {
+    artifact? := some artifact
+    commentSummary? := commentSummary?
+    formatDraft? := formatDraft?
+    formatFailure? := formatFailure?
+    canonical? := canonical?
+    validationFailure? := validationFailure? }
+
+/-- Test-only admission of externally supplied candidate bytes through the same production
+comparator and second formatting pass. Product formatting never accepts candidate bytes from a
+caller; this operation exists so mutation fixtures can exercise the real gates. -/
+unsafe def validateCandidateExact (setup : Lean.ModuleSetup) (source candidate : String)
+    (sourcePath : System.FilePath) (width : Nat) : IO CandidateValidationEnvelope := do
+  let original ← analyzeExact setup source sourcePath (captureFormatDraft := true)
+    (formatWidth := width)
+  if !original.diagnostics.isEmpty then
+    return candidateFailure .diagnostics (String.intercalate "\n" original.diagnostics.toList)
+  let reparsed ← analyzeExact setup candidate sourcePath (captureFormatDraft := true)
+    (formatWidth := width) (loadDynlibs := false)
+  if !reparsed.diagnostics.isEmpty then
+    return candidateFailure .diagnostics (String.intercalate "\n" reparsed.diagnostics.toList)
+  match original.artifact?, original.formatDraft?, reparsed.artifact?, reparsed.formatDraft?,
+      reparsed.formatFailure? with
+  | some beforeArtifact, some beforeDraft, some afterArtifact, some second, none =>
+    let normalizedSource := (LosslessSource.normalize source).1
+    let normalizedCandidate := (LosslessSource.normalize candidate).1
+    let first : FormatDraft := {
+      beforeDraft with
+      text := normalizedCandidate
+      sourceMap := #[{
+        source := ⟨0, normalizedSource.utf8ByteSize⟩
+        output := ⟨0, normalizedCandidate.utf8ByteSize⟩ }] }
+    match Validator.admit normalizedSource beforeArtifact.source first afterArtifact.source second with
+    | .ok canonical => return { canonical? := some canonical }
+    | .error failure => return { failure? := some failure }
+  | _, _, _, _, some failure =>
+    return candidateFailure .formatter failure.detail
+  | _, _, _, _, _ =>
+    return candidateFailure .structure
+      "candidate validation did not produce both frontend projections"
 
 /- Extract the compiler-owned payload from one exact module artifact. Process exit remains the
 reclamation boundary; the returned value is compact and contains no environment-owned reference. -/

@@ -58,6 +58,7 @@ lean_lib LeanFmtApplication where
     Glob.one `LeanFmt.GitSelection,
     Glob.one `LeanFmt.Project,
     Glob.one `LeanFmt.Semantic,
+    Glob.one `LeanFmt.Validator,
     Glob.one `LeanFmt.LanguageServer,
     Glob.one `LeanFmt.Watch,
     Glob.one `LeanFmt.Application,

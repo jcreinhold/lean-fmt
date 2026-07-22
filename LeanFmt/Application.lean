@@ -1861,26 +1861,32 @@ private unsafe def runAnalyzeChild (args : List String) : IO UInt32 := do
     let source ← IO.FS.readFile snapshotPath
     pure (setup, source)
   -- "0" none, "1" semantic (notations + diagnostics), "2" semantic + the info-tree occurrence
-  -- fold, "3" test/audit-only comment ownership over the live syntax, and "4[:WIDTH]" the
-  -- unvalidated whole-module draft. Product callers do not request "3" or "4" yet; Prompt 10 wires
-  -- the width-bearing demand only after Prompt 09 installs mandatory admission.
+  -- fold, "3" test/audit-only comment ownership, "draft[:WIDTH]" the deliberately unvalidated test
+  -- hook, and "4[:WIDTH]" the structurally/idempotently admitted layout. Product callers do not
+  -- request the last two yet; Prompt 10 wires the width-bearing validated demand.
   --
   -- Two phases, on this side of the process boundary where the parent cannot see: `child_analyze` is
   -- the frontend itself, `child_encode` is turning its result into the JSON the parent reads back. A
   -- projection runs about 10x the size of its source (`ruff-01`), so the second is not obviously
   -- small, and the parent's `exact_child` covers both without distinguishing them. These records go
   -- to stderr, which the parent captures and forwards; stdout is the envelope and takes no passengers.
-  let formatWidth? := match captureMode.splitOn ":" with
+  let validatedWidth? := match captureMode.splitOn ":" with
     | ["4"] => some 100
     | ["4", width] => width.toNat?
     | _ => none
+  let draftWidth? := match captureMode.splitOn ":" with
+    | ["draft"] => some 100
+    | ["draft", width] => width.toNat?
+    | _ => none
+  let formatWidth := (validatedWidth? <|> draftWidth?).getD 100
   let envelope ← withPhase "child_analyze" <|
     analyzeExact setup source displayPath
       (captureSemantic := captureMode == "1" || captureMode == "2")
       (captureOccurrences := captureMode == "2")
       (captureComments := captureMode == "3")
-      (captureFormatDraft := formatWidth?.isSome)
-      (formatWidth := formatWidth?.getD 100)
+      (captureFormatDraft := draftWidth?.isSome)
+      (validateFormatDraft := validatedWidth?.isSome)
+      (formatWidth := formatWidth)
   let encoded ← withPhase "child_encode" do
     -- `IO.lazyPure` for the reason `profiledPositions` documents: a plain `let` of a pure value can be
     -- floated out of the action's closure, and then the bracket times nothing. The `utf8ByteSize`
@@ -1904,6 +1910,24 @@ private unsafe def runExtractChild (args : List String) : IO UInt32 := do
     if let some parent := (output : FilePath).parent then
       IO.FS.createDirAll parent
     IO.FS.writeFile output "null"
+  return 0
+
+private unsafe def runValidateCandidateChild (args : List String) : IO UInt32 := do
+  let [setupPath, sourcePath, candidatePath, displayPath, maxBytes, width] := args
+    | return 2
+  let some maxBytes := maxBytes.toNat?
+    | return 2
+  let some width := width.toNat?
+    | return 2
+  Lean.Internal.setMaxMemory maxBytes.toUSize
+  let .ok setupJson := Lean.Json.parse (← IO.FS.readFile setupPath)
+    | return 2
+  let .ok (setup : Lean.ModuleSetup) := Lean.fromJson? setupJson
+    | return 2
+  let source ← IO.FS.readFile sourcePath
+  let candidate ← IO.FS.readFile candidatePath
+  let result ← validateCandidateExact setup source candidate displayPath width
+  IO.println (Lean.toJson result).compress
   return 0
 
 private unsafe def runInspectArtifactChild (args : List String) : IO UInt32 := do
@@ -2117,6 +2141,7 @@ def compilerStatus (request : CompilerStatusRequest) : IO CompilerStatusReport :
 unsafe def runInternal? (args : List String) : IO (Option UInt32) :=
   match args with
   | "__analyze-exact" :: rest => some <$> runAnalyzeChild rest
+  | "__validate-candidate" :: rest => some <$> runValidateCandidateChild rest
   | "__extract-artifact" :: rest => some <$> runExtractChild rest
   | "__inspect-artifact" :: rest => some <$> runInspectArtifactChild rest
   | "__measure-cache-epoch" :: rest => some <$> measureCacheEpoch rest

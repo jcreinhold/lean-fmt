@@ -2757,6 +2757,31 @@ steps={rendered.metrics.workSteps} marks={rendered.sourceMap.size} native={rende
     report "marked-call-args" n (markedCallArgs n)
   return 0
 
+private def validatorMapNegative : IO UInt32 := do
+  let base : FormatDraft := {
+    text := "abc"
+    commentContract := #[]
+    metrics := default
+    sourceDigest := ""
+    sourceBytes := 3
+    headerStop := 0
+    terminalStop := 3
+    sourceMap := #[{ source := ⟨0, 3⟩, output := ⟨0, 3⟩ }] }
+  ensure (Validator.validateMap base).isOk "a complete source map was rejected"
+  let defects : Array FormatDraft := #[
+    { base with sourceMap := #[{ source := ⟨0, 2⟩, output := ⟨0, 3⟩ }] },
+    { base with sourceMap := #[
+        { source := ⟨0, 2⟩, output := ⟨0, 2⟩ },
+        { source := ⟨1, 3⟩, output := ⟨2, 3⟩ }] },
+    { base with sourceMap := #[{ source := ⟨2, 1⟩, output := ⟨0, 3⟩ }] },
+    { base with sourceMap := #[{ source := ⟨0, 3⟩, output := ⟨0, 2⟩ }] }]
+  for defect in defects do
+    match Validator.validateMap defect with
+    | .error failure => ensure (failure.gate == .sourceMap) "wrong source-map rejection gate"
+    | .ok _ => throw <| IO.userError "an invalid source map was admitted"
+  IO.println s!"validator-map-negative cases={defects.size}"
+  return 0
+
 /-! ## Report renderer scale (`ruff-15` RRF-FINAL)
 
 `evidence/02-renderer-cost.md` measured the six renderers at 109 findings and the append pattern in
@@ -2845,6 +2870,7 @@ public unsafe def main (args : List String) : IO UInt32 := do
   | ["printer-node-kinds", envelopePath, sourcePath] => printerNodeKinds envelopePath sourcePath
   | ["doc-bench"] => docBench
   | ["doc-step-counts"] => docStepCounts
+  | ["validator-map-negative"] => validatorMapNegative
   | ["doc-properties"] => testDoc; return 0
   | ["report-bench"] => reportBench
   | ["doc-dump"] => docDump

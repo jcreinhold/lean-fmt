@@ -103,6 +103,30 @@ else
   sed 's/^/    /' "$scratch/doc-steps.out" >&2
 fi
 
+printf -- '\n--- §0c validation performs exactly two frontend renders ---\n'
+validator_fixture="$repo_root/tests/performance/validator-gate/Accepted.lean"
+lake setup-file "$validator_fixture" >"$scratch/validator-setup.json"
+"$fmt" __analyze-exact "$scratch/validator-setup.json" "$validator_fixture" \
+  "$validator_fixture" 8589934592 4:80 >"$scratch/validator.json"
+if python3 - "$scratch/validator.json" <<'PY'
+import json, sys
+result = json.load(open(sys.argv[1]))
+canonical = result.get("canonical")
+assert canonical is not None and result.get("validationFailure") is None, result
+assert canonical["validation"] == {
+    "frontendRuns": 2,
+    "renders": 2,
+    "structuralComparisons": 1,
+    "idempotencePasses": 1,
+}, canonical
+assert canonical["metrics"]["frontendRuns"] == 2, canonical
+PY
+then
+  ok "one candidate run plus one reparsed idempotence run; no hidden third render"
+else
+  bad "validation work counts changed from frontend/renders/comparisons/idempotence = 2/2/1/1"
+fi
+
 printf -- '\n--- §1 a warm run is fully cache-served ---\n'
 
 # Prime. The first run may be cold for any reason -- a rebuilt binary, a fresh checkout, another
