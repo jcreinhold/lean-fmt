@@ -1978,24 +1978,6 @@ and this is where it surfaces. -/
 
 private def hugeWidth : Nat := 1000000
 
-/-- The flat rendering, defined independently of the renderer. `hard` is excluded by the properties
-that use this. -/
-private def flatText : Doc → String
-  | .empty => ""
-  | .text s => s
-  | .line flat => flat
-  | .hard => "\n"
-  | .verbatim s => s
-  | .cat a b => flatText a ++ flatText b
-  | .nest _ d | .group d | .mark _ d => flatText d
-
-/-- Only the literal text, with every break opportunity dropped. -/
-private def textAtoms : Doc → String
-  | .empty | .line _ | .hard => ""
-  | .text s | .verbatim s => s
-  | .cat a b => textAtoms a ++ textAtoms b
-  | .nest _ d | .group d | .mark _ d => textAtoms d
-
 private def stripLayout (s : String) : String :=
   s.foldl (fun acc c => if c == '\n' || c == ' ' then acc else acc.push c) ""
 
@@ -2012,34 +1994,51 @@ private def nextRand (seed : Nat) : Nat := (seed * 1103515245 + 12345) % 2147483
 private def atomFor (r : Nat) : String :=
   String.ofList (List.replicate (r % 6 + 1) (Char.ofNat (97 + r % 26)))
 
-/-- A deterministic document generator. Seeded rather than random so a failure is reproducible from
-the printed seed alone; `hard` and `verbatim` are excluded because the properties below are about the
-flat/broken duality and both constructors opt out of it by definition. -/
-private partial def genDoc (depth : Nat) (seed : Nat) : Doc × Nat :=
+private structure GeneratedDoc where
+  document : Doc
+  flat : String
+  atoms : String
+  nextSeed : Nat
+  deriving Inhabited
+
+/-- A deterministic document generator with an independent expected flat spelling and literal-atom
+model. Seeded rather than random so a failure is reproducible from the printed seed alone; `hard`,
+`verbatim`, and registered leaves are excluded because these properties concern custom groups. -/
+private partial def genDoc (depth : Nat) (seed : Nat) : GeneratedDoc :=
   let r := nextRand seed
   if depth == 0 then
     match r % 3 with
-    | 0 => (.empty, r)
-    | 1 => (.text (atomFor r), r)
-    | _ => (.line (if r % 2 == 0 then " " else ""), r)
+    | 0 => { document := .empty, flat := "", atoms := "", nextSeed := r }
+    | 1 =>
+      let atom := atomFor r
+      { document := .text atom, flat := atom, atoms := atom, nextSeed := r }
+    | _ =>
+      let flat := if r % 2 == 0 then " " else ""
+      { document := .line flat, flat, atoms := "", nextSeed := r }
   else
     match r % 7 with
-    | 0 => (.text (atomFor r), r)
-    | 1 => (.line " ", r)
-    | 2 => (.line "", r)
+    | 0 =>
+      let atom := atomFor r
+      { document := .text atom, flat := atom, atoms := atom, nextSeed := r }
+    | 1 => { document := .line " ", flat := " ", atoms := "", nextSeed := r }
+    | 2 => { document := .line "", flat := "", atoms := "", nextSeed := r }
     | 3 =>
-      let (a, r₁) := genDoc (depth - 1) r
-      let (b, r₂) := genDoc (depth - 1) r₁
-      (.cat a b, r₂)
+      let left := genDoc (depth - 1) r
+      let right := genDoc (depth - 1) left.nextSeed
+      {
+        document := .cat left.document right.document
+        flat := left.flat ++ right.flat
+        atoms := left.atoms ++ right.atoms
+        nextSeed := right.nextSeed }
     | 4 =>
-      let (d, r₁) := genDoc (depth - 1) r
-      (.nest 2 d, r₁)
+      let generated := genDoc (depth - 1) r
+      { generated with document := .nest 2 generated.document }
     | 5 =>
-      let (d, r₁) := genDoc (depth - 1) r
-      (.group d, r₁)
+      let generated := genDoc (depth - 1) r
+      { generated with document := .group generated.document }
     | _ =>
-      let (d, r₁) := genDoc (depth - 1) r
-      (.mark ⟨r % 100, r % 100 + 5⟩ d, r₁)
+      let generated := genDoc (depth - 1) r
+      { generated with document := .mark ⟨r % 100, r % 100 + 5⟩ generated.document }
 
 private def testDoc : IO Unit := do
   -- The case the whole model was chosen for. A `do` block is `do act1; act2` flat and drops the
@@ -2083,7 +2082,26 @@ private def testDoc : IO Unit := do
   -- `text` claims to be one line, and the claim is checkable rather than conventional.
   ensure (Doc.wellFormed doBlock) "a well-formed document was rejected"
   ensure (!Doc.wellFormed (.text "a\nb")) "a text holding two lines was accepted"
+  ensure (!Doc.wellFormed (.line "a\nb")) "a break with a multi-line flat spelling was accepted"
   ensure (Doc.wellFormed (.verbatim "a\nb")) "verbatim is how a newline is stated and was rejected"
+  ensure (!Doc.wellFormed (.mark ⟨20, 10⟩ (.text "x"))) "a reversed source mark was accepted"
+
+  -- Columns are codepoints, as in Lean's native renderer. Six CJK codepoints plus a space and `x`
+  -- fit at eight despite occupying more terminal cells, and fail at seven.
+  let unicode : Doc := .group (.text "世界世界世界" ++ .line " " ++ .text "x")
+  ensure (renderText 8 unicode == "世界世界世界 x") "Unicode columns were counted as bytes or cells"
+  ensure (renderText 7 unicode == "世界世界世界\nx") "a Unicode group did not break at its codepoint width"
+
+  -- A registered formatter result remains opaque and is interpreted at the active column. Its
+  -- native group therefore sees the two columns already emitted by the custom prefix.
+  let native := Std.Format.group ("a" ++ Std.Format.line ++ "b")
+  let hybrid : Doc := .text "x " ++ .registered native
+  let wideHybrid := renderDetailed 5 hybrid
+  let narrowHybrid := renderDetailed 4 hybrid
+  ensure (wideHybrid.text == "x a b") "an opaque registered document ignored its active column"
+  ensure (narrowHybrid.text == "x a\nb") "an opaque registered document did not reflow"
+  ensure (wideHybrid.metrics.nativeEvents > 0 && narrowHybrid.metrics.nativeEvents > 0)
+    "the registered document was not interpreted through the native renderer"
 
   -- Source map. Output ranges are bytes; `mark` carries no width and renders exactly as its body.
   let marked : Doc := .text "a" ++ .mark ⟨10, 20⟩ (.text "bcd") ++ .text "e"
@@ -2132,30 +2150,32 @@ private def testDoc : IO Unit := do
   -- deterministic, so a counterexample is reproducible from that number alone.
   let mut seed := 20260716
   for i in [0:400] do
-    let (d, next) := genDoc 5 seed
-    seed := next
-    let wrapped : Doc := .group d
+    let generated := genDoc 5 seed
+    seed := generated.nextSeed
+    let wrapped : Doc := .group generated.document
     ensure (Doc.wellFormed wrapped) s!"generated document {i} (seed {seed}) was not well formed"
     -- At an unreachable margin every group is flat, so the renderer must agree with an
     -- independently defined flat rendering. This is what pins `line`'s flat text end to end.
-    ensure (renderText hugeWidth wrapped == flatText d)
+    ensure (renderText hugeWidth wrapped == generated.flat)
       s!"flat rendering diverged on document {i} (seed {seed})"
     -- At margin 0 every group with any width breaks, so only the literal atoms survive. Nothing may
     -- be dropped, duplicated, or reordered by breaking.
-    ensure (stripLayout (renderText 0 wrapped) == textAtoms d)
+    ensure (stripLayout (renderText 0 wrapped) == generated.atoms)
       s!"breaking lost or duplicated text on document {i} (seed {seed})"
-    -- Rendering is a function, not a process with state.
-    ensure (renderText 20 wrapped == renderText 20 wrapped)
-      s!"rendering was not deterministic on document {i} (seed {seed})"
-    -- Every recorded range must address real output.
-    let (text, marks) := render 20 wrapped
-    for mark in marks do
-      ensure (mark.output.start <= mark.output.stop && mark.output.stop <= text.utf8ByteSize)
-        s!"document {i} (seed {seed}) recorded an out-of-bounds output range"
-    -- Indentation is never negative and a broken line's indent is bounded by the document's nesting;
-    -- a renderer that lost track of `nest` shows up as a line indented past anything it wrote.
-    ensure (lineCount text <= Doc.size wrapped + 1)
-      s!"document {i} (seed {seed}) produced more lines than it has nodes"
+    for width in [0, 1, 40, 80, 100, 1000] do
+      -- Rendering is a function, not a process with state.
+      let rendered := renderDetailed width wrapped
+      ensure (renderDetailed width wrapped == rendered)
+        s!"rendering at width {width} was not deterministic on document {i} (seed {seed})"
+      -- Every recorded range must address real output.
+      for mark in rendered.sourceMap do
+        ensure (mark.output.start <= mark.output.stop && mark.output.stop <= rendered.text.utf8ByteSize)
+          s!"document {i} (seed {seed}) recorded an out-of-bounds output range at width {width}"
+      -- A document can emit no more custom commands than a fixed multiple of its nodes and marks.
+      ensure (rendered.metrics.workSteps <= 2 * Doc.size wrapped + 1)
+        s!"document {i} (seed {seed}) exceeded its work-step bound at width {width}"
+      ensure (lineCount rendered.text <= Doc.size wrapped + 1)
+        s!"document {i} (seed {seed}) produced more lines than nodes at width {width}"
 
 /-- `ruff-14` RSF-IMPL: unit selection and splicing over a layout source map.
 
@@ -2683,29 +2703,23 @@ private def printerNodeKinds (envelopePath sourcePath : String) : IO UInt32 := d
     IO.println kind
   return 0
 
-/- Layout cost, on the shapes `RLC-FINAL` names.
-
-`notes/01-layout-design.md` §4.6 records a known hole: the fit test is bounded in *columns*, not in
-nodes, so a document that never spends a column could make one fit test walk arbitrarily far. These
-fixtures are built to decide it rather than to pass. `tests/layout/bench.sh` reads the output and
-asserts; the numbers live in `evidence/03-layout-bench.txt`.
+/- Layout cost, including the zero-width shapes that exposed the former renderer's suffix-rescan
+defect. `docStepCounts` is the durable assertion; `docBench` remains a non-gating local timing probe.
 
 Construction is deliberately outside every timed region, and every timed region forces its result: a
 pure `let` in Lean is not evaluated where it is written, and an unforced `render` measures 166 ns for
 any `n` — which is how this benchmark first lied. -/
 
-/-- **The adversary.** `n` sibling groups that never spend a column and never offer a break, so no fit
-test can ever answer early: each one walks the entire remaining tail. This is §4.6's hole made
-concrete, and it is not reachable from a printer that emits a token per node — see `bench.sh`. -/
+/-- **The adversary.** `n` sibling groups that never spend a column and never offer a break. The old
+fit walk rescanned the whole tail for each group; cached work summaries now make every decision
+constant-time. -/
 private def zeroWidthSiblings (n : Nat) : Doc := Id.run do
   let mut d := Doc.text "x"
   for _ in [0:n] do
     d := .cat (.group (.nest 1 .empty)) d
   return d
 
-/-- **Adversarial nesting**, which is the shape the roadmap names by that phrase: `n` groups deep,
-none of which spends a column. Distinct from `zeroWidthSiblings`, and the distinction is the whole
-result — see `evidence/03-layout-bench.txt`. -/
+/-- **Adversarial nesting**: `n` zero-width groups deep, complementary to sibling width. -/
 private def zeroWidthNesting (n : Nat) : Doc := Id.run do
   let mut d := Doc.text "x"
   for _ in [0:n] do
@@ -2757,10 +2771,10 @@ arguing that a change "should not" alter output. `results/03-acceptance.md` reco
 private def docDump : IO UInt32 := do
   let mut seed : Nat := 20260716
   for i in [0:400] do
-    let (d, s) := genDoc 4 seed
-    seed := s
+    let generated := genDoc 4 seed
+    seed := generated.nextSeed
     for w in [0:41] do
-      IO.println s!"{i} {w} {String.intercalate "⏎" ((renderText w d).splitOn "\n")}"
+      IO.println s!"{i} {w} {String.intercalate "⏎" ((renderText w generated.document).splitOn "\n")}"
   return 0
 
 /-! ## Source-security microbenchmark (`RSR-FINAL`)
@@ -2865,6 +2879,20 @@ private def docBench : IO UInt32 := do
     benchOne "marked-call-args" n (markedCallArgs n)
   return 0
 
+/-- Machine-independent renderer work for the adversarial and Lean-shaped documents. One custom
+node is visited once and each mark adds exactly one close sentinel; no fit decision walks a suffix. -/
+private def docStepCounts : IO UInt32 := do
+  let report (label : String) (n : Nat) (document : Doc) : IO Unit := do
+    let rendered := renderDetailed 80 document
+    IO.println s!"doc-steps label={label} n={n} nodes={rendered.metrics.documentNodes} \
+steps={rendered.metrics.workSteps} marks={rendered.sourceMap.size} native={rendered.metrics.nativeEvents}"
+  for n in [1000, 8000] do
+    report "zero-width-siblings" n (zeroWidthSiblings n)
+    report "zero-width-nesting" n (zeroWidthNesting n)
+    report "call-args" n (callArgs n)
+    report "marked-call-args" n (markedCallArgs n)
+  return 0
+
 /-! ## Report renderer scale (`ruff-15` RRF-FINAL)
 
 `evidence/02-renderer-cost.md` measured the six renderers at 109 findings and the append pattern in
@@ -2952,6 +2980,8 @@ public unsafe def main (args : List String) : IO UInt32 := do
   | ["range-units", envelopePath, sourcePath, width] => rangeUnits envelopePath sourcePath width
   | ["printer-node-kinds", envelopePath, sourcePath] => printerNodeKinds envelopePath sourcePath
   | ["doc-bench"] => docBench
+  | ["doc-step-counts"] => docStepCounts
+  | ["doc-properties"] => testDoc; return 0
   | ["report-bench"] => reportBench
   | ["doc-dump"] => docDump
   | ["security-bench"] => securityBench
@@ -3012,6 +3042,8 @@ public unsafe def main (args : List String) : IO UInt32 := do
       verify-official-facet ROOT SOURCE | \
       attach-report ENVELOPE SOURCE | \
       doc-bench | \
+      doc-step-counts | \
+      doc-properties | \
       security-bench | \
       formatter-header SOURCE | \
       print-lake-hash ARTIFACT]"

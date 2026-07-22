@@ -80,6 +80,29 @@ CAPTURE
 
 printf 'tests/performance negative: every gate must be able to fail\n\n'
 
+printf -- '--- §0b renderer work is linear in nodes plus marks ---\n'
+cat >"$scratch/doc-healthy.out" <<'CAPTURE'
+doc-steps label=zero-width-siblings n=1000 nodes=4001 steps=4001 marks=0 native=0
+doc-steps label=zero-width-nesting n=1000 nodes=2001 steps=2001 marks=0 native=0
+doc-steps label=call-args n=1000 nodes=6005 steps=6005 marks=0 native=0
+doc-steps label=marked-call-args n=1000 nodes=7005 steps=8005 marks=1000 native=0
+doc-steps label=zero-width-siblings n=8000 nodes=32001 steps=32001 marks=0 native=0
+doc-steps label=zero-width-nesting n=8000 nodes=16001 steps=16001 marks=0 native=0
+doc-steps label=call-args n=8000 nodes=48005 steps=48005 marks=0 native=0
+doc-steps label=marked-call-args n=8000 nodes=56005 steps=64005 marks=8000 native=0
+CAPTURE
+expect_accept "eight renderer rows with steps = nodes + marks" \
+  gate_doc_steps_linear "$scratch/doc-healthy.out"
+
+sed 's/nodes=32001 steps=32001/nodes=32001 steps=64001/' \
+  "$scratch/doc-healthy.out" >"$scratch/doc-rescan.out"
+expect_reject "a zero-width suffix rescan doubling renderer work" \
+  gate_doc_steps_linear "$scratch/doc-rescan.out"
+
+head -7 "$scratch/doc-healthy.out" >"$scratch/doc-truncated.out"
+expect_reject "a truncated renderer report that omits one adversarial row" \
+  gate_doc_steps_linear "$scratch/doc-truncated.out"
+
 printf -- '--- §1a the workload is the one that was handed over ---\n'
 expect_accept "a run over all 34 targets" gate_targets_match "$scratch/healthy.err" 34
 

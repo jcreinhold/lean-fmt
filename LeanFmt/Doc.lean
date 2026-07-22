@@ -6,250 +6,310 @@ Authors: Jacob Reinhold
 
 module
 
-/- The layout algebra.
+/- A width-independent formatting document and its bounded renderer.
 
-This model was chosen by building both candidates and measuring them; the comparison is reproducible
-with `experiments/layout-core/run.sh`.
+The document has one flat/broken choice: `group`. A break carries its flat spelling, so separators
+such as `"; "` can disappear when a construct opens. There is no generic alternative, alignment, or
+best-fitting search.
 
-Two facts from that note matter here and are not obvious:
+The custom renderer is linear in document nodes plus emitted bytes. Each document caches the width
+up to its first forced break in flat and broken modes. The work stack caches the same summary for its
+suffix, so deciding a group is constant-time even for adversarial zero-width siblings. This avoids
+the repeated suffix walk used by the former renderer. Opaque leaves use Lean's own bounded work-list
+renderer and expose its output events separately from custom work counts.
 
-* **The renderer is part of the contract, not an implementation detail.** Wadler's `best`/`fits` is
-  linear only because Haskell is lazy: `better` compares two *unevaluated* renderings and forces only
-  the prefix that fits. Lean is strict, so a transliteration builds both alternatives in full and
-  takes time exponential in the number of sibling groups. `render` below is a bounded work list, and
-  its step count grows linearly in the size of the document. Lean core's `Std.Format.be` is a work
-  list for the same reason.
-* **`Std.Format` is not reusable here.** It is core's own Wadler algebra, but `Format` is a closed
-  inductive and its `line` flattens to `" "` and nothing else. A `do` block needs a separator that is
-  `"; "` flat and *nothing* broken; core and Oppen both strand the semicolon (measured). `line` below
-  carries its flat text, and that generalization decided the choice.
+Registered Lean formatter output remains opaque. `registered` stores one `Std.Format` and interprets
+it incrementally at the active width and column through `Std.Format.prettyM`; it neither clones the
+native tree nor renders it before width selection. A registered leaf is a fit boundary for enclosing
+custom groups. Core rules therefore compose it as a leaf, rather than putting it inside a custom
+group whose decision would require inspecting Lean's private layout tree.
 
-Units differ on purpose and the difference is not a bug: **columns are codepoints, ranges are bytes.**
-Columns are compared against the margin, and codepoints are what `Std.Format` counts
-(`Init/Data/Format/Basic.lean:401`), so this formatter agrees with every other Lean tool about where
-column 100 is. Ranges address source text, and `LosslessSource` is byte-indexed throughout. Neither
-unit is right for the other job. -/
+Columns count codepoints, matching `Std.Format`; source and output ranges count UTF-8 bytes. -/
 
 import all LeanFmt.LosslessSource
 
 namespace LeanFmt.Internal
 
-/-- The document algebra.
+private structure LineMeasure where
+  width : Nat
+  boundary : Bool
 
-A caller names structure — "these things are a group", "indent this", "a break may go here" — and
-never a column, a mode, or the rest of the line. Everything else in this module is private to that
-promise.
+namespace LineMeasure
 
-There is deliberately **no alternative constructor**: no Wadler `Union`, no Prettier
-`conditionalGroup`, no `ruff_formatter` `best_fitting`. The only choice in the algebra is flat versus
-broken, decided by one bounded fit test. The roadmap forbids unbounded alternative retention; with no
-alternative to retain that is unrepresentable rather than a discipline someone must keep. Adding such
-a constructor later would reopen `RLC-SPEC`, not merely extend this type. -/
-inductive Doc where
-  /-- Renders as nothing. -/
-  | empty
-  /-- Literal text on one line. Must not contain `'\n'` — `Doc.wellFormed` checks it, and `hard` or
-  `verbatim` is how a newline is stated. Splitting the two is a deliberate departure from
-  `Std.Format`, where a `'\n'` inside `text` is a hard break (`Basic.lean:269`): here "this string is
-  one line" is checkable rather than conventional. -/
-  | text (s : String)
-  /-- A break opportunity carrying the text it becomes when its group is flat.
-  `line " "` is Wadler's `line`, `line ""` is Leijen's `softline`, and `line "; "` is a `do` block's
-  separator. Broken, it emits a newline and the current indentation, dropping the flat text. -/
-  | line (flat : String)
-  /-- An unconditional newline plus the current indentation. A group containing one can never be
-  flat. A line comment must be followed by one: `--` swallows the rest of its line, so a comment a
-  group flattened onto one line would eat the code after it. -/
-  | hard
-  /-- Literal text that may span lines, emitted exactly as given.
+def empty : LineMeasure := ⟨0, false⟩
 
-  Its interior is **never re-indented**, which is why it exists and what `text`+`hard` cannot
-  express: `hard` applies the current indentation to the next line, and re-indenting a block comment
-  or a multi-line string literal rewrites its *content*.
-  `Std.Format` re-indents such text (`Basic.lean:269-276`); for a comment body that is a defect, not
-  a feature. A multi-line `verbatim` can never be flat. Discovered by `RLC-IMPL`; see
-  `results/02-engine.md`. -/
-  | verbatim (s : String)
-  /-- Concatenation. -/
-  | cat (a b : Doc)
-  /-- Indent `d` by `n` more columns. Relative and additive; consumed only by a broken `line` or a
-  `hard`. There is no align-to-current-column, which is column arithmetic and outside the caller's
-  vocabulary by design. -/
-  | nest (n : Nat) (d : Doc)
-  /-- Render `d` flat if it fits, else broken. Nested groups decide independently: an outer group
-  breaking does not break an inner one. -/
-  | group (d : Doc)
-  /-- Record that `d` was rendered from `range` in the source. Carries no width and renders exactly
-  as `d`; its only effect is a `Mark` in the source map. -/
-  | mark (range : SourceRange) (d : Doc)
-  deriving Inhabited
+def append (left right : LineMeasure) : LineMeasure :=
+  if left.boundary then left else ⟨left.width + right.width, right.boundary⟩
 
-instance : Append Doc where
-  append := .cat
+end LineMeasure
+
+mutual
+  private inductive DocKind where
+    | empty
+    | text (value : String)
+    | line (flat : String)
+    | hard
+    | verbatim (value : String)
+    | cat (left right : Doc)
+    | nest (indent : Nat) (body : Doc)
+    | group (body : Doc)
+    | mark (source : SourceRange) (body : Doc)
+    | registered (format : Std.Format)
+
+  /-- A formatting document. Construct values through the operations in `Doc`; its cached measures
+  and well-formedness bit are intentionally not caller-settable. -/
+  inductive Doc where
+    | private mk (kind : DocKind) (flat broken : LineMeasure) (nodes : Nat) (valid : Bool)
+end
 
 namespace Doc
 
-/-- Column width of a fragment, in codepoints. See the module comment on units.
+private def kind : Doc → DocKind
+  | .mk value .. => value
 
-This is the policy `Std.Format` uses, and it is a recorded compromise: it is right for the notation
-Lean is written in (`→`, `α`, `x₁` measure 1, 1, 2) and wrong for CJK and emoji, which display twice
-as wide as they measure. It also depends on normalization — `é` measures 1 column precomposed and 2
-decomposed. UAX#11 East Asian Width would need a table core does not have, and would put this
-formatter's column count at odds with every other Lean tool. -/
-def width (s : String) : Nat := s.length
+private def flatMeasure : Doc → LineMeasure
+  | .mk _ value .. => value
 
-/-- Text after the last newline, which is where the column stands once `verbatim` has been emitted. -/
-private def lastLine (s : String) : String :=
-  match (s.splitOn "\n").getLast? with
-  | some l => l
-  | none => s
+private def brokenMeasure : Doc → LineMeasure
+  | .mk _ _ value .. => value
 
-private def spansLines (s : String) : Bool := s.contains '\n'
-
-/-- Does every `text` hold exactly one line?
-
-The renderer tracks columns by adding `width s` for each `text`, which is only the true column if `s`
-has no newline in it. A document that fails this check renders text the caller wrote, but every
-column decision after the offending `text` is measured against the wrong number. `verbatim` is the
-supported way to emit a newline inside literal text. -/
-def wellFormed : Doc → Bool
-  | .text s => !spansLines s
-  | .empty | .line _ | .hard | .verbatim _ => true
-  | .cat a b => wellFormed a && wellFormed b
-  | .nest _ d | .group d | .mark _ d => wellFormed d
-
-/-- Number of constructors. Used by tests to talk about document size. -/
+/-- Number of custom document nodes. One registered formatter result is one opaque node. -/
 def size : Doc → Nat
-  | .empty | .text _ | .line _ | .hard | .verbatim _ => 1
-  | .cat a b => 1 + size a + size b
-  | .nest _ d | .group d | .mark _ d => 1 + size d
+  | .mk _ _ _ value _ => value
+
+/-- Whether all single-line literals are single-line and every source range is ordered. Mark scopes
+are balanced by construction because a mark owns its complete subdocument. -/
+def wellFormed : Doc → Bool
+  | .mk _ _ _ _ value => value
+
+/-- Column width in codepoints, the unit used by Lean's formatter. -/
+def width (value : String) : Nat := value.length
+
+private def spansLines (value : String) : Bool := value.contains '\n'
+
+private def firstLine (value : String) : String :=
+  match (value.splitOn "\n")[0]? with
+  | some line => line
+  | none => value
+
+private def lastLine (value : String) : String :=
+  match (value.splitOn "\n").getLast? with
+  | some line => line
+  | none => value
+
+private def literalMeasure (value : String) : LineMeasure :=
+  if spansLines value then ⟨width (firstLine value), true⟩ else ⟨width value, false⟩
+
+/-- The empty document. -/
+def empty : Doc := .mk .empty .empty .empty 1 true
+
+/-- Literal single-line text. A newline makes the resulting document ill-formed. -/
+def text (value : String) : Doc :=
+  let measure := literalMeasure value
+  .mk (.text value) measure measure 1 (!spansLines value)
+
+/-- A break opportunity with its exact flat spelling. A newline in the flat spelling is rejected. -/
+def line (flat : String) : Doc :=
+  .mk (.line flat) (literalMeasure flat) ⟨0, true⟩ 1 (!spansLines flat)
+
+/-- An unconditional newline at the current indentation. -/
+def hard : Doc := .mk .hard ⟨0, true⟩ ⟨0, true⟩ 1 true
+
+/-- Literal text that may span lines. Interior lines are never re-indented. -/
+def verbatim (value : String) : Doc :=
+  let measure := literalMeasure value
+  .mk (.verbatim value) measure measure 1 true
+
+/-- Concatenate two documents. -/
+def cat (left right : Doc) : Doc :=
+  .mk (.cat left right)
+    (left.flatMeasure.append right.flatMeasure)
+    (left.brokenMeasure.append right.brokenMeasure)
+    (1 + left.size + right.size)
+    (left.wellFormed && right.wellFormed)
+
+/-- Increase indentation after a break inside `body`. -/
+def nest (indent : Nat) (body : Doc) : Doc :=
+  .mk (.nest indent body) body.flatMeasure body.brokenMeasure (1 + body.size) body.wellFormed
+
+/-- Keep `body` flat when its current line fits, otherwise enable its breaks. -/
+def group (body : Doc) : Doc :=
+  .mk (.group body) body.flatMeasure body.flatMeasure (1 + body.size) body.wellFormed
+
+/-- Associate the complete rendering of `body` with a normalized-source byte range. -/
+def mark (source : SourceRange) (body : Doc) : Doc :=
+  .mk (.mark source body) body.flatMeasure body.brokenMeasure (1 + body.size)
+    (source.start <= source.stop && body.wellFormed)
+
+/-- Embed one formatter-registry result without converting its native tree. The leaf is interpreted
+at render time and forms a fit boundary for surrounding custom groups. -/
+def registered (format : Std.Format) : Doc :=
+  .mk (.registered format) ⟨0, true⟩ ⟨0, true⟩ 1 true
 
 end Doc
 
-/-- One entry of the source map: the input range a fragment came from, and the output range it
-occupies. `output` is a byte range into the rendered string; `source` is a byte range into the normalized
-source, the same coordinate system `LosslessSource` uses.
+instance : Append Doc where
+  append := Doc.cat
 
-Range formatting needs this, and so does any caller that must map a finding back to what it edited. -/
+instance : Inhabited Doc where
+  default := Doc.empty
+
+/-- One source-map entry. Both ranges use UTF-8 byte offsets. -/
 structure Mark where
   source : SourceRange
   output : SourceRange
   deriving Inhabited, BEq, Repr
 
+/-- Deterministic renderer work counters. Native events count incremental outputs, newlines, and tag
+events observed while interpreting opaque `Std.Format` leaves. -/
+structure RenderMetrics where
+  documentNodes : Nat
+  workSteps : Nat
+  nativeEvents : Nat
+  deriving Inhabited, BEq, Repr
+
+/-- Complete result of one render. -/
+structure Rendered where
+  text : String
+  sourceMap : Array Mark
+  metrics : RenderMetrics
+  deriving Inhabited, BEq, Repr
+
 private inductive Mode where
   | flat
-  | brk
-  deriving BEq, Inhabited
+  | broken
 
-/- One unit of pending work. `closeMark` is how a `mark` learns where its rendering ended: the
-renderer pushes the subdocument and a `closeMark` carrying the output offset at which it started, and
-records the `Mark` when the sentinel surfaces. It carries no width, so `fits` steps over it. -/
-private inductive Cmd where
-  | doc (indent : Nat) (mode : Mode) (d : Doc)
-  | closeMark (source : SourceRange) (outStart : Nat)
+private inductive Command where
+  | document (indent : Nat) (mode : Mode) (document : Doc)
+  | closeMark (source : SourceRange) (outputStart : Nat)
 
-private def newlineIndent (indent : Nat) : String :=
-  "\n".pushn ' ' indent
+private def Command.measure : Command → LineMeasure
+  | .closeMark .. => .empty
+  | .document _ mode doc =>
+    match mode with
+    | .flat => doc.flatMeasure
+    | .broken => doc.brokenMeasure
 
-/-- Does the undecided document still fit on this line?
+private inductive Work where
+  | empty
+  | more (command : Command) (measure : LineMeasure) (rest : Work)
 
-`remaining` is columns left. The walk stops at the first break-mode `line`, because everything after
-it is on another line and cannot affect this one — that bound keeps the renderer linear instead of
-exponential, and it is why no alternative rendering is ever built.
+namespace Work
 
-The caller deliberately includes `z`, the work list *after* the group. A group that fits on its own
-may still not fit once what follows it before the next break is counted, so a margin promises
-something about lines, not about groups. `Std.Format.pushGroup` carries the remainder for the same
-reason.
+def measure : Work → LineMeasure
+  | .empty => .empty
+  | .more _ value _ => value
 
-**Known hole, owned by `RLC-FINAL`.** The bound counts columns of *text*, not nodes between columns:
-`empty`, `nest`, `group`, `mark`, and `closeMark` consume no width, so a document that nests them
-deeply between text could walk arbitrarily far — O(n·w), and O(n²) in the limit. Every shape
-`RLC-SPEC` measured is linear, and any printer emitting text at bounded node-distance stays linear.
-No one has shown the bound for an adversarial zero-width document. -/
-private partial def fits (remaining : Int) : List Cmd → Bool
-  | [] => remaining >= 0
-  | cmd :: z =>
-    if remaining < 0 then false
-    else match cmd with
-      | .closeMark .. => fits remaining z
-      | .doc i m d => match d with
-        | .empty => fits remaining z
-        | .text s => fits (remaining - Doc.width s) z
-        | .verbatim s =>
-          -- Multi-line text cannot sit on this line at all, exactly like `hard`.
-          if Doc.spansLines s then (match m with | .flat => false | .brk => remaining >= 0)
-          else fits (remaining - Doc.width s) z
-        | .cat a b => fits remaining (.doc i m a :: .doc i m b :: z)
-        | .nest j d => fits remaining (.doc (i + j) m d :: z)
-        | .mark _ d => fits remaining (.doc i m d :: z)
-        | .group d => fits remaining (.doc i .flat d :: z)
-        | .line flat => match m with
-          | .flat => fits (remaining - Doc.width flat) z
-          | .brk => remaining >= 0
-        | .hard => match m with
-          -- The comment case: a `hard` forces its enclosing group open rather than swallowing code.
-          | .flat => false
-          | .brk => remaining >= 0
+def push (command : Command) (rest : Work) : Work :=
+  .more command (command.measure.append rest.measure) rest
 
-/- The renderer proper.
+end Work
 
-`out` is threaded rather than accumulated into an `Array` and joined. That is the measured choice, not
-the intuitive one: Lean's runtime mutates a string in place when its reference is unique, so `out ++ s`
-here is linear and beats `Array` + `String.join`. The roadmap's "repeated string concatenation" stop
-rule is about accumulators that are *shared*, which this one is not — it dies the moment it is passed
-on. `tests/layout/run.sh` measures the growth, so the claim cannot rot silently. -/
-private partial def go (w : Nat) : List Cmd → Nat → Nat → String → Array Mark → String × Array Mark
-  | [], _, _, out, marks => (out, marks)
-  | .closeMark source outStart :: z, col, outBytes, out, marks =>
-    go w z col outBytes out (marks.push { source, output := ⟨outStart, outBytes⟩ })
-  | .doc i m d :: z, col, outBytes, out, marks => match d with
-    | .empty => go w z col outBytes out marks
-    | .text s => go w z (col + Doc.width s) (outBytes + s.utf8ByteSize) (out ++ s) marks
-    | .verbatim s =>
-      let col := if Doc.spansLines s then Doc.width (Doc.lastLine s) else col + Doc.width s
-      go w z col (outBytes + s.utf8ByteSize) (out ++ s) marks
-    | .cat a b => go w (.doc i m a :: .doc i m b :: z) col outBytes out marks
-    | .nest j d => go w (.doc (i + j) m d :: z) col outBytes out marks
-    | .mark r d => go w (.doc i m d :: .closeMark r outBytes :: z) col outBytes out marks
-    | .hard =>
-      let s := newlineIndent i
-      go w z i (outBytes + s.utf8ByteSize) (out ++ s) marks
-    | .line flat => match m with
-      | .flat => go w z (col + Doc.width flat) (outBytes + flat.utf8ByteSize) (out ++ flat) marks
-      | .brk =>
-        let s := newlineIndent i
-        go w z i (outBytes + s.utf8ByteSize) (out ++ s) marks
-    | .group d => match m with
-      -- Already flat: the enclosing group's fit test *pushed this group as `.doc i .flat d`* to reach
-      -- its answer, so re-testing here can only re-derive the answer that authorized it — and if it
-      -- ever derived a different one, `go` would emit a break inside a group `fits` had certified as
-      -- flat. Honoring `m` keeps the two functions in step. It is also the difference between linear
-      -- and quadratic on nested groups: without it every one of `n` nested groups re-walks the tail.
-      -- Measured, `evidence/03-layout-bench.txt`.
-      | .flat => go w (.doc i .flat d :: z) col outBytes out marks
-      | .brk =>
-        let mode := if fits (Int.ofNat w - Int.ofNat col) (.doc i .flat d :: z) then Mode.flat else Mode.brk
-        go w (.doc i mode d :: z) col outBytes out marks
+private structure RenderState where
+  output : String := ""
+  column : Nat := 0
+  outputBytes : Nat := 0
+  marks : Array Mark := #[]
+  workSteps : Nat := 0
+  nativeEvents : Nat := 0
 
-/-- Render `d` at margin `w`, returning the text and the source map.
+private def appendLiteral (state : RenderState) (value : String) : RenderState :=
+  let column :=
+    if Doc.spansLines value then Doc.width (Doc.lastLine value) else state.column + Doc.width value
+  { state with
+    output := state.output ++ value
+    column
+    outputBytes := state.outputBytes + value.utf8ByteSize }
 
-**Total.** There is no `Except`, because layout cannot fail: no backtracking, no alternatives, no
-unsatisfiable constraint. That is a property of the constructor set, not a claim about this function.
+private def appendNewline (state : RenderState) (indent : Nat) : RenderState :=
+  let value := "\n".pushn ' ' indent
+  { state with
+    output := state.output ++ value
+    column := indent
+    outputBytes := state.outputBytes + value.utf8ByteSize }
 
-**A margin is not a guarantee.** The renderer never breaks a `text` and never invents a break
-opportunity, so a document whose atoms exceed `w` produces lines wider than `w`: an atom such as
-`) => tail` renders at its own width however small the margin. Indentation is likewise unclamped:
-`nest` depth d at unit u indents d·u whatever `w` is. Both follow from the model rather than being
-defects in it, and clamping is a language decision `RLC-FINAL` owns.
+private instance : Std.Format.MonadPrettyFormat (StateM RenderState) where
+  pushOutput value := modify fun state =>
+    { appendLiteral state value with nativeEvents := state.nativeEvents + 1 }
+  pushNewline indent := modify fun state =>
+    { appendNewline state indent with nativeEvents := state.nativeEvents + 1 }
+  currColumn := return (← get).column
+  startTag _ := modify fun state => { state with nativeEvents := state.nativeEvents + 1 }
+  endTags count := modify fun state => { state with nativeEvents := state.nativeEvents + count }
 
-Marks are recorded when their subdocument completes, so an inner `mark` precedes the outer `mark` that
-contains it; the array is in completion order, not source order. -/
-def render (w : Nat) (d : Doc) : String × Array Mark :=
-  go w [.doc 0 .brk d] 0 0 "" #[]
+private partial def renderWork (width : Nat) : Work → StateM RenderState Unit
+  | .empty => pure ()
+  | .more command _ rest => do
+    modify fun state => { state with workSteps := state.workSteps + 1 }
+    match command with
+    | .closeMark source outputStart =>
+      let state ← get
+      set { state with marks := state.marks.push {
+        source
+        output := ⟨outputStart, state.outputBytes⟩ } }
+      renderWork width rest
+    | .document indent mode document =>
+      match document.kind with
+      | .empty => renderWork width rest
+      | .text value =>
+        modify (appendLiteral · value)
+        renderWork width rest
+      | .verbatim value =>
+        modify (appendLiteral · value)
+        renderWork width rest
+      | .cat left right =>
+        renderWork width <| rest.push (.document indent mode right)
+          |>.push (.document indent mode left)
+      | .nest extra body =>
+        renderWork width <| rest.push (.document (indent + extra) mode body)
+      | .mark source body =>
+        let outputStart := (← get).outputBytes
+        renderWork width <| rest.push (.closeMark source outputStart)
+          |>.push (.document indent mode body)
+      | .hard =>
+        modify (appendNewline · indent)
+        renderWork width rest
+      | .line flat =>
+        match mode with
+        | .flat => modify (appendLiteral · flat)
+        | .broken => modify (appendNewline · indent)
+        renderWork width rest
+      | .group body =>
+        match mode with
+        | .flat => renderWork width <| rest.push (.document indent .flat body)
+        | .broken =>
+          let candidate := rest.push (.document indent .flat body)
+          let column := (← get).column
+          let available := width - column
+          let selected :=
+            if column <= width && !body.flatMeasure.boundary && candidate.measure.width <= available then
+              Mode.flat
+            else
+              Mode.broken
+          renderWork width <| rest.push (.document indent selected body)
+      | .registered format =>
+        Std.Format.prettyM format width indent
+        renderWork width rest
 
-/-- The rendered text, for callers that do not need the source map. -/
-def renderText (w : Nat) (d : Doc) : String :=
-  (render w d).1
+/-- Render a document at `width`, returning text, byte source maps, and deterministic work counts. -/
+def renderDetailed (width : Nat) (document : Doc) : Rendered :=
+  let initial := Work.empty.push (.document 0 .broken document)
+  let state := (renderWork width initial).run {} |>.2
+  {
+    text := state.output
+    sourceMap := state.marks
+    metrics := {
+      documentNodes := document.size
+      workSteps := state.workSteps
+      nativeEvents := state.nativeEvents } }
+
+/-- Render text and byte source maps. -/
+def render (width : Nat) (document : Doc) : String × Array Mark :=
+  let rendered := renderDetailed width document
+  (rendered.text, rendered.sourceMap)
+
+/-- Render only text. -/
+def renderText (width : Nat) (document : Doc) : String :=
+  (renderDetailed width document).text
 
 end LeanFmt.Internal

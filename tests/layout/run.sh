@@ -27,6 +27,14 @@ failures=0
 total_comments=0
 total_dangling=0
 
+printf -- '--- layout document properties ---\n'
+if "$tests" doc-properties; then
+  printf '  ok   widths 0/1/40/80/100/1000, Unicode, groups, marks, and registered leaves\n'
+else
+  printf 'FAIL layout document properties\n' >&2
+  failures=$((failures + 1))
+fi
+
 check_module() {
   local module=$1
   LEAN_NUM_THREADS=1 lake setup-file "$module" >"$work/setup.json"

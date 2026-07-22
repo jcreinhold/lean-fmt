@@ -38,10 +38,15 @@ repo_root=$(cd "$(dirname "$0")/../.." && pwd)
 cd "$repo_root"
 
 fmt="$repo_root/.lake/build/bin/lean-fmt"
+tests="$repo_root/.lake/build/bin/lean-fmt-tests"
 manifest="$repo_root/experiments/workloads/lean-fmt-self.txt"
 
 if [[ ! -x $fmt ]]; then
   printf 'build lean-fmt first: lake build\n' >&2
+  exit 2
+fi
+if [[ ! -x $tests ]]; then
+  printf 'build lean-fmt-tests first: lake build\n' >&2
   exit 2
 fi
 
@@ -87,6 +92,15 @@ if bash "$repo_root/tests/performance/negative.sh" >"$scratch/negative.log" 2>&1
 else
   bad "the gate predicates do not discriminate; see below"
   sed 's/^/    /' "$scratch/negative.log" >&2
+fi
+
+printf -- '\n--- §0b renderer work is linear in document nodes ---\n'
+"$tests" doc-step-counts >"$scratch/doc-steps.out"
+if gate_doc_steps_linear "$scratch/doc-steps.out"; then
+  ok "every custom node is visited once and every mark adds one close step (8 adversarial rows)"
+else
+  bad "renderer work is no longer steps = nodes + marks, or the step report is incomplete"
+  sed 's/^/    /' "$scratch/doc-steps.out" >&2
 fi
 
 printf -- '\n--- §1 a warm run is fully cache-served ---\n'

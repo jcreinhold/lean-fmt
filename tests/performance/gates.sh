@@ -42,6 +42,29 @@ gate_accounted() {
 
 # --- the gates ------------------------------------------------------------------------------------
 
+# §0b. Every custom document node is visited once and every mark adds one close sentinel. The input
+# is `lean-fmt-tests doc-step-counts`; native leaves are excluded because Lean owns their work list.
+# Requiring all eight rows prevents an empty or truncated report from passing vacuously.
+gate_doc_steps_linear() {
+  local report_path=$1
+  awk '
+    /^doc-steps / {
+      nodes = steps = marks = native = ""
+      for (i = 1; i <= NF; i++) {
+        split($i, pair, "=")
+        if (pair[1] == "nodes") nodes = pair[2]
+        if (pair[1] == "steps") steps = pair[2]
+        if (pair[1] == "marks") marks = pair[2]
+        if (pair[1] == "native") native = pair[2]
+      }
+      if (nodes == "" || steps == "" || marks == "" || native == "" ||
+          steps != nodes + marks || native != 0) bad = 1
+      rows++
+    }
+    END { exit !(rows == 8 && !bad) }
+  ' "$report_path"
+}
+
 # §1a. The run saw exactly the workload it was handed. Catches a selection change masquerading as a
 # speedup: processing fewer files is always faster and is never an optimization.
 gate_targets_match() {
