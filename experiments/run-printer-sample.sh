@@ -5,7 +5,7 @@ set -euo pipefail
 #
 # `tests/printer/run.sh` runs the printer over this repository's own modules, and that corpus has a
 # structural weakness no amount of care removes: I wrote it, so it is already formatted the way the
-# layouts format it. `evidence/01-projection-shape.txt` measures the consequence — 0 of its 260
+# layouts format it. `tests/printer/projection-shape.txt` measures the consequence — 0 of its 260
 # constructor and field shells hold collapsible slack — which means the corpus can show that the
 # layouts *run* but never that they *decide*. Its fixtures fill that gap with source written to be
 # wrong, and a fixture is still something I thought of.
@@ -168,7 +168,7 @@ done <"$sources"
   printf '# application gaps holding more than one space, and binder or match-alternative gaps whose\n'
   printf '# bytes are not the spacing the grammar declares (too tight counts too). All three are 0\n'
   printf '# here, across 11,679 applications, 3,851 binders and 121 alternatives\n'
-  printf '# (`evidence/02-term-census.txt`) -- real Lean writes `f a`, `(x : Nat)` and `| 0 => 1`\n'
+  printf '# (`experiments/evidence/02-term-census.txt`) -- real Lean writes `f a`, `(x : Nat)` and `| 0 => 1`\n'
   printf '# already. So `reformatted` does not move when a term layout lands,\n'
   printf '# and that is the finding rather than a disappointment: the part of term formatting that is\n'
   printf '# citable today is the part that changes nothing on code people actually wrote. The part\n'

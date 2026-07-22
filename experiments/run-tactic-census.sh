@@ -5,7 +5,7 @@ set -euo pipefail
 #
 # `run-term-census.sh` answered `RLF-EXPRESSIONS`'s scope question — how much of real Lean's *term*
 # syntax is a core parser this stack can cite — and its exhaustive list is deliberately
-# `Lean.Parser.Term.*` only (`evidence/02-term-census.txt`, last section). Tactic kinds appear there
+# `Lean.Parser.Term.*` only (`experiments/evidence/02-term-census.txt`, last section). Tactic kinds appear there
 # only in the top-60, which is enough to see that `tacticSeq` is 1967 and `tacticSeq1Indented` is 1966
 # and not enough to conclude anything: `tacticSeqBracketed` is below the cut, and the difference of the
 # two is *not* its count, because `tacticSeqIndentGt`'s `pushNone` branch (`Term/Basic.lean:90-92`)

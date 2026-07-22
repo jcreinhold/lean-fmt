@@ -5,7 +5,7 @@ set -euo pipefail
 #
 # `notes/03-tactics.md` §8 designs one change a formatter can make to a tactic block without moving a
 # column: rewrite the newline run inside a separator gap to a single newline. `tactic_blank_gaps`
-# (`evidence/01-printer-sample.txt`) measures what that would rewrite and reports **0** across 62
+# (`experiments/evidence/01-printer-sample.txt`) measures what that would rewrite and reports **0** across 62
 # modules and 1,966 blocks.
 #
 # A 0 wants two independent kinds of support, because a broken counter reports it just as readily:

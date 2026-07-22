@@ -98,7 +98,7 @@ fi
 # `members` is the same assertion one level down, and it needs its own floor because `canonical` cannot
 # see it: a command counts once whether it claimed one region or six, so every member claim could
 # vanish and `canonical` would not move. It is also the *only* assertion the corpus can make about the
-# member layout — `evidence/01-projection-shape.txt` measures that no constructor or field in this
+# member layout — `tests/printer/projection-shape.txt` measures that no constructor or field in this
 # repository holds collapsible slack, so laying them out reproduces their bytes exactly and the
 # round-trip is blind to it. The wonky fixture below is what pins that it changes anything at all.
 if [[ $total_members -lt 50 ]]; then
@@ -566,7 +566,7 @@ LEAN_NUM_THREADS=1 lake env "$application" __analyze-exact \
 #                                    `private     modified` collapses and the signature does not.
 #                                    This line is the whole reason the member layout exists: no
 #                                    constructor or field in the corpus holds collapsible slack
-#                                    (`evidence/01-projection-shape.txt`), so nothing but a written
+#                                    (`tests/printer/projection-shape.txt`), so nothing but a written
 #                                    fixture can show the layout changing a byte.
 #   `  /-- ... -/`                   UNCHANGED, and this is a refusal, not an oversight. A
 #   `  documented     : Nat`         `structSimpleBinder`'s doc comment is inside its `declModifiers`
@@ -817,7 +817,7 @@ fi
 # `tactic_blank_gaps` is the whole of what design B would have rewritten, and on the frozen sample it
 # is **0, across all 62 modules and 1,966 blocks**: real Lean does not put a blank line between two
 # tactics. Every blank line in that sample is followed by a column-0 line -- it *ends* an indented
-# block rather than sitting inside one (`evidence/03-blank-line-columns.txt`). So design B ships
+# block rather than sitting inside one (`experiments/evidence/03-blank-line-columns.txt`). So design B ships
 # nothing, and tactic blocks stay on the conservative path.
 #
 # That 0 is a fact only if the counter can count, which is what this fixture is for -- `RLF-COMMANDS`'s

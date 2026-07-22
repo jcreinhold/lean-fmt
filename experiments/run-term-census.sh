@@ -102,7 +102,7 @@ rest=$((total - core_term - tactic - command - lexical - other))
   printf '\n# Nodes whose subtree carries no token are excluded: an absent slot has no atoms, so there\n'
   printf '# is nothing a layout could decide about it. `null` still leads the census and belongs there\n'
   printf '# — those are the `many`/`optional` wrappers that are *filled*. The excluded ones are the\n'
-  printf '# empty slots, 36%% of all nodes (`evidence/01-projection-shape.txt`).\n'
+  printf '# empty slots, 36%% of all nodes (`tests/printer/projection-shape.txt`).\n'
   printf '\n# the 60 most common token-bearing kinds\n'
   sort "$scratch/kinds" | uniq -c | sort -rn | head -60
   printf '\n# the 40 most common kinds this stack cannot cite a compiler declaration for: notations,\n'

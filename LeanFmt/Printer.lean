@@ -17,7 +17,7 @@ artifact is already the cache key, and printing inside the frontend would cost a
 file.
 
 **What the projection does not carry.** Measured over this repository
-(`evidence/01-projection-shape.txt`), about a third of all nodes carry no token at all — they are
+(`tests/printer/projection-shape.txt`), about a third of all nodes carry no token at all — they are
 *absent* syntax, the unfilled optional slots of `declModifiers`, `optDeclSig`, `Termination.suffix` —
 and `collect` gives them range `(0,0)`, because a node's range is the hull of the leaves beneath it
 and there are none. For about half of those the parent also has direct token children, so nothing in
@@ -59,7 +59,7 @@ transport format. This is the view a walk needs, computed once.
 
 Both child arrays ascend in index order, which **is** arg order by `collect`'s construction. The
 projection retains no other order, so nothing can check this property against its output —
-`evidence/01-projection-shape.txt` checks the visible consequence instead: among a parent's
+`tests/printer/projection-shape.txt` checks the visible consequence instead: among a parent's
 token-bearing children, index order agrees with byte order, and it finds no violation. -/
 structure Tree where
   source : LosslessSource
@@ -76,7 +76,7 @@ structure Tree where
 
   This does not assume the measured contiguity property. It is the max of the children's ends, which
   is the subtree's extent whether or not the indices run contiguously.
-  `evidence/01-projection-shape.txt` reports no contiguity violation, so the range has no gaps in
+  `tests/printer/projection-shape.txt` reports no contiguity violation, so the range has no gaps in
   practice — but nothing below depends on that. -/
   subtreeEnd : Array Nat
   /-- The `ruff-05b` notation-spacing fact, indexed for lookup: `notationSpacing[kind]` is the declared
@@ -560,7 +560,7 @@ private def Tree.wholeSpan? (tree : Tree) (normalized : String) (span : CommandS
 /-- The first and last token index under `node`'s subtree, or `none` when it carries no token.
 
 `none` is the *absent syntax* case, and it is common: about a third of all nodes are empty
-(`evidence/01-projection-shape.txt`), because an unfilled optional slot is still a node. This is how
+(`tests/printer/projection-shape.txt`), because an unfilled optional slot is still a node. This is how
 a layout tells "the slot is empty" from "the slot is filled" — which the projection carries exactly
 and positions do not carry at all. -/
 private def Tree.subtreeTokens (tree : Tree) (node : Nat) : Option (Nat × Nat) := Id.run do
@@ -669,7 +669,7 @@ deeper, so a `declId` occurring inside a value could not drag the shell past the
 Its `declId` is optional — anonymous instances are ordinary Lean — so the shell would have to end at
 the keyword instead, and `optNamedPrio` (`:64-65`) is bracketed, so one space between its tokens gives
 `( priority := 5 )`. Neither is hard; both are separate claims needing separate fixtures, and
-`evidence/01-projection-shape.txt` counts 11 of them.
+`tests/printer/projection-shape.txt` counts 11 of them.
 
 The signature and the value are deliberately *not* reached, and neither are a `structure`'s fields or
 an `inductive`'s constructors. Everything from the `declId`'s last token onward stays verbatim. -/
@@ -886,7 +886,7 @@ private def Tree.memberClaims (tree : Tree) (normalized : String) (root : Nat) (
     Array Claim := Id.run do
   let mut claims : Array Claim := #[]
   -- Pre-order DFS makes a node's subtree the contiguous index range `[root, subtreeEnd)`
-  -- (`RLF-COMMANDS` measures this: `evidence/01-projection-shape.txt`), and index order agrees with
+  -- (`RLF-COMMANDS` measures this: `tests/printer/projection-shape.txt`), and index order agrees with
   -- source order, so the claims come out sorted with no sort.
   for node in [root:tree.subtreeEnd[root]!] do
     if let some claim := tree.memberShell? normalized node then
@@ -905,7 +905,7 @@ The projection records a token's *source* text, never the declaration, so a term
 those kinds whose spacing does not depend on that string.
 
 `Term.app` is the largest such kind and the largest term kind in real Lean at all — 11,679 of 122,011
-token-bearing nodes on the frozen sample (`evidence/02-term-census.txt`). It declares **no atom**:
+token-bearing nodes on the frozen sample (`experiments/evidence/02-term-census.txt`). It declares **no atom**:
 `app := trailing_parser:leadPrec:maxPrec many1 argument` (`Lean/Parser/Term.lean:892`). What separates
 a function from its argument is `argument := checkWsBefore "expected space" >> checkColGt "expected to
 be indented" >> …` (`:885-888`), and `checkWsBefore` "requires that there is some whitespace at this
@@ -944,7 +944,7 @@ private def Tree.parts (tree : Tree) (node : Nat) : Array Part := Id.run do
       parts := parts.push { first, last, child := some child }
   -- Tokens are indexed in source order, so ordering by `first` is ordering by position. Empty
   -- node-children are dropped rather than placed: they contribute no bytes, and nothing in the
-  -- projection says where among its siblings an absent slot belongs; `evidence/01-projection-shape.txt`
+  -- projection says where among its siblings an absent slot belongs; `tests/printer/projection-shape.txt`
   -- measures how many nodes are ambiguous that way.
   return parts.qsort (·.first < ·.first)
 
@@ -1402,7 +1402,7 @@ private partial def Tree.termDoc (tree : Tree) (normalized : String) (mayCollaps
 Maximal, because `termDoc` recurses: an app inside an app's argument, or inside a binder's type, is
 laid out by its ancestor's claim already, and claiming it again would emit its bytes twice. Pre-order
 DFS makes a node's subtree the contiguous index range `[node, subtreeEnd)`
-(`evidence/01-projection-shape.txt`), so skipping a claimed subtree is one comparison and the claims
+(`tests/printer/projection-shape.txt`), so skipping a claimed subtree is one comparison and the claims
 come out in source order with no sort.
 
 **The overlap test against the shells is not defensive.** `declModifiers` can hold an attribute, an
@@ -1629,7 +1629,7 @@ private def Tree.claims (tree : Tree) (normalized : String) (span : CommandSpan)
 
 Reported alongside `canonical` and floored by `tests/printer/run.sh`, for the same reason: this
 repository writes its constructors the way the layout would, so every member claim here could vanish
-and the round-trip would stay green. `evidence/01-projection-shape.txt` measures that no member in
+and the round-trip would stay green. `tests/printer/projection-shape.txt` measures that no member in
 this corpus holds *collapsible* slack, which makes this number the only evidence the member layout
 ran at all, and `tests/printer/run.sh`'s wonky fixture the only evidence it changes anything. -/
 def Tree.memberShells (tree : Tree) (normalized : String) : Nat :=
@@ -1775,7 +1775,7 @@ have rewritten, and the only bytes in this prompt that would have changed.
 **It is 0 on the frozen sample, across 62 modules and 1,966 blocks, and design B is retired.** Real
 Lean does not put a blank line between two tactics: every blank line in the sample is followed by a
 column-0 line, so it *ends* an indented block rather than sitting inside one
-(`evidence/03-blank-line-columns.txt`, which reads the bytes as lines and never loads this code).
+(`experiments/evidence/03-blank-line-columns.txt`, which reads the bytes as lines and never loads this code).
 The counter stays because the 0 is the finding and a number nobody can reproduce is not one —
 `tests/printer/run.sh` hand-counts it to 3 against a written fixture, and two mutations of the two
 guards below each move that 3.
@@ -1871,7 +1871,7 @@ the frozen sample and tallies.
 
 **Nodes whose subtree holds no token are skipped**, because an absent slot has no atoms and therefore
 nothing a layout could decide about it — 36% of this corpus's nodes are absent syntax
-(`evidence/01-projection-shape.txt`). The filter is the subtree rather than the direct token
+(`tests/printer/projection-shape.txt`). The filter is the subtree rather than the direct token
 children, so a *filled* `many`/`optional` wrapper survives it and `null` still leads the census. That
 is correct and not the filter leaking: those wrappers are real syntax, they simply declare no atoms
 of their own.
@@ -2059,7 +2059,7 @@ line the layout *adds* is after `module`, because the header grammar puts `ppLin
 one vertical shape the grammar itself rules out.
 
 An earlier version emitted a single `hard` between every pair of groups, which read "the grammar
-decides vertical space" as licence to delete blank lines. `evidence/01-printer-sample.txt` is where
+decides vertical space" as licence to delete blank lines. `experiments/evidence/01-printer-sample.txt` is where
 that surfaced: it dropped a line from real mathlib headers, and no header in this repository had a
 blank line inside it for the corpus to notice. -/
 private def headerGap (normalized : String) (stop start : Nat) (afterModule : Bool) : Doc :=

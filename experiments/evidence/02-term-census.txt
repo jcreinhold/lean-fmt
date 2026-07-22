@@ -4,7 +4,7 @@ core_term=41266 tactic=15769 command=10645 lexical=40646 other_parser=466 notati
 # Nodes whose subtree carries no token are excluded: an absent slot has no atoms, so there
 # is nothing a layout could decide about it. `null` still leads the census and belongs there
 # — those are the `many`/`optional` wrappers that are *filled*. The excluded ones are the
-# empty slots, 36% of all nodes (`evidence/01-projection-shape.txt`).
+# empty slots, 36% of all nodes (`tests/printer/projection-shape.txt`).
 
 # the 60 most common token-bearing kinds
 34104 null

@@ -3,7 +3,7 @@
 # `RLF-FINAL`'s stop rule is "zero silently unowned accepted syntax kinds in the frozen corpus". The
 # refusals were never unsafe -- an unclaimed command is emitted as its own bytes, which is the
 # conservative path `RLF-COMMANDS` built and `tests/printer/run.sh` pins. They were *silent*:
-# `run-printer-sample.sh` counted them into `evidence/01-printer-sample.txt` and nothing compared that
+# `run-printer-sample.sh` counted them into `experiments/evidence/01-printer-sample.txt` and nothing compared that
 # count against anything, so a kind arriving in the corpus produced one more line in a report nobody
 # was required to read. This file is the thing to read, and the script now fails on a kind that is not
 # in it.
@@ -16,7 +16,7 @@
 # sentence, not wrong Lean, and the gate below is what makes even that loud.
 #
 # **Kinds, not counts.** The gate compares the set of kinds, because a count moves whenever the sample
-# moves and a disposition does not. `evidence/01-printer-sample.txt` is where the counts live.
+# moves and a disposition does not. `experiments/evidence/01-printer-sample.txt` is where the counts live.
 #
 # The counts do say one thing worth writing down, though, because it is a check on this file rather
 # than on the printer: the three dispositions **partition** the sample's refusals exactly.
