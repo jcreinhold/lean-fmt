@@ -16,6 +16,7 @@ has no operator spelling table and never infers structure from a flat token list
 
 import Lean.Parser.Term
 import all LeanFmt.Formatter
+import all LeanFmt.Formatter.Block
 import all LeanFmt.Formatter.Collection
 import all LeanFmt.Formatter.Syntax
 
@@ -78,6 +79,7 @@ def format (ownership : CommentOwnership) (stx : Lean.Syntax) :
     Lean.CoreM (Except FormatterFailure RegisteredDocument) := do
   let registered ← Formatter.registered ownership .term stx
   if !(Comments.subtree ownership stx).isEmpty then return registered
+  if let some block := Block.formatTerm? stx registered then return block
   match transparentDocument? stx with
   | some document =>
     let trace := match registered with

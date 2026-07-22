@@ -98,13 +98,6 @@ private def flatValueDocument (value : Lean.Syntax) : Doc :=
   let body := if tokens[0]? == some ":=" then tokens.extract 1 tokens.size else tokens
   Doc.text " :=" ++ Doc.nest 2 (Doc.line " " ++ Syntax.flat body)
 
-private partial def hasOffsideBody (stx : Lean.Syntax) : Bool :=
-  stx.isOfKind ``Lean.Parser.Term.do ||
-    stx.isOfKind ``Lean.Parser.Term.match ||
-    stx.isOfKind ``Lean.Parser.Term.whereDecls ||
-    stx.isOfKind ``Lean.Parser.Term.matchAlts ||
-    stx.getArgs.any hasOffsideBody
-
 private def simpleDocument? (ownership : CommentOwnership) (stx : Lean.Syntax) :
     Lean.CoreM (Except FormatterFailure (Option Doc)) := do
   let #[modifiers, inner] := stx.getArgs | return .ok none
@@ -112,7 +105,7 @@ private def simpleDocument? (ownership : CommentOwnership) (stx : Lean.Syntax) :
   let parts := simpleParts modifiers inner
   let tokens := Syntax.spellings inner
   if parts.value?.isNone && (tokens.contains ":=" || tokens.contains "where") then return .ok none
-  if parts.value?.any hasOffsideBody then return .ok none
+  if parts.value?.any fun value => (Syntax.spellings value).contains "where" then return .ok none
   let mut document := Syntax.flat parts.leading
   if let some signature := parts.signature? then
     let (binders, typeSpec?) := signatureParts signature #[] none
