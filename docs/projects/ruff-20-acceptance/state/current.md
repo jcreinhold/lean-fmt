@@ -10,9 +10,18 @@ This stack is planned and has not begun. Its external prerequisite stacks are
 implementation still matches recorded state.
 
 **`ruff-12b-rule-graduation` was added as a prerequisite on 2026-07-22.** Ten of the catalog's
-fifteen rules sit in preview because no stack was ever asked to judge them, and accepting the product
-in that state would accept a linter with two thirds of its rules gated off. `ruff-12b` decides each
-one's fate first, so this stack audits the catalog as intended. `ruff-21-rule-catalog` then grows the
+fifteen rules sat in preview because no stack was ever asked to judge them, and accepting the product
+in that state would have accepted a linter with two thirds of its rules gated off. `ruff-12b` decides
+each one's fate first, so this stack audits the catalog as intended.
+
+**`ruff-12b` has since decided them, and the count above is now nine, not ten** (updated by `ruff-12b`
+`RGR-FINAL`'s repository-wide count audit). Only `FMT013` left preview, and it did **not** become
+default: it is `lifecycle := .stable` with `defaultEnabled := false`, the `stable-optional` outcome.
+So the concern this paragraph raised is *not* resolved — nine rules remain gated off by default, and
+the default set is still the same five source/import-tier rules. What changed is that the gating is
+now a recorded decision with a stated condition for revisiting, rather than an unexamined default.
+`ruff-12b`'s finding was that mathlib is close to the worst available corpus for exercising these
+rules, so this stack should expect the audit to inherit an evidence problem, not a solved catalog. `ruff-21-rule-catalog` then grows the
 catalog *after* this stack, from the corpus evidence this audit produces.
 
 | Prompt | Claim | Status | Depends on |
