@@ -340,14 +340,13 @@ where
     | span, none => span
     | some a, some b => some { start := min a.start b.start, stop := max a.stop b.stop }
 
-/-- Byte offset where the first leaf's leading trivia begins, i.e. where the command stream starts.
-
-Taken from the parser's own `leading.startPos` rather than reconstructed, because the token stream
-records no leading start of its own — `headerStop` *is* that boundary. -/
-private partial def firstLeadingStart? (stx : Lean.Syntax) : Option Nat :=
+/-- Byte offset at which the parser begins the first leaf's leading source region. This is shared by
+lossless projection and whole-module formatting so their command boundaries cannot drift. It comes
+from the parser's `leading.startPos`, which the token projection does not otherwise retain. -/
+partial def leadingStart? (stx : Lean.Syntax) : Option Nat :=
   match stx with
   | .missing => none
-  | .node _ _ args => args.findSome? firstLeadingStart?
+  | .node _ _ args => args.findSome? leadingStart?
   | .atom info _ | .ident info _ _ _ =>
     match info with
     | .original leading .. => some leading.startPos.byteIdx
@@ -366,18 +365,22 @@ def ofSource (mainModule : String) (normalized : String) (commands : Array Lean.
     (terminal? : Option Lean.Syntax := none) : LosslessSource :=
   let build := commands.foldl (init := ({} : Build)) fun build stx =>
     (collect normalized none stx build).2
-  -- With no commands the whole file is header: its trailing trivia runs to end of file.
-  let headerStop := (commands.findSome? firstLeadingStart?).getD normalized.utf8ByteSize
+  -- With no ordinary command, this candidate reaches EOF; a leading `#exit` clamps it below.
+  let headerCandidate := (commands.findSome? leadingStart?).getD normalized.utf8ByteSize
   -- Where the terminal command *begins*, which is where the modeled token stream ends: neither
   -- producer puts a terminal into `commands`, so its own text is tail, not token. For `eoi` this is
   -- end of file, since trailing trivia is greedy up to the next token's text and `eoi` has none.
   -- For `#exit` it is the `#exit` itself, and the tail is that plus the never-parsed remainder.
   let terminalStop :=
-    match terminal?.bind firstLeadingStart? with
+    match terminal?.bind leadingStart? with
     | some start => start
     | none => match build.tokens.back? with
       | some token => token.trailingStop
       | none => normalized.utf8ByteSize
+  -- A terminal-only `#exit` file has no ordinary command from which to derive the header boundary.
+  -- Its header ends where the terminal begins, not at EOF; otherwise the header and verbatim tail
+  -- overlap and violate the structural invariant below.
+  let headerStop := min headerCandidate terminalStop
   {
     schema := losslessSourceSchema
     mainModule

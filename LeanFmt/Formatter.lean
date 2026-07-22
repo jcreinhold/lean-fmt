@@ -77,6 +77,34 @@ structure RegisteredDocument where
   trace : FormatterTrace
   deriving Inhabited
 
+/-- Deterministic whole-module formatter counters. A draft is produced by one already-running
+frontend and contains no live frontend object. -/
+structure FormatMetrics where
+  frontendRuns : Nat
+  commands : Nat
+  coreDocuments : Nat
+  registryDocuments : Nat
+  registryNodes : Nat
+  explicitDocuments : Nat
+  descriptorDocuments : Nat
+  commentOwners : Nat
+  documentNodes : Nat
+  renderSteps : Nat
+  nativeEvents : Nat
+  deriving Inhabited, BEq, Repr, Lean.ToJson, Lean.FromJson
+
+/-- Unvalidated whole-module rendering. Prompt 09 is the only operation allowed to admit this as a
+canonical layout. -/
+structure FormatDraft where
+  text : String
+  sourceMap : Array Mark
+  metrics : FormatMetrics
+  sourceDigest : String
+  sourceBytes : Nat
+  headerStop : Nat
+  terminalStop : Nat
+  deriving Inhabited, BEq, Repr, Lean.ToJson, Lean.FromJson
+
 namespace Formatter
 
 private def sourceRange (stx : Lean.Syntax) : SourceRange :=

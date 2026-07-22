@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Actual imported syntax through Lean's live formatter registry. The analyzer's mode 4 is a private
-# audit transport; product callers cannot select it.
+# Actual imported syntax through the live whole-module draft. Mode 4 is a private audit transport;
+# product callers cannot select it.
 
 repo_root=$(cd "$(dirname "$0")/../.." && pwd)
 work=$(mktemp -d)
@@ -34,57 +34,59 @@ def optionProbe : Nat → Nat := fun value => value
 LEAN
 
 LEAN_NUM_THREADS=1 lake setup-file "$work/AdapterInput.lean" >"$work/setup.json"
-LEAN_NUM_THREADS=1 lake env "$application" __analyze-exact \
-  "$work/setup.json" "$work/AdapterInput.lean" "AdapterInput.lean" 8589934592 4 \
-  >"$work/envelope.json"
+for width in 32 100; do
+  LEAN_NUM_THREADS=1 lake env "$application" __analyze-exact \
+    "$work/setup.json" "$work/AdapterInput.lean" "AdapterInput.lean" 8589934592 "4:$width" \
+    >"$work/envelope-$width.json"
+done
 
-python3 - "$work/envelope.json" "$work/Candidate.lean" <<'PY'
+python3 - "$work/envelope-100.json" "$work/envelope-32.json" "$work/Candidate.lean" <<'PY'
 import json, pathlib, sys
 
 envelope = json.load(open(sys.argv[1]))
-audit = envelope.get("formatterAudit")
-assert audit is not None, envelope
-entries = audit["entries"]
-assert audit["successes"] == len(entries) and audit["failures"] == 0, audit
-assert audit["explicit"] >= 1 and audit["descriptor"] >= 1, audit
-assert audit["commentOwners"] == 3, audit
-assert all(entry["documentNodes"] == 1 for entry in entries), entries
-assert all(entry["narrowNativeEvents"] > 0 and entry["wideNativeEvents"] > 0 for entry in entries), entries
+draft = envelope.get("formatDraft")
+narrow = json.load(open(sys.argv[2])).get("formatDraft")
+assert draft is not None and envelope.get("formatFailure") is None, envelope
+assert narrow is not None and narrow["text"] != draft["text"], narrow
+metrics = draft["metrics"]
+assert metrics["frontendRuns"] == 1 and metrics["commands"] == 6, metrics
+assert metrics["registryDocuments"] == 6 and metrics["registryNodes"] == 6, metrics
+assert metrics["explicitDocuments"] == 5 and metrics["descriptorDocuments"] == 1, metrics
+assert metrics["commentOwners"] == 3 and metrics["nativeEvents"] > 0, metrics
 
-def resolution(entry):
-    return entry["trace"]["resolution"]
-
-explicit = [entry for entry in entries if "explicitCommand" in entry["trace"]["kind"]]
-assert len(explicit) == 1 and "explicit" in resolution(explicit[0]), explicit
-assert explicit[0]["wide"].startswith("explicit_command selectedName"), explicit[0]
-assert explicit[0]["wide"] != explicit[0]["source"], explicit[0]
-
-all_narrow = "\n".join(entry["narrow"] for entry in entries)
-all_wide = "\n".join(entry["wide"] for entry in entries)
-assert all_narrow != all_wide, "registry documents were not width-sensitive"
-assert "twice(" in all_wide, all_wide
-assert "adapter_exact" in all_wide, all_wide
-assert "Nat -> Nat" in all_wide, all_wide
+output = draft["text"]
+assert "explicit_command selectedName" in output, output
+assert "explicit_command       selectedName" not in output, output
+assert "twice(" in output and "adapter_exact" in output, output
+assert "Nat -> Nat" in output, output
 for payload in ["adapter block payload", "adapter trailing payload", "adapter tactic payload"]:
-    assert all_wide.count(payload) == 1, (payload, all_wide)
+    assert output.count(payload) == 1, (payload, output)
 
-candidate = "module\n\nimport AdapterSyntax\n\n" + all_wide + "\n"
-pathlib.Path(sys.argv[2]).write_text(candidate)
+source_cursor = output_cursor = 0
+for unit in draft["sourceMap"]:
+    assert unit["source"]["start"] == source_cursor, (source_cursor, unit)
+    assert unit["output"]["start"] == output_cursor, (output_cursor, unit)
+    source_cursor = unit["source"]["stop"]
+    output_cursor = unit["output"]["stop"]
+assert source_cursor == draft["sourceBytes"], (source_cursor, draft)
+assert output_cursor == len(output.encode()), (output_cursor, len(output.encode()))
+
+pathlib.Path(sys.argv[3]).write_text(output)
 print(json.dumps({
-    "commands": len(entries),
-    "comments": audit["commentOwners"],
-    "descriptor": audit["descriptor"],
-    "explicit": audit["explicit"],
-    "widthSensitive": all_narrow != all_wide,
+    "commands": metrics["commands"],
+    "comments": metrics["commentOwners"],
+    "descriptor": metrics["descriptorDocuments"],
+    "explicit": metrics["explicitDocuments"],
+    "units": len(draft["sourceMap"]),
+    "widthSensitive": narrow["text"] != output,
 }, sort_keys=True, separators=(",", ":")))
 PY
 
-# The rendered commands remain a module accepted under the same imported extension environment.
 LEAN_NUM_THREADS=1 lake setup-file "$work/Candidate.lean" >/dev/null
 LEAN_NUM_THREADS=1 lake env "$application" __analyze-exact \
   "$work/setup.json" "$work/Candidate.lean" "Candidate.lean" 8589934592 0 \
   >"$work/candidate-envelope.json"
-python3 - "$work/envelope.json" "$work/candidate-envelope.json" <<'PY'
+python3 - "$work/envelope-100.json" "$work/candidate-envelope.json" <<'PY'
 import json, sys
 before, after = (json.load(open(path))["artifact"]["source"] for path in sys.argv[1:])
 def tree(source):
@@ -113,16 +115,13 @@ LEAN_NUM_THREADS=1 lake env "$application" __analyze-exact \
 
 python3 - "$work/throwing.json" <<'PY'
 import json, sys
-audit = json.load(open(sys.argv[1]))["formatterAudit"]
-assert audit["failures"] == 1, audit
-failed = [entry for entry in audit["entries"] if entry.get("error") is not None]
-assert len(failed) == 1, audit
-entry = failed[0]
-assert "throwingCommand" in entry["trace"]["kind"], entry
-assert "explicit" in entry["trace"]["resolution"], entry
-assert "adapter fixture formatter failure" in entry["error"], entry
-assert entry.get("narrow") is None and entry.get("wide") is None, entry
-assert entry["range"]["stop"] > entry["range"]["start"], entry
+envelope = json.load(open(sys.argv[1]))
+assert envelope.get("formatDraft") is None, envelope
+failure = envelope["formatFailure"]
+assert "throwingCommand" in failure["trace"]["kind"], failure
+assert "explicit" in failure["trace"]["resolution"], failure
+assert "adapter fixture formatter failure" in failure["detail"], failure
+assert failure["range"]["stop"] > failure["range"]["start"], failure
 print("  ok   throwing formatter surfaced a typed hard failure with kind/category/range/trace")
 PY
 

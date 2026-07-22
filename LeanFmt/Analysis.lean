@@ -20,31 +20,11 @@ namespace LeanFmt.Internal
 
 /- The process response is deliberately semantic. It contains neither setup paths nor execution
 strategy, so the parent cannot accidentally key reporting on how it obtained the analysis. -/
-structure FormatterAuditEntry where
-  trace : FormatterTrace
-  range : SourceRange
-  source : String
-  documentNodes : Nat
-  narrowNativeEvents : Nat
-  wideNativeEvents : Nat
-  narrow? : Option String
-  wide? : Option String
-  error? : Option String
-  deriving Lean.ToJson, Lean.FromJson
-
-structure FormatterAuditSummary where
-  entries : Array FormatterAuditEntry
-  successes : Nat
-  failures : Nat
-  explicit : Nat
-  descriptor : Nat
-  commentOwners : Nat
-  deriving Lean.ToJson, Lean.FromJson
-
 structure AnalysisEnvelope where
   artifact? : Option ModuleArtifact
   commentSummary? : Option CommentSummary := none
-  formatterAudit? : Option FormatterAuditSummary := none
+  formatDraft? : Option FormatDraft := none
+  formatFailure? : Option FormatterFailure := none
   diagnostics : Array String := #[]
   deriving Lean.ToJson, Lean.FromJson
 
@@ -60,30 +40,109 @@ private def messageStrings (messages : Lean.MessageLog) : IO (Array String) :=
 private def broken (messages : Lean.MessageLog) : IO AnalysisEnvelope := do
   return { artifact? := none, diagnostics := ← messageStrings messages }
 
-/- Split the snapshot chain the way a module linter sees it: the ordinary command stream, and the
-terminal command that ended the file. The terminal is `eoi`, or `#exit` when a file stops early and
-leaves an unparsed tail; dropping it would silently discard both the tail and the end of the parsed
-region. `isTerminalCommand` also admits `import`, which cannot occur here because the header is
-processed before `firstCmdSnap`. -/
-private partial def collectCommands
-    (snapshot : Lean.Language.Lean.CommandParsedSnapshot)
-    (commands : Array Lean.Syntax := #[])
-    (terminal? : Option Lean.Syntax := none) : Array Lean.Syntax × Option Lean.Syntax :=
+/-- An actual parsed command paired with the frontend state immediately before elaborating it. The
+pre-state supplies precisely the options and formatter registrations under which the parser accepted
+that command; persistent environments share their unchanged structure across these short-lived rows. -/
+private structure LiveCommand where
+  stx : Lean.Syntax
+  env : Lean.Environment
+  options : Lean.Options
+
+private partial def collectLiveCommands (snapshot : Lean.Language.Lean.CommandParsedSnapshot)
+    (state : Lean.Elab.Command.State) (commands : Array LiveCommand := #[])
+    (terminal? : Option Lean.Syntax := none) : Array LiveCommand × Option Lean.Syntax :=
   let isTerminal := Lean.Parser.isTerminalCommand snapshot.stx
-  let commands := if isTerminal then commands else commands.push snapshot.stx
+  let commands := if isTerminal then commands else commands.push {
+    stx := snapshot.stx
+    env := state.env
+    options := state.scopes.head!.opts }
   let terminal? := if isTerminal then terminal? <|> some snapshot.stx else terminal?
+  let nextState := snapshot.elabSnap.resultSnap.get.cmdState
   match snapshot.nextCmdSnap? with
-  | some next => collectCommands next.get commands terminal?
+  | some next => collectLiveCommands next.get nextState commands terminal?
   | none => (commands, terminal?)
 
-private def processedCommands
-    (snapshot : Lean.Language.Lean.InitialSnapshot) : Array Lean.Syntax × Option Lean.Syntax :=
+private def processedLiveCommands (snapshot : Lean.Language.Lean.InitialSnapshot) :
+    Array LiveCommand × Option Lean.Syntax :=
   match snapshot.result? with
   | none => (#[], none)
   | some parsed =>
     match parsed.processedSnap.get.result? with
     | none => (#[], none)
-    | some processed => collectCommands processed.firstCmdSnap.get
+    | some processed =>
+      collectLiveCommands processed.firstCmdSnap.get processed.cmdState
+
+private def normalizedSlice (bytes : ByteArray) (range : SourceRange) : String :=
+  String.fromUTF8! <| bytes.extract range.start range.stop
+
+private def appendDocument (document? : Option Doc) (next : Doc) : Option Doc :=
+  some <| match document? with
+  | some document => document ++ next
+  | none => next
+
+private def buildFormatDraft (normalized : String) (source : LosslessSource)
+    (sourcePath : System.FilePath) (fileMap : Lean.FileMap) (ownership : CommentOwnership)
+    (commands : Array LiveCommand) (width : Nat) : IO (Except FormatterFailure FormatDraft) := do
+  let bytes := normalized.toUTF8
+  let headerRange : SourceRange := ⟨0, source.headerStop⟩
+  let mut document? : Option Doc := none
+  let mut coreDocuments := 0
+  let mut registryNodes := 0
+  let mut explicitDocuments := 0
+  let mut descriptorDocuments := 0
+  if headerRange.start < headerRange.stop then
+    document? := appendDocument document? <|
+      Doc.mark headerRange (Doc.verbatim (normalizedSlice bytes headerRange))
+    coreDocuments := coreDocuments + 1
+  for h : index in [0:commands.size] do
+    let command := commands[index]
+    let result ← Lean.Core.CoreM.toIO' (Formatter.registered ownership .command command.stx)
+      { fileName := sourcePath.toString, fileMap, options := command.options }
+      { env := command.env }
+    let registered ← match result with
+      | .ok registered => pure registered
+      | .error failure => return .error failure
+    registryNodes := registryNodes + registered.document.size
+    match registered.trace.resolution with
+    | .explicit _ => explicitDocuments := explicitDocuments + 1
+    | .descriptor => descriptorDocuments := descriptorDocuments + 1
+    let start := (LosslessSource.leadingStart? command.stx).getD source.headerStop
+    let stop := match commands[index + 1]? with
+      | some next => (LosslessSource.leadingStart? next.stx).getD source.terminalStop
+      | none => source.terminalStop
+    let hasTail := source.terminalStop < source.normalizedBytes
+    let preserveFinalNewline := index + 1 == commands.size && !hasTail && normalized.endsWith "\n"
+    let separator := if index + 1 < commands.size || hasTail || preserveFinalNewline then
+        Doc.hard
+      else Doc.empty
+    document? := appendDocument document? <|
+      Doc.mark ⟨start, stop⟩ (registered.document ++ separator)
+  let tailRange : SourceRange := ⟨source.terminalStop, source.normalizedBytes⟩
+  if tailRange.start < tailRange.stop then
+    document? := appendDocument document? <|
+      Doc.mark tailRange (Doc.verbatim (normalizedSlice bytes tailRange))
+    coreDocuments := coreDocuments + 1
+  let document := document?.getD Doc.empty
+  let rendered := renderDetailed width document
+  return .ok {
+    text := rendered.text
+    sourceMap := rendered.sourceMap
+    metrics := {
+      frontendRuns := 1
+      commands := commands.size
+      coreDocuments
+      registryDocuments := commands.size
+      registryNodes
+      explicitDocuments
+      descriptorDocuments
+      commentOwners := Comments.all ownership |>.size
+      documentNodes := rendered.metrics.documentNodes
+      renderSteps := rendered.metrics.workSteps
+      nativeEvents := rendered.metrics.nativeEvents }
+    sourceDigest := source.normalizedDigest.hex
+    sourceBytes := source.normalizedBytes
+    headerStop := source.headerStop
+    terminalStop := source.terminalStop }
 
 private def isApplicationRuntimePlugin (plugin : Lean.Plugin) : Bool :=
   plugin.path.fileName.any fun name => name.startsWith "libLake"
@@ -245,7 +304,7 @@ compiler plugin; no accumulated environment or parser state crosses this process
 unsafe def analyzeExact (setup : Lean.ModuleSetup) (source : String)
     (sourcePath : System.FilePath) (captureSemantic : Bool := false)
     (captureOccurrences : Bool := false) (captureComments : Bool := false)
-    (captureFormatter : Bool := false) : IO AnalysisEnvelope := do
+    (captureFormatDraft : Bool := false) (formatWidth : Nat := 100) : IO AnalysisEnvelope := do
   Lean.initSearchPath (← Lean.findSysroot)
   Lean.enableInitializersExecution
   let input := Lean.Parser.mkInputContext source sourcePath.toString
@@ -272,7 +331,8 @@ unsafe def analyzeExact (setup : Lean.ModuleSetup) (source : String)
     | return ← broken messages
   if messages.hasErrors then
     return ← broken messages
-  let (commands, terminal?) := processedCommands snapshot
+  let (liveCommands, terminal?) := processedLiveCommands snapshot
+  let commands := liveCommands.map (·.stx)
   -- The semantic projection is captured only under demand (`captureSemantic`, set by a run that
   -- renders canonical text *or* selects a `.semantic` rule). The two cheap sub-facts — `notations` and
   -- `diagnostics` — are captured together (`ruff-11` `notes/01-authority.md` §6); the one expensive
@@ -297,70 +357,22 @@ unsafe def analyzeExact (setup : Lean.ModuleSetup) (source : String)
   -- systems inside one artifact for any file that uses CRLF.
   let artifact := ModuleArtifact.ofParsedModule setup.name.toString
     normalizedSource commands terminal? semantic
-  let ownership? := if captureComments || captureFormatter then
+  let ownership? := if captureComments || captureFormatDraft then
       let suppressed := (Suppression.collect artifact.source normalizedSource).directives.map (·.scopeRange)
       some <| Comments.build normalizedSource snapshot.stx commands terminal? suppressed
     else none
   let commentSummary? := if captureComments then
       ownership?.map (Comments.summary normalizedSource)
     else none
-  let formatterAudit? ← if captureFormatter then do
+  let (formatDraft?, formatFailure?) ← if captureFormatDraft then do
       let some ownership := ownership?
-        | throw <| IO.userError "formatter audit has no comment ownership"
-      let bytes := normalizedSource.toUTF8
-      let commandOptions := commandState.scopes.head!.opts
-      let mut entries := #[]
-      let mut successes := 0
-      let mut failures := 0
-      let mut explicit := 0
-      let mut descriptor := 0
-      let mut commentOwners := 0
-      for command in commands do
-        let range := match command.getRange? with
-          | some value => SourceRange.mk value.start.byteIdx value.stop.byteIdx
-          | none => ⟨0, 0⟩
-        let commandSource := String.fromUTF8! <| bytes.extract range.start range.stop
-        let result ← Lean.Core.CoreM.toIO' (Formatter.registered ownership .command command)
-          { fileName := sourcePath.toString, fileMap := input.fileMap, options := commandOptions }
-          { env := commandState.env }
-        match result with
-        | .ok registered =>
-          successes := successes + 1
-          commentOwners := commentOwners + registered.trace.commentOwners
-          match registered.trace.resolution with
-          | .explicit _ => explicit := explicit + 1
-          | .descriptor => descriptor := descriptor + 1
-          let narrow := renderDetailed 32 registered.document
-          let wide := renderDetailed 100 registered.document
-          entries := entries.push {
-            trace := registered.trace
-            range
-            source := commandSource
-            documentNodes := registered.document.size
-            narrowNativeEvents := narrow.metrics.nativeEvents
-            wideNativeEvents := wide.metrics.nativeEvents
-            narrow? := some narrow.text
-            wide? := some wide.text
-            error? := none }
-        | .error failure =>
-          failures := failures + 1
-          commentOwners := commentOwners + failure.trace.commentOwners
-          match failure.trace.resolution with
-          | .explicit _ => explicit := explicit + 1
-          | .descriptor => descriptor := descriptor + 1
-          entries := entries.push {
-            trace := failure.trace
-            range
-            source := commandSource
-            documentNodes := 0
-            narrowNativeEvents := 0
-            wideNativeEvents := 0
-            narrow? := none
-            wide? := none
-            error? := some failure.detail }
-      pure <| some { entries, successes, failures, explicit, descriptor, commentOwners }
-    else pure none
-  return { artifact? := some artifact, commentSummary?, formatterAudit? }
+        | throw <| IO.userError "format draft has no comment ownership"
+      match ← buildFormatDraft normalizedSource artifact.source sourcePath input.fileMap ownership
+          liveCommands formatWidth with
+      | .ok draft => pure (some draft, none)
+      | .error failure => pure (none, some failure)
+    else pure (none, none)
+  return { artifact? := some artifact, commentSummary?, formatDraft?, formatFailure? }
 
 /- Extract the compiler-owned payload from one exact module artifact. Process exit remains the
 reclamation boundary; the returned value is compact and contains no environment-owned reference. -/

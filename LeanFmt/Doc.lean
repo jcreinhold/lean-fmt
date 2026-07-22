@@ -158,7 +158,7 @@ instance : Inhabited Doc where
 structure Mark where
   source : SourceRange
   output : SourceRange
-  deriving Inhabited, BEq, Repr
+  deriving Inhabited, BEq, Repr, Lean.ToJson, Lean.FromJson
 
 /-- Deterministic renderer work counters. Native events count incremental outputs, newlines, and tag
 events observed while interpreting opaque `Std.Format` leaves. -/

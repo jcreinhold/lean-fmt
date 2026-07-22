@@ -1861,21 +1861,26 @@ private unsafe def runAnalyzeChild (args : List String) : IO UInt32 := do
     let source ← IO.FS.readFile snapshotPath
     pure (setup, source)
   -- "0" none, "1" semantic (notations + diagnostics), "2" semantic + the info-tree occurrence
-  -- fold, "3" test/audit-only comment ownership over the live syntax, and "4" the actual-node
-  -- registry adapter audit. Product callers do not request "3" or "4" yet; Prompt 08 will make
-  -- ownership and formatting part of one frontend demand rather than report facts.
+  -- fold, "3" test/audit-only comment ownership over the live syntax, and "4[:WIDTH]" the
+  -- unvalidated whole-module draft. Product callers do not request "3" or "4" yet; Prompt 10 wires
+  -- the width-bearing demand only after Prompt 09 installs mandatory admission.
   --
   -- Two phases, on this side of the process boundary where the parent cannot see: `child_analyze` is
   -- the frontend itself, `child_encode` is turning its result into the JSON the parent reads back. A
   -- projection runs about 10x the size of its source (`ruff-01`), so the second is not obviously
   -- small, and the parent's `exact_child` covers both without distinguishing them. These records go
   -- to stderr, which the parent captures and forwards; stdout is the envelope and takes no passengers.
+  let formatWidth? := match captureMode.splitOn ":" with
+    | ["4"] => some 100
+    | ["4", width] => width.toNat?
+    | _ => none
   let envelope ← withPhase "child_analyze" <|
     analyzeExact setup source displayPath
       (captureSemantic := captureMode == "1" || captureMode == "2")
       (captureOccurrences := captureMode == "2")
       (captureComments := captureMode == "3")
-      (captureFormatter := captureMode == "4")
+      (captureFormatDraft := formatWidth?.isSome)
+      (formatWidth := formatWidth?.getD 100)
   let encoded ← withPhase "child_encode" do
     -- `IO.lazyPure` for the reason `profiledPositions` documents: a plain `let` of a pure value can be
     -- floated out of the action's closure, and then the bracket times nothing. The `utf8ByteSize`
