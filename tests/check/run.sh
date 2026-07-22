@@ -75,11 +75,12 @@ cmp "$work/artifact-findings.json" \
 # source-only shortcut in `availableAnalysis` — every rule is source-tier, the mode renders nothing,
 # and module evidence is current — while `format` takes the artifact path for the projection it must
 # print. Only the findings are comparable; mode, status, and rendered text are meant to differ — and
-# since `ruff-11c` RDF-IMPL so do the exit codes: `check` exits 1 on the finding, while `format` applies
-# no fix and this file is layout-clean, so it exits 0 while still *reporting* the same finding.
+# since `ruff-11c` RDF-IMPL the exit codes depend independently on findings and layout. The
+# frontend-native formatter deliberately reflows the declaration body, so both happen to exit 1 on
+# this fixture while still reporting the same original-coordinate finding.
 run_expect 1 "$work/agreement-check.json" "$application" check --root . --json --no-cache \
   tests/check/Findings.lean
-run_expect 0 "$work/agreement-format.json" "$application" format --check --root . --json --no-cache \
+run_expect 1 "$work/agreement-format.json" "$application" format --check --root . --json --no-cache \
   tests/check/Findings.lean
 python3 - "$work/agreement-check.json" "$work/agreement-format.json" <<'PY'
 import json, sys

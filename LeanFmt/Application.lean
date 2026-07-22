@@ -10,7 +10,6 @@ import all LeanFmt.Cache
 import all LeanFmt.Config
 import all LeanFmt.Edit
 import all LeanFmt.Imports
-import all LeanFmt.Printer
 import all LeanFmt.Profile
 import all LeanFmt.Project
 import all LeanFmt.Semantic
@@ -114,7 +113,7 @@ structure FileReport where
   reachability cannot reason about (`import all`, `meta import`, a re-exported `public import`) makes
   them unsafe even to name. Recorded, never silent — `RIR-FINAL` audits this count. -/
   withheldRedundant : Nat := 0
-  deriving Lean.ToJson
+  deriving Inhabited, Lean.ToJson
 
 structure RunReport where
   mode : String
@@ -379,6 +378,7 @@ private def ExactRun.primeSetups (run : ExactRun) (targets : Array SourceSnapsho
 private def ExactRun.envelope (run : ExactRun)
     (snapshot : SourceSnapshot) (captureSemantic : Bool) (validator := false)
     (captureOccurrences : Bool := false)
+    (formatWidth? : Option Nat := none)
     (cancel? : Option Std.CancellationToken := none) : IO AnalysisEnvelope := do
   let index ← run.nextPathIndex
   -- Three phases, because `RPR-SPEC` found this operation reported as one unnamed 43-second gap and
@@ -409,7 +409,9 @@ private def ExactRun.envelope (run : ExactRun)
       -- `occurrences` is only ever demanded together with the tier, so the token is a simple ladder.
       args := #["__analyze-exact", setupPath.toString, sourcePath.toString,
         snapshot.path.toString, toString run.maxBytes,
-        if captureOccurrences then "2" else if captureSemantic then "1" else "0"]
+        match formatWidth? with
+        | some width => s!"4:{width}"
+        | none => if captureOccurrences then "2" else if captureSemantic then "1" else "0"]
       env := run.project.workspace.augmentedEnvVars.push ⟨"LEAN_NUM_THREADS", some "1"⟩
     } run.maxBytes cancel?
     unless output.exitCode == 0 do
@@ -438,11 +440,11 @@ private def ExactRun.envelope (run : ExactRun)
     if ← setupPath.pathExists then IO.FS.removeFile setupPath
     if ← sourcePath.pathExists then IO.FS.removeFile sourcePath
 
-/- The margin `Printer.format` is rendered at is no longer a constant here.
+/- The margin the frontend-native formatter renders at is no longer a constant here.
 
-`RLF-REFLOW` made the margin observable: `Printer.termDoc` emits `group`/`nest`/`line` for over-margin
-applications, so `Doc.go`'s `.group` fit test (`Doc.lean:219-229`) breaks a single-line app onto
-indented continuation lines when its flat width exceeds it. `ruff-13` RCD-IMPL then promoted it
+The frontend-native document emits groups, nesting, and line choices for registered syntax, and the
+linear renderer breaks those groups when their flat width exceeds the margin. `ruff-13` RCD-IMPL
+promoted the previous formatter's identical observable setting
 to the runtime key `[format] line-width` (`FormatConfig.lineWidth`, default 100), resolved per file from
 that file's effective configuration.
 
@@ -459,22 +461,6 @@ key — the obligation `ruff-13` `notes/01-discovery.md` §9.1 records.
 
 The value 100 remains the default; it matches mathlib's own text-linter convention and is otherwise
 arbitrary. -/
-
-/-- Render a validated artifact's projection to canonical layout text — the layout, and only the layout.
-
-No rule runs here. Since `ruff-11c` RDF-IMPL the canonical text carries no findings: `format`/`diff`
-render this text and report `result.findings` at **original** coordinates (drawn one level up in
-`prepareFile`), and every fix applies at original coordinates through `fix`, never on these moved bytes.
-The retired `runSourceRules text` here was the source-rule surface that only ever fed the old
-canonical-patch, and `ExactRun.reprojectCanonical` — which re-projected the whole registry over the
-*rendered* text so a syntax/semantic fix applied in canonical coordinates — retired with it. The
-"re-project, don't translate onto moved bytes" model (`ruff-06-fix-safety/notes/01-model.md` §3) still
-holds; RDF-IMPL satisfies it the other way, by never moving the bytes a fix indexes. -/
-private def renderCanonicalText (width : Nat) (raw : String) (artifact : ModuleArtifact) :
-    IO CanonicalText := do
-  let normalized := (LosslessSource.normalize raw).1
-  let text ← Printer.format artifact.source normalized width artifact.semantic
-  return { text }
 
 /-! ## Range formatting — unit selection over the layout source map
 
@@ -541,8 +527,8 @@ structure RangeResult where
 
 /-- Splice one whole-file render down to the units a request expands to.
 
-`normalized` and `rendered` are the same file before and after layout; `marks` is the source map
-`Printer.formatWithMap` produced. The result is
+`normalized` and `rendered` are the same file before and after layout; `marks` is the source map the
+admitted frontend-native layout produced. The result is
 
     normalized[0, actual.start)  ++  rendered[out.start, out.stop)  ++  normalized[actual.stop, end)
 
@@ -572,18 +558,20 @@ private def canonicalAnalysis (snapshot : SourceSnapshot) (renderCanonical : Boo
     (analysis : AnalysisEnvelope) : IO SemanticAnalysis := do
   match SemanticAnalysis.ofEnvelope? snapshot.source analysis with
   | some semantic =>
-    -- `ofEnvelope?` has already checked `structurallyValid` and `validFor`, so the projection is
-    -- known to describe these bytes before anything renders it.
+    if semantic.result?.isNone then return semantic
     if renderCanonical then
-      if let some artifact := analysis.artifact? then
-        -- `layout` is the whole render: `LeanFmt.Printer` building the document and `LeanFmt.Doc`
-        -- laying it out, including the phase-2 reflow fit tests. It is not split further here
-        -- because `Doc` is pure and reading a clock inside it would make it `IO`; the fit-test
-        -- sub-phase is measured out-of-production by `tests/layout/bench.sh` instead
-        -- (`notes/02-instrumentation.md` §3).
-        return semantic.withCanonical
-          (← withPhase "layout" <|
-            renderCanonicalText snapshot.config.format.lineWidth snapshot.source artifact)
+      match analysis.canonical?, analysis.validationFailure? with
+      | some layout, none =>
+        recordCount "path_exact_render" 1
+        return semantic.withCanonical { text := layout.text }
+      | none, some failure =>
+        recordCount "path_validation_failure" 1
+        throw <| IO.userError
+          s!"frontend-native formatting rejected {snapshot.relativePath} at {reprStr failure.gate}: {failure.detail}"
+      | _, _ =>
+        recordCount "path_validation_failure" 1
+        throw <| IO.userError
+          s!"frontend-native formatting produced no admitted layout for {snapshot.relativePath}"
     return semantic
   | none => throw <| IO.userError s!"invalid exact analysis for {snapshot.relativePath}"
 
@@ -602,7 +590,9 @@ def ExactRun.analyzeSnapshot (run : ExactRun) (snapshot : SourceSnapshot)
     (captureSemantic : Bool := false) (captureOccurrences : Bool := false)
     (cancel? : Option Std.CancellationToken := none) : IO SemanticAnalysis := do
   canonicalAnalysis snapshot renderCanonical
-    (← run.envelope snapshot captureSemantic validator captureOccurrences cancel?)
+    (← run.envelope snapshot captureSemantic validator captureOccurrences
+      (formatWidth? := if renderCanonical then some snapshot.config.format.lineWidth else none)
+      (cancel? := cancel?))
 
 /- Bracket a complete exact-analysis run. The capability is constructed only after a real fallback
 or editor request needs it; cache-only and ordinary-evidence batch runs create no temporary state. -/
@@ -666,6 +656,7 @@ private def availableAnalysis (plan : RulePlan) (renderCanonical applies : Bool)
     -- silently do nothing. `mayContainDirective` is a superset test, so this over-fetches only on files
     -- that mention the sigil without a valid directive, never under-fetches.
     let normalized := (LosslessSource.normalize snapshot.source).1
+    recordCount "path_source_shortcut" 1
     return some <| SemanticAnalysis.success normalized (runSourceRules normalized)
   else if let some artifact := officialArtifact? then
     -- A non-rendering syntax/semantic run with a current artifact — `check`/`fix --select FMT01x` — is
@@ -833,6 +824,70 @@ private def publishAtomic (path : FilePath) (original output : String) : IO (Exc
       IO.FS.removeFile temporary
     throw error
 
+private structure Publication where
+  path : FilePath
+  original : String
+  output : String
+  deriving Inhabited
+
+private structure StagedPublication extends Publication where
+  temporary : FilePath
+  backup : FilePath
+  deriving Inhabited
+
+private def cleanupIfExists (path : FilePath) : IO Unit := do
+  if ← path.pathExists then IO.FS.removeFile path
+
+/-- Stage and stale-check a whole format batch before replacing any source. Backups make a failure in
+the rename phase recoverable, so one rejected/stale member cannot leave a partially formatted batch. -/
+private def publishBatchAtomic (items : Array Publication) : IO (Except String Unit) := do
+  let mut staged : Array StagedPublication := #[]
+  try
+    for item in items do
+      let mode ← accessMode item.path
+      let temporary ← publicationTemp item.path
+      let backup ← publicationTemp (FilePath.mk s!"{item.path}.backup")
+      IO.FS.writeFile temporary item.output
+      IO.Prim.setAccessRights temporary mode.toUInt32
+      staged := staged.push {
+        path := item.path, original := item.original, output := item.output, temporary, backup }
+    -- Hooks and every stale check run before the first source is renamed.
+    for item in staged do runBeforeWriteHook item.path
+    for item in staged do
+      unless (← IO.FS.readFile item.path) == item.original do
+        for stagedItem in staged do cleanupIfExists stagedItem.temporary
+        return .error s!"source changed after analysis; refusing stale write: {item.path}"
+    let mut backedUp := 0
+    try
+      for item in staged do
+        IO.FS.rename item.path item.backup
+        backedUp := backedUp + 1
+    catch error =>
+      for item in staged.take backedUp do
+        if ← item.backup.pathExists then IO.FS.rename item.backup item.path
+      for item in staged do cleanupIfExists item.temporary
+      throw error
+    let mut installed := 0
+    try
+      for item in staged do
+        IO.FS.rename item.temporary item.path
+        installed := installed + 1
+    catch error =>
+      for item in staged.take installed do cleanupIfExists item.path
+      for item in staged do
+        if ← item.backup.pathExists then IO.FS.rename item.backup item.path
+      for item in staged do cleanupIfExists item.temporary
+      throw error
+    for item in staged do cleanupIfExists item.backup
+    return .ok ()
+  catch error =>
+    for item in staged do
+      cleanupIfExists item.temporary
+      if ← item.backup.pathExists then
+        if !(← item.path.pathExists) then IO.FS.rename item.backup item.path
+        else cleanupIfExists item.backup
+    throw error
+
 private def baseReport (snapshot : SourceSnapshot) (status : String)
     (findings : Array Finding := #[]) (diagnostics : Array String := #[]) : FileReport :=
   { path := snapshot.relativePath, status, findings, diagnostics }
@@ -998,7 +1053,8 @@ keyed on `renderCanonical` (`ruff-11c` RDF-IMPL, `notes/01-model.md` §2):
 
 - **Layout patch** (`format`/`diff`, `renderCanonical`). `base := canonical.text`, the reflowed bytes,
   and the patch carries **no** rule fix. The render is the whole answer: `format` publishes `output` in
-  place (`ruff-11d`, `formatFile`; `format --check` previews it), `diff` diffs `normalized` against it.
+  place (`ruff-11d`, `prepareFormatFile`; `format --check` previews it), `diff` diffs `normalized`
+  against it.
   A rule fix belongs to `fix`, never layout.
 - **Fix patch** (`fix`; `check` computes it for the report). `base := normalized`, the file's own bytes,
   and the patch carries the admitted fixes from `selected` at **original** coordinates. `fix` validates
@@ -1139,43 +1195,38 @@ private def fixFile (run : ExactRun) (plan : RulePlan) (unsafeFixes : Bool)
 
 Structurally `fixFile` with the *layout* base: it renders the `ruff-11c` layout patch
 (`renderCanonical := true`, so `patch.formatted = canonical.text` and the patch carries no rule fix),
-short-circuits `clean` when the file already is canonical, validates the reflowed bytes under the exact
-module setup, and publishes through `publishAtomic` — the same guarded path (stale-source check + atomic
-lossless write) `fix` and `organize` use. A file that does not elaborate is `broken` and never written;
-a partial write is impossible. `format` applies no rule fix; those belong to `fix`. Status `formatted` +
+short-circuits `clean` when the file already is canonical, and publishes the already admitted bytes
+through `publishAtomic` — the same guarded path (stale-source check + atomic lossless write) `fix` and
+`organize` use. The candidate frontend inside admission has already parsed and elaborated those exact
+bytes. `format` applies no rule fix; those belong to `fix`. Status `formatted` +
 `written` mirrors `fix`'s `fixed`; the write bytes are `prepared.output`, denormalized to the file's own
 line endings, so a CRLF file stays CRLF. -/
-private def formatFile (run : ExactRun) (plan : RulePlan) (unsafeFixes : Bool)
+private def prepareFormatFile (plan : RulePlan) (unsafeFixes : Bool)
     (reportImports : Array Finding) (withheldRedundant : Nat)
-    (snapshot : SourceSnapshot) (analysis : SemanticAnalysis) : IO FileReport := do
+    (snapshot : SourceSnapshot) (analysis : SemanticAnalysis) : FileReport × Option String :=
   match prepareFile plan (renderCanonical := true) unsafeFixes reportImports
       withheldRedundant snapshot analysis with
-  | .error report => return report
+  | .error report => (report, none)
   | .ok prepared =>
     let findings := prepared.findings
     let withheldUnsafe := prepared.withheldUnsafe
     let suppressed := prepared.suppressed
     let withheldRedundant := prepared.withheldRedundant
-    unless prepared.changed do
-      return { (baseReport snapshot "clean" findings) with withheldUnsafe, suppressed, withheldRedundant }
-    let output := prepared.output
-    -- Validate the reflowed bytes as `fix` validates its fixed bytes: the printer is not proven
-    -- to preserve elaboration (`RLF-REFLOW` moves bytes across lines), so a layout that fails to
-    -- elaborate is rejected, never published. No canonical render — the question is only whether these
-    -- bytes elaborate.
-    let candidate := snapshot.withSource output
-    let validation ← withPhase "validation" <|
-      run.analyzeSnapshot candidate (renderCanonical := false) (validator := true)
-    if let some report := validationReport snapshot findings validation then
-      return report
-    match ← publishAtomic snapshot.path snapshot.source output with
-    | .error message => return { (baseReport snapshot "rejected" findings #[message]) with
-        withheldUnsafe, suppressed, withheldRedundant }
-    | .ok _ =>
-      return { (baseReport snapshot "formatted" findings) with
-        formatted := some output
-        written := true
-        withheldUnsafe, suppressed, withheldRedundant }
+    if !prepared.changed then
+      ({ (baseReport snapshot "clean" findings) with withheldUnsafe, suppressed, withheldRedundant },
+        none)
+    else
+      let output := prepared.output
+      -- The admitted layout's second frontend pass already parsed and elaborated these exact normalized
+      -- bytes under this setup. Publication is deferred until every file has an admitted candidate.
+      ({ (baseReport snapshot "formatted" findings) with
+          formatted := some output
+          withheldUnsafe, suppressed, withheldRedundant }, some output)
+
+private structure PendingFormat where
+  reportIndex : Nat
+  snapshot : SourceSnapshot
+  output : String
 
 def ExactRun.checkSnapshot (run : ExactRun) (plan : RulePlan)
     (snapshot : SourceSnapshot) : IO FileReport := do
@@ -1448,7 +1499,9 @@ def execute (request : RunRequest) : IO RunOutcome := do
   -- so reporting both separates "the entry was invalidated" from "the entry was inadequate".
   recordCount "targets" snapshots.size
   recordCount "index_hits" indexHits
-  recordCount "served" (cached.foldl (init := 0) fun n c? => if c?.isSome then n + 1 else n)
+  let served := cached.foldl (init := 0) fun n c? => if c?.isSome then n + 1 else n
+  recordCount "served" served
+  recordCount "path_cache_hit" served
   -- A writing `format` (`ruff-11d`) is not served here: it must reach `withExactRun` for the validator
   -- child before it publishes, so it is excluded from both cache-only preview fast paths. `format
   -- --check`, which writes nothing, keeps them.
@@ -1501,6 +1554,7 @@ def execute (request : RunRequest) : IO RunOutcome := do
     let mut files := #[]
     let mut failures := #[]
     let mut analyses := #[]
+    let mut pendingFormats : Array PendingFormat := #[]
     for (((snapshot, available?), ir), plan) in
         ((snapshots.zip available).zip importReports).zip plans do
       try
@@ -1511,16 +1565,28 @@ def execute (request : RunRequest) : IO RunOutcome := do
               (captureSemantic := demanded == .semantic)
               (captureOccurrences := demandedCaps.occurrences)
         analyses := analyses.push (some analysis)
-        let report ← withPhase "rules" <| match request.mode with
-          | .fix => fixFile exactRun plan request.unsafeFixes ir.1 ir.2 snapshot analysis
-          | .check => previewFile .check plan request.unsafeFixes ir.1 ir.2 snapshot analysis
+        let (report, formatOutput?) ← withPhase "rules" <| match request.mode with
+          | .fix => do
+            let report ← fixFile exactRun plan request.unsafeFixes ir.1 ir.2 snapshot analysis
+            pure (report, none)
+          | .check => do
+            let report ← previewFile .check plan request.unsafeFixes ir.1 ir.2 snapshot analysis
+            pure (report, none)
           -- `format` publishes in place by default (`ruff-11d`); `--check` demotes it to the preview.
           | .format =>
-            if request.formatCheck then
-              previewFile .format plan request.unsafeFixes ir.1 ir.2 snapshot analysis
+            if request.formatCheck then do
+              let report ← previewFile .format plan request.unsafeFixes ir.1 ir.2 snapshot analysis
+              pure (report, none)
             else
-              formatFile exactRun plan request.unsafeFixes ir.1 ir.2 snapshot analysis
-          | .diff => previewFile .diff plan request.unsafeFixes ir.1 ir.2 snapshot analysis
+              pure <| prepareFormatFile plan request.unsafeFixes ir.1 ir.2 snapshot analysis
+          | .diff => do
+            let report ← previewFile .diff plan request.unsafeFixes ir.1 ir.2 snapshot analysis
+            pure (report, none)
+        if let some output := formatOutput? then
+          pendingFormats := pendingFormats.push {
+            reportIndex := files.size
+            snapshot
+            output }
         files := files.push report
       catch error =>
         analyses := analyses.push none
@@ -1531,6 +1597,29 @@ def execute (request : RunRequest) : IO RunOutcome := do
           status := "infrastructure-failure"
           diagnostics := #[message]
         }
+    if request.writesFormat && !pendingFormats.isEmpty then
+      let batchReady := failures.isEmpty && files.all fun report =>
+        report.status != "broken" && report.status != "rejected" &&
+          report.status != "infrastructure-failure"
+      if batchReady then
+        let publications := pendingFormats.map fun pending => {
+          path := pending.snapshot.path
+          original := pending.snapshot.source
+          output := pending.output : Publication }
+        match ← publishBatchAtomic publications with
+        | .ok _ =>
+          for pending in pendingFormats do
+            files := files.set! pending.reportIndex { files[pending.reportIndex]! with written := true }
+        | .error message =>
+          for pending in pendingFormats do
+            files := files.set! pending.reportIndex {
+              files[pending.reportIndex]! with status := "rejected", diagnostics := #[message] }
+      else
+        for pending in pendingFormats do
+          files := files.set! pending.reportIndex {
+            files[pending.reportIndex]! with
+              status := "rejected"
+              diagnostics := #["format batch was not published because another target failed"] }
     if let some cache := cache? then
       withPhase "cache_write" <| cache.writeAll project snapshots analyses
     let positions ← profiledPositions snapshots files
@@ -1634,17 +1723,11 @@ def ExactRun.streamSnapshot (run : ExactRun) (target : Project.SourceTarget) (pl
   let demandedCaps := plan.demandedCaps renderCanonical applies
   let demanded := plan.requiredTier.max (if renderCanonical then Tier.semantic else Tier.source)
   let envelope ← run.envelope target (captureSemantic := demanded == .semantic)
-    (captureOccurrences := demandedCaps.occurrences) (cancel? := cancel?)
-  -- Rendered here rather than inside `canonicalAnalysis` so the source map survives the trip.
-  let base ← canonicalAnalysis target (renderCanonical := false) envelope
-  let (analysis, marks) ←
-    match renderCanonical, envelope.artifact?, base.result? with
-    | true, some artifact, some _ =>
-      let (normalized, _) := LosslessSource.normalize target.source
-      let (text, marks) ← Printer.formatWithMap artifact.source normalized
-        target.config.format.lineWidth artifact.semantic
-      pure (base.withCanonical { text }, marks)
-    | _, _, _ => pure (base, #[])
+    (captureOccurrences := demandedCaps.occurrences)
+    (formatWidth? := if renderCanonical then some target.config.format.lineWidth else none)
+    (cancel? := cancel?)
+  let analysis ← canonicalAnalysis target renderCanonical envelope
+  let marks := envelope.canonical?.map (fun layout => layout.sourceMap) |>.getD #[]
   let (normalized, _) := LosslessSource.normalize target.source
   let (reportImports, withheldRedundant) ← singleImportReport plan project.workspace normalized
   match prepareFile plan renderCanonical unsafeFixes reportImports
@@ -1711,10 +1794,9 @@ Every clause the freeze fixes is enforced here:
   the `.lake` floor, and resolves the effective configuration from the buffer's location, so the same
   bytes get the same answer whether they arrive by path or by pipe.
 
-The range render is taken with the map (`Printer.formatWithMap`) instead of through
-`canonicalAnalysis`'s render, which would drop it — one render either way, not two. `CanonicalText`
-deliberately does not grow a `marks` field: it is a cached value, and the map is needed only by this
-surface. -/
+The exact frontend response retains the admitted layout map for this surface. `CanonicalText`
+deliberately does not grow a `marks` field: it is a cached batch value, and the map is needed only by
+the stream/range surface. -/
 def stream (request : StreamRequest) : IO StreamReport := do
   unless request.maxMemoryGiB > 0 do
     throw <| IO.userError "--max-memory must provide a nonzero operating envelope"
@@ -1881,7 +1963,7 @@ private unsafe def runAnalyzeChild (args : List String) : IO UInt32 := do
   let formatWidth := (validatedWidth? <|> draftWidth?).getD 100
   let envelope ← withPhase "child_analyze" <|
     analyzeExact setup source displayPath
-      (captureSemantic := captureMode == "1" || captureMode == "2")
+      (captureSemantic := captureMode == "1" || captureMode == "2" || validatedWidth?.isSome)
       (captureOccurrences := captureMode == "2")
       (captureComments := captureMode == "3")
       (captureFormatDraft := draftWidth?.isSome)

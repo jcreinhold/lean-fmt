@@ -55,7 +55,7 @@ for format in concise github sarif junit; do
     "--output-format $format is not available for diff; diff reports a patch, not findings"
 done
 check "--output-format json is still allowed for diff" \
-  "$(code diff "$findings" --output-format json)" "0"
+  "$(code diff "$findings" --output-format json)" "1"
 
 # §2.2 — two spellings of one choice. Agreement is fine; disagreement is an error, never a precedence
 # rule, because a caller who typed two formats has no preference for us to guess.

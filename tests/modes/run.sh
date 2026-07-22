@@ -110,17 +110,17 @@ PY
 
 # Every non-writing preview — `check`, `format --check` (`ruff-11d`: the opt-in CI preview), and `diff`
 # — consumes the same result and leaves source bytes, mtimes, and permissions untouched. `Findings.lean`
-# is layout-clean but carries one FMT003 (duplicate import). Since `ruff-11c` RDF-IMPL split layout from
-# fix, `format`/`diff` reflow only and apply **no** rule fix: on a layout-clean file they are `clean` and
-# exit 0 even though `check` still reports the finding — the FMT003 dedup is a fix, not layout, and rides
+# carries one FMT003 (duplicate import). Since `ruff-11c` RDF-IMPL split layout from fix,
+# `format`/`diff` reflow only and apply **no** rule fix. The frontend-native formatter also breaks the
+# declaration body, so the layout modes exit 1 independently of the finding; the FMT003 dedup rides
 # `fix` (exercised below), never `format`. (Plain `format` writes in place since `ruff-11d`; these
 # previews use `--check` so the shared `Findings.lean` fixture stays byte-stable for the asserts below.)
 metadata "$source_file" >"$work/source.before"
 run_expect 1 "$work/check.json" "$application" check --root . --json --no-cache \
   tests/check/Findings.lean
-run_expect 0 "$work/format.json" "$application" format --check --root . --json --no-cache \
+run_expect 1 "$work/format.json" "$application" format --check --root . --json --no-cache \
   tests/check/Findings.lean
-run_expect 0 "$work/diff.txt" "$application" diff --root . --no-cache \
+run_expect 1 "$work/diff.txt" "$application" diff --root . --no-cache \
   tests/check/Findings.lean
 metadata "$source_file" >"$work/source.after-previews"
 cmp "$work/source.before" "$work/source.after-previews"
@@ -133,16 +133,14 @@ diff = open(sys.argv[3]).read()
 # `check` reports the finding and its safe fix; it changes nothing on disk.
 assert check["mode"] == "check" and check["changed"] == 1 and check["written"] == 0
 assert [f["code"] for f in check["files"][0]["findings"]] == ["FMT003"]
-# `format` applies no rule fix and the file is layout-clean, so it is `clean` — but it still reports the
-# finding at original coordinates (`notes/01-model.md` §4: the report survives the patch split).
-assert formatted["mode"] == "format" and formatted["changed"] == 0
-assert formatted["files"][0]["status"] == "clean"
-assert formatted["files"][0]["formatted"] is None
+# `format` applies no rule fix but does reflow; the finding remains at original coordinates.
+assert formatted["mode"] == "format" and formatted["changed"] == 1
+assert formatted["files"][0]["status"] == "would-format"
+assert formatted["files"][0]["formatted"] is not None
 assert [f["code"] for f in formatted["files"][0]["findings"]] == ["FMT003"]
-# `diff` likewise shows no layout change — an empty diff body, `changed=0`, the FMT003 dedup withheld
-# from the layout preview. The stats line still reports the finding.
-assert "@@" not in diff, repr(diff)
-assert diff == ("mode=diff files=1 findings=1 changed=0 written=0 broken=0 rejected=0 "
+# `diff` shows only layout; the FMT003 dedup remains withheld from the patch.
+assert "@@" in diff, repr(diff)
+assert diff.endswith("mode=diff files=1 findings=1 changed=1 written=0 broken=0 rejected=0 "
     "withheld_unsafe=0 suppressed=0 infrastructure_failures=0\n"), repr(diff)
 PY
 
@@ -171,7 +169,7 @@ assert r["findings"] == 0, f"layout-only change must carry no findings: {r}"
 assert r["changed"] == 1 and r["written"] == 0, r
 assert r["files"][0]["status"] == "would-format", r["files"][0]
 assert r["files"][0]["formatted"] == \
-    "module\n\nnamespace Alpha\n\ndef layoutValue : Nat := 1\n\nend Alpha\n", \
+    "module\n\nnamespace Alpha\ndef layoutValue : Nat :=\n  1\nend Alpha\n", \
     repr(r["files"][0]["formatted"])
 PY
 grep -q 'namespace     Alpha' tests/check/Layout.lean ||
@@ -205,22 +203,13 @@ run_expect 1 "$work/layout-nonl.diff" "$application" diff --root . --no-cache \
 python3 - "$work/layout-nonl.diff" <<'PY'
 import sys
 diff = open(sys.argv[1]).read()
-# GNU diff's exact rendering: the marker follows the side that lacks the terminator, so the same
-# text appears once removed and once added.
-expected = "".join(line + "\n" for line in [
-    "--- a/tests/check/Layout.lean",
-    "+++ b/tests/check/Layout.lean",
-    "@@ -4,4 +4,4 @@",
-    " ",
-    " def layoutValue : Nat := 1",
-    " ",
-    "-end Alpha",
-    "\\ No newline at end of file",
-    "+end Alpha",
-    "mode=diff files=1 findings=0 changed=1 written=0 broken=0 rejected=0 withheld_unsafe=0 "
-    "suppressed=0 infrastructure_failures=0",
-])
-assert diff == expected, repr(diff)
+# The native formatter also reflows the body, but the missing-terminator distinction must remain
+# explicit rather than collapsing to an empty/ambiguous diff.
+assert diff.startswith("--- a/tests/check/Layout.lean\n+++ b/tests/check/Layout.lean\n@@"), repr(diff)
+assert "\\ No newline at end of file" in diff, repr(diff)
+assert "-def layoutValue : Nat := 1" in diff and "+def layoutValue : Nat :=" in diff, repr(diff)
+assert diff.endswith("mode=diff files=1 findings=0 changed=1 written=0 broken=0 rejected=0 "
+    "withheld_unsafe=0 suppressed=0 infrastructure_failures=0\n"), repr(diff)
 PY
 cp -p "$work/Layout.lean" "$layout_file"
 
@@ -261,7 +250,7 @@ assert seed["files"][0]["status"] == "clean", seed
 assert after["changed"] == 1, f"a check-populated hit suppressed layout: {after}"
 assert after["files"][0]["status"] == "would-format", after["files"][0]
 assert after["files"][0]["formatted"] == \
-    "module\n\nnamespace Alpha\n\ndef layoutValue : Nat := 1\n\nend Alpha\n", \
+    "module\n\nnamespace Alpha\ndef layoutValue : Nat :=\n  1\nend Alpha\n", \
     repr(after["files"][0]["formatted"])
 PY
 rm -rf "$cache_root"
@@ -610,8 +599,8 @@ f, = r["files"]
 assert f["status"] == "would-format", f
 assert [x["code"] for x in f["findings"]] == ["FMT003"], f          # finding survives format
 assert f["formatted"] == \
-    "module\n\nimport LeanFmt.Basic\nimport LeanFmt.Basic\n\nnamespace Alpha\n\n" \
-    "def mixedValue : Nat := 1\n\nend Alpha\n", repr(f["formatted"])  # reflowed, NOT deduped
+    "module\n\nimport LeanFmt.Basic\nimport LeanFmt.Basic\n\nnamespace Alpha\n" \
+    "def mixedValue : Nat :=\n  1\nend Alpha\n", repr(f["formatted"])  # reflowed, NOT deduped
 PY
 
 # `diff` equals the `format` preview: same reflow, same withheld fix.
@@ -659,7 +648,7 @@ import json, sys
 f, = json.load(open(sys.argv[1]))["files"]
 assert f["status"] == "would-format" and f["findings"] == [], f
 assert f["formatted"] == \
-    "module\n\nimport LeanFmt.Basic\n\nnamespace Alpha\n\ndef mixedValue : Nat := 1\n\nend Alpha\n", \
+    "module\n\nimport LeanFmt.Basic\n\nnamespace Alpha\ndef mixedValue : Nat :=\n  1\nend Alpha\n", \
     repr(f["formatted"])
 PY
 
@@ -681,7 +670,7 @@ assert r["mode"] == "format" and r["changed"] == 1 and r["findings"] == 0, r
 f, = r["files"]
 assert f["status"] == "would-format", f
 assert f["findings"] == [], f  # the reflow, not a rule, made the change
-assert f["formatted"] == "module\n\ndef alpha : Nat := 1\n\ndef beta : Nat := 2\n", repr(f["formatted"])
+assert f["formatted"] == "module\n\ndef alpha : Nat :=\n  1\ndef beta : Nat :=\n  2", repr(f["formatted"])
 PY
 run_expect 0 "$work/nosel-check.json" "$application" check --root . --json --no-cache \
   tests/modes/.rdf-layout-nosel.lean
@@ -694,20 +683,19 @@ assert f["status"] == "clean" and f["findings"] == [], f
 PY
 
 # 2. In-string trailing whitespace is token content, not inter-token trivia, so the trim is sound by
-#    construction: the string value survives byte-for-byte and no rule reports it. `format` adds the
-#    missing final newline as layout; `fix` — which since RDF-IMPL applies rule fixes, not layout — is a
-#    clean no-op on this finding-free file and adds no newline, leaving every byte exactly as written.
-#    This is the case the retired trailing-whitespace rule corrupted (it edited the string's bytes);
-#    it now cannot recur.
+#    construction. The toolchain formatter currently reindents this multiline literal, which changes
+#    its token spelling; the structural gate refuses that candidate as an infrastructure failure.
+#    `fix` remains a clean no-op at original coordinates. Prompt 14 owns a literal-safe layout.
 printf 'module\n\ndef stringWsValue : String := "alpha   \n  beta"' >"$string_fixture"
-run_expect 1 "$work/string-format.json" "$application" format --check --root . --json --no-cache \
+run_expect 2 "$work/string-format.json" "$application" format --check --root . --json --no-cache \
   tests/modes/.rdf-layout-string.lean
 python3 - "$work/string-format.json" <<'PY'
 import json, sys
-f, = json.load(open(sys.argv[1]))["files"]
-assert f["findings"] == [], f
-assert f["formatted"] == 'module\n\ndef stringWsValue : String := "alpha   \n  beta"\n', \
-    repr(f["formatted"])
+r = json.load(open(sys.argv[1]))
+f, = r["files"]
+assert f["findings"] == [] and f["formatted"] is None, f
+assert f["status"] == "infrastructure-failure" and r["infrastructureFailures"], r
+assert "changed spelling" in f["diagnostics"][0], f
 PY
 run_expect 0 "$work/string-fix.json" "$application" fix --root . --json --no-cache \
   tests/modes/.rdf-layout-string.lean
@@ -722,16 +710,15 @@ data = open(sys.argv[2], "rb").read()
 assert data == b'module\n\ndef stringWsValue : String := "alpha   \n  beta"', repr(data)
 PY
 
-# 3. A verbatim tail after a terminal `#exit` is emitted byte-for-byte EXCEPT its own trailing
-#    horizontal whitespace, which is layout the reflow lays down: it is trimmed and the file gains a
-#    final newline. (`#exit` ends the command stream, so everything after it is uninterpreted tail.)
+# 3. A verbatim tail after a terminal `#exit` is emitted byte-for-byte. The formatter reflows the
+#    command before it but cannot reinterpret or normalize the never-parsed tail.
 printf 'module\n\ndef x : Nat := 1\n#exit\ntrailing garbage   ' >"$tail_fixture"
 run_expect 1 "$work/tail-format.json" "$application" format --check --root . --json --no-cache \
   tests/modes/.rdf-layout-tail.lean
 python3 - "$work/tail-format.json" <<'PY'
 import json, sys
 f, = json.load(open(sys.argv[1]))["files"]
-assert f["formatted"] == "module\n\ndef x : Nat := 1\n#exit\ntrailing garbage\n", repr(f["formatted"])
+assert f["formatted"] == "module\n\ndef x : Nat :=\n  1\n#exit\ntrailing garbage   ", repr(f["formatted"])
 PY
 
 # --- RDF-FINAL / FIP-IMPL: composition confluence with `format` WRITING. The two decoupled operations
@@ -740,7 +727,7 @@ PY
 #     reaches the SAME fixed point on disk. Since `ruff-11d`, `format` publishes in place, so both orders
 #     are materialized by the tools themselves (no captured-preview step) and the two files are compared.
 #     `fix` and `format` are both writers now; each still owns only its half. ---
-canonical='module\n\nimport LeanFmt.Basic\n\nnamespace Alpha\n\ndef mixedValue : Nat := 1\n\nend Alpha\n'
+canonical='module\n\nimport LeanFmt.Basic\n\nnamespace Alpha\ndef mixedValue : Nat :=\n  1\nend Alpha\n'
 source='module\n\nimport LeanFmt.Basic\nimport LeanFmt.Basic\n\nnamespace     Alpha\n\ndef mixedValue : Nat := 1\n\nend Alpha\n'
 
 # Order A — `fix` then `format`: fix dedups at original coords (layout still dirty), then format reflows
@@ -811,7 +798,7 @@ PY
 # 1+2. Exact bytes + idempotence. A layout-dirty, otherwise lint-clean file: `format` writes EXACTLY the
 #      canonical bytes (byte-compared), no rule fix appears, and a second `format` writes nothing.
 printf 'module\n\nnamespace     Gamma\n\ndef exactValue : Nat := 1\n\nend Gamma\n' >"$fin_exact_fixture"
-canonical_exact='module\n\nnamespace Gamma\n\ndef exactValue : Nat := 1\n\nend Gamma\n'
+canonical_exact='module\n\nnamespace Gamma\ndef exactValue : Nat :=\n  1\nend Gamma\n'
 run_expect 0 "$work/fin-exact.json" "$application" format --root . --json --no-cache \
   tests/modes/.fip-final-exact.lean
 CANON="$canonical_exact" python3 - "$work/fin-exact.json" "$fin_exact_fixture" <<'PY'
@@ -892,16 +879,15 @@ assert b"namespace Delta\r\n" in data and b"namespace     Delta" not in data, \
     ("layout not canonicalized on a CRLF write", data)
 PY
 
-# 5b. In-string trailing whitespace round-trip. `format` adds the missing final newline (layout) but the
-#     string value "alpha   " survives byte-for-byte — the trivia-only trim cannot reach token content,
-#     so the write cannot corrupt a string the way the retired trailing-whitespace rule once did.
+# 5b. In-string trailing whitespace safety. The toolchain formatter's candidate changes this literal's
+#     spelling, so admission refuses it and the write transaction leaves the source byte-identical.
 printf 'module\n\ndef stringVal : String := "alpha   \n  beta"' >"$fin_string_fixture"
-run_expect 0 "$work/fin-string.json" "$application" format --root . --json --no-cache \
+run_expect 2 "$work/fin-string.json" "$application" format --root . --json --no-cache \
   tests/modes/.fip-final-string.lean
 python3 - "$fin_string_fixture" <<'PY'
 import sys
 data = open(sys.argv[1], "rb").read()
-assert data == b'module\n\ndef stringVal : String := "alpha   \n  beta"\n', repr(data)
+assert data == b'module\n\ndef stringVal : String := "alpha   \n  beta"', repr(data)
 PY
 
 # 6. Stale-source guard on format's write. A concurrent change between analysis and rename is caught by
@@ -945,7 +931,7 @@ assert f["status"] == "formatted" and f["written"] is True, f
 PY
 python3 - "$fin_incl_fixture" <<'PY'
 import sys
-assert open(sys.argv[1]).read() == "module\n\nnamespace Incl\n\ndef inclValue : Nat := 1\n\nend Incl\n"
+assert open(sys.argv[1]).read() == "module\n\nnamespace Incl\ndef inclValue : Nat :=\n  1\nend Incl\n"
 PY
 metadata "$fin_excl_fixture" >"$work/fin-excl.after"
 cmp "$work/fin-excl.before" "$work/fin-excl.after" # the excluded sibling was never touched
@@ -1029,7 +1015,7 @@ PY
 python3 - "$rcd_excl_fixture" <<'PY'
 import sys
 assert open(sys.argv[1]).read() == \
-    "module\n\nnamespace Excluded\n\ndef excludedValue : Nat := 1\n\nend Excluded\n"
+    "module\n\nnamespace Excluded\ndef excludedValue : Nat :=\n  1\nend Excluded\n"
 PY
 
 # 11. `[format] line-width` participates in the result-cache identity and `[lint]` does not
@@ -1056,12 +1042,12 @@ line-width = 100
 [lint]
 select = ["security"]
 EOF
-run_expect 0 "$work/rcd-w100.json" "$application" format --check --root . --json \
+run_expect 1 "$work/rcd-w100.json" "$application" format --check --root . --json \
   --config "$work/rcd-w100.toml" tests/modes/.rcd-impl-excluded.lean
-run_expect 0 "$work/rcd-w100b.json" "$application" format --check --root . --json \
+run_expect 1 "$work/rcd-w100b.json" "$application" format --check --root . --json \
   --config "$work/rcd-w100.toml" tests/modes/.rcd-impl-excluded.lean
 cmp "$work/rcd-w100.json" "$work/rcd-w100b.json" # a warm identical run is byte-identical
-run_expect 0 "$work/rcd-w100-lint.json" "$application" format --check --root . --json \
+run_expect 1 "$work/rcd-w100-lint.json" "$application" format --check --root . --json \
   --config "$work/rcd-w100-lint.toml" tests/modes/.rcd-impl-excluded.lean
 python3 - "$work/rcd-w100.json" "$work/rcd-w100-lint.json" <<'PY'
 import json, sys
@@ -1073,9 +1059,11 @@ run_expect 1 "$work/rcd-w20.json" "$application" format --check --root . --json 
 python3 - "$work/rcd-w100.json" "$work/rcd-w20.json" <<'PY'
 import json, sys
 wide, narrow = (json.load(open(p)) for p in sys.argv[1:3])
-assert [f["status"] for f in wide["files"]] == ["clean"], wide
+assert [f["status"] for f in wide["files"]] == ["would-format"], wide
 assert [f["status"] for f in narrow["files"]] == ["would-format"], \
     ("a width-100 cache entry was served to a width-20 run", narrow)
+assert wide["files"][0]["formatted"] != narrow["files"][0]["formatted"], \
+    ("line-width did not change admitted canonical bytes", wide, narrow)
 PY
 rm -rf "$cache_root"
 

@@ -16,12 +16,12 @@ namespace LeanFmt.Internal
 `text` is what `format` publishes in place (`ruff-11d`; `format --check` previews it) and what `diff`
 diffs the file's own bytes against. It carries **no**
 findings: since `ruff-11c` RDF-IMPL the layout patch applies no rule fix (`fix` applies a rule fix at
-the file's *original* coordinates, never on the moved canonical bytes), so the source-rule surface
-that once re-indexed findings against this text (`renderCanonicalText`'s `runSourceRules`) is gone.
+the file's *original* coordinates, never on the moved canonical bytes), so the retired source-rule
+surface that once re-indexed findings against rendered text is gone.
 `format`/`diff` render this text; the report they show is still `result.findings` at original
 coordinates, drawn one level up in `prepareFile` and independent of this structure.
 
-Selection-independent — one rendered layout serves any `--select`, because selection never enters the
+Selection-independent — one admitted layout serves any `--select`, because selection never enters the
 canonical transformation. -/
 structure CanonicalText where
   text : String
@@ -98,8 +98,13 @@ so no `v6` `.semantic` entry serves a fixable-FMT012 demand it never captured oc
 rule fix now that `format`/`diff` reflow only and every fix applies at original coordinates. A `v7`
 `canonical` object has an extra `findings` field the `v8` shape ignores, but a `v7` entry read as `v8`
 would also be serving canonical text whose findings the new code no longer folds into any patch; the
-schema bump makes it a clean miss instead. -/
-def semanticResultSchema : String := "lean-fmt.semantic-result.v8"
+schema bump makes it a clean miss instead.
+
+`v9` (`LFF-APPLICATION`): canonical bytes now come only from the frontend-native formatter after its
+structural/idempotence gate. A `v8` cache entry contains projection-printer bytes that never passed
+that gate; accepting it would preserve the deleted production path through storage, so every such
+entry is a miss. -/
+def semanticResultSchema : String := "lean-fmt.semantic-result.v9"
 
 /-- `normalized` must be `(LosslessSource.normalize raw).1`, the string every finding indexes.
 `suppression` defaults empty for the source-only shortcut; `ofEnvelope?` passes the collected facts.
@@ -120,13 +125,11 @@ def SemanticAnalysis.success (normalized : String) (findings : Array Finding)
   }
 }
 
-/-- Attach a rendered canonical layout to an already-validated result.
+/-- Attach an already admitted canonical layout to a source-validated semantic result.
 
-Separate from `success` because rendering needs `IO` (`Printer.format` parses the header) while every
-other step here is pure, and because it must happen *after* `ofEnvelope?` has checked
-`structurallyValid` and `validFor`: rendering a projection that does not match its own source would
-produce canonical text for a file that does not exist. Applying this to a `broken` analysis is a
-no-op — there is nothing to render and nothing to attach it to. -/
+Separate from `success` because the frontend admission is an independently fallible operation and
+because this must happen *after* `ofEnvelope?` checks `structurallyValid` and `validFor`. Applying it
+to a broken analysis is a no-op. -/
 def SemanticAnalysis.withCanonical (analysis : SemanticAnalysis)
     (canonical : CanonicalText) : SemanticAnalysis :=
   { analysis with result? := analysis.result?.map ({ · with canonical? := some canonical }) }

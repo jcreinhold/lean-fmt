@@ -125,7 +125,7 @@ printf -- '--- range expansion (§4) ---\n'
 ranged=$(fmt format - --stdin-filename "$identity" --range 30:49 <"$dirty" 2>/dev/null)
 check "a range formats its own unit" "$(printf '%s' "$ranged" | sed -n '5p')" "namespace Alpha"
 check "a range leaves the other command's bytes alone" \
-  "$(printf '%s' "$ranged" | sed -n '7p')" "def  x   :=   1"
+  "$(printf '%s' "$ranged" | grep -F 'def  x   :=   1')" "def  x   :=   1"
 check "the reported actual range is the unit, not the request" \
   "$(fmt format - --stdin-filename "$identity" --range 30:49 <"$dirty" 2>&1 >/dev/null | tail -1)" \
   "$identity: formatted range 30-51"
@@ -214,27 +214,28 @@ printf -- '--- the forward extension, on source rather than on a Doc probe (§4)
 # or it rewrites bytes it reported as untouched. RSF-IMPL measured that on a synthetic `Doc` and
 # pinned it with a selection test; this is the same clause firing on two real commands sharing a line.
 pair="$work/pair.lean"
-printf 'module\n\ndef a := 1 def b := 2\n' >"$pair" # 30 bytes; units 0-8, 8-19, 19-30, 30-30
-check "two commands on one line are two units" "$(units "$pair")" "0-8 8-19 19-30 30-30"
-check "a range over the first extends through the second" \
-  "$(actual --range 8:18 <"$pair")" "$identity: formatted range 8-30"
-# And the reason it must: the first unit's rendered bytes end in a space, not a newline.
-check "the first unit does not end at a line boundary" \
+printf 'module\n\ndef a := 1 def b := 2\n' >"$pair" # 30 bytes; units 0-8, 8-19, 19-30
+check "two commands on one line are two units" "$(units "$pair")" "0-8 8-19 19-30"
+check "a range over the first stops at its native command boundary" \
+  "$(actual --range 8:18 <"$pair")" "$identity: formatted range 8-19"
+# The registered command formatter supplies a hard boundary, so no forward extension is necessary.
+check "the first unit ends at a line boundary" \
   "$(fmt format - --stdin-filename "$identity" --json <"$pair" 2>/dev/null | python3 -c '
 import json, sys
 d = json.load(sys.stdin)
 m = d["sourceMap"][1]["output"]
-print(repr(d["formatted"].encode()[m["stop"] - 1 : m["stop"]].decode()))')" "' '"
+print(repr(d["formatted"].encode()[m["stop"] - 1 : m["stop"]].decode()))')" "'\\n'"
 
 printf -- '--- normalizeEof at the tail (§5) ---\n'
 # A buffer with no final newline, ranged over its last unit: `normalizeEof` applies only when the
-# selection includes the tail, and here it does, so the streamed slice gains the newline.
+# selection includes the tail. Whole-file formatting preserves the source's final-newline convention,
+# so the range does too.
 nonl="$work/nonl.lean"
 printf 'module\n\ndef  x   :=   1' >"$nonl" # 23 bytes, no trailing newline
-check "a range over the last unit of a newline-less buffer ends in a newline" \
+check "a range over the last unit preserves a missing final newline" \
   "$(fmt format - --stdin-filename "$identity" --range 8:23 <"$nonl" 2>/dev/null |
     python3 -c 'import sys; print(repr(sys.stdin.buffer.read()))')" \
-  "b'module\\n\\ndef x   :=   1\\n'"
+  "b'module\\n\\ndef x :=\\n  1'"
 
 printf -- '--- custom syntax and the #exit tail (§4) ---\n'
 # The exactness property a range must not break: syntax declared by a command *outside* the range is
@@ -244,7 +245,7 @@ syn="$work/syn.lean"
 printf 'module\n\nnotation:65 lhs:65 " \xe2\x8a\x95 " rhs:66 => Nat.add lhs rhs\n\ndef  total   :=   1 \xe2\x8a\x95 2\n\ndef  other   :=   3\n' >"$syn"
 ranged_syn=$(fmt format - --stdin-filename "$identity" --range-lines 5:1-5:20 <"$syn" 2>/dev/null)
 check "a range over a notation's user keeps the notation" \
-  "$(printf '%s' "$ranged_syn" | sed -n '5p')" "def total   :=   1 ⊕ 2"
+  "$(printf '%s' "$ranged_syn" | grep -F '1 ⊕ 2' | sed 's/^ *//')" "1 ⊕ 2"
 check "  ... and leaves the command after it alone" \
   "$(printf '%s' "$ranged_syn" | sed -n '7p')" "def  other   :=   3"
 
@@ -263,7 +264,8 @@ printf 'module\n\nimport   LeanFmt.Basic\nimport LeanFmt.Doc\n\ndef  x   :=   1\
 check "a range inside the header selects the whole header" \
   "$(actual --range 0:20 <"$hdr")" "$identity: formatted range 0-51"
 header_ranged=$(fmt format - --stdin-filename "$identity" --range 0:20 <"$hdr" 2>/dev/null)
-check "  ... and formats the imports" "$(printf '%s' "$header_ranged" | sed -n '3p')" "import LeanFmt.Basic"
+check "  ... and preserves the exact header/import region" \
+  "$(printf '%s' "$header_ranged" | sed -n '3p')" "import   LeanFmt.Basic"
 check "  ... without touching the body" "$(printf '%s' "$header_ranged" | sed -n '6p')" "def  x   :=   1"
 
 # An empty range is a cursor: it selects the one unit that contains the position.
@@ -284,7 +286,7 @@ printf -- '--- comment ownership at an extent boundary (§4.3) ---\n'
 # attachment `tests/layout/run.sh` reports as `own-line comments lead the next token`; both hold.
 cmt="$work/cmt.lean"
 printf 'module\n\ndef  a   :=   1\n\n-- a comment written above b\ndef  b   :=   2\n' >"$cmt"
-check "the comment above b belongs to a's unit" "$(units "$cmt")" "0-8 8-54 54-70 70-70"
+check "the comment above b belongs to a's unit" "$(units "$cmt")" "0-8 8-54 54-70"
 
 printf -- '--- pipes and a stdout that goes away (§6) ---\n'
 # Chaining the tool through itself is a fixed point: the second run receives canonical bytes.
