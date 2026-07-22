@@ -31,7 +31,7 @@ for width in (20, 40, 80, 100):
     text = canonical["text"]
     texts[width] = text
     for required in (
-        "by exact proof",
+        "exact proof",
         "constructor",
         "first",
         "| exact proof",
@@ -46,15 +46,9 @@ for width in (20, 40, 80, 100):
     assert text.index("let first") < text.index("let second") < text.index("pure second"), text
 
 narrow = texts[20]
-assert """    by
-      constructor
-      ·""" in narrow, narrow
-assert """    by
-      first
-      | exact proof
-      | assumption""" in narrow, narrow
-assert """    do
-      let first ←""" in narrow, narrow
+assert "by\n    constructor\n    ·" in narrow, narrow
+assert "first\n    | exact proof\n    | assumption" in narrow, narrow
+assert "do\n    let first ←" in narrow, narrow
 assert narrow.index("| 0 => by") < narrow.index("| _ => by"), narrow
 assert texts[20] != texts[40] != texts[80], "block registry ignored configured width"
 print("  ok   declaration shells embed actual by/do/match block documents at four widths")

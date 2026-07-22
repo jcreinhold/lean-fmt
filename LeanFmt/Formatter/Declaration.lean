@@ -10,12 +10,13 @@ module
 
 Shared value declarations use their parser nodes for declaration id, binder list, optional result,
 and simple value. Their flat and broken forms are lean-fmt documents. Nested result types remain exact
-token rows; value bodies request term documents. Other closed declaration families stay with the live
-registry while this module owns their dispatch boundary. Project command wrappers are not recognized
-here. -/
+token rows; ordinary value bodies request term documents. Equation declarations, value-less families,
+and offside bodies stay with the complete live command registry because their outer grammar or base
+column is part of the formatting context. Project command wrappers are not recognized here. -/
 
 import Lean.Parser.Command
 import all LeanFmt.Formatter
+import all LeanFmt.Formatter.Block
 import all LeanFmt.Formatter.Syntax
 import all LeanFmt.Formatter.Term
 
@@ -103,8 +104,10 @@ private def simpleDocument? (ownership : CommentOwnership) (stx : Lean.Syntax) :
   let #[modifiers, inner] := stx.getArgs | return .ok none
   if !simpleKind inner then return .ok none else
   let parts := simpleParts modifiers inner
-  let tokens := Syntax.spellings inner
-  if parts.value?.isNone && (tokens.contains ":=" || tokens.contains "where") then return .ok none
+  -- Equation declarations and value-less families have a different outer grammar. Keeping them in
+  -- the live command registry is structural dispatch, not a source fallback; treating equation rows
+  -- as a suffix of the declaration id moves them before the type and produces invalid Lean.
+  if parts.value?.isNone then return .ok none
   if parts.value?.any fun value => (Syntax.spellings value).contains "where" then return .ok none
   let mut document := Syntax.flat parts.leading
   if let some signature := parts.signature? then
@@ -116,6 +119,7 @@ private def simpleDocument? (ownership : CommentOwnership) (stx : Lean.Syntax) :
   if let some value := parts.value? then
     match valueBody? value with
     | some body =>
+      if Block.contains body then return .ok none
       match ← Term.format ownership body with
       | .ok formatted => document := document ++ valueDocument formatted.document
       | .error failure => return .error failure
@@ -131,7 +135,7 @@ families retain the live registry document and trace. -/
 def format? (ownership : CommentOwnership) (stx : Lean.Syntax) :
     Lean.CoreM (Option (Except FormatterFailure RegisteredDocument)) := do
   if !handles stx then return none
-  let registered ← Formatter.registered ownership .command stx
+  let registered ← Formatter.registeredAs ownership .command stx stx.unsetTrailing
   match ← simpleDocument? ownership stx with
   | .error failure => return some (.error failure)
   | .ok (some document) =>

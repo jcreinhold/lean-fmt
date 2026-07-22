@@ -22,6 +22,7 @@ import Lean.Parser.Module
 import all LeanFmt.Formatter
 import all LeanFmt.Formatter.Declaration
 import all LeanFmt.Formatter.Syntax
+import all LeanFmt.Formatter.Trivia
 
 namespace LeanFmt.Internal
 
@@ -117,12 +118,21 @@ def headerContract (stx : Lean.Syntax) : Array String :=
   contractFrom stx #[]
 
 private def format (ownership : CommentOwnership) (owner : CommandDocumentOwner)
-    (category : FormatterCategory) (stx : Lean.Syntax) :
+    (category : FormatterCategory) (stx : Lean.Syntax) (clearHead := true) :
     Lean.CoreM (Except FormatterFailure CommandDocument) := do
-  let result ← Formatter.registered ownership category stx
+  let formattedSyntax := if clearHead then boundaryFree stx else stx.unsetTrailing
+  let result ← Formatter.registeredAs ownership category stx formattedSyntax
   let document := result.map fun registered =>
     { document := registered.document, trace := registered.trace, owner }
   return document
+where
+  clearLeading (stx : Lean.Syntax) : Lean.Syntax :=
+    match stx.getHeadInfo with
+    | .original leading position trailing stop =>
+      stx.setHeadInfo (.original { leading with stopPos := leading.startPos } position trailing stop)
+    | _ => stx
+
+  boundaryFree (stx : Lean.Syntax) : Lean.Syntax := clearLeading stx |>.unsetTrailing
 
 private def ownerOf (stx : Lean.Syntax) : CommandDocumentOwner :=
   let coreNamespace := ``Lean.Parser.Command.declaration |>.getPrefix
@@ -143,11 +153,11 @@ private def headerDocument? (stx : Lean.Syntax) : Option Doc :=
   else none
 
 /-- Format the parsed module/import header as one closed core document. Import order and modifiers
-remain those of the actual header syntax. A comment-free header uses formatter-owned rows; until the
-trivia layer lands, a commented header retains Lean's exact comment emission. -/
+remain those of the actual header syntax. A comment-free header uses formatter-owned rows; a commented
+header keeps native leading trivia while stripping the ordinary-command boundary from its tail. -/
 def header (ownership : CommentOwnership) (stx : Lean.Syntax) :
     Lean.CoreM (Except FormatterFailure CommandDocument) := do
-  let result ← format ownership .core (.named ``Lean.Parser.Module.header) stx
+  let result ← format ownership .core (.named ``Lean.Parser.Module.header) stx (clearHead := false)
   match result, headerDocument? stx with
   | .ok formatted, some document =>
     if (Comments.subtree ownership stx).isEmpty then

@@ -21,6 +21,7 @@ exclude = [
   "tests/check/**",
   "tests/compiler/**",
   "tests/downstream/**",
+  "tests/format-suppression/**",
   "tests/imports/**",
   "tests/reporting/**",
   "tests/semantic/**",

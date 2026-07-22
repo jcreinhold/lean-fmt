@@ -62,6 +62,7 @@ private structure Assignment where
 structure CommentOwnership where
   private assignments : Array Assignment
   private extracted : Array Comment
+  private normalized : String
 
 structure CommentSummary where
   comments : Nat
@@ -277,7 +278,7 @@ def build (normalized : String) (header : Lean.Syntax) (commands : Array Lean.Sy
   let leaves := sites.filter (·.leaf)
   let extracted := (uniqueComments rawComments).map (suppressedBy suppressed)
   let assignments := assignAll bytes sites leaves extracted
-  ⟨assignments, extracted⟩
+  ⟨assignments, extracted, normalized⟩
 
 private def sameSyntax (left right : Lean.Syntax) : Bool := left.eqWithInfo right
 
@@ -306,6 +307,14 @@ def fileDangling (ownership : CommentOwnership) : Array Comment :=
 
 def all (ownership : CommentOwnership) : Array Comment := ownership.extracted
 
+/-- Exact normalized-source bytes of an owned comment. -/
+def payload (ownership : CommentOwnership) (comment : Comment) : String :=
+  slice ownership.normalized.toUTF8 comment.range
+
+/-- Whether normalized source contains a line break between two byte offsets. -/
+def hasNewlineBetween (ownership : CommentOwnership) (start stop : Nat) : Bool :=
+  hasNewline ownership.normalized.toUTF8 start stop
+
 /-- Comments logically owned by the node itself or one of its selected source-covering descendants.
 Lean may physically store boundary trivia on an adjacent token, so this is an ownership count, not a
 claim that one isolated registered document emits those same comments. -/
@@ -313,6 +322,20 @@ def subtree (ownership : CommentOwnership) (stx : Lean.Syntax) : Array Comment :
   match sourceRange? stx with
   | none => #[]
   | some root => ownership.assignments.filterMap fun assignment =>
+    match assignment.owner with
+    | .file => none
+    | .node owner _ =>
+      match sourceRange? owner with
+      | some range => if containsRange root range then some assignment.comment else none
+      | none => if sameSyntax owner stx then some assignment.comment else none
+
+/-- Comments in a syntax subtree with one requested logical placement. -/
+def subtreeAt (ownership : CommentOwnership) (stx : Lean.Syntax)
+    (placement : CommentPlacement) : Array Comment :=
+  match sourceRange? stx with
+  | none => #[]
+  | some root => ownership.assignments.filterMap fun assignment =>
+    if assignment.placement != placement then none else
     match assignment.owner with
     | .file => none
     | .node owner _ =>

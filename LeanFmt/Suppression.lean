@@ -299,13 +299,20 @@ def collect (src : LosslessSource) (normalized : String) : SuppressionFacts := I
     let body := trim (commentBody kind text)
     if body.startsWith sigil then
       let afterSigil := String.ofList (body.toList.drop sigil.length)
-      match parseBody afterSigil with
-      | .error reason => malformed := malformed.push (malformedFinding range reason)
-      | .ok (scope, codes?) =>
-        directives := directives.push {
-          scope, codes?
-          scopeRange := directiveScope src bytes scope range
-          commentRange := range }
+      if trim afterSigil == "format-ignore-next" then
+        let scopeRange := directiveScope src bytes .nextItem range
+        if range.stop <= src.headerStop then
+          malformed := malformed.push (malformedFinding range "formatter suppression cannot target the module/import header")
+        else if scopeRange.start == scopeRange.stop then
+          malformed := malformed.push (malformedFinding range "formatter suppression has no following ordinary unit")
+      else
+        match parseBody afterSigil with
+        | .error reason => malformed := malformed.push (malformedFinding range reason)
+        | .ok (scope, codes?) =>
+          directives := directives.push {
+            scope, codes?
+            scopeRange := directiveScope src bytes scope range
+            commentRange := range }
   return { directives, malformed }
 
 /-- Does this directive suppress `finding`? The code must be in scope and either blanket or named. -/

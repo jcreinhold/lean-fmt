@@ -61,6 +61,7 @@ lean_lib LeanFmtApplication where
     Glob.one `LeanFmt.Formatter.Declaration,
     Glob.one `LeanFmt.Formatter.Syntax,
     Glob.one `LeanFmt.Formatter.Term,
+    Glob.one `LeanFmt.Formatter.Trivia,
     Glob.one `LeanFmt.GitSelection,
     Glob.one `LeanFmt.Project,
     Glob.one `LeanFmt.Semantic,

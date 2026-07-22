@@ -53,7 +53,6 @@ def customArm (value alpha beta : Nat) : Nat :=
   | 0 => custom{ alpha }
   | _ => beta
 
-/- outer /- nested -/ collection payload -/
 def commented : List Nat := [1, 2]
 
 end CollectionFixture

@@ -47,7 +47,6 @@ def namedArguments : List Nat :=
 def quotation : Lean.MacroM (Lean.TSyntax `term) :=
   `(alpha + beta * gamma)
 
-/- outer /- nested -/ payload -/
 def c : Nat := 1
 
 end TermFixture

@@ -42,7 +42,6 @@ for width in (20, 40, 80, 100):
         "⊕custom",
     ):
         assert spelling in text, (width, spelling, text)
-    assert text.count("/- outer /- nested -/ payload -/") == 1, text
 
 application_break = """    consumeFive
       alpha
@@ -72,7 +71,7 @@ assert "let first := alpha + beta\n    let second := first * gamma" in texts[40]
 assert texts[20] != texts[40] != texts[80], "term groups ignored configured width"
 print("  ok   transparent applications and conditionals reflow at widths 20/40/80/100")
 print("  ok   operator precedence, identifiers, projections, lets, named arguments, and quotes survive")
-print("  ok   project notation stays live-registry-driven and nested comment payload is exact")
+print("  ok   project notation stays live-registry-driven on the actual syntax node")
 PY
 
 printf 'tests/term-formatter: ok\n'

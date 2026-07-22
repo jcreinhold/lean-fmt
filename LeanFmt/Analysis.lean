@@ -10,6 +10,7 @@ import all LeanFmt.ArtifactStore
 import all LeanFmt.Comments
 import all LeanFmt.Formatter
 import all LeanFmt.Formatter.Command
+import all LeanFmt.Formatter.Trivia
 import all LeanFmt.Rules
 import all LeanFmt.Suppression
 import all LeanFmt.Validator
@@ -105,6 +106,7 @@ private def buildFormatDraft (normalized : String) (source : LosslessSource)
   let mut registryNodes := 0
   let mut explicitDocuments := 0
   let mut descriptorDocuments := 0
+  let fileDangling := Formatter.Trivia.fileDangling ownership
   if headerRange.start < headerRange.stop then
     let result ← Lean.Core.CoreM.toIO' (Formatter.Command.header ownership header)
       { fileName := sourcePath.toString, fileMap, options := headerOptions }
@@ -127,6 +129,27 @@ private def buildFormatDraft (normalized : String) (source : LosslessSource)
     let command := commands[index]
     let (nextSequence, placement) := Formatter.Command.place sequence command.stx
     sequence := nextSequence
+    let start := (LosslessSource.leadingStart? command.stx).getD source.headerStop
+    let stop := match commands[index + 1]? with
+      | some next => (LosslessSource.leadingStart? next.stx).getD source.terminalStop
+      | none => source.terminalStop
+    let hasTail := source.terminalStop < source.normalizedBytes
+    let preserveFinalNewline := index + 1 == commands.size && !hasTail && normalized.endsWith "\n"
+    let leading := if placement.blankBefore then Doc.hard else Doc.empty
+    let separator := if index + 1 < commands.size || hasTail || preserveFinalNewline then
+        Doc.hard
+      else Doc.empty
+    let boundaryTail := if index + 1 == commands.size then
+        match fileDangling with
+        | some comments => Doc.hard ++ comments
+        | none => Doc.empty
+      else Doc.empty
+    if let some suppressed := Formatter.Trivia.formatIgnoreNext? ownership command.stx then
+      document? := appendDocument document? <|
+        Doc.mark ⟨start, stop⟩
+          (leading ++ Doc.verbatim (normalizedSlice bytes suppressed) ++ boundaryTail ++ separator)
+      coreDocuments := coreDocuments + 1
+      continue
     let result ← Lean.Core.CoreM.toIO' (Formatter.Command.command ownership command.stx)
       { fileName := sourcePath.toString, fileMap, options := command.options }
       { env := command.env }
@@ -140,20 +163,17 @@ private def buildFormatDraft (normalized : String) (source : LosslessSource)
     match formatted.owner with
     | .core => coreDocuments := coreDocuments + 1
     | .registry => registryDocuments := registryDocuments + 1
-    let start := (LosslessSource.leadingStart? command.stx).getD source.headerStop
-    let stop := match commands[index + 1]? with
-      | some next => (LosslessSource.leadingStart? next.stx).getD source.terminalStop
-      | none => source.terminalStop
-    let hasTail := source.terminalStop < source.normalizedBytes
-    let preserveFinalNewline := index + 1 == commands.size && !hasTail && normalized.endsWith "\n"
-    let leading := if placement.blankBefore then Doc.hard else Doc.empty
-    let separator := if index + 1 < commands.size || hasTail || preserveFinalNewline then
-        Doc.hard
-      else Doc.empty
     let indentation := Doc.text ("".pushn ' ' placement.indent)
-    let commandDocument := Doc.nest placement.indent (indentation ++ formatted.document)
+    let leadingTrivia := match Formatter.Trivia.leading ownership command.stx with
+      | some comments => comments ++ Doc.hard
+      | none => Doc.empty
+    let trailingTrivia := match Formatter.Trivia.trailing ownership command.stx stop with
+      | some comments => comments
+      | none => Doc.empty
+    let commandDocument := Doc.nest placement.indent
+      (indentation ++ leadingTrivia ++ formatted.document ++ trailingTrivia)
     document? := appendDocument document? <|
-      Doc.mark ⟨start, stop⟩ (leading ++ commandDocument ++ separator)
+      Doc.mark ⟨start, stop⟩ (leading ++ commandDocument ++ boundaryTail ++ separator)
   let tailRange : SourceRange := ⟨source.terminalStop, source.normalizedBytes⟩
   if tailRange.start < tailRange.stop then
     document? := appendDocument document? <|

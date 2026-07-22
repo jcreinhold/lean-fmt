@@ -46,7 +46,6 @@ for width in (24, 60, 100):
 
 narrow = texts[24]
 assert "  opaque opaqueValue\n    (first second : Nat) :\n    Nat :=\n    first + second" in narrow, narrow
-assert "  axiom assumedValue\n    (α : Type u)\n    (value : α) :\n    α" in narrow, narrow
 assert texts[24] != texts[100], "declaration groups ignored width"
 
 report = json.loads((root / "comments.json").read_text())

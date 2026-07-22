@@ -120,25 +120,30 @@ private def resolution (kind : Lean.Name) : Lean.CoreM FormatterResolution := do
 
 /-- Resolve and run Lean's formatter registry against `stx` in the current frontend context. Errors
 remain typed refusals and never become verbatim output. -/
-def registered (ownership : CommentOwnership) (category : FormatterCategory)
-    (stx : Lean.Syntax) : Lean.CoreM (Except FormatterFailure RegisteredDocument) := do
-  let kind := stx.getKind
+def registeredAs (ownership : CommentOwnership) (category : FormatterCategory)
+    (traceSyntax formatSyntax : Lean.Syntax) : Lean.CoreM (Except FormatterFailure RegisteredDocument) := do
+  let kind := traceSyntax.getKind
   let trace : FormatterTrace := {
     category
     kind
     resolution := ← resolution kind
-    commentOwners := (Comments.subtree ownership stx).size }
+    commentOwners := (Comments.subtree ownership traceSyntax).size }
   try
-    let native ← Lean.PrettyPrinter.formatCategory category.name stx
+    let native ← Lean.PrettyPrinter.formatCategory category.name formatSyntax
     return .ok { document := Doc.registered native, trace }
   catch exception =>
     let detail ← exception.toMessageData.toString
     return .error {
       category
       kind
-      range := sourceRange stx
+      range := sourceRange traceSyntax
       trace
       detail }
+
+/-- Resolve and run the registry with the same actual syntax used for trace and formatting. -/
+def registered (ownership : CommentOwnership) (category : FormatterCategory)
+    (stx : Lean.Syntax) : Lean.CoreM (Except FormatterFailure RegisteredDocument) :=
+  registeredAs ownership category stx stx
 
 end Formatter
 

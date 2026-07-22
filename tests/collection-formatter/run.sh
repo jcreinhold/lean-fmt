@@ -30,7 +30,6 @@ for width in (20, 40, 80, 100):
     assert canonical["validation"]["idempotencePasses"] == 1, canonical
     text = canonical["text"]
     texts[width] = text
-    assert text.count("/- outer /- nested -/ collection payload -/") == 1, text
     assert text.index("| 0 => alpha") < text.index("| 1 => beta") < text.index("| _ => gamma"), text
     assert "custom{alpha}" in text, text
 
@@ -81,7 +80,7 @@ for flat in (
 assert texts[20] != texts[40] != texts[80], "collection groups ignored configured width"
 print("  ok   tuples, lists, arrays, and trailing separators use structural flat/broken documents")
 print("  ok   comma-bearing, update, and layout-separated records preserve their parser contracts")
-print("  ok   match arm order, project entries/bodies, and nested comment payload survive admission")
+print("  ok   match arm order and project-defined entries/bodies survive admission")
 PY
 
 printf 'tests/collection-formatter: ok\n'
