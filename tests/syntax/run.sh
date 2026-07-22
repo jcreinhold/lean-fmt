@@ -44,8 +44,10 @@ run_expect() {
   fi
 }
 
-# `select` is one selector per flag; the six preview rules are named explicitly so a negative fixture
-# is measured against every rule at once, not just the one it is a near-miss for.
+# `select` is one selector per flag; the six syntax-tier rules are named explicitly so a negative
+# fixture is measured against every rule at once, not just the one it is a near-miss for. Five are
+# preview and FMT013 is `stable` with default off (`ruff-12b`), so `--preview` is not what makes the
+# set reachable; naming each code is.
 all_six=(--select FMT008 --select FMT009 --select FMT010 --select FMT011 --select FMT012 --select FMT013)
 
 # Assert the exact ordered list of finding codes a single-file `check` reports, and that nothing

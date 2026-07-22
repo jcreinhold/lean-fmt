@@ -16,10 +16,45 @@ about — add an entry to `ruleRegistry` and you are done.
     summary := "..."          -- one line, imperative: what the rule makes true
     fixable := true           -- whether findings carry a `fix?`
     defaultEnabled := true
+    lifecycle := .stable      -- `.stable`, `.preview`, or `.deprecated`; see below
+    previewPath? := none      -- required iff `lifecycle == .preview`; see below
   }
   impl := .source fun facts => #[...]
 }
 ```
+
+## Lifecycle, and why a preview rule must state its way out
+
+`lifecycle` and `defaultEnabled` are separate axes, and all four combinations are meaningful:
+
+| `lifecycle` | `defaultEnabled` | what it means | reachable by |
+| --- | --- | --- | --- |
+| `.stable` | `true` | the default set | anything |
+| `.stable` | `false` | correct, but too expensive or too opinionated for the default path | its code, its category, `all` |
+| `.preview` | `false` | not yet judged on corpus evidence | its code, its category, `all` — **only under `--preview`** |
+| `.deprecated` | either | on its way out | its code |
+
+`.stable` with `defaultEnabled := false` is not a contradiction. `FMT013` is the live instance: its
+correctness earned `.stable`, and its cost — one compiler frontend run per module on a project not
+built with the plugin, measured at 33× the default-run budget — kept it off the default path
+(`docs/projects/ruff-12b-rule-graduation/results/03-graduate.md`). Do not make a rule `.preview`
+because it is expensive; `.preview` means *unjudged*, not *costly*.
+
+**A `.preview` rule must set `previewPath?` to a nonempty string, and a non-preview rule must leave
+it `none`.** `testCatalogInvariants` enforces both directions and the build fails otherwise. Write
+the condition that would graduate the rule — concretely enough that someone could go and test it:
+
+```lean
+    previewPath? := some "Graduates when it produces at least 10 audited true positives with zero \
+      false positives on a corpus with no `set_option` linter of its own. …"
+```
+
+Naming the corpus matters. `ruff-12b` ran ten preview rules over 85 mathlib modules and eight of them
+never fired — because mathlib runs its own linters for most of what they check. That measured which
+rules mathlib already enforces, not which rules are correct, and a graduation condition that does not
+say where the evidence must come from invites the same mistake. The string is shown by
+`lean-fmt explain`, in `docs/rules/FMTxxx.md`, and in the JSON, because a path out of preview that
+lives only in a result note is a rule nobody will revisit.
 
 `Rule.tier` derives from `impl`, so there is no tier field to keep in sync and no way to declare one
 tier and read another. That is on purpose: the field that used to do this job (`RuleInfo.input`) was
