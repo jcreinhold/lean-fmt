@@ -998,8 +998,10 @@ private def renderRules (format : ReportFormat) : IO Unit :=
       IO.println s!"{info.code}\t{info.category}\t{info.lifecycle.toWire}\t{fix}\t{enabled}\t{info.summary}"
 
 /-- `explain RULE` — one rule's full description, all of it from the registry. A live rule prints
-its `explainText`/`ruleInfoJson`; a retired code prints its disposition and exits 0 (`explain` is
-discovery); an unknown token errors (exit 2). -/
+its `explainText`/`ruleInfoJson`; a retired code prints its disposition; a meta self-diagnostic
+(`FMT900`/`FMT901`, which no registry holds because neither is selectable) prints its description.
+All three exit 0, because `explain` is discovery. Only a token the product could never have emitted
+errors (exit 2). -/
 private def renderExplain (format : ReportFormat) (code : String) : IO UInt32 := do
   match ruleInfoByCode? code with
   | some info =>
@@ -1016,8 +1018,16 @@ private def renderExplain (format : ReportFormat) (code : String) : IO UInt32 :=
       | _ => IO.println s!"{code}  [retired]\n  {disposition}"
       return 0
     | none =>
-      IO.eprintln s!"unknown rule: {code}"
-      return 2
+      match metaDescription? code with
+      | some description =>
+        match format with
+        | .json => IO.println (Lean.Json.mkObj
+            [("code", .str code), ("lifecycle", .str "meta"), ("description", .str description)]).compress
+        | _ => IO.println s!"{code}  [meta]\n  {description}"
+        return 0
+      | none =>
+        IO.eprintln s!"unknown rule: {code}"
+        return 2
 
 /-- `docs` — generate `docs/rules/{index,FMT###}.md` from the registry, or (`--check`) verify the
 committed tree matches, which is the doc-drift / undocumented-rule invariant (`notes/01-schema.md` §9). -/

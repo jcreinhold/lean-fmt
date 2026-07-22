@@ -133,11 +133,16 @@ print(f"executed {tested} registry examples across {len(rules)} live rules")
 PY
 
 # --- CLI lifecycle contract: `explain` across the code classes ------------------------------------
-# `explain` answers for the three discoverable classes (`notes/01-schema.md` §8): a live rule explains
-# with exit 0; a retired code explains its reserved-table disposition (exit 0) though it names no live
-# rule. Everything else is a specific error, exit 2 — including a meta self-diagnostic code (FMT900 is
-# deliberately not in the reserved table, §7) and a never-assigned code (FMT999). This is the graceful-
-# degradation surface a stale config/selector lands on.
+# `explain` answers for every class of code the product can print (`notes/01-schema.md` §8): a live
+# rule explains with exit 0; a retired code explains its reserved-table disposition (exit 0) though it
+# names no live rule; a meta self-diagnostic (FMT900/FMT901) explains its description (exit 0) though
+# it is in neither table, because it is never selectable. Only a code the product could never have
+# emitted is an error — FMT999, never assigned, exit 2.
+#
+# FMT900 used to be in that error class (`ruff-12b`). It was wrong: a user meets FMT900 by reading it
+# in a report, and `unknown rule: FMT900` denies a code the product had just printed. Absence from the
+# registry is a fact about *selection*, not about existence. This is the graceful-degradation surface
+# a stale config/selector lands on, and denying a live code is not graceful.
 explain_expect() {
   local code=$1 expect=$2 needle=$3
   set +e
@@ -155,7 +160,8 @@ explain_expect() {
 }
 explain_expect FMT003 0 "FMT003"
 explain_expect FMT001 0 "retired"
-explain_expect FMT900 2 ""
+explain_expect FMT900 0 "suppressed nothing"
+explain_expect FMT901 0 "does not parse as a directive"
 explain_expect FMT999 2 ""
 
 # --- Generated-docs drift: the pages regenerate identically from the registry --------------------

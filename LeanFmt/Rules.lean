@@ -1082,6 +1082,28 @@ def isReservedCode (code : String) : Bool := reservedCodes.any (·.1 == code)
 def reservedDisposition? (code : String) : Option String :=
   (reservedCodes.find? (·.1 == code)).map (·.2)
 
+/-- The **meta** self-diagnostic codes and what each one means. These are emitted by the suppression
+projection (`Suppression.lean`), not by any rule: they are deliberately absent from `ruleRegistry`
+because they are never selectable and never suppressible, and §10 invariant 1 forbids a live rule
+from reusing them.
+
+They are here so `explain` can answer for them. A user meets `FMT900` by seeing it in a report and
+then looks it up; before `ruff-12b` that lookup returned `unknown rule: FMT900` and exit 2, which is
+a false statement about a code the product had just printed. Not being in the registry is a fact
+about selection, not a licence to deny the code exists. -/
+def metaCodes : Array (String × String) := #[
+  ("FMT900", "a suppression directive suppressed nothing — the finding it names was not reported, \
+or the directive's scope holds no such finding. Always active, never selectable, and not itself \
+suppressible. Carries a removal fix, which `check` shows and batch `fix` never applies."),
+  ("FMT901", "a comment opens with the `lean-fmt:` sigil but does not parse as a directive, so it \
+suppresses nothing. Always active, never selectable, and not itself suppressible. Its removal fix is \
+`displayOnly`: deleting a broken directive may discard what its author meant.")
+]
+
+/-- The description for a meta self-diagnostic code, if any. -/
+def metaDescription? (code : String) : Option String :=
+  (metaCodes.find? (·.1 == code)).map (·.2)
+
 /-- Rules exempt from the "≥1 executable example" invariant (§10 invariant 5/6), each for a stated
 structural reason: FMT003/FMT004 flag an invisible/dangerous byte that cannot be embedded verbatim in
 documentation, and FMT006 flags a cross-module graph fact that has no self-contained single-file
