@@ -478,8 +478,7 @@ private def renderCanonicalText (width : Nat) (raw : String) (artifact : ModuleA
 
 /-! ## Range formatting — unit selection over the layout source map
 
-`ruff-14` RSF-IMPL. The freeze is `docs/projects/ruff-14-stream-range/notes/01-stream-range.md`; §4 is
-the part that matters here. Everything below is pure and works on one whole-file render plus its
+Everything below is pure and works on one whole-file render plus its
 source map: the bytes emitted for a selected unit are **the bytes whole-file `format` produced for
 it**, spliced out, never a separate rendering of a slice. So "never slice arbitrary bytes and parse
 them as an exact module" is unreachable here — nothing here parses. -/

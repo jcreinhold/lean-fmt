@@ -14,8 +14,7 @@ namespace LeanFmt.Internal.GitSelection
 
 /-! # Version-control changed-file selection
 
-The private adapter `ruff-16` RWI-IMPL owes
-(`docs/projects/ruff-16-watch-incremental/notes/01-watch-generations.md` §9). It answers exactly one
+The private adapter behind changed-file selection. It answers exactly one
 question — *which paths did version control change* — and produces a path list plus the provenance a
 partial run must report. It does not decide what a path means: `.lean`-ness, `.lake` exclusion,
 configured `include`/`exclude`, ordering, and snapshotting all stay in `LeanFmt.Project` and

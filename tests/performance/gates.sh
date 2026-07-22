@@ -12,7 +12,7 @@
 
 # The 17 top-level phase names. Sub-phases are excluded from the accounted sum -- they are nested
 # inside a top-level bracket, so counting both double-counts the same milliseconds.
-# `docs/projects/ruff-19-performance/notes/01-phase-schema.md` §5.1 and `notes/02-instrumentation.md`
+# `LeanFmt/Profile.lean` (the phase schema) and the instrumentation it documents
 # are the source; that table marks every sub-phase in bold, and this list is its complement.
 GATE_TOP_LEVEL_PHASES=(
   discovery workspace_load selection_snapshot cache_epoch cache_lookup module_evidence

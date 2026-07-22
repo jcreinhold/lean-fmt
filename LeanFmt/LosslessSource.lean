@@ -13,8 +13,6 @@ Every offset in this module indexes the *normalized* source: `raw.crlfToLf`, the
 `LosslessSource.ofSource` is the only supported way to get both forms together, so a caller cannot
 mix them by accident.
 
-The design comparison behind this shape is `docs/projects/ruff-01-lossless-source/notes/
-02-projection-interface.md`; the parser facts it relies on are in `01-source-authority.md`.
 -/
 
 import all LeanFmt.Digest

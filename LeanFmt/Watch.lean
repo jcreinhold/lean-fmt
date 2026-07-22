@@ -14,8 +14,7 @@ namespace LeanFmt.Internal.Watch
 
 /-! # Bounded filesystem observation
 
-The private observer `ruff-16` RWI-IMPL owes
-(`docs/projects/ruff-16-watch-incremental/notes/01-watch-generations.md` §1–§6). It owns polling,
+The private observer behind `watch`. It owns polling,
 debouncing, and the two retained snapshots that make coalescing bounded — and nothing else. It never
 runs an analysis, never renders, and never decides what a generation *does*: the caller supplies that
 as an action, so execution stays in `LeanFmt.Application` and rendering in `LeanFmt.Cli`.

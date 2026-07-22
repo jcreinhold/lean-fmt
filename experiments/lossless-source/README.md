@@ -1,6 +1,6 @@
 # lossless-source
 
-Toolchain experiment for `docs/projects/ruff-01-lossless-source` (`RLS-SPEC`). It answers one
+Toolchain experiment behind `LeanFmt/LosslessSource.lean`. It answers one
 question: which compiler-owned data reconstructs an accepted Lean source file exactly, and which
 data only appears to.
 
@@ -10,8 +10,7 @@ Nothing here imports `LeanFmt`. The oracle must be able to contradict the produc
 ./run.sh            # 13 cases, expects 0 failures
 ```
 
-Findings are frozen in `docs/projects/ruff-01-lossless-source/notes/01-source-authority.md`; the
-transcript is `docs/projects/ruff-01-lossless-source/evidence/01-round-trip.txt`.
+The projection this established is implemented in `LeanFmt/LosslessSource.lean`.
 
 ## Parts
 

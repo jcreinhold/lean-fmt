@@ -4,7 +4,7 @@ set -euo pipefail
 # End-to-end acceptance for the source-suppression layer (`RSP-FINAL`). Where `LeanFmtTest.lean`'s
 # `testSuppression` checks `apply`/`collect` against a hand-built projection, this drives the real CLI
 # over committed fixtures parsed by the real frontend: the acceptance matrix from
-# `docs/projects/ruff-07-suppressions/prompts/03-acceptance.md` — nested syntax, doc comments, custom
+# the suppression acceptance cases — nested syntax, doc comments, custom
 # commands, formatting movement, unknown rules, per-file config, and unused fixes.
 
 repo_root=$(cd "$(dirname "$0")/../.." && pwd)

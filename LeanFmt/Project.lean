@@ -481,9 +481,8 @@ private def setupJob (target : SourceTarget) : Lake.FetchM (Lake.Job Lean.Module
 `Bool` it returns is exactly "`out` was `.ok`". Every caller that then wants the value has to run the
 identical graph a second time to get it.
 
-`RPR-IMPL` measured that second traversal: over 34 modules, the probe cost 3,676 ms and the build that
-repeated it 3,663 ms — the same work, twice, for 16% of a cold run
-(`docs/projects/ruff-19-performance/results/02-optimize.md` §2). This returns `out` itself, so the
+That second traversal was measured: over 34 modules, the probe cost 3,676 ms and the build that
+repeated it 3,663 ms — the same work, twice, for 16% of a cold run. This returns `out` itself, so the
 up-to-date case traverses once.
 
 It is written out rather than delegated to `checkNoBuild` because there is nothing to delegate to:

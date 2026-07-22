@@ -30,7 +30,7 @@ set -euo pipefail
 # usage: run-projection-shape.sh [OUT]
 
 repo_root=$(cd "$(dirname "$0")/.." && pwd)
-out=${1:-"$repo_root/docs/projects/ruff-03-language-formatting/evidence/01-projection-shape.txt"}
+out=${1:-"$repo_root/tests/printer/projection-shape.txt"}
 
 application="$repo_root/.lake/build/bin/lean-fmt"
 scratch=$(mktemp -d)

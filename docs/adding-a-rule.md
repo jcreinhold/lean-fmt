@@ -36,8 +36,8 @@ about — add an entry to `ruleRegistry` and you are done.
 
 `.stable` with `defaultEnabled := false` is not a contradiction. `FMT011` is the live instance: its
 correctness earned `.stable`, and its cost — one compiler frontend run per module on a project not
-built with the plugin, measured at 33× the default-run budget — kept it off the default path
-(`docs/projects/ruff-12b-rule-graduation/results/03-graduate.md`). Do not make a rule `.preview`
+built with the plugin, measured at 33× the default-run budget — kept it off the default path.
+Do not make a rule `.preview`
 because it is expensive; `.preview` means *unjudged*, not *costly*.
 
 **A `.preview` rule must set `previewPath?` to a nonempty string, and a non-preview rule must leave
@@ -102,7 +102,7 @@ by reformatting. `FMT001` (forbidden control byte) and `FMT002` (suspicious bidi
 the shipped examples — both scan bytes in the `security` category. Report-only is the honest choice
 when the offending byte is inside a string literal or a comment: deleting it changes program data or
 human-read text, which is not a change a byte-level safety argument can call safe
-(`docs/projects/ruff-08-source-rules/notes/01-catalog.md` §3). When there is no meaning-preserving
+(see the source-rule catalog in `LeanFmt/Rules.lean`). When there is no meaning-preserving
 edit, emit no fix rather than an `.unsafe` one nobody should apply.
 
 These two rules also show why a `.source` scan needs no token context: a bare control byte or bidi
@@ -191,6 +191,6 @@ know about your rule, you have crossed the boundary. `tests/boundary/run.sh` wil
 
 ## Where the reasoning lives
 
-`docs/projects/ruff-05-rule-engine/notes/01-rule-facts.md` is the design: why a function table rather
+`LeanFmt/Rules.lean`'s module docstring is the design: why a function table rather
 than an attribute or a typeclass (§7), why the artifact carries facts and never findings (§6), and
 what each tier costs (§5, §8).

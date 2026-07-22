@@ -5,7 +5,7 @@ dependency and what the three consumption levels are. This document says how to 
 what may be cached between runs, and what pinning and upgrading change.
 
 Every command quoted here was executed against a scratch consuming repository before it was written
-down; the transcripts are in `docs/projects/ruff-18-integrations/results/01-recipes.md`.
+down; `tests/ci/run.sh` builds and runs every recipe here against a real consuming project.
 
 `tests/ci/run.sh` keeps it honest. It builds a consuming project that takes lean-fmt as a git
 dependency, with real commit history, and runs all four recipes, the cache instruction, and a

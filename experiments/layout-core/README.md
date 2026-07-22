@@ -1,6 +1,6 @@
 # layout-core
 
-Toolchain experiment for `docs/projects/ruff-02-layout-core` (`RLC-SPEC`). It answers one question:
+Toolchain experiment behind `LeanFmt/Doc.lean`. It answers one question:
 which layout model should this formatter's document algebra be, and it answers it by building the
 candidates and measuring them rather than by citing their papers.
 
@@ -11,8 +11,7 @@ shared code with the product, or with its rival, could not contradict either.
 ./run.sh            # 22 checks, expects 0 failures
 ```
 
-Findings are frozen in `docs/projects/ruff-02-layout-core/notes/01-layout-design.md`; the transcripts
-are under `docs/projects/ruff-02-layout-core/evidence/`.
+The model this chose is implemented in `LeanFmt/Doc.lean`.
 
 ## Candidates
 

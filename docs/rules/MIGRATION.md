@@ -61,12 +61,9 @@ A placeholder retired code, invented to give those tests something to assert aga
 and rejected: it would prove the placeholder exists, not that the machinery works. Coverage returns
 when a rule genuinely retires.
 
-## Historical records were not rewritten
+## Historical records
 
-The stack notes under `docs/projects/` still use the old codes. They are frozen records of decisions
-made at the time — `ruff-10` really did decide six syntax rules numbered FMT008–FMT013, and rewriting
-that sentence would make it a false account of a real decision. Read them against the table above.
-
-Forward-looking documents — `state/current.md` and `state/next.md` of stacks that have not finished,
-and the roadmaps — *were* updated, because they describe the catalog as it is now rather than as it
-was decided.
+The prompt stacks under `docs/projects/` used the old codes throughout and were deleted wholesale
+after this renumbering, so no record outside this file still refers to them. Anything predating this
+table — an old branch, a saved report, a downstream `ignore[…]` written before release — must be read
+against it.

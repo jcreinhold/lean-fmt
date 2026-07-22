@@ -115,40 +115,26 @@ if [[ $total_commands -lt 100 ]]; then
   failures=$((failures + 1))
 fi
 
-# --- the figures quoted in prose, and the chain that keeps them true. `RLF-FINAL`. ---
+# --- the committed shape evidence agrees with the live corpus ---
 #
 # The three floors above are deliberately loose so they do not move as the project grows. That is the
 # right call for a floor and it leaves a real hole: this repository *is* the printer's corpus, so
-# every figure describing it moves whenever `LeanFmt/` changes -- and the prompts that change
-# `LeanFmt/` are not the ones that wrote the sentences quoting it. `RLF-EXTENSIONS` added
-# `Tree.mayCollapse` and left `Printer.lean`, `notes/01-command-printing.md` and `state/current.md`
-# claiming a node count from two prompts earlier. Nothing failed, because nothing was looking, and
-# `results/01-commands.md` said so outright: "a gate that diffed the quoted figures against the
-# evidence would be better and does not exist."
+# every figure describing it moves whenever `LeanFmt/` changes. `projection-shape.txt` is the census
+# `experiments/run-projection-shape.sh` writes, and it goes stale silently the moment a declaration is
+# added or removed -- so this asserts that the counts the printer just measured on the live corpus are
+# the counts the committed file reports. Re-run the probe when it fires.
 #
-# It exists now, and it is a chain of two links, because either alone is worthless:
-#
-#   live printer  ->  evidence/01-projection-shape.txt  ->  the prose that quotes it
-#        (here)              (check-quoted-figures.py)
-#
-# `check-quoted-figures.py` alone would compare prose against an evidence file that is itself stale
-# whenever the probe has not been re-run -- passing while everything is wrong together. So this asserts
-# the *first* link: the counts the printer just measured on the live corpus are the counts the
-# committed evidence file reports. Re-run `experiments/run-projection-shape.sh` when it fires.
-shape_evidence="$repo_root/docs/projects/ruff-03-language-formatting/evidence/01-projection-shape.txt"
+# This used to be the first of two links, the second being `check-quoted-figures.py`, which held the
+# prose quoting these figures to the evidence. Its targets were `notes/01-command-printing.md` and
+# `state/current.md` in the ruff-03 prompt stack; when that stack was deleted the checker had no
+# subject left and went with it. `LeanFmt/Printer.lean`'s docstrings had already been taken off that
+# gate -- they name this evidence file and describe the shape in words rather than quoting counts.
+shape_evidence="$repo_root/tests/printer/projection-shape.txt"
 evidence_commands=$(sed -nE 's/^# command kinds in the corpus \(([0-9]+) commands.*/\1/p' "$shape_evidence")
 if [[ $evidence_commands != "$total_commands" ]]; then
   printf 'FAIL the shape evidence is stale: it reports %s commands, the live corpus has %s.\n' \
     "$evidence_commands" "$total_commands" >&2
   printf '     Re-run experiments/run-projection-shape.sh; every figure quoted from it is now wrong.\n' >&2
-  failures=$((failures + 1))
-fi
-
-# And the second link, on the evidence this run just agreed with.
-if python3 "$repo_root/experiments/check-quoted-figures.py"; then
-  printf '  ok   the figures quoted in Printer.lean, notes/01 and state agree with the evidence\n'
-else
-  printf 'FAIL prose quotes a corpus figure the evidence does not support (see above).\n' >&2
   failures=$((failures + 1))
 fi
 

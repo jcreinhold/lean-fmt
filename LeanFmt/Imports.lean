@@ -8,8 +8,7 @@ module
 
 /- The lossless module-header model and the import rules that read it.
 
-`RIR-SPEC` (`docs/projects/ruff-09-import-rules/notes/01-semantics.md`) froze two facts this module
-rests on:
+Two facts this module rests on:
 
   1. **The surface header is not the abstract import list.** `Lean.parseImports'` prepends two
      synthesized `Init` imports on an ordinary file, a `prelude` marker suppresses them, and it drops

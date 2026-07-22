@@ -5,7 +5,7 @@ set -euo pipefail
 #
 # Every case drives the real executable through a pipe, because the thing under test *is* the pipe
 # behavior: what reaches stdout, what reaches stderr, what the exit code is, and what is NOT written.
-# The frozen contract is `docs/projects/ruff-14-stream-range/notes/01-stream-range.md`; section
+# The frozen contract is the range-formatting section of `LeanFmt/Application.lean`; section
 # numbers below refer to it.
 
 repo_root=$(cd "$(dirname "$0")/../.." && pwd)

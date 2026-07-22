@@ -10,8 +10,8 @@ module
 # The profile channel
 
 `LEAN_FMT_PROFILE_PHASES=1` turns on a stderr diagnostic channel carrying `phase.<name>_ms=<n>` and
-`cache.<name>=<n>` records. `docs/projects/ruff-19-performance/notes/01-phase-schema.md` is the
-schema: which names exist, what each brackets, and the completeness gate they answer to.
+`cache.<name>=<n>` records. `tests/performance/gates.sh` is the schema in force: which names exist,
+what each brackets, and the completeness gate they answer to.
 
 This is a diagnostic channel, not a reporting surface. It is off by default, writes to stderr, never
 enters `RunReport`, and no exit code depends on it. Nothing gated on it may allocate into, order, or

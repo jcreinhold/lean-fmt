@@ -8,10 +8,8 @@ module
 
 /- The layout algebra.
 
-`RLC-SPEC` chose this model by building both candidates and measuring them; the reasoning, the
-numbers, and the rejected alternatives are in `docs/projects/ruff-02-layout-core/notes/01-layout-design.md`
-and reproducible with `experiments/layout-core/run.sh`. This module implements the contract that note
-froze.
+This model was chosen by building both candidates and measuring them; the comparison is reproducible
+with `experiments/layout-core/run.sh`.
 
 Two facts from that note matter here and are not obvious:
 

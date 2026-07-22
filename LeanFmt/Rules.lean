@@ -334,8 +334,7 @@ private def bidiControl (facts : SourceFacts) : Array Finding :=
 `FMT006`–`FMT011` read the exact frontend's projection through `SyntaxFacts`: node **kinds as
 strings**, child/token adjacency, and leaf source text. None reads `Lean.Syntax`, precedence (the
 projection carries none), or `choice` alternatives (only the first survives). Every kind string is
-cited to the pinned v4.32.0 compiler in `docs/projects/ruff-10-syntax-rules/notes/01-catalog.md` §2 and
-was read off real projections in that stack's `evidence/01-catalog.md` §1. A wrong kind string is a
+cited to the pinned v4.32.0 compiler and was read off real projections. A wrong kind string is a
 rule that silently never fires, so these come from the census, not from memory. -/
 
 private def kModuleDoc := "Lean.Parser.Command.moduleDoc"

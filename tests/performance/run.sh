@@ -32,7 +32,7 @@ set -euo pipefail
 #
 # Heavier scheduled checks -- the frozen mathlib sample, the positions bench, the integrated
 # artifact path, and the concurrency re-test -- are not here. They cost minutes, not seconds, and
-# live in `experiments/` for a scheduled runner. See `docs/projects/ruff-19-performance/`.
+# live in `experiments/` for a scheduled runner.
 
 repo_root=$(cd "$(dirname "$0")/../.." && pwd)
 cd "$repo_root"

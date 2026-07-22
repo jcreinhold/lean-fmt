@@ -25,6 +25,6 @@ internal phase times and cache accounting separately inspectable; the full comma
 authoritative. `lean-fmt` emits both under `LEAN_FMT_PROFILE_PHASES=1`, which the wrapper does not
 set for you — a profile of the phase schema has to ask for it.
 
-`docs/projects/ruff-19-performance/notes/01-phase-schema.md` is the schema those names belong to, and
+`LeanFmt/Profile.lean` is the schema those names belong to, and
 `evidence/01-workloads.md` in the same stack is the frozen workload set this repository measures
 against.

@@ -17,9 +17,8 @@ open System
 
 /- The Language Server Protocol surface.
 
-`ruff-17` RLP-DOCUMENTS and RLP-FEATURES. The capability and state model is frozen in
-`docs/projects/ruff-17-lsp/notes/01-protocol.md`; this module is all of it: the transport and document
-store, and the diagnostics, formatting, and code actions served from them.
+This module is the whole of the server: the transport and document store, and the diagnostics,
+formatting, and code actions served from them.
 
 It computes nothing itself. Every answer is `Application.ExactRun.streamSnapshot` over the whole
 buffer, the same operation `--stdin` enters, so an editor and a pipe give the same answer for the

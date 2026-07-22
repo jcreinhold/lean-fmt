@@ -63,7 +63,7 @@ cmp "$work/artifact-findings.json" "$work/fallback-findings.json"
 # A field added to `RunReport` or `FileReport` breaks this `cmp`. That is the point — it is the only
 # thing standing between "we kept the JSON backward-compatible" and an assertion nobody checked.
 cmp "$work/artifact-findings.json" \
-  docs/projects/ruff-15-reporting/evidence/01-json-golden-check.json
+  tests/reporting/golden/json-check.json
 
 # `check` and `format` must never disagree about one unchanged file — the invariant
 # `notes/01-rule-facts.md` §2 caught the product violating. The trigger it used is gone (there is no
@@ -358,7 +358,7 @@ grep -q 'selected file does not exist: tests/check/Clean.lean tests/check/Findin
 # The source-security family end-to-end, on committed bytes rather than a runtime-crafted string.
 # `Security.lean` carries a bidi mark (U+202E) inside a line comment and a NUL inside a string literal
 # — the only two places a control or bidi byte reaches accepted source (bare occurrences are parse
-# errors, `docs/projects/ruff-08-source-rules/notes/01-catalog.md` §2). The unit and property tests in
+# errors — see the source-rule catalog in `LeanFmt/Rules.lean`). The unit and property tests in
 # `LeanFmtTest.lean` pin the scans; this pins the whole pipeline — read, normalize, source facts,
 # rules, report — surfacing them byte-exact in normalized coordinates. The file is also in `sources`
 # above, so the `cmp` at the end proves `check` reads a control-byte file without writing it.

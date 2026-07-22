@@ -1,7 +1,7 @@
 # Reporting format tests
 
 `run.sh` exercises the machine-readable report formats added by `ruff-15` RRF-IMPL. The frozen
-contract is `docs/projects/ruff-15-reporting/notes/01-report-formats.md`.
+contract is the format section of `docs/ci.md`.
 
 ## Vendored schema
 

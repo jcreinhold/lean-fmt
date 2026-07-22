@@ -10,7 +10,7 @@ set -euo pipefail
 #
 # Discovery-selected runs are a separate workload, not this one. Passing paths pins selection but
 # also bypasses the discovery walk, so a run measured through here does not measure discovery on a
-# large tree; `docs/projects/ruff-19-performance/evidence/01-workloads.md` records which frozen
+# large tree; `CLAUDE.md` names the four workloads and records which frozen
 # workload takes which route and why.
 
 if (($# < 3)); then

@@ -29,7 +29,7 @@ structure Edit where
   cannot promote it, because the rule itself declined to make the edit applicable.
 
 "Safe" is a claim under the rule's evidence and is tied to the rule's tier — never merely "it
-reparses". See `docs/projects/ruff-06-fix-safety/notes/01-model.md` §1. -/
+reparses". -/
 inductive Applicability where
   | safe
   | «unsafe»

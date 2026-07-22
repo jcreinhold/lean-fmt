@@ -29,7 +29,7 @@ set -euo pipefail
 repo_root=$(cd "$(dirname "$0")/.." && pwd)
 mathlib_root=${1:-"$HOME/Code/mathlib4"}
 sources=${2:-"$repo_root/experiments/workloads/mathlib-v4.32.0-sample.txt"}
-out=${3:-"$repo_root/docs/projects/ruff-03-language-formatting/evidence/03-blank-line-columns.txt"}
+out=${3:-"$repo_root/experiments/evidence/03-blank-line-columns.txt"}
 
 mkdir -p "$(dirname "$out")"
 

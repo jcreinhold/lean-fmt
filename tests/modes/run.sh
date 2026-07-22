@@ -963,7 +963,7 @@ cmp "$work/fin-nw.before" "$work/fin-nw.after" # check and diff wrote nothing
 # 9. RCD-IMPL (`ruff-13`) gate 1: a path inside `.lake` is refused by every mode under every
 #    configuration. `.lake` holds Lake's build outputs and vendored dependency sources; before this
 #    stack an explicit `.lake/...` argument was accepted and *written*
-#    (`docs/projects/ruff-13-config-discovery/evidence/01-discovery-baseline.md` §3). The floor is
+#    (measured against the discovery baseline). The floor is
 #    absolute: no `--config`, no `force-exclude` setting, and no explicit argument lifts it, so each
 #    setting is asserted separately rather than once with the default.
 printf 'module\n\nnamespace     Floor\n\ndef floorValue : Nat := 1\n\nend Floor\n' >"$rcd_floor_fixture"

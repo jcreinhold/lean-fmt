@@ -8,8 +8,7 @@ module
 
 /- # Source-level suppression directives
 
-`RSP-SPEC` (`docs/projects/ruff-07-suppressions/notes/01-spec.md`) froze the model this implements. The
-one-line summary: a directive is read **only** from a `Comment` (a `lineComment`/`blockComment`
+The model in one line: a directive is read **only** from a `Comment` (a `lineComment`/`blockComment`
 trivia), never by substring search, so strings, syntax quotations, and doc comments are excluded by
 construction. A directive suppresses canonical findings whose anchor falls in its byte scope, and an
 unused directive is itself a finding (`FMT900`) with a safe removal fix. Suppression is a **projection

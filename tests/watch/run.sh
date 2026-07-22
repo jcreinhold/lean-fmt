@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Characterization suite for the platform behaviors `ruff-16` RWI-SPEC froze
-# (`docs/projects/ruff-16-watch-incremental/notes/01-watch-generations.md`).
+# (see `LeanFmt/Watch.lean`).
 #
 # RWI-SPEC ships no production surface, so this suite deliberately tests **git and the filesystem**,
 # not `lean-fmt`. Every assertion below is a premise the RWI-IMPL selection adapter is built on. If a

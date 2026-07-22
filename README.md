@@ -238,7 +238,7 @@ snapshots, module evidence, and exact setup; `LeanFmt.Semantic` keeps product re
 compiler projections. Artifact validation, fallback, cache sequencing, validation, stale checks, and
 writes remain behind one private execution operation. `LeanFmt.Cli` owns only parsing, presentation,
 statistics, and exit mapping. Design and
-performance evidence lives in `docs/projects/execution-core-v2/`; exploratory code remains under
+exploratory code remains under
 `experiments/`. `docs/adding-a-rule.md` is the contributor guide for the rule engine.
 
 ```sh

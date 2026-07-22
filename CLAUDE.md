@@ -15,15 +15,14 @@ reads that facet through one private no-build Lake operation, and only when a se
 syntax.
 
 Do not restore the archived Rust workspace, worker protocol, `libleanshared` boundary, or seven-crate
-split. `docs/projects/execution-core-v2/` and its measurements govern architecture work.
+split.
 
 ## Directory guides
 
 Read the nearest guide before working in a directory. A guide may add rules. It may not contradict
 this file.
 
-- `LeanFmt/AGENTS.md` for writing Lean;
-- `docs/projects/AGENTS.md` for prompt stacks.
+- `LeanFmt/AGENTS.md` for writing Lean.
 
 ## Build and checks
 
@@ -76,20 +75,22 @@ out of production modules until their owning prompt selects and verifies the int
 
 ## Which record wins
 
+The prompt stacks that built this product (`docs/projects/`) were deleted once it shipped. What
+remains is the record, in this order:
+
 - Built code decides what the product does. No record outranks it.
-- `results/` freezes a decision a prompt made, with its evidence. Amend it; do not work around it.
-- `evidence/` and `notes/` are working material. They support a result. They do not stand in for one.
-- `state/current.md` records where a stack stopped and what is unfinished. It does not overrule code
-  or a result.
-- `roadmap.md` orders the work. It does not report status.
+- A suite under `tests/` decides whether a behaviour is intended. A test asserting something is the
+  strongest surviving statement that it was chosen rather than stumbled into.
+- Module docstrings in `LeanFmt/` carry the reasoning — why a shape was picked and what was rejected.
+  They are prose and can rot; when one contradicts the code, the code wins and the docstring is wrong.
+- `docs/` is the user-facing contract. `docs/ci.md` and `docs/adding-a-rule.md` are gated by suites;
+  the rest is not.
+- Committed evidence (`tests/printer/projection-shape.txt`, `experiments/evidence/`) is a measurement
+  with a date, not a decision. Regenerate it rather than arguing with it.
 
-If code contradicts a result, reopen the stack that owns the result. Do not patch around it. If two
-records disagree, write down the disagreement and how you settled it.
-
-## Stack order
-
-The number sets the step: finish every stack at a lower number before starting a higher one. A letter
-suffix marks a stack opened against an earlier one, and it runs after the stack it amends.
+If two records disagree, write down the disagreement and how you settled it. The design rationale that
+is *not* recoverable from code or tests is gone with the stacks — when you cannot find why something is
+the way it is, say so rather than inventing a reason.
 
 ## Design constraints
 

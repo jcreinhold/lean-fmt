@@ -5,7 +5,6 @@ set -euo pipefail
 #
 # Every case drives the real executable, because what is under test is the bytes a CI system receives:
 # the grammar, the escaping, the exit code, and where the report lands. The frozen contract is
-# `docs/projects/ruff-15-reporting/notes/01-report-formats.md`; section numbers below refer to it.
 #
 # The three structured formats are checked with **independent parsers** rather than with our own
 # string matching wherever one exists — a renderer and its bespoke checker can agree on the same
@@ -77,7 +76,7 @@ if cmp -s "$work/via-json.json" "$work/via-format.json"; then
 else
   fail "--json and --output-format json diverged"
 fi
-if cmp -s "$work/via-json.json" docs/projects/ruff-15-reporting/evidence/01-json-golden-check.json; then
+if cmp -s "$work/via-json.json" tests/reporting/golden/json-check.json; then
   ok "--output-format json still reproduces the pre-change golden"
 else
   fail "the JSON report changed shape"

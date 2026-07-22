@@ -213,8 +213,8 @@ private def sliceNormalized (source : String) (start stop : Nat) : String :=
 
 /-! ### Whitespace-trivia trimming (formatter-owned, `ruff format`-style)
 
-The canonical formatter — not a lint rule — owns trailing-whitespace and final-newline normalization
-(`docs/projects/ruff-11c-decouple-fix-format/notes/01-model.md` §3). `trimTriviaWs` removes horizontal
+The canonical formatter — not a lint rule — owns trailing-whitespace and final-newline normalization.
+`trimTriviaWs` removes horizontal
 whitespace (`0x20`, `0x09`) that sits immediately before a newline, but **only where that whitespace is
 whitespace *trivia*** — never token bytes, string-literal content, line-comment text, or block-comment
 bodies. Soundness is by construction, not by a byte scan of the final string: this is applied *only* to
