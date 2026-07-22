@@ -83,23 +83,72 @@ runs succeeded, so the zeros are zeros, not silence.
 
 That is the complete audit. There were no other findings to read.
 
-## Per-rule exposure against §2.2
+## The named stress files (§6.2)
 
-| Rule | Tier | Findings on the 62-module sample | §2.2 exposure |
-| --- | --- | ---: | --- |
-| FMT008 | syntax | 0 | none |
-| FMT009 | syntax | 0 | none |
-| FMT010 | syntax | 0 | none |
-| FMT011 | syntax | 0 | none |
-| FMT012 | syntax | 0 | none |
-| FMT013 | syntax | **1** | 1, audits clean |
-| FMT014 | semantic | 0 | none |
-| FMT015 | semantic | 0 | none |
-| FMT016 | semantic | 0 | none |
-| FMT017 | semantic | 0 | none |
+Same runner, `STAMP=rgr-evidence-stress`, over the concatenation of `mathlib-v4.32.0-stress-largest.txt`,
+`-tactic.txt`, `-attr.txt`, `-batch-8.txt`, and `-remainder.txt` — **23 modules**, including the
+attribute-dense `Mathlib/Data/Finset/Attr.lean` (FMT010's best chance), `Mathlib/Tactic.lean`, and the
+63,748-byte `Mathlib/Analysis/Normed/Module/Multilinear/Basic.lean`.
+
+```
+modules=23   total_findings=1
+  FMT008=0  FMT009=1  FMT010=0  FMT011=0  FMT012=0
+  FMT013=0  FMT014=0  FMT015=0  FMT016=0  FMT017=0
+broken_modules=0: []   infra_failures=0: []
+seconds_total=194.6  seconds_max=39.1
+```
+
+### 2. FMT009 — `mathlib4/scripts/create_deprecated_modules.lean:21`
+
+- **Message:** `unclosed namespace`
+- **Byte range:** 423–449; **slice:** `namespace DeprecatedModule`
+- **Checked:** the file is 411 lines and contains **no `end` at all** — the only `namespace`/`section`/`end`
+  line in it is line 21 itself. So the namespace is genuinely never closed.
+- **Verdict: TRUE POSITIVE under the rule's contract**, and **a borderline opinionation finding (§2.1)**
+  that this file records rather than forces into a bucket, per §"Remaining uncertainty" of the criteria.
+
+  Why it is a true positive: FMT009's stated contract is "a `section` or `namespace` is opened and never
+  closed by a matching `end`". That is literally the case here, and the rule did not misread the source.
+
+  Why it is borderline opinionation: an unclosed namespace at end-of-file is **legal Lean and harmless** —
+  everything after it simply stays in the namespace, which for a whole-file script is the intent. A
+  mathlib author would plausibly decline to add `end DeprecatedModule` to a `scripts/` file.
+
+  And the rule's own explanation shows the carve-out already exists in spirit: *"An outermost anonymous
+  `noncomputable`/`public`/`meta` section — the idiomatic whole-file section — is not reported."* FMT009
+  already refuses to report the idiomatic whole-file **anonymous section**. A named namespace spanning a
+  whole file is arguably the same idiom, and the rule does not carve it out.
+
+  **This is a defect worth recording, not a rule to repair here.** Prompt 02's stop rule forbids changing
+  a rule's implementation to make it pass; the verdict is "not yet, and here is the defect", and the
+  candidate repair — extend the whole-file carve-out from an anonymous section to a named namespace that
+  spans the file — belongs to whoever owns FMT009 next.
+
+## Per-rule exposure against §2.2 — the whole corpus
+
+85 real mathlib modules (62 frozen sample + 23 stress/batch/remainder), **2 findings**, 0 broken,
+0 infrastructure failures.
+
+| Rule | Tier | Sample (62) | Stress (23) | Total | §2.2 exposure |
+| --- | --- | ---: | ---: | ---: | --- |
+| FMT008 | syntax | 0 | 0 | **0** | none |
+| FMT009 | syntax | 0 | 1 | **1** | 1, true positive, borderline opinionation |
+| FMT010 | syntax | 0 | 0 | **0** | none — and the attribute-dense stress file was in scope |
+| FMT011 | syntax | 0 | 0 | **0** | none |
+| FMT012 | syntax | 0 | 0 | **0** | none |
+| FMT013 | syntax | 1 | 0 | **1** | 1, audits clean |
+| FMT014 | semantic | 0 | 0 | **0** | none |
+| FMT015 | semantic | 0 | 0 | **0** | none |
+| FMT016 | semantic | 0 | 0 | **0** | none |
+| FMT017 | semantic | 0 | 0 | **0** | none |
 
 §2.2's `default` threshold is **10 audited true positives on real code**. The highest any rule reached
-is **1**. No rule is within an order of magnitude of the bar.
+is **1**. No rule is within an order of magnitude of the bar, and **eight of the ten never fired at
+all across 85 modules**.
+
+FMT010 deserves a note: `Mathlib/Data/Finset/Attr.lean` was selected into the stress set precisely
+because it is attribute-dense, and FMT010 still found nothing. That is the strongest available evidence
+that duplicate attributes do not occur in reviewed mathlib, not that FMT010 is broken.
 
 ## This is a finding about the corpus, reported as §2.2 requires
 
