@@ -1,11 +1,30 @@
 ---
 kind: state
-first_unresolved: 01-criteria
+first_unresolved: 02-evidence
 ---
 
 # Current state
 
-This stack is planned and has not begun. It was opened against `ruff-12-rule-lifecycle`, which built
+**RGR-SPEC is verified.** `results/01-criteria.md` freezes the criteria: four outcomes (§1),
+the false-positive budget and audit method (§2), the fix standard (§3), the documentation standard
+(§4), the default-path cost policy (§5), and the named corpus (§6). Three things it decided that
+change the shape of the remaining work:
+
+- **`stable-optional` is the fourth outcome** — `lifecycle := .stable` with `defaultEnabled := false`.
+  It needs no new machinery: `LeanFmt/Config.lean:668-671` already expands `all` and category to
+  every `.stable` rule regardless of `defaultEnabled`, so the state is implemented and merely
+  unoccupied. It is the landing spot for a rule that is correct but too expensive for the default path.
+- **"Default when integrated, optional otherwise" is refused** (§1.4), because it would make findings
+  depend on build state the user cannot see and would make the catalog unprintable without a workspace.
+- **CP-2 (§5.3) is expected to bind.** At `ruff-19`'s measured ~408 ms marginal per module, one
+  syntax-tier rule on the default path would roughly double a cold 62-module `check` — about 8× the
+  1.25× budget. `RGR-EVIDENCE` measures rather than assuming this, but the projection is on record.
+
+`results/01-criteria.md` §0 discloses that its author had already read `ruff-12`'s aggregate firing
+count (ten preview rules, 62 modules, one true-positive FMT013, zero false positives) and names
+§2.2's exposure threshold as the criterion that exposure could have contaminated.
+
+This stack was opened against `ruff-12-rule-lifecycle`, which built
 the stable/preview/deprecated machinery but was never asked to decide which rules belong in which
 state. Its external prerequisite stacks are `ruff-10b-syntax-fix-composition`,
 `ruff-11-semantic-rules`, `ruff-12-rule-lifecycle`, and `ruff-19-performance`. Before starting,
@@ -18,7 +37,7 @@ verified.
 
 | Prompt | Claim | Status | Depends on |
 | --- | --- | --- | --- |
-| 01-criteria | RGR-SPEC | planned | — |
+| 01-criteria | RGR-SPEC | **verified** (`results/01-criteria.md`) | — |
 | 02-evidence | RGR-EVIDENCE | planned | RGR-SPEC |
 | 03-graduate | RGR-IMPL | planned | RGR-EVIDENCE |
 | 04-final | RGR-FINAL | planned | RGR-IMPL |
@@ -79,6 +98,14 @@ feel it.
 ## Blockers and prerequisites
 
 - No blocker is currently recorded beyond the named prerequisite stacks.
+- **The KanProofs structural checkers no longer pass on any lean-fmt stack.** `check_stack.py` reports
+  five `implementation_route` errors here *and* on the closed, verified `ruff-06-fix-safety` and
+  `ruff-12-rule-lifecycle`, whose own result notes record "0 warnings" from the same script;
+  `write_next.py --check` fails earlier on a missing "formalization policy". The tooling acquired a
+  convention after these stacks were written and no lean-fmt stack adopts it. Settled by recording it
+  (`results/01-criteria.md` §"Structural checker disagreement"), not by adding a route block to one
+  stack. The stack-shaped assertions — frontmatter, `depends_on`, `first_unresolved` — do pass. Not a
+  blocker; adopting or discarding the convention repo-wide belongs with `docs/projects/AGENTS.md`.
 - If live code contradicts prerequisite results, reopen the owning prerequisite rather than patching around it.
 - Full mathlib is not development evidence; that licence belongs to `ruff-20-acceptance` alone. A
   graduation decision that can only be made with the complete corpus is a decision to defer to
