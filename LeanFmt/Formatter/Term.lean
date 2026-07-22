@@ -16,6 +16,7 @@ has no operator spelling table and never infers structure from a flat token list
 
 import Lean.Parser.Term
 import all LeanFmt.Formatter
+import all LeanFmt.Formatter.Collection
 import all LeanFmt.Formatter.Syntax
 
 namespace LeanFmt.Internal.Formatter.Term
@@ -68,6 +69,7 @@ private partial def transparentDocument? (stx : Lean.Syntax) : Option Doc := do
         Doc.nest 2 (Doc.line " " ++ positiveDocument) ++
         Doc.line " " ++ Doc.text "else" ++
         Doc.nest 2 (Doc.line " " ++ negativeDocument)
+  if let some document := Collection.document? transparentDocument? stx then return document
   none
 
 /-- Format one actual term child. Transparent core views become composable documents; every opaque or

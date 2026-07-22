@@ -56,6 +56,7 @@ lean_lib LeanFmtApplication where
     Glob.one `LeanFmt.Edit,
     Glob.one `LeanFmt.Formatter,
     Glob.one `LeanFmt.Formatter.Command,
+    Glob.one `LeanFmt.Formatter.Collection,
     Glob.one `LeanFmt.Formatter.Declaration,
     Glob.one `LeanFmt.Formatter.Syntax,
     Glob.one `LeanFmt.Formatter.Term,
