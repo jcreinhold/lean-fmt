@@ -8,6 +8,7 @@ module
 
 import all LeanFmt.ArtifactStore
 import all LeanFmt.Comments
+import all LeanFmt.Formatter
 import all LeanFmt.Rules
 import all LeanFmt.Suppression
 
@@ -19,9 +20,31 @@ namespace LeanFmt.Internal
 
 /- The process response is deliberately semantic. It contains neither setup paths nor execution
 strategy, so the parent cannot accidentally key reporting on how it obtained the analysis. -/
+structure FormatterAuditEntry where
+  trace : FormatterTrace
+  range : SourceRange
+  source : String
+  documentNodes : Nat
+  narrowNativeEvents : Nat
+  wideNativeEvents : Nat
+  narrow? : Option String
+  wide? : Option String
+  error? : Option String
+  deriving Lean.ToJson, Lean.FromJson
+
+structure FormatterAuditSummary where
+  entries : Array FormatterAuditEntry
+  successes : Nat
+  failures : Nat
+  explicit : Nat
+  descriptor : Nat
+  commentOwners : Nat
+  deriving Lean.ToJson, Lean.FromJson
+
 structure AnalysisEnvelope where
   artifact? : Option ModuleArtifact
   commentSummary? : Option CommentSummary := none
+  formatterAudit? : Option FormatterAuditSummary := none
   diagnostics : Array String := #[]
   deriving Lean.ToJson, Lean.FromJson
 
@@ -221,7 +244,8 @@ owned by the target Lake workspace. The resulting projection is the same one emi
 compiler plugin; no accumulated environment or parser state crosses this process invocation. -/
 unsafe def analyzeExact (setup : Lean.ModuleSetup) (source : String)
     (sourcePath : System.FilePath) (captureSemantic : Bool := false)
-    (captureOccurrences : Bool := false) (captureComments : Bool := false) : IO AnalysisEnvelope := do
+    (captureOccurrences : Bool := false) (captureComments : Bool := false)
+    (captureFormatter : Bool := false) : IO AnalysisEnvelope := do
   Lean.initSearchPath (← Lean.findSysroot)
   Lean.enableInitializersExecution
   let input := Lean.Parser.mkInputContext source sourcePath.toString
@@ -273,12 +297,70 @@ unsafe def analyzeExact (setup : Lean.ModuleSetup) (source : String)
   -- systems inside one artifact for any file that uses CRLF.
   let artifact := ModuleArtifact.ofParsedModule setup.name.toString
     normalizedSource commands terminal? semantic
-  let commentSummary? := if captureComments then
+  let ownership? := if captureComments || captureFormatter then
       let suppressed := (Suppression.collect artifact.source normalizedSource).directives.map (·.scopeRange)
-      some <| Comments.summary normalizedSource <|
-        Comments.build normalizedSource snapshot.stx commands terminal? suppressed
+      some <| Comments.build normalizedSource snapshot.stx commands terminal? suppressed
     else none
-  return { artifact? := some artifact, commentSummary? }
+  let commentSummary? := if captureComments then
+      ownership?.map (Comments.summary normalizedSource)
+    else none
+  let formatterAudit? ← if captureFormatter then do
+      let some ownership := ownership?
+        | throw <| IO.userError "formatter audit has no comment ownership"
+      let bytes := normalizedSource.toUTF8
+      let commandOptions := commandState.scopes.head!.opts
+      let mut entries := #[]
+      let mut successes := 0
+      let mut failures := 0
+      let mut explicit := 0
+      let mut descriptor := 0
+      let mut commentOwners := 0
+      for command in commands do
+        let range := match command.getRange? with
+          | some value => SourceRange.mk value.start.byteIdx value.stop.byteIdx
+          | none => ⟨0, 0⟩
+        let commandSource := String.fromUTF8! <| bytes.extract range.start range.stop
+        let result ← Lean.Core.CoreM.toIO' (Formatter.registered ownership .command command)
+          { fileName := sourcePath.toString, fileMap := input.fileMap, options := commandOptions }
+          { env := commandState.env }
+        match result with
+        | .ok registered =>
+          successes := successes + 1
+          commentOwners := commentOwners + registered.trace.commentOwners
+          match registered.trace.resolution with
+          | .explicit _ => explicit := explicit + 1
+          | .descriptor => descriptor := descriptor + 1
+          let narrow := renderDetailed 32 registered.document
+          let wide := renderDetailed 100 registered.document
+          entries := entries.push {
+            trace := registered.trace
+            range
+            source := commandSource
+            documentNodes := registered.document.size
+            narrowNativeEvents := narrow.metrics.nativeEvents
+            wideNativeEvents := wide.metrics.nativeEvents
+            narrow? := some narrow.text
+            wide? := some wide.text
+            error? := none }
+        | .error failure =>
+          failures := failures + 1
+          commentOwners := commentOwners + failure.trace.commentOwners
+          match failure.trace.resolution with
+          | .explicit _ => explicit := explicit + 1
+          | .descriptor => descriptor := descriptor + 1
+          entries := entries.push {
+            trace := failure.trace
+            range
+            source := commandSource
+            documentNodes := 0
+            narrowNativeEvents := 0
+            wideNativeEvents := 0
+            narrow? := none
+            wide? := none
+            error? := some failure.detail }
+      pure <| some { entries, successes, failures, explicit, descriptor, commentOwners }
+    else pure none
+  return { artifact? := some artifact, commentSummary?, formatterAudit? }
 
 /- Extract the compiler-owned payload from one exact module artifact. Process exit remains the
 reclamation boundary; the returned value is compact and contains no environment-owned reference. -/

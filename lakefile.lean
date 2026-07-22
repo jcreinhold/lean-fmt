@@ -54,6 +54,7 @@ lean_lib LeanFmtApplication where
     Glob.one `LeanFmt.Config,
     Glob.one `LeanFmt.Discovery,
     Glob.one `LeanFmt.Edit,
+    Glob.one `LeanFmt.Formatter,
     Glob.one `LeanFmt.GitSelection,
     Glob.one `LeanFmt.Project,
     Glob.one `LeanFmt.Semantic,
@@ -67,7 +68,8 @@ lean_lib LeanFmtApplication where
 This later declaration remains the canonical owner for ordinary application imports, so changing
 application orchestration cannot invalidate compiler-integrated project modules.
 
-`LeanFmt.Doc`, `LeanFmt.Comments`, and `LeanFmt.Printer` are deliberately *not* in the plugin library
+`LeanFmt.Doc`, `LeanFmt.Comments`, `LeanFmt.Formatter`, and `LeanFmt.Printer` are deliberately *not*
+in the plugin library
 above. The plugin runs inside every compilation of every downstream module, so its surface is the
 semantic core and nothing else; layout is a consumer of the projection, never a producer of it. Nothing
 the compiler does needs to render a document, and `LeanFmt.Printer` is the sharpest case: it exists to
@@ -180,3 +182,9 @@ lean_lib CheckFixtures where
 lean_lib BrokenCheckFixtures where
   srcDir := "tests/check"
   roots := #[`MalformedHeader, `UnresolvedImport]
+
+/- Imported open syntax for the actual-node formatter adapter contract. This is a fixture library,
+not part of the application or compiler-plugin link closure. -/
+lean_lib FormatterAdapterFixtures where
+  srcDir := "tests/formatter-adapter"
+  roots := #[`AdapterSyntax]

@@ -288,6 +288,20 @@ def fileDangling (ownership : CommentOwnership) : Array Comment :=
 
 def all (ownership : CommentOwnership) : Array Comment := ownership.extracted
 
+/-- Comments logically owned by the node itself or one of its selected source-covering descendants.
+Lean may physically store boundary trivia on an adjacent token, so this is an ownership count, not a
+claim that one isolated registered document emits those same comments. -/
+def subtree (ownership : CommentOwnership) (stx : Lean.Syntax) : Array Comment :=
+  match sourceRange? stx with
+  | none => #[]
+  | some root => ownership.assignments.filterMap fun assignment =>
+    match assignment.owner with
+    | .file => none
+    | .node owner =>
+      match sourceRange? owner with
+      | some range => if containsRange root range then some assignment.comment else none
+      | none => if sameSyntax owner stx then some assignment.comment else none
+
 private def assignmentComments (ownership : CommentOwnership) : Array Comment :=
   ownership.assignments.map (·.comment)
 

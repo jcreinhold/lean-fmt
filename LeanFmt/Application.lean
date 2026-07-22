@@ -1861,8 +1861,9 @@ private unsafe def runAnalyzeChild (args : List String) : IO UInt32 := do
     let source ← IO.FS.readFile snapshotPath
     pure (setup, source)
   -- "0" none, "1" semantic (notations + diagnostics), "2" semantic + the info-tree occurrence
-  -- fold, "3" test/audit-only comment ownership over the live syntax. Product callers do not request
-  -- "3" yet; Prompt 08 will make ownership part of the formatter demand rather than a report fact.
+  -- fold, "3" test/audit-only comment ownership over the live syntax, and "4" the actual-node
+  -- registry adapter audit. Product callers do not request "3" or "4" yet; Prompt 08 will make
+  -- ownership and formatting part of one frontend demand rather than report facts.
   --
   -- Two phases, on this side of the process boundary where the parent cannot see: `child_analyze` is
   -- the frontend itself, `child_encode` is turning its result into the JSON the parent reads back. A
@@ -1874,6 +1875,7 @@ private unsafe def runAnalyzeChild (args : List String) : IO UInt32 := do
       (captureSemantic := captureMode == "1" || captureMode == "2")
       (captureOccurrences := captureMode == "2")
       (captureComments := captureMode == "3")
+      (captureFormatter := captureMode == "4")
   let encoded ← withPhase "child_encode" do
     -- `IO.lazyPure` for the reason `profiledPositions` documents: a plain `let` of a pure value can be
     -- floated out of the action's closure, and then the bracket times nothing. The `utf8ByteSize`
