@@ -17,7 +17,7 @@
 #
 # and read `canonical=` per module out of `tests/printer/run.sh`'s corpus section.
 
-printer_total=927   probe_total=926   modules_compared=28
+printer_total=929   probe_total=928   modules_compared=28
 
 # modules where the two disagree (printer canonical, probe claimable+namespace+end+open)
 LeanFmt/Cache/Decision.lean   printer=11  probe=10
@@ -42,6 +42,16 @@ LeanFmt/Imports.lean          printer=20  probe=21
 # And again for the batched setup probe in the same prompt, which added declarations to
 # `LeanFmt/Application.lean` and `LeanFmt/Project.lean`: 925/924 became 927/926. Both were re-probed
 # individually -- Application.lean 112/112, Project.lean 36/36 -- and again neither disagrees.
+#
+# And again at `ruff-12b` RGR-FINAL, which added `metaCodes` and `metaDescription?` to
+# `LeanFmt/Rules.lean` and one `explain` branch to `LeanFmt/Cli.lean`: 927/926 became 929/928 over the
+# same 28 modules. Both edited modules were re-probed individually rather than assumed --
+# Rules.lean 90/90 (88 claimable + 1 namespace + 1 end), Cli.lean 80/80 (76 + 1 + 1 + 2 open) -- so
+# neither joins the disagreement list and the gap is still exactly +1 for the two reasons below.
+#
+# `tests/printer/run.sh` is what caught this, which is the point of it: the edit was two declarations
+# in a rule catalog and had nothing to do with the printer, and the prompt making it had no reason to
+# think about this corpus. That is precisely the failure mode `RLF-FINAL` built the chain for.
 
 # Two causes, in opposite directions.
 #
