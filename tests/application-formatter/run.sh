@@ -14,12 +14,12 @@ application=$(lake -q query lean-fmt --text)
 cat >"$work/A.lean" <<'LEAN'
 module
 
-def alpha : Nat := 1
+def  alpha :Nat:=1
 LEAN
 cat >"$work/B.lean" <<'LEAN'
 module
 
-def beta : Nat := 2
+def  beta :Nat:=2
 LEAN
 cp "$work/A.lean" "$work/A.original"
 cp "$work/B.lean" "$work/B.original"

@@ -193,11 +193,12 @@ fix_applies fmt013 NestedParen.lean FMT011 '((1))' '(1)'
 fix_applies fmt010 Duplicates.lean FMT008 '@[simp, simp]' '@[simp]'
 fix_applies fmt011 Duplicates.lean FMT009 'deriving Repr, Repr' 'deriving Repr'
 
-# The inverse half of the split: `format` applies no syntax fix. On the same FMT011 fixture — already
-# layout-canonical — `format --select FMT011` *reports* the redundant-paren finding but leaves `((1))`
+# The inverse half of the split: `format` applies no syntax fix. On the same FMT011 fixture,
+# `format --select FMT011` reports the redundant-paren finding and may canonicalize command spacing,
+# but leaves `((1))`
 # byte-for-byte, where `fix` above rewrote it to `(1)`. This is the RDF-IMPL decoupling on a syntax-tier
 # `.safe` fix: applied by `fix` at original coordinates, absent from `format`.
-run_expect 0 "$work/fmt013-format.json" \
+run_expect 1 "$work/fmt013-format.json" \
   sfmt format --check --root . --json --no-cache --preview --select FMT011 tests/syntax/NestedParen.lean
 python3 - "$work/fmt013-format.json" <<'PY'
 import json, sys

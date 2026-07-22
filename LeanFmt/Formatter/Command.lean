@@ -20,6 +20,8 @@ the closed core side automatically. -/
 
 import Lean.Parser.Module
 import all LeanFmt.Formatter
+import all LeanFmt.Formatter.Declaration
+import all LeanFmt.Formatter.Syntax
 
 namespace LeanFmt.Internal
 
@@ -126,51 +128,9 @@ private def ownerOf (stx : Lean.Syntax) : CommandDocumentOwner :=
   let coreNamespace := ``Lean.Parser.Command.declaration |>.getPrefix
   if coreNamespace.isPrefixOf stx.getKind then .core else .registry
 
-private partial def tokenSpellingsFrom (stx : Lean.Syntax) (values : Array String) : Array String :=
-  match stx with
-  | .missing => values
-  | .atom _ value => if value.isEmpty then values else values.push value
-  | .ident _ raw value _ =>
-    let spelling := raw.toString
-    values.push (if spelling.isEmpty then value.toString else spelling)
-  | .node _ kind children =>
-    if kind == Lean.choiceKind then
-      match children[0]? with
-      | some selected => tokenSpellingsFrom selected values
-      | none => values
-    else
-      children.foldl (init := values) fun result child => tokenSpellingsFrom child result
-
-private def tokenSpellings (stx : Lean.Syntax) : Array String := tokenSpellingsFrom stx #[]
-
-private def hugsPrevious : String → Bool
-  | ")" | "]" | "}" | "⟩" | "," | ";" => true
-  | _ => false
-
-private def hugsNext : String → Bool
-  | "(" | "[" | "{" | "⟨" | "`(" | "`[" | "`{" | "$" => true
-  | _ => false
-
-private def spacedTokens (tokens : Array String) : String := Id.run do
-  let mut output := ""
-  for index in [0:tokens.size] do
-    let token := tokens[index]!
-    if index > 0 then
-      let previous := tokens[index - 1]!
-      unless hugsNext previous || hugsPrevious token do output := output ++ " "
-    output := output ++ token
-  return output
-
-private def lines (rows : Array String) : Doc :=
-  let result : Option Doc := rows.foldl (init := none) fun document? row =>
-    some <| match document? with
-      | some document => document ++ Doc.hard ++ Doc.text row
-      | none => Doc.text row
-  result.getD Doc.empty
-
 private partial def headerRowsFrom (stx : Lean.Syntax) (rows : Array String) : Array String :=
   if stx.isOfKind ``Lean.Parser.Module.import then
-    rows.push (spacedTokens (tokenSpellings stx))
+    rows.push (Syntax.flatText (Syntax.spellings stx))
   else match stx with
     | .atom _ value => if value == "module" || value == "prelude" then rows.push value else rows
     | .node _ _ children =>
@@ -178,7 +138,9 @@ private partial def headerRowsFrom (stx : Lean.Syntax) (rows : Array String) : A
     | _ => rows
 
 private def headerDocument? (stx : Lean.Syntax) : Option Doc :=
-  if stx.isOfKind ``Lean.Parser.Module.header then some (lines (headerRowsFrom stx #[])) else none
+  if stx.isOfKind ``Lean.Parser.Module.header then
+    some (Syntax.lines (headerRowsFrom stx #[]))
+  else none
 
 /-- Format the parsed module/import header as one closed core document. Import order and modifiers
 remain those of the actual header syntax. A comment-free header uses formatter-owned rows; until the
@@ -195,7 +157,7 @@ def header (ownership : CommentOwnership) (stx : Lean.Syntax) :
   | result, _ => return result
 
 private def macroRulesDocument (stx : Lean.Syntax) : Doc :=
-  let tokens := tokenSpellings stx
+  let tokens := Syntax.spellings stx
   let body := if tokens[0]? == some "macro_rules" then tokens.extract 1 tokens.size else tokens
   let alternatives := body.foldl (init := #[]) fun (rows : Array (Array String)) token =>
     if token == "|" then rows.push #[token]
@@ -203,12 +165,15 @@ private def macroRulesDocument (stx : Lean.Syntax) : Doc :=
       | some row => rows.set! (rows.size - 1) (row.push token)
       | none => #[#[token]]
   alternatives.foldl (init := Doc.text "macro_rules") fun document alternative =>
-    document ++ Doc.nest 2 (Doc.hard ++ Doc.text (spacedTokens alternative))
+    document ++ Doc.nest 2 (Doc.hard ++ Doc.text (Syntax.flatText alternative))
 
 /-- Format one actual ordinary command. Built-in command shells are closed; project-defined command
 syntax is delegated under the environment and options that parsed it. -/
 def command (ownership : CommentOwnership) (stx : Lean.Syntax) :
     Lean.CoreM (Except FormatterFailure CommandDocument) := do
+  if let some declaration ← Formatter.Declaration.format? ownership stx then
+    return declaration.map fun formatted =>
+      { document := formatted.document, trace := formatted.trace, owner := .core }
   let result ← format ownership (ownerOf stx) .command stx
   if stx.isOfKind ``Lean.Parser.Command.macro_rules &&
       (Comments.subtree ownership stx).isEmpty then

@@ -64,10 +64,10 @@ LEAN_NUM_THREADS=1 lake setup-file tests/style/fixtures/UnsafeLiteral.lean >"$wo
 python3 - "$work/literal.json" <<'PY'
 import json, sys
 r = json.load(open(sys.argv[1]))
-failure = r["validationFailure"]
-assert r.get("canonical") is None and failure["gate"] == "tokens", r
-assert "changed spelling" in failure["detail"], failure
-print("  ok   known multiline-literal corruption remains a typed production rejection")
+canonical = r.get("canonical")
+assert canonical is not None and r.get("validationFailure") is None, r
+assert '"alpha   \n  beta"' in canonical["text"], canonical
+print("  ok   structural declaration layout preserves a multiline literal byte-for-byte")
 PY
 
 printf 'tests/style: ok\n'
