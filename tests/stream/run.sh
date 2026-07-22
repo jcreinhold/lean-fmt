@@ -280,7 +280,7 @@ check "a range inside a nested node widens to its command" \
 printf -- '--- comment ownership at an extent boundary (§4.3) ---\n'
 # Trailing-greedy: a comment written *above* a declaration is in the *earlier* command's extent. This
 # is the frozen `RLC-SPEC` verdict (`nonempty_leading=0`) and it surprises people, so it is asserted
-# rather than left to be rediscovered. It is extent ownership, not the finer `Comments.partitions`
+# rather than left to be rediscovered. It is extent ownership, not live-syntax comment ownership
 # attachment `tests/layout/run.sh` reports as `own-line comments lead the next token`; both hold.
 cmt="$work/cmt.lean"
 printf 'module\n\ndef  a   :=   1\n\n-- a comment written above b\ndef  b   :=   2\n' >"$cmt"

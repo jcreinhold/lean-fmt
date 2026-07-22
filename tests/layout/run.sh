@@ -1,18 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Comment attachment over real parsed modules.
+# Live-syntax comment ownership over real parsed modules.
 #
-# `lake exe lean-fmt-tests` checks the attachment algorithm against hand-built projections, which
-# only proves it agrees with my reading of the trivia model. This checks it against the *parser*, on
-# this repository's own modules — real, non-trivial, always present, and changing as the project
-# changes, which a frozen fixture cannot. It is the only path that can catch the trivia model itself
-# being wrong.
+# The exact frontend retains actual header, command, choice-selected, and terminal syntax while it
+# builds the summary. This drives that path over the repository's changing production corpus.
 #
 # The claim under test is the roadmap's "preserve every comment exactly once". It is decidable rather
-# than aspirational: `structurallyValid` independently guarantees the trivia runs tile
-# `[headerStop, terminalStop)` exactly once, and attachment is a partition of that tiling, so
-# `Comments.partitions` compares two independent walks of the same runs.
+# than aspirational: the live-syntax summary validates one owner per independently extracted payload.
 
 repo_root=$(cd "$(dirname "$0")/../.." && pwd)
 work=$(mktemp -d)
@@ -39,18 +34,18 @@ check_module() {
   local module=$1
   LEAN_NUM_THREADS=1 lake setup-file "$module" >"$work/setup.json"
   LEAN_NUM_THREADS=1 lake env "$application" __analyze-exact \
-    "$work/setup.json" "$module" "$module" 8589934592 >"$work/envelope.json"
+    "$work/setup.json" "$module" "$module" 8589934592 3 >"$work/envelope.json"
   printf '%-34s ' "$module"
   local report
-  if ! report=$("$tests" attach-report "$work/envelope.json" "$module" 2>&1); then
+  if ! report=$("$tests" comment-summary "$work/envelope.json" 2>&1); then
     printf 'FAIL %s\n' "$report" >&2
     failures=$((failures + 1))
     return
   fi
   printf '%s\n' "$report"
   local comments dangling
-  comments=$(printf '%s' "$report" | sed -n 's/.*comments=\([0-9]*\).*/\1/p')
-  dangling=$(printf '%s' "$report" | sed -n 's/.*dangling=\([0-9]*\).*/\1/p')
+  comments=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["comments"])' <<<"$report")
+  dangling=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["dangling"])' <<<"$report")
   total_comments=$((total_comments + comments))
   total_dangling=$((total_dangling + dangling))
 }
@@ -61,14 +56,14 @@ for module in $(find LeanFmt -name '*.lean' | LC_ALL=C sort) Main.lean; do
 done
 
 printf -- '--- corpus ---\n'
-printf 'modules_checked=%s comments_attached=%s dangling=%s failures=%s\n' \
+printf 'modules_checked=%s comments_owned=%s dangling=%s failures=%s\n' \
   "$(find LeanFmt -name '*.lean' | wc -l | tr -d ' ')" "$total_comments" "$total_dangling" "$failures"
 
-# A corpus that attached no comment would pass every assertion above while testing nothing. A floor
+# A corpus that owned no comment would pass every assertion above while testing nothing. A floor
 # rather than an exact count: the number rises as the project is commented, and only a broken walk
 # drives it toward zero.
 if [[ $total_comments -lt 25 ]]; then
-  printf 'FAIL corpus attached only %s comments; the walk is not finding them\n' "$total_comments" >&2
+  printf 'FAIL corpus owned only %s comments; the walk is not finding them\n' "$total_comments" >&2
   failures=$((failures + 1))
 fi
 
@@ -95,8 +90,8 @@ spanning a newline -/
 FIXTURE
 LEAN_NUM_THREADS=1 lake env "$application" __analyze-exact \
   "$work/borrowed.setup.json" "$work/positions.lean" "positions.lean" 8589934592 \
-  >"$work/positions.json"
-positions=$("$tests" attach-report "$work/positions.json" "$work/positions.lean")
+  3 >"$work/positions.json"
+positions=$("$tests" comment-summary "$work/positions.json")
 printf '%-34s %s\n' "positions.lean" "$positions"
 
 # Exact, because each number is a separate claim about the rule:
@@ -115,10 +110,10 @@ expect() {
     printf '  ok   %s\n' "$label"
   fi
 }
-expect "every comment attached exactly once" "comments=5"
-expect "same-line comments trail their token" "trailing=3"
-expect "own-line comments lead the next token" "leading=1"
-expect "a comment past the last token dangles" "dangling=1"
+expect "every comment owned exactly once" '"comments":5'
+expect "same-line comments trail their syntax leaf" '"trailing":3'
+expect "own-line comments lead the next syntax leaf or terminal" '"leading":2'
+expect "the parsed end-of-input terminal owns the EOF comment" '"dangling":0'
 
 printf 'failures=%d\n' "$failures"
 exit $((failures > 0 ? 1 : 0))

@@ -45,6 +45,7 @@ lean_lib LeanFmtApplication where
   globs := #[
     Glob.one `LeanFmt.ArtifactStore,
     Glob.one `LeanFmt.Analysis,
+    Glob.one `LeanFmt.Comments,
     Glob.one `LeanFmt.Cache,
     -- The currency decision `LeanFmt.Cache` and `LeanFmt.Application` both call, and
     -- `LeanFmt.Cache.Spec` proves about. It is here, not in `LeanFmtCacheSpec`, because it is
@@ -82,7 +83,6 @@ lean_lib LeanFmtCore where
     Glob.one `LeanFmt.Rules,
     Glob.one `LeanFmt.Imports,
     Glob.one `LeanFmt.Doc,
-    Glob.one `LeanFmt.Comments,
     Glob.one `LeanFmt.Printer
   ]
 

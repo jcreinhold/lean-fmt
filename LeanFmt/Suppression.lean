@@ -19,7 +19,7 @@ Placement in the pipeline: `runRules` (engine) → `RulePlan.findings` (config l
 (this module, source layer) → report. The report gains the surviving findings, a suppressed count, and
 the `FMT900`/`FMT901` self-diagnostics. -/
 
-import all LeanFmt.Comments
+import all LeanFmt.LosslessSource
 import all LeanFmt.Rules
 
 namespace LeanFmt.Internal
@@ -209,12 +209,11 @@ private def malformedFinding (comment : SourceRange) (reason : String) : Finding
   fix? := some { applicability := .displayOnly, edits := #[{ range := comment, replacement := "" }] }
 }
 
-/-- Comments in the module header `[0, headerStop)`, which `Comments.allTrivia` deliberately omits.
+/-- Comments in the module header `[0, headerStop)`, which the compiler artifact deliberately omits.
 
-The header is not in the trivia projection — "a module linter never receives the header"
-(`Comments.lean` §header) — so a directive placed at the top of a file, the natural home for
-`ignore-file`, would otherwise be silently dropped: no suppression and, worse, no diagnostic. This
-recovers those comments so they parse like any other.
+The header is not in the artifact's trivia projection, so a directive placed at the top of a file,
+the natural home for `ignore-file`, would otherwise be silently dropped: no suppression and, worse,
+no diagnostic. This recovers those comments so they parse like any other.
 
 A dedicated scanner is safe here because the header grammar is so small. In the module
 system, the header holds only the `module` marker, `import` statements, and interspersed whitespace
@@ -260,19 +259,41 @@ private def headerComments (bytes : ByteArray) (headerStop : Nat) :
       i := i + 1
   return out
 
+/-- Directive-eligible comments in the compiler artifact's command-body trivia. This projection scan
+belongs to suppression, which must run on artifact-only rule paths; formatter comment ownership uses
+actual `Syntax` and is intentionally not serialized into the artifact. -/
+private def bodyComments (src : LosslessSource) : Array (TriviaKind × SourceRange) := Id.run do
+  let scan (runs : Array Trivia) (start : Nat) : Array (TriviaKind × SourceRange) × Nat := Id.run do
+    let mut comments := #[]
+    let mut cursor := start
+    for run in runs do
+      if run.kind == .lineComment || run.kind == .blockComment then
+        comments := comments.push (run.kind, ⟨cursor, run.stop⟩)
+      cursor := run.stop
+    return (comments, cursor)
+  let mut result := #[]
+  let mut cursor := src.headerStop
+  for token in src.tokens do
+    let (leading, _) := scan token.leading cursor
+    result := result ++ leading
+    let (trailing, trailingStop) := scan token.trailing token.stop
+    result := result ++ trailing
+    cursor := trailingStop
+  return result
+
 /-- Parse every directive comment in a module into `SuppressionFacts`.
 
-Directives are read from the recorded comment trivia only: `Comments.allTrivia` for the command body,
-plus `headerComments` for the module header the projection omits. A comment whose body does not open
-with the sigil is ordinary prose and produces nothing; one that opens with the sigil but breaks the
-grammar becomes an `FMT901` finding and suppresses nothing. -/
+Directives are read from recorded artifact trivia for the command body plus `headerComments` for the
+module header the artifact omits. Formatter ownership is neither required nor serialized on this
+independent rule-only path. A comment whose body does not open with the sigil is ordinary prose and
+produces nothing; one that opens with the sigil but breaks the grammar becomes an `FMT901` finding
+and suppresses nothing. -/
 def collect (src : LosslessSource) (normalized : String) : SuppressionFacts := Id.run do
   let bytes := normalized.toUTF8
   let mut directives := #[]
   let mut malformed := #[]
-  let bodyComments := (Comments.allTrivia src).map (fun c => (c.kind, c.range))
   -- Header first keeps global source order, so `FMT900`/`FMT901` report top-to-bottom.
-  let comments := headerComments bytes src.headerStop ++ bodyComments
+  let comments := headerComments bytes src.headerStop ++ bodyComments src
   for (kind, range) in comments do
     let text := (String.fromUTF8? (bytes.extract range.start range.stop)).getD ""
     let body := trim (commentBody kind text)

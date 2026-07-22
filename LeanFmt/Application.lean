@@ -1837,13 +1837,13 @@ def organize (request : OrganizeRequest) : IO RunReport := do
     return summarize "organize" files failures
 
 private unsafe def runAnalyzeChild (args : List String) : IO UInt32 := do
-  -- The `captureSemantic` flag is a trailing optional argument: a direct 4-argument invocation (the
-  -- syntax-only path, and every existing test harness) omits it and captures no semantic fact.
-  let (setupPath, snapshotPath, displayPath, maxBytes, captureSemantic) ← match args with
+  -- The capture mode is a trailing optional argument: a direct 4-argument invocation omits it and
+  -- captures no optional frontend fact.
+  let (setupPath, snapshotPath, displayPath, maxBytes, captureMode) ← match args with
     | [setupPath, snapshotPath, displayPath, maxBytes] =>
       pure (setupPath, snapshotPath, displayPath, maxBytes, "0")
-    | [setupPath, snapshotPath, displayPath, maxBytes, captureSemantic] =>
-      pure (setupPath, snapshotPath, displayPath, maxBytes, captureSemantic)
+    | [setupPath, snapshotPath, displayPath, maxBytes, captureMode] =>
+      pure (setupPath, snapshotPath, displayPath, maxBytes, captureMode)
     | _ => return 2
   let some maxBytes := maxBytes.toNat?
     | return 2
@@ -1860,7 +1860,9 @@ private unsafe def runAnalyzeChild (args : List String) : IO UInt32 := do
       | throw <| IO.userError "invalid ModuleSetup payload"
     let source ← IO.FS.readFile snapshotPath
     pure (setup, source)
-  -- "0" none, "1" semantic (notations + diagnostics), "2" semantic + the info-tree occurrence fold.
+  -- "0" none, "1" semantic (notations + diagnostics), "2" semantic + the info-tree occurrence
+  -- fold, "3" test/audit-only comment ownership over the live syntax. Product callers do not request
+  -- "3" yet; Prompt 08 will make ownership part of the formatter demand rather than a report fact.
   --
   -- Two phases, on this side of the process boundary where the parent cannot see: `child_analyze` is
   -- the frontend itself, `child_encode` is turning its result into the JSON the parent reads back. A
@@ -1869,8 +1871,9 @@ private unsafe def runAnalyzeChild (args : List String) : IO UInt32 := do
   -- to stderr, which the parent captures and forwards; stdout is the envelope and takes no passengers.
   let envelope ← withPhase "child_analyze" <|
     analyzeExact setup source displayPath
-      (captureSemantic := captureSemantic == "1" || captureSemantic == "2")
-      (captureOccurrences := captureSemantic == "2")
+      (captureSemantic := captureMode == "1" || captureMode == "2")
+      (captureOccurrences := captureMode == "2")
+      (captureComments := captureMode == "3")
   let encoded ← withPhase "child_encode" do
     -- `IO.lazyPure` for the reason `profiledPositions` documents: a plain `let` of a pure value can be
     -- floated out of the action's closure, and then the bracket times nothing. The `utf8ByteSize`

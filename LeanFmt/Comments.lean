@@ -6,196 +6,336 @@ Authors: Jacob Reinhold
 
 module
 
-/- Which token owns each comment.
+/- Deterministic comment ownership over actual source-covering syntax.
 
-The roadmap requires these rules be "derived from the lossless source model" rather than invented, and
-`RLS-SPEC` already settled the hard half: comments are not tree nodes, they live in the `leading` and
-`trailing` runs of `Token`. That leaves one question, and `RLC-SPEC` measured the answer on the
-shipping toolchain rather than reading it off a docstring.
+The parser stores comments in leaf `SourceInfo`, not as ordinary tree children. This module selects
+the first spelling of every `choice`, scans each selected trivia region once, recognizes doc-comment
+tokens separately, and assigns every payload to one leading, trailing, dangling, or file owner.
+Ownership depends only on source positions, physical-line relation, and delimiter context; render
+width never enters this module.
 
-**The parser does not split trivia, so this module must.** `Lean.Syntax.updateLeading`
-(`Lean/Syntax.lean:304`) is documented to split a token's trailing run at the first newline via
-`chooseNiceTrailStop` "so that e.g. comments are associated to the (intuitively) correct token", and
-its own docstring states "after parsing, all `SourceInfo.leading` fields are empty". It has **no
-caller in the 4.32 tree**. Measuring the leaves of a parsed module confirms it: leading runs are
-empty, comments appear only in trailing runs, and the parser is trailing-greedy. One trailing run
-routinely holds a trailing comment, a blank line, and the next declaration's leading comments
-together. So the split is ours, and this module adopts `chooseNiceTrailStop`'s rule — split at the
-first newline — with one correction that preservation forces; see `splitPoint`.
+The assignment table is private. Formatter rules can ask for comments leading, trailing, or dangling
+from the actual `Syntax` value they are rendering. -/
 
-`leading` is handled anyway rather than assumed empty. The projection permits a non-empty leading run,
-and a rule that is only correct because of a fact measured on one toolchain should not also be
-*unable* to express the other case. -/
-
+import Lean.Syntax
 import all LeanFmt.LosslessSource
 
 namespace LeanFmt.Internal
 
-/-- A comment, located in the normalized source. `kind` is `lineComment` or `blockComment`; whitespace
-trivia is not a comment and never appears here. -/
+inductive CommentKind where
+  | line
+  | block
+  | doc
+  deriving Inhabited, BEq, DecidableEq, Repr
+
 structure Comment where
-  kind : TriviaKind
+  kind : CommentKind
   range : SourceRange
+  suppressed : Bool := false
   deriving Inhabited, BEq, Repr
 
-/-- The comments owned by one token.
+inductive CommentPlacement where
+  | leading
+  | trailing
+  | dangling
+  deriving Inhabited, BEq, DecidableEq, Repr
 
-`leading` comments sit on their own lines before the token; `trailing` comments sit on the token's own
-line, after it. Blank-line runs fall in the leading region, which is where a formatter wants them:
-they precede the declaration they separate. -/
-structure TokenComments where
-  leading : Array Comment := #[]
-  trailing : Array Comment := #[]
-  deriving Inhabited, BEq, Repr
+private structure Site where
+  stx : Lean.Syntax
+  range : SourceRange
+  depth : Nat
+  leaf : Bool
+  spelling : String
+  deriving Inhabited
 
-/-- Every comment in a module, each assigned to exactly one owner.
+private inductive Owner where
+  | node (value : Lean.Syntax)
+  | file
 
-Two fields name regions the layout engine **cannot** attach. Naming them is the point — a token model
-has no third place to hide a comment, and a formatter that discovers these late has already lost them:
+private structure Assignment where
+  comment : Comment
+  placement : CommentPlacement
+  owner : Owner
 
-* `header` — `[0, headerStop)`, the module header. Not attachable, and its comments are not even in
-  this projection: the trivia tiling *begins* at `headerStop`, so there is nothing here to enumerate.
-  That is why it names a region rather than comments. A module linter never receives the header.
-  Measured: one header leaf carries both the module docstring and the first declaration's leading
-  comment.
-* `trailer` — after the last token's split point, out to `terminalStop`. These are the genuinely
-  *dangling* comments: the first-newline rule assigns them to "the next token", and at end of file
-  there is none. AST formatters meet this case inside empty constructs and invent a "dangling"
-  category for it; in a token model it arises once, at the end, and it is structural, not a
-  heuristic.
+/-- Width-independent ownership for one parsed module. Its table is deliberately private. -/
+structure CommentOwnership where
+  private assignments : Array Assignment
+  private extracted : Array Comment
 
-`tokens` is index-aligned with `LosslessSource.tokens`. -/
-structure Attachment where
-  header : SourceRange := ⟨0, 0⟩
-  tokens : Array TokenComments := #[]
-  trailer : Array Comment := #[]
-  deriving Inhabited, BEq, Repr
-
-namespace Attachment
-
-/-- Every comment this attachment owns, in source order. The header region is left out: the trivia
-tiling starts after it, so it holds no attachable comment. -/
-def all (a : Attachment) : Array Comment := Id.run do
-  let mut out := #[]
-  for tc in a.tokens do
-    out := out ++ tc.leading ++ tc.trailing
-  return out ++ a.trailer
-
-end Attachment
+structure CommentSummary where
+  comments : Nat
+  leading : Nat
+  trailing : Nat
+  dangling : Nat
+  suppressed : Nat
+  payloadDigest : String
+  valid : Bool
+  deriving Inhabited, BEq, Repr, Lean.ToJson, Lean.FromJson
 
 namespace Comments
 
-private def isComment : TriviaKind → Bool
-  | .lineComment | .blockComment => true
-  | .whitespace => false
+private def sourceRange? (stx : Lean.Syntax) : Option SourceRange := do
+  let range ← stx.getRange?
+  return ⟨range.start.byteIdx, range.stop.byteIdx⟩
 
-/-- Byte offset of the first `'\n'` in `[start, stop)`, or `stop` if there is none. -/
-private partial def firstNewline (source : String) (start stop : Nat) : Nat :=
-  let rec loop (p : String.Pos.Raw) : Nat :=
-    if p.byteIdx >= stop then stop
-    else if p.get source == '\n' then p.byteIdx
-    else loop (p.next source)
-  loop ⟨start⟩
+private def slice (bytes : ByteArray) (range : SourceRange) : String :=
+  (String.fromUTF8? (bytes.extract range.start range.stop)).getD ""
 
-/-- Where a token's trailing run stops belonging to that token.
+private def isDocSpelling (value : String) : Bool :=
+  value.startsWith "/--" || value.startsWith "/-!"
 
-This is `chooseNiceTrailStop` with one correction. Lean computes `trail.posOf '\n'` — a raw character
-scan with no idea what it is scanning. A **block comment may contain newlines**, so on
-`def x := /- multi⏎line -/ 0` that scan splits *inside* the comment. Lean survives it because it only
-moves a substring boundary and `leading ++ trailing` still reconstructs the text. This module does
-not: it attaches whole comments by range, so a comment straddling the split would belong to neither
-side and be lost. "Preserve every comment exactly once" is a roadmap stop rule, not a preference.
+private def matchingDelimiters : String → String → Bool
+  | "(", ")" | "[", "]" | "{", "}" | "⟨", "⟩" => true
+  | _, _ => false
 
-So the split is the first newline **outside any comment** — equivalently, the first newline inside a
-`whitespace` trivia. That is not a heuristic: a line comment cannot contain a newline (`LosslessSource.scanTrivia` records "`--` runs to, but does not include, the newline;
-`whitespace` takes the newline itself"), so the only comment a raw scan can tear is a block one, and
-the projection already tells us which trivia is which. A multi-line block comment therefore stays whole
-and belongs to the token whose line it starts on.
+private def isClosing : String → Bool
+  | ")" | "]" | "}" | "⟩" => true
+  | _ => false
 
-The newline itself is not on the trailing side; it opens the next token's leading region. -/
-private def splitPoint (source : String) (run : Array Trivia) (start stop : Nat) : Nat := Id.run do
-  let mut cursor := start
-  for trivia in run do
-    if trivia.kind == .whitespace then
-      let newline := firstNewline source cursor trivia.stop
-      if newline < trivia.stop then
-        return newline
-    cursor := trivia.stop
-  return stop
+private def containsRange (outer inner : SourceRange) : Bool :=
+  outer.start <= inner.start && inner.stop <= outer.stop
 
-/-- Comments of one trivia run lying within `[lo, hi)`.
+private partial def collectSitesFrom (bytes : ByteArray) (stx : Lean.Syntax) (depth : Nat)
+    (sites : Array Site) (comments : Array Comment) : Array Site × Array Comment :=
+  match stx with
+  | .node _ kind args =>
+    if kind == Lean.choiceKind then
+      match args[0]? with
+      | some selected => collectSitesFrom bytes selected depth sites comments
+      | none => (sites, comments)
+    else
+      let sites := match sourceRange? stx with
+        | some range => sites.push { stx, range, depth, leaf := false, spelling := "" }
+        | none => sites
+      args.foldl (init := (sites, comments)) fun (sites, comments) child =>
+        collectSitesFrom bytes child (depth + 1) sites comments
+  | .atom info _ | .ident info .. =>
+    match sourceRange? stx with
+    | none => (sites, comments)
+    | some range =>
+      let spelling := slice bytes range
+      let sites := if isDocSpelling spelling then sites else
+        sites.push { stx, range, depth, leaf := true, spelling }
+      let comments := if isDocSpelling spelling then
+          comments.push { kind := .doc, range }
+        else comments
+      collectTrivia bytes info sites comments
+  | .missing => (sites, comments)
+where
+  collectTrivia (bytes : ByteArray) (info : Lean.SourceInfo) (sites : Array Site)
+      (comments : Array Comment) : (Array Site × Array Comment) :=
+    match info with
+    | .original leading _ trailing _ =>
+      (sites, scanTrivia bytes trailing (scanTrivia bytes leading comments))
+    | _ => (sites, comments)
 
-The run tiles `[start, ...)` in order and stores only stops, so each trivia's start is its
-predecessor's stop. `lo`/`hi` clip the run rather than partition it, because the split point can fall
-inside a whitespace trivia — `"\n\n"` is one trivia — and, by `splitPoint`, never inside a comment. -/
-private def commentsIn (run : Array Trivia) (start lo hi : Nat) : Array Comment := Id.run do
-  let mut out := #[]
-  let mut cursor := start
-  for trivia in run do
-    if isComment trivia.kind && cursor >= lo && trivia.stop <= hi then
-      out := out.push { kind := trivia.kind, range := ⟨cursor, trivia.stop⟩ }
-    cursor := trivia.stop
-  return out
+  scanTrivia (bytes : ByteArray) (trivia : Substring.Raw)
+      (comments : Array Comment) : Array Comment := Id.run do
+    let stop := min trivia.stopPos.byteIdx bytes.size
+    let mut cursor := min trivia.startPos.byteIdx stop
+    let mut result := comments
+    while cursor < stop do
+      if bytes[cursor]! == 0x2d && cursor + 1 < stop && bytes[cursor + 1]! == 0x2d then
+        let start := cursor
+        cursor := cursor + 2
+        while cursor < stop && bytes[cursor]! != 0x0a do cursor := cursor + 1
+        result := result.push { kind := .line, range := ⟨start, cursor⟩ }
+      else if bytes[cursor]! == 0x2f && cursor + 1 < stop && bytes[cursor + 1]! == 0x2d then
+        let start := cursor
+        cursor := cursor + 2
+        let mut nesting := 1
+        while cursor + 1 < stop && nesting > 0 do
+          if bytes[cursor]! == 0x2f && bytes[cursor + 1]! == 0x2d then
+            nesting := nesting + 1
+            cursor := cursor + 2
+          else if bytes[cursor]! == 0x2d && bytes[cursor + 1]! == 0x2f then
+            nesting := nesting - 1
+            cursor := cursor + 2
+          else
+            cursor := cursor + 1
+        result := result.push { kind := .block, range := ⟨start, cursor⟩ }
+      else
+        cursor := cursor + 1
+    return result
 
-/-- Assign every comment in `source` to exactly one owner.
+private def collectSites (bytes : ByteArray) (roots : Array Lean.Syntax) : Array Site × Array Comment :=
+  roots.foldl (init := (#[], #[])) fun (sites, comments) root =>
+    collectSitesFrom bytes root 0 sites comments
 
-`normalized` must be the string `source` was projected from; `LosslessSource.validFor` checks that.
-Per token: its **trailing** comments are those before its split point, on its own line; the **next**
-token's **leading** comments are everything from there to that token's start — which spans the tail of
-this token's trailing run *and* the next token's own leading run, since the two tile one contiguous
-region between the tokens.
+private def commentOrder (left right : Comment) : Bool :=
+  left.range.start < right.range.start ||
+    (left.range.start == right.range.start && left.range.stop < right.range.stop)
 
-The result partitions the comment trivia of `[headerStop, terminalStop)`: every comment is owned once,
-by exactly one of `tokens[i].leading`, `tokens[i].trailing`, or `trailer`. `Comments.partitions`
-checks it, and `structurallyValid` already guarantees the tiling this relies on. -/
-def attach (source : LosslessSource) (normalized : String) : Attachment := Id.run do
-  let toks := source.tokens
-  let mut tokens : Array TokenComments := #[]
-  -- The previous token's split point: where the current token's leading region opens.
-  let mut carry := source.headerStop
-  for i in [0:toks.size] do
-    let token := toks[i]!
-    -- Leading spans two runs: what the previous token disowned past its split, then this token's own
-    -- leading run. Both are empty on 4.32, and neither is assumed to be.
-    let previousTrailingStop := if i = 0 then source.headerStop else toks[i - 1]!.trailingStop
-    let mut leading := #[]
-    if i > 0 then
-      let previous := toks[i - 1]!
-      leading := commentsIn previous.trailing previous.stop carry previousTrailingStop
-    leading := leading ++ commentsIn token.leading previousTrailingStop previousTrailingStop token.start
-    let split := splitPoint normalized token.trailing token.stop token.trailingStop
-    tokens := tokens.push {
-      leading
-      trailing := commentsIn token.trailing token.stop token.stop split }
-    carry := split
-  -- Whatever the last token disowned has no next token to claim it. `structurallyValid` guarantees
-  -- the last trailing stop is `terminalStop`, so this is exactly `[carry, terminalStop)`.
-  let trailer := match toks.back? with
-    | none => #[]
-    | some last => commentsIn last.trailing last.stop carry last.trailingStop
-  return { header := ⟨0, source.headerStop⟩, tokens, trailer }
+private def siteOrder (left right : Site) : Bool :=
+  left.range.start < right.range.start ||
+    (left.range.start == right.range.start && left.range.stop < right.range.stop)
 
-/-- Every comment the projection records, in source order, regardless of ownership.
+private def uniqueComments (comments : Array Comment) : Array Comment := Id.run do
+  let mut result := #[]
+  for comment in comments.qsort commentOrder do
+    match result.back? with
+    | some previous =>
+      unless previous.kind == comment.kind && previous.range == comment.range do
+        result := result.push comment
+    | none => result := result.push comment
+  return result
 
-This is deliberately computed a different way from `attach` — straight off the runs, with no split and
-no regions — so that `partitions` compares two independent walks rather than one walk against itself. -/
-def allTrivia (source : LosslessSource) : Array Comment := Id.run do
-  let mut out := #[]
-  let mut cursor := source.headerStop
-  for token in source.tokens do
-    out := out ++ commentsIn token.leading cursor cursor token.start
-    out := out ++ commentsIn token.trailing token.stop token.stop token.trailingStop
-    cursor := token.trailingStop
-  return out
+private def hasNewline (bytes : ByteArray) (start stop : Nat) : Bool := Id.run do
+  let mut cursor := min start bytes.size
+  let stop := min stop bytes.size
+  while cursor < stop do
+    if bytes[cursor]! == 0x0a then return true
+    cursor := cursor + 1
+  return false
 
-/-- Does `attach` own every recorded comment exactly once, and invent none?
+private def suppressedBy (regions : Array SourceRange) (comment : Comment) : Comment :=
+  { comment with suppressed := regions.any (containsRange · comment.range) }
 
-This is the roadmap's "preserve every comment exactly once" reduced to a decidable check. It is
-meaningful rather than circular because `structurallyValid` independently guarantees that the trivia
-runs tile `[headerStop, terminalStop)` exactly once: attachment is a partition of that tiling, so
-agreeing with `allTrivia` as an ordered sequence means no comment was dropped, duplicated, or moved. -/
-def partitions (source : LosslessSource) (normalized : String) : Bool :=
-  (attach source normalized).all == allTrivia source
+private def enclosingDelimiter? (sites : Array Site) (left right : Site) : Option Site :=
+  sites.foldl (init := none) fun selected site =>
+    if site.leaf || !containsRange site.range ⟨left.range.start, right.range.stop⟩ then selected
+    else match selected with
+      | none => some site
+      | some current =>
+        if site.depth > current.depth ||
+            (site.depth == current.depth && site.range.stop - site.range.start <
+              current.range.stop - current.range.start) then some site else selected
+
+private def syntaxOwner (site : Site) (placement : CommentPlacement) (comment : Comment) : Assignment :=
+  { comment, placement, owner := .node site.stx }
+
+private def assignWithNeighbors (bytes : ByteArray) (sites : Array Site) (comment : Comment)
+    (previous following : Option Site) : Assignment :=
+  match previous, following with
+  | some left, some right =>
+    if matchingDelimiters left.spelling right.spelling then
+      match enclosingDelimiter? sites left right with
+      | some container => syntaxOwner container .dangling comment
+      | none => syntaxOwner right .leading comment
+    else if !hasNewline bytes left.range.stop comment.range.start then
+      syntaxOwner left .trailing comment
+    else if isClosing right.spelling then
+      match enclosingDelimiter? sites left right with
+      | some container => syntaxOwner container .dangling comment
+      | none => syntaxOwner right .leading comment
+    else
+      syntaxOwner right .leading comment
+  | none, some right => syntaxOwner right .leading comment
+  | some left, none =>
+    if !hasNewline bytes left.range.stop comment.range.start then syntaxOwner left .trailing comment
+    else { comment, placement := .dangling, owner := .file }
+  | none, none => { comment, placement := .dangling, owner := .file }
+
+/-- Merge source-sorted comments with source-sorted leaves. Each leaf cursor advances once; comment
+ownership is linear except for the rare closing-delimiter query for the smallest enclosing node. -/
+private def assignAll (bytes : ByteArray) (sites leaves : Array Site)
+    (comments : Array Comment) : Array Assignment := Id.run do
+  let mut assignments := #[]
+  let mut previous : Option Site := none
+  let mut leafIndex := 0
+  for comment in comments do
+    while leafIndex < leaves.size && leaves[leafIndex]!.range.stop <= comment.range.start do
+      previous := some leaves[leafIndex]!
+      leafIndex := leafIndex + 1
+    let mut followingIndex := leafIndex
+    while followingIndex < leaves.size && leaves[followingIndex]!.range.start < comment.range.stop do
+      followingIndex := followingIndex + 1
+    assignments := assignments.push <|
+      assignWithNeighbors bytes sites comment previous leaves[followingIndex]?
+  return assignments
+
+/-- Build ownership from the actual parsed header, commands, and optional terminal command. -/
+def build (normalized : String) (header : Lean.Syntax) (commands : Array Lean.Syntax)
+    (terminal? : Option Lean.Syntax := none) (suppressed : Array SourceRange := #[]) :
+    CommentOwnership :=
+  let bytes := normalized.toUTF8
+  let roots := #[header] ++ commands ++ terminal?.toArray
+  let (sites, rawComments) := collectSites bytes roots
+  -- A terminal command begins the verbatim tail. Its syntax remains an owner for comments immediately
+  -- before it, but trivia after `#exit` is outside the parsed region and is not formatter input.
+  let parsedStop := terminal?.bind sourceRange? |>.map (·.start) |>.getD bytes.size
+  let rawComments := rawComments.filter (·.range.start < parsedStop)
+  let sites := sites.qsort siteOrder
+  let leaves := sites.filter (·.leaf)
+  let extracted := (uniqueComments rawComments).map (suppressedBy suppressed)
+  let assignments := assignAll bytes sites leaves extracted
+  ⟨assignments, extracted⟩
+
+private def sameSyntax (left right : Lean.Syntax) : Bool := left.eqWithInfo right
+
+private def forSyntax (ownership : CommentOwnership) (stx : Lean.Syntax)
+    (placement : CommentPlacement) : Array Comment :=
+  ownership.assignments.filterMap fun assignment =>
+    match assignment.owner with
+    | .node owner =>
+      if assignment.placement == placement && sameSyntax owner stx then some assignment.comment else none
+    | .file => none
+
+def leading (ownership : CommentOwnership) (stx : Lean.Syntax) : Array Comment :=
+  forSyntax ownership stx .leading
+
+def trailing (ownership : CommentOwnership) (stx : Lean.Syntax) : Array Comment :=
+  forSyntax ownership stx .trailing
+
+def dangling (ownership : CommentOwnership) (stx : Lean.Syntax) : Array Comment :=
+  forSyntax ownership stx .dangling
+
+def fileDangling (ownership : CommentOwnership) : Array Comment :=
+  ownership.assignments.filterMap fun assignment =>
+    match assignment.owner with
+    | .file => some assignment.comment
+    | .node _ => none
+
+def all (ownership : CommentOwnership) : Array Comment := ownership.extracted
+
+private def assignmentComments (ownership : CommentOwnership) : Array Comment :=
+  ownership.assignments.map (·.comment)
+
+/-- The table owns every extracted comment exactly once, in source order. -/
+def valid (ownership : CommentOwnership) : Bool :=
+  assignmentComments ownership == ownership.extracted
+
+private def placementName : CommentPlacement → String
+  | .leading => "L"
+  | .trailing => "T"
+  | .dangling => "D"
+
+private def kindName : CommentKind → String
+  | .line => "line"
+  | .block => "block"
+  | .doc => "doc"
+
+/-- Counts and an exact payload/ownership digest suitable for process-boundary tests. -/
+def summary (normalized : String) (ownership : CommentOwnership) : CommentSummary := Id.run do
+  let bytes := normalized.toUTF8
+  let mut leading := 0
+  let mut trailing := 0
+  let mut dangling := 0
+  let mut suppressed := 0
+  let mut digestInput := ""
+  for assignment in ownership.assignments do
+    match assignment.placement with
+    | .leading => leading := leading + 1
+    | .trailing => trailing := trailing + 1
+    | .dangling => dangling := dangling + 1
+    if assignment.comment.suppressed then suppressed := suppressed + 1
+    let owner := match assignment.owner with
+      | .file => "file"
+      | .node stx =>
+        match sourceRange? stx with
+        | some range => s!"{stx.getKind}:{range.start}:{range.stop}"
+        | none => s!"{stx.getKind}:none"
+    digestInput := digestInput ++ s!"{kindName assignment.comment.kind}:\
+{assignment.comment.range.start}:{assignment.comment.range.stop}:\
+{placementName assignment.placement}:{owner}:" ++ slice bytes assignment.comment.range ++ "\n"
+  return {
+    comments := ownership.extracted.size
+    leading
+    trailing
+    dangling
+    suppressed
+    payloadDigest := Digest.ofString digestInput |>.hex
+    valid := valid ownership }
 
 end Comments
 

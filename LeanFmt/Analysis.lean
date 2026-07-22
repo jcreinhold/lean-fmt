@@ -7,7 +7,9 @@ Authors: Jacob Reinhold
 module
 
 import all LeanFmt.ArtifactStore
+import all LeanFmt.Comments
 import all LeanFmt.Rules
+import all LeanFmt.Suppression
 
 import Lean.Elab.Frontend
 import Lean.Linter.Deprecated
@@ -19,6 +21,7 @@ namespace LeanFmt.Internal
 strategy, so the parent cannot accidentally key reporting on how it obtained the analysis. -/
 structure AnalysisEnvelope where
   artifact? : Option ModuleArtifact
+  commentSummary? : Option CommentSummary := none
   diagnostics : Array String := #[]
   deriving Lean.ToJson, Lean.FromJson
 
@@ -218,7 +221,7 @@ owned by the target Lake workspace. The resulting projection is the same one emi
 compiler plugin; no accumulated environment or parser state crosses this process invocation. -/
 unsafe def analyzeExact (setup : Lean.ModuleSetup) (source : String)
     (sourcePath : System.FilePath) (captureSemantic : Bool := false)
-    (captureOccurrences : Bool := false) : IO AnalysisEnvelope := do
+    (captureOccurrences : Bool := false) (captureComments : Bool := false) : IO AnalysisEnvelope := do
   Lean.initSearchPath (← Lean.findSysroot)
   Lean.enableInitializersExecution
   let input := Lean.Parser.mkInputContext source sourcePath.toString
@@ -270,7 +273,12 @@ unsafe def analyzeExact (setup : Lean.ModuleSetup) (source : String)
   -- systems inside one artifact for any file that uses CRLF.
   let artifact := ModuleArtifact.ofParsedModule setup.name.toString
     normalizedSource commands terminal? semantic
-  return { artifact? := some artifact }
+  let commentSummary? := if captureComments then
+      let suppressed := (Suppression.collect artifact.source normalizedSource).directives.map (·.scopeRange)
+      some <| Comments.summary normalizedSource <|
+        Comments.build normalizedSource snapshot.stx commands terminal? suppressed
+    else none
+  return { artifact? := some artifact, commentSummary? }
 
 /- Extract the compiler-owned payload from one exact module artifact. Process exit remains the
 reclamation boundary; the returned value is compact and contains no environment-owned reference. -/

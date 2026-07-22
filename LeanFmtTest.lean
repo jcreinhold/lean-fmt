@@ -2238,130 +2238,12 @@ private def testRangeSelection : IO Unit := do
   -- A map with no units at all cannot answer, and says so rather than inventing an empty range.
   ensure ((Application.sliceRange normalized rendered #[] ⟨0, 4⟩).isNone) "an empty source map produced a result"
 
-private def testComments : IO Unit := do
-  -- `def x := 1  -- why\n-- next\ndef y := 2\n`
-  --  0123456789...
-  let text := "def x := 1  -- why\n-- next\ndef y := 2\n"
-  let lineComment (stop : Nat) : Trivia := { kind := .lineComment, stop }
-  let whitespace (stop : Nat) : Trivia := { kind := .whitespace, stop }
-  -- `--` runs to but does not include its newline; `whitespace` takes the newline itself
-  -- (`LosslessSource.scanTrivia`). That is why the split point can never land inside a line comment.
-  let projection : LosslessSource := {
-    schema := losslessSourceSchema
-    mainModule := "Test"
-    normalizedBytes := text.utf8ByteSize
-    normalizedDigest := Digest.ofString text
-    headerStop := 0
-    terminalStop := text.utf8ByteSize
-    kinds := #["Lean.Parser.Command.declaration"]
-    nodes := #[{ kind := 0, parent := none, range := ⟨0, text.utf8ByteSize⟩ }]
-    tokens := #[
-      { node := 0, start := 0, stop := 3, trailing := #[whitespace 4] },
-      { node := 0, start := 4, stop := 5, trailing := #[whitespace 6] },
-      { node := 0, start := 6, stop := 8, trailing := #[whitespace 9] },
-      -- `1` owns everything up to the next token: two spaces, a trailing comment, a newline, a
-      -- leading comment for the next declaration, and another newline. One run, four owners.
-      { node := 0, start := 9, stop := 10,
-        trailing := #[whitespace 12, lineComment 18, whitespace 19, lineComment 26, whitespace 27] },
-      { node := 0, start := 27, stop := 30, trailing := #[whitespace 31] },
-      { node := 0, start := 31, stop := 32, trailing := #[whitespace 33] },
-      { node := 0, start := 33, stop := 35, trailing := #[whitespace 36] },
-      { node := 0, start := 36, stop := 37, trailing := #[whitespace 38] }
-    ]
-  }
-  ensure projection.structurallyValid "the comment fixture is not a valid projection"
-  ensure (projection.validFor text) "the comment fixture does not match its own source"
-
-  let attachment := Comments.attach projection text
-  ensure (Comments.partitions projection text) "attachment did not partition the recorded comments"
-  ensure (attachment.header == ⟨0, 0⟩) "the fixture has no header and one was reported"
-  ensure attachment.trailer.isEmpty "the fixture ends with no comment and a trailer was reported"
-
-  -- `-- why` is on `1`'s line, so `1` owns it.
-  ensure (attachment.tokens[3]!.trailing == #[{ kind := .lineComment, range := ⟨12, 18⟩ }])
-    "the trailing comment was not owned by the token on its line"
-  ensure (slice text 12 18 == "-- why") "the trailing comment range is not the comment"
-  -- `-- next` is past the first newline, so it leads the *next* token rather than trailing `1`.
-  ensure (attachment.tokens[3]!.leading.isEmpty) "a token claimed a comment from before its own line"
-  ensure (attachment.tokens[4]!.leading == #[{ kind := .lineComment, range := ⟨19, 26⟩ }])
-    "the leading comment was not handed to the following token"
-  ensure (slice text 19 26 == "-- next") "the leading comment range is not the comment"
-  ensure (attachment.tokens[4]!.trailing.isEmpty) "a leading comment was also counted as trailing"
-  ensure (attachment.all.size == 2) "attachment invented or lost a comment"
-
-  -- The correction to `chooseNiceTrailStop`. A block comment may contain newlines, so Lean's raw
-  -- `posOf '\n'` would split *inside* this one; Lean survives that because it only moves a substring
-  -- boundary, but attaching whole comments by range would drop it from both sides. Splitting at the
-  -- first newline *outside* a comment keeps it whole and gives it to the token whose line it starts
-  -- on. Losing it would violate the roadmap's "preserve every comment exactly once".
-  let blockText := "def x := /- a\nb -/ 0\n"
-  let blockProjection : LosslessSource := {
-    schema := losslessSourceSchema
-    mainModule := "Test"
-    normalizedBytes := blockText.utf8ByteSize
-    normalizedDigest := Digest.ofString blockText
-    headerStop := 0
-    terminalStop := blockText.utf8ByteSize
-    kinds := #["Lean.Parser.Command.declaration"]
-    nodes := #[{ kind := 0, parent := none, range := ⟨0, blockText.utf8ByteSize⟩ }]
-    tokens := #[
-      { node := 0, start := 0, stop := 3, trailing := #[whitespace 4] },
-      { node := 0, start := 4, stop := 5, trailing := #[whitespace 6] },
-      -- `:=` owns a space, a block comment spanning a newline, and a space.
-      { node := 0, start := 6, stop := 8,
-        trailing := #[whitespace 9, { kind := .blockComment, stop := 18 }, whitespace 19] },
-      { node := 0, start := 19, stop := 20, trailing := #[whitespace 21] }
-    ]
-  }
-  ensure blockProjection.structurallyValid "the block-comment fixture is not a valid projection"
-  ensure (blockProjection.validFor blockText) "the block-comment fixture does not match its source"
-  ensure (Comments.partitions blockProjection blockText)
-    "a block comment containing a newline was lost by the split"
-  let blockAttachment := Comments.attach blockProjection blockText
-  ensure (blockAttachment.tokens[2]!.trailing == #[{ kind := .blockComment, range := ⟨9, 18⟩ }])
-    "a multi-line block comment was not owned by the token whose line it starts on"
-  ensure (slice blockText 9 18 == "/- a\nb -/") "the block comment range is not the comment"
-
-  -- Dangling: a comment after the last token's split has no next token to lead. It is not dropped,
-  -- and it is not silently handed to a token that does not own it.
-  let tailText := "def x := 1\n-- dangling\n"
-  let tailProjection : LosslessSource := {
-    schema := losslessSourceSchema
-    mainModule := "Test"
-    normalizedBytes := tailText.utf8ByteSize
-    normalizedDigest := Digest.ofString tailText
-    headerStop := 0
-    terminalStop := tailText.utf8ByteSize
-    kinds := #["Lean.Parser.Command.declaration"]
-    nodes := #[{ kind := 0, parent := none, range := ⟨0, tailText.utf8ByteSize⟩ }]
-    tokens := #[
-      { node := 0, start := 0, stop := 3, trailing := #[whitespace 4] },
-      { node := 0, start := 4, stop := 5, trailing := #[whitespace 6] },
-      { node := 0, start := 6, stop := 8, trailing := #[whitespace 9] },
-      { node := 0, start := 9, stop := 10,
-        trailing := #[whitespace 11, lineComment 22, whitespace 23] }
-    ]
-  }
-  ensure tailProjection.structurallyValid "the dangling fixture is not a valid projection"
-  ensure (tailProjection.validFor tailText) "the dangling fixture does not match its source"
-  ensure (Comments.partitions tailProjection tailText) "the dangling comment was lost"
-  let tailAttachment := Comments.attach tailProjection tailText
-  ensure (tailAttachment.trailer == #[{ kind := .lineComment, range := ⟨11, 22⟩ }])
-    "a comment past the last token was not reported as dangling"
-  ensure (tailAttachment.tokens[3]!.trailing.isEmpty)
-    "a comment on its own line was claimed by the previous token"
-
-  -- A header region is reported rather than enumerated: the trivia tiling begins at `headerStop`, so
-  -- comments before the first command are not in this projection at all.
-  let headed := { tailProjection with headerStop := 0 }
-  ensure ((Comments.attach headed tailText).header == ⟨0, 0⟩) "an empty header reported a region"
-
 /-- Project suppression directives over findings, and recover directives from the module header.
 
 `apply` is a pure projection over `Array Finding`; the first block checks it in isolation, with
 hand-built facts, so the scope arithmetic is tested without a parser. The second block is the
 regression that `RSP-IMPL` found and fixed: a directive in the module header `[0, headerStop)` — the
-natural home for `ignore-file` — is invisible to `Comments.allTrivia`, so `collect` scans the header
+natural home for `ignore-file` — is invisible to artifact trivia, so `collect` scans the header
 itself. A hand-built single-command projection puts a directive above the first command and asserts it
 is both parsed and, when malformed, reported rather than dropped. -/
 private def testSuppression : IO Unit := do
@@ -2434,7 +2316,7 @@ private def testSuppression : IO Unit := do
   ensure (eof.suppressed == 1) "a file scope ending at EOF did not catch the empty finding"
 
   -- Header recovery. `headerStop` is the first command's start, so the directive on line 2 lives in
-  -- `[0, headerStop)`, which `Comments.allTrivia` omits and `collect` must scan for itself.
+  -- `[0, headerStop)`, which the artifact omits and `collect` must scan for itself.
   let mkProj (text : String) (headerStop : Nat) : LosslessSource :=
     let size := text.utf8ByteSize
     let tokenStop := headerStop + 3
@@ -2464,35 +2346,17 @@ private def testSuppression : IO Unit := do
   ensure (badFacts.malformed[0]!.fix?.map (·.applicability) == some .displayOnly)
     "the FMT901 fix is not display-only"
 
-/-- Attach comments over a real projection and report what happened.
-
-The unit tests above build projections by hand, which checks the attachment algorithm against my
-reading of the trivia model. This checks it against the *parser*, over whatever module the caller
-projected, and it is the only path here that can catch the trivia model itself being wrong.
-`tests/layout/run.sh` drives it across the repository's own modules. -/
-private def attachReport (envelopePath sourcePath : String) : IO UInt32 := do
+/-- Report live-syntax ownership captured inside the exact frontend lifetime. -/
+private def commentSummaryReport (envelopePath : String) : IO UInt32 := do
   let .ok json := Lean.Json.parse (← IO.FS.readFile envelopePath)
     | throw <| IO.userError s!"{envelopePath} is not JSON"
   let .ok (envelope : AnalysisEnvelope) := Lean.fromJson? json
     | throw <| IO.userError s!"{envelopePath} is not an analysis envelope"
-  let some artifact := envelope.artifact?
-    | throw <| IO.userError s!"{sourcePath} produced no artifact: {envelope.diagnostics}"
-  let raw ← IO.FS.readFile sourcePath
-  let normalized := (LosslessSource.normalize raw).1
-  let projection := artifact.source
-  ensure (projection.validFor raw) s!"{sourcePath}: the projection does not match its own source"
-  -- The claim. `structurallyValid` independently guarantees the trivia runs tile
-  -- `[headerStop, terminalStop)` exactly once, so agreeing with an independent walk of those runs
-  -- means no comment was dropped, duplicated, or moved.
-  ensure (Comments.partitions projection normalized)
-    s!"{sourcePath}: attachment did not preserve every comment exactly once"
-  let attachment := Comments.attach projection normalized
-  let leading := attachment.tokens.foldl (fun n tc => n + tc.leading.size) 0
-  let trailing := attachment.tokens.foldl (fun n tc => n + tc.trailing.size) 0
-  IO.println s!"comments={attachment.all.size} leading={leading} trailing={trailing} \
-dangling={attachment.trailer.size} header_bytes={attachment.header.stop} tokens={projection.tokens.size}"
+  let some summary := envelope.commentSummary?
+    | throw <| IO.userError "exact frontend captured no comment ownership summary"
+  ensure summary.valid "comment ownership did not assign every extracted payload exactly once"
+  IO.println <| (Lean.toJson summary).compress
   return 0
-
 /- Does the conservative printer lose bytes on real parser output?
 
 Every kind is still on the conservative path, so `Printer.format` is the identity on accepted source
@@ -2969,7 +2833,7 @@ end ReportBench
 
 public unsafe def main (args : List String) : IO UInt32 := do
   match args with
-  | ["attach-report", envelopePath, sourcePath] => attachReport envelopePath sourcePath
+  | ["comment-summary", envelopePath] => commentSummaryReport envelopePath
   | ["printer-roundtrip", envelopePath, sourcePath] =>
     printerRoundtrip envelopePath sourcePath (checkIdentity := true)
   | ["printer-report", envelopePath, sourcePath] =>
@@ -3013,7 +2877,6 @@ public unsafe def main (args : List String) : IO UInt32 := do
     testSemanticCaps
     testDoc
     testRangeSelection
-    testComments
     testSuppression
     IO.println "lean-fmt module-artifact tests passed"
     return 0
@@ -3040,7 +2903,7 @@ public unsafe def main (args : List String) : IO UInt32 := do
     IO.eprintln "usage: lean-fmt-tests [verify-plugin-artifact MODULE SOURCE | \
       verify-facet-artifact ARTIFACT SOURCE EXPECTED_HASH | \
       verify-official-facet ROOT SOURCE | \
-      attach-report ENVELOPE SOURCE | \
+      comment-summary ENVELOPE | \
       doc-bench | \
       doc-step-counts | \
       doc-properties | \
