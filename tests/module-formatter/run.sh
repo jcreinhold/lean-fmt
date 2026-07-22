@@ -42,7 +42,8 @@ left, right = (json.load(open(path)) for path in sys.argv[2:])
 assert left["formatDraft"] == right["formatDraft"], "draft or metrics are nondeterministic"
 draft = left["formatDraft"]
 assert draft["metrics"]["frontendRuns"] == 1, draft
-assert draft["metrics"]["registryNodes"] == draft["metrics"]["registryDocuments"], draft
+assert draft["metrics"]["registryDocuments"] == 1, draft
+assert draft["metrics"]["registryNodes"] >= draft["metrics"]["registryDocuments"], draft
 assert draft["terminalStop"] < draft["sourceBytes"], draft
 tail = raw[draft["terminalStop"]:]
 assert tail.startswith(b"#exit") and draft["text"].encode().endswith(tail), (tail, draft["text"])
@@ -55,7 +56,8 @@ for mark in draft["sourceMap"]:
     output_cursor = mark["output"]["stop"]
 assert source_cursor == len(raw) == draft["sourceBytes"], draft
 assert output_cursor == len(draft["text"].encode()), draft
-assert draft["text"].encode()[:draft["headerStop"]] == raw[:draft["headerStop"]]
+assert draft["text"].startswith("module\nimport AdapterSyntax\n\n"), draft
+assert "ident:AdapterSyntax" in draft["headerContract"], draft
 print("  ok   deterministic header/command/tail draft tiles source and output")
 PY
 
@@ -105,7 +107,8 @@ envelope = json.load(open(sys.argv[1]))
 draft = envelope["formatDraft"]
 assert envelope.get("formatFailure") is None and not envelope["diagnostics"], envelope
 assert draft["metrics"]["commands"] == 8, draft
-assert draft["metrics"]["registryNodes"] == 8, draft
+assert draft["metrics"]["coreDocuments"] + draft["metrics"]["registryDocuments"] == 9, draft
+assert draft["metrics"]["registryNodes"] >= draft["metrics"]["commands"], draft
 assert draft["metrics"]["commentOwners"] == 6, draft
 assert "emit_local_command" in draft["text"] and "an identifier with spaces" in draft["text"], draft["text"]
 print("  ok   plugin setup, imported syntax, choice, comments, and Unicode format in one frontend")

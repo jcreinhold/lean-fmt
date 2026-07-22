@@ -2760,6 +2760,7 @@ steps={rendered.metrics.workSteps} marks={rendered.sourceMap.size} native={rende
 private def validatorMapNegative : IO UInt32 := do
   let base : FormatDraft := {
     text := "abc"
+    headerContract := #[]
     commentContract := #[]
     metrics := default
     sourceDigest := ""

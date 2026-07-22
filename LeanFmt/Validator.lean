@@ -9,9 +9,10 @@ module
 /- Pure admission checks for a whole-module formatting draft.
 
 The comparator consumes lossless projections produced by two independent frontend runs. Locations
-and whitespace lengths may change; node kind/parent order, token ownership and spelling, comment
-payload/logical ownership, exact header, and terminal tail may not. Keeping this module pure makes
-the comparison independently testable and prevents it from acquiring frontend authority. -/
+and whitespace lengths may change; node kind/parent order, token ownership and spelling, header
+structure/token spelling, comment payload/logical ownership, and terminal tail may not. Keeping this
+module pure makes the comparison independently testable and prevents it from acquiring frontend
+authority. -/
 
 import all LeanFmt.Formatter
 
@@ -85,8 +86,6 @@ def compare (beforeText : String) (before : LosslessSource)
     (afterText : String) (after : LosslessSource) : Except ValidationFailure Unit := do
   let beforeBytes := beforeText.toUTF8
   let afterBytes := afterText.toUTF8
-  unless slice beforeBytes 0 before.headerStop == slice afterBytes 0 after.headerStop do
-    return ← fail .header "module/header/import bytes changed"
   unless slice beforeBytes before.terminalStop beforeBytes.size ==
       slice afterBytes after.terminalStop afterBytes.size do
     return ← fail .terminal "terminal command or verbatim tail changed"
@@ -120,6 +119,8 @@ def admit (beforeText : String) (before : LosslessSource) (first : FormatDraft)
   validateMap first
   validateMap second
   compare beforeText before first.text after
+  unless first.headerContract == second.headerContract do
+    return ← fail .header "module/header/import structure or token spelling changed"
   unless first.commentContract == second.commentContract do
     return ← fail .comments "comment kind, payload, order, or logical owner path changed"
   unless second.text == first.text do

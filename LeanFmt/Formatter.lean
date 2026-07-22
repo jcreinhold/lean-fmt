@@ -98,6 +98,7 @@ canonical layout. -/
 structure FormatDraft where
   text : String
   sourceMap : Array Mark
+  headerContract : Array String
   commentContract : Array CommentContractEntry
   metrics : FormatMetrics
   sourceDigest : String

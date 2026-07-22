@@ -55,6 +55,7 @@ lean_lib LeanFmtApplication where
     Glob.one `LeanFmt.Discovery,
     Glob.one `LeanFmt.Edit,
     Glob.one `LeanFmt.Formatter,
+    Glob.one `LeanFmt.Formatter.Command,
     Glob.one `LeanFmt.GitSelection,
     Glob.one `LeanFmt.Project,
     Glob.one `LeanFmt.Semantic,

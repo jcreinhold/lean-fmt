@@ -50,8 +50,9 @@ assert draft is not None and envelope.get("formatFailure") is None, envelope
 assert narrow is not None and narrow["text"] != draft["text"], narrow
 metrics = draft["metrics"]
 assert metrics["frontendRuns"] == 1 and metrics["commands"] == 6, metrics
-assert metrics["registryDocuments"] == 6 and metrics["registryNodes"] == 6, metrics
-assert metrics["explicitDocuments"] == 5 and metrics["descriptorDocuments"] == 1, metrics
+assert metrics["coreDocuments"] == 5 and metrics["registryDocuments"] == 2, metrics
+assert metrics["registryNodes"] >= metrics["commands"], metrics
+assert metrics["explicitDocuments"] == 6 and metrics["descriptorDocuments"] == 1, metrics
 assert metrics["commentOwners"] == 3 and metrics["nativeEvents"] > 0, metrics
 
 output = draft["text"]

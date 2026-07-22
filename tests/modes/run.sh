@@ -169,7 +169,7 @@ assert r["findings"] == 0, f"layout-only change must carry no findings: {r}"
 assert r["changed"] == 1 and r["written"] == 0, r
 assert r["files"][0]["status"] == "would-format", r["files"][0]
 assert r["files"][0]["formatted"] == \
-    "module\n\nnamespace Alpha\ndef layoutValue : Nat :=\n  1\nend Alpha\n", \
+    "module\n\nnamespace Alpha\n\n  def layoutValue : Nat :=\n    1\n\nend Alpha\n", \
     repr(r["files"][0]["formatted"])
 PY
 grep -q 'namespace     Alpha' tests/check/Layout.lean ||
@@ -207,7 +207,7 @@ diff = open(sys.argv[1]).read()
 # explicit rather than collapsing to an empty/ambiguous diff.
 assert diff.startswith("--- a/tests/check/Layout.lean\n+++ b/tests/check/Layout.lean\n@@"), repr(diff)
 assert "\\ No newline at end of file" in diff, repr(diff)
-assert "-def layoutValue : Nat := 1" in diff and "+def layoutValue : Nat :=" in diff, repr(diff)
+assert "-def layoutValue : Nat := 1" in diff and "+  def layoutValue : Nat :=" in diff, repr(diff)
 assert diff.endswith("mode=diff files=1 findings=0 changed=1 written=0 broken=0 rejected=0 "
     "withheld_unsafe=0 suppressed=0 infrastructure_failures=0\n"), repr(diff)
 PY
@@ -250,7 +250,7 @@ assert seed["files"][0]["status"] == "clean", seed
 assert after["changed"] == 1, f"a check-populated hit suppressed layout: {after}"
 assert after["files"][0]["status"] == "would-format", after["files"][0]
 assert after["files"][0]["formatted"] == \
-    "module\n\nnamespace Alpha\ndef layoutValue : Nat :=\n  1\nend Alpha\n", \
+    "module\n\nnamespace Alpha\n\n  def layoutValue : Nat :=\n    1\n\nend Alpha\n", \
     repr(after["files"][0]["formatted"])
 PY
 rm -rf "$cache_root"
@@ -599,8 +599,8 @@ f, = r["files"]
 assert f["status"] == "would-format", f
 assert [x["code"] for x in f["findings"]] == ["FMT003"], f          # finding survives format
 assert f["formatted"] == \
-    "module\n\nimport LeanFmt.Basic\nimport LeanFmt.Basic\n\nnamespace Alpha\n" \
-    "def mixedValue : Nat :=\n  1\nend Alpha\n", repr(f["formatted"])  # reflowed, NOT deduped
+    "module\nimport LeanFmt.Basic\nimport LeanFmt.Basic\n\nnamespace Alpha\n" \
+    "\n  def mixedValue : Nat :=\n    1\n\nend Alpha\n", repr(f["formatted"])  # reflowed, NOT deduped
 PY
 
 # `diff` equals the `format` preview: same reflow, same withheld fix.
@@ -648,7 +648,7 @@ import json, sys
 f, = json.load(open(sys.argv[1]))["files"]
 assert f["status"] == "would-format" and f["findings"] == [], f
 assert f["formatted"] == \
-    "module\n\nimport LeanFmt.Basic\n\nnamespace Alpha\ndef mixedValue : Nat :=\n  1\nend Alpha\n", \
+    "module\nimport LeanFmt.Basic\n\nnamespace Alpha\n\n  def mixedValue : Nat :=\n    1\n\nend Alpha\n", \
     repr(f["formatted"])
 PY
 
@@ -670,7 +670,7 @@ assert r["mode"] == "format" and r["changed"] == 1 and r["findings"] == 0, r
 f, = r["files"]
 assert f["status"] == "would-format", f
 assert f["findings"] == [], f  # the reflow, not a rule, made the change
-assert f["formatted"] == "module\n\ndef alpha : Nat :=\n  1\ndef beta : Nat :=\n  2", repr(f["formatted"])
+assert f["formatted"] == "module\n\ndef alpha : Nat :=\n  1\n\ndef beta : Nat :=\n  2", repr(f["formatted"])
 PY
 run_expect 0 "$work/nosel-check.json" "$application" check --root . --json --no-cache \
   tests/modes/.rdf-layout-nosel.lean
@@ -727,7 +727,7 @@ PY
 #     reaches the SAME fixed point on disk. Since `ruff-11d`, `format` publishes in place, so both orders
 #     are materialized by the tools themselves (no captured-preview step) and the two files are compared.
 #     `fix` and `format` are both writers now; each still owns only its half. ---
-canonical='module\n\nimport LeanFmt.Basic\n\nnamespace Alpha\ndef mixedValue : Nat :=\n  1\nend Alpha\n'
+canonical='module\nimport LeanFmt.Basic\n\nnamespace Alpha\n\n  def mixedValue : Nat :=\n    1\n\nend Alpha\n'
 source='module\n\nimport LeanFmt.Basic\nimport LeanFmt.Basic\n\nnamespace     Alpha\n\ndef mixedValue : Nat := 1\n\nend Alpha\n'
 
 # Order A — `fix` then `format`: fix dedups at original coords (layout still dirty), then format reflows
@@ -798,7 +798,7 @@ PY
 # 1+2. Exact bytes + idempotence. A layout-dirty, otherwise lint-clean file: `format` writes EXACTLY the
 #      canonical bytes (byte-compared), no rule fix appears, and a second `format` writes nothing.
 printf 'module\n\nnamespace     Gamma\n\ndef exactValue : Nat := 1\n\nend Gamma\n' >"$fin_exact_fixture"
-canonical_exact='module\n\nnamespace Gamma\ndef exactValue : Nat :=\n  1\nend Gamma\n'
+canonical_exact='module\n\nnamespace Gamma\n\n  def exactValue : Nat :=\n    1\n\nend Gamma\n'
 run_expect 0 "$work/fin-exact.json" "$application" format --root . --json --no-cache \
   tests/modes/.fip-final-exact.lean
 CANON="$canonical_exact" python3 - "$work/fin-exact.json" "$fin_exact_fixture" <<'PY'
@@ -931,7 +931,8 @@ assert f["status"] == "formatted" and f["written"] is True, f
 PY
 python3 - "$fin_incl_fixture" <<'PY'
 import sys
-assert open(sys.argv[1]).read() == "module\n\nnamespace Incl\ndef inclValue : Nat :=\n  1\nend Incl\n"
+assert open(sys.argv[1]).read() == \
+    "module\n\nnamespace Incl\n\n  def inclValue : Nat :=\n    1\n\nend Incl\n"
 PY
 metadata "$fin_excl_fixture" >"$work/fin-excl.after"
 cmp "$work/fin-excl.before" "$work/fin-excl.after" # the excluded sibling was never touched
@@ -1015,7 +1016,7 @@ PY
 python3 - "$rcd_excl_fixture" <<'PY'
 import sys
 assert open(sys.argv[1]).read() == \
-    "module\n\nnamespace Excluded\ndef excludedValue : Nat :=\n  1\nend Excluded\n"
+    "module\n\nnamespace Excluded\n\n  def excludedValue : Nat :=\n    1\n\nend Excluded\n"
 PY
 
 # 11. `[format] line-width` participates in the result-cache identity and `[lint]` does not

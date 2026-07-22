@@ -9,6 +9,7 @@ module
 import all LeanFmt.ArtifactStore
 import all LeanFmt.Comments
 import all LeanFmt.Formatter
+import all LeanFmt.Formatter.Command
 import all LeanFmt.Rules
 import all LeanFmt.Suppression
 import all LeanFmt.Validator
@@ -94,41 +95,65 @@ private def appendDocument (document? : Option Doc) (next : Doc) : Option Doc :=
 
 private def buildFormatDraft (normalized : String) (source : LosslessSource)
     (sourcePath : System.FilePath) (fileMap : Lean.FileMap) (ownership : CommentOwnership)
+    (header : Lean.Syntax) (headerEnv : Lean.Environment) (headerOptions : Lean.Options)
     (commands : Array LiveCommand) (width : Nat) : IO (Except FormatterFailure FormatDraft) := do
   let bytes := normalized.toUTF8
   let headerRange : SourceRange := ⟨0, source.headerStop⟩
   let mut document? : Option Doc := none
   let mut coreDocuments := 0
+  let mut registryDocuments := 0
   let mut registryNodes := 0
   let mut explicitDocuments := 0
   let mut descriptorDocuments := 0
   if headerRange.start < headerRange.stop then
-    document? := appendDocument document? <|
-      Doc.mark headerRange (Doc.verbatim (normalizedSlice bytes headerRange))
-    coreDocuments := coreDocuments + 1
-  for h : index in [0:commands.size] do
-    let command := commands[index]
-    let result ← Lean.Core.CoreM.toIO' (Formatter.registered ownership .command command.stx)
-      { fileName := sourcePath.toString, fileMap, options := command.options }
-      { env := command.env }
-    let registered ← match result with
-      | .ok registered => pure registered
+    let result ← Lean.Core.CoreM.toIO' (Formatter.Command.header ownership header)
+      { fileName := sourcePath.toString, fileMap, options := headerOptions }
+      { env := headerEnv }
+    let formatted ← match result with
+      | .ok formatted => pure formatted
       | .error failure => return .error failure
-    registryNodes := registryNodes + registered.document.size
-    match registered.trace.resolution with
+    registryNodes := registryNodes + formatted.document.size
+    match formatted.trace.resolution with
     | .explicit _ => explicitDocuments := explicitDocuments + 1
     | .descriptor => descriptorDocuments := descriptorDocuments + 1
+    let headerSeparator :=
+      if commands.isEmpty && source.terminalStop == source.normalizedBytes then Doc.hard
+      else Doc.hard ++ Doc.hard
+    document? := appendDocument document? <|
+      Doc.mark headerRange (formatted.document ++ headerSeparator)
+    coreDocuments := coreDocuments + 1
+  let mut sequence := Formatter.Command.sequence
+  for h : index in [0:commands.size] do
+    let command := commands[index]
+    let (nextSequence, placement) := Formatter.Command.place sequence command.stx
+    sequence := nextSequence
+    let result ← Lean.Core.CoreM.toIO' (Formatter.Command.command ownership command.stx)
+      { fileName := sourcePath.toString, fileMap, options := command.options }
+      { env := command.env }
+    let formatted ← match result with
+      | .ok formatted => pure formatted
+      | .error failure => return .error failure
+    registryNodes := registryNodes + formatted.document.size
+    match formatted.trace.resolution with
+    | .explicit _ => explicitDocuments := explicitDocuments + 1
+    | .descriptor => descriptorDocuments := descriptorDocuments + 1
+    match formatted.owner with
+    | .core => coreDocuments := coreDocuments + 1
+    | .registry => registryDocuments := registryDocuments + 1
     let start := (LosslessSource.leadingStart? command.stx).getD source.headerStop
     let stop := match commands[index + 1]? with
       | some next => (LosslessSource.leadingStart? next.stx).getD source.terminalStop
       | none => source.terminalStop
     let hasTail := source.terminalStop < source.normalizedBytes
     let preserveFinalNewline := index + 1 == commands.size && !hasTail && normalized.endsWith "\n"
+    let leading := if placement.blankBefore then Doc.hard else Doc.empty
     let separator := if index + 1 < commands.size || hasTail || preserveFinalNewline then
         Doc.hard
       else Doc.empty
+    let indentation := Doc.text ("".pushn ' ' placement.indent)
+    let commandDocument := Doc.nest placement.indent (indentation ++ formatted.document)
     document? := appendDocument document? <|
-      Doc.mark ⟨start, stop⟩ (registered.document ++ separator)
+      Doc.mark ⟨start, stop⟩ (leading ++ commandDocument ++ separator)
   let tailRange : SourceRange := ⟨source.terminalStop, source.normalizedBytes⟩
   if tailRange.start < tailRange.stop then
     document? := appendDocument document? <|
@@ -139,12 +164,13 @@ private def buildFormatDraft (normalized : String) (source : LosslessSource)
   return .ok {
     text := rendered.text
     sourceMap := rendered.sourceMap
+    headerContract := Formatter.Command.headerContract header
     commentContract := Comments.contract normalized ownership
     metrics := {
       frontendRuns := 1
       commands := commands.size
       coreDocuments
-      registryDocuments := commands.size
+      registryDocuments
       registryNodes
       explicitDocuments
       descriptorDocuments
@@ -384,7 +410,7 @@ unsafe def analyzeExact (setup : Lean.ModuleSetup) (source : String)
       let some ownership := ownership?
         | throw <| IO.userError "format draft has no comment ownership"
       match ← buildFormatDraft normalizedSource artifact.source sourcePath input.fileMap ownership
-          liveCommands formatWidth with
+          snapshot.stx commandState.env options liveCommands formatWidth with
       | .ok draft => pure (some draft, none)
       | .error failure => pure (none, some failure)
     else pure (none, none)
