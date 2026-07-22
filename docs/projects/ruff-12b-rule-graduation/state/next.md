@@ -1,87 +1,50 @@
 # Next Proof Packet
 
 - Stack: ruff-12b-rule-graduation
-- First unresolved: 04-final
-- Claim ID: RGR-FINAL
-- Prompt: 04-final
-- Module: none expected — this is an audit prompt. `LeanFmt/Rules.lean` and `docs/` only if the audit
-  finds drift.
-- Target file: `results/04-final.md`
+- First unresolved: none — **the stack is complete**
+- Claim ID: —
+- Prompt: —
+- Target file: —
 
-## Target Declarations
+All four claims are verified: RGR-SPEC (`results/01-criteria.md`), RGR-EVIDENCE
+(`results/02-evidence.md`), RGR-IMPL (`results/03-graduate.md`), RGR-FINAL (`results/04-final.md`).
 
-None. `RGR-FINAL` adds no declaration. If it needs one, the audit found a defect and the defect is the
-finding.
+## What the next stack should read
 
-## Read Before Editing
+`ruff-20-acceptance` is next in the order and takes this stack as a prerequisite. It should read
+`results/04-final.md` §1 (the shipped catalog table) and §7 (what it inherits) before anything else.
+Both are written to stand alone.
 
-This file, `prompts/04-final.md`, `results/03-graduate.md` (what shipped), `results/02-evidence.md`
-(the measurements to reproduce against), and `results/01-criteria.md` §5–§6 (cost policy and corpus
-pins).
+## What this stack deliberately did not do
 
-## Proof Task
+Recorded here so a later prompt does not read these as oversights and quietly "fix" them:
 
-Deliver **RGR-FINAL**: accept the catalog, or find what drifted between measuring it and shipping it.
+- **No rule graduated to default.** RGR-SPEC §2.2's bar is 10 audited true positives; the highest any
+  rule reached is 1. The bar was **not** lowered, and `results/02-evidence.md` names which criteria
+  were *not* revised so the claim can be checked rather than taken.
+- **Nothing was retired.** Eight of the ten rules were judged on a corpus that could not exercise
+  them, so a zero is not evidence against them. Retiring one to tidy the catalog is explicitly
+  refused by §1.3.
+- **Two rule defects were left unrepaired**, because prompt 02 forbade repairing a rule to make it
+  pass its own evidence run: FMT009 does not carve out a whole-file *named* namespace though it
+  carves out the whole-file *anonymous* section, and lean-fmt's own 34 modules violate FMT008
+  seventeen times. Both belong to whoever next owns those rules.
+- **CP-3 was never measured.** It is a gap, not a pass. Nothing binds it while no rule reaches
+  default, but it should not be cited as satisfied.
+- **`ruff-10b` Design B was refused, not deferred again.** The refusal carries a measurement — 33.0×
+  against a 1.25× budget, 1 frontend child versus 62 — so a later stack reopening it should argue
+  against that number rather than re-derive the question.
 
-1. **Write the standalone catalog table.** Every rule: code, category, tier, lifecycle, default,
-   fixable, and — for the nine preview rules — the graduation condition. `ruff-20` audits against this
-   table, so it must be readable **without** the three prior result notes. Generate it from
-   `lean-fmt rules` and `lean-fmt explain`, not by transcribing `state/current.md`.
-2. **Re-run the frozen sample with the shipped default set** and confirm the finding counts match what
-   `RGR-EVIDENCE` recorded. The corpus pins are `results/01-criteria.md` §6 (`783ccda4…`/v4.32.0,
-   digest `1936bdb6…`). A mismatch is not a nuisance to reconcile — finding it is this prompt's job.
-   Note that the shipped default set is *unchanged* from the one `RGR-EVIDENCE` measured, so the
-   expected delta is zero and a nonzero one means something moved silently.
-3. **Confirm the cost policy on both build states** — `ordinary-built` and
-   `formatter-integrated-built` — under `ruff-19`'s variance policy: median of ≥3, never the first
-   run, spread beside the median, machine conditions recorded. `experiments/run-cp2-cold-cost.sh`
-   already implements that discipline and can be reused.
-4. **Confirm `ruff-19`'s gates as shipped.** `RGR-IMPL` did not re-derive any gate, so there is no
-   re-derived gate to negative-test; run `tests/performance/run.sh` (whose §0 is `negative.sh`) and
-   confirm both.
-5. **Audit every quoted rule count in the repository.** `docs/adding-a-rule.md`'s tier guidance,
-   README-style prose, `docs/ci.md`, suite fixtures — anywhere a number like "ten preview rules" or
-   "fifteen live rules" appears. FMT013 leaving preview changes those counts. A quoted count that
-   drifts is the small false claim that makes a reader distrust the large true ones.
-6. **Confirm every remaining preview rule has a stated path**, from `explain` output rather than from
-   the invariant. The invariant proves the field is nonempty; only reading the nine strings proves
-   they say something a reader could act on.
+## Open items this stack could not close
 
-## Reuse
-
-- `experiments/run-cp2-cold-cost.sh` — the two-arm cold-cost harness with the discard-first-run
-  discipline already applied.
-- `experiments/run-cp1-warm-serve.sh` — the five-arm warm-serve probe, including the anti-vacuity
-  check (`cmp` prime-vs-warm report, nonzero line count) that made CP-1 evidence rather than silence.
-- `tests/performance/run.sh` §0 is the negative test; it does not need to be invoked separately.
-- `lake exe lean-fmt docs --check` gates generated-doc drift; `lake exe lean-fmt rules` and
-  `explain <code>` are the catalog's authority.
-
-## Lean Work
-
-Expect none. This prompt reads the built binary and the repository's prose. If it edits Lean, it is
-because the audit found the catalog and the code disagreeing, and that disagreement is the result.
-
-## Stop Rules
-
-- Do not accept a catalog whose shipped behaviour differs from `RGR-EVIDENCE` without explaining the
-  difference. Reconciling by adjusting the expectation is the failure mode this rule exists to catch.
-- **No full mathlib run.** That licence is `ruff-20-acceptance`'s alone. A conclusion that needs the
-  complete corpus is a deferral to `ruff-20`, and it should say so rather than guess.
-- Stop resource experiments at 8 GiB aggregate RSS, abnormal pressure, or 256 MiB new swap.
-- Stop rather than weakening exact semantics, write safety, or the resource envelope.
-
-## Check
-
-- `LEAN_NUM_THREADS=1 lake build`, `lake lint`, `lake exe lean-fmt-tests`, and **every** suite in
-  `tests/*/run.sh` (boundary, cache, catalog, check, ci, compiler, discovery, downstream, imports,
-  layout, lossless, modes, performance, printer, reporting, scale, semantic, stream, suppression,
-  syntax, watch).
-- `tests/performance/run.sh` and `tests/performance/negative.sh`.
-- `tests/ci/run.sh` reads **committed** state — commit before running it or it tests the previous
-  commit and passes while the change is broken.
-- `tests/watch/run.sh` §9.6 fails whenever a `.lean` file is staged; run it with a clean index.
-- `lake exe lean-fmt docs --check`.
-- `git diff --check`, read in full.
-- Structural checkers: expect the same 5 pre-existing `implementation_route` failures every lean-fmt
-  stack reports; confirm no new stack-shaped failure.
+- **The baseline's single `exact_child` is unexplained.** Not an error path; simply not chased. The
+  CP-2 conclusion does not depend on it.
+- **CP-4's 0 ms is a measurement without a mechanism.** RGR-SPEC §5.5 predicted ~101 ms and this
+  workload showed none. No cause is claimed.
+- **Nine graduation conditions are unexercised.** Each names a corpus that would test its rule; none
+  of those corpora has been run. Falsifiable and unfalsified is the honest state, and it is not
+  evidence that any of the nine is correct. **Full mathlib will not settle them** — it is more of the
+  corpus that produced the zeros.
+- **The KanProofs structural checkers do not pass on any lean-fmt stack**, including closed and
+  verified ones. Repo-wide tooling drift, recorded in `results/01-criteria.md`; adopting or discarding
+  the convention belongs with `docs/projects/AGENTS.md`, not with one stack.

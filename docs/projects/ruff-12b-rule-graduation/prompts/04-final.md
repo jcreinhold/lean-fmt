@@ -1,6 +1,6 @@
 ---
 claim_id: RGR-FINAL
-status: planned
+status: verified
 depends_on: [RGR-IMPL]
 ---
 

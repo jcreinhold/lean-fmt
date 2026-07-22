@@ -1,6 +1,6 @@
 ---
 kind: state
-first_unresolved: 04-final
+first_unresolved: none
 ---
 
 # Current state
@@ -70,6 +70,30 @@ count (ten preview rules, 62 modules, one true-positive FMT013, zero false posit
   premise ("every stable rule is default-on") is exactly what this stack broke. Its replacement
   carries a guard so it cannot pass vacuously if `stable-optional` is ever vacated.
 
+**RGR-FINAL is verified. The stack is complete.** `results/04-final.md` is the standalone catalog
+`ruff-20-acceptance` audits against — readable without the three notes before it, by design.
+
+- **The shipped catalog was run, not asserted.** Three arms over the frozen 62-module sample,
+  `ordinary-built`, cold: `default` **27** findings (reproducing CP-2's baseline exactly — the control),
+  `all` without `--preview` **28** (the extra one is FMT013), `all --preview` **28** (unchanged). Zero
+  broken, zero rejected, zero infrastructure failures in every arm.
+- **The one-finding gap is `stable-optional`, observed end to end.** Before this stack those first two
+  arms were byte-identical, because every stable rule was default-on. A user can now see the state
+  with two commands on real source.
+- **`--preview` adds nothing on this manifest**, and that *reproduces* RGR-EVIDENCE rather than
+  contradicting it: its second finding (FMT009) is in a module outside the 62-file manifest. The
+  uncomfortable reading stands — nine rules unlocked against 62 real mathlib modules found nothing.
+- **Two documentation defects found and fixed.** `explain FMT900` answered `unknown rule` for a code
+  the product prints in reports; the cause was reading absence from `ruleRegistry` (never *selectable*)
+  as non-existence. And `docs/adding-a-rule.md` had never documented `lifecycle` at all, so a
+  contributor setting `.preview` would hit invariant 3b with no guidance.
+- **A real gate fired.** The two declarations added for `explain` moved this repository's own command
+  count 1,035 → 1,037, and this repository is the printer's corpus. `ruff-03`'s `RLF-FINAL` chain
+  caught it and named its own remedy; both links were re-run, both edited modules re-probed
+  individually (Rules.lean 90/90, Cli.lean 80/80), and 21 stale prose figures updated. 927/926 →
+  929/928 over the same 28 modules, gap still +1 for the two documented causes.
+- **All 21 suites pass**, plus `lake build`, `lake lint`, `lean-fmt-tests`, and `docs --check`.
+
 Two defects recorded for later owners, not repaired here (prompt 02 forbids repairing a rule to make
 it pass): FMT009 does not carve out a whole-file *named* namespace though it carves out the whole-file
 *anonymous* section, and lean-fmt's own 34 modules violate FMT008.
@@ -90,7 +114,7 @@ verified.
 | 01-criteria | RGR-SPEC | **verified** (`results/01-criteria.md`) | — |
 | 02-evidence | RGR-EVIDENCE | **verified** (`results/02-evidence.md`) | RGR-SPEC |
 | 03-graduate | RGR-IMPL | **verified** (`results/03-graduate.md`) | RGR-EVIDENCE |
-| 04-final | RGR-FINAL | planned | RGR-IMPL |
+| 04-final | RGR-FINAL | **verified** (`results/04-final.md`) | RGR-IMPL |
 
 ## The catalog as it stands, 2026-07-22
 
