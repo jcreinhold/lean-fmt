@@ -2,7 +2,7 @@
 kind: roadmap
 topic: "Fresh Ruff-class product acceptance"
 main_results: [RCP-ACCEPT]
-prereq_stacks: [ruff-18-integrations, ruff-19-performance]
+prereq_stacks: [ruff-12b-rule-graduation, ruff-18-integrations, ruff-19-performance]
 blueprint_tracked: false
 ---
 

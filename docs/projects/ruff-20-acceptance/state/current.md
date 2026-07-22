@@ -6,8 +6,14 @@ first_unresolved: 01-audit
 # Current state
 
 This stack is planned and has not begun. Its external prerequisite stacks are
-`ruff-18-integrations`, `ruff-19-performance`. Before starting, confirm those roadmaps are verified and their live
+`ruff-12b-rule-graduation`, `ruff-18-integrations`, `ruff-19-performance`. Before starting, confirm those roadmaps are verified and their live
 implementation still matches recorded state.
+
+**`ruff-12b-rule-graduation` was added as a prerequisite on 2026-07-22.** Ten of the catalog's
+fifteen rules sit in preview because no stack was ever asked to judge them, and accepting the product
+in that state would accept a linter with two thirds of its rules gated off. `ruff-12b` decides each
+one's fate first, so this stack audits the catalog as intended. `ruff-21-rule-catalog` then grows the
+catalog *after* this stack, from the corpus evidence this audit produces.
 
 | Prompt | Claim | Status | Depends on |
 | --- | --- | --- | --- |

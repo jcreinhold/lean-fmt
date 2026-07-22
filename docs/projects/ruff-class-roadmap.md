@@ -40,6 +40,7 @@ envelope remain non-negotiable.
 | 11c | `ruff-11c-decouple-fix-format` | Decouple lint-fix from formatting: `format`/`diff` reflow only, `fix`/`check --fix` apply fixes at original coordinates (retires the canonical-coordinate fix composition) | 06, 09, 10b, 11b |
 | 11d | `ruff-11d-format-in-place` | `format` writes canonical layout in place by default (like `ruff format`) via the `ruff-06` guarded publish; `format --check` is the non-writing CI preview | 04, 06, 11c |
 | 12 | `ruff-12-rule-lifecycle` | Stable/preview/deprecated rules, explain, generated docs | 07–11 |
+| 12b | `ruff-12b-rule-graduation` | Graduate, park, or retire the ten preview rules on corpus evidence; owns the default-path tier cost and `ruff-10b`'s deferred Design B decision | 10b, 11, 12, 19 |
 | 13 | `ruff-13-config-discovery` | Hierarchical config, Git ignores, formatter/linter sections | 04, 11d, 12 |
 | 14 | `ruff-14-stream-range` | stdin/stdout and range formatting | 04, 11d, 13 |
 | 15 | `ruff-15-reporting` | Concise, GitHub, SARIF, and JUnit reporting | 12, 13 |
@@ -47,7 +48,8 @@ envelope remain non-negotiable.
 | 17 | `ruff-17-lsp` | Native LSP diagnostics, formatting, and code actions | 06, 07, 13, 14 |
 | 18 | `ruff-18-integrations` | CI recipes and clean install/upgrade documentation (completions, pre-commit, and first-party editor packages cut 2026-07-21; see its roadmap §Scope) | 15–17 |
 | 19 | `ruff-19-performance` | Regression budgets and measured private concurrency decision (also owns the `ruff-01` artifact-granularity and `ruff-10b` re-projection-cost revisits) | 01, 04, 10b, 12, 17 |
-| 20 | `ruff-20-acceptance` | Fresh Ruff-class product, architecture, and mathlib audit | 18, 19 |
+| 20 | `ruff-20-acceptance` | Fresh Ruff-class product, architecture, and mathlib audit | 12b, 18, 19 |
+| 21 | `ruff-21-rule-catalog` | Audit-driven catalog expansion: ~8-10 new rules ranked on measured corpus evidence before authoring | 05, 05b, 06, 12b, 20 |
 
 ## Coverage contract
 
@@ -56,6 +58,13 @@ whole-language formatter; a useful rule catalog; import organization; fix applic
 suppressions; rule explanations and lifecycle; stdin and range operation; hierarchical and
 Git-aware configuration; watch and changed-file operation; CI formats; native LSP; editor and
 pre-commit integration; stable formatting policy; and end-to-end performance evidence.
+
+**Catalog size is a product question, and two stacks own it.** Stacks 08-11 built the rule machinery
+and left fifteen rules — enough to prove every tier works, not enough to be why anyone adopts the
+tool — and ten of those fifteen sit in preview because nothing was ever asked to judge them.
+`ruff-12b` decides the fate of what exists, before acceptance, so `ruff-20` accepts the catalog as
+intended rather than one with two thirds of its rules gated off. `ruff-21` grows it afterwards, from
+`ruff-20`'s corpus audit rather than from a wishlist.
 
 The family does not copy Python-specific Ruff features such as notebook formatting or Python target
 versions. Exact Lean toolchain selection already owns the corresponding compatibility boundary.
