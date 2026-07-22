@@ -209,6 +209,20 @@ structure RuleInfo where
   /-- The successor code for a `deprecated` rule (its migration path); `none` otherwise. Required to be
   `some` iff `lifecycle == .deprecated` (invariant 4). -/
   replacement? : Option String := none
+  /-- What would graduate this rule out of preview (`ruff-12b` RGR-SPEC `results/01-criteria.md` §1.5,
+  §4 DOC-3). Required to be `some` and nonempty **iff** `lifecycle == .preview` (invariant 4b), and
+  surfaced by `explain` and the generated page, because a preview rule whose path out lives only in a
+  result note is a rule nobody will revisit.
+
+  It states a *checkable* condition, not a sentiment: "graduates when it produces ≥10 audited true
+  positives with zero false positives on a corpus that …" and not "needs more evidence". `ruff-12b`
+  `results/02-evidence.md` derives the current ten from measured corpus behaviour — eight of these
+  rules never fired on 85 real mathlib modules, so what each one names is the corpus that would
+  actually exercise it.
+
+  The invariant is what keeps this honest. An unenforced field rots exactly as a declared tier field
+  would (`CLAUDE.md`), so `testCatalogInvariants` pins it in both directions. -/
+  previewPath? : Option String := none
   /-- Whether this rule's fix reads the owned deprecation-occurrence fact (`ruff-11b`). It governs
   *capture cost only*: `RulePlan.demandedCaps` sets the `occurrences` capability — and pays the
   whole-file info-tree fold — when and only when a selected rule declares this in a rendering mode. A
@@ -730,6 +744,12 @@ A module contains at least one declaration but no module docstring (`/-! … -/`
 `/-- … -/` is a different node and does not satisfy the requirement. Report-only: the missing thing is \
 documentation prose, which no formatter can write; the finding is a caret where a module doc belongs, \
 just after the header."
+      previewPath? := "\
+Graduates when it produces at least 10 audited true positives with zero false positives on a corpus of \
+Lean projects that do not already enforce module docstrings in CI, AND lean-fmt's own tree either \
+complies or the rule is scoped to exclude executable and script modules. The second condition is not \
+padding: on lean-fmt's own 34 modules this rule fires 17 times, so the project shipping it does not \
+follow it."
       examples := #[{ bad := "def answer : Nat := 42\n" }]
     }
     impl := .syntax moduleDocRequired
@@ -747,6 +767,14 @@ A `section` or `namespace` is opened and never closed by a matching `end`, track
 stack over the top-level command stream (one `end A.B` closes both a single `namespace A.B` and an \
 `A`/`B` pair). An outermost anonymous `noncomputable`/`public`/`meta` section — the idiomatic whole-file \
 section — is not reported. Report-only: where a scope *should* close is author judgment."
+      previewPath? := "\
+Graduates when the whole-file NAMED namespace case is settled, and then only with at least 10 audited \
+true positives and zero false positives. The open question is this rule's own contract: it already \
+declines to report the idiomatic whole-file *anonymous* section, and a named namespace spanning an \
+entire file is arguably the same idiom. Its one corpus finding \
+(mathlib `scripts/create_deprecated_modules.lean:21`) is exactly that case. Settle it by carving the \
+case out or by keeping it reportable with the reason recorded; until then the meaning is not ready to \
+freeze, which is what `stable` would promise."
       examples := #[{ bad := "namespace Demo\n\ndef answer : Nat := 42\n" }]
     }
     impl := .syntax unclosedScopes
@@ -763,6 +791,12 @@ section — is not reported. Report-only: where a scope *should* close is author
 An `@[…]` attribute list names the same attribute twice. The safe fix deletes the later instance and \
 its preceding separator, so `@[simp, simp]` becomes `@[simp]`. Safe: an exact repeat is idempotent, so \
 removing it preserves what the elaborator records."
+      previewPath? := "\
+Graduates when it produces at least 10 audited true positives with zero false positives on a corpus \
+that is not attribute-reviewed — generated code, student code, or a project with no attribute linter. \
+Its fix already passes the safety, idempotence, convergence, and composition audit; what is missing is \
+evidence that the rule fires correctly on code its author did not write. It found nothing across 85 \
+mathlib modules including `Mathlib/Data/Finset/Attr.lean`, which was chosen for being attribute-dense."
       examples := #[{ bad := "@[simp, simp] def idem : Nat := 0\n"
                       good? := "@[simp] def idem : Nat := 0\n" }]
     }
@@ -780,6 +814,10 @@ removing it preserves what the elaborator records."
 A `deriving` clause names the same class twice. The safe fix deletes the later instance and its \
 separator, so `deriving Repr, Repr` becomes `deriving Repr`. Safe for the same idempotence reason as \
 FMT010."
+      previewPath? := "\
+Graduates on the same condition as FMT010, for duplicate `deriving` classes: at least 10 audited true \
+positives with zero false positives on a corpus that is not attribute-reviewed. Its fix passes the same \
+audit; it found nothing across 85 mathlib modules."
       examples := #[{ bad := "inductive Color where\n  | red\n  deriving Repr, Repr\n"
                       good? := "inductive Color where\n  | red\n  deriving Repr\n" }]
     }
@@ -798,6 +836,11 @@ A committed `set_option` sets an option whose root is `debug`, `pp`, `profiler`,
 Mathlib's `linter.style.setOption` flags. Matching the `set_option` node (not a string) means a \
 `set_option`-looking string or comment never fires. Report-only: removing a committed option is author \
 intent, and the scoped `… in` boundary is not a byte-safe question."
+      previewPath? := "\
+Graduates when it produces at least 10 audited true positives with zero false positives on a corpus \
+with no `set_option` linter of its own. mathlib cannot supply that evidence by construction: \
+`linter.style.setOption` is this rule's near-exact equivalent, so the zero it scored across 85 mathlib \
+modules says what mathlib already enforces and nothing about whether this rule is correct."
       examples := #[{ bad := "set_option trace.Meta.debug true\n\ndef answer : Nat := 42\n" }]
     }
     impl := .syntax developmentSetOption
@@ -808,12 +851,22 @@ intent, and the scoped `… in` boundary is not a byte-safe question."
       category := "redundancy"
       summary := "remove redundant nested parentheses"
       fixable := true
+      -- `stable` but default-OFF: the "stable-optional" outcome (`ruff-12b` RGR-SPEC §1, RGR-IMPL).
+      -- Its meaning is frozen and it is selectable by `all`, by `redundancy`, and by code with no
+      -- `--preview` gate; it is absent from `default` because it is syntax tier, and `RGR-EVIDENCE`
+      -- measured a default syntax-tier rule at 33x the cold-path budget on an ordinary-built project
+      -- (62 frontend children against the baseline's 1). Correctness earned the promotion; cost kept it
+      -- off the default path. These are separate axes and `Lifecycle` is orthogonal to `defaultEnabled`
+      -- exactly so this state can be expressed.
       defaultEnabled := false
-      lifecycle := .preview
+      lifecycle := .stable
       explanation := "\
 A parenthesized term's only child is itself parenthesized — `((e))`. The inner `(e)` is already a \
 complete atomic term, so dropping the outer pair cannot regroup anything; only the directly-nested case \
-is answered, because the projection carries no precedence. The safe fix deletes the outer pair."
+is answered, because the projection carries no precedence. The safe fix deletes the outer pair.\n\n\
+This rule is stable but off by default. It is syntax tier, so running it on a project not built with \
+the lean-fmt compiler plugin costs one compiler frontend run per module; select it with \
+`--select FMT013`, or `--select redundancy`, or enable it in `lean-fmt.toml`."
       examples := #[{ bad := "def twice : Nat := ((1))\n"
                       good? := "def twice : Nat := (1)\n" }]
     }
@@ -833,6 +886,11 @@ A reference resolves to a declaration marked `@[deprecated]`; the report surface
 `Lean.Linter.deprecatedAttr` diagnostic unchanged. When the deprecation names a replacement and the run \
 applies fixes, an **unsafe** rename fix is offered (a textual name swap is plausibly intended but \
 unproven, so it applies only under `--unsafe-fixes` and is backstopped by output re-elaboration)."
+      previewPath? := "\
+Graduates report-only when it produces at least 10 audited true positives with zero false positives on \
+a corpus that actually uses deprecated declarations; it found none across 85 mathlib modules. The \
+rename fix stays `unsafe` and opt-in regardless of that outcome, because a textual name swap is \
+plausibly intended but unproven — so graduation would enable the report, never the fix."
       examples := #[{ bad := "def new : Nat := 0\n@[deprecated new (since := \"1.0\")] def old : Nat := 0\ndef use : Nat := old\n"
                       good? := "def new : Nat := 0\n@[deprecated new (since := \"1.0\")] def old : Nat := 0\ndef use : Nat := new\n" }]
     }
@@ -850,6 +908,10 @@ unproven, so it applies only under `--unsafe-fixes` and is backstopped by output
 A bound variable or binder is never used, surfaced from the compiler's `linter.unusedVariables` \
 diagnostic. Report-only: removing or renaming a binder is not an edit any byte-level or projection fact \
 here can prove safe."
+      previewPath? := "\
+Graduates when it produces at least 10 audited true positives with zero false positives on a corpus \
+that is not already `linter.unusedVariables`-clean. mathlib runs that linter, so it cannot supply the \
+evidence: the zero this rule scored across 85 mathlib modules measures mathlib's CI, not this rule."
       examples := #[{ bad := "def constZero (x : Nat) : Nat := 0\n" }]
     }
     impl := .semantic unusedVariable
@@ -865,6 +927,9 @@ here can prove safe."
       explanation := "\
 An automatically-included section `variable` is unused in a theorem, surfaced from the compiler's \
 `linter.unusedSectionVars` diagnostic. Report-only, for the same reason as FMT015."
+      previewPath? := "\
+Graduates on the same condition as FMT015, for section variables: at least 10 audited true positives \
+with zero false positives on a corpus that does not already run `linter.unusedSectionVars`."
       examples := #[{ bad := "section\nvariable {α : Type} [inst : Inhabited α]\ntheorem refl_eq (a : α) : a = a := rfl\nend\n" }]
     }
     impl := .semantic unusedSectionVariable
@@ -881,6 +946,12 @@ An automatically-included section `variable` is unused in a theorem, surfaced fr
 A bound variable's name matches a nullary constructor in scope, surfaced from the compiler's \
 `linter.constructorNameAsVariable` diagnostic — a pattern that reads as a constructor but binds a fresh \
 variable. Report-only."
+      previewPath? := "\
+Graduates when it produces at least 10 audited true positives on a corpus that exercises it AND its \
+opinionation rate is measured under RGR-SPEC §2.4 — not just its false-positive rate. Of the ten \
+preview rules this is the most likely to be true-but-unwanted: naming a binder after a nullary \
+constructor can be deliberate and readable, so a clean false-positive count would not by itself show \
+the rule is worth imposing."
       examples := #[{ bad := "inductive Light where\n  | red\n  | green\n\ndef f (red : Light) : Light := red\n" }]
     }
     impl := .semantic constructorNameVariable
@@ -1059,6 +1130,7 @@ def ruleInfoJson (info : RuleInfo) (tier : String) : Lean.Json :=
     ("input", .str tier),
     ("explanation", .str info.explanation),
     ("replacement", match info.replacement? with | some r => .str r | none => .null),
+    ("previewPath", match info.previewPath? with | some p => .str p | none => .null),
     ("examples", Lean.Json.arr (info.examples.map fun ex =>
       Lean.Json.mkObj [
         ("bad", .str ex.bad),
@@ -1101,6 +1173,9 @@ def explainText (info : RuleInfo) : String := Id.run do
   | some r => out := out ++ s!"  replacement: {r}\n"
   | none => pure ()
   out := out ++ "\n  " ++ info.explanation ++ "\n"
+  match info.previewPath? with
+  | some p => out := out ++ "\n  Path out of preview\n    " ++ p ++ "\n"
+  | none => pure ()
   for ex in info.examples do
     out := out ++ "\n  Example\n    - bad -\n"
     out := out ++ String.intercalate "\n" ((ex.bad.trimAsciiEnd.copy.splitOn "\n").map ("    " ++ ·)) ++ "\n"
@@ -1145,6 +1220,9 @@ def rulePageMarkdown (info : RuleInfo) : String := Id.run do
   | some r => out := out ++ s!"- **Replacement:** `{r}`\n"
   | none => pure ()
   out := out ++ "\n" ++ info.explanation ++ "\n"
+  match info.previewPath? with
+  | some p => out := out ++ "\n## Path out of preview\n\n" ++ p ++ "\n"
+  | none => pure ()
   for ex in info.examples do
     out := out ++ "\n## Example\n\nBad:\n\n" ++ fence ex.bad
     match ex.good? with

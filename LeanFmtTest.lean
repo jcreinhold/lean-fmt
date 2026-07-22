@@ -669,22 +669,41 @@ ignore = [\"FMT004\"]\n\
       | throw <| IO.userError "the 'security' category selector was rejected"
     ensure ((secPlan.findings "A.lean" findings).map (·.code) == #["FMT003", "FMT004"])
       "the security category did not select both control-byte rules"
-    -- Preview gate: `redundancy` (FMT010/11/13, all preview) selects nothing without preview mode, and
-    -- all three with it. This is the `ruff-12` gate on a category selector.
+    -- Preview gate on a category selector (`ruff-12`), now over a MIXED category: `redundancy` holds
+    -- FMT010 and FMT011 (preview) and FMT013 (stable, default-off — the `ruff-12b` "stable-optional"
+    -- outcome). So the category resolves to exactly the stable member without preview mode, and to all
+    -- three with it. The mixed case is the interesting one and did not exist before `ruff-12b`.
     let .ok gated := config.rulePlan { select := #["redundancy"] }
-      | throw <| IO.userError "a category of preview rules was rejected"
-    ensure (gated.activeCount == 0) "a preview category selected rules without preview mode"
+      | throw <| IO.userError "a partly-preview category was rejected"
+    ensure (gated.selected == #["FMT013"])
+      "the redundancy category did not resolve to exactly its stable member without preview mode"
     let .ok previewed := config.rulePlan { select := #["redundancy"], preview := true }
       | throw <| IO.userError "the preview category was rejected under preview mode"
     ensure (previewed.activeCount == 3) "preview mode did not unlock the redundancy category"
-    -- Explicit preview-code selection is an error without preview mode, and succeeds with it.
-    ensure (match config.rulePlan { select := #["FMT013"] } with | .error _ => true | .ok _ => false)
-      "an explicit preview-code selection was accepted without preview mode"
-    ensure (match config.rulePlan { select := #["FMT013"], preview := true } with
+    -- `stable-optional`, stated directly (`ruff-12b` RGR-SPEC §1.1). FMT013 is reachable by `all`, by
+    -- its category, and by its exact code with NO preview gate, and is absent from `default`. That
+    -- combination is the whole outcome: promoted out of preview on correctness, kept off the default
+    -- path on cost.
+    ensure (match config.rulePlan { select := #["FMT013"] } with
       | .ok p => p.selected == #["FMT013"] | .error _ => false)
+      "a stable default-off rule was not selectable by its exact code without preview mode"
+    let .ok allSel := config.rulePlan { select := #["all"] }
+      | throw <| IO.userError "the 'all' selector was rejected"
+    ensure (allSel.selected.contains "FMT013")
+      "'all' did not reach a stable default-off rule without preview mode"
+    let .ok defSel := config.rulePlan { select := #["default"] }
+      | throw <| IO.userError "the 'default' selector was rejected"
+    ensure (!defSel.selected.contains "FMT013")
+      "a stable default-off rule leaked into the default set"
+    -- Explicit preview-code selection is still an error without preview mode, and succeeds with it.
+    -- FMT010 carries this now that FMT013 is stable.
+    ensure (match config.rulePlan { select := #["FMT010"] } with | .error _ => true | .ok _ => false)
+      "an explicit preview-code selection was accepted without preview mode"
+    ensure (match config.rulePlan { select := #["FMT010"], preview := true } with
+      | .ok p => p.selected == #["FMT010"] | .error _ => false)
       "preview mode did not admit an explicit preview-code selection"
     -- Specificity keeps an exact select over a category ignore (the case flat subtraction dropped).
-    let .ok keep := config.rulePlan { select := #["FMT013"], ignore := #["redundancy"], preview := true }
+    let .ok keep := config.rulePlan { select := #["FMT013"], ignore := #["redundancy"] }
       | throw <| IO.userError "exact-vs-category precedence rejected a valid plan"
     ensure (keep.selected == #["FMT013"]) "an exact select did not outrank a category ignore"
     -- A retired code is accepted (non-breaking), selects no rule, and raises a notice.
@@ -693,7 +712,7 @@ ignore = [\"FMT004\"]\n\
     ensure (retired.activeCount == 0 && !retired.notices.isEmpty)
       "a retired selector did not degrade to an empty selection with a notice"
     -- Fixability axis: a selected rule made unfixable is still selected, but out of `fixableSelected`.
-    let .ok unfix := config.rulePlan { select := #["FMT013"], unfixable := #["FMT013"], preview := true }
+    let .ok unfix := config.rulePlan { select := #["FMT013"], unfixable := #["FMT013"] }
       | throw <| IO.userError "the unfixable axis rejected a valid plan"
     ensure (unfix.selected == #["FMT013"] && unfix.fixableSelected.isEmpty)
       "unfixable did not withhold FMT013's fix while keeping it selected"
@@ -703,23 +722,30 @@ ignore = [\"FMT004\"]\n\
     let .ok tie := config.rulePlan { select := #["FMT004"], ignore := #["FMT004"] }
       | throw <| IO.userError "an exact select/ignore tie was rejected"
     ensure (tie.activeCount == 0) "an exact select/ignore tie did not resolve to ignore"
-    -- (b) `all` and `default` both expand to the stable set here (every stable rule is default-on),
-    -- and neither admits a preview rule without the gate; `all` + preview unlocks the whole registry.
+    -- (b) `all` expands to the stable set; `default` expands to the default-ON set. Since `ruff-12b`
+    -- these DIFFER — FMT013 is stable and default-off — and that divergence is the point of the
+    -- `stable-optional` outcome, so it is asserted rather than assumed away. Neither admits a preview
+    -- rule without the gate; `all` + preview unlocks the whole registry.
     let stableCount := (allRuleInfos.filter (·.lifecycle == .stable)).size
+    let defaultCount := (allRuleInfos.filter (·.defaultEnabled)).size
+    ensure (defaultCount < stableCount)
+      "no stable rule is default-off, so the stable-optional outcome has no live instance"
     let .ok allPlan := config.rulePlan { select := #["all"] }
       | throw <| IO.userError "the 'all' selector was rejected"
     let .ok defPlan := config.rulePlan { select := #["default"] }
       | throw <| IO.userError "the 'default' selector was rejected"
-    ensure (allPlan.activeCount == stableCount && defPlan.activeCount == stableCount)
-      "all/default did not expand to exactly the stable set without preview"
+    ensure (allPlan.activeCount == stableCount)
+      "'all' did not expand to exactly the stable set without preview"
+    ensure (defPlan.activeCount == defaultCount)
+      "'default' did not expand to exactly the default-enabled set"
     let .ok allPreview := config.rulePlan { select := #["all"], preview := true }
       | throw <| IO.userError "'all' under preview was rejected"
     ensure (allPreview.activeCount == allRuleInfos.size)
       "'all' under preview did not unlock the whole registry"
     -- (c) `extend-select` always adds, across the CLI-owns-selection boundary: with no CLI `select`, the
     -- config selection (security minus the config's exact `ignore = [FMT004]`) still applies, and a CLI
-    -- extend-select adds FMT013 on top (needing the preview gate). Result: FMT003 + FMT013.
-    let .ok extended := config.rulePlan { extendSelect := #["FMT013"], preview := true }
+    -- extend-select adds FMT013 on top (no preview gate needed since `ruff-12b`). Result: FMT003 + FMT013.
+    let .ok extended := config.rulePlan { extendSelect := #["FMT013"] }
       | throw <| IO.userError "extend-select over the config selection was rejected"
     ensure (extended.selected == #["FMT003", "FMT013"])
       "extend-select did not add to the config selection while keeping the config ignore"
@@ -904,6 +930,18 @@ private def testCatalogInvariants : IO Unit := do
         s!"deprecated rule {info.code} names an unknown replacement: {r}"
     else
       ensure info.replacement?.isNone s!"non-deprecated rule {info.code} carries a replacement"
+  -- 3b. Every preview rule states what would graduate it, and no other rule pretends to
+  --     (`ruff-12b` RGR-SPEC §4 DOC-3). Pinned in BOTH directions on purpose: a field that is merely
+  --     *allowed* is a field that goes unset, and "not yet" with no condition is how a preview rule
+  --     becomes permanent.
+  for info in infos do
+    if info.lifecycle == .preview then
+      match info.previewPath? with
+      | none => throw <| IO.userError s!"preview rule {info.code} states no path out of preview"
+      | some p => ensure (!p.isEmpty) s!"preview rule {info.code} has an empty path out of preview"
+    else
+      ensure info.previewPath?.isNone
+        s!"non-preview rule {info.code} carries a path out of preview"
   -- 4. Documentation: nonempty explanation always; ≥1 example unless exempt; a fixable non-exempt rule
   --    ships a bad→good example so its fix is testable.
   for info in infos do

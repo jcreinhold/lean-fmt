@@ -40,7 +40,7 @@ Generated from the rule registry (`LeanFmt/Rules.lean`); do not edit by hand.
 | --- | --- | --- | --- | --- |
 | [FMT010](FMT010.md) | preview | off | fixable | remove a duplicate attribute in an attribute list |
 | [FMT011](FMT011.md) | preview | off | fixable | remove a duplicate deriving class |
-| [FMT013](FMT013.md) | preview | off | fixable | remove redundant nested parentheses |
+| [FMT013](FMT013.md) | stable | off | fixable | remove redundant nested parentheses |
 
 ## security
 
