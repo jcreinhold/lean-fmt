@@ -24,6 +24,28 @@ change the shape of the remaining work:
 count (ten preview rules, 62 modules, one true-positive FMT013, zero false positives) and names
 §2.2's exposure threshold as the criterion that exposure could have contaminated.
 
+**RGR-EVIDENCE is in progress.** Verdicts and CP-1 are final; CP-2 is still measuring. What is settled:
+
+- **85 real mathlib modules produced 2 findings.** Both true positives, zero false positives, zero
+  broken modules, zero infrastructure failures. Eight of the ten rules never fired at all.
+- **No rule graduates to default.** §2.2's bar is 10 audited true positives; the highest any rule
+  reached is 1. The bar was not moved, and `results/02-evidence.md` carries a section saying which
+  criteria were *not* revised so a reader can check.
+- **FMT013 → `stable-optional`;** the other nine → `preview-with-path`, each with a §1.5 condition
+  naming the corpus that would exercise it. Nothing is retired.
+- **The corpus, not the rules, is what got measured.** mathlib enforces most of these rules itself
+  (`linter.style.setOption` is FMT012's near-equivalent). FMT013 is the one rule with no mathlib
+  counterpart and the one rule that fired on the sample.
+- **CP-1 holds and its untested prediction is now tested** (`evidence/02-cp1-warm-serve.md`): the
+  content-keyed cache does serve a tier above source on a warm hit. Shown non-vacuously — the all-ten
+  arm emitted 17 findings on a warm, fully-served, zero-`exact_child` run, byte-identical to cold.
+- **`ruff-10b` Design B does not fire.** Its trigger needs a syntax rule at *default*; `stable-optional`
+  is off the default path by construction.
+
+Two defects recorded for later owners, not repaired here (prompt 02 forbids repairing a rule to make
+it pass): FMT009 does not carve out a whole-file *named* namespace though it carves out the whole-file
+*anonymous* section, and lean-fmt's own 34 modules violate FMT008.
+
 This stack was opened against `ruff-12-rule-lifecycle`, which built
 the stable/preview/deprecated machinery but was never asked to decide which rules belong in which
 state. Its external prerequisite stacks are `ruff-10b-syntax-fix-composition`,
@@ -38,7 +60,7 @@ verified.
 | Prompt | Claim | Status | Depends on |
 | --- | --- | --- | --- |
 | 01-criteria | RGR-SPEC | **verified** (`results/01-criteria.md`) | — |
-| 02-evidence | RGR-EVIDENCE | planned | RGR-SPEC |
+| 02-evidence | RGR-EVIDENCE | in progress (`results/02-evidence.md`) | RGR-SPEC |
 | 03-graduate | RGR-IMPL | planned | RGR-EVIDENCE |
 | 04-final | RGR-FINAL | planned | RGR-IMPL |
 
