@@ -2821,6 +2821,34 @@ private def securityBench : IO UInt32 := do
   securityBenchOne "dense" (repeatTo securityDenseBlock 256000)
   return 0
 
+/-! ## Frontend-native formatter contract harness
+
+`tests/formatter/oracle.py` owns the independent comparison. This one test-only command exposes the
+already-shipped lossless header parser so the oracle compares Lean's parsed ordered imports rather
+than approximating the header with a regular expression. It returns facts only; the Python harness
+decides whether two signatures agree. -/
+
+private def formatterHeader (sourcePath : String) : IO UInt32 := do
+  let raw ← IO.FS.readFile sourcePath
+  let normalized := (LosslessSource.normalize raw).1
+  let some header ← Imports.parseHeaderModel normalized
+    | do
+      IO.eprintln s!"header did not parse: {sourcePath}"
+      return 1
+  let imports := header.imports.map fun stmt => Lean.Json.mkObj [
+    ("module", .str stmt.module.toString),
+    ("all", stmt.importAll),
+    ("meta", stmt.isMeta),
+    ("public", stmt.isPublic),
+    ("exported", stmt.isExported)
+  ]
+  IO.println <| (Lean.Json.mkObj [
+    ("module", header.hasModule),
+    ("prelude", header.hasPrelude),
+    ("imports", .arr imports)
+  ]).compress
+  return 0
+
 private def docBench : IO UInt32 := do
   for n in [1000, 2000, 4000, 8000] do
     benchOne "zero-width-siblings" n (zeroWidthSiblings n)
@@ -2927,6 +2955,7 @@ public unsafe def main (args : List String) : IO UInt32 := do
   | ["report-bench"] => reportBench
   | ["doc-dump"] => docDump
   | ["security-bench"] => securityBench
+  | ["formatter-header", sourcePath] => formatterHeader sourcePath
   | [] =>
     testDigests
     testRules
@@ -2984,5 +3013,6 @@ public unsafe def main (args : List String) : IO UInt32 := do
       attach-report ENVELOPE SOURCE | \
       doc-bench | \
       security-bench | \
+      formatter-header SOURCE | \
       print-lake-hash ARTIFACT]"
     return 2
