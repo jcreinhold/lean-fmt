@@ -1,6 +1,6 @@
 ---
 kind: state
-first_unresolved: 03-graduate
+first_unresolved: 04-final
 ---
 
 # Current state
@@ -49,6 +49,27 @@ count (ten preview rules, 62 modules, one true-positive FMT013, zero false posit
   it fired, Design A would have missed the budget by 26×**, so `RGR-IMPL` records that measurement in
   place of a bare re-check.
 
+**RGR-IMPL is verified.** The verdicts are the built catalog (`results/03-graduate.md`):
+
+- **FMT013 is `lifecycle := .stable`, `defaultEnabled := false`** — the `stable-optional` outcome,
+  occupied for the first time. No selector machinery was added; the state was already implemented.
+  Confirmed against the built binary: FMT013 fires under `--select FMT013`, `--select redundancy`,
+  and `--select all` with **no** `--preview`, and stays silent under `--select default` and a bare run.
+- **`RuleInfo.previewPath?` implements DOC-3**, rendered by `explain`, the generated page, and the
+  JSON, and pinned by a **bidirectional** catalog invariant: nonempty iff `lifecycle == .preview`.
+  The backward direction matters as much as the forward one — a stale path on a graduated rule is a
+  documentation lie that reads as current.
+- **Nothing is retired.** `reservedCodes` is untouched.
+- **`ruff-10b` Design B is refused with a measurement, not a re-check.** The trigger is unfired (no
+  syntax rule reaches default), but the cost of firing it was measured: **33.0× against a 1.25×
+  budget, 1 frontend child versus 62**. Had it fired, Design A would have missed by 26×.
+- **`ruff-19`'s gates pass unchanged and were not re-derived.** The default set did not change, so
+  §1c's derivation still holds for the original reason. `tests/performance/run.sh` §0 (`negative.sh`)
+  proved all 16 gates discriminate before the suite reported that none failed.
+- **Three unit assertions that encoded the old catalog were rewritten**, including one whose stated
+  premise ("every stable rule is default-on") is exactly what this stack broke. Its replacement
+  carries a guard so it cannot pass vacuously if `stable-optional` is ever vacated.
+
 Two defects recorded for later owners, not repaired here (prompt 02 forbids repairing a rule to make
 it pass): FMT009 does not carve out a whole-file *named* namespace though it carves out the whole-file
 *anonymous* section, and lean-fmt's own 34 modules violate FMT008.
@@ -68,12 +89,14 @@ verified.
 | --- | --- | --- | --- |
 | 01-criteria | RGR-SPEC | **verified** (`results/01-criteria.md`) | — |
 | 02-evidence | RGR-EVIDENCE | **verified** (`results/02-evidence.md`) | RGR-SPEC |
-| 03-graduate | RGR-IMPL | planned | RGR-EVIDENCE |
+| 03-graduate | RGR-IMPL | **verified** (`results/03-graduate.md`) | RGR-EVIDENCE |
 | 04-final | RGR-FINAL | planned | RGR-IMPL |
 
 ## The catalog as it stands, 2026-07-22
 
-From `lean-fmt rules` against the built binary, not from a record:
+From `lean-fmt rules` against the built binary, not from a record. Re-read after `RGR-IMPL`: FMT013's
+lifecycle is now `stable` with default still off, and that one row is the whole of what this stack
+changed in the catalog.
 
 | Code | Category | Tier | Lifecycle | Default | Fixable |
 | --- | --- | --- | --- | --- | --- |
@@ -87,7 +110,7 @@ From `lean-fmt rules` against the built binary, not from a record:
 | FMT010 | redundancy | **syntax** | preview | no | **yes** |
 | FMT011 | redundancy | **syntax** | preview | no | **yes** |
 | FMT012 | debug | **syntax** | preview | no | no |
-| FMT013 | redundancy | **syntax** | preview | no | **yes** |
+| FMT013 | redundancy | **syntax** | **stable** | no | **yes** |
 | FMT014 | deprecation | **semantic** | preview | no | **yes** |
 | FMT015 | unused | **semantic** | preview | no | no |
 | FMT016 | unused | **semantic** | preview | no | no |

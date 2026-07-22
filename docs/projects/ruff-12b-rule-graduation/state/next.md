@@ -1,81 +1,87 @@
 # Next Proof Packet
 
 - Stack: ruff-12b-rule-graduation
-- First unresolved: 03-graduate
-- Claim ID: RGR-IMPL
-- Prompt: 03-graduate
-- Module: `LeanFmt/Rules.lean` (catalog fields, new preview-path field), `LeanFmt/Cli.lean` (`explain`),
-  `LeanFmtTest.lean` (catalog invariant), `docs/rules/` (generated)
-- Target file: `results/03-graduate.md`
+- First unresolved: 04-final
+- Claim ID: RGR-FINAL
+- Prompt: 04-final
+- Module: none expected — this is an audit prompt. `LeanFmt/Rules.lean` and `docs/` only if the audit
+  finds drift.
+- Target file: `results/04-final.md`
 
 ## Target Declarations
 
-- `RuleInfo.previewPath?` (or equivalent) — the §4 DOC-3 field carrying a preview rule's graduation
-  condition, rendered by `explain` and the generated doc page.
-- The catalog invariant pinning it nonempty **iff** `lifecycle == .preview`.
-- `FMT013`: `lifecycle := .stable`, `defaultEnabled := false`.
+None. `RGR-FINAL` adds no declaration. If it needs one, the audit found a defect and the defect is the
+finding.
 
 ## Read Before Editing
 
-This file, `prompts/03-graduate.md`, `results/02-evidence.md` (the verdicts), `results/01-criteria.md`
-§1 and §4 (outcomes and documentation standard), and the named source ranges only.
+This file, `prompts/04-final.md`, `results/03-graduate.md` (what shipped), `results/02-evidence.md`
+(the measurements to reproduce against), and `results/01-criteria.md` §5–§6 (cost policy and corpus
+pins).
 
 ## Proof Task
 
-Deliver **RGR-IMPL**: apply `results/02-evidence.md`'s verdict table. It is designed to be applied
-without re-deciding anything — do not reopen a verdict here.
+Deliver **RGR-FINAL**: accept the catalog, or find what drifted between measuring it and shipping it.
 
-1. **FMT013 → `stable-optional`.** Set `lifecycle := .stable`, keep `defaultEnabled := false`. No new
-   machinery: `LeanFmt/Config.lean:668-671` already expands `all` and category to every `.stable` rule
-   regardless of `defaultEnabled`. Confirm by test that FMT013 becomes reachable by `all` and by
-   `redundancy` **without** `--preview`, and stays absent from `default`.
-2. **The other nine stay `.preview`,** each carrying its §1.5 graduation condition from
-   `results/02-evidence.md`, in the DOC-3 field — **not** in prose in a result note. Prompt 03 requires
-   the condition appear where a user sees it.
-3. **Nothing is retired.** §1.3 and the verdict table both say so; `reservedCodes` is permanent and
-   eight of these rules were judged on a corpus that could not exercise them.
-4. **Record the Design B decision with the CP-2 measurement.** The trigger is unfired (no syntax rule
-   reaches default), but unlike `ruff-19`'s bare re-check this stack measured what firing it would have
-   cost: 33× against a 1.25× budget, 62 frontend children against 1.
-5. **`ruff-19`'s gates need no re-derivation.** The default set is unchanged, and CP-1 showed the warm
-   §1a/§1b/§1c gates survive even all ten preview rules selected. Confirm they still pass; do not
-   re-derive what did not change.
+1. **Write the standalone catalog table.** Every rule: code, category, tier, lifecycle, default,
+   fixable, and — for the nine preview rules — the graduation condition. `ruff-20` audits against this
+   table, so it must be readable **without** the three prior result notes. Generate it from
+   `lean-fmt rules` and `lean-fmt explain`, not by transcribing `state/current.md`.
+2. **Re-run the frozen sample with the shipped default set** and confirm the finding counts match what
+   `RGR-EVIDENCE` recorded. The corpus pins are `results/01-criteria.md` §6 (`783ccda4…`/v4.32.0,
+   digest `1936bdb6…`). A mismatch is not a nuisance to reconcile — finding it is this prompt's job.
+   Note that the shipped default set is *unchanged* from the one `RGR-EVIDENCE` measured, so the
+   expected delta is zero and a nonzero one means something moved silently.
+3. **Confirm the cost policy on both build states** — `ordinary-built` and
+   `formatter-integrated-built` — under `ruff-19`'s variance policy: median of ≥3, never the first
+   run, spread beside the median, machine conditions recorded. `experiments/run-cp2-cold-cost.sh`
+   already implements that discipline and can be reused.
+4. **Confirm `ruff-19`'s gates as shipped.** `RGR-IMPL` did not re-derive any gate, so there is no
+   re-derived gate to negative-test; run `tests/performance/run.sh` (whose §0 is `negative.sh`) and
+   confirm both.
+5. **Audit every quoted rule count in the repository.** `docs/adding-a-rule.md`'s tier guidance,
+   README-style prose, `docs/ci.md`, suite fixtures — anywhere a number like "ten preview rules" or
+   "fifteen live rules" appears. FMT013 leaving preview changes those counts. A quoted count that
+   drifts is the small false claim that makes a reader distrust the large true ones.
+6. **Confirm every remaining preview rule has a stated path**, from `explain` output rather than from
+   the invariant. The invariant proves the field is nonempty; only reading the nine strings proves
+   they say something a reader could act on.
 
 ## Reuse
 
-- The lifecycle/selector machinery is complete (`ruff-12`). This prompt sets fields and adds one
-  documented, invariant-enforced field. It does not need new selector logic.
-- `LeanFmtTest.lean`'s `testCatalogInvariants` is where the DOC-3 invariant belongs, beside the existing
-  lifecycle/default coherence checks at 895-905.
-- The generated docs regenerate from the registry; `lake exe lean-fmt docs --check` gates drift.
+- `experiments/run-cp2-cold-cost.sh` — the two-arm cold-cost harness with the discard-first-run
+  discipline already applied.
+- `experiments/run-cp1-warm-serve.sh` — the five-arm warm-serve probe, including the anti-vacuity
+  check (`cmp` prime-vs-warm report, nonzero line count) that made CP-1 evidence rather than silence.
+- `tests/performance/run.sh` §0 is the negative test; it does not need to be invoked separately.
+- `lake exe lean-fmt docs --check` gates generated-doc drift; `lake exe lean-fmt rules` and
+  `explain <code>` are the catalog's authority.
 
 ## Lean Work
 
-Inspect the live goal, search relevant declarations, test plausible steps, and verify completed
-declarations. A rule's tier is its `RuleImpl` constructor and never a field (`CLAUDE.md`); this prompt
-changes `lifecycle` and adds a documentation field, and moves nothing between tiers.
+Expect none. This prompt reads the built binary and the repository's prose. If it edits Lean, it is
+because the audit found the catalog and the code disagreeing, and that disagreement is the result.
 
 ## Stop Rules
 
-- Do not reopen a verdict. If one looks wrong, record the disagreement per `CLAUDE.md` and stop; do not
-  silently re-decide.
-- Do not add a declared tier field, and do not make `defaultEnabled` depend on build state (§1.4 refused
-  that explicitly).
-- Do not retire a rule to tidy the catalog.
-- The DOC-3 field must be **enforced by an invariant**, or it will rot exactly as `CLAUDE.md` says a
-  declared tier field would. An unenforced field is not an implementation of DOC-3.
+- Do not accept a catalog whose shipped behaviour differs from `RGR-EVIDENCE` without explaining the
+  difference. Reconciling by adjusting the expectation is the failure mode this rule exists to catch.
+- **No full mathlib run.** That licence is `ruff-20-acceptance`'s alone. A conclusion that needs the
+  complete corpus is a deferral to `ruff-20`, and it should say so rather than guess.
+- Stop resource experiments at 8 GiB aggregate RSS, abnormal pressure, or 256 MiB new swap.
 - Stop rather than weakening exact semantics, write safety, or the resource envelope.
 
 ## Check
 
-- `LEAN_NUM_THREADS=1 lake build`, `lake exe lean-fmt-tests`, `lake lint`.
-- `tests/catalog/run.sh`, `tests/syntax/run.sh`, `tests/semantic/run.sh`, `tests/modes/run.sh`,
-  `tests/reporting/run.sh`, `tests/suppression/run.sh`, `tests/discovery/run.sh`.
-- `tests/boundary/run.sh`; inspect every changed module boundary manually.
-- `tests/performance/run.sh` and `tests/performance/negative.sh` — expect pass without re-derivation.
+- `LEAN_NUM_THREADS=1 lake build`, `lake lint`, `lake exe lean-fmt-tests`, and **every** suite in
+  `tests/*/run.sh` (boundary, cache, catalog, check, ci, compiler, discovery, downstream, imports,
+  layout, lossless, modes, performance, printer, reporting, scale, semantic, stream, suppression,
+  syntax, watch).
+- `tests/performance/run.sh` and `tests/performance/negative.sh`.
+- `tests/ci/run.sh` reads **committed** state — commit before running it or it tests the previous
+  commit and passes while the change is broken.
+- `tests/watch/run.sh` §9.6 fails whenever a `.lean` file is staged; run it with a clean index.
 - `lake exe lean-fmt docs --check`.
-- `lean-fmt explain` for FMT013 (must show `stable`, default off) and for one preview rule (must show
-  its graduation condition).
 - `git diff --check`, read in full.
 - Structural checkers: expect the same 5 pre-existing `implementation_route` failures every lean-fmt
-  stack has; confirm no new stack-shaped failure.
+  stack reports; confirm no new stack-shaped failure.
