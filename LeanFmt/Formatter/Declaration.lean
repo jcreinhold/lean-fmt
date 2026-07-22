@@ -9,14 +9,15 @@ module
 /- Structural declaration documents over actual command syntax.
 
 Shared value declarations use their parser nodes for declaration id, binder list, optional result,
-and simple value. Their flat and broken forms are lean-fmt documents; nested type/body syntax remains
-an exact token row until the term layer replaces it. Other closed declaration families stay with the
-live registry while this module owns their dispatch boundary. Project command wrappers are not
-recognized here. -/
+and simple value. Their flat and broken forms are lean-fmt documents. Nested result types remain exact
+token rows; value bodies request term documents. Other closed declaration families stay with the live
+registry while this module owns their dispatch boundary. Project command wrappers are not recognized
+here. -/
 
 import Lean.Parser.Command
 import all LeanFmt.Formatter
 import all LeanFmt.Formatter.Syntax
+import all LeanFmt.Formatter.Term
 
 namespace LeanFmt.Internal
 
@@ -84,7 +85,15 @@ private def typeDocument (typeSpec : Lean.Syntax) : Doc :=
   let body := if tokens[0]? == some ":" then tokens.extract 1 tokens.size else tokens
   Doc.text " :" ++ Doc.nest 2 (Doc.line " " ++ Syntax.flat body)
 
-private def valueDocument (value : Lean.Syntax) : Doc :=
+private def valueBody? (value : Lean.Syntax) : Option Lean.Syntax :=
+  value.getArgs.find? fun child =>
+    let tokens := Syntax.spellings child
+    !child.isOfKind ``Lean.Parser.Termination.suffix && !tokens.isEmpty && tokens != #[":="]
+
+private def valueDocument (body : Doc) : Doc :=
+  Doc.text " :=" ++ Doc.nest 2 (Doc.line " " ++ body)
+
+private def flatValueDocument (value : Lean.Syntax) : Doc :=
   let tokens := Syntax.spellings value
   let body := if tokens[0]? == some ":=" then tokens.extract 1 tokens.size else tokens
   Doc.text " :=" ++ Doc.nest 2 (Doc.line " " ++ Syntax.flat body)
@@ -96,13 +105,14 @@ private partial def hasOffsideBody (stx : Lean.Syntax) : Bool :=
     stx.isOfKind ``Lean.Parser.Term.matchAlts ||
     stx.getArgs.any hasOffsideBody
 
-private def simpleDocument? (stx : Lean.Syntax) : Option Doc := do
-  let #[modifiers, inner] := stx.getArgs | none
-  if !simpleKind inner then none else
+private def simpleDocument? (ownership : CommentOwnership) (stx : Lean.Syntax) :
+    Lean.CoreM (Except FormatterFailure (Option Doc)) := do
+  let #[modifiers, inner] := stx.getArgs | return .ok none
+  if !simpleKind inner then return .ok none else
   let parts := simpleParts modifiers inner
   let tokens := Syntax.spellings inner
-  if parts.value?.isNone && (tokens.contains ":=" || tokens.contains "where") then none else
-  if parts.value?.any hasOffsideBody then none else
+  if parts.value?.isNone && (tokens.contains ":=" || tokens.contains "where") then return .ok none
+  if parts.value?.any hasOffsideBody then return .ok none
   let mut document := Syntax.flat parts.leading
   if let some signature := parts.signature? then
     let (binders, typeSpec?) := signatureParts signature #[] none
@@ -110,11 +120,17 @@ private def simpleDocument? (stx : Lean.Syntax) : Option Doc := do
       document := document ++ Doc.nest 2
         (Doc.line " " ++ Syntax.flat (Syntax.spellings binder))
     if let some typeSpec := typeSpec? then document := document ++ typeDocument typeSpec
-  if let some value := parts.value? then document := document ++ valueDocument value
+  if let some value := parts.value? then
+    match valueBody? value with
+    | some body =>
+      match ← Term.format ownership body with
+      | .ok formatted => document := document ++ valueDocument formatted.document
+      | .error failure => return .error failure
+    | none => document := document ++ flatValueDocument value
   unless parts.trailing.isEmpty do
     document := document ++ Doc.nest 2
       (Doc.line " " ++ Syntax.flat parts.trailing)
-  return Doc.group document
+  return .ok (some (Doc.group document))
 
 /-- Format a closed declaration command, or return `none` for a non-declaration command. Shared
 simple declarations receive structural flat/broken documents when comment-free; other declaration
@@ -123,8 +139,9 @@ def format? (ownership : CommentOwnership) (stx : Lean.Syntax) :
     Lean.CoreM (Option (Except FormatterFailure RegisteredDocument)) := do
   if !handles stx then return none
   let registered ← Formatter.registered ownership .command stx
-  match simpleDocument? stx with
-  | some document =>
+  match ← simpleDocument? ownership stx with
+  | .error failure => return some (.error failure)
+  | .ok (some document) =>
     if (Comments.subtree ownership stx).isEmpty then
       let trace := match registered with
         | .ok value => value.trace
@@ -132,7 +149,7 @@ def format? (ownership : CommentOwnership) (stx : Lean.Syntax) :
       return some (.ok { document, trace })
     else
       return some registered
-  | none => return some registered
+  | .ok none => return some registered
 
 end Formatter.Declaration
 
