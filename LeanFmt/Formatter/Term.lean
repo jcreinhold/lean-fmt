@@ -30,6 +30,11 @@ private def separated (head : Doc) (values : Array Doc) : Doc :=
   values.foldl (init := head) fun document value =>
     document ++ Doc.nest 2 (Doc.line " " ++ value)
 
+private def isTrailingParserKind (env : Lean.Environment) (kind : Lean.Name) : Bool :=
+  match env.find? kind with
+  | some info => info.type.isConstOf ``Lean.TrailingParserDescr
+  | none => false
+
 private partial def transparentDocument? (stx : Lean.Syntax) : Option Doc := do
   let tokens := Syntax.spellings stx
   if tokens.size == 1 then return Syntax.flat tokens
@@ -61,7 +66,7 @@ private partial def transparentDocument? (stx : Lean.Syntax) : Option Doc := do
   if stx.isOfKind ``Lean.Parser.Term.fun then
     let #[_, bodySyntax] := stx.getArgs | none
     if !bodySyntax.isOfKind ``Lean.Parser.Term.basicFun then none else
-    let #[binders, typeSpec, _, body] := bodySyntax.getArgs | none
+    let #[binders, typeSpec, arrow, body] := bodySyntax.getArgs | none
     if !(Syntax.spellings typeSpec).isEmpty then none else
     let binders := nonemptyChildren binders
     if binders.isEmpty then none else
@@ -70,7 +75,8 @@ private partial def transparentDocument? (stx : Lean.Syntax) : Option Doc := do
       let document ← transparentDocument? binder
       binderDocuments := binderDocuments.push document
     let bodyDocument ← transparentDocument? body
-    let header := Doc.group (separated (Doc.text "fun") binderDocuments ++ Doc.text " =>")
+    let header := Doc.group (separated (Doc.text "fun") binderDocuments ++ Doc.text " " ++
+      Syntax.flat (Syntax.spellings arrow))
     return Doc.group (header ++ Doc.nest 2 (Doc.line " " ++ bodyDocument))
   if stx.isOfKind ``Lean.Parser.Term.typeAscription ||
       stx.isOfKind ``Lean.Parser.Term.namedArgument ||
@@ -80,13 +86,19 @@ private partial def transparentDocument? (stx : Lean.Syntax) : Option Doc := do
       stx.isOfKind ``Lean.Parser.Term.strictImplicitBinder ||
       stx.isOfKind ``Lean.Parser.Term.instBinder ||
       stx.isOfKind ``Lean.Parser.Term.binderIdent ||
-      stx.isOfKind ``Lean.Parser.Term.doubleQuotedName ||
-      stx.isOfKind ``Lean.Parser.Term.quot then
-    return Syntax.flat tokens
+      stx.isOfKind ``Lean.Parser.Term.doubleQuotedName then
+    return Syntax.flatSyntax stx
+  if stx.isOfKind ``Lean.Parser.Term.quot ||
+      stx.isOfKind ``Lean.Parser.Term.dynamicQuot then
+    return Syntax.flatSyntax stx
   none
 
 private partial def composableDocument? (ownership : CommentOwnership) (stx : Lean.Syntax) :
     Lean.CoreM (Except FormatterFailure (Option Doc)) := do
+  match stx with
+  | .atom _ spelling => return .ok (some (Doc.text spelling))
+  | .ident .. => return .ok (some (Syntax.flat (Syntax.spellings stx)))
+  | _ => pure ()
   if CoreSurface.owner (← Lean.getEnv) .term stx.getKind == .extension then return .ok none
   if (Comments.subtree ownership stx).isEmpty || (Syntax.spellings stx).size == 1 then
     if let some document := transparentDocument? stx then
@@ -94,8 +106,8 @@ private partial def composableDocument? (ownership : CommentOwnership) (stx : Le
   let childDocument (child : Lean.Syntax) : Lean.CoreM (Except FormatterFailure (Option Doc)) := do
     match CoreSurface.owner (← Lean.getEnv) .term child.getKind with
     | .extension =>
-      return (← Formatter.registered ownership .term child).map fun formatted =>
-        some formatted.document
+      return (← Formatter.registeredBoundary ownership .term child).map fun formatted =>
+        some (Trivia.decorate ownership child formatted.document)
     | _ =>
       match ← composableDocument? ownership child with
       | .ok (some document) =>
@@ -105,8 +117,13 @@ private partial def composableDocument? (ownership : CommentOwnership) (stx : Le
         -- This is an exact-child debt boundary for the operator, collection, and control-term
         -- owners in Prompts 12b/12c. It must not widen into registry ownership of `stx`; Prompt
         -- 14b removes the boundary once those closed core families are structurally complete.
-        return (← Formatter.registered ownership .term child).map fun formatted =>
-          some formatted.document
+        return (← Formatter.registeredBoundary ownership .term child).map fun formatted =>
+          some (Trivia.decorate ownership child formatted.document)
+  if stx.getKind == Lean.nullKind || stx.getKind == Lean.groupKind ||
+      stx.getKind == Lean.choiceKind then
+    let children := nonemptyChildren stx
+    if let #[child] := children then
+      return ← childDocument child
   match ← Collection.document ownership childDocument stx with
   | .ok (some document) => return .ok (some document)
   | .error failure => return .error failure
@@ -127,19 +144,20 @@ private partial def composableDocument? (ownership : CommentOwnership) (stx : Le
         Syntax.flat (Syntax.spellings field)))
     | .ok none => return .ok none
     | .error failure => return .error failure
-  if let #[left, operator, right] := stx.getArgs then
-    if let .atom _ spelling := operator then
-      match ← childDocument left with
-      | .error failure => return .error failure
-      | .ok none => return .ok none
-      | .ok (some leftDocument) =>
-        match ← childDocument right with
+  if isTrailingParserKind (← Lean.getEnv) stx.getKind then
+    if let #[left, operator, right] := stx.getArgs then
+      if let .atom _ spelling := operator then
+        match ← childDocument left with
         | .error failure => return .error failure
         | .ok none => return .ok none
-        | .ok (some rightDocument) =>
-          return .ok (some (Doc.group <|
-            leftDocument ++ Doc.text (" " ++ spelling) ++
-              Doc.nest 2 (Doc.line " " ++ rightDocument)))
+        | .ok (some leftDocument) =>
+          match ← childDocument right with
+          | .error failure => return .error failure
+          | .ok none => return .ok none
+          | .ok (some rightDocument) =>
+            return .ok (some (Doc.group <|
+              leftDocument ++ Doc.text (" " ++ spelling) ++
+                Doc.nest 2 (Doc.line " " ++ rightDocument)))
   if stx.isOfKind ``Lean.Parser.Term.paren then
     let children := nonemptyChildren stx
     let inner? := children.find? fun child =>
@@ -147,7 +165,8 @@ private partial def composableDocument? (ownership : CommentOwnership) (stx : Le
       tokens != #["("] && tokens != #[")"] && !child.isOfKind ``Lean.Parser.Term.hygienicLParen
     let some inner := inner? | return .ok none
     match ← childDocument inner with
-    | .ok (some document) => return .ok (some (Doc.text "(" ++ document ++ Doc.text ")"))
+    | .ok (some document) =>
+      return .ok (some (Doc.text "(" ++ document ++ Doc.text ")"))
     | .ok none => return .ok none
     | .error failure => return .error failure
   if stx.isOfKind ``Lean.Parser.Term.app then
@@ -168,7 +187,7 @@ private partial def composableDocument? (ownership : CommentOwnership) (stx : Le
   if stx.isOfKind ``Lean.Parser.Term.fun then
     let #[_, bodySyntax] := stx.getArgs | return .ok none
     if !bodySyntax.isOfKind ``Lean.Parser.Term.basicFun then return .ok none
-    let #[binders, typeSpec, _, body] := bodySyntax.getArgs | return .ok none
+    let #[binders, typeSpec, arrow, body] := bodySyntax.getArgs | return .ok none
     let binders := nonemptyChildren binders
     if binders.isEmpty then return .ok none
     let mut binderDocuments := #[]
@@ -180,7 +199,7 @@ private partial def composableDocument? (ownership : CommentOwnership) (stx : Le
     let header := separated (Doc.text "fun") binderDocuments ++
       (if (Syntax.spellings typeSpec).isEmpty then Doc.empty
        else Doc.text " : " ++ Syntax.flat (Syntax.spellings typeSpec)) ++
-      Doc.text " =>"
+      Doc.text " " ++ Syntax.flat (Syntax.spellings arrow)
     match ← childDocument body with
     | .ok (some bodyDocument) =>
       return .ok (some (Doc.group <|
@@ -201,6 +220,7 @@ def format (ownership : CommentOwnership) (stx : Lean.Syntax) :
       structural := true }
   | .error failure => return .error failure
   | .ok none =>
-    return ← Formatter.registered ownership .term stx
+    return (← Formatter.registeredBoundary ownership .term stx).map fun formatted =>
+      { formatted with document := Trivia.decorate ownership stx formatted.document }
 
 end LeanFmt.Internal.Formatter.Term

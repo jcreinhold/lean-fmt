@@ -3,6 +3,8 @@ module
 /- before import -/
 import Lean
 
+/-! Module documentation remains one complete lexical command. -/
+
 namespace CommentLayout
 
 syntax "comment_leaf" : term

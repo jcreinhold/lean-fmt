@@ -49,12 +49,12 @@ for width in (20, 40, 80, 100):
     assert text.index("first : α") < text.index("second : α") < text.index("count : Nat"), text
     assert text.index("| neither") < text.index("| left") < text.index("| right"), text
     assert text.index("def isEven") < text.index("def isOdd"), text
-    assert "def isEven" in text and "\n\n    def isOdd" in text, text
+    assert "def isEven" in text and "\n\n  def isOdd" in text, text
     assert all(not line.endswith((" ", "\t")) for line in text.splitlines()), text
 
 narrow = texts[20]
-assert "  opaque opaqueValue\n    (first second : Nat) :\n    Nat :=\n    first + second" in narrow, narrow
-assert "structure ExtendedPacket\n    (α : Type u)" in narrow, narrow
+assert "opaque opaqueValue\n  (first second : Nat) :\n  Nat :=\n  first + second" in narrow, narrow
+assert "structure ExtendedPacket\n  (α : Type u)" in narrow, narrow
 assert "structure ExtendedPacket (α : Type u) extends Packet α where" in texts[100], texts[100]
 assert texts[20] != texts[100], "declaration groups ignored width"
 

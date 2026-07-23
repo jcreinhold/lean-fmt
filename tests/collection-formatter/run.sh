@@ -36,47 +36,47 @@ for width in (20, 40, 80, 100):
 
 narrow = texts[20]
 for broken in (
-    """    (
-      alpha,
-      beta,
-      gamma,
-      delta
-    )""",
-    """    [
-      alpha,
-      beta,
-      gamma,
-      delta,
-      epsilon
-    ]""",
-    """    #[
-      alpha,
-      beta,
-      gamma,
-      delta,
-      epsilon
-    ]""",
-    """    ⟨
-      alpha,
-      beta,
-      gamma
-    ⟩""",
+    """  (
+    alpha,
+    beta,
+    gamma,
+    delta
+  )""",
+    """  [
+    alpha,
+    beta,
+    gamma,
+    delta,
+    epsilon
+  ]""",
+    """  #[
+    alpha,
+    beta,
+    gamma,
+    delta,
+    epsilon
+  ]""",
+    """  ⟨
+    alpha,
+    beta,
+    gamma
+  ⟩""",
 ):
     assert broken in narrow, narrow
-assert "      gamma,\n    ]" in narrow, "trailing list separator was lost"
-assert """    { first := alpha,
-      second := beta,
-      third := gamma }""" in narrow, narrow
-assert """    { packet with
-      first := alpha,
-      second := beta }""" in narrow, narrow
-assert """    { first := alpha
-      second := beta
-      third := gamma }""" in narrow, narrow
-assert "alpha + beta +\n      gamma +\n      delta" in narrow, narrow
-assert "alpha ^\n      beta ^\n        gamma" in narrow, narrow
-assert "Nat →\n      Nat →\n        Nat" in narrow, narrow
-assert "[\n      custom{alpha}," in narrow, narrow
+assert "    gamma,\n  ]" in narrow, "trailing list separator was lost"
+assert """  { first := alpha,
+    second := beta,
+    third := gamma }""" in narrow, narrow
+assert """  { packet with
+    first := alpha,
+    second := beta }""" in narrow, narrow
+assert """  { first := alpha
+    second := beta
+    third := gamma }""" in narrow, narrow
+assert "alpha + beta +\n    gamma +\n    delta" in narrow, narrow
+assert "alpha ^\n    beta ^\n      gamma" in narrow, narrow
+assert "Nat →\n    Nat →\n      Nat" in narrow, narrow
+assert "[\n    custom{alpha}," in narrow, narrow
 
 wide = texts[80]
 for flat in (

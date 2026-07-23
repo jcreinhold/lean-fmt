@@ -31,8 +31,9 @@ Import modifiers remain in source order. A comment-separated import group remain
 never deduplicates, reorders, or organizes imports. There is one blank line after the header before the
 first ordinary command.
 
-`commands.namespace` writes `namespace Name`, `section Name`, and their matching `end Name` at the
-owner's indentation. A nonempty body is indented two spaces. Top-level declaration-like commands are
+`commands.namespace` writes `namespace Name`, `section Name`, their bodies, and matching `end Name` at
+the command column. Namespace and section nesting changes names and scope, not command indentation;
+this follows ordinary Lean and mathlib source layout. Top-level declaration-like commands are
 separated by one blank line; cohesive setup commands (`open`, `export`, `universe`, `variable`, local
 options) may remain adjacent. Empty vertical padding is not preserved.
 

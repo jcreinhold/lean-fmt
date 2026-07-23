@@ -105,12 +105,11 @@ def leading (ownership : CommentOwnership) (stx : Lean.Syntax) : Option Doc :=
       | some document => document ++ Doc.hard ++ commentDocument ownership comment
       | none => commentDocument ownership comment
 
-/-- Comments physically following the complete command. Lean can logically attach an end-of-file
-line comment as `leading` trivia of a synthetic descendant, so the source boundary, rather than the
-logical placement tag, decides this outer case. Interior comments remain in registry-owned syntax. -/
+/-- Comments logically trailing the complete command and physically before its unit boundary.
+Comments assigned as leading trivia of the next command are emitted there, never duplicated here. -/
 def trailing (ownership : CommentOwnership) (stx : Lean.Syntax) (boundaryStop : Nat) : Option Doc :=
   let stop := stx.getRange?.map (·.stop.byteIdx) |>.getD 0
-  let comments := Comments.all ownership |>.filter fun comment =>
+  let comments := Comments.subtreeAt ownership stx .trailing |>.filter fun comment =>
     comment.range.start >= stop && comment.range.start < boundaryStop
   let (document?, _) := comments.foldl (init := (none, stop)) fun (document?, cursor) comment =>
     let boundary := if Comments.hasNewlineBetween ownership cursor comment.range.start then

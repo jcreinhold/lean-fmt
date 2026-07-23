@@ -73,11 +73,11 @@ for width in (20, 40, 80, 100):
     assert text.index("let first") < text.index("let second") < text.index("pure second"), text
 
 narrow = texts[20]
-assert "by\n      constructor\n      ·" in narrow, narrow
-assert "first\n      | exact proof\n      | assumption" in narrow, narrow
-assert "do\n      let first ←" in narrow, narrow
-assert "Id.run\n      do" in narrow, narrow
-assert "do\n      {" in narrow, narrow
+assert "by\n    constructor\n    ·" in narrow, narrow
+assert "first\n    | exact proof\n    | assumption" in narrow, narrow
+assert "do\n    let first ←" in narrow, narrow
+assert "Id.run\n    do" in narrow, narrow
+assert "do\n    {" in narrow, narrow
 assert narrow.index("| 0 =>") < narrow.index("| _ =>"), narrow
 assert texts[20] != texts[40] != texts[80], "block registry ignored configured width"
 print("  ok   tactic, do, control, match, and where roots compose structurally at four widths")

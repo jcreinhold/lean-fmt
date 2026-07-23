@@ -128,13 +128,13 @@ private def fieldDocument
     | some comments => comments ++ Doc.hard ++ document
     | none => document
   let some definition := definitions[0]? |
-    return .ok (some (attachLeading (Syntax.flat (Syntax.spellings left))))
+    return .ok (some (attachLeading (Syntax.flatSyntax left)))
   for child in definition.getArgs do
     if (Syntax.spellings child).isEmpty || isAtom ":=" child then continue
     match ← childDocument child with
     | .ok (some value) =>
       return .ok (some (attachLeading <|
-        Syntax.flat (Syntax.spellings left) ++ Doc.text " := " ++ value))
+        Syntax.flatSyntax left ++ Doc.text " := " ++ value))
     | .error failure => return .error failure
     | .ok none => pure ()
   return .ok none

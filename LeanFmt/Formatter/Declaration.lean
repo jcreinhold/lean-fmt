@@ -193,8 +193,8 @@ private def whereDocument? (ownership : CommentOwnership) (value : Lean.Syntax) 
   for declaration in declarations do
     document := document ++ Doc.nest 2
       (Doc.hard ++ (match Trivia.leading ownership declaration with
-        | some comments => comments ++ Doc.hard ++ Syntax.flat (Syntax.spellings declaration)
-        | none => Syntax.flat (Syntax.spellings declaration)))
+        | some comments => comments ++ Doc.hard ++ Syntax.flatSyntax declaration
+        | none => Syntax.flatSyntax declaration))
   return document
 
 private def terminationDocument? (value : Lean.Syntax) : Option Doc := do
@@ -218,15 +218,18 @@ private def equationDocument (ownership : CommentOwnership) (value : Lean.Syntax
     match ← Term.format ownership body with
     | .error failure => return .error failure
     | .ok formatted =>
-      let row := Doc.text "| " ++ Syntax.flat (Syntax.spellings patterns) ++ Doc.text " =>" ++
+      let row := Doc.text "| " ++ Syntax.flatSyntax patterns ++ Doc.text " =>" ++
         Doc.nest 2 (Doc.line " " ++ formatted.document)
+      let row := match Trivia.leading ownership alternative with
+        | some comments => comments ++ Doc.hard ++ row
+        | none => row
       document? := some <| document?.map (· ++ Doc.hard ++ row) |>.getD row
   return .ok (document?.getD Doc.empty)
 
 private def structureValueDocument (value : Lean.Syntax) : Doc :=
   let fields := descendants (·.isOfKind ``Lean.Parser.Term.structInstField) value
   fields.foldl (init := Doc.text "where") fun document field =>
-    document ++ Doc.nest 2 (Doc.hard ++ Syntax.flat (Syntax.spellings field))
+    document ++ Doc.nest 2 (Doc.hard ++ Syntax.flatSyntax field)
 
 private def familyDocument? (stx : Lean.Syntax) : Option Doc := do
   let #[modifiers, inner] := stx.getArgs | none
@@ -238,7 +241,7 @@ private def familyDocument? (stx : Lean.Syntax) : Option Doc := do
   let mut document := Syntax.groupedTopLevel headerTokens
   for member in members do
     document := document ++ Doc.nest 2
-      (Doc.hard ++ Syntax.flat (Syntax.spellings member))
+      (Doc.hard ++ Syntax.flatSyntax member)
   if let some derivingStx := findDescendant? (·.isOfKind ``Lean.Parser.Command.optDeriving) inner then
     let tokens := Syntax.spellings derivingStx
     unless tokens.isEmpty do
@@ -255,7 +258,7 @@ private def simpleDocument? (ownership : CommentOwnership) (stx : Lean.Syntax) :
     let (binders, typeSpec?) := signatureParts signature #[] none
     for binder in binders do
       document := document ++ Doc.nest 2
-        (Doc.line " " ++ Syntax.flat (Syntax.spellings binder))
+        (Doc.line " " ++ Syntax.flatSyntax binder)
     if let some typeSpec := typeSpec? then document := document ++ typeDocument typeSpec
   if let some value := parts.value? then
     if isEquationValue value then
@@ -303,7 +306,7 @@ private def mutualDocument? (ownership : CommentOwnership) (stx : Lean.Syntax) :
 
 private def derivingDocument? (stx : Lean.Syntax) : Option Doc :=
   if stx.isOfKind ``Lean.Parser.Command.deriving then
-    some (Syntax.flat (Syntax.spellings stx))
+    some (Syntax.flatSyntax stx)
   else none
 
 /-- Format a closed declaration command, or return `none` for a non-declaration command. Supported

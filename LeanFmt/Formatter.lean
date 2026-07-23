@@ -160,6 +160,38 @@ def registeredAs (ownership : CommentOwnership) (category : FormatterCategory)
       trace
       detail }
 
+private def stripBoundaryInfo (start stop : Nat) : Lean.SourceInfo → Lean.SourceInfo
+  | .original leading position trailing endPos =>
+    let leading := if leading.startPos.byteIdx < start then
+        { leading with stopPos := leading.startPos }
+      else leading
+    let trailing := if stop < trailing.stopPos.byteIdx then
+        { trailing with stopPos := trailing.startPos }
+      else trailing
+    .original leading position trailing endPos
+  | info => info
+
+private partial def stripBoundaryTriviaFrom (start stop : Nat) : Lean.Syntax → Lean.Syntax
+  | .node info kind children =>
+    .node (stripBoundaryInfo start stop info) kind
+      (children.map (stripBoundaryTriviaFrom start stop))
+  | .atom info value => .atom (stripBoundaryInfo start stop info) value
+  | .ident info raw value preresolved =>
+    .ident (stripBoundaryInfo start stop info) raw value preresolved
+  | .missing => .missing
+
+/-- Remove trivia outside a syntax root while retaining every comment between its first and last
+token. Structural parents own that boundary trivia; an opaque registered leaf owns only its interior. -/
+def withoutBoundaryTrivia (stx : Lean.Syntax) : Lean.Syntax :=
+  let start := stx.getRange?.map (·.start.byteIdx) |>.getD 0
+  let stop := stx.getRange?.map (·.stop.byteIdx) |>.getD start
+  stripBoundaryTriviaFrom start stop stx
+
+/-- Run a registered leaf without allowing it to duplicate trivia owned by its structural parent. -/
+def registeredBoundary (ownership : CommentOwnership) (category : FormatterCategory)
+    (stx : Lean.Syntax) : Lean.CoreM (Except FormatterFailure RegisteredDocument) :=
+  registeredAs ownership category stx (withoutBoundaryTrivia stx)
+
 /-- Resolve and run the registry with the same actual syntax used for trace and formatting. -/
 def registered (ownership : CommentOwnership) (category : FormatterCategory)
     (stx : Lean.Syntax) : Lean.CoreM (Except FormatterFailure RegisteredDocument) :=

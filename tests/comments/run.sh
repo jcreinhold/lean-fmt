@@ -116,13 +116,14 @@ import json, pathlib, sys
 root = pathlib.Path(sys.argv[1])
 summary = json.loads((root / "layout-summary.json").read_text())
 assert summary == {
-    "comments": 12, "dangling": 0, "leading": 7,
-    "payloadDigest": "8ae2700978ffee3afd6a0406698de9076a2a14224f140a3b55b3042c68e73b50",
+    "comments": 13, "dangling": 0, "leading": 8,
+    "payloadDigest": "274997ea206091bf77ee03b20c21942d8b31e495a8a687e0d93fd93e141a9a7d",
     "suppressed": 0, "trailing": 5, "valid": True,
 }, summary
 
 payloads = (
-    "/- before import -/", "/- before macro alternative -/", "/- between binders -/",
+    "/- before import -/", "/-! Module documentation remains one complete lexical command. -/",
+    "/- before macro alternative -/", "/- between binders -/",
     "/- before operator -/", "/- before entry -/",
     "-- trailing tactic", "/- alternative comment -/", "-- leading item",
     "-- trailing item", "/- between items -/", "/- arm body -/",
@@ -134,21 +135,21 @@ for width in (24, 60, 100):
     assert report.get("validationFailure") is None and report.get("canonical") is not None, report
     canonical = report["canonical"]
     assert canonical["validation"]["idempotencePasses"] == 1, canonical
-    assert canonical["metrics"]["commentOwners"] == 12, canonical["metrics"]
+    assert canonical["metrics"]["commentOwners"] == 13, canonical["metrics"]
     assert canonical["metrics"]["coreRegistryDocuments"] == 0, canonical["metrics"]
     assert canonical["metrics"]["registryDocuments"] == 0, canonical["metrics"]
     for payload in payloads:
         assert canonical["text"].count(payload) == 1, (width, payload, canonical["text"])
     assert canonical["text"].startswith("module\n/- before import -/\nimport Lean\n"), canonical["text"]
-    assert "macro_rules\n    /- before macro alternative -/\n    |" in canonical["text"], canonical["text"]
+    assert "macro_rules\n  /- before macro alternative -/\n  |" in canonical["text"], canonical["text"]
     texts[width] = canonical["text"]
 
 crlf = json.loads((root / "layout-crlf.json").read_text())
 assert crlf.get("validationFailure") is None and crlf.get("canonical") is not None, crlf
 assert crlf["canonical"]["text"] == texts[60], crlf["canonical"]["text"]
-assert crlf["canonical"]["metrics"]["commentOwners"] == 12, crlf["canonical"]["metrics"]
+assert crlf["canonical"]["metrics"]["commentOwners"] == 13, crlf["canonical"]["metrics"]
 assert texts[24] != texts[60], "configured width did not reflow the commented fixture"
-print("  ok   twelve exact payloads retain one logical owner through two frontend passes")
+print("  ok   thirteen exact payloads retain one logical owner through two frontend passes")
 print("  ok   widths 24/60/100 and LF/CRLF preserve one stable comment contract")
 PY
 

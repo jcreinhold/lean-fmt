@@ -41,15 +41,23 @@ private def hugsPrevious : String → Bool
   | _ => false
 
 private def hugsNext : String → Bool
-  | "(" | "[" | "{" | "⟨" | "@(" | "@[" | "`(" | "`[" | "`{" | ".{" | "$" | "." => true
+  | "(" | "[" | "{" | "⟨" | "@(" | "@[" | "#[" | "`" | "`(" | "`[" | "`{" | ".{" | "$" | "." => true
   | _ => false
 
-/-- Whether two adjacent selected syntax tokens receive canonical horizontal separation. Structural
-owners that retain token identity use this predicate while attaching exact-node comments. -/
-def separates (previous token : String) : Bool :=
+/-- Whether adjacent selected syntax tokens receive canonical horizontal separation, with the one
+token of left context needed by typed antiquotations such as `$x:ident`. -/
+def separatesAfter (_previousPrevious : Option String) (previous token : String) : Bool :=
   let projectionDot := token == "." &&
     previous != "=>" && previous != ":=" && previous != "|" && previous != ","
-  !(hugsNext previous || hugsPrevious token || projectionDot)
+  let compositeOpening := previous.endsWith "(" || previous.endsWith "[" ||
+    previous.endsWith "{"
+  let antiquotationRepetition := previous == "]" && (token == "?" || token == "*" || token == "+")
+  !(hugsNext previous || hugsPrevious token || projectionDot || compositeOpening ||
+    antiquotationRepetition)
+
+/-- Whether two adjacent selected syntax tokens receive canonical horizontal separation when no
+antiquotation context is available. -/
+def separates (previous token : String) : Bool := separatesAfter none previous token
 
 /-- Canonical flat spacing for an already-owned token row. Delimiter and projection punctuation hug;
 all other adjacent tokens receive one space. -/
@@ -59,7 +67,7 @@ def flatText (tokens : Array String) : String := Id.run do
     let token := tokens[index]!
     if index > 0 then
       let previous := tokens[index - 1]!
-      if separates previous token then output := output ++ " "
+      if separatesAfter tokens[index - 2]? previous token then output := output ++ " "
     output := output ++ token
   return output
 
@@ -68,6 +76,39 @@ node rather than smuggling a newline through `Doc.text`. -/
 def flat (tokens : Array String) : Doc :=
   let value := flatText tokens
   if value.contains '\n' then Doc.verbatim value else Doc.text value
+
+private structure FlatSyntaxToken where
+  spelling : String
+  compact : Bool
+  deriving Inhabited
+
+private partial def flatSyntaxTokens (stx : Lean.Syntax) (tokens : Array FlatSyntaxToken := #[])
+    (compact := false) : Array FlatSyntaxToken :=
+  match stx with
+  | .missing => tokens
+  | .atom _ spelling => if spelling.isEmpty then tokens else tokens.push { spelling, compact }
+  | .ident _ raw _ _ =>
+    let spelling := raw.toString
+    if spelling.isEmpty then tokens else tokens.push { spelling, compact }
+  | .node _ kind children =>
+    let children := if kind == Lean.choiceKind then children[0]?.toArray else children
+    let compact := compact || kind == `antiquotName
+    children.foldl (init := tokens) fun tokens child => flatSyntaxTokens child tokens compact
+
+/-- A flat syntax document that preserves the parser's compact typed-antiquotation node. Unlike a
+spelling-only heuristic, this distinguishes `$x:ident` from a custom quotation containing `$x :`. -/
+def flatSyntax (stx : Lean.Syntax) : Doc := Id.run do
+  let tokens := flatSyntaxTokens stx
+  let mut output := ""
+  for index in [:tokens.size] do
+    let token := tokens[index]!
+    if index > 0 && !token.compact then
+      let previous := tokens[index - 1]!
+      if separatesAfter (tokens[index - 2]?.map (·.spelling)) previous.spelling token.spelling then
+        output := output ++ " "
+    output := output ++ token.spelling
+  if output.contains '\n' then return Doc.verbatim output
+  return Doc.text output
 
 private def opensDelimiter : String → Bool
   | "(" | "[" | "{" | "⟨" | "@(" | "@[" | "`(" | "`[" | "`{" | ".{" => true
@@ -87,7 +128,7 @@ def groupedTopLevel (tokens : Array String) : Doc := Id.run do
   for index in [1:tokens.size] do
     let previous := tokens[index - 1]!
     let token := tokens[index]!
-    let separator := if separates previous token then
+    let separator := if separatesAfter tokens[index - 2]? previous token then
         if index < protectedPrefix || depth > 0 then Doc.text " " else Doc.line " "
       else Doc.empty
     document := document ++ separator ++ Doc.text token

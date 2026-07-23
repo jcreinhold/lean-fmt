@@ -69,7 +69,7 @@ private def letDeclaration (formatChild : ChildDocument) (declaration : Lean.Syn
 
 private def letDocument (formatChild : ChildDocument) (stx : Lean.Syntax) :
     Lean.CoreM (Except FormatterFailure (Option Doc)) := do
-  let #[_, config, declaration, _, continuation] := stx.getArgs | return .ok none
+  let #[_, config, declaration, separator, continuation] := stx.getArgs | return .ok none
   if !(Syntax.spellings config).isEmpty then return .ok none
   match ← letDeclaration formatChild declaration with
   | .error failure => return .error failure
@@ -79,8 +79,11 @@ private def letDocument (formatChild : ChildDocument) (stx : Lean.Syntax) :
     | .error failure => return .error failure
     | .ok none => return .ok none
     | .ok (some continuationDocument) =>
-      return .ok (some (Doc.text "let " ++ declarationDocument ++
-        Doc.hard ++ continuationDocument))
+      let separatorTokens := Syntax.spellings separator
+      let boundary := if separatorTokens.isEmpty then Doc.hard
+        else Syntax.flat separatorTokens ++ Doc.line " "
+      return .ok (some (Doc.group <| Doc.text "let " ++ declarationDocument ++
+        boundary ++ continuationDocument))
 
 private partial def containerMembers (containerKind memberKind : Lean.Name) (stx : Lean.Syntax)
     (values : Array Lean.Syntax := #[]) : Array Lean.Syntax :=
@@ -113,7 +116,7 @@ private def alternativeDocument (ownership : CommentOwnership) (formatChild : Ch
       | some comments => comments ++ Doc.hard ++ bodyDocument
       | none => bodyDocument
     let document := Doc.group <|
-      Doc.text "| " ++ Syntax.flat (Syntax.spellings patterns) ++ Doc.text " =>" ++
+      Doc.text "| " ++ Syntax.flatSyntax patterns ++ Doc.text " =>" ++
         Doc.nest 2 (Doc.line " " ++ bodyDocument)
     return .ok (some <| match Trivia.leading ownership stx with
       | some comments => comments ++ Doc.hard ++ document

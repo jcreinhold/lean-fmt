@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Closed-core provenance and the temporary pre-cutover ownership-debt ledger. The zero-core-registry
-# release gate is intentionally not waived: this suite proves it currently fails, and prompts 11–14b
-# must drive the recorded count to zero before Prompt 15 can pass it.
+# Closed-core provenance and the zero-core-registry release gate. Registered documents are permitted
+# only for non-core extension roots.
 
 repo_root=$(cd "$(dirname "$0")/../.." && pwd)
 work=$(mktemp -d)
@@ -33,12 +32,15 @@ LEAN
 lake setup-file "$work/Extension.lean" >"$work/extension.setup.json"
 LEAN_NUM_THREADS=1 lake env "$application" __analyze-exact \
   "$work/extension.setup.json" "$work/Extension.lean" Extension.lean \
-  8589934592 draft:100 >"$work/extension.json"
+  8589934592 4:100 >"$work/extension.json"
 
 python3 - "$work/application.json" "$work/extension.json" <<'PY'
 import copy, json, sys
 
-application, extension = (json.load(open(path))["formatDraft"]["metrics"] for path in sys.argv[1:])
+application_envelope, extension_envelope = (json.load(open(path)) for path in sys.argv[1:])
+application = application_envelope["formatDraft"]["metrics"]
+extension = extension_envelope["canonical"]["metrics"]
+assert extension_envelope.get("validationFailure") is None, extension_envelope
 
 def complete(metrics):
     classified = (metrics["structuralDocuments"] + metrics["coreRegistryDocuments"] +
@@ -50,8 +52,7 @@ def release_gate(metrics):
     return complete(metrics) and metrics["coreRegistryDocuments"] == 0
 
 assert complete(application), application
-assert application["coreRegistryDocuments"] > 0, application
-assert not release_gate(application), "the pre-rule core debt was silently accepted"
+assert release_gate(application), application
 
 assert complete(extension), extension
 assert extension["extensionRegistryDocuments"] == 2, extension
@@ -65,7 +66,7 @@ misclassified["coreRegistryDocuments"] += misclassified["extensionRegistryDocume
 misclassified["extensionRegistryDocuments"] = 0
 assert not release_gate(misclassified), "an extension misclassified as core passed the registry gate"
 
-print("core-surface debt:", {
+print("core-surface ownership:", {
     "applicationCoreRegistry": application["coreRegistryDocuments"],
     "applicationStructural": application["structuralDocuments"],
     "extensionRegistry": extension["extensionRegistryDocuments"],

@@ -130,7 +130,10 @@ private partial def collectSitesFrom (bytes : ByteArray) (stx : Lean.Syntax) (de
     | none => (sites, comments)
     | some range =>
       let spelling := slice bytes range
-      let sites := if isDocSpelling spelling then sites else
+      -- Zero-width parser sentinels (notably end-of-input) do not spell source and therefore cannot
+      -- own source trivia. Keeping one as the following leaf turns a final comment into leading
+      -- trivia of an unrenderable node instead of file-dangling trivia.
+      let sites := if spelling.isEmpty || isDocSpelling spelling then sites else
         sites.push { stx, range, depth, path, leaf := true, spelling }
       let comments := if isDocSpelling spelling then
           comments.push { kind := .doc, range }

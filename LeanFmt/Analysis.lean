@@ -96,6 +96,12 @@ private def appendDocument (document? : Option Doc) (next : Doc) : Option Doc :=
   | some document => document ++ next
   | none => next
 
+private partial def containsKind (kind : Lean.Name) (stx : Lean.Syntax) : Bool :=
+  if stx.getKind == kind then true
+  else if stx.getKind == Lean.choiceKind then
+    stx.getArgs[0]?.any (containsKind kind)
+  else stx.getArgs.any (containsKind kind)
+
 private def buildFormatDraft (normalized : String) (source : LosslessSource)
     (sourcePath : System.FilePath) (fileMap : Lean.FileMap) (ownership : CommentOwnership)
     (header : Lean.Syntax) (headerEnv : Lean.Environment) (headerOptions : Lean.Options)
@@ -179,12 +185,23 @@ private def buildFormatDraft (normalized : String) (source : LosslessSource)
       | .extension => extensionRegistryDocuments := extensionRegistryDocuments + 1
       | _ => coreRegistryDocuments := coreRegistryDocuments + 1
     let indentation := Doc.text ("".pushn ' ' placement.indent)
-    let leadingTrivia := match Formatter.Trivia.leading ownership command.stx with
+    -- Docstrings are command syntax even though Lean stores their opening token in `SourceInfo` and
+    -- comment ownership classifies that token as `doc`. Their structural command document is the
+    -- sole emitter; treating the opening as outer trivia duplicates `/--` or `/-!` and makes the
+    -- candidate an unterminated nested comment.
+    let ownsDocSyntax := command.stx.isOfKind ``Lean.Parser.Command.moduleDoc ||
+      containsKind ``Lean.Parser.Command.docComment command.stx
+    -- Command-boundary trivia belongs to whole-module composition. Registered command syntax is
+    -- boundary-stripped before delegation, so the ownership layer remains its sole outer emitter.
+    let leadingTrivia := if ownsDocSyntax then Doc.empty else
+      match Formatter.Trivia.leading ownership command.stx with
       | some comments => comments ++ Doc.hard
       | none => Doc.empty
-    let trailingTrivia := match Formatter.Trivia.trailing ownership command.stx stop with
-      | some comments => comments
-      | none => Doc.empty
+    let trailingTrivia := if formatted.mechanism == .registry then
+        match Formatter.Trivia.trailing ownership command.stx stop with
+        | some comments => comments
+        | none => Doc.empty
+      else Doc.empty
     let commandDocument := Doc.nest placement.indent
       (indentation ++ leadingTrivia ++ formatted.document ++ trailingTrivia)
     document? := appendDocument document? <|
