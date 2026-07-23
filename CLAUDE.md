@@ -34,7 +34,7 @@ lake lint            # the formatter on itself, under lean-fmt.toml; this is wha
 ```
 
 Suites live in `tests/*/run.sh`: boundary, cache, catalog, check, ci, compiler, discovery, downstream,
-imports, layout, lossless, modes, performance, printer, reporting, scale, semantic, stream,
+imports, layout, lossless, modes, performance, reporting, scale, semantic, stream,
 suppression, syntax, watch.
 
 Match the checks to the change:
@@ -85,7 +85,7 @@ remains is the record, in this order:
   They are prose and can rot; when one contradicts the code, the code wins and the docstring is wrong.
 - `docs/` is the user-facing contract. `docs/ci.md` and `docs/adding-a-rule.md` are gated by suites;
   the rest is not.
-- Committed evidence (`tests/printer/projection-shape.txt`, `experiments/evidence/`) is a measurement
+- Committed evidence under `experiments/evidence/` is a measurement
   with a date, not a decision. Regenerate it rather than arguing with it.
 
 If two records disagree, write down the disagreement and how you settled it. The design rationale that

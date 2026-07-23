@@ -803,16 +803,8 @@ def RulePlan.requiredTierOf (plan : RulePlan) (rules : Array Rule) : Tier :=
 /-- The cheapest facts that can answer every selected rule the product ships. -/
 def RulePlan.requiredTier (plan : RulePlan) : Tier := plan.requiredTierOf ruleRegistry
 
-/-- The tier a run must actually obtain, folding in the mode's own demand on top of its rules'.
-
-Rules alone give `requiredTier`; the mode contributes separately, because a rendering mode needs facts
-its rules do not. The declared-spacing fact (`Tier.semantic`) is consumed by the **formatter**, not by
-any rule, so `requiredTier` — a fold over rules — can never reach `semantic` on its own (`ruff-05b`).
-A canonical-rendering run demands it here instead: `format`/`diff`/`fix` obtain the semantic artifact,
-`check` and a source/syntax report do not. This is the one place the formatter's demand enters
-planning, so the gating cost is recorded rather than hidden across call sites. -/
-def RulePlan.demandedTier (plan : RulePlan) (renderCanonical : Bool) : Tier :=
-  plan.requiredTier.max (if renderCanonical then .semantic else .source)
+/-- The tier selected rules require. Formatting is an exact-frontend demand, not a semantic fact. -/
+def RulePlan.demandedTier (plan : RulePlan) : Tier := plan.requiredTier
 
 /-- Whether the plan selects a rule whose fix reads the owned deprecation-occurrence fact. Governs the
 `occurrences` capability and the info-tree fold's cost (`RuleInfo.needsOccurrences`). `rules` is a
@@ -824,24 +816,18 @@ def RulePlan.selectsOccurrenceRuleOf (plan : RulePlan) (rules : Array Rule) : Bo
 def RulePlan.selectsOccurrenceRule (plan : RulePlan) : Bool :=
   plan.selectsOccurrenceRuleOf ruleRegistry
 
-/-- The semantic sub-facts a run demands — the capability axis beside `demandedTier` (`ruff-11b`
-Design B). Non-empty only when the demanded tier reaches `.semantic`:
-- `notations` when a rendering mode needs the layout fact (`format`/`diff`; `fix` does not reflow);
-- `diagnostics` when a selected rule reads the compiler diagnostics (the tier reached `.semantic`
-  through a rule) — always satisfied by any `.semantic` entry, which captures it monolithically;
+/-- The semantic rule sub-facts a run demands. Non-empty only at the semantic tier:
+- `diagnostics` for the selected semantic rules;
 - `occurrences` when a run that **applies** fixes selects an occurrence-fix rule (FMT012's rename) — the
   one capability that gates the whole-file info-tree fold.
 
-The `occurrences` demand keys off `applies` (true only for `fix`), not off `renderCanonical`, since
-`ruff-11c` RDF-IMPL split layout from fix: `format`/`diff` render (`renderCanonical`) but apply no fix,
-so they must not pay the info-tree fold, while `fix` applies the FMT012 rename but no longer renders. A
-`check` neither renders nor applies, so it demands neither `notations` nor `occurrences`. `cacheHitServes`
+The `occurrences` demand keys off `applies` (true only for `fix`). A check does not pay the fold.
+`cacheHitServes`
 serves a `.semantic` entry only when `demandedCaps.subset entry.caps`, so a fix's `occurrences` demand
 misses a monolithic-era entry that never captured it. -/
-def RulePlan.demandedCaps (plan : RulePlan) (renderCanonical applies : Bool) : SemanticCaps :=
-  if plan.demandedTier renderCanonical == .semantic then
-    { notations := renderCanonical
-      diagnostics := plan.requiredTier == .semantic
+def RulePlan.demandedCaps (plan : RulePlan) (applies : Bool) : SemanticCaps :=
+  if plan.demandedTier == .semantic then
+    { diagnostics := true
       occurrences := applies && plan.selectsOccurrenceRule }
   else {}
 

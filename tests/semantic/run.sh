@@ -1,18 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# RSF-FINAL acceptance for the semantic notation-spacing fact (ruff-05b). Proves, on the real
-# production capture path (`__analyze-exact`, the on-demand `analyzeExact` producer), that:
-#   A. the fresh-frontend differential holds for core *and* a corpus-declared notation — the captured
-#      declared spacing equals what Lean's own `ppTerm`/`pushToken` emits, computed independently;
-#   A'. the differential is non-vacuous — a deliberately wrong atom does not match the emission;
-#   B. demand-gating runs both directions — `captureSemantic=0` yields `semantic = null` with a source
-#      projection byte-identical to the capturing run, and end to end a `format` run rejects the
-#      plugin's `semantic = none` artifact while `check` serves source-tier from it;
-#   C. the v4 artifact is byte-stable across runs (a stable cache digest).
-# The in-module `run_cmd` differential in `LeanFmtTest.lean` covers the corpus case against `ppTerm`
-# directly; this harness adds what the module system hides in-module — core notation *values* are
-# only visible in the live frontend env the child analyzes, never to an importing module.
+# Acceptance for semantic rule facts. Formatting is deliberately absent from this capability: the
+# exact formatter uses live syntax and registry state, while this suite gates compiler diagnostics and
+# owned deprecation occurrences only.
 
 repo_root=$(cd "$(dirname "$0")/../.." && pwd)
 work=$(mktemp -d)
@@ -40,18 +31,14 @@ LEAN_NUM_THREADS=1 lake env "$application" __analyze-exact \
 LEAN_NUM_THREADS=1 lake env "$application" __analyze-exact \
   "$work/setup.json" "$fixture" "$fixture" "$maxb" 1 >"$work/on2.json"
 
-# --- Lean's own emission (the independent oracle) -------------------------------------------------
-LEAN_NUM_THREADS=1 lake env lean tests/semantic/Emit.lean >"$work/emit.txt"
-
-python3 - "$work/on.json" "$work/off.json" "$work/on2.json" "$work/emit.txt" <<'PY'
+python3 - "$work/on.json" "$work/off.json" "$work/on2.json" <<'PY'
 import json, sys
 on = json.load(open(sys.argv[1]))["artifact"]
 off = json.load(open(sys.argv[2]))["artifact"]
 on2 = json.load(open(sys.argv[3]))["artifact"]
-emit = open(sys.argv[4]).read().splitlines()
 
-# Both schemas advanced to v6 regardless of capture; only the semantic field differs.
-assert on["schema"] == off["schema"] == "lean-fmt.module-artifact.v6", on["schema"]
+# Both schemas advanced regardless of capture; only the semantic field differs.
+assert on["schema"] == off["schema"] == "lean-fmt.module-artifact.v7", on["schema"]
 
 # B. Demand-gating: no capture -> semantic is null; capture -> semantic present. The source
 # projection is byte-identical either way, so the fact is purely additive and the syntax-only path is
@@ -60,40 +47,15 @@ assert off["semantic"] is None, f"captureSemantic=0 still captured: {off['semant
 assert on["semantic"] is not None, "captureSemantic=1 produced no semantic fact"
 assert on["source"] == off["source"], "semantic capture perturbed the source projection"
 
-# C. The v4 artifact is byte-stable across identical runs (a stable cache digest).
+# The artifact is byte-stable across identical runs.
 assert on == on2, "two identical capturing runs produced different artifacts"
-
-spacing = {n["kind"]: n["atoms"] for n in on["semantic"]["notations"]}
-plus = spacing["«term_+_»"]
-times = spacing["«term_*_»"]
-corpus = spacing["«term_⊕corpus_»"]
-# Each is a single symbolic atom carrying its declared, untrimmed spacing.
-assert plus == [" + "], plus
-assert times == [" * "], times
-assert corpus == [" ⊕corpus "], corpus
-
-# A. Fresh-frontend differential: the captured atoms predict Lean's own emission byte for byte. The
-# emission was produced by `ppTerm` in a separate process that never touched the capture code.
-core_emitted, corpus_emitted = emit[0], emit[1]
-core_predicted = "1" + plus[0] + "2" + times[0] + "3"   # 1 + (2 * 3)
-corpus_predicted = "1" + corpus[0] + "2"
-assert core_predicted == core_emitted, f"core: {core_predicted!r} != {core_emitted!r}"
-assert corpus_predicted == corpus_emitted, f"corpus: {corpus_predicted!r} != {corpus_emitted!r}"
-
-# A'. Non-vacuity: a wrong atom must NOT reproduce the emission. If it did, the differential would
-# accept anything and prove nothing.
-assert "1" + " - " + "2" + times[0] + "3" != core_emitted, "core differential is vacuous"
-assert "1" + " WRONG " + "2" != corpus_emitted, "corpus differential is vacuous"
-
-print("differential: core", repr(core_emitted), "corpus", repr(corpus_emitted))
-print("captured atoms:", {"+" : plus, "*": times, "⊕corpus": corpus})
+assert set(on["semantic"]) == {"diagnostics"}, on["semantic"]
+print("semantic artifact: diagnostics/occurrences only")
 PY
 
-# --- Demand-gating end to end: format rejects the plugin's semantic=none artifact ----------------
-# `format` demands `.semantic`; the always-on plugin artifact carries `semantic = none`, so a format
-# run must reject it and re-run `analyzeExact`. With the analyzer disabled that re-run fails (exit 2)
-# — the rejection made observable. `check` on the same file needs only source-tier facts, accepts the
-# cheap artifact, and succeeds (exit 0). The pair is the fast path and the demand seam at once.
+# --- Formatting needs the exact frontend, independently of semantic facts -------------------------
+# The plugin artifact cannot format because it carries no live syntax/environment. With the analyzer
+# disabled `format` fails, while source-tier `check` still succeeds from cheap evidence.
 clean=tests/check/Clean.lean
 set +e
 LEAN_FMT_TEST_ANALYZER=/usr/bin/false "$application" format --root . --json --no-cache "$clean" \
@@ -104,7 +66,7 @@ LEAN_FMT_TEST_ANALYZER=/usr/bin/false "$application" check --root . --json --no-
 chk_exit=$?
 set -e
 if [[ $fmt_exit -ne 2 ]]; then
-  printf 'format should reject the semantic=none artifact and fail (exit 2), got %s\n' "$fmt_exit" >&2
+  printf 'format should require the exact frontend and fail (exit 2), got %s\n' "$fmt_exit" >&2
   cat "$work/fmt.json" >&2
   exit 1
 fi

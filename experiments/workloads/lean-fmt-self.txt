@@ -19,7 +19,6 @@ LeanFmt/GitSelection.lean
 LeanFmt/Imports.lean
 LeanFmt/LanguageServer.lean
 LeanFmt/LosslessSource.lean
-LeanFmt/Printer.lean
 LeanFmt/Project.lean
 LeanFmt/Rules.lean
 LeanFmt/Semantic.lean

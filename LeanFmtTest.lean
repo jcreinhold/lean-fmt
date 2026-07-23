@@ -12,7 +12,6 @@ import all LeanFmt.Doc
 import all LeanFmt.Edit
 import all LeanFmt.Imports
 import all LeanFmt.LanguageServer
-import all LeanFmt.Printer
 import all LeanFmt.Rules
 import all LeanFmt.Suppression
 
@@ -58,7 +57,7 @@ private def testRules : IO Unit := do
   -- Trailing-whitespace and final-newline normalization is the **formatter's** layout, not a lint rule
   -- (`ruff-11c` RDF-LAYOUT): both rules were retired, so the source rules are silent on both, even on
   -- this trailing-whitespace, no-final-newline fixture. The printer owns the normalization; that it does
-  -- so soundly (never touching a string literal's interior) is proved in `tests/printer`/`tests/modes`.
+  -- so soundly (never touching a string literal's interior) is proved in formatter/mode suites.
   --
   -- This once named the retired codes FMT001/FMT002 explicitly, in a `f.code != …` guard. The
   -- renumbering (`docs/rules/MIGRATION.md`) reassigned both codes to the live security rules, which
@@ -507,7 +506,7 @@ private def ensureRejected (source : String) (findings : Array Finding)
 private def testEdits : IO Unit := do
   -- Patch assembly over multi-byte input (`α` is two UTF-8 bytes), independent of any rule: two disjoint
   -- synthetic safe edits exercise the offset math, `editCount`, `changed`, and `revert`. (Trailing
-  -- whitespace and the final newline are the formatter's layout now, tested in tests/printer and
+  -- whitespace and the final newline are the formatter's layout now, tested in formatter and
   -- tests/modes — not a source-rule fix.)
   let source := "def α := 1  \n#check α"
   let patch ← requirePatch source #[
@@ -1376,23 +1375,17 @@ private def testMixedSelection : IO Unit := do
   ensure (ruleRegistry.all (fun rule => ({ selected := #[rule.code], perFileIgnores := #[], extendSafe := #[], extendUnsafe := #[] } : RulePlan).requiredTier == rule.tier))
     "a shipped rule's single selection costs a different tier than the rule's own"
 
-  -- Demand-gating (`ruff-05b`): two demanders now reach `semantic`. A report run (no canonical
-  -- rendering) stays at its rules' tier — so a source-only selection demands only `.source`; a
-  -- canonical-rendering run (`format`/`diff`/`fix`) is lifted to `.semantic`, so the declared-spacing
-  -- fact is captured then and not on the syntax-only fast path. `demandedTier` folds over the shipped
-  -- registry, so this uses shipped codes rather than probes.
+  -- Formatting does not demand semantic rule facts. Only the selected rules determine the tier.
   let shippedPlan : RulePlan :=
     { selected := #["FMT001"], perFileIgnores := #[], extendSafe := #[], extendUnsafe := #[] }
-  ensure (shippedPlan.demandedTier false == .source)
+  ensure (shippedPlan.demandedTier == .source)
     "a non-rendering run demanded more than its rules needed"
-  ensure (shippedPlan.demandedTier true == .semantic)
-    "a canonical-rendering run did not demand the semantic fact"
   -- `ruff-11`: selecting a shipped `.semantic`-tier rule demands the semantic fact on its own, with no
   -- rendering — the second demander the mode is not. This is what makes a `check --select FMT012` run
   -- capture the compiler diagnostics rather than serve a syntax-only artifact that never held them.
   let semanticPlan : RulePlan :=
     { selected := #["FMT012"], perFileIgnores := #[], extendSafe := #[], extendUnsafe := #[] }
-  ensure (semanticPlan.demandedTier false == .semantic)
+  ensure (semanticPlan.demandedTier == .semantic)
     "selecting a semantic rule did not demand the semantic fact without rendering"
 
 private def fixtureArtifact : ModuleArtifact := {
@@ -1508,15 +1501,9 @@ private def testStore : IO Unit := do
   finally
     IO.FS.removeDirAll directory
 
-/-- A `v5` artifact carrying the full semantic fact: two notation kinds with their declared spacing
-(`ruff-05b`, Design B keys by `SyntaxNodeKind`) and one surfaced compiler diagnostic (`ruff-11`, the
-`v5` addition FMT012–FMT015 key on). Both sub-facts populated, because a demanded `.semantic` artifact
-carries both together (monolithic capture). -/
+/-- An artifact carrying one surfaced compiler diagnostic. -/
 private def fixtureSemanticArtifact : ModuleArtifact :=
   { fixtureArtifact with semantic := some {
-      notations := #[
-        { kind := "«term_+_»", atoms := #[" + "] },
-        { kind := "«term-_»", atoms := #["-"] }]
       diagnostics := #[
         { kind := "linter.unusedVariables", range := { start := 0, stop := 3 },
           severity := .warning, message := "unused variable `x`" }] } }
@@ -1555,19 +1542,6 @@ private def testSemanticArtifact : IO Unit := do
     ensure (actual.semantic.isNone && !structurallyValid actual)
       "a semantic-less v4 payload did not decode-then-miss cleanly"
   | .error message => throw <| IO.userError s!"the v5 decoder is not total over a semantic-less v4 payload: {message}"
-  -- Faithful to a `v4` **full**-`semantic` payload written before `diagnostics` existed: a `semantic`
-  -- with `notations` but no `diagnostics` key. Unlike the `Option semantic` field, the inner
-  -- `Array Diagnostic` does *not* default on a missing key — the derived `FromJson` errors (verified,
-  -- v4.32.0) — so this never reads as captured-and-empty. Decode-failure is itself a miss (a foreign
-  -- payload is discarded, not served), the backstop behind the schema tag. Either outcome — a decode
-  -- error, or a decode the schema guard rejects — is "not a valid v5 artifact", which is the invariant.
-  let v4full := Lean.Json.mkObj
-    [("schema", "lean-fmt.module-artifact.v4"), ("source", Lean.toJson fixtureLosslessSource),
-     ("semantic", Lean.Json.mkObj [("notations", Lean.toJson (#[] : Array NotationSpacing))])]
-  match (Lean.fromJson? v4full : Except String ModuleArtifact) with
-  | .ok actual => ensure (!structurallyValid actual) "a diagnostics-less v4 payload decoded as a valid v5 artifact"
-  | .error _ => pure ()  -- decode-failed: also a miss, the backstop the comment above names
-
 /- The shipped semantic-tier rules (`ruff-11` FMT012–FMT015) surface the compiler's own diagnostics:
 each keys on one stable `kind` tag and re-emits it as a report-only finding under its own code,
 preserving the compiler's message, severity, and range. This exercises the whole engine seam over
@@ -1692,8 +1666,8 @@ private def testOwnedDeprecationFix : IO Unit := do
 makes a monolithic-era `.semantic` cache entry miss a fixable-FMT012 demand rather than serve a false
 clean; the invariant is what keeps the capability from rotting into an unenforced field. -/
 private def testSemanticCaps : IO Unit := do
-  let all : SemanticCaps := { notations := true, diagnostics := true, occurrences := true }
-  let cheap : SemanticCaps := { notations := true, diagnostics := true }
+  let all : SemanticCaps := { diagnostics := true, occurrences := true }
+  let cheap : SemanticCaps := { diagnostics := true }
   let occ : SemanticCaps := { occurrences := true }
   -- `{}` demands nothing, so a source/syntax run is served by any entry.
   ensure (SemanticCaps.subset {} all && SemanticCaps.subset {} {}) "the empty demand is not a subset of everything"
@@ -1715,126 +1689,6 @@ private def testSemanticCaps : IO Unit := do
         s!"{rule.info.code} needs occurrences but is not a semantic-tier rule"
   ensure ((ruleRegistry.filter (·.info.needsOccurrences)).map (·.info.code) == #["FMT012"])
     "exactly FMT012 must declare needsOccurrences (a new owner needs its own capture + tests)"
-
-/-- Capture a kind's declared atoms exactly as `analyzeExact`'s `captureNotationSpacing` does:
-type-guard to a descriptor, then read it through the **module-safe** compiled meta IR via `evalConst`
-(never `ConstantInfo.value?`, the kernel `Expr` the module system strips). `descrAtoms` is the
-production walker. `unsafe` because `evalConst` runs compiled code; wrapping the call in an `unsafe`
-term keeps this test in the safe `CommandElabM` of a `run_cmd`. `ruff-05b` `RSF-IMPL`. -/
-private def kindAtoms (env : Lean.Environment) (kind : Lean.Name) : Array String :=
-  match env.find? kind with
-  | some ci =>
-    if ci.type.isConstOf ``Lean.ParserDescr || ci.type.isConstOf ``Lean.TrailingParserDescr then
-      match unsafe (env.evalConst Lean.ParserDescr ({} : Lean.Options) kind) with
-      | .ok descr => descrAtoms descr #[]
-      | .error _ => #[]
-    else #[]
-  | none => #[]
-
-/-- Every declared atom of the notations *defined in this module* (`constants.map₂` is the current
-module's own decls), captured via the production `evalConst`/`descrAtoms` path. -/
-private def localDeclaredAtoms (env : Lean.Environment) : Array String := Id.run do
-  let mut atoms : Array String := #[]
-  for (kind, _) in env.constants.map₂.toList do
-    atoms := atoms ++ kindAtoms env kind
-  return atoms
-
-/- Two locally-declared notations whose `ParserDescr` the walker must read. They carry deliberately
-distinctive symbols so no other decl's atoms collide: an infix with a breakable gap on both sides, and
-a tight prefix — real `ParserDescr`s generated by the `notation`/`prefix` commands, the same shape
-`analyzeExact` reads from the live frontend environment. -/
-local notation:65 a " ⊹leanfmt⊹ " b => HAdd.hAdd a b
-local prefix:100 "⊟leanfmt⊟" => Neg.neg
-
-/- Compile-time acceptance that `evalConst ParserDescr` **is module-safe**, the property whose absence
-let the `value?` capture ship empty on ~99% of the corpus (`ruff-05b` `results/03-final.md`). This
-file is itself `module`-mode, so every *imported* notation's `value?` is stripped here — yet the
-compiled meta IR is retained, so `evalConst` recovers the untrimmed pp-hint. Each core operator's
-`value?` is asserted **absent** (the module system did strip it) while `kindAtoms` recovers its
-declared spacing — `" + "`, `" * "`, `"-"` — the exact defect the reopened `RSF-IMPL` fixed. -/
-open Lean Elab Command in
-run_cmd do
-  let env ← getEnv
-  for (kind, expected) in [(`«term_+_», " + "), (`«term_*_», " * "), (`«term-_», "-")] do
-    unless (env.find? kind >>= (·.value?)).isNone do
-      throwError "{kind}: expected the module system to strip value?, but it is present — the \
-        module-safety premise no longer holds and this test is vacuous"
-    let atoms := kindAtoms env kind
-    unless atoms.contains expected do
-      throwError "{kind}: evalConst did not recover the imported atom {expected.quote} in module \
-        mode; got {atoms} (value? is {(env.find? kind >>= (·.value?)).isSome})"
-
-/- Compile-time acceptance of the declared-spacing walker on locally-declared notations:
-`kindAtoms` (production `evalConst`/`descrAtoms`) recovers the untrimmed atoms Lean *trims away* at
-parse time (`Parser/Basic.lean:1114`). The infix declares `" ⊹leanfmt⊹ "` — a breakable gap on both
-sides, spaces intact — and the prefix declares `"⊟leanfmt⊟"`, tight. Recovering the *spaced* form is
-the whole point: it proves capture reads the formatter's pp-hint, not the trimmed token the parser
-stores. `RSF-FINAL`'s differential then confirms the atoms equal Lean's own emission. `ruff-05b`
-`RSF-IMPL`. -/
-open Lean Elab Command in
-run_cmd do
-  let atoms := localDeclaredAtoms (← getEnv)
-  unless atoms.contains " ⊹leanfmt⊹ " do
-    throwError "the infix's untrimmed breakable gap ' ⊹leanfmt⊹ ' was not captured; got {atoms}"
-  unless atoms.contains "⊟leanfmt⊟" do
-    throwError "the prefix's tight atom '⊟leanfmt⊟' was not captured; got {atoms}"
-  -- The trimmed spelling must never be what we captured: that would be the parser's token, not the
-  -- formatter's declared spacing, and the two are exactly what `RSF-SPEC` F1 proved differ.
-  unless !atoms.contains "⊹leanfmt⊹" do
-    throwError "captured the trimmed token '⊹leanfmt⊹' instead of the declared gap ' ⊹leanfmt⊹ '"
-
-/-- Whether `s` contains `sub` as a substring (`sub` assumed non-empty). -/
-private def containsSubstr (s sub : String) : Bool := (s.splitOn sub).length > 1
-
-/- Three locally-declared **symbolic** notations for the fresh-frontend differential below: an infix
-with a breakable gap on both sides, a tight infix, and a tight symbolic prefix. Symbolic (not
-alphanumeric) atoms matter — `pushToken` adds a lexer-adjacency space around an *identifier-like*
-atom to stop it merging with the next token, so an alphanumeric keyword's emitted spacing exceeds its
-declared atom. Operators are symbolic, so for them the declared atom *is* the emitted spacing; the
-differential asserts exactly that and records the bound. -/
-local notation:65 a " ⊞gapfd " b => HAdd.hAdd a b
-local notation:65 a "⊕tightfd" b => HAdd.hAdd a b
-local prefix:100 "⊗prefd" => Neg.neg
-
-/- **RSF-FINAL fresh-frontend differential** (`ruff-05b`). The captured declared spacing equals what
-Lean's own pretty printer emits — the fact is the compiler's, not this stack's guess. For each local
-notation this reads the atom `kindAtoms` recovered from its `ParserDescr` (production
-`evalConst`/`descrAtoms`), then formats a node built from that notation with `PrettyPrinter.ppTerm`
-and asserts the emitted text equals the operands joined by the *captured* atom (not a hardcoded
-string, so the two sides are genuinely independent). The final `!=` checks make it non-vacuous: a
-wrong atom would not satisfy the equality — this is the mutation guard the audit requires. Core
-`+`/`*` emission is confirmed here too; the core *capture* through the on-demand `analyzeExact`
-producer is `tests/semantic/run.sh`. -/
-open Lean Elab Command PrettyPrinter in
-run_cmd do
-  let localAtoms := localDeclaredAtoms (← getEnv)
-  let atomWith (marker : String) : CommandElabM String := do
-    match localAtoms.filter (containsSubstr · marker) with
-    | #[atom] => pure atom
-    | hits => throwError "expected exactly one captured atom containing {marker}, got {hits}"
-  let ppText (stx : Term) : CommandElabM String := do
-    pure (← liftCoreM (ppTerm stx)).pretty
-  let gap ← atomWith "⊞gapfd"
-  let tight ← atomWith "⊕tightfd"
-  let pre ← atomWith "⊗prefd"
-  -- Infix: emitted text = lhs ++ capturedAtom ++ rhs, exactly.
-  let emittedGap ← ppText (← `(1 ⊞gapfd 2))
-  unless emittedGap == "1" ++ gap ++ "2" do
-    throwError "gap infix: captured {gap.quote} does not predict emitted {emittedGap.quote}"
-  unless emittedGap != "1" ++ " wrong " ++ "2" do
-    throwError "the differential is vacuous: a wrong atom also matched the gap infix"
-  let emittedTight ← ppText (← `(1 ⊕tightfd 2))
-  unless emittedTight == "1" ++ tight ++ "2" do
-    throwError "tight infix: captured {tight.quote} does not predict emitted {emittedTight.quote}"
-  -- Prefix: emitted text = capturedAtom ++ operand, exactly.
-  let emittedPre ← ppText (← `(⊗prefd 3))
-  unless emittedPre == pre ++ "3" do
-    throwError "symbolic prefix: captured {pre.quote} does not predict emitted {emittedPre.quote}"
-  -- Core operators emit their declared spacing (their live-env capture is the shell harness's).
-  unless (← ppText (← `(1 + 2 * 3))) == "1 + 2 * 3" do
-    throwError "core + / * declared spacing drifted from its emission"
-  unless (← ppText (← `(-1))) == "-1" do
-    throwError "core prefix - declared spacing drifted from its emission"
 
 private def sliceOf (source : String) (start stop : Nat) : String :=
   String.Pos.Raw.extract source ⟨start⟩ ⟨stop⟩
@@ -2357,216 +2211,6 @@ private def commentSummaryReport (envelopePath : String) : IO UInt32 := do
   ensure summary.valid "comment ownership did not assign every extracted payload exactly once"
   IO.println <| (Lean.toJson summary).compress
   return 0
-/- Does the conservative printer lose bytes on real parser output?
-
-Every kind is still on the conservative path, so `Printer.format` is the identity on accepted source
-and this checks exactly that. The property is weaker than it looks and stronger than it sounds: it does
-not test any layout decision, because there are none yet — it tests that the *skeleton* is lossless.
-The header split at `headerStop`, the command extents tiling `[headerStop, terminalStop)`, and the
-uninterpreted tail from `terminalStop` are each a place where a byte can vanish, and each is checked
-here against code nobody wrote to suit the printer.
-
-Checked at several margins because the margin must not matter. `Doc.verbatim` is specified to emit its
-bytes unchanged and, unlike `hard`, not to force its group to break; a width-sensitive result would
-mean `verbatim` is re-indenting or breaking content that is not the formatter's to touch, which is the
-`Std.Format` defect (`Basic.lean:269-276`) that `RLC-IMPL` added the constructor to avoid. Width 0 is
-included on purpose: it is the most hostile margin there is. -/
-/- The identity check is a claim about *canonical* source, not about the printer.
-
-`checkIdentity` is true for this repository's corpus, whose modules are already written the way the
-layouts write them, so any changed byte there is a defect. It is false for the frozen mathlib sample
-(`experiments/run-printer-sample.sh`), which is foreign code the printer is *supposed* to reformat —
-asserting identity on it reports the declaration layout doing its job as a failure, which is exactly
-what the first draft of that script did. Everything else below holds either way: the projection
-matching its source, and the extents tiling `[headerStop, terminalStop)` exactly once. -/
-private def printerRoundtrip (envelopePath sourcePath : String) (checkIdentity : Bool) :
-    IO UInt32 := do
-  let .ok json := Lean.Json.parse (← IO.FS.readFile envelopePath)
-    | throw <| IO.userError s!"{envelopePath} is not JSON"
-  let .ok (envelope : AnalysisEnvelope) := Lean.fromJson? json
-    | throw <| IO.userError s!"{envelopePath} is not an analysis envelope"
-  let some artifact := envelope.artifact?
-    | throw <| IO.userError s!"{sourcePath} produced no artifact: {envelope.diagnostics}"
-  let raw ← IO.FS.readFile sourcePath
-  let normalized := (LosslessSource.normalize raw).1
-  let projection := artifact.source
-  ensure (projection.validFor raw) s!"{sourcePath}: the projection does not match its own source"
-  if checkIdentity then
-    -- Before `RLF-REFLOW` the formatter was margin-independent, so byte-identity held at every width.
-    -- Reflow makes it margin-*dependent* by design (`notes/07-reflow-policy.md`): an over-margin
-    -- single-line command breaks. Two invariants replace the old one and are together stronger:
-    --   * at *every* width, reflow only ever swaps a gap's spaces for a newline+indent, so the
-    --     non-whitespace content is byte-identical — a direct parse-preservation proxy (no token
-    --     added, dropped, or altered), checked here corpus-wide and by reparse on the fixtures;
-    --   * at any width no source line exceeds, nothing can break (a flat layout is never wider than
-    --     its source line), so the whole file is byte-identical — losslessness on the canonical corpus.
-    let maxLine := (normalized.splitOn "\n").foldl (fun m ln => max m ln.length) 0
-    let nonWs (s : String) : List Char := s.toList.filter (!·.isWhitespace)
-    for width in [0, 1, 40, 80, 120, 1000] do
-      let formatted ← Printer.format projection normalized width
-      ensure (nonWs formatted == nonWs normalized)
-        s!"{sourcePath}: reflow changed non-whitespace bytes at width {width}"
-      if width ≥ maxLine then
-        ensure (formatted == normalized)
-          s!"{sourcePath}: format changed bytes at fitting width {width} \
-({formatted.utf8ByteSize} bytes out, {normalized.utf8ByteSize} in)"
-  let tree := Tree.ofSource projection
-  let extents := tree.commandExtents
-  -- Every command contributes exactly one extent, and the extents touch end to end across
-  -- `[headerStop, terminalStop)`. The identity above would survive a *pair* of compensating errors
-  -- here — a command dropped and its bytes absorbed into its neighbour's extent reproduces the source
-  -- perfectly — so the tiling is checked directly rather than inferred from the bytes.
-  ensure (extents.size == tree.roots.size)
-    s!"{sourcePath}: {tree.roots.size} commands produced {extents.size} extents"
-  let mut cursor := projection.headerStop
-  for extent in extents do
-    ensure (extent.start == cursor)
-      s!"{sourcePath}: extent starts at {extent.start}, expected {cursor}"
-    ensure (extent.stop >= extent.start) s!"{sourcePath}: extent {extent.start} runs backwards"
-    cursor := extent.stop
-  ensure (cursor == projection.terminalStop)
-    s!"{sourcePath}: extents end at {cursor}, expected terminalStop {projection.terminalStop}"
-  -- `header_canonical` is the header's answer to the question `canonical` asks of the commands: the
-  -- round-trip above cannot see whether the header layout ran, because refusing it *is* the identity.
-  let headerCanonical := if (← Printer.headerDoc? normalized projection.headerStop).isSome then 1
-    else 0
-  let (tacticBlocks, tacticOwnable, tacticOwnLine, tacticAtTwo) := tree.tacticBlocks normalized
-  IO.println s!"commands={tree.roots.size} canonical={tree.canonicalCommands normalized} \
-tokens={projection.tokens.size} nodes={projection.nodes.size} header_bytes={projection.headerStop} \
-header_canonical={headerCanonical} members={tree.memberShells normalized} \
-app_slack={tree.appSlack normalized} \
-binder_slack={tree.binderSlack normalized} \
-match_slack={tree.matchSlack normalized} \
-tactic_blocks={tacticBlocks} tactic_ownable={tacticOwnable} \
-tactic_ownable_own_line={tacticOwnLine} tactic_ownable_at_two={tacticAtTwo} \
-tactic_blank_gaps={tree.tacticBlankGaps normalized} \
-tail_bytes={projection.normalizedBytes - projection.terminalStop}"
-  return 0
-
-/- Print one projected module to stdout, for golden and idempotence checks.
-
-Separate from `printer-roundtrip` because it answers a different question. That one asks whether the
-skeleton loses bytes; this one shows what the formatter actually *decided*, which is the only way a
-golden file can pin a canonical layout, and the only way idempotence can be checked at all — the second
-format needs the first one's output as a file to re-parse. -/
-private def printerFormat (envelopePath sourcePath widthText : String) : IO UInt32 := do
-  let .ok json := Lean.Json.parse (← IO.FS.readFile envelopePath)
-    | throw <| IO.userError s!"{envelopePath} is not JSON"
-  let .ok (envelope : AnalysisEnvelope) := Lean.fromJson? json
-    | throw <| IO.userError s!"{envelopePath} is not an analysis envelope"
-  let some artifact := envelope.artifact?
-    | throw <| IO.userError s!"{sourcePath} produced no artifact: {envelope.diagnostics}"
-  let some width := widthText.toNat?
-    | throw <| IO.userError s!"WIDTH must be a natural number, got {widthText}"
-  let raw ← IO.FS.readFile sourcePath
-  let normalized := (LosslessSource.normalize raw).1
-  let projection := artifact.source
-  ensure (projection.validFor raw) s!"{sourcePath}: the projection does not match its own source"
-  -- The semantic fact rides along when the envelope carries it (a `captureSemantic=1` analysis); it is
-  -- `none` for every fixture analyzed without it, which is exactly the conservative path those goldens
-  -- pin. So this one line is what lets a notation fixture change while `wonky`/`header`/`ext` do not.
-  IO.print (← Printer.format projection normalized width artifact.semantic)
-  return 0
-
-/- Census the layout units of one module: how many there are, and how many do **not** end at a line
-boundary in the rendered output — the `RSF-FINAL` question.
-
-A unit that does not end in a newline is exactly a unit whose trailing group `Doc.fits` can rebreak
-from the tail that follows it (`notes/01-stream-range.md` §4), so a range stopping there must extend
-forward and will report bytes the caller did not ask for. `RSF-IMPL` reasoned that clause from a
-measured `Doc` probe and pinned it with a synthetic selection test; nobody had counted how often it
-fires on foreign Lean. This reads the count off the same `Printer.formatWithMap` the product uses —
-not a reimplementation of the rule — so a drift in the printer moves this number too.
-
-`extending` counts units 0..n-2 (the final unit has nothing to extend into, so it can never fire). -/
-private def rangeUnits (envelopePath sourcePath widthText : String) : IO UInt32 := do
-  let .ok json := Lean.Json.parse (← IO.FS.readFile envelopePath)
-    | throw <| IO.userError s!"{envelopePath} is not JSON"
-  let .ok (envelope : AnalysisEnvelope) := Lean.fromJson? json
-    | throw <| IO.userError s!"{envelopePath} is not an analysis envelope"
-  let some artifact := envelope.artifact?
-    | throw <| IO.userError s!"{sourcePath} produced no artifact: {envelope.diagnostics}"
-  let some width := widthText.toNat?
-    | throw <| IO.userError s!"WIDTH must be a natural number, got {widthText}"
-  let raw ← IO.FS.readFile sourcePath
-  let normalized := (LosslessSource.normalize raw).1
-  ensure (artifact.source.validFor raw) s!"{sourcePath}: the projection does not match its own source"
-  let (rendered, marks) ← Printer.formatWithMap artifact.source normalized width artifact.semantic
-  let bytes := rendered.toUTF8
-  let mut extending := 0
-  for index in [0:marks.size] do
-    if index + 1 == marks.size then continue
-    let stop := marks[index]!.output.stop
-    unless stop != 0 && stop ≤ bytes.size && bytes[stop - 1]! == 10 do
-      extending := extending + 1
-  IO.println s!"units={marks.size} extending={extending}"
-  return 0
-
-/- Re-indent the fixture's one offside block to `base` and print the whole module — the `RLF-OFFSIDE`
-capability driven in isolation. The block is auto-detected (`firstIndentedBlock`: first line-starting
-token indented past column 0, through the last token), re-indented (`reindentBlock`, uniform Δ shift),
-and spliced back (`reindentSpanInModule`). The suite runs this at several bases and reparses each, so
-parse-preservation is checked by the fresh frontend rather than argued. -/
-private def printerReindent (envelopePath sourcePath baseText : String) : IO UInt32 := do
-  let .ok json := Lean.Json.parse (← IO.FS.readFile envelopePath)
-    | throw <| IO.userError s!"{envelopePath} is not JSON"
-  let .ok (envelope : AnalysisEnvelope) := Lean.fromJson? json
-    | throw <| IO.userError s!"{envelopePath} is not an analysis envelope"
-  let some artifact := envelope.artifact?
-    | throw <| IO.userError s!"{sourcePath} produced no artifact: {envelope.diagnostics}"
-  let some base := baseText.toNat?
-    | throw <| IO.userError s!"BASE must be a natural number, got {baseText}"
-  let raw ← IO.FS.readFile sourcePath
-  let normalized := (LosslessSource.normalize raw).1
-  ensure (artifact.source.validFor raw) s!"{sourcePath}: the projection does not match its own source"
-  let tree := Tree.ofSource artifact.source
-  let some (lo, hi) := tree.firstIndentedBlock normalized
-    | throw <| IO.userError s!"{sourcePath}: no indented offside block to re-indent"
-  IO.print (tree.reindentSpanInModule normalized lo hi base)
-  return 0
-
-/- Name every command the layouts refused, one syntax kind per line.
-
-`printer-report` counts the claims; this names the misses. It exists for the frozen mathlib sample,
-where `canonical` is about half of `commands` against 95% on this repository, and the percentage alone
-cannot say whether that is unread grammar or a guard misfiring. The caller tallies the lines. -/
-private def printerUnclaimed (envelopePath sourcePath : String) : IO UInt32 := do
-  let .ok json := Lean.Json.parse (← IO.FS.readFile envelopePath)
-    | throw <| IO.userError s!"{envelopePath} is not JSON"
-  let .ok (envelope : AnalysisEnvelope) := Lean.fromJson? json
-    | throw <| IO.userError s!"{envelopePath} is not an analysis envelope"
-  let some artifact := envelope.artifact?
-    | throw <| IO.userError s!"{sourcePath} produced no artifact: {envelope.diagnostics}"
-  let raw ← IO.FS.readFile sourcePath
-  let normalized := (LosslessSource.normalize raw).1
-  let projection := artifact.source
-  ensure (projection.validFor raw) s!"{sourcePath}: the projection does not match its own source"
-  let tree := Tree.ofSource projection
-  for kind in tree.unclaimedKinds normalized do
-    IO.println kind
-  return 0
-
-/- Name every node that carries a token, one syntax kind per line.
-
-`printer-unclaimed` names the commands the layouts refused; this names what is inside them. It exists
-for the same corpus and the same reason: `RLF-EXPRESSIONS` must pick the term kinds it can cite a
-grammar for, and this repository's term mix is no more representative of Lean than its command mix
-turned out to be. The caller tallies the lines. -/
-private def printerNodeKinds (envelopePath sourcePath : String) : IO UInt32 := do
-  let .ok json := Lean.Json.parse (← IO.FS.readFile envelopePath)
-    | throw <| IO.userError s!"{envelopePath} is not JSON"
-  let .ok (envelope : AnalysisEnvelope) := Lean.fromJson? json
-    | throw <| IO.userError s!"{envelopePath} is not an analysis envelope"
-  let some artifact := envelope.artifact?
-    | throw <| IO.userError s!"{sourcePath} produced no artifact: {envelope.diagnostics}"
-  let raw ← IO.FS.readFile sourcePath
-  let projection := artifact.source
-  ensure (projection.validFor raw) s!"{sourcePath}: the projection does not match its own source"
-  let tree := Tree.ofSource projection
-  for kind in tree.nodeKinds do
-    IO.println kind
-  return 0
-
 /- Layout cost, including the zero-width shapes that exposed the former renderer's suffix-rescan
 defect. `docStepCounts` is the durable assertion; `docBench` remains a non-gating local timing probe.
 
@@ -2860,15 +2504,6 @@ end ReportBench
 public unsafe def main (args : List String) : IO UInt32 := do
   match args with
   | ["comment-summary", envelopePath] => commentSummaryReport envelopePath
-  | ["printer-roundtrip", envelopePath, sourcePath] =>
-    printerRoundtrip envelopePath sourcePath (checkIdentity := true)
-  | ["printer-report", envelopePath, sourcePath] =>
-    printerRoundtrip envelopePath sourcePath (checkIdentity := false)
-  | ["printer-format", envelopePath, sourcePath, width] => printerFormat envelopePath sourcePath width
-  | ["printer-reindent", envelopePath, sourcePath, base] => printerReindent envelopePath sourcePath base
-  | ["printer-unclaimed", envelopePath, sourcePath] => printerUnclaimed envelopePath sourcePath
-  | ["range-units", envelopePath, sourcePath, width] => rangeUnits envelopePath sourcePath width
-  | ["printer-node-kinds", envelopePath, sourcePath] => printerNodeKinds envelopePath sourcePath
   | ["doc-bench"] => docBench
   | ["doc-step-counts"] => docStepCounts
   | ["validator-map-negative"] => validatorMapNegative

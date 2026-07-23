@@ -404,7 +404,7 @@ private def ExactRun.envelope (run : ExactRun)
     let output ← withPhase "exact_child" <| runBounded {
       cmd := analyzer.toString
       -- The trailing capture token encodes the demanded semantic capabilities: "0" none, "1" the two
-      -- cheap sub-facts (notations + diagnostics), "2" those plus the info-tree occurrence fold. A
+      -- semantic diagnostics, "2" diagnostics plus the info-tree occurrence fold. A
       -- direct 4-argument invocation (every syntax-only harness) omits it and captures nothing.
       -- `occurrences` is only ever demanded together with the tier, so the token is a simple ladder.
       args := #["__analyze-exact", setupPath.toString, sourcePath.toString,
@@ -636,7 +636,7 @@ private def availableAnalysis (plan : RulePlan) (renderCanonical applies : Bool)
     (snapshot : SourceSnapshot) (cached? : Option SemanticAnalysis)
     (officialArtifact? : Option ModuleArtifact) : IO (Option SemanticAnalysis) := do
   if let some analysis := cached? then
-    if cacheHitServes plan.requiredTier (plan.demandedCaps renderCanonical applies) renderCanonical
+    if cacheHitServes plan.requiredTier (plan.demandedCaps applies) renderCanonical
         analysis then
       return some analysis
   if plan.requiredTier == .source && !renderCanonical && evidence == .current
@@ -664,9 +664,8 @@ private def availableAnalysis (plan : RulePlan) (renderCanonical applies : Bool)
     -- longer a syntax branch that declines here to force an `ExactRun` re-projection: it retired with
     -- `reprojectCanonical` (no fix is computed at canonical coordinates), so a syntax `--select` costs
     -- one artifact read, never a second frontend pass. A *rendering* run (`format`/`diff`) never reaches
-    -- this branch: it demands `.semantic` for notation-aware layout (`RulePlan.demandedTier`), the plugin
-    -- artifact carries no `semantic` (`ruff-05b`), so the driver fetches no artifact for it and it takes
-    -- its single `analyzeExact` run — the same one it always owed, with no added run for the selection.
+    -- this branch: formatting requires the exact frontend and never treats an artifact projection as
+    -- live formatter state.
     return some (← canonicalAnalysis snapshot renderCanonical { artifact? := some artifact })
   else
     return none
@@ -1472,9 +1471,8 @@ def execute (request : RunRequest) : IO RunOutcome := do
   -- FMT012 occurrence fold. It is distinct from `renderCanonical` now that layout and fix are split —
   -- `format`/`diff` render but apply nothing; `fix` applies but no longer renders.
   let applies := request.mode == .fix
-  -- What this run must actually obtain, rules and mode together. `semantic` is reachable only through
-  -- the mode: no rule is `semantic`-tier, so a rendering mode is the sole demander of the notation
-  -- fact (`RulePlan.demandedTier`). Capture runs only when `demanded` reaches it.
+  -- What selected rules must obtain. Formatting is tracked independently by `renderCanonical` and
+  -- always reaches the exact frontend.
   --
   -- Selection is per file since `ruff-13`, but what a run must *obtain* is decided once, for the whole
   -- batch, as the **union** of what any file demands. Two facts force that: the artifact fetch and the
@@ -1482,17 +1480,16 @@ def execute (request : RunRequest) : IO RunOutcome := do
   -- wrong answer. The union is seeded at `.source`, not at the fallback plan's tier, so a root config
   -- that selects syntax rules cannot make a project whose files all override it pay for syntax.
   let unionRequiredTier := plans.foldl (init := Tier.source) fun tier plan => tier.max plan.requiredTier
-  let demanded := unionRequiredTier.max (if renderCanonical then Tier.semantic else Tier.source)
+  let demanded := unionRequiredTier
   let demandedCaps : SemanticCaps := plans.foldl (init := {}) fun caps plan =>
-    let wanted := plan.demandedCaps renderCanonical applies
-    { notations := caps.notations || wanted.notations
-      diagnostics := caps.diagnostics || wanted.diagnostics
+    let wanted := plan.demandedCaps applies
+    { diagnostics := caps.diagnostics || wanted.diagnostics
       occurrences := caps.occurrences || wanted.occurrences }
   -- Serving a cache entry stays a *per-file* question: it is that file's own required tier that decides
   -- whether a stored result answers it, never the batch union.
   let indexHits := cached.foldl (init := 0) fun n c? => if c?.isSome then n + 1 else n
   let cached := (cached.zip plans).map fun (cached?, plan) =>
-    cached?.filter (cacheHitServes plan.requiredTier (plan.demandedCaps renderCanonical applies)
+    cached?.filter (cacheHitServes plan.requiredTier (plan.demandedCaps applies)
       renderCanonical)
   -- `index_hits` counts entries the index answered with; `served` counts those that survived the
   -- tier/caps demotion above. They differ exactly when a stored result cannot answer this run's mode,
@@ -1525,7 +1522,7 @@ def execute (request : RunRequest) : IO RunOutcome := do
   -- served by it and must re-analyze via `analyzeExact`; fetching it would be wasted work and, worse,
   -- would let `availableAnalysis` render canonical text off a fact-free artifact. Skipping the fetch
   -- both records the gating cost and rejects the `semantic = none` artifact for a `format` run.
-  let artifacts ← if demanded == .semantic then
+  let artifacts ← if renderCanonical then
     pure (Array.replicate snapshots.size none)
   else if unionRequiredTier != Tier.source then
     officialArtifacts project.workspace snapshots
@@ -1720,8 +1717,8 @@ def ExactRun.streamSnapshot (run : ExactRun) (target : Project.SourceTarget) (pl
   let project := run.project
   let renderCanonical := mode.rendersCanonical
   let applies := mode == .fix
-  let demandedCaps := plan.demandedCaps renderCanonical applies
-  let demanded := plan.requiredTier.max (if renderCanonical then Tier.semantic else Tier.source)
+  let demandedCaps := plan.demandedCaps applies
+  let demanded := plan.requiredTier
   let envelope ← run.envelope target (captureSemantic := demanded == .semantic)
     (captureOccurrences := demandedCaps.occurrences)
     (formatWidth? := if renderCanonical then some target.config.format.lineWidth else none)
@@ -1942,7 +1939,7 @@ private unsafe def runAnalyzeChild (args : List String) : IO UInt32 := do
       | throw <| IO.userError "invalid ModuleSetup payload"
     let source ← IO.FS.readFile snapshotPath
     pure (setup, source)
-  -- "0" none, "1" semantic (notations + diagnostics), "2" semantic + the info-tree occurrence
+  -- "0" none, "1" semantic diagnostics, "2" diagnostics plus the info-tree occurrence
   -- fold, "3" test/audit-only comment ownership, "draft[:WIDTH]" the deliberately unvalidated test
   -- hook, and "4[:WIDTH]" the structurally/idempotently admitted layout. Product callers do not
   -- request the last two yet; Prompt 10 wires the width-bearing validated demand.
@@ -1963,7 +1960,7 @@ private unsafe def runAnalyzeChild (args : List String) : IO UInt32 := do
   let formatWidth := (validatedWidth? <|> draftWidth?).getD 100
   let envelope ← withPhase "child_analyze" <|
     analyzeExact setup source displayPath
-      (captureSemantic := captureMode == "1" || captureMode == "2" || validatedWidth?.isSome)
+      (captureSemantic := captureMode == "1" || captureMode == "2")
       (captureOccurrences := captureMode == "2")
       (captureComments := captureMode == "3")
       (captureFormatDraft := draftWidth?.isSome)

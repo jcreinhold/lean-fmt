@@ -150,8 +150,8 @@ PY
 # `format --check` (`ruff-11d`) so the render is exercised without writing the tracked fixture; the
 # in-place write of this same reflow is FIP-FINAL's exact-bytes acceptance.
 #
-# `tests/check/Layout.lean` holds `namespace     Alpha` — five spaces where `LeanFmt.Printer` renders
-# exactly one (`Printer.lean:344-348` `wholeSpan?` -> `spaceSeparated`, `:511-515` citing Lean's
+# `tests/check/Layout.lean` holds `namespace     Alpha` — five spaces where the formatter renders
+# exactly one, following Lean's
 # `Command.lean:317-318`). It is otherwise lint-clean, which is the point: `findings` is 0 and
 # `changed` is 1, so the report cannot be explained by a fix. Only layout moved.
 #
@@ -654,7 +654,7 @@ PY
 
 # --- RDF-LAYOUT: the canonical reflow is the sole, sound owner of trailing-horizontal-whitespace and
 #     final-newline normalization. `ruff-11c` retired the trailing-whitespace rule and the final
-#     newline) as rules and folded the normalization into `LeanFmt.Printer`, mirroring `ruff format`.
+#     newline) as rules and folded the normalization into formatting, mirroring `ruff format`.
 #     Three persistent regressions pin what that ownership means. ---
 
 # 1. No rule selected: the reflow trims interior AND final-line trailing whitespace and adds exactly one

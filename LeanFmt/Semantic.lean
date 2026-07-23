@@ -54,7 +54,7 @@ structure SemanticResult where
   tier : Tier := .source
   /-- The semantic sub-facts this entry actually captured (`ruff-11b` Design B, the capability axis
   beside `tier`). `{}` for a source/syntax entry (no projection); the projection's caps for a
-  `.semantic` entry (`notations` and `diagnostics` always, `occurrences` only when the info-tree fold
+  `.semantic` entry (`diagnostics` always, `occurrences` only when the info-tree fold
   ran). `cacheHitServes` serves a `.semantic` run only when `demandedCaps.subset caps`, so a
   monolithic-era `.semantic` entry — captured without the `occurrences` capability — misses a
   fixable-FMT012 demand rather than serving a false clean. Defaults `{}`; the schema bump below makes
@@ -104,7 +104,8 @@ schema bump makes it a clean miss instead.
 structural/idempotence gate. A `v8` cache entry contains projection-printer bytes that never passed
 that gate; accepting it would preserve the deleted production path through storage, so every such
 entry is a miss. -/
-def semanticResultSchema : String := "lean-fmt.semantic-result.v9"
+/- `v10` removes the formatter-only notation capability from semantic cache entries. -/
+def semanticResultSchema : String := "lean-fmt.semantic-result.v10"
 
 /-- `normalized` must be `(LosslessSource.normalize raw).1`, the string every finding indexes.
 `suppression` defaults empty for the source-only shortcut; `ofEnvelope?` passes the collected facts.
@@ -185,8 +186,8 @@ def SemanticAnalysis.ofEnvelope? (raw : String)
       -- `notes/01-authority.md` §6). An artifact without the projection runs the source/syntax
       -- registry against `.syntax` facts and is tagged `.syntax`, exactly as before — a `.syntax`
       -- entry then misses a `.semantic` selection through `cacheHitServes` rather than a false clean.
-      -- The caps a `.semantic` entry provides are the projection's own (`notations`/`diagnostics`
-      -- always, `occurrences` iff the info-tree fold ran); a syntax entry provides none. `occurrences`
+      -- The caps a `.semantic` entry provides are the projection's own (`diagnostics` always,
+      -- `occurrences` iff the info-tree fold ran); a syntax entry provides none. `occurrences`
       -- flow into the facts so the owned FMT012 rule can attach its rename fix — empty when the
       -- capability was not demanded, keeping the report byte-identical to the surfaced-only path.
       let (facts, tier, caps) := match artifact.semantic with

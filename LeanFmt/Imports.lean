@@ -14,8 +14,8 @@ Two facts this module rests on:
      synthesized `Init` imports on an ordinary file, a `prelude` marker suppresses them, and it drops
      every source range, comment, and modifier spelling (measured, `evidence/01-semantics.txt`). So an
      import rule cannot count occurrences in `parseImports'.imports`; it must read the *written*
-     header. This module reads it by parsing the header to `Lean.Syntax` — the same parse the printer
-     already does (`Printer.lean:2030`), which builds an empty environment and is not a frontend run —
+     header. This module reads it by parsing the header to `Lean.Syntax`, which builds an empty
+     environment and is not a frontend run,
      and dispatching on the header grammar's node kinds
      (`Lean/Parser/Module/Syntax.lean:16-29`): `moduleTk`, `«prelude»`, `«import»`, and inside an
      import the `«public»`/`«meta»`/`«all»` modifier nodes.
@@ -97,7 +97,7 @@ private partial def leafSpan (stx : Lean.Syntax) : Option (Nat × Nat) :=
     | _ => none
 
 /-- Whether `stx` contains a descendant node of the given kind — how a modifier (`«all»`, `«meta»`,
-`«public»`) is detected, mirroring the printer's kind dispatch (`Printer.lean:1877-1885`). -/
+`«public»`) is detected. -/
 private partial def hasKind (stx : Lean.Syntax) (kind : Lean.SyntaxNodeKind) : Bool :=
   match stx with
   | .node _ k args => k == kind || args.any (hasKind · kind)
@@ -136,7 +136,7 @@ private def hasNodeOfKind (stx : Lean.Syntax) (kind : Lean.SyntaxNodeKind) : Boo
   hasKind stx kind
 
 /-- Parse the surface header of `normalized` into the model, or `none` if the header parser emits any
-message. Any message is a refusal, exactly as the printer refuses (`Printer.lean:2030-2033`): on an
+message. Any message is a refusal: on an
 accepted module the header log is empty, and a partial parse would fabricate positions a rule must not
 read. `headerStop` is the parser's own post-header position (`state.pos`), so the caller need not build
 a `LosslessSource` to supply it — this parse already knows where the header ends. -/
@@ -214,7 +214,7 @@ def duplicateFindings (header : HeaderModel) (normalized : String) : Array Findi
 
 /-- Whether two adjacent imports are separated by a blank line or a comment in `normalized` — the
 boundary between two organization *groups*, which the canonical order never crosses
-(`notes/01-semantics.md` §3, matching `Printer.lean:1936-1941`: blank-line groups are organization). -/
+(`notes/01-semantics.md` §3: blank-line groups are organization). -/
 private def groupBreakBetween (normalized : String) (a b : ImportStmt) : Bool :=
   let gap := slice normalized a.range.stop b.range.start
   let newlines := gap.foldl (fun n c => if c == '\n' then n + 1 else n) 0

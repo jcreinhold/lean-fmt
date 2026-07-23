@@ -206,60 +206,6 @@ private def buildFormatDraft (normalized : String) (source : LosslessSource)
 private def isApplicationRuntimePlugin (plugin : Lean.Plugin) : Bool :=
   plugin.path.fileName.any fun name => name.startsWith "libLake"
 
-/- The distinct syntax node kinds appearing anywhere in `stx`. Design B (`ruff-05b`
-`notes/01-semantic-facts.md`) captures one spacing template per distinct kind, so the module is
-deduplicated here rather than once per occurrence. -/
-private partial def collectKinds (stx : Lean.Syntax) (acc : Lean.NameSet) : Lean.NameSet :=
-  match stx with
-  | .node _ kind args =>
-    let acc := if kind.isAnonymous then acc else acc.insert kind
-    args.foldl (init := acc) fun acc arg => collectKinds arg acc
-  | _ => acc
-
-/- Recover a notation's declared atom strings — untrimmed, in source order — by walking its
-`ParserDescr`. This is the pretty-printing hint the parser trims away (`Init/Prelude.lean:5389`,
-`Lean/Parser/Basic.lean:1114`); it survives only in the descriptor. Matches `symbol` /
-`nonReservedSymbol` / `unicodeSymbol` (the operator atoms `RLF-NOTATION` needs) and recurses through
-the structural combinators (`unary`/`binary`/`node`/`trailingNode`/`nodeWithAntiquot`, and into a
-`sepBy` separator sub-parser). `const`/`cat`/`parser` leaves contribute nothing and degrade to
-conservative source bytes. No formatter runs and no `Environment` escapes. -/
-private partial def descrAtoms : Lean.ParserDescr → Array String → Array String
-  | .symbol s, acc => acc.push s
-  | .nonReservedSymbol s _, acc => acc.push s
-  | .unicodeSymbol s _ _, acc => acc.push s
-  | .unary _ p, acc => descrAtoms p acc
-  | .binary _ p₁ p₂, acc => descrAtoms p₂ (descrAtoms p₁ acc)
-  | .node _ _ p, acc => descrAtoms p acc
-  | .trailingNode _ _ _ p, acc => descrAtoms p acc
-  | .nodeWithAntiquot _ _ p, acc => descrAtoms p acc
-  | .sepBy p _ psep _, acc => descrAtoms psep (descrAtoms p acc)
-  | .sepBy1 p _ psep _, acc => descrAtoms psep (descrAtoms p acc)
-  | _, acc => acc
-
-/- The declared notation spacing for every notation kind present in `commands`. Each present kind's
-`ParserDescr` is read via `evalConst` — the compiled *meta* IR the parser and pretty printer already
-interpret (`Lean/PrettyPrinter/Basic.lean` `runForNodeKind`), which the module system **retains** for
-imported constants (unlike `ConstantInfo.value?`, the kernel `Expr`, which it strips — the defect this
-replaced). The type is guarded to `ParserDescr`/`TrailingParserDescr` before eval, exactly as
-`runForNodeKind` does, so `infixl`/`infixr` trailing notations are captured too. A kind that is not a
-descriptor, or whose eval fails, is omitted — never invented. `unsafe` because `evalConst` runs
-compiled code; `analyzeExact` (its only caller) already is. -/
-private unsafe def captureNotationSpacing (env : Lean.Environment) (options : Lean.Options)
-    (commands : Array Lean.Syntax) : SemanticProjection :=
-  let kinds := commands.foldl (init := Lean.NameSet.empty) fun acc c => collectKinds c acc
-  let notations := kinds.toList.foldl (init := #[]) fun acc kind =>
-    match env.find? kind with
-    | some ci =>
-      if ci.type.isConstOf ``Lean.ParserDescr || ci.type.isConstOf ``Lean.TrailingParserDescr then
-        match env.evalConst Lean.ParserDescr options kind with
-        | .ok descr =>
-          let atoms := descrAtoms descr #[]
-          if atoms.isEmpty then acc else acc.push { kind := kind.toString, atoms }
-        | .error _ => acc
-      else acc
-    | none => acc
-  { notations }
-
 private def ofMessageSeverity : Lean.MessageSeverity → Severity
   | .information => .information
   | .warning => .warning
@@ -394,24 +340,15 @@ unsafe def analyzeExact (setup : Lean.ModuleSetup) (source : String)
     return ← broken messages
   let (liveCommands, terminal?) := processedLiveCommands snapshot
   let commands := liveCommands.map (·.stx)
-  -- The semantic projection is captured only under demand (`captureSemantic`, set by a run that
-  -- renders canonical text *or* selects a `.semantic` rule). The two cheap sub-facts — `notations` and
-  -- `diagnostics` — are captured together (`ruff-11` `notes/01-authority.md` §6); the one expensive
-  -- sub-fact, the whole-file info-tree occurrence fold, is captured only under the *separate*
-  -- `captureOccurrences` capability (`ruff-11b` Design B, `notes/01-model.md` §4), so a plain `format`
-  -- or a `check --select FMT013` never pays the walk. `occurrences? := none` records *not captured* (a
-  -- fixable demand must miss the cache); `some` records captured-possibly-empty. `commandState.env` is
-  -- the module's final environment; `messages` is the whole-file diagnostic log; `input.fileMap` is
-  -- normalized-coordinate; `tree` is the same snapshot tree walked for `messages`. The always-on plugin
-  -- producer sets no capability, keeping integrated builds on the syntax-only path.
+  -- Semantic rule facts are captured only under rule demand. The whole-file occurrence fold remains
+  -- separately gated, so report-only semantic checks do not pay for fix ownership.
   let normalizedSource := (LosslessSource.normalize source).1
   let semantic ← if captureSemantic then do
       let diagnostics ← captureDiagnostics input.fileMap normalizedSource.utf8ByteSize messages
       let occurrences? := if captureOccurrences then
           some (captureDeprecatedOccurrences tree normalizedSource normalizedSource.utf8ByteSize)
         else none
-      pure (some { captureNotationSpacing commandState.env options commands with
-        diagnostics, occurrences? })
+      pure (some { diagnostics, occurrences? })
     else pure none
   -- `mkInputContext` normalized `source` before parsing it, so every offset above indexes the
   -- normalized string. Measuring the artifact against `source` itself would mix two coordinate

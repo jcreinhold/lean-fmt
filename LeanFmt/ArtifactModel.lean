@@ -138,16 +138,9 @@ structure DeprecatedOccurrence where
   fixable : Bool
   deriving Inhabited, BEq, Repr, Lean.ToJson, Lean.FromJson
 
-/-- Which semantic sub-facts a run demanded, or a captured projection provides. The capability axis
-Design B adds beside the tier (`ruff-11` `notes/01-authority.md` §6, `ruff-11b` `notes/01-model.md`
-§4): `Tier.satisfies` gates the tier lattice; `SemanticCaps.subset` gates the sub-facts within
-`.semantic`, orthogonally. `notations` and `diagnostics` are the two cheap sub-facts captured together
-whenever `.semantic` is demanded (Design A for those two, unchanged); `occurrences` is the one
-info-tree-backed sub-fact captured only on demand, so the walk is not forced onto every render. A
-cached `.semantic` entry serves a demand only when `demanded.subset provided` — a monolithic-era entry
-without the occurrence cap therefore misses a fixable-FMT012 demand rather than serving a false clean. -/
+/-- Semantic rule capabilities. Diagnostics are captured with every semantic projection; occurrences
+are captured only when a selected fix needs the whole-file info-tree fold. -/
 structure SemanticCaps where
-  notations : Bool := false
   diagnostics : Bool := false
   occurrences : Bool := false
   deriving Inhabited, BEq, Repr, Lean.ToJson, Lean.FromJson
@@ -156,51 +149,18 @@ structure SemanticCaps where
 `satisfies`-style partial), so it composes with `Tier.satisfies` as a plain conjunction in
 `cacheHitServes`. -/
 def SemanticCaps.subset (demanded provided : SemanticCaps) : Bool :=
-  (!demanded.notations || provided.notations) &&
-    (!demanded.diagnostics || provided.diagnostics) &&
+  (!demanded.diagnostics || provided.diagnostics) &&
     (!demanded.occurrences || provided.occurrences)
 
-/-- The declared inter-atom spacing of one notation/atom syntax kind: the untrimmed declared atom
-strings, in source order (`" + "` for infix add, `"-"` for prefix neg). A leading or trailing ASCII
-space in a string is the notation's declared breakable gap on that side; its absence is tight. This
-is the pretty-printing hint the parser trims away (`Init/Prelude.lean:5389`,
-`Lean/Parser/Basic.lean:1114`), recovered as data from the notation's `ParserDescr` where the
-`Environment` is live. Keyed by `kind` (the `SyntaxNodeKind` string, matching the projection's node
-kinds), never by bare token — one token declares different gaps in different kinds (`ruff-05b`
-`notes/01-semantic-facts.md` §2-3). -/
-structure NotationSpacing where
-  kind : String
-  atoms : Array String
-  deriving Inhabited, BEq, Repr, Lean.ToJson, Lean.FromJson
-
-/-- The semantic facts for one module, captured from the live exact frontend and carried in the
-artifact only when a consumer demanded the `.semantic` tier. `notations` and `diagnostics` are
-captured together (monolithic, `ruff-11` `notes/01-authority.md` §6): a demanded `.semantic` artifact
-carries both, so `Tier.satisfies` stays a sound cache gate and a notations-only entry never silently
-under-serves a rule.
-
-- `notations` (`ruff-05b`, formatter fact): declared spacing for every notation kind present, one
-  entry per distinct kind (Design B).
-- `diagnostics` (`ruff-11`, rule fact, new in `v5`): the compiler's own diagnostics with a stable
-  `kind` tag and exact range, which the semantic-tier rules FMT012–FMT015 surface.
-- `occurrences?` (`ruff-11b`, fix fact, new in `v6`): the owned deprecation-occurrence facts, present
-  (`some`, possibly empty) only when the run demanded the **occurrences** capability, and `none`
-  otherwise. `none` means *not captured* (a demand for it must miss the cache); `some #[]` means
-  *captured, none found* (a clean hit). This `Option` is the capability record inside the projection:
-  `notations`/`diagnostics` are always captured together at `.semantic` (cheap), but the info-tree fold
-  behind `occurrences?` is paid only when the fix is asked for (`ruff-11b` `notes/01-model.md` §4). -/
+/-- Semantic facts for one module. `occurrences? = none` means the expensive fold was not requested;
+`some #[]` means it ran and found no owned deprecation occurrences. -/
 structure SemanticProjection where
-  notations : Array NotationSpacing
   diagnostics : Array Diagnostic := #[]
   occurrences? : Option (Array DeprecatedOccurrence) := none
   deriving Inhabited, BEq, Repr, Lean.ToJson, Lean.FromJson
 
-/-- The capabilities a captured projection provides. `notations` and `diagnostics` are always captured
-together when the projection exists (a `.semantic` capture, Design A for the two cheap facts);
-`occurrences` is present iff the info-tree fold ran (`occurrences?.isSome`). Derived, not stored twice:
-the projection's shape *is* its capability record, so the two cannot disagree. -/
+/-- Capabilities derived from the projection's shape, never stored a second time. -/
 def SemanticProjection.caps (projection : SemanticProjection) : SemanticCaps := {
-  notations := true
   diagnostics := true
   occurrences := projection.occurrences?.isSome
 }
@@ -228,12 +188,9 @@ it does not. -/
 structure ModuleArtifact where
   schema : String
   source : LosslessSource
-  /-- The semantic projection (`v5`): declared notation spacing and normalized compiler diagnostics,
-  `none` unless a consumer demanded it. Optional because the two producers differ — the always-on
+  /-- Semantic rule facts, `none` unless a consumer demanded them. The always-on
   compiler plugin emits `none` (no capture in an integrated build), and the on-demand `analyzeExact`
-  emits `some` only when the run's tier reaches `.semantic` (a `format` run, or a run selecting a
-  `.semantic` rule). See `ruff-05b` `notes/01-semantic-facts.md` §1, `ruff-11` `notes/01-authority.md`
-  §6. -/
+  emits `some` only when selected rules reach `.semantic`. -/
   semantic : Option SemanticProjection := none
   deriving BEq, Repr, Lean.ToJson, Lean.FromJson
 
@@ -244,20 +201,9 @@ def ModuleArtifact.caps (artifact : ModuleArtifact) : SemanticCaps :=
   | some projection => projection.caps
   | none => {}
 
-/-- Bumped from `v1` when the command-kind/range projection became `LosslessSource`, from `v2` when
-findings and their rule configuration left the artifact, from `v3` when the optional `semantic`
-projection was added (`ruff-05b` `RSF-IMPL`), from `v4` when that projection gained `diagnostics`
-(`ruff-11` `RMR-IMPL`), and from `v5` when it gained the optional `occurrences?` deprecation-occurrence
-fact (`ruff-11b` `ROS-IMPL`). A stale payload must miss, never read as captured-and-empty: a `v5` full
-`semantic` (notations + diagnostics, no `occurrences?` key) *does* decode under `v6` — `occurrences?`
-is an `Option` and defaults to `none` on a missing key — but `none` is exactly *not captured*, so a run
-demanding the occurrence capability misses through the caps gate (`SemanticCaps.subset`,
-`cacheHitServes`) rather than reading a false "no deprecations". The schema tag still moves so no `v5`
-entry is silently reinterpreted; the caps gate is what makes the `Option` default safe, the same way
-the tier gate made the earlier defaults safe. A `v4` full `semantic` (no `diagnostics` key) still fails
-to decode outright — the derived `FromJson` does not default an absent *array* field, it errors
-(verified, v4.32.0) — a harder backstop for the older shape. -/
-def artifactSchema : String := "lean-fmt.module-artifact.v6"
+/-- `v7` deletes the formatter-only notation database. Old artifact shapes miss rather than being
+reinterpreted as semantic rule facts. -/
+def artifactSchema : String := "lean-fmt.module-artifact.v7"
 
 /-- Build the artifact for one accepted module.
 

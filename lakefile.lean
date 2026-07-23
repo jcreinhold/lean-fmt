@@ -53,6 +53,7 @@ lean_lib LeanFmtApplication where
     Glob.one `LeanFmt.Cache.Decision,
     Glob.one `LeanFmt.Config,
     Glob.one `LeanFmt.Discovery,
+    Glob.one `LeanFmt.Doc,
     Glob.one `LeanFmt.Edit,
     Glob.one `LeanFmt.Formatter,
     Glob.one `LeanFmt.Formatter.Block,
@@ -76,12 +77,9 @@ lean_lib LeanFmtApplication where
 This later declaration remains the canonical owner for ordinary application imports, so changing
 application orchestration cannot invalidate compiler-integrated project modules.
 
-`LeanFmt.Doc`, `LeanFmt.Comments`, `LeanFmt.Formatter`, and `LeanFmt.Printer` are deliberately *not*
-in the plugin library
+`LeanFmt.Doc`, `LeanFmt.Comments`, and `LeanFmt.Formatter` are deliberately *not* in the plugin library
 above. The plugin runs inside every compilation of every downstream module, so its surface is the
-semantic core and nothing else; layout is a consumer of the projection, never a producer of it. Nothing
-the compiler does needs to render a document, and `LeanFmt.Printer` is the sharpest case: it exists to
-turn a finished projection back into text, which is the one thing the compiler has no use for. -/
+semantic core and nothing else; layout is an application-only frontend capability. -/
 lean_lib LeanFmtCore where
   roots := #[`LeanFmt]
   globs := #[
@@ -91,9 +89,7 @@ lean_lib LeanFmtCore where
     Glob.one `LeanFmt.ArtifactModel,
     Glob.one `LeanFmt.LosslessSource,
     Glob.one `LeanFmt.Rules,
-    Glob.one `LeanFmt.Imports,
-    Glob.one `LeanFmt.Doc,
-    Glob.one `LeanFmt.Printer
+    Glob.one `LeanFmt.Imports
   ]
 
 /- The `RCI-MODEL` proof library. It has its own target, and is globbed explicitly and alone, for the
@@ -179,7 +175,7 @@ lean_lib BrokenCompilerFixtures where
   plugins := #[`@/LeanFmtCompilerPlugin:shared]
 
 /- `Layout` is lint-clean and deliberately not canonically laid out: `namespace     Alpha` is five
-spaces where `LeanFmt.Printer` renders one (`Printer.lean:511-515`, citing `Command.lean:317-318`).
+spaces where the frontend-native formatter renders one.
 It is the one fixture that separates "has no findings" from "needs no formatting", which is the
 distinction `RFP-SPEC` exists to name. -/
 lean_lib CheckFixtures where
