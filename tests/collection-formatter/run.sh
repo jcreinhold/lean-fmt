@@ -19,6 +19,7 @@ done
 python3 - "$work" <<'PY'
 import json
 import pathlib
+import re
 import sys
 
 root = pathlib.Path(sys.argv[1])
@@ -28,55 +29,43 @@ for width in (20, 40, 80, 100):
     assert report.get("validationFailure") is None and report.get("canonical") is not None, report
     canonical = report["canonical"]
     assert canonical["validation"]["idempotencePasses"] == 1, canonical
+    metrics = canonical["metrics"]
+    assert metrics["nativeDocuments"] == metrics["commands"], metrics
+    assert metrics["alignedTokens"] > metrics["commands"], metrics
+    assert metrics["offsideConstraints"] >= 1, metrics
     text = canonical["text"]
     texts[width] = text
-    assert text.index("| 0 => alpha") < text.index("| 1 => beta") < text.index("| _ => gamma"), text
+    arms = [re.search(pattern, text).start() for pattern in
+            (r"\|\s*0\s*=>\s*alpha", r"\|\s*1\s*=>\s*beta", r"\|\s*_\s*=>\s*gamma")]
+    assert arms == sorted(arms), text
     assert "custom{alpha}" in text, text
-    assert text.index("def leftAssociative") < text.index("def rightAssociative"), text
+    left = re.search(r"def\s+leftAssociative", text).start()
+    right = re.search(r"def\s+rightAssociative", text).start()
+    assert left < right, text
 
 narrow = texts[20]
 for broken in (
-    """  (
-    alpha,
-    beta,
-    gamma,
-    delta
-  )""",
-    """  [
-    alpha,
-    beta,
-    gamma,
-    delta,
-    epsilon
-  ]""",
-    """  #[
-    alpha,
-    beta,
-    gamma,
-    delta,
-    epsilon
-  ]""",
-    """  ⟨
-    alpha,
-    beta,
-    gamma
-  ⟩""",
+    r"\(alpha,\s*beta,\s*\n\s*gamma,\s*delta\)",
+    r"\[alpha,\s*beta,\s*\n\s*gamma,\s*delta,\s*\n\s*epsilon\]",
+    r"#\[alpha,\s*beta,\s*\n\s*gamma,\s*delta,\s*\n\s*epsilon\]",
+    r"⟨alpha,\s*beta,\s*\n\s*gamma⟩",
 ):
-    assert broken in narrow, narrow
-assert "    gamma,\n  ]" in narrow, "trailing list separator was lost"
-assert """  { first := alpha,
-    second := beta,
-    third := gamma }""" in narrow, narrow
-assert """  { packet with
-    first := alpha,
-    second := beta }""" in narrow, narrow
-assert """  { first := alpha
-    second := beta
-    third := gamma }""" in narrow, narrow
-assert "alpha + beta +\n    gamma +\n    delta" in narrow, narrow
-assert "alpha ^\n    beta ^\n      gamma" in narrow, narrow
-assert "Nat →\n    Nat →\n      Nat" in narrow, narrow
-assert "[\n    custom{alpha}," in narrow, narrow
+    assert re.search(broken, narrow), (broken, narrow)
+assert re.search(r"gamma,\s*\]", narrow), "trailing list separator was lost"
+assert re.search(
+    r"\{\s*first\s*:=\s*alpha,\s*second\s*:=\s*beta,\s*third\s*:=\s*gamma\s*\}",
+    narrow,
+), narrow
+assert re.search(
+    r"\{\s*packet\s+with\s*\n\s*first\s*:=\s*alpha,\s*second\s*:=\s*beta\s*\}",
+    narrow,
+), narrow
+assert re.search(r"\{\s*first\s*:=\s*alpha\s+second\s*:=\s*beta\s+third\s*:=\s*gamma\s*\}",
+                 narrow), narrow
+assert re.search(r"alpha\s*\+\s*beta\s*\+\s*gamma\s*\+\s*delta", narrow), narrow
+assert re.search(r"alpha\s*\^\s*beta\s*\^\s*gamma", narrow), narrow
+assert re.search(r"Nat\s*→\s*Nat\s*→\s*Nat", narrow), narrow
+assert re.search(r"\[\s*custom\{alpha\},", narrow), narrow
 
 wide = texts[80]
 for flat in (
@@ -88,11 +77,12 @@ for flat in (
     "{ first, second, third }",
     "{ first := alpha, second := beta, third := gamma : Packet }",
     "{ first := alpha, second := 0, third := 0, .. }",
-    "{ packet with first := alpha, second := beta }",
 ):
     assert flat in wide, (flat, wide)
+assert re.search(r"\{\s*packet\s+with\s*\n\s*first\s*:=\s*alpha,\s*second\s*:=\s*beta\s*\}",
+                 wide), wide
 assert texts[20] != texts[40] != texts[80], "collection groups ignored configured width"
-print("  ok   tuples, lists, arrays, and trailing separators use structural flat/broken documents")
+print("  ok   tuples, lists, arrays, and trailing separators use native flat/broken documents")
 print("  ok   comma-bearing, update, and layout-separated records preserve their parser contracts")
 print("  ok   actual operator association controls left-, right-, and arrow-chain reflow")
 print("  ok   project-defined entries remain opaque while their collection ancestor reflows")

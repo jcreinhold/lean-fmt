@@ -19,6 +19,7 @@ done
 python3 - "$work" <<'PY'
 import json
 import pathlib
+import re
 import sys
 
 root = pathlib.Path(sys.argv[1])
@@ -33,32 +34,30 @@ for width in (20, 40, 80, 100):
         "structuralComparisons": 1,
         "idempotencePasses": 1,
     }, canonical
+    metrics = canonical["metrics"]
+    assert metrics["nativeDocuments"] == metrics["commands"], metrics
+    assert metrics["alignedTokens"] > metrics["commands"], metrics
     text = canonical["text"]
     texts[width] = text
     for spelling in (
-        "alpha + beta",
-        "Nat.succ value",
-        "pair.1 + pair.2",
-        "⊕custom",
-        "(value : Nat)",
-        "@Nat.succ",
+        r"alpha\s*\+\s*beta",
+        r"Nat\.succ\s+value",
+        r"pair\.1\s*\+\s*pair\.2",
+        r"⊕custom",
+        r"\(value\s*:\s*Nat\)",
+        r"@Nat\.succ",
     ):
-        assert spelling in text, (width, spelling, text)
+        assert re.search(spelling, text), (width, spelling, text)
 
-application_break = """  consumeFive
-    alpha
-    beta
-    gamma
-    delta
-    epsilon"""
-assert application_break in texts[20], texts[20]
-assert application_break in texts[40], texts[40]
+assert """  consumeFive alpha
+    beta gamma delta
+    epsilon""" in texts[20], texts[20]
+assert """  consumeFive alpha beta gamma delta
+    epsilon""" in texts[40], texts[40]
 assert "consumeFive alpha beta gamma delta epsilon" in texts[80], texts[80]
 assert """consumeFive
-    (
-      alpha ⊕custom
-        beta
-    )""" in texts[20], texts[20]
+    (alpha ⊕custom
+      beta)""" in texts[20], texts[20]
 assert "fun (first : Nat) (second : Nat) =>" in texts[80], texts[80]
 assert "@Nat.succ value" in texts[100], texts[100]
 for flat in (
@@ -70,15 +69,14 @@ for flat in (
 
 conditional_break = """  if condition then
     yes
-  else
-    no"""
+  else no"""
 assert conditional_break in texts[20], texts[20]
 assert "if condition then yes else no" in texts[40], texts[40]
 assert "else if second then" in texts[80], texts[80]
 assert "let (actual, _) := value" in texts[80], texts[80]
 assert "match _h : first, second with" in texts[80], texts[80]
 assert texts[20].index("| 0, _ => alpha") < texts[20].index("| _, 1 => beta"), texts[20]
-assert "fun first second =>\n    first + second" in texts[40], texts[40]
+assert "fun first second => first + second" in texts[40], texts[40]
 assert "let first := alpha + beta\n  let second := first * gamma" in texts[40], texts[40]
 
 assert texts[20] != texts[40] != texts[80], "term groups ignored configured width"

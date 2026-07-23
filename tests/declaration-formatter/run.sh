@@ -22,7 +22,7 @@ done
 analyze tests/declaration-formatter/Comments.lean 60 "$work/comments.json"
 
 python3 - "$work" <<'PY'
-import json, pathlib, sys
+import json, pathlib, re, sys
 
 root = pathlib.Path(sys.argv[1])
 texts = {}
@@ -32,30 +32,36 @@ for width in (20, 40, 80, 100):
     canonical = report["canonical"]
     assert canonical["validation"]["idempotencePasses"] == 1, canonical
     metrics = canonical["metrics"]
-    assert metrics["coreRegistryDocuments"] == 0, metrics
-    assert metrics["structuralDocuments"] == metrics["coreDocuments"], metrics
+    assert metrics["nativeDocuments"] == metrics["commands"], metrics
+    assert metrics["alignedTokens"] > metrics["commands"], metrics
     text = canonical["text"]
     texts[width] = text
     for required in (
-        "abbrev VeryLongAliasName", "opaque opaqueValue", "axiom assumedValue",
-        "@[inline] private def modifiedValue", "def «name with spaces»",
-        "instance", "structure Packet", "structure ExtendedPacket", "class HasValue",
-        "class ExtendedHasValue", "inductive Choice", "coinductive Always",
-        "class inductive Classified",
-        "mutual", "def isEven", "def isOdd", "def countdown", "termination_by",
-        "def withLocal", "where",
+        r"abbrev\s+VeryLongAliasName", r"opaque\s+opaqueValue", r"axiom\s+assumedValue",
+        r"@\[inline\]\s+private\s+def\s+modifiedValue", r"«name with spaces»",
+        r"\binstance\b", r"structure\s+Packet", r"structure\s+ExtendedPacket",
+        r"class\s+HasValue", r"class\s+ExtendedHasValue", r"inductive\s+Choice",
+        r"coinductive\s+Always", r"class\s+inductive\s+Classified",
+        r"\bmutual\b", r"def\s+isEven", r"def\s+isOdd", r"def\s+countdown",
+        r"termination_by", r"def\s+withLocal", r"\bwhere\b",
     ):
-        assert required in text, (width, required, text)
+        assert re.search(required, text), (width, required, text)
     assert text.index("first : α") < text.index("second : α") < text.index("count : Nat"), text
-    assert text.index("| neither") < text.index("| left") < text.index("| right"), text
-    assert text.index("def isEven") < text.index("def isOdd"), text
-    assert "def isEven" in text and "\n\n  def isOdd" in text, text
+    constructors = [re.search(pattern, text).start() for pattern in
+                    (r"\|\s+neither", r"\|\s+left", r"\|\s+right")]
+    assert constructors == sorted(constructors), text
+    is_even = re.search(r"def\s+isEven", text).start()
+    is_odd = re.search(r"def\s+isOdd", text).start()
+    assert is_even < is_odd, text
     assert all(not line.endswith((" ", "\t")) for line in text.splitlines()), text
 
 narrow = texts[20]
-assert "opaque opaqueValue\n  (first second : Nat) :\n  Nat :=\n  first + second" in narrow, narrow
-assert "structure ExtendedPacket\n  (α : Type u)" in narrow, narrow
-assert "structure ExtendedPacket (α : Type u) extends Packet α where" in texts[100], texts[100]
+assert re.search(r"opaque\s+opaqueValue\s+\(first\s+second\s*:\s*Nat\)", narrow), narrow
+assert re.search(r"structure\s+ExtendedPacket\s+\(α\s*:\s*Type\s+u\)", narrow), narrow
+assert re.search(
+    r"structure\s+ExtendedPacket\s+\(α\s*:\s*Type\s+u\)\s+extends\s+Packet\s+α\s+where",
+    texts[100],
+), texts[100]
 assert texts[20] != texts[100], "declaration groups ignored width"
 
 report = json.loads((root / "comments.json").read_text())

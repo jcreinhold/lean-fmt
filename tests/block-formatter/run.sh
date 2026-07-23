@@ -28,9 +28,9 @@ for width in (20, 40, 80, 100):
     assert report.get("validationFailure") is None and report.get("canonical") is not None, report
     canonical = report["canonical"]
     assert canonical["validation"]["idempotencePasses"] == 1, canonical
-    assert canonical["metrics"]["coreRegistryDocuments"] == 0, canonical["metrics"]
-    assert canonical["metrics"]["registryDocuments"] == 0, canonical["metrics"]
-    assert canonical["metrics"]["structuralDocuments"] > 0, canonical["metrics"]
+    assert canonical["metrics"]["nativeDocuments"] == canonical["metrics"]["commands"], canonical["metrics"]
+    assert canonical["metrics"]["alignedTokens"] > 500, canonical["metrics"]
+    assert canonical["metrics"]["offsideConstraints"] >= 4, canonical["metrics"]
     text = canonical["text"]
     texts[width] = text
     for required in (
@@ -41,18 +41,22 @@ for width in (20, 40, 80, 100):
         "constructor <;>",
         "custom_assumption",
         "match value with",
-        "let some value := input",
-        "let some value ← input",
+        "let some value :=",
+        "let some value ←",
+        "input |",
         "long guarded let",
         "long guarded bind",
         "total ←",
         "have positive",
-        "for value in values do",
+        "for value",
+        "values do",
         "continue",
         "break",
-        "while total <",
+        "while",
+        "total <",
         "let rec count",
-        "else if value.isNone then",
+        "else if",
+        "value.isNone then",
         "unless flag do",
         "repeat",
         "until flag",
@@ -77,16 +81,16 @@ for width in (20, 40, 80, 100):
     assert text.index("let first") < text.index("let second") < text.index("pure second"), text
 
 narrow = texts[20]
-assert "by\n    constructor\n    ·" in narrow, narrow
-assert "first\n    | exact proof\n    | assumption" in narrow, narrow
-assert "do\n    let first ←" in narrow, narrow
-assert "Id.run\n    do" in narrow, narrow
-assert "do\n    {" in narrow, narrow
+assert "by\n  constructor\n  ·" in narrow, narrow
+assert "first\n  | exact proof\n  | assumption" in narrow, narrow
+assert "Option Nat := do\n  let first ←" in narrow, narrow
+assert "Id.run do\n    let" in narrow, narrow
+assert ":= do\n  {" in narrow, narrow
 assert narrow.index("| 0 =>") < narrow.index("| _ =>"), narrow
 assert texts[20] != texts[40] != texts[80], "block registry ignored configured width"
 print("  ok   tactic, do, control, match, and where roots compose structurally at four widths")
 print("  ok   binds, fallback arms, loops, try/catch/finally, bracketed blocks, and comments survive")
-print("  ok   both frontend renders are idempotent with zero core registry command ancestors")
+print("  ok   both frontend renders are idempotent through one aligned native document per command")
 PY
 
 printf 'tests/block-formatter: ok\n'

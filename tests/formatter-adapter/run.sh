@@ -61,11 +61,11 @@ assert narrow is not None and narrow_envelope.get("validationFailure") is None, 
 assert narrow is not None and narrow["text"] != draft["text"], narrow
 metrics = draft["metrics"]
 assert metrics["frontendRuns"] == 2 and metrics["commands"] >= 10, metrics
-assert metrics["coreDocuments"] > 0 and metrics["registryDocuments"] == 1, metrics
-assert metrics["structuralDocuments"] == metrics["coreDocuments"], metrics
-assert metrics["coreRegistryDocuments"] == 0, metrics
-assert metrics["extensionRegistryDocuments"] == 1, metrics
-assert metrics["registryNodes"] >= metrics["commands"], metrics
+assert metrics["nativeDocuments"] == metrics["commands"], metrics
+assert metrics["alignedTokens"] > metrics["commands"], metrics
+assert metrics["nativeCommentLeaves"] > 0, metrics
+assert metrics["registryNodes"] > metrics["alignedTokens"], metrics
+assert metrics["extensionRegistryDocuments"] >= 2, metrics
 assert metrics["explicitDocuments"] > 0 and metrics["descriptorDocuments"] > 0, metrics
 assert metrics["commentOwners"] == 3 and metrics["nativeEvents"] > 0, metrics
 assert draft["validation"]["structuralComparisons"] == 1, draft["validation"]
@@ -147,11 +147,36 @@ LEAN_NUM_THREADS=1 lake env "$application" __analyze-exact \
 python3 - "$work/invalid.json" <<'PY'
 import json, sys
 envelope = json.load(open(sys.argv[1]))
+canonical = envelope.get("canonical")
+assert canonical is not None and envelope.get("validationFailure") is None, envelope
+assert "invalid_command" in canonical["text"] and "\ndef\n" not in canonical["text"], canonical
+assert canonical["metrics"]["normalizedTokens"] == 1, canonical["metrics"]
+print("  ok   unsafe extension token normalization was replaced by the original payload")
+PY
+
+cat >"$work/ExtraToken.lean" <<'LEAN'
+module
+
+import AdapterSyntax
+
+open AdapterSyntax
+
+extra_token_command
+LEAN
+
+LEAN_NUM_THREADS=1 lake setup-file "$work/ExtraToken.lean" >"$work/extra-token-setup.json"
+LEAN_NUM_THREADS=1 lake env "$application" __analyze-exact \
+  "$work/extra-token-setup.json" "$work/ExtraToken.lean" "ExtraToken.lean" 8589934592 4:100 \
+  >"$work/extra-token.json"
+
+python3 - "$work/extra-token.json" <<'PY'
+import json, sys
+envelope = json.load(open(sys.argv[1]))
 assert envelope.get("canonical") is None, envelope
-failure = envelope["validationFailure"]
-assert failure["gate"] == "diagnostics", failure
-assert "expected" in failure["detail"] and "identifier" in failure["detail"], failure
-print("  ok   unparsable extension output was a named diagnostics-gate refusal")
+failure = envelope["formatFailure"]
+assert "extra text leaf" in failure["detail"], failure
+assert failure["trace"]["kind"].endswith("extraTokenCommand"), failure
+print("  ok   formatter-only token insertion was a typed alignment refusal")
 PY
 
 printf 'tests/formatter-adapter: ok\n'

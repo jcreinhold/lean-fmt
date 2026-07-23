@@ -11,6 +11,7 @@ import all LeanFmt.Comments
 import all LeanFmt.Formatter
 import all LeanFmt.Formatter.Command
 import all LeanFmt.Formatter.CoreSurface
+import all LeanFmt.Formatter.NativeLayout
 import all LeanFmt.Formatter.Trivia
 import all LeanFmt.Rules
 import all LeanFmt.Suppression
@@ -120,6 +121,14 @@ private def buildFormatDraft (normalized : String) (source : LosslessSource)
   let mut coreRegistryDocuments := 0
   let mut extensionRegistryDocuments := 0
   let mut registryNodes := 0
+  let mut nativeDocuments := 0
+  let mut alignedTokens := 0
+  let mut nativeCommentLeaves := 0
+  let mut normalizedTokens := 0
+  let mut exactIslands := 0
+  let mut exactIslandBytes := 0
+  let mut offsideConstraints := 0
+  let mut commentConstraints := 0
   let mut explicitDocuments := 0
   let mut descriptorDocuments := 0
   let fileDangling := Formatter.Trivia.fileDangling ownership
@@ -172,25 +181,32 @@ private def buildFormatDraft (normalized : String) (source : LosslessSource)
       coreDocuments := coreDocuments + 1
       structuralDocuments := structuralDocuments + 1
       continue
-    let result ← Lean.Core.CoreM.toIO' (Formatter.Command.command ownership command.stx)
+    let result ← Lean.Core.CoreM.toIO'
+      (Formatter.NativeLayout.command normalized ownership command.stx)
       { fileName := sourcePath.toString, fileMap, options := command.options }
       { env := command.env }
     let formatted ← match result with
       | .ok formatted => pure formatted
       | .error failure => return .error failure
-    registryNodes := registryNodes + formatted.document.size
+    nativeDocuments := nativeDocuments + 1
+    alignedTokens := alignedTokens + formatted.metrics.tokenLeaves
+    nativeCommentLeaves := nativeCommentLeaves + formatted.metrics.commentLeaves
+    normalizedTokens := normalizedTokens + formatted.metrics.normalizedTokens
+    exactIslands := exactIslands + formatted.metrics.exactIslands
+    exactIslandBytes := exactIslandBytes + formatted.metrics.exactIslandBytes
+    offsideConstraints := offsideConstraints + formatted.metrics.offsideConstraints
+    commentConstraints := commentConstraints + formatted.metrics.commentConstraints
+    registryNodes := registryNodes + formatted.metrics.nativeNodes
     match formatted.trace.resolution with
     | .explicit _ => explicitDocuments := explicitDocuments + 1
     | .descriptor => descriptorDocuments := descriptorDocuments + 1
-    match formatted.owner with
-    | .core => coreDocuments := coreDocuments + 1
-    | .registry => registryDocuments := registryDocuments + 1
-    match formatted.mechanism with
-    | .structural => structuralDocuments := structuralDocuments + 1
-    | .registry =>
-      match formatted.trace.surfaceOwner with
-      | .extension => extensionRegistryDocuments := extensionRegistryDocuments + 1
-      | _ => coreRegistryDocuments := coreRegistryDocuments + 1
+    match formatted.trace.surfaceOwner with
+    | .extension =>
+      registryDocuments := registryDocuments + 1
+      extensionRegistryDocuments := extensionRegistryDocuments + 1
+    | _ =>
+      coreDocuments := coreDocuments + 1
+      structuralDocuments := structuralDocuments + 1
     let indentation := Doc.text ("".pushn ' ' placement.indent)
     -- Docstrings are command syntax even though Lean stores their opening token in `SourceInfo` and
     -- comment ownership classifies that token as `doc`. Their structural command document is the
@@ -204,11 +220,9 @@ private def buildFormatDraft (normalized : String) (source : LosslessSource)
       match Formatter.Trivia.leading ownership command.stx with
       | some comments => comments ++ Doc.hard
       | none => Doc.empty
-    let trailingTrivia := if formatted.mechanism == .registry then
-        match Formatter.Trivia.trailing ownership command.stx stop with
-        | some comments => comments
-        | none => Doc.empty
-      else Doc.empty
+    let trailingTrivia := match Formatter.Trivia.trailing ownership command.stx stop with
+      | some comments => comments
+      | none => Doc.empty
     let commandDocument := Doc.nest placement.indent
       (indentation ++ leadingTrivia ++ formatted.document ++ trailingTrivia)
     document? := appendDocument document? <|
@@ -230,6 +244,14 @@ private def buildFormatDraft (normalized : String) (source : LosslessSource)
     metrics := {
       frontendRuns := 1
       commands := commands.size
+      nativeDocuments
+      alignedTokens
+      nativeCommentLeaves
+      normalizedTokens
+      exactIslands
+      exactIslandBytes
+      offsideConstraints
+      commentConstraints
       coreDocuments
       registryDocuments
       structuralDocuments

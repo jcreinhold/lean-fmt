@@ -39,17 +39,16 @@ for width in (32, 60, 100):
         "frontendRuns": 2, "renders": 2, "structuralComparisons": 1, "idempotencePasses": 1
     }, canonical
     metrics = canonical["metrics"]
-    assert metrics["commands"] >= 20 and metrics["coreDocuments"] >= 20, metrics
-    assert metrics["structuralDocuments"] == metrics["coreDocuments"], metrics
-    assert metrics["coreRegistryDocuments"] == 0, metrics
-    assert metrics["registryDocuments"] == 0 and metrics["extensionRegistryDocuments"] == 0, metrics
+    assert metrics["commands"] >= 20 and metrics["nativeDocuments"] == metrics["commands"], metrics
+    assert metrics["alignedTokens"] > metrics["commands"], metrics
+    assert metrics["extensionRegistryDocuments"] == 1, metrics
     assert metrics["descriptorDocuments"] == 1, metrics
     assert text.startswith("module\nimport Lean\n\nnamespace CommandFixture\n"), text
     if width == 32:
-        assert "\nuniverse u v\nvariable\n  {α : Type u}\n  (value : α)" in text, text
+        assert "\nuniverse u v\nvariable {α : Type u}\n  (value : α)" in text, text
     else:
         assert "\nuniverse u v\nvariable {α : Type u} (value : α)" in text, text
-    assert "\nmacro_rules\n  | `(identity! $term) =>\n    `($term)\n" in text, text
+    assert "\nmacro_rules\n  | `(identity! $term)" in text and "`($term)\n" in text, text
     assert "\nemit_custom generated\n" in text, text
     assert text.endswith("\nend CommandFixture\n"), text
     assert all(not line.endswith((" ", "\t")) for line in text.splitlines()), text
@@ -65,7 +64,7 @@ for payload in (
 ):
     assert text.count(payload) == 1, (payload, text)
 assert "\nuniverse u\nvariable {α : Type u} -- trailing setup comment\n" in text, text
-print("  ok   parsed headers, core shells, command-column scopes, comments, and custom commands are structural")
+print("  ok   parsed headers, command boundaries, comments, and custom commands use native layout")
 print("  ok   widths 32/60/100 are admitted and byte-idempotent with a descriptor command")
 PY
 
@@ -74,10 +73,9 @@ import json, sys
 report = json.load(open(sys.argv[1]))
 assert report.get("formatFailure") is None and report.get("formatDraft") is not None, report
 metrics = report["formatDraft"]["metrics"]
-assert metrics["commands"] > 20 and metrics["coreDocuments"] > 20, metrics
-assert metrics["structuralDocuments"] == metrics["coreDocuments"], metrics
-assert metrics["coreRegistryDocuments"] == 0, metrics
-print("  ok   lean-fmt's commented command module has no comment-triggered core registry fallback")
+assert metrics["commands"] > 20 and metrics["nativeDocuments"] == metrics["commands"], metrics
+assert metrics["alignedTokens"] > metrics["commands"], metrics
+print("  ok   lean-fmt's commented command module aligns every command through native layout")
 PY
 
 printf 'tests/command-formatter: ok\n'

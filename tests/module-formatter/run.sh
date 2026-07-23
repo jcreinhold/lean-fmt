@@ -42,9 +42,10 @@ left, right = (json.load(open(path)) for path in sys.argv[2:])
 assert left["formatDraft"] == right["formatDraft"], "draft or metrics are nondeterministic"
 draft = left["formatDraft"]
 assert draft["metrics"]["frontendRuns"] == 1, draft
-assert draft["metrics"]["registryDocuments"] == 0, draft
+assert draft["metrics"]["nativeDocuments"] == draft["metrics"]["commands"], draft
+assert draft["metrics"]["alignedTokens"] > draft["metrics"]["commands"], draft
 assert draft["metrics"]["descriptorDocuments"] == 1, draft
-assert draft["metrics"]["registryNodes"] >= draft["metrics"]["registryDocuments"], draft
+assert draft["metrics"]["registryNodes"] >= draft["metrics"]["nativeDocuments"], draft
 assert draft["terminalStop"] < draft["sourceBytes"], draft
 tail = raw[draft["terminalStop"]:]
 assert tail.startswith(b"#exit") and draft["text"].encode().endswith(tail), (tail, draft["text"])
@@ -108,7 +109,8 @@ envelope = json.load(open(sys.argv[1]))
 draft = envelope["formatDraft"]
 assert envelope.get("formatFailure") is None and not envelope["diagnostics"], envelope
 assert draft["metrics"]["commands"] == 8, draft
-assert draft["metrics"]["coreDocuments"] + draft["metrics"]["registryDocuments"] == 9, draft
+assert draft["metrics"]["nativeDocuments"] == draft["metrics"]["commands"], draft
+assert draft["metrics"]["alignedTokens"] > draft["metrics"]["commands"], draft
 assert draft["metrics"]["registryNodes"] >= draft["metrics"]["commands"], draft
 assert draft["metrics"]["commentOwners"] == 6, draft
 assert "emit_local_command" in draft["text"] and "an identifier with spaces" in draft["text"], draft["text"]

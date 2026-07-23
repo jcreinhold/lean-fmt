@@ -91,6 +91,14 @@ frontend and contains no live frontend object. -/
 structure FormatMetrics where
   frontendRuns : Nat
   commands : Nat
+  nativeDocuments : Nat
+  alignedTokens : Nat
+  nativeCommentLeaves : Nat
+  normalizedTokens : Nat
+  exactIslands : Nat
+  exactIslandBytes : Nat
+  offsideConstraints : Nat
+  commentConstraints : Nat
   coreDocuments : Nat
   registryDocuments : Nat
   structuralDocuments : Nat

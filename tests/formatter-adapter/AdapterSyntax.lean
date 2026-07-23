@@ -70,4 +70,18 @@ meta def invalidCommandFormatter : Lean.PrettyPrinter.Formatter := do
     Lean.PrettyPrinter.Formatter.pushToken info "def" false
     Lean.Syntax.MonadTraverser.goLeft
 
+syntax (name := extraTokenCommand) "extra_token_command" : command
+
+macro_rules
+  | `(extra_token_command) => `(def extraTokenFormatterFixture : Nat := 0)
+
+@[formatter AdapterSyntax.extraTokenCommand]
+meta def extraTokenCommandFormatter : Lean.PrettyPrinter.Formatter := do
+  Lean.PrettyPrinter.Formatter.visitArgs do
+    let stx ← Lean.Syntax.MonadTraverser.getCur
+    let Lean.Syntax.atom info _ := stx | throwError "extra-token formatter expected an atom"
+    Lean.PrettyPrinter.Formatter.pushToken info "extra" false
+    Lean.PrettyPrinter.Formatter.pushToken info "tokens" false
+    Lean.Syntax.MonadTraverser.goLeft
+
 end AdapterSyntax

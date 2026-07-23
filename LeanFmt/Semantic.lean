@@ -44,7 +44,7 @@ structure SemanticAnalysis where
 
 /-- The current cache shape stores the complete admitted `CanonicalLayout` with its source map and
 formatter/validation metrics. The version is part of cache identity; older result shapes miss. -/
-def semanticResultSchema : String := "lean-fmt.semantic-result.v11"
+def semanticResultSchema : String := "lean-fmt.semantic-result.v12"
 
 /-- `normalized` must be `(LosslessSource.normalize raw).1`, the string every finding indexes.
 `suppression` defaults empty for the source-only shortcut; `ofArtifact?` passes the collected facts.
