@@ -407,19 +407,22 @@ private def codeActions (h : Harness) : IO Unit := do
 
 The claim under test is not "a cancelled request is answered" — `tests/lsp/run.sh` already shows that
 for a *queued* request. It is that a `$/cancelRequest` naming the request already running reaches the
-exact frontend child and shortens it. That can only be shown by timing: the same request, cancelled
+document's active snapshot and shortens it. That can only be shown by timing: the same request, cancelled
 mid-flight, must come back in a fraction of the time it takes to finish. -/
 
-private def slowSource (h : Harness) : IO String :=
-  IO.FS.readFile (System.FilePath.mk h.root / "LeanFmt" / "Application.lean")
+private def slowSource : String := Id.run do
+  let mut source := "module\nimport Lean\n\nnamespace LspCancellation\n\n"
+  for i in [0:2500] do
+    source := source ++ s!"def cancellation_{i} : Nat := {i}\n"
+  return source ++ "\nend LspCancellation\n"
 
 private def cancellation (h : Harness) : IO Unit := do
   let uri := s!"file://{h.root}/LeanFmt/Application.lean"
-  let source ← slowSource h
+  let source := slowSource
   let ((uncancelled, cancelled), code) ← withServer h do
     discard <| initializeSession h.root
     openDocument uri source
-    -- Wait for the debounced analysis first. It is one exact run of this same slow module, and it
+    -- Wait for the debounced analysis first. It is one incremental run of this same slow module, and it
     -- rides the same FIFO, so timing a request while it is still queued measures the queue rather than
     -- the child — which is exactly the mistake the first version of this check made, reporting a
     -- "cancelled" request that had not begun.
@@ -432,7 +435,9 @@ private def cancellation (h : Harness) : IO Unit := do
     match answer with
     | .result _ => h.check "the slow document formats at all" true
     | .error _ message => h.check "the slow document formats at all" false message
-    -- The same request, cancelled while its child is running.
+    -- A new version prevents the completed canonical envelope above from answering this request.
+    -- The same work is then cancelled while its candidate snapshot is running.
+    changeDocument uri (source ++ "\n") 2
     let started ← IO.monoMsNow
     request 2 "textDocument/formatting" (documentParam uri)
     IO.sleep 400
@@ -454,8 +459,8 @@ private def cancellation (h : Harness) : IO Unit := do
     return (uncancelled, cancelled)
   h.checkEq "the cancellation session exits cleanly" code 0
   IO.println s!"     uncancelled {uncancelled} ms, cancelled {cancelled} ms"
-  -- The poll that kills the child runs every 50 ms and the cancellation is sent at 400 ms, so a
-  -- cancellation that reached the child returns well inside the uncancelled cost. Half is a wide
+  -- Cancellation is sent at 400 ms, so a cancellation that reached the active snapshot returns well
+  -- inside the uncancelled cost. Half is a wide
   -- margin chosen so the check does not depend on this machine's speed; the printed pair is the
   -- measurement.
   h.check "and it returned in a fraction of the uncancelled cost"
@@ -463,14 +468,14 @@ private def cancellation (h : Harness) : IO Unit := do
 
 /-! ## 7. Memory stability over 100 requests (§13)
 
-§13's promise is a fresh bounded child per request and nothing retained between them but documents,
-versions, and resolved configuration. The observable form is that the session's resident size after a
-hundred requests is not meaningfully above its resident size after the first. -/
+§13's promise is one bounded document snapshot and one richest current-version envelope, with no
+per-request snapshot chain or report history. The observable form is that the session's resident size
+after a hundred requests is not meaningfully above its resident size after the first. -/
 
 /-- Resident size of a process and everything below it, in KiB, from `ps`.
 
-The server's exact frontend children are its children, not ours, so a single-process reading would
-miss exactly the thing §13 bounds. -/
+The subtree measurement also includes the specialized organize-import validation child used by odd
+requests; the persistent document analyzer itself lives in the server process. -/
 private def subtreeRssKiB (rootPid : Nat) : IO Nat := do
   let output ← IO.Process.run { cmd := "ps", args := #["-Ao", "ppid=,pid=,rss="] }
   let rows := output.splitOn "\n" |>.filterMap fun line =>
@@ -509,8 +514,8 @@ private def memoryStability (h : Harness) : IO Unit := do
     let mut peak := 0
     let mut last := 0
     for i in [0:100] do
-      -- Alternated so the hundred are not all one code path: formatting runs a child every time,
-      -- code actions run one for `source.fixAll` and read the memo for `quickfix`.
+      -- Alternated so the hundred are not all one code path: formatting reads the richest envelope;
+      -- code actions share it for fix-all/quickfix and separately validate organize-imports.
       if i % 2 == 0 then
         request (i + 10) "textDocument/formatting" (documentParam uri)
       else

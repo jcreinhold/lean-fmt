@@ -428,8 +428,13 @@ private partial def doDocument (ownership : CommentOwnership) (formatTerm : Term
           if (args.extract 1 3).all fun child => (Syntax.spellings child).isEmpty then Doc.empty
           else modifiers ++ Doc.text " "
         let header := Doc.text "let " ++ modifierDocument ++
-          Syntax.flat (Syntax.spellings patternSyntax) ++ Doc.text " := " ++ value ++ Doc.text " |"
-        return .ok (some (header ++ Doc.text " " ++ body))
+          Syntax.flat (Syntax.spellings patternSyntax) ++ Doc.text " := " ++ value
+        -- A guarded-let fallback is an offside child, not an inline suffix. If the complete guard
+        -- does not fit, moving only the fallback value's application arguments left of `return`
+        -- makes them new `do` items. Nest the pipe and the complete fallback together so both the
+        -- flat `| return x` form and every broken continuation stay inside the guard.
+        let fallback := Doc.text "|" ++ Doc.nest 2 (Doc.line " " ++ body)
+        return .ok (some (Doc.group (header ++ Doc.nest 2 (Doc.line " " ++ fallback))))
   if stx.isOfKind ``Lean.Parser.Term.doLetArrow ||
       stx.isOfKind ``Lean.Parser.Term.doReassignArrow then
     if let some (pattern, fallback) := patDeclFallback? stx then
@@ -442,7 +447,9 @@ private partial def doDocument (ownership : CommentOwnership) (formatTerm : Term
             tokens ++ (pattern.getArgs.extract 0 4).foldl (init := #[]) fun inner nested =>
               inner ++ Syntax.spellings nested
           else tokens ++ Syntax.spellings child
-        return .ok (some (Syntax.flat headerTokens ++ Doc.text " | " ++ body))
+        let fallback := Doc.text "|" ++ Doc.nest 2 (Doc.line " " ++ body)
+        return .ok (some (Doc.group <|
+          Syntax.flat headerTokens ++ Doc.nest 2 (Doc.line " " ++ fallback)))
   if stx.isOfKind ``Lean.Parser.Term.doMatch then
     return ← matchDocument ownership (doDocument ownership formatTerm) formatTerm stx
   if stx.isOfKind ``Lean.Parser.Term.doIf then

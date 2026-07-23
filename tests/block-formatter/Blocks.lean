@@ -51,6 +51,16 @@ def bindFallback (input : Option (Option Nat)) : Option Nat := do
   let some value ← input | return 0
   pure value
 
+def longLetFallback (input : Option Nat) : Option Nat := do
+  /- long guarded let -/
+  let some value := input | return Array.replicate 12 0 |>.size
+  pure value
+
+def longBindFallback (input : Option (Option Nat)) : Option Nat := do
+  /- long guarded bind -/
+  let some value ← input | return Array.replicate 12 0 |>.size
+  pure value
+
 def mutableLoop (values : Array Nat) : Nat := Id.run do
   let mut total := customNat
   total ← pure (total + 1)

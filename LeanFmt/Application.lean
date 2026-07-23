@@ -137,7 +137,8 @@ private structure ChildOutput where
 
 /- A valid exact-analysis capability. Construction brackets its temporary storage, fixes the target
 project/toolchain and aggregate envelope once, and owns collision-free request names. No caller can
-observe setup paths or sequence cleanup. Each analysis still gets a fresh child process. -/
+observe setup paths or sequence cleanup. Batch envelopes use fresh child processes; the language
+server may instead request an exact setup for its document-owned in-process analyzer. -/
 structure ExactRun where
   private mk ::
   project : Project.Snapshot
@@ -159,6 +160,11 @@ structure ExactRun where
   FMT005) and `organize` exists to. Keying on the path alone would validate a rewritten file against
   the imports it no longer has, which is precisely the check those modes are performing. -/
   setups : IO.Ref (Std.HashMap String (String × Lean.ModuleSetup))
+  /-- Setups retained for editor documents, keyed by the parsed module header rather than the whole
+  buffer. Ordinary command edits do not alter imports and must not rebuild Lake's setup graph on
+  every keystroke. This is separate from `setups`: batch validation deliberately keys rewritten
+  sources by all bytes. -/
+  documentSetups : IO.Ref (Std.HashMap String (String × Lean.ModuleSetup))
 
 private structure FacetDescriptor where
   hash : String
@@ -256,6 +262,22 @@ private def exactSetupResult (project : Project.Snapshot)
     return Except.ok (← Project.exactSetup project snapshot)
   catch error =>
     return Except.error error
+
+/-- Resolve and memoize the exact setup for an in-process document analyzer. Unlike `envelope`, this
+returns no diagnostic substitute: a persistent snapshot may never be created under an approximate
+setup. The parsed header identity changes exactly when the import-bearing part of the buffer does. -/
+def ExactRun.setupSnapshot (run : ExactRun) (snapshot : SourceSnapshot) : IO Lean.ModuleSetup := do
+  let input := Lean.Parser.mkInputContext snapshot.source snapshot.path.toString
+  let (header, _, messages) ← Lean.Parser.parseHeader input
+  let identity := if messages.hasErrors then
+      toString <| Digest.ofString snapshot.source
+    else
+      toString <| Digest.ofString (header.raw.unsetTrailing.reprint.getD "")
+  if let some (cachedIdentity, setup) := (← run.documentSetups.get)[snapshot.relativePath]? then
+    if cachedIdentity == identity then return setup
+  let setup ← Project.exactSetup run.project snapshot
+  run.documentSetups.modify (·.insert snapshot.relativePath (identity, setup))
+  return setup
 
 private def residentKiB : IO Nat := do
   let pid ← IO.Process.getPID
@@ -649,6 +671,7 @@ def withExactRun (project : Project.Snapshot) (maxMemoryGiB : Nat)
   let temporary ← IO.FS.createTempDir
   let nextIndex ← IO.mkRef 0
   let setups ← IO.mkRef {}
+  let documentSetups ← IO.mkRef {}
   let run : ExactRun := {
     project
     application := ← IO.appPath
@@ -656,6 +679,7 @@ def withExactRun (project : Project.Snapshot) (maxMemoryGiB : Nat)
     maxBytes
     nextIndex
     setups
+    documentSetups
   }
   try action run finally IO.FS.removeDirAll temporary
 
@@ -1770,21 +1794,13 @@ This is what "no second formatter" means concretely (`ruff-17` roadmap): the LSP
 not through a parallel rendering path, so a range answer served to an editor and the same range piped
 through `--stdin` are the same bytes computed by the same code.
 
-`cancel?` is threaded to the child poll, so a client's `$/cancelRequest` kills the frontend run rather
-than waiting for it (`ruff-17` `notes/01-protocol.md` §9). -/
-def ExactRun.streamSnapshot (run : ExactRun) (target : Project.SourceTarget) (plan : RulePlan)
-    (mode : RunMode) (range? : Option SourceRange := none) (unsafeFixes : Bool := false)
-    (formatCheck : Bool := false) (cancel? : Option Std.CancellationToken := none) :
-    IO StreamReport := do
+The supplied envelope may come from the isolated child path or a document-owned incremental frontend;
+projection, rule execution, validation, range slicing, and rendering do not distinguish them. -/
+def ExactRun.streamEnvelope (run : ExactRun) (target : Project.SourceTarget) (plan : RulePlan)
+    (mode : RunMode) (envelope : AnalysisEnvelope) (range? : Option SourceRange := none)
+    (unsafeFixes : Bool := false) (formatCheck : Bool := false) : IO StreamReport := do
   let project := run.project
   let renderCanonical := mode.rendersCanonical
-  let applies := mode == .fix
-  let demandedCaps := plan.demandedCaps applies
-  let demanded := plan.requiredTier
-  let envelope ← run.envelope target (captureSemantic := demanded == .semantic)
-    (captureOccurrences := demandedCaps.occurrences)
-    (formatWidth? := if renderCanonical then some target.config.format.lineWidth else none)
-    (cancel? := cancel?)
   let analysis ← canonicalAnalysis target renderCanonical envelope
   let marks := analysis.result?.bind (·.canonical?) |>.map (·.sourceMap) |>.getD #[]
   let (normalized, _) := LosslessSource.normalize target.source
@@ -1813,16 +1829,12 @@ def ExactRun.streamSnapshot (run : ExactRun) (target : Project.SourceTarget) (pl
         changed := true
         diff := some (unifiedDiff target.relativePath prepared.normalized prepared.patch.formatted) }
     | .fix =>
-      -- `fix` streams; it does not validate by re-elaboration, because it publishes nothing. The
-      -- caller reads the bytes and decides. `format` below is the same.
       unless prepared.changed do return { base with output := some prepared.output }
       return { base with
         status := "fixed"
         changed := true
         output := some prepared.output }
     | .format =>
-      -- A range narrows the *published* bytes to the layout units it expands to; the report's
-      -- findings are unchanged, because they index the caller's own unmoved coordinates.
       let sliced? := range?.bind fun range =>
         sliceRange prepared.normalized prepared.patch.formatted marks range
       let (text, requested?, actual?, sourceMap) := match sliced? with
@@ -1839,6 +1851,20 @@ def ExactRun.streamSnapshot (run : ExactRun) (target : Project.SourceTarget) (pl
         output := some output
         changed, requested?, actual?, sourceMap }
 
+def ExactRun.streamSnapshot (run : ExactRun) (target : Project.SourceTarget) (plan : RulePlan)
+    (mode : RunMode) (range? : Option SourceRange := none) (unsafeFixes : Bool := false)
+    (formatCheck : Bool := false) (cancel? : Option Std.CancellationToken := none) :
+    IO StreamReport := do
+  let renderCanonical := mode.rendersCanonical
+  let applies := mode == .fix
+  let demandedCaps := plan.demandedCaps applies
+  let demanded := plan.requiredTier
+  let envelope ← run.envelope target (captureSemantic := demanded == .semantic)
+    (captureOccurrences := demandedCaps.occurrences)
+    (formatWidth? := if renderCanonical then some target.config.format.lineWidth else none)
+    (cancel? := cancel?)
+  run.streamEnvelope target plan mode envelope range? unsafeFixes formatCheck
+
 /-- Format, check, diff, or fix one unsaved buffer and stream the answer.
 
 Every clause the freeze fixes is enforced here:
@@ -1847,8 +1873,9 @@ Every clause the freeze fixes is enforced here:
   in `output` for the caller to redirect; the file, if there even is one, is untouched.
 - **No persistent cache.** `ResultCache` is never opened. A cache entry is keyed on a digest bound to a
   file on disk, and unsaved bytes have no disk state to bind — the same rule an editor session follows.
-- **The editor envelope.** One `withExactRun`, a fresh bounded child, the `--max-memory` aggregate
-  limit. Not a second execution path: it is the same `ExactRun` the batch fallback uses.
+- **The isolated stream envelope.** One `withExactRun`, a fresh bounded child, and the
+  `--max-memory` aggregate limit. The language server uses the same capability's setup and projection
+  operations around its persistent document frontend, without introducing a second formatter.
 - **Identity is required.** `Project.unsavedTarget` applies every gate the file path applies, including
   the `.lake` floor, and resolves the effective configuration from the buffer's location, so the same
   bytes get the same answer whether they arrive by path or by pipe.

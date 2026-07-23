@@ -6,6 +6,7 @@ Authors: Jacob Reinhold
 
 module
 
+import all LeanFmt.Analysis
 import all LeanFmt.Application
 import all LeanFmt.LosslessSource
 
@@ -20,10 +21,10 @@ open System
 This module is the whole of the server: the transport and document store, and the diagnostics,
 formatting, and code actions served from them.
 
-It computes nothing itself. Every answer is `Application.ExactRun.streamSnapshot` over the whole
-buffer, the same operation `--stdin` enters, so an editor and a pipe give the same answer for the
-same bytes. What this module adds is the protocol: client coordinates, document lifetime, which fixes
-may be offered, and when to run an analysis.
+It computes no formatter policy itself. Each admitted document owns one bounded incremental frontend;
+its envelope enters `Application.ExactRun.streamEnvelope`, the same projection and rendering path used
+by `--stdin`. What this module adds is the protocol: client coordinates, document and analyzer
+lifetime, which fixes may be offered, and when to run an analysis.
 
 The namespace is `LanguageServer` and not `Lsp` because `Lean.Lsp` is opened throughout, and a
 namespace of the same name would make every `Lsp.Position` ambiguous. -/
@@ -262,8 +263,25 @@ structure Document where
   line-ending convention, and output is denormalized back to it (`notes` §4). -/
   lineEndings : LineEndings
   version : Int
+  /-- One bounded last-good frontend session for this document's normalized lineage. -/
+  analyzer : IncrementalAnalyzer
 
 def Document.source (document : Document) : String := document.text.source
+
+private structure DocumentEnvelope where
+  version : Int
+  semantic : Bool
+  occurrences : Bool
+  width? : Option Nat
+  envelope : AnalysisEnvelope
+
+private def DocumentEnvelope.meets (cached : DocumentEnvelope) (version : Int)
+    (semantic occurrences : Bool) (width? : Option Nat) : Bool :=
+  cached.version == version && (!semantic || cached.semantic) &&
+    (!occurrences || cached.occurrences) &&
+    match width? with
+    | some width => cached.width? == some width
+    | none => true
 
 /-- Why a document cannot be served. The text is the user-facing message; it names the URI the client
 sent, as every path-taking surface in this product names the caller's own argument. -/
@@ -283,9 +301,9 @@ structure Session where
   settings : IO.Ref ServerOptions
   root : FilePath
   project : Project.Snapshot
-  /-- One exact capability for the session. Each
-  analysis still gets a fresh bounded child; the workspace load, the discovery walk, and the
-  temporary-directory bracket are not paid per request. -/
+  /-- One exact capability for the session. It resolves exact module setups for document analyzers
+  and supplies the shared projection/rendering path; workspace loading and discovery are not paid per
+  request. The specialized organize-imports operation still uses its isolated exact child. -/
   run : Application.ExactRun
   sink : Sink
   /-- Replaced wholesale on `workspace/didChangeConfiguration`; never mutated in place. -/
@@ -298,18 +316,24 @@ structure Session where
   /-- Request ids the client has cancelled. Written by the reader, read by the worker, so it is a
   mutex and not a ref. -/
   cancelled : Std.Mutex (Std.HashSet RequestID)
-  /-- The request being served right now, with the token its exact child polls (§9).
+  /-- The request being served right now, with the cancellation token its operation observes (§9).
 
   A cancellation for a *queued* request is answered out of `cancelled` when the worker reaches it. A
-  cancellation for the request already running has nothing to check it: the worker is inside
-  `monitorChild`. So the reader cancels the token here directly, and `Application.monitorChild` kills
-  the child at its next 50 ms poll. -/
+  cancellation for the request already running is delivered directly: the reader cancels this token
+  and, while a document frontend is active, also cancels its snapshot tree. -/
   inFlight : Std.Mutex (Option (RequestID × Std.CancellationToken))
+  /-- The document analyzer currently serving that request, installed only around its frontend call.
+  The reader uses it to propagate `$/cancelRequest` directly into Lean's snapshot tree. -/
+  activeAnalyzer : Std.Mutex (Option IncrementalAnalyzer)
   /-- The findings last computed for a document, with the version they describe. An entry is only ever
   read for the version it names, and a `didChange` supersedes it. It exists because an editor asks for
   code actions on cursor movement, and the alternative is one exact frontend run per cursor movement
   over bytes that did not change. -/
   analyses : IO.Ref (Std.HashMap String (Int × Array Finding))
+  /-- The richest envelope computed for each current document version. One validated canonical
+  envelope also answers non-rendering source/syntax checks, preventing identical editor requests from
+  building chains of fully reused snapshots or retaining duplicate semantic results. -/
+  envelopes : IO.Ref (Std.HashMap String DocumentEnvelope)
   /-- Ask for a debounced analysis of one document version. A handler sees a function, not the queue,
   so no handler can reorder the queue. -/
   schedule : String → Int → IO Unit
@@ -330,18 +354,21 @@ def Session.forgetCancellation (session : Session) (id : RequestID) : IO Unit :=
 anything the worker holds. Reading the in-flight slot and cancelling a token are both wait-free. -/
 def Session.cancelInFlight (session : Session) (id : RequestID) : IO Unit := do
   if let some (running, token) ← session.inFlight.atomically do get then
-    if running == id then token.cancel
+    if running == id then
+      token.cancel
+      if let some analyzer ← session.activeAnalyzer.atomically do get then
+        analyzer.cancel
 
 /-- Serve one request under a fresh cancellation token, and answer `RequestCancelled` if it is used.
 
 Install-then-check is the order that closes the race with the reader. The reader records the id in
 `cancelled` and *then* reads the in-flight slot; this installs the slot and *then* reads `cancelled`.
 Whichever runs first, the other sees its write, so a cancellation arriving in the window between the
-worker's admission check and the child starting is never lost.
+worker's admission check and the operation starting is never lost.
 
-The body raises `Application.cancellationMessage` when the child was killed by the token, which is a
-cancelled request rather than a failed one, and gets the code the specification assigns it. Every other
-error is the caller's to answer. -/
+The body raises `Application.cancellationMessage` when the token stops either execution path. That is
+a cancelled request rather than a failed one and gets the code the specification assigns it. Every
+other error is the caller's to answer. -/
 def Session.serveCancellable (session : Session) (id : RequestID)
     (body : Std.CancellationToken → IO Unit) : IO Unit := do
   let token ← Std.CancellationToken.new
@@ -540,11 +567,16 @@ private def handleDidOpen (session : Session) (params : Json) : IO Unit := do
     session.sink.show 2 s!"lean-fmt: {reason}"
   | .ok (path, relativePath) =>
     let (normalized, lineEndings) := LosslessSource.normalize text
+    if let some previous := (← session.documents.get).get? uri then
+      previous.analyzer.close
+    let analyzer ← IncrementalAnalyzer.open
     session.refusals.modify (·.erase uri)
     session.documents.modify (·.insert uri {
-      uri, path, relativePath, lineEndings, version
+      uri, path, relativePath, lineEndings, version, analyzer
       text := FileMap.ofString normalized
     })
+    session.analyses.modify (·.erase uri)
+    session.envelopes.modify (·.erase uri)
     session.schedule uri version
 
 private def handleDidChange (session : Session) (params : Json) : IO Unit := do
@@ -565,18 +597,27 @@ private def handleDidChange (session : Session) (params : Json) : IO Unit := do
     -- The document is closed rather than left at a stale version: continuing to answer from bytes the
     -- client has since edited past is the stale publication the freeze forbids.
     session.documents.modify (·.erase uri)
+    document.analyzer.close
+    session.analyses.modify (·.erase uri)
+    session.envelopes.modify (·.erase uri)
     let reason := s!"document grew past {maxDocumentBytes} bytes and is no longer served: {uri}"
     session.refusals.modify (·.insert uri reason)
     publishEmpty session uri
     session.sink.show 2 reason
     return
   session.documents.modify (·.insert uri { document with text, version })
+  session.analyses.modify (·.erase uri)
+  session.envelopes.modify (·.erase uri)
   session.schedule uri version
 
 private def handleDidClose (session : Session) (params : Json) : IO Unit := do
   let .ok identifier := params.getObjVal? "textDocument" | return
   let .ok uri := identifier.getObjValAs? String "uri" | return
+  if let some document := (← session.documents.get).get? uri then
+    document.analyzer.close
   session.documents.modify (·.erase uri)
+  session.analyses.modify (·.erase uri)
+  session.envelopes.modify (·.erase uri)
   session.refusals.modify (·.erase uri)
   -- A client keeps the last published set until told otherwise, so without this a closed document
   -- keeps showing diagnostics for bytes nobody holds.
@@ -600,6 +641,7 @@ private def handleDidChangeConfiguration (session : Session) : IO Unit := do
   -- selections, or a margin that no longer apply. Dropped wholesale rather than compared: a memo whose
   -- key does not mention the configuration cannot be checked against a new one.
   session.analyses.set {}
+  session.envelopes.set {}
   for (uri, document) in documents.toList do
     match ← admit session uri with
     | .ok _ =>
@@ -609,6 +651,7 @@ private def handleDidChangeConfiguration (session : Session) : IO Unit := do
       session.schedule uri document.version
     | .error reason =>
       session.documents.modify (·.erase uri)
+      document.analyzer.close
       session.refusals.modify (·.insert uri reason)
       publishEmpty session uri
       session.sink.show 2 s!"lean-fmt: {reason}"
@@ -632,8 +675,9 @@ private def handleHealth (session : Session) (id : RequestID) : IO Unit := do
 
 /-! ## Analysis
 
-`notes/01-protocol.md` §7. Every answer below is one `ExactRun.streamSnapshot` over the whole buffer:
-there is no incremental analysis here and none is advertised. -/
+`notes/01-protocol.md` §7. Every answer below consumes the current whole-buffer frontend envelope.
+Successive versions reuse the document's last-good snapshot; projection and rendering remain the
+same `ExactRun.streamEnvelope` path used outside the editor. -/
 
 /-- The document's identity and the rule plan that identity resolves.
 
@@ -648,6 +692,71 @@ private def resolve (session : Session) (document : Document) :
     | .ok plan => return .ok (target, plan)
     | .error message => return .error message
   catch error => return .error s!"{error}"
+
+private def withAnalyzerCancellation (session : Session) (analyzer : IncrementalAnalyzer)
+    (cancel? : Option Std.CancellationToken) (action : IO α) : IO α := do
+  let some cancel := cancel? | action
+  session.activeAnalyzer.atomically do set (some analyzer)
+  try
+    if ← cancel.isCancelled then
+      throw <| IO.userError Application.cancellationMessage
+    action
+  finally
+    session.activeAnalyzer.atomically do set (none : Option IncrementalAnalyzer)
+
+private def replaceAnalyzer (session : Session) (document : Document) : IO IncrementalAnalyzer := do
+  document.analyzer.close
+  let analyzer ← IncrementalAnalyzer.open
+  session.documents.modify fun documents =>
+    match documents.get? document.uri with
+    | some current =>
+      if current.version == document.version then
+        documents.insert document.uri { current with analyzer }
+      else documents
+    | none => documents
+  return analyzer
+
+/- Run the one document-owned frontend, recreating its empty session once after an infrastructure
+failure. Recovery starts from these in-memory bytes and exact setup; it never consults disk evidence
+or the persistent result cache. A cancellation is propagated and never treated as a crash. -/
+private def incrementalEnvelope (session : Session) (document : Document)
+    (target : Project.SourceTarget) (plan : RulePlan) (mode : RunMode)
+    (cancel? : Option Std.CancellationToken := none) : IO AnalysisEnvelope := do
+  let setup ← session.run.setupSnapshot target
+  let semantic := plan.requiredTier == .semantic
+  let occurrences := (plan.demandedCaps (mode == .fix)).occurrences
+  let width? := if mode.rendersCanonical then some target.config.format.lineWidth else none
+  if let some cached := (← session.envelopes.get).get? document.uri then
+    if cached.meets document.version semantic occurrences width? then
+      return cached.envelope
+  let run (analyzer : IncrementalAnalyzer) := withAnalyzerCancellation session analyzer cancel? do
+    let result ← if mode.rendersCanonical then
+        analyzer.format setup document.source document.path target.config.format.lineWidth
+          (captureSemantic := semantic) (captureOccurrences := occurrences)
+      else
+        analyzer.analyze setup document.source document.path
+          (captureSemantic := semantic) (captureOccurrences := occurrences)
+    if result.cancelled then
+      throw <| IO.userError Application.cancellationMessage
+    return result.envelope
+  let envelope ← try
+      run document.analyzer
+    catch error =>
+      if Application.cancelled? error then throw error
+      let analyzer ← replaceAnalyzer session document
+      run analyzer
+  if let some current := (← session.documents.get).get? document.uri then
+    if current.version == document.version then
+      session.envelopes.modify (·.insert document.uri {
+        version := document.version, semantic, occurrences, width?, envelope })
+  return envelope
+
+private def incrementalReport (session : Session) (document : Document)
+    (target : Project.SourceTarget) (plan : RulePlan) (mode : RunMode)
+    (range? : Option SourceRange := none) (unsafeFixes : Bool := false)
+    (cancel? : Option Std.CancellationToken := none) : IO StreamReport := do
+  let envelope ← incrementalEnvelope session document target plan mode cancel?
+  session.run.streamEnvelope target plan mode envelope range? unsafeFixes
 
 /-- Byte range in the normalized document → LSP range. Both ends convert through the same `FileMap`
 the client's own positions convert through, so a round trip is the identity on positions that name a
@@ -699,7 +808,7 @@ private def findingsFor (session : Session) (document : Document)
   | .error message => return .error message
   | .ok (target, plan) =>
     try
-      let report ← session.run.streamSnapshot target plan .check (cancel? := cancel?)
+      let report ← incrementalReport session document target plan .check (cancel? := cancel?)
       -- A buffer that did not analyze reports its diagnostics as a log line, not as findings: it is
       -- mid-keystroke, and reporting that as a finding is wrong (§7). It is also not memoized,
       -- because the next request should try again.
@@ -708,7 +817,7 @@ private def findingsFor (session : Session) (document : Document)
       session.analyses.modify (·.insert document.uri (document.version, report.findings))
       return .ok report.findings
     catch error =>
-      -- A cancelled child is not a broken buffer. Reporting it as one would log a failure the client
+      -- A cancelled analysis is not a broken buffer. Reporting it as one would log a failure the client
       -- asked for; whoever answers the request answers this.
       if Application.cancelled? error then throw error
       return .error s!"{error}"
@@ -737,7 +846,7 @@ private def wholeEdit (document : Document) (output : String) : Json :=
 
 /-- `textDocument/formatting` and `textDocument/rangeFormatting`.
 
-One operation, because they are one operation below: `streamSnapshot .format` with or without a range.
+One operation, because they are one operation below: `streamEnvelope .format` with or without a range.
 A range answer replaces the **actual** range — the hull of the layout units the selection expands to —
 not the range the client asked for, because reflow can rebreak the enclosing unit past the selection
 (`ruff-14`, §8). Clients that re-format are expected to send back the range the unit now occupies;
@@ -764,7 +873,9 @@ private def handleFormatting (session : Session) (id : RequestID) (params : Json
   | .error message => session.sink.fail id .invalidParams message
   | .ok (target, plan) =>
     let report ←
-      try session.run.streamSnapshot target plan .format (range? := range?) (cancel? := some cancel)
+      try
+        incrementalReport session document target plan .format (range? := range?)
+          (cancel? := some cancel)
       catch error =>
         -- A cancellation is not a formatting failure, and saying so here would report the client's own
         -- `$/cancelRequest` back to it as an internal error. `serveCancellable` answers it.
@@ -870,7 +981,7 @@ private def handleCodeAction (session : Session) (id : RequestID) (params : Json
   if wants "source.fixAll" then
     let fixed? ←
       try
-        let report ← session.run.streamSnapshot target plan .fix
+        let report ← incrementalReport session document target plan .fix
           (unsafeFixes := unsafeFixes) (cancel? := some cancel)
         pure (some report)
       catch error =>
@@ -1060,6 +1171,7 @@ which documents exist — and a document may be a file that has never been saved
 def serveLanguageServer (options : ServerOptions) : IO UInt32 := do
   unless options.maxMemoryGiB > 0 do
     throw <| IO.userError "--max-memory must provide a nonzero operating envelope"
+  Lean.Internal.setMaxMemory (options.maxMemoryGiB * 1024 * 1024 * 1024).toUSize
   let root ← IO.FS.realPath options.root
   let configPath? := options.configPath?.map fun path =>
     if path.isAbsolute then path else root / path
@@ -1081,7 +1193,9 @@ def serveLanguageServer (options : ServerOptions) : IO UInt32 := do
       refusals := ← IO.mkRef {}
       cancelled := ← Std.Mutex.new {}
       inFlight := ← Std.Mutex.new none
+      activeAnalyzer := ← Std.Mutex.new none
       analyses := ← IO.mkRef {}
+      envelopes := ← IO.mkRef {}
       -- The quiet interval is a wait, not a poll: one task per scheduled version, which enqueues
       -- either way. The worker drops a superseded analysis, because only the worker's ordering says
       -- which version is current.
@@ -1097,6 +1211,8 @@ def serveLanguageServer (options : ServerOptions) : IO UInt32 := do
     -- The reader has finished whenever the queue closed; waiting makes that certain, and stops a
     -- half-read frame from outliving the session.
     discard <| IO.wait reader
+    for (_, document) in (← session.documents.get).toList do
+      document.analyzer.close
     return code
 
 end LeanFmt.Internal.LanguageServer

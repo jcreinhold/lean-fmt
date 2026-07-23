@@ -41,8 +41,10 @@ for width in (20, 40, 80, 100):
         "constructor <;>",
         "custom_assumption",
         "match value with",
-        "let some value := input |",
-        "let some value ← input |",
+        "let some value := input",
+        "let some value ← input",
+        "long guarded let",
+        "long guarded bind",
         "total ←",
         "have positive",
         "for value in values do",
@@ -70,6 +72,8 @@ for width in (20, 40, 80, 100):
         assert required in text, (width, required, text)
     assert text.count("/- between focused goals -/") == 1, text
     assert text.count("/- match-arm comment -/") == 1, text
+    assert text.count("/- long guarded let -/") == 1, text
+    assert text.count("/- long guarded bind -/") == 1, text
     assert text.index("let first") < text.index("let second") < text.index("pure second"), text
 
 narrow = texts[20]

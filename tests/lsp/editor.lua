@@ -109,13 +109,18 @@ vim.api.nvim_buf_set_lines(buf, code_line - 1, code_line, false, { original[code
 
 -- Format through neovim's own request path.
 local before = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+local expected_text = vim.fn.system(
+  { ".lake/build/bin/lean-fmt", "format", "-", "--stdin-filename", "LeanFmt/Basic.lean" },
+  table.concat(before, "\n") .. "\n")
+check("the stdin oracle formats the same unsaved bytes", vim.v.shell_error == 0,
+  "exit=" .. vim.v.shell_error)
+local expected = vim.split(expected_text, "\n", { plain = true })
+if expected[#expected] == "" then table.remove(expected) end
 vim.lsp.buf.format({ name = "lean-fmt", bufnr = buf, timeout_ms = 60000 })
 local after = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
 
 check("formatting changed the buffer", not vim.deep_equal(before, after))
-check("formatting removed the trailing whitespace", after[code_line] == original[code_line],
-  ("got %q want %q"):format(after[code_line] or "<nil>", original[code_line]))
-check("formatting left every other line alone", vim.deep_equal(after, original))
+check("editor formatting equals the stdin formatter", vim.deep_equal(after, expected))
 
 -- The server must not have touched disk.
 local on_disk = vim.fn.readfile("LeanFmt/Basic.lean")
