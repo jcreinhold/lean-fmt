@@ -104,6 +104,18 @@ private def categoryFamily : SurfaceCategory → CoreSurfaceFamily
     else if termPrefix.isPrefixOf name then .term
     else .shared
 
+/-- Whether Lean's formatter registry can be invoked at this exact kind. Explicit formatters and
+data-backed parser descriptions are callable; opaque parser closures are not. -/
+def hasExplicitFormatter (env : Lean.Environment) (kind : Lean.Name) : Bool :=
+  !(Lean.PrettyPrinter.formatterAttribute.getValues env kind).isEmpty
+
+def registryCallable (env : Lean.Environment) (kind : Lean.Name) : Bool :=
+  hasExplicitFormatter env kind ||
+    match env.find? kind with
+    | some info => info.type.isConstOf ``Lean.ParserDescr ||
+        info.type.isConstOf ``Lean.TrailingParserDescr
+    | none => false
+
 /-- Classify one actual syntax kind without consulting its source spelling or layout. -/
 def owner (env : Lean.Environment) (category : SurfaceCategory) (kind : Lean.Name) : SurfaceOwner :=
   if lexicalKinds.contains kind then .lexical
@@ -112,6 +124,10 @@ def owner (env : Lean.Environment) (category : SurfaceCategory) (kind : Lean.Nam
   else if termPrefix.isPrefixOf kind then .structural .term
   else if tacticPrefix.isPrefixOf kind then .structural .tactic
   else if parserPrefix.isPrefixOf kind then .structural (categoryFamily category)
+  -- Parser combinators also introduce internal wrappers. Even with imported provenance, an opaque
+  -- parser closure without an explicit formatter cannot be an independent registry root. Treat the
+  -- whole class as transparent metadata instead of maintaining a toolchain-specific name table.
+  else if !registryCallable env kind && (originModule? env kind).isSome then .transparent
   else if (originModule? env kind).any coreModule then .structural (categoryFamily category)
   else .extension
 

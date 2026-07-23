@@ -78,7 +78,7 @@ assert "else if second then" in texts[80], texts[80]
 assert "let (actual, _) := value" in texts[80], texts[80]
 assert "match _h : first, second with" in texts[80], texts[80]
 assert texts[20].index("| 0, _ => alpha") < texts[20].index("| _, 1 => beta"), texts[20]
-assert "fun first second => first + second" in texts[40], texts[40]
+assert "fun first second =>\n    first + second" in texts[40], texts[40]
 assert "let first := alpha + beta\n  let second := first * gamma" in texts[40], texts[40]
 
 assert texts[20] != texts[40] != texts[80], "term groups ignored configured width"

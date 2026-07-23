@@ -4,11 +4,11 @@ set -euo pipefail
 mathlib_root=${1:-"$HOME/Code/mathlib4"}
 selection=${2:-full}
 
-expected_revision=783ccda4ee524f13cc5636237be0a1942bc04824
-expected_toolchain=leanprover/lean4:v4.32.0
-expected_file_count=8795
+expected_revision=3de5ed81cc71b9ea62597b865ba0baaeb5eb0ea9
+expected_toolchain=leanprover/lean4:v4.33.0-rc1
+expected_file_count=8815
 expected_sample_count=62
-expected_sample_digest=1936bdb60e01c14fdc986a535ef9317d63775506708e35f4155a9c4c5c6eeeef
+expected_sample_digest=3cd304e6463e119b17776db151a24c522df13d046ed4153922b9b64893442b68
 
 actual_revision=$(git -C "$mathlib_root" rev-parse HEAD)
 actual_toolchain=$(<"$mathlib_root/lean-toolchain")

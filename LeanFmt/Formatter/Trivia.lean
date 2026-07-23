@@ -95,6 +95,26 @@ def decorateBeforeBoundary (ownership : CommentOwnership) (stx : Lean.Syntax)
   | some comments => document ++ comments
   | none => document
 
+/-- Add every logical comment below an opaque structural leaf. Descriptor-backed extensions have no
+recursive formatter callbacks, so this is their exact-once comment path. -/
+def decorateSubtree (ownership : CommentOwnership) (stx : Lean.Syntax) (document : Doc) : Doc :=
+  let leading := Comments.subtreeAt ownership stx .leading
+  let trailing := Comments.subtreeAt ownership stx .trailing
+  let document := leading.foldr (init := document) fun comment result =>
+    commentDocument ownership comment ++ Doc.hard ++ result
+  trailing.foldl (init := document) fun result comment =>
+    result ++ Doc.text " " ++ commentDocument ownership comment ++
+      (if comment.kind == .line then Doc.hard else Doc.empty)
+
+def decorateSubtreeTrailingAfter (ownership : CommentOwnership) (owner included : Lean.Syntax)
+    (document : Doc) : Doc :=
+  let includedStop? := included.getRange?.map (·.stop.byteIdx)
+  Comments.subtreeAt ownership owner .trailing |>.filter (fun comment =>
+    includedStop?.any (· <= comment.range.start)) |>.foldl
+      (init := document) fun result comment =>
+    result ++ Doc.text " " ++ commentDocument ownership comment ++
+      (if comment.kind == .line then Doc.hard else Doc.empty)
+
 /-- Comments logically leading the complete command, independent of which adjacent token physically
 stores their trivia. -/
 def leading (ownership : CommentOwnership) (stx : Lean.Syntax) : Option Doc :=

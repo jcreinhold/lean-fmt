@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Actual imported syntax through the production exact formatter. Descriptor-derived and explicitly
-# registered extension roots are admitted only after structural validation and idempotence.
+# Actual imported syntax through the production exact formatter. Descriptor-derived roots are
+# structural syntax islands; explicitly registered roots enter the live registry. Both are admitted
+# only after structural validation and idempotence.
 
 repo_root=$(cd "$(dirname "$0")/../.." && pwd)
 work=$(mktemp -d)
@@ -60,10 +61,10 @@ assert narrow is not None and narrow_envelope.get("validationFailure") is None, 
 assert narrow is not None and narrow["text"] != draft["text"], narrow
 metrics = draft["metrics"]
 assert metrics["frontendRuns"] == 2 and metrics["commands"] >= 10, metrics
-assert metrics["coreDocuments"] > 0 and metrics["registryDocuments"] == 2, metrics
+assert metrics["coreDocuments"] > 0 and metrics["registryDocuments"] == 1, metrics
 assert metrics["structuralDocuments"] == metrics["coreDocuments"], metrics
 assert metrics["coreRegistryDocuments"] == 0, metrics
-assert metrics["extensionRegistryDocuments"] == 2, metrics
+assert metrics["extensionRegistryDocuments"] == 1, metrics
 assert metrics["registryNodes"] >= metrics["commands"], metrics
 assert metrics["explicitDocuments"] > 0 and metrics["descriptorDocuments"] > 0, metrics
 assert metrics["commentOwners"] == 3 and metrics["nativeEvents"] > 0, metrics
@@ -87,7 +88,7 @@ for unit in draft["sourceMap"]:
     assert unit["output"]["start"] == output_cursor, (output_cursor, unit)
     source_cursor = unit["source"]["stop"]
     output_cursor = unit["output"]["stop"]
-assert source_cursor == envelope["artifact"]["source"]["normalizedBytes"], (source_cursor, envelope)
+assert source_cursor == envelope["artifact"]["normalizedBytes"], (source_cursor, envelope)
 assert output_cursor == len(output.encode()), (output_cursor, len(output.encode()))
 
 print(json.dumps({

@@ -128,6 +128,14 @@ def admit (beforeText : String) (before : LosslessSource) (first : FormatDraft)
   unless first.headerContract == second.headerContract do
     return ← fail .header "module/header/import structure or token spelling changed"
   unless first.commentContract == second.commentContract do
+    if first.commentContract.size != second.commentContract.size then
+      return ← fail .comments s!"comment contract count changed: \
+        {first.commentContract.size} -> {second.commentContract.size}"
+    for index in [0:first.commentContract.size] do
+      let left := first.commentContract[index]!
+      let right := second.commentContract[index]!
+      unless left == right do
+        return ← fail .comments s!"comment {index} changed: {repr left} -> {repr right}"
     return ← fail .comments "comment kind, payload, order, or logical owner path changed"
   unless second.text == first.text do
     return ← fail .idempotence "formatting the reparsed candidate changed bytes"

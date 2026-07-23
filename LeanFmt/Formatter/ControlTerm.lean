@@ -116,7 +116,7 @@ private def alternativeDocument (ownership : CommentOwnership) (formatChild : Ch
       | some comments => comments ++ Doc.hard ++ bodyDocument
       | none => bodyDocument
     let document := Doc.group <|
-      Doc.text "| " ++ Syntax.flatSyntax patterns ++ Doc.text " =>" ++
+      Doc.text "| " ++ Syntax.verbatimSyntax patterns ++ Doc.text " =>" ++
         Doc.nest 2 (Doc.line " " ++ bodyDocument)
     return .ok (some <| match Trivia.leading ownership stx with
       | some comments => comments ++ Doc.hard ++ document

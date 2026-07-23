@@ -37,7 +37,7 @@ private partial def spellingsFrom (stx : Lean.Syntax) (values : Array String) : 
 def spellings (stx : Lean.Syntax) : Array String := spellingsFrom stx #[]
 
 private def hugsPrevious : String → Bool
-  | ")" | "]" | "}" | "⟩" | "," | ";" => true
+  | ")" | "]" | "}" | "⟩" | "," | ";" | ".{" => true
   | _ => false
 
 private def hugsNext : String → Bool
@@ -46,14 +46,17 @@ private def hugsNext : String → Bool
 
 /-- Whether adjacent selected syntax tokens receive canonical horizontal separation, with the one
 token of left context needed by typed antiquotations such as `$x:ident`. -/
-def separatesAfter (_previousPrevious : Option String) (previous token : String) : Bool :=
+def separatesAfter (previousPrevious : Option String) (previous token : String) : Bool :=
   let projectionDot := token == "." &&
     previous != "=>" && previous != ":=" && previous != "|" && previous != ","
+  let quotationCategory := token == "|" && previousPrevious.any (·.endsWith "(")
   let compositeOpening := previous.endsWith "(" || previous.endsWith "[" ||
     previous.endsWith "{"
-  let antiquotationRepetition := previous == "]" && (token == "?" || token == "*" || token == "+")
-  !(hugsNext previous || hugsPrevious token || projectionDot || compositeOpening ||
-    antiquotationRepetition)
+  let compositeProjection := previous.endsWith "."
+  let antiquotationRepetition := (previous == "]" || previous == ")") &&
+    (token == "?" || token == "*" || token == "+")
+  !(hugsNext previous || hugsPrevious token || projectionDot || quotationCategory || compositeOpening ||
+    compositeProjection || antiquotationRepetition)
 
 /-- Whether two adjacent selected syntax tokens receive canonical horizontal separation when no
 antiquotation context is available. -/
@@ -99,6 +102,11 @@ private partial def flatSyntaxTokens (stx : Lean.Syntax) (tokens : Array FlatSyn
 spelling-only heuristic, this distinguishes `$x:ident` from a custom quotation containing `$x :`. -/
 def flatSyntax (stx : Lean.Syntax) : Doc := Id.run do
   let tokens := flatSyntaxTokens stx
+  let containsQuotation := (List.range tokens.size).any fun index =>
+    index >= 2 && tokens[index]!.spelling == "|" &&
+      tokens[index - 2]!.spelling.endsWith "("
+  if containsQuotation then
+    if let some exact := stx.reprint then return Doc.verbatim exact.trimAscii.copy
   let mut output := ""
   for index in [:tokens.size] do
     let token := tokens[index]!
@@ -109,6 +117,43 @@ def flatSyntax (stx : Lean.Syntax) : Doc := Id.run do
     output := output ++ token.spelling
   if output.contains '\n' then return Doc.verbatim output
   return Doc.text output
+
+/-- Exact spelling of a syntax island whose bytes are semantically data, with outer trivia removed
+so its structural parent remains the sole boundary owner. -/
+private def stripBoundaryInfo (start stop : Nat) : Lean.SourceInfo → Lean.SourceInfo
+  | .original leading position trailing endPos =>
+    let leading := if leading.startPos.byteIdx < start then
+        { leading with stopPos := leading.startPos }
+      else leading
+    let trailing := if stop < trailing.stopPos.byteIdx then
+        { trailing with stopPos := trailing.startPos }
+      else trailing
+    .original leading position trailing endPos
+  | info => info
+
+private partial def withoutBoundaryTrivia (start stop : Nat) : Lean.Syntax → Lean.Syntax
+  | .node info kind children =>
+    .node (stripBoundaryInfo start stop info) kind
+      (children.map (withoutBoundaryTrivia start stop))
+  | .atom info value => .atom (stripBoundaryInfo start stop info) value
+  | .ident info raw value preresolved =>
+    .ident (stripBoundaryInfo start stop info) raw value preresolved
+  | .missing => .missing
+
+def verbatimSyntax (stx : Lean.Syntax) : Doc :=
+  let start := stx.getRange?.map (·.start.byteIdx) |>.getD 0
+  let stop := stx.getRange?.map (·.stop.byteIdx) |>.getD start
+  match withoutBoundaryTrivia start stop stx |>.reprint with
+  | some value =>
+    let tokens := spellings stx
+    let value := if let some pipeIndex := tokens.findIdx? (· == "|") then
+        if 0 < pipeIndex then
+          let category := tokens[pipeIndex - 1]!
+          value.replace ("(" ++ category ++ " |") ("(" ++ category ++ "|")
+        else value
+      else value
+    Doc.verbatim value
+  | none => flatSyntax stx
 
 private def opensDelimiter : String → Bool
   | "(" | "[" | "{" | "⟨" | "@(" | "@[" | "`(" | "`[" | "`{" | ".{" => true

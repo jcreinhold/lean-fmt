@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Closed-core provenance and the zero-core-registry release gate. Registered documents are permitted
-# only for non-core extension roots.
+# Closed-core provenance and the zero-core-registry release gate. Inspectable extension descriptors
+# are structural leaves; only extension roots with explicit formatters enter the live registry.
 
 repo_root=$(cd "$(dirname "$0")/../.." && pwd)
 work=$(mktemp -d)
@@ -55,7 +55,8 @@ assert complete(application), application
 assert release_gate(application), application
 
 assert complete(extension), extension
-assert extension["extensionRegistryDocuments"] == 2, extension
+assert extension["extensionRegistryDocuments"] == 1, extension
+assert extension["descriptorDocuments"] == 1, extension
 
 omitted = copy.deepcopy(extension)
 omitted["extensionRegistryDocuments"] -= 1

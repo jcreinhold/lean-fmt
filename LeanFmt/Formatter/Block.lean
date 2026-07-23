@@ -267,16 +267,24 @@ private partial def tacticDocument (ownership : CommentOwnership) (formatTerm : 
     return .ok (some (Trivia.decorateBeforeBoundary ownership stx
       (Syntax.flat (Syntax.spellings stx))))
   | _ => pure ()
-  match CoreSurface.owner (← Lean.getEnv) .tactic stx.getKind with
+  let owner := CoreSurface.owner (← Lean.getEnv) .tactic stx.getKind
+  match owner with
   | .extension =>
-    return (← Formatter.registeredBoundary ownership .tactic stx).map fun formatted =>
-      some <| match Trivia.leading ownership stx with
-        | some comments => comments ++ Doc.hard ++ formatted.document
-        | none => formatted.document
+    if CoreSurface.hasExplicitFormatter (← Lean.getEnv) stx.getKind then
+      return (← Formatter.registeredBoundary ownership .tactic stx).map fun formatted =>
+        some <| match Trivia.leading ownership stx with
+          | some comments => comments ++ Doc.hard ++ formatted.document
+          | none => formatted.document
+    return .ok (some (Trivia.decorateSubtree ownership stx (Syntax.verbatimSyntax stx)))
   | _ => pure ()
-  if stx.getKind == Lean.nullKind || stx.getKind == Lean.groupKind ||
+  if stx.getKind == Lean.choiceKind then
+    let some selected := stx.getArgs[0]? | return .ok none
+    return ← tacticDocument ownership formatTerm selected
+  if owner == .transparent || stx.getKind == Lean.nullKind || stx.getKind == Lean.groupKind ||
       stx.isOfKind ``Lean.Parser.Tactic.tacticSeq ||
-      stx.isOfKind ``Lean.Parser.Tactic.tacticSeq1Indented then
+      stx.isOfKind ``Lean.Parser.Tactic.tacticSeq1Indented ||
+      stx.isOfKind ``Lean.Parser.Tactic.tacticSeqBracketed ||
+      stx.getKind == `Lean.Parser.Tactic.seq1 then
     let lexicalContainer := (stx.getKind == Lean.nullKind || stx.getKind == Lean.groupKind) &&
       (nonemptyChildren stx).all fun child => child.isAtom || child.isIdent
     let mut documents := #[]
@@ -307,6 +315,8 @@ private partial def tacticDocument (ownership : CommentOwnership) (formatTerm : 
       let some body := groupChildren.back? | return .ok none
       match ← tacticDocument ownership formatTerm body with
       | .ok (some bodyDocument) =>
+        let bodyDocument :=
+          Trivia.decorateSubtreeTrailingAfter ownership alternative body bodyDocument
         let marker := match firstTokenSyntax? "|" alternative with
           | some pipe => Trivia.decorateBeforeBoundary ownership pipe (Doc.text "|")
           | none => Doc.text "|"
@@ -341,34 +351,45 @@ private partial def tacticDocument (ownership : CommentOwnership) (formatTerm : 
       | .ok none => return .ok none
       | .ok (some arm) => document := document ++ Doc.hard ++ arm
     return .ok (some document)
+  let directChildren := nonemptyChildren stx
+  if let some byBody := directChildren.back? then
+    if byBody.isOfKind ``Lean.Parser.Term.byTactic ||
+        byBody.isOfKind ``Lean.Parser.Term.byTactic' then
+      let some sequence := (nonemptyChildren byBody).back? | return .ok none
+      let prefixSyntax := Lean.Syntax.node .none Lean.nullKind
+        (directChildren.extract 0 (directChildren.size - 1))
+      match ← tacticDocument ownership formatTerm sequence with
+      | .error failure => return .error failure
+      | .ok none => return .ok none
+      | .ok (some bodyDocument) =>
+        let byDocument := Doc.group (Doc.text "by" ++ Doc.nest 2 (Doc.line " " ++ bodyDocument))
+        return .ok (some (Syntax.verbatimSyntax prefixSyntax ++
+          Doc.nest 2 (Doc.line " " ++ byDocument)))
+  if let some sequence := directChildren.back? then
+    if sequence.isOfKind ``Lean.Parser.Tactic.tacticSeq ||
+        sequence.isOfKind ``Lean.Parser.Tactic.tacticSeq1Indented then
+      let prefixSyntax := Lean.Syntax.node .none Lean.nullKind
+        (directChildren.extract 0 (directChildren.size - 1))
+      match ← tacticDocument ownership formatTerm sequence with
+      | .error failure => return .error failure
+      | .ok none => return .ok none
+      | .ok (some sequenceDocument) =>
+        return .ok (some (Syntax.verbatimSyntax prefixSyntax ++
+          Doc.nest 2 (Doc.hard ++ sequenceDocument)))
   let args := nonemptyChildren stx
-  if args.isEmpty then return .ok none
-  let mut documents := #[]
-  for nested in args do
-    match nested with
-    | .atom _ spelling =>
-      documents := documents.push (Trivia.decorateBeforeBoundary ownership nested (Doc.text spelling))
-    | .ident .. =>
-      documents := documents.push (Trivia.decorateBeforeBoundary ownership nested
-        (Syntax.flat (Syntax.spellings nested)))
-    | _ =>
-      match CoreSurface.owner (← Lean.getEnv) .tactic nested.getKind with
-      | .structural .term =>
-        match ← formatTerm nested with
-        | .ok (some document) => documents := documents.push document
-        | .ok none => return .ok none
-        | .error failure => return .error failure
-      | _ =>
-        match ← tacticDocument ownership formatTerm nested with
-        | .ok (some document) => documents := documents.push document
-        | .ok none => documents := documents.push (Trivia.decorateBeforeBoundary ownership nested
-          (Syntax.flat (Syntax.spellings nested)))
-        | .error failure => return .error failure
-  if let #[left, _, right] := documents then
-    if (Syntax.spellings args[1]!) == #["<;>"] then
-      return .ok (some (Doc.group <|
-        left ++ Doc.text " <;>" ++ Doc.nest 2 (Doc.line " " ++ right)))
-  return .ok (some (join documents (Doc.text " ")))
+  if let some declarationIndex := args.findIdx? fun child =>
+      child.isOfKind ``Lean.Parser.Term.letDecl then
+    let declaration := args[declarationIndex]!
+    let prefixTokens := (args.extract 0 declarationIndex).foldl (init := #[]) fun tokens child =>
+      tokens ++ Syntax.spellings child
+    match ← formatTerm declaration with
+    | .error failure => return .error failure
+    | .ok none => return .ok none
+    | .ok (some declarationDocument) =>
+      return .ok (some (Doc.group <| Syntax.flat prefixTokens ++
+        Doc.nest 2 (Doc.line " " ++ declarationDocument)))
+  if (Syntax.spellings stx).isEmpty then return .ok none
+  return .ok (some (Trivia.decorateBeforeBoundary ownership stx (Syntax.verbatimSyntax stx)))
 
 private partial def doDocument (ownership : CommentOwnership) (formatTerm : TermDocument)
     (stx : Lean.Syntax) : Lean.CoreM (Except FormatterFailure (Option Doc)) := do
@@ -656,7 +677,8 @@ def document (ownership : CommentOwnership) (formatTerm : TermDocument) (stx : L
     | .ok (some body) => return .ok (some (Doc.text "do" ++ Doc.nest 2 (Doc.hard ++ body)))
     | .ok none => return .ok none
     | .error failure => return .error failure
-  if !stx.isOfKind ``Lean.Parser.Term.byTactic then return .ok none
+  if !stx.isOfKind ``Lean.Parser.Term.byTactic &&
+      !stx.isOfKind ``Lean.Parser.Term.byTactic' then return .ok none
   let children := nonemptyChildren stx
   let some sequence := children.back? | return .ok none
   match ← tacticDocument ownership formatTerm sequence with

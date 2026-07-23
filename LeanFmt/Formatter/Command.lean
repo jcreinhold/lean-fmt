@@ -259,64 +259,6 @@ private def headerDocument? (ownership : CommentOwnership) (stx : Lean.Syntax) :
     some (document?.getD Doc.empty)
   else none
 
-private def simpleShellKinds : Array Lean.Name := #[
-  ``Lean.Parser.Command.moduleDoc,
-  ``Lean.Parser.Command.namespace,
-  ``Lean.Parser.Command.section,
-  ``Lean.Parser.Command.end,
-  ``Lean.Parser.Command.open,
-  ``Lean.Parser.Command.export,
-  ``Lean.Parser.Command.universe,
-  ``Lean.Parser.Command.variable,
-  ``Lean.Parser.Command.attribute,
-  ``Lean.Parser.Command.include,
-  ``Lean.Parser.Command.omit,
-  ``Lean.Parser.Command.check,
-  ``Lean.Parser.Command.check_failure,
-  ``Lean.Parser.Command.eval,
-  ``Lean.Parser.Command.evalBang,
-  ``Lean.Parser.Command.synth,
-  ``Lean.Parser.Command.print,
-  ``Lean.Parser.Command.printSig,
-  ``Lean.Parser.Command.printAxioms,
-  ``Lean.Parser.Command.printEqns,
-  ``Lean.Parser.Command.version,
-  ``Lean.Parser.Command.assertNotExists,
-  ``Lean.Parser.Command.assertNotImported,
-  ``Lean.Parser.Command.checkAssertions,
-  ``Lean.Parser.Command.deprecatedSyntax,
-  ``Lean.Parser.Command.deprecated_module,
-  ``Lean.Parser.Command.showDeprecatedModules,
-  ``Lean.Parser.Command.addDocString,
-  ``Lean.Parser.Command.register_tactic_tag,
-  ``Lean.Parser.Command.recommended_spelling,
-  ``Lean.Parser.Command.mixfix,
-  ``Lean.Parser.Command.notation,
-  ``Lean.Parser.Command.syntax,
-  ``Lean.Parser.Command.syntaxAbbrev,
-  ``Lean.Parser.Command.syntaxCat,
-  ``Lean.Parser.Command.macro,
-  ``Lean.Parser.Command.binderPredicate
-]
-
-private def grammarShellKinds : Array Lean.Name := #[
-  ``Lean.Parser.Command.namespace,
-  ``Lean.Parser.Command.section,
-  ``Lean.Parser.Command.end,
-  ``Lean.Parser.Command.deprecatedSyntax,
-  ``Lean.Parser.Command.mixfix,
-  ``Lean.Parser.Command.notation,
-  ``Lean.Parser.Command.syntax,
-  ``Lean.Parser.Command.syntaxAbbrev,
-  ``Lean.Parser.Command.syntaxCat,
-  ``Lean.Parser.Command.macro,
-  ``Lean.Parser.Command.binderPredicate
-]
-
-private def isPlainSetOption (stx : Lean.Syntax) : Bool :=
-  stx.isOfKind ``Lean.Parser.Command.set_option &&
-    !(Syntax.spellings stx).contains "in"
-
 private def isVariableBinder (stx : Lean.Syntax) : Bool :=
   stx.isOfKind ``Lean.Parser.Term.explicitBinder ||
     stx.isOfKind ``Lean.Parser.Term.implicitBinder ||
@@ -347,17 +289,17 @@ private def variableDocument (ownership : CommentOwnership) (stx : Lean.Syntax) 
     previous? := tokens.back?
   Doc.group document
 
-private def simpleShellDocument? (ownership : CommentOwnership) (stx : Lean.Syntax) : Option Doc :=
-  if simpleShellKinds.contains stx.getKind || isPlainSetOption stx then
-    if stx.isOfKind ``Lean.Parser.Command.moduleDoc then
-      -- The complete docstring is command syntax. Its opening token is also represented in comment
-      -- ownership, but emitting that logical assignment separately would duplicate `/-!`.
-      some (Syntax.flat (Syntax.spellings stx))
-    else if stx.isOfKind ``Lean.Parser.Command.variable then
-      some (variableDocument ownership stx)
-    else
-      some (ownedTokensDocument ownership stx
-        (breakable := !grammarShellKinds.contains stx.getKind))
+private def specialShellDocument? (ownership : CommentOwnership) (stx : Lean.Syntax) : Option Doc :=
+  if stx.isOfKind ``Lean.Parser.Command.moduleDoc then
+    -- The complete docstring is command syntax. Its opening token is also represented in comment
+    -- ownership, but emitting that logical assignment separately would duplicate `/-!`.
+    some (Syntax.flat (Syntax.spellings stx))
+  else if stx.isOfKind ``Lean.Parser.Command.variable then
+    some (variableDocument ownership stx)
+  else if stx.isOfKind ``Lean.Parser.Command.initialize then
+    some (Syntax.verbatimSyntax stx)
+  else if stx.isOfKind ``Lean.Parser.Command.elab then
+    some (Syntax.verbatimSyntax stx)
   else none
 
 private def structural (ownership : CommentOwnership) (stx : Lean.Syntax) (document : Doc) :
@@ -377,29 +319,36 @@ def header (ownership : CommentOwnership) (stx : Lean.Syntax) :
     return .ok { document, trace, owner := .core, mechanism := .structural }
   format ownership .core (.named ``Lean.Parser.Module.header) stx (clearHead := false)
 
-private def macroRulesDocument (ownership : CommentOwnership) (stx : Lean.Syntax) : Doc := Id.run do
-  let tokens := selectedTokens stx
-  let rows := tokens.foldl (init := #[]) fun (rows : Array (Array SelectedToken)) token =>
-    if token.spelling == "|" then rows.push #[token]
-    else match rows.back? with
-      | some row => rows.set! (rows.size - 1) (row.push token)
-      | none => #[#[token]]
-  let mut document? : Option Doc := none
-  for index in [0:rows.size] do
-    let row := rows[index]!
-    let row := ownedSelectedTokensDocument ownership row (breakable := false)
-      (emitFirstLeading := index != 0)
-      (emitFinalTrailing := index + 1 != rows.size)
-    document? := some <| match document? with
-      | some document => document ++ Doc.nest 2 (Doc.hard ++ row)
-      | none => row
-  return Trivia.decorateBeforeBoundary ownership stx (Option.getD document? Doc.empty)
-
 private partial def descendantsOfKind (kind : Lean.Name) (stx : Lean.Syntax)
     (result : Array Lean.Syntax := #[]) : Array Lean.Syntax :=
   if stx.getKind == kind then result.push stx
   else stx.getArgs.foldl (init := result) fun result child =>
     descendantsOfKind kind child result
+
+private def rulesDocument (ownership : CommentOwnership) (stx : Lean.Syntax) :
+    Lean.CoreM (Except FormatterFailure Doc) := do
+  let alternatives := descendantsOfKind ``Lean.Parser.Term.matchAlt stx
+  if alternatives.isEmpty then
+    return .ok (ownedTokensDocument ownership stx (breakable := false))
+  let allTokens := selectedTokens stx
+  let alternativesCount := alternatives.foldl (init := 0) fun count alternative =>
+    count + (selectedTokens alternative).size
+  if alternativesCount > allTokens.size then
+    return .ok (ownedTokensDocument ownership stx (breakable := false))
+  let prefixTokens := allTokens.extract 0 (allTokens.size - alternativesCount)
+  let mut document := ownedSelectedTokensDocument ownership prefixTokens (breakable := false)
+    (emitFirstLeading := false) (emitFinalTrailing := false)
+  for alternative in alternatives do
+    let #[pipe, patterns, arrow, body] := alternative.getArgs |
+      return .ok (ownedTokensDocument ownership stx (breakable := false))
+    match ← Formatter.Term.format ownership body with
+    | .error failure => return .error failure
+    | .ok formatted =>
+      let row := Trivia.decorateBeforeBoundary ownership pipe (Doc.text "|") ++ Doc.text " " ++
+        Syntax.verbatimSyntax patterns ++ Doc.text " " ++ Syntax.flatSyntax arrow ++
+          Doc.nest 2 (Doc.line " " ++ formatted.document)
+      document := document ++ Doc.nest 2 (Doc.hard ++ row)
+  return .ok (Trivia.decorateBeforeBoundary ownership stx document)
 
 private def macroDocument? (ownership : CommentOwnership) (stx : Lean.Syntax) :
     Lean.CoreM (Except FormatterFailure (Option Doc)) := do
@@ -454,7 +403,7 @@ partial def command (ownership : CommentOwnership) (stx : Lean.Syntax) :
   | .error failure => return .error failure
   | .ok (some document) => return .ok (← structural ownership stx document)
   | .ok none => pure ()
-  if let some document := simpleShellDocument? ownership stx then
+  if let some document := specialShellDocument? ownership stx then
     return .ok (← structural ownership stx document)
   if let some declaration ← Formatter.Declaration.format? ownership stx then
     return declaration.map fun formatted =>
@@ -463,8 +412,20 @@ partial def command (ownership : CommentOwnership) (stx : Lean.Syntax) :
         trace := formatted.trace
         owner := .core
         mechanism := if formatted.structural then .structural else .registry }
-  if stx.isOfKind ``Lean.Parser.Command.macro_rules then
-    return .ok (← structural ownership stx (macroRulesDocument ownership stx))
+  if stx.isOfKind ``Lean.Parser.Command.macro_rules ||
+      stx.isOfKind ``Lean.Parser.Command.elab_rules then
+    match ← rulesDocument ownership stx with
+    | .error failure => return .error failure
+    | .ok document => return .ok (← structural ownership stx document)
+  -- Every remaining closed command is structurally owned. Its compact shell is safe and complete;
+  -- richer command families above replace this document when they have grammar-aware reflow. The
+  -- open set alone crosses into Lean's live formatter registry.
+  if CoreSurface.owner (← Lean.getEnv) .command stx.getKind != .extension then
+    return .ok (← structural ownership stx
+      (ownedTokensDocument ownership stx (breakable := false)))
+  if !CoreSurface.hasExplicitFormatter (← Lean.getEnv) stx.getKind then
+    return .ok (← structural ownership stx
+      (ownedTokensDocument ownership stx (breakable := false)))
   let result ← format ownership (← ownerOf stx) .command stx
   match result with
   | .ok formatted => return .ok formatted

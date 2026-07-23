@@ -115,6 +115,10 @@ private def isBinder (stx : Lean.Syntax) : Bool :=
     stx.isOfKind ``Lean.Parser.Term.instBinder ||
     stx.isOfKind ``Lean.Parser.Term.binderIdent
 
+private partial def containsQuotation (stx : Lean.Syntax) : Bool :=
+  stx.isOfKind ``Lean.Parser.Term.quot || stx.isOfKind ``Lean.Parser.Term.dynamicQuot ||
+    stx.getArgs.any containsQuotation
+
 private partial def signatureParts (stx : Lean.Syntax) (binders : Array Lean.Syntax)
     (typeSpec? : Option Lean.Syntax) : Array Lean.Syntax × Option Lean.Syntax :=
   if isBinder stx then (binders.push stx, typeSpec?)
@@ -128,9 +132,8 @@ private structure SimpleParts where
   value? : Option Lean.Syntax := none
   trailing : Array String := #[]
 
-private def simpleParts (modifiers inner : Lean.Syntax) : SimpleParts :=
-  let initial : SimpleParts := { leading := Syntax.spellings modifiers }
-  inner.getArgs.foldl (init := initial) fun parts child =>
+private def simpleParts (inner : Lean.Syntax) : SimpleParts :=
+  inner.getArgs.foldl (init := {}) fun parts child =>
     match findDescendant? isSignature child, findDescendant? isValue child with
     | some signature, _ => { parts with signature? := some signature }
     | _, some value => { parts with value? := some value }
@@ -140,10 +143,18 @@ private def simpleParts (modifiers inner : Lean.Syntax) : SimpleParts :=
       else
         { parts with leading := parts.leading ++ Syntax.spellings child }
 
-private def typeDocument (typeSpec : Lean.Syntax) : Doc :=
-  let tokens := Syntax.spellings typeSpec
-  let body := if tokens[0]? == some ":" then tokens.extract 1 tokens.size else tokens
-  Doc.text " :" ++ Doc.nest 2 (Doc.line " " ++ Syntax.flat body)
+private def typeDocument (ownership : CommentOwnership) (typeSpec : Lean.Syntax) :
+    Lean.CoreM (Except FormatterFailure Doc) := do
+  if containsQuotation typeSpec then
+    return .ok (Doc.text " " ++ Syntax.verbatimSyntax typeSpec)
+  let some body := typeSpec.getArgs.findRev? fun child =>
+      let tokens := Syntax.spellings child
+      !tokens.isEmpty && tokens != #[":"] |
+    return .ok (Doc.text " " ++ Syntax.verbatimSyntax typeSpec)
+  match ← Term.format ownership body with
+  | .error failure => return .error failure
+  | .ok formatted =>
+    return .ok (Doc.text " :" ++ Doc.nest 2 (Doc.line " " ++ formatted.document))
 
 private def declarationHead (tokens : Array String) : Doc := Id.run do
   let mut document := Doc.empty
@@ -251,15 +262,30 @@ private def familyDocument? (stx : Lean.Syntax) : Option Doc := do
 private def simpleDocument? (ownership : CommentOwnership) (stx : Lean.Syntax) :
     Lean.CoreM (Except FormatterFailure (Option Doc)) := do
   let #[modifiers, inner] := stx.getArgs | return .ok none
-  if !simpleKind inner then return .ok none else
-  let parts := simpleParts modifiers inner
-  let mut document := declarationHead parts.leading
+  let (_, nestedModifierDoc) := (Syntax.spellings modifiers).foldl
+    (init := (false, false)) fun (insideAttribute, found) token =>
+      let startsAttribute := token == "@[" || token == "@" || insideAttribute
+      (startsAttribute, found || (insideAttribute && token.startsWith "/--"))
+  if nestedModifierDoc then return .ok (some (Syntax.verbatimSyntax stx))
+  let declarationShaped := simpleKind inner ||
+    ((findDescendant? isSignature inner).isSome && (findDescendant? isValue inner).isSome)
+  if !declarationShaped then return .ok none else
+  let parts := simpleParts inner
+  let modifierTokens := Syntax.spellings modifiers
+  let mut document := if modifierTokens.isEmpty then declarationHead parts.leading else
+    Syntax.verbatimSyntax modifiers ++
+      (if modifierTokens.any (fun token => token.startsWith "/--" || token.startsWith "/-!") then
+        Doc.hard
+      else Doc.text " ") ++ declarationHead parts.leading
   if let some signature := parts.signature? then
     let (binders, typeSpec?) := signatureParts signature #[] none
     for binder in binders do
       document := document ++ Doc.nest 2
-        (Doc.line " " ++ Syntax.flatSyntax binder)
-    if let some typeSpec := typeSpec? then document := document ++ typeDocument typeSpec
+        (Doc.line " " ++ Syntax.verbatimSyntax binder)
+    if let some typeSpec := typeSpec? then
+      match ← typeDocument ownership typeSpec with
+      | .error failure => return .error failure
+      | .ok typeDocument => document := document ++ typeDocument
   if let some value := parts.value? then
     if isEquationValue value then
       match ← equationDocument ownership value with
@@ -274,9 +300,12 @@ private def simpleDocument? (ownership : CommentOwnership) (stx : Lean.Syntax) :
     else
       match valueBody? value with
       | some body =>
-        match ← Term.format ownership body with
-        | .ok formatted => document := document ++ valueDocument formatted.document
-        | .error failure => return .error failure
+        if containsQuotation body then
+          document := document ++ valueDocument (Syntax.verbatimSyntax body)
+        else
+          match ← Term.format ownership body with
+          | .ok formatted => document := document ++ valueDocument formatted.document
+          | .error failure => return .error failure
       | none => document := document ++ flatValueDocument value
       if let some termination := terminationDocument? value then
         document := document ++ Doc.hard ++ termination
@@ -314,7 +343,15 @@ core declaration families receive structural documents; only an unsupported decl
 back to its actual live registry root. -/
 def format? (ownership : CommentOwnership) (stx : Lean.Syntax) :
     Lean.CoreM (Option (Except FormatterFailure RegisteredDocument)) := do
-  if !handles stx then return none
+  if !handles stx then
+    match ← simpleDocument? ownership stx with
+    | .error failure => return some (.error failure)
+    | .ok none => return none
+    | .ok (some document) =>
+      return some (.ok {
+        document
+        trace := ← Formatter.trace ownership .command stx
+        structural := true })
   let documentResult ← if stx.isOfKind ``Lean.Parser.Command.mutual then
     mutualDocument? ownership stx
   else if let some family := familyDocument? stx then

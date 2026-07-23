@@ -42,7 +42,8 @@ left, right = (json.load(open(path)) for path in sys.argv[2:])
 assert left["formatDraft"] == right["formatDraft"], "draft or metrics are nondeterministic"
 draft = left["formatDraft"]
 assert draft["metrics"]["frontendRuns"] == 1, draft
-assert draft["metrics"]["registryDocuments"] == 1, draft
+assert draft["metrics"]["registryDocuments"] == 0, draft
+assert draft["metrics"]["descriptorDocuments"] == 1, draft
 assert draft["metrics"]["registryNodes"] >= draft["metrics"]["registryDocuments"], draft
 assert draft["terminalStop"] < draft["sourceBytes"], draft
 tail = raw[draft["terminalStop"]:]
