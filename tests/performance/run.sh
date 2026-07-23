@@ -26,6 +26,8 @@ set -euo pipefail
 # ## The gates
 #
 #   §1  a warm run is fully cache-served: hits == served == targets, and the frontend never runs
+#   §1d serial child admission remains explicit and bounded
+#   §1e artifact rendering avoids exact-source analysis and preserves the report
 #   §2  no work happens outside the top-level phases (RPR-SPEC gate G3, recalibrated)
 #   §3  no top-level phase silently measures nothing (the `withPhase <| pure e` defect class)
 #   §4  digest reuse: the report is byte-identical cold and warm
@@ -157,6 +159,34 @@ if gate_no_frontend_work "$scratch/warm.err"; then
   ok "neither the exact frontend nor per-target setup runs on a served workload"
 else
   bad "warm run did frontend work: $child_runs children, $setup_runs setup resolutions; expected 0 and 0"
+fi
+
+printf -- '\n--- §1d/§1e bounded child lifetime and artifact acceleration ---\n'
+
+artifact_fixture="$repo_root/tests/compiler/ArtifactLayout.lean"
+LEAN_NUM_THREADS=1 lake build +ArtifactLayout:leanFmtArtifact >/dev/null
+LEAN_FMT_PROFILE_PHASES=1 LEAN_NUM_THREADS=1 "$fmt" diff --no-cache "$artifact_fixture" \
+  >"$scratch/artifact.out" 2>"$scratch/artifact.err" || true
+LEAN_FMT_DISABLE_ARTIFACT=1 LEAN_FMT_PROFILE_PHASES=1 LEAN_NUM_THREADS=1 \
+  "$fmt" diff --no-cache "$artifact_fixture" \
+  >"$scratch/exact.out" 2>"$scratch/exact.err" || true
+
+if gate_serial_children "$scratch/artifact.err" 1 && gate_serial_children "$scratch/exact.err" 1; then
+  ok "artifact and exact strategies each admit exactly one active child"
+else
+  bad "child admission was absent or exceeded one active child"
+fi
+
+if gate_artifact_avoids_exact "$scratch/artifact.err" "$scratch/exact.err"; then
+  ok "artifact-built formatting uses one artifact child and zero exact-source children"
+else
+  bad "artifact/exact strategy counts no longer distinguish their frontend work"
+fi
+
+if gate_reports_identical "$scratch/artifact.out" "$scratch/exact.out"; then
+  ok "artifact-built and exact-source reports are byte-identical"
+else
+  bad "artifact-built and exact-source reports differ"
 fi
 
 printf -- '\n--- §2 no work outside the top-level phases (gate G3) ---\n'

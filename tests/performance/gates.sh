@@ -10,13 +10,13 @@
 # Every function is a predicate: it returns 0 when the gate holds and 1 when it does not, and prints
 # nothing. Reporting belongs to the caller, which knows whether a failure is expected.
 
-# The 17 top-level phase names. Sub-phases are excluded from the accounted sum -- they are nested
+# The top-level phase names. Sub-phases are excluded from the accounted sum -- they are nested
 # inside a top-level bracket, so counting both double-counts the same milliseconds.
 # `LeanFmt/Profile.lean` (the phase schema) and the instrumentation it documents
 # are the source; that table marks every sub-phase in bold, and this list is its complement.
 GATE_TOP_LEVEL_PHASES=(
   discovery workspace_load selection_snapshot cache_epoch cache_lookup module_evidence
-  official_artifacts import_findings exact_setup setup_prime exact_child envelope_decode
+  official_artifacts import_findings exact_setup setup_prime exact_child artifact_setup artifact_child envelope_decode
   layout rules cache_write positions render_report
 )
 
@@ -90,6 +90,28 @@ gate_no_frontend_work() {
   local stderr_path=$1
   [[ $(gate_phase_count exact_child "$stderr_path") == 0 &&
     $(gate_phase_count exact_setup "$stderr_path") == 0 ]]
+}
+
+# §1d. Every observed child admission must be the sole active child, and the capture must contain the
+# expected number of admissions. The second clause prevents an empty profile from proving seriality.
+gate_serial_children() {
+  local stderr_path=$1 expected=$2
+  local count
+  count=$(grep -c '^cache\.active_children=' "$stderr_path" || true)
+  [[ $count == "$expected" ]] &&
+    ! grep -Eq '^cache\.active_children=([2-9]|[1-9][0-9]+)$' "$stderr_path"
+}
+
+# §1e. Artifact formatting must avoid the exact-source child, while the forced exact run must really
+# exercise it. Both still validate canonical output; this gate distinguishes the acceleration route.
+gate_artifact_avoids_exact() {
+  local artifact_path=$1 exact_path=$2
+  [[ $(gate_phase_count artifact_child "$artifact_path") == 1 &&
+    $(gate_phase_count exact_child "$artifact_path") == 0 &&
+    $(gate_counter cache.path_artifact_render "$artifact_path") == 1 &&
+    $(gate_phase_count artifact_child "$exact_path") == 0 &&
+    $(gate_phase_count exact_child "$exact_path") == 1 &&
+    $(gate_counter cache.path_exact_render "$exact_path") == 1 ]]
 }
 
 # §2. Gate G3, recalibrated onto the remainder rather than the percentage. See `run.sh` for the

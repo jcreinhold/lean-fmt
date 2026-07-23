@@ -136,6 +136,34 @@ printf 'phase.exact_setup_ms=0\n' >>"$scratch/setup.err"
 expect_reject "a per-target setup resolution, even one costing 0 ms" \
   gate_no_frontend_work "$scratch/setup.err"
 
+printf -- '\n--- §1d child admission stays serial ---\n'
+cat >"$scratch/serial.err" <<'CAPTURE'
+cache.active_children=1
+cache.active_children=1
+CAPTURE
+expect_accept "two sequential child admissions" gate_serial_children "$scratch/serial.err" 2
+
+sed '2s/=1$/=2/' "$scratch/serial.err" >"$scratch/concurrent.err"
+expect_reject "a second concurrently active child" gate_serial_children "$scratch/concurrent.err" 2
+expect_reject "an empty child profile" gate_serial_children "$scratch/healthy.err" 2
+
+printf -- '\n--- §1e artifact formatting avoids exact-source analysis ---\n'
+cat >"$scratch/artifact.err" <<'CAPTURE'
+phase.artifact_child_ms=900
+cache.path_artifact_render=1
+CAPTURE
+cat >"$scratch/exact-route.err" <<'CAPTURE'
+phase.exact_child_ms=1500
+cache.path_exact_render=1
+CAPTURE
+expect_accept "one artifact child versus one forced exact child" \
+  gate_artifact_avoids_exact "$scratch/artifact.err" "$scratch/exact-route.err"
+
+cp "$scratch/artifact.err" "$scratch/artifact-regressed.err"
+printf 'phase.exact_child_ms=1500\n' >>"$scratch/artifact-regressed.err"
+expect_reject "an artifact route that also launches the exact-source child" \
+  gate_artifact_avoids_exact "$scratch/artifact-regressed.err" "$scratch/exact-route.err"
+
 printf -- '\n--- §2 gate G3, on the remainder ---\n'
 # The healthy capture accounts for 715 ms. A 760 ms wall leaves a 45 ms remainder: the startup
 # constant, and inside the bound.

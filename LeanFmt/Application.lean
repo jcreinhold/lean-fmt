@@ -371,6 +371,9 @@ private def runBounded (arguments : IO.Process.SpawnArgs)
     stderr := .piped
     setsid := true
   }
+  -- Batch target processing is deliberately serial after the two-child one-thread prototype
+  -- pipe-blocked. This count makes that resource/lifetime decision a durable, negative-tested gate.
+  recordCount "active_children" 1
   let stdoutTask ← IO.asTask child.stdout.readToEnd
   let stderrTask ← IO.asTask child.stderr.readToEnd
   monitorChild child stdoutTask stderrTask maxBytes 0 cancel?

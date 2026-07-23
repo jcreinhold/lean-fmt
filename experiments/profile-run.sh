@@ -160,9 +160,33 @@ pid=$!
 peak_rss_kib=0
 peak_pressure_level=$pressure_level_before
 hard_stop=none
+
+# Exact and artifact workers deliberately call `setsid`, so process-group membership is not a
+# workload boundary. Follow the live parent relation instead; otherwise both the recorded peak and
+# the 8 GiB stop omit precisely the frontend children this harness exists to measure.
+process_tree() {
+  ps -axo ppid=,pid=,rss= | awk -v root="$pid" -v field="$1" '
+    {
+      parent[$2] = $1
+      rss[$2] = $3
+      order[++n] = $2
+    }
+    END {
+      included[root] = 1
+      for (pass = 1; pass <= n; pass++)
+        for (i = 1; i <= n; i++)
+          if (included[parent[order[i]]]) included[order[i]] = 1
+      for (i = 1; i <= n; i++)
+        if (included[order[i]]) {
+          if (field == "pids") printf "%s ", order[i]
+          else total += rss[order[i]]
+        }
+      if (field != "pids") print total + 0
+    }'
+}
+
 while kill -0 "$pid" 2>/dev/null; do
-  rss_kib=$(ps -axo pgid=,rss= | awk -v group="$pid" \
-    '$1 == group { total += $2 } END { print total + 0 }')
+  rss_kib=$(process_tree rss)
   if ((rss_kib > peak_rss_kib)); then
     peak_rss_kib=$rss_kib
   fi
@@ -180,6 +204,13 @@ while kill -0 "$pid" 2>/dev/null; do
     hard_stop=pressure
   fi
   if [[ $hard_stop != none ]]; then
+    # Kill escaped descendant sessions explicitly before the original process group. Pids come only
+    # from the root's current ancestry, never from a name match or broad group guess.
+    descendant_pids=$(process_tree pids)
+    if [[ -n $descendant_pids ]]; then
+      # shellcheck disable=SC2086 -- deliberate expansion of validated numeric pids
+      kill -TERM $descendant_pids 2>/dev/null || true
+    fi
     kill -TERM -- "-$pid" 2>/dev/null || true
     break
   fi
