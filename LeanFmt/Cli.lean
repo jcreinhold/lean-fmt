@@ -232,7 +232,6 @@ file options:\n\
   --max-memory GIB     aggregate operating envelope (default: 8)\n\
   --unsafe-fixes       apply/preview unsafe fixes too (default: safe only)\n\
   --check              format: report what would change, write nothing (CI preview)\n\
-  --check-elab         fix: require elaboration validation\n\
 \n\
 stdin options (target `-`; never writes a file or a cache entry):\n\
   --stdin-filename P   required with `-`: the buffer's identity for config/module resolution\n\
@@ -319,11 +318,6 @@ private def parseFileArgs (mode : RunMode) (args : List String) : Except String 
     | "--changed-since" :: [] => .error "--changed-since expects a revision"
     | "--poll-interval" :: [] =>
       .error "--poll-interval expects a whole number of milliseconds"
-    | "--check-elab" :: rest =>
-      if mode == .fix then
-        loop rest { command with run := { command.run with validationLevel := .elaboration } }
-      else
-        .error "--check-elab is valid only for fix"
     | "--check" :: rest =>
       if mode == .format then
         loop rest { command with run := { command.run with formatCheck := true } }

@@ -1054,8 +1054,6 @@ private def testCacheIdentity : IO Unit := do
     environment := Digest.ofString "environment"
     formatter := Digest.ofString "formatter"
     configuration := Digest.ofString "configuration"
-    validationLevel := .syntax
-    semanticSchema := semanticResultSchema
     closure := Digest.ofString "closure"
   }
   let original := cacheIdentityDigest base
@@ -1065,8 +1063,6 @@ private def testCacheIdentity : IO Unit := do
     cacheIdentityDigest { base with environment := Digest.ofString "other-environment" },
     cacheIdentityDigest { base with formatter := Digest.ofString "other-formatter" },
     cacheIdentityDigest { base with configuration := Digest.ofString "other-configuration" },
-    cacheIdentityDigest { base with validationLevel := .elaboration },
-    cacheIdentityDigest { base with semanticSchema := "other-semantic-schema" },
     -- `ruff-16b` `RCI-IMPL`: the grammar a module was parsed under is an identity component, so a
     -- change in the import closure's artifacts must move the key on its own. Without this row the
     -- suite would pass under the naive fix that rekeys on nothing but the module's own bytes.
@@ -1673,22 +1669,22 @@ private def testOwnedDeprecationFix : IO Unit := do
   ensure (e == { a with fix? := none })
     "the surfaced-only FMT012 finding is not the fixable one minus its fix (report drifted)"
 
-/- `SemanticCaps.subset` (Design B) and the `needsOccurrences`↔tier invariant. The subset gate is what
-makes a monolithic-era `.semantic` cache entry miss a fixable-FMT012 demand rather than serve a false
+/- `SemanticCaps.subset` and the `needsOccurrences`↔tier invariant. The subset gate is what makes a
+report-only `.semantic` cache entry miss a fixable-FMT012 demand rather than serve a false
 clean; the invariant is what keeps the capability from rotting into an unenforced field. -/
 private def testSemanticCaps : IO Unit := do
-  let all : SemanticCaps := { diagnostics := true, occurrences := true }
-  let cheap : SemanticCaps := { diagnostics := true }
+  let all : SemanticCaps := { occurrences := true }
+  let cheap : SemanticCaps := {}
   let occ : SemanticCaps := { occurrences := true }
   -- `{}` demands nothing, so a source/syntax run is served by any entry.
   ensure (SemanticCaps.subset {} all && SemanticCaps.subset {} {}) "the empty demand is not a subset of everything"
   -- A full entry serves every demand; the demand serves itself.
   ensure (SemanticCaps.subset occ all && SemanticCaps.subset occ occ) "occurrences demand not served by an entry that has it"
-  -- The load-bearing miss: an occurrences demand against a monolithic-era entry (cheap sub-facts only,
-  -- no occurrence cap) is NOT a subset, so `cacheHitServes` recomputes rather than serving a false clean.
+  -- The load-bearing miss: an occurrences demand against a report-only entry is not a subset, so
+  -- `cacheHitServes` recomputes rather than serving a false clean.
   ensure (!SemanticCaps.subset occ cheap && !SemanticCaps.subset occ {})
     "a fixable-FMT012 demand was (wrongly) served by an entry that captured no occurrences"
-  -- The cheap demand is served by an occurrence-bearing entry (superset), orthogonal to the tier.
+  -- The empty demand is served by an occurrence-bearing entry (superset), orthogonal to the tier.
   ensure (SemanticCaps.subset cheap all) "the cheap sub-facts are not a subset of the full capability set"
 
   -- The invariant: a `needsOccurrences` rule is `.semantic` (its fix reads an info-tree fact), and only

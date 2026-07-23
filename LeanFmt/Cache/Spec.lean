@@ -275,7 +275,7 @@ has to follow. This is the same fact with nothing to follow: an entry exists tha
 theorem serves_hits_somewhere
     (o : Obs Mod SDigest GDigest Schema) (m : Mod) (a : Analysis) :
     serves ⟨m, o.schema, o.sourceDigest m, o.closureDigest m,
-            ⟨false, .semantic, ⟨true, true⟩, true⟩, a⟩ o
+            .success .semantic ⟨true⟩ true, a⟩ o
       ⟨.source, {}, false⟩ = true := by
   simp [serves, Entry.identityCurrent, Provided.meets, Tier.satisfies, SemanticCaps.subset]
 
@@ -297,7 +297,7 @@ private abbrev O : Obs Unit Bool Bool Unit := ⟨(), fun _ => true, fun _ => tru
 private abbrev A : Bool → Bool → Bool × Bool := fun g s => (g, s)
 
 /-- An entry built under the *current* grammar (`true`). -/
-private abbrev Provides : Provided := ⟨false, .semantic, ⟨true, true⟩, true⟩
+private abbrev Provides : Provided := .success .semantic ⟨true⟩ true
 
 private abbrev Asks : Demand := ⟨.source, {}, false⟩
 

@@ -138,10 +138,9 @@ structure DeprecatedOccurrence where
   fixable : Bool
   deriving Inhabited, BEq, Repr, Lean.ToJson, Lean.FromJson
 
-/-- Semantic rule capabilities. Diagnostics are captured with every semantic projection; occurrences
-are captured only when a selected fix needs the whole-file info-tree fold. -/
+/-- The optional semantic sub-capability beyond `Tier.semantic`. Diagnostics are inherent in that
+tier; occurrences are captured only when a selected fix needs the whole-file info-tree fold. -/
 structure SemanticCaps where
-  diagnostics : Bool := false
   occurrences : Bool := false
   deriving Inhabited, BEq, Repr, Lean.ToJson, Lean.FromJson
 
@@ -149,8 +148,7 @@ structure SemanticCaps where
 `satisfies`-style partial), so it composes with `Tier.satisfies` as a plain conjunction in
 `cacheHitServes`. -/
 def SemanticCaps.subset (demanded provided : SemanticCaps) : Bool :=
-  (!demanded.diagnostics || provided.diagnostics) &&
-    (!demanded.occurrences || provided.occurrences)
+  !demanded.occurrences || provided.occurrences
 
 /-- Semantic facts for one module. `occurrences? = none` means the expensive fold was not requested;
 `some #[]` means it ran and found no owned deprecation occurrences. -/
@@ -161,7 +159,6 @@ structure SemanticProjection where
 
 /-- Capabilities derived from the projection's shape, never stored a second time. -/
 def SemanticProjection.caps (projection : SemanticProjection) : SemanticCaps := {
-  diagnostics := true
   occurrences := projection.occurrences?.isSome
 }
 

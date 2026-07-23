@@ -59,12 +59,10 @@ structure Demand where
 
 `broken` means the analysis produced no result at all. Such an entry answers **any** demand: a file
 that did not analyze did not analyze at some tier and fail to at another. -/
-structure Provided where
-  broken : Bool
-  tier : Tier
-  caps : SemanticCaps
-  hasCanonical : Bool
-  deriving BEq, Lean.ToJson, Lean.FromJson
+inductive Provided where
+  | broken
+  | success (tier : Tier) (caps : SemanticCaps) (hasCanonical : Bool)
+  deriving BEq
 
 /-- Does what the entry captured answer what the run asked?
 
@@ -72,10 +70,12 @@ A `.source` shortcut entry computed no syntax findings, so it cannot serve a run
 rule; without the tier clause, shipping the first syntax rule would let a source-only `check` turn a
 later `--select FMT008` into a stored false clean. The caps clause is separate: a `.semantic` entry
 serves only when it captured every sub-fact demanded, so a fixable-`FMT012` demand against an entry
-from the monolithic era misses and recomputes rather than serving a false clean. -/
+captured by a report-only check misses and recomputes rather than serving a false clean. -/
 def Provided.meets (p : Provided) (d : Demand) : Bool :=
-  p.broken ||
-    ((!d.renderCanonical || p.hasCanonical) && p.tier.satisfies d.tier && d.caps.subset p.caps)
+  match p with
+  | .broken => true
+  | .success tier caps hasCanonical =>
+    (!d.renderCanonical || hasCanonical) && tier.satisfies d.tier && d.caps.subset caps
 
 /-! ## The world as the cache can see it -/
 

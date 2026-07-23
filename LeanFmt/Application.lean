@@ -79,7 +79,6 @@ structure RunRequest where
   layout — so this flag changes only their reported withheld-unsafe count, not their bytes. Display-only
   fixes are unaffected: nothing applies them. -/
   unsafeFixes : Bool := false
-  validationLevel : ValidationLevel := .syntax
   /-- `format --check` (`ruff-11d` FIP-IMPL): the non-writing CI preview. Meaningful only for `.format`.
   When `false` (the default), `format` publishes the canonical layout in place through the `ruff-06`
   guarded path — the same publisher `fix` uses. When `true`, `format` renders but writes nothing and
@@ -1497,7 +1496,7 @@ def execute (request : RunRequest) : IO RunOutcome := do
   let application ← IO.appPath
   let epochStarted ← IO.monoNanosNow
   let cache? ← if request.cache then
-    ResultCache.open? project.workspace application request.validationLevel
+    ResultCache.open? project.workspace application
   else
     pure none
   let epochFinished ← IO.monoNanosNow
@@ -1528,8 +1527,7 @@ def execute (request : RunRequest) : IO RunOutcome := do
   let demanded := unionRequiredTier
   let demandedCaps : SemanticCaps := plans.foldl (init := {}) fun caps plan =>
     let wanted := plan.demandedCaps applies
-    { diagnostics := caps.diagnostics || wanted.diagnostics
-      occurrences := caps.occurrences || wanted.occurrences }
+    { occurrences := caps.occurrences || wanted.occurrences }
   -- Serving a cache entry stays a *per-file* question: it is that file's own required tier that decides
   -- whether a stored result answers it, never the batch union.
   let indexHits := cached.foldl (init := 0) fun n c? => if c?.isSome then n + 1 else n

@@ -173,6 +173,39 @@ expect_eq "one index file after warming" 1 "$(index_count)"
 probe "unchanged tree"
 expect_eq "unchanged tree still serves everything under the oracle" "$TOTAL" "$SERVED"
 
+# Pre-release schema replacement is deletion, not migration: a v3 index must decode to no usable
+# entries and the next run repopulates v4 from scratch.
+cache_index=$(find "$project/.lean-fmt-cache/results" -name '*.json' -print)
+python3 - "$cache_index" <<'PY'
+import json
+import sys
+
+path = sys.argv[1]
+data = json.load(open(path))
+data["schema"] = "lean-fmt.result-cache.v3"
+open(path, "w").write(json.dumps(data, separators=(",", ":")))
+PY
+expect_eq "a v3 index is an unconditional miss" 0 "$(served)"
+expect_eq "the replacement v4 index serves every target" "$TOTAL" "$(served)"
+
+# Two cold writers may race on the same atomic index, but neither may publish partial JSON or leave
+# the cache unable to serve the complete identical selection.
+rm -rf "$project/.lean-fmt-cache"
+set +e
+"$fmt" check --output-format concise >"$work/concurrent-a.out" 2>"$work/concurrent-a.err" &
+cache_pid_a=$!
+"$fmt" check --output-format concise >"$work/concurrent-b.out" 2>"$work/concurrent-b.err" &
+cache_pid_b=$!
+wait "$cache_pid_a"
+cache_status_a=$?
+wait "$cache_pid_b"
+cache_status_b=$?
+set -e
+if [[ $cache_status_a -gt 1 || $cache_status_b -gt 1 ]]; then
+  fail "concurrent cold cache writers failed: $cache_status_a/$cache_status_b"
+fi
+expect_eq "a warm run after concurrent writers serves every target" "$TOTAL" "$(served)"
+
 # ---------------------------------------------------------------------------
 # §2 A module with no dependents invalidates only itself.
 #

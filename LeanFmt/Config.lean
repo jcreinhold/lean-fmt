@@ -816,19 +816,17 @@ def RulePlan.selectsOccurrenceRuleOf (plan : RulePlan) (rules : Array Rule) : Bo
 def RulePlan.selectsOccurrenceRule (plan : RulePlan) : Bool :=
   plan.selectsOccurrenceRuleOf ruleRegistry
 
-/-- The semantic rule sub-facts a run demands. Non-empty only at the semantic tier:
-- `diagnostics` for the selected semantic rules;
-- `occurrences` when a run that **applies** fixes selects an occurrence-fix rule (FMT012's rename) — the
+/-- The semantic rule sub-fact a run demands beyond the semantic tier itself: `occurrences` when a
+run that **applies** fixes selects an occurrence-fix rule (FMT012's rename) — the
   one capability that gates the whole-file info-tree fold.
 
 The `occurrences` demand keys off `applies` (true only for `fix`). A check does not pay the fold.
 `cacheHitServes`
 serves a `.semantic` entry only when `demandedCaps.subset entry.caps`, so a fix's `occurrences` demand
-misses a monolithic-era entry that never captured it. -/
+misses a report-only check entry that never captured it. -/
 def RulePlan.demandedCaps (plan : RulePlan) (applies : Bool) : SemanticCaps :=
   if plan.demandedTier == .semantic then
-    { diagnostics := true
-      occurrences := applies && plan.selectsOccurrenceRule }
+    { occurrences := applies && plan.selectsOccurrenceRule }
   else {}
 
 end LeanFmt.Internal

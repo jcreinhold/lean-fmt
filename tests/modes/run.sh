@@ -406,7 +406,7 @@ if compgen -G "$repo_root/tests/check/Findings.lean.lean-fmt-tmp-*" >/dev/null; 
 fi
 
 original_mode=$(stat -f %Lp "$source_file" 2>/dev/null || stat -c %a "$source_file")
-run_expect 0 "$work/fixed.json" "$application" fix --root . --json --no-cache --check-elab \
+run_expect 0 "$work/fixed.json" "$application" fix --root . --json --no-cache \
   tests/check/Findings.lean
 fixed_mode=$(stat -f %Lp "$source_file" 2>/dev/null || stat -c %a "$source_file")
 test "$original_mode" = "$fixed_mode"
@@ -508,12 +508,12 @@ EOF
 python3 - "$work/downstream/.lake/build/lean-fmt-artifacts/Downstream.json" <<'PY'
 import json, sys
 artifact = json.load(open(sys.argv[1]))
-assert artifact["source"]["mainModule"] == "Downstream"
-# The artifact is the projection and nothing else. A downstream integrator gets facts about its
+assert artifact["mainModule"] == "Downstream"
+# The artifact is reconstructible syntax and nothing else. A downstream integrator gets facts about its
 # module, never this formatter's verdicts about it -- that is what keeps a rule edit out of the
 # integrator's build graph (`ruff-05-rule-engine/notes/01-rule-facts.md` §3).
 assert "findings" not in artifact, artifact.keys()
-assert artifact["source"]["tokens"], "the downstream projection recorded no tokens"
+assert artifact["syntaxData"]["entries"], "the downstream projection recorded no syntax entries"
 PY
 
 # `compiler status` on a project that really is plugin-integrated. This is the only place a `ready`

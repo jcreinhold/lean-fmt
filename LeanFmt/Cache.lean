@@ -36,19 +36,12 @@ private structure FileTrace where
   outputs : String
   deriving Lean.FromJson
 
-inductive ValidationLevel where
-  | syntax
-  | elaboration
-  deriving BEq, Lean.ToJson, Lean.FromJson
-
 structure CacheIdentity where
   source : Digest
   toolchain : String
   environment : Digest
   formatter : Digest
   configuration : Digest
-  validationLevel : ValidationLevel
-  semanticSchema : String
   /-- Currency of the grammar this module's artifact was produced under (`ruff-16b` `RCI-IMPL`).
 
   `source` covers the module's own bytes. This covers the other half of what a cached analysis
@@ -83,12 +76,9 @@ Derived from the analysis rather than stored beside it: a stored copy could disa
 it describes, and that disagreement is a stale hit. One source of truth per entry. -/
 def providedOf (analysis : SemanticAnalysis) : Cache.Decision.Provided :=
   match analysis.result? with
-  | none => { broken := true, tier := .source, caps := {}, hasCanonical := false }
+  | none => .broken
   | some result =>
-    { broken := false
-      tier := result.tier
-      caps := result.caps
-      hasCanonical := result.canonical?.isSome }
+    .success result.tier result.caps result.canonical?.isSome
 
 private structure CacheIndex where
   schema : String
@@ -118,7 +108,6 @@ structure ResultCache where
   toolchain : String
   environment : Digest
   formatter : Digest
-  validationLevel : ValidationLevel
   directoryReady : IO.Ref Bool
   loadedEntries : IO.Ref (Option (Std.HashMap String CacheEntry))
   /-- Memoized conservative currency for standalone (non-workspace-module) targets: the digest of
@@ -142,7 +131,7 @@ structure ResultCache where
   way. -/
   artifactHashByModule : IO.Ref (Std.HashMap String MemberFact)
 
-def resultCacheSchema : String := "lean-fmt.result-cache.v3"
+def resultCacheSchema : String := "lean-fmt.result-cache.v4"
 
 private def digestParts (parts : Array String) : Digest :=
   Digest.ofString (String.intercalate "\u0000" parts.toList)
@@ -416,8 +405,6 @@ private def identity (cache : ResultCache) (project : Project.Snapshot)
     environment := cache.environment
     formatter := cache.formatter
     configuration := ← Project.configurationIdentity project target
-    validationLevel := cache.validationLevel
-    semanticSchema := semanticResultSchema
     closure
   }
 
@@ -512,9 +499,7 @@ private def baseDigest (cache : ResultCache) : Digest :=
     resultCacheSchema,
     cache.toolchain,
     toString cache.environment,
-    toString cache.formatter,
-    (Lean.toJson cache.validationLevel).compress,
-    semanticResultSchema
+    toString cache.formatter
   ]
 
 private def indexPath (cache : ResultCache) : System.FilePath :=
@@ -534,8 +519,8 @@ private def temporaryPath (target : System.FilePath) : IO System.FilePath := do
 
 /-- How many index files a project keeps besides the one currently in use.
 
-The index name is a digest of the *epoch* -- toolchain, search-path order, dependency roots, validation
-level, and the formatter binary's own identity. `ruff-16b` made project edits stop moving it, but an
+The index name is a digest of the *epoch* -- toolchain, search-path order, dependency roots, and the
+formatter binary's own identity. `ruff-16b` made project edits stop moving it, but an
 epoch change still does, and each change orphans the previous index with nothing collecting it.
 Measured before this: repeated formatter rebuilds left index files piling up without bound.
 
@@ -591,8 +576,8 @@ private def writeIndexAtomic (path : System.FilePath) (index : CacheIndex) : IO 
 /- Construct a cache capability only after the evaluated workspace's ordered roots, current source
 contents, and all non-toolchain module artifacts have trustworthy, content-matching Lake traces.
 Absence is a normal disabled-cache outcome; callers cannot manufacture a partial epoch. -/
-def ResultCache.open? (workspace : Lake.Workspace) (application : System.FilePath)
-    (validationLevel := ValidationLevel.syntax) : IO (Option ResultCache) := do
+def ResultCache.open? (workspace : Lake.Workspace) (application : System.FilePath) :
+    IO (Option ResultCache) := do
   try
     let some environment ← environmentDigest? workspace
       | return none
@@ -614,7 +599,6 @@ def ResultCache.open? (workspace : Lake.Workspace) (application : System.FilePat
       toolchain := s!"{Lean.versionString}\u0000{workspace.lakeEnv.lean.githash}"
       environment
       formatter
-      validationLevel
       directoryReady
       loadedEntries
       workspaceArtifacts

@@ -47,6 +47,8 @@ run_expect() {
 }
 
 run_expect 0 "$work/help" "$application" check --help
+! grep -q -- '--check-elab' "$work/help"
+run_expect 2 "$work/removed-check-elab" "$application" fix --check-elab tests/check/Clean.lean
 run_expect 0 "$work/clean.json" "$application" check --root . --json --no-cache \
   tests/check/Clean.lean
 run_expect 1 "$work/artifact-findings.json" "$application" check --root . --json --no-cache \
@@ -108,16 +110,22 @@ python3 - "$work/exact-envelope.json" \
 import json, sys
 fallback = json.load(open(sys.argv[1]))["artifact"]
 integrated = json.load(open(sys.argv[2]))
-# The exact frontend and the compiler plugin must project one module identically. They reach the
-# same producer with the same arguments, so any difference here is a real divergence, not drift.
-assert fallback == integrated
-source = fallback["source"]
+# The syntax projection must agree. The build frontend additionally records its private
+# `internal.cmdlineSnapshots` option; it is execution bookkeeping, not formatter policy, and the
+# exact on-demand frontend intentionally does not invent it.
+fallback_syntax = dict(fallback["syntaxData"])
+integrated_syntax = dict(integrated["syntaxData"])
+fallback_options = fallback_syntax.pop("options")
+integrated_options = integrated_syntax.pop("options")
+assert fallback_syntax == integrated_syntax
+def public_options(states):
+    return [[[name, value] for name, value in state if name != "internal.cmdlineSnapshots"]
+            for state in states]
+assert public_options(fallback_options) == public_options(integrated_options)
 # File-local `syntax` reaches the kind table, which only an elaborated environment can parse.
-assert "commandEmit_local_command" in source["kinds"]
-# The projection covers the whole file: header, then a token stream tiling up to the terminal.
-assert source["headerStop"] > 0
-assert source["terminalStop"] == source["normalizedBytes"]
-assert source["tokens"], "the projection recorded no tokens"
+assert "commandEmit_local_command" in fallback_syntax["kinds"]
+assert fallback_syntax["commands"], "the projection recorded no commands"
+assert fallback_syntax["terminal"] < len(fallback_syntax["entries"])
 PY
 
 run_expect 1 "$work/broken.json" env LEAN_FMT_DISABLE_ARTIFACT=1 LEAN_FMT_TEST_DISABLE_MODULE_EVIDENCE=1 \
@@ -198,6 +206,21 @@ assert short_codes < full_codes, (short_codes, full_codes)
 assert "FMT006" in full_codes - short_codes, (short_codes, full_codes)
 PY
 cmp "$work/cache-artifact.json" "$work/cache-fallback.json"
+
+# Canonical artifact and exact production are cache-interchangeable: same identity and byte-identical
+# payload. The compiler fixture carries file-local syntax, so this is not a source-only shortcut.
+LEAN_NUM_THREADS=1 lake build +ArtifactLayout:leanFmtArtifact >/dev/null
+rm -rf "$cache_root"
+run_expect 1 "$work/cache-canonical-artifact.json" "$application" format --check --root . --json \
+  tests/compiler/ArtifactLayout.lean
+canonical_artifact_entry=$(find "$cache_root/results" -type f -name '*.json' -print)
+cp "$canonical_artifact_entry" "$work/canonical-artifact-entry.json"
+rm -rf "$cache_root"
+run_expect 1 "$work/cache-canonical-exact.json" env LEAN_FMT_DISABLE_ARTIFACT=1 \
+  "$application" format --check --root . --json tests/compiler/ArtifactLayout.lean
+canonical_exact_entry=$(find "$cache_root/results" -type f -name '*.json' -print)
+cmp "$work/canonical-artifact-entry.json" "$canonical_exact_entry"
+cmp "$work/cache-canonical-artifact.json" "$work/cache-canonical-exact.json"
 
 # Selection is a projection over one cached result, not a component of its identity. Two runs that
 # differ only in `--select` must collide onto the same entry: the completion contract says selection
@@ -402,22 +425,16 @@ assert r["written"] == 1, ("source-only fix did not apply the dedup", r)
 PY
 cp -p "$work/Findings.effbak" tests/check/Findings.lean
 
-# (b) A syntax `--select` adds NO frontend run to `format`. Since `ruff-11c` RDF-IMPL retired
-#     `reprojectCanonical`, `format` no longer does a second re-projection pass to land a syntax fix in
-#     canonical coordinates (it applies no fix). `format` still owes its single `analyzeExact` run — it
-#     demands `.semantic` for notation-aware layout, which the plugin artifact never carries — but that
-#     run is the SAME one whether or not a syntax rule is selected: plain `format` and `format --select
-#     FMT011` each reach the frontend exactly once (one infrastructure failure), never twice.
+# (b) A syntax `--select` does not choose execution strategy. With a current compiler artifact, plain
+#     `format --check` and the syntax-rule selection both take exactly one artifact renderer path; rule
+#     selection changes only the projected findings. The cache is disabled so it cannot mask the path.
 for label in plain fmt013; do
-  args=(format --root . --json --no-cache)
+  args=(format --check --root . --json --no-cache)
   [ "$label" = fmt013 ] && args+=(--preview --select FMT011)
-  run_expect 2 "$work/eff-format-$label.json" env LEAN_FMT_TEST_ANALYZER=/usr/bin/false \
+  run_expect 1 "$work/eff-format-$label.json" env LEAN_FMT_PROFILE_PHASES=1 \
     "$application" "${args[@]}" tests/check/Findings.lean
-  python3 - "$work/eff-format-$label.json" "$label" <<'PY'
-import json, sys
-r = json.load(open(sys.argv[1]))
-assert len(r["infrastructureFailures"]) == 1, (sys.argv[2], "not exactly one frontend run", r)
-PY
+  grep -q '^cache.path_artifact_render=1$' "$work/eff-format-$label.json.stderr"
+  ! grep -q '^cache.path_exact_render=' "$work/eff-format-$label.json.stderr"
 done
 
 snapshot_metadata "${sources[@]}" >"$work/after"
