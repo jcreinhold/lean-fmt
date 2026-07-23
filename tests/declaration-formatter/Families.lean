@@ -30,14 +30,28 @@ structure Packet (α : Type u) where
   count : Nat := 0
   deriving Repr
 
+structure ExtendedPacket (α : Type u) extends Packet α where
+  third : α
+  description : String := "extended packet"
+  deriving Repr
+
 class HasValue (α : Type u) where
   value : α
+
+class ExtendedHasValue (α : Type u) extends HasValue α where
+  count : Nat := 0
 
 inductive Choice (α : Type u) where
   | neither
   | left (value : α)
   | right (value : α)
   deriving Repr
+
+coinductive Always (α : Type u) : α → Prop where
+  | intro (value : α) : Always α value
+
+class inductive Classified (α : Type u) where
+  | classified (value : α)
 
 mutual
   def isEven : Nat → Bool

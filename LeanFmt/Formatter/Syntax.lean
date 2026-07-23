@@ -67,6 +67,32 @@ def flat (tokens : Array String) : Doc :=
   let value := flatText tokens
   if value.contains '\n' then Doc.verbatim value else Doc.text value
 
+private def opensDelimiter : String → Bool
+  | "(" | "[" | "{" | "⟨" | "@(" | "@[" | "`(" | "`[" | "`{" | ".{" => true
+  | _ => false
+
+private def closesDelimiter : String → Bool
+  | ")" | "]" | "}" | "⟩" => true
+  | _ => false
+
+/-- A header row may break only between top-level token groups. Delimited binders and parameter lists
+remain indivisible; the keyword and declared name remain together. -/
+def groupedTopLevel (tokens : Array String) : Doc := Id.run do
+  if tokens.isEmpty then return Doc.empty
+  let mut document := Doc.text tokens[0]!
+  let mut depth := if opensDelimiter tokens[0]! then 1 else 0
+  let protectedPrefix := if tokens[0]? == some "class" && tokens[1]? == some "inductive" then 3 else 2
+  for index in [1:tokens.size] do
+    let previous := tokens[index - 1]!
+    let token := tokens[index]!
+    let separator := if separates previous token then
+        if index < protectedPrefix || depth > 0 then Doc.text " " else Doc.line " "
+      else Doc.empty
+    document := document ++ separator ++ Doc.text token
+    if closesDelimiter token then depth := depth - 1
+    if opensDelimiter token then depth := depth + 1
+  return Doc.group (Doc.nest 2 document)
+
 /-- Join nonempty rows with hard line breaks. -/
 def lines (rows : Array String) : Doc :=
   let result : Option Doc := rows.foldl (init := none) fun document? row =>

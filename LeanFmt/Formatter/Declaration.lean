@@ -38,6 +38,12 @@ private def simpleKind (stx : Lean.Syntax) : Bool :=
     stx.isOfKind ``Lean.Parser.Command.axiom ||
     stx.isOfKind ``Lean.Parser.Command.example
 
+private def familyKind (stx : Lean.Syntax) : Bool :=
+  stx.isOfKind ``Lean.Parser.Command.inductive ||
+    stx.isOfKind ``Lean.Parser.Command.coinductive ||
+    stx.isOfKind ``Lean.Parser.Command.classInductive ||
+    stx.isOfKind ``Lean.Parser.Command.structure
+
 private def isSignature (stx : Lean.Syntax) : Bool :=
   stx.isOfKind ``Lean.Parser.Command.declSig ||
     stx.isOfKind ``Lean.Parser.Command.optDeclSig
@@ -62,6 +68,31 @@ private partial def descendants (predicate : Lean.Syntax → Bool) (stx : Lean.S
     (result : Array Lean.Syntax := #[]) : Array Lean.Syntax :=
   if predicate stx then result.push stx
   else stx.getArgs.foldl (init := result) fun result child => descendants predicate child result
+
+private def isFamilyMember (stx : Lean.Syntax) : Bool :=
+  stx.isOfKind ``Lean.Parser.Command.ctor ||
+    stx.isOfKind ``Lean.Parser.Command.computedField ||
+    stx.isOfKind ``Lean.Parser.Command.structExplicitBinder ||
+    stx.isOfKind ``Lean.Parser.Command.structImplicitBinder ||
+    stx.isOfKind ``Lean.Parser.Command.structInstBinder ||
+    stx.isOfKind ``Lean.Parser.Command.structSimpleBinder
+
+private partial def spellingsExcept (excluded : Lean.Syntax → Bool) (stx : Lean.Syntax)
+    (result : Array String := #[]) : Array String :=
+  if excluded stx then result else
+  match stx with
+  | .missing => result
+  | .atom _ value => if value.isEmpty then result else result.push value
+  | .ident _ raw _ _ =>
+    let value := raw.toString
+    if value.isEmpty then result else result.push value
+  | .node _ kind children =>
+    if kind == Lean.choiceKind then
+      match children[0]? with
+      | some selected => spellingsExcept excluded selected result
+      | none => result
+    else
+      children.foldl (init := result) fun result child => spellingsExcept excluded child result
 
 private def isBinder (stx : Lean.Syntax) : Bool :=
   stx.isOfKind ``Lean.Parser.Term.explicitBinder ||
@@ -141,6 +172,23 @@ private def structureValueDocument (value : Lean.Syntax) : Doc :=
   fields.foldl (init := Doc.text "where") fun document field =>
     document ++ Doc.nest 2 (Doc.hard ++ Syntax.flat (Syntax.spellings field))
 
+private def familyDocument? (stx : Lean.Syntax) : Option Doc := do
+  let #[modifiers, inner] := stx.getArgs | none
+  if !familyKind inner then none else
+  let excluded := fun child => isFamilyMember child ||
+    child.isOfKind ``Lean.Parser.Command.optDeriving
+  let headerTokens := Syntax.spellings modifiers ++ spellingsExcept excluded inner
+  let members := descendants isFamilyMember inner
+  let mut document := Syntax.groupedTopLevel headerTokens
+  for member in members do
+    document := document ++ Doc.nest 2
+      (Doc.hard ++ Syntax.flat (Syntax.spellings member))
+  if let some derivingStx := findDescendant? (·.isOfKind ``Lean.Parser.Command.optDeriving) inner then
+    let tokens := Syntax.spellings derivingStx
+    unless tokens.isEmpty do
+      document := document ++ Doc.nest 2 (Doc.hard ++ Syntax.flat tokens)
+  return document
+
 private def simpleDocument? (ownership : CommentOwnership) (stx : Lean.Syntax) :
     Lean.CoreM (Except FormatterFailure (Option Doc)) := do
   let #[modifiers, inner] := stx.getArgs | return .ok none
@@ -208,9 +256,11 @@ def format? (ownership : CommentOwnership) (stx : Lean.Syntax) :
     Lean.CoreM (Option (Except FormatterFailure RegisteredDocument)) := do
   if !handles stx then return none
   let documentResult ← if stx.isOfKind ``Lean.Parser.Command.mutual then
-      mutualDocument? ownership stx
-    else
-      simpleDocument? ownership stx
+    mutualDocument? ownership stx
+  else if let some family := familyDocument? stx then
+    pure (.ok (some family))
+  else
+    simpleDocument? ownership stx
   match documentResult with
   | .error failure => return some (.error failure)
   | .ok (some document) =>
