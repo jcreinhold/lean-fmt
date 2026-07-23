@@ -39,10 +39,15 @@ for width in (32, 60, 100):
         "frontendRuns": 2, "renders": 2, "structuralComparisons": 1, "idempotencePasses": 1
     }, canonical
     metrics = canonical["metrics"]
-    assert metrics["commands"] >= 13 and metrics["coreDocuments"] >= 13, metrics
-    assert metrics["registryDocuments"] >= 1, metrics
+    assert metrics["commands"] >= 20 and metrics["coreDocuments"] >= 20, metrics
+    assert metrics["structuralDocuments"] == metrics["coreDocuments"], metrics
+    assert metrics["coreRegistryDocuments"] == 0, metrics
+    assert metrics["registryDocuments"] == 1 and metrics["extensionRegistryDocuments"] == 1, metrics
     assert text.startswith("module\nimport Lean\n\nnamespace CommandFixture\n"), text
-    assert "\n  universe u v\n  variable {α : Type u}" in text, text
+    if width == 32:
+        assert "\n  universe u v\n  variable\n    {α : Type u}\n    (value : α)" in text, text
+    else:
+        assert "\n  universe u v\n  variable {α : Type u} (value : α)" in text, text
     assert "\n  macro_rules\n    | `(identity! $term) => `($term)\n" in text, text
     assert "\n  emit_custom generated\n" in text, text
     assert text.endswith("\nend CommandFixture\n"), text
@@ -69,7 +74,8 @@ report = json.load(open(sys.argv[1]))
 assert report.get("formatFailure") is None and report.get("formatDraft") is not None, report
 metrics = report["formatDraft"]["metrics"]
 assert metrics["commands"] > 20 and metrics["coreDocuments"] > 20, metrics
-print("  ok   lean-fmt's command module has zero unsupported core command shells")
+assert metrics["structuralDocuments"] > 0 and metrics["coreRegistryDocuments"] > 0, metrics
+print("  ok   lean-fmt's command module records remaining declaration/comment debt without failure")
 PY
 
 printf 'tests/command-formatter: ok\n'

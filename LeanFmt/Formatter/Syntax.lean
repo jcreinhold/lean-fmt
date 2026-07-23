@@ -44,6 +44,11 @@ private def hugsNext : String → Bool
   | "(" | "[" | "{" | "⟨" | "@(" | "@[" | "`(" | "`[" | "`{" | ".{" | "$" | "." => true
   | _ => false
 
+private def separates (previous token : String) : Bool :=
+  let projectionDot := token == "." &&
+    previous != "=>" && previous != ":=" && previous != "|" && previous != ","
+  !(hugsNext previous || hugsPrevious token || projectionDot)
+
 /-- Canonical flat spacing for an already-owned token row. Delimiter and projection punctuation hug;
 all other adjacent tokens receive one space. -/
 def flatText (tokens : Array String) : String := Id.run do
@@ -52,9 +57,7 @@ def flatText (tokens : Array String) : String := Id.run do
     let token := tokens[index]!
     if index > 0 then
       let previous := tokens[index - 1]!
-      let projectionDot := token == "." &&
-        previous != "=>" && previous != ":=" && previous != "|" && previous != ","
-      unless hugsNext previous || hugsPrevious token || projectionDot do output := output ++ " "
+      if separates previous token then output := output ++ " "
     output := output ++ token
   return output
 

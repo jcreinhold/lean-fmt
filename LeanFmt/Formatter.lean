@@ -130,17 +130,24 @@ private def resolution (kind : Lean.Name) : Lean.CoreM FormatterResolution := do
   let registrations := Lean.PrettyPrinter.formatterAttribute.getValues (← Lean.getEnv) kind |>.length
   return if registrations == 0 then .descriptor else .explicit registrations
 
+/-- Record the live ownership and registry metadata for a syntax root without invoking its formatter.
+Structural rules use this trace so audit evidence cannot be confused with registry execution. -/
+def trace (ownership : CommentOwnership) (category : FormatterCategory)
+    (stx : Lean.Syntax) : Lean.CoreM FormatterTrace := do
+  let kind := stx.getKind
+  return {
+    category
+    kind
+    surfaceOwner := CoreSurface.owner (← Lean.getEnv) category.surface kind
+    resolution := ← resolution kind
+    commentOwners := (Comments.subtree ownership stx).size }
+
 /-- Resolve and run Lean's formatter registry against `stx` in the current frontend context. Errors
 remain typed refusals and never become verbatim output. -/
 def registeredAs (ownership : CommentOwnership) (category : FormatterCategory)
     (traceSyntax formatSyntax : Lean.Syntax) : Lean.CoreM (Except FormatterFailure RegisteredDocument) := do
   let kind := traceSyntax.getKind
-  let trace : FormatterTrace := {
-    category
-    kind
-    surfaceOwner := CoreSurface.owner (← Lean.getEnv) category.surface kind
-    resolution := ← resolution kind
-    commentOwners := (Comments.subtree ownership traceSyntax).size }
+  let trace ← trace ownership category traceSyntax
   try
     let native ← Lean.PrettyPrinter.formatCategory category.name formatSyntax
     return .ok { document := Doc.registered native, trace }

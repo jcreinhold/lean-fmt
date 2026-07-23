@@ -4,11 +4,16 @@ import   Lean
 namespace CommandFixture
 universe   u v
 variable {α:Type u} (value : α)
+section Secondary
+include value
+omit value
+end Secondary
 open Nat hiding succ
 export Nat (add mul)
 set_option pp.universes false
 
 syntax "identity!" term : term
+notation "fortyTwo" => (42 : Nat)
 macro_rules
 | `(identity! $term) => `($term)
 
@@ -18,5 +23,9 @@ macro_rules
 
 emit_custom generated
 
-def useIdentity : Nat := identity! generated
+@[inline] private def useIdentity : Nat := identity! generated
+#check useIdentity
+#eval useIdentity
+#synth OfNat Nat 42
+#print useIdentity
 end CommandFixture

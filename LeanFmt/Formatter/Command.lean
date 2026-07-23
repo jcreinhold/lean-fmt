@@ -19,6 +19,7 @@ not require changing lean-fmt, and adding a new toolchain command under `Lean.Pa
 the closed core side automatically. -/
 
 import Lean.Parser.Module
+import Lean.Parser.Syntax
 import all LeanFmt.Formatter
 import all LeanFmt.Formatter.Declaration
 import all LeanFmt.Formatter.Syntax
@@ -178,19 +179,95 @@ private def headerDocument? (stx : Lean.Syntax) : Option Doc :=
     some (Syntax.lines (headerRowsFrom stx #[]))
   else none
 
+private def simpleShellKinds : Array Lean.Name := #[
+  ``Lean.Parser.Command.moduleDoc,
+  ``Lean.Parser.Command.namespace,
+  ``Lean.Parser.Command.section,
+  ``Lean.Parser.Command.end,
+  ``Lean.Parser.Command.open,
+  ``Lean.Parser.Command.export,
+  ``Lean.Parser.Command.universe,
+  ``Lean.Parser.Command.variable,
+  ``Lean.Parser.Command.attribute,
+  ``Lean.Parser.Command.include,
+  ``Lean.Parser.Command.omit,
+  ``Lean.Parser.Command.check,
+  ``Lean.Parser.Command.check_failure,
+  ``Lean.Parser.Command.eval,
+  ``Lean.Parser.Command.evalBang,
+  ``Lean.Parser.Command.synth,
+  ``Lean.Parser.Command.print,
+  ``Lean.Parser.Command.printSig,
+  ``Lean.Parser.Command.printAxioms,
+  ``Lean.Parser.Command.printEqns,
+  ``Lean.Parser.Command.version,
+  ``Lean.Parser.Command.assertNotExists,
+  ``Lean.Parser.Command.assertNotImported,
+  ``Lean.Parser.Command.checkAssertions,
+  ``Lean.Parser.Command.deprecatedSyntax,
+  ``Lean.Parser.Command.deprecated_module,
+  ``Lean.Parser.Command.showDeprecatedModules,
+  ``Lean.Parser.Command.addDocString,
+  ``Lean.Parser.Command.register_tactic_tag,
+  ``Lean.Parser.Command.recommended_spelling,
+  ``Lean.Parser.Command.mixfix,
+  ``Lean.Parser.Command.notation,
+  ``Lean.Parser.Command.syntax,
+  ``Lean.Parser.Command.syntaxAbbrev,
+  ``Lean.Parser.Command.syntaxCat,
+  ``Lean.Parser.Command.macro,
+  ``Lean.Parser.Command.binderPredicate
+]
+
+private def isPlainSetOption (stx : Lean.Syntax) : Bool :=
+  stx.isOfKind ``Lean.Parser.Command.set_option &&
+    !(Syntax.spellings stx).contains "in"
+
+private def isVariableBinder (stx : Lean.Syntax) : Bool :=
+  stx.isOfKind ``Lean.Parser.Term.explicitBinder ||
+    stx.isOfKind ``Lean.Parser.Term.implicitBinder ||
+    stx.isOfKind ``Lean.Parser.Term.strictImplicitBinder ||
+    stx.isOfKind ``Lean.Parser.Term.instBinder ||
+    stx.isOfKind ``Lean.Parser.Term.binderIdent
+
+private partial def variableBinders (stx : Lean.Syntax) (result : Array Lean.Syntax := #[]) :
+    Array Lean.Syntax :=
+  if isVariableBinder stx then result.push stx
+  else stx.getArgs.foldl (init := result) fun result child => variableBinders child result
+
+private def variableDocument (stx : Lean.Syntax) : Doc :=
+  let binders := variableBinders stx
+  let document := binders.foldl (init := Doc.text "variable") fun document binder =>
+    document ++ Doc.nest 2 (Doc.line " " ++ Syntax.flat (Syntax.spellings binder))
+  Doc.group document
+
+private def simpleShellDocument? (stx : Lean.Syntax) : Option Doc :=
+  if simpleShellKinds.contains stx.getKind || isPlainSetOption stx then
+    let tokens := Syntax.spellings stx
+    if stx.isOfKind ``Lean.Parser.Command.variable then
+      some (variableDocument stx)
+    else
+      some (Doc.group (Syntax.flat tokens))
+  else none
+
+private def structural (ownership : CommentOwnership) (stx : Lean.Syntax) (document : Doc) :
+    Lean.CoreM CommandDocument := do
+  return {
+    document
+    trace := ← Formatter.trace ownership .command stx
+    owner := .core
+    mechanism := .structural }
+
 /-- Format the parsed module/import header as one closed core document. Import order and modifiers
 remain those of the actual header syntax. A comment-free header uses formatter-owned rows; a commented
 header keeps native leading trivia while stripping the ordinary-command boundary from its tail. -/
 def header (ownership : CommentOwnership) (stx : Lean.Syntax) :
     Lean.CoreM (Except FormatterFailure CommandDocument) := do
-  let result ← format ownership .core (.named ``Lean.Parser.Module.header) stx (clearHead := false)
-  match result, headerDocument? stx with
-  | .ok formatted, some document =>
+  if let some document := headerDocument? stx then
     if (Comments.subtree ownership stx).isEmpty then
-      return .ok { formatted with document, mechanism := .structural }
-    else
-      return .ok formatted
-  | result, _ => return result
+      let trace ← Formatter.trace ownership (.named ``Lean.Parser.Module.header) stx
+      return .ok { document, trace, owner := .core, mechanism := .structural }
+  format ownership .core (.named ``Lean.Parser.Module.header) stx (clearHead := false)
 
 private def macroRulesDocument (stx : Lean.Syntax) : Doc :=
   let tokens := Syntax.spellings stx
@@ -207,6 +284,9 @@ private def macroRulesDocument (stx : Lean.Syntax) : Doc :=
 syntax is delegated under the environment and options that parsed it. -/
 def command (ownership : CommentOwnership) (stx : Lean.Syntax) :
     Lean.CoreM (Except FormatterFailure CommandDocument) := do
+  if let some document := simpleShellDocument? stx then
+    if (Comments.subtree ownership stx).isEmpty then
+      return .ok (← structural ownership stx document)
   if let some declaration ← Formatter.Declaration.format? ownership stx then
     return declaration.map fun formatted =>
       {
@@ -214,17 +294,10 @@ def command (ownership : CommentOwnership) (stx : Lean.Syntax) :
         trace := formatted.trace
         owner := .core
         mechanism := if formatted.structural then .structural else .registry }
-  let result ← format ownership (← ownerOf stx) .command stx
   if stx.isOfKind ``Lean.Parser.Command.macro_rules &&
       (Comments.subtree ownership stx).isEmpty then
-    let trace := match result with
-      | .ok formatted => formatted.trace
-      | .error failure => failure.trace
-    return .ok {
-      document := macroRulesDocument stx
-      trace
-      owner := .core
-      mechanism := .structural }
+    return .ok (← structural ownership stx (macroRulesDocument stx))
+  let result ← format ownership (← ownerOf stx) .command stx
   match result with
   | .ok formatted => return .ok formatted
   | .error failure => return .error failure
