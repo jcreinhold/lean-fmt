@@ -19,6 +19,7 @@ import all LeanFmt.Validator
 import Lean.Elab.Frontend
 import Lean.Linter.Deprecated
 import Lean.Server.InfoUtils
+import Std.Sync.Mutex
 
 namespace LeanFmt.Internal
 
@@ -339,14 +340,13 @@ private def captureDeprecatedOccurrences (tree : Lean.Language.SnapshotTree)
   raw.foldl (init := #[]) fun acc occ =>
     if acc.any (·.range == occ.range) then acc else acc.push occ
 
-/- Execute Lean's ordinary header and sequential command frontend under the exact `ModuleSetup`
-owned by the target Lake workspace. The resulting projection is the same one emitted by the
-compiler plugin; no accumulated environment or parser state crosses this process invocation. -/
-unsafe def analyzeExact (setup : Lean.ModuleSetup) (source : String)
-    (sourcePath : System.FilePath) (captureSemantic : Bool := false)
-    (captureOccurrences : Bool := false) (captureComments : Bool := false)
-    (captureFormatDraft : Bool := false) (validateFormatDraft : Bool := false)
-    (formatWidth : Nat := 100) (loadDynlibs : Bool := true) : IO AnalysisEnvelope := do
+private structure FrontendRun where
+  input : Lean.Parser.InputContext
+  snapshot : Lean.Language.Lean.InitialSnapshot
+
+private unsafe def processSource (setup : Lean.ModuleSetup) (source : String)
+    (sourcePath : System.FilePath) (old? : Option Lean.Language.Lean.InitialSnapshot := none)
+    (loadDynlibs : Bool := true) : IO FrontendRun := do
   Lean.initSearchPath (← Lean.findSysroot)
   Lean.enableInitializersExecution
   let input := Lean.Parser.mkInputContext source sourcePath.toString
@@ -367,7 +367,18 @@ unsafe def analyzeExact (setup : Lean.ModuleSetup) (source : String)
       plugins := setup.plugins.filter (!isApplicationRuntimePlugin ·)
     }
   let context : Lean.Language.ProcessingContext := { input with }
-  let snapshot ← Lean.Language.Lean.process setupImports none context
+  let snapshot ← Lean.Language.Lean.process setupImports old? context
+  return { input, snapshot }
+
+/- Convert one completed frontend snapshot into the product's semantic envelope. Incremental
+processing changes only where the snapshot came from, never how formatter facts are derived. -/
+private unsafe def analyzeSnapshot (setup : Lean.ModuleSetup) (source : String)
+    (sourcePath : System.FilePath) (input : Lean.Parser.InputContext)
+    (snapshot : Lean.Language.Lean.InitialSnapshot) (captureSemantic : Bool := false)
+    (captureOccurrences : Bool := false) (captureComments : Bool := false)
+    (captureFormatDraft : Bool := false) (validateFormatDraft : Bool := false)
+    (formatWidth : Nat := 100) : IO AnalysisEnvelope := do
+  let options := Lean.Elab.async.setIfNotSet setup.options.toOptions true
   let tree := Lean.Language.toSnapshotTree snapshot
   let messages := tree.getAll.map (·.diagnostics.msgLog) |>.foldl (· ++ ·) {}
   let some commandState := Lean.Language.Lean.waitForFinalCmdState? snapshot
@@ -425,8 +436,9 @@ unsafe def analyzeExact (setup : Lean.ModuleSetup) (source : String)
           | none => pure (none, some {
               gate := .formatter
               detail := "format draft was not produced" })
-      let candidate ← analyzeExact setup first.text sourcePath
-        (captureFormatDraft := true) (formatWidth := formatWidth) (loadDynlibs := false)
+      let candidateRun ← processSource setup first.text sourcePath (loadDynlibs := false)
+      let candidate ← analyzeSnapshot setup first.text sourcePath candidateRun.input
+        candidateRun.snapshot (captureFormatDraft := true) (formatWidth := formatWidth)
       if !candidate.diagnostics.isEmpty then
         pure (none, some {
           gate := .diagnostics
@@ -453,6 +465,190 @@ unsafe def analyzeExact (setup : Lean.ModuleSetup) (source : String)
     formatFailure? := formatFailure?
     canonical? := canonical?
     validationFailure? := validationFailure? }
+
+/- Execute Lean's frontend under the exact target setup without retaining parser or environment
+state. Batch exact analysis remains deliberately one-shot. -/
+unsafe def analyzeExact (setup : Lean.ModuleSetup) (source : String)
+    (sourcePath : System.FilePath) (captureSemantic : Bool := false)
+    (captureOccurrences : Bool := false) (captureComments : Bool := false)
+    (captureFormatDraft : Bool := false) (validateFormatDraft : Bool := false)
+    (formatWidth : Nat := 100) (loadDynlibs : Bool := true) : IO AnalysisEnvelope := do
+  let run ← processSource setup source sourcePath (loadDynlibs := loadDynlibs)
+  analyzeSnapshot setup source sourcePath run.input run.snapshot captureSemantic captureOccurrences
+    captureComments captureFormatDraft validateFormatDraft formatWidth
+
+structure IncrementalCounters where
+  updates : Nat := 0
+  successful : Nat := 0
+  failed : Nat := 0
+  cancelled : Nat := 0
+  invalidated : Nat := 0
+  reusedCommands : Nat := 0
+  deriving Inhabited, Repr, Lean.ToJson, Lean.FromJson
+
+structure IncrementalResult where
+  envelope : AnalysisEnvelope
+  reusedCommands : Nat
+  invalidated : Bool
+  cancelled : Bool := false
+  retainedSnapshots : Nat
+  counters : IncrementalCounters
+  deriving Lean.ToJson, Lean.FromJson
+
+private structure IncrementalGood where
+  setupIdentity : String
+  sourcePath : String
+  headerIdentity : String
+  snapshot : Lean.Language.Lean.InitialSnapshot
+
+private structure IncrementalFlight where
+  snapshot? : Option Lean.Language.Lean.InitialSnapshot := none
+  cancelled : IO.Ref Bool
+
+private structure IncrementalState where
+  good? : Option IncrementalGood := none
+  flight? : Option IncrementalFlight := none
+  counters : IncrementalCounters := {}
+  closed : Bool := false
+
+/-- A single-document frontend session. Its constructor and state are private so callers can only
+use the bounded lifecycle operations below; in particular, no caller can retain snapshot history or
+invoke parse/elaboration stages out of order. -/
+structure IncrementalAnalyzer where
+  private mk ::
+    private state : Std.Mutex IncrementalState
+
+private def setupIdentity (setup : Lean.ModuleSetup) : String :=
+  toString <| Digest.ofString (Lean.toJson setup).compress
+
+private def headerIdentity (snapshot : Lean.Language.Lean.InitialSnapshot) : String :=
+  snapshot.stx.unsetTrailing.reprint.getD ""
+
+private unsafe def cancelSnapshot (snapshot : Lean.Language.Lean.InitialSnapshot) : IO Unit :=
+  (Lean.Language.toSnapshotTree snapshot).children.forM (·.cancelRec)
+
+private unsafe def sharedCommandPrefix (old new : Lean.Language.Lean.InitialSnapshot) : Nat :=
+  let before := (processedLiveCommands old).1
+  let after := (processedLiveCommands new).1
+  let rec loop (i : Nat) : Nat :=
+    match before[i]?, after[i]? with
+    | some oldCommand, some newCommand =>
+      if ptrEq oldCommand.stx newCommand.stx then loop (i + 1) else i
+    | _, _ => i
+  loop 0
+
+def IncrementalAnalyzer.open : IO IncrementalAnalyzer := do
+  return .mk (← Std.Mutex.new {})
+
+private def IncrementalAnalyzer.releaseFlight (analyzer : IncrementalAnalyzer) : IO Unit :=
+  analyzer.state.atomically fun ref => do
+    let state ← ref.get
+    ref.set { state with flight? := none }
+
+private unsafe def IncrementalAnalyzer.run (analyzer : IncrementalAnalyzer)
+    (setup : Lean.ModuleSetup) (source : String) (sourcePath : System.FilePath)
+    (captureSemantic : Bool) (captureOccurrences : Bool) (captureComments : Bool)
+    (captureFormatDraft : Bool) (validateFormatDraft : Bool) (formatWidth : Nat) :
+    IO IncrementalResult := do
+  let cancelRef ← IO.mkRef false
+  let state ← analyzer.state.atomically fun ref => do
+    let state ← ref.get
+    if state.closed then
+      throw <| IO.userError "incremental analyzer is closed"
+    if state.flight?.isSome then
+      throw <| IO.userError "incremental analyzer already has an update in flight"
+    ref.set { state with flight? := some { cancelled := cancelRef } }
+    return state
+  let identity := setupIdentity setup
+  let path := sourcePath.toString
+  let lineageMatches := state.good?.any fun good =>
+    good.setupIdentity == identity && good.sourcePath == path
+  unless lineageMatches do
+    state.good?.forM fun good => cancelSnapshot good.snapshot
+  let old? := if lineageMatches then state.good?.map (·.snapshot) else none
+  let run ← try
+      processSource setup source sourcePath old? (loadDynlibs := !lineageMatches)
+    catch error =>
+      analyzer.releaseFlight
+      throw error
+  analyzer.state.atomically fun ref => do
+    let current ← ref.get
+    ref.set { current with
+      flight? := current.flight?.map ({ · with snapshot? := some run.snapshot }) }
+  if ← cancelRef.get then cancelSnapshot run.snapshot
+  let envelope ← try
+      analyzeSnapshot setup source sourcePath run.input run.snapshot captureSemantic
+        captureOccurrences captureComments captureFormatDraft validateFormatDraft formatWidth
+    catch error =>
+      if ← cancelRef.get then
+        pure { artifact? := none, diagnostics := #["analysis cancelled"] }
+      else
+        analyzer.releaseFlight
+        throw error
+  let wasCancelled ← cancelRef.get
+  let oldHeader? := if lineageMatches then state.good?.map (·.headerIdentity) else none
+  let newHeader := headerIdentity run.snapshot
+  let invalidated := !lineageMatches || oldHeader?.any (· != newHeader)
+  let reused := if invalidated then 0 else old?.map (sharedCommandPrefix · run.snapshot) |>.getD 0
+  let (good?, counters) ← analyzer.state.atomically fun ref => do
+    let current ← ref.get
+    let succeeded := !current.closed && !wasCancelled && envelope.artifact?.isSome
+    let counters := { current.counters with
+      updates := current.counters.updates + 1
+      successful := current.counters.successful + if succeeded then 1 else 0
+      failed := current.counters.failed + if !succeeded && !wasCancelled then 1 else 0
+      cancelled := current.counters.cancelled + if wasCancelled then 1 else 0
+      invalidated := current.counters.invalidated + if invalidated then 1 else 0
+      reusedCommands := current.counters.reusedCommands + reused }
+    let good? := if current.closed then none
+      else if succeeded then some {
+          setupIdentity := identity, sourcePath := path, headerIdentity := newHeader
+          snapshot := run.snapshot }
+        else state.good?
+    ref.set { current with good?, flight? := none, counters }
+    return (good?, counters)
+  return {
+    envelope, reusedCommands := reused, invalidated, cancelled := wasCancelled
+    retainedSnapshots := if good?.isSome then 1 else 0, counters }
+
+/-- Analyze the current document version, retaining it only when the frontend succeeds. -/
+unsafe def IncrementalAnalyzer.analyze (analyzer : IncrementalAnalyzer)
+    (setup : Lean.ModuleSetup) (source : String) (sourcePath : System.FilePath)
+    (captureSemantic : Bool := false) (captureOccurrences : Bool := false)
+    (captureComments : Bool := false) : IO IncrementalResult :=
+  analyzer.run setup source sourcePath captureSemantic captureOccurrences captureComments
+    false false 100
+
+/-- Format the current document version through the same two-pass admission path as one-shot exact
+formatting. The validated canonical layout, if any, is in `result.envelope.canonical?`. -/
+unsafe def IncrementalAnalyzer.format (analyzer : IncrementalAnalyzer)
+    (setup : Lean.ModuleSetup) (source : String) (sourcePath : System.FilePath)
+    (width : Nat := 100) : IO IncrementalResult :=
+  analyzer.run setup source sourcePath false false false false true width
+
+/-- Cancel the current update, if any. Lean recursively cancels only snapshot subtrees it has ruled
+out for reuse; the session marks the generation so it can never become the last-good snapshot. -/
+unsafe def IncrementalAnalyzer.cancel (analyzer : IncrementalAnalyzer) : IO Unit := do
+  if let some flight ← analyzer.state.atomically fun ref => return (← ref.get).flight? then
+    flight.cancelled.set true
+    flight.snapshot?.forM cancelSnapshot
+
+def IncrementalAnalyzer.counters (analyzer : IncrementalAnalyzer) : IO IncrementalCounters :=
+  analyzer.state.atomically fun ref => return (← ref.get).counters
+
+private def IncrementalAnalyzer.isRunning (analyzer : IncrementalAnalyzer) : IO Bool :=
+  analyzer.state.atomically fun ref => return (← ref.get).flight?.isSome
+
+/-- Release the retained snapshot and reject all later operations. Closing twice is harmless. -/
+unsafe def IncrementalAnalyzer.close (analyzer : IncrementalAnalyzer) : IO Unit := do
+  let state ← analyzer.state.atomically fun ref => do
+    let state ← ref.get
+    ref.set { state with good? := none, flight? := none, closed := true }
+    return state
+  state.flight?.forM fun flight => do
+    flight.cancelled.set true
+    flight.snapshot?.forM cancelSnapshot
+  state.good?.forM fun good => cancelSnapshot good.snapshot
 
 /-- Test-only admission of externally supplied candidate bytes through the same production
 comparator and second formatting pass. Product formatting never accepts candidate bytes from a
