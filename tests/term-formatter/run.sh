@@ -74,13 +74,17 @@ conditional_break = """    if condition then
       no"""
 assert conditional_break in texts[20], texts[20]
 assert "if condition then yes else no" in texts[40], texts[40]
+assert "else if second then" in texts[80], texts[80]
+assert "let (actual, _) := value" in texts[80], texts[80]
+assert "match _h : first, second with" in texts[80], texts[80]
+assert texts[20].index("| 0, _ => alpha") < texts[20].index("| _, 1 => beta"), texts[20]
 assert "fun first second => first + second" in texts[40], texts[40]
 assert "let first := alpha + beta\n    let second := first * gamma" in texts[40], texts[40]
 
 assert texts[20] != texts[40] != texts[80], "term groups ignored configured width"
-print("  ok   transparent applications and conditionals reflow at widths 20/40/80/100")
-print("  ok   operator precedence, identifiers, projections, lets, named arguments, and quotes survive")
-print("  ok   project notation stays live-registry-driven on the actual syntax node")
+print("  ok   applications and structural control terms reflow at widths 20/40/80/100")
+print("  ok   let continuations, nested conditionals, match discriminants, and arm order survive")
+print("  ok   project notation stays registry-driven only at its actual syntax node")
 PY
 
 printf 'tests/term-formatter: ok\n'

@@ -17,6 +17,7 @@ import Lean.Parser.Term
 import all LeanFmt.Formatter
 import all LeanFmt.Formatter.Block
 import all LeanFmt.Formatter.Collection
+import all LeanFmt.Formatter.ControlTerm
 import all LeanFmt.Formatter.Syntax
 
 namespace LeanFmt.Internal.Formatter.Term
@@ -67,16 +68,6 @@ private partial def transparentDocument? (stx : Lean.Syntax) : Option Doc := do
     let bodyDocument ← transparentDocument? body
     let header := Doc.group (separated (Doc.text "fun") binderDocuments ++ Doc.text " =>")
     return Doc.group (header ++ Doc.nest 2 (Doc.line " " ++ bodyDocument))
-  if stx.isOfKind ``termIfThenElse then
-    let #[_, condition, _, positive, _, negative] := stx.getArgs | none
-    let conditionDocument ← transparentDocument? condition
-    let positiveDocument ← transparentDocument? positive
-    let negativeDocument ← transparentDocument? negative
-    return Doc.group <|
-      Doc.text "if " ++ conditionDocument ++ Doc.text " then" ++
-        Doc.nest 2 (Doc.line " " ++ positiveDocument) ++
-        Doc.line " " ++ Doc.text "else" ++
-        Doc.nest 2 (Doc.line " " ++ negativeDocument)
   if stx.isOfKind ``Lean.Parser.Term.typeAscription ||
       stx.isOfKind ``Lean.Parser.Term.namedArgument ||
       stx.isOfKind ``Lean.Parser.Term.explicitBinder ||
@@ -108,6 +99,10 @@ private partial def composableDocument? (ownership : CommentOwnership) (stx : Le
         return (← Formatter.registered ownership .term child).map fun formatted =>
           some formatted.document
   match ← Collection.document childDocument stx with
+  | .ok (some document) => return .ok (some document)
+  | .error failure => return .error failure
+  | .ok none => pure ()
+  match ← ControlTerm.document childDocument stx with
   | .ok (some document) => return .ok (some document)
   | .error failure => return .error failure
   | .ok none => pure ()

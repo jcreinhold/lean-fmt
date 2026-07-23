@@ -47,6 +47,19 @@ def sequentialLets (alpha beta gamma : Nat) : Nat :=
 def conditional (condition : Bool) (yes no : Nat) : Nat :=
   if condition then yes else no
 
+def nestedConditional (first second : Bool) (yes middle no : Nat) : Nat :=
+  if first then yes else if second then middle else no
+
+def patternLet (value : Nat × Nat) : Nat :=
+  let (actual, _) := value
+  actual
+
+def multiMatch (first second alpha beta gamma : Nat) : Nat :=
+  match _h : first, second with
+  | 0, _ => alpha
+  | _, 1 => beta
+  | _, _ => gamma
+
 def projections (pair : Nat × Nat) : Nat :=
   pair.1 + pair.2
 
