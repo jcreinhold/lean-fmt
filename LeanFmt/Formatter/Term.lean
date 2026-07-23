@@ -106,6 +106,10 @@ private partial def composableDocument? (ownership : CommentOwnership) (stx : Le
   | .ok (some document) => return .ok (some document)
   | .error failure => return .error failure
   | .ok none => pure ()
+  match ← Block.document ownership childDocument stx with
+  | .ok (some document) => return .ok (some document)
+  | .error failure => return .error failure
+  | .ok none => pure ()
   if let #[left, operator, right] := stx.getArgs then
     if let .atom _ spelling := operator then
       match ← childDocument left with
@@ -182,8 +186,6 @@ def format (ownership : CommentOwnership) (stx : Lean.Syntax) :
       structural := true }
   | .error failure => return .error failure
   | .ok none =>
-    let registered ← Formatter.registered ownership .term stx
-    if let some block := Block.formatTerm? stx registered then return block
-    return registered
+    return ← Formatter.registered ownership .term stx
 
 end LeanFmt.Internal.Formatter.Term

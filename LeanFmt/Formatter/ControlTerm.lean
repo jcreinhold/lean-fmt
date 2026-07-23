@@ -93,7 +93,7 @@ private def discriminantDocument (formatChild : ChildDocument) (stx : Lean.Synta
   | .ok none => return .ok none
   | .ok (some valueDocument) =>
     if (Syntax.spellings binder).isEmpty then return .ok (some valueDocument)
-    return .ok (some (Syntax.flat (Syntax.spellings binder) ++ valueDocument))
+    return .ok (some (Syntax.flat (Syntax.spellings binder) ++ Doc.text " " ++ valueDocument))
 
 private def alternativeDocument (formatChild : ChildDocument) (stx : Lean.Syntax) :
     Lean.CoreM (Except FormatterFailure (Option Doc)) := do

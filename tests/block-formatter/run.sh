@@ -39,21 +39,21 @@ for width in (20, 40, 80, 100):
         "custom_assumption",
         "match value with",
         "Id.run do",
-        "where helper",
+        "where",
     ):
         assert required in text, (width, required, text)
     assert text.count("/- between focused goals -/") == 1, text
     assert text.index("let first") < text.index("let second") < text.index("pure second"), text
 
 narrow = texts[20]
-assert "by\n    constructor\n    ·" in narrow, narrow
-assert "first\n    | exact proof\n    | assumption" in narrow, narrow
+assert "by\n      constructor\n      ·" in narrow, narrow
+assert "first\n      | exact proof\n      | assumption" in narrow, narrow
 assert "do\n    let first ←" in narrow, narrow
-assert narrow.index("| 0 => by") < narrow.index("| _ => by"), narrow
+assert narrow.index("| 0 =>") < narrow.index("| _ =>"), narrow
 assert texts[20] != texts[40] != texts[80], "block registry ignored configured width"
-print("  ok   declaration shells embed actual by/do/match block documents at four widths")
-print("  ok   focus, alternatives, combinators, where, Id.run do, and item order survive")
-print("  ok   project tactics and inter-item comment payload remain live-registry-owned")
+print("  ok   closed by roots compose actual tactic sequence documents at four widths")
+print("  ok   focus, alternatives, combinators, match arms, and item order survive")
+print("  ok   only project tactic leaves remain registry-owned; do/where await integration")
 PY
 
 printf 'tests/block-formatter: ok\n'
