@@ -63,11 +63,11 @@ expect_reject() {
   fi
 }
 
-# A healthy warm capture: 34 targets, all hit and served, no frontend work, phases that measure.
+# A healthy warm capture: 45 targets, all hit and served, no frontend work, phases that measure.
 cat >"$scratch/healthy.err" <<'CAPTURE'
-cache.targets=34
-cache.index_hits=34
-cache.served=34
+cache.targets=45
+cache.index_hits=45
+cache.served=45
 phase.discovery_ms=7
 phase.workspace_load_ms=515
 phase.selection_snapshot_ms=5
@@ -104,16 +104,16 @@ expect_reject "a truncated renderer report that omits one adversarial row" \
   gate_doc_steps_linear "$scratch/doc-truncated.out"
 
 printf -- '--- §1a the workload is the one that was handed over ---\n'
-expect_accept "a run over all 34 targets" gate_targets_match "$scratch/healthy.err" 34
+expect_accept "a run over all 45 targets" gate_targets_match "$scratch/healthy.err" 45
 
-sed 's/^cache.targets=34$/cache.targets=33/' "$scratch/healthy.err" >"$scratch/fewer.err"
-expect_reject "a run that quietly processed 33 of 34 files" \
-  gate_targets_match "$scratch/fewer.err" 34
+sed 's/^cache.targets=45$/cache.targets=44/' "$scratch/healthy.err" >"$scratch/fewer.err"
+expect_reject "a run that quietly processed 44 of 45 files" \
+  gate_targets_match "$scratch/fewer.err" 45
 
 printf -- '\n--- §1b every target served from the index ---\n'
-expect_accept "34 targets, 34 hits, 34 served" gate_fully_served "$scratch/healthy.err"
+expect_accept "45 targets, 45 hits, 45 served" gate_fully_served "$scratch/healthy.err"
 
-sed -e 's/^cache.index_hits=34$/cache.index_hits=30/' -e 's/^cache.served=34$/cache.served=30/' \
+sed -e 's/^cache.index_hits=45$/cache.index_hits=41/' -e 's/^cache.served=45$/cache.served=41/' \
   "$scratch/healthy.err" >"$scratch/misses.err"
 expect_reject "4 cache misses on a warm run (the cache-identity regression)" \
   gate_fully_served "$scratch/misses.err"
