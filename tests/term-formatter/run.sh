@@ -54,7 +54,11 @@ application_break = """    consumeFive
 assert application_break in texts[20], texts[20]
 assert application_break in texts[40], texts[40]
 assert "consumeFive alpha beta gamma delta epsilon" in texts[80], texts[80]
-assert "consumeFive\n      (alpha ⊕custom\n        beta)" in texts[20], texts[20]
+assert """consumeFive
+      (
+        alpha ⊕custom
+          beta
+      )""" in texts[20], texts[20]
 assert "fun (first : Nat) (second : Nat) =>" in texts[80], texts[80]
 assert "@Nat.succ value" in texts[100], texts[100]
 for flat in (
@@ -70,7 +74,7 @@ conditional_break = """    if condition then
       no"""
 assert conditional_break in texts[20], texts[20]
 assert "if condition then yes else no" in texts[40], texts[40]
-assert "fun first second =>\n      first + second" in texts[40], texts[40]
+assert "fun first second => first + second" in texts[40], texts[40]
 assert "let first := alpha + beta\n    let second := first * gamma" in texts[40], texts[40]
 
 assert texts[20] != texts[40] != texts[80], "term groups ignored configured width"

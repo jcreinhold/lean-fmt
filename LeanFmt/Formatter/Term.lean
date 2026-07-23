@@ -77,7 +77,6 @@ private partial def transparentDocument? (stx : Lean.Syntax) : Option Doc := do
         Doc.nest 2 (Doc.line " " ++ positiveDocument) ++
         Doc.line " " ++ Doc.text "else" ++
         Doc.nest 2 (Doc.line " " ++ negativeDocument)
-  if let some document := Collection.document? transparentDocument? stx then return document
   if stx.isOfKind ``Lean.Parser.Term.typeAscription ||
       stx.isOfKind ``Lean.Parser.Term.namedArgument ||
       stx.isOfKind ``Lean.Parser.Term.explicitBinder ||
@@ -91,6 +90,7 @@ private partial def transparentDocument? (stx : Lean.Syntax) : Option Doc := do
 
 private partial def composableDocument? (ownership : CommentOwnership) (stx : Lean.Syntax) :
     Lean.CoreM (Except FormatterFailure (Option Doc)) := do
+  if CoreSurface.owner (← Lean.getEnv) .term stx.getKind == .extension then return .ok none
   if let some document := transparentDocument? stx then return .ok (some document)
   let childDocument (child : Lean.Syntax) : Lean.CoreM (Except FormatterFailure (Option Doc)) := do
     match CoreSurface.owner (← Lean.getEnv) .term child.getKind with
@@ -107,6 +107,23 @@ private partial def composableDocument? (ownership : CommentOwnership) (stx : Le
         -- 14b removes the boundary once those closed core families are structurally complete.
         return (← Formatter.registered ownership .term child).map fun formatted =>
           some formatted.document
+  match ← Collection.document childDocument stx with
+  | .ok (some document) => return .ok (some document)
+  | .error failure => return .error failure
+  | .ok none => pure ()
+  if let #[left, operator, right] := stx.getArgs then
+    if let .atom _ spelling := operator then
+      match ← childDocument left with
+      | .error failure => return .error failure
+      | .ok none => return .ok none
+      | .ok (some leftDocument) =>
+        match ← childDocument right with
+        | .error failure => return .error failure
+        | .ok none => return .ok none
+        | .ok (some rightDocument) =>
+          return .ok (some (Doc.group <|
+            leftDocument ++ Doc.text (" " ++ spelling) ++
+              Doc.nest 2 (Doc.line " " ++ rightDocument)))
   if stx.isOfKind ``Lean.Parser.Term.paren then
     let children := nonemptyChildren stx
     let inner? := children.find? fun child =>

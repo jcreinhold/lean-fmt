@@ -28,8 +28,29 @@ def trailingList (alpha beta gamma : Nat) : List Nat :=
 def arrayValue (alpha beta gamma delta epsilon : Nat) : Array Nat :=
   #[alpha, beta, gamma, delta, epsilon]
 
+def anonymousValue (alpha beta gamma : Nat) : Packet :=
+  ⟨alpha, beta, gamma⟩
+
+def leftAssociative (alpha beta gamma delta epsilon : Nat) : Nat :=
+  alpha + beta + gamma + delta + epsilon
+
+def rightAssociative (alpha beta gamma delta epsilon : Nat) : Nat :=
+  alpha ^ beta ^ gamma ^ delta ^ epsilon
+
+def arrowAssociation : Type :=
+  Nat → Nat → Nat → Nat → Nat
+
 def recordValue (alpha beta gamma : Nat) : Packet :=
   { first := alpha, second := beta, third := gamma }
+
+def shorthandRecord (first second third : Nat) : Packet :=
+  { first, second, third }
+
+def typedRecord (alpha beta gamma : Nat) : Packet :=
+  { first := alpha, second := beta, third := gamma : Packet }
+
+def ellipsisRecord (alpha : Nat) : Packet :=
+  { first := alpha, second := 0, third := 0, .. }
 
 def recordUpdate (packet : Packet) (alpha beta : Nat) : Packet :=
   { packet with first := alpha, second := beta }
