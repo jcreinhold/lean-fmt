@@ -36,6 +36,7 @@ lean_lib LeanFmtCompilerPlugin where
     Glob.one `LeanFmt,
     Glob.one `LeanFmt.Basic,
     Glob.one `LeanFmt.Digest,
+    Glob.one `LeanFmt.SyntaxArtifact,
     Glob.one `LeanFmt.ArtifactModel,
     Glob.one `LeanFmt.LosslessSource
   ]
@@ -67,6 +68,7 @@ lean_lib LeanFmtApplication where
     Glob.one `LeanFmt.GitSelection,
     Glob.one `LeanFmt.Project,
     Glob.one `LeanFmt.Semantic,
+    Glob.one `LeanFmt.SyntaxArtifact,
     Glob.one `LeanFmt.Validator,
     Glob.one `LeanFmt.LanguageServer,
     Glob.one `LeanFmt.Watch,
@@ -87,6 +89,7 @@ lean_lib LeanFmtCore where
     Glob.one `LeanFmt,
     Glob.one `LeanFmt.Basic,
     Glob.one `LeanFmt.Digest,
+    Glob.one `LeanFmt.SyntaxArtifact,
     Glob.one `LeanFmt.ArtifactModel,
     Glob.one `LeanFmt.LosslessSource,
     Glob.one `LeanFmt.Rules,
@@ -167,7 +170,7 @@ module_facet leanFmtArtifact (mod : Module) : Artifact := do
 own implementation depend on itself as a compiler plugin. -/
 lean_lib CompilerFixtures where
   srcDir := "tests/compiler"
-  roots := #[`LocalSyntax]
+  roots := #[`LocalSyntax, `ArtifactLayout]
   plugins := #[`@/LeanFmtCompilerPlugin:shared]
 
 lean_lib BrokenCompilerFixtures where

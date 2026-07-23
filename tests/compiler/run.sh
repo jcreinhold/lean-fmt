@@ -18,6 +18,15 @@ rules_backup=$(mktemp)
 shadow_dir=$(mktemp -d)
 cache_dir=$(mktemp -d)
 cache_log=$(mktemp)
+artifact_layout_diff=$(mktemp)
+exact_layout_diff=$(mktemp)
+artifact_layout_profile=$(mktemp)
+exact_layout_profile=$(mktemp)
+layout_setup=$(mktemp)
+artifact_layout_envelope=$(mktemp)
+exact_layout_envelope=$(mktemp)
+artifact_layout_backup=$(mktemp)
+artifact_fallback_profile=$(mktemp)
 cp "$source_file" "$backup"
 cp "$plugin_source" "$plugin_backup"
 cp "$rules_source" "$rules_backup"
@@ -27,6 +36,10 @@ cleanup() {
   cp "$rules_backup" "$rules_source"
   rm -f "$backup" "$fixture_backup"
   rm -f "$plugin_backup" "$rules_backup" "$cache_log"
+  rm -f "$artifact_layout_diff" "$exact_layout_diff" \
+    "$artifact_layout_profile" "$exact_layout_profile"
+  rm -f "$layout_setup" "$artifact_layout_envelope" "$exact_layout_envelope"
+  rm -f "$artifact_layout_backup" "$artifact_fallback_profile"
   rm -rf "$shadow_dir" "$cache_dir"
 }
 trap cleanup EXIT
@@ -62,6 +75,66 @@ LEAN_NUM_THREADS=1 lake -R build +LocalSyntax:leanFmtArtifact
 verify_artifacts
 LEAN_NUM_THREADS=1 lake exe lean-fmt-tests verify-official-facet \
   . tests/compiler/LocalSyntax.lean
+
+# Canonical rendering consumes the reconstructible artifact under the matching loaded module
+# environment. It must be byte-identical to the exact-source path, including file-local syntax, and
+# the profile must prove that both independently reachable strategies were exercised.
+LEAN_NUM_THREADS=1 lake build +ArtifactLayout:leanFmtArtifact lean-fmt
+application=$(lake -q query lean-fmt --text)
+set +e
+LEAN_FMT_PROFILE_PHASES=1 LEAN_NUM_THREADS=1 "$application" diff \
+  --no-cache tests/compiler/ArtifactLayout.lean >"$artifact_layout_diff" 2>"$artifact_layout_profile"
+artifact_layout_status=$?
+LEAN_FMT_DISABLE_ARTIFACT=1 LEAN_FMT_PROFILE_PHASES=1 LEAN_NUM_THREADS=1 "$application" diff \
+  --no-cache tests/compiler/ArtifactLayout.lean >"$exact_layout_diff" 2>"$exact_layout_profile"
+exact_layout_status=$?
+set -e
+if [[ $artifact_layout_status -ne 1 || $exact_layout_status -ne 1 ]]; then
+  printf 'artifact/exact formatter comparison did not report a changed file: artifact=%s exact=%s\n' \
+    "$artifact_layout_status" "$exact_layout_status" >&2
+  cat "$artifact_layout_profile" "$exact_layout_profile" >&2
+  exit 1
+fi
+cmp "$artifact_layout_diff" "$exact_layout_diff"
+grep -q '^cache.path_artifact_render=1$' "$artifact_layout_profile"
+grep -q '^cache.path_exact_render=1$' "$exact_layout_profile"
+
+LEAN_NUM_THREADS=1 lake setup-file tests/compiler/ArtifactLayout.lean >"$layout_setup"
+LEAN_NUM_THREADS=1 lake env "$application" __analyze-artifact "$layout_setup" \
+  .lake/build/lib/lean/ArtifactLayout.olean \
+  .lake/build/lean-fmt-artifacts/ArtifactLayout.json \
+  tests/compiler/ArtifactLayout.lean tests/compiler/ArtifactLayout.lean \
+  8589934592 100 >"$artifact_layout_envelope"
+LEAN_NUM_THREADS=1 lake env "$application" __analyze-exact "$layout_setup" \
+  tests/compiler/ArtifactLayout.lean tests/compiler/ArtifactLayout.lean \
+  8589934592 4:100 >"$exact_layout_envelope"
+python3 - "$artifact_layout_envelope" "$exact_layout_envelope" <<'PY'
+import json
+import sys
+
+artifact = json.load(open(sys.argv[1]))["canonical"]
+exact = json.load(open(sys.argv[2]))["canonical"]
+for field in ("text", "sourceMap", "metrics", "validation"):
+    if artifact[field] != exact[field]:
+        raise SystemExit(f"artifact/exact canonical {field} differ")
+PY
+
+# Corruption is a counted exact fallback, not a rebuild, partial result, or hard failure.
+cp .lake/build/lean-fmt-artifacts/ArtifactLayout.json "$artifact_layout_backup"
+printf '{"partial":' >.lake/build/lean-fmt-artifacts/ArtifactLayout.json
+set +e
+LEAN_FMT_PROFILE_PHASES=1 LEAN_NUM_THREADS=1 "$application" diff --no-cache \
+  tests/compiler/ArtifactLayout.lean >/dev/null 2>"$artifact_fallback_profile"
+artifact_fallback_status=$?
+set -e
+cp "$artifact_layout_backup" .lake/build/lean-fmt-artifacts/ArtifactLayout.json
+if [[ $artifact_fallback_status -ne 1 ]]; then
+  printf 'corrupt syntax artifact did not fall through to a successful exact diff\n' >&2
+  cat "$artifact_fallback_profile" >&2
+  exit 1
+fi
+grep -q '^cache.path_exact_render=1$' "$artifact_fallback_profile"
+grep -q '^cache.official_artifact_miss=1$' "$artifact_fallback_profile"
 
 # The extractor must use the exact `.olean` returned by the facet even when ambient `LEAN_PATH`
 # contains a different module with the same name first.
@@ -136,8 +209,8 @@ import sys
 
 path = Path(sys.argv[1])
 source = path.read_text()
-old = "private def produceArtifact"
-new = 'private def invalidationProbe : String := "probe"\n\nprivate def produceArtifact'
+old = "private def produceCommandRecord"
+new = 'private def invalidationProbe : String := "probe"\n\nprivate def produceCommandRecord'
 if source.count(old) != 1:
     raise SystemExit("plugin invalidation probe could not find its unique source marker")
 path.write_text(source.replace(old, new))

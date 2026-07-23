@@ -112,9 +112,11 @@ def SemanticAnalysis.ofArtifact? (raw : String) (artifact? : Option ModuleArtifa
   | none =>
     if diagnostics.isEmpty then none else some (.broken diagnostics)
   | some artifact =>
-    if structurallyValid artifact && artifact.source.validFor raw &&
-        diagnostics.isEmpty then
+    if diagnostics.isEmpty then
       let normalized := (LosslessSource.normalize raw).1
+      match artifact.materialize raw with
+      | .error _ => none
+      | .ok materialized =>
       -- The projection is in hand here (and only here), so this is where directives are parsed:
       -- syntax-tier, exactly like the syntax facts the findings are computed from.
       --
@@ -129,14 +131,15 @@ def SemanticAnalysis.ofArtifact? (raw : String) (artifact? : Option ModuleArtifa
       -- `occurrences` iff the info-tree fold ran); a syntax entry provides none. `occurrences`
       -- flow into the facts so the owned FMT012 rule can attach its rename fix — empty when the
       -- capability was not demanded, keeping the report byte-identical to the surfaced-only path.
-      let (facts, tier, caps) := match artifact.semantic with
-        | some projection =>
-          (Facts.semantic (SemanticFacts.of normalized artifact.source projection.diagnostics
-            (projection.occurrences?.getD #[])), Tier.semantic, projection.caps)
-        | none =>
-          (Facts.syntax (SyntaxFacts.of normalized artifact.source), Tier.syntax, ({} : SemanticCaps))
-      some (.success normalized (runRules facts) (tier := tier)
-        (suppression := Suppression.collect artifact.source normalized) (caps := caps))
+        let (facts, tier, caps) := match artifact.semantic with
+          | some projection =>
+            (Facts.semantic (SemanticFacts.of normalized materialized.source projection.diagnostics
+              (projection.occurrences?.getD #[])), Tier.semantic, projection.caps)
+          | none =>
+            (Facts.syntax (SyntaxFacts.of normalized materialized.source), Tier.syntax,
+              ({} : SemanticCaps))
+        some (.success normalized (runRules facts) (tier := tier)
+          (suppression := Suppression.collect materialized.source normalized) (caps := caps))
     else
       none
 

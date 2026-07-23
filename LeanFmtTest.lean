@@ -1390,7 +1390,25 @@ private def testMixedSelection : IO Unit := do
 
 private def fixtureArtifact : ModuleArtifact := {
   schema := artifactSchema
-  source := fixtureLosslessSource
+  mainModule := "Test"
+  normalizedBytes := fixtureSourceText.utf8ByteSize
+  normalizedDigest := Digest.ofString fixtureSourceText
+  syntaxData := {
+    kinds := #[`Lean.Parser.Command.declaration]
+    entries := #[
+      .node .none 0 4,
+      .atom (.original 0 0 3 4) none,
+      .atom (.original 4 4 5 6) none,
+      .atom (.original 6 6 8 9) none,
+      .atom (.original 9 9 10 11) none,
+      .atom (.synthetic fixtureSourceText.utf8ByteSize fixtureSourceText.utf8ByteSize true) (some "")]
+    commands := #[{
+      entry := 0
+      options := 0
+      range := ⟨0, fixtureSourceText.utf8ByteSize⟩ }]
+    terminal := 5
+    options := #[{ entries := #[] }]
+  }
 }
 
 /- Every rejection below is an ordinary miss, not an error: a consumer that cannot authenticate a
@@ -1463,7 +1481,7 @@ private def testStore : IO Unit := do
   -- for one to be structurally wrong. The check that used to live here bounded every finding's range
   -- by `normalizedBytes`; there are no findings to bound.
   ensure (!(structurallyValid { artifact with
-      source := { artifact.source with terminalStop := artifact.source.normalizedBytes + 1 } }))
+      syntaxData := { artifact.syntaxData with terminal := artifact.syntaxData.entries.size + 1 } }))
     "an artifact whose projection is itself invalid was accepted"
   ensure (!(artifact.validFor `Other fixtureSourceText)) "a wrong-module artifact was accepted"
   ensure (!(artifact.validFor `Test "other source")) "a wrong-source artifact was accepted"
@@ -1508,40 +1526,33 @@ private def fixtureSemanticArtifact : ModuleArtifact :=
         { kind := "linter.unusedVariables", range := { start := 0, stop := 3 },
           severity := .warning, message := "unused variable `x`" }] } }
 
-/- The semantic fact is additive and demand-gated: the codec round-trips both sub-facts, `semantic =
-none` (the always-on plugin's shape) stays valid, and a `v4` payload — including one that predates the
-`diagnostics` field entirely — is an ordinary miss under the schema guard rather than a decode crash
-that would present a module whose diagnostics are unknown as if it had been captured and found empty
-(`ruff-11`). Same discipline as the `v3→v4` notation guard (`ruff-05b` `RSF-IMPL`). -/
+/- The semantic fact is additive and demand-gated. The pre-release syntax-artifact replacement has no
+legacy decoder: old lossy payloads fail decoding and therefore become ordinary facet misses. -/
 private def testSemanticArtifact : IO Unit := do
   ensure (structurallyValid fixtureSemanticArtifact)
-    "a v5 artifact carrying the semantic fact was rejected"
+    "a v9 artifact carrying the semantic fact was rejected"
   let decoded : Except String ModuleArtifact := Lean.fromJson? (Lean.toJson fixtureSemanticArtifact)
   match decoded with
-  | .ok actual => ensure (actual == fixtureSemanticArtifact) "v5 semantic artifact JSON round trip failed"
-  | .error message => throw <| IO.userError s!"v5 semantic artifact decode failed: {message}"
+  | .ok actual => ensure (actual == fixtureSemanticArtifact) "v9 semantic artifact JSON round trip failed"
+  | .error message => throw <| IO.userError s!"v9 semantic artifact decode failed: {message}"
 
   -- The plugin producer emits `semantic = none`; that shape is valid and round-trips too.
   ensure (fixtureArtifact.semantic.isNone) "the plugin-shaped fixture already carried a semantic fact"
-  ensure (structurallyValid fixtureArtifact) "a v5 artifact with semantic = none was rejected"
+  ensure (structurallyValid fixtureArtifact) "a v9 artifact with semantic = none was rejected"
   let noneDecoded : Except String ModuleArtifact := Lean.fromJson? (Lean.toJson fixtureArtifact)
   match noneDecoded with
-  | .ok actual => ensure (actual == fixtureArtifact) "v5 semantic = none artifact JSON round trip failed"
-  | .error message => throw <| IO.userError s!"v5 semantic = none artifact decode failed: {message}"
+  | .ok actual => ensure (actual == fixtureArtifact) "v9 semantic = none artifact JSON round trip failed"
+  | .error message => throw <| IO.userError s!"v9 semantic = none artifact decode failed: {message}"
 
   -- A stale `v4` payload is a clean miss, the same discipline as the `v1` miss in `testStore`.
   ensure (!(structurallyValid { fixtureArtifact with schema := "lean-fmt.module-artifact.v4" }))
     "a stale v4 artifact was accepted by the current reader"
-  -- Faithful to a `v4` payload with no `semantic` key at all: the `Option` field defaults to `none`
-  -- (Option fields *do* default on a missing key), so it decodes, and the schema guard then misses —
-  -- it never reads as "captured, no diagnostics".
+  -- Faithful to a `v4` payload with the deleted lossy source projection and no syntax payload.
   let v4none := Lean.Json.mkObj
     [("schema", "lean-fmt.module-artifact.v4"), ("source", Lean.toJson fixtureLosslessSource)]
   match (Lean.fromJson? v4none : Except String ModuleArtifact) with
-  | .ok actual =>
-    ensure (actual.semantic.isNone && !structurallyValid actual)
-      "a semantic-less v4 payload did not decode-then-miss cleanly"
-  | .error message => throw <| IO.userError s!"the v5 decoder is not total over a semantic-less v4 payload: {message}"
+  | .ok _ => throw <| IO.userError "the v9 decoder retained the deleted v4 payload shape"
+  | .error _ => pure ()
 /- The shipped semantic-tier rules (`ruff-11` FMT012–FMT015) surface the compiler's own diagnostics:
 each keys on one stable `kind` tag and re-emits it as a report-only finding under its own code,
 preserving the compiler's message, severity, and range. This exercises the whole engine seam over
@@ -1751,21 +1762,23 @@ private unsafe def verifyPluginArtifact (moduleName : Lean.Name)
     | throw <| IO.userError "module has no matching lean-fmt payload in its `.olean`"
   ensure (artifact.validFor moduleName source) "plugin payload does not match the source"
   ensure (artifact.schema == artifactSchema) "plugin emitted the wrong schema"
-  ensure (artifact.source.kinds.contains "commandEmit_local_command")
+  ensure (artifact.syntaxData.kinds.contains `commandEmit_local_command)
     "plugin lost file-local command syntax"
   -- The fixture's `{ first, second }` parses two ways over one byte range. `checkProjection` is
   -- what proves only one alternative spells those bytes; this proves the case is not vacuous.
-  ensure (artifact.source.kinds.contains "choice")
+  ensure (artifact.syntaxData.kinds.contains Lean.choiceKind)
     "the fixture's ambiguous parse produced no choice node"
-  checkProjection artifact.source source
+  let .ok materialized := artifact.materialize source
+    | throw <| IO.userError "plugin syntax artifact did not reconstruct"
+  checkProjection materialized.source source
   -- The roadmap asks for a compact representation. What grows with a file is the token and node
   -- tables, so bound their cost per element; the fixed schema strings and two digests dominate a
   -- small module and say nothing about compactness (a 34-byte module measures 29x its source and
   -- is not thereby extravagant). Derived field-name JSON measured 114 bytes per token and 54 per
   -- node on this fixture, against 28 and 13 for the array wire format.
   let encoded := (Lean.toJson artifact).compress
-  let elements := artifact.source.tokens.size + artifact.source.nodes.size
-  ensure (encoded.utf8ByteSize < 1024 + 40 * elements)
+  let elements := artifact.syntaxData.entries.size
+  ensure (encoded.utf8ByteSize < 1024 + 128 * elements)
     s!"plugin artifact is not compact: {encoded.utf8ByteSize} bytes for {elements} elements"
 
 private def verifyFacetArtifact (path sourcePath : System.FilePath)
@@ -1778,8 +1791,10 @@ private def verifyFacetArtifact (path sourcePath : System.FilePath)
   }
   let some artifact ← readFacet? facet `LocalSyntax source
     | throw <| IO.userError "facet artifact failed integrity or semantic validation"
-  ensure (artifact.source.mainModule == "LocalSyntax") "facet artifact lost module identity"
-  checkProjection artifact.source source
+  ensure (artifact.mainModule == "LocalSyntax") "facet artifact lost module identity"
+  let .ok materialized := artifact.materialize source
+    | throw <| IO.userError "facet syntax artifact did not reconstruct"
+  checkProjection materialized.source source
 
 /-- The registered facet, end to end, plus the agreement the product had no test for.
 
@@ -1804,13 +1819,15 @@ private def verifyOfficialFacet (root sourcePath : System.FilePath) : IO Unit :=
   let some semantic := SemanticAnalysis.ofArtifact? target.source (some artifact)
     | throw <| IO.userError "registered official facet did not produce a semantic result"
   let normalized := (LosslessSource.normalize target.source).1
+  let .ok materialized := artifact.materialize target.source
+    | throw <| IO.userError "official syntax artifact did not reconstruct"
   -- The artifact path runs the whole registry against the projection and tags the result `.syntax`,
   -- with source-suppression directives collected from the same projection. The direct construction
   -- has to spell all three or it is comparing against a differently-shaped value — the `.syntax` tier
   -- and collected `suppression` are exactly what `ofArtifact?` attaches (`Semantic.lean`).
   ensure (semantic == SemanticAnalysis.success normalized
-      (runRules (.syntax (SyntaxFacts.of normalized artifact.source)))
-      (tier := .syntax) (suppression := Suppression.collect artifact.source normalized))
+      (runRules (.syntax (SyntaxFacts.of normalized materialized.source)))
+      (tier := .syntax) (suppression := Suppression.collect materialized.source normalized))
     "registered official facet differed from direct product semantics"
   let some artifactResult := semantic.result?
     | throw <| IO.userError "registered official facet produced no result to compare"
@@ -2505,6 +2522,13 @@ end ReportBench
 
 public unsafe def main (args : List String) : IO UInt32 := do
   match args with
+  | ["artifact-projection", artifactPath, sourcePath] =>
+    let .ok json := Lean.Json.parse (← IO.FS.readFile artifactPath) | return 2
+    let .ok (artifact : ModuleArtifact) := Lean.fromJson? json | return 2
+    let source ← IO.FS.readFile sourcePath
+    let .ok materialized := artifact.materialize source | return 2
+    IO.println (Lean.toJson materialized.source).compress
+    return 0
   | ["comment-summary", envelopePath] => commentSummaryReport envelopePath
   | ["doc-bench"] => docBench
   | ["doc-step-counts"] => docStepCounts
@@ -2564,7 +2588,8 @@ public unsafe def main (args : List String) : IO UInt32 := do
     IO.println "lean-fmt registered compiler facet verified"
     return 0
   | _ =>
-    IO.eprintln "usage: lean-fmt-tests [verify-plugin-artifact MODULE SOURCE | \
+    IO.eprintln "usage: lean-fmt-tests [artifact-projection ARTIFACT SOURCE | \
+      verify-plugin-artifact MODULE SOURCE | \
       verify-facet-artifact ARTIFACT SOURCE EXPECTED_HASH | \
       verify-official-facet ROOT SOURCE | \
       comment-summary ENVELOPE | \

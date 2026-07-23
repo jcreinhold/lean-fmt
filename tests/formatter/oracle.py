@@ -95,7 +95,7 @@ def validate_source_map(response: dict[str, Any], source: bytes, output: bytes) 
     return units
 
 
-def analyze(application: str, setup: Path, source: bytes, label: str) -> tuple[dict[str, Any], Path]:
+def analyze(application: str, tests: str, setup: Path, source: bytes, label: str) -> tuple[dict[str, Any], Path]:
     handle = tempfile.NamedTemporaryFile(prefix="lean-fmt-contract-", suffix=".lean", delete=False)
     path = Path(handle.name)
     try:
@@ -112,6 +112,17 @@ def analyze(application: str, setup: Path, source: bytes, label: str) -> tuple[d
         artifact = envelope.get("artifact")
         if not artifact or envelope.get("diagnostics"):
             raise GateFailure("frontend", json.dumps(envelope.get("diagnostics"), ensure_ascii=False))
+        with tempfile.NamedTemporaryFile(prefix="lean-fmt-artifact-", suffix=".json") as artifact_file:
+            artifact_file.write(json.dumps(artifact).encode("utf-8"))
+            artifact_file.flush()
+            projected = subprocess.run(
+                [tests, "artifact-projection", artifact_file.name, str(path)],
+                capture_output=True,
+                text=True,
+            )
+        if projected.returncode != 0:
+            raise GateFailure("frontend", projected.stderr.strip() or "artifact reconstruction failed")
+        artifact["source"] = json.loads(projected.stdout)
         return artifact, path
     except Exception:
         path.unlink(missing_ok=True)
@@ -201,8 +212,8 @@ def main() -> int:
     before_path: Path | None = None
     after_path: Path | None = None
     try:
-        before, before_path = analyze(args.application, args.setup, original, args.source.name)
-        after, after_path = analyze(args.application, args.setup, formatted, args.source.name)
+        before, before_path = analyze(args.application, args.tests, args.setup, original, args.source.name)
+        after, after_path = analyze(args.application, args.tests, args.setup, formatted, args.source.name)
         if header_signature(args.tests, before_path) != header_signature(args.tests, after_path):
             raise GateFailure("imports", "ordered parsed import signature changed")
         compare_artifacts(before, after, original, formatted)

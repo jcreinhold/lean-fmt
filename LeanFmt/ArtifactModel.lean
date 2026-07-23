@@ -6,7 +6,7 @@ Authors: Jacob Reinhold
 
 module
 
-import all LeanFmt.LosslessSource
+import all LeanFmt.SyntaxArtifact
 
 import Lean
 
@@ -169,15 +169,16 @@ def SemanticProjection.caps (projection : SemanticProjection) : SemanticCaps := 
 plugins, ordered imports, and dependency identity therefore belong to the module artifact itself
 rather than to a parallel cache identity.
 
-`source` carries both the projection and the artifact's whole identity. There is no second module
-name or source digest beside it: a duplicate identity is one that can disagree with itself.
-
-The payload contains facts a reader cannot recompute: the source projection and, when demanded,
+The payload contains facts a reader cannot recompute: the parser's reconstructible syntax and,
+when demanded,
 frontend semantic evidence. It contains no formatter policy, findings, rule selection, or canonical
 bytes. Rules remain outside the compiler plugin and derive conclusions from these facts. -/
 structure ModuleArtifact where
   schema : String
-  source : LosslessSource
+  mainModule : String
+  normalizedBytes : Nat
+  normalizedDigest : Digest
+  syntaxData : ModuleSyntax
   /-- Semantic rule facts, `none` unless a consumer demanded them. The always-on
   compiler plugin emits `none` (no capture in an integrated build), and the on-demand `analyzeExact`
   emits `some` only when selected rules reach `.semantic`. -/
@@ -192,26 +193,62 @@ def ModuleArtifact.caps (artifact : ModuleArtifact) : SemanticCaps :=
   | none => {}
 
 /-- Current policy-free module artifact shape. The version is checked before any artifact is trusted. -/
-def artifactSchema : String := "lean-fmt.module-artifact.v8"
+def artifactSchema : String := "lean-fmt.module-artifact.v9"
 
 /-- Build the artifact for one accepted module.
 
-This is the only artifact producer. Exact analysis and the compiler plugin reach it with the same
-arguments, so they cannot drift into emitting different artifacts for the same module — which is
-what makes the facet a sound cache of the exact frontend rather than a second opinion.
+Exact analysis reaches this aggregate builder directly. The compiler plugin emits the same
+`CommandArtifactRecord` values independently and the facet extractor performs the same
+`ModuleSyntax.ofRecords` compaction, avoiding an async process-global accumulator.
 
 It takes no rule configuration, deliberately: an artifact is a function of the module and its source
 alone, so turning a rule on cannot rebuild or re-elaborate anything. The optional `semantic` projection is likewise a function of the module and its environment;
 it defaults to `none` so the always-on plugin producer stays on the syntax-only path, and only
 `analyzeExact` passes `some` under demand. -/
 def ModuleArtifact.ofParsedModule (mainModule normalized : String)
-    (commands : Array Lean.Syntax) (terminal? : Option Lean.Syntax)
-    (semantic : Option SemanticProjection := none) : ModuleArtifact := {
-  schema := artifactSchema
-  source := LosslessSource.ofSource mainModule normalized commands terminal?
-  semantic
-}
+    (commands : Array (Lean.Syntax × Lean.Options)) (terminal : Lean.Syntax)
+    (terminalOptions : Lean.Options) (semantic : Option SemanticProjection := none) :
+    Except String ModuleArtifact := do
+  let records := commands.map fun (stx, options) =>
+    CommandArtifactRecord.ofSyntax mainModule normalized false stx options
+  let records := records.push <|
+    CommandArtifactRecord.ofSyntax mainModule normalized true terminal terminalOptions
+  let syntaxData ← ModuleSyntax.ofRecords records
+  return {
+    schema := artifactSchema
+    mainModule
+    normalizedBytes := normalized.utf8ByteSize
+    normalizedDigest := Digest.ofString normalized
+    syntaxData
+    semantic
+  }
 
-def artifactLinter : Lean.Name := `leanFmt.semanticArtifact
+structure MaterializedArtifact where
+  source : LosslessSource
+  commands : Array Lean.Syntax
+  terminal : Lean.Syntax
+  options : Array Lean.Options
+
+def ModuleArtifact.materialize (artifact : ModuleArtifact) (raw : String) :
+    Except String MaterializedArtifact := do
+  let (normalized, _) := LosslessSource.normalize raw
+  unless artifact.schema == artifactSchema &&
+      artifact.normalizedBytes == normalized.utf8ByteSize &&
+      artifact.normalizedDigest == Digest.ofString normalized &&
+      artifact.syntaxData.structurallyValid artifact.normalizedBytes do
+    throw "module artifact identity or structure is invalid"
+  let materialized ← artifact.syntaxData.materialize normalized
+  let sourceProjection := LosslessSource.ofSource artifact.mainModule normalized materialized.commands
+    (some materialized.terminal)
+  unless sourceProjection.structurallyValid && sourceProjection.validFor raw do
+    throw "reconstructed syntax does not form a complete lossless source projection"
+  return {
+    source := sourceProjection
+    commands := materialized.commands
+    terminal := materialized.terminal
+    options := materialized.options
+  }
+
+def commandArtifactLinter : Lean.Name := `leanFmt.commandSyntaxArtifact
 
 end LeanFmt.Internal

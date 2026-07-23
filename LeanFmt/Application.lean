@@ -441,6 +441,49 @@ private def ExactRun.envelope (run : ExactRun)
     if ← setupPath.pathExists then IO.FS.removeFile setupPath
     if ← sourcePath.pathExists then IO.FS.removeFile sourcePath
 
+private def ExactRun.artifactEnvelope (run : ExactRun) (snapshot : SourceSnapshot)
+    (artifact : ModuleArtifact) (moduleFile : FilePath) (width : Nat)
+    (cancel? : Option Std.CancellationToken := none) : IO AnalysisEnvelope := do
+  let index ← run.nextPathIndex
+  let (setupResult, setupPath, sourcePath, artifactPath) ← withPhase "artifact_setup" do
+    let setupResult ← exactSetupResult run.project (← run.setups.get) snapshot
+    let setup := match setupResult with
+      | .ok setup => setup
+      | .error _ => diagnosticSetup snapshot
+    let setupPath ← writeSetup run.temporary index setup
+    let sourcePath := run.temporary / s!"{index}.artifact.lean"
+    let artifactPath := run.temporary / s!"{index}.artifact.json"
+    IO.FS.writeFile sourcePath snapshot.source
+    IO.FS.writeFile artifactPath (Lean.toJson artifact).compress
+    pure (setupResult, setupPath, sourcePath, artifactPath)
+  try
+    if (← residentKiB) * 1024 >= run.maxBytes then
+      throw <| IO.userError s!"resource envelope exhausted before artifact formatter child \
+        (limit {run.maxBytes} bytes)"
+    let output ← withPhase "artifact_child" <| runBounded {
+      cmd := run.application.toString
+      args := #["__analyze-artifact", setupPath.toString, moduleFile.toString,
+        artifactPath.toString, sourcePath.toString, snapshot.path.toString,
+        toString run.maxBytes, toString width]
+      env := run.project.workspace.augmentedEnvVars.push ⟨"LEAN_NUM_THREADS", some "1"⟩
+    } run.maxBytes cancel?
+    unless output.exitCode == 0 do
+      throw <| IO.userError s!"artifact formatter child failed for {snapshot.relativePath}: \
+        {output.stderr.trimAscii}"
+    let .ok json := Lean.Json.parse output.stdout
+      | throw <| IO.userError s!"artifact formatter child returned invalid JSON for \
+          {snapshot.relativePath}"
+    let .ok (envelope : AnalysisEnvelope) := Lean.fromJson? json
+      | throw <| IO.userError s!"artifact formatter child returned an invalid result for \
+          {snapshot.relativePath}"
+    if let .error setupError := setupResult then
+      throw <| IO.userError s!"could not establish the exact Lake setup for \
+        {snapshot.relativePath}: {setupError}"
+    return envelope
+  finally
+    for path in #[setupPath, sourcePath, artifactPath] do
+      if ← path.pathExists then IO.FS.removeFile path
+
 /- The frontend-native document emits groups, nesting, and line choices, and its linear renderer
 breaks them against the effective `[format] line-width`. Because a runtime width changes canonical
 bytes without changing the executable, `Project.configurationIdentity` folds the resolved value into
@@ -555,14 +598,14 @@ def sliceRange (normalized rendered : String) (marks : Array Mark)
   return some { text := before ++ body ++ after, requested, actual, marks := selected }
 
 private def canonicalAnalysis (snapshot : SourceSnapshot) (renderCanonical : Bool)
-    (analysis : AnalysisEnvelope) : IO SemanticAnalysis := do
+    (analysis : AnalysisEnvelope) (artifactRender := false) : IO SemanticAnalysis := do
   match SemanticAnalysis.ofArtifact? snapshot.source analysis.artifact? analysis.diagnostics with
   | some semantic =>
     if semantic.result?.isNone then return semantic
     if renderCanonical then
       match analysis.canonical?, analysis.validationFailure? with
       | some layout, none =>
-        recordCount "path_exact_render" 1
+        recordCount (if artifactRender then "path_artifact_render" else "path_exact_render") 1
         return semantic.withCanonical layout
       | none, some failure =>
         recordCount "path_validation_failure" 1
@@ -571,7 +614,8 @@ private def canonicalAnalysis (snapshot : SourceSnapshot) (renderCanonical : Boo
       | _, _ =>
         recordCount "path_validation_failure" 1
         throw <| IO.userError
-          s!"frontend-native formatting produced no admitted layout for {snapshot.relativePath}"
+          s!"frontend-native formatting produced no admitted layout for {snapshot.relativePath}; \
+            draft={analysis.formatDraft?.isSome} formatter-failure={analysis.formatFailure?.isSome}"
     return semantic
   | none => throw <| IO.userError s!"invalid exact analysis for {snapshot.relativePath}"
 
@@ -658,14 +702,15 @@ private def availableAnalysis (plan : RulePlan) (renderCanonical applies : Bool)
     let normalized := (LosslessSource.normalize snapshot.source).1
     recordCount "path_source_shortcut" 1
     return some <| SemanticAnalysis.success normalized (runSourceRules normalized)
+  else if renderCanonical then
+    return none
   else if let some artifact := officialArtifact? then
     -- A non-rendering syntax/semantic run with a current artifact — `check`/`fix --select FMT01x` — is
     -- served here from the plugin projection, no frontend run. Since `ruff-11c` RDF-IMPL there is no
     -- longer a syntax branch that declines here to force an `ExactRun` re-projection: it retired with
     -- `reprojectCanonical` (no fix is computed at canonical coordinates), so a syntax `--select` costs
-    -- one artifact read, never a second frontend pass. A *rendering* run (`format`/`diff`) never reaches
-    -- this branch: formatting requires the exact frontend and never treats an artifact projection as
-    -- live formatter state.
+    -- one artifact read, never a second frontend pass. A rendering run is deliberately deferred to
+    -- `artifactEnvelope`, which loads the owning `.olean` and admits the result through the validator.
     return some (← canonicalAnalysis snapshot renderCanonical { artifact? := some artifact })
   else
     return none
@@ -1517,17 +1562,16 @@ def execute (request : RunRequest) : IO RunOutcome := do
   let evidenceFinished ← IO.monoNanosNow
   recordPhase "module_evidence" evidenceStarted evidenceFinished
   let artifactStarted ← IO.monoNanosNow
-  -- The plugin artifact carries `source`+`syntax` but never `semantic` (it is always-on, so capturing
-  -- there would tax every build — `ruff-05b` F3/F4). A run that demands `semantic` therefore cannot be
-  -- served by it and must re-analyze via `analyzeExact`; fetching it would be wasted work and, worse,
-  -- would let `availableAnalysis` render canonical text off a fact-free artifact. Skipping the fetch
-  -- both records the gating cost and rejects the `semantic = none` artifact for a `format` run.
-  let artifacts ← if renderCanonical then
-    pure (Array.replicate snapshots.size none)
-  else if unionRequiredTier != Tier.source then
+  -- The plugin artifact carries reconstructible syntax but never semantic diagnostics. Formatting
+  -- fetches it because layout can run from syntax under the owning `.olean`; semantic selections still
+  -- fall through to exact analysis because the always-on plugin does not tax builds for those facts.
+  let artifacts ← if renderCanonical || unionRequiredTier != Tier.source then
     officialArtifacts project.workspace snapshots
   else
     pure (Array.replicate snapshots.size none)
+  if renderCanonical || unionRequiredTier != Tier.source then
+    recordCount "official_artifact_hit" (artifacts.countP (·.isSome))
+    recordCount "official_artifact_miss" (artifacts.countP (·.isNone))
   let artifactFinished ← IO.monoNanosNow
   recordPhase "official_artifacts" artifactStarted artifactFinished
   let available ← ((((snapshots.zip cached).zip evidence).zip artifacts).zip plans).mapM fun
@@ -1552,15 +1596,35 @@ def execute (request : RunRequest) : IO RunOutcome := do
     let mut failures := #[]
     let mut analyses := #[]
     let mut pendingFormats : Array PendingFormat := #[]
-    for (((snapshot, available?), ir), plan) in
-        ((snapshots.zip available).zip importReports).zip plans do
+    for ((((snapshot, available?), artifact?), ir), plan) in
+        (((snapshots.zip available).zip artifacts).zip importReports).zip plans do
       try
         let analysis ← match available? with
           | some analysis => pure analysis
           | none =>
-            exactRun.analyzeSnapshot snapshot renderCanonical
-              (captureSemantic := demanded == .semantic)
-              (captureOccurrences := demandedCaps.occurrences)
+            if renderCanonical && plan.requiredTier != .semantic then
+              match artifact? with
+              | some artifact =>
+                match snapshot.module? with
+                | some mod =>
+                  let artifactEnvelope? ← try
+                      some <$> exactRun.artifactEnvelope snapshot artifact mod.oleanFile
+                        snapshot.config.format.lineWidth
+                    catch _ => pure none
+                  match artifactEnvelope? with
+                  | some envelope => canonicalAnalysis snapshot true envelope (artifactRender := true)
+                  | none =>
+                    recordCount "path_artifact_runtime_fallback" 1
+                    exactRun.analyzeSnapshot snapshot true
+                | none => exactRun.analyzeSnapshot snapshot true
+              | none =>
+                exactRun.analyzeSnapshot snapshot true
+                  (captureSemantic := demanded == .semantic)
+                  (captureOccurrences := demandedCaps.occurrences)
+            else
+              exactRun.analyzeSnapshot snapshot renderCanonical
+                (captureSemantic := demanded == .semantic)
+                (captureOccurrences := demandedCaps.occurrences)
         analyses := analyses.push (some analysis)
         let (report, formatOutput?) ← withPhase "rules" <| match request.mode with
           | .fix => do
@@ -1915,6 +1979,21 @@ def organize (request : OrganizeRequest) : IO RunReport := do
           }
     return summarize "organize" files failures
 
+private unsafe def runArtifactAnalyzeChild (args : List String) : IO UInt32 := do
+  let [setupPath, moduleFile, artifactPath, snapshotPath, displayPath, maxBytes, width] := args
+    | return 2
+  let some maxBytes := maxBytes.toNat? | return 2
+  let some width := width.toNat? | return 2
+  Lean.Internal.setMaxMemory maxBytes.toUSize
+  let .ok setupJson := Lean.Json.parse (← IO.FS.readFile setupPath) | return 2
+  let .ok (setup : Lean.ModuleSetup) := Lean.fromJson? setupJson | return 2
+  let .ok artifactJson := Lean.Json.parse (← IO.FS.readFile artifactPath) | return 2
+  let .ok (artifact : ModuleArtifact) := Lean.fromJson? artifactJson | return 2
+  let source ← IO.FS.readFile snapshotPath
+  let envelope ← analyzeArtifact setup moduleFile artifact source displayPath width
+  IO.println (Lean.toJson envelope).compress
+  return 0
+
 private unsafe def runAnalyzeChild (args : List String) : IO UInt32 := do
   -- The capture mode is a trailing optional argument: a direct 4-argument invocation omits it and
   -- captures no optional frontend fact.
@@ -2220,6 +2299,7 @@ def compilerStatus (request : CompilerStatusRequest) : IO CompilerStatusReport :
 unsafe def runInternal? (args : List String) : IO (Option UInt32) :=
   match args with
   | "__analyze-exact" :: rest => some <$> runAnalyzeChild rest
+  | "__analyze-artifact" :: rest => some <$> runArtifactAnalyzeChild rest
   | "__validate-candidate" :: rest => some <$> runValidateCandidateChild rest
   | "__extract-artifact" :: rest => some <$> runExtractChild rest
   | "__inspect-artifact" :: rest => some <$> runInspectArtifactChild rest

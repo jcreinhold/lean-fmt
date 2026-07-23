@@ -20,30 +20,48 @@ in an artifact any more, and dropping that check lost nothing: the process that 
 computes it, from facts `validFor` has already matched to the bytes in hand, so its range fits those
 bytes without a separate audit. -/
 def structurallyValid (artifact : ModuleArtifact) : Bool :=
-  artifact.schema == artifactSchema && artifact.source.structurallyValid
+  artifact.schema == artifactSchema &&
+    artifact.syntaxData.structurallyValid artifact.normalizedBytes
 
 /-- Validity against the file a caller actually read. Normalizing is the caller's only correct move:
 no compiler-produced offset or digest indexes the bytes on disk. -/
 def ModuleArtifact.validFor (artifact : ModuleArtifact) (moduleName : Lean.Name)
     (raw : String) : Bool :=
+  let normalized := (LosslessSource.normalize raw).1
   structurallyValid artifact &&
-    artifact.source.mainModule == moduleName.toString &&
-    artifact.source.validFor raw
+    artifact.mainModule == moduleName.toString &&
+    artifact.normalizedBytes == normalized.utf8ByteSize &&
+    artifact.normalizedDigest == Digest.ofString normalized &&
+    (artifact.materialize raw).isOk
 
-private def decodeEntry? (entry : Lean.Linter.LintEntry) : Option ModuleArtifact := do
-  guard <| entry.linter == artifactLinter
+private def decodeEntry? (entry : Lean.Linter.LintEntry) : Option CommandArtifactRecord := do
+  guard <| entry.linter == commandArtifactLinter
   let json ← Lean.Json.parse entry.message.data |>.toOption
-  let artifact ← Lean.fromJson? json |>.toOption
-  guard <| structurallyValid artifact
-  return artifact
+  let record ← Lean.fromJson? json |>.toOption
+  guard record.structurallyValid
+  return record
 
 /- Read the formatter result owned by `moduleName` from an already imported module environment.
 The caller cannot substitute a side-file path or an independent build identity. -/
 def fromEnvironment? (environment : Lean.Environment)
     (moduleName : Lean.Name) : Option ModuleArtifact := do
   let (_, entries) ← Lean.Linter.getAllLints environment |>.find? (fun item => item.1 == moduleName)
-  let artifact ← entries.findSome? decodeEntry?
-  guard <| artifact.source.mainModule == moduleName.toString
+  let records := entries.filterMap decodeEntry?
+  let first ← records[0]?
+  guard <| first.mainModule == moduleName.toString
+  guard <| records.all fun record =>
+    record.mainModule == first.mainModule &&
+      record.normalizedBytes == first.normalizedBytes &&
+      record.normalizedDigest == first.normalizedDigest
+  let syntaxData ← ModuleSyntax.ofRecords records |>.toOption
+  let artifact : ModuleArtifact := {
+    schema := artifactSchema
+    mainModule := first.mainModule
+    normalizedBytes := first.normalizedBytes
+    normalizedDigest := first.normalizedDigest
+    syntaxData
+  }
+  guard <| structurallyValid artifact
   return artifact
 
 private def temporaryPath (target : System.FilePath) : IO System.FilePath := do
@@ -67,6 +85,12 @@ def writeArtifactAtomic (path : System.FilePath) (artifact : ModuleArtifact) : I
       IO.FS.removeFile temporary
     throw error
 
+private def headerBoundaryValid (artifact : ModuleArtifact) (source : String) : IO Bool := do
+  let .ok materialized := artifact.materialize source | return false
+  let input := Lean.Parser.mkInputContext source "<lean-fmt-artifact>"
+  let (_, state, messages) ← Lean.Parser.parseHeader input
+  return !messages.hasErrors && state.pos.byteIdx == materialized.source.headerStop
+
 /- Validate the descriptor returned by the Lake-owning orchestration immediately after a facet
 fetch. `Lake.Artifact` itself is publicly constructible and is not authority by type alone; this
 primitive must remain behind that orchestration boundary. The content hash is recomputed instead of
@@ -84,6 +108,8 @@ def readFacet? (facet : Lake.Artifact) (moduleName : Lean.Name)
     let .ok artifact := Lean.fromJson? json
       | return none
     unless artifact.validFor moduleName source do
+      return none
+    unless ← headerBoundaryValid artifact source do
       return none
     return some artifact
   catch _ =>

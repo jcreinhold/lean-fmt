@@ -24,25 +24,41 @@ not belong in an `.olean`.
 What belongs here is what a later reader cannot recompute: the exact frontend's projection. Whoever
 holds these facts computes the findings outside. -/
 
-/- A module linter receives the non-terminal command stream and runs at the terminal command, which
-is `getRef` here. The terminal is what ends the parsed region — `eoi` ordinarily, `#exit` for a file
-with an unparsed tail — so the projection needs it and the command stream does not contain it.
+private partial def findCommandOptions? (target : Syntax) (tree : InfoTree) : Option Options :=
+  go none tree
+where
+  go (context? : Option ContextInfo) : InfoTree → Option Options
+    | .context context tree => go (context.mergeIntoOuter? context?) tree
+    | .node info children =>
+      let found := match context?, info with
+        | some context, .ofCommandInfo command =>
+          if command.stx.eqWithInfo target then some context.options else none
+        | _, _ => none
+      found <|> children.findSome? (go (info.updateContext? context?))
+    | .hole _ => none
 
-`fileMap.source` is the string the parser saw, already normalized by `Parser.mkInputContext`. This
-position cannot observe the file's bytes, which is why artifact identity is normalized identity. -/
-private def produceArtifact (commands : Array Syntax) : CommandElabM Unit := do
+private def commandOptions? (target : Syntax) : CommandElabM (Option Options) := do
+  let infoState ← getInfoState
+  return infoState.trees.toArray.findSome? (findCommandOptions? target)
+
+/- Each command owns one independently persistent record. Async command elaboration may complete in
+any order, so aggregation inside the compiler is unsound; the facet extractor validates, sorts, and
+compacts the records after the successful `.olean` exists. -/
+private def produceCommandRecord (stx : Syntax) : CommandElabM Unit := do
   let environment ← getEnv
   if environment.mainModule.isAnonymous then
     return
   let fileMap ← getFileMap
-  let terminal ← getRef
-  let artifact := ModuleArtifact.ofParsedModule environment.mainModule.toString fileMap.source
-    commands (some terminal)
-  logAt terminal
-    (.tagged artifactLinter <| .tagged Lean.Linter.linterMessageTag <|
-      m!"{Lean.toJson artifact |>.compress}")
+  let options ← match ← commandOptions? stx with
+    | some options => pure options
+    | none => getOptions
+  let record := CommandArtifactRecord.ofSyntax environment.mainModule.toString fileMap.source
+    (Parser.isTerminalCommand stx) stx options
+  logAt stx
+    (.tagged commandArtifactLinter <| .tagged Lean.Linter.linterMessageTag <|
+      m!"{Lean.toJson record |>.compress}")
     (severity := .information) (isSilent := true)
 
-initialize addModuleLinter { name := `leanFmtSemanticArtifact, run := produceArtifact }
+initialize addLinter { name := `leanFmtCommandSyntaxArtifact, run := produceCommandRecord }
 
 end LeanFmt.Internal.CompilerPlugin
