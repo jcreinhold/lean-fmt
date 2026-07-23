@@ -25,7 +25,7 @@ run_oracle() {
 }
 
 for width in 24 40 60 100; do
-  run_oracle "$repo" experiments/native-layout-route/fixtures/Core.lean \
+  run_oracle "$repo" experiments/native-layout-route/fixtures/LayoutCore.lean \
     NativeLayoutRouteFixture "$width" "core-$width"
   run_oracle "$repo" experiments/native-layout-route/fixtures/SourceData.lean \
     NativeLayoutSourceData "$width" "source-data-$width"

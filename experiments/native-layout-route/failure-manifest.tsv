@@ -1,6 +1,6 @@
 mathlib_path	former_gate	minimized_or_policy_owner
-Mathlib/Algebra/Homology/DerivedCategory/Basic.lean	unterminated-comment	fixtures/Core.lean:commented
-Mathlib/Algebra/Module/Submodule/Union.lean	comment-count-and-tactic-parentage	fixtures/Core.lean:commented; exact byTactic island
+Mathlib/Algebra/Homology/DerivedCategory/Basic.lean	unterminated-comment	fixtures/LayoutCore.lean:commented
+Mathlib/Algebra/Module/Submodule/Union.lean	comment-count-and-tactic-parentage	fixtures/LayoutCore.lean:commented; exact byTactic island
 Mathlib/Algebra/Order/Group/Lattice.lean	unsolved-goals	exact byTactic island
 Mathlib/AlgebraicGeometry/IdealSheaf/Subscheme.lean	term.pseudo.antiquot	fixtures/SourceData.lean; pseudo-antiquotation exact island
 Mathlib/AlgebraicTopology/MooreComplex.lean	unexpected-colon	exact byTactic island
@@ -9,8 +9,8 @@ Mathlib/Analysis/Convex/Cone/InnerDual.lean	diagnostics	exact byTactic island
 Mathlib/Analysis/InnerProductSpace/l2Space.lean	diagnostics	exact byTactic island
 Mathlib/Analysis/Normed/Module/Multilinear/Basic.lean	unsolved-goals	exact byTactic island
 Mathlib/Analysis/SpecialFunctions/Exponential.lean	unsolved-goals	exact byTactic island
-Mathlib/CategoryTheory/Action/Basic.lean	record-offside	fixtures/Core.lean:layoutRecord
+Mathlib/CategoryTheory/Action/Basic.lean	record-offside	fixtures/LayoutCore.lean:layoutRecord
 Mathlib/CategoryTheory/Groupoid/Subgroupoid.lean	diagnostics	exact byTactic island
-Mathlib/CategoryTheory/Limits/Preserves/SigmaConst.lean	let-and-delimiter-offside	fixtures/Core.lean:nested
+Mathlib/CategoryTheory/Limits/Preserves/SigmaConst.lean	let-and-delimiter-offside	fixtures/LayoutCore.lean:nested
 Mathlib/CategoryTheory/Localization/Opposite.lean	unsolved-goals	exact byTactic island
-tests/block-formatter/Blocks.lean	guarded-let-return-parentage	fixtures/Core.lean:guarded; guarded doSeq interval
+tests/block-formatter/Blocks.lean	guarded-let-return-parentage	fixtures/LayoutCore.lean:guarded; guarded doSeq interval

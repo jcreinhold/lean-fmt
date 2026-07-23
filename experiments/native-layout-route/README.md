@@ -9,7 +9,7 @@ idempotence.
 
 The rejected prototype lowered every `Std.Format` constructor into an isomorphic private tree and then
 converted it back. It produced byte-identical output at widths 24, 40, 60, and 100, but allocated one
-additional node per native node: 431 extra nodes on `fixtures/Core.lean` and 13,928 on
+additional node per native node: 431 extra nodes on `fixtures/LayoutCore.lean` and 13,928 on
 `Mathlib/CategoryTheory/Action/Basic.lean`. Its wall/RSS measurements had no compensating improvement.
 The lowering implementation was deleted after `selection.json` was recorded.
 
