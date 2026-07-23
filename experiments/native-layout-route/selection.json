@@ -1,0 +1,30 @@
+{
+  "selected": "direct-transformed-std-format",
+  "rejected": "eager-lowered-document",
+  "toolchain": "leanprover/lean4:v4.33.0-rc1",
+  "leanFmtCommit": "36935c70ce4de67f299abfb700ab65f4aed3eba5",
+  "mathlibCommit": "3de5ed81cc71b9ea62597b865ba0baaeb5eb0ea9",
+  "coreWidths": {
+    "24": {"digest": "679f9094e1b8c0db2c52c42c3b10281316396a29bdd034827371aff199c51c10", "nativeNodes": 430, "loweredExtraNodes": 431},
+    "40": {"digest": "0ac8c6015f40ac174b28ee35f28a230b93fccefcc90a3e4cb4bb25390e8fc8c3", "nativeNodes": 430, "loweredExtraNodes": 431},
+    "60": {"digest": "6667abfaceacc1957f8870389164747a35cda60ebaf5f414674df7845fa6239b", "nativeNodes": 430, "loweredExtraNodes": 431},
+    "100": {"digest": "129fc1a8c8e765ba2fc9ddd68b88f9a863ec724c9122fa7bae8224f279436f38", "nativeNodes": 430, "loweredExtraNodes": 431}
+  },
+  "actionFile": {
+    "width": 80,
+    "digest": "12f78972061533982d2d5d3b68753388f0dd566cb0573f7ef73f76eaf1dec95c",
+    "nativeNodes": 13928,
+    "loweredExtraNodes": 13928,
+    "directWallSeconds": 4.09,
+    "loweredWallSeconds": 4.10,
+    "directPeakBytes": 2118172672,
+    "loweredPeakBytes": 2120024064
+  },
+  "first24": {
+    "manifestDigest": "3de69ddefa960d75cf288f7bdaab2e213173fa017acff8b3075aa772a3847aea",
+    "oracleResultDigest": "edf8809e9509ca275d6f7b3d1703546b51b156d600ff4a2a5647fa9f382579fc",
+    "passed": 24,
+    "failed": 0,
+    "changed": 24
+  }
+}
