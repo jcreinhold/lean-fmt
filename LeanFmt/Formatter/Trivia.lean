@@ -35,6 +35,66 @@ private def commentDocument (ownership : CommentOwnership) (comment : Comment) :
   let payload := Comments.payload ownership comment
   if payload.contains '\n' then Doc.verbatim payload else Doc.text payload
 
+private def exactLeading (ownership : CommentOwnership) (stx : Lean.Syntax) : Option Doc :=
+  Comments.leading ownership stx |>.foldl (init := none) fun document? comment =>
+    some <| match document? with
+      | some document => document ++ Doc.hard ++ commentDocument ownership comment
+      | none => commentDocument ownership comment
+
+private def exactTrailing (ownership : CommentOwnership) (stx : Lean.Syntax)
+    (terminateLine : Bool := true) : Option Doc :=
+  Comments.trailing ownership stx |>.foldl (init := none) fun document? comment =>
+    let next := Doc.text " " ++ commentDocument ownership comment ++
+      (if terminateLine && comment.kind == .line then Doc.hard else Doc.empty)
+    some <| document?.map (· ++ next) |>.getD next
+
+/-- Add comments logically owned by exactly this structural node. Descendant documents add their own
+comments recursively; opaque registry leaves are never decorated because their native formatter is
+already the sole emitter for that subtree. -/
+def decorate (ownership : CommentOwnership) (stx : Lean.Syntax) (document : Doc) : Doc :=
+  let document := match exactLeading ownership stx with
+    | some comments => comments ++ Doc.hard ++ document
+    | none => document
+  match exactTrailing ownership stx with
+  | some comments => document ++ comments
+  | none => document
+
+/-- Add only comments trailing this exact node. Recursive structural child callbacks use this form;
+their parent owns comments that lead a nested child and establishes the correct offside base. -/
+def decorateTrailing (ownership : CommentOwnership) (stx : Lean.Syntax) (document : Doc) : Doc :=
+  match exactTrailing ownership stx with
+  | some comments => document ++ comments
+  | none => document
+
+/-- Add only comments leading this exact node. Command composition owns trivia physically following
+the command boundary, so the final token of a structural command uses this form and cannot emit that
+same payload a second time. -/
+def decorateLeading (ownership : CommentOwnership) (stx : Lean.Syntax) (document : Doc) : Doc :=
+  match exactLeading ownership stx with
+  | some comments => comments ++ Doc.hard ++ document
+  | none => document
+
+/-- Add only comments trailing this exact node when the enclosing structural owner supplies the next
+hard boundary. This is the command-internal counterpart of `decorateLeading`. -/
+def decorateTrailingBeforeBoundary (ownership : CommentOwnership) (stx : Lean.Syntax)
+    (document : Doc) : Doc :=
+  match exactTrailing ownership stx (terminateLine := false) with
+  | some comments => document ++ comments
+  | none => document
+
+/-- Add exact-node comments when the enclosing structural owner already supplies the following hard
+boundary. A trailing line comment must end the current row, but emitting that boundary twice would
+invent a blank line. This is intentionally separate from `decorate`: inline term composition still
+needs the comment itself to force the break. -/
+def decorateBeforeBoundary (ownership : CommentOwnership) (stx : Lean.Syntax)
+    (document : Doc) : Doc :=
+  let document := match exactLeading ownership stx with
+    | some comments => comments ++ Doc.hard ++ document
+    | none => document
+  match exactTrailing ownership stx (terminateLine := false) with
+  | some comments => document ++ comments
+  | none => document
+
 /-- Comments logically leading the complete command, independent of which adjacent token physically
 stores their trivia. -/
 def leading (ownership : CommentOwnership) (stx : Lean.Syntax) : Option Doc :=
@@ -50,7 +110,7 @@ line comment as `leading` trivia of a synthetic descendant, so the source bounda
 logical placement tag, decides this outer case. Interior comments remain in registry-owned syntax. -/
 def trailing (ownership : CommentOwnership) (stx : Lean.Syntax) (boundaryStop : Nat) : Option Doc :=
   let stop := stx.getRange?.map (·.stop.byteIdx) |>.getD 0
-  let comments := Comments.subtree ownership stx |>.filter fun comment =>
+  let comments := Comments.all ownership |>.filter fun comment =>
     comment.range.start >= stop && comment.range.start < boundaryStop
   let (document?, _) := comments.foldl (init := (none, stop)) fun (document?, cursor) comment =>
     let boundary := if Comments.hasNewlineBetween ownership cursor comment.range.start then

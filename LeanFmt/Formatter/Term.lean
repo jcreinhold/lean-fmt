@@ -19,6 +19,7 @@ import all LeanFmt.Formatter.Block
 import all LeanFmt.Formatter.Collection
 import all LeanFmt.Formatter.ControlTerm
 import all LeanFmt.Formatter.Syntax
+import all LeanFmt.Formatter.Trivia
 
 namespace LeanFmt.Internal.Formatter.Term
 
@@ -87,7 +88,9 @@ private partial def transparentDocument? (stx : Lean.Syntax) : Option Doc := do
 private partial def composableDocument? (ownership : CommentOwnership) (stx : Lean.Syntax) :
     Lean.CoreM (Except FormatterFailure (Option Doc)) := do
   if CoreSurface.owner (← Lean.getEnv) .term stx.getKind == .extension then return .ok none
-  if let some document := transparentDocument? stx then return .ok (some document)
+  if (Comments.subtree ownership stx).isEmpty || (Syntax.spellings stx).size == 1 then
+    if let some document := transparentDocument? stx then
+      return .ok (some document)
   let childDocument (child : Lean.Syntax) : Lean.CoreM (Except FormatterFailure (Option Doc)) := do
     match CoreSurface.owner (← Lean.getEnv) .term child.getKind with
     | .extension =>
@@ -95,7 +98,8 @@ private partial def composableDocument? (ownership : CommentOwnership) (stx : Le
         some formatted.document
     | _ =>
       match ← composableDocument? ownership child with
-      | .ok (some document) => return .ok (some document)
+      | .ok (some document) =>
+        return .ok (some (Trivia.decorateTrailing ownership child document))
       | .error failure => return .error failure
       | .ok none =>
         -- This is an exact-child debt boundary for the operator, collection, and control-term
@@ -192,7 +196,7 @@ def format (ownership : CommentOwnership) (stx : Lean.Syntax) :
   match ← composableDocument? ownership stx with
   | .ok (some document) =>
     return .ok {
-      document
+      document := Trivia.decorate ownership stx document
       trace := ← Formatter.trace ownership .term stx
       structural := true }
   | .error failure => return .error failure

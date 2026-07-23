@@ -45,11 +45,12 @@ for width in (20, 100):
     texts[width] = text
     assert text.count("-- lean-fmt: format-ignore-next") == 1, text
     assert "def preserved(alpha:Nat):Nat:=alpha+1" in text, text
-    assert "def resumed\n" in text and "beta + 1" in text, text
+    assert "def resumed" in text and "beta + 1" in text, text
 
 crlf = json.loads((root / "crlf.json").read_text())
 assert crlf.get("validationFailure") is None and crlf.get("canonical") is not None, crlf
 assert crlf["canonical"]["text"] == texts[100], "LF/CRLF normalized suppression diverged"
+assert texts[20] != texts[100], "formatting did not resume with width-sensitive layout"
 
 malformed = json.loads((root / "malformed.json").read_text())
 findings = [finding for file in malformed["files"] for finding in file["findings"]]

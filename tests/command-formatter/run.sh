@@ -74,8 +74,9 @@ report = json.load(open(sys.argv[1]))
 assert report.get("formatFailure") is None and report.get("formatDraft") is not None, report
 metrics = report["formatDraft"]["metrics"]
 assert metrics["commands"] > 20 and metrics["coreDocuments"] > 20, metrics
-assert metrics["structuralDocuments"] > 0 and metrics["coreRegistryDocuments"] > 0, metrics
-print("  ok   lean-fmt's command module records remaining declaration/comment debt without failure")
+assert metrics["structuralDocuments"] == metrics["coreDocuments"], metrics
+assert metrics["coreRegistryDocuments"] == 0, metrics
+print("  ok   lean-fmt's commented command module has no comment-triggered core registry fallback")
 PY
 
 printf 'tests/command-formatter: ok\n'

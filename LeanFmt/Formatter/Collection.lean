@@ -29,7 +29,8 @@ private def isAtom (value : String) : Lean.Syntax → Bool
   | .atom _ spelling => spelling == value
   | _ => false
 
-private partial def separated (childDocument : Lean.Syntax → Lean.CoreM (Except FormatterFailure (Option Doc)))
+private partial def separated (ownership : CommentOwnership)
+    (childDocument : Lean.Syntax → Lean.CoreM (Except FormatterFailure (Option Doc)))
     (stx : Lean.Syntax) (result : Separated := {}) : Lean.CoreM (Except FormatterFailure Separated) := do
   let mut result := result
   for child in stx.getArgs do
@@ -37,12 +38,15 @@ private partial def separated (childDocument : Lean.Syntax → Lean.CoreM (Excep
     if isAtom "," child then
       result := { result with separators := result.separators + 1, trailing := true }
     else if child.getKind == Lean.nullKind then
-      match ← separated childDocument child result with
+      match ← separated ownership childDocument child result with
       | .ok nested => result := nested
       | .error failure => return .error failure
     else
       match ← childDocument child with
       | .ok (some document) =>
+        let document := match Trivia.leading ownership child with
+          | some comments => comments ++ Doc.hard ++ document
+          | none => document
         result := { result with values := result.values.push document, trailing := false }
       | .ok none => return .ok { result with separators := 0, values := #[] }
       | .error failure => return .error failure
@@ -58,7 +62,7 @@ private def delimited (opening closing : String) (items : Separated) : Doc :=
     if items.trailing then document := document ++ Doc.text ","
     return Doc.group (document ++ Doc.line "" ++ Doc.text closing)
 
-private def delimiterDocument
+private def delimiterDocument (ownership : CommentOwnership)
     (childDocument : Lean.Syntax → Lean.CoreM (Except FormatterFailure (Option Doc)))
     (stx : Lean.Syntax) : Lean.CoreM (Except FormatterFailure (Option Doc)) := do
   let args := stx.getArgs
@@ -69,7 +73,7 @@ private def delimiterDocument
   let some opening := opening? | return .ok none
   let some closing := closing? | return .ok none
   let wrapper : Lean.Syntax := .node .none Lean.nullKind (args.extract 1 (args.size - 1))
-  match ← separated childDocument wrapper with
+  match ← separated ownership childDocument wrapper with
   | .error failure => return .error failure
   | .ok items =>
     if items.values.isEmpty && !(Syntax.spellings wrapper).isEmpty then return .ok none
@@ -188,7 +192,7 @@ def document
     let result ← if stx.isOfKind ``Lean.Parser.Term.paren || stx.isOfKind ``Lean.Parser.Term.tuple ||
         stx.isOfKind ``Lean.Parser.Term.anonymousCtor || stx.getKind == `«term[_]» ||
         stx.getKind == `«term#[_,]» then
-      delimiterDocument childDocument stx
+      delimiterDocument ownership childDocument stx
     else if stx.isOfKind ``Lean.Parser.Term.structInst then
       recordDocument ownership childDocument stx
     else

@@ -94,4 +94,62 @@ assert local == {
 print("  ok   exact owner counts and payload/owner digests match")
 PY
 
+printf -- '--- structural comment layout across constructs, widths, and line endings ---\n'
+lake setup-file tests/comments/Layout.lean >"$work/layout.setup.json"
+summary "$work/layout.setup.json" tests/comments/Layout.lean \
+  tests/comments/Layout.lean "$work/layout-summary.json"
+for width in 24 60 100; do
+  "$application" __analyze-exact "$work/layout.setup.json" tests/comments/Layout.lean \
+    tests/comments/Layout.lean 8589934592 "4:$width" >"$work/layout-$width.json"
+done
+python3 - tests/comments/Layout.lean "$work/LayoutCRLF.lean" <<'PY'
+import pathlib, sys
+pathlib.Path(sys.argv[2]).write_bytes(pathlib.Path(sys.argv[1]).read_text().replace("\n", "\r\n").encode())
+PY
+lake setup-file "$work/LayoutCRLF.lean" >"$work/layout-crlf.setup.json"
+"$application" __analyze-exact "$work/layout-crlf.setup.json" "$work/LayoutCRLF.lean" \
+  LayoutCRLF.lean 8589934592 4:60 >"$work/layout-crlf.json"
+
+python3 - "$work" <<'PY'
+import json, pathlib, sys
+
+root = pathlib.Path(sys.argv[1])
+summary = json.loads((root / "layout-summary.json").read_text())
+assert summary == {
+    "comments": 12, "dangling": 0, "leading": 7,
+    "payloadDigest": "8ae2700978ffee3afd6a0406698de9076a2a14224f140a3b55b3042c68e73b50",
+    "suppressed": 0, "trailing": 5, "valid": True,
+}, summary
+
+payloads = (
+    "/- before import -/", "/- before macro alternative -/", "/- between binders -/",
+    "/- before operator -/", "/- before entry -/",
+    "-- trailing tactic", "/- alternative comment -/", "-- leading item",
+    "-- trailing item", "/- between items -/", "/- arm body -/",
+    "/- local declaration -/",
+)
+texts = {}
+for width in (24, 60, 100):
+    report = json.loads((root / f"layout-{width}.json").read_text())
+    assert report.get("validationFailure") is None and report.get("canonical") is not None, report
+    canonical = report["canonical"]
+    assert canonical["validation"]["idempotencePasses"] == 1, canonical
+    assert canonical["metrics"]["commentOwners"] == 12, canonical["metrics"]
+    assert canonical["metrics"]["coreRegistryDocuments"] == 0, canonical["metrics"]
+    assert canonical["metrics"]["registryDocuments"] == 0, canonical["metrics"]
+    for payload in payloads:
+        assert canonical["text"].count(payload) == 1, (width, payload, canonical["text"])
+    assert canonical["text"].startswith("module\n/- before import -/\nimport Lean\n"), canonical["text"]
+    assert "macro_rules\n    /- before macro alternative -/\n    |" in canonical["text"], canonical["text"]
+    texts[width] = canonical["text"]
+
+crlf = json.loads((root / "layout-crlf.json").read_text())
+assert crlf.get("validationFailure") is None and crlf.get("canonical") is not None, crlf
+assert crlf["canonical"]["text"] == texts[60], crlf["canonical"]["text"]
+assert crlf["canonical"]["metrics"]["commentOwners"] == 12, crlf["canonical"]["metrics"]
+assert texts[24] != texts[60], "configured width did not reflow the commented fixture"
+print("  ok   twelve exact payloads retain one logical owner through two frontend passes")
+print("  ok   widths 24/60/100 and LF/CRLF preserve one stable comment contract")
+PY
+
 printf 'tests/comments: ok\n'

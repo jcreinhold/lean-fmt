@@ -28,6 +28,23 @@ private abbrev TermDocument :=
 private def nonemptyChildren (stx : Lean.Syntax) : Array Lean.Syntax :=
   stx.getArgs.filter fun child => !(Syntax.spellings child).isEmpty
 
+private partial def firstTokenSyntax? (spelling : String) (stx : Lean.Syntax) : Option Lean.Syntax :=
+  match stx with
+  | .atom _ value => if value == spelling then some stx else none
+  | .ident _ raw _ _ => if raw.toString == spelling then some stx else none
+  | .node _ kind children =>
+    let children := if kind == Lean.choiceKind then children[0]?.toArray else children
+    children.findSome? (firstTokenSyntax? spelling)
+  | .missing => none
+
+private partial def lastTokenSyntax? (stx : Lean.Syntax) : Option Lean.Syntax :=
+  match stx with
+  | .atom .. | .ident .. => some stx
+  | .node _ kind children =>
+    let children := if kind == Lean.choiceKind then children[0]?.toArray else children
+    children.foldr (init := none) fun child found => found <|> lastTokenSyntax? child
+  | .missing => none
+
 private def join (documents : Array Doc) (separator : Doc) : Doc :=
   match documents[0]? with
   | none => Doc.empty
@@ -108,13 +125,17 @@ private partial def itemValueSyntax? (stx : Lean.Syntax) : Option Lean.Syntax :=
   else
     stx.getArgs.foldr (init := none) fun nested found => found <|> itemValueSyntax? nested
 
-private def assignmentDocument (formatTerm : TermDocument) (stx : Lean.Syntax) :
+private def assignmentDocument (ownership : CommentOwnership) (formatTerm : TermDocument)
+    (stx : Lean.Syntax) :
     Lean.CoreM (Except FormatterFailure (Option Doc)) := do
   let some valueSyntax := itemValueSyntax? stx | return .ok none
   match ← formatTerm valueSyntax with
   | .error failure => return .error failure
   | .ok none => return .ok none
   | .ok (some value) =>
+    let value := match lastTokenSyntax? valueSyntax with
+      | some token => Trivia.decorateBeforeBoundary ownership token value
+      | none => value
     let tokens := Syntax.spellings stx
     let valueTokens := Syntax.spellings valueSyntax
     if valueTokens.size > tokens.size then return .ok none
@@ -265,7 +286,10 @@ private partial def tacticDocument (ownership : CommentOwnership) (formatTerm : 
       let some body := groupChildren.back? | return .ok none
       match ← tacticDocument ownership formatTerm body with
       | .ok (some bodyDocument) =>
-        document := document ++ Doc.hard ++ Doc.text "| " ++ bodyDocument
+        let marker := match firstTokenSyntax? "|" alternative with
+          | some pipe => Trivia.decorateBeforeBoundary ownership pipe (Doc.text "|")
+          | none => Doc.text "|"
+        document := document ++ Doc.hard ++ marker ++ Doc.text " " ++ bodyDocument
       | .ok none => return .ok none
       | .error failure => return .error failure
     return .ok (some document)
@@ -274,8 +298,11 @@ private partial def tacticDocument (ownership : CommentOwnership) (formatTerm : 
   let mut documents := #[]
   for nested in args do
     match nested with
-    | .atom _ spelling => documents := documents.push (Doc.text spelling)
-    | .ident .. => documents := documents.push (Syntax.flat (Syntax.spellings nested))
+    | .atom _ spelling =>
+      documents := documents.push (Trivia.decorateBeforeBoundary ownership nested (Doc.text spelling))
+    | .ident .. =>
+      documents := documents.push (Trivia.decorateBeforeBoundary ownership nested
+        (Syntax.flat (Syntax.spellings nested)))
     | _ =>
       match CoreSurface.owner (← Lean.getEnv) .tactic nested.getKind with
       | .structural .term =>
@@ -286,7 +313,8 @@ private partial def tacticDocument (ownership : CommentOwnership) (formatTerm : 
       | _ =>
         match ← tacticDocument ownership formatTerm nested with
         | .ok (some document) => documents := documents.push document
-        | .ok none => documents := documents.push (Syntax.flat (Syntax.spellings nested))
+        | .ok none => documents := documents.push (Trivia.decorateBeforeBoundary ownership nested
+          (Syntax.flat (Syntax.spellings nested)))
         | .error failure => return .error failure
   if let #[left, _, right] := documents then
     if (Syntax.spellings args[1]!) == #["<;>"] then
@@ -533,7 +561,7 @@ private partial def doDocument (ownership : CommentOwnership) (formatTerm : Term
   if stx.isOfKind ``Lean.Parser.Term.doLet ||
       stx.isOfKind ``Lean.Parser.Term.doReassign ||
       stx.isOfKind ``Lean.Parser.Term.doHave then
-    return ← assignmentDocument formatTerm stx
+    return ← assignmentDocument ownership formatTerm stx
   if stx.getKind == Lean.nullKind || stx.getKind == Lean.groupKind then
     let mut documents := #[]
     for nested in nonemptyChildren stx do

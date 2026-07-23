@@ -182,7 +182,7 @@ private def flatValueDocument (value : Lean.Syntax) : Doc :=
   let body := if tokens[0]? == some ":=" then tokens.extract 1 tokens.size else tokens
   Doc.text " :=" ++ Doc.nest 2 (Doc.line " " ++ Syntax.flat body)
 
-private def whereDocument? (value : Lean.Syntax) : Option Doc := do
+private def whereDocument? (ownership : CommentOwnership) (value : Lean.Syntax) : Option Doc := do
   let owner := if value.isOfKind ``Lean.Parser.Command.declValEqns then
       findDescendant? (·.isOfKind ``Lean.Parser.Term.matchAltsWhereDecls) value |>.getD value
     else value
@@ -192,7 +192,9 @@ private def whereDocument? (value : Lean.Syntax) : Option Doc := do
   let mut document := Doc.text "where"
   for declaration in declarations do
     document := document ++ Doc.nest 2
-      (Doc.hard ++ Syntax.flat (Syntax.spellings declaration))
+      (Doc.hard ++ (match Trivia.leading ownership declaration with
+        | some comments => comments ++ Doc.hard ++ Syntax.flat (Syntax.spellings declaration)
+        | none => Syntax.flat (Syntax.spellings declaration)))
   return document
 
 private def terminationDocument? (value : Lean.Syntax) : Option Doc := do
@@ -262,7 +264,7 @@ private def simpleDocument? (ownership : CommentOwnership) (stx : Lean.Syntax) :
       | .ok equations => document := document ++ Doc.nest 2 (Doc.hard ++ equations)
       if let some termination := terminationDocument? value then
         document := document ++ Doc.hard ++ termination
-      if let some whereDocument := whereDocument? value then
+      if let some whereDocument := whereDocument? ownership value then
         document := document ++ Doc.hard ++ whereDocument
     else if isStructureValue value then
       document := document ++ Doc.nest 2 (Doc.hard ++ structureValueDocument value)
@@ -275,7 +277,7 @@ private def simpleDocument? (ownership : CommentOwnership) (stx : Lean.Syntax) :
       | none => document := document ++ flatValueDocument value
       if let some termination := terminationDocument? value then
         document := document ++ Doc.hard ++ termination
-      if let some whereDocument := whereDocument? value then
+      if let some whereDocument := whereDocument? ownership value then
         document := document ++ Doc.hard ++ whereDocument
   else if !inner.isOfKind ``Lean.Parser.Command.axiom then
     return .ok none

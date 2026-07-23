@@ -165,18 +165,91 @@ private def ownerOf (stx : Lean.Syntax) : Lean.CoreM CommandDocumentOwner := do
     | .extension => .registry
     | _ => .core
 
-private partial def headerRowsFrom (stx : Lean.Syntax) (rows : Array String) : Array String :=
+private structure SelectedToken where
+  stx : Lean.Syntax
+  spelling : String
+  deriving Inhabited
+
+private partial def selectedTokens (stx : Lean.Syntax)
+    (tokens : Array SelectedToken := #[]) : Array SelectedToken :=
+  match stx with
+  | .missing => tokens
+  | .atom _ spelling => if spelling.isEmpty then tokens else tokens.push { stx, spelling }
+  | .ident _ raw _ _ =>
+    let spelling := raw.toString
+    if spelling.isEmpty then tokens else tokens.push { stx, spelling }
+  | .node _ kind children =>
+    let children := if kind == Lean.choiceKind then children[0]?.toArray else children
+    children.foldl (init := tokens) fun tokens child => selectedTokens child tokens
+
+private def hasTrailingLine (ownership : CommentOwnership) (stx : Lean.Syntax) : Bool :=
+  (Comments.trailing ownership stx).any fun comment => comment.kind == .line
+
+private def ownedSelectedTokensDocument (ownership : CommentOwnership)
+    (tokens : Array SelectedToken) (breakable := true) (emitFirstLeading := true)
+    (emitFinalTrailing := true) : Doc := Id.run do
+  let some first := tokens[0]? | return Doc.empty
+  let firstDocument :=
+    if !emitFirstLeading && tokens.size == 1 && !emitFinalTrailing then Doc.text first.spelling
+    else if !emitFirstLeading then
+      Trivia.decorateTrailingBeforeBoundary ownership first.stx (Doc.text first.spelling)
+    else if tokens.size == 1 && !emitFinalTrailing then
+      Trivia.decorateLeading ownership first.stx (Doc.text first.spelling)
+    else Trivia.decorateBeforeBoundary ownership first.stx (Doc.text first.spelling)
+  let mut document := firstDocument
+  for index in [1:tokens.size] do
+    let previous := tokens[index - 1]!
+    let token := tokens[index]!
+    let boundary := if hasTrailingLine ownership previous.stx ||
+        !(Comments.leading ownership token.stx).isEmpty then
+      Doc.hard
+    else if Syntax.separates previous.spelling token.spelling then
+      if breakable then Doc.line " " else Doc.text " "
+    else Doc.empty
+    let tokenDocument := if index + 1 == tokens.size && !emitFinalTrailing then
+        Trivia.decorateLeading ownership token.stx (Doc.text token.spelling)
+      else Trivia.decorateBeforeBoundary ownership token.stx (Doc.text token.spelling)
+    document := document ++ boundary ++ tokenDocument
+  Doc.group document
+
+private def ownedTokensDocument (ownership : CommentOwnership) (stx : Lean.Syntax)
+    (outerCommandBoundary := true) : Doc :=
+  Trivia.decorateBeforeBoundary ownership stx <|
+    ownedSelectedTokensDocument ownership (selectedTokens stx)
+      (emitFirstLeading := !outerCommandBoundary)
+      (emitFinalTrailing := !outerCommandBoundary)
+
+private def headerTokensDocument (ownership : CommentOwnership) (stx : Lean.Syntax) : Doc :=
+  let tokens := selectedTokens stx
+  let document := ownedSelectedTokensDocument ownership tokens (emitFirstLeading := false)
+    (emitFinalTrailing := false)
+  let document := match tokens[0]? with
+    | some token => Trivia.decorateLeading ownership token.stx document
+    | none => document
+  let document := match tokens.back? with
+    | some token => Trivia.decorateTrailingBeforeBoundary ownership token.stx document
+    | none => document
+  Trivia.decorateBeforeBoundary ownership stx document
+
+private partial def headerRowsFrom (ownership : CommentOwnership) (stx : Lean.Syntax)
+    (rows : Array Doc) : Array Doc :=
   if stx.isOfKind ``Lean.Parser.Module.import then
-    rows.push (Syntax.flatText (Syntax.spellings stx))
+    rows.push (headerTokensDocument ownership stx)
   else match stx with
-    | .atom _ value => if value == "module" || value == "prelude" then rows.push value else rows
+    | .atom _ value =>
+      if value == "module" || value == "prelude" then
+        rows.push (Trivia.decorateBeforeBoundary ownership stx (Doc.text value))
+      else rows
     | .node _ _ children =>
-      children.foldl (init := rows) fun result child => headerRowsFrom child result
+      children.foldl (init := rows) fun result child => headerRowsFrom ownership child result
     | _ => rows
 
-private def headerDocument? (stx : Lean.Syntax) : Option Doc :=
+private def headerDocument? (ownership : CommentOwnership) (stx : Lean.Syntax) : Option Doc :=
   if stx.isOfKind ``Lean.Parser.Module.header then
-    some (Syntax.lines (headerRowsFrom stx #[]))
+    let rows := headerRowsFrom ownership stx #[]
+    let document? : Option Doc := rows.foldl (init := none) fun document? row =>
+      some <| document?.map (· ++ Doc.hard ++ row) |>.getD row
+    some (document?.getD Doc.empty)
   else none
 
 private def simpleShellKinds : Array Lean.Name := #[
@@ -235,19 +308,33 @@ private partial def variableBinders (stx : Lean.Syntax) (result : Array Lean.Syn
   if isVariableBinder stx then result.push stx
   else stx.getArgs.foldl (init := result) fun result child => variableBinders child result
 
-private def variableDocument (stx : Lean.Syntax) : Doc :=
+private def variableDocument (ownership : CommentOwnership) (stx : Lean.Syntax) : Doc := Id.run do
   let binders := variableBinders stx
-  let document := binders.foldl (init := Doc.text "variable") fun document binder =>
-    document ++ Doc.nest 2 (Doc.line " " ++ Syntax.flat (Syntax.spellings binder))
+  let mut document := Doc.text "variable"
+  let mut previous? : Option SelectedToken := none
+  for index in [0:binders.size] do
+    let binder := binders[index]!
+    let boundary := match previous? with
+      | some previous => if hasTrailingLine ownership previous.stx then Doc.hard else Doc.line " "
+      | none => Doc.line " "
+    let tokens := selectedTokens binder
+    let binderDocument := match tokens.back? with
+      | some token =>
+        if index + 1 == binders.size then
+          Trivia.decorateLeading ownership token.stx (Syntax.flat (Syntax.spellings binder))
+        else
+          Trivia.decorateBeforeBoundary ownership token.stx (Syntax.flat (Syntax.spellings binder))
+      | none => Syntax.flat (Syntax.spellings binder)
+    document := document ++ Doc.nest 2 (boundary ++ binderDocument)
+    previous? := tokens.back?
   Doc.group document
 
-private def simpleShellDocument? (stx : Lean.Syntax) : Option Doc :=
+private def simpleShellDocument? (ownership : CommentOwnership) (stx : Lean.Syntax) : Option Doc :=
   if simpleShellKinds.contains stx.getKind || isPlainSetOption stx then
-    let tokens := Syntax.spellings stx
     if stx.isOfKind ``Lean.Parser.Command.variable then
-      some (variableDocument stx)
+      some (variableDocument ownership stx)
     else
-      some (Doc.group (Syntax.flat tokens))
+      some (ownedTokensDocument ownership stx)
   else none
 
 private def structural (ownership : CommentOwnership) (stx : Lean.Syntax) (document : Doc) :
@@ -258,36 +345,39 @@ private def structural (ownership : CommentOwnership) (stx : Lean.Syntax) (docum
     owner := .core
     mechanism := .structural }
 
-/-- Format the parsed module/import header as one closed core document. Import order and modifiers
-remain those of the actual header syntax. A comment-free header uses formatter-owned rows; a commented
-header keeps native leading trivia while stripping the ordinary-command boundary from its tail. -/
+/-- Format the parsed module/import header as one closed structural document. Import order, modifiers,
+and exact-node comments remain those of the actual selected header syntax. -/
 def header (ownership : CommentOwnership) (stx : Lean.Syntax) :
     Lean.CoreM (Except FormatterFailure CommandDocument) := do
-  if let some document := headerDocument? stx then
-    if (Comments.subtree ownership stx).isEmpty then
-      let trace ← Formatter.trace ownership (.named ``Lean.Parser.Module.header) stx
-      return .ok { document, trace, owner := .core, mechanism := .structural }
+  if let some document := headerDocument? ownership stx then
+    let trace ← Formatter.trace ownership (.named ``Lean.Parser.Module.header) stx
+    return .ok { document, trace, owner := .core, mechanism := .structural }
   format ownership .core (.named ``Lean.Parser.Module.header) stx (clearHead := false)
 
-private def macroRulesDocument (stx : Lean.Syntax) : Doc :=
-  let tokens := Syntax.spellings stx
-  let body := if tokens[0]? == some "macro_rules" then tokens.extract 1 tokens.size else tokens
-  let alternatives := body.foldl (init := #[]) fun (rows : Array (Array String)) token =>
-    if token == "|" then rows.push #[token]
+private def macroRulesDocument (ownership : CommentOwnership) (stx : Lean.Syntax) : Doc := Id.run do
+  let tokens := selectedTokens stx
+  let rows := tokens.foldl (init := #[]) fun (rows : Array (Array SelectedToken)) token =>
+    if token.spelling == "|" then rows.push #[token]
     else match rows.back? with
       | some row => rows.set! (rows.size - 1) (row.push token)
       | none => #[#[token]]
-  alternatives.foldl (init := Doc.text "macro_rules") fun document alternative =>
-    document ++ Doc.nest 2 (Doc.hard ++ Doc.text (Syntax.flatText alternative))
+  let mut document? : Option Doc := none
+  for index in [0:rows.size] do
+    let row := rows[index]!
+    let row := ownedSelectedTokensDocument ownership row (breakable := false)
+      (emitFirstLeading := index != 0)
+      (emitFinalTrailing := index + 1 != rows.size)
+    document? := some <| match document? with
+      | some document => document ++ Doc.nest 2 (Doc.hard ++ row)
+      | none => row
+  return Trivia.decorateBeforeBoundary ownership stx (Option.getD document? Doc.empty)
 
 /-- Format one actual ordinary command. Built-in command shells are closed; project-defined command
 syntax is delegated under the environment and options that parsed it. -/
 def command (ownership : CommentOwnership) (stx : Lean.Syntax) :
     Lean.CoreM (Except FormatterFailure CommandDocument) := do
-  if let some document := simpleShellDocument? stx then
-    if stx.isOfKind ``Lean.Parser.Command.moduleDoc ||
-        (Comments.subtree ownership stx).isEmpty then
-      return .ok (← structural ownership stx document)
+  if let some document := simpleShellDocument? ownership stx then
+    return .ok (← structural ownership stx document)
   if let some declaration ← Formatter.Declaration.format? ownership stx then
     return declaration.map fun formatted =>
       {
@@ -295,9 +385,8 @@ def command (ownership : CommentOwnership) (stx : Lean.Syntax) :
         trace := formatted.trace
         owner := .core
         mechanism := if formatted.structural then .structural else .registry }
-  if stx.isOfKind ``Lean.Parser.Command.macro_rules &&
-      (Comments.subtree ownership stx).isEmpty then
-    return .ok (← structural ownership stx (macroRulesDocument stx))
+  if stx.isOfKind ``Lean.Parser.Command.macro_rules then
+    return .ok (← structural ownership stx (macroRulesDocument ownership stx))
   let result ← format ownership (← ownerOf stx) .command stx
   match result with
   | .ok formatted => return .ok formatted

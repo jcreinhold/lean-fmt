@@ -44,7 +44,9 @@ private def hugsNext : String → Bool
   | "(" | "[" | "{" | "⟨" | "@(" | "@[" | "`(" | "`[" | "`{" | ".{" | "$" | "." => true
   | _ => false
 
-private def separates (previous token : String) : Bool :=
+/-- Whether two adjacent selected syntax tokens receive canonical horizontal separation. Structural
+owners that retain token identity use this predicate while attaching exact-node comments. -/
+def separates (previous token : String) : Bool :=
   let projectionDot := token == "." &&
     previous != "=>" && previous != ":=" && previous != "|" && previous != ","
   !(hugsNext previous || hugsPrevious token || projectionDot)

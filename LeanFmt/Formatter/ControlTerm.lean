@@ -109,6 +109,9 @@ private def alternativeDocument (ownership : CommentOwnership) (formatChild : Ch
   | .error failure => return .error failure
   | .ok none => return .ok none
   | .ok (some bodyDocument) =>
+    let bodyDocument := match Trivia.leading ownership body with
+      | some comments => comments ++ Doc.hard ++ bodyDocument
+      | none => bodyDocument
     let document := Doc.group <|
       Doc.text "| " ++ Syntax.flat (Syntax.spellings patterns) ++ Doc.text " =>" ++
         Doc.nest 2 (Doc.line " " ++ bodyDocument)
