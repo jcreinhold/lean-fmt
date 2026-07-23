@@ -49,6 +49,7 @@ mutual
     | text (value : String)
     | line (flat : String)
     | hard
+    | blank
     | verbatim (value : String)
     | cat (left right : Doc)
     | nest (indent : Nat) (body : Doc)
@@ -114,6 +115,10 @@ def line (flat : String) : Doc :=
 
 /-- An unconditional newline at the current indentation. -/
 def hard : Doc := .mk .hard ⟨0, true⟩ ⟨0, true⟩ 1 true
+
+/-- One empty line followed by the current indentation. Unlike two adjacent `hard` nodes, this does
+not materialize indentation whitespace on the empty line. -/
+def blank : Doc := .mk .blank ⟨0, true⟩ ⟨0, true⟩ 1 true
 
 /-- Literal text that may span lines. Interior lines are never re-indented. -/
 def verbatim (value : String) : Doc :=
@@ -268,6 +273,14 @@ private partial def renderWork (width : Nat) : Work → StateM RenderState Unit
           |>.push (.document indent mode body)
       | .hard =>
         modify (appendNewline · indent)
+        renderWork width rest
+      | .blank =>
+        modify fun state =>
+          let value := "\n\n".pushn ' ' indent
+          { state with
+            output := state.output ++ value
+            column := indent
+            outputBytes := state.outputBytes + value.utf8ByteSize }
         renderWork width rest
       | .line flat =>
         match mode with

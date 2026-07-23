@@ -49,6 +49,11 @@ mutual
     | n + 1 => isEven n
 end
 
+def countdown : Nat → Nat
+  | 0 => 0
+  | n + 1 => countdown n
+termination_by n => n
+
 def withLocal (value : Nat) : Nat := localValue + value
 where
   localValue : Nat := 1

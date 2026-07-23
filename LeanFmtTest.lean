@@ -1923,6 +1923,8 @@ private def testDoc : IO Unit := do
     "a group containing a hard break was flattened"
   ensure (renderText hugeWidth (.nest 2 (.group (.text "a" ++ .hard ++ .text "b"))) == "a\n  b")
     "a hard break ignored the current indentation"
+  ensure (renderText hugeWidth (.nest 2 (.text "a" ++ .blank ++ .text "b")) == "a\n\n  b")
+    "a structural blank line contained indentation whitespace"
 
   -- `verbatim` is the constructor `RLC-IMPL` added, and this is the reason: a block comment's
   -- interior is content, and `hard` would re-indent it. `Std.Format` re-indents it too.

@@ -31,18 +31,23 @@ for width in (24, 60, 100):
     assert report.get("validationFailure") is None and report.get("canonical") is not None, report
     canonical = report["canonical"]
     assert canonical["validation"]["idempotencePasses"] == 1, canonical
+    metrics = canonical["metrics"]
+    assert metrics["coreRegistryDocuments"] == 3, metrics
+    assert metrics["structuralDocuments"] + 3 == metrics["coreDocuments"], metrics
     text = canonical["text"]
     texts[width] = text
     for required in (
         "abbrev VeryLongAliasName", "opaque opaqueValue", "axiom assumedValue",
         "@[inline] private def modifiedValue", "def «name with spaces»",
         "instance", "structure Packet", "class HasValue", "inductive Choice",
-        "mutual", "def isEven", "def isOdd", "def withLocal", "where",
+        "mutual", "def isEven", "def isOdd", "def countdown", "termination_by",
+        "def withLocal", "where",
     ):
         assert required in text, (width, required, text)
     assert text.index("first : α") < text.index("second : α") < text.index("count : Nat"), text
     assert text.index("| neither") < text.index("| left") < text.index("| right"), text
     assert text.index("def isEven") < text.index("def isOdd"), text
+    assert "def isEven" in text and "\n\n    def isOdd" in text, text
 
 narrow = texts[24]
 assert "  opaque opaqueValue\n    (first second : Nat) :\n    Nat :=\n    first + second" in narrow, narrow
