@@ -50,7 +50,7 @@ line comment as `leading` trivia of a synthetic descendant, so the source bounda
 logical placement tag, decides this outer case. Interior comments remain in registry-owned syntax. -/
 def trailing (ownership : CommentOwnership) (stx : Lean.Syntax) (boundaryStop : Nat) : Option Doc :=
   let stop := stx.getRange?.map (·.stop.byteIdx) |>.getD 0
-  let comments := Comments.all ownership |>.filter fun comment =>
+  let comments := Comments.subtree ownership stx |>.filter fun comment =>
     comment.range.start >= stop && comment.range.start < boundaryStop
   let (document?, _) := comments.foldl (init := (none, stop)) fun (document?, cursor) comment =>
     let boundary := if Comments.hasNewlineBetween ownership cursor comment.range.start then

@@ -143,7 +143,7 @@ def format? (ownership : CommentOwnership) (stx : Lean.Syntax) :
       let trace := match registered with
         | .ok value => value.trace
         | .error failure => failure.trace
-      return some (.ok { document, trace })
+      return some (.ok { document, trace, structural := true })
     else
       return some registered
   | .ok none => return some registered

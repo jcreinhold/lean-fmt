@@ -25,6 +25,7 @@ adapter fixture is the upgrade tripwire for these private implementation assumpt
 import Lean.PrettyPrinter
 import all LeanFmt.Comments
 import all LeanFmt.Doc
+import all LeanFmt.Formatter.CoreSurface
 
 namespace LeanFmt.Internal
 
@@ -44,6 +45,12 @@ def name : FormatterCategory → Lean.Name
   | .tactic => `tactic
   | .named value => value
 
+def surface : FormatterCategory → SurfaceCategory
+  | .command => .command
+  | .term => .term
+  | .tactic => .tactic
+  | .named value => .named value
+
 end FormatterCategory
 
 /-- How Lean resolved the outer syntax kind's formatter. Nested kinds resolve independently during
@@ -57,6 +64,7 @@ inductive FormatterResolution where
 structure FormatterTrace where
   category : FormatterCategory
   kind : Lean.Name
+  surfaceOwner : SurfaceOwner
   resolution : FormatterResolution
   commentOwners : Nat
   deriving Inhabited, BEq, Repr, Lean.ToJson, Lean.FromJson
@@ -75,6 +83,7 @@ ordered module, native formatter leaves are the sole comment emitters. -/
 structure RegisteredDocument where
   document : Doc
   trace : FormatterTrace
+  structural : Bool := false
   deriving Inhabited
 
 /-- Deterministic whole-module formatter counters. A draft is produced by one already-running
@@ -84,6 +93,9 @@ structure FormatMetrics where
   commands : Nat
   coreDocuments : Nat
   registryDocuments : Nat
+  structuralDocuments : Nat
+  coreRegistryDocuments : Nat
+  extensionRegistryDocuments : Nat
   registryNodes : Nat
   explicitDocuments : Nat
   descriptorDocuments : Nat
@@ -126,6 +138,7 @@ def registeredAs (ownership : CommentOwnership) (category : FormatterCategory)
   let trace : FormatterTrace := {
     category
     kind
+    surfaceOwner := CoreSurface.owner (← Lean.getEnv) category.surface kind
     resolution := ← resolution kind
     commentOwners := (Comments.subtree ownership traceSyntax).size }
   try

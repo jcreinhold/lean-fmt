@@ -85,7 +85,7 @@ def format (ownership : CommentOwnership) (stx : Lean.Syntax) :
     let trace := match registered with
       | .ok value => value.trace
       | .error failure => failure.trace
-    return .ok { document, trace }
+    return .ok { document, trace, structural := true }
   | none => return registered
 
 end LeanFmt.Internal.Formatter.Term

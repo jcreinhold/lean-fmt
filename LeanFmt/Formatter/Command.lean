@@ -33,11 +33,19 @@ inductive CommandDocumentOwner where
   | registry
   deriving Inhabited, BEq, Repr
 
+/-- Whether the selected command document was built by lean-fmt's structural rules or emitted by
+Lean's live registry. Syntax provenance and document mechanism are deliberately separate. -/
+inductive CommandDocumentMechanism where
+  | structural
+  | registry
+  deriving Inhabited, BEq, Repr
+
 /-- A formatted header or command and the boundary that owns its outer syntax. -/
 structure CommandDocument where
   document : Doc
   trace : FormatterTrace
   owner : CommandDocumentOwner
+  mechanism : CommandDocumentMechanism
   deriving Inhabited
 
 /-- Owner-relative placement of one command in the module stream. -/
@@ -117,26 +125,44 @@ positions are intentionally absent. -/
 def headerContract (stx : Lean.Syntax) : Array String :=
   contractFrom stx #[]
 
+private def stripInfo (start stop : Nat) : Lean.SourceInfo → Lean.SourceInfo
+    | .original leading position trailing endPos =>
+      let leading := if leading.startPos.byteIdx < start then
+          { leading with stopPos := leading.startPos }
+        else leading
+      let trailing := if stop < trailing.stopPos.byteIdx then
+          { trailing with stopPos := trailing.startPos }
+        else trailing
+      .original leading position trailing endPos
+    | info => info
+
+private partial def stripBoundaries (start stop : Nat) : Lean.Syntax → Lean.Syntax
+    | .node info kind children =>
+      .node (stripInfo start stop info) kind (children.map (stripBoundaries start stop))
+    | .atom info value => .atom (stripInfo start stop info) value
+    | .ident info raw value preresolved => .ident (stripInfo start stop info) raw value preresolved
+    | .missing => .missing
+
+/-- Remove only trivia physically outside an ordinary command's token range. Interior comments remain
+with the live registry until their structural owner formats them. -/
+def boundaryFree (stx : Lean.Syntax) : Lean.Syntax :=
+  let start := stx.getRange?.map (·.start.byteIdx) |>.getD 0
+  let stop := stx.getRange?.map (·.stop.byteIdx) |>.getD start
+  stripBoundaries start stop stx
+
 private def format (ownership : CommentOwnership) (owner : CommandDocumentOwner)
     (category : FormatterCategory) (stx : Lean.Syntax) (clearHead := true) :
     Lean.CoreM (Except FormatterFailure CommandDocument) := do
   let formattedSyntax := if clearHead then boundaryFree stx else stx.unsetTrailing
   let result ← Formatter.registeredAs ownership category stx formattedSyntax
   let document := result.map fun registered =>
-    { document := registered.document, trace := registered.trace, owner }
+    { document := registered.document, trace := registered.trace, owner, mechanism := .registry }
   return document
-where
-  clearLeading (stx : Lean.Syntax) : Lean.Syntax :=
-    match stx.getHeadInfo with
-    | .original leading position trailing stop =>
-      stx.setHeadInfo (.original { leading with stopPos := leading.startPos } position trailing stop)
-    | _ => stx
 
-  boundaryFree (stx : Lean.Syntax) : Lean.Syntax := clearLeading stx |>.unsetTrailing
-
-private def ownerOf (stx : Lean.Syntax) : CommandDocumentOwner :=
-  let coreNamespace := ``Lean.Parser.Command.declaration |>.getPrefix
-  if coreNamespace.isPrefixOf stx.getKind then .core else .registry
+private def ownerOf (stx : Lean.Syntax) : Lean.CoreM CommandDocumentOwner := do
+  return match CoreSurface.owner (← Lean.getEnv) .command stx.getKind with
+    | .extension => .registry
+    | _ => .core
 
 private partial def headerRowsFrom (stx : Lean.Syntax) (rows : Array String) : Array String :=
   if stx.isOfKind ``Lean.Parser.Module.import then
@@ -161,7 +187,7 @@ def header (ownership : CommentOwnership) (stx : Lean.Syntax) :
   match result, headerDocument? stx with
   | .ok formatted, some document =>
     if (Comments.subtree ownership stx).isEmpty then
-      return .ok { formatted with document }
+      return .ok { formatted with document, mechanism := .structural }
     else
       return .ok formatted
   | result, _ => return result
@@ -183,14 +209,22 @@ def command (ownership : CommentOwnership) (stx : Lean.Syntax) :
     Lean.CoreM (Except FormatterFailure CommandDocument) := do
   if let some declaration ← Formatter.Declaration.format? ownership stx then
     return declaration.map fun formatted =>
-      { document := formatted.document, trace := formatted.trace, owner := .core }
-  let result ← format ownership (ownerOf stx) .command stx
+      {
+        document := formatted.document
+        trace := formatted.trace
+        owner := .core
+        mechanism := if formatted.structural then .structural else .registry }
+  let result ← format ownership (← ownerOf stx) .command stx
   if stx.isOfKind ``Lean.Parser.Command.macro_rules &&
       (Comments.subtree ownership stx).isEmpty then
     let trace := match result with
       | .ok formatted => formatted.trace
       | .error failure => failure.trace
-    return .ok { document := macroRulesDocument stx, trace, owner := .core }
+    return .ok {
+      document := macroRulesDocument stx
+      trace
+      owner := .core
+      mechanism := .structural }
   match result with
   | .ok formatted => return .ok formatted
   | .error failure => return .error failure

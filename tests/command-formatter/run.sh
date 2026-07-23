@@ -58,7 +58,7 @@ for payload in (
     "/-- A declaration doc comment remains before its owner. -/",
 ):
     assert text.count(payload) == 1, (payload, text)
-assert "\n  universe u\n  variable\n    {α : Type u} -- trailing setup comment\n" in text, text
+assert "\n  universe u\n  variable {α : Type u} -- trailing setup comment\n" in text, text
 print("  ok   parsed headers, core shells, scope indentation, comments, and custom commands are structural")
 print("  ok   widths 32/60/100 are admitted and byte-idempotent with an open registry command")
 PY

@@ -51,6 +51,9 @@ assert narrow is not None and narrow["text"] != draft["text"], narrow
 metrics = draft["metrics"]
 assert metrics["frontendRuns"] == 1 and metrics["commands"] == 6, metrics
 assert metrics["coreDocuments"] == 5 and metrics["registryDocuments"] == 2, metrics
+assert metrics["structuralDocuments"] == 2, metrics
+assert metrics["coreRegistryDocuments"] == 3, metrics
+assert metrics["extensionRegistryDocuments"] == 2, metrics
 assert metrics["registryNodes"] >= metrics["commands"], metrics
 assert metrics["explicitDocuments"] == 6 and metrics["descriptorDocuments"] == 1, metrics
 assert metrics["commentOwners"] == 3 and metrics["nativeEvents"] > 0, metrics
@@ -59,7 +62,7 @@ output = draft["text"]
 assert "explicit_command selectedName" in output, output
 assert "explicit_command       selectedName" not in output, output
 assert "twice(" in output and "adapter_exact" in output, output
-assert "Nat -> Nat" in output, output
+assert "Nat → Nat" in output, output
 for payload in ["adapter block payload", "adapter trailing payload", "adapter tactic payload"]:
     assert output.count(payload) == 1, (payload, output)
 

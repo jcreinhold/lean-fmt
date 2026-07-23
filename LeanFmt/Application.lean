@@ -427,10 +427,10 @@ private def ExactRun.envelope (run : ExactRun)
       let .ok json := Lean.Json.parse output.stdout
         | throw <| IO.userError s!"exact frontend child returned invalid JSON for \
           {snapshot.relativePath}"
-      let .ok envelope := Lean.fromJson? json
-        | throw <| IO.userError s!"exact frontend child returned an invalid result for \
-          {snapshot.relativePath}"
-      pure (envelope : AnalysisEnvelope)
+      match Lean.fromJson? json with
+      | .ok envelope => pure (envelope : AnalysisEnvelope)
+      | .error error => throw <| IO.userError s!"exact frontend child returned an invalid result \
+          for {snapshot.relativePath}: {error}"
     if let .error setupError := setupResult then
       if envelope.artifact?.isSome then
         throw <| IO.userError s!"could not establish the exact Lake setup for \
