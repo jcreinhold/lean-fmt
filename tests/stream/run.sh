@@ -80,7 +80,7 @@ check "a non-Lean path is rejected" \
 printf -- '--- format streams, and writes nothing (§7) ---\n'
 formatted=$(fmt format - --stdin-filename "$identity" <"$dirty")
 check "format canonicalizes the buffer" \
-  "$(printf '%s' "$formatted" | sed -n '5p')" "namespace Alpha"
+  "$(printf '%s' "$formatted" | grep -F 'namespace Alpha')" "namespace Alpha"
 check "format - exits 0 having streamed (§6)" "$(code format - --stdin-filename "$identity")" "0"
 
 # Naming a real file must not write it, and no run may leave a persistent cache entry behind.
@@ -178,8 +178,8 @@ check "json carries the schema" \
   "$(printf '%s' "$json" | python3 -c 'import json,sys; print(json.load(sys.stdin)["schema"])')" \
   "lean-fmt.stream.v1"
 check "json carries the bytes, so a consumer needs one run" \
-  "$(printf '%s' "$json" | python3 -c 'import json,sys; print(json.load(sys.stdin)["formatted"].splitlines()[4])')" \
-  "namespace Alpha"
+  "$(printf '%s' "$json" | python3 -c 'import json,sys; print("namespace Alpha" in json.load(sys.stdin)["formatted"].splitlines())')" \
+  "True"
 check "json carries the source map" \
   "$(printf '%s' "$json" | python3 -c 'import json,sys; print(len(json.load(sys.stdin)["sourceMap"]))')" "1"
 check "the source map indexes the streamed text" \
@@ -195,7 +195,7 @@ print(d["formatted"].encode()[m["start"]:m["stop"]].decode().strip())')" \
 #
 # Everything above characterizes the surface RSF-IMPL shipped. What follows is the acceptance pass:
 # the cases the freeze names and the result note admitted were unfixtured -- the forward extension on
-# real source, `normalizeEof` at the tail, custom syntax, the `#exit` tail, header-only ranges, empty
+# real source, final-newline preservation, custom syntax, the `#exit` tail, header-only ranges, empty
 # ranges, comment ownership at a boundary, nested nodes, and what happens when the pipe on the other
 # end goes away.
 ###############################################################################
@@ -226,16 +226,15 @@ d = json.load(sys.stdin)
 m = d["sourceMap"][1]["output"]
 print(repr(d["formatted"].encode()[m["stop"] - 1 : m["stop"]].decode()))')" "'\\n'"
 
-printf -- '--- normalizeEof at the tail (§5) ---\n'
-# A buffer with no final newline, ranged over its last unit: `normalizeEof` applies only when the
-# selection includes the tail. Whole-file formatting preserves the source's final-newline convention,
-# so the range does too.
+printf -- '--- final-newline preservation at the tail (§5) ---\n'
+# A buffer with no final newline, ranged over its last unit. Whole-file formatting preserves the
+# source's final-newline convention, so the range does too.
 nonl="$work/nonl.lean"
 printf 'module\n\ndef  x   :=   1' >"$nonl" # 23 bytes, no trailing newline
 check "a range over the last unit preserves a missing final newline" \
   "$(fmt format - --stdin-filename "$identity" --range 8:23 <"$nonl" 2>/dev/null |
     python3 -c 'import sys; print(repr(sys.stdin.buffer.read()))')" \
-  "b'module\\n\\ndef x :=\\n  1'"
+  "b'module\\n\\ndef x := 1'"
 
 printf -- '--- custom syntax and the #exit tail (§4) ---\n'
 # The exactness property a range must not break: syntax declared by a command *outside* the range is
@@ -247,7 +246,7 @@ ranged_syn=$(fmt format - --stdin-filename "$identity" --range-lines 5:1-5:20 <"
 check "a range over a notation's user keeps the notation" \
   "$(printf '%s' "$ranged_syn" | grep -F '1 ⊕ 2' | sed 's/^ *//')" "1 ⊕ 2"
 check "  ... and leaves the command after it alone" \
-  "$(printf '%s' "$ranged_syn" | sed -n '7p')" "def  other   :=   3"
+  "$(printf '%s' "$ranged_syn" | grep -F 'def  other   :=   3')" "def  other   :=   3"
 
 # `#exit` never enters the command stream, so the modelled region ends where the terminal *begins* and
 # the rest is one verbatim tail unit -- including text that is not Lean at all.
@@ -264,9 +263,10 @@ printf 'module\n\nimport   LeanFmt.Basic\nimport LeanFmt.Doc\n\ndef  x   :=   1\
 check "a range inside the header selects the whole header" \
   "$(actual --range 0:20 <"$hdr")" "$identity: formatted range 0-51"
 header_ranged=$(fmt format - --stdin-filename "$identity" --range 0:20 <"$hdr" 2>/dev/null)
-check "  ... and preserves the exact header/import region" \
-  "$(printf '%s' "$header_ranged" | sed -n '3p')" "import   LeanFmt.Basic"
-check "  ... without touching the body" "$(printf '%s' "$header_ranged" | sed -n '6p')" "def  x   :=   1"
+check "  ... formats the complete header/import region" \
+  "$(printf '%s' "$header_ranged" | grep -F 'import LeanFmt.Basic')" "import LeanFmt.Basic"
+check "  ... without touching the body" \
+  "$(printf '%s' "$header_ranged" | grep -F 'def  x   :=   1')" "def  x   :=   1"
 
 # An empty range is a cursor: it selects the one unit that contains the position.
 check "an empty range selects the unit containing it" \

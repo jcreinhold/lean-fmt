@@ -597,7 +597,7 @@ The `[format]` fold is what `ruff-13` RCD-IMPL owes the moment `line-width` beca
 (`notes/01-discovery.md` §9.1). Formatter identity is `(path, byteSize, mtime)` of the executable
 (`Cache.lean`), so editing the old compile-time `canonicalWidth` still invalidated — a rebuild rewrites
 the file. A *runtime* override changes output without touching the binary, so without this component
-two projects on one machine at different widths would serve each other's cached `CanonicalText`.
+two projects on one machine at different widths would serve each other's cached `CanonicalLayout`.
 `[lint]` settings are deliberately absent: they project over an unchanged canonical result and must
 stay out of identity, as `CLAUDE.md` requires of rule selection. -/
 def configurationIdentity (_snapshot : Snapshot) (target : SourceTarget) : IO Digest :=

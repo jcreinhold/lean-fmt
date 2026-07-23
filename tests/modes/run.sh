@@ -169,7 +169,7 @@ assert r["findings"] == 0, f"layout-only change must carry no findings: {r}"
 assert r["changed"] == 1 and r["written"] == 0, r
 assert r["files"][0]["status"] == "would-format", r["files"][0]
 assert r["files"][0]["formatted"] == \
-    "module\n\nnamespace Alpha\n\n  def layoutValue : Nat := 1\n\nend Alpha\n", \
+    "module\n\nnamespace Alpha\n\ndef layoutValue : Nat := 1\n\nend Alpha\n", \
     repr(r["files"][0]["formatted"])
 PY
 grep -q 'namespace     Alpha' tests/check/Layout.lean ||
@@ -190,24 +190,21 @@ assert r["mode"] == "check" and r["findings"] == 0 and r["changed"] == 0, r
 assert r["files"][0]["status"] == "clean", r["files"][0]
 PY
 
-# A file whose only defect is the missing final newline. This is the case that decides whether
-# `unifiedDiff` compares lines or *files*: `diffSource` reads the terminator into `finalNewline` and
-# drops it, so "end Alpha\n" and "end Alpha" both project to the line "end Alpha". A diff over bare
-# strings pairs them as unchanged and emits an empty hunk list — reporting `changed=1` above a diff
-# showing nothing, for the single edit the formatter's final-newline normalization makes (a layout
-# concern since `ruff-11c` RDF-LAYOUT, no longer the retired final-newline rule). `DiffLine` carries the terminator
-# into the compared element to keep them unequal, and this test is why that type is not over-engineering.
-printf 'module\n\nnamespace Alpha\n\ndef layoutValue : Nat := 1\n\nend Alpha' >"$layout_file"
+# A layout-dirty file without a final newline. `unifiedDiff` must retain the missing-terminator marker
+# while showing the namespace edit; the formatter preserves final-newline presence rather than
+# inventing a byte outside the parsed command stream.
+printf 'module\n\nnamespace     Alpha\n\ndef layoutValue : Nat := 1\n\nend     Alpha' >"$layout_file"
 run_expect 1 "$work/layout-nonl.diff" "$application" diff --root . --no-cache \
   tests/check/Layout.lean
 python3 - "$work/layout-nonl.diff" <<'PY'
 import sys
 diff = open(sys.argv[1]).read()
-# The native formatter also reflows the body, but the missing-terminator distinction must remain
-# explicit rather than collapsing to an empty/ambiguous diff.
+# Namespace spacing also reflows, but the missing-terminator distinction must remain explicit rather
+# than collapsing to an empty/ambiguous diff.
 assert diff.startswith("--- a/tests/check/Layout.lean\n+++ b/tests/check/Layout.lean\n@@"), repr(diff)
 assert "\\ No newline at end of file" in diff, repr(diff)
-assert "-def layoutValue : Nat := 1" in diff and "+  def layoutValue : Nat := 1" in diff, repr(diff)
+assert "-namespace     Alpha" in diff and "+namespace Alpha" in diff, repr(diff)
+assert "-end     Alpha" in diff and "+end Alpha" in diff, repr(diff)
 assert diff.endswith("mode=diff files=1 findings=0 changed=1 written=0 broken=0 rejected=0 "
     "withheld_unsafe=0 suppressed=0 infrastructure_failures=0\n"), repr(diff)
 PY
@@ -250,7 +247,7 @@ assert seed["files"][0]["status"] == "clean", seed
 assert after["changed"] == 1, f"a check-populated hit suppressed layout: {after}"
 assert after["files"][0]["status"] == "would-format", after["files"][0]
 assert after["files"][0]["formatted"] == \
-    "module\n\nnamespace Alpha\n\n  def layoutValue : Nat := 1\n\nend Alpha\n", \
+    "module\n\nnamespace Alpha\n\ndef layoutValue : Nat := 1\n\nend Alpha\n", \
     repr(after["files"][0]["formatted"])
 PY
 rm -rf "$cache_root"
@@ -600,7 +597,7 @@ assert f["status"] == "would-format", f
 assert [x["code"] for x in f["findings"]] == ["FMT003"], f          # finding survives format
 assert f["formatted"] == \
     "module\nimport LeanFmt.Basic\nimport LeanFmt.Basic\n\nnamespace Alpha\n" \
-    "\n  def mixedValue : Nat := 1\n\nend Alpha\n", repr(f["formatted"])  # reflowed, NOT deduped
+    "\ndef mixedValue : Nat := 1\n\nend Alpha\n", repr(f["formatted"])  # reflowed, NOT deduped
 PY
 
 # `diff` equals the `format` preview: same reflow, same withheld fix.
@@ -648,18 +645,16 @@ import json, sys
 f, = json.load(open(sys.argv[1]))["files"]
 assert f["status"] == "would-format" and f["findings"] == [], f
 assert f["formatted"] == \
-    "module\nimport LeanFmt.Basic\n\nnamespace Alpha\n\n  def mixedValue : Nat := 1\n\nend Alpha\n", \
+    "module\nimport LeanFmt.Basic\n\nnamespace Alpha\n\ndef mixedValue : Nat := 1\n\nend Alpha\n", \
     repr(f["formatted"])
 PY
 
-# --- RDF-LAYOUT: the canonical reflow is the sole, sound owner of trailing-horizontal-whitespace and
-#     final-newline normalization. `ruff-11c` retired the trailing-whitespace rule and the final
-#     newline) as rules and folded the normalization into formatting, mirroring `ruff format`.
-#     Three persistent regressions pin what that ownership means. ---
+# --- RDF-LAYOUT: canonical reflow owns inter-token trailing whitespace while preserving token content,
+#     verbatim tails, and final-newline presence. Three persistent regressions pin that boundary. ---
 
-# 1. No rule selected: the reflow trims interior AND final-line trailing whitespace and adds exactly one
-#    final newline. The change is pure layout, so `format` carries no findings; `check` (which runs
-#    selected rules, never layout) reports the very same file clean.
+# 1. No rule selected: the reflow trims interior and final-line trailing whitespace while preserving
+#    the absent final newline. The change is pure layout, so `format` carries no findings; `check`
+#    (which runs selected rules, never layout) reports the very same file clean.
 printf 'module\n\ndef alpha : Nat := 1   \n\ndef beta : Nat := 2   ' >"$nosel_fixture"
 run_expect 1 "$work/nosel-format.json" "$application" format --check --root . --json --no-cache \
   tests/modes/.rdf-layout-nosel.lean
@@ -727,7 +722,7 @@ PY
 #     reaches the SAME fixed point on disk. Since `ruff-11d`, `format` publishes in place, so both orders
 #     are materialized by the tools themselves (no captured-preview step) and the two files are compared.
 #     `fix` and `format` are both writers now; each still owns only its half. ---
-canonical='module\nimport LeanFmt.Basic\n\nnamespace Alpha\n\n  def mixedValue : Nat := 1\n\nend Alpha\n'
+canonical='module\nimport LeanFmt.Basic\n\nnamespace Alpha\n\ndef mixedValue : Nat := 1\n\nend Alpha\n'
 source='module\n\nimport LeanFmt.Basic\nimport LeanFmt.Basic\n\nnamespace     Alpha\n\ndef mixedValue : Nat := 1\n\nend Alpha\n'
 
 # Order A — `fix` then `format`: fix dedups at original coords (layout still dirty), then format reflows
@@ -798,7 +793,7 @@ PY
 # 1+2. Exact bytes + idempotence. A layout-dirty, otherwise lint-clean file: `format` writes EXACTLY the
 #      canonical bytes (byte-compared), no rule fix appears, and a second `format` writes nothing.
 printf 'module\n\nnamespace     Gamma\n\ndef exactValue : Nat := 1\n\nend Gamma\n' >"$fin_exact_fixture"
-canonical_exact='module\n\nnamespace Gamma\n\n  def exactValue : Nat := 1\n\nend Gamma\n'
+canonical_exact='module\n\nnamespace Gamma\n\ndef exactValue : Nat := 1\n\nend Gamma\n'
 run_expect 0 "$work/fin-exact.json" "$application" format --root . --json --no-cache \
   tests/modes/.fip-final-exact.lean
 CANON="$canonical_exact" python3 - "$work/fin-exact.json" "$fin_exact_fixture" <<'PY'
@@ -934,7 +929,7 @@ PY
 python3 - "$fin_incl_fixture" <<'PY'
 import sys
 assert open(sys.argv[1]).read() == \
-    "module\n\nnamespace Incl\n\n  def inclValue : Nat := 1\n\nend Incl\n"
+    "module\n\nnamespace Incl\n\ndef inclValue : Nat := 1\n\nend Incl\n"
 PY
 metadata "$fin_excl_fixture" >"$work/fin-excl.after"
 cmp "$work/fin-excl.before" "$work/fin-excl.after" # the excluded sibling was never touched
@@ -1018,7 +1013,7 @@ PY
 python3 - "$rcd_excl_fixture" <<'PY'
 import sys
 assert open(sys.argv[1]).read() == \
-    "module\n\nnamespace Excluded\n\n  def excludedValue : Nat := 1\n\nend Excluded\n"
+    "module\n\nnamespace Excluded\n\ndef excludedValue : Nat := 1\n\nend Excluded\n"
 PY
 
 # 11. `[format] line-width` participates in the result-cache identity and `[lint]` does not
@@ -1026,10 +1021,9 @@ PY
 #     is stored, and the width-20 run that follows must not be served from it. A hit counter would
 #     prove less - this asserts the wrong answer cannot be returned, which is the property at stake.
 rm -rf "$cache_root"
-# A layout-clean file at width 100 whose canonical layout at width 20 differs: without a
-# width-sensitive body, both runs are `clean` and the assertion below passes whether or not the
-# cache respects the width.
-printf 'module\n\nnamespace Width\n\ndef widthValue : Nat := 1 + 2 + 3 + 4 + 5 + 6 + 7 + 8 + 9 + 10\n\nend Width\n' \
+# A namespace-spacing change at both widths with a body that breaks only at width 20. Both runs must
+# format, and their admitted bytes must differ; otherwise a width-100 cache hit could mask width 20.
+printf 'module\n\nnamespace     Width\n\ndef widthValue : Nat := 1 + 2 + 3 + 4 + 5 + 6 + 7 + 8 + 9 + 10\n\nend Width\n' \
   >"$rcd_excl_fixture"
 cat >"$work/rcd-w100.toml" <<'EOF'
 [format]

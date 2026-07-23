@@ -172,19 +172,9 @@ rather than to a parallel cache identity.
 `source` carries both the projection and the artifact's whole identity. There is no second module
 name or source digest beside it: a duplicate identity is one that can disagree with itself.
 
-**Facts, never findings.** This carries what a reader cannot recompute — the exact frontend's
-projection — and nothing a reader could derive from bytes it already holds. It held `findings` and a
-`trailingWhitespace` flag until `RRE-IMPL`; `notes/01-rule-facts.md` §6 has the argument and §2-3
-have the two measured defects that made it. The short version is that a conclusion in here is a
-second decider: `check` never reads an artifact, so it decided the trailing-whitespace question for
-itself and disagreed. The
-long version is that the rules were in the compiler plugin's import closure, which put one lint
-rule's message text inside every module's compiled bytes. Both are gone: there is nothing here to
-disagree with, and the plugin has no reason to link a rule.
-
-`ruff-11` adds further semantic facts beside `source`. They are facts too, and the same rule applies:
-elaboration evidence belongs here because only the frontend can make it; what a rule concludes from
-it does not. -/
+The payload contains facts a reader cannot recompute: the source projection and, when demanded,
+frontend semantic evidence. It contains no formatter policy, findings, rule selection, or canonical
+bytes. Rules remain outside the compiler plugin and derive conclusions from these facts. -/
 structure ModuleArtifact where
   schema : String
   source : LosslessSource
@@ -201,9 +191,8 @@ def ModuleArtifact.caps (artifact : ModuleArtifact) : SemanticCaps :=
   | some projection => projection.caps
   | none => {}
 
-/-- `v7` deletes the formatter-only notation database. Old artifact shapes miss rather than being
-reinterpreted as semantic rule facts. -/
-def artifactSchema : String := "lean-fmt.module-artifact.v7"
+/-- Current policy-free module artifact shape. The version is checked before any artifact is trusted. -/
+def artifactSchema : String := "lean-fmt.module-artifact.v8"
 
 /-- Build the artifact for one accepted module.
 

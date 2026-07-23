@@ -38,7 +38,7 @@ off = json.load(open(sys.argv[2]))["artifact"]
 on2 = json.load(open(sys.argv[3]))["artifact"]
 
 # Both schemas advanced regardless of capture; only the semantic field differs.
-assert on["schema"] == off["schema"] == "lean-fmt.module-artifact.v7", on["schema"]
+assert on["schema"] == off["schema"] == "lean-fmt.module-artifact.v8", on["schema"]
 
 # B. Demand-gating: no capture -> semantic is null; capture -> semantic present. The source
 # projection is byte-identical either way, so the fact is purely additive and the syntax-only path is

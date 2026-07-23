@@ -6,6 +6,7 @@ Authors: Jacob Reinhold
 
 module
 
+import all LeanFmt.Analysis
 import all LeanFmt.Cache
 import all LeanFmt.Config
 import all LeanFmt.Edit
@@ -440,27 +441,10 @@ private def ExactRun.envelope (run : ExactRun)
     if ← setupPath.pathExists then IO.FS.removeFile setupPath
     if ← sourcePath.pathExists then IO.FS.removeFile sourcePath
 
-/- The margin the frontend-native formatter renders at is no longer a constant here.
-
-The frontend-native document emits groups, nesting, and line choices for registered syntax, and the
-linear renderer breaks those groups when their flat width exceeds the margin. `ruff-13` RCD-IMPL
-promoted the previous formatter's identical observable setting
-to the runtime key `[format] line-width` (`FormatConfig.lineWidth`, default 100), resolved per file from
-that file's effective configuration.
-
-That promotion invalidated the old case for keeping it compiled in. The earlier wording argued
-cache identity stayed sound without a new component because the `formatter`
-component hashes the application binary, so editing the constant and recompiling invalidated every
-cached `CanonicalText`. Two things about that are now wrong. Formatter identity is no longer a content
-hash of the binary — commit `62e23fa` made it `(path, byteSize, mtime)` metadata (`Cache.lean`), which
-still moves on a rebuild, so the *conclusion* held for a constant. But a **runtime** override changes
-output without touching the binary, so neither version of formatter identity can see it. The
-resolved margin is therefore folded into the `configuration` component instead
-(`Project.configurationIdentity`, via `FormatConfig.identityString`), in the commit that introduced the
-key — the obligation `ruff-13` `notes/01-discovery.md` §9.1 records.
-
-The value 100 remains the default; it matches mathlib's own text-linter convention and is otherwise
-arbitrary. -/
+/- The frontend-native document emits groups, nesting, and line choices, and its linear renderer
+breaks them against the effective `[format] line-width`. Because a runtime width changes canonical
+bytes without changing the executable, `Project.configurationIdentity` folds the resolved value into
+cache identity. The default is 100. -/
 
 /-! ## Range formatting — unit selection over the layout source map
 
@@ -494,7 +478,8 @@ The three steps are `notes/01-stream-range.md` §4.2:
    range surface can promise anything about the text outside it. Without it, `def a := 1 def b := 2`
    lets a request rewrite the first command with bytes whose layout was decided by the second — so
    re-running the formatter would move them again, and the reported actual range would have been
-   wrong. It terminates: the tail is last and `normalizeEof` leaves the output ending in a newline. -/
+   wrong. It terminates because extension stops at the final unit even when the source deliberately
+   has no final newline. -/
 private def selectUnits (rendered : ByteArray) (marks : Array Mark)
     (requested : SourceRange) : Option (Nat × Nat) := Id.run do
   if marks.isEmpty then return none
@@ -571,14 +556,14 @@ def sliceRange (normalized rendered : String) (marks : Array Mark)
 
 private def canonicalAnalysis (snapshot : SourceSnapshot) (renderCanonical : Bool)
     (analysis : AnalysisEnvelope) : IO SemanticAnalysis := do
-  match SemanticAnalysis.ofEnvelope? snapshot.source analysis with
+  match SemanticAnalysis.ofArtifact? snapshot.source analysis.artifact? analysis.diagnostics with
   | some semantic =>
     if semantic.result?.isNone then return semantic
     if renderCanonical then
       match analysis.canonical?, analysis.validationFailure? with
       | some layout, none =>
         recordCount "path_exact_render" 1
-        return semantic.withCanonical { text := layout.text }
+        return semantic.withCanonical layout
       | none, some failure =>
         recordCount "path_validation_failure" 1
         throw <| IO.userError
@@ -594,7 +579,7 @@ private def canonicalAnalysis (snapshot : SourceSnapshot) (renderCanonical : Boo
 layout when `renderCanonical`.
 
 Every finding — source, syntax, and the owned `.semantic` FMT012 rename — is computed once, on the
-**original** projection (`canonicalAnalysis` → `ofEnvelope?`), at the file's own coordinates, and `fix`
+**original** projection (`canonicalAnalysis` → `ofArtifact?`), at the file's own coordinates, and `fix`
 applies it there. `ruff-11c` RDF-IMPL retired `reprojectCanonical`, which re-ran the whole registry over
 the *rendered* text so a fix could land in canonical coordinates: with the layout/fix split, no fix is
 computed or applied at canonical coordinates, so there is nothing to re-project. `captureOccurrences`
@@ -666,7 +651,7 @@ private def availableAnalysis (plan : RulePlan) (renderCanonical applies : Bool)
     -- `fix` both reach it on a source-only selection: `fix` no longer renders, so a `fix --select FMT003`
     -- takes the shortcut and applies the dedup at original coordinates without a frontend run. Also
     -- gated on the absence of a directive sigil: suppression is parsed only from the syntax projection
-    -- (`ofEnvelope?`), so a directive-bearing file must take the artifact path even when its selected
+    -- (`ofArtifact?`), so a directive-bearing file must take the artifact path even when its selected
     -- rules are all source-tier — otherwise its `SuppressionFacts` would default empty and the directive
     -- silently do nothing. `mayContainDirective` is a superset test, so this over-fetches only on files
     -- that mention the sigil without a valid directive, never under-fetches.
@@ -1739,7 +1724,7 @@ def ExactRun.streamSnapshot (run : ExactRun) (target : Project.SourceTarget) (pl
     (formatWidth? := if renderCanonical then some target.config.format.lineWidth else none)
     (cancel? := cancel?)
   let analysis ← canonicalAnalysis target renderCanonical envelope
-  let marks := envelope.canonical?.map (fun layout => layout.sourceMap) |>.getD #[]
+  let marks := analysis.result?.bind (·.canonical?) |>.map (·.sourceMap) |>.getD #[]
   let (normalized, _) := LosslessSource.normalize target.source
   let (reportImports, withheldRedundant) ← singleImportReport plan project.workspace normalized
   match prepareFile plan renderCanonical unsafeFixes reportImports
@@ -1806,9 +1791,9 @@ Every clause the freeze fixes is enforced here:
   the `.lake` floor, and resolves the effective configuration from the buffer's location, so the same
   bytes get the same answer whether they arrive by path or by pipe.
 
-The exact frontend response retains the admitted layout map for this surface. `CanonicalText`
-deliberately does not grow a `marks` field: it is a cached batch value, and the map is needed only by
-the stream/range surface. -/
+The exact frontend response retains the complete admitted layout for this surface. Batch cache hits
+and unsaved streams consume the same text, source map, formatter metrics, and validation metrics; no
+caller reaches back into the transport envelope for a second partial representation. -/
 def stream (request : StreamRequest) : IO StreamReport := do
   unless request.maxMemoryGiB > 0 do
     throw <| IO.userError "--max-memory must provide a nonzero operating envelope"

@@ -86,7 +86,7 @@ expect_codes fmt012-scoped-in ScopedInOption.lean "FMT010" --select FMT010
 expect_codes fmt013-pos NestedParen.lean "FMT011" --select FMT011
 
 # The three fixable rules carry a `.safe` fix whose edits are expressed in original-source
-# coordinates (`Application.renderCanonicalText` docstring). Pin the applicability and the byte spans
+# coordinates (the frontend-native canonical layout contract). Pin the applicability and the byte spans
 # the edits delete: FMT008/011 drop the duplicate instance and its `", "` separator; FMT011 deletes
 # just the outer parenthesis pair and leaves the inner `(1)`.
 python3 - "$work/fmt010-pos.json" "$work/fmt011-pos.json" "$work/fmt013-pos.json" <<'PY'

@@ -31,7 +31,7 @@ private structure PerFileIgnore where
 
 The section split marks the cache-identity boundary, not a cosmetic grouping (`notes/01-discovery.md`
 §8.1, §9.2): every field here is folded into `Project.configurationIdentity`, because a cached
-`CanonicalText` rendered under one value must never be served under another. `[lint]` settings are the
+`CanonicalLayout` rendered under one value must never be served under another. `[lint]` settings are the
 complement — they project over an unchanged canonical result and must stay out of identity, as
 `CLAUDE.md` requires of rule selection. -/
 structure FormatConfig where

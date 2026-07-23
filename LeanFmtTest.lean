@@ -1312,7 +1312,7 @@ private def testEngineTiers : IO Unit := do
     "the rules wire shape does not derive input from the implementation"
   -- `ruff-10` shipped the first `.syntax`-tier rules (FMT006–FMT011) and `ruff-11` the first
   -- `.semantic`-tier ones (FMT012–FMT015), so the registry now spans the whole lattice. The seams that
-  -- once assumed it was uniformly source-tier are all tier-aware: `ofEnvelope?` tags its cache entry
+  -- once assumed it was uniformly source-tier are all tier-aware: `ofArtifact?` tags its cache entry
   -- with the tier the facts reached (`.semantic` for a demanded artifact, else `.syntax`) and the
   -- source-only shortcut tags `.source`, and `cacheHitServes` serves an entry only when
   -- `result.tier.satisfies plan.requiredTier` — so a narrow shortcut entry cannot answer a syntax or
@@ -1801,13 +1801,13 @@ private def verifyOfficialFacet (root sourcePath : System.FilePath) : IO Unit :=
   let artifacts ← Application.officialArtifacts project.workspace #[target]
   let some (some artifact) := artifacts[0]?
     | throw <| IO.userError "registered official facet was unavailable or invalid"
-  let some semantic := SemanticAnalysis.ofEnvelope? target.source { artifact? := some artifact }
-    | throw <| IO.userError "registered official facet did not produce a canonical result"
+  let some semantic := SemanticAnalysis.ofArtifact? target.source (some artifact)
+    | throw <| IO.userError "registered official facet did not produce a semantic result"
   let normalized := (LosslessSource.normalize target.source).1
   -- The artifact path runs the whole registry against the projection and tags the result `.syntax`,
   -- with source-suppression directives collected from the same projection. The direct construction
   -- has to spell all three or it is comparing against a differently-shaped value — the `.syntax` tier
-  -- and collected `suppression` are exactly what `ofEnvelope?` attaches (`Semantic.lean`).
+  -- and collected `suppression` are exactly what `ofArtifact?` attaches (`Semantic.lean`).
   ensure (semantic == SemanticAnalysis.success normalized
       (runRules (.syntax (SyntaxFacts.of normalized artifact.source)))
       (tier := .syntax) (suppression := Suppression.collect artifact.source normalized))
