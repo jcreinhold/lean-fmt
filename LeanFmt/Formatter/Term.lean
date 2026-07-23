@@ -8,11 +8,10 @@ module
 
 /- Foundational term documents over actual parsed nodes.
 
-Application, projection, lambda, and conditional views own documents only when every nested child is
-transparent to this module. Precedence-sensitive operators, project notation, lets, annotations,
-named arguments, quotations, and every other term stay with the live term registry. This boundary is
-intentional: the registry has the parser's precedence and parenthesizer information, while this module
-has no operator spelling table and never infers structure from a flat token list. -/
+Application, projection, lambda, annotation, named-argument, quotation, and conditional views own
+documents from their actual parentage. Precedence-sensitive operators and later control terms remain
+with their assigned structural prompts. Project notation invokes the live registry only at its actual
+non-core child root; a closed ancestor composes that opaque child without delegating itself. -/
 
 import Lean.Parser.Term
 import all LeanFmt.Formatter
@@ -32,10 +31,18 @@ private def separated (head : Doc) (values : Array Doc) : Doc :=
 private partial def transparentDocument? (stx : Lean.Syntax) : Option Doc := do
   let tokens := Syntax.spellings stx
   if tokens.size == 1 then return Syntax.flat tokens
+  if stx.getKind == `null || stx.getKind == `group || stx.getKind == `choice then
+    let children := nonemptyChildren stx
+    if let #[child] := children then return ← transparentDocument? child
   if stx.isOfKind ``Lean.Parser.Term.proj then
     let #[receiver, _, field] := stx.getArgs | none
     let receiverDocument ← transparentDocument? receiver
     return receiverDocument ++ Doc.text "." ++ Syntax.flat (Syntax.spellings field)
+  if stx.isOfKind ``Lean.Parser.Term.explicit then
+    let children := nonemptyChildren stx
+    let some body := children.find? fun child => Syntax.spellings child != #["@"] | none
+    let bodyDocument ← transparentDocument? body
+    return Doc.text "@" ++ bodyDocument
   if stx.isOfKind ``Lean.Parser.Term.app then
     let #[function, arguments] := stx.getArgs | none
     let functionDocument ← transparentDocument? function
@@ -71,21 +78,100 @@ private partial def transparentDocument? (stx : Lean.Syntax) : Option Doc := do
         Doc.line " " ++ Doc.text "else" ++
         Doc.nest 2 (Doc.line " " ++ negativeDocument)
   if let some document := Collection.document? transparentDocument? stx then return document
+  if stx.isOfKind ``Lean.Parser.Term.typeAscription ||
+      stx.isOfKind ``Lean.Parser.Term.namedArgument ||
+      stx.isOfKind ``Lean.Parser.Term.explicitBinder ||
+      stx.isOfKind ``Lean.Parser.Term.implicitBinder ||
+      stx.isOfKind ``Lean.Parser.Term.strictImplicitBinder ||
+      stx.isOfKind ``Lean.Parser.Term.instBinder ||
+      stx.isOfKind ``Lean.Parser.Term.binderIdent ||
+      stx.isOfKind ``Lean.Parser.Term.quot then
+    return Syntax.flat tokens
   none
+
+private partial def composableDocument? (ownership : CommentOwnership) (stx : Lean.Syntax) :
+    Lean.CoreM (Except FormatterFailure (Option Doc)) := do
+  if let some document := transparentDocument? stx then return .ok (some document)
+  let childDocument (child : Lean.Syntax) : Lean.CoreM (Except FormatterFailure (Option Doc)) := do
+    match CoreSurface.owner (← Lean.getEnv) .term child.getKind with
+    | .extension =>
+      return (← Formatter.registered ownership .term child).map fun formatted =>
+        some formatted.document
+    | _ =>
+      match ← composableDocument? ownership child with
+      | .ok (some document) => return .ok (some document)
+      | .error failure => return .error failure
+      | .ok none =>
+        -- This is an exact-child debt boundary for the operator, collection, and control-term
+        -- owners in Prompts 12b/12c. It must not widen into registry ownership of `stx`; Prompt
+        -- 14b removes the boundary once those closed core families are structurally complete.
+        return (← Formatter.registered ownership .term child).map fun formatted =>
+          some formatted.document
+  if stx.isOfKind ``Lean.Parser.Term.paren then
+    let children := nonemptyChildren stx
+    let inner? := children.find? fun child =>
+      let tokens := Syntax.spellings child
+      tokens != #["("] && tokens != #[")"] && !child.isOfKind ``Lean.Parser.Term.hygienicLParen
+    let some inner := inner? | return .ok none
+    match ← childDocument inner with
+    | .ok (some document) => return .ok (some (Doc.text "(" ++ document ++ Doc.text ")"))
+    | .ok none => return .ok none
+    | .error failure => return .error failure
+  if stx.isOfKind ``Lean.Parser.Term.app then
+    let #[function, arguments] := stx.getArgs | return .ok none
+    match ← childDocument function with
+    | .error failure => return .error failure
+    | .ok none => return .ok none
+    | .ok (some functionDocument) =>
+      let arguments := nonemptyChildren arguments
+      if arguments.isEmpty then return .ok none
+      let mut argumentDocuments := #[]
+      for argument in arguments do
+        match ← childDocument argument with
+        | .ok (some document) => argumentDocuments := argumentDocuments.push document
+        | .ok none => return .ok none
+        | .error failure => return .error failure
+      return .ok (some (Doc.group (separated functionDocument argumentDocuments)))
+  if stx.isOfKind ``Lean.Parser.Term.fun then
+    let #[_, bodySyntax] := stx.getArgs | return .ok none
+    if !bodySyntax.isOfKind ``Lean.Parser.Term.basicFun then return .ok none
+    let #[binders, typeSpec, _, body] := bodySyntax.getArgs | return .ok none
+    let binders := nonemptyChildren binders
+    if binders.isEmpty then return .ok none
+    let mut binderDocuments := #[]
+    for binder in binders do
+      match ← childDocument binder with
+      | .ok (some document) => binderDocuments := binderDocuments.push document
+      | .ok none => return .ok none
+      | .error failure => return .error failure
+    let header := separated (Doc.text "fun") binderDocuments ++
+      (if (Syntax.spellings typeSpec).isEmpty then Doc.empty
+       else Doc.text " : " ++ Syntax.flat (Syntax.spellings typeSpec)) ++
+      Doc.text " =>"
+    match ← childDocument body with
+    | .ok (some bodyDocument) =>
+      return .ok (some (Doc.group <|
+        Doc.group header ++ Doc.nest 2 (Doc.line " " ++ bodyDocument)))
+    | .ok none => return .ok none
+    | .error failure => return .error failure
+  return .ok none
 
 /-- Format one actual term child. Transparent core views become composable documents; every opaque or
 precedence-sensitive view uses its live registered formatter on the actual node. -/
 def format (ownership : CommentOwnership) (stx : Lean.Syntax) :
     Lean.CoreM (Except FormatterFailure RegisteredDocument) := do
-  let registered ← Formatter.registered ownership .term stx
-  if !(Comments.subtree ownership stx).isEmpty then return registered
-  if let some block := Block.formatTerm? stx registered then return block
-  match transparentDocument? stx with
-  | some document =>
-    let trace := match registered with
-      | .ok value => value.trace
-      | .error failure => failure.trace
-    return .ok { document, trace, structural := true }
-  | none => return registered
+  if !(Comments.subtree ownership stx).isEmpty then
+    return ← Formatter.registered ownership .term stx
+  match ← composableDocument? ownership stx with
+  | .ok (some document) =>
+    return .ok {
+      document
+      trace := ← Formatter.trace ownership .term stx
+      structural := true }
+  | .error failure => return .error failure
+  | .ok none =>
+    let registered ← Formatter.registered ownership .term stx
+    if let some block := Block.formatTerm? stx registered then return block
+    return registered
 
 end LeanFmt.Internal.Formatter.Term

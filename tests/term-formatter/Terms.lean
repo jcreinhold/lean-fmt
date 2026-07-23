@@ -30,6 +30,15 @@ def customInsideApplication (alpha beta gamma delta : Nat) : Nat :=
 def lambdaTerm : Nat → Nat → Nat :=
   fun first second => first + second
 
+def typedLambda : Nat → Nat → Nat :=
+  fun (first : Nat) (second : Nat) => first + second
+
+def annotation (value : Nat) : Nat :=
+  (value : Nat)
+
+def explicitApplication (value : Nat) : Nat :=
+  @Nat.succ value
+
 def sequentialLets (alpha beta gamma : Nat) : Nat :=
   let first := alpha + beta
   let second := first * gamma
