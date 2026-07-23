@@ -69,10 +69,16 @@ def validateMap (draft : FormatDraft) : Except ValidationFailure Unit := do
   let mut outputCursor := 0
   for index in [0:draft.sourceMap.size] do
     let mark := draft.sourceMap[index]!
-    unless mark.source.start == sourceCursor && mark.output.start == outputCursor do
-      return ← fail .sourceMap s!"map unit {index} overlaps or leaves a gap"
     unless mark.source.start <= mark.source.stop && mark.output.start <= mark.output.stop do
       return ← fail .sourceMap s!"map unit {index} has an inverted range"
+    unless mark.source.start == sourceCursor do
+      let relation :=
+        if mark.source.start < sourceCursor then "overlaps or is out of order" else "leaves a gap"
+      return ← fail .sourceMap s!"source map unit {index} {relation} at {sourceCursor}"
+    unless mark.output.start == outputCursor do
+      let relation :=
+        if mark.output.start < outputCursor then "overlaps or is out of order" else "leaves a gap"
+      return ← fail .sourceMap s!"output map unit {index} {relation} at {outputCursor}"
     sourceCursor := mark.source.stop
     outputCursor := mark.output.stop
   unless sourceCursor == draft.sourceBytes do

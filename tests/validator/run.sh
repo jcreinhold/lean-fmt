@@ -108,6 +108,6 @@ assert envelope["formatFailure"]["detail"] == "adapter fixture formatter failure
 print("  ok   formatter exception remains a typed refusal")
 PY
 
-"$tests" validator-map-negative | grep -q 'cases=4'
-printf '  ok   incomplete, overlapping, inverted, and short output maps rejected by sourceMap\n'
+"$tests" validator-map-negative | grep -q 'cases=6'
+printf '  ok   missing, overlapping, out-of-order, inverted, and short maps rejected by sourceMap\n'
 printf 'tests/validator: ok\n'

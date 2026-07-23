@@ -112,8 +112,8 @@ expect() {
 }
 expect "every comment owned exactly once" '"comments":5'
 expect "same-line comments trail their syntax leaf" '"trailing":3'
-expect "own-line comments lead the next syntax leaf or terminal" '"leading":2'
-expect "the parsed end-of-input terminal owns the EOF comment" '"dangling":0'
+expect "an own-line comment leads the next syntax leaf" '"leading":1'
+expect "a comment past the last token is file-dangling" '"dangling":1'
 
 printf 'failures=%d\n' "$failures"
 exit $((failures > 0 ? 1 : 0))

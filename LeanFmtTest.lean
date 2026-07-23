@@ -2428,17 +2428,26 @@ private def validatorMapNegative : IO UInt32 := do
     terminalStop := 3
     sourceMap := #[{ source := ⟨0, 3⟩, output := ⟨0, 3⟩ }] }
   ensure (Validator.validateMap base).isOk "a complete source map was rejected"
-  let defects : Array FormatDraft := #[
-    { base with sourceMap := #[{ source := ⟨0, 2⟩, output := ⟨0, 3⟩ }] },
-    { base with sourceMap := #[
-        { source := ⟨0, 2⟩, output := ⟨0, 2⟩ },
-        { source := ⟨1, 3⟩, output := ⟨2, 3⟩ }] },
-    { base with sourceMap := #[{ source := ⟨2, 1⟩, output := ⟨0, 3⟩ }] },
-    { base with sourceMap := #[{ source := ⟨0, 3⟩, output := ⟨0, 2⟩ }] }]
-  for defect in defects do
+  let defects : Array (String × FormatDraft) := #[
+    ("missing source tail", { base with
+      sourceMap := #[{ source := ⟨0, 2⟩, output := ⟨0, 3⟩ }] }),
+    ("overlapping source units", { base with sourceMap := #[
+      { source := ⟨0, 2⟩, output := ⟨0, 2⟩ },
+      { source := ⟨1, 3⟩, output := ⟨2, 3⟩ }] }),
+    ("out-of-order source units", { base with sourceMap := #[
+      { source := ⟨1, 2⟩, output := ⟨0, 1⟩ },
+      { source := ⟨0, 1⟩, output := ⟨1, 2⟩ },
+      { source := ⟨2, 3⟩, output := ⟨2, 3⟩ }] }),
+    ("inverted source unit", { base with
+      sourceMap := #[{ source := ⟨2, 1⟩, output := ⟨0, 3⟩ }] }),
+    ("inverted output unit", { base with
+      sourceMap := #[{ source := ⟨0, 3⟩, output := ⟨2, 1⟩ }] }),
+    ("short output tail", { base with
+      sourceMap := #[{ source := ⟨0, 3⟩, output := ⟨0, 2⟩ }] })]
+  for (label, defect) in defects do
     match Validator.validateMap defect with
     | .error failure => ensure (failure.gate == .sourceMap) "wrong source-map rejection gate"
-    | .ok _ => throw <| IO.userError "an invalid source map was admitted"
+    | .ok _ => throw <| IO.userError s!"an invalid source map was admitted: {label}"
   IO.println s!"validator-map-negative cases={defects.size}"
   return 0
 

@@ -438,6 +438,19 @@ whole = client.request("textDocument/formatting",
 check("the narrow edit does what the whole-document edit does",
       apply_edit(layout_source, edits[0]), whole[0]["newText"])
 
+# Drive the public stdin range surface over the identical unsaved bytes and requested coordinates.
+# This must be the same complete spliced document that applying the LSP's narrow edit produces.
+requested_start = sum(len(line) + 1 for line in layout_source.split("\n")[:2])
+requested_stop = requested_start + 5
+stdin = subprocess.run(
+    [application, "format", "-", "--stdin-filename", "tests/check/Layout.lean",
+     "--range", f"{requested_start}:{requested_stop}"],
+    cwd=root, env={**os.environ, "LEAN_NUM_THREADS": "1"},
+    input=layout_source.encode(), capture_output=True, timeout=300)
+check("stdin range formatting exits cleanly", stdin.returncode, 0)
+check("stdin and LSP select and render identical range bytes",
+      stdin.stdout.decode(), apply_edit(layout_source, edits[0]))
+
 # --- code actions ---
 actions = client.request("textDocument/codeAction", {
     "textDocument": {"uri": findings_uri},

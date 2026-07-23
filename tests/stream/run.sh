@@ -189,6 +189,13 @@ d = json.load(sys.stdin)
 m = d["sourceMap"][0]["output"]
 print(d["formatted"].encode()[m["start"]:m["stop"]].decode().strip())')" \
   "namespace Alpha"
+check "the structural source-map digest is deterministic" \
+  "$(printf '%s' "$json" | python3 -c '
+import hashlib,json,sys
+d=json.load(sys.stdin)
+payload=json.dumps(d["sourceMap"],sort_keys=True,separators=(",",":")).encode()
+print(hashlib.sha256(payload).hexdigest())')" \
+  "6d65a19283a1094a684dc55c07c30f958c8024e39f807cb49dee3c4c52aa3303"
 
 ###############################################################################
 # `ruff-14` RSF-FINAL — boundary stability and pipeline behavior.
@@ -278,6 +285,20 @@ nest="$work/nest.lean"
 printf 'module\n\nstructure Point where\n  x : Nat\n  y : Nat\n\ndef  origin   : Point   :=   { x := 0, y := 0 }\n' >"$nest"
 check "a range inside a nested node widens to its command" \
   "$(actual --range 82:88 <"$nest")" "$identity: formatted range 51-99"
+
+printf -- '--- formatter suppression is a structural unit (§4) ---\n'
+suppressed="$work/suppressed.lean"
+printf 'module\n\n-- lean-fmt: format-ignore-next\ndef preserved(alpha:Nat):Nat:=alpha+1\n\ndef  resumed(beta:Nat):Nat:=beta+1\n' >"$suppressed"
+suppressed_range=$(fmt format - --stdin-filename "$identity" --range-lines 3:1-4:38 <"$suppressed" 2>/dev/null)
+check "a selected suppressed unit stays byte-for-byte" \
+  "$(printf '%s' "$suppressed_range" | sed -n '4p')" "def preserved(alpha:Nat):Nat:=alpha+1"
+check "a suppressed range leaves the following dirty unit alone" \
+  "$(printf '%s' "$suppressed_range" | sed -n '6p')" "def  resumed(beta:Nat):Nat:=beta+1"
+resumed_range=$(fmt format - --stdin-filename "$identity" --range-lines 6:1-6:39 <"$suppressed" 2>/dev/null)
+check "formatting resumes in the next selected unit" \
+  "$(printf '%s' "$resumed_range" | grep -F 'def resumed')" "def resumed (beta : Nat) : Nat := beta + 1"
+check "formatting the next unit does not disturb suppressed bytes" \
+  "$(printf '%s' "$resumed_range" | sed -n '4p')" "def preserved(alpha:Nat):Nat:=alpha+1"
 
 printf -- '--- comment ownership at an extent boundary (§4.3) ---\n'
 # Trailing-greedy: a comment written *above* a declaration is in the *earlier* command's extent. This
