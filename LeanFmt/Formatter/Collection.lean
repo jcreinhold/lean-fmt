@@ -16,6 +16,7 @@ Match/control layout is intentionally absent and belongs to `LeanFmt.Formatter.C
 import Lean.Parser.Term
 import all LeanFmt.Formatter
 import all LeanFmt.Formatter.Syntax
+import all LeanFmt.Formatter.Trivia
 
 namespace LeanFmt.Internal.Formatter.Collection
 
@@ -81,6 +82,21 @@ private partial def descendants (predicate : Lean.Syntax → Bool) (stx : Lean.S
   if predicate stx then values.push stx
   else stx.getArgs.foldl (init := values) fun result child => descendants predicate child result
 
+private structure RecordField where
+  stx : Lean.Syntax
+  commaAfter : Bool := false
+  deriving Inhabited
+
+private partial def recordFields (stx : Lean.Syntax) (fields : Array RecordField := #[]) :
+    Array RecordField :=
+  if stx.isOfKind ``Lean.Parser.Term.structInstField then fields.push { stx }
+  else
+    stx.getArgs.foldl (init := fields) fun fields child =>
+      if isAtom "," child then
+        if fields.isEmpty then fields
+        else fields.modify (fields.size - 1) ({ · with commaAfter := true })
+      else recordFields child fields
+
 private partial def firstDocument
     (childDocument : Lean.Syntax → Lean.CoreM (Except FormatterFailure (Option Doc)))
     (stx : Lean.Syntax) : Lean.CoreM (Except FormatterFailure (Option Doc)) := do
@@ -98,35 +114,40 @@ private partial def firstDocument
   return .ok none
 
 private def fieldDocument
+    (ownership : CommentOwnership)
     (childDocument : Lean.Syntax → Lean.CoreM (Except FormatterFailure (Option Doc)))
     (field : Lean.Syntax) : Lean.CoreM (Except FormatterFailure (Option Doc)) := do
   let #[left, right] := field.getArgs | return .ok none
   let definitions := descendants (·.isOfKind ``Lean.Parser.Term.structInstFieldDef) right
+  let leading := Trivia.leading ownership field
+  let attachLeading := fun document => match leading with
+    | some comments => comments ++ Doc.hard ++ document
+    | none => document
   let some definition := definitions[0]? |
-    return .ok (some (Syntax.flat (Syntax.spellings left)))
+    return .ok (some (attachLeading (Syntax.flat (Syntax.spellings left))))
   for child in definition.getArgs do
     if (Syntax.spellings child).isEmpty || isAtom ":=" child then continue
     match ← childDocument child with
     | .ok (some value) =>
-      return .ok (some (Syntax.flat (Syntax.spellings left) ++ Doc.text " := " ++ value))
+      return .ok (some (attachLeading <|
+        Syntax.flat (Syntax.spellings left) ++ Doc.text " := " ++ value))
     | .error failure => return .error failure
     | .ok none => pure ()
   return .ok none
 
 private def recordDocument
+    (ownership : CommentOwnership)
     (childDocument : Lean.Syntax → Lean.CoreM (Except FormatterFailure (Option Doc)))
     (stx : Lean.Syntax) : Lean.CoreM (Except FormatterFailure (Option Doc)) := do
   let #[_, update, fields, ellipsis, typeSpec, _] := stx.getArgs | return .ok none
-  let fieldNodes := descendants (·.isOfKind ``Lean.Parser.Term.structInstField) fields
-  if fieldNodes.isEmpty then return .ok (some (Doc.text "{}"))
+  let fieldEntries := recordFields fields
+  if fieldEntries.isEmpty then return .ok (some (Doc.text "{}"))
   let mut documents := #[]
-  for field in fieldNodes do
-    match ← fieldDocument childDocument field with
+  for field in fieldEntries do
+    match ← fieldDocument ownership childDocument field.stx with
     | .ok (some document) => documents := documents.push document
     | .ok none => return .ok none
     | .error failure => return .error failure
-  let separators := descendants (isAtom ",") fields |>.size
-  if separators > documents.size then return .ok none
   let mut document := Doc.text "{ "
   if (Syntax.spellings update).isEmpty then
     document := document ++ documents[0]!
@@ -138,11 +159,11 @@ private def recordDocument
     | .ok none => return .ok none
     | .error failure => return .error failure
   for index in [1:documents.size] do
-    if separators >= index then
+    if fieldEntries[index - 1]!.commaAfter then
       document := document ++ Doc.text "," ++ Doc.nest 2 (Doc.line " " ++ documents[index]!)
     else
       document := document ++ Doc.nest 2 (Doc.hard ++ documents[index]!)
-  if separators == documents.size then document := document ++ Doc.text ","
+  if fieldEntries[fieldEntries.size - 1]!.commaAfter then document := document ++ Doc.text ","
   if (descendants (isAtom "..") ellipsis).size == 1 then
     document := document ++ Doc.text " .."
   else if !(Syntax.spellings ellipsis).isEmpty then
@@ -160,15 +181,21 @@ private def recordDocument
 /-- Compose one closed delimiter or record root from actual parser children. `none` means this module
 does not own the syntax family; it never means to copy the source or delegate a recognized root. -/
 def document
+    (ownership : CommentOwnership)
     (childDocument : Lean.Syntax → Lean.CoreM (Except FormatterFailure (Option Doc)))
     (stx : Lean.Syntax) : Lean.CoreM (Except FormatterFailure (Option Doc)) :=
-  if stx.isOfKind ``Lean.Parser.Term.paren || stx.isOfKind ``Lean.Parser.Term.tuple ||
-      stx.isOfKind ``Lean.Parser.Term.anonymousCtor || stx.getKind == `«term[_]» ||
-      stx.getKind == `«term#[_,]» then
-    delimiterDocument childDocument stx
-  else if stx.isOfKind ``Lean.Parser.Term.structInst then
-    recordDocument childDocument stx
-  else
-    return .ok none
+  do
+    let result ← if stx.isOfKind ``Lean.Parser.Term.paren || stx.isOfKind ``Lean.Parser.Term.tuple ||
+        stx.isOfKind ``Lean.Parser.Term.anonymousCtor || stx.getKind == `«term[_]» ||
+        stx.getKind == `«term#[_,]» then
+      delimiterDocument childDocument stx
+    else if stx.isOfKind ``Lean.Parser.Term.structInst then
+      recordDocument ownership childDocument stx
+    else
+      pure (.ok none)
+    return result.map fun document? => document?.map fun document =>
+      match Trivia.leading ownership stx with
+      | some comments => comments ++ Doc.hard ++ document
+      | none => document
 
 end LeanFmt.Internal.Formatter.Collection

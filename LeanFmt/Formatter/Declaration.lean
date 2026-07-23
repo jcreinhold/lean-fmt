@@ -9,10 +9,9 @@ module
 /- Structural declaration documents over actual command syntax.
 
 Shared value declarations use their parser nodes for declaration id, binder list, optional result,
-and simple value. Their flat and broken forms are lean-fmt documents. Nested result types remain exact
-token rows; ordinary value bodies request term documents. Equation declarations, value-less families,
-and offside bodies stay with the complete live command registry because their outer grammar or base
-column is part of the formatting context. Project command wrappers are not recognized here. -/
+value, equations, termination suffix, and local `where` declarations. Their flat and broken forms are
+lean-fmt documents, and term, tactic, control, and `do` bodies retain structural ownership across the
+command boundary. Unsupported project command wrappers are not recognized here. -/
 
 import Lean.Parser.Command
 import all LeanFmt.Formatter
@@ -68,6 +67,21 @@ private partial def descendants (predicate : Lean.Syntax → Bool) (stx : Lean.S
     (result : Array Lean.Syntax := #[]) : Array Lean.Syntax :=
   if predicate stx then result.push stx
   else stx.getArgs.foldl (init := result) fun result child => descendants predicate child result
+
+private partial def containerMembers (containerKind memberKind : Lean.Name) (stx : Lean.Syntax)
+    (result : Array Lean.Syntax := #[]) : Array Lean.Syntax :=
+  if stx.getKind == memberKind then result.push stx
+  else if stx.getKind == containerKind || stx.getKind == Lean.nullKind ||
+      stx.getKind == Lean.groupKind then
+    stx.getArgs.foldl (init := result) fun values child =>
+      containerMembers containerKind memberKind child values
+  else result
+
+private partial def transparentMember? (kind : Lean.Name) (stx : Lean.Syntax) : Option Lean.Syntax :=
+  if stx.getKind == kind then some stx
+  else if stx.getKind == Lean.nullKind || stx.getKind == Lean.groupKind then
+    stx.getArgs.findSome? (transparentMember? kind)
+  else none
 
 private def isFamilyMember (stx : Lean.Syntax) : Bool :=
   stx.isOfKind ``Lean.Parser.Command.ctor ||
@@ -131,6 +145,30 @@ private def typeDocument (typeSpec : Lean.Syntax) : Doc :=
   let body := if tokens[0]? == some ":" then tokens.extract 1 tokens.size else tokens
   Doc.text " :" ++ Doc.nest 2 (Doc.line " " ++ Syntax.flat body)
 
+private def declarationHead (tokens : Array String) : Doc := Id.run do
+  let mut document := Doc.empty
+  let mut ordinary := #[]
+  let mut docComment := #[]
+  for token in tokens do
+    if !docComment.isEmpty then
+      docComment := docComment.push token
+      if token.endsWith "-/" then
+        document := document ++ Syntax.flat docComment ++ Doc.hard
+        docComment := #[]
+    else if token.startsWith "/--" || token.startsWith "/-!" then
+      unless ordinary.isEmpty do
+        document := document ++ Syntax.flat ordinary ++ Doc.text " "
+      ordinary := #[]
+      docComment := #[token]
+      if token.endsWith "-/" then
+        document := document ++ Syntax.flat docComment ++ Doc.hard
+        docComment := #[]
+    else
+      ordinary := ordinary.push token
+  unless docComment.isEmpty do document := document ++ Syntax.flat docComment ++ Doc.hard
+  unless ordinary.isEmpty do document := document ++ Syntax.flat ordinary
+  return document
+
 private def valueBody? (value : Lean.Syntax) : Option Lean.Syntax :=
   value.getArgs.find? fun child =>
     let tokens := Syntax.spellings child
@@ -145,8 +183,12 @@ private def flatValueDocument (value : Lean.Syntax) : Doc :=
   Doc.text " :=" ++ Doc.nest 2 (Doc.line " " ++ Syntax.flat body)
 
 private def whereDocument? (value : Lean.Syntax) : Option Doc := do
-  let whereDecls ← findDescendant? (·.isOfKind ``Lean.Parser.Term.whereDecls) value
-  let declarations := descendants (·.isOfKind ``Lean.Parser.Term.letRecDecl) whereDecls
+  let owner := if value.isOfKind ``Lean.Parser.Command.declValEqns then
+      findDescendant? (·.isOfKind ``Lean.Parser.Term.matchAltsWhereDecls) value |>.getD value
+    else value
+  let whereDecls ← owner.getArgs.findSome? (transparentMember? ``Lean.Parser.Term.whereDecls)
+  let declarations := containerMembers ``Lean.Parser.Term.whereDecls
+    ``Lean.Parser.Term.letRecDecl whereDecls
   let mut document := Doc.text "where"
   for declaration in declarations do
     document := document ++ Doc.nest 2
@@ -158,14 +200,26 @@ private def terminationDocument? (value : Lean.Syntax) : Option Doc := do
   let tokens := Syntax.spellings suffix
   if tokens.isEmpty then none else some (Syntax.flat tokens)
 
-private def equationDocument (value : Lean.Syntax) : Doc :=
-  let alternatives := descendants (·.isOfKind ``Lean.Parser.Term.matchAlt) value
-  let document? := alternatives.foldl (init := none) fun document? alternative =>
-    let row := Syntax.flat (Syntax.spellings alternative)
-    some <| match document? with
-      | some document => document ++ Doc.hard ++ row
-      | none => row
-  document?.getD Doc.empty
+private def equationDocument (ownership : CommentOwnership) (value : Lean.Syntax) :
+    Lean.CoreM (Except FormatterFailure Doc) := do
+  let some equationContainer :=
+      findDescendant? (·.isOfKind ``Lean.Parser.Term.matchAltsWhereDecls) value |
+    return .ok Doc.empty
+  let some alternativeContainer := equationContainer.getArgs.findSome?
+      (transparentMember? ``Lean.Parser.Term.matchAlts) |
+    return .ok Doc.empty
+  let alternatives := containerMembers ``Lean.Parser.Term.matchAlts
+    ``Lean.Parser.Term.matchAlt alternativeContainer
+  let mut document? := none
+  for alternative in alternatives do
+    let #[_, patterns, _, body] := alternative.getArgs | continue
+    match ← Term.format ownership body with
+    | .error failure => return .error failure
+    | .ok formatted =>
+      let row := Doc.text "| " ++ Syntax.flat (Syntax.spellings patterns) ++ Doc.text " =>" ++
+        Doc.nest 2 (Doc.line " " ++ formatted.document)
+      document? := some <| document?.map (· ++ Doc.hard ++ row) |>.getD row
+  return .ok (document?.getD Doc.empty)
 
 private def structureValueDocument (value : Lean.Syntax) : Doc :=
   let fields := descendants (·.isOfKind ``Lean.Parser.Term.structInstField) value
@@ -194,7 +248,7 @@ private def simpleDocument? (ownership : CommentOwnership) (stx : Lean.Syntax) :
   let #[modifiers, inner] := stx.getArgs | return .ok none
   if !simpleKind inner then return .ok none else
   let parts := simpleParts modifiers inner
-  let mut document := Syntax.flat parts.leading
+  let mut document := declarationHead parts.leading
   if let some signature := parts.signature? then
     let (binders, typeSpec?) := signatureParts signature #[] none
     for binder in binders do
@@ -203,7 +257,9 @@ private def simpleDocument? (ownership : CommentOwnership) (stx : Lean.Syntax) :
     if let some typeSpec := typeSpec? then document := document ++ typeDocument typeSpec
   if let some value := parts.value? then
     if isEquationValue value then
-      document := document ++ Doc.nest 2 (Doc.hard ++ equationDocument value)
+      match ← equationDocument ownership value with
+      | .error failure => return .error failure
+      | .ok equations => document := document ++ Doc.nest 2 (Doc.hard ++ equations)
       if let some termination := terminationDocument? value then
         document := document ++ Doc.hard ++ termination
       if let some whereDocument := whereDocument? value then
@@ -213,7 +269,6 @@ private def simpleDocument? (ownership : CommentOwnership) (stx : Lean.Syntax) :
     else
       match valueBody? value with
       | some body =>
-        if Block.contains body then return .ok none
         match ← Term.format ownership body with
         | .ok formatted => document := document ++ valueDocument formatted.document
         | .error failure => return .error failure
@@ -249,9 +304,9 @@ private def derivingDocument? (stx : Lean.Syntax) : Option Doc :=
     some (Syntax.flat (Syntax.spellings stx))
   else none
 
-/-- Format a closed declaration command, or return `none` for a non-declaration command. Shared
-simple declarations receive structural flat/broken documents when comment-free; other declaration
-families retain the live registry document and trace. -/
+/-- Format a closed declaration command, or return `none` for a non-declaration command. Supported
+core declaration families receive structural documents; only an unsupported declaration shape falls
+back to its actual live registry root. -/
 def format? (ownership : CommentOwnership) (stx : Lean.Syntax) :
     Lean.CoreM (Option (Except FormatterFailure RegisteredDocument)) := do
   if !handles stx then return none
@@ -264,18 +319,16 @@ def format? (ownership : CommentOwnership) (stx : Lean.Syntax) :
   match documentResult with
   | .error failure => return some (.error failure)
   | .ok (some document) =>
-    if (Comments.subtree ownership stx).isEmpty then
+    return some (.ok {
+      document
+      trace := ← Formatter.trace ownership .command stx
+      structural := true })
+  | .ok none =>
+    if let some document := derivingDocument? stx then
       return some (.ok {
         document
         trace := ← Formatter.trace ownership .command stx
         structural := true })
-  | .ok none =>
-    if let some document := derivingDocument? stx then
-      if (Comments.subtree ownership stx).isEmpty then
-        return some (.ok {
-          document
-          trace := ← Formatter.trace ownership .command stx
-          structural := true })
   let registered ← Formatter.registeredAs ownership .command stx stx.unsetTrailing
   return some registered
 

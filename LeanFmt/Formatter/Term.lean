@@ -32,6 +32,9 @@ private def separated (head : Doc) (values : Array Doc) : Doc :=
 private partial def transparentDocument? (stx : Lean.Syntax) : Option Doc := do
   let tokens := Syntax.spellings stx
   if tokens.size == 1 then return Syntax.flat tokens
+  if stx.getKind == `termS!_ || stx.getKind == `interpolatedStrKind ||
+      stx.getKind == `interpolatedStrLitKind then
+    return Syntax.flat tokens
   if stx.getKind == `null || stx.getKind == `group || stx.getKind == `choice then
     let children := nonemptyChildren stx
     if let #[child] := children then return ← transparentDocument? child
@@ -70,11 +73,13 @@ private partial def transparentDocument? (stx : Lean.Syntax) : Option Doc := do
     return Doc.group (header ++ Doc.nest 2 (Doc.line " " ++ bodyDocument))
   if stx.isOfKind ``Lean.Parser.Term.typeAscription ||
       stx.isOfKind ``Lean.Parser.Term.namedArgument ||
+      stx.isOfKind ``Lean.Parser.Term.dotIdent ||
       stx.isOfKind ``Lean.Parser.Term.explicitBinder ||
       stx.isOfKind ``Lean.Parser.Term.implicitBinder ||
       stx.isOfKind ``Lean.Parser.Term.strictImplicitBinder ||
       stx.isOfKind ``Lean.Parser.Term.instBinder ||
       stx.isOfKind ``Lean.Parser.Term.binderIdent ||
+      stx.isOfKind ``Lean.Parser.Term.doubleQuotedName ||
       stx.isOfKind ``Lean.Parser.Term.quot then
     return Syntax.flat tokens
   none
@@ -98,11 +103,11 @@ private partial def composableDocument? (ownership : CommentOwnership) (stx : Le
         -- 14b removes the boundary once those closed core families are structurally complete.
         return (← Formatter.registered ownership .term child).map fun formatted =>
           some formatted.document
-  match ← Collection.document childDocument stx with
+  match ← Collection.document ownership childDocument stx with
   | .ok (some document) => return .ok (some document)
   | .error failure => return .error failure
   | .ok none => pure ()
-  match ← ControlTerm.document childDocument stx with
+  match ← ControlTerm.document ownership childDocument stx with
   | .ok (some document) => return .ok (some document)
   | .error failure => return .error failure
   | .ok none => pure ()
@@ -110,6 +115,14 @@ private partial def composableDocument? (ownership : CommentOwnership) (stx : Le
   | .ok (some document) => return .ok (some document)
   | .error failure => return .error failure
   | .ok none => pure ()
+  if stx.isOfKind ``Lean.Parser.Term.proj then
+    let #[receiver, _, field] := stx.getArgs | return .ok none
+    match ← childDocument receiver with
+    | .ok (some receiverDocument) =>
+      return .ok (some (receiverDocument ++ Doc.text "." ++
+        Syntax.flat (Syntax.spellings field)))
+    | .ok none => return .ok none
+    | .error failure => return .error failure
   if let #[left, operator, right] := stx.getArgs then
     if let .atom _ spelling := operator then
       match ← childDocument left with
@@ -176,8 +189,6 @@ private partial def composableDocument? (ownership : CommentOwnership) (stx : Le
 precedence-sensitive view uses its live registered formatter on the actual node. -/
 def format (ownership : CommentOwnership) (stx : Lean.Syntax) :
     Lean.CoreM (Except FormatterFailure RegisteredDocument) := do
-  if !(Comments.subtree ownership stx).isEmpty then
-    return ← Formatter.registered ownership .term stx
   match ← composableDocument? ownership stx with
   | .ok (some document) =>
     return .ok {

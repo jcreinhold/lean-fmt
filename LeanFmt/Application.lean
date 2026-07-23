@@ -533,14 +533,27 @@ admitted frontend-native layout produced. The result is
     normalized[0, actual.start)  ++  rendered[out.start, out.stop)  ++  normalized[actual.stop, end)
 
 so every byte outside the actual range is the caller's own, unmoved. Selecting every unit reproduces
-`rendered` exactly, which is the roadmap's whole-file/full-range equivalence. `RSF-FINAL` tests it. -/
+`rendered` exactly, which is the roadmap's whole-file/full-range equivalence. The whitespace prefix of
+the next unit is part of the preceding boundary: include it without including the next unit's first
+token, so formatting a scope opener can establish the following unit's vertical separation and
+owner-relative indentation through a narrow edit. `RSF-FINAL` and the LSP range test cover both
+cases. -/
 def sliceRange (normalized rendered : String) (marks : Array Mark)
     (requested : SourceRange) : Option RangeResult := Id.run do
   let renderedBytes := rendered.toUTF8
   let some (first, last) := selectUnits renderedBytes marks requested
     | return none
   let actual : SourceRange := ⟨marks[first]!.source.start, marks[last]!.source.stop⟩
-  let output : SourceRange := ⟨marks[first]!.output.start, marks[last]!.output.stop⟩
+  let outputStop := Id.run do
+    let mut stop := marks[last]!.output.stop
+    if let some next := marks[last + 1]? then
+      if next.output.start == stop then
+        while stop < next.output.stop &&
+            (renderedBytes[stop]! == 0x20 || renderedBytes[stop]! == 0x09 ||
+              renderedBytes[stop]! == 0x0a || renderedBytes[stop]! == 0x0d) do
+          stop := stop + 1
+    return stop
+  let output : SourceRange := ⟨marks[first]!.output.start, outputStop⟩
   let normalizedBytes := normalized.toUTF8
   let slice (bytes : ByteArray) (range : SourceRange) : String :=
     (String.fromUTF8? (bytes.extract range.start range.stop)).getD ""
@@ -549,9 +562,11 @@ def sliceRange (normalized rendered : String) (marks : Array Mark)
   let after := slice normalizedBytes ⟨actual.stop, normalizedBytes.size⟩
   -- Output offsets are re-based onto the spliced text: the body starts where `before` ends.
   let shift := before.utf8ByteSize
-  let selected := (marks.extract first (last + 1)).map fun mark =>
+  let selectedMarks := marks.extract first (last + 1)
+  let selected := selectedMarks.mapIdx fun index mark =>
+    let stop := if index + 1 == selectedMarks.size then output.stop else mark.output.stop
     { mark with output := ⟨mark.output.start - output.start + shift,
-        mark.output.stop - output.start + shift⟩ }
+        stop - output.start + shift⟩ }
   return some { text := before ++ body ++ after, requested, actual, marks := selected }
 
 private def canonicalAnalysis (snapshot : SourceSnapshot) (renderCanonical : Bool)

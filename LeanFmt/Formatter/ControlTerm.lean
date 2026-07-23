@@ -10,11 +10,13 @@ module
 
 Branch, declaration, continuation, discriminant, and alternative membership are taken from their
 syntax kinds and fixed child contracts. This module never searches rendered text or source columns.
-Embedded tactic and `do` bodies remain opaque exact children until their block owner lands. -/
+Embedded tactic and `do` bodies are documents supplied by the block owner; the control ancestor
+retains structural ownership. -/
 
 import Lean.Parser.Term
 import all LeanFmt.Formatter
 import all LeanFmt.Formatter.Syntax
+import all LeanFmt.Formatter.Trivia
 
 namespace LeanFmt.Internal.Formatter.ControlTerm
 
@@ -80,10 +82,14 @@ private def letDocument (formatChild : ChildDocument) (stx : Lean.Syntax) :
       return .ok (some (Doc.text "let " ++ declarationDocument ++
         Doc.hard ++ continuationDocument))
 
-private partial def descendants (kind : Lean.Name) (stx : Lean.Syntax)
+private partial def containerMembers (containerKind memberKind : Lean.Name) (stx : Lean.Syntax)
     (values : Array Lean.Syntax := #[]) : Array Lean.Syntax :=
-  if stx.getKind == kind then values.push stx
-  else stx.getArgs.foldl (init := values) fun result nested => descendants kind nested result
+  if stx.getKind == memberKind then values.push stx
+  else if stx.getKind == containerKind || stx.getKind == Lean.nullKind ||
+      stx.getKind == Lean.groupKind then
+    stx.getArgs.foldl (init := values) fun result nested =>
+      containerMembers containerKind memberKind nested result
+  else values
 
 private def discriminantDocument (formatChild : ChildDocument) (stx : Lean.Syntax) :
     Lean.CoreM (Except FormatterFailure (Option Doc)) := do
@@ -95,21 +101,30 @@ private def discriminantDocument (formatChild : ChildDocument) (stx : Lean.Synta
     if (Syntax.spellings binder).isEmpty then return .ok (some valueDocument)
     return .ok (some (Syntax.flat (Syntax.spellings binder) ++ Doc.text " " ++ valueDocument))
 
-private def alternativeDocument (formatChild : ChildDocument) (stx : Lean.Syntax) :
+private def alternativeDocument (ownership : CommentOwnership) (formatChild : ChildDocument)
+    (stx : Lean.Syntax) :
     Lean.CoreM (Except FormatterFailure (Option Doc)) := do
   let #[_, patterns, _, body] := stx.getArgs | return .ok none
   match ← formatChild body with
   | .error failure => return .error failure
   | .ok none => return .ok none
   | .ok (some bodyDocument) =>
-    return .ok (some (Doc.group <|
+    let document := Doc.group <|
       Doc.text "| " ++ Syntax.flat (Syntax.spellings patterns) ++ Doc.text " =>" ++
-        Doc.nest 2 (Doc.line " " ++ bodyDocument)))
+        Doc.nest 2 (Doc.line " " ++ bodyDocument)
+    return .ok (some <| match Trivia.leading ownership stx with
+      | some comments => comments ++ Doc.hard ++ document
+      | none => document)
 
-private def matchDocument (formatChild : ChildDocument) (stx : Lean.Syntax) :
+private def matchDocument (ownership : CommentOwnership) (formatChild : ChildDocument)
+    (stx : Lean.Syntax) :
     Lean.CoreM (Except FormatterFailure (Option Doc)) := do
-  let discriminants := descendants ``Lean.Parser.Term.matchDiscr stx
-  let alternatives := descendants ``Lean.Parser.Term.matchAlt stx
+  let #[_, _, _, discriminantContainer, _, alternativeContainer] := stx.getArgs |
+    return .ok none
+  let discriminants := containerMembers Lean.nullKind ``Lean.Parser.Term.matchDiscr
+    discriminantContainer
+  let alternatives := containerMembers ``Lean.Parser.Term.matchAlts
+    ``Lean.Parser.Term.matchAlt alternativeContainer
   if discriminants.isEmpty || alternatives.isEmpty then return .ok none
   let mut document := Doc.text "match "
   for index in [0:discriminants.size] do
@@ -121,18 +136,18 @@ private def matchDocument (formatChild : ChildDocument) (stx : Lean.Syntax) :
       document := document ++ discriminant
   document := Doc.group (document ++ Doc.text " with")
   for alternative in alternatives do
-    match ← alternativeDocument formatChild alternative with
+    match ← alternativeDocument ownership formatChild alternative with
     | .error failure => return .error failure
     | .ok none => return .ok none
     | .ok (some arm) => document := document ++ Doc.hard ++ arm
   return .ok (some document)
 
 /-- Compose a closed core control term, returning `none` only for a family owned elsewhere. -/
-def document (formatChild : ChildDocument) (stx : Lean.Syntax) :
+def document (ownership : CommentOwnership) (formatChild : ChildDocument) (stx : Lean.Syntax) :
     Lean.CoreM (Except FormatterFailure (Option Doc)) :=
   if stx.isOfKind ``termIfThenElse then ifDocument formatChild stx
   else if stx.isOfKind ``Lean.Parser.Term.let then letDocument formatChild stx
-  else if stx.isOfKind ``Lean.Parser.Term.match then matchDocument formatChild stx
+  else if stx.isOfKind ``Lean.Parser.Term.match then matchDocument ownership formatChild stx
   else return .ok none
 
 end LeanFmt.Internal.Formatter.ControlTerm

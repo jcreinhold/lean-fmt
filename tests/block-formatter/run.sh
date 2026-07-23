@@ -28,6 +28,9 @@ for width in (20, 40, 80, 100):
     assert report.get("validationFailure") is None and report.get("canonical") is not None, report
     canonical = report["canonical"]
     assert canonical["validation"]["idempotencePasses"] == 1, canonical
+    assert canonical["metrics"]["coreRegistryDocuments"] == 0, canonical["metrics"]
+    assert canonical["metrics"]["registryDocuments"] == 0, canonical["metrics"]
+    assert canonical["metrics"]["structuralDocuments"] > 0, canonical["metrics"]
     text = canonical["text"]
     texts[width] = text
     for required in (
@@ -38,22 +41,48 @@ for width in (20, 40, 80, 100):
         "constructor <;>",
         "custom_assumption",
         "match value with",
-        "Id.run do",
+        "let some value := input |",
+        "let some value ← input |",
+        "total ←",
+        "have positive",
+        "for value in values do",
+        "continue",
+        "break",
+        "while total <",
+        "let rec count",
+        "else if value.isNone then",
+        "unless flag do",
+        "repeat",
+        "until flag",
+        "let value ←",
+        "{\n",
+        "1;",
+        "try",
+        "catch _ =>",
+        "catch\n",
+        "finally",
+        "dbg_trace",
+        "assert!",
+        "debug_assert!",
+        "Id.run",
         "where",
     ):
         assert required in text, (width, required, text)
     assert text.count("/- between focused goals -/") == 1, text
+    assert text.count("/- match-arm comment -/") == 1, text
     assert text.index("let first") < text.index("let second") < text.index("pure second"), text
 
 narrow = texts[20]
 assert "by\n      constructor\n      ·" in narrow, narrow
 assert "first\n      | exact proof\n      | assumption" in narrow, narrow
-assert "do\n    let first ←" in narrow, narrow
+assert "do\n      let first ←" in narrow, narrow
+assert "Id.run\n      do" in narrow, narrow
+assert "do\n      {" in narrow, narrow
 assert narrow.index("| 0 =>") < narrow.index("| _ =>"), narrow
 assert texts[20] != texts[40] != texts[80], "block registry ignored configured width"
-print("  ok   closed by roots compose actual tactic sequence documents at four widths")
-print("  ok   focus, alternatives, combinators, match arms, and item order survive")
-print("  ok   only project tactic leaves remain registry-owned; do/where await integration")
+print("  ok   tactic, do, control, match, and where roots compose structurally at four widths")
+print("  ok   binds, fallback arms, loops, try/catch/finally, bracketed blocks, and comments survive")
+print("  ok   both frontend renders are idempotent with zero core registry command ancestors")
 PY
 
 printf 'tests/block-formatter: ok\n'

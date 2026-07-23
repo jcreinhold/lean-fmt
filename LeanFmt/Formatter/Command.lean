@@ -10,9 +10,9 @@ module
 
 The public operation deliberately reports only the ownership boundary needed by whole-module
 composition. Header syntax and Lean's built-in command namespace are closed formatter-owned shells;
-all other command kinds are open project syntax and stay with the live formatter registry. Nested
-declarations, terms, tactics, and parser categories remain inside the same registry traversal until
-their dedicated structural layers replace them.
+all other command kinds are open project syntax and stay with the live formatter registry. Dedicated
+structural layers compose core declarations, terms, tactics, control forms, and blocks without
+delegating their command ancestor.
 
 This classification is structural rather than a spelling database: adding a new project command does
 not require changing lean-fmt, and adding a new toolchain command under `Lean.Parser.Command` enters
@@ -285,7 +285,8 @@ syntax is delegated under the environment and options that parsed it. -/
 def command (ownership : CommentOwnership) (stx : Lean.Syntax) :
     Lean.CoreM (Except FormatterFailure CommandDocument) := do
   if let some document := simpleShellDocument? stx then
-    if (Comments.subtree ownership stx).isEmpty then
+    if stx.isOfKind ``Lean.Parser.Command.moduleDoc ||
+        (Comments.subtree ownership stx).isEmpty then
       return .ok (← structural ownership stx document)
   if let some declaration ← Formatter.Declaration.format? ownership stx then
     return declaration.map fun formatted =>
