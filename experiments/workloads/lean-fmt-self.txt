@@ -16,14 +16,8 @@ LeanFmt/Discovery.lean
 LeanFmt/Doc.lean
 LeanFmt/Edit.lean
 LeanFmt/Formatter.lean
-LeanFmt/Formatter/Block.lean
-LeanFmt/Formatter/Collection.lean
 LeanFmt/Formatter/Command.lean
-LeanFmt/Formatter/ControlTerm.lean
-LeanFmt/Formatter/CoreSurface.lean
-LeanFmt/Formatter/Declaration.lean
-LeanFmt/Formatter/Syntax.lean
-LeanFmt/Formatter/Term.lean
+LeanFmt/Formatter/NativeLayout.lean
 LeanFmt/Formatter/Trivia.lean
 LeanFmt/GitSelection.lean
 LeanFmt/Imports.lean
@@ -34,6 +28,7 @@ LeanFmt/Project.lean
 LeanFmt/Rules.lean
 LeanFmt/Semantic.lean
 LeanFmt/Suppression.lean
+LeanFmt/SyntaxArtifact.lean
 LeanFmt/Validator.lean
 LeanFmt/Watch.lean
 LeanFmtArtifactExtract.lean
