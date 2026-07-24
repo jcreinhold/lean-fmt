@@ -177,18 +177,15 @@ check "tactic steps stay siblings" \
 check "by stays on the := line" "$(grep -c ' := by$' "$offside")" "1"
 check "and its first tactic still starts the next line" \
   "$(grep -A1 -F ':= by' "$offside" | tail -1)" "  have step : n + 0 = n := Nat.add_zero n"
-# A guarded `let` is one construct: the bar reads as a guard only with its bail-out beside it. Lean's
-# document spells that boundary as a literal `text"\n"` no width can flatten, so the flat boundary is
-# what holds it. The sibling statements below are the offside constraint's own job -- native layout
-# reparents them *into* the guard, where they would run conditionally.
-check "a guarded let keeps its bail-out on the bar's line" \
-  "$(grep -c '^    let some current := value | return 0$' "$offside")" "1"
-check "and its siblings stay at the owning indentation" \
-  "$(grep -A2 -F 'let some current := value | return 0' "$offside" | tail -2)" \
+# A guarded `let`'s siblings are the offside constraint's own job: native layout reparents them *into*
+# the guard, where they would run conditionally. The break after the bar is D4 and stays pinned in §7;
+# these assert the part that is already right, which nothing asserted before.
+check "a guarded let's siblings stay at the owning indentation" \
+  "$(grep -A3 -F 'let some current := value |' "$offside" | tail -2)" \
   "    let doubled := current + current
     return doubled + 1"
-check "two guards in one sequence each keep their own bail-out" \
-  "$(grep -c '^    let some \(first := left | return 0\|second := right | return first\)$' "$offside")" "2"
+check "two guards in one sequence each keep their own siblings at that indentation" \
+  "$(grep -c '^    let some \(first := left\|second := right\) |$' "$offside")" "2"
 
 printf -- '--- pinned defects these fixtures found, owned by 23c (§7) ---\n'
 # Each of these is wrong. They are pinned exactly as measured so that repairing one fails this
@@ -212,11 +209,20 @@ check "D2 and is followed by a blank line" \
 #       why §4 passes; its owner is not.
 check "D3 a dangling do-block comment escapes to column zero" \
   "$(grep -c '^-- dangling comment after the last statement$' "$boundaries")" "1"
-# D4 is repaired and its assertion moved into §6, alongside the sibling dedent it shares an owner with.
-# `results/23a` passed it to 23c as an open safety boundary; it validated even while broken, so it was
-# a layout defect and not a correctness one.
+# D4 -- a guarded `let ... | return 0` breaks after the `|`. `results/23a` passed this to 23c as an
+#       open safety boundary; it validates today, so it is a layout defect and not a correctness one.
+#       A flat boundary at the bar was tried and reverted: it is width-unsound. Forcing the bail-out
+#       onto the bar's line makes the renderer break *inside* the bail-out instead, at an indentation
+#       derived from the enclosing `nest` rather than from the bar's column, and the continuation
+#       reparses as a sibling `do` element. `tests/block-formatter` renders the same fixture at four
+#       widths and caught it: at 40, `return Array.replicate 12 0 |>.size` split after `12` and the
+#       output no longer elaborated. Repairing D4 needs an indentation anchor for the bail-out, not
+#       just a flat boundary; `experiments/native-layout-defects/README.md` records the measurement.
+check "D4 a guarded let breaks after its bar" \
+  "$(grep -c '^    let some current := value |$' "$offside")" "1"
 # D5 is repaired and its assertion moved into §6. It was the first of the three *upstream* defects to
-# go: the flat boundary the adapter already had reaches it, so no new mechanism was needed.
+# go: the flat boundary the adapter already had reaches it, so no new mechanism was needed. Unlike D4,
+# joining `by` to `:=` cannot migrate a break: the tactic sequence starts its own line either way.
 # D6 is repaired; its assertion moved into §4. It was the adapter's for the same reason as D1 and D3.
 
 printf -- '--- result ---\n'

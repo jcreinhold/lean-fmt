@@ -90,12 +90,14 @@ It does not need to. The repair is a **flat boundary at the `by` terminal**, and
 has that mechanism: `transformOrdinaryText` (`NativeLayout.lean:704-711`) routes a whitespace-only text
 leaf through `constrainBoundary`, so `flatBoundaries` replaces whatever the renderer emitted at that
 position with `" "`. What is missing is only a pure collector of the shape `collectReturnTermStarts`
-(`:372-381`) and `collectRecordUpdateFieldStarts` (`:394-413`) already are. The same is true of D4 (a
-flat boundary at the guard body's first terminal) and D2 (hard at the docstring's open, flat at its
-close, plus an `OffsideConstraint`). An earlier draft of this file claimed all three needed a new
-document-rewriting mechanism — an eighth entry for the list in `CLAUDE.md`. Reading
-`transformOrdinaryText` disproves that: three mechanisms already reach every position these defects
-occupy.
+(`:372-381`) and `collectRecordUpdateFieldStarts` (`:394-413`) already are. An earlier draft of this
+file claimed the repair needed a new document-rewriting mechanism — an eighth entry for the list in
+`CLAUDE.md`. Reading `transformOrdinaryText` disproves that for D5: the position is already reachable.
+
+D5 shipped this way and is width-safe, which is not a general property of flat boundaries (see D4
+below). It holds here because the tactic sequence begins its own line either way, so joining `by` to
+`:=` adds exactly three columns and moves no break. `tests/block-formatter/run.sh` renders `by` roots
+at widths 20, 40, 80, and 100 and is the standing evidence.
 
 `run.sh` keeps the `do` and `fun` reproductions even though both are correct today. They are the
 control: they show the repair must not fire on a body whose soft line already renders flat, and they
@@ -156,3 +158,30 @@ of the guarded `let` in the source and run unconditionally. The adapter's existi
 already repairs it; its output keeps them at the owning indentation. What survives as D4 is only the
 break after the bar. So the offside mechanism is doing its job and D4 is cosmetic, which is what
 `tests/native-layout/run.sh` §7 records and what `results/23a` did not yet know.
+
+### A flat boundary at the bar is width-unsound
+
+Measured 2026-07-24 at `929b067`, and reverted. Forcing the bail-out onto the bar's line does not
+remove the break — it moves it. `.text " "` is unbreakable, so the renderer re-measures and breaks at
+the next soft line, which is now *inside* the bail-out term. That break's indentation comes from the
+enclosing `nest`, not from the bar's column, so the continuation lands at a column the `do` block
+reads as a sibling element:
+
+```sh
+lake setup-file experiments/native-layout-defects/D4Probe.lean > setup.json
+"$(lake -q query lean-fmt --text)" __analyze-exact setup.json \
+  experiments/native-layout-defects/D4Probe.lean D4Probe.lean 8589934592 4:40
+```
+
+`D4Probe.lean` is `tests/block-formatter/Blocks.lean`'s `longLetFallback` alone. At width 47 and above
+the whole guard fits and the output is correct. At 45 and below it fails the diagnostics gate:
+`return Array.replicate 12 0 |>.size` splits after `12`, `Array.replicate 12` becomes the `return`'s
+argument at type `Nat`, and `0 |>.size` becomes a statement of its own — `Nat.size` does not exist.
+`tests/block-formatter/run.sh` renders its fixture at 20, 40, 80, and 100, so it caught this while
+`tests/native-layout/run.sh`, which renders at 100 only, stayed green.
+
+The width where it breaks is a property of the term, not a bound anyone can pick: any bail-out has a
+width at which it must break somewhere. So D4 needs an indentation anchor for the bail-out — a
+constraint that puts every break inside it past the guard's own column, which is what the hard newline
+plus `nest` was already buying — and a flat boundary alone cannot supply one. Until then the break
+stays, and §7 keeps the pin.

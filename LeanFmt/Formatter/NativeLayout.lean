@@ -459,39 +459,6 @@ private partial def collectUngroupedBodyStarts (stx : Lean.Syntax)
       collectUngroupedBodyStarts child starts
   | _ => starts
 
-/- A guarded `let`'s bail-out stays on the bar's line.
-
-Lean's document spells this boundary as a literal `text" |" text"\n"`, a hard newline no width can
-flatten, so `let some current := value | return 0` always breaks after the bar. The bar and its
-continuation are one construct: the bar reads as a guard only with the bail-out beside it.
-
-The boundary is the first terminal at or after the bar, which is `pipe.stop` -- no need to identify the
-continuation's own node, and it holds whether or not the guard body is a `doSeqIndent`. `pipes.back?`
-for the same reason `collectOffsideConstraints` uses it: a pattern may spell alternatives with earlier
-bars, and only the last one is the guard.
-
-The cost is that a bail-out long enough to overflow now stays on the bar's line rather than breaking
-there. Measured against this repository's own 60-odd guarded `let`s, every body is a short bail-out --
-`return false`, `none`, `continue`, `.error "unknown directive scope"` -- and the widest resulting line
-is 94 columns. The idiom bounds it: a guarded `let` exists to leave, and leaving is short. -/
-private partial def collectGuardContinuationStarts (stx : Lean.Syntax)
-    (starts : Array Nat := #[]) : Array Nat :=
-  match stx with
-  | .node _ kind children =>
-    let starts :=
-      if kind == ``Lean.Parser.Term.doLetElse ||
-          kind == ``Lean.Parser.Term.doLetExpr ||
-          kind == ``Lean.Parser.Term.doLetMetaExpr ||
-          kind == ``Lean.Parser.Term.doLetArrow then
-        match (guardedPipeRanges stx).back? with
-        | some pipe => starts.push pipe.stop
-        | none => starts
-      else starts
-    let children := if kind == Lean.choiceKind then children[0]?.toArray else children
-    children.foldl (init := starts) fun starts child =>
-      collectGuardContinuationStarts child starts
-  | _ => starts
-
 /- `indent` is `Std.Format.getIndent`, the `format.indent` option Lean's own `ppIndent`/`ppDedent`
 read. A constraint here cancels one level of the indentation native layout introduced, so it is that
 same quantity negated -- not the literal `-2` this used to spell. The default happens to be 2, which is
@@ -1022,8 +989,7 @@ def command (source : String) (ownership : CommentOwnership) (stx : Lean.Syntax)
 alternatives: alternative 0 is {expected}, alternative {alternative} is {actual}" }
   let comments := interiorComments ownership stx
   let constraints := collectOffsideConstraints formatIndent stripped
-  let flatStarts := collectGuardContinuationStarts stripped
-    (collectUngroupedBodyStarts stripped (collectReturnTermStarts stripped))
+  let flatStarts := collectUngroupedBodyStarts stripped (collectReturnTermStarts stripped)
   let hardStarts := collectRecordUpdateFieldStarts stripped
   let commentFree := withoutTrivia stripped
   let (formattedSyntax, islands) := protectSourceData source commentFree
