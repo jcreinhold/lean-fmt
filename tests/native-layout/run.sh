@@ -169,6 +169,26 @@ check "equation alternatives stay at the declaration's own indent" \
   "$(grep -c '^  | n + 2 => alternatives n + alternatives (n + 1)$' "$offside")" "1"
 check "tactic steps stay siblings" \
   "$(grep -A1 -F 'have step : n + 0 = n' "$offside" | tail -1)" "  exact step"
+# `Term.byTactic` declares `ppAllowUngrouped` to keep `by` on the `:=` line, and the mechanism fires --
+# the native document holds a soft `line`. `Std.Format`'s own `fill` measurement breaks it anyway, as a
+# function of the width rather than of this line: measured threshold 136 columns for a line occupying
+# 50. A flat boundary at the `by` terminal is what holds it, since `Doc` delegates rendering to
+# `Std.Format.prettyM` on purpose and the adapter does not own that decision.
+check "by stays on the := line" "$(grep -c ' := by$' "$offside")" "1"
+check "and its first tactic still starts the next line" \
+  "$(grep -A1 -F ':= by' "$offside" | tail -1)" "  have step : n + 0 = n := Nat.add_zero n"
+# A guarded `let` is one construct: the bar reads as a guard only with its bail-out beside it. Lean's
+# document spells that boundary as a literal `text"\n"` no width can flatten, so the flat boundary is
+# what holds it. The sibling statements below are the offside constraint's own job -- native layout
+# reparents them *into* the guard, where they would run conditionally.
+check "a guarded let keeps its bail-out on the bar's line" \
+  "$(grep -c '^    let some current := value | return 0$' "$offside")" "1"
+check "and its siblings stay at the owning indentation" \
+  "$(grep -A2 -F 'let some current := value | return 0' "$offside" | tail -2)" \
+  "    let doubled := current + current
+    return doubled + 1"
+check "two guards in one sequence each keep their own bail-out" \
+  "$(grep -c '^    let some \(first := left | return 0\|second := right | return first\)$' "$offside")" "2"
 
 printf -- '--- pinned defects these fixtures found, owned by 23c (§7) ---\n'
 # Each of these is wrong. They are pinned exactly as measured so that repairing one fails this
@@ -192,13 +212,11 @@ check "D2 and is followed by a blank line" \
 #       why §4 passes; its owner is not.
 check "D3 a dangling do-block comment escapes to column zero" \
   "$(grep -c '^-- dangling comment after the last statement$' "$boundaries")" "1"
-# D4 -- a guarded `let ... | return 0` breaks after the `|`. `results/23a` passed this to 23c as an
-#       open safety boundary; it validates today, so it is a layout defect and not a correctness one.
-check "D4 a guarded let breaks after its bar" \
-  "$(grep -c '^    let some current := value |$' "$offside")" "1"
-# D5 -- `:= by` puts `by` on its own line, even though `Term.byTactic` (`Term.lean:108`) declares
-#       `ppAllowUngrouped`, which exists precisely to keep `by` on the `:=` line.
-check "D5 by does not stay on the := line" "$(grep -c '^  by$' "$offside")" "1"
+# D4 is repaired and its assertion moved into §6, alongside the sibling dedent it shares an owner with.
+# `results/23a` passed it to 23c as an open safety boundary; it validated even while broken, so it was
+# a layout defect and not a correctness one.
+# D5 is repaired and its assertion moved into §6. It was the first of the three *upstream* defects to
+# go: the flat boundary the adapter already had reaches it, so no new mechanism was needed.
 # D6 is repaired; its assertion moved into §4. It was the adapter's for the same reason as D1 and D3.
 
 printf -- '--- result ---\n'

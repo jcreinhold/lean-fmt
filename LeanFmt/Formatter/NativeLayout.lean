@@ -412,6 +412,86 @@ private partial def collectRecordUpdateFieldStarts (stx : Lean.Syntax)
       collectRecordUpdateFieldStarts child starts
   | _ => starts
 
+/- `:= by` keeps the `by` on the `:=` line.
+
+`Term.byTactic` (`Term.lean:108`) is `ppAllowUngrouped >> "by " >> Tactic.tacticSeqIndentGt`, and that
+mechanism works: `categoryParser.formatter` (`Formatter.lean:302-310`) skips its `fill` wrapping when
+`isUngrouped`, so `ppHardLineUnlessUngrouped` (`Extra.lean:304-308`) emits a soft `line` rather than a
+hard `"\n"`. The document holds `text" :=" line text"by"`.
+
+What breaks it is one layer below, in `Std.Format` itself. `pushGroup`
+(`Init/Data/Format/Basic.lean:243-249`) measures the group *and the enclosing remainder*, and a
+multi-step tactic sequence carries an `align(true)` whose `spaceUptoLine` case (`:165-170`) contributes
+padding at narrow widths instead of stopping the measurement. So the soft line breaks as a function of
+the width rather than of the line being laid out: measured threshold 136 for a line that occupies 50
+columns through `by`. `LeanFmt/Doc.lean` hands registered documents to `Std.Format.prettyM` on purpose,
+so this adapter does not own that decision and must not reimplement the renderer to take it back. A
+flat boundary at the `by` terminal is the whole repair.
+
+Only `by`, not the other two parsers that declare `ppAllowUngrouped`. Measured: `fun` and a bare `do`
+are already correct, so there is nothing to force. `by` is also the only one safe to force -- its
+tactic sequence begins its own line, so joining `by` to `:=` adds exactly three columns and cannot
+overflow, where forcing `fun` flat would pull an arbitrarily long body onto the `:=` line. The one cost
+is `:= by rfl` at a width narrow enough that Lean would have broken it; that stays joined, three
+columns over a soft target the source spellings can already exceed.
+
+`:= Id.run do` is deliberately not matched. Its body's head is an application, so `ppAllowUngrouped`
+never applied and the hard line is correct. -/
+private partial def collectUngroupedBodyStarts (stx : Lean.Syntax)
+    (starts : Array Nat := #[]) : Array Nat :=
+  match stx with
+  | .node _ kind children =>
+    let starts :=
+      if kind == ``Lean.Parser.Command.declValSimple then
+        -- `declBody` (`Command.lean:137-161`) is `lookahead … >> termParser`, and `lookahead` pushes
+        -- nothing, so the body term is this node's second child with no wrapper in between.
+        match children[1]? with
+        | some body =>
+          if body.isOfKind ``Lean.Parser.Term.byTactic then
+            match (selectedLeafRanges body)[0]? with
+            | some range => starts.push range.start
+            | none => starts
+          else starts
+        | none => starts
+      else starts
+    let children := if kind == Lean.choiceKind then children[0]?.toArray else children
+    children.foldl (init := starts) fun starts child =>
+      collectUngroupedBodyStarts child starts
+  | _ => starts
+
+/- A guarded `let`'s bail-out stays on the bar's line.
+
+Lean's document spells this boundary as a literal `text" |" text"\n"`, a hard newline no width can
+flatten, so `let some current := value | return 0` always breaks after the bar. The bar and its
+continuation are one construct: the bar reads as a guard only with the bail-out beside it.
+
+The boundary is the first terminal at or after the bar, which is `pipe.stop` -- no need to identify the
+continuation's own node, and it holds whether or not the guard body is a `doSeqIndent`. `pipes.back?`
+for the same reason `collectOffsideConstraints` uses it: a pattern may spell alternatives with earlier
+bars, and only the last one is the guard.
+
+The cost is that a bail-out long enough to overflow now stays on the bar's line rather than breaking
+there. Measured against this repository's own 60-odd guarded `let`s, every body is a short bail-out --
+`return false`, `none`, `continue`, `.error "unknown directive scope"` -- and the widest resulting line
+is 94 columns. The idiom bounds it: a guarded `let` exists to leave, and leaving is short. -/
+private partial def collectGuardContinuationStarts (stx : Lean.Syntax)
+    (starts : Array Nat := #[]) : Array Nat :=
+  match stx with
+  | .node _ kind children =>
+    let starts :=
+      if kind == ``Lean.Parser.Term.doLetElse ||
+          kind == ``Lean.Parser.Term.doLetExpr ||
+          kind == ``Lean.Parser.Term.doLetMetaExpr ||
+          kind == ``Lean.Parser.Term.doLetArrow then
+        match (guardedPipeRanges stx).back? with
+        | some pipe => starts.push pipe.stop
+        | none => starts
+      else starts
+    let children := if kind == Lean.choiceKind then children[0]?.toArray else children
+    children.foldl (init := starts) fun starts child =>
+      collectGuardContinuationStarts child starts
+  | _ => starts
+
 /- `indent` is `Std.Format.getIndent`, the `format.indent` option Lean's own `ppIndent`/`ppDedent`
 read. A constraint here cancels one level of the indentation native layout introduced, so it is that
 same quantity negated -- not the literal `-2` this used to spell. The default happens to be 2, which is
@@ -837,17 +917,26 @@ private def spanForRange (terminals : Array Terminal) (range : SourceRange) : To
   let stop := terminals.findIdx? (range.stop <= ·.range.start) |>.getD terminals.size
   ⟨start, stop⟩
 
+/- Which terminal a collected source offset constrains: the first one at or after it.
+
+Boundaries are collected by grammar shape and applied by kind, so more than one collector can name the
+same terminal. `constrainBoundary` applies a boundary once, so a repeated index would leave the applied
+count permanently short of the collected one and turn every such command into a refusal. -/
+private def boundaryIndices (terminals : Array Terminal) (starts : Array Nat) : Array Nat :=
+  starts.foldl (init := #[]) fun indices start =>
+    match terminals.findIdx? (start <= ·.range.start) with
+    | some index => if indices.contains index then indices else indices.push index
+    | none => indices
+
 private def transform (source : String) (terminals : Array Terminal)
     (comments : Array InteriorComment)
     (islands : Array ExactIsland) (constraints : Array OffsideConstraint)
-    (returnTermStarts recordUpdateFieldStarts : Array Nat) (baseIndent : Nat)
+    (flatStarts hardStarts : Array Nat) (baseIndent : Nat)
     (native : Std.Format) : Except String (Std.Format × Metrics) := do
   let constraints := constraints.map fun constraint =>
     (constraint, spanForRange terminals constraint.range)
-  let flatBoundaries := returnTermStarts.filterMap fun start =>
-    terminals.findIdx? (start <= ·.range.start)
-  let hardBoundaries := recordUpdateFieldStarts.filterMap fun start =>
-    terminals.findIdx? (start <= ·.range.start)
+  let flatBoundaries := boundaryIndices terminals flatStarts
+  let hardBoundaries := boundaryIndices terminals hardStarts
   let comments := comments.map fun comment =>
     { comment with
       boundary := terminals.findIdx? (comment.range.start < ·.range.start) |>.getD terminals.size }
@@ -873,10 +962,10 @@ next expected range: {repr nextRange}; recent native leaves: \
 offside constraints"
   if state.appliedFlatBoundaries.size != flatBoundaries.size then
     throw s!"native formatter applied {state.appliedFlatBoundaries.size}/{flatBoundaries.size} \
-return-term constraints"
+flat boundaries"
   if state.appliedHardBoundaries.size != hardBoundaries.size then
     throw s!"native formatter applied {state.appliedHardBoundaries.size}/{hardBoundaries.size} \
-record-update field constraints"
+hard boundaries"
   return (result.format, state.metrics)
 
 private def rootRange (stx : Lean.Syntax) : SourceRange :=
@@ -933,8 +1022,9 @@ def command (source : String) (ownership : CommentOwnership) (stx : Lean.Syntax)
 alternatives: alternative 0 is {expected}, alternative {alternative} is {actual}" }
   let comments := interiorComments ownership stx
   let constraints := collectOffsideConstraints formatIndent stripped
-  let returnTermStarts := collectReturnTermStarts stripped
-  let recordUpdateFieldStarts := collectRecordUpdateFieldStarts stripped
+  let flatStarts := collectGuardContinuationStarts stripped
+    (collectUngroupedBodyStarts stripped (collectReturnTermStarts stripped))
+  let hardStarts := collectRecordUpdateFieldStarts stripped
   let commentFree := withoutTrivia stripped
   let (formattedSyntax, islands) := protectSourceData source commentFree
   -- A marker is matched by its spelling when the formatter hands the leaf back, so a source that
@@ -951,8 +1041,8 @@ alternatives: alternative 0 is {expected}, alternative {alternative} is {actual}
 cannot tell from the placeholder that protects {marker.range.start}:{marker.range.stop}" }
   try
     let native ← Lean.PrettyPrinter.formatCommand formattedSyntax
-    match transform source terminals comments islands constraints returnTermStarts
-        recordUpdateFieldStarts baseIndent native with
+    match transform source terminals comments islands constraints flatStarts
+        hardStarts baseIndent native with
     | .ok (native, metrics) =>
       return .ok { document := Doc.registered native, trace, metrics }
     | .error detail =>
