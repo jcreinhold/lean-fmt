@@ -18,9 +18,10 @@ set -euo pipefail
 # test starts succeeding -- which is how `tests/check/Clean.lean` was silently rewritten before
 # `23b-suite-baseline-repair`.
 #
-# §7 is the unusual section: it pins layout defects these fixtures *found*, exactly as measured, so
-# that fixing one shows up here as a failure rather than passing unnoticed. Each is labelled with the
-# prompt that owns it. A green run means "still broken in the recorded way", not "correct".
+# §7 was the unusual section: it pinned the layout defects these fixtures *found*, exactly as measured,
+# so that fixing one showed up here as a failure rather than passing unnoticed. All six are repaired
+# and their claims now sit in §4 and §6 as positive assertions, so §7 runs no check and is the record
+# of what the six were. Re-pin there if a seventh turns up.
 
 repo_root=$(cd "$(dirname "$0")/../.." && pwd)
 cd "$repo_root"
@@ -249,19 +250,36 @@ check "by stays on the := line" "$(grep -c ' := by$' "$offside")" "1"
 check "and its first tactic still starts the next line" \
   "$(grep -A1 -F ':= by' "$offside" | tail -1)" "  have step : n + 0 = n := Nat.add_zero n"
 # A guarded `let`'s siblings are the offside constraint's own job: native layout reparents them *into*
-# the guard, where they would run conditionally. The break after the bar is D4 and stays pinned in §7;
-# these assert the part that is already right, which nothing asserted before.
-check "a guarded let's siblings stay at the owning indentation" \
-  "$(grep -A3 -F 'let some current := value |' "$offside" | tail -2)" \
+# the guard, where they would run conditionally. The bail-out's own placement is the other half, and
+# both are positive claims now; §7 records what D4 was and why joining is the only sound layout for it.
+check "a guarded let's bail-out stays on the bar's line" \
+  "$(grep -c '^    let some current := value | return 0$' "$offside")" "1"
+check "  ... and its siblings stay at the owning indentation" \
+  "$(grep -A2 -F 'let some current := value |' "$offside" | tail -2)" \
   "    let doubled := current + current
     return doubled + 1"
-check "two guards in one sequence each keep their own siblings at that indentation" \
-  "$(grep -c '^    let some \(first := left\|second := right\) |$' "$offside")" "2"
+check "two guards in one sequence each join their own bail-out" \
+  "$(grep -c '^    let some \(first := left | return 0\|second := right | return first\)$' "$offside")" "2"
+# The join has to survive a bail-out long enough to break, because that is the one the reverted repair
+# got wrong: joining moved the break *inside* the term, to an indentation the enclosing `nest` chose
+# rather than the bar's column, and the continuation reparsed as a sibling `do` element. Flattening the
+# joined span leaves no break there to land wrong. §1b renders this same fixture at 20 and 40.
+check "a bail-out long enough to break still joins the bar" \
+  "$(grep -c '^    let some measured := value | return (Array.replicate 12 0).size + Array.size #\[1, 2, 3\]$' "$offside")" "1"
+# The join is collected only where the source already spelled the bail-out on one line. That is what
+# makes flattening total -- `sepByIndent.formatter` is the sole producer of the forced align and the
+# hard newline, and only on its `hasNewlineSep` path -- and what bounds the joined line's width.
+check "a bail-out the source spelled on several lines keeps its break" \
+  "$(grep -A1 -Fx '    let some measured := value |' "$offside" | tail -1)" \
+  "      let fallback := 3"
+check "  ... and is the only bar in these fixtures left bare" \
+  "$(grep -c '^    let some .* |$' "$offside")" "1"
 
-printf -- '--- pinned defects these fixtures found, owned by 23c (§7) ---\n'
-# Each of these is wrong. They are pinned exactly as measured so that repairing one fails this
-# section instead of passing silently, and so 23c inherits minimized reproductions rather than a
-# description. A green run here means "still broken in the recorded way".
+printf -- '--- the six defects these fixtures found, and where their claims live now (§7) ---\n'
+# This section held six pins, each a defect these fixtures found, recorded exactly as measured so that
+# repairing one failed here instead of passing silently. All six are repaired, so it holds no pin and
+# runs no check: it is the record of what they were, which of them were the adapter's and which were
+# upstream, and which section now asserts the repair. Re-pin here if a seventh turns up.
 #
 # D1 is repaired and its assertion moved into §4, where it now reads as the positive claim rather than
 # the pinned defect. `experiments/native-layout-defects` records why it was the adapter's: trivia is
@@ -275,17 +293,17 @@ printf -- '--- pinned defects these fixtures found, owned by 23c (§7) ---\n'
 # layout defect: `Comments.assignWithNeighbors` had no rule for a comment indented past the token after
 # it, so the comment changed *owner*, and layout followed the owner. The repair is a column comparison
 # in ownership plus one break in the adapter, and the two have to agree or the comment gate refuses.
-# D4 -- a guarded `let ... | return 0` breaks after the `|`. `results/23a` passed this to 23c as an
-#       open safety boundary; it validates today, so it is a layout defect and not a correctness one.
-#       A flat boundary at the bar was tried and reverted: it is width-unsound. Forcing the bail-out
-#       onto the bar's line makes the renderer break *inside* the bail-out instead, at an indentation
-#       derived from the enclosing `nest` rather than from the bar's column, and the continuation
-#       reparses as a sibling `do` element. `tests/block-formatter` renders the same fixture at four
-#       widths and caught it: at 40, `return Array.replicate 12 0 |>.size` split after `12` and the
-#       output no longer elaborated. Repairing D4 needs an indentation anchor for the bail-out, not
-#       just a flat boundary; `experiments/native-layout-defects/README.md` records the measurement.
-check "D4 a guarded let breaks after its bar" \
-  "$(grep -c '^    let some current := value |$' "$offside")" "1"
+#
+# D4 is repaired and its assertions moved into §6. It was upstream -- Lean's document spells a hard
+# `text "\n"` after the bar -- and the last of the six because the obvious repair is wrong for a reason
+# the other two upstream ones do not have. A flat boundary at the bar alone was tried and reverted
+# (`929b067`): joining the bail-out does not remove its break, it *moves* it inside the term, to an
+# indentation the enclosing `nest` chose rather than the bar's column, where `checkColGe` reparses the
+# continuation as a sibling `do` element. `Std.Format` has no constructor for "indent to the column
+# where this subtree starts" -- `nest` is relative to the indent and `align` pads to it -- so no anchor
+# can be expressed, and the only sound join is one that leaves no break behind. That is a flat boundary
+# at the bar *plus* flattening the bail-out's own span, collected only where the source already spelled
+# it on one line, which is what makes flattening total and bounds the joined line.
 # D5 is repaired and its assertion moved into §6. It was the first of the three *upstream* defects to
 # go: the flat boundary the adapter already had reaches it, so no new mechanism was needed. Unlike D4,
 # joining `by` to `:=` cannot migrate a break: the tactic sequence starts its own line either way.

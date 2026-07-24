@@ -69,6 +69,12 @@ Match the checks to the change:
 - `tests/watch/run.sh` §9.6 runs `check --staged` against *this* repository, so it fails whenever a
   `.lean` file is staged. That is a defect in the suite, not in your change; re-run it with a clean
   index. `ruff-20-acceptance` owns the repair (move the assertion to a fixture repository).
+- `tests/stream/run.sh` is the sweep's longest suite at about 7.5 minutes, and nearly all of that is
+  one check: it streams a 20,001-declaration buffer into a reader that exits, and the
+  `__analyze-exact` child it spawns runs several minutes at full CPU and reaches about 4.6 GiB RSS.
+  The suite hands that child an 8 GiB limit deliberately. A single suite pinned at 100% CPU with
+  multi-GiB RSS is this working, not a runaway — measured twice, 2026-07-24. Do not kill it, and do
+  not read the aggregate-RSS stop rule for memory *experiments* as covering it.
 - `tests/lsp/acceptance.sh` drives the language server with the toolchain's own LSP client
   (`Lean.Data.Lsp.Ipc`) and measures cancellation latency and hundred-request memory stability. It
   costs about 90 s, so it is not in the `tests/*/run.sh` sweep. Run it when you touch
@@ -156,8 +162,8 @@ original to be faithful to and nobody can diff the output against source.
 A formatter is the missing third row: full layout *and* exact fidelity.
 `LeanFmt/Formatter/NativeLayout.lean` is that row written out by hand, and most difficulty in it is a
 guarantee a printer has no reason to make. Each one already costs a mechanism there. Before adding a
-new mechanism, decide which of these you are paying for; if it is none of them, you have found an
-eighth and it goes in this list.
+new mechanism, decide which of these you are paying for; if it is none of them, you have found a
+ninth and it goes in this list.
 
 - **It can silently drop a leaf.** The combinators backtrack, so a subtree the formatter cannot format
   is omitted rather than reported. `dbg_trace s!"…"` with the interpolated string replaced by a marker
@@ -171,6 +177,13 @@ eighth and it goes in this list.
   `Format.tag` nodes. Correspondence is positional; a divergence is a refusal, not a lookup.
 - **Parser-significant columns are not in the document.** See the `align`/`sepByIndent` note under
   *Exactness and coordinates* below and in the module docstring.
+- **A parser-significant column cannot be expressed even where it is known.** The one above is that the
+  document does not say which columns matter; this is that knowing one does not help. `nest n` is
+  relative to the current *indent* and `align force` pads *to* that indent, so no constructor means
+  "indent this subtree's continuations to the column where it starts" — which is what `many1Indent`
+  saves and `checkColGe` measures against. A break that has to land at such a column cannot be *placed*,
+  so `collectGuardBailouts`/`flattenNative` *remove* it instead, under a source precondition that makes
+  removal total. Refuse rather than emit a break you cannot position.
 - **Comments are not in the algebra**, there is **no verbatim leaf** (`Format.text` re-indents embedded
   newlines), and there is **no protocol for source-sensitive syntax** — hence trivia stripping, the
   cancelling `nest`, and marker substitution respectively.

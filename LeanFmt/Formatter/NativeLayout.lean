@@ -108,10 +108,11 @@ broke, `hard` breaks what it joined, and `elided` removes a separator the docume
 `flat` is not free and is not the default reading of "this should be on one line". `.text " "` cannot
 break, so the renderer re-measures and breaks at the next soft line instead. When that next line is
 inside the construct whose boundary was just moved, its continuation is indented from the enclosing
-`nest` rather than from the column the boundary moved, and offside-sensitive syntax reparses. That is
-why the guarded `let`'s bar is *not* repaired here; see `tests/native-layout/run.sh` §7 D4 and
-`experiments/native-layout-defects/README.md`. `hard` and `elided` do not have this failure mode:
-neither can make a line longer. -/
+`nest` rather than from the column the boundary moved, and offside-sensitive syntax reparses. The
+guarded `let`'s bar was reverted once for exactly that (`7e838a1`) and is joined today only because
+`collectGuardBailouts` pairs the boundary with a flatten that leaves no soft line behind — a `flat`
+alone would not be sound there. `hard` and `elided` do not have this failure mode: neither can make a
+line longer. -/
 private inductive BoundaryLayout where
   | flat
   | hard
@@ -514,6 +515,60 @@ private partial def collectUngroupedBodyStarts (stx : Lean.Syntax)
       collectUngroupedBodyStarts child starts
   | _ => starts
 
+/- A guarded `let`'s bail-out, when the source already spells it on one line.
+
+Lean's document spells this boundary as a literal `text" |" text"\n"`, a hard newline no width can
+flatten, so `let some current := value | return 0` always breaks after the bar. The bar and its
+bail-out are one construct: the bar reads as a guard only with the bail-out beside it.
+
+`doLetElse` (`Lean/Parser/Do.lean:79-81`) spells two `doSeqIndent`s --
+`(checkColGe >> " | " >> doSeqIndent) >> optional (checkColGe >> doSeqIndent)` -- the guard body and
+the rest of the enclosing block, which is why `collectOffsideConstraints` finds two sequences past the
+bar and takes the *last* for its constraint. The bail-out is the first. `pipes.back?` for the reason
+that collector uses it: a pattern may spell alternatives with earlier bars, and only the last one is
+the guard.
+
+Joining alone is width-unsound and was reverted once (`7e838a1`). `.text " "` cannot break, so the
+renderer re-measures and breaks at the next soft line, which is now *inside* the bail-out at an
+indentation the enclosing `nest` chose rather than the bar's column -- and `many1Indent` saved the
+bail-out's first token as the column every later item is measured against, so the continuation
+reparsed as a sibling of the outer `do`. `Std.Format` has no shape that fixes this: `nest` is relative
+to the current indent and `align` pads to it, so nothing in the algebra means "indent this subtree's
+continuations to the column where it starts". The repair is instead to leave no soft line to break --
+the boundary joins, and `flattenNative` removes every break inside the bail-out.
+
+Only a bail-out the *source* already spells on one line is collected, and that one condition buys both
+halves. It is what makes the flatten free of newline-emitting leaves: `sepByIndent.formatter`
+(`Lean/Parser/Extra.lean:212-224`) is the sole producer of both `pushWhitespace "\n"` and
+`pushAlign (force := true)` in the tree, and emits them only on its `hasNewlineSep` path, which is a
+property of the source argument list. And it bounds the cost -- a line the source already fit on is a
+line, not a paragraph. Measured 2026-07-24 over this repository's own `LeanFmt/`: 102 guarded `let`s
+already sit on one line, median 60 columns and widest 99, every body a short bail-out
+(`return false`, `none`, `continue`, `.error "unknown directive scope"`); 10 more spell the bail-out
+on the next line and are not collected. The idiom bounds it: a guarded `let` exists to leave, and
+leaving is short. -/
+private partial def collectGuardBailouts (source : String) (stx : Lean.Syntax)
+    (ranges : Array SourceRange := #[]) : Array SourceRange :=
+  match stx with
+  | .node _ kind children =>
+    let ranges :=
+      if kind == ``Lean.Parser.Term.doLetElse ||
+          kind == ``Lean.Parser.Term.doLetExpr ||
+          kind == ``Lean.Parser.Term.doLetMetaExpr ||
+          kind == ``Lean.Parser.Term.doLetArrow then
+        match (guardedPipeRanges stx).back? with
+        | some pipe =>
+          match ((guardedSequenceRanges stx).filter (pipe.stop <= ·.start))[0]? with
+          | some range =>
+            if (slice source range).contains '\n' then ranges else ranges.push range
+          | none => ranges
+        | none => ranges
+      else ranges
+    let children := if kind == Lean.choiceKind then children[0]?.toArray else children
+    children.foldl (init := ranges) fun ranges child =>
+      collectGuardBailouts source child ranges
+  | _ => ranges
+
 /- The docstring of a constructor that has one.
 
 `ctor` (`Command.lean:210-212`) is `atomic (optional docComment >> "\n| ") >> ppGroup …`, so the
@@ -655,6 +710,7 @@ private structure TransformState where
   droppedIslands : Array String
   constraints : Array (OffsideConstraint × TokenSpan)
   boundaries : Array (Nat × BoundaryLayout)
+  flattened : Array TokenSpan
   baseIndent : Nat
   terminalIndex : Nat := 0
   commentIndex : Nat := 0
@@ -663,6 +719,7 @@ private structure TransformState where
   appliedConstraints : Array Nat := #[]
   appliedBoundaries : Array Nat := #[]
   appliedTrailing : Array Nat := #[]
+  appliedFlattened : Array Nat := #[]
   /- Whether the document emitted since the previous terminal is known to render as something other
   than the empty string. A command starts separated because its first terminal has no predecessor to
   merge with. -/
@@ -728,6 +785,30 @@ private partial def hasLineBoundary : Std.Format → Bool
   | .append left right => hasLineBoundary left || hasLineBoundary right
   | .nil => false
 
+/- The same document with every break removed, or the leaf that made that impossible.
+
+This is `Std.Format`'s own flattening, spelled out because the renderer's lives inside `be` and is not
+callable: `line` becomes `text " "`, an unforced `align` becomes nothing, and a `group` is only a
+decision about breaks the subtree no longer has.
+
+Two leaves survive flattening -- a forced `align`, which pads or breaks to the indent either way, and a
+`text` carrying a newline, which `Format.text` re-indents rather than removes. Both are reported rather
+than silently kept: a caller flattens because it is about to join this subtree onto a line, and a
+subtree that still breaks after joining produces exactly the reparse the join was meant to prevent.
+
+`nest` is kept. It is inert in a subtree that emits no newline, and dropping it would have to be
+justified against exact islands, whose cancelling nests are computed against `ambientNest`. -/
+private partial def flattenNative : Std.Format → Except String Std.Format
+  | .nil => return .nil
+  | .line => return .text " "
+  | .align force => if force then throw "a forced alignment" else return .nil
+  | .text value =>
+    if value.contains '\n' then throw s!"the multi-line leaf {repr value}" else return .text value
+  | .nest indent inner => return .nest indent (← flattenNative inner)
+  | .append left right => return .append (← flattenNative left) (← flattenNative right)
+  | .group inner _ => flattenNative inner
+  | .tag tag inner => return .tag tag (← flattenNative inner)
+
 private def finishConstraint (result : Transformed) (carrier? : Option ConstraintCarrier := none) :
     StateT TransformState (Except String) Transformed := do
   let some carrier := carrier? | return result
@@ -746,6 +827,31 @@ private def finishConstraint (result : Transformed) (carrier? : Option Constrain
           offsideConstraints := state.metrics.offsideConstraints + 1 } }
       return { result with format := .nest constraint.indentAdjustment result.format }
     | none => return result
+
+/- Remove every break inside a span the facts marked as joinable.
+
+Keyed by span and taken by the *deepest* node whose span matches, because the walk is post-order. That
+is not incidental. An `append` of the span and the layout leaf after it carries the same span -- a
+pure-layout leaf contributes none -- and flattening *that* would eat the separator the next sibling
+needs. The deeper node claims the span first and every enclosing one declines.
+
+No metric of its own. The boundary that joins the bail-out onto the bar's line already counted this
+correction, and counting the second half again would report two rules where one fired. -/
+private def finishFlatten (result : Transformed) :
+    StateT TransformState (Except String) Transformed := do
+  let state ← get
+  let some span := result.span? | return result
+  match state.flattened.findIdx? (· == span) with
+  | none => return result
+  | some index =>
+    if state.appliedFlattened.contains index then return result
+    match flattenNative result.format with
+    | .error leaf =>
+      throw s!"native formatter cannot join a guarded bail-out onto the bar's line: its document \
+holds {leaf}, which flattening cannot remove"
+    | .ok format =>
+      set { state with appliedFlattened := state.appliedFlattened.push index }
+      return { result with format }
 
 /- Put a block's dangling comment back at the end of that block.
 
@@ -784,6 +890,13 @@ private def finishTrailing (left right : Transformed) :
         commentLeaves := state.metrics.commentLeaves + 1
         commentConstraints := state.metrics.commentConstraints + 1 } }
     return some (.append right.format (.append (.text "\n") (.text comment.payload)))
+
+/- Every span-keyed correction a finished node can carry, in the order they compose, so that adding a
+node kind to the walk cannot silently skip one. A constraint's `nest` is inert inside a subtree that no
+longer breaks, so the order matters only in that it is fixed. -/
+private def finishNode (result : Transformed) (carrier? : Option ConstraintCarrier := none) :
+    StateT TransformState (Except String) Transformed := do
+  finishFlatten (← finishConstraint result carrier?)
 
 /- The unapplied island covering the terminal the transform is waiting for, if any. An island consumes
 every terminal it covers at once, so this stays fixed at the island's first covered terminal for as
@@ -916,7 +1029,7 @@ private def consumeIsland (value : String) (island : ExactIsland) :
         containingConstraintNest state ⟨start, stop⟩)) payload
     else payload
   let payload := if startsLine then .append (.text "\n") payload else payload
-  finishConstraint { format := payload, span? := some ⟨start, stop⟩ }
+  finishNode { format := payload, span? := some ⟨start, stop⟩ }
 
 private def transformOrdinaryText (value : String) :
     StateT TransformState (Except String) Transformed := do
@@ -924,7 +1037,7 @@ private def transformOrdinaryText (value : String) :
   if value.trimAscii.isEmpty then
     set { state with metrics := { state.metrics with
       nativeNodes := state.metrics.nativeNodes + 1 } }
-    finishConstraint { format := ← constrainBoundary (.text value) }
+    finishNode { format := ← constrainBoundary (.text value) }
   else if let some island := islandAt state then
     -- This leaf spells a terminal the island covers, so the island's own bytes already carry it.
     -- Recording the entry is what lets `insideIsland` suppress the boundaries that follow it.
@@ -958,7 +1071,7 @@ private def transformOrdinaryText (value : String) :
         nativeNodes := state.metrics.nativeNodes + 1
         tokenLeaves := state.metrics.tokenLeaves + 1
         normalizedTokens := state.metrics.normalizedTokens + if normalized then 1 else 0 } }
-    finishConstraint {
+    finishNode {
       format := .append boundary (.append (.text terminal.sourceSpelling) (.text trailing))
       span? := some ⟨state.terminalIndex, state.terminalIndex + 1⟩ }
 
@@ -999,7 +1112,7 @@ private def transformText (value : String) :
       let island ← consumeIsland exact.marker exact
       let island := if separate then { island with format := .append .line island.format } else island
       let current ← transformOrdinaryText value
-      finishConstraint {
+      finishNode {
         format := .append island.format current.format
         span? := mergeSpan island.span? current.span? }
     | none =>
@@ -1010,17 +1123,17 @@ private partial def transformNative : Std.Format →
   | .nil => do
     modify fun state => { state with metrics := { state.metrics with
       nativeNodes := state.metrics.nativeNodes + 1 } }
-    finishConstraint { format := .nil }
+    finishNode { format := .nil }
   | .line => do
     modify fun state => { state with metrics := { state.metrics with
       nativeNodes := state.metrics.nativeNodes + 1 } }
-    finishConstraint { format := ← constrainBoundary .line }
+    finishNode { format := ← constrainBoundary .line }
   | .align force => do
     modify fun state => { state with metrics := { state.metrics with
       nativeNodes := state.metrics.nativeNodes + 1 } }
     if insideIsland (← get) then return { format := .nil }
     modify fun state => { state with separated := true }
-    finishConstraint { format := .align force }
+    finishNode { format := .align force }
   | .text value => transformText value
   | .nest indent inner => do
     modify fun state => { state with
@@ -1028,14 +1141,14 @@ private partial def transformNative : Std.Format →
       metrics := { state.metrics with nativeNodes := state.metrics.nativeNodes + 1 } }
     let inner ← transformNative inner
     modify fun state => { state with ambientNest := state.ambientNest - indent }
-    finishConstraint { inner with format := .nest indent inner.format } (carrier? := some .nest)
+    finishNode { inner with format := .nest indent inner.format } (carrier? := some .nest)
   | .append left right => do
     modify fun state => { state with metrics := { state.metrics with
       nativeNodes := state.metrics.nativeNodes + 1 } }
     let left ← transformNative left
     let right ← transformNative right
     let right := { right with format := (← finishTrailing left right).getD right.format }
-    finishConstraint {
+    finishNode {
       format := .append left.format right.format
       span? := mergeSpan left.span? right.span? }
       (carrier? := if left.span?.isNone && hasLineBoundary left.format then some .boundary else none)
@@ -1043,12 +1156,12 @@ private partial def transformNative : Std.Format →
     modify fun state => { state with metrics := { state.metrics with
       nativeNodes := state.metrics.nativeNodes + 1 } }
     let inner ← transformNative inner
-    finishConstraint { inner with format := .group inner.format behavior }
+    finishNode { inner with format := .group inner.format behavior }
   | .tag tag inner => do
     modify fun state => { state with metrics := { state.metrics with
       nativeNodes := state.metrics.nativeNodes + 1 } }
     let inner ← transformNative inner
-    finishConstraint { inner with format := .tag tag inner.format }
+    finishNode { inner with format := .tag tag inner.format }
 
 private def spanForRange (terminals : Array Terminal) (range : SourceRange) : TokenSpan :=
   let start := terminals.findIdx? (range.start <= ·.range.start) |>.getD terminals.size
@@ -1082,11 +1195,12 @@ private def boundaryTable (terminals : Array Terminal) (starts : Array (Nat × B
 private def transform (source : String) (terminals : Array Terminal)
     (comments : Array InteriorComment) (blockDangling : Array (SourceRange × InteriorComment))
     (islands : Array ExactIsland) (constraints : Array OffsideConstraint)
-    (boundaryStarts : Array (Nat × BoundaryLayout)) (baseIndent : Nat)
+    (boundaryStarts : Array (Nat × BoundaryLayout)) (joined : Array SourceRange) (baseIndent : Nat)
     (native : Std.Format) : Except String (Std.Format × Metrics) := do
   let constraints := constraints.map fun constraint =>
     (constraint, spanForRange terminals constraint.range)
   let boundaries ← boundaryTable terminals boundaryStarts
+  let flattened := joined.map (spanForRange terminals)
   let trailing := blockDangling.map fun (range, comment) => (spanForRange terminals range, comment)
   let comments := comments.map fun comment =>
     { comment with
@@ -1096,7 +1210,7 @@ private def transform (source : String) (terminals : Array Terminal)
     if spelled.contains island.marker then none else some island.marker
   let initial : TransformState := {
     source, terminals, comments, trailing, islands, droppedIslands, constraints, boundaries,
-    baseIndent }
+    flattened, baseIndent }
   let (result, state) ← (transformNative native).run initial
   if state.terminalIndex != terminals.size then
     throw s!"native formatter consumed {state.terminalIndex}/{terminals.size} terminals; \
@@ -1114,6 +1228,9 @@ offside constraints"
   if state.appliedBoundaries.size != boundaries.size then
     throw s!"native formatter applied {state.appliedBoundaries.size}/{boundaries.size} \
 boundaries"
+  if state.appliedFlattened.size != flattened.size then
+    throw s!"native formatter joined {state.appliedFlattened.size}/{flattened.size} guarded \
+bail-outs; the document holds no node spelling exactly one of them"
   if state.appliedTrailing.size != trailing.size then
     throw s!"native formatter placed {state.appliedTrailing.size}/{trailing.size} block-dangling \
 comments; the block's document holds no break to hang one on"
@@ -1194,11 +1311,16 @@ alternatives: alternative 0 is {expected}, alternative {alternative} is {actual}
   let constraints := collectOffsideConstraints formatIndent stripped
   -- One table, one line per rule, and the spelling each rule asks for is right here rather than in the
   -- collector's name. A collector answers "where", `BoundaryLayout` answers "what".
+  -- Both halves of the guarded-`let` join come from one collected range: the boundary joins the
+  -- bail-out to the bar's line, and `transform` flattens the same span so the join leaves no break
+  -- behind to land at the wrong column.
+  let joined := collectGuardBailouts source stripped
   let boundaryStarts : Array (Nat × BoundaryLayout) :=
     (collectUngroupedBodyStarts stripped (collectReturnTermStarts stripped)).map
         (·, BoundaryLayout.flat) ++
       (collectRecordUpdateFieldStarts stripped).map (·, BoundaryLayout.hard) ++
-      (collectCtorDocStarts stripped).map (·, BoundaryLayout.elided)
+      (collectCtorDocStarts stripped).map (·, BoundaryLayout.elided) ++
+      joined.map (·.start, BoundaryLayout.flat)
   let commentFree := withoutTrivia stripped
   let (formattedSyntax, islands) := protectSourceData source commentFree
   -- A marker is matched by its spelling when the formatter hands the leaf back, so a source that
@@ -1216,7 +1338,7 @@ cannot tell from the placeholder that protects {marker.range.start}:{marker.rang
   try
     let native ← Lean.PrettyPrinter.formatCommand formattedSyntax
     match transform source terminals comments blockDangling islands constraints boundaryStarts
-        baseIndent native with
+        joined baseIndent native with
     | .ok (native, metrics) =>
       return .ok { document := Doc.registered native, trace, metrics }
     | .error detail =>

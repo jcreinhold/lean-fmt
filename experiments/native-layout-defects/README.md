@@ -26,9 +26,10 @@ bash experiments/native-layout-defects/run.sh
 So three of the six are Lean's document and three are the adapter's handling of comments, which the
 native document never sees. They do not share a repair.
 
-D1, D2, D5, and D6 are repaired; their assertions moved out of §7 and into the section of
-`tests/native-layout/run.sh` that states the positive claim. D3 and D4 remain pinned, for the reasons
-below.
+All six are repaired; every assertion moved out of §7 and into the section of
+`tests/native-layout/run.sh` that states the positive claim, and §7 now holds the record rather than a
+pin. D4 was last, and the sections below are why: the repair that looks right is width-unsound, and the
+one that works needed a second mechanism.
 
 ## D5 is one case, not three, and not the mechanism the prompt names
 
@@ -233,5 +234,30 @@ argument at type `Nat`, and `0 |>.size` becomes a statement of its own — `Nat.
 The width where it breaks is a property of the term, not a bound anyone can pick: any bail-out has a
 width at which it must break somewhere. So D4 needs an indentation anchor for the bail-out — a
 constraint that puts every break inside it past the guard's own column, which is what the hard newline
-plus `nest` was already buying — and a flat boundary alone cannot supply one. Until then the break
-stays, and §7 keeps the pin.
+plus `nest` was already buying — and a flat boundary alone cannot supply one.
+
+### There is no anchor to supply, so the repair removes the break instead
+
+`Std.Format` has eight constructors — `nil`, `line`, `align`, `text`, `nest`, `append`, `group`, `tag`
+— and none of them means "indent this subtree's continuations to the column where it starts". `nest n`
+is relative to the current *indent*, and `align force` pads *to* that indent; neither reads the column.
+So the anchor the paragraph above asks for cannot be written, whatever the adapter knows. That is a
+distinct gap from `notes/06` item 4, which is that a parser-significant column cannot be *marked*; this
+one is that it cannot be *expressed* even when it is known, and it is recorded there as item 9.
+
+What is left is to leave no break for the anchor to place. The repair is two mechanisms over one
+collected range: a flat `BoundaryLayout` at the bar joins the bail-out onto its line, and
+`flattenNative` rewrites the bail-out's own span so it holds no `line` at all. Flattening can fail —
+`align (force := true)` and a `text` containing a newline are the two leaves it cannot remove — and
+when it does the command is refused with the leaf named, rather than published at a wrong column.
+
+Flattening is total in practice because of the collector's one precondition: only a bail-out the
+*source* already spells on one line is collected. `sepByIndent.formatter`
+(`Lean/Parser/Extra.lean:212-224`) is the sole producer of both `pushWhitespace "\n"` and
+`pushAlign (force := true)`, and emits them only on its `hasNewlineSep` path, which is a property of
+the source argument list — so a bail-out with no source newline has neither leaf. The same
+precondition bounds the joined line: measured 2026-07-24 over `LeanFmt/`, 102 guarded `let`s already
+sit on one line, median 60 columns and widest 99; 10 more spell the bail-out on the next line and keep
+their break. `tests/native-layout/Offside.lean`'s `guardedSpanningBailout` is that negative half, and
+§6 asserts both directions. `tests/block-formatter/run.sh`, which caught the reverted attempt at width
+40, passes.

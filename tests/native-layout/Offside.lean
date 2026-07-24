@@ -44,6 +44,16 @@ def guardedLongBailout (value : Option Nat) : Nat := Id.run do
   let some measured := value | return (Array.replicate 12 0).size + Array.size #[1, 2, 3]
   return measured
 
+/- A bail-out the source spells on more than one line. The join is collected only for a bail-out the
+source already fit on one line, because that is what makes flattening it free of the two leaves
+flattening cannot remove -- and what bounds the resulting line. This one is not collected, keeps its
+break after the bar, and is the negative half of that rule. -/
+def guardedSpanningBailout (value : Option Nat) : Nat := Id.run do
+  let some measured := value |
+    let fallback := 3
+    return fallback + 1
+  return measured
+
 structure Packet where
   first : Nat
   second : Nat
