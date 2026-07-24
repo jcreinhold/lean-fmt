@@ -13,8 +13,15 @@ Lean's registered formatter remains the grammar authority. This module transform
 terminals and replaced by their original bytes, while groups, fills, nesting, alignment, and tags
 remain native. Source-data syntax is replaced before formatter execution by a typed marker and restored
 at that marker; this prevents a private formatter failure or normalization from becoming a source-text
-fallback. The one offside constraint repairs the parser-significant continuation of guarded `let` by
-dedenting the native subtree that spells that structural child.
+fallback.
+
+Two corrections sit on top of that, both collected from grammar shape and both refusing the command if
+the document turns out not to have the node they name. A `BoundaryLayout` replaces the layout between
+two named terminals with a space, a newline, or nothing. An `OffsideConstraint` adds a `nest` the
+document never had, over exactly one source range, on the node its `ConstraintCarrier` names — the
+`append` that carries the break before the range, or the `nest` the document wrapped the range in. Both
+are documented at their declarations, including why the carrier is not a predicate and why a flat
+boundary is not free.
 
 Doc comments are syntax, not trivia, so they are ordinary terminals: their opening token and body align
 and emit original bytes exactly where their owner spells them. Hoisting them to a command prefix moved
@@ -25,7 +32,9 @@ An exact island whose payload spans lines carries its own absolute source column
 re-indents every newline inside a `text` leaf to the ambient indentation, and that indentation is
 exactly the sum of the enclosing `nest` amounts plus the column the leaf is rendered at — `align` pads
 output without changing it (`Init/Data/Format/Basic.lean`). The adapter therefore wraps a multiline
-island in a `nest` that cancels both, and `Int.toNat` clamps the result to column zero.
+island in a `nest` that cancels both, and `Int.toNat` clamps the result to column zero. The sum
+includes the constraint nests an ancestor has not applied yet, which the walk cannot have seen and
+`containingConstraintNest` reads out of the spans instead.
 
 The adapter has no core/extension gate and no command/term/tactic visitor. A failure is a typed refusal
 with the root category, kind, range, resolution trace, native leaf index, and nearby source terminals.
@@ -63,10 +72,56 @@ private structure InteriorComment where
   boundary : Nat := 0
   deriving Inhabited
 
+/- Which native node an indentation constraint is written on.
+
+A constraint names a source range, and more than one node in the document spells exactly that range:
+the `nest` the formatter put around it and the `append` that joins it to the break before it are both
+candidates, and they mean different things. The `append` moves the break *and* what follows it, which
+is what an offside sibling needs. The `nest` moves only what is inside it, which is what a wrong nest
+needs cancelled.
+
+Left to a single predicate this is not a choice at all -- the walk is post-order, so whichever node is
+deeper claims the constraint, and for a guarded `let` that is the `nest`, which dedents the body
+without moving the break above it and puts the siblings back inside the guard. So the constraint
+carries its carrier and `finishConstraint` matches on it. A carrier that never appears leaves the
+applied count short and refuses the command, so this cannot silently pick the wrong one. -/
+private inductive ConstraintCarrier where
+  | boundary
+  | nest
+  deriving BEq, Inhabited
+
 private structure OffsideConstraint where
   range : SourceRange
   indentAdjustment : Int
+  carrier : ConstraintCarrier
   deriving Inhabited
+
+/- What the adapter puts at one boundary in place of whatever the native document laid out there.
+
+A boundary is the layout between two terminals, and these are the three things it can be. Each is a
+correction to Lean's own document, collected by grammar shape and applied by terminal index, so a rule
+that needs one names the terminal and the spelling and nothing else.
+
+The mechanism is one substitution; the constructors are its values. `flat` joins what the document
+broke, `hard` breaks what it joined, and `elided` removes a separator the document spelled twice.
+
+`flat` is not free and is not the default reading of "this should be on one line". `.text " "` cannot
+break, so the renderer re-measures and breaks at the next soft line instead. When that next line is
+inside the construct whose boundary was just moved, its continuation is indented from the enclosing
+`nest` rather than from the column the boundary moved, and offside-sensitive syntax reparses. That is
+why the guarded `let`'s bar is *not* repaired here; see `tests/native-layout/run.sh` §7 D4 and
+`experiments/native-layout-defects/README.md`. `hard` and `elided` do not have this failure mode:
+neither can make a line longer. -/
+private inductive BoundaryLayout where
+  | flat
+  | hard
+  | elided
+  deriving BEq, Inhabited
+
+private def BoundaryLayout.format : BoundaryLayout → Std.Format
+  | .flat => .text " "
+  | .hard => .text "\n"
+  | .elided => .nil
 
 private structure TokenSpan where
   start : Nat
@@ -459,10 +514,59 @@ private partial def collectUngroupedBodyStarts (stx : Lean.Syntax)
       collectUngroupedBodyStarts child starts
   | _ => starts
 
+/- The docstring of a constructor that has one.
+
+`ctor` (`Command.lean:210-212`) is `atomic (optional docComment >> "\n| ") >> ppGroup …`, so the
+docstring is the first child -- a `null` node, empty when the constructor has none -- and the `|` is
+the second. The newline the constructor needs sits *inside* the `"\n| "` atom, after the docstring
+that was supposed to follow it, which is the whole of D2: Lean emits the docstring where a separator
+should be and the separator after it. -/
+private def ctorDocComment? (stx : Lean.Syntax) : Option Lean.Syntax := do
+  guard (stx.isOfKind ``Lean.Parser.Command.ctor)
+  let doc ← stx.getArgs[0]?.bind fun optional => optional.getArgs[0]?
+  guard (doc.isOfKind ``Lean.Parser.Command.docComment)
+  return doc
+
+/- A constructor docstring keeps its constructor's indentation, and one blank line goes away.
+
+Lean's document is `text" where" nest-2[text"/--" line text"…-/" text"\n"] text"\n|" …`, which spells
+the boundary between the docstring and its constructor twice and dedents the docstring by one level.
+Rendered, that is a docstring at column zero followed by a blank line -- and reparsed, a docstring
+that no longer sits on its constructor.
+
+Both corrections are ordinary. The `elided` boundary at the `|` removes the first of the two newlines,
+leaving the one inside the `"\n| "` atom, which carries the constructor's own indentation. The
+constraint cancels the `nest -2` over exactly the docstring's range, so the line the island opens
+lands at the same column as the `|` below it.
+
+Eliding rather than flattening matters: `.text " "` here would leave a space at the end of the
+docstring's line, and the `elided` spelling exists because a doubled separator is a different defect
+from a badly placed one.
+
+This half is the boundary; `collectOffsideConstraints` carries the other. The offset is the
+docstring's own end, which `boundaryTable` resolves to the `|` -- the first terminal at or after it. -/
+private partial def collectCtorDocStarts (stx : Lean.Syntax)
+    (starts : Array Nat := #[]) : Array Nat :=
+  match stx with
+  | .node _ kind children =>
+    let starts :=
+      match ctorDocComment? stx with
+      | some doc =>
+        match sourceRange? doc with
+        | some range => starts.push range.stop
+        | none => starts
+      | none => starts
+    let children := if kind == Lean.choiceKind then children[0]?.toArray else children
+    children.foldl (init := starts) fun starts child => collectCtorDocStarts child starts
+  | _ => starts
+
 /- `indent` is `Std.Format.getIndent`, the `format.indent` option Lean's own `ppIndent`/`ppDedent`
 read. A constraint here cancels one level of the indentation native layout introduced, so it is that
 same quantity negated -- not the literal `-2` this used to spell. The default happens to be 2, which is
-why the constant went unnoticed; a project that sets `format.indent` would have silently drifted. -/
+why the constant went unnoticed; a project that sets `format.indent` would have silently drifted.
+
+The constructor-docstring branch cancels a `nest -2` rather than introducing one, so its adjustment is
+that same quantity un-negated. Both are one level; nothing here knows how to ask for two. -/
 private partial def collectOffsideConstraints (indent : Nat) (stx : Lean.Syntax)
     (constraints : Array OffsideConstraint := #[]) : Array OffsideConstraint :=
   match stx with
@@ -479,11 +583,23 @@ private partial def collectOffsideConstraints (indent : Nat) (stx : Lean.Syntax)
           let continuations := sequences.filter (pipe.stop <= ·.start)
           if 2 <= continuations.size then
             match continuations.back? with
-            | some range => constraints.push { range, indentAdjustment := -(indent : Int) }
+            | some range =>
+              constraints.push
+                { range, indentAdjustment := -(indent : Int), carrier := .boundary }
             | none => constraints
           else constraints
         | none => constraints
-      else constraints
+      else match ctorDocComment? stx with
+        | some doc =>
+          match sourceRange? doc with
+          | some range =>
+            constraints.push { range, indentAdjustment := (indent : Int), carrier := .nest }
+          | none => constraints
+        | none => constraints
+    -- As in the boundary collectors: one alternative of a `choice` spells the bytes, and collecting
+    -- from all of them would name the same range once per alternative. A constraint is applied once,
+    -- so the duplicate would leave the applied count short and refuse the command.
+    let children := if kind == Lean.choiceKind then children[0]?.toArray else children
     children.foldl (init := constraints) fun constraints child =>
       collectOffsideConstraints indent child constraints
   | _ => constraints
@@ -537,16 +653,14 @@ private structure TransformState where
   islands : Array ExactIsland
   droppedIslands : Array String
   constraints : Array (OffsideConstraint × TokenSpan)
-  flatBoundaries : Array Nat
-  hardBoundaries : Array Nat
+  boundaries : Array (Nat × BoundaryLayout)
   baseIndent : Nat
   terminalIndex : Nat := 0
   commentIndex : Nat := 0
   ambientNest : Int := 0
   appliedIslands : Array String := #[]
   appliedConstraints : Array Nat := #[]
-  appliedFlatBoundaries : Array Nat := #[]
-  appliedHardBoundaries : Array Nat := #[]
+  appliedBoundaries : Array Nat := #[]
   /- Whether the document emitted since the previous terminal is known to render as something other
   than the empty string. A command starts separated because its first terminal has no predecessor to
   merge with. -/
@@ -612,15 +726,15 @@ private partial def hasLineBoundary : Std.Format → Bool
   | .append left right => hasLineBoundary left || hasLineBoundary right
   | .nil => false
 
-private def finishConstraint (result : Transformed) (eligible := false) :
+private def finishConstraint (result : Transformed) (carrier? : Option ConstraintCarrier := none) :
     StateT TransformState (Except String) Transformed := do
-  unless eligible do return result
+  let some carrier := carrier? | return result
   let state ← get
   match result.span? with
   | none => return result
   | some span =>
-    match state.constraints.findIdx? fun (_, expected) =>
-        expected == span with
+    match state.constraints.findIdx? fun (constraint, expected) =>
+        expected == span && constraint.carrier == carrier with
     | some index =>
       if state.appliedConstraints.contains index then return result
       let (constraint, _) := state.constraints[index]!
@@ -674,25 +788,40 @@ private def beganLine (state : TransformState) (index : Nat) : Bool :=
       (slice state.source ⟨previous.range.stop, next.range.start⟩).contains '\n'
     | _, _ => false
 
+/- How far the constraints that will wrap this span move it, in columns.
+
+`ambientNest` is the native document's own nest depth, which is what the walk carries. A constraint
+introduces a `nest` the native document never had, at an ancestor -- and post-order finishes that
+ancestor *after* this subtree is built, so the walk cannot have seen it yet. The spans are known
+before the walk starts, so a node can ask for them by containment instead of waiting.
+
+Every collected constraint is applied or `transform` refuses the command, so a constraint whose span
+contains this one is indentation this subtree will certainly sit inside.
+
+Only exact islands need this, and only because their bytes carry absolute source columns that a
+cancelling `nest` has to reach. Without it a constructor docstring spanning more than one line came
+out with its first line moved and its continuations left behind. -/
+private def containingConstraintNest (state : TransformState) (span : TokenSpan) : Int :=
+  state.constraints.foldl (init := 0) fun total (constraint, expected) =>
+    if expected.start <= span.start && span.stop <= expected.stop then
+      total + constraint.indentAdjustment
+    else total
+
 private def constrainBoundary (format : Std.Format) :
     StateT TransformState (Except String) Std.Format := do
   let state ← get
   if insideIsland state then return .nil
   let mut format := format
-  if state.hardBoundaries.contains state.terminalIndex &&
-      !state.appliedHardBoundaries.contains state.terminalIndex then
-    set { state with
-      appliedHardBoundaries := state.appliedHardBoundaries.push state.terminalIndex
-      metrics := { state.metrics with
-        offsideConstraints := state.metrics.offsideConstraints + 1 } }
-    format := .text "\n"
-  else if state.flatBoundaries.contains state.terminalIndex &&
-      !state.appliedFlatBoundaries.contains state.terminalIndex then
-    set { state with
-      appliedFlatBoundaries := state.appliedFlatBoundaries.push state.terminalIndex
-      metrics := { state.metrics with
-        offsideConstraints := state.metrics.offsideConstraints + 1 } }
-    format := .text " "
+  -- The first boundary leaf at this terminal, and only the first: the document can lay out more than
+  -- one leaf between two terminals, and a correction that fired at each of them would spell itself
+  -- twice. Eliding a doubled newline depends on exactly this -- it removes the first of the two.
+  if let some (_, layout) := state.boundaries.find? fun (index, _) => index == state.terminalIndex then
+    unless state.appliedBoundaries.contains state.terminalIndex do
+      set { state with
+        appliedBoundaries := state.appliedBoundaries.push state.terminalIndex
+        metrics := { state.metrics with
+          offsideConstraints := state.metrics.offsideConstraints + 1 } }
+      format := layout.format
   let state ← get
   let start := state.commentIndex
   let mut stop := start
@@ -743,7 +872,8 @@ private def consumeIsland (value : String) (island : ExactIsland) :
   let payload := Std.Format.text (withPayload value island.text)
   -- A single-line payload has no interior newline for the ambient indentation to reach.
   let payload := if island.text.contains '\n' then
-      .nest (-(state.baseIndent + state.ambientNest)) payload
+      .nest (-(state.baseIndent + state.ambientNest +
+        containingConstraintNest state ⟨start, stop⟩)) payload
     else payload
   let payload := if startsLine then .append (.text "\n") payload else payload
   finishConstraint { format := payload, span? := some ⟨start, stop⟩ }
@@ -858,7 +988,7 @@ private partial def transformNative : Std.Format →
       metrics := { state.metrics with nativeNodes := state.metrics.nativeNodes + 1 } }
     let inner ← transformNative inner
     modify fun state => { state with ambientNest := state.ambientNest - indent }
-    finishConstraint { inner with format := .nest indent inner.format }
+    finishConstraint { inner with format := .nest indent inner.format } (carrier? := some .nest)
   | .append left right => do
     modify fun state => { state with metrics := { state.metrics with
       nativeNodes := state.metrics.nativeNodes + 1 } }
@@ -867,7 +997,7 @@ private partial def transformNative : Std.Format →
     finishConstraint {
       format := .append left.format right.format
       span? := mergeSpan left.span? right.span? }
-      (eligible := left.span?.isNone && hasLineBoundary left.format)
+      (carrier? := if left.span?.isNone && hasLineBoundary left.format then some .boundary else none)
   | .group inner behavior => do
     modify fun state => { state with metrics := { state.metrics with
       nativeNodes := state.metrics.nativeNodes + 1 } }
@@ -884,26 +1014,38 @@ private def spanForRange (terminals : Array Terminal) (range : SourceRange) : To
   let stop := terminals.findIdx? (range.stop <= ·.range.start) |>.getD terminals.size
   ⟨start, stop⟩
 
-/- Which terminal a collected source offset constrains: the first one at or after it.
+/- Which terminal a collected source offset names: the first one at or after it.
 
-Boundaries are collected by grammar shape and applied by kind, so more than one collector can name the
-same terminal. `constrainBoundary` applies a boundary once, so a repeated index would leave the applied
-count permanently short of the collected one and turn every such command into a refusal. -/
-private def boundaryIndices (terminals : Array Terminal) (starts : Array Nat) : Array Nat :=
-  starts.foldl (init := #[]) fun indices start =>
+Every rule collects source offsets, because a grammar shape is what it can see; `constrainBoundary`
+works in terminal indices, because that is what the walk carries. This is the one place the two meet.
+
+Collectors run independently, so more than one can name the same terminal. `constrainBoundary` applies
+a boundary once, so a repeated index would leave the applied count permanently short of the collected
+one and turn every such command into a refusal. Two rules asking for the *same* spelling there is a
+duplicate and collapses; two rules asking for different spellings is a disagreement about the same
+gap, which no order of this table resolves -- so it is refused rather than decided by which collector
+the call site happens to list first. Neither has been observed; the second is the one that would
+otherwise be silent. -/
+private def boundaryTable (terminals : Array Terminal) (starts : Array (Nat × BoundaryLayout)) :
+    Except String (Array (Nat × BoundaryLayout)) :=
+  starts.foldlM (init := #[]) fun table (start, layout) =>
     match terminals.findIdx? (start <= ·.range.start) with
-    | some index => if indices.contains index then indices else indices.push index
-    | none => indices
+    | some index =>
+      match table.find? fun (existing, _) => existing == index with
+      | some (_, existing) =>
+        if existing == layout then .ok table
+        else .error s!"two boundary rules disagree at terminal {index}"
+      | none => .ok (table.push (index, layout))
+    | none => .ok table
 
 private def transform (source : String) (terminals : Array Terminal)
     (comments : Array InteriorComment)
     (islands : Array ExactIsland) (constraints : Array OffsideConstraint)
-    (flatStarts hardStarts : Array Nat) (baseIndent : Nat)
+    (boundaryStarts : Array (Nat × BoundaryLayout)) (baseIndent : Nat)
     (native : Std.Format) : Except String (Std.Format × Metrics) := do
   let constraints := constraints.map fun constraint =>
     (constraint, spanForRange terminals constraint.range)
-  let flatBoundaries := boundaryIndices terminals flatStarts
-  let hardBoundaries := boundaryIndices terminals hardStarts
+  let boundaries ← boundaryTable terminals boundaryStarts
   let comments := comments.map fun comment =>
     { comment with
       boundary := terminals.findIdx? (comment.range.start < ·.range.start) |>.getD terminals.size }
@@ -911,8 +1053,7 @@ private def transform (source : String) (terminals : Array Terminal)
   let droppedIslands := islands.filterMap fun island =>
     if spelled.contains island.marker then none else some island.marker
   let initial : TransformState := {
-    source, terminals, comments, islands, droppedIslands, constraints, flatBoundaries,
-    hardBoundaries, baseIndent }
+    source, terminals, comments, islands, droppedIslands, constraints, boundaries, baseIndent }
   let (result, state) ← (transformNative native).run initial
   if state.terminalIndex != terminals.size then
     throw s!"native formatter consumed {state.terminalIndex}/{terminals.size} terminals; \
@@ -927,12 +1068,9 @@ next expected range: {repr nextRange}; recent native leaves: \
   if state.appliedConstraints.size != constraints.size then
     throw s!"native formatter applied {state.appliedConstraints.size}/{constraints.size} \
 offside constraints"
-  if state.appliedFlatBoundaries.size != flatBoundaries.size then
-    throw s!"native formatter applied {state.appliedFlatBoundaries.size}/{flatBoundaries.size} \
-flat boundaries"
-  if state.appliedHardBoundaries.size != hardBoundaries.size then
-    throw s!"native formatter applied {state.appliedHardBoundaries.size}/{hardBoundaries.size} \
-hard boundaries"
+  if state.appliedBoundaries.size != boundaries.size then
+    throw s!"native formatter applied {state.appliedBoundaries.size}/{boundaries.size} \
+boundaries"
   return (result.format, state.metrics)
 
 private def rootRange (stx : Lean.Syntax) : SourceRange :=
@@ -965,8 +1103,8 @@ private partial def nativeSize : Std.Format → Nat
   | _ => 1
 
 /-- Format one actual command through Lean's live registry, preserving source payloads and applying
-only the structurally measured guarded-`let` continuation constraint. `baseIndent` is the column the
-resulting registered leaf is rendered at; an exact island's dedent must cancel it. -/
+only the structurally measured boundary and offside corrections collected below. `baseIndent` is the
+column the resulting registered leaf is rendered at; an exact island's dedent must cancel it. -/
 def command (source : String) (ownership : CommentOwnership) (stx : Lean.Syntax)
     (baseIndent : Nat := 0) : Lean.CoreM (Except FormatterFailure Document) := do
   let trace ← Formatter.trace ownership .command stx
@@ -989,8 +1127,13 @@ def command (source : String) (ownership : CommentOwnership) (stx : Lean.Syntax)
 alternatives: alternative 0 is {expected}, alternative {alternative} is {actual}" }
   let comments := interiorComments ownership stx
   let constraints := collectOffsideConstraints formatIndent stripped
-  let flatStarts := collectUngroupedBodyStarts stripped (collectReturnTermStarts stripped)
-  let hardStarts := collectRecordUpdateFieldStarts stripped
+  -- One table, one line per rule, and the spelling each rule asks for is right here rather than in the
+  -- collector's name. A collector answers "where", `BoundaryLayout` answers "what".
+  let boundaryStarts : Array (Nat × BoundaryLayout) :=
+    (collectUngroupedBodyStarts stripped (collectReturnTermStarts stripped)).map
+        (·, BoundaryLayout.flat) ++
+      (collectRecordUpdateFieldStarts stripped).map (·, BoundaryLayout.hard) ++
+      (collectCtorDocStarts stripped).map (·, BoundaryLayout.elided)
   let commentFree := withoutTrivia stripped
   let (formattedSyntax, islands) := protectSourceData source commentFree
   -- A marker is matched by its spelling when the formatter hands the leaf back, so a source that
@@ -1007,8 +1150,8 @@ alternatives: alternative 0 is {expected}, alternative {alternative} is {actual}
 cannot tell from the placeholder that protects {marker.range.start}:{marker.range.stop}" }
   try
     let native ← Lean.PrettyPrinter.formatCommand formattedSyntax
-    match transform source terminals comments islands constraints flatStarts
-        hardStarts baseIndent native with
+    match transform source terminals comments islands constraints boundaryStarts
+        baseIndent native with
     | .ok (native, metrics) =>
       return .ok { document := Doc.registered native, trace, metrics }
     | .error detail =>

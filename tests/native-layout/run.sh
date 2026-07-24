@@ -147,6 +147,28 @@ done
 # the structure; this pins it to the line directly above the field it documents.
 check "the field docstring still precedes its field" \
   "$(grep -A1 -F '/-- A field doc comment' "$boundaries" | tail -1)" "  first : Nat"
+# Was D2, and it was upstream twice over: `def ctor` wraps the docstring in a `nest -2` and puts the
+# constructor's newline inside the `"\n| "` atom that follows it, so the docstring came out at column
+# zero with a blank line under it -- and reparsed onto no constructor at all. The repair is an elided
+# boundary at the `|`, which removes the first of the two newlines, and a constraint cancelling the
+# `nest -2` over the docstring's own range.
+check "the constructor docstring keeps its constructor's indentation" \
+  "$(grep -c '^  /-- A constructor doc comment stays on its constructor. -/$' "$boundaries")" "1"
+check "  ... and its constructor follows on the next line, with no blank between" \
+  "$(grep -A1 -F 'A constructor doc comment stays on its constructor' "$boundaries" | tail -1)" \
+  "  | left"
+# A docstring spanning more than one line is where the two halves of that repair pull against each
+# other. The docstring is an exact island, so its bytes carry absolute source columns and a cancelling
+# `nest` has to reach column zero -- but that nest is computed from the native document's own depth
+# during the walk, and the constraint's nest is added by an *ancestor*, which post-order finishes
+# afterwards. Verified to fail: without `containingConstraintNest`, this file is not merely misindented
+# but rejected, at the token gate, `token 75 (Lean.Parser.Command.docComment) changed spelling`.
+check "a constructor docstring's continuation lines do not move with its first" \
+  "$(grep -A2 -F 'A constructor doc comment can run onto a second line' "$boundaries" | tail -1)" \
+  "  exact island already carries exactly where they are. -/"
+check "  ... and its constructor still follows it" \
+  "$(grep -A3 -F 'A constructor doc comment can run onto a second line' "$boundaries" | tail -1)" \
+  "  | only"
 check "the trailing comment stays on its owner's last line" \
   "$(grep -F -- '-- trailing line comment' "$boundaries")" "  0 -- trailing line comment"
 check "the interior comment stays between the operator and its continuation" \
@@ -225,14 +247,10 @@ printf -- '--- pinned defects these fixtures found, owned by 23c (§7) ---\n'
 # the pinned defect. `experiments/native-layout-defects` records why it was the adapter's: trivia is
 # stripped before native formatting, so no native document ever held that comment.
 #
-# D2 -- a constructor docstring is dedented to column zero and gains a blank line before its
-#       constructor. This is the upstream `def ctor` shape: the newline lives inside the `"\n| "`
-#       atom, which sits *after* `optional docComment`, so the docstring is emitted before the
-#       separator that was supposed to precede it.
-check "D2 constructor docstring is dedented to column zero" \
-  "$(grep -c '^/-- A constructor doc comment stays on its constructor. -/$' "$boundaries")" "1"
-check "D2 and is followed by a blank line" \
-  "$(grep -A1 -F '/-- A constructor doc comment' "$boundaries" | tail -1)" ""
+# D2 is repaired and its assertions moved into §4, beside the field docstring whose ownership they
+# match. It was upstream: `def ctor` puts the newline inside the `"\n| "` atom, which sits *after*
+# `optional docComment`, and wraps the docstring in a `nest -2`.
+#
 # D3 -- a comment dangling after the last statement of a `do` block leaves the block entirely and
 #       lands at column zero before the next command. The comment multiset is preserved, which is
 #       why §4 passes; its owner is not.

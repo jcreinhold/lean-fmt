@@ -49,6 +49,12 @@ inductive Choice where
   | left
   | right
 
+inductive Spanning where
+  /-- A constructor doc comment can run onto a second line, and then the two halves of its repair
+  pull against each other: the constraint that moves the first line must leave the bytes the
+  exact island already carries exactly where they are. -/
+  | only
+
 def danglingOwner : Nat := Id.run do
   let value := 8
   return value

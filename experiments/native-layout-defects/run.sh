@@ -29,6 +29,19 @@ inductive Choice where
   | right
 EOF
 
+# The same shape with a docstring that runs onto a second line. The document is identical apart from
+# the docstring leaf, which is what makes it interesting: the adapter protects that leaf as an exact
+# island whose bytes carry absolute source columns, so D2's constraint and the island's own cancelling
+# `nest` are two indentation decisions over the same range. See the README.
+probe "D2 constructor docstring, spanning two lines" "$widths" <<'EOF'
+module
+
+inductive Spanning where
+  /-- A constructor doc comment that runs onto a second line
+  keeps both of its lines. -/
+  | only
+EOF
+
 probe "D4 guarded let" "$widths" <<'EOF'
 module
 

@@ -26,6 +26,10 @@ bash experiments/native-layout-defects/run.sh
 So three of the six are Lean's document and three are the adapter's handling of comments, which the
 native document never sees. They do not share a repair.
 
+D1, D2, D5, and D6 are repaired; their assertions moved out of §7 and into the section of
+`tests/native-layout/run.sh` that states the positive claim. D3 and D4 remain pinned, for the reasons
+below.
+
 ## D5 is one case, not three, and not the mechanism the prompt names
 
 `23c`'s D5 says `ppAllowUngrouped` is "one mechanism failing" across the three parsers that declare it.
@@ -102,6 +106,52 @@ at widths 20, 40, 80, and 100 and is the standing evidence.
 `run.sh` keeps the `do` and `fun` reproductions even though both are correct today. They are the
 control: they show the repair must not fire on a body whose soft line already renders flat, and they
 are what would catch a fix that forced every `:=` join unconditionally.
+
+## D2 is two upstream faults, and repairing one exposes a third thing
+
+Measured 2026-07-24. `run.sh`'s first two probes print `formatCommand`'s document for
+`inductive Choice where / /-- … -/ / | left / | right`:
+
+```
+text " where"
+nest -2 [ text "/--" line text "…-/" text "\n" ]
+text "\n|" line group-fill[nest 2[text "left"]] …
+```
+
+Two faults, not one. The `nest -2` dedents the docstring a level below the constructor it documents,
+and the `"\n"` closing that nest spells a separator the `"\n| "` atom already carries — so the
+rendered docstring is at column zero with a blank line under it, and reparsing hands it to no
+constructor at all. Neither is a width effect; both hold at every width.
+
+The repair is two ordinary corrections and no new mechanism: an `elided` boundary at the `|`, which
+removes the first of the two newlines, and a constraint of `+format.indent` over the docstring's own
+range, which cancels the `nest -2`. `elided` joins `flat` and `hard` as a third spelling of the one
+substitution the adapter already had.
+
+### Two things the naive repair got wrong, both caught by measurement
+
+**A `nest` is not interchangeable with an `append` as a constraint carrier.** More than one node in
+the document spells exactly the range a constraint names. Making `nest` eligible on the same predicate
+as `append` is not additive: the walk is post-order, so the *deeper* node claims the constraint, and
+for a guarded `let` that is the `nest` inside the `append`. Cancelling the nest dedents the body
+without moving the break above it, which puts the siblings straight back inside the guard —
+`tests/native-layout/run.sh` §1 reported `Offside.lean` as `infrastructure-failure` at the diagnostics
+gate, `pure PUnit.unit … expected to have type Nat`. So a constraint now names its carrier, and a
+carrier that never appears refuses the command rather than picking the other one.
+
+**A constraint's `nest` is invisible to any exact island inside it.** An island's bytes carry absolute
+source columns, so the adapter cancels the ambient indentation to reach column zero — computed from
+`ambientNest`, the native document's own depth, during the walk. A constraint adds a `nest` the
+document never had, at an *ancestor*, which post-order finishes afterwards. A constructor docstring
+spanning two lines is exactly this case: the constraint moved its first line and left its
+continuations behind. Verified to fail — with `containingConstraintNest` removed,
+`tests/native-layout/Boundaries.lean` is not merely misindented but rejected, at the token gate:
+`token 75 (Lean.Parser.Command.docComment) changed spelling`. The fix reads the containment out of the
+spans, which are known before the walk starts.
+
+Both were latent before D2 rather than introduced by it — the `doLetElse` constraint has the same
+island exposure — but D2 is the first constraint whose range *is* an island, so it is what made them
+observable.
 
 ## D3 is an ownership question, not a layout one
 
