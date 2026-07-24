@@ -10,6 +10,7 @@ import all LeanFmt.Config
 import all LeanFmt.Discovery
 import all LeanFmt.Doc
 import all LeanFmt.Edit
+import all LeanFmt.Formatter.NativeLayout
 import all LeanFmt.Imports
 import all LeanFmt.LanguageServer
 import all LeanFmt.Rules
@@ -2646,6 +2647,42 @@ ms={(Float.ofNat (stop - start)) / 1000000.0} out_bytes={out.utf8ByteSize}"
 
 end ReportBench
 
+/- `NativeLayout` refuses a `choice` node whose alternatives do not spell the same source, rather than
+taking `children[0]?` on faith the way `terminalsFrom` used to. The parser does not build a
+disagreeing `choice`, so no fixture reaches that refusal from a file and no suite under `tests/` can
+prove it fires. Without this the gate is unreachable code. The `Syntax` is hand-built for exactly that
+reason. -/
+private def choiceAtom (start stop : Nat) (val : String) : Lean.Syntax :=
+  .atom (.original "".toRawSubstring ⟨start⟩ "".toRawSubstring ⟨stop⟩) val
+
+private def testChoiceVerification : IO Unit := do
+  let source := "alpha beta"
+  let agree := Lean.Syntax.node .none Lean.choiceKind
+    #[choiceAtom 0 5 "alpha", choiceAtom 0 5 "alpha"]
+  ensure (Formatter.NativeLayout.choiceDisagreement? source agree).isNone
+    "a choice node whose alternatives spell the same source was refused"
+  let disagree := Lean.Syntax.node .none Lean.choiceKind
+    #[choiceAtom 0 5 "alpha", choiceAtom 6 10 "beta"]
+  let some (range, alternative, _, _) := Formatter.NativeLayout.choiceDisagreement? source disagree
+    | throw (IO.userError "a choice node whose alternatives spell different source was accepted")
+  ensure (alternative == 1) s!"expected the disagreement at alternative 1, got {alternative}"
+  ensure (range == ⟨0, 10⟩)
+    s!"expected the choice node's own range, got {range.start}:{range.stop}"
+  -- The outer alternatives agree -- both spell bytes 0..5, because the wrapper's own terminals come
+  -- from the inner choice's first alternative. The disagreement is one level down, inside outer
+  -- alternative 1, which is precisely where `terminalsFrom` never looks. A gate that descended the
+  -- way the walk does would report this file clean.
+  let nested := Lean.Syntax.node .none Lean.choiceKind
+    #[choiceAtom 0 5 "alpha",
+      Lean.Syntax.node .none `wrapper
+        #[Lean.Syntax.node .none Lean.choiceKind
+            #[choiceAtom 0 5 "alpha", choiceAtom 6 10 "beta"]]]
+  ensure (Formatter.NativeLayout.choiceSpelling source nested[0]! ==
+      Formatter.NativeLayout.choiceSpelling source nested[1]!)
+    "the nested case is vacuous: its outer alternatives already disagree"
+  ensure (Formatter.NativeLayout.choiceDisagreement? source nested).isSome
+    "a disagreement nested below the first alternative was missed"
+
 public unsafe def main (args : List String) : IO UInt32 := do
   match args with
   | ["artifact-projection", artifactPath, sourcePath] =>
@@ -2693,6 +2730,7 @@ public unsafe def main (args : List String) : IO UInt32 := do
     testSemanticCaps
     testDoc
     testRangeSelection
+    testChoiceVerification
     testSuppression
     IO.println "lean-fmt module-artifact tests passed"
     return 0

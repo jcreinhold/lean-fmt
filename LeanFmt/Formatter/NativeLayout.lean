@@ -137,6 +137,64 @@ private partial def terminalsFrom (source : String) (stx : Lean.Syntax)
       children.foldl (init := result) fun terminals child =>
         terminalsFrom source child terminals
 
+/- Verify what `terminalsFrom` assumes.
+
+`Lean.Syntax.reprint` (`Syntax.lean:400`) reprints *every* alternative of a `choice` node and refuses
+when they disagree. `terminalsFrom` takes `children[0]?` and assumes agreement, and so do the three
+other walks below that spell `children[0]?` for the same reason -- `selectedLeafRanges`,
+`containsAtom`, and `collectRecordUpdateFieldStarts`. That is four assumptions, not four checks, on a
+node this repository records hitting 1 of 5 sampled mathlib modules. One gate at the entry point makes
+the assumption true for all of them rather than repeating the comparison four times.
+
+What has to agree is what the adapter consumes: each alternative's ordered terminal sequence, compared
+on `(range, sourceSpelling)`. Those two are not independent -- `terminalsFrom` sets
+`sourceSpelling := slice source range` -- so the comparison reduces to range-sequence equality, and
+carrying the spelling along only makes the refusal message readable. That reduction is the point: for
+leaves that carry original `SourceInfo`, equal range sequences are exactly what makes `reprint`'s
+`lead ++ val ++ trail` agree, so this checks the same property `reprint` does.
+
+`syntaxSpelling` deliberately does not participate. An `atom` and an `ident` over the same bytes spell
+it differently and emit the same source, so comparing it would refuse a file that is fine.
+
+Every alternative is descended into, not only the first, so a disagreement nested inside an unselected
+alternative is still found. `reprint` does the same.
+
+What this gate does *not* cover is `containsAtom`'s question, which is about a leaf's constructor
+rather than its bytes: two alternatives could in principle spell identical source with an atom on one
+side and an ident on the other. No such node has been observed, and the parser does not build one, so
+it is recorded here rather than guarded. -/
+private def choiceSpelling (source : String) (alternative : Lean.Syntax) :
+    Array (SourceRange × String) :=
+  (terminalsFrom source alternative).map fun terminal => (terminal.range, terminal.sourceSpelling)
+
+private def renderChoiceSpelling (terminals : Array (SourceRange × String)) : String :=
+  String.intercalate " " (terminals.toList.map fun (range, text) => s!"{range.start}:{repr text}")
+
+private partial def choiceDisagreement? (source : String) (stx : Lean.Syntax) :
+    Option (SourceRange × Nat × String × String) :=
+  match stx with
+  | .node _ kind children =>
+    let here :=
+      if kind == Lean.choiceKind then
+        match children[0]? with
+        | none => none
+        | some first =>
+          let expected := choiceSpelling source first
+          match (children.extract 1 children.size).findIdx?
+              (fun alternative => choiceSpelling source alternative != expected) with
+          | some offset =>
+            match children[offset + 1]? with
+            | none => none
+            | some actual =>
+              some (sourceRange? stx |>.getD ⟨0, 0⟩, offset + 1,
+                renderChoiceSpelling expected, renderChoiceSpelling (choiceSpelling source actual))
+          | none => none
+      else none
+    match here with
+    | some found => some found
+    | none => children.findSome? (choiceDisagreement? source)
+  | _ => none
+
 /- The two interpolation kinds Lean defines: the interpolated string itself and its literal chunks.
 Naming them is not the same as testing `kind.toString.contains "interpolatedStr"`, which this replaced:
 that also matched every antiquotation kind derived from them, because an antiquotation kind is built by
@@ -850,6 +908,18 @@ def command (source : String) (ownership : CommentOwnership) (stx : Lean.Syntax)
   let formatIndent := Lean.Std.Format.getIndent (← Lean.getOptions)
   let stripped := Formatter.withoutBoundaryTrivia stx
   let terminals := terminalsFrom source stripped
+  -- `terminals` above, and the three other walks that spell `children[0]?`, each pick one alternative
+  -- of a `choice` node and assume the rest spell the same bytes. `Syntax.reprint` verifies that
+  -- instead of assuming it, and this is where lean-fmt does the same: one check on `stripped`, which
+  -- is the tree all four walk, makes the assumption true for all four.
+  if let some (range, alternative, expected, actual) := choiceDisagreement? source stripped then
+    return .error {
+      category := .command
+      kind := stx.getKind
+      range
+      trace
+      detail := s!"choice node at {range.start}:{range.stop} spells different source in its \
+alternatives: alternative 0 is {expected}, alternative {alternative} is {actual}" }
   let comments := interiorComments ownership stx
   let constraints := collectOffsideConstraints formatIndent stripped
   let returnTermStarts := collectReturnTermStarts stripped
