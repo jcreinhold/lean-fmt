@@ -198,9 +198,9 @@ private partial def terminalsFrom (source : String) (stx : Lean.Syntax)
 `Lean.Syntax.reprint` (`Syntax.lean:400`) reprints *every* alternative of a `choice` node and refuses
 when they disagree. `terminalsFrom` takes `children[0]?` and assumes agreement, and so do the three
 other walks below that spell `children[0]?` for the same reason -- `selectedLeafRanges`,
-`containsAtom`, and `collectRecordUpdateFieldStarts`. That is four assumptions, not four checks, on a
-node this repository records hitting 1 of 5 sampled mathlib modules. One gate at the entry point makes
-the assumption true for all of them rather than repeating the comparison four times.
+`collectIndentedSequenceStarts`, and `collectOffsideConstraints`. That is four assumptions, not four
+checks, on a node this repository records hitting 1 of 5 sampled mathlib modules. One gate at the entry
+point makes the assumption true for all of them rather than repeating the comparison four times.
 
 What has to agree is what the adapter consumes: each alternative's ordered terminal sequence, compared
 on `(range, sourceSpelling)`. Those two are not independent -- `terminalsFrom` sets
@@ -215,10 +215,10 @@ it differently and emit the same source, so comparing it would refuse a file tha
 Every alternative is descended into, not only the first, so a disagreement nested inside an unselected
 alternative is still found. `reprint` does the same.
 
-What this gate does *not* cover is `containsAtom`'s question, which is about a leaf's constructor
-rather than its bytes: two alternatives could in principle spell identical source with an atom on one
-side and an ident on the other. No such node has been observed, and the parser does not build one, so
-it is recorded here rather than guarded. -/
+What this gate does *not* cover is a question about a leaf's *constructor* rather than its bytes: two
+alternatives could in principle spell identical source with an atom on one side and an ident on the
+other. No walk below asks that today -- `containsAtom` did, and went with the record-update rule that
+used it -- and no such node has been observed, so it is recorded here rather than guarded. -/
 private def choiceSpelling (source : String) (alternative : Lean.Syntax) :
     Array (SourceRange × String) :=
   (terminalsFrom source alternative).map fun terminal => (terminal.range, terminal.sourceSpelling)
@@ -436,36 +436,121 @@ private partial def collectReturnTermStarts (stx : Lean.Syntax)
   stx.getArgs.foldl (init := starts) fun starts child =>
     collectReturnTermStarts child starts
 
-private partial def containsAtom (expected : String) : Lean.Syntax → Bool
-  | .atom _ value => value == expected
-  | .node _ kind children =>
-    let children := if kind == Lean.choiceKind then children[0]?.toArray else children
-    children.any (containsAtom expected)
-  | _ => false
+/- Every `sepByIndent` list whose separators are written out begins on its own line.
 
-/- In `{ base with fields }`, `sepByIndent` requires a broken field sequence to begin on its own line.
-Lean's native document can otherwise keep the first field after `with` while breaking a later comma,
-dedenting that later field below the parser's reference column. This constraint forces only the
-delimiter-to-first-field boundary; the native field document still controls every inner break. -/
-private partial def collectRecordUpdateFieldStarts (stx : Lean.Syntax)
+`sepByIndent` (`Lean/Parser/Extra.lean:202-204`) is `withPosition (sepBy (checkColGe >> p) …)`, so the
+column it measures every later item against is the column of the *first* item. Its formatter
+(`:211-223`) spells that in one of two ways, and which one it picks is a property of the source:
+
+- `hasNewlineSep` -- some separator slot is an empty null node, meaning the source separated two items
+  by a line break rather than by the written separator. The formatter then emits `pushWhitespace "\n"`
+  for each such slot and one `pushAlign (force := true)` before the list. The align pads to the current
+  indent and every `"\n"` lands on it, so the first item and every later one share one column and the
+  parser's reference column is satisfied by construction. Nothing to correct.
+- otherwise -- every separator is written (`,` or `;`), the formatter emits none of that, and the list
+  is laid out by the soft `line`s the enclosing document already has. Those `line`s break to the
+  enclosing `nest`, which has no reason to equal the column the *first* item happens to land on. Break
+  one and not the one before the first item, and a later item is dedented below the reference column.
+
+The correction for the second case is one boundary: break before the first item, so that the first
+item lands on the same `nest` every later break lands on. `hard` is what makes this sound rather than
+merely likely -- it cannot lengthen a line, so unlike a `flat` join it cannot push a break somewhere
+else and it needs no accompanying flatten. Everything inside the list still lays itself out.
+
+But "has no reason to equal" is not "does not equal", and forcing the boundary where the two already
+coincide is a gratuitous break. They coincide exactly when the first item's unbroken column *is* the
+`nest` the separators break to, and only two shapes of carrier can pull them apart:
+
+- A carrier that opens with a delimiter and wraps its list in that delimiter's own group. `structInst`
+  is the one: `{ ` is `format.indent` columns wide, and `fill` breaks the line *before* a group it
+  cannot fit rather than inside it, so `{` reaches the current indent before any comma breaks and the
+  first field sits exactly on the `nest`. Verified by rendering an inline record at widths 100, 90, 80
+  and 70 -- the fields stay aligned at every one. Content between the delimiter and the first item is
+  what breaks it: `{ base with ` is wider than the indent, so the fields sit right of the `nest` and a
+  later comma dedents below them. The test is therefore *whether a terminal intervenes*, not whether
+  the intervening terminal is `with`.
+- A carrier `ppAllowUngrouped` left outside any group of its own. `Term.byTactic` (`Term.lean:108`) is
+  the only one that carries a `sepByIndent` list -- `categoryParser.formatter`
+  (`Formatter.lean:302-310`) skips its `fill` wrapping, so `by` and its tactics are direct children of
+  whatever `nest` encloses the declaration. The separators then break to *that* indent, which is
+  unrelated to the column `by` happens to sit at, so the two never reliably coincide and the boundary
+  is always needed. This is the same mechanism `collectUngroupedBodyStarts` above turns to the other
+  purpose; the two are the joined `:= by` and the broken `by`-to-first-tactic halves of one line.
+
+The delimiter-free sequences are the ungrouped case wherever they appear, not only under `by`, because
+being delimiter-free is exactly what leaves them without a group. `whereDecls` and the two bracketed
+sequences are the delimited case; no terminal can intervene in any of them, so the test says no and
+they are walked anyway rather than assumed. The one carrier not walked is `structInstFields` spelled
+after `where` (`Command.lean:174`) instead of inside `{ }`: `where` is its delimiter and the list is
+the very next thing, so nothing can come between them and there is no shape for the test to find.
+
+Which nodes carry such a list is a fact about Lean's grammar, not a list of shapes observed to fail.
+These are the `sepByIndent`/`sepBy1Indent` call sites reachable from a Lean source file:
+`structInstFields` (`Term.lean:354`, `Command.lean:174`, `Elab/StructInst.lean:42,58`),
+`tacticSeq1Indented` and `tacticSeqBracketed` (`Term/Basic.lean:75,79`), `convSeq1Indented` and
+`convSeqBracketed` (`Init/Conv.lean:25-26`), and `whereDecls` (`Term.lean:741-742`). In each the list
+is the first `null` child, because every other child is an atom or follows it.
+
+This replaces a rule that fired on `{ base with … }` alone and fired unconditionally. Both halves were
+wrong. `with` was a proxy for the intervening terminal, and it missed the tactic sequence entirely;
+firing unconditionally added a second break to lists the `align` had already positioned, which is how
+a record update whose fields the source spelled on their own lines acquired a blank line above the
+first field and left it indented one level past its siblings. -/
+private def ungroupedSequenceKind (kind : Lean.Name) : Bool :=
+  kind == ``Lean.Parser.Tactic.tacticSeq1Indented ||
+    kind == ``Lean.Parser.Tactic.Conv.convSeq1Indented
+
+private def delimitedSequenceKind (kind : Lean.Name) : Bool :=
+  kind == ``Lean.Parser.Tactic.tacticSeqBracketed ||
+    kind == ``Lean.Parser.Tactic.Conv.convSeqBracketed ||
+    kind == ``Lean.Parser.Term.whereDecls
+
+/- `sepByIndent.formatter`'s own test, transcribed: an odd slot holding an empty null node is a
+separator the source spelled as a line break. The final slot is excluded there because a trailing
+separator is skipped rather than emitted, and it is excluded here for the same reason. -/
+private def hasNewlineSeparator (list : Lean.Syntax) : Bool :=
+  let args := list.getArgs
+  args.size != 0 && (List.range args.size).any fun index =>
+    index % 2 == 1 && args[index]!.matchesNull 0 && index != args.size - 1
+
+/- `structInstFields` is the list's own wrapper, so the delimiter and anything between it and the list
+belong to the *parent*. Every other delimited carrier holds its own delimiter, and this walk sees the
+node that holds the list either way -- so the terminals to count are the ones under `owner` that start
+before the list does, and "more than the delimiter itself" is more than one of them. -/
+private def delimiterIntervenes (owner list : Lean.Syntax) : Bool :=
+  match (selectedLeafRanges list)[0]? with
+  | some first => ((selectedLeafRanges owner).filter (·.start < first.start)).size > 1
+  | none => false
+
+private partial def collectIndentedSequenceStarts (stx : Lean.Syntax)
     (starts : Array Nat := #[]) : Array Nat :=
   match stx with
   | .node _ kind children =>
-    let starts :=
+    -- `(owner, carrier)`: the node whose terminals include the opening delimiter, and the node that
+    -- holds the list. They differ only for `structInst`, whose `{` is a sibling of the field list.
+    let carrier? : Option (Lean.Syntax × Lean.Syntax) :=
       if kind == ``Lean.Parser.Term.structInst then
-        match children.findIdx? (·.isOfKind ``Lean.Parser.Term.structInstFields) with
-        | some fieldsIndex =>
-          let updatePrefix := children.extract 0 fieldsIndex
-          if updatePrefix.any (containsAtom "with") then
-            match (selectedLeafRanges children[fieldsIndex]!)[0]? with
+        (children.find? (·.isOfKind ``Lean.Parser.Term.structInstFields)).map fun fields =>
+          (stx, fields)
+      else if ungroupedSequenceKind kind || delimitedSequenceKind kind then some (stx, stx)
+      else none
+    let starts :=
+      match carrier? with
+      | some (owner, carrier) =>
+        match carrier.getArgs.find? (·.isOfKind Lean.nullKind) with
+        -- One item has no separator to break at the wrong column, so it needs no boundary; two do.
+        | some list =>
+          if list.getArgs.size >= 3 && !hasNewlineSeparator list &&
+              (ungroupedSequenceKind kind || delimiterIntervenes owner list) then
+            match (selectedLeafRanges list)[0]? with
             | some range => if starts.contains range.start then starts else starts.push range.start
             | none => starts
           else starts
         | none => starts
-      else starts
+      | none => starts
     let children := if kind == Lean.choiceKind then children[0]?.toArray else children
     children.foldl (init := starts) fun starts child =>
-      collectRecordUpdateFieldStarts child starts
+      collectIndentedSequenceStarts child starts
   | _ => starts
 
 /- `:= by` keeps the `by` on the `:=` line.
@@ -1318,7 +1403,7 @@ alternatives: alternative 0 is {expected}, alternative {alternative} is {actual}
   let boundaryStarts : Array (Nat × BoundaryLayout) :=
     (collectUngroupedBodyStarts stripped (collectReturnTermStarts stripped)).map
         (·, BoundaryLayout.flat) ++
-      (collectRecordUpdateFieldStarts stripped).map (·, BoundaryLayout.hard) ++
+      (collectIndentedSequenceStarts stripped).map (·, BoundaryLayout.hard) ++
       (collectCtorDocStarts stripped).map (·, BoundaryLayout.elided) ++
       joined.map (·.start, BoundaryLayout.flat)
   let commentFree := withoutTrivia stripped

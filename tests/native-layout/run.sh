@@ -248,10 +248,14 @@ check "a multiline doc comment keeps its second line at column zero" \
 
 printf -- '--- offside carriers compose (§6) ---\n'
 offside="$work/Offside.once"
-# `sepByIndent` is the one format-algebra carrier for parser-significant columns, and record updates
-# are what it covers. The field sequence must begin on its own line once a later separator breaks.
+# `sepByIndent` is the one format-algebra carrier for parser-significant columns, and it covers record
+# fields, tactic sequences, and conv sequences alike. A list whose separators the source wrote out has
+# to begin on its own line once a later separator can break -- but only where the first item would not
+# already sit on the indent those breaks land on, which is why `{ base with` is here and a plain
+# `{ first := …, … }` is not.
 check "a record update opens its field sequence on its own line" \
-  "$(grep -A1 -F '{ base with' "$offside" | tail -1)" "    first := 1, second := 2, third := 3, fourth := 4 }"
+  "$(grep -A2 -Fx 'def updated (base : Packet) : Packet :=' "$offside" | tail -1)" \
+  "    first := 1, second := 2, third := 3, fourth := 4 }"
 # `do`, `match`, and equation alternatives have no algebra carrier at all; their offside lives in the
 # parser's `withPosition`/`checkColGe`. These assert the columns survived anyway.
 check "match arms stay siblings at one column" "$(grep -c '^      | 0 => 1$' "$offside")" "1"
@@ -265,9 +269,30 @@ check "tactic steps stay siblings" \
 # function of the width rather than of this line: measured threshold 136 columns for a line occupying
 # 50. A flat boundary at the `by` terminal is what holds it, since `Doc` delegates rendering to
 # `Std.Format.prettyM` on purpose and the adapter does not own that decision.
-check "by stays on the := line" "$(grep -c ' := by$' "$offside")" "1"
+check "by stays on the := line" "$(grep -c ' := by$' "$offside")" "2"
 check "and its first tactic still starts the next line" \
-  "$(grep -A1 -F ':= by' "$offside" | tail -1)" "  have step : n + 0 = n := Nat.add_zero n"
+  "$(grep -A1 -Fx '    n + 0 = n := by' "$offside" | tail -1)" \
+  "  have step : n + 0 = n := Nat.add_zero n"
+# Was D9's tactic surface, and the same rule as the record update above: a `;`-separated tactic
+# sequence is a `sepByIndent` list, and `by ` lands its first tactic at one column past the indent the
+# separators break to. Joined, `exact` came out at column 2 against a saved column of 60, the block
+# ended at the break, and the rest of the proof was read as a command.
+check "a semicolon-separated tactic sequence opens on its own line" \
+  "$(grep -A1 -Fx 'theorem semicolonTactics (n : Nat) : n + 0 = n ∧ n + 0 = n := by' "$offside" \
+    | tail -1)" \
+  "  constructor; exact Nat.add_zero n; exact Nat.add_zero n"
+# The negative half: one item has no separator, so there is nothing to position and nothing is forced.
+# The rule counts items rather than matching a tactic kind, and this is what says so.
+check "a single tactic stays on the by line" \
+  "$(grep -c '^theorem singleTactic (n : Nat) : n + 0 = n := by rfl$' "$offside")" "1"
+# The other half of D9, and the reason the rule reads `hasNewlineSep` instead of firing on every list:
+# `sepByIndent.formatter` emits a forced `align` when the source spelled the separators as line breaks,
+# which already positions the sequence. Forcing a second break there put a blank line above `first` and
+# indented it one level past its siblings -- the parser stopped reading fields at the second one.
+check "a line-break-separated record update keeps its own alignment" \
+  "$(grep -A2 -Fx 'def relaid (base : Packet) : Packet :=' "$offside" | tail -1)" "    first := 1"
+check "  ... with its siblings at that same column and no blank line above them" \
+  "$(grep -c '^    \(second\|third\) := [23]$' "$offside")" "2"
 # A guarded `let`'s siblings are the offside constraint's own job: native layout reparents them *into*
 # the guard, where they would run conditionally. The bail-out's own placement is the other half, and
 # both are positive claims now; §7 records what D4 was and why joining is the only sound layout for it.
@@ -340,6 +365,11 @@ check "  ... and the same loop over an identifier keeps it, so a repair must tel
 # go: the flat boundary the adapter already had reaches it, so no new mechanism was needed. Unlike D4,
 # joining `by` to `:=` cannot migrate a break: the tactic sequence starts its own line either way.
 # D6 is repaired; its assertion moved into §4. It was the adapter's for the same reason as D1 and D3.
+# D9 is repaired; its assertions are in §6, on both surfaces. It was one mechanism -- a `sepByIndent`
+# list whose separators the source wrote out, laid out by soft `line`s that break to an indent the
+# first item does not sit on -- reached through a `;`-separated tactic sequence and through a record
+# update. The rule that covered only the second was also firing where it was not needed, which is why
+# the repair reads `hasNewlineSep` and asks whether a terminal intervenes.
 # D8 is repaired, and it is the one D these fixtures did *not* find -- the stratified mathlib sample
 # did, because nothing here wrote an ordinary comment above a docstring. Its fixture and assertions
 # were added to Boundaries.lean and §4 as part of the repair, which is the shape a corpus defect takes

@@ -97,7 +97,10 @@ It does not need to. The repair is a **flat boundary at the `by` terminal**, and
 has that mechanism: `transformOrdinaryText` (`NativeLayout.lean:704-711`) routes a whitespace-only text
 leaf through `constrainBoundary`, so `flatBoundaries` replaces whatever the renderer emitted at that
 position with `" "`. What is missing is only a pure collector of the shape `collectReturnTermStarts`
-(`:372-381`) and `collectRecordUpdateFieldStarts` (`:394-413`) already are. An earlier draft of this
+(`:372-381`) and `collectRecordUpdateFieldStarts` already are. (That second collector was replaced by
+`collectIndentedSequenceStarts` when D9 showed the record update was one instance of a `sepByIndent`
+rule, not a rule of its own; the line numbers here are as measured and are not maintained.) An earlier
+draft of this
 file claimed the repair needed a new document-rewriting mechanism — an eighth entry for the list in
 `CLAUDE.md`. Reading `transformOrdinaryText` disproves that for D5: the position is already reachable.
 

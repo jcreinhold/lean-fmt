@@ -12,8 +12,10 @@ Each constraint names a parser-significant column that native layout alone does 
 
 - a guarded `let ... | ...` whose continuation is a sibling statement, which native layout can
   reparent under the guard's own sequence;
-- the field sequence of a record update, which `sepByIndent` requires to begin on its own line once
-  any later separator breaks;
+- the first item of a `sepByIndent` list whose separators the source wrote out, which has to begin on
+  its own line so that a later separator breaking cannot dedent an item below it -- and the same list
+  spelled with line-break separators, which the formatter's own `align` already positions and which a
+  second break would displace;
 - the term of a `return`, which must stay on the `return` line.
 
 `do`, nested `match`, tactic blocks, `where`, and equation alternatives are here because the
@@ -64,6 +66,18 @@ structure Packet where
 def updated (base : Packet) : Packet :=
   { base with first := 1, second := 2, third := 3, fourth := 4 }
 
+/- The same update with the separators spelled as line breaks. `sepByIndent.formatter`
+(`Lean/Parser/Extra.lean:211-223`) emits a forced `align` for exactly this spelling, so the sequence is
+already positioned; the rule above must not fire here. It used to, and the extra break put a blank line
+above `first` and left it indented one level past its siblings, which is where the parser stopped
+reading fields. -/
+def relaid (base : Packet) : Packet :=
+  { base with
+    first := 1
+    second := 2
+    third := 3
+    fourth := 4 }
+
 /- Nested `match` inside `do`, with alternatives whose bodies break. -/
 def nestedMatch (value : Nat) : Nat := Id.run do
   let result :=
@@ -79,6 +93,17 @@ def nestedMatch (value : Nat) : Nat := Id.run do
 theorem tacticSiblings (n : Nat) : n + 0 = n := by
   have step : n + 0 = n := Nat.add_zero n
   exact step
+
+/- The same list, spelled with `;` instead of line breaks. A tactic sequence is a `sepByIndent` list
+like a record update's fields, and `by ` puts its first tactic one column right of the indent the `;`
+separators break to -- so breaking a later one and not the first dedents it below the column
+`many1Indent` saved, and the block ends there with the rest read as a command. -/
+theorem semicolonTactics (n : Nat) : n + 0 = n ∧ n + 0 = n := by
+  constructor; exact Nat.add_zero n; exact Nat.add_zero n
+
+/- One tactic has no separator that can break at the wrong column, so nothing is forced and `by` keeps
+its tactic. The negative half of the rule, and the reason it counts items rather than matching a kind. -/
+theorem singleTactic (n : Nat) : n + 0 = n := by rfl
 
 /- `where` bindings after an equation-alternative body. -/
 def withWhere (value : Nat) : Nat :=
