@@ -258,6 +258,11 @@ check "a quotation with an antiquotation survives" \
   "$(count "$islands" '`($(Lean.quote value))')" "1"
 check "a multiline doc comment keeps its second line at column zero" \
   "$(grep -c '^Its second line owns its own column. -/$' "$islands")" "1"
+# The dynamic quotation is an island for a different reason than the rest of §5: not because its
+# payload is source data the document cannot hold, but because Lean's formatter cannot reach it at all.
+# Asserting the exact bytes is still the right assertion -- an island is its own rendering. See D11.
+check "a dynamic quotation survives as its own bytes" \
+  "$(count "$islands" '`(Lean.explicitBinders| (x : Nat))')" "1"
 
 printf -- '--- offside carriers compose (§6) ---\n'
 offside="$work/Offside.once"
@@ -387,6 +392,14 @@ check "  ... and the same loop over an identifier keeps it, so a repair must tel
 # did, because nothing here wrote an ordinary comment above a docstring. Its fixture and assertions
 # were added to Boundaries.lean and §4 as part of the repair, which is the shape a corpus defect takes
 # once it has a minimized case: a positive assertion here, not a pin.
+# D10 is repaired; its assertions are at §4's `alignBoundaryOwner`, and it was two defects in one gap.
+# D11 is repaired; its fixture and assertion are in Islands.lean and §5. It is the second *upstream*
+# bug in the toolchain proper rather than a mismatch of expectations: `parserOfStack.formatter` reads
+# `idxs.back! - offset` where the parser wrote `stack.size - offset - 1`, one slot short, so
+# `` `(cat| body) `` asks for a formatter registered under the bar and the command dies as
+# `Unknown constant «|»`. It is unreachable from an adapter repair, so the class is protected as an
+# exact island instead -- keyed on `dynamicQuot`, which is the whole of `parserOfStack`'s call sites.
+# Like D8, the stratified mathlib sample found it and these fixtures did not: four of seventy-two.
 
 printf -- '--- result ---\n'
 printf 'failures=%s\n' "$failures"

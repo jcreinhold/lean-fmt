@@ -279,6 +279,26 @@ private def antiquotationKind (kind : Lean.Name) : Bool :=
 private def sourceDataKind (kind : Lean.Name) : Bool :=
   kind == Lean.interpolatedStrKind || antiquotationKind kind
 
+/- A quotation whose body was parsed by a parser named at runtime, which Lean's formatter cannot
+recover. This is the second ordinary upstream bug the module works around.
+
+`Lean.Parser.Term.dynamicQuot` -- `` `(cat| body) ``, `Lean/Parser/Term.lean:1033` -- parses `body` with
+`parserOfStack 1`, which reads the parser's name off the syntax stack. At parse time that is the `ident`:
+`parserOfStackFn` takes `stack.get! (stack.size - offset - 1)` and the stack top is the `"| "` atom
+(`Lean/Parser/Extension.lean:772`). At format time `parserOfStack.formatter` takes
+`parents.back!.getArg (idxs.back! - offset)` (`Lean/PrettyPrinter/Formatter.lean:319`), and `idxs.back!`
+is the index of the argument being visited, so the same `offset` lands one slot short -- on the `"| "`
+atom rather than the `ident`. The formatter then asks `formatterForKind` about an atom, whose kind is
+`Name.mkSimple "|"`, and the command dies as `Unknown constant «|»`. Four of the seventy-two sampled
+mathlib modules refused on exactly that.
+
+Keying on this kind is keying on the *only* call site of `parserOfStack` in the toolchain, so no other
+node can reach that formatter; it is not a shape added because it was seen to fail. The body's category
+is chosen at parse time, so there is no grammar here whose layout lean-fmt could validate either. The
+quotation is therefore one exact island, and its source bytes are its whole rendering. -/
+private def dynamicQuotationKind (kind : Lean.Name) : Bool :=
+  kind == ``Lean.Parser.Term.dynamicQuot
+
 /- A marker stands in for protected syntax while the formatter runs, so it has to be a spelling the
 formatter cannot confuse with a real token. `command` rejects a source that already spells one rather
 than trusting the shape to be unusual; see `markerCollision?`. -/
@@ -356,6 +376,10 @@ private partial def protectSourceDataFrom (source : String) : Lean.Syntax → Pr
       | none => { stx }
     else if sourceDataKind kind then
       { stx, pendingEnvelope := true }
+    else if dynamicQuotationKind kind then
+      -- Protected here, not escalated: the quotation is a complete term, so a marker leaf standing in
+      -- for it leaves the grammar around it intact and the island stays as small as the defect.
+      exactPlaceholder source stx info
     else
       let (children, islands, pending) := children.foldl (init := (#[], #[], false))
         fun (rewritten, islands, pending) child =>

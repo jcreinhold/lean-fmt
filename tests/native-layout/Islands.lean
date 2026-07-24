@@ -41,4 +41,13 @@ def interpolated (name : String) : String := s!"hello {name} and {name}"
 formatting the quotation. -/
 def quoted (value : Nat) : Lean.Syntax → Lean.MacroM Lean.Syntax := fun _ => `($(Lean.quote value))
 
+/- A *dynamic* quotation, whose body's parser is named by the identifier before the bar. That name is
+read off the syntax stack, and Lean's formatter reads one slot short of where its parser wrote it, so
+the formatter asks for a formatter registered under the bar and the command dies as
+`Unknown constant «|»`. The class is the sole call site of `parserOfStack`, and its body is in a
+category picked at parse time, so the quotation is one island. That was D11. -/
+def dynamicallyQuoted : Lean.MacroM Lean.Syntax := do
+  let binders ← `(Lean.explicitBinders| (x : Nat))
+  return binders
+
 end NativeLayoutIslands
