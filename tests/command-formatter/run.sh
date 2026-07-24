@@ -41,7 +41,6 @@ for width in (32, 60, 100):
     metrics = canonical["metrics"]
     assert metrics["commands"] >= 20 and metrics["nativeDocuments"] == metrics["commands"], metrics
     assert metrics["alignedTokens"] > metrics["commands"], metrics
-    assert metrics["extensionRegistryDocuments"] == 1, metrics
     assert metrics["descriptorDocuments"] == 1, metrics
     assert text.startswith("module\nimport Lean\n\nnamespace CommandFixture\n"), text
     if width == 32:
@@ -73,7 +72,11 @@ import json, sys
 report = json.load(open(sys.argv[1]))
 assert report.get("formatFailure") is None and report.get("formatDraft") is not None, report
 metrics = report["formatDraft"]["metrics"]
-assert metrics["commands"] > 20 and metrics["nativeDocuments"] == metrics["commands"], metrics
+# The floor was 20 while `Formatter/Command.lean` still held the handwritten command grammar. Deleting
+# that grammar left the module at exactly 20 commands, so the floor moves down rather than pinning the
+# module's current size; what the check is for is that every command in a real commented module is a
+# native document, not that this module has a particular length.
+assert metrics["commands"] >= 15 and metrics["nativeDocuments"] == metrics["commands"], metrics
 assert metrics["alignedTokens"] > metrics["commands"], metrics
 print("  ok   lean-fmt's commented command module aligns every command through native layout")
 PY

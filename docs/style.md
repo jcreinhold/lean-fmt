@@ -42,9 +42,9 @@ and the declaration keyword in parsed order. Short attribute lists are flat (`@[
 long lists break after `@[` with one entry per line and a closing `]` at the attribute's indentation.
 
 `commands.syntax` keeps syntax, notation, macro, `open`, `export`, `universe`, `variable`, and
-`set_option` shells structural. Their nested term/parser/tactic children use their own category
-formatter. A long notation declaration breaks only at parser-child boundaries, never by splitting a
-quoted atom.
+`set_option` shells on one line while they fit. Their nested term/parser/tactic children break under
+their own category's layout. A long notation declaration breaks only at parsed child boundaries, never
+by splitting a quoted atom.
 
 ## Declarations and members
 
@@ -135,8 +135,8 @@ by
   · exact x
 ```
 
-Bullets and case/focus bodies are structural owners. Nested project tactics are formatted by the live
-tactic registry; they do not cause the enclosing declaration to become verbatim.
+Bullets and case/focus bodies own their bodies' indentation. Project-defined tactics break under the
+same live registry as core ones; they do not cause the enclosing declaration to become verbatim.
 
 `blocks.do-where` writes `do` followed by two-space-indented items unless one simple item fits flat.
 `where` uses the declaration rule above. Match arms containing `by`, tactic alternatives, and nested
@@ -168,7 +168,9 @@ never makes invalid Lean acceptable and never acts as unsupported-syntax fallbac
 
 ## Open project syntax
 
-`registry.custom` assigns the inside of imported syntax to the live registered formatter under the
-actual environment/options. Lean-fmt owns the surrounding command/term/tactic block and comments. It
-does not key project syntax by kind name, quoted atom, or a synthetic canonical-rewrite table. A
-registry-owned unbreakable atom may exceed width; a surrounding breakable core group may not.
+`registry.custom` assigns layout to the live registered formatter under the environment and options
+that parsed the file. That is not a rule for imported syntax alone: one adapter drives every command,
+so project syntax and core syntax reach the same authority, and nothing keys layout on a kind name, a
+quoted atom, or a canonical-rewrite table. Lean-fmt owns what surrounds those documents -- the module
+stream, comments, and the alignment and offside constraints a candidate must satisfy before it is
+admitted. A registry-owned unbreakable atom may exceed the width.

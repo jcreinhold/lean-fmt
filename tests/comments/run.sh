@@ -136,8 +136,6 @@ for width in (24, 60, 100):
     canonical = report["canonical"]
     assert canonical["validation"]["idempotencePasses"] == 1, canonical
     assert canonical["metrics"]["commentOwners"] == 13, canonical["metrics"]
-    assert canonical["metrics"]["coreRegistryDocuments"] == 0, canonical["metrics"]
-    assert canonical["metrics"]["registryDocuments"] == 0, canonical["metrics"]
     for payload in payloads:
         assert canonical["text"].count(payload) == 1, (width, payload, canonical["text"])
     assert canonical["text"].startswith("module\n/- before import -/\nimport Lean\n"), canonical["text"]

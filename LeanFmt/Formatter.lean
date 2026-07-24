@@ -25,7 +25,6 @@ adapter fixture is the upgrade tripwire for these private implementation assumpt
 import Lean.PrettyPrinter
 import all LeanFmt.Comments
 import all LeanFmt.Doc
-import all LeanFmt.Formatter.CoreSurface
 
 namespace LeanFmt.Internal
 
@@ -45,12 +44,6 @@ def name : FormatterCategory → Lean.Name
   | .tactic => `tactic
   | .named value => value
 
-def surface : FormatterCategory → SurfaceCategory
-  | .command => .command
-  | .term => .term
-  | .tactic => .tactic
-  | .named value => .named value
-
 end FormatterCategory
 
 /-- How Lean resolved the outer syntax kind's formatter. Nested kinds resolve independently during
@@ -64,7 +57,6 @@ inductive FormatterResolution where
 structure FormatterTrace where
   category : FormatterCategory
   kind : Lean.Name
-  surfaceOwner : SurfaceOwner
   resolution : FormatterResolution
   commentOwners : Nat
   deriving Inhabited, BEq, Repr, Lean.ToJson, Lean.FromJson
@@ -83,7 +75,6 @@ ordered module, native formatter leaves are the sole comment emitters. -/
 structure RegisteredDocument where
   document : Doc
   trace : FormatterTrace
-  structural : Bool := false
   deriving Inhabited
 
 /-- Deterministic whole-module formatter counters. A draft is produced by one already-running
@@ -99,11 +90,6 @@ structure FormatMetrics where
   exactIslandBytes : Nat
   offsideConstraints : Nat
   commentConstraints : Nat
-  coreDocuments : Nat
-  registryDocuments : Nat
-  structuralDocuments : Nat
-  coreRegistryDocuments : Nat
-  extensionRegistryDocuments : Nat
   registryNodes : Nat
   explicitDocuments : Nat
   descriptorDocuments : Nat
@@ -138,15 +124,15 @@ private def resolution (kind : Lean.Name) : Lean.CoreM FormatterResolution := do
   let registrations := Lean.PrettyPrinter.formatterAttribute.getValues (← Lean.getEnv) kind |>.length
   return if registrations == 0 then .descriptor else .explicit registrations
 
-/-- Record the live ownership and registry metadata for a syntax root without invoking its formatter.
-Structural rules use this trace so audit evidence cannot be confused with registry execution. -/
+/-- Record how the registry resolves a syntax root without invoking its formatter. The one caller that
+builds a document itself -- the module header, which is parsed before any environment exists -- uses
+this so its trace cannot be confused with a registry execution. -/
 def trace (ownership : CommentOwnership) (category : FormatterCategory)
     (stx : Lean.Syntax) : Lean.CoreM FormatterTrace := do
   let kind := stx.getKind
   return {
     category
     kind
-    surfaceOwner := CoreSurface.owner (← Lean.getEnv) category.surface kind
     resolution := ← resolution kind
     commentOwners := (Comments.subtree ownership stx).size }
 
@@ -194,16 +180,6 @@ def withoutBoundaryTrivia (stx : Lean.Syntax) : Lean.Syntax :=
   let start := stx.getRange?.map (·.start.byteIdx) |>.getD 0
   let stop := stx.getRange?.map (·.stop.byteIdx) |>.getD start
   stripBoundaryTriviaFrom start stop stx
-
-/-- Run a registered leaf without allowing it to duplicate trivia owned by its structural parent. -/
-def registeredBoundary (ownership : CommentOwnership) (category : FormatterCategory)
-    (stx : Lean.Syntax) : Lean.CoreM (Except FormatterFailure RegisteredDocument) :=
-  registeredAs ownership category stx (withoutBoundaryTrivia stx)
-
-/-- Resolve and run the registry with the same actual syntax used for trace and formatting. -/
-def registered (ownership : CommentOwnership) (category : FormatterCategory)
-    (stx : Lean.Syntax) : Lean.CoreM (Except FormatterFailure RegisteredDocument) :=
-  registeredAs ownership category stx stx
 
 end Formatter
 

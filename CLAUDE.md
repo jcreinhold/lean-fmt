@@ -34,9 +34,9 @@ lake lint            # the formatter on itself, under lean-fmt.toml; this is wha
 ```
 
 Suites live in `tests/*/run.sh`. Enumerate them, do not read them off a list — this one named 20 of
-36 for long enough that `tests/lsp/run.sh` went unrun and stayed red through three prompts. All 37:
+36 for long enough that `tests/lsp/run.sh` went unrun and stayed red through three prompts. All 36:
 application-formatter, block-formatter, boundary, cache, catalog, check, ci, collection-formatter,
-command-formatter, comments, compiler, core-surface, declaration-formatter, discovery, downstream,
+command-formatter, comments, compiler, declaration-formatter, discovery, downstream,
 format-suppression, formatter, formatter-adapter, imports, incremental, layout, lossless, lsp, modes,
 module-formatter, native-layout, performance, reporting, scale, semantic, stream, style, suppression,
 syntax, term-formatter, validator, watch.

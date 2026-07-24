@@ -65,7 +65,6 @@ assert metrics["nativeDocuments"] == metrics["commands"], metrics
 assert metrics["alignedTokens"] > metrics["commands"], metrics
 assert metrics["nativeCommentLeaves"] > 0, metrics
 assert metrics["registryNodes"] > metrics["alignedTokens"], metrics
-assert metrics["extensionRegistryDocuments"] >= 2, metrics
 assert metrics["explicitDocuments"] > 0 and metrics["descriptorDocuments"] > 0, metrics
 assert metrics["commentOwners"] == 3 and metrics["nativeEvents"] > 0, metrics
 assert draft["validation"]["structuralComparisons"] == 1, draft["validation"]

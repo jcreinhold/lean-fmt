@@ -10,7 +10,6 @@ import all LeanFmt.ArtifactStore
 import all LeanFmt.Comments
 import all LeanFmt.Formatter
 import all LeanFmt.Formatter.Command
-import all LeanFmt.Formatter.CoreSurface
 import all LeanFmt.Formatter.NativeLayout
 import all LeanFmt.Formatter.Trivia
 import all LeanFmt.Rules
@@ -28,7 +27,6 @@ namespace LeanFmt.Internal
 strategy, so the parent cannot accidentally key reporting on how it obtained the analysis. -/
 structure AnalysisEnvelope where
   artifact? : Option ModuleArtifact
-  surfaceSummary? : Option SurfaceSummary := none
   commentSummary? : Option CommentSummary := none
   formatDraft? : Option FormatDraft := none
   formatFailure? : Option FormatterFailure := none
@@ -115,11 +113,6 @@ private def buildFormatDraft (normalized : String) (source : LosslessSource)
   let bytes := normalized.toUTF8
   let headerRange : SourceRange := ⟨0, source.headerStop⟩
   let mut document? : Option Doc := none
-  let mut coreDocuments := 0
-  let mut registryDocuments := 0
-  let mut structuralDocuments := 0
-  let mut coreRegistryDocuments := 0
-  let mut extensionRegistryDocuments := 0
   let mut registryNodes := 0
   let mut nativeDocuments := 0
   let mut alignedTokens := 0
@@ -149,10 +142,6 @@ private def buildFormatDraft (normalized : String) (source : LosslessSource)
       else Doc.hard ++ Doc.hard
     document? := appendDocument document? <|
       Doc.mark headerRange (formatted.document ++ headerSeparator)
-    coreDocuments := coreDocuments + 1
-    match formatted.mechanism with
-    | .structural => structuralDocuments := structuralDocuments + 1
-    | .registry => coreRegistryDocuments := coreRegistryDocuments + 1
   let mut sequence := Formatter.Command.sequence
   for h : index in [0:commands.size] do
     checkCancelled
@@ -178,8 +167,6 @@ private def buildFormatDraft (normalized : String) (source : LosslessSource)
       document? := appendDocument document? <|
         Doc.mark ⟨start, stop⟩
           (leading ++ Doc.verbatim (normalizedSlice bytes suppressed) ++ boundaryTail ++ separator)
-      coreDocuments := coreDocuments + 1
-      structuralDocuments := structuralDocuments + 1
       continue
     let result ← Lean.Core.CoreM.toIO'
       (Formatter.NativeLayout.command normalized ownership command.stx placement.indent)
@@ -200,13 +187,6 @@ private def buildFormatDraft (normalized : String) (source : LosslessSource)
     match formatted.trace.resolution with
     | .explicit _ => explicitDocuments := explicitDocuments + 1
     | .descriptor => descriptorDocuments := descriptorDocuments + 1
-    match formatted.trace.surfaceOwner with
-    | .extension =>
-      registryDocuments := registryDocuments + 1
-      extensionRegistryDocuments := extensionRegistryDocuments + 1
-    | _ =>
-      coreDocuments := coreDocuments + 1
-      structuralDocuments := structuralDocuments + 1
     let indentation := Doc.text ("".pushn ' ' placement.indent)
     -- Docstrings are command syntax even though Lean stores their opening token in `SourceInfo` and
     -- comment ownership classifies that token as `doc`. Their structural command document is the
@@ -235,8 +215,6 @@ private def buildFormatDraft (normalized : String) (source : LosslessSource)
   if tailRange.start < tailRange.stop then
     document? := appendDocument document? <|
       Doc.mark tailRange (Doc.verbatim (normalizedSlice bytes tailRange))
-    coreDocuments := coreDocuments + 1
-    structuralDocuments := structuralDocuments + 1
   let document := document?.getD Doc.empty
   checkCancelled
   let rendered := renderDetailed width document
@@ -256,11 +234,6 @@ private def buildFormatDraft (normalized : String) (source : LosslessSource)
       exactIslandBytes
       offsideConstraints
       commentConstraints
-      coreDocuments
-      registryDocuments
-      structuralDocuments
-      coreRegistryDocuments
-      extensionRegistryDocuments
       registryNodes
       explicitDocuments
       descriptorDocuments
@@ -429,9 +402,6 @@ private unsafe def analyzeSnapshot (setup : Lean.ModuleSetup) (source : String)
   let (liveCommands, terminal?) ← processedLiveCommands snapshot checkCancelled
   checkCancelled
   let commands := liveCommands.map (·.stx)
-  let surfaceSummary := CoreSurface.summarize <|
-    liveCommands.foldl (init := #[]) fun observations command =>
-      observations ++ CoreSurface.observe command.env .command command.stx
   -- Semantic rule facts are captured only under rule demand. The whole-file occurrence fold remains
   -- separately gated, so report-only semantic checks do not pay for fix ownership.
   let normalizedSource := (LosslessSource.normalize source).1
@@ -503,7 +473,6 @@ private unsafe def analyzeSnapshot (setup : Lean.ModuleSetup) (source : String)
   let formatDraft? := if captureFormatDraft then firstDraft? else none
   return {
     artifact? := some artifact
-    surfaceSummary? := some surfaceSummary
     commentSummary? := commentSummary?
     formatDraft? := formatDraft?
     formatFailure? := formatFailure?
