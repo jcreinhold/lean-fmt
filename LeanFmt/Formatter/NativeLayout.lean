@@ -650,6 +650,7 @@ private structure TransformState where
   source : String
   terminals : Array Terminal
   comments : Array InteriorComment
+  trailing : Array (TokenSpan × InteriorComment)
   islands : Array ExactIsland
   droppedIslands : Array String
   constraints : Array (OffsideConstraint × TokenSpan)
@@ -661,6 +662,7 @@ private structure TransformState where
   appliedIslands : Array String := #[]
   appliedConstraints : Array Nat := #[]
   appliedBoundaries : Array Nat := #[]
+  appliedTrailing : Array Nat := #[]
   /- Whether the document emitted since the previous terminal is known to render as something other
   than the empty string. A command starts separated because its first terminal has no predecessor to
   merge with. -/
@@ -744,6 +746,44 @@ private def finishConstraint (result : Transformed) (carrier? : Option Constrain
           offsideConstraints := state.metrics.offsideConstraints + 1 } }
       return { result with format := .nest constraint.indentAdjustment result.format }
     | none => return result
+
+/- Put a block's dangling comment back at the end of that block.
+
+`finishConstraint`'s `.boundary` carrier already names the shape this needs: an `append` whose left is
+the break before a span and whose right spells exactly that span. Here the span is the block's last
+statement, so appending a break and the payload after the right side puts the comment one break
+further along the same item list the statement is in — at the statement's own column, and outside the
+group that decides the statement's own layout.
+
+The break is a `text "\n"`, the same leaf the document's own item separator is, and not a `line`. A
+`line` is discretionary and the enclosing group is a `fill`, which flattens item by item: a comment
+short enough to fit rendered as a *space* after the statement, and reparsed as its trailing trivia
+rather than the block's dangling trivia. `text "\n"` re-indents to the current level, which at this
+point is the level the sibling separators were emitted at.
+
+Nothing follows the payload. This runs only for a comment past the command's last token, so nothing in
+the command's document follows it and the module boundary supplies the break.
+
+There is no fallback. A block whose document holds no such break is a block this cannot place a
+comment in, and the alternative to refusing is emitting the comment at some other column — where
+reparsing hands it to a different owner and the comment gate refuses anyway, later and with a worse
+message. -/
+private def finishTrailing (left right : Transformed) :
+    StateT TransformState (Except String) (Option Std.Format) := do
+  let state ← get
+  let some span := right.span? | return none
+  unless left.span?.isNone && hasLineBoundary left.format do return none
+  match state.trailing.findIdx? fun (expected, _) => expected == span with
+  | none => return none
+  | some index =>
+    if state.appliedTrailing.contains index then return none
+    let (_, comment) := state.trailing[index]!
+    set { state with
+      appliedTrailing := state.appliedTrailing.push index
+      metrics := { state.metrics with
+        commentLeaves := state.metrics.commentLeaves + 1
+        commentConstraints := state.metrics.commentConstraints + 1 } }
+    return some (.append right.format (.append (.text "\n") (.text comment.payload)))
 
 /- The unapplied island covering the terminal the transform is waiting for, if any. An island consumes
 every terminal it covers at once, so this stays fixed at the island's first covered terminal for as
@@ -994,6 +1034,7 @@ private partial def transformNative : Std.Format →
       nativeNodes := state.metrics.nativeNodes + 1 } }
     let left ← transformNative left
     let right ← transformNative right
+    let right := { right with format := (← finishTrailing left right).getD right.format }
     finishConstraint {
       format := .append left.format right.format
       span? := mergeSpan left.span? right.span? }
@@ -1039,13 +1080,14 @@ private def boundaryTable (terminals : Array Terminal) (starts : Array (Nat × B
     | none => .ok table
 
 private def transform (source : String) (terminals : Array Terminal)
-    (comments : Array InteriorComment)
+    (comments : Array InteriorComment) (blockDangling : Array (SourceRange × InteriorComment))
     (islands : Array ExactIsland) (constraints : Array OffsideConstraint)
     (boundaryStarts : Array (Nat × BoundaryLayout)) (baseIndent : Nat)
     (native : Std.Format) : Except String (Std.Format × Metrics) := do
   let constraints := constraints.map fun constraint =>
     (constraint, spanForRange terminals constraint.range)
   let boundaries ← boundaryTable terminals boundaryStarts
+  let trailing := blockDangling.map fun (range, comment) => (spanForRange terminals range, comment)
   let comments := comments.map fun comment =>
     { comment with
       boundary := terminals.findIdx? (comment.range.start < ·.range.start) |>.getD terminals.size }
@@ -1053,7 +1095,8 @@ private def transform (source : String) (terminals : Array Terminal)
   let droppedIslands := islands.filterMap fun island =>
     if spelled.contains island.marker then none else some island.marker
   let initial : TransformState := {
-    source, terminals, comments, islands, droppedIslands, constraints, boundaries, baseIndent }
+    source, terminals, comments, trailing, islands, droppedIslands, constraints, boundaries,
+    baseIndent }
   let (result, state) ← (transformNative native).run initial
   if state.terminalIndex != terminals.size then
     throw s!"native formatter consumed {state.terminalIndex}/{terminals.size} terminals; \
@@ -1071,6 +1114,9 @@ offside constraints"
   if state.appliedBoundaries.size != boundaries.size then
     throw s!"native formatter applied {state.appliedBoundaries.size}/{boundaries.size} \
 boundaries"
+  if state.appliedTrailing.size != trailing.size then
+    throw s!"native formatter placed {state.appliedTrailing.size}/{trailing.size} block-dangling \
+comments; the block's document holds no break to hang one on"
   return (result.format, state.metrics)
 
 private def rootRange (stx : Lean.Syntax) : SourceRange :=
@@ -1096,6 +1142,24 @@ private def interiorComments (ownership : CommentOwnership) (stx : Lean.Syntax) 
           placement := placement
           kind := comment.kind }
     else none
+
+/- The comments `interiorComments` cannot take, with the block that owns each.
+
+A comment dangling at the end of a block sits past the command's own last token, so the range filter
+above drops it and it renders wherever the *next* command's leading trivia renders — column zero,
+outside the block it was written in. That is the whole of D3, and the two halves are one range test
+apart: `interiorComments` keeps what is inside the command, this keeps what a block inside the command
+owns from beyond it. Nothing is in both. -/
+private def blockDanglingComments (ownership : CommentOwnership) (stx : Lean.Syntax) :
+    Array (SourceRange × InteriorComment) :=
+  let range := rootRange stx
+  Comments.blockDangling ownership stx |>.filterMap fun (owner, comment) =>
+    if comment.kind == .doc || comment.range.stop <= range.stop then none
+    else some (owner, {
+      payload := Comments.payload ownership comment
+      range := comment.range
+      placement := .dangling
+      kind := comment.kind })
 
 private partial def nativeSize : Std.Format → Nat
   | .nest _ inner | .group inner _ | .tag _ inner => 1 + nativeSize inner
@@ -1126,6 +1190,7 @@ def command (source : String) (ownership : CommentOwnership) (stx : Lean.Syntax)
       detail := s!"choice node at {range.start}:{range.stop} spells different source in its \
 alternatives: alternative 0 is {expected}, alternative {alternative} is {actual}" }
   let comments := interiorComments ownership stx
+  let blockDangling := blockDanglingComments ownership stx
   let constraints := collectOffsideConstraints formatIndent stripped
   -- One table, one line per rule, and the spelling each rule asks for is right here rather than in the
   -- collector's name. A collector answers "where", `BoundaryLayout` answers "what".
@@ -1150,7 +1215,7 @@ alternatives: alternative 0 is {expected}, alternative {alternative} is {actual}
 cannot tell from the placeholder that protects {marker.range.start}:{marker.range.stop}" }
   try
     let native ← Lean.PrettyPrinter.formatCommand formattedSyntax
-    match transform source terminals comments islands constraints boundaryStarts
+    match transform source terminals comments blockDangling islands constraints boundaryStarts
         baseIndent native with
     | .ok (native, metrics) =>
       return .ok { document := Doc.registered native, trace, metrics }

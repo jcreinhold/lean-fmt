@@ -213,6 +213,48 @@ private def hasNewline (bytes : ByteArray) (start stop : Nat) : Bool := Id.run d
 private def suppressedBy (regions : Array SourceRange) (comment : Comment) : Comment :=
   { comment with suppressed := regions.any (containsRange · comment.range) }
 
+/- The column a byte offset sits at, counted from the last newline before it.
+
+Bytes, not codepoints: the only comparison this feeds is between two columns on two lines of the same
+file, and the two disagree only if the indentation before one of them holds a multi-byte character.
+Indentation is whitespace, so it cannot. -/
+private def columnOf (bytes : ByteArray) (offset : Nat) : Nat := Id.run do
+  let offset := min offset bytes.size
+  let mut cursor := offset
+  while cursor > 0 do
+    if bytes[cursor - 1]! == 0x0a then return offset - cursor
+    cursor := cursor - 1
+  return offset
+
+/- The statement a comment lines up under, when the comment is indented past the token after it.
+
+This is the whole of the offside case. A comment on its own line, indented strictly deeper than the
+token that follows it, cannot be that token's leading trivia in any layout that keeps the source's
+block structure -- the block it sits in closed before that token, and it closed *after* the comment.
+`assignWithNeighbors` would otherwise hand it to the following token and the formatter would render it
+at that token's column, outside the block it was written in.
+
+The owner is the innermost node that ends where the token before the comment ends and *starts at
+exactly the comment's column*. Ending there is what makes it a construct the comment sits at the end
+of; starting at the comment's column is what makes the comment a member of the same item list rather
+than something indented arbitrarily. Both are byte-level facts about lines, and neither names a
+syntax kind.
+
+Equality rather than `<=` on the column is deliberate and is what keeps the rule narrow. A comment
+indented deeper than every enclosing block's items -- say two spaces inside a `namespace` whose
+commands are at column zero -- selects nothing here and keeps the leading-trivia assignment it has
+always had. Widening it to `<=` selects the command root instead, which is a block the adapter has no
+break to attach to. -/
+private def enclosingBlock? (bytes : ByteArray) (sites : Array Site) (left : Site)
+    (comment : Comment) : Option Site :=
+  let column := columnOf bytes comment.range.start
+  sites.foldl (init := none) fun selected site =>
+    if site.leaf || site.range.stop != left.range.stop ||
+        columnOf bytes site.range.start != column then selected
+    else match selected with
+      | none => some site
+      | some current => if site.depth > current.depth then some site else selected
+
 private def enclosingDelimiter? (sites : Array Site) (left right : Site) : Option Site :=
   sites.foldl (init := none) fun selected site =>
     if site.leaf || !containsRange site.range ⟨left.range.start, right.range.stop⟩ then selected
@@ -239,6 +281,10 @@ private def assignWithNeighbors (bytes : ByteArray) (sites : Array Site) (commen
     else if isClosing right.spelling then
       match enclosingDelimiter? sites left right with
       | some container => syntaxOwner container .dangling comment
+      | none => syntaxOwner right .leading comment
+    else if columnOf bytes right.range.start < columnOf bytes comment.range.start then
+      match enclosingBlock? bytes sites left comment with
+      | some block => syntaxOwner block .dangling comment
       | none => syntaxOwner right .leading comment
     else
       syntaxOwner right .leading comment
@@ -354,6 +400,30 @@ def subtree (ownership : CommentOwnership) (stx : Lean.Syntax) : Array Comment :
       match sourceRange? owner with
       | some range => if containsRange root range then some assignment.comment else none
       | none => if sameSyntax owner stx then some assignment.comment else none
+
+/-- Comments a block inside this subtree owns that lie *after* that block's own last token, each with
+the owning block's range.
+
+Every other accessor here answers "which comments does this subtree own", which is all a renderer needs
+when the comment sits between two of the subtree's tokens: the boundary it belongs at is between them.
+A comment dangling at the end of a block is the one placement where it is not — the block closed, so
+the comment is past every token the subtree spells, and the renderer has to be told *which* block ended
+in order to put it back at that block's indentation rather than at the subtree's. -/
+def blockDangling (ownership : CommentOwnership) (stx : Lean.Syntax) :
+    Array (SourceRange × Comment) :=
+  match sourceRange? stx with
+  | none => #[]
+  | some root => ownership.assignments.filterMap fun assignment =>
+    if assignment.placement != .dangling then none else
+    match assignment.owner with
+    | .file => none
+    | .node owner _ =>
+      match sourceRange? owner with
+      | some range =>
+        if containsRange root range && range.stop <= assignment.comment.range.start then
+          some (range, assignment.comment)
+        else none
+      | none => none
 
 /-- Comments in a syntax subtree with one requested logical placement. -/
 def subtreeAt (ownership : CommentOwnership) (stx : Lean.Syntax)

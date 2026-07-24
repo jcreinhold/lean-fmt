@@ -60,4 +60,7 @@ def danglingOwner : Nat := Id.run do
   return value
   -- dangling comment after the last statement
 
+def unalignedTail : Nat := 8
+  -- indented past every block, aligned with none of them
+
 end NativeLayoutBoundaries

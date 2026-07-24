@@ -140,7 +140,8 @@ for body in \
   '/-- A declaration doc comment stays on its declaration. -/' \
   '/-- A field doc comment stays on its field, not on the structure. -/' \
   '/-- A constructor doc comment stays on its constructor. -/' \
-  '-- dangling comment after the last statement'; do
+  '-- dangling comment after the last statement' \
+  '-- indented past every block, aligned with none of them'; do
   check "placed once: $body" "$(count "$boundaries" "$body")" "1"
 done
 # Ownership, not just presence. A field docstring hoisted to the front of its command would land on
@@ -171,6 +172,25 @@ check "  ... and its constructor still follows it" \
   "  | only"
 check "the trailing comment stays on its owner's last line" \
   "$(grep -F -- '-- trailing line comment' "$boundaries")" "  0 -- trailing line comment"
+# Was D3, and unlike D1, D2, and D6 it was an *ownership* defect rather than a layout one: the comment
+# is indented past the token after it, so `assignWithNeighbors` had no rule for it and handed it to
+# that token as leading trivia. It then rendered at that token's column -- zero -- outside the block it
+# was written in, while the comment multiset stayed intact, which is why every count above passed.
+# These two lines are the repair's claim: the comment lines up with the statement it follows, and the
+# statement is still the last thing in the block.
+check "a block's dangling comment stays inside the block" \
+  "$(grep -B1 -F -- '-- dangling comment after the last statement' "$boundaries" | head -1)" \
+  "    return value"
+check "  ... at the column of the statement it follows" \
+  "$(grep -c '^    -- dangling comment after the last statement$' "$boundaries")" "1"
+# The negative half of the same rule, and the reason `enclosingBlock?` compares columns for equality
+# rather than `<=`. This comment is also indented past the token after it, but it lines up with no
+# item of any block that ends where it starts, so it has no block to belong to and stays what it has
+# always been: leading trivia of the next command's first token, rendered at that token's column. A
+# `<=` test would have handed it to the command root, which is a block the adapter has no break inside
+# to hang it on -- the comment gate would then refuse the whole file rather than move one comment.
+check "a comment aligned with no block item keeps its leading assignment" \
+  "$(grep -c '^-- indented past every block, aligned with none of them$' "$boundaries")" "1"
 check "the interior comment stays between the operator and its continuation" \
   "$(grep -A1 -F -- '-- interior line comment' "$boundaries" | tail -1)" "    4"
 # The adapter owns *both* sides of a comment, not only the side facing the token behind it. `[` and `5`
@@ -251,11 +271,10 @@ printf -- '--- pinned defects these fixtures found, owned by 23c (§7) ---\n'
 # match. It was upstream: `def ctor` puts the newline inside the `"\n| "` atom, which sits *after*
 # `optional docComment`, and wraps the docstring in a `nest -2`.
 #
-# D3 -- a comment dangling after the last statement of a `do` block leaves the block entirely and
-#       lands at column zero before the next command. The comment multiset is preserved, which is
-#       why §4 passes; its owner is not.
-check "D3 a dangling do-block comment escapes to column zero" \
-  "$(grep -c '^-- dangling comment after the last statement$' "$boundaries")" "1"
+# D3 is repaired and its assertions moved into §4. It was the only one of the six that was not a
+# layout defect: `Comments.assignWithNeighbors` had no rule for a comment indented past the token after
+# it, so the comment changed *owner*, and layout followed the owner. The repair is a column comparison
+# in ownership plus one break in the adapter, and the two have to agree or the comment gate refuses.
 # D4 -- a guarded `let ... | return 0` breaks after the `|`. `results/23a` passed this to 23c as an
 #       open safety boundary; it validates today, so it is a layout defect and not a correctness one.
 #       A flat boundary at the bar was tried and reverted: it is width-unsound. Forcing the bail-out
