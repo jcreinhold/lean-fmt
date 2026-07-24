@@ -316,3 +316,55 @@ that removal is the formatter doing its job. The proposed rule restores them —
 separator Lean *declined for shape* from one it *declined for re-lexing*, because `pushToken` records
 no such distinction. Nothing else in the document does either. A real repair needs a predicate over the
 token pair itself, not over the source, and that has not been written; D7 stays pinned.
+
+## D11 is upstream and unreachable from the adapter; D12 was hiding behind it
+
+Added 2026-07-24, from the stratified mathlib sample rather than from these fixtures. Both were found
+in the same four modules and they are independent: each reproduces without the other.
+
+| Defect | Origin | Evidence |
+| --- | --- | --- |
+| D11 `` `(cat\| body) `` refuses with ``Unknown constant «\|»`` | **upstream** | `parserOfStack.formatter` resolves the `"\| "` atom as a parser name |
+| D12 escalated island smaller than the marker it produced | adapter | island `112:120` for a marker standing in for `112:136` |
+
+**D11.** `Lean.Parser.Term.dynamicQuot` (`Lean/Parser/Term.lean:1033`) parses its body with
+`parserOfStack 1`, which reads the parser's name off the syntax stack. The two ends disagree about
+where that name is:
+
+| | Expression | Reads |
+| --- | --- | --- |
+| `parserOfStackFn` (`Lean/Parser/Extension.lean:772`) | `stack.get! (stack.size - offset - 1)` | the `ident`; the stack top is the `"\| "` atom |
+| `parserOfStack.formatter` (`Lean/PrettyPrinter/Formatter.lean:319`) | `parents.back!.getArg (idxs.back! - offset)` | one slot short of the `ident` |
+
+`idxs.back!` is the index of the argument being visited — arg 3 of
+`"`(" >> ident >> "\| " >> incQuotDepth (parserOfStack 1) >> ")"` — so `3 - 1` lands on arg 2, the bar.
+`formatterForKind` is then asked about an atom whose kind is `Name.mkSimple "\|"`, and the command dies.
+`Lean/PrettyPrinter/Parenthesizer.lean:375` has the same expression.
+
+No adapter repair reaches an upstream index, so the class is protected as an exact island instead.
+Keying on `dynamicQuot` is not a shape whitelist: it is the toolchain's **only** call site of
+`parserOfStack`, so nothing else can reach the broken formatter, and the body's category is chosen at
+parse time, so there is no grammar here whose layout lean-fmt could validate either. `` `(tactic| …) ``
+and the other dedicated category quotations are unaffected — they have their own parsers and never
+route through `parserOfStack`, which is why the first minimization attempt with `` `(tactic| skip) ``
+did not reproduce.
+
+**D12.** Protection escalates from an antiquotation to the smallest node that *strictly* encloses it,
+and it measured that node on the **rewritten** subtree. A placeholder is a leaf built from its node's
+own `SourceInfo`, and an interior node's is `.none`, so a child that had already escalated contributed
+no position and `Syntax.getRange?` stopped at the last leaf the rewrite left intact:
+
+```
+Term.app [112:136]                  -- as parsed
+  term.pseudo.antiquot [112:116]    -- $(_)      => pending
+  null [117:136]
+    Term.fun [117:136]
+      atom "fun" [117:120]
+      Term.basicFun [121:136]       -- escalates first, for $b
+```
+
+After `basicFun` becomes a marker leaf, `Term.fun` measures `117:120` and the application `112:120`.
+The island is `$(_) fun`; the marker stands for `$(_) fun $x:ident ↦ $b`. The transform then refuses
+with `exact island 112:120 cuts terminal 141:146`, naming a terminal well past the island because
+every leaf the island *should* have covered was suppressed as interior to it. Escalation has to be able
+to run twice, so every range is now read off the node as the source wrote it.
