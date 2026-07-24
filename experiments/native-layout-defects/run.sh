@@ -104,3 +104,19 @@ module
 def viaDo (value : Nat) : Nat := Id.run do
   return value + 1
 EOF
+
+# D7, found after the six above were repaired. `pushToken` (`Lean/PrettyPrinter/Formatter.lean:383-407`)
+# decides the discretionary space between two adjacent tokens by re-lexing alone. Both loops below are
+# the same syntax; only the token before `do` differs. `list` then `do` re-lexes as one identifier, so
+# the document holds a space; `]` then `do` does not, so it holds nothing.
+probe "D7 space before do" "$widths" <<'EOF'
+module
+
+def loops (list : List Nat) : Nat := Id.run do
+  let mut total := 0
+  for value in list do
+    total := total + value
+  for value in #[1, 2, 3] do
+    total := total + value
+  return total
+EOF

@@ -35,4 +35,20 @@ def projections (pair : Nat × Nat) : Nat := Nat.succ pair.fst + Nat.succ pair.s
 allowed to re-escape, and whose original bytes are the contract. -/
 def literals : Char × String × String := ('α', "tab\there", "λ x → x")
 
+/- The separator *between* two aligned terminals is the document's decision, not the source's, and
+Lean decides it by re-lexing alone. `pushToken` (`Lean/PrettyPrinter/Formatter.lean:385-407`) inserts
+a discretionary separator exactly when `parseToken (tk ++ leadWord)` would run past `tk`. `]` followed
+by `do` does not, so the document holds `text"]" text"do"` with nothing between them; `list` followed
+by `do` would re-lex as `listdo`, so that one gets a soft `line` -- trailing *inside* the operand's own
+group, not at the seam. Both loops are here because the pair is the defect: a repair that adds the
+missing separator must not also disturb the one Lean already gets right, and neither loop alone can
+tell those apart. See §7. -/
+def loops (list : List Nat) : Nat := Id.run do
+  let mut total := 0
+  for value in list do
+    total := total + value
+  for value in #[1, 2, 3] do
+    total := total + value
+  return total
+
 end NativeLayoutAlignment

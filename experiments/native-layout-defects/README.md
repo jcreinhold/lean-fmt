@@ -1,8 +1,9 @@
-# Attribution of the six pinned layout defects
+# Attribution of the pinned layout defects
 
 Measured 2026-07-24 against `leanprover/lean4:v4.33.0-rc1`, at `90537d0`.
 
-`tests/native-layout/run.sh` §7 pins six defects as the *adapter's* output. That pin cannot say
+`tests/native-layout/run.sh` §7 pins layout defects as the *adapter's* output — six originally, and D7
+below after those six were repaired. That pin cannot say
 whether a defect is a shape Lean's own registered formatter produces or one the adapter introduces on
 top of a correct native document, and the two need different repairs. `Probe.lean` prints the native
 document with nothing between `PrettyPrinter.formatCommand` and `Std.Format.pretty`, plus the same
@@ -27,9 +28,10 @@ So three of the six are Lean's document and three are the adapter's handling of 
 native document never sees. They do not share a repair.
 
 All six are repaired; every assertion moved out of §7 and into the section of
-`tests/native-layout/run.sh` that states the positive claim, and §7 now holds the record rather than a
-pin. D4 was last, and the sections below are why: the repair that looks right is width-unsound, and the
-one that works needed a second mechanism.
+`tests/native-layout/run.sh` that states the positive claim, so those six survive in §7 as the record
+rather than a pin. D4 was last, and the sections below are why: the repair that looks right is
+width-unsound, and the one that works needed a second mechanism. D7, at the end, is the one still
+pinned live.
 
 ## D5 is one case, not three, and not the mechanism the prompt names
 
@@ -261,3 +263,53 @@ sit on one line, median 60 columns and widest 99; 10 more spell the bail-out on 
 their break. `tests/native-layout/Offside.lean`'s `guardedSpanningBailout` is that negative half, and
 §6 asserts both directions. `tests/block-formatter/run.sh`, which caught the reverted attempt at width
 40, passes.
+
+## D7 is upstream, and the obvious adapter-side repair over-fires
+
+Measured 2026-07-24, after the six above were repaired. `pushToken`
+(`Lean/PrettyPrinter/Formatter.lean:366`) decides the separator between two adjacent tokens by
+**re-lexing alone**. The formatter runs right-to-left, so `st.leadWord` holds the *next* token, and
+lines 385-407 insert a separator only when the concatenation would lex past `tk`:
+
+```lean
+let t ← parseToken $ tk' ++ st.leadWord
+if t.pos ≤ tk'.rawEndPos then pure false   -- stopped within `tk` => use it as is
+else pure true                             -- stopped after `tk` => add space
+```
+
+That is the correct rule for a printer whose only obligation is that its output re-lexes to the same
+tokens, and the wrong one for a formatter, which also owes the reader a shape. `for value in list do`
+and `for value in #[1, 2, 3] do` are the same syntax with a different operand, and the probe separates
+them:
+
+| Preceding token | `parseToken (tk ++ "do")` | Document |
+| --- | --- | --- |
+| `list` | `listdo`, one identifier — runs past `tk` | `fill[nest2[text"list" line]] text"do"` |
+| `]` | `]do`, stops at `]` | `fill[nest2[… text"]"]] text"do"` |
+
+So the output reads `for value in #[1, 2, 3]do`. It still parses — `]do` was never one token, which is
+precisely why `pushToken` declined — and it validates, so no gate catches it. `tests/native-layout/run.sh`
+§7 pins both loops, because a repair must add the missing separator without disturbing the one Lean
+already gets right.
+
+Two things the table shows that the rendered output does not. The separator is `pushLine`, a **soft
+`line`**, not a `text " "` — so it is a break candidate, and at a narrow width the identifier loop can
+break where the bracket loop cannot. And it sits *inside* the preceding operand's group, trailing, not
+between the two groups: whatever supplies the missing one has to reach into the operand's span rather
+than concatenate at the seam.
+
+### Why "the source separated them, so emit a `line`" is not the repair
+
+The adapter knows both terminals' source ranges, so the tempting rule is to emit a `Format.line`
+wherever the source put whitespace between two terminals that the document spells adjacent. Measured
+against `def pair (a b : Nat) : Nat × Nat := ⟨ a , b ⟩`:
+
+```
+text"⟨" fill[nest2[text"a"]] text"," line fill[nest2[text"b"]] text"⟩"
+```
+
+The source separated `⟨` from `a` and `a` from `,`; the document removes both spaces on purpose, and
+that removal is the formatter doing its job. The proposed rule restores them — it cannot tell a
+separator Lean *declined for shape* from one it *declined for re-lexing*, because `pushToken` records
+no such distinction. Nothing else in the document does either. A real repair needs a predicate over the
+token pair itself, not over the source, and that has not been written; D7 stays pinned.

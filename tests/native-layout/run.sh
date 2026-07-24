@@ -18,10 +18,11 @@ set -euo pipefail
 # test starts succeeding -- which is how `tests/check/Clean.lean` was silently rewritten before
 # `23b-suite-baseline-repair`.
 #
-# §7 was the unusual section: it pinned the layout defects these fixtures *found*, exactly as measured,
-# so that fixing one showed up here as a failure rather than passing unnoticed. All six are repaired
-# and their claims now sit in §4 and §6 as positive assertions, so §7 runs no check and is the record
-# of what the six were. Re-pin there if a seventh turns up.
+# §7 is the unusual section: it pins the layout defects these fixtures *found*, exactly as measured, so
+# that fixing one shows up here as a failure rather than passing unnoticed. Six are repaired and their
+# claims now sit in §4 and §6 as positive assertions, so those six survive there only as the record of
+# what they were. A seventh turned up and is pinned live: D7, the space Lean's `pushToken` does not put
+# between `]` and `do`. Re-pin there for an eighth.
 
 repo_root=$(cd "$(dirname "$0")/../.." && pwd)
 cd "$repo_root"
@@ -275,11 +276,24 @@ check "a bail-out the source spelled on several lines keeps its break" \
 check "  ... and is the only bar in these fixtures left bare" \
   "$(grep -c '^    let some .* |$' "$offside")" "1"
 
-printf -- '--- the six defects these fixtures found, and where their claims live now (§7) ---\n'
+printf -- '--- the defects these fixtures found: six repaired, one pinned (§7) ---\n'
 # This section held six pins, each a defect these fixtures found, recorded exactly as measured so that
-# repairing one failed here instead of passing silently. All six are repaired, so it holds no pin and
-# runs no check: it is the record of what they were, which of them were the adapter's and which were
-# upstream, and which section now asserts the repair. Re-pin here if a seventh turns up.
+# repairing one failed here instead of passing silently. All six are repaired; below the D1-D6 record
+# is D7, found later and pinned the same way.
+#
+# D7: a keyword whose parser spells no leading space sits flush against a delimiter before it.
+# `pushToken` (`Lean/PrettyPrinter/Formatter.lean:385-407`) decides the discretionary separator by
+# re-lexing alone -- it inserts one exactly when `parseToken (tk ++ leadWord)` runs past `tk`. That is
+# the right rule for safety and the wrong one for a formatter: `]` then `do` does not re-lex, so the
+# document spells them adjacent and the output reads `#[1, 2, 3]do`. It is upstream, and
+# `experiments/native-layout-defects/README.md` records the probe, the negative case, and why the
+# obvious adapter-side repair ("the source separated these two terminals, so emit a `Format.line`")
+# over-fires on `⟨ a, b ⟩`. The output still parses and still validates, which is why no gate catches
+# it and why it needs a pin.
+check "a for over a bracketed collection loses the space before do" \
+  "$(count "$alignment" 'for value in #[1, 2, 3]do')" "1"
+check "  ... and the same loop over an identifier keeps it, so a repair must tell them apart" \
+  "$(count "$alignment" 'for value in list do')" "1"
 #
 # D1 is repaired and its assertion moved into §4, where it now reads as the positive claim rather than
 # the pinned defect. `experiments/native-layout-defects` records why it was the adapter's: trivia is
