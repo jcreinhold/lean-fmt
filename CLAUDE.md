@@ -194,9 +194,13 @@ ninth and it goes in this list.
 Do not reimplement what Lean does do. `pushToken` inserts a discretionary space exactly when
 concatenation would re-lex as one token, using the real tokenizer; an adapter-side merge rule
 over-fires. Read `format.indent` through `Lean.Std.Format.getIndent`, never as a literal `2`. And
-`reprint` handles `choice` by reprinting every alternative and checking they agree, where
-`terminalsFrom` takes `children[0]?` — lean-fmt currently *assumes* what `reprint` *verifies*, on a
-node CLAUDE.md records hitting 1 of 5 sampled mathlib modules.
+`reprint` handles `choice` by reprinting every alternative and checking they agree. Four walks in
+`NativeLayout.lean` take `children[0]?` and would each *assume* it — `terminalsFrom`,
+`selectedLeafRanges`, `containsAtom`, `collectRecordUpdateFieldStarts` — so one gate at
+`NativeLayout.command` compares every alternative's ordered `(range, sourceSpelling)` sequence and
+refuses with the node and range named, making the assumption true for all four rather than repeating
+the comparison. Do the same for a fifth walk: verify once at the entry point, not per walk. The
+handwritten `Formatter.Command` header path still assumes, and is the remaining place it is unchecked.
 
 ### The module artifact and rule tiers
 

@@ -2683,6 +2683,85 @@ private def testChoiceVerification : IO Unit := do
   ensure (Formatter.NativeLayout.choiceDisagreement? source nested).isSome
     "a disagreement nested below the first alternative was missed"
 
+/- Generated terminal sequences through the alignment walk, with no syntax tree and no formatter.
+
+`Formatter.NativeLayout.transform` is the adapter minus syntax collection: terminals, comments,
+islands, constraints, and boundaries arrive as data, one state machine runs over an `Std.Format`, and
+the command is refused unless every one of them was applied exactly once. Nothing in that signature
+is a `Lean.Syntax`, so the sequences below are built rather than parsed -- which is the only way to
+put a duplicate spelling, a multi-byte payload, and a deliberately wrong native document next to each
+other in one test. `private` is not an obstacle: `import all` above reaches it, the same way
+`testChoiceVerification` reaches `choiceDisagreement?`.
+
+The round trip guarantees more than "the payloads match". The emitted payload sequence *is* the
+terminal sequence by construction -- alignment writes `terminal.sourceSpelling` at the Nth native
+leaf -- so a native document that reorders its own leaves cannot corrupt the output. It is counted as
+normalization instead, which is the deliberate asymmetry: Lean's formatter legitimately respells a
+token, so refusing a spelling mismatch would refuse ordinary files. Insert and delete are refusals
+because they change the leaf *count*, which position cannot absorb. -/
+private def spelledTerminals (spellings : Array (String × String)) :
+    String × Array Formatter.NativeLayout.Terminal := Id.run do
+  let mut source := ""
+  let mut terminals := #[]
+  for (syntaxSpelling, sourceSpelling) in spellings do
+    let start := source.utf8ByteSize
+    source := source ++ sourceSpelling
+    terminals := terminals.push
+      { syntaxSpelling, sourceSpelling, range := ⟨start, source.utf8ByteSize⟩ }
+    source := source ++ " "
+  return (source, terminals)
+
+private def nativeSequence (leaves : Array String) : Std.Format :=
+  leaves.foldl (init := (none : Option Std.Format)) (fun document leaf =>
+      match document with
+      | none => some (Std.Format.text leaf)
+      | some document => some (document ++ Std.Format.line ++ Std.Format.text leaf))
+    |>.getD Std.Format.nil
+
+private def alignedPayloads (format : Std.Format) : Array String :=
+  ((format.pretty 200).split (fun char => char == ' ' || char == '\n')).toArray.map (·.copy)
+    |>.filter (!·.isEmpty)
+
+private def testAlignmentSequences : IO Unit := do
+  -- A duplicate spelling, two multi-byte payloads, and one terminal the formatter respells the way
+  -- `«x»` is spelled `x` in syntax.
+  let spellings := #[("alpha", "alpha"), ("beta", "beta"), ("alpha", "alpha"), ("λ", "λ"),
+    ("x", "«x»"), ("γδ", "γδ")]
+  let (source, terminals) := spelledTerminals spellings
+  let expected := spellings.map (·.2)
+  let leaves := spellings.map (·.1)
+  let run (native : Std.Format) :=
+    Formatter.NativeLayout.transform source terminals #[] #[] #[] #[] #[] #[] 0 native
+  let .ok (aligned, metrics) := run (nativeSequence leaves)
+    | throw (IO.userError "an ordinary terminal sequence was refused")
+  ensure (alignedPayloads aligned == expected)
+    s!"alignment did not preserve the ordered payloads: {repr (alignedPayloads aligned)}"
+  ensure (metrics.tokenLeaves == spellings.size)
+    s!"expected {spellings.size} token leaves, got {metrics.tokenLeaves}"
+  ensure (metrics.normalizedTokens == 0)
+    s!"a leaf spelling one of its terminal's two spellings counted as normalized \
+({metrics.normalizedTokens})"
+  -- Insert: one native leaf more than there are terminals.
+  let .error inserted := run (nativeSequence (leaves.push "epsilon"))
+    | throw (IO.userError "an extra native leaf was accepted")
+  ensure ((inserted.splitOn "extra text leaf").length == 2)
+    s!"the extra leaf was refused without naming it: {inserted}"
+  -- Delete: one native leaf fewer.
+  let .error deleted := run (nativeSequence leaves.pop)
+    | throw (IO.userError "a missing native leaf was accepted")
+  ensure ((deleted.splitOn s!"consumed {spellings.size - 1}/{spellings.size} terminals").length == 2)
+    s!"the missing leaf was refused without naming the counts: {deleted}"
+  -- Reorder: the payloads still come out in terminal order, and the two moved leaves are the two
+  -- that now spell neither of their terminal's spellings.
+  let swapped := leaves.swapIfInBounds 1 3
+  let .ok (reordered, reorderedMetrics) := run (nativeSequence swapped)
+    | throw (IO.userError "a reordered native document was refused rather than counted")
+  ensure (alignedPayloads reordered == expected)
+    s!"a reordered native document changed the payload order: {repr (alignedPayloads reordered)}"
+  ensure (reorderedMetrics.normalizedTokens == 2)
+    s!"expected the two moved leaves to count as normalized, got \
+{reorderedMetrics.normalizedTokens}"
+
 public unsafe def main (args : List String) : IO UInt32 := do
   match args with
   | ["artifact-projection", artifactPath, sourcePath] =>
@@ -2731,6 +2810,7 @@ public unsafe def main (args : List String) : IO UInt32 := do
     testDoc
     testRangeSelection
     testChoiceVerification
+    testAlignmentSequences
     testSuppression
     IO.println "lean-fmt module-artifact tests passed"
     return 0

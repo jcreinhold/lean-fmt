@@ -229,8 +229,10 @@ checks = [
 for name, edit in checks:
     print("   rejected", mutate(name, edit))
 
-# `choice` alternatives all spell one byte range. The product takes `children[0]` and assumes the
-# rest agree; the oracle checks it, so it must be able to see them disagree.
+# `choice` alternatives all spell one byte range. Four walks in `NativeLayout.lean` take
+# `children[0]`; `NativeLayout.command` gates them by comparing every alternative's terminal
+# sequence, and this oracle checks the same property over the projected artifact independently of
+# that gate -- so it must be able to see them disagree.
 def disagree(artifact):
     syntax = artifact["syntaxData"]
     position = choice_alternative(syntax)[0]
