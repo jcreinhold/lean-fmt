@@ -241,7 +241,7 @@ printf 'module\n\ndef  x   :=   1' >"$nonl" # 23 bytes, no trailing newline
 check "a range over the last unit preserves a missing final newline" \
   "$(fmt format - --stdin-filename "$identity" --range 8:23 <"$nonl" 2>/dev/null |
     python3 -c 'import sys; print(repr(sys.stdin.buffer.read()))')" \
-  "b'module\\n\\ndef x := 1'"
+  "b'module\\n\\ndef x :=\\n  1'"
 
 printf -- '--- custom syntax and the #exit tail (§4) ---\n'
 # The exactness property a range must not break: syntax declared by a command *outside* the range is
@@ -296,7 +296,14 @@ check "a suppressed range leaves the following dirty unit alone" \
   "$(printf '%s' "$suppressed_range" | sed -n '6p')" "def  resumed(beta:Nat):Nat:=beta+1"
 resumed_range=$(fmt format - --stdin-filename "$identity" --range-lines 6:1-6:39 <"$suppressed" 2>/dev/null)
 check "formatting resumes in the next selected unit" \
-  "$(printf '%s' "$resumed_range" | grep -F 'def resumed')" "def resumed (beta : Nat) : Nat := beta + 1"
+  "$(printf '%s' "$resumed_range" | grep -F 'def resumed')" "def resumed (beta : Nat) : Nat :="
+# Split from the line above because the body is now on its own line: `declValSimple` is
+# `" :=" >> ppHardLineUnlessUngrouped >> declBody` (`Command.lean:169`), and that combinator's
+# formatter pushes a hard `"\n"` unless `ppAllowUngrouped` cleared `mustBeGrouped`, which only `:= by`
+# does. Asserting the header alone would no longer prove the unit reflowed at all, so the body is
+# asserted too.
+check "the resumed unit's body reflows onto its own line" \
+  "$(printf '%s' "$resumed_range" | grep -A1 -F 'def resumed' | tail -1)" "  beta + 1"
 check "formatting the next unit does not disturb suppressed bytes" \
   "$(printf '%s' "$resumed_range" | sed -n '4p')" "def preserved(alpha:Nat):Nat:=alpha+1"
 

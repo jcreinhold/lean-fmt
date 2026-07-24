@@ -2,6 +2,7 @@ module
 
 namespace     Alpha
 
-def layoutValue : Nat := 1
+def layoutValue : Nat :=
+  1
 
 end Alpha

@@ -94,64 +94,153 @@ printf 'module\n\nstructure P where\n  a : Nat\n  b : Nat\n\ndef mk (a b : Nat) 
 exotic_case choice
 python3 - "$work/choice.json" <<'PY'
 import json, sys
-source = json.load(open(sys.argv[1]))["artifact"]["source"]
-assert "choice" in source["kinds"], "the ambiguous parse produced no choice node; case is vacuous"
+syntax = json.load(open(sys.argv[1]))["artifact"]["syntaxData"]
+assert "choice" in syntax["kinds"], "the ambiguous parse produced no choice node; case is vacuous"
 PY
 
 # The oracle must be able to fail. Each mutation is a lie a corrupt or buggy producer could tell,
 # and a validator that accepts any of them proves nothing about the ones it accepted above.
+#
+# The tiling mutations are the load-bearing ones. `ModuleSyntax.structurallyValid` accepts every one
+# of them: it checks that roots are contiguous in the entry array and that command ranges lie in the
+# file, and never that one leaf's `trailingStop` is the next leaf's `leadingStart`. A producer that
+# drops a token's bytes or claims the same bytes twice is structurally valid and still wrong.
 project "$work/borrowed.setup.json" "$work/unicode.lean" unicode.lean "$work/mutate-base.json"
-python3 - "$work/mutate-base.json" "$work/unicode.lean" "$oracle" <<'PY'
+python3 - "$work/mutate-base.json" "$work/unicode.lean" "$work/choice.json" "$work/choice.lean" \
+  "$oracle" <<'PY'
 import copy, json, subprocess, sys, tempfile, os
 
 base = json.load(open(sys.argv[1]))["artifact"]
-source_path, oracle = sys.argv[2], sys.argv[3]
+source_path = sys.argv[2]
+choice_base = json.load(open(sys.argv[3]))["artifact"]
+choice_path = sys.argv[4]
+oracle = sys.argv[5]
+
+ENTRY_MISSING, ENTRY_NODE, ENTRY_ATOM, ENTRY_IDENT = 0, 1, 2, 3
 
 
-def mutate(name, edit):
-    artifact = copy.deepcopy(base)
-    edit(artifact["source"])
+def mutate(name, edit, artifact=None, path=None):
+    artifact = copy.deepcopy(artifact if artifact is not None else base)
+    edit(artifact)
     with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as handle:
         json.dump(artifact, handle)
-        path = handle.name
+        temp = handle.name
     try:
-        done = subprocess.run([sys.executable, oracle, path, source_path],
+        done = subprocess.run([sys.executable, oracle, temp, path or source_path],
                               capture_output=True, text=True)
     finally:
-        os.unlink(path)
+        os.unlink(temp)
     assert done.returncode != 0, f"the oracle accepted a {name} mutation; it has no teeth"
     return f"{name}: {done.stderr.strip()}"
 
 
-def bump(source, key):
-    source[key] += 1
+def leaves(syntax):
+    """Array positions of the original-info leaves, in pre-order (which is array order)."""
+    found = [index for index, entry in enumerate(syntax["entries"])
+             if entry[0] in (ENTRY_ATOM, ENTRY_IDENT) and isinstance(entry[1], list)]
+    assert len(found) >= 4, f"the mutation base has only {len(found)} leaves"
+    return found
+
+
+def leaf(syntax, position):
+    return syntax["entries"][leaves(syntax)[position]]
+
+
+def trailing_leaf(syntax):
+    """The first leaf that owns trailing trivia. Shrinking one of those opens a hole; shrinking a
+    leaf with none would instead invert `endPosition <= trailingStop` and be caught as bad order,
+    which is a different claim than the one this mutation means to test."""
+    for index in leaves(syntax):
+        info = syntax["entries"][index][1]
+        if info[4] > info[3]:
+            return syntax["entries"][index]
+    raise AssertionError("no leaf in the mutation base owns trailing trivia")
+
+
+def shift(info, field, delta):
+    info[field] += delta
+
+
+def choice_alternative(syntax):
+    """Entry positions of the leaves under the second alternative of the first choice node."""
+    kinds, entries = syntax["kinds"], syntax["entries"]
+    choice_kind = kinds.index("choice")
+
+    def subtree(index):
+        """Return (next entry index, [leaf entry positions in this subtree])."""
+        entry = entries[index]
+        if entry[0] == ENTRY_MISSING:
+            return index + 1, []
+        if entry[0] != ENTRY_NODE:
+            return index + 1, [index]
+        cursor, found = index + 1, []
+        for _ in range(entry[3]):
+            cursor, child = subtree(cursor)
+            found.extend(child)
+        return cursor, found
+
+    for index, entry in enumerate(entries):
+        if entry[0] == ENTRY_NODE and entry[2] == choice_kind:
+            cursor, alternatives = index + 1, []
+            for _ in range(entry[3]):
+                cursor, child = subtree(cursor)
+                alternatives.append(child)
+            assert len(alternatives) >= 2, "the choice node has one alternative; case is vacuous"
+            assert alternatives[1], "the choice node's second alternative holds no leaf"
+            return alternatives[1]
+    raise AssertionError("no choice node in the choice fixture")
+
+
+# `s` is the artifact; `x` its projection. Identity lives on the artifact, structure on the
+# projection, and the tiling claims live on individual leaves.
+def sd(edit):
+    return lambda s: edit(s["syntaxData"])
 
 
 checks = [
     # Identity: the artifact must be about the file the consumer holds, not another one.
     ("wrong digest", lambda s: s.update(normalizedDigest="0" * 64)),
-    ("wrong length", lambda s: bump(s, "normalizedBytes")),
-    # Boundaries.
-    ("header past terminal", lambda s: s.update(headerStop=s["terminalStop"] + 1)),
-    ("terminal past end", lambda s: bump(s, "terminalStop")),
-    ("short terminal", lambda s: s.update(terminalStop=s["terminalStop"] - 1)),
-    # Tiling: a hole, an overlap, and a dropped token are all silent losses of source.
-    ("dropped token", lambda s: s["tokens"].pop()),
-    ("shifted token", lambda s: s["tokens"][0].__setitem__(2, s["tokens"][0][2] + 1)),
-    ("trivia hole", lambda s: s["tokens"][0][5].__setitem__(
-        -1, [s["tokens"][0][5][-1][0], s["tokens"][0][5][-1][1] - 1])),
-    # Content: the spans can tile perfectly while every run is misdescribed.
-    ("misclassified trivia", lambda s: s["tokens"][0][5][0].__setitem__(0, 1)),
+    ("wrong length", lambda s: s.update(normalizedBytes=s["normalizedBytes"] + 1)),
+    ("stale schema", lambda s: s.update(schema="lean-fmt.module-artifact.v0")),
+    ("carries findings", lambda s: s.update(findings=[])),
+    # Roots: the command array must be a concatenation of whole trees with nothing between them.
+    ("non-contiguous root", sd(lambda x: x["commands"][0].update(entry=1))),
+    ("dangling options ref",
+     sd(lambda x: x["commands"][0].update(options=len(x["options"])))),
+    ("command range past end",
+     sd(lambda x: x["commands"][0]["range"].update(stop=x["commands"][0]["range"]["stop"] + 10**9))),
+    ("terminal misplaced", sd(lambda x: x.update(terminal=x["terminal"] + 1))),
+    ("truncated entries", sd(lambda x: x["entries"].pop())),
+    ("trailing entry", sd(lambda x: x["entries"].append([ENTRY_MISSING]))),
+    # Tiling: a hole, an overlap, and a dropped leaf are all silent losses of source, and all three
+    # are invisible to `structurallyValid`.
+    ("dropped leaf",
+     sd(lambda x: x["entries"].__setitem__(leaves(x)[2], [ENTRY_MISSING]))),
+    ("hole after leaf", sd(lambda x: shift(trailing_leaf(x)[1], 4, -1))),
+    ("overlapping leaf", sd(lambda x: shift(trailing_leaf(x)[1], 4, 1))),
+    ("leaf past end", sd(lambda x: shift(leaf(x, -1)[1], 4, 10**6))),
+    ("inverted leaf", sd(lambda x: shift(leaf(x, 2)[1], 2, 10**9))),
     # Provenance: a fabricated position is not a projection of anything.
-    ("synthetic leaf", lambda s: s["tokens"][0].__setitem__(3, 1)),
+    ("synthetic leaf",
+     sd(lambda x: leaf(x, 2).__setitem__(1, [2, leaf(x, 2)[1][2], leaf(x, 2)[1][3], True]))),
     # Dangling references.
-    ("bad node ref", lambda s: s["tokens"][0].__setitem__(0, len(s["nodes"]))),
-    ("bad kind ref", lambda s: s["nodes"][0].__setitem__(0, len(s["kinds"]))),
-    ("stale schema", lambda s: s.update(schema="lean-fmt.lossless-source.v0")),
+    ("bad kind ref", sd(lambda x: x["entries"][0].__setitem__(2, len(x["kinds"])))),
 ]
 for name, edit in checks:
     print("   rejected", mutate(name, edit))
-print(f"the oracle rejected all {len(checks)} mutations")
+
+# `choice` alternatives all spell one byte range. The product takes `children[0]` and assumes the
+# rest agree; the oracle checks it, so it must be able to see them disagree.
+def disagree(artifact):
+    syntax = artifact["syntaxData"]
+    position = choice_alternative(syntax)[0]
+    # `trailingStop`, so the span the oracle compares differs while the info stays well ordered and
+    # the failure is attributable to disagreement rather than to a malformed leaf.
+    shift(syntax["entries"][position][1], 4, 1)
+
+
+print("   rejected", mutate("choice disagreement", disagree, choice_base, choice_path))
+print(f"the oracle rejected all {len(checks) + 1} mutations")
 PY
 
 printf 'lean-fmt lossless projection corpus passed\n'

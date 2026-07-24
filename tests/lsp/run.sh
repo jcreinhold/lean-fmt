@@ -392,6 +392,12 @@ published = client.await_notification(
 check("a clean document publishes nothing to report", published["params"]["diagnostics"], [])
 
 # --- formatting ---
+# `tests/check/Clean.lean` has to actually be canonical for this to say anything, and its name is the
+# only thing that promises it. It held `def cleanValue : Nat := 1` on one line, which stopped being
+# canonical at `3635d39` when the native adapter landed: `declValSimple` is
+# `" :=" >> ppHardLineUnlessUngrouped >> declBody` (`Command.lean:169-170`), a hard newline unless the
+# body is one of the three `ppAllowUngrouped` parsers. A `Nat` literal is none of them. The fixture
+# was updated to the bytes Lean's own formatter produces; see `tests/modes/run.sh` for the full trace.
 answer = client.request("textDocument/formatting",
                         {"textDocument": {"uri": clean_uri}, "options": {}})
 check("a canonical document needs no edits", answer["result"], [])
@@ -433,6 +439,14 @@ def apply_edit(text, edit):
 # the *whole* document with the unit reformatted in place, so serving it as the replacement for the
 # actual range duplicated the file. Only this assertion could see that -- the range was right, the
 # text was right, and the pair was wrong.
+#
+# This holds only while everything *outside* the selected range is already canonical, because the
+# whole-document edit reformats those units too and the narrow edit by construction cannot. That
+# precondition is a property of the fixture, so keep `Layout.lean` dirty in exactly one place --
+# `namespace     Alpha`, the unit this range selects. It briefly held two: `def layoutValue` reflowed
+# to `:=\n  1` at `3635d39` and the difference surfaced here rather than in the range logic. If this
+# fails again, format `Layout.lean` and diff: a second dirty unit is the likely cause, and weakening
+# the assertion would retire the only check that catches a range/replacement mismatch.
 whole = client.request("textDocument/formatting",
                        {"textDocument": {"uri": layout_uri}, "options": {}})["result"]
 check("the narrow edit does what the whole-document edit does",

@@ -1,3 +1,4 @@
 module
 
-def cleanValue : Nat := 1
+def cleanValue : Nat :=
+  1

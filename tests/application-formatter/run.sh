@@ -8,7 +8,13 @@ work=$(mktemp -d "$repo_root/tests/application-formatter/.tmp.XXXXXX")
 trap 'rm -rf "$work"' EXIT
 cd "$repo_root"
 
-LEAN_NUM_THREADS=1 lake build lean-fmt FormatterAdapterFixtures
+# `Clean` is here because the `path_source_shortcut` assertion below reads module evidence for
+# `tests/check/Clean.lean`, and this suite used to build neither the module nor its facet. It passed
+# only because some other suite had left `Clean.olean` in `.lake` — an order dependency that turned
+# red the first time anyone edited that fixture, since a stale `.olean` is not evidence. Verified by
+# deleting `.lake/build/lib/lean/Clean.olean` and watching `cache.path_source_shortcut=1` vanish from
+# the profile. The `.olean` alone restores it; the `leanFmtArtifact` facet is not involved.
+LEAN_NUM_THREADS=1 lake build lean-fmt FormatterAdapterFixtures Clean
 application=$(lake -q query lean-fmt --text)
 
 cat >"$work/A.lean" <<'LEAN'

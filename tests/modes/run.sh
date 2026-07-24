@@ -159,6 +159,16 @@ PY
 # makes `patch.changed` — "are there fix edits?" — the wrong question, and it answers `false` here.
 # Had that survived, `format` would report this file clean while printing a different body, and
 # `RFP-SPEC`'s test would have passed as though nothing were wired in at all.
+#
+# The body breaks after `:=` at every width. That is not a wrapping decision this project makes and
+# not an adapter artifact: `Command.lean:169-170` spells `declValSimple` as
+# `" :=" >> ppHardLineUnlessUngrouped >> declBody`, and `Extra.lean:304` resolves that combinator to
+# `ppLine.formatter` — `pushWhitespace "\n"`, a hard newline — unless `ppAllowUngrouped` has cleared
+# `mustBeGrouped`. Exactly three parsers do that: `do` (`Do.lean:326`), `by` (`Term.lean:108`), and
+# `fun`/`λ` (`Term.lean:387`). A body that is none of the three — an application, a literal, an
+# arithmetic term — therefore breaks onto its own line at every width, which is what `#print` shows.
+# The one-line pin this assertion used to carry was the handwritten grammar's choice, not Lean's, and
+# it did not survive the native adapter. It is pinned in three places; grep `layoutValue` first.
 run_expect 1 "$work/layout-format.json" "$application" format --check --root . --json --no-cache \
   tests/check/Layout.lean
 python3 - "$work/layout-format.json" <<'PY'
@@ -169,7 +179,7 @@ assert r["findings"] == 0, f"layout-only change must carry no findings: {r}"
 assert r["changed"] == 1 and r["written"] == 0, r
 assert r["files"][0]["status"] == "would-format", r["files"][0]
 assert r["files"][0]["formatted"] == \
-    "module\n\nnamespace Alpha\n\ndef layoutValue : Nat := 1\n\nend Alpha\n", \
+    "module\n\nnamespace Alpha\n\ndef layoutValue : Nat :=\n  1\n\nend Alpha\n", \
     repr(r["files"][0]["formatted"])
 PY
 grep -q 'namespace     Alpha' tests/check/Layout.lean ||
@@ -247,7 +257,7 @@ assert seed["files"][0]["status"] == "clean", seed
 assert after["changed"] == 1, f"a check-populated hit suppressed layout: {after}"
 assert after["files"][0]["status"] == "would-format", after["files"][0]
 assert after["files"][0]["formatted"] == \
-    "module\n\nnamespace Alpha\n\ndef layoutValue : Nat := 1\n\nend Alpha\n", \
+    "module\n\nnamespace Alpha\n\ndef layoutValue : Nat :=\n  1\n\nend Alpha\n", \
     repr(after["files"][0]["formatted"])
 PY
 rm -rf "$cache_root"
@@ -597,7 +607,7 @@ assert f["status"] == "would-format", f
 assert [x["code"] for x in f["findings"]] == ["FMT003"], f          # finding survives format
 assert f["formatted"] == \
     "module\nimport LeanFmt.Basic\nimport LeanFmt.Basic\n\nnamespace Alpha\n" \
-    "\ndef mixedValue : Nat := 1\n\nend Alpha\n", repr(f["formatted"])  # reflowed, NOT deduped
+    "\ndef mixedValue : Nat :=\n  1\n\nend Alpha\n", repr(f["formatted"])  # reflowed, NOT deduped
 PY
 
 # `diff` equals the `format` preview: same reflow, same withheld fix.
@@ -645,7 +655,7 @@ import json, sys
 f, = json.load(open(sys.argv[1]))["files"]
 assert f["status"] == "would-format" and f["findings"] == [], f
 assert f["formatted"] == \
-    "module\nimport LeanFmt.Basic\n\nnamespace Alpha\n\ndef mixedValue : Nat := 1\n\nend Alpha\n", \
+    "module\nimport LeanFmt.Basic\n\nnamespace Alpha\n\ndef mixedValue : Nat :=\n  1\n\nend Alpha\n", \
     repr(f["formatted"])
 PY
 
@@ -665,7 +675,7 @@ assert r["mode"] == "format" and r["changed"] == 1 and r["findings"] == 0, r
 f, = r["files"]
 assert f["status"] == "would-format", f
 assert f["findings"] == [], f  # the reflow, not a rule, made the change
-assert f["formatted"] == "module\n\ndef alpha : Nat := 1\n\ndef beta : Nat := 2", repr(f["formatted"])
+assert f["formatted"] == "module\n\ndef alpha : Nat :=\n  1\n\ndef beta : Nat :=\n  2", repr(f["formatted"])
 PY
 run_expect 0 "$work/nosel-check.json" "$application" check --root . --json --no-cache \
   tests/modes/.rdf-layout-nosel.lean
@@ -680,6 +690,12 @@ PY
 # 2. In-string trailing whitespace is token content, not inter-token trivia. The declaration layer
 #    now carries that literal as an exact syntax token while reflowing only the surrounding shell.
 #    `fix` remains a clean no-op at original coordinates.
+#
+#    At `3635d39` this file was an `infrastructure-failure` — the formatter gate reported "not an
+#    atom: failed to pretty print term", because the multiline string island was substituted with a
+#    marker leaf that Lean's own formatter then refused. It formats now. The pin this assertion used
+#    to carry (`def stringWsValue :\n  String :=`) was therefore never a measurement of anything;
+#    nothing at that commit produced it.
 printf 'module\n\ndef stringWsValue : String := "alpha   \n  beta"' >"$string_fixture"
 run_expect 1 "$work/string-format.json" "$application" format --check --root . --json --no-cache \
   tests/modes/.rdf-layout-string.lean
@@ -689,7 +705,7 @@ r = json.load(open(sys.argv[1]))
 f, = r["files"]
 assert f["findings"] == [] and f["status"] == "would-format", f
 assert f["formatted"] == \
-    'module\n\ndef stringWsValue :\n  String :=\n  "alpha   \n  beta"', f
+    'module\n\ndef stringWsValue : String :=\n  "alpha   \n  beta"', f
 assert not r["infrastructureFailures"], r
 PY
 run_expect 0 "$work/string-fix.json" "$application" fix --root . --json --no-cache \
@@ -713,7 +729,7 @@ run_expect 1 "$work/tail-format.json" "$application" format --check --root . --j
 python3 - "$work/tail-format.json" <<'PY'
 import json, sys
 f, = json.load(open(sys.argv[1]))["files"]
-assert f["formatted"] == "module\n\ndef x : Nat := 1\n#exit\ntrailing garbage   ", repr(f["formatted"])
+assert f["formatted"] == "module\n\ndef x : Nat :=\n  1\n#exit\ntrailing garbage   ", repr(f["formatted"])
 PY
 
 # --- RDF-FINAL / FIP-IMPL: composition confluence with `format` WRITING. The two decoupled operations
@@ -722,7 +738,7 @@ PY
 #     reaches the SAME fixed point on disk. Since `ruff-11d`, `format` publishes in place, so both orders
 #     are materialized by the tools themselves (no captured-preview step) and the two files are compared.
 #     `fix` and `format` are both writers now; each still owns only its half. ---
-canonical='module\nimport LeanFmt.Basic\n\nnamespace Alpha\n\ndef mixedValue : Nat := 1\n\nend Alpha\n'
+canonical='module\nimport LeanFmt.Basic\n\nnamespace Alpha\n\ndef mixedValue : Nat :=\n  1\n\nend Alpha\n'
 source='module\n\nimport LeanFmt.Basic\nimport LeanFmt.Basic\n\nnamespace     Alpha\n\ndef mixedValue : Nat := 1\n\nend Alpha\n'
 
 # Order A — `fix` then `format`: fix dedups at original coords (layout still dirty), then format reflows
@@ -793,7 +809,7 @@ PY
 # 1+2. Exact bytes + idempotence. A layout-dirty, otherwise lint-clean file: `format` writes EXACTLY the
 #      canonical bytes (byte-compared), no rule fix appears, and a second `format` writes nothing.
 printf 'module\n\nnamespace     Gamma\n\ndef exactValue : Nat := 1\n\nend Gamma\n' >"$fin_exact_fixture"
-canonical_exact='module\n\nnamespace Gamma\n\ndef exactValue : Nat := 1\n\nend Gamma\n'
+canonical_exact='module\n\nnamespace Gamma\n\ndef exactValue : Nat :=\n  1\n\nend Gamma\n'
 run_expect 0 "$work/fin-exact.json" "$application" format --root . --json --no-cache \
   tests/modes/.fip-final-exact.lean
 CANON="$canonical_exact" python3 - "$work/fin-exact.json" "$fin_exact_fixture" <<'PY'
@@ -884,7 +900,7 @@ import json, sys
 f, = json.load(open(sys.argv[1]))["files"]
 assert f["status"] == "formatted" and f["written"] is True, f
 data = open(sys.argv[2], "rb").read()
-assert data == b'module\n\ndef stringVal :\n  String :=\n  "alpha   \n  beta"', repr(data)
+assert data == b'module\n\ndef stringVal : String :=\n  "alpha   \n  beta"', repr(data)
 PY
 
 # 6. Stale-source guard on format's write. A concurrent change between analysis and rename is caught by
@@ -929,7 +945,7 @@ PY
 python3 - "$fin_incl_fixture" <<'PY'
 import sys
 assert open(sys.argv[1]).read() == \
-    "module\n\nnamespace Incl\n\ndef inclValue : Nat := 1\n\nend Incl\n"
+    "module\n\nnamespace Incl\n\ndef inclValue : Nat :=\n  1\n\nend Incl\n"
 PY
 metadata "$fin_excl_fixture" >"$work/fin-excl.after"
 cmp "$work/fin-excl.before" "$work/fin-excl.after" # the excluded sibling was never touched
@@ -1013,7 +1029,7 @@ PY
 python3 - "$rcd_excl_fixture" <<'PY'
 import sys
 assert open(sys.argv[1]).read() == \
-    "module\n\nnamespace Excluded\n\ndef excludedValue : Nat := 1\n\nend Excluded\n"
+    "module\n\nnamespace Excluded\n\ndef excludedValue : Nat :=\n  1\n\nend Excluded\n"
 PY
 
 # 11. `[format] line-width` participates in the result-cache identity and `[lint]` does not

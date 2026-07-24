@@ -281,9 +281,17 @@ if [[ $staged_output != *"no changed Lean sources"* ]]; then
 fi
 
 # §9.6 A non-empty selection discloses that it covers a subset.
+#
+# The fixture is restored from the byte copy taken below, not with `git checkout --`. `git
+# checkout` restores HEAD, not what the working tree held, so this suite silently discarded an
+# uncommitted edit to `tests/check/Clean.lean` while that fixture was being repaired: the change
+# vanished mid-sweep and only the sweep's own before/after `git status` diff noticed. A suite may
+# read the repository; it may not decide what the working tree contains. Note the trap order too --
+# `restore_clean` now runs before `$work` is removed, because the saved copy lives there.
+cp -p tests/check/Clean.lean "$work/Clean.lean.orig"
 printf '\n' >>tests/check/Clean.lean
-restore_clean() { cd "$repo_root" && git checkout -- tests/check/Clean.lean 2>/dev/null || true; }
-trap 'rm -rf "$work"; restore_clean' EXIT
+restore_clean() { cp -p "$work/Clean.lean.orig" "$repo_root/tests/check/Clean.lean" 2>/dev/null || true; }
+trap 'restore_clean; rm -rf "$work"' EXIT
 set +e
 changed_output=$("$application" check --changed --root . 2>&1 >/dev/null)
 set -e
@@ -308,7 +316,7 @@ restore_clean
 untracked_marker="$repo_root/tests/watch/.regression-untracked.md"
 printf 'not a lean source\n' >"$untracked_marker"
 cleanup_untracked() { rm -f "$untracked_marker"; }
-trap 'rm -rf "$work"; restore_clean; cleanup_untracked' EXIT
+trap 'restore_clean; cleanup_untracked; rm -rf "$work"' EXIT
 
 set +e
 untracked_output=$("$application" check --changed --root . 2>&1 >/dev/null)
@@ -321,7 +329,7 @@ if [[ $untracked_code -ne 0 && $untracked_code -ne 1 ]]; then
   fail "--changed with an untracked non-Lean file exited $untracked_code: $untracked_output"
 fi
 cleanup_untracked
-trap 'rm -rf "$work"; restore_clean' EXIT
+trap 'restore_clean; rm -rf "$work"' EXIT
 
 # §9.7's other half — that a missing binary surfaces as `IO.Process.output` returning exit 255 rather
 # than throwing — is deliberately **not** asserted here. It is a fact about Lean's spawn path, and the

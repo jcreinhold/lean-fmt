@@ -33,9 +33,16 @@ lake exe lean-fmt-tests
 lake lint            # the formatter on itself, under lean-fmt.toml; this is what CI runs
 ```
 
-Suites live in `tests/*/run.sh`: boundary, cache, catalog, check, ci, compiler, discovery, downstream,
-imports, layout, lossless, modes, performance, reporting, scale, semantic, stream,
-suppression, syntax, watch.
+Suites live in `tests/*/run.sh`. Enumerate them, do not read them off a list — this one named 20 of
+36 for long enough that `tests/lsp/run.sh` went unrun and stayed red through three prompts. All 37:
+application-formatter, block-formatter, boundary, cache, catalog, check, ci, collection-formatter,
+command-formatter, comments, compiler, core-surface, declaration-formatter, discovery, downstream,
+format-suppression, formatter, formatter-adapter, imports, incremental, layout, lossless, lsp, modes,
+module-formatter, native-layout, performance, reporting, scale, semantic, stream, style, suppression,
+syntax, term-formatter, validator, watch.
+
+`tests/lsp/run.sh` is the ordinary suite and belongs in the sweep; `tests/lsp/acceptance.sh` and
+`tests/lsp/editor.sh` are the two costly ones described below and do not.
 
 Match the checks to the change:
 
