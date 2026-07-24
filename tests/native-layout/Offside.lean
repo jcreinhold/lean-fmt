@@ -36,6 +36,14 @@ def guardedTwice (left right : Option Nat) : Nat := Id.run do
   let some second := right | return first
   return first + second
 
+/- A guarded `let` whose bail-out is long enough to need a break of its own. The short bail-outs above
+cannot tell an honest boundary from one that only looks right at width 100: a constraint that pins this
+bar's break has to leave the term's own break somewhere the `do` block still reads as part of the
+bail-out. §1b renders this at 20 and 40, where it must break. -/
+def guardedLongBailout (value : Option Nat) : Nat := Id.run do
+  let some measured := value | return (Array.replicate 12 0).size + Array.size #[1, 2, 3]
+  return measured
+
 structure Packet where
   first : Nat
   second : Nat

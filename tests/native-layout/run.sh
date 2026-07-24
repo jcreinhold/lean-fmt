@@ -65,6 +65,35 @@ sys.stdout.write(json.load(open(sys.argv[1]))["files"][0]["formatted"])' \
     "$work/$fixture.json" >"$work/$fixture.once"
 done
 
+printf -- '--- every family still validates at narrow widths (§1b) ---\n'
+# Every section below reads a width-100 render, and that is not enough to keep a boundary honest. A
+# flat boundary substitutes an unbreakable `.text " "`, so the renderer re-measures and breaks at the
+# next soft line instead -- possibly inside a construct whose continuation indentation comes from the
+# enclosing `nest` rather than from the column the boundary just moved. At width 100 these fixtures fit
+# and nothing moves; the defect only appears where something has to break. D4's reverted repair
+# (`929b067`) failed exactly this way and only `tests/block-formatter`, which renders at four widths,
+# saw it. These two widths are cheap and put the check where the boundaries are written.
+#
+# Verified to fail: with `929b067`'s guard collector restored, `Offside` reports
+# `infrastructure-failure` at the diagnostics gate at width 20. Width 40 still passes there, so both
+# widths are load-bearing -- and so is `guardedLongBailout`, whose bail-out is the only one in these
+# fixtures long enough to have to break.
+for width in 20 40; do
+  printf '[format]\nline-width = %s\n' "$width" >"$work/width-$width.toml"
+  for fixture in "${fixtures[@]}"; do
+    set +e
+    "$application" format --check --root . --json --no-cache --config "$work/width-$width.toml" \
+      "tests/native-layout/$fixture.lean" >"$work/$fixture-$width.json" 2>"$work/$fixture-$width.err"
+    set -e
+    status=$(python3 -c '
+import json, sys
+record = json.load(open(sys.argv[1]))["files"][0]
+detail = "; ".join(record["diagnostics"]) if record["diagnostics"] else ""
+print(record["status"] + (f" ({detail})" if detail else ""))' "$work/$fixture-$width.json")
+    check "$fixture validates at width $width" "$status" "would-format"
+  done
+done
+
 printf -- '--- formatting is a fixed point (§2) ---\n'
 # The second pass goes through stdin borrowing the fixture's identity, so it is the same exact setup
 # without writing the tracked file. The validator already runs an idempotence gate internally; this
