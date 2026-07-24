@@ -838,18 +838,32 @@ private partial def provablyEmpty : Std.Format → Bool
   | .append left right => provablyEmpty left && provablyEmpty right
   | .line | .align _ => false
 
-private def insertComments (comments : Array InteriorComment) (suffix : Std.Format) : Std.Format :=
+/- A comment's own bytes, with the columns the source gave them.
+
+`Format.text` re-indents every newline it contains, so a block comment spanning lines would have its
+continuations pushed right by the ambient indentation while its opening moved with the layout -- and
+the payload the contract compares is the whole slice, so that is a changed comment and a refusal.
+`dedent` is the same cancelling `nest` an exact island gets, and for the same reason: a payload
+carrying absolute source columns has to reach column zero. A single-line payload has no interior
+newline for the indentation to reach, so it is left alone. -/
+private def commentPayload (dedent : Int) (comment : InteriorComment) : Std.Format :=
+  if comment.payload.contains '\n' then .nest dedent (.text comment.payload)
+  else .text comment.payload
+
+private def insertComments (dedent : Int) (comments : Array InteriorComment)
+    (suffix : Std.Format) : Std.Format :=
   let (document, atLineStart) := comments.foldl (init := (.nil, false))
     fun (document, atLineStart) comment =>
+      let payload := commentPayload dedent comment
       match comment.placement with
       | .trailing =>
         let boundary := if atLineStart then .nil else .text " "
-        let document := .append document (.append boundary (.text comment.payload))
+        let document := .append document (.append boundary payload)
         if comment.kind == .line then (.append document (.text "\n"), true)
         else (document, false)
       | .leading | .dangling =>
         let boundary := if atLineStart then .nil else .text "\n"
-        (.append document <| .append boundary <| .append (.text comment.payload) (.text "\n"), true)
+        (.append document <| .append boundary <| .append payload (.text "\n"), true)
   if atLineStart then document
   -- The adapter owns *both* sides of a comment, not just the side facing the token behind it. `suffix`
   -- is the native boundary between the two tokens the comment sits between, and the native document
@@ -1073,7 +1087,10 @@ private def constrainBoundary (format : Std.Format) :
       metrics := { state.metrics with
         commentLeaves := state.metrics.commentLeaves + comments.size
         commentConstraints := state.metrics.commentConstraints + comments.size } }
-    format := insertComments comments format
+    let span : TokenSpan := ⟨state.terminalIndex, state.terminalIndex⟩
+    format := insertComments
+      (-(state.baseIndent + state.ambientNest + containingConstraintNest state span))
+      comments format
   modify fun state => { state with separated := state.separated || !provablyEmpty format }
   return format
 
@@ -1213,12 +1230,17 @@ private partial def transformNative : Std.Format →
     modify fun state => { state with metrics := { state.metrics with
       nativeNodes := state.metrics.nativeNodes + 1 } }
     finishNode { format := ← constrainBoundary .line }
+  -- An `align` is a boundary: it is layout the document put between two terminals, and a comment that
+  -- belongs in that gap belongs *here*. It used to be the one boundary leaf that did not go through
+  -- `constrainBoundary`, so a comment landing in this gap was carried to the next leaf that did --
+  -- the following terminal's own leading padding, which is inside that terminal's `nest`. The comment
+  -- then rendered one level too deep and took the terminal with it, while the sibling items stayed on
+  -- the align's column, which is `sepByIndent`'s reference column: the block ended at the first
+  -- sibling. `constrainBoundary` subsumes the island and `separated` handling this case used to spell.
   | .align force => do
     modify fun state => { state with metrics := { state.metrics with
       nativeNodes := state.metrics.nativeNodes + 1 } }
-    if insideIsland (← get) then return { format := .nil }
-    modify fun state => { state with separated := true }
-    finishNode { format := .align force }
+    finishNode { format := ← constrainBoundary (.align force) }
   | .text value => transformText value
   | .nest indent inner => do
     modify fun state => { state with

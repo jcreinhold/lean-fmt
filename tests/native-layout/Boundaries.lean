@@ -70,6 +70,22 @@ inductive Spanning where
   exact island already carries exactly where they are. -/
   | only
 
+/- A comment sitting in the one boundary the document spells as a forced alignment: between `by` and
+the first tactic of a line-separated sequence. That align is `sepByIndent`'s reference column for every
+later tactic, so a comment the adapter cannot place there is carried to the next boundary it can --
+the following tactic's own leading padding, inside that tactic's `nest` -- where it renders one level
+too deep and takes the tactic with it, leaving the second tactic to end the block.
+
+The payload spans lines because that is the other half of the same fixture. `Format.text` re-indents
+every newline it contains, so a continuation line carrying its own source column needs the cancelling
+`nest` an exact island gets; without it the comment's bytes change and the contract refuses. -/
+theorem alignBoundaryOwner (n : Nat) : n + 0 = n := by
+  /- A comment written between `by` and the first tactic, too long to join the `by` line, with a
+  continuation line that owns its own column. -/
+  let doubled := n
+  have step : doubled + 0 = doubled := Nat.add_zero doubled
+  exact step
+
 def danglingOwner : Nat := Id.run do
   let value := 8
   return value

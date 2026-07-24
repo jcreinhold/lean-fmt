@@ -175,6 +175,19 @@ check "a constructor docstring's continuation lines do not move with its first" 
 check "  ... and its constructor still follows it" \
   "$(grep -A3 -F 'A constructor doc comment can run onto a second line' "$boundaries" | tail -1)" \
   "  | only"
+# Was D10, and it is two claims because it was two defects in one gap. The comment has to be placed at
+# the forced alignment between `by` and its first tactic -- not carried to the next boundary, which is
+# inside the tactic's own `nest` -- and its continuation line has to keep the column the source gave
+# it, which `Format.text` re-indents away without a cancelling `nest`.
+check "a comment in a forced alignment is placed on the align's own column" \
+  "$(grep -c '^  /- A comment written between `by` and the first tactic, too long to join the `by` line, with a$' \
+    "$boundaries")" "1"
+check "  ... with its continuation line still at the column the source gave it" \
+  "$(grep -c '^  continuation line that owns its own column. -/$' "$boundaries")" "1"
+check "  ... and the tactic it leads at that same column, with its siblings" \
+  "$(grep -A2 -Fx '  continuation line that owns its own column. -/' "$boundaries" | tail -2)" \
+  "  let doubled := n
+  have step : doubled + 0 = doubled := Nat.add_zero doubled"
 # Was D8, and the count above is only half of it: the comment has to stay *above* the docstring, and
 # the docstring has to appear once. The defect dropped the command's entire leading trivia whenever it
 # contained doc syntax, so the ordinary comment vanished silently while every doc comment count stayed
