@@ -37,15 +37,19 @@ on = json.load(open(sys.argv[1]))["artifact"]
 off = json.load(open(sys.argv[2]))["artifact"]
 on2 = json.load(open(sys.argv[3]))["artifact"]
 
-# Both schemas advanced regardless of capture; only the semantic field differs.
-assert on["schema"] == off["schema"] == "lean-fmt.module-artifact.v8", on["schema"]
+# Both schemas advanced regardless of capture; only the semantic field differs. The version is read
+# from the product rather than pinned here: this suite is about capture being demand-gated and
+# additive, and a schema bump it does not care about should not fail it. `tests/cache/run.sh` owns
+# whether a bump invalidates what it must.
+assert on["schema"] == off["schema"], (on["schema"], off["schema"])
+assert on["schema"].startswith("lean-fmt.module-artifact.v"), on["schema"]
 
-# B. Demand-gating: no capture -> semantic is null; capture -> semantic present. The source
+# B. Demand-gating: no capture -> semantic is null; capture -> semantic present. The syntax
 # projection is byte-identical either way, so the fact is purely additive and the syntax-only path is
-# untouched (only the schema tag advances to v4).
+# untouched (only the schema tag advances).
 assert off["semantic"] is None, f"captureSemantic=0 still captured: {off['semantic']}"
 assert on["semantic"] is not None, "captureSemantic=1 produced no semantic fact"
-assert on["source"] == off["source"], "semantic capture perturbed the source projection"
+assert on["syntaxData"] == off["syntaxData"], "semantic capture perturbed the syntax projection"
 
 # The artifact is byte-stable across identical runs.
 assert on == on2, "two identical capturing runs produced different artifacts"
@@ -53,20 +57,28 @@ assert set(on["semantic"]) == {"diagnostics"}, on["semantic"]
 print("semantic artifact: diagnostics/occurrences only")
 PY
 
-# --- Formatting needs the exact frontend, independently of semantic facts -------------------------
-# The plugin artifact cannot format because it carries no live syntax/environment. With the analyzer
-# disabled `format` fails, while source-tier `check` still succeeds from cheap evidence.
+# --- Formatting is served without the exact frontend, independently of semantic facts -------------
+# This section used to assert the opposite: that `format` fails (exit 2) with the analyzer disabled,
+# because the plugin artifact carried no reconstructible syntax. `5cd3d67` changed that -- the
+# artifact now carries a syntax projection a formatter can be built from -- and this suite was not
+# updated with it, so it has been asserting a claim the product stopped making. What is tested here
+# now is the property that survived the change: neither tier reaches the exact frontend when the
+# facet is current. Whether the two paths agree byte-for-byte is `tests/compiler/run.sh`'s claim.
+#
+# `format --check`, not `format`: this fixture is a committed repository file and the previous form
+# rewrote it in place the moment the artifact path started succeeding.
 clean=tests/check/Clean.lean
 set +e
-LEAN_FMT_TEST_ANALYZER=/usr/bin/false "$application" format --root . --json --no-cache "$clean" \
-  >"$work/fmt.json" 2>/dev/null
+LEAN_FMT_TEST_ANALYZER=/usr/bin/false "$application" format --check --root . --json --no-cache \
+  "$clean" >"$work/fmt.json" 2>/dev/null
 fmt_exit=$?
 LEAN_FMT_TEST_ANALYZER=/usr/bin/false "$application" check --root . --json --no-cache "$clean" \
   >"$work/chk.json" 2>/dev/null
 chk_exit=$?
 set -e
-if [[ $fmt_exit -ne 2 ]]; then
-  printf 'format should require the exact frontend and fail (exit 2), got %s\n' "$fmt_exit" >&2
+# Exit 2 is infrastructure failure; 0 and 1 are both results. The claim is that a result was reached.
+if [[ $fmt_exit -eq 2 ]]; then
+  printf 'format should be served by the artifact facet, got infrastructure failure\n' >&2
   cat "$work/fmt.json" >&2
   exit 1
 fi
@@ -75,11 +87,18 @@ if [[ $chk_exit -ne 0 ]]; then
   cat "$work/chk.json" >&2
   exit 1
 fi
-grep -q 'infrastructure-failure' "$work/fmt.json" ||
-  {
-    echo 'format did not reach the disabled analyzer — it may have accepted the fact-free artifact' >&2
-    exit 1
-  }
+if grep -q 'infrastructure-failure' "$work/fmt.json"; then
+  echo 'format reached the disabled analyzer -- the artifact facet did not serve it' >&2
+  cat "$work/fmt.json" >&2
+  exit 1
+fi
+python3 - "$work/fmt.json" <<'PY'
+import json, sys
+report = json.load(open(sys.argv[1]))
+assert report["mode"] == "format", report["mode"]
+assert report["written"] == 0, f"a preview wrote {report['written']} file(s)"
+assert not report["infrastructureFailures"], report["infrastructureFailures"]
+PY
 
 # --- ruff-11 RMR-IMPL: the surfaced-diagnostics differential --------------------------------------
 # The production capture path (`__analyze-exact ... 1`) normalizes the compiler's own diagnostics into

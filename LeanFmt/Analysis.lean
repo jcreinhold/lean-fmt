@@ -182,7 +182,7 @@ private def buildFormatDraft (normalized : String) (source : LosslessSource)
       structuralDocuments := structuralDocuments + 1
       continue
     let result ← Lean.Core.CoreM.toIO'
-      (Formatter.NativeLayout.command normalized ownership command.stx)
+      (Formatter.NativeLayout.command normalized ownership command.stx placement.indent)
       { fileName := sourcePath.toString, fileMap, options := command.options }
       { env := command.env }
     let formatted ← match result with

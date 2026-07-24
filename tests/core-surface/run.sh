@@ -55,7 +55,10 @@ assert complete(application), application
 assert release_gate(application), application
 
 assert complete(extension), extension
-assert extension["extensionRegistryDocuments"] == 1, extension
+# Every root reaches Lean's live registry under the native layout adapter, so both extension roots
+# are registry documents; `descriptor_command` is no longer withheld as a structural leaf. How Lean
+# resolved each formatter is what still separates them, and `descriptorDocuments` pins that.
+assert extension["extensionRegistryDocuments"] == 2, extension
 assert extension["descriptorDocuments"] == 1, extension
 
 omitted = copy.deepcopy(extension)

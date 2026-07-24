@@ -138,6 +138,46 @@ the way it is, say so rather than inventing a reason.
   ordinary files, not just edge cases: `choice` hit 1 of 5 sampled mathlib modules, and `#exit` every
   file that contains it.
 
+### Lean's pretty-printer is a printer, not a re-printer
+
+Lean ships both endpoints of the layout/fidelity axis and nothing in between. `Lean.Syntax.reprint`
+(`Lean/Syntax.lean:400`) emits `lead ++ val ++ trail` from each leaf's `SourceInfo`: exact source bytes,
+zero layout decisions. `Lean.PrettyPrinter` renders syntax the *elaborator* produced, for error
+messages, `#print`, and infoview hovers: every layout decision, no source fidelity — there is no
+original to be faithful to and nobody can diff the output against source.
+
+A formatter is the missing third row: full layout *and* exact fidelity.
+`LeanFmt/Formatter/NativeLayout.lean` is that row written out by hand, and most difficulty in it is a
+guarantee a printer has no reason to make. Each one already costs a mechanism there. Before adding a
+new mechanism, decide which of these you are paying for; if it is none of them, you have found an
+eighth and it goes in this list.
+
+- **It can silently drop a leaf.** The combinators backtrack, so a subtree the formatter cannot format
+  is omitted rather than reported. `dbg_trace s!"…"` with the interpolated string replaced by a marker
+  formats to `grp[nest2[T"dbg_trace"]]` — no marker, no `line`, no diagnostic. A missing marker in the
+  native document is expected; the adapter owns what surrounds a dropped island, including the
+  separator, because the document holds no decision about a leaf it never emitted.
+- **Failure is unstructured when it does escape.** The same mismatch inside `` `(…) `` surfaces as the
+  bare string `uncaught backtrack exception`: no node, no range, no expected shape.
+- **There is no leaf-to-source correspondence.** `withMaybeTag` tags with `getExprPos?`, populated for
+  delaborated syntax and not for syntax parsed from source, so a parsed command yields zero
+  `Format.tag` nodes. Correspondence is positional; a divergence is a refusal, not a lookup.
+- **Parser-significant columns are not in the document.** See the `align`/`sepByIndent` note under
+  *Exactness and coordinates* below and in the module docstring.
+- **Comments are not in the algebra**, there is **no verbatim leaf** (`Format.text` re-indents embedded
+  newlines), and there is **no protocol for source-sensitive syntax** — hence trivia stripping, the
+  cancelling `nest`, and marker substitution respectively.
+- One ordinary upstream bug: `def ctor` puts the newline inside the `"\n| "` atom *after*
+  `optional docComment`, so a constructor docstring renders as `where/-- doc -/` and reparses onto the
+  wrong owner.
+
+Do not reimplement what Lean does do. `pushToken` inserts a discretionary space exactly when
+concatenation would re-lex as one token, using the real tokenizer; an adapter-side merge rule
+over-fires. Read `format.indent` through `Lean.Std.Format.getIndent`, never as a literal `2`. And
+`reprint` handles `choice` by reprinting every alternative and checking they agree, where
+`terminalsFrom` takes `children[0]?` — lean-fmt currently *assumes* what `reprint` *verifies*, on a
+node CLAUDE.md records hitting 1 of 5 sampled mathlib modules.
+
 ### The module artifact and rule tiers
 
 - A current ordinary `.olean` is successful-compilation evidence for source-tier rules, not a

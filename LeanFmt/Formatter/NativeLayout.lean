@@ -16,6 +16,17 @@ at that marker; this prevents a private formatter failure or normalization from 
 fallback. The one offside constraint repairs the parser-significant continuation of guarded `let` by
 dedenting the native subtree that spells that structural child.
 
+Doc comments are syntax, not trivia, so they are ordinary terminals: their opening token and body align
+and emit original bytes exactly where their owner spells them. Hoisting them to a command prefix moved
+a field or constructor docstring off its owner and left the native separator behind, which is why no
+prefix mechanism exists here.
+
+An exact island whose payload spans lines carries its own absolute source columns. `Std.Format`
+re-indents every newline inside a `text` leaf to the ambient indentation, and that indentation is
+exactly the sum of the enclosing `nest` amounts plus the column the leaf is rendered at — `align` pads
+output without changing it (`Init/Data/Format/Basic.lean`). The adapter therefore wraps a multiline
+island in a `nest` that cancels both, and `Int.toNat` clamps the result to column zero.
+
 The adapter has no core/extension gate and no command/term/tactic visitor. A failure is a typed refusal
 with the root category, kind, range, resolution trace, native leaf index, and nearby source terminals.
 -/
@@ -37,6 +48,11 @@ private structure ExactIsland where
   marker : String
   range : SourceRange
   text : String
+  /- Whether the payload is a comment. Lean ends a token's trailing trivia at the end of its line, so
+  which side of a line break a comment falls on decides whether it is the previous token's trailing
+  comment or the next token's leading one. That is the one layout question a comment's own bytes
+  cannot answer, and it is the only reason this flag exists. -/
+  comment : Bool := false
   deriving Inhabited
 
 private structure InteriorComment where
@@ -83,8 +99,16 @@ private def sourceRange? (stx : Lean.Syntax) : Option SourceRange := do
 private def slice (source : String) (range : SourceRange) : String :=
   (String.fromUTF8? (source.toUTF8.extract range.start range.stop)).getD ""
 
-private def isDocComment (value : String) : Bool :=
-  value.startsWith "/--" || value.startsWith "/-!"
+private def isDocSyntax (kind : Lean.Name) : Bool :=
+  kind == ``Lean.Parser.Command.docComment || kind == ``Lean.Parser.Command.moduleDoc
+
+-- A comment has no interior layout. Lean's derived formatter spells a doc comment as its opening
+-- token, a `Format.line`, and its body, so at a narrow width it would break a comment across the
+-- separator its source never had. The whole comment is therefore one exact island covering both
+-- terminals, and the marker replaces the body: the island's own bytes are the only rendering.
+private def docSyntaxBody? (stx : Lean.Syntax) : Option Lean.Syntax := do
+  guard (isDocSyntax stx.getKind)
+  stx.getArgs[1]?
 
 private partial def terminalsFrom (source : String) (stx : Lean.Syntax)
     (result : Array Terminal := #[]) : Array Terminal :=
@@ -94,7 +118,7 @@ private partial def terminalsFrom (source : String) (stx : Lean.Syntax)
     match sourceRange? stx with
     | some range =>
       let sourceSpelling := slice source range
-      if sourceSpelling.isEmpty || isDocComment sourceSpelling then result
+      if sourceSpelling.isEmpty then result
       else result.push { syntaxSpelling, sourceSpelling, range }
     | none => result
   | .ident _ raw _ _ =>
@@ -105,9 +129,7 @@ private partial def terminalsFrom (source : String) (stx : Lean.Syntax)
       else result.push { syntaxSpelling := raw.toString, sourceSpelling, range }
     | none => result
   | .node _ kind children =>
-    if kind == ``Lean.Parser.Command.docComment ||
-        kind == ``Lean.Parser.Command.moduleDoc then result
-    else if kind == Lean.choiceKind then
+    if kind == Lean.choiceKind then
       match children[0]? with
       | some selected => terminalsFrom source selected result
       | none => result
@@ -115,14 +137,48 @@ private partial def terminalsFrom (source : String) (stx : Lean.Syntax)
       children.foldl (init := result) fun terminals child =>
         terminalsFrom source child terminals
 
-private def sourceDataKind (kind : Lean.Name) : Bool :=
-  kind == Lean.interpolatedStrKind || kind.toString.contains ".pseudo.antiquot"
+/- The two interpolation kinds Lean defines: the interpolated string itself and its literal chunks.
+Naming them is not the same as testing `kind.toString.contains "interpolatedStr"`, which this replaced:
+that also matched every antiquotation kind derived from them, because an antiquotation kind is built by
+appending to the kind it quotes. -/
+private def interpolationKind (kind : Lean.Name) : Bool :=
+  kind == Lean.interpolatedStrKind || kind == Lean.interpolatedStrLitKind
 
+/- A *pseudo* antiquotation node, and only that. `Lean.Parser.mkAntiquot` builds the kind as
+`kind ++ (if isPseudoKind then `pseudo else .anonymous) ++ `antiquot`, where `isPseudoKind` means the
+kind is not checked at syntax `match`; this matches the two trailing components that spelling produces.
+
+Ordinary antiquotations are deliberately excluded. Every antiquotation has a registered formatter
+(`mkAntiquot.formatter`), so protecting one buys nothing -- and it costs: protection escalates to the
+smallest enclosing node, which is replaced by a marker leaf, and a quotation whose typed child has
+become a leaf no longer matches the grammar its formatter expects. Widening this predicate to all
+antiquotations made `macro_rules | `(emit_custom $name) => ...` fail with `uncaught backtrack
+exception`, because the `command` quotation was handed an atom where a command node belonged.
+
+This is spelled structurally rather than as `kind.toString.contains ".pseudo.antiquot"`, which asked
+the same question of the rendered name and so could also match a kind that merely contains that text. -/
+private def antiquotationKind (kind : Lean.Name) : Bool :=
+  match kind with
+  | .str (.str _ "pseudo") "antiquot" => true
+  | _ => false
+
+private def sourceDataKind (kind : Lean.Name) : Bool :=
+  kind == Lean.interpolatedStrKind || antiquotationKind kind
+
+/- A marker stands in for protected syntax while the formatter runs, so it has to be a spelling the
+formatter cannot confuse with a real token. `command` rejects a source that already spells one rather
+than trusting the shape to be unusual; see `markerCollision?`. -/
 private def markerFor (range : SourceRange) : String :=
   s!"leanFmtExact{range.start}x{range.stop}"
 
-private def placeholder (info : Lean.SourceInfo) (marker : String) : Lean.Syntax :=
-  .ident info marker.toRawSubstring marker.toName []
+/- A placeholder replaces the syntax it protects, so it must keep that syntax's leaf constructor:
+Lean's formatter for a literal token calls the atom printer and refuses an identifier with `not an
+atom`. Only a protected interior node, which has no single spelling of its own, becomes an identifier. -/
+private def placeholder (protected? : Lean.Syntax) (info : Lean.SourceInfo)
+    (marker : String) : Lean.Syntax :=
+  match protected? with
+  | .atom .. => .atom info marker
+  | _ => .ident info marker.toRawSubstring marker.toName []
 
 private def stripTriviaInfo : Lean.SourceInfo → Lean.SourceInfo
   | .original leading position trailing endPos =>
@@ -150,7 +206,7 @@ private def exactPlaceholder (source : String) (stx : Lean.Syntax)
   | some range =>
     let marker := markerFor range
     {
-      stx := placeholder info marker
+      stx := placeholder stx info marker
       islands := #[{ marker, range, text := slice source range }] }
   | none => { stx }
 
@@ -161,7 +217,7 @@ private partial def protectSourceDataFrom (source : String) : Lean.Syntax → Pr
     match sourceRange? stx with
     | some range =>
       let text := slice source range
-      if text.contains '\n' && !isDocComment text then
+      if text.contains '\n' then
         exactPlaceholder source stx info
       else { stx }
     | none => { stx }
@@ -176,9 +232,14 @@ private partial def protectSourceDataFrom (source : String) : Lean.Syntax → Pr
     | none => { stx }
   | .node info kind children =>
     let stx := Lean.Syntax.node info kind children
-    if kind == ``Lean.Parser.Command.docComment ||
-        kind == ``Lean.Parser.Command.moduleDoc then
-      { stx }
+    if let some body := docSyntaxBody? stx then
+      match sourceRange? stx with
+      | some range =>
+        let marker := markerFor range
+        {
+          stx := .node info kind (children.set! 1 (.atom body.getHeadInfo marker))
+          islands := #[{ marker, range, text := slice source range, comment := true }] }
+      | none => { stx }
     else if sourceDataKind kind then
       { stx, pendingEnvelope := true }
     else
@@ -195,7 +256,7 @@ private partial def protectSourceDataFrom (source : String) : Lean.Syntax → Pr
           let strictlyEncloses := pendingRanges.any fun child =>
             range.start < child.start || child.stop < range.stop
           let transparentEnvelope := kind == `null || kind == Lean.choiceKind ||
-            kind.toString.contains "interpolatedStr"
+            interpolationKind kind
           if strictlyEncloses && !transparentEnvelope then exactPlaceholder source rewritten info
           else { stx := rewritten, islands, pendingEnvelope := true }
         | none => { stx := rewritten, islands, pendingEnvelope := true }
@@ -209,21 +270,6 @@ private def protectSourceData (source : String) (stx : Lean.Syntax) :
     (result.stx, result.islands)
   else
     (result.stx, result.islands)
-
-private partial def docIslandsFrom (source : String) (stx : Lean.Syntax)
-    (islands : Array ExactIsland := #[]) : Array ExactIsland :=
-  if stx.isOfKind ``Lean.Parser.Command.docComment ||
-      stx.isOfKind ``Lean.Parser.Command.moduleDoc then
-    match sourceRange? stx with
-    | some range =>
-      islands.push {
-        marker := markerFor range
-        range
-        text := (slice source range).trimAscii.copy }
-    | none => islands
-  else
-    stx.getArgs.foldl (init := islands) fun islands child =>
-      docIslandsFrom source child islands
 
 private partial def guardedSequenceRanges (stx : Lean.Syntax)
     (ranges : Array SourceRange := #[]) : Array SourceRange :=
@@ -308,7 +354,11 @@ private partial def collectRecordUpdateFieldStarts (stx : Lean.Syntax)
       collectRecordUpdateFieldStarts child starts
   | _ => starts
 
-private partial def collectOffsideConstraints (stx : Lean.Syntax)
+/- `indent` is `Std.Format.getIndent`, the `format.indent` option Lean's own `ppIndent`/`ppDedent`
+read. A constraint here cancels one level of the indentation native layout introduced, so it is that
+same quantity negated -- not the literal `-2` this used to spell. The default happens to be 2, which is
+why the constant went unnoticed; a project that sets `format.indent` would have silently drifted. -/
+private partial def collectOffsideConstraints (indent : Nat) (stx : Lean.Syntax)
     (constraints : Array OffsideConstraint := #[]) : Array OffsideConstraint :=
   match stx with
   | .node _ kind children =>
@@ -324,22 +374,18 @@ private partial def collectOffsideConstraints (stx : Lean.Syntax)
           let continuations := sequences.filter (pipe.stop <= ·.start)
           if 2 <= continuations.size then
             match continuations.back? with
-            | some range => constraints.push { range, indentAdjustment := -2 }
+            | some range => constraints.push { range, indentAdjustment := -(indent : Int) }
             | none => constraints
           else constraints
         | none => constraints
       else constraints
     children.foldl (init := constraints) fun constraints child =>
-      collectOffsideConstraints child constraints
+      collectOffsideConstraints indent child constraints
   | _ => constraints
 
 private def commentText (value : String) : Bool :=
   let trimmed := value.trimAscii.copy
   trimmed.startsWith "--" || trimmed.startsWith "/-"
-
-private def replacePayload (value payload : String) : String :=
-  let trimmed := value.trimAscii.copy
-  if trimmed.isEmpty then value else value.replace trimmed payload
 
 private def layoutWhitespace (char : Char) : Bool :=
   char == ' ' || char == '\t' || char == '\n' || char == '\r'
@@ -351,29 +397,28 @@ private def splitPadding (value : String) : String × String :=
   let trailing := remainder.reverse.takeWhile layoutWhitespace |>.reverse
   (String.ofList leading, String.ofList trailing)
 
-private def findBytesFrom (haystack needle : ByteArray) (start : Nat) : Option Nat := Id.run do
-  if needle.isEmpty then return some (min start haystack.size)
-  if haystack.size < needle.size || haystack.size - needle.size < start then return none
-  for index in [start:haystack.size - needle.size + 1] do
-    if haystack.extract index (index + needle.size) == needle then return some index
-  return none
+/- Put `payload` where a native leaf spelled something, keeping the leaf's own padding.
 
-/- A native comment leaf may hold several consecutive source comments. Match exact payload bytes in
-order rather than equating one `Std.Format.text` leaf with one comment assignment. Returning the leaf
-unchanged is safe precisely because every consumed payload occurs byte-for-byte in it. -/
-private def matchedCommentStop (value : String) (comments : Array String) (start : Nat) : Nat :=
-  Id.run do
-    let bytes := value.toUTF8
-    let mut index := start
-    let mut cursor := 0
-    while index < comments.size do
-      let payload := comments[index]!.toUTF8
-      match findBytesFrom bytes payload cursor with
-      | some found =>
-        cursor := found + payload.size
-        index := index + 1
-      | none => break
-    return index
+`splitPadding` already decides where the padding ends and the spelling begins, so the spelling is
+whatever lies between. This replaced `value.replace trimmed payload`, a substring substitution that
+searched the leaf for its own trimmed text: on a leaf whose padding repeats inside the spelling, or
+whose spelling occurs twice, `String.replace` rewrites every occurrence rather than the one. -/
+private def withPayload (value payload : String) : String :=
+  let (leading, trailing) := splitPadding value
+  leading ++ payload ++ trailing
+
+/- Which markers the formatter kept. A marker replaces the syntax it protects, so a formatter that
+drops or restructures that syntax drops the marker with it; the island then has to be placed at the
+terminal it covers instead of at a leaf that never arrives. -/
+private partial def spelledMarkers (format : Std.Format) (found : Array String := #[]) :
+    Array String :=
+  match format with
+  | .text value =>
+    let payload := value.trimAscii.copy
+    if payload.isEmpty then found else found.push payload
+  | .nest _ inner | .group inner _ | .tag _ inner => spelledMarkers inner found
+  | .append left right => spelledMarkers right (spelledMarkers left found)
+  | .nil | .line | .align _ => found
 
 private def mergeSpan : Option TokenSpan → Option TokenSpan → Option TokenSpan
   | none, right => right
@@ -385,16 +430,24 @@ private structure TransformState where
   terminals : Array Terminal
   comments : Array InteriorComment
   islands : Array ExactIsland
+  droppedIslands : Array String
   constraints : Array (OffsideConstraint × TokenSpan)
   flatBoundaries : Array Nat
   hardBoundaries : Array Nat
+  baseIndent : Nat
   terminalIndex : Nat := 0
   commentIndex : Nat := 0
-  skippingDocSyntax : Bool := false
+  ambientNest : Int := 0
   appliedIslands : Array String := #[]
   appliedConstraints : Array Nat := #[]
   appliedFlatBoundaries : Array Nat := #[]
   appliedHardBoundaries : Array Nat := #[]
+  /- Whether the document emitted since the previous terminal is known to render as something other
+  than the empty string. A command starts separated because its first terminal has no predecessor to
+  merge with. -/
+  separated : Bool := true
+  /- Islands whose interior the formatter has started to spell. See `insideIsland`. -/
+  enteredIslands : Array String := #[]
   recentNativeLeaves : Array String := #[]
   metrics : Metrics := {}
 
@@ -452,9 +505,63 @@ private def finishConstraint (result : Transformed) (eligible := false) :
       return { result with format := .nest constraint.indentAdjustment result.format }
     | none => return result
 
+/- The unapplied island covering the terminal the transform is waiting for, if any. An island consumes
+every terminal it covers at once, so this stays fixed at the island's first covered terminal for as
+long as the formatter is still spelling that island's leaves. -/
+private def islandAt (state : TransformState) : Option ExactIsland :=
+  match state.terminals[state.terminalIndex]? with
+  | none => none
+  | some terminal =>
+    state.islands.find? fun island =>
+      !state.appliedIslands.contains island.marker &&
+        island.range.start <= terminal.range.start && terminal.range.stop <= island.range.stop
+
+/- An exact island's bytes are its whole rendering, so native layout emitted *between* the terminals it
+covers is inside a region the source owns and must not be emitted.
+
+The boundary *before* the island is not: it separates the island from the token ahead of it, and is the
+adapter's to keep. The terminal index alone cannot tell those two cases apart, because it does not
+advance until the island is applied. `enteredIslands` is what separates them -- an island is entered by
+the first native leaf that spells one of its covered terminals, so a boundary is suppressed only once
+the formatter has started spelling that island's interior. Suppressing the boundary ahead of an island
+instead is what ran `=>` into the quotation after it. -/
+private def insideIsland (state : TransformState) : Bool :=
+  match islandAt state with
+  | none => false
+  | some island => state.enteredIslands.contains island.marker
+
+/- Whether a document renders as the empty string at every width. `nil` and an empty `text` are the
+only leaves that emit nothing; `line` renders as a space or a newline, and `align` is a layout node
+whose output the width decides, so neither is provably empty. -/
+private partial def provablyEmpty : Std.Format → Bool
+  | .nil => true
+  | .text value => value.isEmpty
+  | .nest _ inner | .group inner _ | .tag _ inner => provablyEmpty inner
+  | .append left right => provablyEmpty left && provablyEmpty right
+  | .line | .align _ => false
+
+/- Whether the source began a line with the terminal at `index`.
+
+A comment is the previous token's trailing trivia exactly when it sits on that token's line, and the
+next token's leading trivia otherwise; Lean's tokenizer ends trailing trivia at the newline. So a
+comment that the source put on its own line has to keep starting one, or reparsing the output hands it
+to a different owner with a different placement -- which is what the `comments` validation gate
+compares. A comment that shared its owner's line has no such constraint: staying adjacent is what
+keeps it trailing.
+
+This is only consulted where the document native layout produced since the previous terminal is
+provably empty, which is the one case where the output is certainly on the previous token's line. -/
+private def beganLine (state : TransformState) (index : Nat) : Bool :=
+  if index == 0 then false else
+    match state.terminals[index - 1]?, state.terminals[index]? with
+    | some previous, some next =>
+      (slice state.source ⟨previous.range.stop, next.range.start⟩).contains '\n'
+    | _, _ => false
+
 private def constrainBoundary (format : Std.Format) :
     StateT TransformState (Except String) Std.Format := do
   let state ← get
+  if insideIsland state then return .nil
   let mut format := format
   if state.hardBoundaries.contains state.terminalIndex &&
       !state.appliedHardBoundaries.contains state.terminalIndex then
@@ -483,7 +590,8 @@ private def constrainBoundary (format : Std.Format) :
       metrics := { state.metrics with
         commentLeaves := state.metrics.commentLeaves + comments.size
         commentConstraints := state.metrics.commentConstraints + comments.size } }
-    return insertComments comments format
+    format := insertComments comments format
+  modify fun state => { state with separated := state.separated || !provablyEmpty format }
   return format
 
 private def consumeIsland (value : String) (island : ExactIsland) :
@@ -500,59 +608,57 @@ private def consumeIsland (value : String) (island : ExactIsland) :
 {terminal.range.start}:{terminal.range.stop}"
     stop := stop + 1
   if start == stop then
-    throw s!"exact island {island.range.start}:{island.range.stop} contains no terminal"
+    throw s!"exact island {island.range.start}:{island.range.stop} contains no terminal at index \
+{start}/{state.terminals.size}; nearby: {nearbyTerminals state}; recent native leaves: \
+{repr state.recentNativeLeaves}"
+  let (leading, _) := splitPadding value
+  let startsLine :=
+    island.comment && !state.separated && leading.isEmpty && beganLine state start
   set { state with
     terminalIndex := stop
+    separated := false
     appliedIslands := state.appliedIslands.push island.marker
     metrics := { state.metrics with
       nativeNodes := state.metrics.nativeNodes + 1
       tokenLeaves := state.metrics.tokenLeaves + 1
       exactIslands := state.metrics.exactIslands + 1
       exactIslandBytes := state.metrics.exactIslandBytes + island.text.utf8ByteSize } }
-  finishConstraint {
-    format := .text (replacePayload value island.text)
-    span? := some ⟨start, stop⟩ }
+  let state ← get
+  let payload := Std.Format.text (withPayload value island.text)
+  -- A single-line payload has no interior newline for the ambient indentation to reach.
+  let payload := if island.text.contains '\n' then
+      .nest (-(state.baseIndent + state.ambientNest)) payload
+    else payload
+  let payload := if startsLine then .append (.text "\n") payload else payload
+  finishConstraint { format := payload, span? := some ⟨start, stop⟩ }
 
-private partial def transformOrdinaryText (value : String) :
+private def transformOrdinaryText (value : String) :
     StateT TransformState (Except String) Transformed := do
   let state ← get
-  if state.skippingDocSyntax then
-    if value.trimAscii.isEmpty then
-      set { state with metrics := { state.metrics with
-        nativeNodes := state.metrics.nativeNodes + 1 } }
-      finishConstraint { format := .nil }
-    else
-      let nativePayload := value.trimAscii.copy
-      match state.terminals[state.terminalIndex]? with
-      | some terminal =>
-        if nativePayload == terminal.syntaxSpelling ||
-            nativePayload == terminal.sourceSpelling then
-          set { state with skippingDocSyntax := false }
-          transformOrdinaryText nativePayload
-        else
-          set { state with metrics := { state.metrics with
-            nativeNodes := state.metrics.nativeNodes + 1 } }
-          finishConstraint { format := .nil }
-      | none =>
-        set { state with metrics := { state.metrics with
-          nativeNodes := state.metrics.nativeNodes + 1 } }
-        finishConstraint { format := .nil }
-  else if value.trimAscii.isEmpty then
+  if value.trimAscii.isEmpty then
     set { state with metrics := { state.metrics with
       nativeNodes := state.metrics.nativeNodes + 1 } }
     finishConstraint { format := ← constrainBoundary (.text value) }
-  else if commentText value then
-    if isDocComment value.trimAscii.copy then
-      set { state with
-        skippingDocSyntax := true
-        metrics := { state.metrics with nativeNodes := state.metrics.nativeNodes + 1 } }
-      finishConstraint { format := .nil }
-    else
-      throw s!"comment-free native syntax emitted an interior comment leaf {repr value}"
+  else if let some island := islandAt state then
+    -- This leaf spells a terminal the island covers, so the island's own bytes already carry it.
+    -- Recording the entry is what lets `insideIsland` suppress the boundaries that follow it.
+    set { state with
+      enteredIslands :=
+        if state.enteredIslands.contains island.marker then state.enteredIslands
+        else state.enteredIslands.push island.marker
+      metrics := { state.metrics with nativeNodes := state.metrics.nativeNodes + 1 } }
+    return { format := .nil }
   else
     let some terminal := state.terminals[state.terminalIndex]?
-      | throw s!"native formatter emitted extra text leaf {repr value} after \
+      | if commentText value then
+          throw s!"comment-free native syntax emitted an interior comment leaf {repr value}"
+        else
+          throw s!"native formatter emitted extra text leaf {repr value} after \
 {state.terminalIndex} terminals; nearby: {nearbyTerminals state}"
+    -- `withoutTrivia` removes every comment the formatter could re-emit from `SourceInfo`, so a
+    -- comment leaf is admissible only where the source spells a doc comment as syntax.
+    if commentText value && !commentText terminal.sourceSpelling then
+      throw s!"comment-free native syntax emitted an interior comment leaf {repr value}"
     let nativePayload := value.trimAscii.copy
     let normalized := nativePayload != terminal.syntaxSpelling &&
       nativePayload != terminal.sourceSpelling
@@ -561,6 +667,7 @@ private partial def transformOrdinaryText (value : String) :
     let state ← get
     set { state with
       terminalIndex := state.terminalIndex + 1
+      separated := !trailing.isEmpty
       metrics := { state.metrics with
         nativeNodes := state.metrics.nativeNodes + 1
         tokenLeaves := state.metrics.tokenLeaves + 1
@@ -577,20 +684,34 @@ private def transformText (value : String) :
   match state.islands.find? fun island => value.trimAscii.copy == island.marker with
   | some island => consumeIsland value island
   | none =>
+    -- Only an island the formatter dropped is placed ahead of its own marker. Placing an island the
+    -- formatter *will* spell consumes the terminals that marker is still about to claim, which then
+    -- reports the island as containing no terminal.
     let pending? := state.terminals[state.terminalIndex]?.bind fun terminal =>
       state.islands.find? fun island =>
-        !state.appliedIslands.contains island.marker &&
+        state.droppedIslands.contains island.marker &&
+          !state.appliedIslands.contains island.marker &&
           island.range.start == terminal.range.start
     match pending? with
     | some exact =>
-      let state ← get
-      let gap := match state.terminals[state.terminalIndex - 1]? with
-        | some previous => slice state.source ⟨previous.range.stop, exact.range.start⟩
-        | none => ""
-      let gap := if gap.contains '\n' then gap else if gap.isEmpty then "" else " "
+      -- The formatter emitted no leaf for this island, so the native document also holds no decision
+      -- about what precedes it -- not even whether anything separates it from the previous token.
+      -- `dbg_trace s!"flag: {flag}"` formats to `grp[nest2[T"dbg_trace"]]` with no marker and no
+      -- `line`, because `pushToken` sees an empty `leadWord` and drops the token's own trailing space.
+      -- Re-inserting the bytes without a separator spells `dbg_traces!"flag: {flag}"`.
+      --
+      -- The source answers it at byte level: whitespace between the previous terminal and the island
+      -- start means the two tokens were separated, and nothing else about that whitespace is layout
+      -- this adapter may keep. So the evidence is a boolean and the output is a `Format.line`, whose
+      -- width the renderer owns exactly as it owns every other break.
+      let sourceGap :=
+        if state.terminalIndex == 0 then ""
+        else match state.terminals[state.terminalIndex - 1]? with
+          | some previous => slice state.source ⟨previous.range.stop, exact.range.start⟩
+          | none => ""
+      let separate := !state.separated && !sourceGap.isEmpty
       let island ← consumeIsland exact.marker exact
-      let island := if gap.isEmpty then island else
-        { island with format := .append (.text gap) island.format }
+      let island := if separate then { island with format := .append .line island.format } else island
       let current ← transformOrdinaryText value
       finishConstraint {
         format := .append island.format current.format
@@ -611,12 +732,16 @@ private partial def transformNative : Std.Format →
   | .align force => do
     modify fun state => { state with metrics := { state.metrics with
       nativeNodes := state.metrics.nativeNodes + 1 } }
+    if insideIsland (← get) then return { format := .nil }
+    modify fun state => { state with separated := true }
     finishConstraint { format := .align force }
   | .text value => transformText value
   | .nest indent inner => do
-    modify fun state => { state with metrics := { state.metrics with
-      nativeNodes := state.metrics.nativeNodes + 1 } }
+    modify fun state => { state with
+      ambientNest := state.ambientNest + indent
+      metrics := { state.metrics with nativeNodes := state.metrics.nativeNodes + 1 } }
     let inner ← transformNative inner
+    modify fun state => { state with ambientNest := state.ambientNest - indent }
     finishConstraint { inner with format := .nest indent inner.format }
   | .append left right => do
     modify fun state => { state with metrics := { state.metrics with
@@ -646,7 +771,7 @@ private def spanForRange (terminals : Array Terminal) (range : SourceRange) : To
 private def transform (source : String) (terminals : Array Terminal)
     (comments : Array InteriorComment)
     (islands : Array ExactIsland) (constraints : Array OffsideConstraint)
-    (returnTermStarts recordUpdateFieldStarts : Array Nat)
+    (returnTermStarts recordUpdateFieldStarts : Array Nat) (baseIndent : Nat)
     (native : Std.Format) : Except String (Std.Format × Metrics) := do
   let constraints := constraints.map fun constraint =>
     (constraint, spanForRange terminals constraint.range)
@@ -657,8 +782,12 @@ private def transform (source : String) (terminals : Array Terminal)
   let comments := comments.map fun comment =>
     { comment with
       boundary := terminals.findIdx? (comment.range.start < ·.range.start) |>.getD terminals.size }
+  let spelled := spelledMarkers native
+  let droppedIslands := islands.filterMap fun island =>
+    if spelled.contains island.marker then none else some island.marker
   let initial : TransformState := {
-    source, terminals, comments, islands, constraints, flatBoundaries, hardBoundaries }
+    source, terminals, comments, islands, droppedIslands, constraints, flatBoundaries,
+    hardBoundaries, baseIndent }
   let (result, state) ← (transformNative native).run initial
   if state.terminalIndex != terminals.size then
     throw s!"native formatter consumed {state.terminalIndex}/{terminals.size} terminals; \
@@ -668,8 +797,6 @@ nearby: {nearbyTerminals state}; recent native leaves: {repr state.recentNativeL
     throw s!"native formatter inserted {state.commentIndex}/{comments.size} interior comments; \
 next expected range: {repr nextRange}; recent native leaves: \
 {repr state.recentNativeLeaves}"
-  if state.skippingDocSyntax then
-    throw "native formatter ended inside suppressed doc syntax"
   if state.appliedIslands.size != islands.size then
     throw s!"native formatter applied {state.appliedIslands.size}/{islands.size} exact islands"
   if state.appliedConstraints.size != constraints.size then
@@ -712,65 +839,48 @@ private partial def nativeSize : Std.Format → Nat
   | .append left right => 1 + nativeSize left + nativeSize right
   | _ => 1
 
-private def exactDocument (text : String) : Doc :=
-  if text.contains '\n' then Doc.verbatim text else Doc.text text
-
-private def docPrefix (islands : Array ExactIsland) : Option Doc :=
-  islands.foldl (init := none) fun document? island =>
-    let next := exactDocument island.text
-    some <| match document? with
-      | some document => document ++ Doc.hard ++ next
-      | none => next
-
-private def addDocMetrics (metrics : Metrics) (islands : Array ExactIsland) : Metrics :=
-  { metrics with
-    commentLeaves := metrics.commentLeaves + islands.size
-    exactIslands := metrics.exactIslands + islands.size
-    exactIslandBytes := metrics.exactIslandBytes +
-      islands.foldl (init := 0) fun bytes island => bytes + island.text.utf8ByteSize }
-
 /-- Format one actual command through Lean's live registry, preserving source payloads and applying
-only the structurally measured guarded-`let` continuation constraint. -/
-def command (source : String) (ownership : CommentOwnership) (stx : Lean.Syntax) :
-    Lean.CoreM (Except FormatterFailure Document) := do
+only the structurally measured guarded-`let` continuation constraint. `baseIndent` is the column the
+resulting registered leaf is rendered at; an exact island's dedent must cancel it. -/
+def command (source : String) (ownership : CommentOwnership) (stx : Lean.Syntax)
+    (baseIndent : Nat := 0) : Lean.CoreM (Except FormatterFailure Document) := do
   let trace ← Formatter.trace ownership .command stx
+  -- The same `format.indent` Lean's own `ppIndent`/`ppDedent` read, so a constraint that cancels one
+  -- level of native indentation cancels exactly the amount native layout introduced.
+  let formatIndent := Lean.Std.Format.getIndent (← Lean.getOptions)
   let stripped := Formatter.withoutBoundaryTrivia stx
   let terminals := terminalsFrom source stripped
   let comments := interiorComments ownership stx
-  let docIslands := docIslandsFrom source stripped
-  let constraints := collectOffsideConstraints stripped
+  let constraints := collectOffsideConstraints formatIndent stripped
   let returnTermStarts := collectReturnTermStarts stripped
   let recordUpdateFieldStarts := collectRecordUpdateFieldStarts stripped
   let commentFree := withoutTrivia stripped
   let (formattedSyntax, islands) := protectSourceData source commentFree
+  -- A marker is matched by its spelling when the formatter hands the leaf back, so a source that
+  -- already spells one would be indistinguishable from the placeholder standing in for protected
+  -- syntax. The shape is unlikely, not impossible, and "unlikely" is not a guarantee: refuse instead.
+  if let some marker := islands.find? fun island => terminals.any fun terminal =>
+      terminal.sourceSpelling == island.marker then
+    return .error {
+      category := .command
+      kind := stx.getKind
+      range := rootRange stx
+      trace
+      detail := s!"source spells the exact-island marker {repr marker.marker}, which the formatter \
+cannot tell from the placeholder that protects {marker.range.start}:{marker.range.stop}" }
   try
     let native ← Lean.PrettyPrinter.formatCommand formattedSyntax
-    if stx.isOfKind ``Lean.Parser.Command.moduleDoc then
-      let some document := docPrefix docIslands
-        | return .error {
-            category := .command
-            kind := stx.getKind
-            range := rootRange stx
-            trace
-            detail := "module-doc command has no exact doc island" }
-      let metrics := addDocMetrics { nativeNodes := nativeSize native } docIslands
-      return .ok { document, trace, metrics }
-    else
-      match transform source terminals comments islands constraints returnTermStarts
-          recordUpdateFieldStarts native with
-      | .ok (native, metrics) =>
-        let metrics := addDocMetrics metrics docIslands
-        let document := match docPrefix docIslands with
-          | some leadingDocs => leadingDocs ++ Doc.hard ++ Doc.registered native
-          | none => Doc.registered native
-        return .ok { document, trace, metrics }
-      | .error detail =>
-        return .error {
-          category := .command
-          kind := stx.getKind
-          range := rootRange stx
-          trace
-          detail }
+    match transform source terminals comments islands constraints returnTermStarts
+        recordUpdateFieldStarts baseIndent native with
+    | .ok (native, metrics) =>
+      return .ok { document := Doc.registered native, trace, metrics }
+    | .error detail =>
+      return .error {
+        category := .command
+        kind := stx.getKind
+        range := rootRange stx
+        trace
+        detail }
   catch exception =>
     let detail ← exception.toMessageData.toString
     return .error {
