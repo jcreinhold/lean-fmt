@@ -129,6 +129,15 @@ check "the interior comment stays between the operator and its continuation" \
 check "a block comment closing mid-row is separated from the token after it" \
   "$(grep -F -- '/- interior block comment inside a delimiter -/' "$boundaries")" \
   "  [ /- interior block comment inside a delimiter -/ 5, 6]"
+# A blank line the source put between a leading comment and its owner. `Command.place` decides the gap
+# *between* commands from their roles, and a leading comment is inside its command's unit, so this gap
+# is owned by neither and was dropped. Was D6, and it applied to every file in every Lean project: the
+# copyright block ended flush against `module`. Both lines below are the assertion -- that the blank is
+# there, and that exactly one line separates the block from `module` rather than two.
+check "the blank line after the copyright block survives" \
+  "$(awk '/^-\/$/{getline; print; exit}' "$alignment")" ""
+check "and module follows it directly" \
+  "$(awk '/^-\/$/{getline; getline; print; exit}' "$alignment")" "module"
 
 printf -- '--- exact islands keep payload columns (§5) ---\n'
 islands="$work/Islands.once"
@@ -190,10 +199,7 @@ check "D4 a guarded let breaks after its bar" \
 # D5 -- `:= by` puts `by` on its own line, even though `Term.byTactic` (`Term.lean:108`) declares
 #       `ppAllowUngrouped`, which exists precisely to keep `by` on the `:=` line.
 check "D5 by does not stay on the := line" "$(grep -c '^  by$' "$offside")" "1"
-# D6 -- a blank line between a comment and the command after it is dropped, so every file's
-#       copyright block ends up flush against `module`.
-check "D6 the blank line after the copyright block is dropped" \
-  "$(grep -A1 -F -- '-/' "$alignment" | sed -n '2p')" "module"
+# D6 is repaired; its assertion moved into §4. It was the adapter's for the same reason as D1 and D3.
 
 printf -- '--- result ---\n'
 printf 'failures=%s\n' "$failures"

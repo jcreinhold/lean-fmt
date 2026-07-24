@@ -218,7 +218,11 @@ private def buildFormatDraft (normalized : String) (source : LosslessSource)
     -- boundary-stripped before delegation, so the ownership layer remains its sole outer emitter.
     let leadingTrivia := if ownsDocSyntax then Doc.empty else
       match Formatter.Trivia.leading ownership command.stx with
-      | some comments => comments ++ Doc.hard
+      | some comments =>
+        -- The source's own blank line between a leading comment and its command. `Command.place` owns
+        -- the boundary between commands, and this gap is inside one command's unit, so nothing else
+        -- supplies it -- which is why every file's copyright block ended flush against `module`.
+        comments ++ Formatter.Trivia.leadingBoundary ownership command.stx
       | none => Doc.empty
     let trailingTrivia := match Formatter.Trivia.trailing ownership command.stx stop with
       | some comments => comments

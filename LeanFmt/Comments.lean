@@ -318,6 +318,29 @@ def payload (ownership : CommentOwnership) (comment : Comment) : String :=
 def hasNewlineBetween (ownership : CommentOwnership) (start stop : Nat) : Bool :=
   hasNewline ownership.normalized.toUTF8 start stop
 
+/-- Whether normalized source put a blank line between two byte offsets.
+
+Two line breaks with nothing but horizontal whitespace between them. This is the one vertical fact a
+comment's own bytes cannot carry and the structural command stream cannot supply either: `place`
+decides spacing *between commands* from their roles, and a comment leading a command is inside that
+command's unit, so the gap between a copyright block and the `module` it precedes belongs to neither.
+Anything other than whitespace between the breaks means the caller asked about a range containing
+another token, and the answer is no. -/
+def hasBlankLineBetween (ownership : CommentOwnership) (start stop : Nat) : Bool := Id.run do
+  let bytes := ownership.normalized.toUTF8
+  let mut cursor := min start bytes.size
+  let stop := min stop bytes.size
+  let mut breaks := 0
+  while cursor < stop do
+    let byte := bytes[cursor]!
+    if byte == 0x0a then
+      breaks := breaks + 1
+      if breaks >= 2 then return true
+    else if byte != 0x20 && byte != 0x09 && byte != 0x0d then
+      return false
+    cursor := cursor + 1
+  return false
+
 /-- Comments logically owned by the node itself or one of its selected source-covering descendants.
 Lean may physically store boundary trivia on an adjacent token, so this is an ownership count, not a
 claim that one isolated registered document emits those same comments. -/
