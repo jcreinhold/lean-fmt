@@ -13,7 +13,13 @@ two tokens, interior inside a delimiter pair, dangling at the end of a block, co
 one gap, and doc comments on a declaration, a structure field, and a constructor.
 
 Doc comments are the case that must stay in place. Hoisting them to the front of their command moves
-a field's docstring onto the structure and leaves the native separator where the docstring was. -/
+a field's docstring onto the structure and leaves the native separator where the docstring was.
+
+An ordinary comment written *above* a docstring is the case that must not be swept up with it. Lean
+stores a docstring's opening token in the following token's trivia, so both comments arrive at the
+ownership layer as leading trivia of one command; the rule that keeps the command's own docstring from
+being emitted twice has to select by comment kind, because dropping the whole run drops the ordinary
+comment with it. That was D8, and mathlib writes the shape often. -/
 
 public section
 
@@ -38,6 +44,15 @@ def delimitedOwner : List Nat :=
 
 /-- A declaration doc comment stays on its declaration. -/
 def documented : Nat := 7
+
+-- an ordinary comment above a docstring is not part of it
+/-- A doc comment can be preceded by ordinary comments the command does not own. -/
+def documentedAfterComment : Nat := 7
+
+-- the first of two comments above a docstring
+-- the second of two comments above a docstring
+/-- Both of them survive, because the exclusion is by comment kind and not by trivia run. -/
+def documentedAfterTwoComments : Nat := 7
 
 structure Fields where
   /-- A field doc comment stays on its field, not on the structure. -/

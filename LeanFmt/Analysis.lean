@@ -99,12 +99,6 @@ private def appendDocument (document? : Option Doc) (next : Doc) : Option Doc :=
   | some document => document ++ next
   | none => next
 
-private partial def containsKind (kind : Lean.Name) (stx : Lean.Syntax) : Bool :=
-  if stx.getKind == kind then true
-  else if stx.getKind == Lean.choiceKind then
-    stx.getArgs[0]?.any (containsKind kind)
-  else stx.getArgs.any (containsKind kind)
-
 private def buildFormatDraft (normalized : String) (source : LosslessSource)
     (sourcePath : System.FilePath) (fileMap : Lean.FileMap) (ownership : CommentOwnership)
     (header : Lean.Syntax) (headerEnv : Lean.Environment) (headerOptions : Lean.Options)
@@ -188,15 +182,16 @@ private def buildFormatDraft (normalized : String) (source : LosslessSource)
     | .explicit _ => explicitDocuments := explicitDocuments + 1
     | .descriptor => descriptorDocuments := descriptorDocuments + 1
     let indentation := Doc.text ("".pushn ' ' placement.indent)
-    -- Docstrings are command syntax even though Lean stores their opening token in `SourceInfo` and
-    -- comment ownership classifies that token as `doc`. Their structural command document is the
-    -- sole emitter; treating the opening as outer trivia duplicates `/--` or `/-!` and makes the
-    -- candidate an unterminated nested comment.
-    let ownsDocSyntax := command.stx.isOfKind ``Lean.Parser.Command.moduleDoc ||
-      containsKind ``Lean.Parser.Command.docComment command.stx
     -- Command-boundary trivia belongs to whole-module composition. Registered command syntax is
     -- boundary-stripped before delegation, so the ownership layer remains its sole outer emitter.
-    let leadingTrivia := if ownsDocSyntax then Doc.empty else
+    --
+    -- A docstring is command syntax even though Lean stores its opening token in the following
+    -- token's `SourceInfo`, so its structural document is that opening's sole emitter. This
+    -- used to be enforced here, by dropping the command's *entire* leading trivia whenever it
+    -- contained doc syntax -- which also dropped an ordinary line comment written above the
+    -- docstring, silently, and is the defect 23e names D8. The exclusion is by comment kind now, and
+    -- it lives in `Trivia.commandLeading` where the comments are selected.
+    let leadingTrivia :=
       match Formatter.Trivia.leading ownership command.stx with
       | some comments =>
         -- The source's own blank line between a leading comment and its command. `Command.place` owns

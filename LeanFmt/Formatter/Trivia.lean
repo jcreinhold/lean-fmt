@@ -63,10 +63,23 @@ private def ownerBoundary (ownership : CommentOwnership) (comments : Array Comme
   | _, _ => Doc.hard
 
 /- Comments that lead the *complete command*, whichever adjacent token physically stores their trivia.
-`Comments.leading` answers the narrower question about one exact node. -/
+`Comments.leading` answers the narrower question about one exact node.
+
+A `doc`-kind comment is never one of them. Lean stores a docstring's opening token in the following
+token's `SourceInfo`, so comment ownership sees it as a comment leading that token, but the docstring
+is *command syntax* and the command's own structural document is its sole emitter. Emitting it here as
+well duplicates that opening and makes the candidate an unterminated nested comment.
+
+The range filter alone almost does this -- a docstring the command owns starts exactly where the
+command starts, so `stop <= start` is false for it -- but "almost" is not a guarantee to leave a
+duplication hazard resting on. `Analysis` used to guard the same hazard by dropping the command's
+*entire* leading trivia whenever it contained doc syntax, which also dropped every ordinary comment
+sitting above the docstring; that is the defect this replaces. Excluding by kind is the rule that was
+meant, and it is stated once, here, where the comments are selected. -/
 private def commandLeading (ownership : CommentOwnership) (stx : Lean.Syntax) : Array Comment :=
   let start := stx.getRange?.map (·.start.byteIdx) |>.getD 0
-  Comments.subtreeAt ownership stx .leading |>.filter (·.range.stop <= start)
+  Comments.subtreeAt ownership stx .leading |>.filter fun comment =>
+    comment.kind != .doc && comment.range.stop <= start
 
 private def exactLeading (ownership : CommentOwnership) (stx : Lean.Syntax) : Option Doc :=
   joinLeading ownership (Comments.leading ownership stx)

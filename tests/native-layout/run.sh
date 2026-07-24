@@ -142,6 +142,9 @@ for body in \
   '/-- A declaration doc comment stays on its declaration. -/' \
   '/-- A field doc comment stays on its field, not on the structure. -/' \
   '/-- A constructor doc comment stays on its constructor. -/' \
+  '-- an ordinary comment above a docstring is not part of it' \
+  '-- the first of two comments above a docstring' \
+  '-- the second of two comments above a docstring' \
   '-- dangling comment after the last statement' \
   '-- indented past every block, aligned with none of them'; do
   check "placed once: $body" "$(count "$boundaries" "$body")" "1"
@@ -172,6 +175,21 @@ check "a constructor docstring's continuation lines do not move with its first" 
 check "  ... and its constructor still follows it" \
   "$(grep -A3 -F 'A constructor doc comment can run onto a second line' "$boundaries" | tail -1)" \
   "  | only"
+# Was D8, and the count above is only half of it: the comment has to stay *above* the docstring, and
+# the docstring has to appear once. The defect dropped the command's entire leading trivia whenever it
+# contained doc syntax, so the ordinary comment vanished silently while every doc comment count stayed
+# right. The repair excludes by comment kind in `Trivia.commandLeading`; the two-comment case pins that
+# the rule selects comments rather than truncating the run.
+check "an ordinary comment stays above the docstring it precedes" \
+  "$(grep -A1 -F -- '-- an ordinary comment above a docstring is not part of it' "$boundaries" \
+    | tail -1)" \
+  "/-- A doc comment can be preceded by ordinary comments the command does not own. -/"
+check "  ... and that docstring is emitted exactly once" \
+  "$(count "$boundaries" \
+    '/-- A doc comment can be preceded by ordinary comments the command does not own. -/')" "1"
+check "both of two comments above a docstring survive, in order" \
+  "$(grep -A1 -F -- '-- the first of two comments above a docstring' "$boundaries" | tail -1)" \
+  "-- the second of two comments above a docstring"
 check "the trailing comment stays on its owner's last line" \
   "$(grep -F -- '-- trailing line comment' "$boundaries")" "  0 -- trailing line comment"
 # Was D3, and unlike D1, D2, and D6 it was an *ownership* defect rather than a layout one: the comment
@@ -322,6 +340,10 @@ check "  ... and the same loop over an identifier keeps it, so a repair must tel
 # go: the flat boundary the adapter already had reaches it, so no new mechanism was needed. Unlike D4,
 # joining `by` to `:=` cannot migrate a break: the tactic sequence starts its own line either way.
 # D6 is repaired; its assertion moved into §4. It was the adapter's for the same reason as D1 and D3.
+# D8 is repaired, and it is the one D these fixtures did *not* find -- the stratified mathlib sample
+# did, because nothing here wrote an ordinary comment above a docstring. Its fixture and assertions
+# were added to Boundaries.lean and §4 as part of the repair, which is the shape a corpus defect takes
+# once it has a minimized case: a positive assertion here, not a pin.
 
 printf -- '--- result ---\n'
 printf 'failures=%s\n' "$failures"
