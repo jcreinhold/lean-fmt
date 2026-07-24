@@ -84,9 +84,18 @@ This matters for where the repair goes. `LeanFmt/Doc.lean:303-305` renders a reg
 by handing it to `Std.Format.prettyM` at the active width and column, deliberately — "Registered Lean
 formatter output remains opaque… A registered leaf is a fit boundary for enclosing custom groups."
 lean-fmt does not own this decision and reimplementing `Std.Format`'s renderer to take it back is the
-"do not reimplement what Lean does do" case. Repairing D5 means rewriting the native document at the
-one position where the grammar's declaration and the rendered shape disagree, which is a mechanism the
-adapter does not yet have.
+"do not reimplement what Lean does do" case.
+
+It does not need to. The repair is a **flat boundary at the `by` terminal**, and the adapter already
+has that mechanism: `transformOrdinaryText` (`NativeLayout.lean:704-711`) routes a whitespace-only text
+leaf through `constrainBoundary`, so `flatBoundaries` replaces whatever the renderer emitted at that
+position with `" "`. What is missing is only a pure collector of the shape `collectReturnTermStarts`
+(`:372-381`) and `collectRecordUpdateFieldStarts` (`:394-413`) already are. The same is true of D4 (a
+flat boundary at the guard body's first terminal) and D2 (hard at the docstring's open, flat at its
+close, plus an `OffsideConstraint`). An earlier draft of this file claimed all three needed a new
+document-rewriting mechanism — an eighth entry for the list in `CLAUDE.md`. Reading
+`transformOrdinaryText` disproves that: three mechanisms already reach every position these defects
+occupy.
 
 `run.sh` keeps the `do` and `fun` reproductions even though both are correct today. They are the
 control: they show the repair must not fire on a body whose soft line already renders flat, and they
