@@ -103,7 +103,13 @@ correction to Lean's own document, collected by grammar shape and applied by ter
 that needs one names the terminal and the spelling and nothing else.
 
 The mechanism is one substitution; the constructors are its values. `flat` joins what the document
-broke, `hard` breaks what it joined, and `elided` removes a separator the document spelled twice.
+broke, `hard` breaks what it joined, `elided` removes a separator the document spelled twice, and
+`dedented` breaks to the enclosing command's own column rather than to the document's current indent.
+
+`dedented` is the only one whose spelling depends on where it lands, so it is the only one
+`boundaryFormat` needs the transform's state for. It cancels the whole ambient indentation the way an
+exact island's payload does, and for the same reason: what follows it carries a column of its own
+rather than one the surrounding layout may choose.
 
 `flat` is not free and is not the default reading of "this should be on one line". `.text " "` cannot
 break, so the renderer re-measures and breaks at the next soft line instead. When that next line is
@@ -117,12 +123,8 @@ private inductive BoundaryLayout where
   | flat
   | hard
   | elided
+  | dedented
   deriving BEq, Inhabited
-
-private def BoundaryLayout.format : BoundaryLayout → Std.Format
-  | .flat => .text " "
-  | .hard => .text "\n"
-  | .elided => .nil
 
 private structure TokenSpan where
   start : Nat
@@ -637,6 +639,50 @@ private partial def collectUngroupedBodyStarts (stx : Lean.Syntax)
       collectUngroupedBodyStarts child starts
   | _ => starts
 
+/- Where a command nested inside another command begins.
+
+A command starts at column zero. That is not a style preference this module chose: Lean's `command`
+category is the module's top level, mathlib's whitespace linter reports any command that starts
+elsewhere, and this module's acceptance bar says top-level declarations must remain at column zero.
+A command written as a child of another command is still a command.
+
+Lean's own document usually agrees, because the parser that embeds a command wraps the embedded one in
+`ppDedent` -- `open Nat in` spells `nest -2 [text" in" text"\n" <command>]`, which cancels the enclosing
+node's `nest` exactly. `guardMsgsCmd` (`Init/Notation.lean:938`) does not: it spells
+`" in" ppLine command`, and `categoryParser`'s formatter puts the embedded command inside the node's
+`nest`, so `#guard_msgs in` indents the command after it by `format.indent`. The candidate then trips
+mathlib's own `linter.style.whitespace` on `Mathlib/Tactic/Linter/ValidatePRTitle.lean`, which is a
+`#guard_msgs` test, so the added warning also breaks the message the test asserts.
+
+Rather than name the parsers that forgot, ask the *category*: `commandKinds` is the live parser
+environment's `command` category, so a node is a command exactly when the parser that could produce it
+is registered in it. Nothing here is keyed on a shape observed to fail, and a `dedented` boundary is
+idempotent -- it sets a column rather than adjusting one, so where Lean already dedented, as
+`open … in` does, the correction spells the same newline the document did.
+
+`rootStart` is what keeps this a *boundary* correction. `open Nat in def f := 0` is one node whose
+first child is the `open` command itself, so the category test matches at the command's own first
+terminal, where there is no boundary to correct -- only the leading padding that separates this command
+from the previous one. Constraining that spelled an extra blank line above every such command. A nested
+command that begins where its root begins has nothing in front of it to move. -/
+private partial def collectNestedCommandStarts (commandKinds : Lean.Parser.SyntaxNodeKindSet)
+    (rootStart : Nat) (stx : Lean.Syntax) (root : Bool := true)
+    (starts : Array Nat := #[]) : Array Nat :=
+  match stx with
+  | .node _ kind children =>
+    let starts :=
+      if !root && commandKinds.contains kind then
+        match (selectedLeafRanges stx)[0]? with
+        | some range =>
+          if range.start == rootStart || starts.contains range.start then starts
+          else starts.push range.start
+        | none => starts
+      else starts
+    let children := if kind == Lean.choiceKind then children[0]?.toArray else children
+    children.foldl (init := starts) fun starts child =>
+      collectNestedCommandStarts commandKinds rootStart child false starts
+  | _ => starts
+
 /- A guarded `let`'s bail-out, when the source already spells it on one line.
 
 Lean's document spells this boundary as a literal `text" |" text"\n"`, a hard newline no width can
@@ -1096,6 +1142,18 @@ private def containingConstraintNest (state : TransformState) (span : TokenSpan)
       total + constraint.indentAdjustment
     else total
 
+/- What the adapter spells at a boundary it corrects. Three of the four are fixed text; `dedented`
+cancels `baseIndent`, the document's own `nest` depth here, and every constraint that will wrap this
+terminal, so the line after it starts at the enclosing command's column whatever the document chose. -/
+private def boundaryFormat (state : TransformState) : BoundaryLayout → Std.Format
+  | .flat => .text " "
+  | .hard => .text "\n"
+  | .elided => .nil
+  | .dedented =>
+    let span : TokenSpan := ⟨state.terminalIndex, state.terminalIndex⟩
+    .nest (-(state.baseIndent + state.ambientNest + containingConstraintNest state span))
+      (.text "\n")
+
 private def constrainBoundary (format : Std.Format) :
     StateT TransformState (Except String) Std.Format := do
   let state ← get
@@ -1110,7 +1168,7 @@ private def constrainBoundary (format : Std.Format) :
         appliedBoundaries := state.appliedBoundaries.push state.terminalIndex
         metrics := { state.metrics with
           offsideConstraints := state.metrics.offsideConstraints + 1 } }
-      format := layout.format
+      format := boundaryFormat state layout
   let state ← get
   let start := state.commentIndex
   let mut stop := start
@@ -1459,10 +1517,16 @@ alternatives: alternative 0 is {expected}, alternative {alternative} is {actual}
   -- bail-out to the bar's line, and `transform` flattens the same span so the join leaves no break
   -- behind to land at the wrong column.
   let joined := collectGuardBailouts source stripped
+  let commandKinds :=
+    ((Lean.Parser.parserExtension.getState (← Lean.getEnv)).categories.find?
+      `command).map (·.kinds) |>.getD {}
   let boundaryStarts : Array (Nat × BoundaryLayout) :=
     (collectUngroupedBodyStarts stripped (collectReturnTermStarts stripped)).map
         (·, BoundaryLayout.flat) ++
       (collectIndentedSequenceStarts stripped).map (·, BoundaryLayout.hard) ++
+      (collectNestedCommandStarts commandKinds
+          (((selectedLeafRanges stripped)[0]?).map (·.start) |>.getD 0) stripped).map
+        (·, BoundaryLayout.dedented) ++
       (collectCtorDocStarts stripped).map (·, BoundaryLayout.elided) ++
       joined.map (·.start, BoundaryLayout.flat)
   let commentFree := withoutTrivia stripped

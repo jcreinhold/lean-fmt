@@ -341,6 +341,15 @@ check "a bail-out the source spelled on several lines keeps its break" \
 check "  ... and is the only bar in these fixtures left bare" \
   "$(grep -c '^    let some .* |$' "$offside")" "1"
 
+# A nested command starts at column zero, whatever the embedding node's `nest` chose. The `#guard_msgs`
+# assertion is `grep -c '^#eval'` rather than a substring count because the whole claim is the column.
+check "a command nested in another command starts at column zero" \
+  "$(grep -c '^#eval 1 + 2$' "$offside")" "1"
+check "  ... and the enclosing command keeps its own line" \
+  "$(grep -c '^#guard_msgs in$' "$offside")" "1"
+check "  ... and one Lean already dedented is spelled the same way" \
+  "$(grep -c '^def afterOpen : Nat :=$' "$offside")" "1"
+
 printf -- '--- the defects these fixtures found: six repaired, one pinned (§7) ---\n'
 # This section held six pins, each a defect these fixtures found, recorded exactly as measured so that
 # repairing one failed here instead of passing silently. All six are repaired; below the D1-D6 record
@@ -410,6 +419,12 @@ check "  ... and the same loop over an identifier keeps it, so a repair must tel
 # node's `.none` info -- contributed no position and `Syntax.getRange?` stopped early. The island was
 # then smaller than the marker that produced it. Escalation has to be able to run twice, so every range
 # is now read off the node as the source wrote it.
+# D13 is repaired; its fixture and assertions are in Offside.lean and §6. It is upstream and it is the
+# missing half of an idiom Lean otherwise gets right: a parser that embeds a `command` wraps it in
+# `ppDedent`, and `guardMsgsCmd` (`Init/Notation.lean:938`) does not, so the embedded command landed at
+# `format.indent`. The repair asks the live parser environment which kinds are in the `command`
+# category rather than naming the parsers that forgot, and spells a boundary that *sets* column zero
+# rather than adjusting the indent, so it is idempotent where Lean already dedented.
 
 printf -- '--- result ---\n'
 printf 'failures=%s\n' "$failures"

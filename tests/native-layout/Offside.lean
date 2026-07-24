@@ -16,7 +16,9 @@ Each constraint names a parser-significant column that native layout alone does 
   its own line so that a later separator breaking cannot dedent an item below it -- and the same list
   spelled with line-break separators, which the formatter's own `align` already positions and which a
   second break would displace;
-- the term of a `return`, which must stay on the `return` line.
+- the term of a `return`, which must stay on the `return` line;
+- a command written inside another command, which begins at the enclosing command's own column and not
+  at the indent the embedding node's `nest` would otherwise impose.
 
 `do`, nested `match`, tactic blocks, `where`, and equation alternatives are here because the
 constraints have to compose with them, not because each needs a rule of its own. -/
@@ -116,5 +118,19 @@ def alternatives : Nat → Nat
   | 0 => 0
   | 1 => 1
   | n + 2 => alternatives n + alternatives (n + 1)
+
+/- A command nested inside another command. `#guard_msgs`'s parser spells `" in" ppLine command` with
+no `ppDedent`, so Lean's document puts the embedded command inside the node's own `nest` and it lands
+one level in. A command starts at column zero, so the boundary before it is dedented to the enclosing
+command's column. That was D13. -/
+/-- info: 3 -/
+#guard_msgs in
+#eval 1 + 2
+
+/- The negative half: `open … in` spells the same embedding and Lean *does* dedent it. The correction
+sets a column rather than adjusting one, so it spells here exactly the newline the document already
+had. -/
+open Nat in
+def afterOpen : Nat := 0
 
 end NativeLayoutOffside
