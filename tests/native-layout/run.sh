@@ -263,6 +263,10 @@ check "a multiline doc comment keeps its second line at column zero" \
 # Asserting the exact bytes is still the right assertion -- an island is its own rendering. See D11.
 check "a dynamic quotation survives as its own bytes" \
   "$(count "$islands" '`(Lean.explicitBinders| (x : Nat))')" "1"
+# Twice-escalated protection. The assertion is the whole quotation, because the island the second
+# escalation produces has to cover every terminal the first one already replaced. See D12.
+check "a twice-escalated quotation covers all of its own terminals" \
+  "$(count "$islands" '`($(_) fun $_:ident ↦ $body)')" "1"
 
 printf -- '--- offside carriers compose (§6) ---\n'
 offside="$work/Offside.once"
@@ -400,6 +404,12 @@ check "  ... and the same loop over an identifier keeps it, so a repair must tel
 # `Unknown constant «|»`. It is unreachable from an adapter repair, so the class is protected as an
 # exact island instead -- keyed on `dynamicQuot`, which is the whole of `parserOfStack`'s call sites.
 # Like D8, the stratified mathlib sample found it and these fixtures did not: four of seventy-two.
+# D12 is repaired; its fixture and assertion are in Islands.lean and §5. It was the adapter's, and it
+# was hiding behind D11 in the one mathlib module that had both. Escalated protection measured the
+# *rewritten* node, so a subtree that had already escalated -- a marker leaf built from an interior
+# node's `.none` info -- contributed no position and `Syntax.getRange?` stopped early. The island was
+# then smaller than the marker that produced it. Escalation has to be able to run twice, so every range
+# is now read off the node as the source wrote it.
 
 printf -- '--- result ---\n'
 printf 'failures=%s\n' "$failures"

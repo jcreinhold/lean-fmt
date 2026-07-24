@@ -41,6 +41,16 @@ def interpolated (name : String) : String := s!"hello {name} and {name}"
 formatting the quotation. -/
 def quoted (value : Nat) : Lean.Syntax → Lean.MacroM Lean.Syntax := fun _ => `($(Lean.quote value))
 
+/- A quotation holding two antiquotations at different depths, so protecting it escalates twice: the
+inner one replaces a subtree with a marker leaf, and the outer one then has to measure a node one of
+whose children no longer carries a position. Measuring the rewritten node instead of the original
+truncates the island to the last surviving leaf, and it no longer covers the terminals its own marker
+stands for. That was D12. -/
+def nestedEscalation (stx : Lean.Syntax) : Lean.MacroM Lean.Syntax :=
+  match stx with
+  | `($(_) fun $_:ident ↦ $body) => return body
+  | _ => return stx
+
 /- A *dynamic* quotation, whose body's parser is named by the identifier before the bar. That name is
 read off the syntax stack, and Lean's formatter reads one slot short of where its parser wrote it, so
 the formatter asks for a formatter registered under the bar and the command dies as

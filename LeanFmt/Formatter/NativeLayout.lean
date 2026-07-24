@@ -381,21 +381,31 @@ private partial def protectSourceDataFrom (source : String) : Lean.Syntax → Pr
       -- for it leaves the grammar around it intact and the island stays as small as the defect.
       exactPlaceholder source stx info
     else
-      let (children, islands, pending) := children.foldl (init := (#[], #[], false))
+      let (rewrittenChildren, islands, pending) := children.foldl (init := (#[], #[], false))
         fun (rewritten, islands, pending) child =>
           let child := protectSourceDataFrom source child
           (rewritten.push child.stx, islands ++ child.islands,
             pending || child.pendingEnvelope)
-      let rewritten := Lean.Syntax.node info kind children
+      let rewritten := Lean.Syntax.node info kind rewrittenChildren
       if pending then
-        match sourceRange? rewritten with
+        -- Every range here is read off `stx`, the node as the source wrote it, and never off
+        -- `rewritten`. A placeholder is a leaf built from its node's own `SourceInfo`, which for an
+        -- interior node is `.none`, so a subtree that already escalated contributes no position at
+        -- all: `Syntax.getRange?` on `rewritten` then stops at the last leaf the rewrite left intact.
+        -- `` `($(_) fun $x:ident ↦ $b) `` escalated its `basicFun` first, so the enclosing application
+        -- measured 112:120 -- `$(_) fun` -- while the marker it produced stood for all of 112:136. The
+        -- island was then too small to cover the terminals its own marker replaced, and the transform
+        -- refused with `exact island 112:120 cuts terminal ...`. Escalation must be able to run twice.
+        match sourceRange? stx with
         | some range =>
           let pendingRanges := children.filterMap sourceRange?
           let strictlyEncloses := pendingRanges.any fun child =>
             range.start < child.start || child.stop < range.stop
           let transparentEnvelope := kind == `null || kind == Lean.choiceKind ||
             interpolationKind kind
-          if strictlyEncloses && !transparentEnvelope then exactPlaceholder source rewritten info
+          -- `stx` and `rewritten` are both nodes, so they pick the same placeholder constructor; only
+          -- the range differs, and the island's bytes are the original node's.
+          if strictlyEncloses && !transparentEnvelope then exactPlaceholder source stx info
           else { stx := rewritten, islands, pendingEnvelope := true }
         | none => { stx := rewritten, islands, pendingEnvelope := true }
       else { stx := rewritten, islands }
@@ -404,7 +414,10 @@ private def protectSourceData (source : String) (stx : Lean.Syntax) :
     Lean.Syntax × Array ExactIsland :=
   let result := protectSourceDataFrom source stx
   if result.pendingEnvelope then
-    let result := exactPlaceholder source result.stx result.stx.getHeadInfo
+    -- The original node again, for the reason spelled at the escalation site above: `result.stx` may
+    -- have lost the positions a nested placeholder replaced, and the island covers what the marker
+    -- stands for, not what survived the rewrite.
+    let result := exactPlaceholder source stx stx.getHeadInfo
     (result.stx, result.islands)
   else
     (result.stx, result.islands)
