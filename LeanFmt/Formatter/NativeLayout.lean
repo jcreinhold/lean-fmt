@@ -523,6 +523,16 @@ private def rememberNativeLeaf (leaves : Array String) (value : String) : Array 
   let leaves := leaves.push value
   if leaves.size <= 8 then leaves else leaves.extract (leaves.size - 8) leaves.size
 
+/- Whether a document renders as the empty string at every width. `nil` and an empty `text` are the
+only leaves that emit nothing; `line` renders as a space or a newline, and `align` is a layout node
+whose output the width decides, so neither is provably empty. -/
+private partial def provablyEmpty : Std.Format → Bool
+  | .nil => true
+  | .text value => value.isEmpty
+  | .nest _ inner | .group inner _ | .tag _ inner => provablyEmpty inner
+  | .append left right => provablyEmpty left && provablyEmpty right
+  | .line | .align _ => false
+
 private def insertComments (comments : Array InteriorComment) (suffix : Std.Format) : Std.Format :=
   let (document, atLineStart) := comments.foldl (init := (.nil, false))
     fun (document, atLineStart) comment =>
@@ -535,7 +545,18 @@ private def insertComments (comments : Array InteriorComment) (suffix : Std.Form
       | .leading | .dangling =>
         let boundary := if atLineStart then .nil else .text "\n"
         (.append document <| .append boundary <| .append (.text comment.payload) (.text "\n"), true)
-  if atLineStart then document else .append document suffix
+  if atLineStart then document
+  -- The adapter owns *both* sides of a comment, not just the side facing the token behind it. `suffix`
+  -- is the native boundary between the two tokens the comment sits between, and the native document
+  -- holds no decision about a leaf it never emitted -- so where the grammar spells those tokens
+  -- adjacent, as `[` and `5` in a list, `suffix` is empty and a block comment would close directly
+  -- against the next token: `-/5`. That reparses as one token or not at all.
+  --
+  -- A line comment needs nothing here; it already ended the row and set `atLineStart`. Only the block
+  -- case can end mid-row with nothing after it, and one space is enough -- `pushToken`'s discretionary
+  -- space is the tokenizer's own answer to the same question, and this is the case it never sees.
+  else if provablyEmpty suffix then .append document (.text " ")
+  else .append document suffix
 
 private partial def hasLineBoundary : Std.Format → Bool
   | .line | .align _ => true
@@ -587,16 +608,6 @@ private def insideIsland (state : TransformState) : Bool :=
   match islandAt state with
   | none => false
   | some island => state.enteredIslands.contains island.marker
-
-/- Whether a document renders as the empty string at every width. `nil` and an empty `text` are the
-only leaves that emit nothing; `line` renders as a space or a newline, and `align` is a layout node
-whose output the width decides, so neither is provably empty. -/
-private partial def provablyEmpty : Std.Format → Bool
-  | .nil => true
-  | .text value => value.isEmpty
-  | .nest _ inner | .group inner _ | .tag _ inner => provablyEmpty inner
-  | .append left right => provablyEmpty left && provablyEmpty right
-  | .line | .align _ => false
 
 /- Whether the source began a line with the terminal at `index`.
 

@@ -18,7 +18,7 @@ set -euo pipefail
 # test starts succeeding -- which is how `tests/check/Clean.lean` was silently rewritten before
 # `23b-suite-baseline-repair`.
 #
-# §6 is the unusual section: it pins layout defects these fixtures *found*, exactly as measured, so
+# §7 is the unusual section: it pins layout defects these fixtures *found*, exactly as measured, so
 # that fixing one shows up here as a failure rather than passing unnoticed. Each is labelled with the
 # prompt that owns it. A green run means "still broken in the recorded way", not "correct".
 
@@ -122,6 +122,13 @@ check "the trailing comment stays on its owner's last line" \
   "$(grep -F -- '-- trailing line comment' "$boundaries")" "  0 -- trailing line comment"
 check "the interior comment stays between the operator and its continuation" \
   "$(grep -A1 -F -- '-- interior line comment' "$boundaries" | tail -1)" "    4"
+# The adapter owns *both* sides of a comment, not only the side facing the token behind it. `[` and `5`
+# are adjacent in the list grammar, so the native boundary between them is empty and there is nothing
+# to carry a separator after the comment closes. Was D1: the output read `-/5,`, which reparses as one
+# token or not at all. A line comment cannot reach this case -- it already ended the row.
+check "a block comment closing mid-row is separated from the token after it" \
+  "$(grep -F -- '/- interior block comment inside a delimiter -/' "$boundaries")" \
+  "  [ /- interior block comment inside a delimiter -/ 5, 6]"
 
 printf -- '--- exact islands keep payload columns (§5) ---\n'
 islands="$work/Islands.once"
@@ -159,11 +166,10 @@ printf -- '--- pinned defects these fixtures found, owned by 23c (§7) ---\n'
 # section instead of passing silently, and so 23c inherits minimized reproductions rather than a
 # description. A green run here means "still broken in the recorded way".
 #
-# D1 -- a token following an interior block comment loses the space before it. Source spells
-#       `-/ 5,`; the adapter emits the comment and the token with nothing between them.
-check "D1 interior block comment swallows the following space" \
-  "$(grep -F -- '/- interior block comment inside a delimiter -/' "$boundaries")" \
-  "  [ /- interior block comment inside a delimiter -/5, 6]"
+# D1 is repaired and its assertion moved into §4, where it now reads as the positive claim rather than
+# the pinned defect. `experiments/native-layout-defects` records why it was the adapter's: trivia is
+# stripped before native formatting, so no native document ever held that comment.
+#
 # D2 -- a constructor docstring is dedented to column zero and gains a blank line before its
 #       constructor. This is the upstream `def ctor` shape: the newline lives inside the `"\n| "`
 #       atom, which sits *after* `optional docComment`, so the docstring is emitted before the
