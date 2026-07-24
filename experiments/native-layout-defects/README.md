@@ -92,6 +92,45 @@ adapter does not yet have.
 control: they show the repair must not fire on a body whose soft line already renders flat, and they
 are what would catch a fix that forced every `:=` join unconditionally.
 
+## D3 is an ownership question, not a layout one
+
+The dangling comment never reaches the adapter. `assignWithNeighbors` (`LeanFmt/Comments.lean:227-247`)
+decides a comment's owner from the leaf before it and the leaf after it:
+
+```
+def danglingOwner : Nat := Id.run do
+  let value := 8
+  return value
+  -- dangling comment after the last statement
+
+end NativeLayoutBoundaries
+```
+
+`left` is `value`, `right` is `end`. `matchingDelimiters "value" "end"` is false; there *is* a newline
+between `value` and the comment, so it is not trailing; and `isClosing` (`:102-104`) covers only `)`,
+`]`, `}`, and `⟩`, so `end` is not closing either. Every branch falls through to
+`syntaxOwner right .leading comment` — the comment is assigned as **leading trivia of `end`**, which is
+a command at column zero. That is exactly the observed output, and no part of the adapter is involved.
+
+The block ends by offside, not by a delimiter, so the delimiter-shaped questions above cannot see it.
+What distinguishes the two readings is the one fact neither branch consults: the comment starts at
+column 2 and `end` starts at column 0. A comment indented deeper than the leaf that follows it is
+inside the construct the preceding leaf belongs to, not leading the following one.
+
+Repairing it needs three coordinated changes, which is why it is larger than D1 and D6:
+
+1. `assignWithNeighbors` gains an offside branch, assigning `.dangling` to the innermost site that
+   contains `left` and not `right`.
+2. `NativeLayout.interiorComments` (`:885-904`) filters on the command's `rootRange`, and a dangling
+   comment lies *past* the last token by construction, so it would still be dropped.
+3. `transform` (`:864-868`) gates on every collected comment being inserted, and the walk never reaches
+   the boundary index `terminals.size`, so a comment admitted by (1) and (2) would turn the command
+   into a refusal rather than being emitted.
+
+The validator's comment gate compares ownership across a reparse, and the repair is self-consistent
+under it: re-reading the output puts the comment between the same two leaves at the same two columns,
+so it lands on the same owner.
+
 ## D4 is narrower than `results/23a` left it
 
 Native output reparents the guard's siblings *into* the guard:
