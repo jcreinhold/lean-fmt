@@ -135,6 +135,13 @@ lean_exe «test-suites» where
   root := `Test.Runner
   supportInterpreter := true
 
+/- The boundary suite: repo hygiene (module headers, tracked artifacts, the plugin import and
+link-closure boundaries). Pure reads against the tracked tree, so it runs in the parallel lane. -/
+lean_exe «suite-boundary» where
+  srcDir := "tests"
+  root := `Suites.Boundary
+  supportInterpreter := true
+
 /- The LSP acceptance run, compiled rather than interpreted: `Lean.Data.Lsp.Ipc` is the client,
 and an interpreted generic against compiled library code does not link. A slow-lane suite; the
 orchestrator picks it up when it exists. -/
