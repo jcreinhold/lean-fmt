@@ -1,5 +1,7 @@
 module
 
+public import Test
+
 import Lean.Data.Lsp.CodeActions
 import Lean.Data.Lsp.Ipc
 
@@ -26,6 +28,8 @@ open Lean Lean.Lsp Lean.Lsp.Ipc Lean.JsonRpc
 
 namespace LeanFmt.Acceptance
 
+open LeanFmt.Test.LspClient
+
 /-! ## Reporting -/
 
 structure Harness where
@@ -44,101 +48,6 @@ def Harness.checkEq [BEq α] [ToString α] (h : Harness) (label : String) (actua
     IO Unit :=
   h.check label (actual == expected) s!"expected: {expected}\n  actual:   {actual}"
 
-/-! ## Talking to the server
-
-Everything below writes with `Ipc.writeRequest`/`writeNotification` and reads with `Ipc.readMessage`.
-`awaitResponse` is the one piece `Ipc` does not have in the shape this needs: `Ipc.readResponseAs`
-*throws* on an error response, and half of what an acceptance suite asserts is which error came back.
--/
-
-private def request (id : Nat) (method : String) (param : Json) : IpcM Unit :=
-  writeRequest ⟨id, method, param⟩
-
-private def notify (method : String) (param : Json) : IpcM Unit :=
-  writeNotification ⟨method, param⟩
-
-/-- The outcome of one request: a result, or the code and message of an error response. -/
-inductive Answer where
-  | result (value : Json)
-  | error (code : ErrorCode) (message : String)
-  deriving Inhabited
-
-instance : ToString Answer where
-  toString
-    | .result value => s!"result {value.compress}"
-    | .error code message => s!"error {(toJson code).compress} {message}"
-
-/-- Read until the response to `id`, discarding notifications (`window/logMessage`,
-`textDocument/publishDiagnostics`) that arrive in between. -/
-private partial def awaitResponse (id : Nat) : IpcM Answer := do
-  match ← readMessage with
-  | .response responseId value =>
-    if responseId == (id : RequestID) then return .result value else awaitResponse id
-  | .responseError responseId code message _ =>
-    if responseId == (id : RequestID) then return .error code message else awaitResponse id
-  | _ => awaitResponse id
-
-/-- Read until a `textDocument/publishDiagnostics` for `uri`, or run out of patience.
-
-Diagnostics are published after a quiet interval, so this is the only thing in the suite that can
-block on a timer rather than on work. The bound is a message count, not a clock: the server sends
-nothing else unprompted, so an unbounded wait here would be a hang. -/
-private partial def awaitDiagnostics (uri : String) (budget : Nat := 64) :
-    IpcM (Option (Array Json)) := do
-  if budget == 0 then return none
-  match ← readMessage with
-  | .notification "textDocument/publishDiagnostics" (some param) =>
-    let json := toJson param
-    if (json.getObjValAs? String "uri").toOption == some uri then
-      return (json.getObjValAs? (Array Json) "diagnostics").toOption.getD #[]
-    else
-      awaitDiagnostics uri (budget - 1)
-  | _ => awaitDiagnostics uri (budget - 1)
-
-private def initializeSession (root : String) (options : Json := Json.mkObj []) : IpcM Answer := do
-  request 0 "initialize" (Json.mkObj [
-    ("processId", Json.null),
-    ("rootUri", Json.str s!"file://{root}"),
-    ("capabilities", Json.mkObj []),
-    ("initializationOptions", options)
-  ])
-  let answer ← awaitResponse 0
-  notify "initialized" (Json.mkObj [])
-  return answer
-
-private def openDocument (uri text : String) (version : Nat := 1) : IpcM Unit :=
-  notify "textDocument/didOpen" (Json.mkObj [("textDocument", Json.mkObj [
-    ("uri", Json.str uri), ("languageId", Json.str "lean"),
-    ("version", Lean.toJson version), ("text", Json.str text)])])
-
-private def changeDocument (uri text : String) (version : Nat) : IpcM Unit :=
-  notify "textDocument/didChange" (Json.mkObj [
-    ("textDocument", Json.mkObj [("uri", Json.str uri), ("version", Lean.toJson version)]),
-    ("contentChanges", Json.arr #[Json.mkObj [("text", Json.str text)]])])
-
-private def documentParam (uri : String) : Json :=
-  Json.mkObj [("textDocument", Json.mkObj [("uri", Json.str uri)]), ("options", Json.mkObj [])]
-
-private def position (line character : Nat) : Json :=
-  Json.mkObj [("line", Lean.toJson line), ("character", Lean.toJson character)]
-
-private def range (startLine startCharacter stopLine stopCharacter : Nat) : Json :=
-  Json.mkObj [("start", position startLine startCharacter),
-              ("end", position stopLine stopCharacter)]
-
-/-- Spawn one server and run `body` against it. The process is waited for, so a session that leaks a
-child fails here rather than in whatever runs next. -/
-private def withServer {α : Type} (h : Harness) (body : IpcM α)
-    (extraArgs : Array String := #[]) : IO (α × UInt32) := do
-  let child ← IO.Process.spawn { ipcStdioConfig with
-    cmd := h.application
-    args := #["lsp", "--root", h.root] ++ extraArgs
-    cwd := some h.root
-    env := #[("LEAN_NUM_THREADS", some "1")] }
-  let value ← body.run child
-  let code ← child.wait
-  return (value, code)
-
 /-! ## 1. Lifecycle (§3)
 
 `initialize` is answered before anything else is served; `shutdown` then `exit` leaves zero; `exit`
@@ -147,7 +56,7 @@ see. `Ipc.shutdown` is the toolchain's own shutdown sequence, so this is its ass
 ours. -/
 
 private def lifecycle (h : Harness) : IO Unit := do
-  let (_, code) ← withServer h do
+  let (_, code) ← withServer h.application h.root do
     let answer ← initializeSession h.root
     match answer with
     | .result value =>
@@ -173,12 +82,12 @@ private def lifecycle (h : Harness) : IO Unit := do
     Ipc.shutdown 2
   h.checkEq "shutdown then exit leaves zero" code 0
 
-  let (_, code) ← withServer h do
+  let (_, code) ← withServer h.application h.root do
     discard <| initializeSession h.root
     notify "exit" (Json.mkObj [])
   h.checkEq "exit without shutdown leaves one" code 1
 
-  let (_, code) ← withServer h do
+  let (_, code) ← withServer h.application h.root do
     request 1 "textDocument/formatting" (documentParam s!"file://{h.root}/tests/check/Clean.lean")
     match ← awaitResponse 1 with
     | .error code message =>
@@ -195,46 +104,8 @@ The freeze's claim is not "malformed input is answered" but "malformed input nev
 server". Both halves are asserted here, and the second is the one that needs a process: after each bad
 message the session is asked a real question and must answer it. -/
 
-/-- Read one frame and parse it as JSON, without going through `Ipc.readMessage`.
-
-This exists for exactly one message, and the reason is a finding rather than a convenience.
-JSON-RPC 2.0 §5 requires that a response to a message whose id could not be recovered — a parse error
-— carry `"id": null`, and `notes/01-protocol.md` §11 adopts that. `Lean.JsonRpc`'s `RequestID` decoder
-does not accept it: `fromJson? : Message` fails with "a request id needs to be a number or a string",
-so `Ipc.readMessage` *throws* on a spec-conforming parse-error response. Real clients accept it
-(`vscode-languageclient` and `lsp-mode` both do), the specification mandates it, and the server keeps
-sending it; this reads that one frame at the JSON level instead. The header parsing and the JSON parser
-are still the toolchain's. -/
-private partial def readFrameJson : IpcM Json := do
-  let stream ← stdout
-  let mut length := 0
-  repeat
-    let line := (← stream.getLine).trimAscii.toString
-    if line.isEmpty then break
-    if line.startsWith "Content-Length:" then
-      length := (line.drop "Content-Length:".length).trimAscii.toString.toNat!
-  let body ← stream.read length.toUSize
-  match Json.parse (String.fromUTF8! body) with
-  | .ok json => return json
-  | .error message => throw <| IO.userError s!"the server sent a frame that is not JSON: {message}"
-
-/-- Read until any error response, whatever its id, at the JSON level. See `readFrameJson`. -/
-private partial def awaitAnyError (budget : Nat := 16) : IpcM (Option (Json × Int)) := do
-  if budget == 0 then return none
-  let json ← readFrameJson
-  match (json.getObjVal? "error").toOption with
-  | some error =>
-    let code := (error.getObjValAs? Int "code").toOption.getD 0
-    return some ((json.getObjVal? "id").toOption.getD Json.null, code)
-  | none => awaitAnyError (budget - 1)
-
-private def writeRaw (text : String) : IpcM Unit := do
-  let stream ← stdin
-  stream.putStr text
-  stream.flush
-
 private def malformed (h : Harness) : IO Unit := do
-  let (_, code) ← withServer h do
+  let (_, code) ← withServer h.application h.root do
     discard <| initializeSession h.root
     -- A framed body that is not JSON. The frame is consumed, so the stream stays in sync.
     writeRaw "Content-Length: 5\r\n\r\n{{{{{"
@@ -279,7 +150,7 @@ private def unicodeSource : String :=
 
 private def unicode (h : Harness) : IO Unit := do
   let uri := s!"file://{h.root}/tests/check/Layout.lean"
-  let (_, code) ← withServer h do
+  let (_, code) ← withServer h.application h.root do
     discard <| initializeSession h.root
     openDocument uri unicodeSource
     request 1 "textDocument/formatting" (documentParam uri)
@@ -343,7 +214,7 @@ private def reconfiguration (h : Harness) : IO Unit := do
   let configuration := directory / "lean-fmt.toml"
   IO.FS.writeFile configuration "include = [\"**/*.lean\"]\n"
   let uri := s!"file://{h.root}/tests/check/Findings.lean"
-  let (_, code) ← withServer h (extraArgs := #["--debounce-ms", "1"]) do
+  let (_, code) ← withServer h.application h.root (extraArgs := #["--debounce-ms", "1"]) do
     discard <| initializeSession h.root
       (Json.mkObj [("configPath", Json.str configuration.toString)])
     openDocument uri findingsSource
@@ -375,7 +246,7 @@ further, and must name the version it was computed against. -/
 
 private def codeActions (h : Harness) : IO Unit := do
   let uri := s!"file://{h.root}/tests/check/Findings.lean"
-  let (_, code) ← withServer h do
+  let (_, code) ← withServer h.application h.root do
     discard <| initializeSession h.root
     openDocument uri findingsSource
     request 1 "textDocument/codeAction" (Json.mkObj [
@@ -419,7 +290,7 @@ private def slowSource : String := Id.run do
 private def cancellation (h : Harness) : IO Unit := do
   let uri := s!"file://{h.root}/LeanFmt/Application.lean"
   let source := slowSource
-  let ((uncancelled, cancelled), code) ← withServer h do
+  let ((uncancelled, cancelled), code) ← withServer h.application h.root do
     discard <| initializeSession h.root
     openDocument uri source
     -- Wait for the debounced analysis first. It is one incremental run of this same slow module, and it
@@ -547,9 +418,9 @@ private def memoryStability (h : Harness) : IO Unit := do
 end LeanFmt.Acceptance
 
 open LeanFmt.Acceptance in
-public def main (args : List String) : IO UInt32 := do
-  let [application, root] := args
-    | IO.eprintln "usage: Acceptance.lean <lean-fmt binary> <repository root>"; return 2
+public def main : IO UInt32 := do
+  let root := (← LeanFmt.Test.repoRoot).toString
+  let application := root ++ "/.lake/build/bin/lean-fmt"
   let h : Harness := { failures := ← IO.mkRef #[], root, application }
   lifecycle h
   malformed h

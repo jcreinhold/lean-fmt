@@ -4,6 +4,7 @@ public import Test.Fixture
 public import Test.Golden
 public import Test.Harness
 public import Test.Json
+public import Test.LspClient
 public import Test.Proc
 
 /-!

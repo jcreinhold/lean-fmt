@@ -124,8 +124,17 @@ lean_lib TestSupport where
     Glob.one `Test.Proc,
     Glob.one `Test.Golden,
     Glob.one `Test.Json,
-    Glob.one `Test.Fixture
+    Glob.one `Test.Fixture,
+    Glob.one `Test.LspClient
   ]
+
+/- The LSP acceptance run, compiled rather than interpreted: `Lean.Data.Lsp.Ipc` is the client,
+and an interpreted generic against compiled library code does not link. A slow-lane suite; the
+orchestrator picks it up when it exists. -/
+lean_exe «suite-lsp-acceptance» where
+  srcDir := "tests"
+  root := `Lsp.Acceptance
+  supportInterpreter := true
 
 /- The unit tier: `LeanFmtTest.lean` split into per-domain modules under `tests/Test/Unit`, run by
 the shared harness. The executable's import closure, not a glob, determines what it builds. -/
