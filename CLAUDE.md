@@ -187,9 +187,20 @@ ninth and it goes in this list.
 - **Comments are not in the algebra**, there is **no verbatim leaf** (`Format.text` re-indents embedded
   newlines), and there is **no protocol for source-sensitive syntax** — hence trivia stripping, the
   cancelling `nest`, and marker substitution respectively.
-- One ordinary upstream bug: `def ctor` puts the newline inside the `"\n| "` atom *after*
-  `optional docComment`, so a constructor docstring renders as `where/-- doc -/` and reparses onto the
-  wrong owner.
+- **Output nobody can see is not output to a printer.** A `line` in front of a `text` carrying its own
+  newline is a space at the end of a line when its group flattens and a blank line when it does not.
+  Lean's `doIf` spells one before every indented `doSeq` body. It costs a printer nothing — a trailing
+  space is invisible in an error message and a re-print is never diffed against source — so nothing
+  upstream removes it and no gate here would catch it: the validator reparses, and a space before a
+  newline changes no token. A formatter's output is read as text, so the adapter drops the break, and
+  only the one *in front of* the newline. The mirror rule moves columns: `sepByIndent` spells its first
+  item after an `align` and the rest after a `text "\n"`.
+- Ordinary upstream bugs, each repaired against the mechanism rather than the parser: `def ctor` puts
+  the newline inside the `"\n| "` atom *after* `optional docComment`, so a constructor docstring
+  renders as `where/-- doc -/` and reparses onto the wrong owner; `parserOfStack.formatter` reads one
+  stack slot short of the `ident`, so `` `(cat| body) `` dies as ``Unknown constant «|»``;
+  `guardMsgsCmd` omits the `ppDedent` every other command-embedding parser has. The ledger with
+  measurements is `experiments/native-layout-defects/README.md`.
 
 Do not reimplement what Lean does do. `pushToken` inserts a discretionary space exactly when
 concatenation would re-lex as one token, using the real tokenizer; an adapter-side merge rule

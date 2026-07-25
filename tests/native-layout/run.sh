@@ -110,6 +110,28 @@ for fixture in "${fixtures[@]}"; do
   fi
 done
 
+# No line ends in whitespace, in any fixture, at any width §1 and §1b rendered. This is stated over
+# every candidate rather than against the one construct that produced it, because a trailing space is
+# invisible in a diff and nothing else here would notice: the validator reparses, and a space before a
+# newline changes no token. Lean's own documents spell one wherever a discretionary break sits in front
+# of a hard newline, so the count is a property of the adapter's output, not of these fixtures. The
+# narrow widths matter for the same reason they do in §1b -- a break that flattens at width 100 is a
+# break that breaks at width 20, and only one of the two ends a line with a space.
+for fixture in "${fixtures[@]}"; do
+  for render in "$work/$fixture.once" "$work/$fixture-20.json" "$work/$fixture-40.json"; do
+    case "$render" in
+      *.json)
+        python3 -c '
+import json, sys
+sys.stdout.write(json.load(open(sys.argv[1]))["files"][0]["formatted"])' \
+          "$render" >"$render.text" ;;
+      *) cp "$render" "$render.text" ;;
+    esac
+    check "$(basename "$render") leaves no trailing whitespace" \
+      "$(grep -c '[[:space:]]$' "$render.text" || true)" "0"
+  done
+done
+
 printf -- '--- terminal payloads are original bytes, matched by position (§3) ---\n'
 alignment="$work/Alignment.once"
 # Multibyte spellings: column width and byte width disagree, so an alignment that indexed the source
@@ -350,6 +372,20 @@ check "  ... and the enclosing command keeps its own line" \
 check "  ... and one Lean already dedented is spelled the same way" \
   "$(grep -c '^def afterOpen : Nat :=$' "$offside")" "1"
 
+# The `then` line ends at `then`. The suite-wide gate in §2 already forbids the space that used to
+# follow it; this names the construct that produced one, so that removing the fixture is visible.
+check "a do-block's indented if body leaves nothing after then" \
+  "$(grep -c '^    if value != 0 then$' "$offside")" "1"
+check "  ... and the body is still indented under it" \
+  "$(grep -c '^      total := total + value$' "$offside")" "1"
+
+# A doc comment between two tokens keeps the side of the break the source put it on: its own line, so
+# it is the declaration's leading trivia on a reparse and not the `rec` token's trailing trivia.
+check "an interior doc comment keeps its own line" \
+  "$(grep -c '^    /-- Applies the mapping to a position. -/$' "$offside")" "1"
+check "  ... and nothing shares the line the rec keyword ends" \
+  "$(grep -c '^  let rec$' "$offside")" "1"
+
 printf -- '--- the defects these fixtures found: six repaired, one pinned (§7) ---\n'
 # This section held six pins, each a defect these fixtures found, recorded exactly as measured so that
 # repairing one failed here instead of passing silently. All six are repaired; below the D1-D6 record
@@ -425,6 +461,19 @@ check "  ... and the same loop over an identifier keeps it, so a repair must tel
 # `format.indent`. The repair asks the live parser environment which kinds are in the `command`
 # category rather than naming the parsers that forgot, and spells a boundary that *sets* column zero
 # rather than adjusting the indent, so it is idempotent where Lean already dedented.
+# D14 is repaired; its fixture and assertions are in Offside.lean and §6. It was the adapter's, and it
+# is the one rule here whose spelling is read off the source: a doc comment written between two tokens
+# keeps the side of the line break the source put it on, because that is what decides its owner on a
+# reparse and what the comment gate compares. No fixed choice works -- `Mathlib/Util/Superscript.lean`
+# writes a `let rec` docstring both ways in one file.
+# D15 is repaired; its fixture is in Offside.lean, its named assertions are in §6, and its real gate is
+# the suite-wide trailing-whitespace check in §2. It was upstream and it was invisible: Lean's `doIf`
+# spells `ppSpace` in front of a `doSeq` that begins with its own hard newline, so every `if c then`
+# with an indented body ended its line with a space. A printer has no reason to care. The repair drops
+# a discretionary break that sits directly in front of a newline; the mirror rule, dropping one that
+# *follows* a newline, is deliberately absent because `sepByIndent` spells its first item after an
+# `align` and the rest after `text "\n"`, so the mirror moves every item but the first and the second
+# `where` binding reparses outside the block.
 
 printf -- '--- result ---\n'
 printf 'failures=%s\n' "$failures"

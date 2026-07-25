@@ -141,6 +141,7 @@ structure Metrics where
   exactIslandBytes : Nat := 0
   offsideConstraints : Nat := 0
   commentConstraints : Nat := 0
+  redundantBreaks : Nat := 0
   deriving Inhabited, BEq, Repr, Lean.ToJson, Lean.FromJson
 
 /-- One direct native-layout result before whole-module rendering and validation. -/
@@ -783,6 +784,39 @@ private partial def collectCtorDocStarts (stx : Lean.Syntax)
     children.foldl (init := starts) fun starts child => collectCtorDocStarts child starts
   | _ => starts
 
+/- Every doc comment in the command, in source order.
+
+A doc comment is a comment, and a comment keeps the side of the line break the source put it on. For
+trivia comments the adapter enforces that by construction -- it decides where to place them. A doc
+comment is syntax, so it flows through the native document as an exact island and the document decides
+which side of a break it lands on, using a soft `line` that flattens whenever the two fit together.
+
+`let rec` is where that shows: `letRecDecl` is `optional docComment >> letDecl`, and Lean spells
+`text"let" line text"rec" line nest-2[text"/--" line text"…-/" text"\n"] line text"helper"`. At any
+width where `let rec /-- … -/` fits, the leading `line` flattens and a docstring the source wrote on
+its own line becomes the trailing comment of `rec` -- which the comment contract reports as an
+ownership change, because `leading` and `trailing` are exactly the question of which side of the break
+a comment is on. `Mathlib/Util/Superscript.lean` writes both spellings, one `let rec` with the
+docstring inline and one with it on the next line, so no fixed choice preserves both.
+
+The constructor docstring is excluded here because D2 already owns it with a different pair of
+corrections: `ctor`'s separator lives *inside* the `"\n| "` atom, so that one elides rather than
+breaks. A command's own leading docstring is excluded because there is no boundary in front of the
+command's first terminal. -/
+private partial def collectDocCommentRanges (stx : Lean.Syntax)
+    (ranges : Array SourceRange := #[]) : Array SourceRange :=
+  match stx with
+  | .node _ kind children =>
+    let ranges :=
+      if kind == ``Lean.Parser.Command.docComment then
+        match sourceRange? stx with
+        | some range => ranges.push range
+        | none => ranges
+      else ranges
+    let children := if kind == Lean.choiceKind then children[0]?.toArray else children
+    children.foldl (init := ranges) fun ranges child => collectDocCommentRanges child ranges
+  | _ => ranges
+
 /- `indent` is `Std.Format.getIndent`, the `format.indent` option Lean's own `ppIndent`/`ppDedent`
 read. A constraint here cancels one level of the indentation native layout introduced, so it is that
 same quantity negated -- not the literal `-2` this used to spell. The default happens to be 2, which is
@@ -966,6 +1000,47 @@ private partial def hasLineBoundary : Std.Format → Bool
   | .nest _ inner | .group inner _ | .tag _ inner => hasLineBoundary inner
   | .append left right => hasLineBoundary left || hasLineBoundary right
   | .nil => false
+
+/- Whether a document's own bytes start with a newline. Only a `text` carries one; `line` and `align`
+are decisions, not bytes, which is the whole point of asking. A provably empty side is skipped rather
+than answered for, so a `nest` holding nothing does not hide the leaf behind it. -/
+private partial def opensWithNewline : Std.Format → Bool
+  | .text value => value.startsWith "\n"
+  | .nest _ inner | .group inner _ | .tag _ inner => opensWithNewline inner
+  | .append left right =>
+    if provablyEmpty left then opensWithNewline right else opensWithNewline left
+  | _ => false
+
+/- The same document without its last discretionary break, or `none` where the outermost thing on that
+side is not one.
+
+`Std.Format.line` renders as a space when its group flattens and as a newline when it does not. Sitting
+directly in front of a `text` that carries its own newline it is redundant either way: flattened it is a
+space at the end of a line, which is trailing whitespace no formatter may emit, and broken it is a blank
+line the source never had. Lean's `doIf` spells exactly this -- `ppSpace` before a `doSeq` that begins
+with its own hard newline -- so before this every `if c then` with an indented body ended its line with a
+space, five of them in `Mathlib/Util/Superscript.lean`. A printer has no reason to care: a trailing space
+is invisible in an error message and a re-print is never diffed against source.
+
+The mirror rule, removing a break that *follows* a hard newline, looks equally sound and is not here. It
+is not safe: `sepByIndent` spells its first item after an `align` and every later item after a
+`text "\n"`, so the mirror fires on the later items only and leaves the first one a column to their
+right -- which is `checkColGe`'s reference column, so the second `where` binding parses outside the
+block. Measured on the `where` block of `Mathlib/Util/Superscript.lean:312`. A break before a newline
+cannot move a column because nothing follows it on that line; a break after one always can.
+
+The walk stops at the first leaf that emits anything: it descends through `nest`, `group`, `tag`, and a
+provably empty sibling, and gives up at a `text` or an `align`. So the break it removes is the one
+*adjacent* to the newline that asked, never a break further in with content between. -/
+private partial def dropTrailingBreak : Std.Format → Option Std.Format
+  | .line => some .nil
+  | .nest indent inner => (dropTrailingBreak inner).map (.nest indent ·)
+  | .group inner behavior => (dropTrailingBreak inner).map (.group · behavior)
+  | .tag tag inner => (dropTrailingBreak inner).map (.tag tag ·)
+  | .append left right =>
+    if provablyEmpty right then (dropTrailingBreak left).map (.append · right)
+    else (dropTrailingBreak right).map (.append left ·)
+  | _ => none
 
 /- The same document with every break removed, or the leaf that made that impossible.
 
@@ -1350,10 +1425,20 @@ private partial def transformNative : Std.Format →
     let left ← transformNative left
     let right ← transformNative right
     let right := { right with format := (← finishTrailing left right).getD right.format }
+    -- Read off the *uncorrected* left, because this is what decides whether an offside constraint
+    -- keyed to this append is applied here. Removing a redundant break can empty the left side; the
+    -- constraint still belongs to this boundary, and an unapplied one refuses the command.
+    let carrier? :=
+      if left.span?.isNone && hasLineBoundary left.format then some .boundary else none
+    -- A discretionary break directly in front of a hard newline. See `dropTrailingBreak`.
+    let leftFormat :=
+      if opensWithNewline right.format then dropTrailingBreak left.format else none
+    if leftFormat.isSome then
+      modify fun state => { state with metrics := { state.metrics with
+        redundantBreaks := state.metrics.redundantBreaks + 1 } }
     finishNode {
-      format := .append left.format right.format
-      span? := mergeSpan left.span? right.span? }
-      (carrier? := if left.span?.isNone && hasLineBoundary left.format then some .boundary else none)
+      format := .append (leftFormat.getD left.format) right.format
+      span? := mergeSpan left.span? right.span? } carrier?
   | .group inner behavior => do
     modify fun state => { state with metrics := { state.metrics with
       nativeNodes := state.metrics.nativeNodes + 1 } }
@@ -1520,14 +1605,32 @@ alternatives: alternative 0 is {expected}, alternative {alternative} is {actual}
   let commandKinds :=
     ((Lean.Parser.parserExtension.getState (← Lean.getEnv)).categories.find?
       `command).map (·.kinds) |>.getD {}
+  let rootStart := ((selectedLeafRanges stripped)[0]?).map (·.start) |>.getD 0
+  let ctorDocStarts := collectCtorDocStarts stripped
+  let nestedCommandStarts := collectNestedCommandStarts commandKinds rootStart stripped
+  -- The one boundary whose spelling is read off the source. Everything else here is decided by shape,
+  -- because a shape is what native layout got wrong; this one asks the source because the question it
+  -- answers -- which side of a break a comment is on -- is the source's to answer, and the comment
+  -- contract compares the answer.
+  let docBoundaries : Array (Nat × BoundaryLayout) :=
+    (collectDocCommentRanges stripped).filterMap fun range =>
+      -- A nested command that opens with its own docstring puts both rules on one terminal, and
+      -- `open Foo in` / `/-- … -/` / `def …` is an ordinary mathlib shape. The command's column is the
+      -- stronger claim -- it is a parse-relevant one and this is a line-side preference -- so the
+      -- dedent owns that boundary and the doc rule steps aside rather than letting the two disagree.
+      if range.start == rootStart || ctorDocStarts.contains range.stop ||
+          nestedCommandStarts.contains range.start then none
+      else
+        let broken := (terminals.filter (·.range.stop <= range.start)).back?.any fun previous =>
+          (slice source ⟨previous.range.stop, range.start⟩).contains '\n'
+        some (range.start, if broken then BoundaryLayout.hard else BoundaryLayout.flat)
   let boundaryStarts : Array (Nat × BoundaryLayout) :=
     (collectUngroupedBodyStarts stripped (collectReturnTermStarts stripped)).map
         (·, BoundaryLayout.flat) ++
       (collectIndentedSequenceStarts stripped).map (·, BoundaryLayout.hard) ++
-      (collectNestedCommandStarts commandKinds
-          (((selectedLeafRanges stripped)[0]?).map (·.start) |>.getD 0) stripped).map
-        (·, BoundaryLayout.dedented) ++
-      (collectCtorDocStarts stripped).map (·, BoundaryLayout.elided) ++
+      nestedCommandStarts.map (·, BoundaryLayout.dedented) ++
+      ctorDocStarts.map (·, BoundaryLayout.elided) ++
+      docBoundaries ++
       joined.map (·.start, BoundaryLayout.flat)
   let commentFree := withoutTrivia stripped
   let (formattedSyntax, islands) := protectSourceData source commentFree

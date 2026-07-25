@@ -18,7 +18,10 @@ Each constraint names a parser-significant column that native layout alone does 
   second break would displace;
 - the term of a `return`, which must stay on the `return` line;
 - a command written inside another command, which begins at the enclosing command's own column and not
-  at the indent the embedding node's `nest` would otherwise impose.
+  at the indent the embedding node's `nest` would otherwise impose;
+- the two places where a line's *end* is the column in question: a discretionary break Lean's document
+  spells directly in front of a hard newline, and a doc comment written between two tokens, which has
+  to keep the side of the break the source put it on.
 
 `do`, nested `match`, tactic blocks, `where`, and equation alternatives are here because the
 constraints have to compose with them, not because each needs a rule of its own. -/
@@ -132,5 +135,30 @@ sets a column rather than adjusting one, so it spells here exactly the newline t
 had. -/
 open Nat in
 def afterOpen : Nat := 0
+
+/- A `do` block's `if` whose body is indented under it. Lean's `doIf` spells `ppSpace` before the
+`doSeq`, and the sequence begins with its own hard newline, so the document holds a discretionary break
+directly in front of a newline. Flattened that break is a space at the end of the `then` line. That was
+D15, and it is the one defect in this file whose evidence is what a line ends with rather than where it
+starts. -/
+def indentedThen (limit : Nat) : Id Nat := do
+  let mut total := 0
+  for value in [0:limit] do
+    if value != 0 then
+      total := total + value
+  return total
+
+/- A doc comment written between two tokens rather than in front of the command. `letRecDecl` is
+`optional docComment >> letDecl`, and Lean's document spells the comment's closing newline inside a
+`nest` and then a discretionary break before the declaration's name -- so the name lands one column
+past the `let`, which is where the `where` bindings above land too and is the block's own reference
+column either way. What the comment must not do is change which side of the break it is on: the source
+put it on its own line, and a reparse that finds it trailing the `rec` hands it to a different owner.
+That was D14. -/
+def documentedLetRec (value : Nat) : Nat :=
+  let rec
+    /-- Applies the mapping to a position. -/
+    helper (n : Nat) : Nat := n + value
+  helper 0
 
 end NativeLayoutOffside

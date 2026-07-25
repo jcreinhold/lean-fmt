@@ -368,3 +368,81 @@ The island is `$(_) fun`; the marker stands for `$(_) fun $x:ident ↦ $b`. The 
 with `exact island 112:120 cuts terminal 141:146`, naming a terminal well past the island because
 every leaf the island *should* have covered was suppressed as interior to it. Escalation has to be able
 to run twice, so every range is now read off the node as the source wrote it.
+
+## D13, D14 and D15 are the comment-and-column defects the same three modules carried
+
+Added 2026-07-24, again from the stratified mathlib sample. `Mathlib/Tactic/Linter/ValidatePRTitle.lean`
+carried D13, `Mathlib/Util/Superscript.lean` and `Mathlib/Order/Filter/AtTopBot/Tendsto.lean` carried
+D14, and D15 was invisible until D14 let those two files render far enough to read.
+
+| Defect | Origin | Evidence |
+| --- | --- | --- |
+| D13 a command nested in a command lands at `format.indent` | **upstream** | `guardMsgsCmd` spells `" in" ppLine command` with no `ppDedent` |
+| D14 an interior doc comment changes which side of the break it is on | adapter | `letRecDecl` spells the comment inside a `nest`; the source decides the side, not the shape |
+| D15 a space at the end of every `if c then` line | **upstream** | `doIf` spells `ppSpace` in front of a `doSeq` that begins `text "\n"` |
+
+**D13.** Lean embeds a command in a command in several places and almost always wraps it in
+`ppDedent`, which cancels the enclosing node's `nest` exactly: `open Nat in` spells
+`nest -2 [text" in" text"\n" <command>]`. `guardMsgsCmd` (`Init/Notation.lean:938`) does not, and
+`categoryParser`'s formatter puts the embedded command inside the node's own `nest`, so `#guard_msgs in`
+indents the command after it by `format.indent`. On `ValidatePRTitle.lean` — itself a `#guard_msgs` test
+— the candidate then trips mathlib's `linter.style.whitespace`, and the added warning changes the
+message the test asserts, so the file refuses twice over.
+
+The repair does not name the parsers that forgot. It asks the live parser environment which kinds the
+`command` category holds
+(`(Lean.Parser.parserExtension.getState env).categories.find? \`command |>.map (·.kinds)`) and spells a
+boundary that *sets* column zero rather than adjusting the indent — so where Lean already dedented, as
+`open … in` does, the correction reproduces the newline the document had. `rootStart` keeps it a
+boundary correction: `open Nat in def f := 0` is one node whose first child is the `open` command
+itself, so without the exclusion the rule fires at the command's own first terminal, where the only
+thing in front of it is the padding separating it from the previous command. That spelled a blank line
+above every such command.
+
+**D14.** `letRecDecl` is `optional docComment >> letDecl`, and Lean spells it
+
+```
+text"let" line text"rec" line nest2[text"/--" line text"…-/" text"\n"] line text"helper"
+```
+
+so the comment always ends its own line and the name always follows a break. `Superscript.lean` writes
+both spellings in one file — `let rec /-- … -/` on line 146 and a docstring on its own line on line
+156 — so no fixed choice preserves both, and the choice matters: a comment is the previous token's
+trailing trivia exactly when it shares that token's line, so the side of the break decides the owner
+on a reparse and the comment gate compares owners.
+
+This is therefore the one boundary rule in `NativeLayout.lean` whose spelling is read off the source
+rather than decided by shape. It is read off the source because the question — which side of a break a
+comment is on — is the source's to answer. The rule steps aside where a nested command opens with its
+own docstring (`open Foo in` / `/-- … -/` / `def …`, an ordinary mathlib shape): both rules land on one
+terminal, and D13's is the stronger claim because a parse-relevant column outranks a line-side
+preference.
+
+**D15.** `Std.Format.line` renders as a space when its group flattens and as a newline when it does
+not. In front of a `text` that carries its own newline it is redundant either way: flattened it is a
+space at the end of a line, broken it is a blank line. Lean's `doIf` spells exactly that, and
+`Superscript.lean` has five of them:
+
+```
+group[ nest2[text"if" line … text" then"], line, text"\n", <doSeq> ]
+```
+
+Nothing else notices. The validator reparses the candidate, and a space before a newline changes no
+token; a diff of two candidates shows nothing; and a printer has no reason to care, because a trailing
+space is invisible in an error message and a re-print is never diffed against source. The gate is
+therefore stated over every fixture render at three widths rather than against the construct.
+
+The mirror rule — dropping a break that *follows* a hard newline — looks equally sound and is
+deliberately absent. `sepByIndent` spells its first item after an `align force` and every later item
+after a `text "\n"`, so the mirror fires on the later items only and leaves the first one a column to
+their right. That column is `checkColGe`'s reference, so on `Superscript.lean:312` the second `where`
+binding parsed outside the block:
+
+```
+where
+   valid (s : String) : Bool := …      -- align, break kept
+  scripted : SyntaxNodeKind → Bool :=  -- text "\n", break dropped: outside the block
+```
+
+A break in front of a newline cannot move a column, because nothing follows it on that line. A break
+after one always can.
