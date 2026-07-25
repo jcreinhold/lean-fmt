@@ -10,6 +10,7 @@ rather than arguing with it.
 | mathlib4 | `3de5ed81cc71b9ea62597b865ba0baaeb5eb0ea9`, clean |
 | toolchain | `leanprover/lean4:v4.33.0-rc1` |
 | manifest | `experiments/workloads/mathlib-v4.33.0-rc1-stratified.txt`, 72 paths, sha256 `228161c7c359a4b3352b873b649da113e6cf61d1619eaa772732d61da1b1a073` |
+| corpus content | sha256 `71d462334bc3be7bc7d62cf64925955aedb1e5a923c05b575162c1d2436f6620`, from `cat $(cat <manifest>)` in the mathlib checkout, manifest order |
 | split | three contiguous 24-path thirds in manifest order; concatenating them reproduces that digest |
 | guard | `profile-run.sh`, rss 8 GiB / swap 256 MiB / pressure level 1 |
 
@@ -148,6 +149,73 @@ the offside constraints are what `tests/native-layout/run.sh` §6 asserts per co
 every fixture at widths 20 and 40. Narrow-width output is not pathological — the width-20 and width-40
 renders of all four fixture modules validate, and the suite reads named columns out of them rather than
 only checking that they parse.
+
+## Changes and width-driven reflow, per named construct family
+
+The acceptance bar asks for nonzero changes *and* width-driven reflow across every construct family the
+corpus was built to cover. This is that measurement, in two parts.
+
+**Coverage and change** is a grep over the 72 sources — a syntactic predicate per family, not a parse,
+so read `paths` as "sources whose text matches", not as a parser's answer. `changed` excludes
+`MathlibTest/Linter/LongFile.lean`, the single refusal, and is otherwise equal to `paths` because 71 of
+72 changed.
+
+**Width-driven reflow** is a second run of the smallest covering path per family through
+`format - --stdin-filename <path> --root <mathlib>` at `line-width` 100 and 60, comparing candidate
+bytes. Ten distinct paths cover eighteen families. A family is satisfied by any covering path whose
+candidate differs from its source *and* differs between the two widths; the table names the one used.
+
+| family | paths | changed | width representative | lines 100 → 60 |
+| --- | --- | --- | --- | --- |
+| command | 70 | 69 | `Mathlib/Algebra/Divisibility/Hom.lean` | 38 → 41 |
+| term | 59 | 59 | `Mathlib/Analysis/Normed/Module/Multilinear/Basic.lean` | 1395 → 1874 |
+| tactic | 63 | 62 | `Mathlib/Analysis/Normed/Module/Multilinear/Basic.lean` | 1395 → 1874 |
+| `do` | 15 | 15 | `Mathlib/FieldTheory/Galois/Notation.lean` | 54 → 64 |
+| offside | 45 | 45 | `Mathlib/Algebra/Divisibility/Hom.lean` | 38 → 41 |
+| records | 48 | 48 | `Mathlib/Analysis/Normed/Module/Multilinear/Basic.lean` | 1395 → 1874 |
+| declarations | 67 | 67 | `Mathlib/Algebra/Divisibility/Hom.lean` | 38 → 41 |
+| comments | 39 | 38 | `Mathlib/Analysis/Normed/Module/Multilinear/Basic.lean` | 1395 → 1874 |
+| docstrings | 61 | 60 | `Mathlib/Analysis/Normed/Module/Multilinear/Basic.lean` | 1395 → 1874 |
+| quotations | 24 | 24 | `Mathlib/Analysis/Normed/Module/Multilinear/Basic.lean` | 1395 → 1874 |
+| antiquotations | 14 | 14 | `Mathlib/FieldTheory/Galois/Notation.lean` | 54 → 64 |
+| parser definitions | 7 | 7 | `Mathlib/FieldTheory/Galois/Notation.lean` | 54 → 64 |
+| interpolated literals | 3 | 3 | `Mathlib/Tactic/Linter/ValidatePRTitle.lean` | 165 → 196 |
+| custom notation | 2 | 2 | `Mathlib/FieldTheory/Galois/Notation.lean` | 54 → 64 |
+| explicit/descriptor formatters | 2 | 2 | `Mathlib/FieldTheory/Galois/Notation.lean` | 54 → 64 |
+| macro density (≥3 syntax-defining commands) | 3 | 3 | `Mathlib/Logic/ExistsUnique.lean` | 171 → 216 |
+| Unicode | 70 | 69 | `Mathlib/Algebra/Divisibility/Hom.lean` | 38 → 41 |
+| large files (≥800 lines) | 2 | 2 | `Mathlib/Analysis/Normed/Module/Multilinear/Basic.lean` | 1395 → 1874 |
+| `choice` | see below | | `Mathlib/Util/DischargerAsTactic.lean` | 33 → 38 |
+| `#exit` | 1 | **0** | — see below | |
+
+Two families are not greppable and are measured or attributed separately.
+
+**`choice`.** A `choice` node is a parse, not a spelling, so no predicate over the text finds one. It
+was measured instead with `__analyze-exact` over the ten width representatives, reading
+`artifact.syntaxData.kinds` — the same field `tests/lossless/run.sh` reads to prove its own `choice`
+fixture non-vacuous. One of the ten, `Mathlib/Util/DischargerAsTactic.lean`, holds a `choice` node; it
+changed and it reflows (33 → 38 lines). One in ten agrees with the rate `CLAUDE.md` already records
+(1 of 5 sampled modules), and it means the corpus exercised `NativeLayout.command`'s
+`choiceDisagreement?` gate on real input rather than only on the synthetic case.
+
+**`#exit`.** Exactly one manifest path contains `#exit`, and it is `MathlibTest/Linter/LongFile.lean`,
+the single refusal — so the corpus contributes *no* changed `#exit` candidate, and this row is a
+genuine gap in the corpus rather than a passing measurement. The family's durable evidence is
+elsewhere and predates this prompt: `tests/module-formatter/run.sh` builds a module whose commands
+precede a `#exit` with a deliberately unparseable tail, drafts it at **width 72**, and asserts
+`nativeDocuments == commands`, `alignedTokens > commands`, `terminalStop < sourceBytes`, that the
+candidate ends with the raw tail byte-for-byte, and that the source map tiles source and output with no
+gap. That is reflow at a narrow width over a `#exit` module through this adapter; the corpus adds
+nothing to it. A second case in the same suite covers a terminal-only module (`commands == 0`,
+`headerStop == terminalStop`, candidate identical to source).
+
+**exact/artifact equality** is not applicable to this corpus: mathlib is not formatter-integrated, so
+every path here took the exact route and there is no artifact route to compare it against. Where it
+*is* applicable it is gated durably rather than measured here — `tests/compiler/run.sh` `cmp`s the
+artifact-route and exact-route diffs of `tests/compiler/ArtifactLayout.lean` byte-for-byte while
+proving the two took different routes (`cache.path_artifact_render=1` versus
+`cache.path_exact_render=1`), and `tests/performance/run.sh` §1e asserts the two reports are
+byte-identical while the artifact route launches zero exact-source children.
 
 ## `MathlibTest/Linter/LongFile.lean` is not a formatter defect
 
