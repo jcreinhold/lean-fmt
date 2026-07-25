@@ -113,4 +113,17 @@ def danglingInnerBlock (flag : Bool) (n : Nat) : Nat := Id.run do
   total := total + 3
   return total
 
+/- A docstring on a `where` binding: a doc comment that is an exact island *and* the terminal a doc
+boundary was collected at, because it is neither the command's own docstring nor a constructor's. The
+island consumed that terminal in one step and never asked for the boundary in front of it, so the
+boundary stayed collected and the command was refused -- `Mathlib/Tactic/CasesM.lean` reported
+`applied 4/5 boundaries`. Two bindings, because the second is where a column that moved would show:
+`where` bindings are `checkColGe` against the first. That was D26. -/
+def documentedWhere (n : Nat) : Nat := twice n + once n
+where
+  /-- Doubles its argument. -/
+  twice (n : Nat) : Nat := n + n
+  /-- Adds one to its argument. -/
+  once (n : Nat) : Nat := n + 1
+
 end NativeLayoutBoundaries

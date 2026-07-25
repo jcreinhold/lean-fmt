@@ -933,3 +933,76 @@ nothing else. Escalation is what handed `sepBy.antiquot_scope` a leaf in the fir
 Measured: the three mathlib files format; `lake lint` unchanged at 63 files / 0 findings;
 `tests/native-layout` and `tests/command-formatter` both green, which is the point -- they pin opposite
 sides of the rule. `tests/native-layout/Islands.lean` now carries both sides itself.
+
+## D26 is a boundary at an island's first terminal, which nothing ever visits
+
+`Mathlib/Tactic/CasesM.lean` reported `applied 4/5 boundaries` and
+`Mathlib/Analysis/InnerProductSpace/Projection/Submodule.lean` `applied 2/4 exact islands`. Both counts
+name a rule that went unapplied and nothing about which one, so both were minimized by hand from a
+whole module. That is now fixed at the source: each of those three refusals names the first unapplied
+entry and the source it was collected at. `applied 0/1 boundaries; unapplied at #[(14, some (115,
+"/--"))]` is what turned the second half of this into a five-minute read.
+
+### The boundary
+
+Reduced to seven lines:
+
+    partial def casesMatching (g : Nat) : Nat := go g
+    where
+      /-- Auxiliary. -/
+      go (g : Nat) (acc : Nat := 0) : Nat := acc + g
+
+A docstring on a `where` binding is a doc-comment **exact island** and, at the same terminal, a
+**doc boundary**: `docBoundaries` excludes the command's own docstring (`range.start == rootStart`), a
+constructor's, and a nested command's, and a `where` binding's is none of those. `transform` keeps a
+boundary collected at an island's *first* terminal on purpose -- it separates the island from the token
+in front of it, and that separator is the adapter's, not the island's. Nothing then applied it:
+`consumeIsland` advanced `terminalIndex` from `start` to `stop` in one step and never called
+`constrainBoundary`, and the other path into an island -- `transformOrdinaryText`'s entry branch, which
+`/--` reaches because `docSyntaxBody?` replaces only the docstring's *body* -- recorded the entry and
+returned `.nil`. So `insideIsland` then held and the boundary was unreachable from either side.
+
+Both sites now ask, once: the entry branch when it is the first leaf of the island, `consumeIsland`
+otherwise. The native document spells `where/-- Auxiliary. -/`, which is D2's shape one level in, and
+the boundary is what puts the docstring on its own line.
+
+### The island
+
+Different mechanism, same file class. `appliedIslands` was two short with *no* unapplied island to
+name, which is only possible if two entries are indistinguishable: `markerFor` is a function of the
+range alone, so two protected nodes spanning the same bytes -- a node and the only child that fills it
+-- produce the same marker. The formatter spells one, `consumeIsland` applies one, and the count is
+short by the duplicate. Equal markers mean equal ranges mean equal bytes, so they are the same island;
+`transform` collapses them before it counts.
+
+### What this did not fix, and it is not D26
+
+A `where` block that mixes a documented and an undocumented binding produces a candidate that does not
+elaborate -- `Unknown identifier other` -- and did so before this repair as well:
+
+    partial def outer (g : Nat) : Nat := go g + other g
+    where
+      go (g : Nat) (acc : Nat := 0) : Nat := acc + g
+      /-- Second auxiliary. -/
+      other (g : Nat) : Nat := g + 1
+
+That is **D28**, pinned and unrepaired. Lean's own document for an undocumented `where` block is
+
+    text"where" align(true) fill[nest2[line text"go" …]] text"\n" fill[nest2[line text"other" …]]
+
+so every binding lands one column right of the align's own column -- `align(true)`, then a `line` that
+flattens to a space. `PrettyPrinter.formatCommand` prints `   go` at three spaces with no adapter
+involved, and because *every* binding shifts equally the block still parses. A documented binding does
+not follow that `line`; it follows the doc comment's own hard newline. Correcting one kind and not the
+other puts the two on different columns, and `where` is `checkColGe` against the first, so the block
+ends at the mismatch.
+
+The obvious repair -- dropping the discretionary break behind a doc comment's newline -- was written and
+measured. It fixes the mixed block's columns and then joins the docstring onto its binding's line
+(`/-- Auxiliary. -/ go (g : Nat) …`) whenever the `fill` fits, which loses the comment's line ownership
+and, in the mixed case, still does not parse. It was reverted. See `dropTrailingBreak`'s docstring for
+why the general mirror rule is absent; this is the same measurement from a second direction.
+
+Measured after the repair: both mathlib files format, `lake lint` unchanged at 63 files / 0 findings,
+20 suites green, and `tests/native-layout/Boundaries.lean` carries the two-binding fixture with gates on
+both docstrings and on the bindings sharing one column.

@@ -1489,9 +1489,21 @@ private def consumeIsland (value : String) (island : ExactIsland) :
     throw s!"exact island {island.range.start}:{island.range.stop} contains no terminal at index \
 {start}/{state.terminals.size}; nearby: {nearbyTerminals state}; recent native leaves: \
 {repr state.recentNativeLeaves}"
-  let (leading, _) := splitPadding value
+  let (leading, trailing) := splitPadding value
+  -- The boundary in front of the island, asked for at the island's own first terminal and asked here
+  -- because this is one of the two places that terminal is ever visited. `transform` keeps a boundary
+  -- collected at an island's first terminal on purpose -- it separates the island from the token
+  -- before it, and that separator is the adapter's -- but this consumed `start`..`stop` in one step
+  -- and never called `constrainBoundary`, so the boundary stayed collected and unapplied and the
+  -- command was refused. That was D26.
+  let boundary ← constrainBoundary (.text leading)
+  -- `startsLine` is the fallback for a comment island whose break the document did not spell. An
+  -- applied boundary is the same decision made by a rule that read the grammar, so it wins outright
+  -- rather than composing -- both spell `\n`, and both would spell a blank line.
+  let state ← get
   let startsLine :=
-    island.comment && !state.separated && leading.isEmpty && beganLine state start
+    island.comment && !state.separated && leading.isEmpty && beganLine state start &&
+      provablyEmpty boundary
   set { state with
     terminalIndex := stop
     separated := false
@@ -1502,14 +1514,16 @@ private def consumeIsland (value : String) (island : ExactIsland) :
       exactIslands := state.metrics.exactIslands + 1
       exactIslandBytes := state.metrics.exactIslandBytes + island.text.utf8ByteSize } }
   let state ← get
-  let payload := Std.Format.text (withPayload value island.text)
+  -- The leading padding is `boundary`'s now, not the payload's: `constrainBoundary` returns it
+  -- unchanged when no rule claims this terminal, and replaces it when one does.
+  let payload := Std.Format.text (island.text ++ trailing)
   -- A single-line payload has no interior newline for the ambient indentation to reach.
   let payload := if island.text.contains '\n' then
       .nest (-(state.baseIndent + state.ambientNest +
         containingConstraintNest state ⟨start, stop⟩)) payload
     else payload
   let payload := if startsLine then .append (.text "\n") payload else payload
-  finishNode { format := payload, span? := some ⟨start, stop⟩ }
+  finishNode { format := .append boundary payload, span? := some ⟨start, stop⟩ }
 
 private def transformOrdinaryText (value : String) :
     StateT TransformState (Except String) Transformed := do
@@ -1521,12 +1535,22 @@ private def transformOrdinaryText (value : String) :
   else if let some island := islandAt state then
     -- This leaf spells a terminal the island covers, so the island's own bytes already carry it.
     -- Recording the entry is what lets `insideIsland` suppress the boundaries that follow it.
-    set { state with
+    --
+    -- The boundary in *front* of the island is not one of those, and it is claimed here because this
+    -- leaf is where the island's first terminal is reached whenever the document spells one of its
+    -- tokens before the marker. `docSyntaxBody?` protects a doc comment by replacing its body and
+    -- leaving `/--` a leaf of its own, so a docstring on an interior declaration always arrives this
+    -- way: the entry was recorded, `insideIsland` then held, and the boundary the doc rule collected
+    -- at that terminal could never be applied by anyone. That is the other half of D26,
+    -- `Mathlib/Tactic/CasesM.lean`'s `where` binding, reported as `applied 4/5 boundaries`.
+    let boundary ← if state.enteredIslands.contains island.marker then pure .nil
+      else constrainBoundary (.text (splitPadding value).1)
+    modify fun state => { state with
       enteredIslands :=
         if state.enteredIslands.contains island.marker then state.enteredIslands
         else state.enteredIslands.push island.marker
       metrics := { state.metrics with nativeNodes := state.metrics.nativeNodes + 1 } }
-    return { format := .nil }
+    return { format := boundary }
   else
     let some terminal := state.terminals[state.terminalIndex]?
       | if commentText value then
@@ -1709,6 +1733,16 @@ private def transform (source : String) (terminals : Array Terminal)
   -- grammar, which is where a `` `(command| …) `` body really is a command; whether those bytes are the
   -- adapter's to lay out is decided here, once, for every rule rather than in each of them.
   --
+  -- One island per marker. A marker is `markerFor`'s function of the range alone, so two protected
+  -- nodes spanning the same bytes -- a node and the only child that fills it -- produce two entries
+  -- that no later step can tell apart: the formatter spells one marker, `consumeIsland` applies one,
+  -- and `appliedIslands` is short by exactly the duplicates. That is what
+  -- `Mathlib/Analysis/InnerProductSpace/Projection/Submodule.lean` reported as `applied 2/4 exact
+  -- islands` with no unapplied entry to name. Equal markers mean equal ranges mean equal bytes, so
+  -- they are the same island and collapsing them is the whole repair.
+  let islands := islands.foldl (init := #[]) fun kept island =>
+    if kept.any fun other : ExactIsland => other.marker == island.marker then kept
+    else kept.push island
   -- The island's *first* covered terminal keeps its boundary: that boundary separates the island from
   -- the token in front of it and is the adapter's, which is why the bound is strict on the left.
   let boundaryStarts := boundaryStarts.filter fun (start, _) =>
@@ -1735,14 +1769,26 @@ nearby: {nearbyTerminals state}; recent native leaves: {repr state.recentNativeL
     throw s!"native formatter inserted {state.commentIndex}/{comments.size} interior comments; \
 next expected range: {repr nextRange}; recent native leaves: \
 {repr state.recentNativeLeaves}"
+  -- A count alone says a rule went unapplied and nothing about which one, and every one of these was
+  -- minimized by hand from a whole mathlib module because of it. Each refusal below names the first
+  -- unapplied entry and the source it was collected at.
   if state.appliedIslands.size != islands.size then
-    throw s!"native formatter applied {state.appliedIslands.size}/{islands.size} exact islands"
+    let missing := islands.filter fun island => !state.appliedIslands.contains island.marker
+    throw s!"native formatter applied {state.appliedIslands.size}/{islands.size} exact islands; \
+first unapplied: {repr (missing[0]?.map fun island => (island.range.start, island.range.stop, island.text))}"
   if state.appliedConstraints.size != constraints.size then
+    let missing := (constraints.zipIdx.filter fun (_, index) =>
+      !state.appliedConstraints.contains index).map fun ((constraint, span), _) =>
+        (constraint.range.start, constraint.range.stop, span.start, span.stop)
     throw s!"native formatter applied {state.appliedConstraints.size}/{constraints.size} \
-offside constraints"
+offside constraints; first unapplied: {repr missing[0]?}"
   if state.appliedBoundaries.size != boundaries.size then
+    let missing := boundaries.filter fun (index, _) => !state.appliedBoundaries.contains index
+    let described := missing.map fun (index, _) =>
+      (index, (terminals[index]?.map fun terminal : Terminal =>
+        (terminal.range.start, terminal.sourceSpelling)))
     throw s!"native formatter applied {state.appliedBoundaries.size}/{boundaries.size} \
-boundaries"
+boundaries; unapplied at {repr described}"
   if state.appliedFlattened.size != flattened.size then
     throw s!"native formatter joined {state.appliedFlattened.size}/{flattened.size} guarded \
 bail-outs; the document holds no node spelling exactly one of them"

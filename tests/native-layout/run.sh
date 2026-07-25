@@ -190,6 +190,18 @@ check "the field docstring still precedes its field" \
 # zero with a blank line under it -- and reparsed onto no constructor at all. The repair is an elided
 # boundary at the `|`, which removes the first of the two newlines, and a constraint cancelling the
 # `nest -2` over the docstring's own range.
+# D26. A docstring on a `where` binding is an exact island *and* the terminal a doc boundary was
+# collected at. `consumeIsland` advanced past that terminal without asking for the boundary, so it
+# stayed collected and the command was refused. Both bindings are checked, because `where` is
+# `checkColGe` against the first: a documented binding that moved a column would take the block with
+# it, and does -- see the D28 entry in experiments/native-layout-defects/README.md.
+check "a where binding's docstring keeps its own line (D26)" \
+  "$(grep -c '^  /-- Doubles its argument. -/$' "$boundaries")" "1"
+check "  ... and so does the second one, whose column the first fixes" \
+  "$(grep -c '^  /-- Adds one to its argument. -/$' "$boundaries")" "1"
+check "  ... and both bindings land on one column" \
+  "$(grep -cE '^   (twice|once) \(n : Nat\) : Nat := n \+ ' "$boundaries")" "2"
+
 check "the constructor docstring keeps its constructor's indentation" \
   "$(grep -c '^  /-- A constructor doc comment stays on its constructor. -/$' "$boundaries")" "1"
 check "  ... and its constructor follows on the next line, with no blank between" \
