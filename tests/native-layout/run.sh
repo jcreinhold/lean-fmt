@@ -289,6 +289,11 @@ check "a dynamic quotation survives as its own bytes" \
 # escalation produces has to cover every terminal the first one already replaced. See D12.
 check "a twice-escalated quotation covers all of its own terminals" \
   "$(count "$islands" '`($(_) fun $_:ident ↦ $body)')" "1"
+# A quotation whose body the grammar calls a command, so a boundary rule collects a start inside an
+# island that will spell those bytes itself. The assertion is again the exact bytes; what it pins is
+# that the command was admitted at all, since an unapplied boundary is a refusal. See D16.
+check "a command quotation keeps its body inside the island" \
+  "$(count "$islands" '`(command| #eval $value)')" "1"
 
 printf -- '--- offside carriers compose (§6) ---\n'
 offside="$work/Offside.once"
@@ -474,6 +479,13 @@ check "  ... and the same loop over an identifier keeps it, so a repair must tel
 # *follows* a newline, is deliberately absent because `sepByIndent` spells its first item after an
 # `align` and the rest after `text "\n"`, so the mirror moves every item but the first and the second
 # `where` binding reparses outside the block.
+# D16 is repaired; its fixture and assertion are in Islands.lean and §5. It was the adapter's, and it is
+# the seam between the two things every rule here has: a collector reads the grammar, and the renderer
+# owns bytes. A `` `(command| …) `` body *is* a command grammatically, so D13's rule collected it, and an
+# exact island spells its own bytes and lets no boundary through -- so that boundary could never be
+# applied, and every collected boundary must be or the command is refused. The filter is stated once
+# over the whole table rather than in each collector, and it is strict on the island's left edge because
+# the boundary in front of an island is still the adapter's.
 
 printf -- '--- result ---\n'
 printf 'failures=%s\n' "$failures"

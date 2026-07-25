@@ -446,3 +446,29 @@ where
 
 A break in front of a newline cannot move a column, because nothing follows it on that line. A break
 after one always can.
+
+## D16 is the seam between reading the grammar and owning bytes
+
+Added 2026-07-24, from the same sample, and it is D13's repair meeting the island mechanism.
+
+| Defect | Origin | Evidence |
+| --- | --- | --- |
+| D16 a boundary collected inside an exact island can never be applied | adapter | `Mathlib/Util/ParseCommand.lean`: `native formatter applied 0/2 boundaries` |
+
+Every boundary rule here reads the grammar, because a grammar shape is what a collector can see. An
+exact island renders its own bytes, so `constrainBoundary` spells nothing between the terminals it
+covers. Those two facts are individually right and jointly produce an unapplyable boundary: a
+`` `(command| …) `` body *is* a command as far as the `command` category is concerned, so D13's rule
+collects it, and the quotation is an island, so nothing the adapter asks for there is spelled. Every
+collected boundary must be applied — two rules landing on one terminal and disagreeing is a defect the
+table reports — so the command refuses instead.
+
+`Mathlib/Util/ParseCommand.lean` has two `command` quotations in one `elab_rules` and reported `0/2`.
+It is not a `#guard_msgs` file and had nothing to do with D13's original case; it appeared as a
+*regression* between the D12 corpus run and the D15 one, which is the whole reason the frozen sample is
+rerun after each repair rather than only the files a repair was aimed at.
+
+The filter is stated once over the finished table rather than inside each collector, so a rule added
+later inherits it. Its left edge is strict: the boundary in *front* of an island separates it from the
+token before it and is the adapter's to keep, which is the same distinction `insideIsland` draws with
+`enteredIslands`.

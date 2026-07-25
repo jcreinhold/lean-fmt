@@ -1486,6 +1486,18 @@ private def transform (source : String) (terminals : Array Terminal)
     (native : Std.Format) : Except String (Std.Format × Metrics) := do
   let constraints := constraints.map fun constraint =>
     (constraint, spanForRange terminals constraint.range)
+  -- An exact island's bytes are its whole rendering, so the adapter spells no boundary between the
+  -- terminals it covers and `constrainBoundary` returns nothing there. A boundary collected inside one
+  -- can therefore never be applied, and every collected boundary must be applied or the command is
+  -- refused -- which is how `Mathlib/Util/ParseCommand.lean` reported `0/2` once the nested-command
+  -- rule started reaching the `command` quotations in an `elab_rules`. The collectors read the
+  -- grammar, which is where a `` `(command| …) `` body really is a command; whether those bytes are the
+  -- adapter's to lay out is decided here, once, for every rule rather than in each of them.
+  --
+  -- The island's *first* covered terminal keeps its boundary: that boundary separates the island from
+  -- the token in front of it and is the adapter's, which is why the bound is strict on the left.
+  let boundaryStarts := boundaryStarts.filter fun (start, _) =>
+    !islands.any fun island => island.range.start < start && start < island.range.stop
   let boundaries ← boundaryTable terminals boundaryStarts
   let flattened := joined.map (spanForRange terminals)
   let trailing := blockDangling.map fun (range, comment) => (spanForRange terminals range, comment)

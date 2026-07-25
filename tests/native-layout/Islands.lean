@@ -60,4 +60,14 @@ def dynamicallyQuoted : Lean.MacroM Lean.Syntax := do
   let binders ← `(Lean.explicitBinders| (x : Nat))
   return binders
 
+/- A `command` quotation. As far as the grammar is concerned the quoted `#eval` really is a command,
+and every boundary rule reads the grammar -- so the nested-command rule collects it and asks for a
+boundary that sets column zero. Those bytes belong to the island, which spells them itself and lets no
+boundary through, and a collected boundary that is never applied refuses the command:
+`Mathlib/Util/ParseCommand.lean` reported `applied 0/2 boundaries` for the two `command` quotations in
+its `elab_rules`. A boundary that falls strictly inside an island is dropped once, for every rule.
+That was D16. -/
+def quotedCommand (value : Lean.Term) : Lean.MacroM Lean.Syntax :=
+  `(command| #eval $value)
+
 end NativeLayoutIslands
