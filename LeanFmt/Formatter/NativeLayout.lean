@@ -42,6 +42,7 @@ with the root category, kind, range, resolution trace, native leaf index, and ne
 
 import Lean.Parser.StrInterpolation
 import all LeanFmt.Formatter
+import all LeanFmt.Formatter.Trivia
 
 namespace LeanFmt.Internal
 
@@ -1743,6 +1744,49 @@ private def blockDanglingComments (ownership : CommentOwnership) (stx : Lean.Syn
       placement := .dangling
       kind := comment.kind })
 
+/- A syntax node kind carrying a `_root_` component, with the name that component was meant to be.
+
+`macro (name := _root_.A.B) …` written inside `namespace N` leaves the two ends of one declaration
+disagreeing about what `_root_` means, exactly as D11's two ends disagreed about a stack index. The
+parser *constant* is elaborated as an ordinary declaration name, which honours `_root_`, and is `A.B`.
+The node *kind* is `(← getCurrNamespace) ++ declName.getId` (`Lean/Elab/Syntax.lean:465`), which does
+not, and is `N._root_.A.B`. So every node that parser produces carries a kind naming no constant, and
+`formatCommand` dies looking one up. That is D21.
+
+The obvious repair is to rewrite the kind to the suffix and format the corrected tree, and it does not
+work -- measured, not assumed. `runForNodeKind` (`Lean/PrettyPrinter/Basic.lean:20-30`) resolves the
+formatter by treating the node kind *as* the declaration name, so the rewrite makes the lookup succeed;
+but the descr that lookup finds is `ParserDescr.node `Lean._root_.Lean.Parser.Command.registerLabelAttr …`
+-- upstream baked the doubled name into the descr too -- and `node.formatter`'s own `checkKind`
+(`Lean/PrettyPrinter/Formatter.lean:335-343`) compares it against the node it was handed and
+`throwBacktrack`s. The refusal changes from `Unknown constant …` to `uncaught backtrack exception` and
+nothing is formatted either way. One name cannot satisfy both ends; supplying the alias upstream should
+have declared would mean adding a constant to the environment mid-run, which is a shim rather than a
+repair.
+
+So this is refused, and refused with the diagnosis rather than with whichever lookup failed first. The
+suffix is reported only when the environment holds it, because that is what makes the message a
+statement about the declaration rather than a guess about the name.
+
+Four toolchain declarations spell it this way -- `registerLabelAttr`, `registerSimpAttr`,
+`registerGrindAttr` and `registerSymSimpAttr`, all `macro (name := _root_.…)` inside `namespace Lean`.
+mathlib declares none itself and uses three, in three of its 8,815 files. -/
+private def rootedKind? (env : Lean.Environment) (kind : Lean.Name) : Option Lean.Name := do
+  guard !(env.contains kind)
+  let parts := kind.components
+  let fromEnd ← parts.reverse.findIdx? (· == `_root_)
+  let suffix := (parts.drop (parts.length - fromEnd)).foldl Lean.Name.append .anonymous
+  guard (env.contains suffix)
+  return suffix
+
+private partial def rootedKindNode? (env : Lean.Environment) :
+    Lean.Syntax → Option (Lean.Name × Lean.Name)
+  | .node _ kind children =>
+    match rootedKind? env kind with
+    | some suffix => some (kind, suffix)
+    | none => children.findSome? (rootedKindNode? env)
+  | _ => none
+
 private partial def nativeSize : Std.Format → Nat
   | .nest _ inner | .group inner _ | .tag _ inner => 1 + nativeSize inner
   | .append left right => 1 + nativeSize left + nativeSize right
@@ -1813,6 +1857,18 @@ alternatives: alternative 0 is {expected}, alternative {alternative} is {actual}
       joined.map (·.start, BoundaryLayout.flat)
   let commentFree := withoutTrivia stripped
   let (formattedSyntax, islands) := protectSourceData source commentFree
+  -- D21, named before `formatCommand` reaches it. Both lookups this breaks fail with a message about
+  -- a name nobody wrote, and the one that fires depends on which end is asked first.
+  if let some (kind, suffix) := rootedKindNode? (← Lean.getEnv) formattedSyntax then
+    return .error {
+      category := .command
+      kind := stx.getKind
+      range := rootRange stx
+      trace
+      detail := s!"syntax node kind {kind} names no constant: it is a namespace prefixed onto a \
+declaration name that spelled `_root_`, which the parser constant {suffix} honoured and \
+Lean/Elab/Syntax.lean:465 did not. No formatter can be resolved for it. Write \
+{repr Formatter.Trivia.formatIgnoreNextText} above the command to leave it verbatim" }
   -- A marker is matched by its spelling when the formatter hands the leaf back, so a source that
   -- already spells one would be indistinguishable from the placeholder standing in for protected
   -- syntax. The shape is unlikely, not impossible, and "unlikely" is not a guarantee: refuse instead.

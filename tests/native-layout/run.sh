@@ -440,6 +440,35 @@ check "an interior doc comment keeps its own line" \
 check "  ... and nothing shares the line the rec keyword ends" \
   "$(grep -c '^  let rec$' "$offside")" "1"
 
+printf -- '--- a node kind that names no constant (§6a) ---\n'
+# D21. `RootedKind.lean` is the one fixture here that must not format: its command's node kind is a
+# namespace prefixed onto a declaration name that spelled `_root_`, so no formatter can be resolved
+# for it. The message is what is asserted, because both lookups this breaks fail with a name nobody
+# wrote and which one fires depends on which end is asked first -- rewriting the kind to the suffix
+# moves the failure from `Unknown constant` to `uncaught backtrack exception` and formats nothing.
+rooted=$("$application" format - --stdin-filename tests/native-layout/RootedKind.lean --root . \
+  <tests/native-layout/RootedKind.lean 2>&1 >/dev/null || true)
+case "$rooted" in
+  *"Lean._root_.Lean.Parser.Command.registerLabelAttr names no constant"*)
+    ok "a _root_-bearing node kind is refused by name" ;;
+  *) fail "expected the D21 diagnosis, got: $rooted" ;;
+esac
+case "$rooted" in
+  *"Lean/Elab/Syntax.lean:465"*) ok "  ... and the refusal cites the declaration's other end" ;;
+  *) fail "the D21 refusal named no upstream cause: $rooted" ;;
+esac
+# The escape the message offers has to work, or the message is advice nobody can take. This is the
+# only way a file holding one of these can be formatted at all.
+sed 's|^register_label_attr|-- lean-fmt: format-ignore-next\nregister_label_attr|' \
+  tests/native-layout/RootedKind.lean >"$work/RootedKind.ignored"
+if "$application" format - --stdin-filename tests/native-layout/RootedKind.lean --root . \
+    <"$work/RootedKind.ignored" >"$work/RootedKind.formatted" 2>/dev/null; then
+  check "  ... and the directive it names leaves the command verbatim" \
+    "$(grep -c '^register_label_attr leanFmtRootedKindFixture$' "$work/RootedKind.formatted")" "1"
+else
+  fail "the suppression directive did not make RootedKind.lean formattable"
+fi
+
 # The tally this header used to carry read "eighteen repaired" and was already one short when D24
 # landed. A count nobody can re-derive from the ledger is worse than none, and the prose below states
 # the property that matters: every D but D7 is repaired, and D7 is pinned rather than absent.

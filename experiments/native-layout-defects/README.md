@@ -757,3 +757,66 @@ that block's items really got.
 Gated in `Offside.lean` and §6 beside D13's and D24's, asserting the body's column exactly. Measured
 before and after on the fixture above: `refine` at column 4, then at column 2, with `open Nat in`'s
 multi-line body unchanged at 2 in both.
+
+## D21 is one declaration whose two ends disagree about `_root_`, and no rewrite satisfies both
+
+`MathlibTest/Tactic/SolveByElim/DummyLabelAttr.lean` -- three lines, already minimal:
+
+    import Lean.LabelAttribute
+
+    register_label_attr dummy_label_attr
+
+refused at `ValidationGate.formatter` with
+
+    Unknown constant `Lean._root_.Lean.Parser.Command.registerLabelAttr`
+
+Note the doubled prefix. `Lean/LabelAttribute.lean:84`, inside `namespace Lean` (lines 33-100), spells
+
+    macro (name := _root_.Lean.Parser.Command.registerLabelAttr)
+      doc:(docComment)? "register_label_attr " id:ident : command => do
+
+and the two ends of that declaration compute different names, exactly as D11's two ends computed
+different stack indices:
+
+| | Computed as | Result |
+| --- | --- | --- |
+| the parser constant | ordinary declaration-name elaboration, which honours `_root_` | `Lean.Parser.Command.registerLabelAttr` |
+| the syntax node kind | `Lean/Elab/Syntax.lean:465`, `(← getCurrNamespace) ++ declName.getId`, which does not | `Lean._root_.Lean.Parser.Command.registerLabelAttr` |
+
+Every node this parser produces is tagged with a kind that names no constant, and `formatCommand` dies
+looking one up. Upstream, and cited rather than inferred.
+
+**Scope.** Four toolchain declarations spell it this way, all `macro (name := _root_.…)` inside
+`namespace Lean`: `registerLabelAttr`, `registerSimpAttr`, `registerGrindAttr`, `registerSymSimpAttr`.
+mathlib declares none itself and uses three of them, in three files of 8,815:
+`Mathlib/Tactic/GrindAttrs.lean`, `Mathlib/Tactic/Attr/Register.lean`, and the test above.
+
+### The obvious repair was written, measured, and reverted
+
+Unlike D11 the mismatch is a *name* rather than an index, and `_root_` has a documented meaning, so
+the repair looks reachable: before formatting, rewrite a node kind carrying a `_root_` component to
+the suffix that follows it, and only where the environment holds that suffix as a constant, so the
+rewrite restores a name rather than guessing one.
+
+It does not work, and the reason is that upstream baked the doubled name into *both* ends of the
+pretty-printer's path as well:
+
+- `runForNodeKind` (`Lean/PrettyPrinter/Basic.lean:20-30`) resolves a formatter by treating the node
+  kind as the declaration name. The rewrite makes this lookup succeed.
+- What it finds is `Lean.Parser.Command.registerLabelAttr`, whose value is
+  `ParserDescr.node `Lean._root_.Lean.Parser.Command.registerLabelAttr 1022 …` -- printed, not
+  assumed. `node.formatter`'s `checkKind` (`Lean/PrettyPrinter/Formatter.lean:335-343`) compares that
+  against the node it was handed and `throwBacktrack`s.
+
+Measured on `tests/native-layout/RootedKind.lean`: without the rewrite,
+`Unknown constant `Lean._root_.…``; with it, `uncaught backtrack exception`. Nothing is formatted
+either way. One name cannot satisfy both ends, and supplying the alias the declaration implies would
+mean adding a constant to the environment mid-run -- a shim, not a repair.
+
+### What shipped instead
+
+The shape is detected before `formatCommand` reaches it and refused with the diagnosis: the kind, the
+constant the parser really got, the upstream line that computed the other one, and the directive that
+gets the file formatted anyway. That last part is the difference between a message and advice nobody
+can take -- `-- lean-fmt: format-ignore-next` above the command leaves it verbatim, and §6a asserts
+both the diagnosis and that the escape works.
