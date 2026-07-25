@@ -1,16 +1,7 @@
 module
 
 public import Test
-import Test.Unit.Cache
-import Test.Unit.Config
-import Test.Unit.Digest
-import Test.Unit.Edit -- lean-fmt: ignore[FMT004]
-import Test.Unit.Imports
-import Test.Unit.Layout -- lean-fmt: ignore[FMT004]
-import Test.Unit.Lsp
-import Test.Unit.Rules
-import Test.Unit.Semantic
-import Test.Unit.Source
+import all Test.Unit.Cases
 import all Test.Unit.Tools
 
 /-!
@@ -28,11 +19,8 @@ ported and absorb them.
 
 open LeanFmt.Test
 
-/-- Every unit case, concatenated module by module. -/
-private def allCases : Array Case :=
-  Unit.Digest.cases ++ Unit.Rules.cases ++ Unit.Imports.cases ++ Unit.Lsp.cases ++
-    Unit.Edit.cases ++ Unit.Config.cases ++ Unit.Cache.cases ++ Unit.Source.cases ++
-    Unit.Semantic.cases ++ Unit.Layout.cases
+/-- `doc-properties` is the one legacy subcommand that names a unit case; everything else dispatches
+into `Test.Unit.Tools`. -/
 
 public unsafe def main (args : List String) : IO UInt32 := do
   match args with

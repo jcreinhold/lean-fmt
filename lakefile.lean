@@ -12,7 +12,7 @@ driver by `String.toName`, so the bare spelling does not find the executable —
 §5 pins the consuming form, which needs them in the package half too. -/
 package «lean-fmt» where
   version := v!"0.1.0"
-  testDriver := "«lean-fmt-tests»"
+  testDriver := "«test-suites»"
   lintDriver := "«lean-fmt»"
   lintDriverArgs := #["check"]
 
@@ -127,6 +127,13 @@ lean_lib TestSupport where
     Glob.one `Test.Fixture,
     Glob.one `Test.LspClient
   ]
+
+/- The suite orchestrator and the package's testDriver: `lake test` runs the unit tier in-process
+and then every non-slow registered suite as an executable. See `tests/Test/Runner.lean`. -/
+lean_exe «test-suites» where
+  srcDir := "tests"
+  root := `Test.Runner
+  supportInterpreter := true
 
 /- The LSP acceptance run, compiled rather than interpreted: `Lean.Data.Lsp.Ipc` is the client,
 and an interpreted generic against compiled library code does not link. A slow-lane suite; the
