@@ -223,15 +223,32 @@ accounted=$(gate_accounted "$scratch/g3.err")
 # are exactly what this constant predicts. Stating G3 as a bare percentage, with no workload length
 # attached, was under-specified; `results/03-regressions.md` records the correction.
 #
-# This gate therefore bounds the **remainder**, which is the quantity that actually stays put. The
-# bound is 250 ms, about 5x the observed constant and above the 67 ms seen when wall spiked 2.7x
-# under load. It fires when a genuinely unbracketed region of *work* appears -- which is the
-# regression G3 exists to catch -- and not when the machine is busy.
-GATE_REMAINDER_BOUND_MS=250
+# This gate therefore bounds the **remainder**, which is the quantity that actually stays put --
+# provided the machine is not thrashing. "It is a constant" was calibrated over five runs whose wall
+# ranged 453-1,225 ms, and it is false past that: on 2026-07-25, with a mathlib child and two builds
+# sharing the machine, this same run measured **841 ms of 6,913 ms** and the gate reported a
+# regression that was not there. A re-run on the quiet machine read 57 ms of 638 ms. A gate that
+# fails on load is a gate people learn to re-run, which is the same as not having one.
+#
+# So the constant is measured here rather than carried in from another machine. `rules --json` loads
+# the same binary, initializes the same Lean runtime, does a bounded amount of work and exits: it is
+# process startup with a receipt. It reads 23-25 ms quiet, against the 50-51 ms remainder the real
+# run leaves, and both inflate together because both are the same class of cost. The bound stays 250
+# ms whenever the machine is quiet -- 10x the quiet control, which is where the original calibration
+# put it -- and scales with the control when it is not.
+control_ms=$(python3 - "$fmt" <<'CONTROL'
+import subprocess, sys, time
+started = time.monotonic()
+subprocess.run([sys.argv[1], "rules", "--json"], capture_output=True)
+print(int((time.monotonic() - started) * 1000))
+CONTROL
+)
+GATE_REMAINDER_BOUND_MS=$(( control_ms * 10 > 250 ? control_ms * 10 : 250 ))
 fraction=$(python3 -c "print(round(100.0 * $accounted / max($wall, 1), 1))")
 unaccounted=$((wall - accounted))
 if gate_remainder_within "$scratch/g3.err" "$wall" "$GATE_REMAINDER_BOUND_MS"; then
-  ok "unaccounted remainder ${unaccounted} ms of ${wall} ms (${fraction}% accounted, bound ${GATE_REMAINDER_BOUND_MS} ms)"
+  ok "unaccounted remainder ${unaccounted} ms of ${wall} ms (${fraction}% accounted, bound \
+${GATE_REMAINDER_BOUND_MS} ms from a ${control_ms} ms startup control)"
 else
   bad "unaccounted remainder ${unaccounted} ms of ${wall} ms exceeds the ${GATE_REMAINDER_BOUND_MS} ms startup bound: work is happening outside every top-level phase"
 fi
