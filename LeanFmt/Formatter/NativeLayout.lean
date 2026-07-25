@@ -517,10 +517,20 @@ coincide is a gratuitous break. They coincide exactly when the first item's unbr
   is always needed. This is the same mechanism `collectUngroupedBodyStarts` above turns to the other
   purpose; the two are the joined `:= by` and the broken `by`-to-first-tactic halves of one line.
 
-The delimiter-free sequences are the ungrouped case wherever they appear, not only under `by`, because
-being delimiter-free is exactly what leaves them without a group. `whereDecls` and the two bracketed
-sequences are the delimited case; no terminal can intervene in any of them, so the test says no and
-they are walked anyway rather than assumed. The one carrier not walked is `structInstFields` spelled
+Being ungrouped is a property of the *carrier*, not of the sequence's own kind, and the two come apart
+because `tacticSeq1Indented` is what `tacticSeq` reduces to everywhere -- under `by`, and equally under
+`(`, `·`, `case`, `try`. `ppAllowUngrouped` is `skip` (`Extra.lean:268`), so it leaves no node to test
+for; what stands in for it is the parent, and the four core parsers that carry it (`Do.lean:326`,
+`Term.lean:108,387`, `Extra.lean:262`) put a `sepByIndent` list under exactly one of them. Every other
+parent wraps the sequence in its own `fill`, which makes it the delimited case and `delimiterIntervenes`
+the right question -- `(` alone does not intervene and needs no boundary, `case h => ` does and gets
+one. Reading the kind as ungrouped wherever it appeared forced a break into `constructor <;> (skip; rfl)`
+that the document had nowhere to put: one `nest` past the separators rather than on them, leaving `rfl`
+to reparse outside the parentheses. That was D18, and `Archive/Arithcc.lean` refused for it.
+
+`whereDecls` and the two bracketed sequences are the delimited case; no terminal can intervene in any
+of them, so the test says no and they are walked anyway rather than assumed. The one carrier not walked
+is `structInstFields` spelled
 after `where` (`Command.lean:174`) instead of inside `{ }`: `where` is its delimiter and the list is
 the very next thing, so nothing can come between them and there is no shape for the test to find.
 
@@ -562,35 +572,48 @@ private def delimiterIntervenes (owner list : Lean.Syntax) : Bool :=
   | some first => ((selectedLeafRanges owner).filter (·.start < first.start)).size > 1
   | none => false
 
+/- `Tactic.tacticSeq` and `Conv.convSeq` are the choice between the bracketed and the indented spelling,
+and a `null` node is a parser's own bookkeeping. None of the three spells a token, so none of them owns
+a delimiter for `delimiterIntervenes` to count or a `ppAllowUngrouped` to stand for; the walk carries
+the node above them rather than the immediate parent. -/
+private def sequenceWrapperKind (kind : Lean.Name) : Bool :=
+  kind == ``Lean.Parser.Tactic.tacticSeq || kind == ``Lean.Parser.Tactic.Conv.convSeq ||
+    kind == Lean.nullKind
+
 private partial def collectIndentedSequenceStarts (stx : Lean.Syntax)
-    (starts : Array Nat := #[]) : Array Nat :=
+    (carrier? : Option Lean.Syntax := none) (starts : Array Nat := #[]) : Array Nat :=
   match stx with
   | .node _ kind children =>
-    -- `(owner, carrier)`: the node whose terminals include the opening delimiter, and the node that
-    -- holds the list. They differ only for `structInst`, whose `{` is a sibling of the field list.
-    let carrier? : Option (Lean.Syntax × Lean.Syntax) :=
+    -- `(owner, holder)`: the node whose terminals include the opening delimiter, and the node that
+    -- holds the list. They differ for `structInst`, whose `{` is a sibling of the field list, and for
+    -- an indented sequence, whose delimiter belongs to whatever carries it.
+    let target? : Option (Lean.Syntax × Lean.Syntax × Bool) :=
       if kind == ``Lean.Parser.Term.structInst then
         (children.find? (·.isOfKind ``Lean.Parser.Term.structInstFields)).map fun fields =>
-          (stx, fields)
-      else if ungroupedSequenceKind kind || delimitedSequenceKind kind then some (stx, stx)
+          (stx, fields, false)
+      else if delimitedSequenceKind kind then some (stx, stx, false)
+      else if ungroupedSequenceKind kind then
+        carrier?.map fun carrier =>
+          (carrier, stx, carrier.isOfKind ``Lean.Parser.Term.byTactic)
       else none
     let starts :=
-      match carrier? with
-      | some (owner, carrier) =>
-        match carrier.getArgs.find? (·.isOfKind Lean.nullKind) with
+      match target? with
+      | some (owner, holder, ungrouped) =>
+        match holder.getArgs.find? (·.isOfKind Lean.nullKind) with
         -- One item has no separator to break at the wrong column, so it needs no boundary; two do.
         | some list =>
           if list.getArgs.size >= 3 && !hasNewlineSeparator list &&
-              (ungroupedSequenceKind kind || delimiterIntervenes owner list) then
+              (ungrouped || delimiterIntervenes owner list) then
             match (selectedLeafRanges list)[0]? with
             | some range => if starts.contains range.start then starts else starts.push range.start
             | none => starts
           else starts
         | none => starts
       | none => starts
+    let carrier? := if sequenceWrapperKind kind then carrier? else some stx
     let children := if kind == Lean.choiceKind then children[0]?.toArray else children
     children.foldl (init := starts) fun starts child =>
-      collectIndentedSequenceStarts child starts
+      collectIndentedSequenceStarts child carrier? starts
   | _ => starts
 
 /- `:= by` keeps the `by` on the `:=` line.

@@ -19,10 +19,10 @@ set -euo pipefail
 # `23b-suite-baseline-repair`.
 #
 # §7 is the unusual section: it pins the layout defects these fixtures *found*, exactly as measured, so
-# that fixing one shows up here as a failure rather than passing unnoticed. Six are repaired and their
-# claims now sit in §4 and §6 as positive assertions, so those six survive there only as the record of
-# what they were. A seventh turned up and is pinned live: D7, the space Lean's `pushToken` does not put
-# between `]` and `do`. Re-pin there for an eighth.
+# that fixing one shows up here as a failure rather than passing unnoticed. Seventeen are repaired and
+# their claims now sit in §4, §5 and §6 as positive assertions, so those survive there only as the
+# record of what they were. One is pinned live: D7, the space Lean's `pushToken` does not put between
+# `]` and `do`. Re-pin there for the next one that cannot be repaired here.
 
 repo_root=$(cd "$(dirname "$0")/../.." && pwd)
 cd "$repo_root"
@@ -328,7 +328,7 @@ check "tactic steps stay siblings" \
 # function of the width rather than of this line: measured threshold 136 columns for a line occupying
 # 50. A flat boundary at the `by` terminal is what holds it, since `Doc` delegates rendering to
 # `Std.Format.prettyM` on purpose and the adapter does not own that decision.
-check "by stays on the := line" "$(grep -c ' := by$' "$offside")" "2"
+check "by stays on the := line" "$(grep -c ' := by$' "$offside")" "4"
 check "and its first tactic still starts the next line" \
   "$(grep -A1 -Fx '    n + 0 = n := by' "$offside" | tail -1)" \
   "  have step : n + 0 = n := Nat.add_zero n"
@@ -344,6 +344,15 @@ check "a semicolon-separated tactic sequence opens on its own line" \
 # The rule counts items rather than matching a tactic kind, and this is what says so.
 check "a single tactic stays on the by line" \
   "$(grep -c '^theorem singleTactic (n : Nat) : n + 0 = n := by rfl$' "$offside")" "1"
+# The same rule read off the *carrier* rather than the sequence's own kind, which is D18. Under `(` or
+# a focus dot the delimiter is the only thing in front of the list, so the first tactic already sits on
+# the column the separators break to and no boundary is forced -- forcing one put it a `nest` past them
+# and left `rfl` outside the parentheses. `case left => ` is the same shape in the other direction.
+check "a parenthesised tactic sequence stays on its carrier's line" \
+  "$(grep -c 'by constructor <;> (skip; rfl)$' "$offside")" "1"
+check "  ... as does a focus dot's" "$(grep -c '^  · skip; rfl$' "$offside")" "2"
+check "  ... while a case arm's still opens on its own line" \
+  "$(grep -A1 -Fx '  case left =>' "$offside" | tail -1)" "    skip; rfl"
 # The other half of D9, and the reason the rule reads `hasNewlineSep` instead of firing on every list:
 # `sepByIndent.formatter` emits a forced `align` when the source spelled the separators as line breaks,
 # which already positions the sequence. Forcing a second break there put a blank line above `first` and
@@ -401,10 +410,11 @@ check "an interior doc comment keeps its own line" \
 check "  ... and nothing shares the line the rec keyword ends" \
   "$(grep -c '^  let rec$' "$offside")" "1"
 
-printf -- '--- the defects these fixtures found: six repaired, one pinned (§7) ---\n'
+printf -- '--- the defects these fixtures found: seventeen repaired, one pinned (§7) ---\n'
 # This section held six pins, each a defect these fixtures found, recorded exactly as measured so that
-# repairing one failed here instead of passing silently. All six are repaired; below the D1-D6 record
-# is D7, found later and pinned the same way.
+# repairing one failed here instead of passing silently. All six are repaired, as is every later D but
+# one; the D1-D6 record is followed by D7, which is upstream and still live, and then by D8 onward in
+# the order they were found.
 #
 # D7: a keyword whose parser spells no leading space sits flush against a delimiter before it.
 # `pushToken` (`Lean/PrettyPrinter/Formatter.lean:385-407`) decides the discretionary separator by
@@ -496,7 +506,7 @@ check "  ... and the same loop over an identifier keeps it, so a repair must tel
 # applied, and every collected boundary must be or the command is refused. The filter is stated once
 # over the whole table rather than in each collector, and it is strict on the island's left edge because
 # the boundary in front of an island is still the adapter's.
-# D17 is repaired; its fixture and assertions are in Boundaries.lean and Â§4. It was the adapter's, and it
+# D17 is repaired; its fixture and assertions are in Boundaries.lean and §4. It was the adapter's, and it
 # is D3 one nesting level in: a comment dangling at the end of a block that is not the command's last.
 # The gap after such a block's last token is the same gap as the one before the next statement, so no
 # boundary can spell it at the block's column, and a reparse hands the comment to that statement. It
@@ -504,6 +514,13 @@ check "  ... and the same loop over an identifier keeps it, so a repair must tel
 # the nest between the node that claims the span and the indent that span's line was laid out at, read
 # off the boundary in front of the block. Two consecutive such comments leave together, because the
 # second site with the same span is an enclosing node one level out.
+# D18 is repaired; its fixture and assertions are in Offside.lean and §6. It was the adapter's, and it
+# is D9 asking the wrong node: `ppAllowUngrouped` is `skip` and leaves nothing in the tree, so the rule
+# stood in for it with the sequence's kind -- but `tacticSeq1Indented` is what `tacticSeq` reduces to
+# under `(`, `·` and `case` as much as under `by`, and those carriers do group the list. The forced
+# break then had nowhere to land but one `nest` past the separators, which reparses the second tactic
+# outside its own sequence. The parent is what the rule now reads, and every carrier but `by` falls
+# back to `delimiterIntervenes`, which was already the right question for the grouped case.
 
 printf -- '--- result ---\n'
 printf 'failures=%s\n' "$failures"

@@ -512,3 +512,57 @@ which the walk passes long before the claiming node finishes. Measured:
 A block can also end in more than one such comment — `ValidatePRTitle.lean` ends one in two — and they
 have to leave together, because the next site with the same span is an enclosing node one nest level
 out, which is the column the whole mechanism exists to avoid.
+
+## D18 is D9 asking the node that does not know
+
+| defect | owner | what it does |
+| --- | --- | --- |
+| D18 a delimited tactic sequence takes a break it cannot place | adapter | `constructor <;> (skip; rfl)` renders `rfl` outside the parentheses |
+
+D9's rule breaks a `sepByIndent` list onto its own line when the source spelled the separators, so that
+a later separator breaking cannot dedent an item below the first. It fires unconditionally for a
+carrier Lean marked `ppAllowUngrouped`, because that carrier's list is laid out by whatever `nest`
+encloses the *declaration* and the column `by` happens to sit at is unrelated to it. For a grouped
+carrier it asks `delimiterIntervenes` instead: `{ ` alone puts the first field exactly on the indent
+the commas break to, `{ base with ` does not.
+
+`ppAllowUngrouped` is `skip` (`Lean/Parser/Extra.lean:268`). It contributes no node, so nothing in the
+tree says which carrier declared it, and the rule stood in for it with the sequence's own kind:
+`tacticSeq1Indented` and `convSeq1Indented` were read as ungrouped wherever they appeared. They appear
+in four places:
+
+| carrier | terminals before the list | grouped |
+| --- | --- | --- |
+| `by ` | `by` | no — `ppAllowUngrouped` |
+| `(` … `)` | `(` | yes |
+| `· ` | `·` | yes |
+| `case h => ` | `case`, `h`, `=>` | yes |
+
+The three grouped rows took the boundary anyway. Two of them did not need it — the delimiter is the
+only thing in front of the list, so the first tactic already sits on the column the separators break to
+— and there the forced break had nowhere to land. `nest` is relative to the current indent, so the
+break went one level *past* the separators:
+
+```
+constructor <;>
+  (
+      skip;
+    rfl)
+```
+
+which is `rfl` outside the parentheses; the frontend reported `unexpected identifier; expected ')'`.
+`Archive/Arithcc.lean` refused for it, and it was the last diagnostics refusal in the frozen 72-path
+sample.
+
+The repair reads the carrier rather than the kind. The walk carries the nearest enclosing node that
+spells a token — `Tactic.tacticSeq`, `Conv.convSeq` and `null` are transparent, since none of them owns
+a delimiter to count or a `ppAllowUngrouped` to stand for — and the ungrouped branch is taken only when
+that node is `Term.byTactic`. Every other carrier falls back to `delimiterIntervenes`, which was
+already the right question for a grouped list: `case h => ` still opens its sequence on its own line,
+`(` and `·` no longer do.
+
+A first attempt filtered the collected starts by the source instead, keeping only lists whose first
+item began a line. It repaired all three reproductions and `Archive/Arithcc.lean`, and it broke
+`{ base with first := 1, second := 2, … }` at width 40 — an inline record the source did not open on a
+line and which D9 exists to correct once a comma has to break. The source says where the list *was*,
+not whether the carrier positions it.

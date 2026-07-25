@@ -161,4 +161,25 @@ def documentedLetRec (value : Nat) : Nat :=
     helper (n : Nat) : Nat := n + value
   helper 0
 
+/- The same `sepByIndent` rule as the record update above, read off the carrier instead of the
+sequence. `tacticSeq1Indented` is what `tacticSeq` reduces to under `by`, under `(`, under a focus dot
+and under `case` alike, so treating the kind itself as ungrouped fires the rule in three places whose
+carrier does group the list. Where the carrier's delimiter is the only thing in front of the list --
+`(` here, `·` below -- the first item already sits on the column the separators break to, and the break
+the rule wanted has nowhere to land but one `nest` past them, which puts `rfl` outside the parentheses.
+That was D18. `case left => ` is the contrast in the other direction: terminals intervene, so the list
+does start right of the separators' column and the boundary is still needed. -/
+theorem delimitedTactics (a : Nat) : a = a ∧ a = a := by
+  constructor <;> (skip; rfl)
+
+theorem carriedTactics (a : Nat) : a = a ∧ a = a := by
+  constructor
+  case left => skip; rfl
+  case right => skip; rfl
+
+theorem focusedTactics (a : Nat) : a = a ∧ a = a := by
+  constructor
+  · skip; rfl
+  · skip; rfl
+
 end NativeLayoutOffside
