@@ -142,6 +142,13 @@ lean_exe «suite-boundary» where
   root := `Suites.Boundary
   supportInterpreter := true
 
+/- The incremental-analyzer suite: the persistent frontend session contract over a temp setup
+file. Reads the workspace but builds and writes nothing in it; parallel lane. -/
+lean_exe «suite-incremental» where
+  srcDir := "tests"
+  root := `Suites.Incremental
+  supportInterpreter := true
+
 /- The LSP acceptance run, compiled rather than interpreted: `Lean.Data.Lsp.Ipc` is the client,
 and an interpreted generic against compiled library code does not link. A slow-lane suite; the
 orchestrator picks it up when it exists. -/
