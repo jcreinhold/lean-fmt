@@ -95,7 +95,7 @@ both are recorded here because that is the argument for running the whole sample
 ## Guard readings
 
 Every pass reported in the table above completed with `hard_stop=none`, `peak_pressure_level=1`, and
-non-positive `swap_delta_kib`. Peak RSS per chunk ranged 4.10–4.80 GiB against the 8 GiB limit.
+non-positive `swap_delta_kib`. Peak RSS per chunk ranged 3.91–4.80 GiB against the 8 GiB limit.
 `exit_status=2` on any pass with a refusal is the documented infrastructure-failure code
 (`docs/ci.md:62`), not a crash.
 
