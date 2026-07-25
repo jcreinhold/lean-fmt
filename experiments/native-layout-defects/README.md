@@ -472,3 +472,43 @@ The filter is stated once over the finished table rather than inside each collec
 later inherits it. Its left edge is strict: the boundary in *front* of an island separates it from the
 token before it and is the adapter's to keep, which is the same distinction `insideIsland` draws with
 `enteredIslands`.
+
+## D17 is D3 one nesting level in
+
+Added 2026-07-24, from `Mathlib/Tactic/Linter/ValidatePRTitle.lean`, which is the one file in the
+sample whose refusal survived D11–D16.
+
+| Defect | Origin | Evidence |
+| --- | --- | --- |
+| D17 a comment closing an inner block escapes to the next statement | adapter | `dangling` of a `group` becomes `leading` of the `if` two columns to its left |
+
+A comment written on its own line after a block's last statement has to render at a column inside that
+block. A *boundary* cannot put it there: a boundary is the gap between two terminals, and the gap after
+a block's last token is the same gap as the one before the next statement, so the comment gets that
+statement's indent and a reparse hands it over as leading trivia. D3 was this defect where the next
+statement is the next *command* — the comment left the declaration for column zero. It is the same
+defect wherever the next statement is merely shallower.
+
+`finishTrailing` already existed for D3 and hangs the comment off the owning block's own subtree, where
+`Format.text "\n"` re-indents to the indent that block was rendered at. Two things had to change.
+
+**Which comments reach it.** The split between `interiorComments` and `blockDanglingComments` was a
+range test — this took what lay past the *command's* end — and that was a proxy for the test
+`Comments.blockDangling` already applies: an owner whose own range stops before the comment starts.
+The proxy is gone and the two sets are complementary by construction.
+
+**Which column it lands at.** The site is chosen by span, and post-order reaches the *deepest* node
+with that span first. Where a block's last item is an `if`/`else` chain, that node sits one `nest`
+inside the indent the block's items were laid out at, and the comment came out at column 6 where the
+block's items are at 4 — reparsing as dangling on the `else if` branch rather than on the block. The
+difference is now cancelled against the nest depth recorded by the boundary in *front* of the block,
+which the walk passes long before the claiming node finishes. Measured:
+
+| fixture | ambient nest at the claim | block's item column |
+| --- | --- | --- |
+| one-level block | 4 | 4 |
+| block ending in an `if`/`else` chain | 6 | 4 |
+
+A block can also end in more than one such comment — `ValidatePRTitle.lean` ends one in two — and they
+have to leave together, because the next site with the same span is an enclosing node one nest level
+out, which is the column the whole mechanism exists to avoid.

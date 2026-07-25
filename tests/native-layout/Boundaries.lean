@@ -94,4 +94,23 @@ def danglingOwner : Nat := Id.run do
 def unalignedTail : Nat := 8
   -- indented past every block, aligned with none of them
 
+/- A comment dangling at the end of a block that is *not* the command's last, so a statement follows it
+at a shallower indent. The gap after the block's last token is the same gap as the one before that
+statement, so a boundary can only render the comment at the following statement's column -- where a
+reparse makes it that statement's leading trivia. Two of them, because a block can end in more than one
+and they have to leave together, and the block's last item is itself an `if`/`else` chain, because that
+puts one more `nest` between the node that claims the span and the indent the block's items were laid
+out at. That was D17. -/
+def danglingInnerBlock (flag : Bool) (n : Nat) : Nat := Id.run do
+  let mut total := 0
+  if flag then
+    if n == 0 then
+      total := total + 1
+    else if n == 1 then
+      total := total + 2
+    -- dangling on the block the `if` opens
+    -- and a second one, which leaves with the first
+  total := total + 3
+  return total
+
 end NativeLayoutBoundaries

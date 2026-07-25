@@ -246,6 +246,16 @@ check "  ... at the column of the statement it follows" \
 # to hang it on -- the comment gate would then refuse the whole file rather than move one comment.
 check "a comment aligned with no block item keeps its leading assignment" \
   "$(grep -c '^-- indented past every block, aligned with none of them$' "$boundaries")" "1"
+# The same rule one nesting level in, where the block that owns the comment is not the command's last
+# and the statement after it sits two columns to the left. The assertion is the column: at 6 the comment
+# reparses as dangling on the `if`'s block, at 4 as leading trivia of `total := total + 3`, and at 8 as
+# dangling on the `else if` branch. All three parse; only one is the comment the source wrote. See D17.
+check "a comment closing an inner block stays at that block's column" \
+  "$(grep -c "^      -- dangling on the block the .if. opens$" "$boundaries")" "1"
+check "  ... and a second one leaves with it" \
+  "$(grep -c '^      -- and a second one, which leaves with the first$' "$boundaries")" "1"
+check "  ... and the statement after the block keeps its own column" \
+  "$(grep -c '^    total := total + 3$' "$boundaries")" "1"
 check "the interior comment stays between the operator and its continuation" \
   "$(grep -A1 -F -- '-- interior line comment' "$boundaries" | tail -1)" "    4"
 # The adapter owns *both* sides of a comment, not only the side facing the token behind it. `[` and `5`
@@ -486,6 +496,14 @@ check "  ... and the same loop over an identifier keeps it, so a repair must tel
 # applied, and every collected boundary must be or the command is refused. The filter is stated once
 # over the whole table rather than in each collector, and it is strict on the island's left edge because
 # the boundary in front of an island is still the adapter's.
+# D17 is repaired; its fixture and assertions are in Boundaries.lean and Â§4. It was the adapter's, and it
+# is D3 one nesting level in: a comment dangling at the end of a block that is not the command's last.
+# The gap after such a block's last token is the same gap as the one before the next statement, so no
+# boundary can spell it at the block's column, and a reparse hands the comment to that statement. It
+# goes to `finishTrailing` instead, which hangs it on the owning block's own subtree -- and now cancels
+# the nest between the node that claims the span and the indent that span's line was laid out at, read
+# off the boundary in front of the block. Two consecutive such comments leave together, because the
+# second site with the same span is an enclosing node one level out.
 
 printf -- '--- result ---\n'
 printf 'failures=%s\n' "$failures"

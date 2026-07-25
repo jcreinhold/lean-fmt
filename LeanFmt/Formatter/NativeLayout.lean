@@ -926,6 +926,12 @@ private structure TransformState where
   than the empty string. A command starts separated because its first terminal has no predecessor to
   merge with. -/
   separated : Bool := true
+  /- The document's own nest depth at the first boundary leaf in front of each terminal, which is the
+  indent that terminal's line was laid out at. `finishTrailing` is the only reader: it places a comment
+  a block owns from past its own last token, and the column it needs is the one the block's items got.
+  A boundary is where the walk can see that column, and it passes there long before the node that will
+  claim the comment finishes. -/
+  boundaryNest : Array (Nat × Int) := #[]
   /- Islands whose interior the formatter has started to spell. See `insideIsland`. -/
   enteredIslands : Array String := #[]
   recentNativeLeaves : Array String := #[]
@@ -1136,17 +1142,29 @@ private def finishTrailing (left right : Transformed) :
   let state ← get
   let some span := right.span? | return none
   unless left.span?.isNone && hasLineBoundary left.format do return none
-  match state.trailing.findIdx? fun (expected, _) => expected == span with
-  | none => return none
-  | some index =>
-    if state.appliedTrailing.contains index then return none
-    let (_, comment) := state.trailing[index]!
-    set { state with
-      appliedTrailing := state.appliedTrailing.push index
-      metrics := { state.metrics with
-        commentLeaves := state.metrics.commentLeaves + 1
-        commentConstraints := state.metrics.commentConstraints + 1 } }
-    return some (.append right.format (.append (.text "\n") (.text comment.payload)))
+  -- Every comment this block still owns, not the first: a block can end in more than one dangling
+  -- comment, and `Mathlib/Tactic/Linter/ValidatePRTitle.lean` ends one in two. They have to leave
+  -- together, because the site is chosen by span and the *next* site with this span is an enclosing
+  -- node, one nest level out -- which is the column the whole mechanism exists to avoid.
+  let pending := (List.range state.trailing.size).filter fun index =>
+    state.trailing[index]!.1 == span && !state.appliedTrailing.contains index
+  if pending.isEmpty then return none
+  let comments := pending.map fun index => state.trailing[index]!.2
+  -- `Format.text` re-indents its newline to the *current* indent, and the node that claims a span is
+  -- not always at the indent that span's line was laid out at: post-order reaches the deepest such node
+  -- first, and an `if`/`else` chain as a block's last item puts one more `nest` between the two. So the
+  -- difference is cancelled rather than assumed away, against the depth the boundary in front of the
+  -- block recorded. Without it a comment closing a nested block came out one level too deep and
+  -- reparsed as dangling on the inner block instead of the one that owns it.
+  let target := (state.boundaryNest.find? (·.1 == span.start)).map (·.2) |>.getD state.ambientNest
+  set { state with
+    appliedTrailing := state.appliedTrailing ++ pending.toArray
+    metrics := { state.metrics with
+      commentLeaves := state.metrics.commentLeaves + comments.length
+      commentConstraints := state.metrics.commentConstraints + comments.length } }
+  return some (comments.foldl (init := right.format) fun document comment =>
+    .append document (.nest (target - state.ambientNest)
+      (.append (.text "\n") (.text comment.payload))))
 
 /- Every span-keyed correction a finished node can carry, in the order they compose, so that adding a
 node kind to the walk cannot silently skip one. A constraint's `nest` is inert inside a subtree that no
@@ -1231,6 +1249,10 @@ private def boundaryFormat (state : TransformState) : BoundaryLayout → Std.For
 
 private def constrainBoundary (format : Std.Format) :
     StateT TransformState (Except String) Std.Format := do
+  let state ← get
+  unless state.boundaryNest.any (·.1 == state.terminalIndex) do
+    modify fun state => { state with
+      boundaryNest := state.boundaryNest.push (state.terminalIndex, state.ambientNest) }
   let state ← get
   if insideIsland state then return .nil
   let mut format := format
@@ -1538,15 +1560,15 @@ comments; the block's document holds no break to hang one on"
 private def rootRange (stx : Lean.Syntax) : SourceRange :=
   sourceRange? stx |>.getD ⟨0, 0⟩
 
-private def interiorComments (ownership : CommentOwnership) (stx : Lean.Syntax) :
-    Array InteriorComment :=
+private def interiorComments (ownership : CommentOwnership) (stx : Lean.Syntax)
+    (blockDangling : Array SourceRange) : Array InteriorComment :=
   let range := rootRange stx
   let leading := Comments.subtreeAt ownership stx .leading
   let trailing := Comments.subtreeAt ownership stx .trailing
   let dangling := Comments.subtreeAt ownership stx .dangling
   Comments.subtree ownership stx |>.filterMap fun comment =>
     if range.start <= comment.range.start && comment.range.stop <= range.stop then
-      if comment.kind == .doc then none
+      if comment.kind == .doc || blockDangling.contains comment.range then none
       else
         let placement := if trailing.contains comment then .trailing
           else if dangling.contains comment then .dangling
@@ -1559,18 +1581,27 @@ private def interiorComments (ownership : CommentOwnership) (stx : Lean.Syntax) 
           kind := comment.kind }
     else none
 
-/- The comments `interiorComments` cannot take, with the block that owns each.
+/- Every comment a block owns from past its own last token, with that block.
 
-A comment dangling at the end of a block sits past the command's own last token, so the range filter
-above drops it and it renders wherever the *next* command's leading trivia renders — column zero,
-outside the block it was written in. That is the whole of D3, and the two halves are one range test
-apart: `interiorComments` keeps what is inside the command, this keeps what a block inside the command
-owns from beyond it. Nothing is in both. -/
+A comment dangling at the end of a block has to render at a column inside the block, and the boundary
+mechanism cannot put it there. A boundary is a gap between two terminals, and the gap after a block's
+last token is the same gap as the one before the next statement — so the comment renders at the *next*
+statement's indent, which is the enclosing block's, and a reparse hands it to that statement as leading
+trivia. Where the next statement is the next *command* the indent is column zero and the comment leaves
+the declaration entirely; that was D3, and it is the same defect one nesting level out.
+
+`finishTrailing` places these instead, by hanging the comment off the owning block's own subtree, where
+`Format.text "\n"` re-indents to the indent that block was rendered at whatever the renderer chose.
+That is the one column here nobody has to know in advance.
+
+Nothing is in both sets: `interiorComments` skips exactly the ranges this returns. The two used to be
+split by a range test — this took what lay past the command's end — and that test was a proxy for the
+real one, which `Comments.blockDangling` already applies: an owner whose own range stops before the
+comment starts. -/
 private def blockDanglingComments (ownership : CommentOwnership) (stx : Lean.Syntax) :
     Array (SourceRange × InteriorComment) :=
-  let range := rootRange stx
   Comments.blockDangling ownership stx |>.filterMap fun (owner, comment) =>
-    if comment.kind == .doc || comment.range.stop <= range.stop then none
+    if comment.kind == .doc then none
     else some (owner, {
       payload := Comments.payload ownership comment
       range := comment.range
@@ -1605,8 +1636,8 @@ def command (source : String) (ownership : CommentOwnership) (stx : Lean.Syntax)
       trace
       detail := s!"choice node at {range.start}:{range.stop} spells different source in its \
 alternatives: alternative 0 is {expected}, alternative {alternative} is {actual}" }
-  let comments := interiorComments ownership stx
   let blockDangling := blockDanglingComments ownership stx
+  let comments := interiorComments ownership stx (blockDangling.map (·.2.range))
   let constraints := collectOffsideConstraints formatIndent stripped
   -- One table, one line per rule, and the spelling each rule asks for is right here rather than in the
   -- collector's name. A collector answers "where", `BoundaryLayout` answers "what".
