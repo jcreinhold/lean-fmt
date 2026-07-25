@@ -1,8 +1,8 @@
 # Editor setup
 
-`lean-fmt lsp` speaks the Language Server Protocol over stdio. It offers formatting, range
-formatting, formatting-derived code actions, and diagnostics — and nothing else. It is meant to run
-*alongside* Lean's own language server, not instead of it.
+`lean-fmt lsp` speaks the Language Server Protocol over stdio. It offers formatting, range formatting,
+formatting-derived code actions, and diagnostics — and nothing else. It is meant to run *alongside* Lean's own language
+server, not instead of it.
 
 ```sh
 lake build
@@ -19,64 +19,59 @@ lake build
 | `--max-memory GIB` | `8` | the aggregate envelope for the session and its children |
 | `--debounce-ms MS` | `150` | quiet interval before a changed buffer is re-analyzed |
 
-Every option except `--root` and `--max-memory` can also be sent as `initializationOptions`
-(`configPath`, `select`, `ignore`, `preview`, `unsafeFixes`, `debounceMs`), and a client that sends
-neither is configured exactly as the process was started. `--root` and `--max-memory` are fixed when
-the session opens: one Lake workspace and one envelope. A client that asks to change either is told
-to restart, rather than served from a setup it did not ask for.
+Every option except `--root` and `--max-memory` can also be sent as `initializationOptions` (`configPath`, `select`,
+`ignore`, `preview`, `unsafeFixes`, `debounceMs`), and a client that sends neither is configured exactly as the process
+was started. `--root` and `--max-memory` are fixed when the session opens: one Lake workspace and one envelope. A client
+that asks to change either is told to restart, rather than served from a setup it did not ask for.
 
 ## Two things that look like bugs and are not
 
-**A formatted range is usually wider than the range you selected.** Formatting is command-granular:
-the request is widened to the layout units it touches, and the edit that comes back replaces *that*
-range. Selecting three lines in the middle of a declaration reformats the declaration. Repeated range
-formatting is a fixed point in output coordinates, not in the coordinates you asked in — so a client
-that re-sends its original range after applying an edit may see the region move again.
+**A formatted range is usually wider than the range you selected.** Formatting is command-granular: the request is
+widened to the layout units it touches, and the edit that comes back replaces *that* range. Selecting three lines in the
+middle of a declaration reformats the declaration. Repeated range formatting is a fixed point in output coordinates, not
+in the coordinates you asked in — so a client that re-sends its original range after applying an edit may see the region
+move again.
 
-**A trailing comment belongs to the declaration above it.** A comment on the line after a declaration
-is part of that declaration's layout unit, not the next one's. This is visible in an editor in a way
-it is not in a pipeline: a range selection that stops just before a comment still formats the
-comment, because the comment is inside the unit the selection expanded to.
+**A trailing comment belongs to the declaration above it.** A comment on the line after a declaration is part of that
+declaration's layout unit, not the next one's. This is visible in an editor in a way it is not in a pipeline: a range
+selection that stops just before a comment still formats the comment, because the comment is inside the unit the
+selection expanded to.
 
 ## Incremental analysis
 
-Each open document owns one bounded incremental frontend. The first analysis of a buffer pays the
-full exact frontend; a `didChange` after it reuses the document's last-good snapshot rather than
-starting over, and an identical repeated request — a code-action query on cursor movement is the
-common one — is answered from the validated envelope of the current version instead of a new
-frontend run. Cancellation propagates into the frontend's snapshot tree, so a superseded analysis
-stops rather than finishing in the background. Unsaved bytes are the whole story: analysis reads
-the buffer the client sent, never the disk, and never a persistent cache entry.
+Each open document owns one bounded incremental frontend. The first analysis of a buffer pays the full exact frontend; a
+`didChange` after it reuses the document's last-good snapshot rather than starting over, and an identical repeated
+request — a code-action query on cursor movement is the common one — is answered from the validated envelope of the
+current version instead of a new frontend run. Cancellation propagates into the frontend's snapshot tree, so a
+superseded analysis stops rather than finishing in the background. Unsaved bytes are the whole story: analysis reads the
+buffer the client sent, never the disk, and never a persistent cache entry.
 
 ## Multiple formatters on one file
 
-Lean's language server does not offer formatting at all — it has no formatting provider and
-implements no formatting method — so there is no contention to resolve. What editors *do* need from
-you is a default: when more than one server is attached to a language, most clients ask which one
-formats. Pick `lean-fmt`.
+Lean's language server does not offer formatting at all — it has no formatting provider and implements no formatting
+method — so there is no contention to resolve. What editors *do* need from you is a default: when more than one server
+is attached to a language, most clients ask which one formats. Pick `lean-fmt`.
 
-Both servers answer `textDocument/codeAction` and the client concatenates the menus. `lean-fmt`'s
-entries are titled with the rule code they come from (`FMT003: ...`), so a menu entry is
-attributable. Its diagnostics carry `source: "lean-fmt"` for the same reason.
+Both servers answer `textDocument/codeAction` and the client concatenates the menus. `lean-fmt`'s entries are titled
+with the rule code they come from (`FMT003: ...`), so a menu entry is attributable. Its diagnostics carry
+`source: "lean-fmt"` for the same reason.
 
 ## Configuration changes
 
-The server does not watch `lean-fmt.toml`. File observation belongs to `lean-fmt watch`, and a second
-watcher inside the language server would be a second discovery path with its own staleness. Instead,
-`workspace/didChangeConfiguration` re-runs discovery and re-analyzes every open document — so after
-editing `lean-fmt.toml`, trigger your client's configuration-change notification (all three clients
-below send it when their own `lean-fmt` settings change; VS Code and Neovim also expose a manual
-"restart server" command, which always works).
+The server does not watch `lean-fmt.toml`. File observation belongs to `lean-fmt watch`, and a second watcher inside the
+language server would be a second discovery path with its own staleness. Instead, `workspace/didChangeConfiguration`
+re-runs discovery and re-analyzes every open document — so after editing `lean-fmt.toml`, trigger your client's
+configuration-change notification (all three clients below send it when their own `lean-fmt` settings change; VS Code
+and Neovim also expose a manual "restart server" command, which always works).
 
-A `lakefile` change is different: it invalidates the exact module setup, and the honest answer is to
-restart the server. It says so in a log message rather than serving answers from a workspace that no
-longer describes the project.
+A `lakefile` change is different: it invalidates the exact module setup, and the honest answer is to restart the server.
+It says so in a log message rather than serving answers from a workspace that no longer describes the project.
 
 ## One root
 
-Exactly one workspace root is served per session. A client that offers several gets the first and a
-`window/showMessage` naming the ones it is not serving. Two roots means two Lake workspaces and two
-toolchains in one process; run a second server instead.
+Exactly one workspace root is served per session. A client that offers several gets the first and a `window/showMessage`
+naming the ones it is not serving. Two roots means two Lake workspaces and two toolchains in one process; run a second
+server instead.
 
 ## VS Code
 
@@ -103,8 +98,8 @@ Then make it the default formatter for Lean, or format-on-save will ask every ti
 }
 ```
 
-`editor.codeActionsOnSave` with `"source.fixAll": "explicit"` runs fix-all on save; leave it off if
-you want fixes to stay a deliberate act.
+`editor.codeActionsOnSave` with `"source.fixAll": "explicit"` runs fix-all on save; leave it off if you want fixes to
+stay a deliberate act.
 
 ## Neovim (0.11+)
 
@@ -118,9 +113,8 @@ vim.lsp.config["lean-fmt"] = {
 vim.lsp.enable("lean-fmt")
 ```
 
-`--root` can be omitted when the client starts the server in the project directory; the default is
-the working directory. With `lean.nvim` also attached, pin the formatter so `vim.lsp.buf.format`
-does not prompt:
+`--root` can be omitted when the client starts the server in the project directory; the default is the working
+directory. With `lean.nvim` also attached, pin the formatter so `vim.lsp.buf.format` does not prompt:
 
 ```lua
 vim.api.nvim_create_autocmd("BufWritePre", {
@@ -146,17 +140,14 @@ vim.api.nvim_create_autocmd("BufWritePre", {
     :initialization-options (lambda () (list :debounceMs 150)))))
 ```
 
-`:add-on? t` is the part that matters: it tells `lsp-mode` this server supplements `lean4-mode`'s
-rather than replacing it. Formatting then goes to whichever attached server advertises a formatting
-provider, which is only this one.
+`:add-on? t` is the part that matters: it tells `lsp-mode` this server supplements `lean4-mode`'s rather than replacing
+it. Formatting then goes to whichever attached server advertises a formatting provider, which is only this one.
 
-With `eglot`, which attaches a single server per major mode, run `lean-fmt` through a formatting
-hook instead — `lean-fmt format -` over the buffer — or accept that `eglot` will serve `lean-fmt`
-and not `lean4-mode`.
+With `eglot`, which attaches a single server per major mode, run `lean-fmt` through a formatting hook instead —
+`lean-fmt format -` over the buffer — or accept that `eglot` will serve `lean-fmt` and not `lean4-mode`.
 
 ## What it does not do
 
-No hover, completion, go-to-definition, semantic tokens, rename, or inlay hints — those are Lean's
-language server's, and this one does not duplicate them. No `$/progress` reporting. No file watching.
-No writes: `lean-fmt lsp` never touches a `.lean` file or the result cache; every change reaches disk
-as an edit your editor applied.
+No hover, completion, go-to-definition, semantic tokens, rename, or inlay hints — those are Lean's language server's,
+and this one does not duplicate them. No `$/progress` reporting. No file watching. No writes: `lean-fmt lsp` never
+touches a `.lean` file or the result cache; every change reaches disk as an edit your editor applied.

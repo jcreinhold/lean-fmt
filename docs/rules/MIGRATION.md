@@ -2,9 +2,9 @@
 
 The live catalog was renumbered to start at `FMT001`. Every code shifted down by two.
 
-This is a **breaking change to the public code namespace** and it was made exactly once, before the
-package had users. It is recorded here rather than in a changelog line because it reuses two retired
-codes, which the catalog's own rules forbid.
+This is a **breaking change to the public code namespace** and it was made exactly once, before the package had users.
+It is recorded here rather than in a changelog line because it reuses two retired codes, which the catalog's own rules
+forbid.
 
 ## The mapping
 
@@ -30,40 +30,36 @@ codes, which the catalog's own rules forbid.
 
 ## What this reused, and why that is not a precedent
 
-`FMT001` and `FMT002` were not free. They were *retired* codes: the line-boundary and trailing-newline
-rules, which `ruff-11c` folded into canonical formatting. They sat in `reservedCodes`, and the catalog
-holds retired codes forever on purpose — so that a stale `lean-fmt.toml` or a
-`-- lean-fmt: ignore[FMT001]` comment written against an old version stays *inert* rather than
-silently binding to a different rule.
+`FMT001` and `FMT002` were not free. They were *retired* codes: the line-boundary and trailing-newline rules, which
+`ruff-11c` folded into canonical formatting. They sat in `reservedCodes`, and the catalog holds retired codes forever on
+purpose — so that a stale `lean-fmt.toml` or a `-- lean-fmt: ignore[FMT001]` comment written against an old version
+stays *inert* rather than silently binding to a different rule.
 
-Reusing them is precisely the hazard that machinery prevents. It was allowed here because the package
-is pre-release with no users, so no config file and no suppression comment anywhere could be pointing
-at the old meanings. **That argument expires the moment someone depends on this package.** After that,
-a retired code is permanent and the next renumbering is not available.
+Reusing them is precisely the hazard that machinery prevents. It was allowed here because the package is pre-release
+with no users, so no config file and no suppression comment anywhere could be pointing at the old meanings. **That
+argument expires the moment someone depends on this package.** After that, a retired code is permanent and the next
+renumbering is not available.
 
-Had there been users, the failure mode would have been silent and bad: an old
-`-- lean-fmt: ignore[FMT001]` written to silence trailing-whitespace warnings would now suppress
-**FMT001, the forbidden-control-byte security rule**, in whatever file carried it.
+Had there been users, the failure mode would have been silent and bad: an old `-- lean-fmt: ignore[FMT001]` written to
+silence trailing-whitespace warnings would now suppress **FMT001, the forbidden-control-byte security rule**, in
+whatever file carried it.
 
 ## What this cost
 
-`reservedCodes` is now empty. The retirement machinery — `isReservedCode`, `reservedDisposition?`,
-`explain`'s `[retired]` branch, the reserved-selector branch in `Config.selectorsValid`, and the
-inert-directive branch in `Suppression.apply` — is all still present and still correct, but it has no
-live instance, so **it is untested**.
+`reservedCodes` is now empty. The retirement machinery — `isReservedCode`, `reservedDisposition?`, `explain`'s
+`[retired]` branch, the reserved-selector branch in `Config.selectorsValid`, and the inert-directive branch in
+`Suppression.apply` — is all still present and still correct, but it has no live instance, so **it is untested**.
 
-Three unit cases and one shell case that covered it were **deleted rather than repointed**, along with
-the `tests/suppression/RetiredInert.lean` fixture. Repointing them at `FMT001` would have left tests
-that still passed while testing a live security rule instead of a retired code — a test that survives
-the redefinition of its own subject is worse than no test, because it reads as coverage.
+Three unit cases and one shell case that covered it were **deleted rather than repointed**, along with the
+`tests/suppression/RetiredInert.lean` fixture. Repointing them at `FMT001` would have left tests that still passed while
+testing a live security rule instead of a retired code — a test that survives the redefinition of its own subject is
+worse than no test, because it reads as coverage.
 
-A placeholder retired code, invented to give those tests something to assert against, was considered
-and rejected: it would prove the placeholder exists, not that the machinery works. Coverage returns
-when a rule genuinely retires.
+A placeholder retired code, invented to give those tests something to assert against, was considered and rejected: it
+would prove the placeholder exists, not that the machinery works. Coverage returns when a rule genuinely retires.
 
 ## Historical records
 
-The prompt stacks under `docs/projects/` used the old codes throughout and were deleted wholesale
-after this renumbering, so no record outside this file still refers to them. Anything predating this
-table — an old branch, a saved report, a downstream `ignore[…]` written before release — must be read
-against it.
+The prompt stacks under `docs/projects/` used the old codes throughout and were deleted wholesale after this
+renumbering, so no record outside this file still refers to them. Anything predating this table — an old branch, a saved
+report, a downstream `ignore[…]` written before release — must be read against it.
