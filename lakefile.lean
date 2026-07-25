@@ -111,6 +111,15 @@ lean_lib LeanFmtCacheSpec where
   roots := #[`LeanFmt.Cache.Spec]
   globs := #[Glob.one `LeanFmt.Cache.Spec]
 
+/- The shared test harness: assertions, process spawning, golden files, JSON projection, and
+filesystem fixtures for both the unit tier (`tests/Unit`) and the per-suite executables
+(`tests/Suites`). A library rather than part of each executable's root so the harness compiles
+once and the suite executables stay thin. Nothing in the product imports it. -/
+lean_lib TestSupport where
+  srcDir := "tests"
+  roots := #[`Test]
+  globs := #[Glob.andSubmodules `Test]
+
 lean_exe «lean-fmt-tests» where
   root := `LeanFmtTest
   supportInterpreter := true
