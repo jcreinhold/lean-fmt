@@ -70,8 +70,7 @@ def _info(raw):
         _, leading_start, position, end_position, trailing_stop = raw
         if not leading_start <= position <= end_position <= trailing_stop:
             raise Failure(
-                f"original info out of order: {leading_start} <= {position} <= "
-                f"{end_position} <= {trailing_stop}"
+                f"original info out of order: {leading_start} <= {position} <= {end_position} <= {trailing_stop}"
             )
         return ("original", leading_start, trailing_stop)
     if raw[0] == INFO_SYNTHETIC:
@@ -146,9 +145,7 @@ def check(syntax_data: dict, artifact: dict, raw: bytes) -> dict:
     # Identity. A consumer holds a file; the projection describes the string the parser saw. Digesting
     # the raw bytes here would compare two different strings.
     if artifact["normalizedBytes"] != len(normalized):
-        raise Failure(
-            f"normalizedBytes {artifact['normalizedBytes']} != {len(normalized)} actual bytes"
-        )
+        raise Failure(f"normalizedBytes {artifact['normalizedBytes']} != {len(normalized)} actual bytes")
     actual_digest = hashlib.sha256(normalized).hexdigest()
     if artifact["normalizedDigest"] != actual_digest:
         raise Failure("normalizedDigest does not match the normalized source")
@@ -168,14 +165,9 @@ def check(syntax_data: dict, artifact: dict, raw: bytes) -> dict:
     # ended, so the array is a concatenation of whole trees with nothing between them.
     for position, root in enumerate(commands):
         if root["entry"] != cursor:
-            raise Failure(
-                f"command {position} claims entry {root['entry']} but the previous subtree "
-                f"ended at {cursor}"
-            )
+            raise Failure(f"command {position} claims entry {root['entry']} but the previous subtree ended at {cursor}")
         if not 0 <= root["options"] < len(options):
-            raise Failure(
-                f"command {position} names option set {root['options']} of {len(options)}"
-            )
+            raise Failure(f"command {position} names option set {root['options']} of {len(options)}")
         start, stop = root["range"]["start"], root["range"]["stop"]
         if not 0 <= start <= stop <= len(normalized):
             raise Failure(f"command {position} has range {start}..{stop} of {len(normalized)}")
@@ -191,9 +183,7 @@ def check(syntax_data: dict, artifact: dict, raw: bytes) -> dict:
         raise Failure(f"terminal is entry {terminal} but the commands ended at {cursor}")
     cursor, terminal_spans = walk.subtree(terminal)
     if cursor != len(entries):
-        raise Failure(
-            f"the terminal subtree ends at {cursor}, not the array boundary {len(entries)}"
-        )
+        raise Failure(f"the terminal subtree ends at {cursor}, not the array boundary {len(entries)}")
     terminal_start = terminal_spans[0][0] if terminal_spans else len(normalized)
     spans.extend(terminal_spans)
 
@@ -240,13 +230,15 @@ def check(syntax_data: dict, artifact: dict, raw: bytes) -> dict:
 
 def main(argv):
     if len(argv) == 4 and argv[1] == "--envelope":
-        envelope = json.load(open(argv[2]))
+        with open(argv[2]) as f:
+            envelope = json.load(f)
         artifact = envelope.get("artifact")
         if artifact is None:
             raise Failure(f"envelope has no artifact: {envelope.get('diagnostics')}")
         source_path = argv[3]
     elif len(argv) == 3:
-        artifact = json.load(open(argv[1]))
+        with open(argv[1]) as f:
+            artifact = json.load(f)
         source_path = argv[2]
     else:
         print(__doc__, file=sys.stderr)

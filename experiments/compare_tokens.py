@@ -42,17 +42,16 @@ KINDS = {0: "whitespace", 1: "line comment", 2: "block comment"}
 
 
 def load(envelope_path, source_path):
-    envelope = json.load(open(envelope_path))
+    with open(envelope_path) as f:
+        envelope = json.load(f)
     artifact = envelope.get("artifact")
     if not artifact:
         raise SystemExit(f"{envelope_path}: no artifact: {envelope.get('diagnostics')}")
     source = artifact["source"]
-    raw = open(source_path, "rb").read().replace(b"\r\n", b"\n")
+    with open(source_path, "rb") as f:
+        raw = f.read().replace(b"\r\n", b"\n")
     if len(raw) != source["normalizedBytes"]:
-        raise SystemExit(
-            f"{source_path}: {len(raw)} bytes on disk, projection says "
-            f"{source['normalizedBytes']}"
-        )
+        raise SystemExit(f"{source_path}: {len(raw)} bytes on disk, projection says {source['normalizedBytes']}")
     return source, raw
 
 

@@ -8,11 +8,9 @@ import hashlib
 import json
 import os
 import subprocess
-import sys
 import tempfile
 from pathlib import Path
 from typing import Any
-
 
 MAX_BYTES = "8589934592"
 
@@ -39,7 +37,7 @@ def invoke_candidate(command: list[str], source: bytes, setup_digest: str, pass_
         LEAN_FMT_EXPECTED_SETUP_DIGEST=setup_digest,
         LEAN_FMT_FORMAT_PASS=str(pass_index),
     )
-    done = subprocess.run(command, input=source, capture_output=True, env=env)
+    done = subprocess.run(command, input=source, capture_output=True, env=env, check=False)
     if done.returncode != 0:
         raise GateFailure("candidate", done.stderr.decode("utf-8", "replace").strip())
     try:
@@ -96,41 +94,43 @@ def validate_source_map(response: dict[str, Any], source: bytes, output: bytes) 
 
 
 def analyze(application: str, tests: str, setup: Path, source: bytes, label: str) -> tuple[dict[str, Any], Path]:
-    handle = tempfile.NamedTemporaryFile(prefix="lean-fmt-contract-", suffix=".lean", delete=False)
-    path = Path(handle.name)
-    try:
-        handle.write(source)
-        handle.close()
-        done = subprocess.run(
-            [application, "__analyze-exact", str(setup), str(path), label, MAX_BYTES],
-            capture_output=True,
-            text=True,
-        )
-        if done.returncode != 0:
-            raise GateFailure("frontend", done.stderr.strip() or f"exact analysis exited {done.returncode}")
-        envelope = json.loads(done.stdout)
-        artifact = envelope.get("artifact")
-        if not artifact or envelope.get("diagnostics"):
-            raise GateFailure("frontend", json.dumps(envelope.get("diagnostics"), ensure_ascii=False))
-        with tempfile.NamedTemporaryFile(prefix="lean-fmt-artifact-", suffix=".json") as artifact_file:
-            artifact_file.write(json.dumps(artifact).encode("utf-8"))
-            artifact_file.flush()
-            projected = subprocess.run(
-                [tests, "artifact-projection", artifact_file.name, str(path)],
+    with tempfile.NamedTemporaryFile(prefix="lean-fmt-contract-", suffix=".lean", delete=False) as handle:
+        path = Path(handle.name)
+        try:
+            handle.write(source)
+            handle.close()
+            done = subprocess.run(
+                [application, "__analyze-exact", str(setup), str(path), label, MAX_BYTES],
                 capture_output=True,
                 text=True,
+                check=False,
             )
-        if projected.returncode != 0:
-            raise GateFailure("frontend", projected.stderr.strip() or "artifact reconstruction failed")
-        artifact["source"] = json.loads(projected.stdout)
-        return artifact, path
-    except Exception:
-        path.unlink(missing_ok=True)
-        raise
+            if done.returncode != 0:
+                raise GateFailure("frontend", done.stderr.strip() or f"exact analysis exited {done.returncode}")
+            envelope = json.loads(done.stdout)
+            artifact = envelope.get("artifact")
+            if not artifact or envelope.get("diagnostics"):
+                raise GateFailure("frontend", json.dumps(envelope.get("diagnostics"), ensure_ascii=False))
+            with tempfile.NamedTemporaryFile(prefix="lean-fmt-artifact-", suffix=".json") as artifact_file:
+                artifact_file.write(json.dumps(artifact).encode("utf-8"))
+                artifact_file.flush()
+                projected = subprocess.run(
+                    [tests, "artifact-projection", artifact_file.name, str(path)],
+                    capture_output=True,
+                    check=False,
+                    text=True,
+                )
+            if projected.returncode != 0:
+                raise GateFailure("frontend", projected.stderr.strip() or "artifact reconstruction failed")
+            artifact["source"] = json.loads(projected.stdout)
+            return artifact, path
+        except Exception:
+            path.unlink(missing_ok=True)
+            raise
 
 
 def header_signature(tests: str, path: Path) -> Any:
-    done = subprocess.run([tests, "formatter-header", str(path)], capture_output=True, text=True)
+    done = subprocess.run([tests, "formatter-header", str(path)], capture_output=True, text=True, check=False)
     if done.returncode != 0:
         raise GateFailure("imports", done.stderr.strip() or "header parser refused the candidate")
     return json.loads(done.stdout)
@@ -141,7 +141,9 @@ def tree_signature(source: dict[str, Any]) -> list[tuple[str, int]]:
     return [(kinds[node[0]], node[1]) for node in source["nodes"]]
 
 
-def split_projection(source: dict[str, Any], raw: bytes) -> tuple[list[tuple[int, bytes]], list[tuple[int, bytes]], list[tuple[int, str, int, int, bytes]]]:
+def split_projection(
+    source: dict[str, Any], raw: bytes
+) -> tuple[list[tuple[int, bytes]], list[tuple[int, bytes]], list[tuple[int, str, int, int, bytes]]]:
     tokens: list[tuple[int, bytes]] = []
     comments: list[tuple[int, bytes]] = []
     ownership: list[tuple[int, str, int, int, bytes]] = []
@@ -226,9 +228,7 @@ def main() -> int:
     if second["formatted"].encode("utf-8") != formatted:
         raise GateFailure("idempotence", "the second pass changed bytes")
 
-    reflowed_units = sum(
-        original[ss:se] != formatted[os_:oe] for ss, se, os_, oe in units
-    )
+    reflowed_units = sum(original[ss:se] != formatted[os_:oe] for ss, se, os_, oe in units)
     source_model = before["source"]
     projection_tokens, projection_comments, _projection_owners = split_projection(source_model, original)
     summary = {
@@ -239,8 +239,7 @@ def main() -> int:
         "reflowedUnits": reflowed_units,
         "nodes": len(source_model["nodes"]),
         "tokens": len(source_model["tokens"]),
-        "comments": len(projection_comments) +
-        sum(token.startswith(b"/--") for _node, token in projection_tokens),
+        "comments": len(projection_comments) + sum(token.startswith(b"/--") for _node, token in projection_tokens),
         "unsupported": 0,
     }
     stable = json.dumps(summary, sort_keys=True, separators=(",", ":")).encode() + b"\0" + formatted
