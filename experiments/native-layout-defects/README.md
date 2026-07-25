@@ -657,3 +657,56 @@ its own column there. -/
 Neither occurs anywhere in the 72-path stratified sample — a scan of all 71 accepted candidates found
 no top-level declaration off column zero in 22,031 lines — so neither is gated here. No fixture was
 added for D20 for this reason: the only core-only carrier of it would pin those two as expected output.
+
+## D24 is a boundary that carries a column, dropped as though it carried a separator
+
+Added 2026-07-25, from Prompt 24's stratified current-mathlib audit rather than from these fixtures.
+
+| Defect | Origin | Evidence |
+| --- | --- | --- |
+| D24 a comment between `in` and its nested command indents both | adapter | `insertComments` returns `document` and drops `suffix` whenever the comment ended the row |
+
+`BoundaryLayout` has four constructors and three of them answer the same question -- is the next token
+on this row or the next. `flat` is a space, `hard` a newline, `elided` nothing. A comment that ends the
+row has already answered it, so `insertComments` dropping the boundary there is right for those three.
+
+`dedented` answers a different question. It is the only layout whose spelling depends on where it
+lands: `boundaryFormat` builds it as a `nest` cancelling `baseIndent`, the ambient nest, and every
+constraint wrapping the terminal, around a newline -- so the *column* the next row starts at is
+carried by that newline and by nothing else. Dropping it alongside the separators loses the column:
+
+```
+#guard_msgs in
+  -- `focus` is ignored.
+  example : True ∧ True := by
+```
+
+which is precisely the layout D13's rule exists to prevent, reappearing whenever a comment sits in the
+gap. The boundary is marked applied at `constrainBoundary` before the format is discarded, so
+`applied n/m` stayed level and no gate refused; the candidates were publication-eligible.
+
+**The repair.** `insertComments` takes the row break from its caller instead of spelling `.text "\n"`
+itself, and `constrainBoundary` passes the `dedented` boundary's own format when that is the layout at
+this terminal. Both breaks take it -- the one before the comment and the one after -- because the
+source wrote the comment at the nested command's column too. `hard` spells the same newline, so
+passing it would change nothing; `flat` and `elided` are not row breaks and are not passed.
+
+Found on `MathlibTest/Linter/Multigoal.lean` (25 column-zero declarations to 23) and
+`MathlibTest/Tactic/Linarith/Basic.lean` (157 to 155), two of 235 candidates. Gated in `Offside.lean`
+and §6 beside D13's.
+
+### D27, which D24 was hiding
+
+With the nested command back at column zero, its *body* is visible one level too far in:
+
+```
+#guard_msgs in
+example : True ∧ True := by
+    constructor
+```
+
+`dedented` cancels the nest around **one** newline, so it corrects the break in front of the nested
+command and leaves every break *inside* it carrying the `nest` that `guardMsgsCmd`'s missing `ppDedent`
+introduced. This is not a regression -- it was true before D24 and invisible while the command itself
+was misplaced, and D13's fixture is `#eval 1 + 2`, a single line with no interior break to expose it.
+The output is legal Lean and reparses identically, so no gate catches it. Not yet repaired.

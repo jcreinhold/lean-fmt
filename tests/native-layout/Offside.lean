@@ -130,6 +130,17 @@ command's column. That was D13. -/
 #guard_msgs in
 #eval 1 + 2
 
+/- The same embedding with a comment between `in` and the command. The comment ends the row it is on,
+and `insertComments` used to read that as "the boundary is spent" and drop it -- right for the three
+layouts that only say *whether* the next token is on this row, wrong for the one that says which
+*column* the row starts at. Both the comment and the command landed one level in, with the boundary
+still counted as applied so nothing refused. That was D24, found on
+`MathlibTest/Linter/Multigoal.lean`. -/
+/-- info: 7 -/
+#guard_msgs in
+-- the comment the dedent has to survive
+#eval 3 + 4
+
 /- The negative half: `open … in` spells the same embedding and Lean *does* dedent it. The correction
 sets a column rather than adjusting one, so it spells here exactly the newline the document already
 had. -/

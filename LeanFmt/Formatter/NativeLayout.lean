@@ -1001,8 +1001,20 @@ private def commentPayload (dedent : Int) (comment : InteriorComment) : Std.Form
   if comment.payload.contains '\n' then .nest dedent (.text comment.payload)
   else .text comment.payload
 
-private def insertComments (dedent : Int) (comments : Array InteriorComment)
-    (suffix : Std.Format) : Std.Format :=
+/- `rowBreak` is every newline this insertion emits, and the caller spells it because a boundary can
+carry a *column* rather than a separator.
+
+Three of the four `BoundaryLayout`s say only whether the next token is on this row or the next, and a
+comment that ends the row has already answered that -- which is why `atLineStart` drops `suffix`
+below. `dedented` is the fourth, and it says which *column* the next row starts at: `boundaryFormat`
+spells it as the cancelling `nest` around the newline. Dropping that alongside the separators is D24 --
+`#guard_msgs in`, a line comment, then the nested command, and the command comes back at
+`format.indent` with the comment beside it, exactly the layout D13's dedent exists to prevent. The
+boundary was marked applied before the format was discarded, so `applied n/m` stayed level and nothing
+refused. Both breaks take it: the one before the comment and the one after, because the source wrote
+the comment at the command's own column too. -/
+private def insertComments (dedent : Int) (rowBreak : Std.Format)
+    (comments : Array InteriorComment) (suffix : Std.Format) : Std.Format :=
   let (document, atLineStart) := comments.foldl (init := (.nil, false))
     fun (document, atLineStart) comment =>
       let payload := commentPayload dedent comment
@@ -1010,11 +1022,11 @@ private def insertComments (dedent : Int) (comments : Array InteriorComment)
       | .trailing =>
         let boundary := if atLineStart then .nil else .text " "
         let document := .append document (.append boundary payload)
-        if comment.kind == .line then (.append document (.text "\n"), true)
+        if comment.kind == .line then (.append document rowBreak, true)
         else (document, false)
       | .leading | .dangling =>
-        let boundary := if atLineStart then .nil else .text "\n"
-        (.append document <| .append boundary <| .append payload (.text "\n"), true)
+        let boundary := if atLineStart then .nil else rowBreak
+        (.append document <| .append boundary <| .append payload rowBreak, true)
   if atLineStart then document
   -- The adapter owns *both* sides of a comment, not just the side facing the token behind it. `suffix`
   -- is the native boundary between the two tokens the comment sits between, and the native document
@@ -1306,10 +1318,15 @@ private def constrainBoundary (format : Std.Format) :
   let state ← get
   if insideIsland state then return .nil
   let mut format := format
+  -- A `dedented` boundary at this terminal governs every row the comment insertion below opens, not
+  -- only the one the native document spelled. See `insertComments`.
+  let mut rowBreak : Std.Format := .text "\n"
   -- The first boundary leaf at this terminal, and only the first: the document can lay out more than
   -- one leaf between two terminals, and a correction that fired at each of them would spell itself
   -- twice. Eliding a doubled newline depends on exactly this -- it removes the first of the two.
   if let some (_, layout) := state.boundaries.find? fun (index, _) => index == state.terminalIndex then
+    if layout matches .dedented then
+      rowBreak := boundaryFormat state layout
     unless state.appliedBoundaries.contains state.terminalIndex do
       set { state with
         appliedBoundaries := state.appliedBoundaries.push state.terminalIndex
@@ -1332,7 +1349,7 @@ private def constrainBoundary (format : Std.Format) :
     let span : TokenSpan := ⟨state.terminalIndex, state.terminalIndex⟩
     format := insertComments
       (-(state.baseIndent + state.ambientNest + containingConstraintNest state span))
-      comments format
+      rowBreak comments format
   modify fun state => { state with separated := state.separated || !provablyEmpty format }
   return format
 

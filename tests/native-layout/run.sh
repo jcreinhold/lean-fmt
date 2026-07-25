@@ -408,10 +408,17 @@ check "  ... and is the only bar in these fixtures left bare" \
 # assertion is `grep -c '^#eval'` rather than a substring count because the whole claim is the column.
 check "a command nested in another command starts at column zero" \
   "$(grep -c '^#eval 1 + 2$' "$offside")" "1"
+# Two, not one: the D24 fixture below embeds a second command the same way.
 check "  ... and the enclosing command keeps its own line" \
-  "$(grep -c '^#guard_msgs in$' "$offside")" "1"
+  "$(grep -c '^#guard_msgs in$' "$offside")" "2"
 check "  ... and one Lean already dedented is spelled the same way" \
   "$(grep -c '^def afterOpen : Nat :=$' "$offside")" "1"
+# D24: the same dedent with a comment in the gap. Both columns are asserted, because the defect put
+# both the comment and the command at `format.indent` and either one alone would let the other regress.
+check "  ... and a comment in the gap keeps its own column zero" \
+  "$(grep -c '^-- the comment the dedent has to survive$' "$offside")" "1"
+check "  ... and the command after that comment starts at column zero too" \
+  "$(grep -c '^#eval 3 + 4$' "$offside")" "1"
 
 # The `then` line ends at `then`. The suite-wide gate in §2 already forbids the space that used to
 # follow it; this names the construct that produced one, so that removing the fixture is visible.
