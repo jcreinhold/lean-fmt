@@ -35,6 +35,7 @@ every pass, so no input was already failing and every refusal is the candidate's
 | `e4e71ed` | D13, D14, D15 — nested command column; a doc comment's line side; a break in front of a newline | 68 | 4 |
 | `3aaa89a` | D16 — a boundary collected inside an exact island | 69 | 3 |
 | `800bacc` | D17, D18 — a comment closing an inner block; D9's ungrouped test read off the carrier | **71** | **1** |
+| `3671d63` | D19, D20 — two separators a document spelled that the adapter already owns | **71** | **1** |
 
 Final pass, aggregated over the three chunks:
 
@@ -42,6 +43,10 @@ Final pass, aggregated over the three chunks:
 files=72  changed=71  infrastructure_failures=1
 broken=0  rejected=0  written=0  suppressed=0  withheld_unsafe=0  withheld_redundant=29  findings=38
 ```
+
+D19 and D20 change no verdict — both are style defects in candidates that already validated — so the
+last two rows are identical in every count the gates produce. What they change is the bytes, and that
+is the next section.
 
 71 + 1 = 72, so every path is accounted for. Zero rejected and zero broken means no candidate reached
 publication that should not have, and no source was already failing.
@@ -99,18 +104,50 @@ non-positive `swap_delta_kib`. Peak RSS per chunk ranged 3.91–4.80 GiB against
 `exit_status=2` on any pass with a refusal is the documented infrastructure-failure code
 (`docs/ci.md:62`), not a crash.
 
-Final pass, per chunk:
+Final pass (`3671d63`), per chunk:
 
 | chunk | hard_stop | peak rss | swap delta | peak pressure |
 | --- | --- | --- | --- | --- |
-| c1 | none | 3.91 GiB | −24 MiB | 1 |
-| c2 | none | 4.46 GiB | −72 MiB | 1 |
-| c3 | none | 4.08 GiB | −24 MiB | 1 |
+| c1 | none | 4.26 GiB | −243 MiB | 1 |
+| c2 | none | 4.45 GiB | −152 MiB | 1 |
+| c3 | none | 4.08 GiB | −1,697 MiB | 1 |
 
-Five chunk attempts were stopped by the guard at `hard_stop=pressure` while an unrelated process on the
-machine held several GiB. They are discarded, not reported: a run the guard stopped measured nothing.
+Eleven chunk attempts were stopped by the guard at `hard_stop=pressure`, most while an unrelated
+process on the machine held several GiB. They are discarded, not reported: a run the guard stopped measured nothing.
 Wall time is in the `.meta` files and is deliberately not compared across rows — the same 24 paths on
 the same binary measured 96 s and 208 s depending only on what else the machine was doing.
+
+## Style of the accepted candidates
+
+The gates say a candidate elaborates; they say nothing about whether it reads well. This is that
+inspection, run over the concatenated text of all 71 accepted candidates rather than over a sample of
+diffs, because the properties worth asserting are countable.
+
+| property | at `800bacc` | at `3671d63` |
+| --- | --- | --- |
+| lines | 22,031 | 21,893 |
+| top-level declaration lines | 1,883 | 1,883 |
+| …of those, indented rather than at column zero | 0 | 0 |
+| lines ending in whitespace | 1 | **0** |
+| runs of two consecutive blank lines | 139 | **2** |
+| …in the corresponding sources | 10 | 10 |
+
+The two findings behind the last two rows are D19 (`moduleDoc` ends with `ppLine`, so every module
+docstring gained a blank line below it) and D20 (`docComment` ends with `ppLine` too, so a doc comment
+used as a tactic's own syntax left a line holding nothing but its list's indent). Both are recorded in
+`experiments/native-layout-defects/README.md`. Neither was caught by any gate, and neither could have
+been: a blank line and a trailing space change no token, so the structural, comment, diagnostics and
+source-map gates all pass, and the candidate is byte-stable under a second pass because the second pass
+reproduces the same extra bytes.
+
+After the repairs no candidate holds more blank-line runs than its own source, and the two that remain
+are in files whose sources hold more.
+
+Documentation, structure fields, records and offside blocks keep their hierarchy by construction here:
+the offside constraints are what `tests/native-layout/run.sh` §6 asserts per construct, and §1b renders
+every fixture at widths 20 and 40. Narrow-width output is not pathological — the width-20 and width-40
+renders of all four fixture modules validate, and the suite reads named columns out of them rather than
+only checking that they parse.
 
 ## `MathlibTest/Linter/LongFile.lean` is not a formatter defect
 
