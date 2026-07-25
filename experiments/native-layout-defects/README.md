@@ -1006,3 +1006,93 @@ why the general mirror rule is absent; this is the same measurement from a secon
 Measured after the repair: both mathlib files format, `lake lint` unchanged at 63 files / 0 findings,
 20 suites green, and `tests/native-layout/Boundaries.lean` carries the two-binding fixture with gates on
 both docstrings and on the bindings sharing one column.
+
+## D22 is a column no `Format` constructor names, in three places at once
+
+Two mathlib files refused after D23 and D26 landed, with two unrelated-looking Lean errors:
+
+- `Mathlib/Algebra/MonoidAlgebra/NoZeroDivisors.lean` — `unknown tactic`
+- `Mathlib/CategoryTheory/Sites/CoverLifting.lean` — ``Fields missing: `Y`, `f` ``
+
+They are one defect. Each is a list whose items the parser measures against the enclosing item's *own*
+start column, and each broke between two of those items. `nest` is relative to the ambient indent and
+`align` pads to it, so the column an item starts at is exactly the one the document cannot name — the
+same wall `collectGuardBailouts` hit for a guarded `let`'s bail-out, and the same repair: refuse to
+break where the source did not.
+
+### Getting a candidate out of a refusal
+
+The measurement route matters more than usual here, because a refusal prints a Lean diagnostic against
+*candidate* coordinates and no candidate. `__analyze-exact SETUP SOURCE DISPLAY MAX_BYTES draft:100` is
+the unvalidated hook and returns `formatDraft.text`; `lake setup-file` in the mathlib checkout produces
+the setup. That turns a refusal into a diff, and it never writes the checkout.
+
+### The three runs
+
+**A structure-instance field's binders.** `structInstField` is `structInstLVal >> many (ppSpace >>
+binder) >> …`, and the group that decides those `ppSpace`s also holds the field's body. A field with a
+multi-line body therefore breaks its *binders* however short they are — width never enters it:
+
+    cover_lift {U} S hS := by      →      cover_lift {U} S
+                                            hS := by
+
+26 columns, broken at 100. `hS` then sits at the field column, `structInstFields` is `many1Indent`
+against the first field, and `hS := by …` is read as a second field. The instance loses `cover_lift`
+and Lean reports the fields it was providing as missing.
+
+**An `induction … generalizing` list.** `(" generalizing" (ppSpace colGt term:max)+)?`
+(`Init/Tactics.lean:1009`, and `funInduction` at 1079). A break between two generalized variables put
+the second at the `induction` token's own column; `colGt` fails, the tactic ends one term early, and
+the enclosing `tacticSeq`'s `checkColGe` accepts the leftover identifier as a new tactic —
+`Lean/Parser/Tactic.lean:33`'s `unknown tactic`. Re-indenting that one line by a single column makes
+the same bytes elaborate, measured at 6 (fails), 7 (passes) and 8 (passes). That is the whole defect:
+the column is known and cannot be expressed.
+
+**A structure instance's `..`.** Not a run, but the same join. `..` is also an application's
+placeholder suffix, so
+
+    r.w := by simpa using G.congr_map w =≫ f
+    .. }
+
+joins to one line and the `by` block's `tacticSeq` takes the `..` as part of its last tactic. The
+instance has no ellipsis left and its five defaulted fields become `Fields missing`.
+
+### None of the three is the adapter's
+
+`Lean.PrettyPrinter.formatCommand`, asked directly for the minimized field through `runParserCategory`
+in a file that imports `Lean`, prints
+
+    instance : Foo Nat where
+      coverLift {u} s
+        hs := by
+
+with no adapter in the process. The adapter did not introduce the break; it inherited it, the way it
+inherited D2, D11 and D25.
+
+### The repair, and the two answers that were measured wrong first
+
+A `.flat` boundary at each gap the source spells with spaces alone, inside a run the source spells on
+one line. Two other keyings were built and measured before that one:
+
+- *Flatten the run's span*, the way a guarded bail-out is flattened. It never fires: a flatten is taken
+  by the deepest document node spelling exactly the span, and `many.formatter` concatenates
+  `ppSpace >> binder` straight into its parent's `fill`, so the binder run has no node of its own.
+  `native formatter joined 0/1 …` — which is what the unapplied-span diagnostic added with D26 said.
+- *A boundary at each item's first terminal.* `.flat` spells a space rather than removing a break, so
+  a run's interior gaps get spaces written into them: `coverLift {u} s hs` came back as
+  `coverLift { u } s hs`. Keying on every terminal is that failure; keying on item starts is a
+  different one — `{g₁ g₂}` is a single item, the break moves *inside* it, and the next run over that
+  output no longer sees a one-line run, so the correction stops firing and the candidate is not
+  idempotent. `NoZeroDivisors.lean` reported exactly that, at `ValidationGate.idempotence`.
+
+The gap test is what makes the correction a fixpoint: it asks the source what it spells, and it spells
+the same thing after one pass.
+
+### Measured after the repair
+
+Both mathlib files format. The 13-file re-measurement goes 8 → 10 of 13, and the remaining three are
+the verdicts that were already correct: two `#guard_msgs` files asserting their own layout and D21's
+diagnosed `_root_` refusal. On `experiments/workloads/mathlib-v4.33.0-rc1-stratified-first24.txt` —
+the frozen manifest that measured **15 reflowed, 9 refused** at `0b6f1b1` — all 24 now format.
+`lake lint` is unchanged at 63 files / 0 findings, `lake exe lean-fmt-tests` passes, and 16 suites are
+green. `tests/native-layout/Boundaries.lean` carries all three fixtures with a gate each.

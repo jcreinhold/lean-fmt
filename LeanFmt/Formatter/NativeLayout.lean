@@ -832,6 +832,116 @@ private partial def collectGuardBailouts (source : String) (stx : Lean.Syntax)
       collectGuardBailouts source child ranges
   | _ => ranges
 
+/- The other runs that must not break, for the same reason and with the same source precondition.
+
+`collectGuardBailouts` above joins a bail-out because a break inside it lands at a column
+`many1Indent` reads as a sibling of the enclosing block. These two are that failure again, in lists
+whose items are `colGt` against a position the *item's own* start fixes -- which `nest`, relative to
+the ambient indent, cannot reach. Both are upstream shapes, not adapter ones: Lean's own
+`formatCommand` renders each the same way when asked directly (probe, 2026-07-25).
+
+- `Term.structInstField`'s binder list. `structInstLVal` is followed by `many (ppSpace >> binder)`,
+  and the group deciding those `ppSpace`s also holds the field's body, so a field whose body is
+  multi-line breaks its *binders* however short they are -- width never enters it.
+  `Mathlib/CategoryTheory/Sites/CoverLifting.lean`'s `cover_lift {U} S hS := by …` is 26 columns and
+  renders as `cover_lift {U} S` / `hS := by`, where `hS` sits at the field column and is read as a
+  second field. Lean reports the reparse as `Fields missing: Y, f`.
+- `Tactic.induction`/`Tactic.funInduction`'s `generalizing` list, `(ppSpace colGt term:max)+`
+  (`Init/Tactics.lean:1009,1079`). A break between two terms puts the next one at a column the
+  enclosing `tacticSeq`'s `checkColGe` accepts as a new tactic, and a bare identifier there is
+  `Lean/Parser/Tactic.lean:33`'s `unknown tactic` -- which is what
+  `Mathlib/Algebra/MonoidAlgebra/NoZeroDivisors.lean` reported. Indenting the continuation one column
+  further is enough to make it parse, measured both ways, and that column is exactly the one no
+  `Format` constructor names.
+
+The precondition is the one that collector states: only a run the source already spells on one line is
+collected. It bounds the cost -- a line the source fit on is a line -- and it is what keeps the
+correction from having to remove a newline-emitting leaf, since `sepByIndent`'s `hasNewlineSep` path
+is their sole producer and neither run is a `sepByIndent`.
+
+The correction is a `.flat` boundary in front of each *item* of the run, not a flatten of its span.
+A flatten is keyed by span and taken by the deepest node spelling exactly it, and no node spells
+exactly these: `many.formatter` concatenates `ppSpace >> binder` straight into its parent's `fill`,
+so the binder run has no document node of its own and a collected span of it goes unapplied
+(`joined 0/1`, measured before this took the boundary route). A boundary is keyed by terminal, which
+the walk visits whatever the document's shape, and `.flat` is already `.text " "` -- the same leaf a
+flatten would have left.
+
+The gap the source spells with a space, and only those. `.flat` *spells* a space rather than removing
+a break, so a boundary at every terminal the run covers writes one into gaps the source left empty and
+`coverLift {u} s hs` comes back as `coverLift { u } s hs` (measured). Taking only the item starts is
+the other wrong answer: `{g₁ g₂}` is one item and the break moves *inside* it, which parses but is not
+what the source spells -- and the next run over that output no longer sees a one-line run, so the
+correction stops firing and the candidate is not idempotent (measured, `NoZeroDivisors.lean`). Every
+single-space gap inside the run, including the one in front of it, is exactly the set that is both
+safe and stable. -/
+private partial def collectUnbreakableRuns (source : String) (stx : Lean.Syntax)
+    (ranges : Array SourceRange := #[]) : Array SourceRange :=
+  match stx with
+  | .node _ kind children =>
+    -- `structInstField` is `structInstLVal >> null(binders, optType, fieldDef)`, so the binder list is
+    -- one level down; `induction` spells `generalizing` as `null(atom, null(terms))` in its fourth
+    -- slot. Both are the `null` node covering the run and nothing else.
+    let run? : Option Lean.Syntax :=
+      if kind == ``Lean.Parser.Term.structInstField then
+        children[1]?.bind (·.getArgs[0]?)
+      else if kind == ``Lean.Parser.Tactic.induction ||
+          kind == ``Lean.Parser.Tactic.funInduction then
+        children[3]?.bind (·.getArgs[1]?)
+      else none
+    let ranges := match run?.bind sourceRange? with
+      | some range => if (slice source range).contains '\n' then ranges else ranges.push range
+      | none => ranges
+    let children := if kind == Lean.choiceKind then children[0]?.toArray else children
+    children.foldl (init := ranges) fun ranges child =>
+      collectUnbreakableRuns source child ranges
+  | _ => ranges
+
+/- The boundaries an unbreakable run asks for: one `.flat` per gap the source spells with spaces alone.
+
+A gap holding a comment is not one of them -- the comment machinery owns that gap and a `.flat` there
+would spell a space where a comment has to go. -/
+private def unbreakableRunBoundaries (source : String) (terminals : Array Terminal)
+    (runs : Array SourceRange) : Array (Nat × BoundaryLayout) :=
+  runs.flatMap fun run =>
+    (terminals.zipIdx.filterMap fun (terminal, index) => do
+      guard (run.start <= terminal.range.start && terminal.range.stop <= run.stop)
+      let previous ← if index == 0 then none else terminals[index - 1]?
+      let gap := slice source ⟨previous.range.stop, terminal.range.start⟩
+      guard (!gap.isEmpty && gap.all fun character => character == ' ' || character == '\t')
+      some (terminal.range.start, BoundaryLayout.flat))
+
+/- A structure instance's `..`, when the source spells it on its own line.
+
+`..` is not only the structure-instance ellipsis: it is also the suffix of an application filled with
+placeholders, so `f ..` is a term and joining `..` onto the line in front of it can move it from one
+parser to the other. `Mathlib/CategoryTheory/Sites/CoverLifting.lean` is that move --
+
+    r.w := by simpa using G.congr_map w =≫ f
+    .. }
+
+joins to `r.w := by simpa using G.congr_map w =≫ f .. }`, where the `by` block's `tacticSeq` reaches
+one token further and takes the `..` as part of its own last tactic. The structure instance then has
+no ellipsis, and Lean reports the five fields it was standing in for as `Fields missing: Y, f`.
+
+The source decides, the way it decides a doc comment's side of a break: a `..` the source put on its
+own line gets a `hard` boundary and one the source spelled inline is left to the document. This asks
+nothing of a `..` whose parse was never in question. -/
+private partial def collectStructInstEllipses (stx : Lean.Syntax)
+    (starts : Array Nat := #[]) : Array Nat :=
+  match stx with
+  | .node _ kind children =>
+    let starts :=
+      if kind == ``Lean.Parser.Term.optEllipsis then
+        match children[0]?.bind sourceRange? with
+        | some range => starts.push range.start
+        | none => starts
+      else starts
+    let children := if kind == Lean.choiceKind then children[0]?.toArray else children
+    children.foldl (init := starts) fun starts child =>
+      collectStructInstEllipses child starts
+  | _ => starts
+
 /- The docstring of a constructor that has one.
 
 `ctor` (`Command.lean:210-212`) is `atomic (optional docComment >> "\n| ") >> ppGroup …`, so the
@@ -1790,8 +1900,10 @@ offside constraints; first unapplied: {repr missing[0]?}"
     throw s!"native formatter applied {state.appliedBoundaries.size}/{boundaries.size} \
 boundaries; unapplied at {repr described}"
   if state.appliedFlattened.size != flattened.size then
+    let missing := (flattened.zipIdx.filter fun (_, index) =>
+      !state.appliedFlattened.contains index).map fun (span, _) => (span.start, span.stop)
     throw s!"native formatter joined {state.appliedFlattened.size}/{flattened.size} guarded \
-bail-outs; the document holds no node spelling exactly one of them"
+bail-outs; first unapplied span: {repr missing[0]?}"
   if state.appliedTrailing.size != trailing.size then
     throw s!"native formatter placed {state.appliedTrailing.size}/{trailing.size} block-dangling \
 comments; the block's document holds no break to hang one on"
@@ -1928,6 +2040,7 @@ alternatives: alternative 0 is {expected}, alternative {alternative} is {actual}
   -- bail-out to the bar's line, and `transform` flattens the same span so the join leaves no break
   -- behind to land at the wrong column.
   let joined := collectGuardBailouts source stripped
+  let unbreakableRuns := collectUnbreakableRuns source stripped
   let categories := (Lean.Parser.parserExtension.getState (← Lean.getEnv)).categories
   let commandKinds := (categories.find? `command).map (·.kinds) |>.getD {}
   let rootStart := ((selectedLeafRanges stripped)[0]?).map (·.start) |>.getD 0
@@ -1957,7 +2070,12 @@ alternatives: alternative 0 is {expected}, alternative {alternative} is {actual}
       nestedCommandStarts.map (·, BoundaryLayout.dedented) ++
       ctorDocStarts.map (·, BoundaryLayout.elided) ++
       docBoundaries ++
-      joined.map (·.start, BoundaryLayout.flat)
+      joined.map (·.start, BoundaryLayout.flat) ++
+      unbreakableRunBoundaries source terminals unbreakableRuns ++
+      (collectStructInstEllipses stripped).filterMap fun start =>
+        let broken := (terminals.filter (·.range.stop <= start)).back?.any fun previous =>
+          (slice source ⟨previous.range.stop, start⟩).contains '\n'
+        if broken then some (start, BoundaryLayout.hard) else none
   let commentFree := withoutTrivia stripped
   let (formattedSyntax, islands) := protectSourceData categories source commentFree
   -- D21, named before `formatCommand` reaches it. Both lookups this breaks fail with a message about

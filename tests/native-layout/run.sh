@@ -202,6 +202,17 @@ check "  ... and so does the second one, whose column the first fixes" \
 check "  ... and both bindings land on one column" \
   "$(grep -cE '^   (twice|once) \(n : Nat\) : Nat := n \+ ' "$boundaries")" "2"
 
+# D22, three runs the source spells on one line. Each is a list whose items the parser measures against
+# a column no `Format` constructor names -- the enclosing item's own start -- so a break inside one is
+# read as the next item of the list outside it. Each assertion is on the *joined* form, which is what
+# the source spells; the layout is still free to break at the atoms around them, and does.
+check "a field's binders stay on one line however its body breaks (D22)" \
+  "$(grep -c '^  bounded {n} m h := by$' "$boundaries")" "1"
+check "  ... an induction's generalized variables stay together" \
+  "$(grep -c 'generalizing firstGeneralized secondGeneralized with$' "$boundaries")" "1"
+check "  ... and a structure instance's ellipsis keeps the line the source gave it" \
+  "$(grep -c '^    \.\. }$' "$boundaries")" "1"
+
 check "the constructor docstring keeps its constructor's indentation" \
   "$(grep -c '^  /-- A constructor doc comment stays on its constructor. -/$' "$boundaries")" "1"
 check "  ... and its constructor follows on the next line, with no blank between" \

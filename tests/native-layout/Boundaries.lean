@@ -126,4 +126,48 @@ where
   /-- Adds one to its argument. -/
   once (n : Nat) : Nat := n + 1
 
+/- Three runs the source spells on one line that a break inside would reparse. All three are Lean's own
+`formatCommand` -- each was checked against it directly before the adapter was touched -- and all three
+are the same failure `many1Indent` produces for a guarded `let`'s bail-out: a continuation lands at a
+column the parser reads as the next item of the enclosing list. That was D22. -/
+
+/- A structure-instance field's binders. The group deciding the `ppSpace`s between them also holds the
+field's body, so a multi-line body breaks the binders however short they are -- 21 columns here, and
+`m` would land at the field's own column and be read as a second field.
+`Mathlib/CategoryTheory/Sites/CoverLifting.lean` reported that as `Fields missing: Y, f`. -/
+class BoundedField (a : Type) where
+  bounded : ∀ {n : Nat} (m : Nat), n = m → Nat
+
+instance : BoundedField Nat where
+  bounded {n} m h := by
+    have carried := h
+    exact m + m
+
+/- An `induction … generalizing` list, whose items are `colGt` against the tactic's own start column --
+a column `nest` cannot name, because it is relative to the ambient indent instead. The head is written
+long enough that the layout has to break somewhere; every remaining place is an atom the parser reads
+without a column check. `Mathlib/Algebra/MonoidAlgebra/NoZeroDivisors.lean` reported the break between
+two generalized variables as `unknown tactic`. -/
+inductive Wrapped (a : Type) where
+  | mk : a → Wrapped a
+
+theorem generalizedInduction (theWrappedSubject : Wrapped Nat) (firstGeneralized : Nat)
+    (secondGeneralized : Nat) :
+    firstGeneralized + secondGeneralized = secondGeneralized + firstGeneralized := by
+  induction hwrapped : theWrappedSubject using Wrapped.rec generalizing firstGeneralized secondGeneralized with
+  | _ payload =>
+  omega
+
+/- A structure instance's `..`. It is also an application's placeholder suffix, so joining it onto the
+line in front of it hands it to the `by` block that ended there and the instance loses its ellipsis. -/
+structure Defaulted where
+  first : Nat
+  second : Nat := 0
+  third : Nat := 0
+
+def defaulted (n : Nat) : Defaulted :=
+  { first := by
+      exact n
+    .. }
+
 end NativeLayoutBoundaries
