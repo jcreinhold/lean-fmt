@@ -209,11 +209,29 @@ def officialArtifacts (workspace : Lake.Workspace)
   let facetName := `module.leanFmtArtifact
   let some config := workspace.findModuleFacetConfig? facetName
     | return Array.replicate snapshots.size none
+  -- A module whose sidecar does not exist is a certain miss: `readFacet?` reads that very file,
+  -- so no traversal could return anything else for it. And a never-built facet job does not degrade
+  -- per module — it fails the whole no-build traversal, zeroing every *other* module's artifact
+  -- (measured in Prompt 26: `ArtifactLayout` + `Main` went `official_artifact_miss=2` until Main's
+  -- facet was built once, whereupon the same selection degraded per module). Such modules are
+  -- therefore excluded before the traversal rather than mapped after it. The path is the facet's
+  -- own convention — `artifactFile` in the lakefile that declares `leanFmtArtifact`; the two are
+  -- versioned together, and `tests/compiler/run.sh`'s mixed-selection gate is what notices if they
+  -- drift. The trace is probed alongside the sidecar because a stale or missing trace fails the
+  -- no-build job the same way.
+  let sidecarBuilt ← snapshots.mapM fun snapshot =>
+    match snapshot.module? with
+    | none => pure false
+    | some mod =>
+      let sidecar := Lean.modToFilePath (mod.pkg.buildDir / "lean-fmt-artifacts") mod.name "json"
+      return (← sidecar.pathExists) && (← (sidecar.addExtension "trace").pathExists)
   let build : Lake.FetchM (Lake.Job (Array (Option String))) := do
-    let jobs ← snapshots.mapM fun snapshot => do
+    let jobs ← (snapshots.zip sidecarBuilt).mapM fun (snapshot, built) => do
       match snapshot.module? with
       | none => return Lake.Job.pure none
       | some mod =>
+        unless built do
+          return Lake.Job.pure none
         let job ← config.run (β := Lake.FacetOut facetName) mod
         return job.mapResult fun
           | .ok value state => .ok (some (config.format .json value)) state
@@ -381,6 +399,20 @@ private def runBounded (arguments : IO.Process.SpawnArgs)
 private def ExactRun.nextPathIndex (run : ExactRun) : IO Nat :=
   run.nextIndex.modifyGet fun index => (index, index + 1)
 
+/-- The budget a child may claim: the aggregate envelope minus what the parent already holds.
+
+The parent trips on parent RSS *plus* the child's process-group RSS against `maxBytes`
+(`monitorChild`), so a child told it may use the whole envelope is killed at `maxBytes - parentRSS`
+— the trip point tracked the bound rather than the file. Prompt 24 measured it: twelve import-heavy
+mathlib modules exhausted at 6.00–6.16 GiB against `--max-memory 6` and again at 7.00–7.15 against
+`--max-memory 7`, the overshoot each time being the parent's own footprint plus one 50 ms poll's
+growth. Telling the child its honest headroom lets its own GC spend the envelope instead of the
+parent spending the child's life. The aggregate trip is unchanged: the envelope still bounds parent
+plus children together, and `Nat` subtraction saturates, so a parent already over the bound passes
+zero rather than wrapping. -/
+private def childMemoryBudget (maxBytes : Nat) : IO Nat := do
+  return maxBytes - (← residentKiB) * 1024
+
 /-- Resolve these targets' Lake setups in one graph traversal, before any of them is analyzed.
 
 Called with exactly the files a run has already decided will reach the frontend -- never the whole
@@ -433,7 +465,7 @@ private def ExactRun.envelope (run : ExactRun)
       -- direct 4-argument invocation (every syntax-only harness) omits it and captures nothing.
       -- `occurrences` is only ever demanded together with the tier, so the token is a simple ladder.
       args := #["__analyze-exact", setupPath.toString, sourcePath.toString,
-        snapshot.path.toString, toString run.maxBytes,
+        snapshot.path.toString, toString (← childMemoryBudget run.maxBytes),
         match formatWidth? with
         | some width => s!"4:{width}"
         | none => if captureOccurrences then "2" else if captureSemantic then "1" else "0"]
@@ -488,7 +520,7 @@ private def ExactRun.artifactEnvelope (run : ExactRun) (snapshot : SourceSnapsho
       cmd := run.application.toString
       args := #["__analyze-artifact", setupPath.toString, moduleFile.toString,
         artifactPath.toString, sourcePath.toString, snapshot.path.toString,
-        toString run.maxBytes, toString width]
+        toString (← childMemoryBudget run.maxBytes), toString width]
       env := run.project.workspace.augmentedEnvVars.push ⟨"LEAN_NUM_THREADS", some "1"⟩
     } run.maxBytes cancel?
     unless output.exitCode == 0 do
@@ -2281,7 +2313,7 @@ private def inspectCompilerArtifact (workspace : Lake.Workspace) (application : 
   let output ← runBounded {
     cmd := application.toString
     args := #["__inspect-artifact", mod.name.toString,
-      mod.oleanFile.toString, snapshot.path.toString, toString maxBytes]
+      mod.oleanFile.toString, snapshot.path.toString, toString (← childMemoryBudget maxBytes)]
     env := workspace.augmentedEnvVars.push ⟨"LEAN_NUM_THREADS", some "1"⟩
   } maxBytes
   unless output.exitCode == 0 do

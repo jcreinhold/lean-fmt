@@ -27,6 +27,7 @@ artifact_layout_envelope=$(mktemp)
 exact_layout_envelope=$(mktemp)
 artifact_layout_backup=$(mktemp)
 artifact_fallback_profile=$(mktemp)
+mixed_profile=$(mktemp)
 cp "$source_file" "$backup"
 cp "$plugin_source" "$plugin_backup"
 cp "$rules_source" "$rules_backup"
@@ -40,6 +41,7 @@ cleanup() {
     "$artifact_layout_profile" "$exact_layout_profile"
   rm -f "$layout_setup" "$artifact_layout_envelope" "$exact_layout_envelope"
   rm -f "$artifact_layout_backup" "$artifact_fallback_profile"
+  rm -f "$mixed_profile"
   rm -rf "$shadow_dir" "$cache_dir"
 }
 trap cleanup EXIT
@@ -135,6 +137,31 @@ if [[ $artifact_fallback_status -ne 1 ]]; then
 fi
 grep -q '^cache.path_exact_render=1$' "$artifact_fallback_profile"
 grep -q '^cache.official_artifact_miss=1$' "$artifact_fallback_profile"
+
+# A module whose facet was never built must miss alone, not zero the batch. Before the
+# sidecar-existence pre-filter in `officialArtifacts`, one never-built module in a mixed selection
+# failed the whole no-build traversal: `ArtifactLayout` + `Main` measured `official_artifact_miss=2`
+# and both files paid exact children -- the artifact acceleration silently disabled in exactly the
+# mixed project it was built for (a consuming project integrates the plugin on one library, not
+# every one). The gate removes Main's sidecar set (rebuildable Lake output) and asserts the
+# integrated fixture keeps its artifact route while the never-built module takes the exact one.
+rm -f .lake/build/lean-fmt-artifacts/Main.json \
+  .lake/build/lean-fmt-artifacts/Main.json.hash \
+  .lake/build/lean-fmt-artifacts/Main.json.trace
+set +e
+LEAN_FMT_PROFILE_PHASES=1 LEAN_NUM_THREADS=1 "$application" diff --no-cache \
+  tests/compiler/ArtifactLayout.lean Main.lean >/dev/null 2>"$mixed_profile"
+mixed_status=$?
+set -e
+if [[ $mixed_status -ne 1 ]]; then
+  printf 'mixed artifact/exact selection did not report a diff (status %d)\n' "$mixed_status" >&2
+  cat "$mixed_profile" >&2
+  exit 1
+fi
+grep -q '^cache.official_artifact_hit=1$' "$mixed_profile"
+grep -q '^cache.official_artifact_miss=1$' "$mixed_profile"
+grep -q '^cache.path_artifact_render=1$' "$mixed_profile"
+grep -q '^cache.path_exact_render=1$' "$mixed_profile"
 
 # The extractor must use the exact `.olean` returned by the facet even when ambient `LEAN_PATH`
 # contains a different module with the same name first.

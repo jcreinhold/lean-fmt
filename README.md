@@ -27,8 +27,10 @@ same-directory rename.
 
 Exit `0` means clean or successfully applied output. Exit `1` means findings, proposed changes, broken sources, or
 rejected fixes. Exit `2` means a request, workspace, or infrastructure failure prevented a trustworthy result.
-`--max-memory GIB` is an aggregate operating envelope, not a worker or scheduling control. Statistics go to stderr so
-`--json` stdout remains one valid object.
+`--max-memory GIB` is an aggregate operating envelope, not a worker or scheduling control. A frontend child is
+budgeted what the parent can actually grant — the envelope minus what the parent already holds — so an exhausted run
+refuses by name: the parent's aggregate trip or the child's own memory threshold. Statistics go to stderr so `--json`
+stdout remains one valid object.
 
 ## Formatting guarantees
 

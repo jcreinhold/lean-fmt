@@ -162,6 +162,32 @@ run_expect 2 "$work/memory.json" env LEAN_FMT_DISABLE_ARTIFACT=1 LEAN_FMT_TEST_D
   tests/check/Clean.lean
 grep -q 'resource envelope exhausted' "$work/memory.json"
 
+# The child is told its honest headroom, not the whole envelope. The parent trips on parent RSS
+# plus the child's process-group RSS against `--max-memory`, so a child budget equal to the
+# envelope spends the parent's footprint twice — Prompt 24 measured the trip point tracking the
+# bound rather than the file, and `childMemoryBudget` is the repair. The gate asserts the argument
+# handed to the analyzer, a count that does not move when the machine gets slower: strictly
+# positive, and strictly less than the 8 GiB envelope. The recorder exits 1 so the run fails after
+# recording; what matters is the argv, not the report.
+recorder="$work/recording-analyzer.sh"
+cat >"$recorder" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$@" >"$LEAN_FMT_ARGV_CAPTURE"
+exit 1
+SH
+chmod +x "$recorder"
+run_expect 2 "$work/budget.json" env LEAN_FMT_DISABLE_ARTIFACT=1 \
+  LEAN_FMT_TEST_DISABLE_MODULE_EVIDENCE=1 LEAN_FMT_TEST_ANALYZER="$recorder" \
+  LEAN_FMT_ARGV_CAPTURE="$work/child-argv.txt" \
+  "$application" check --root . --json --no-cache --max-memory 8 tests/check/Clean.lean
+python3 - "$work/child-argv.txt" <<'PY'
+import sys
+argv = open(sys.argv[1]).read().splitlines()
+assert argv[0] == "__analyze-exact", argv
+budget = int(argv[4])
+assert 0 < budget < 8 * 1024**3, budget
+PY
+
 run_expect 1 "$work/repeated.json" "$application" check --root . --json --no-cache \
   tests/check/Findings.lean
 cmp "$work/artifact-findings.json" "$work/repeated.json"
