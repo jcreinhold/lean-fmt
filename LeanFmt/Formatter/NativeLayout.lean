@@ -1066,6 +1066,28 @@ cannot move a column because nothing follows it on that line; a break after one 
 The walk stops at the first leaf that emits anything: it descends through `nest`, `group`, `tag`, and a
 provably empty sibling, and gives up at a `text` or an `align`. So the break it removes is the one
 *adjacent* to the newline that asked, never a break further in with content between. -/
+/- The separator between two commands belongs to the adapter: it renders each command and then spells
+the blank lines the source wrote between them. One command's document carries that separator inside
+itself: `moduleDoc` (`Command.lean:60-61`) ends with `ppLine`, whose formatter is
+`pushWhitespace "\n"`. Every module docstring therefore contributed a newline the assembly was about to
+add again and gained a blank line below it. Stated over any command that ends in a hard newline rather
+than for `moduleDoc`, because the ownership is what makes it wrong: nothing else a command's document
+ends with is whitespace, and if another parser acquires the same tail it is wrong there for the same
+reason.
+
+This is `dropTrailingBreak`'s question one level out. That one removes a *discretionary* break the
+renderer would turn into a trailing space; this removes a hard newline that duplicates a separator the
+adapter owns. -/
+private partial def dropTrailingHardLine : Std.Format → Option Std.Format
+  | .text value => if value == "\n" then some .nil else none
+  | .nest indent inner => (dropTrailingHardLine inner).map (.nest indent ·)
+  | .group inner behavior => (dropTrailingHardLine inner).map (.group · behavior)
+  | .tag tag inner => (dropTrailingHardLine inner).map (.tag tag ·)
+  | .append left right =>
+    if provablyEmpty right then (dropTrailingHardLine left).map (.append · right)
+    else (dropTrailingHardLine right).map (.append left ·)
+  | _ => none
+
 private partial def dropTrailingBreak : Std.Format → Option Std.Format
   | .line => some .nil
   | .nest indent inner => (dropTrailingBreak inner).map (.nest indent ·)
@@ -1719,6 +1741,7 @@ alternatives: alternative 0 is {expected}, alternative {alternative} is {actual}
 cannot tell from the placeholder that protects {marker.range.start}:{marker.range.stop}" }
   try
     let native ← Lean.PrettyPrinter.formatCommand formattedSyntax
+    let native := (dropTrailingHardLine native).getD native
     match transform source terminals comments blockDangling islands constraints boundaryStarts
         joined baseIndent native with
     | .ok (native, metrics) =>

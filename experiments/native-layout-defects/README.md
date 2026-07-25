@@ -586,3 +586,30 @@ item began a line. It repaired all three reproductions and `Archive/Arithcc.lean
 `{ base with first := 1, second := 2, … }` at width 40 — an inline record the source did not open on a
 line and which D9 exists to correct once a comma has to break. The source says where the list *was*,
 not whether the carrier positions it.
+
+## D19 is a separator two layers both spelled
+
+| defect | owner | what it does |
+| --- | --- | --- |
+| D19 a module docstring gains a blank line below it | upstream | every `/-!` block in ~50 of the 71 accepted sample files |
+
+The adapter renders each command on its own and then spells the separator between commands from the
+source's own blank lines. That is the only place the separator can come from, because a command's
+document does not know what follows it.
+
+One command's document spells it anyway. `moduleDoc` (`Lean/Parser/Command.lean:60-61`) ends with
+`ppLine`, whose formatter is `pushWhitespace "\n"`, so the document ends in a hard newline and the
+assembly adds the source's blank line on top of it.
+
+For a printer this is right: a module docstring is followed by a blank line and there is no assembly
+layer to own that. For a formatter it is a duplicate. Nothing caught it — a blank line changes no
+token, so the structural, comment, diagnostics and idempotence gates all pass, and the candidate is
+byte-stable under a second pass because the second pass produces the same extra line. It was found by
+counting `\n\n\n` runs across the accepted candidates of the stratified sample: 139 runs against 10 in
+the corresponding sources.
+
+The repair drops a hard newline a command's document *ends* with. It is stated over any command rather
+than for `moduleDoc`, because what makes it wrong is who owns the separator, and a parser that acquires
+the same tail tomorrow is wrong for the same reason. The durable gate is suite-wide: no candidate of any
+of the four fixture modules, at any of the three rendered widths, holds two consecutive blank lines.
+None of the four sources does either, so the assertion is about the adapter and not about the fixtures.

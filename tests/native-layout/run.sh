@@ -19,7 +19,7 @@ set -euo pipefail
 # `23b-suite-baseline-repair`.
 #
 # §7 is the unusual section: it pins the layout defects these fixtures *found*, exactly as measured, so
-# that fixing one shows up here as a failure rather than passing unnoticed. Seventeen are repaired and
+# that fixing one shows up here as a failure rather than passing unnoticed. Eighteen are repaired and
 # their claims now sit in §4, §5 and §6 as positive assertions, so those survive there only as the
 # record of what they were. One is pinned live: D7, the space Lean's `pushToken` does not put between
 # `]` and `do`. Re-pin there for the next one that cannot be repaired here.
@@ -129,6 +129,16 @@ sys.stdout.write(json.load(open(sys.argv[1]))["files"][0]["formatted"])' \
     esac
     check "$(basename "$render") leaves no trailing whitespace" \
       "$(grep -c '[[:space:]]$' "$render.text" || true)" "0"
+    # And no candidate holds two consecutive blank lines. None of the four sources does either, so this
+    # is a property of the adapter's output: a command's document is not supposed to carry the separator
+    # to the next command, and `moduleDoc` carried one. Stated over every render for the same reason as
+    # the check above -- a blank line is invisible in a diff, and the validator reparses, where an extra
+    # one changes no token.
+    check "$(basename "$render") holds no double blank line" \
+      "$(python3 -c '
+import sys
+sys.stdout.write(str(open(sys.argv[1], encoding="utf-8").read().count(chr(10) * 3)))' \
+        "$render.text")" "0"
   done
 done
 
@@ -417,7 +427,7 @@ check "an interior doc comment keeps its own line" \
 check "  ... and nothing shares the line the rec keyword ends" \
   "$(grep -c '^  let rec$' "$offside")" "1"
 
-printf -- '--- the defects these fixtures found: seventeen repaired, one pinned (§7) ---\n'
+printf -- '--- the defects these fixtures found: eighteen repaired, one pinned (§7) ---\n'
 # This section held six pins, each a defect these fixtures found, recorded exactly as measured so that
 # repairing one failed here instead of passing silently. All six are repaired, as is every later D but
 # one; the D1-D6 record is followed by D7, which is upstream and still live, and then by D8 onward in
@@ -528,11 +538,19 @@ check "  ... and the same loop over an identifier keeps it, so a repair must tel
 # break then had nowhere to land but one `nest` past the separators, which reparses the second tactic
 # outside its own sequence. The parent is what the rule now reads, and every carrier but `by` falls
 # back to `delimiterIntervenes`, which was already the right question for the grouped case. The parent
-# is the nearest node that *owns a group*, which is not always the immediate one: `Term.byTactic'`,
-# `Tactic.tacticSeq`, `Conv.convSeq` and `null` are registered in no parser category, so
-# `categoryParser.formatter` never wraps them and the group belongs to whatever encloses them. Reading
-# the immediate parent instead declined the boundary for `show … by tac; tac`, whose group is the
-# `show`'s, and `Mathlib/NumberTheory/LSeries/HurwitzZetaEven.lean` refused for that.
+# it reads is the nearest node that *owns a group*: `Term.byTactic'`, `Tactic.tacticSeq`,
+# `Conv.convSeq` and `null` are registered in no parser category, so `categoryParser.formatter` never
+# wraps them and the group belongs to whatever encloses them. Reading the immediate parent instead
+# declined the boundary for `show … by tac; tac`, whose group is the `show`'s, and
+# `Mathlib/NumberTheory/LSeries/HurwitzZetaEven.lean` refused for that.
+# D19 is repaired; its gate is the suite-wide double-blank-line check in §2, and its fixture is the
+# module docstring `Boundaries.lean` has opened with since it was written. It was upstream and it was
+# an ownership mistake: `moduleDoc` (`Command.lean:60-61`) ends with `ppLine`, so its document carries
+# the separator to the next command inside itself -- and the adapter also spells that separator, from
+# the source's own blank lines. Every module docstring in the stratified sample gained a blank line
+# below it, about fifty files, and no gate saw it because a blank line changes no token. The repair
+# drops a hard newline a command's document *ends* with, stated over any command rather than for
+# `moduleDoc`, because what makes it wrong is who owns the separator.
 
 printf -- '--- result ---\n'
 printf 'failures=%s\n' "$failures"
