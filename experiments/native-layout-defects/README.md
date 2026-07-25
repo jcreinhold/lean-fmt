@@ -1092,7 +1092,19 @@ the same thing after one pass.
 
 Both mathlib files format. The 13-file re-measurement goes 8 → 10 of 13, and the remaining three are
 the verdicts that were already correct: two `#guard_msgs` files asserting their own layout and D21's
-diagnosed `_root_` refusal. On `experiments/workloads/mathlib-v4.33.0-rc1-stratified-first24.txt` —
-the frozen manifest that measured **15 reflowed, 9 refused** at `0b6f1b1` — all 24 now format.
+diagnosed `_root_` refusal. That sample is where the improvement is: it was drawn from the full-mathlib
+sweep, which is where these two files came from.
+
+`experiments/workloads/mathlib-v4.33.0-rc1-stratified-first24.txt` is a **no-regression** check and not
+a second improvement, and the commit message for `3bfeafe` reads it as one. That manifest is the first
+third of the 72-path stratified sample, whose final pass in `23e` was 71 of 72 with the single refusal
+at path 72 — so the first 24 were already whole before this repair. The 24-of-24 measured here
+(`3bfeafe`, `format --check --json` through `run-check-workload.sh`, `changed=24 rejected=0 broken=0
+infrastructure_failures=0`, `wall_ms=150776`, `peak_rss_kib=4452480`, `hard_stop=none`) says the
+repair broke none of them. The **15 reflowed / 9 refused** the commit message quotes is `23c` at
+`0b6f1b1`, which is *before* the native-grammar cutover (`c3e744f`) and before D8–D20; attributing that
+gap to D22 crosses two campaigns. The 9 were resolved by D10, D11/D12, D14 and D18, as `23e` records
+path by path.
+
 `lake lint` is unchanged at 63 files / 0 findings, `lake exe lean-fmt-tests` passes, and 16 suites are
 green. `tests/native-layout/Boundaries.lean` carries all three fixtures with a gate each.
