@@ -12,7 +12,7 @@ driver by `String.toName`, so the bare spelling does not find the executable —
 §5 pins the consuming form, which needs them in the package half too. -/
 package «lean-fmt» where
   version := v!"0.1.0"
-  testDriver := "lean-fmt-tests"
+  testDriver := "«lean-fmt-tests»"
   lintDriver := "«lean-fmt»"
   lintDriverArgs := #["check"]
 
@@ -118,10 +118,20 @@ once and the suite executables stay thin. Nothing in the product imports it. -/
 lean_lib TestSupport where
   srcDir := "tests"
   roots := #[`Test]
-  globs := #[Glob.andSubmodules `Test]
+  globs := #[
+    Glob.one `Test,
+    Glob.one `Test.Harness,
+    Glob.one `Test.Proc,
+    Glob.one `Test.Golden,
+    Glob.one `Test.Json,
+    Glob.one `Test.Fixture
+  ]
 
+/- The unit tier: `LeanFmtTest.lean` split into per-domain modules under `tests/Test/Unit`, run by
+the shared harness. The executable's import closure, not a glob, determines what it builds. -/
 lean_exe «lean-fmt-tests» where
-  root := `LeanFmtTest
+  srcDir := "tests"
+  root := `Test.Unit
   supportInterpreter := true
 
 lean_exe artifactExtractor where
