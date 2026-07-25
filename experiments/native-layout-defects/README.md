@@ -613,3 +613,47 @@ than for `moduleDoc`, because what makes it wrong is who owns the separator, and
 the same tail tomorrow is wrong for the same reason. The durable gate is suite-wide: no candidate of any
 of the four fixture modules, at any of the three rendered widths, holds two consecutive blank lines.
 None of the four sources does either, so the assertion is about the adapter and not about the fixtures.
+
+## D20 is D19 one level in, and two more defects sit behind it
+
+| defect | owner | what it does |
+| --- | --- | --- |
+| D20 a doc comment used as syntax leaves a line holding only an indent | upstream | `#adaptation_note` in `Mathlib/MeasureTheory/…/AbsolutelyContinuousFun.lean` |
+
+`docComment` (`Lean/Parser/Term.lean:91-92`) ends with `ppLine`, exactly as `moduleDoc` does. As a
+declaration's docstring that `ppLine` *is* the separator to the declaration below it and nothing else
+supplies one. As a *tactic's own syntax* — `#adaptation_note /-- … -/` — the enclosing `sepByIndent`
+list supplies one too, and the two stack: a hard newline, the list's alignment padding, another hard
+newline, and the line between them holds nothing but the indent.
+
+The repair is at D15's site, which already asked whether a discretionary break sits directly in front
+of a hard newline; it now also removes a *hard* newline that does. Two adjacent hard newlines are not
+something Lean's documents intend inside a command — a blank line is not in the algebra — so the only
+producer is a leaf carrying its own separator into a place that already has one.
+
+Found the same way D19 was: by scanning the accepted candidates of the stratified sample, where it was
+one line in 22,031.
+
+### Two findings behind it, recorded and not repaired
+
+Reducing D20 to a core-only fixture led to `register_tactic_tag` (`Command.lean:899-900`), which is
+`optional (docComment >> ppLine) >> "register_tactic_tag " >> ident >> strLit` — a `ppLine` on top of
+the one `docComment` already spells, so it reproduces D20 with no mathlib syntax at all. Its candidate
+also shows two defects this repair does not touch, both present before it:
+
+```
+/-- A tag whose description runs onto a second line and owns
+its own column there. -/
+  register_tactic_tag simp_like"simp-like"
+```
+
+- **The command lands at column 2.** D13's rule puts a *nested* command at the enclosing command's
+  column and excludes the root, which this is. The indent comes from the `docComment`'s own
+  `ppDedent` and is not cancelled.
+- **No separator between `simp_like` and `"simp-like"`.** This is D7's mechanism: `pushToken` inserts a
+  discretionary space only when concatenation would re-lex as one token, and `simp_like"simp-like"`
+  does not.
+
+Neither occurs anywhere in the 72-path stratified sample — a scan of all 71 accepted candidates found
+no top-level declaration off column zero in 22,031 lines — so neither is gated here. No fixture was
+added for D20 for this reason: the only core-only carrier of it would pin those two as expected output.

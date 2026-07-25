@@ -1502,9 +1502,15 @@ private partial def transformNative : Std.Format →
     -- constraint still belongs to this boundary, and an unapplied one refuses the command.
     let carrier? :=
       if left.span?.isNone && hasLineBoundary left.format then some .boundary else none
-    -- A discretionary break directly in front of a hard newline. See `dropTrailingBreak`.
+    -- A discretionary break directly in front of a hard newline, or a hard newline in front of one.
+    -- See `dropTrailingBreak` for the first and `dropTrailingHardLine` for the second: `docComment`
+    -- (`Term.lean:91-92`) ends with `ppLine`, so a doc comment used as a tactic's own syntax rather
+    -- than as a declaration's docstring carries a separator its `sepByIndent` list also spells, and
+    -- the two stacked into a line holding nothing but the list's indent.
     let leftFormat :=
-      if opensWithNewline right.format then dropTrailingBreak left.format else none
+      if opensWithNewline right.format then
+        (dropTrailingBreak left.format).orElse fun _ => dropTrailingHardLine left.format
+      else none
     if leftFormat.isSome then
       modify fun state => { state with metrics := { state.metrics with
         redundantBreaks := state.metrics.redundantBreaks + 1 } }
