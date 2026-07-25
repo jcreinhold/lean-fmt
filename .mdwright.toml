@@ -27,7 +27,7 @@ exclude = []
 [lint.info-strings]
 # Type: array of string.
 # Project-specific additions to the `info-string-typo` allowlist. The stdlib default allowlist still applies.
-extra = []
+extra = ["elisp"]
 
 [lint.render]
 # Type: "mathjax-v3" | "katex".

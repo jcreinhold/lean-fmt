@@ -309,13 +309,13 @@ modules and they are independent: each reproduces without the other.
 **D11.** `Lean.Parser.Term.dynamicQuot` (`Lean/Parser/Term.lean:1033`) parses its body with `parserOfStack 1`, which
 reads the parser's name off the syntax stack. The two ends disagree about where that name is:
 
-|  | Expression | Reads |
+| | Expression | Reads |
 | --- | --- | --- |
 | `parserOfStackFn` (`Lean/Parser/Extension.lean:772`) | `stack.get! (stack.size - offset - 1)` | the `ident`; the stack top is the `"\| "` atom |
 | `parserOfStack.formatter` (`Lean/PrettyPrinter/Formatter.lean:319`) | `parents.back!.getArg (idxs.back! - offset)` | one slot short of the `ident` |
 
-`idxs.back!` is the index of the argument being visited — arg 3 of `"`(" >> ident >> "\| " >> incQuotDepth
-(parserOfStack 1) >> ")"` — so `3 - 1` lands on arg 2, the bar.
+`idxs.back!` is the index of the argument being visited — arg 3 of
+``"`(" >> ident >> "\| " >> incQuotDepth (parserOfStack 1) >> ")"`` — so `3 - 1` lands on arg 2, the bar.
 `formatterForKind` is then asked about an atom whose kind is `Name.mkSimple "\|"`, and the command dies.
 `Lean/PrettyPrinter/Parenthesizer.lean:375` has the same expression.
 
@@ -366,12 +366,13 @@ the enclosing node's `nest` exactly: `open Nat in` spells `nest -2 [text" in" te
 message the test asserts, so the file refuses twice over.
 
 The repair does not name the parsers that forgot. It asks the live parser environment which kinds the `command` category
-holds (`(Lean.Parser.parserExtension.getState env).categories.find? \`command |>.map (·.kinds)`) and spells a boundary
-that *sets* column zero rather than adjusting the indent — so where Lean already dedented, as `open …
-in` does, the correction reproduces the newline the document had. `rootStart` keeps it a boundary correction: `open Nat
-in def f := 0` is one node whose first child is the `open` command itself, so without the exclusion the rule fires at
-the command's own first terminal, where the only thing in front of it is the padding separating it from the previous
-command. That spelled a blank line above every such command.
+holds
+(``(Lean.Parser.parserExtension.getState env).categories.find? \`command |>.map (·.kinds)``) and spells a boundary
+that *sets* column zero rather than adjusting the indent — so where Lean already dedented, as `open … in` does, the
+correction reproduces the newline the document had. `rootStart` keeps it a boundary correction:
+`open Nat in def f := 0` is one node whose first child is the `open` command itself, so without the exclusion the
+rule fires at the command's own first terminal, where the only thing in front of it is the padding separating it from
+the previous command. That spelled a blank line above every such command.
 
 **D14.** `letRecDecl` is `optional docComment >> letDecl`, and Lean spells it
 
@@ -488,8 +489,8 @@ whole mechanism exists to avoid.
 D9's rule breaks a `sepByIndent` list onto its own line when the source spelled the separators, so that a later
 separator breaking cannot dedent an item below the first. It fires unconditionally for a carrier Lean marked
 `ppAllowUngrouped`, because that carrier's list is laid out by whatever `nest` encloses the *declaration* and the column
-`by` happens to sit at is unrelated to it. For a grouped carrier it asks `delimiterIntervenes` instead: `{ ` alone puts
-the first field exactly on the indent the commas break to, `{ base with ` does not.
+`by` happens to sit at is unrelated to it. For a grouped carrier it asks `delimiterIntervenes` instead: `{` alone puts
+the first field exactly on the indent the commas break to, `{ base with` does not.
 
 `ppAllowUngrouped` is `skip` (`Lean/Parser/Extra.lean:268`). It contributes no node, so nothing in the tree says which
 carrier declared it, and the rule stood in for it with the sequence's own kind: `tacticSeq1Indented` and
@@ -497,10 +498,10 @@ carrier declared it, and the rule stood in for it with the sequence's own kind: 
 
 | carrier | terminals before the list | grouped |
 | --- | --- | --- |
-| `by ` | `by` | no — `ppAllowUngrouped` |
+| `by` | `by` | no — `ppAllowUngrouped` |
 | `(` … `)` | `(` | yes |
-| `· ` | `·` | yes |
-| `case h => ` | `case`, `h`, `=>` | yes |
+| `·` | `·` | yes |
+| `case h =>` | `case`, `h`, `=>` | yes |
 
 The three grouped rows took the boundary anyway. Two of them did not need it — the delimiter is the only thing in front
 of the list, so the first tactic already sits on the column the separators break to — and there the forced break had
@@ -519,7 +520,7 @@ which is `rfl` outside the parentheses; the frontend reported `unexpected identi
 The repair reads the carrier rather than the kind. The walk carries the nearest enclosing node that spells a token —
 `Tactic.tacticSeq`, `Conv.convSeq` and `null` are transparent, since none of them owns a delimiter to count or a
 `ppAllowUngrouped` to stand for — and the ungrouped branch is taken only when that node is `Term.byTactic`. Every other
-carrier falls back to `delimiterIntervenes`, which was already the right question for a grouped list: `case h => ` still
+carrier falls back to `delimiterIntervenes`, which was already the right question for a grouped list: `case h =>` still
 opens its sequence on its own line, `(` and `·` no longer do.
 
 The parent is not always the immediate one. `Term.byTactic'` (`Term.lean:117`) is `byTactic` with the `ppAllowUngrouped`
@@ -724,7 +725,7 @@ Note the doubled prefix. `Lean/LabelAttribute.lean:84`, inside `namespace Lean` 
 and the two ends of that declaration compute different names, exactly as D11's two ends computed different stack
 indices:
 
-|  | Computed as | Result |
+| | Computed as | Result |
 | --- | --- | --- |
 | the parser constant | ordinary declaration-name elaboration, which honours `_root_` | `Lean.Parser.Command.registerLabelAttr` |
 | the syntax node kind | `Lean/Elab/Syntax.lean:465`, `(← getCurrNamespace) ++ declName.getId`, which does not | `Lean._root_.Lean.Parser.Command.registerLabelAttr` |
@@ -749,12 +750,12 @@ as well:
 - `runForNodeKind` (`Lean/PrettyPrinter/Basic.lean:20-30`) resolves a formatter by treating the node kind as the
   declaration name. The rewrite makes this lookup succeed.
 - What it finds is `Lean.Parser.Command.registerLabelAttr`, whose value is
-  `ParserDescr.node `Lean._root_.Lean.Parser.Command.registerLabelAttr 1022 …` -- printed, not assumed.
+  ``ParserDescr.node `Lean._root_.Lean.Parser.Command.registerLabelAttr 1022 …`` -- printed, not assumed.
   `node.formatter`'s `checkKind` (`Lean/PrettyPrinter/Formatter.lean:335-343`) compares that against the node it was
   handed and `throwBacktrack`s.
 
-Measured on `tests/native-layout/RootedKind.lean`: without the rewrite, `Unknown constant `Lean._root_.…``; with it,
-`uncaught backtrack exception`. Nothing is formatted either way. One name cannot satisfy both ends, and supplying the
+Measured on `tests/native-layout/RootedKind.lean`: without the rewrite, the error is
+``Unknown constant `Lean._root_.…``; with it, `uncaught backtrack exception`. Nothing is formatted either way. One name cannot satisfy both ends, and supplying the
 alias the declaration implies would mean adding a constant to the environment mid-run -- a shim, not a repair.
 
 ### What shipped instead
@@ -771,7 +772,7 @@ the command leaves it verbatim, and §6a asserts both the diagnosis and that the
     htmls := htmls.push <div> <strong className="goal-vdash">⊢ </strong> {← exprToHtml goal} </div>
 
 and refused at `ValidationGate.tokens` with `token 451 (ProofWidgets.Jsx.jsxText) changed spelling`. That line holds
-four `jsxText` leaves -- three of them a single space, one `⊢ ` -- and JSX text is whitespace-significant, so the
+four `jsxText` leaves -- three of them a single space, one `⊢` -- and JSX text is whitespace-significant, so the
 whitespace is the token rather than the separator in front of it.
 
 `protectSourceDataFrom` protected `interpolatedStrKind`, pseudo-antiquotations, `dynamicQuot`, and any leaf whose source
@@ -857,9 +858,10 @@ never is.
 
 Both simpler rules were written and measured before this one:
 
-- **Protect every antiquotation.** `tests/command-formatter/CoreInput.lean`'s `macro_rules | `(emit_custom $name) =>
-  `(def $name : Nat := 1)` fails with `uncaught backtrack exception`, because `declId`'s formatter is handed a marker
-  leaf. This is the same failure the narrowing in `99d6212` had already recorded once.
+- **Protect every antiquotation.** `tests/command-formatter/CoreInput.lean`'s
+  ``macro_rules | `(emit_custom $name) => `(def $name : Nat := 1)`` fails with `uncaught backtrack exception`,
+  because `declId`'s formatter is handed a marker leaf. This is the same failure the narrowing in `99d6212` had
+  already recorded once.
 - **`!env.contains base`.** Right on all four shapes *in an importing module*, and wrong in
   `tests/native-layout/Islands.lean`, which has no imports and still quotes `def $name`. Builtin parsers are registered
   natively and format fine there; the constant is simply absent. The predicate must ask about the grammar, not about the
@@ -926,7 +928,7 @@ That is **D28**, pinned and unrepaired. Lean's own document for an undocumented 
     text"where" align(true) fill[nest2[line text"go" …]] text"\n" fill[nest2[line text"other" …]]
 
 so every binding lands one column right of the align's own column -- `align(true)`, then a `line` that flattens to a
-space. `PrettyPrinter.formatCommand` prints `   go` at three spaces with no adapter involved, and because *every*
+space. `PrettyPrinter.formatCommand` prints `go` at three spaces with no adapter involved, and because *every*
 binding shifts equally the block still parses. A documented binding does not follow that `line`; it follows the doc
 comment's own hard newline. Correcting one kind and not the other puts the two on different columns, and `where` is
 `checkColGe` against the first, so the block ends at the mismatch.
