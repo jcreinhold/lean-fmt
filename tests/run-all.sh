@@ -27,7 +27,7 @@ else
 fi
 
 failures=0
-declare -a lines
+timings="$scratch/timings"
 for suite in "${suites[@]}"; do
   run="tests/$suite/run.sh"
   if [ ! -f "$run" ]; then
@@ -44,11 +44,11 @@ for suite in "${suites[@]}"; do
   fi
   elapsed=$(python3 -c "import time; print(int(time.monotonic() - $started))")
   printf '%-28s %s  %4ds\n' "$suite" "$verdict" "$elapsed"
-  lines+=("$(printf '%10d  %s' "$elapsed" "$suite")")
+  printf '%s %s\n' "$elapsed" "$suite" >>"$timings"
 done
 
 printf -- '\n--- slowest suites ---\n'
-printf '%s\n' "${lines[@]}" | sort -rn | head -8 | awk '{printf "%7ds  %s\n", $1, $2}'
+sort -rn "$timings" | head -8 | awk '{printf "%7ds  %s\n", $1, $2}'
 if [ "$failures" -gt 0 ]; then
   printf 'logs kept at %s\n' "$scratch" >&2
   printf '%d suite(s) failed\n' "$failures" >&2

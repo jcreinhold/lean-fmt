@@ -326,12 +326,20 @@ if cmp -s "$once" "$twice"; then ok "format - piped into itself is a fixed point
 
 # A reader that exits before the writer finishes. The buffer is large enough that the write cannot
 # fit in the pipe buffer, so the failure is real rather than lucky. The contract is that this is an
-# infrastructure failure (exit 2, §6) reported on stderr -- not a crash, and not a silent 0 that would
-# tell a caller its bytes were delivered when they were not.
+# infrastructure failure (exit 2, §6) reported on stderr -- not a crash, and not a silent 0 that
+# would tell a caller its bytes were delivered when they were not.
+#
+# 6,000 definitions, because the size is part of the contract and no more: the output must exceed
+# the 64 KiB pipe buffer (~16 bytes per definition, so ~96 KB here), and anything larger only
+# spends frontend time. This fixture used to carry 20,000 definitions -- 7.2 minutes of the
+# suite's 8.4, for a test whose only size requirement is "bigger than the pipe buffer". (The
+# frontend is quadratic in command count on many-command files -- 2.5k/5k/10k/20k defs measure
+# 10/32/110/435 s while plain elaboration is linear -- which is a formatter finding of its own,
+# not something this test exists to measure.)
 big="$work/big.lean"
 {
   printf 'module\n\n'
-  for i in $(seq 0 20000); do printf 'def  x%s   :=   %s\n\n' "$i" "$i"; done
+  for i in $(seq 0 6000); do printf 'def  x%s   :=   %s\n\n' "$i" "$i"; done
 } >"$big"
 set +e
 fmt format - --stdin-filename "$identity" <"$big" 2>"$work/pipe.err" | {
