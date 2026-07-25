@@ -38,6 +38,16 @@ is part of that declaration's layout unit, not the next one's. This is visible i
 it is not in a pipeline: a range selection that stops just before a comment still formats the
 comment, because the comment is inside the unit the selection expanded to.
 
+## Incremental analysis
+
+Each open document owns one bounded incremental frontend. The first analysis of a buffer pays the
+full exact frontend; a `didChange` after it reuses the document's last-good snapshot rather than
+starting over, and an identical repeated request — a code-action query on cursor movement is the
+common one — is answered from the validated envelope of the current version instead of a new
+frontend run. Cancellation propagates into the frontend's snapshot tree, so a superseded analysis
+stops rather than finishing in the background. Unsaved bytes are the whole story: analysis reads
+the buffer the client sent, never the disk, and never a persistent cache entry.
+
 ## Multiple formatters on one file
 
 Lean's language server does not offer formatting at all — it has no formatting provider and

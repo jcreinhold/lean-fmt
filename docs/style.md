@@ -35,11 +35,17 @@ first ordinary command.
 the command column. Namespace and section nesting changes names and scope, not command indentation;
 this follows ordinary Lean and mathlib source layout. Top-level declaration-like commands are
 separated by one blank line; cohesive setup commands (`open`, `export`, `universe`, `variable`, local
-options) may remain adjacent. Empty vertical padding is not preserved.
+options) may remain adjacent. Empty vertical padding is not preserved: a run of consecutive blank
+lines collapses to one.
 
 `commands.modifiers` keeps doc comments on their own line, then attributes, visibility/safety modifiers,
 and the declaration keyword in parsed order. Short attribute lists are flat (`@[simp, aesop safe]`);
 long lists break after `@[` with one entry per line and a closing `]` at the attribute's indentation.
+A top-level declaration's attribute list always occupies its own line above the declaration, even a
+short one: `@[simp] theorem foo` comes back as `@[simp]` on one line and `theorem foo` on the next.
+That is the grammar's layout, not a width decision — a declaration-level attribute list carries a
+hard line after it upstream, and the inline variant of that construct exists and is used for
+structure fields, `let rec`, and binders, so the split is deliberate rather than a defect.
 
 `commands.syntax` keeps syntax, notation, macro, `open`, `export`, `universe`, `variable`, and
 `set_option` shells on one line while they fit. Their nested term/parser/tactic children break under

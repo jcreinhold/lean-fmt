@@ -30,6 +30,29 @@ broken sources, or rejected fixes. Exit `2` means a request, workspace, or infra
 prevented a trustworthy result. `--max-memory GIB` is an aggregate operating envelope, not a worker
 or scheduling control. Statistics go to stderr so `--json` stdout remains one valid object.
 
+## Formatting guarantees
+
+`docs/style.md` is the one canonical style; `line-width` is the only choice it offers. Every mode
+that renders canonical layout — `format`, `diff`, `fix`, and `format --check` — admits the
+candidate before anything leaves the process. Admission re-analyzes the candidate under a fresh
+frontend, holds node kinds, token spellings and ownership, comment payloads and logical owners,
+the import header, and the `#exit` tail fixed against the source (columns and whitespace lengths
+may move), and requires a second formatting pass over the candidate to be byte-identical. Only an
+admitted layout is reported or published; `fix` additionally rereads the original snapshot before
+writing, and publishes the batch as a unit or not at all.
+
+Refusal is loud. A file whose candidate fails admission is reported `infrastructure-failure` with
+the gate and the detail, the run exits 2, and nothing is published. There is no silent fallback:
+the formatter never ships source it could not validate as though it had formatted it. The one
+escape is explicit suppression — `-- lean-fmt: format-ignore-next` on the line above a unit
+copies that unit's normalized bytes exactly and resumes canonical formatting after it
+(`docs/style.md` §"Comments, literals, and suppression").
+
+Unbreakable payloads are best-effort: a long string literal, URL, or exact comment payload may
+exceed `line-width` rather than be rewritten. Two consequences of the canonical layout are worth
+knowing before the first run: a top-level declaration's attributes always move to their own line,
+and a run of consecutive blank lines collapses to one. Both are layout, not findings.
+
 ## Configuration and selection
 
 Configuration is discovered hierarchically. Walking up from each source file to the project root, the
@@ -223,9 +246,12 @@ ranges and trailing-comment ownership — that otherwise get reported as bugs.
 lean-fmt lsp --root . --debounce-ms 150
 ```
 
-One workspace root per session, one exact frontend child per request, no writes: the server never
-touches a `.lean` file or the result cache. `--max-memory` bounds the session and its children
-together.
+One workspace root per session, one bounded incremental frontend per open document, no writes: the
+server never touches a `.lean` file or the result cache. Analysis is incremental — a `didChange`
+reuses the document's last-good snapshot rather than paying a fresh frontend per edit, and an
+identical repeated request is answered from the validated envelope — and debounced, so a burst of
+edits costs one analysis. Cancelling a request cancels the frontend's snapshot tree directly.
+`--max-memory` bounds the session and its children together.
 
 `lsp` replaces `serve`, the NDJSON service earlier releases shipped. Every request `serve` answered
 has an LSP counterpart: `health` is `$/lean-fmt/health`, `analyze` is
@@ -235,11 +261,14 @@ has an LSP counterpart: `health` is `$/lean-fmt/health`, `analyze` is
 
 The application exposes no library API. `LeanFmt.Project` hides complete source selection, immutable
 snapshots, module evidence, and exact setup; `LeanFmt.Semantic` keeps product results independent of
-compiler projections. Artifact validation, fallback, cache sequencing, validation, stale checks, and
-writes remain behind one private execution operation. `LeanFmt.Cli` owns only parsing, presentation,
-statistics, and exit mapping. Design and
-exploratory code remains under
-`experiments/`. `docs/adding-a-rule.md` is the contributor guide for the rule engine.
+compiler projections. Layout authority is Lean's own grammar: the formatter registered for each
+parser produces the layout document, and `LeanFmt.Formatter.NativeLayout` adapts those documents
+under source-owned trivia and parser-significant-column constraints — nothing keys layout on a kind
+name, a quoted atom, or a rewrite table. Artifact validation, fallback, cache sequencing,
+validation, stale checks, and writes remain behind one private execution operation. `LeanFmt.Cli`
+owns only parsing, presentation, statistics, and exit mapping. Design and exploratory code remains
+under `experiments/`. `docs/adding-a-rule.md` is the contributor guide for the rule engine, and
+`docs/toolchain-upgrade.md` is the maintainer checklist for moving the pinned Lean toolchain.
 
 ```sh
 LEAN_NUM_THREADS=1 lake build

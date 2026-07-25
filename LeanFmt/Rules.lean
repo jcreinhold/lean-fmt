@@ -27,15 +27,15 @@ cache, an `Environment`, or `IO`: `run` takes a fact view and returns an `Array 
 
 `source` facts are free: the file was read. `syntax` facts need the exact frontend, so a run that
 selects any `syntax` rule needs a current `.olean` and its facet, or a frontend invocation. `semantic`
-facts also need the exact frontend, but additionally read the module's `Environment` — the parser and
-notation declarations — which the projection does not otherwise carry.
+facts add the exact frontend's normalized compiler diagnostics, captured only under rule demand, and
+the deprecation-occurrence facts a `.semantic` fix may read.
 
 `ruff-05b` (`RSF-IMPL`) added the `semantic` case with the producer, consumer, and test `ruff-05`
 required before a tier may exist, so it is not the empty tier `RuleInfo.input` rotted into. The
-producer is `analyzeExact`, which captures the declared notation spacing from the live `Environment`
-(`Analysis.lean`); the first consumer was the **formatter** rather than a rule, and `ruff-11` added
-semantic rules after. `RulePlan.demandedTier` and the artifact round-trip tests exercise it. A
-`format` run demands this tier; a source/syntax-only run never does. -/
+producer is `analyzeExact` (`Analysis.lean`), gated by `captureSemantic`; `ruff-11` added the first
+semantic rules. Formatting itself does not demand this tier — canonical layout is derived from the
+syntax projection and validated independently — so a run pays for diagnostics only when a selected
+rule reads them. -/
 inductive Tier where
   | source
   | «syntax»
