@@ -348,6 +348,28 @@ private def exactPlaceholder (source : String) (stx : Lean.Syntax)
       islands := #[{ marker, range, text := slice source range }] }
   | none => { stx }
 
+/- A leaf whose own bytes begin or end with whitespace, which no ordinary token's can.
+
+A token's range stops where its trivia begins, so leading or trailing whitespace *inside* the range is
+whitespace the parser captured as payload rather than skipped as separator -- and a parser that
+captures it is one whose token the surrounding gap belongs to. `ProofWidgets.Jsx.jsxText` is the case
+this was measured on: `<div> <strong …>⊢ </strong> …` spells four of them, three pure whitespace, and
+the adapter's boundary in front of each is a layout decision that reparses *into* the token. That is
+D25, caught by the `tokens` gate as `token 451 (ProofWidgets.Jsx.jsxText) changed spelling`.
+
+Protecting the leaf alone does not fix it, and that is why this returns `pendingEnvelope` rather than
+an island: an island keeps the boundary in *front* of it, which is exactly the gap in question. The
+enclosing node has to be the island, which is the escalation an interpolated string already uses.
+
+A leaf whose whitespace is interior only -- `<div>hello world</div>` -- is not covered, because
+nothing in its bytes distinguishes it from a string literal, which is common and must not escalate.
+Lean publishes no protocol for whitespace-significant syntax (there is no attribute, and the kind is a
+downstream library's), so this is what can be decided from the leaf itself. -/
+private def whitespaceEnvelope (text : String) : Bool :=
+  match text.front?, text.back? with
+  | some first, some last => first.isWhitespace || last.isWhitespace
+  | _, _ => false
+
 private partial def protectSourceDataFrom (source : String) : Lean.Syntax → ProtectedSyntax
   | .missing => { stx := .missing }
   | .atom info spelling =>
@@ -357,6 +379,7 @@ private partial def protectSourceDataFrom (source : String) : Lean.Syntax → Pr
       let text := slice source range
       if text.contains '\n' then
         exactPlaceholder source stx info
+      else if whitespaceEnvelope text then { stx, pendingEnvelope := true }
       else { stx }
     | none => { stx }
   | .ident info raw value preresolved =>
@@ -366,6 +389,7 @@ private partial def protectSourceDataFrom (source : String) : Lean.Syntax → Pr
       let text := slice source range
       if text.contains '\n' then
         exactPlaceholder source stx info
+      else if whitespaceEnvelope text then { stx, pendingEnvelope := true }
       else { stx }
     | none => { stx }
   | .node info kind children =>

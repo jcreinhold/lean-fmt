@@ -2762,6 +2762,47 @@ private def testAlignmentSequences : IO Unit := do
     s!"expected the two moved leaves to count as normalized, got \
 {reorderedMetrics.normalizedTokens}"
 
+/- D25: a leaf whose own bytes carry whitespace escalates to an enclosing island.
+
+`ProofWidgets.Jsx.jsxText` is the measured case and no such parser exists in this project, so the tree
+is built by hand -- which is also the sharper test, because it asserts the rule the leaf's bytes
+decide rather than one library's kind. Three leaves over one source: an ordinary token, a leaf whose
+bytes end in a space, and a string literal's own bytes, which contain a space and must *not* escalate.
+
+The claim is escalation, not protection: the island has to cover the enclosing node, because the
+boundary the adapter would choose sits in *front* of the whitespace leaf and reparses into it. An
+island over the leaf alone keeps that boundary and fixes nothing. -/
+private def sourceLeaf (start stop : String.Pos.Raw) (value : String)
+    (ident : Bool := false) : Lean.Syntax :=
+  let info := Lean.SourceInfo.original "".toRawSubstring start "".toRawSubstring stop
+  if ident then .ident info value.toRawSubstring value.toName [] else .atom info value
+
+private def testWhitespaceEnvelope : IO Unit := do
+  -- `<b>alpha </b>` in miniature: `open`, the payload leaf, `close`.
+  let source := "open alpha close"
+  let node := Lean.Syntax.node .none `test #[
+    sourceLeaf ⟨0⟩ ⟨4⟩ "open",
+    sourceLeaf ⟨5⟩ ⟨11⟩ "alpha ",
+    sourceLeaf ⟨11⟩ ⟨16⟩ "close"]
+  let (rewritten, islands) := Formatter.NativeLayout.protectSourceData source node
+  ensure (islands.size == 1)
+    s!"a whitespace-bearing leaf produced {islands.size} islands, expected one"
+  let island := islands[0]!
+  ensure (island.range.start == 0 && island.range.stop == 16)
+    s!"the island covers {island.range.start}:{island.range.stop}, not the enclosing node"
+  ensure (island.text == source) s!"the island's bytes are {repr island.text}, not the node's source"
+  ensure (rewritten.isIdent)
+    s!"the enclosing node was not replaced by a marker leaf: {rewritten.getKind}"
+  -- The negative half. A string literal's bytes contain a space and are already exact under the
+  -- ordinary path; escalating one would put every `"a b"` in mathlib inside an island.
+  let quoted := "call \"a b\""
+  let literal := Lean.Syntax.node .none `test #[
+    sourceLeaf ⟨0⟩ ⟨4⟩ "call",
+    sourceLeaf ⟨5⟩ ⟨10⟩ "\"a b\""]
+  let (_, quotedIslands) := Formatter.NativeLayout.protectSourceData quoted literal
+  ensure quotedIslands.isEmpty
+    s!"interior whitespace escalated: {quotedIslands.size} islands over {repr quoted}"
+
 public unsafe def main (args : List String) : IO UInt32 := do
   match args with
   | ["artifact-projection", artifactPath, sourcePath] =>
@@ -2811,6 +2852,7 @@ public unsafe def main (args : List String) : IO UInt32 := do
     testRangeSelection
     testChoiceVerification
     testAlignmentSequences
+    testWhitespaceEnvelope
     testSuppression
     IO.println "lean-fmt module-artifact tests passed"
     return 0

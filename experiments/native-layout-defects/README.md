@@ -820,3 +820,42 @@ constant the parser really got, the upstream line that computed the other one, a
 gets the file formatted anyway. That last part is the difference between a message and advice nobody
 can take -- `-- lean-fmt: format-ignore-next` above the command leaves it verbatim, and §6a asserts
 both the diagnosis and that the escape works.
+
+## D25 is a token whose parser kept the whitespace, and the gap in front of it is the adapter's
+
+`Mathlib/Tactic/ClickSuggestions/ApplyAt.lean:89` spells
+
+    htmls := htmls.push <div> <strong className="goal-vdash">⊢ </strong> {← exprToHtml goal} </div>
+
+and refused at `ValidationGate.tokens` with `token 451 (ProofWidgets.Jsx.jsxText) changed spelling`.
+That line holds four `jsxText` leaves -- three of them a single space, one `⊢ ` -- and JSX text is
+whitespace-significant, so the whitespace is the token rather than the separator in front of it.
+
+`protectSourceDataFrom` protected `interpolatedStrKind`, pseudo-antiquotations, `dynamicQuot`, and any
+leaf whose source text contains a newline. None of those describe a leaf whose bytes are one space.
+
+### The rule, and what decides it
+
+A token's range stops where its trivia begins, so **leading or trailing whitespace inside a leaf's own
+range is whitespace the parser captured as payload**. No ordinary token's range can carry it. That is
+the whole test -- `whitespaceEnvelope` -- and it is a property of the leaf's bytes rather than of a
+kind, so it does not name a downstream library's parser. Lean publishes no protocol for
+whitespace-significant syntax to key on instead; `CLAUDE.md` records that absence, and this is what can
+be decided without one.
+
+**Protection is not enough; it escalates.** An exact island keeps the boundary in *front* of it -- that
+is deliberate, and D16's note says why -- and that boundary is exactly the gap that reparses into a
+whitespace-significant token. So the leaf returns `pendingEnvelope`, and the enclosing node becomes the
+island, which is the same escalation an interpolated string already uses.
+
+**What it does not cover.** A leaf whose whitespace is interior only, `<div>hello world</div>`, is not
+protected: nothing in its bytes tells it from a string literal, and `"a b"` is common enough that
+escalating one would put a large fraction of mathlib inside islands. The unit test asserts both halves
+for that reason -- the trailing-space leaf escalates and the string literal does not.
+
+Measured on the file above at `--max-memory 6`: `infrastructure-failure` at
+`ValidationGate.tokens`, then `would-format`. `lake lint` over this repository's own 63 files is
+unchanged at 0 findings, and no fixture in any suite changed, which is the other half of the
+measurement: the rule fires on nothing ordinary. The end-to-end gate is that mathlib file; the
+in-repository gate is `testWhitespaceEnvelope`, which builds the tree by hand because no parser in
+this project captures whitespace.
