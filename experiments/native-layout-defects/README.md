@@ -859,3 +859,77 @@ unchanged at 0 findings, and no fixture in any suite changed, which is the other
 measurement: the rule fires on nothing ordinary. The end-to-end gate is that mathlib file; the
 in-repository gate is `testWhitespaceEnvelope`, which builds the tree by hand because no parser in
 this project captures whitespace.
+
+## D23 is one question asked of every antiquotation, and both wrong answers were shipped
+
+`Mathlib/Tactic/Rename.lean`, `Mathlib/Data/DFinsupp/Notation.lean` and
+`Mathlib/Data/Finsupp/Notation.lean` -- three of the 264 audited paths -- refused with `format:
+uncaught backtrack exception`. The message is the unstructured one `CLAUDE.md` warns about: no node, no
+range, no expected shape. Minimizing `Rename.lean` by hand through the stdin route (`format -
+--stdin-filename … --root /Users/jcreinhold/Code/mathlib4`, 1.6 s a try, so bisection is cheap) got to
+
+    syntax (name := r4) "r4 " (term " => " ident),+ : tactic
+
+    elab_rules : tactic
+      | `(tactic| r4 $[$as:term => $bs:ident],*) => pure ()
+
+and the same shape with `$as:ident` instead of `$as:term` formats. `experiments/native-layout-defects`'s
+own probe then split the two halves apart: `PrettyPrinter.formatCommand` on the trivia-stripped syntax
+renders all three commands **exactly**, so nothing upstream is wrong with the document. A second probe
+over the *marker-substituted* tree found the failure:
+
+    (Tactic.quot "`(tactic|" (r4 "r4" [(sepBy.antiquot_scope "$" [] "[" [`leanFmtExact172x193] "]" ",*")]) ")")
+
+`$as:term => $bs:ident` -- the entire splice group -- had become one marker leaf. `sepBy.antiquot_scope`
+was handed an identifier where its own children belong, and backtracked.
+
+### Why it escalated, and why not escalating is also wrong
+
+`sourceDataKind` protected pseudo antiquotations, and protection sets `pendingEnvelope`, which replaces
+the smallest strictly-enclosing node. Removing the protection outright fixes `Rename.lean` and moves the
+other two to `Unknown constant term.pseudo.antiquot`. That message names the real mechanism.
+`categoryFormatterCore` (`Lean/PrettyPrinter/Formatter.lean:288-301`) is
+
+    withAntiquot.formatter (mkAntiquot.formatter' cat.toString cat (isPseudoKind := true))
+      (formatterForKind stx.getKind)
+
+and `withAntiquot.formatter` is `orelse.formatter`. So a category position formats *its own* pseudo
+antiquotation and, for anything else, falls through to `formatterForKind` -- `runForNodeKind`
+(`Lean/PrettyPrinter/Basic.lean:20-30`), which treats the kind as a declaration name. A category is not
+a declaration. `fun $_:ident ↦ $body` parses, because `funBinder` admits `ident`, and then cannot be
+re-printed: the printer asks the category and the node carries the token's kind. Nothing in the node
+says which category will ask. That is an upstream gap, in the same family as D21.
+
+A concrete parser's slot has no such problem. `node.formatter` for `p` is itself wrapped in
+`withAntiquot.formatter (mkAntiquot.formatter' … p)`, which accepts `p.antiquot` exactly.
+
+### The discriminator, and the two wrong ones measured first
+
+Protect an antiquotation iff its kind's base -- the kind with `antiquot` and an optional `pseudo`
+stripped -- **is a registered syntax category or is atomic**. A token kind is one component (`ident`,
+`str`, `num`); a parser declaration never is.
+
+| shape | base | protect | why |
+| --- | --- | --- | --- |
+| `$as:term` in a splice group | `term` | yes | category |
+| `$_` heading an application | `term` | yes | category |
+| `$_:ident` in a `funBinder` slot | `ident` | yes | token kind |
+| `$name` in `` `(def $name : Nat := 1) `` | `Lean.Parser.Command.declId` | no | parser declaration |
+
+Both simpler rules were written and measured before this one:
+
+- **Protect every antiquotation.** `tests/command-formatter/CoreInput.lean`'s
+  `macro_rules | `(emit_custom $name) => `(def $name : Nat := 1)` fails with `uncaught backtrack
+  exception`, because `declId`'s formatter is handed a marker leaf. This is the same failure the
+  narrowing in `99d6212` had already recorded once.
+- **`!env.contains base`.** Right on all four shapes *in an importing module*, and wrong in
+  `tests/native-layout/Islands.lean`, which has no imports and still quotes `def $name`. Builtin parsers
+  are registered natively and format fine there; the constant is simply absent. The predicate must ask
+  about the grammar, not about the file's imports.
+
+Protection is also **in place** rather than escalating: the marker replaces the antiquotation and
+nothing else. Escalation is what handed `sepBy.antiquot_scope` a leaf in the first place.
+
+Measured: the three mathlib files format; `lake lint` unchanged at 63 files / 0 findings;
+`tests/native-layout` and `tests/command-formatter` both green, which is the point -- they pin opposite
+sides of the rule. `tests/native-layout/Islands.lean` now carries both sides itself.

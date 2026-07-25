@@ -70,4 +70,26 @@ That was D16. -/
 def quotedCommand (value : Lean.Term) : Lean.MacroM Lean.Syntax :=
   `(command| #eval $value)
 
+/- The two sides of D23, which is one question asked of every antiquotation: will anything in scope
+format this node, or will the lookup fall through to its kind?
+
+Below, `$_` heads an application and `$as:term` sits inside a splice group. Both carry a *category's*
+pseudo kind, and a category is not a declaration, so when `categoryFormatterCore`'s own antiquotation
+formatter declines them the fall-through asks `runForNodeKind` for `term.pseudo.antiquot` and gets
+`Unknown constant`. They have to be protected. `$_:ident` in `nestedEscalation` above is the same
+failure spelled with a token's kind in a category slot -- `funBinder` admits `ident`, and the printer
+asks the category first.
+
+`$name` in the quotation on the last line is the opposite case and the one that keeps the rule honest:
+`declId` is a declared parser, its own formatter accepts `declId.antiquot`, and protecting it hands
+`Command.quot` a leaf where a command belongs -- `uncaught backtrack exception`, which is how a
+predicate that matched every antiquotation was caught. The base naming a constant is the whole
+discriminator. -/
+def spliceGroup : Lean.Syntax → Lean.MacroM Lean.Syntax
+  | `(term| $_ $pat $val) => `($pat $val)
+  | stx => return stx
+
+def declarationQuotation (name : Lean.Ident) : Lean.MacroM Lean.Syntax :=
+  `(def $name : Nat := 1)
+
 end NativeLayoutIslands

@@ -2784,7 +2784,7 @@ private def testWhitespaceEnvelope : IO Unit := do
     sourceLeaf ⟨0⟩ ⟨4⟩ "open",
     sourceLeaf ⟨5⟩ ⟨11⟩ "alpha ",
     sourceLeaf ⟨11⟩ ⟨16⟩ "close"]
-  let (rewritten, islands) := Formatter.NativeLayout.protectSourceData source node
+  let (rewritten, islands) := Formatter.NativeLayout.protectSourceData {} source node
   ensure (islands.size == 1)
     s!"a whitespace-bearing leaf produced {islands.size} islands, expected one"
   let island := islands[0]!
@@ -2799,7 +2799,7 @@ private def testWhitespaceEnvelope : IO Unit := do
   let literal := Lean.Syntax.node .none `test #[
     sourceLeaf ⟨0⟩ ⟨4⟩ "call",
     sourceLeaf ⟨5⟩ ⟨10⟩ "\"a b\""]
-  let (_, quotedIslands) := Formatter.NativeLayout.protectSourceData quoted literal
+  let (_, quotedIslands) := Formatter.NativeLayout.protectSourceData {} quoted literal
   ensure quotedIslands.isEmpty
     s!"interior whitespace escalated: {quotedIslands.size} islands over {repr quoted}"
 

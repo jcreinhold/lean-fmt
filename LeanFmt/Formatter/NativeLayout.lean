@@ -262,26 +262,56 @@ appending to the kind it quotes. -/
 private def interpolationKind (kind : Lean.Name) : Bool :=
   kind == Lean.interpolatedStrKind || kind == Lean.interpolatedStrLitKind
 
-/- A *pseudo* antiquotation node, and only that. `Lean.Parser.mkAntiquot` builds the kind as
-`kind ++ (if isPseudoKind then `pseudo else .anonymous) ++ `antiquot`, where `isPseudoKind` means the
-kind is not checked at syntax `match`; this matches the two trailing components that spelling produces.
+/- An antiquotation node no formatter in scope will accept, which is not the same as an antiquotation
+node. That is D23, and the discriminator is the whole of it.
 
-Ordinary antiquotations are deliberately excluded. Every antiquotation has a registered formatter
-(`mkAntiquot.formatter`), so protecting one buys nothing -- and it costs: protection escalates to the
-smallest enclosing node, which is replaced by a marker leaf, and a quotation whose typed child has
-become a leaf no longer matches the grammar its formatter expects. Widening this predicate to all
-antiquotations made `macro_rules | `(emit_custom $name) => ...` fail with `uncaught backtrack
-exception`, because the `command` quotation was handed an atom where a command node belonged.
+`mkAntiquot` builds the kind as `base ++ (if isPseudoKind then `pseudo else .anonymous) ++ `antiquot`,
+so the base is recoverable from the kind. Whether Lean can format the node depends on what dispatches
+on it:
 
-This is spelled structurally rather than as `kind.toString.contains ".pseudo.antiquot"`, which asked
-the same question of the rendered name and so could also match a kind that merely contains that text. -/
-private def antiquotationKind (kind : Lean.Name) : Bool :=
+- a **concrete parser's slot** formats its own antiquotation. `node.formatter` for `p` is wrapped in
+  `withAntiquot.formatter (mkAntiquot.formatter' … p)`, which accepts `p.antiquot` exactly. `p` is a
+  declared parser, so `env.contains base` holds.
+- a **category position** formats only that category's own pseudo antiquotation.
+  `categoryFormatterCore` (`Lean/PrettyPrinter/Formatter.lean:288-301`) wraps the dispatch in
+  `withAntiquot.formatter (mkAntiquot.formatter' cat.toString cat (isPseudoKind := true))` and, when
+  that backtracks, falls through to `formatterForKind stx.getKind` -- which is `runForNodeKind`, which
+  treats the kind as a declaration name. A category is not a declaration, so `env.contains base` fails
+  and so does the lookup: `Unknown constant term.pseudo.antiquot`, `Unknown constant ident.antiquot`.
+
+The second case is an upstream gap, not a lean-fmt one. `fun $_:ident ↦ $body` parses -- `funBinder`
+admits `ident` -- and then cannot be re-printed, because the formatter asks the *category* first and
+the node carries the *token's* kind. Nothing about the node says which category will ask.
+
+So the test is what the base *is*: a syntax category or a token kind, which only a category position
+can dispatch on, versus a parser declaration, whose own formatter accepts its own antiquotation. The
+registered categories answer the first half directly. The second half is `Name.isAtomic`, because a
+token kind is a one-component name -- `ident`, `str`, `num` -- and a parser declaration never is.
+
+It is exact on the four shapes that pin it. `Lean.Parser.Command.declId.antiquot` in
+`` `(def $name : Nat := 1) `` is neither, and must be left alone: protecting it is what made
+`macro_rules | `(emit_custom $name) => …` fail with `uncaught backtrack exception`. `ident.antiquot`,
+`term.pseudo.antiquot` and their kin are both, and must be protected.
+
+Not `env.contains base`, which asks about the file's imports rather than about the grammar and gets the
+same four shapes right only when they are imported. Every builtin parser is registered natively and
+formats in an import-less module; `tests/native-layout/Islands.lean` is one, and `env.contains` refuses
+its `` `(def $name : Nat := 1) `` while every rule that matters says it is fine.
+
+Protection is *in place*: the marker replaces the antiquotation and nothing else, because escalating to
+the smallest enclosing node hands a quotation a leaf where its grammar wants a subtree, which is the
+same failure from the other side. -/
+private def antiquotationKind (categories : Lean.Parser.ParserCategories) (kind : Lean.Name) : Bool :=
   match kind with
-  | .str (.str _ "pseudo") "antiquot" => true
+  | .str base "antiquot" =>
+    let base := match base with
+      | .str base "pseudo" => base
+      | base => base
+    categories.contains base || base.isAtomic
   | _ => false
 
 private def sourceDataKind (kind : Lean.Name) : Bool :=
-  kind == Lean.interpolatedStrKind || antiquotationKind kind
+  kind == Lean.interpolatedStrKind
 
 /- A quotation whose body was parsed by a parser named at runtime, which Lean's formatter cannot
 recover. This is the second ordinary upstream bug the module works around.
@@ -370,7 +400,8 @@ private def whitespaceEnvelope (text : String) : Bool :=
   | some first, some last => first.isWhitespace || last.isWhitespace
   | _, _ => false
 
-private partial def protectSourceDataFrom (source : String) : Lean.Syntax → ProtectedSyntax
+private partial def protectSourceDataFrom (categories : Lean.Parser.ParserCategories) (source : String) :
+    Lean.Syntax → ProtectedSyntax
   | .missing => { stx := .missing }
   | .atom info spelling =>
     let stx := Lean.Syntax.atom info spelling
@@ -404,6 +435,8 @@ private partial def protectSourceDataFrom (source : String) : Lean.Syntax → Pr
       | none => { stx }
     else if sourceDataKind kind then
       { stx, pendingEnvelope := true }
+    else if antiquotationKind categories kind then
+      exactPlaceholder source stx info
     else if dynamicQuotationKind kind then
       -- Protected here, not escalated: the quotation is a complete term, so a marker leaf standing in
       -- for it leaves the grammar around it intact and the island stays as small as the defect.
@@ -411,7 +444,7 @@ private partial def protectSourceDataFrom (source : String) : Lean.Syntax → Pr
     else
       let (rewrittenChildren, islands, pending) := children.foldl (init := (#[], #[], false))
         fun (rewritten, islands, pending) child =>
-          let child := protectSourceDataFrom source child
+          let child := protectSourceDataFrom categories source child
           (rewritten.push child.stx, islands ++ child.islands,
             pending || child.pendingEnvelope)
       let rewritten := Lean.Syntax.node info kind rewrittenChildren
@@ -438,9 +471,10 @@ private partial def protectSourceDataFrom (source : String) : Lean.Syntax → Pr
         | none => { stx := rewritten, islands, pendingEnvelope := true }
       else { stx := rewritten, islands }
 
-private def protectSourceData (source : String) (stx : Lean.Syntax) :
+private def protectSourceData (categories : Lean.Parser.ParserCategories) (source : String)
+    (stx : Lean.Syntax) :
     Lean.Syntax × Array ExactIsland :=
-  let result := protectSourceDataFrom source stx
+  let result := protectSourceDataFrom categories source stx
   if result.pendingEnvelope then
     -- The original node again, for the reason spelled at the escalation site above: `result.stx` may
     -- have lost the positions a nested placeholder replaced, and the island covers what the marker
@@ -1848,9 +1882,8 @@ alternatives: alternative 0 is {expected}, alternative {alternative} is {actual}
   -- bail-out to the bar's line, and `transform` flattens the same span so the join leaves no break
   -- behind to land at the wrong column.
   let joined := collectGuardBailouts source stripped
-  let commandKinds :=
-    ((Lean.Parser.parserExtension.getState (← Lean.getEnv)).categories.find?
-      `command).map (·.kinds) |>.getD {}
+  let categories := (Lean.Parser.parserExtension.getState (← Lean.getEnv)).categories
+  let commandKinds := (categories.find? `command).map (·.kinds) |>.getD {}
   let rootStart := ((selectedLeafRanges stripped)[0]?).map (·.start) |>.getD 0
   let ctorDocStarts := collectCtorDocStarts stripped
   let nestedCommandRanges := collectNestedCommandRanges commandKinds rootStart stripped
@@ -1880,7 +1913,7 @@ alternatives: alternative 0 is {expected}, alternative {alternative} is {actual}
       docBoundaries ++
       joined.map (·.start, BoundaryLayout.flat)
   let commentFree := withoutTrivia stripped
-  let (formattedSyntax, islands) := protectSourceData source commentFree
+  let (formattedSyntax, islands) := protectSourceData categories source commentFree
   -- D21, named before `formatCommand` reaches it. Both lookups this breaks fail with a message about
   -- a name nobody wrote, and the one that fires depends on which end is asked first.
   if let some (kind, suffix) := rootedKindNode? (← Lean.getEnv) formattedSyntax then
