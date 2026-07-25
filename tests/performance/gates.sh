@@ -89,7 +89,7 @@ gate_fully_served() {
 gate_no_frontend_work() {
   local stderr_path=$1
   [[ $(gate_phase_count exact_child "$stderr_path") == 0 &&
-    $(gate_phase_count exact_setup "$stderr_path") == 0 ]]
+  $(gate_phase_count exact_setup "$stderr_path") == 0 ]]
 }
 
 # §1d. Every observed child admission must be the sole active child, and the capture must contain the
@@ -102,16 +102,29 @@ gate_serial_children() {
     ! grep -Eq '^cache\.active_children=([2-9]|[1-9][0-9]+)$' "$stderr_path"
 }
 
+# §1f. With `--jobs N` every admission must observe no more than N active children, at least one
+# admission must observe exactly N (a serial regression must not pass as parallel), and the capture
+# must contain the expected number of admissions.
+gate_parallel_children() {
+  local stderr_path=$1 jobs=$2 expected=$3
+  local count
+  count=$(grep -c '^cache\.active_children=' "$stderr_path" || true)
+  [[ $count == "$expected" ]] || return 1
+  grep -Eq "^cache\.active_children=${jobs}\$" "$stderr_path" || return 1
+  awk -F= -v j="$jobs" '/^cache\.active_children=/ && $2+0 > j { bad=1 } END { exit bad }' \
+    "$stderr_path"
+}
+
 # §1e. Artifact formatting must avoid the exact-source child, while the forced exact run must really
 # exercise it. Both still validate canonical output; this gate distinguishes the acceleration route.
 gate_artifact_avoids_exact() {
   local artifact_path=$1 exact_path=$2
   [[ $(gate_phase_count artifact_child "$artifact_path") == 1 &&
-    $(gate_phase_count exact_child "$artifact_path") == 0 &&
-    $(gate_counter cache.path_artifact_render "$artifact_path") == 1 &&
-    $(gate_phase_count artifact_child "$exact_path") == 0 &&
-    $(gate_phase_count exact_child "$exact_path") == 1 &&
-    $(gate_counter cache.path_exact_render "$exact_path") == 1 ]]
+  $(gate_phase_count exact_child "$artifact_path") == 0 &&
+  $(gate_counter cache.path_artifact_render "$artifact_path") == 1 &&
+  $(gate_phase_count artifact_child "$exact_path") == 0 &&
+  $(gate_phase_count exact_child "$exact_path") == 1 &&
+  $(gate_counter cache.path_exact_render "$exact_path") == 1 ]]
 }
 
 # §2. Gate G3, recalibrated onto the remainder rather than the percentage. See `run.sh` for the

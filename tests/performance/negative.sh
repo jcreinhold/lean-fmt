@@ -147,6 +147,22 @@ sed '2s/=1$/=2/' "$scratch/serial.err" >"$scratch/concurrent.err"
 expect_reject "a second concurrently active child" gate_serial_children "$scratch/concurrent.err" 2
 expect_reject "an empty child profile" gate_serial_children "$scratch/healthy.err" 2
 
+printf -- '\n--- §1f parallel admission stays within --jobs ---\n'
+cat >"$scratch/bounded.err" <<'CAPTURE'
+cache.active_children=1
+cache.active_children=2
+CAPTURE
+expect_accept "two bounded concurrent admissions" gate_parallel_children "$scratch/bounded.err" 2 2
+
+cat >"$scratch/over.err" <<'CAPTURE'
+cache.active_children=1
+cache.active_children=3
+CAPTURE
+expect_reject "a third child under --jobs 2" gate_parallel_children "$scratch/over.err" 2 2
+expect_reject "no observed concurrency under --jobs 2" \
+  gate_parallel_children "$scratch/serial.err" 2 2
+expect_reject "a missing admission under --jobs 2" gate_parallel_children "$scratch/bounded.err" 2 3
+
 printf -- '\n--- §1e artifact formatting avoids exact-source analysis ---\n'
 cat >"$scratch/artifact.err" <<'CAPTURE'
 phase.artifact_child_ms=900

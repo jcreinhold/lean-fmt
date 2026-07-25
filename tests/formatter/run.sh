@@ -11,7 +11,7 @@ application=$(lake -q query lean-fmt --text)
 tests=$(lake -q query lean-fmt-tests --text)
 LEAN_NUM_THREADS=1 lake setup-file tests/check/Clean.lean >"$work/setup.json"
 
-oracle=(lake env python3 tests/formatter/oracle.py --application "$application" --tests "$tests" \
+oracle=(lake env python3 tests/formatter/oracle.py --application "$application" --tests "$tests"
   --setup "$work/setup.json")
 candidate=(python3 tests/formatter/candidate.py)
 

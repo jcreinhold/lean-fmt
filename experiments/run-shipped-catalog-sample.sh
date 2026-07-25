@@ -26,10 +26,17 @@ cd "$repo_root"
 mathlib_root=${1:-"$HOME/Code/mathlib4"}
 sources=${2:-"$repo_root/experiments/workloads/mathlib-v4.32.0-sample.txt"}
 fmt="$repo_root/.lake/build/bin/lean-fmt"
-[[ -x $fmt ]] || { echo "build lean-fmt first" >&2; exit 2; }
-[[ -d $mathlib_root ]] || { echo "no mathlib at $mathlib_root" >&2; exit 2; }
+[[ -x $fmt ]] || {
+  echo "build lean-fmt first" >&2
+  exit 2
+}
+[[ -d $mathlib_root ]] || {
+  echo "no mathlib at $mathlib_root" >&2
+  exit 2
+}
 
-files=(); while IFS= read -r f; do [[ -n $f ]] && files+=("$f"); done <"$sources"
+files=()
+while IFS= read -r f; do [[ -n $f ]] && files+=("$f"); done <"$sources"
 echo "manifest: ${#files[@]} modules from $sources"
 
 out_dir=${OUT_DIR:-$(mktemp -d)}
@@ -37,7 +44,8 @@ mkdir -p "$out_dir"
 echo "reports: $out_dir"
 
 arm() {
-  local label=$1; shift
+  local label=$1
+  shift
   local json="$out_dir/$label.json"
   # `check` exits 1 when it reports findings, which is not a failure of the run.
   set +e
@@ -45,17 +53,19 @@ arm() {
   local rc=$?
   set -e
   if [[ $rc -gt 1 ]]; then
-    echo "  $label: RUN FAILED (exit $rc)" >&2; tail -5 "$json.err" >&2; return 1
+    echo "  $label: RUN FAILED (exit $rc)" >&2
+    tail -5 "$json.err" >&2
+    return 1
   fi
   # Codes in emission order, so a count is never reported without saying which rules produced it.
   local codes
-  codes=$(grep -o '"code":"FMT[0-9]*"' "$json" | sed 's/.*"\(FMT[0-9]*\)"/\1/' | sort | uniq -c \
-            | awk '{printf "%s×%s ", $1, $2}')
+  codes=$(grep -o '"code":"FMT[0-9]*"' "$json" | sed 's/.*"\(FMT[0-9]*\)"/\1/' | sort | uniq -c |
+    awk '{printf "%s×%s ", $1, $2}')
   local n
   n=$(grep -o '"code":"FMT[0-9]*"' "$json" | wc -l | tr -d ' ')
   printf '  %-16s findings=%-4s %s\n' "$label" "$n" "${codes:-(none)}"
 }
 
-arm default       --select default
-arm all           --select all
-arm all-preview   --select all --preview
+arm default --select default
+arm all --select all
+arm all-preview --select all --preview

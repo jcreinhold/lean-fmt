@@ -188,6 +188,30 @@ budget = int(argv[4])
 assert 0 < budget < 8 * 1024**3, budget
 PY
 
+# With `--workers 2` the headroom is divided between the workers' children, so the budget argument is
+# at most half the envelope. The gate is the same argv observation as above, a count that cannot
+# drift with machine speed; the scheduler itself is pinned by tests/performance §1f.
+run_expect 2 "$work/budget-jobs.json" env LEAN_FMT_DISABLE_ARTIFACT=1 \
+  LEAN_FMT_TEST_DISABLE_MODULE_EVIDENCE=1 LEAN_FMT_TEST_ANALYZER="$recorder" \
+  LEAN_FMT_ARGV_CAPTURE="$work/child-argv-jobs.txt" \
+  "$application" check --root . --json --no-cache --max-memory 8 --workers 2 tests/check/Clean.lean
+python3 - "$work/child-argv-jobs.txt" <<'PY'
+import sys
+argv = open(sys.argv[1]).read().splitlines()
+assert argv[0] == "__analyze-exact", argv
+budget = int(argv[4])
+assert 0 < budget <= 4 * 1024**3, budget
+PY
+
+# `--workers` changes scheduling, never output: the parallel run assembles results by target index,
+# so its report is byte-identical to the serial run's. Three fixtures with three different
+# outcomes (clean, findings, would-format) exercise the fold over every report shape.
+run_expect 1 "$work/serial.json" "$application" check --root . --json --no-cache \
+  tests/check/Clean.lean tests/check/Findings.lean tests/check/Layout.lean
+run_expect 1 "$work/parallel.json" "$application" check --root . --json --no-cache --workers 2 \
+  tests/check/Clean.lean tests/check/Findings.lean tests/check/Layout.lean
+cmp "$work/serial.json" "$work/parallel.json"
+
 run_expect 1 "$work/repeated.json" "$application" check --root . --json --no-cache \
   tests/check/Findings.lean
 cmp "$work/artifact-findings.json" "$work/repeated.json"

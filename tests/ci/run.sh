@@ -42,7 +42,7 @@ mkdir -p "$consumer/Demo"
 cd "$consumer"
 cp "$repo_root/lean-toolchain" .
 
-cat > lakefile.lean <<EOF
+cat >lakefile.lean <<EOF
 import Lake
 open Lake DSL
 
@@ -56,19 +56,19 @@ package demo where
 lean_lib Demo
 EOF
 
-cat > Demo.lean <<'EOF'
+cat >Demo.lean <<'EOF'
 module
 
 import Demo.Basic
 EOF
 
-cat > Demo/Basic.lean <<'EOF'
+cat >Demo/Basic.lean <<'EOF'
 module
 
 public def greeting : String := "hello"
 EOF
 
-cat > .gitignore <<'EOF'
+cat >.gitignore <<'EOF'
 .lake/
 .lean-fmt-cache/
 *.sarif
@@ -98,7 +98,7 @@ ok 'lake lint exits 0 on a clean tree'
 
 # Now give it something to find. FMT003 is a duplicate import: stable, safe-fixable, and it does not
 # depend on line width or preview status.
-cat > Demo/Dirty.lean <<'EOF'
+cat >Demo/Dirty.lean <<'EOF'
 module
 
 import Demo.Basic
@@ -106,7 +106,7 @@ import Demo.Basic
 
 public def other : String := greeting
 EOF
-printf 'import Demo.Dirty\n' >> Demo.lean
+printf 'import Demo.Dirty\n' >>Demo.lean
 git_q add -A
 git_q commit -qm 'add a module with a duplicate import'
 
@@ -157,8 +157,8 @@ ok 'an exit-2 run writes no SARIF file, which is why the recipe guards on its ex
 
 if command -v uv >/dev/null 2>&1; then
   if uv run --with check-jsonschema --quiet check-jsonschema \
-      --schemafile "$repo_root/tests/reporting/sarif-schema-2.1.0.json" findings.sarif \
-      >/dev/null 2>&1; then
+    --schemafile "$repo_root/tests/reporting/sarif-schema-2.1.0.json" findings.sarif \
+    >/dev/null 2>&1; then
     ok 'the consuming project SARIF log validates against the vendored 2.1.0 schema'
   else
     fail 'SARIF from a consuming project failed schema validation'
@@ -170,7 +170,7 @@ fi
 printf -- '--- Recipe 3: changed files on a pull request ---\n'
 
 git_q checkout -q -b feature
-cat > Demo/New.lean <<'EOF'
+cat >Demo/New.lean <<'EOF'
 module
 
 import Demo.Basic
@@ -178,7 +178,7 @@ import Demo.Basic
 
 public def fresh : String := greeting
 EOF
-printf 'import Demo.New\n' >> Demo.lean
+printf 'import Demo.New\n' >>Demo.lean
 git_q add -A
 git_q commit -qm 'add another module with a duplicate import'
 

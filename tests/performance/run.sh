@@ -110,7 +110,7 @@ validator_fixture="$repo_root/tests/performance/validator-gate/Accepted.lean"
 lake setup-file "$validator_fixture" >"$scratch/validator-setup.json"
 "$fmt" __analyze-exact "$scratch/validator-setup.json" "$validator_fixture" \
   "$validator_fixture" 8589934592 4:80 >"$scratch/validator.json"
-if python3 - "$scratch/validator.json" <<'PY'
+if python3 - "$scratch/validator.json" <<'PY'; then
 import json, sys
 result = json.load(open(sys.argv[1]))
 canonical = result.get("canonical")
@@ -123,7 +123,6 @@ assert canonical["validation"] == {
 }, canonical
 assert canonical["metrics"]["frontendRuns"] == 2, canonical
 PY
-then
   ok "one candidate run plus one reparsed idempotence run; no hidden third render"
 else
   bad "validation work counts changed from frontend/renders/comparisons/idempotence = 2/2/1/1"
@@ -189,13 +188,38 @@ else
   bad "artifact-built and exact-source reports differ"
 fi
 
+printf -- '\n--- §1f parallel child admission stays within --workers ---\n'
+
+# A sleeping fake analyzer holds both children alive long enough for the second admission to
+# observe the first: concurrency is certain, not timed. Both files fail (the fake exits 1); what
+# the gate reads is the admission counter, not the report.
+sleeper="$scratch/sleeping-analyzer.sh"
+cat >"$sleeper" <<'SH'
+#!/usr/bin/env bash
+sleep 1
+exit 1
+SH
+chmod +x "$sleeper"
+LEAN_FMT_DISABLE_ARTIFACT=1 LEAN_FMT_TEST_DISABLE_MODULE_EVIDENCE=1 \
+  LEAN_FMT_TEST_ANALYZER="$sleeper" LEAN_FMT_PROFILE_PHASES=1 \
+  "$fmt" check --no-cache --workers 2 \
+  "$repo_root/tests/check/Clean.lean" "$repo_root/tests/check/Layout.lean" \
+  >"$scratch/parallel.out" 2>"$scratch/parallel.err" || true
+
+if gate_parallel_children "$scratch/parallel.err" 2 2; then
+  ok "two workers admit two concurrent children and never a third"
+else
+  bad "parallel child admission breached the --workers bound"
+fi
+
 printf -- '\n--- §2 no work outside the top-level phases (gate G3) ---\n'
 
 # The wall clock must cover the formatter process and nothing else. Taking two `python3`
 # timestamps around the run instead put both interpreter startups in the denominator, which read as
 # 68 ms of unaccounted time the formatter never spent -- the harness failing its own measurement.
 # One Python process times the child directly.
-wall=$(python3 - "$fmt" "$repo_root" "$scratch/g3.out" "$scratch/g3.err" "${files[@]}" <<'TIMED'
+wall=$(
+  python3 - "$fmt" "$repo_root" "$scratch/g3.out" "$scratch/g3.err" "${files[@]}" <<'TIMED'
 import os, subprocess, sys, time
 
 binary, root, out_path, err_path, *targets = sys.argv[1:]
@@ -236,14 +260,15 @@ accounted=$(gate_accounted "$scratch/g3.err")
 # run leaves, and both inflate together because both are the same class of cost. The bound stays 250
 # ms whenever the machine is quiet -- 10x the quiet control, which is where the original calibration
 # put it -- and scales with the control when it is not.
-control_ms=$(python3 - "$fmt" <<'CONTROL'
+control_ms=$(
+  python3 - "$fmt" <<'CONTROL'
 import subprocess, sys, time
 started = time.monotonic()
 subprocess.run([sys.argv[1], "rules", "--json"], capture_output=True)
 print(int((time.monotonic() - started) * 1000))
 CONTROL
 )
-GATE_REMAINDER_BOUND_MS=$(( control_ms * 10 > 250 ? control_ms * 10 : 250 ))
+GATE_REMAINDER_BOUND_MS=$((control_ms * 10 > 250 ? control_ms * 10 : 250))
 fraction=$(python3 -c "print(round(100.0 * $accounted / max($wall, 1), 1))")
 unaccounted=$((wall - accounted))
 if gate_remainder_within "$scratch/g3.err" "$wall" "$GATE_REMAINDER_BOUND_MS"; then

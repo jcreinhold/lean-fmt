@@ -14,7 +14,7 @@ trap 'rm -rf "$scratch"' EXIT
 
 printf '%s\n' '--- direct Syntax codec is not a public API ---'
 if (cd "$experiment" && lake env lean DirectCodecNegative.lean) \
-    >"$scratch/direct-codec.log" 2>&1; then
+  >"$scratch/direct-codec.log" 2>&1; then
   printf 'DirectCodecNegative.lean unexpectedly found a public Syntax JSON codec\n' >&2
   exit 1
 fi

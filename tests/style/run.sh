@@ -29,7 +29,7 @@ print("  ok   19 unique style rows cover every prompt 11-14 family and decision 
 PY
 
 LEAN_NUM_THREADS=1 lake setup-file tests/style/fixtures/PolicyInput.lean >"$work/setup.json"
-oracle=(python3 tests/formatter/oracle.py --application "$application" --tests "$tests" \
+oracle=(python3 tests/formatter/oracle.py --application "$application" --tests "$tests"
   --setup "$work/setup.json" --source tests/style/fixtures/PolicyInput.lean --)
 "${oracle[@]}" python3 tests/style/expected_candidate.py tests/style/fixtures/Policy.lean \
   >"$work/policy.json"

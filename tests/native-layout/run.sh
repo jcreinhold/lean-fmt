@@ -120,12 +120,13 @@ done
 for fixture in "${fixtures[@]}"; do
   for render in "$work/$fixture.once" "$work/$fixture-20.json" "$work/$fixture-40.json"; do
     case "$render" in
-      *.json)
-        python3 -c '
+    *.json)
+      python3 -c '
 import json, sys
 sys.stdout.write(json.load(open(sys.argv[1]))["files"][0]["formatted"])' \
-          "$render" >"$render.text" ;;
-      *) cp "$render" "$render.text" ;;
+        "$render" >"$render.text"
+      ;;
+    *) cp "$render" "$render.text" ;;
     esac
     check "$(basename "$render") leaves no trailing whitespace" \
       "$(grep -c '[[:space:]]$' "$render.text" || true)" "0"
@@ -249,8 +250,8 @@ check "  ... and the tactic it leads at that same column, with its siblings" \
 # right. The repair excludes by comment kind in `Trivia.commandLeading`; the two-comment case pins that
 # the rule selects comments rather than truncating the run.
 check "an ordinary comment stays above the docstring it precedes" \
-  "$(grep -A1 -F -- '-- an ordinary comment above a docstring is not part of it' "$boundaries" \
-    | tail -1)" \
+  "$(grep -A1 -F -- '-- an ordinary comment above a docstring is not part of it' "$boundaries" |
+    tail -1)" \
   "/-- A doc comment can be preceded by ordinary comments the command does not own. -/"
 check "  ... and that docstring is emitted exactly once" \
   "$(count "$boundaries" \
@@ -370,8 +371,8 @@ check "and its first tactic still starts the next line" \
 # separators break to. Joined, `exact` came out at column 2 against a saved column of 60, the block
 # ended at the break, and the rest of the proof was read as a command.
 check "a semicolon-separated tactic sequence opens on its own line" \
-  "$(grep -A1 -Fx 'theorem semicolonTactics (n : Nat) : n + 0 = n ∧ n + 0 = n := by' "$offside" \
-    | tail -1)" \
+  "$(grep -A1 -Fx 'theorem semicolonTactics (n : Nat) : n + 0 = n ∧ n + 0 = n := by' "$offside" |
+    tail -1)" \
   "  constructor; exact Nat.add_zero n; exact Nat.add_zero n"
 # The negative half: one item has no separator, so there is nothing to position and nothing is forced.
 # The rule counts items rather than matching a tactic kind, and this is what says so.
@@ -472,20 +473,21 @@ printf -- '--- a node kind that names no constant (§6a) ---\n'
 rooted=$("$application" format - --stdin-filename tests/native-layout/RootedKind.lean --root . \
   <tests/native-layout/RootedKind.lean 2>&1 >/dev/null || true)
 case "$rooted" in
-  *"Lean._root_.Lean.Parser.Command.registerLabelAttr names no constant"*)
-    ok "a _root_-bearing node kind is refused by name" ;;
-  *) fail "expected the D21 diagnosis, got: $rooted" ;;
+*"Lean._root_.Lean.Parser.Command.registerLabelAttr names no constant"*)
+  ok "a _root_-bearing node kind is refused by name"
+  ;;
+*) fail "expected the D21 diagnosis, got: $rooted" ;;
 esac
 case "$rooted" in
-  *"Lean/Elab/Syntax.lean:465"*) ok "  ... and the refusal cites the declaration's other end" ;;
-  *) fail "the D21 refusal named no upstream cause: $rooted" ;;
+*"Lean/Elab/Syntax.lean:465"*) ok "  ... and the refusal cites the declaration's other end" ;;
+*) fail "the D21 refusal named no upstream cause: $rooted" ;;
 esac
 # The escape the message offers has to work, or the message is advice nobody can take. This is the
 # only way a file holding one of these can be formatted at all.
 sed 's|^register_label_attr|-- lean-fmt: format-ignore-next\nregister_label_attr|' \
   tests/native-layout/RootedKind.lean >"$work/RootedKind.ignored"
 if "$application" format - --stdin-filename tests/native-layout/RootedKind.lean --root . \
-    <"$work/RootedKind.ignored" >"$work/RootedKind.formatted" 2>/dev/null; then
+  <"$work/RootedKind.ignored" >"$work/RootedKind.formatted" 2>/dev/null; then
   check "  ... and the directive it names leaves the command verbatim" \
     "$(grep -c '^register_label_attr leanFmtRootedKindFixture$' "$work/RootedKind.formatted")" "1"
 else

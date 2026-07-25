@@ -25,15 +25,21 @@ mathlib_root=${1:-"$HOME/Code/mathlib4"}
 sources=${2:-"$repo_root/experiments/workloads/mathlib-v4.32.0-sample.txt"}
 reps=${REPS:-3}
 fmt="$repo_root/.lake/build/bin/lean-fmt"
-[[ -x $fmt ]] || { echo "build lean-fmt first" >&2; exit 2; }
+[[ -x $fmt ]] || {
+  echo "build lean-fmt first" >&2
+  exit 2
+}
 
-files=(); while IFS= read -r f; do [[ -n $f ]] && files+=("$f"); done <"$sources"
-work=$(mktemp -d); trap 'rm -rf "$work"' EXIT
+files=()
+while IFS= read -r f; do [[ -n $f ]] && files+=("$f"); done <"$sources"
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT
 
 # `ruff-19`'s variance policy: median of >=3, never the first run. `--no-cache` makes every repetition
 # cold, which is the workload under test -- the warm path is CP-1's and is already settled.
 arm() {
-  local label=$1; shift
+  local label=$1
+  shift
   local -a walls=() children=() child_ms=()
   local i
   for ((i = 0; i <= reps; i++)); do

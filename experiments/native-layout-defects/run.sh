@@ -62,14 +62,15 @@ EOF
 # The D5 threshold. Nothing about it is a property of the line being laid out, which is the finding.
 printf '########## D5 threshold sweep\n'
 for width in 100 135 136 400; do
-  line=$(probe "D5" "$width" <<'EOF' 2>/dev/null | sed -n '/--- native ---/{n;p;}'
+  line=$(
+    probe "D5" "$width" <<'EOF' 2>/dev/null | sed -n '/--- native ---/{n;p;}'
 module
 
 theorem tacticSiblings (n : Nat) : n + 0 = n := by
   have step : n + 0 = n := Nat.add_zero n
   exact step
 EOF
-)
+  )
   printf 'width=%-4s [%s]\n' "$width" "$line"
 done
 

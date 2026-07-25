@@ -20,7 +20,10 @@ set -euo pipefail
 repo_root=$(cd "$(dirname "$0")/.." && pwd)
 cd "$repo_root"
 fmt="$repo_root/.lake/build/bin/lean-fmt"
-[[ -x $fmt ]] || { echo "build lean-fmt first" >&2; exit 2; }
+[[ -x $fmt ]] || {
+  echo "build lean-fmt first" >&2
+  exit 2
+}
 
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
@@ -28,7 +31,8 @@ failures=0
 
 # One case: apply `fix` twice to a copy of `fixture` under `selector`, and check FX-2, FX-3, FX-4.
 audit() {
-  local label=$1 fixture=$2 selector=$3; shift 3
+  local label=$1 fixture=$2 selector=$3
+  shift 3
   local extra=("$@")
   local probe="tests/syntax/.rgr-audit-$label.lean"
   cp "$fixture" "$probe"
@@ -43,7 +47,10 @@ audit() {
 
   # FX-2. Byte identity between one application and two.
   local fx2=ok
-  cmp -s "$work/$label.once" "$work/$label.twice" || { fx2=FAIL; failures=$((failures + 1)); }
+  cmp -s "$work/$label.once" "$work/$label.twice" || {
+    fx2=FAIL
+    failures=$((failures + 1))
+  }
 
   # FX-3. One pass converges: no finding of that rule survives.
   local remaining fx3=ok
@@ -51,7 +58,10 @@ audit() {
     >"$work/$label.recheck.json" 2>/dev/null || true
   remaining=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["findings"])' \
     "$work/$label.recheck.json" 2>/dev/null || echo '?')
-  [[ $remaining == 0 ]] || { fx3=FAIL; failures=$((failures + 1)); }
+  [[ $remaining == 0 ]] || {
+    fx3=FAIL
+    failures=$((failures + 1))
+  }
 
   # FX-4. The fixed bytes still parse and elaborate. `check` over the written file goes through the
   # exact module setup, so an `infrastructureFailures` entry or a `broken` count is the signal; a
@@ -61,7 +71,10 @@ audit() {
     "$work/$label.recheck.json" 2>/dev/null || echo '?')
   infra=$(python3 -c 'import json,sys; print(len(json.load(open(sys.argv[1]))["infrastructureFailures"]))' \
     "$work/$label.recheck.json" 2>/dev/null || echo '?')
-  [[ $broken == 0 && $infra == 0 ]] || { fx4=FAIL; failures=$((failures + 1)); }
+  [[ $broken == 0 && $infra == 0 ]] || {
+    fx4=FAIL
+    failures=$((failures + 1))
+  }
 
   local wrote1 wrote2
   wrote1=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["written"])' \
@@ -78,18 +91,18 @@ printf 'RGR-EVIDENCE §3 fix audit — FX-2 (byte idempotence), FX-3 (convergenc
 printf 'wrote=N/M is files written by the first / second `fix`; M must be 0 for a converged fix.\n\n'
 
 printf -- '--- fixtures ---\n'
-audit fmt013-nested   tests/syntax/NestedParen.lean       FMT011
-audit fmt013-triple   tests/syntax/NestedParenTriple.lean FMT011
-audit fmt013-utf8     tests/syntax/NestedParenUtf8.lean   FMT011
-audit fmt013-comment  tests/syntax/Comment.lean           FMT011
-audit fmt010-dup      tests/syntax/Duplicates.lean        FMT008
-audit fmt011-dup      tests/syntax/Duplicates.lean        FMT009
-audit fmt010-quote    tests/syntax/QuoteAttr.lean         FMT008
-audit fmt013-quote    tests/syntax/QuoteParen.lean        FMT011
-audit fmt013-attr     tests/syntax/AttrThenParen.lean     FMT011
+audit fmt013-nested tests/syntax/NestedParen.lean FMT011
+audit fmt013-triple tests/syntax/NestedParenTriple.lean FMT011
+audit fmt013-utf8 tests/syntax/NestedParenUtf8.lean FMT011
+audit fmt013-comment tests/syntax/Comment.lean FMT011
+audit fmt010-dup tests/syntax/Duplicates.lean FMT008
+audit fmt011-dup tests/syntax/Duplicates.lean FMT009
+audit fmt010-quote tests/syntax/QuoteAttr.lean FMT008
+audit fmt013-quote tests/syntax/QuoteParen.lean FMT011
+audit fmt013-attr tests/syntax/AttrThenParen.lean FMT011
 
 printf -- '\n--- FX-6 composition: the three safe fixes selected together ---\n'
-audit compose-all     tests/syntax/Duplicates.lean        FMT008 --select FMT009 --select FMT011
+audit compose-all tests/syntax/Duplicates.lean FMT008 --select FMT009 --select FMT011
 
 printf '\n'
 if ((failures)); then
