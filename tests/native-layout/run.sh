@@ -353,6 +353,13 @@ check "a parenthesised tactic sequence stays on its carrier's line" \
 check "  ... as does a focus dot's" "$(grep -c '^  · skip; rfl$' "$offside")" "2"
 check "  ... while a case arm's still opens on its own line" \
   "$(grep -A1 -Fx '  case left =>' "$offside" | tail -1)" "    skip; rfl"
+# `show`'s `by` is `Term.byTactic'`, which is `byTactic` with `ppAllowUngrouped` removed and a kind of
+# its own. It is in no parser category, so it owns no group and the group is the `show`'s -- which puts
+# `by` far right of the separators' column, the case the boundary exists for. Testing for `byTactic`
+# alone declined it and `Mathlib/NumberTheory/LSeries/HurwitzZetaEven.lean` refused.
+check "  ... and a show's by opens its sequence as by's own does" \
+  "$(grep -A1 -Fx '  show value + 0 = value ∧ value + 0 = value by' "$offside" | tail -1)" \
+  "    constructor; rfl; rfl"
 # The other half of D9, and the reason the rule reads `hasNewlineSep` instead of firing on every list:
 # `sepByIndent.formatter` emits a forced `align` when the source spelled the separators as line breaks,
 # which already positions the sequence. Forcing a second break there put a blank line above `first` and
@@ -520,7 +527,12 @@ check "  ... and the same loop over an identifier keeps it, so a repair must tel
 # under `(`, `·` and `case` as much as under `by`, and those carriers do group the list. The forced
 # break then had nowhere to land but one `nest` past the separators, which reparses the second tactic
 # outside its own sequence. The parent is what the rule now reads, and every carrier but `by` falls
-# back to `delimiterIntervenes`, which was already the right question for the grouped case.
+# back to `delimiterIntervenes`, which was already the right question for the grouped case. The parent
+# is the nearest node that *owns a group*, which is not always the immediate one: `Term.byTactic'`,
+# `Tactic.tacticSeq`, `Conv.convSeq` and `null` are registered in no parser category, so
+# `categoryParser.formatter` never wraps them and the group belongs to whatever encloses them. Reading
+# the immediate parent instead declined the boundary for `show … by tac; tac`, whose group is the
+# `show`'s, and `Mathlib/NumberTheory/LSeries/HurwitzZetaEven.lean` refused for that.
 
 printf -- '--- result ---\n'
 printf 'failures=%s\n' "$failures"

@@ -561,6 +561,26 @@ that node is `Term.byTactic`. Every other carrier falls back to `delimiterInterv
 already the right question for a grouped list: `case h => ` still opens its sequence on its own line,
 `(` and `·` no longer do.
 
+The parent is not always the immediate one. `Term.byTactic'` (`Term.lean:117`) is `byTactic` with the
+`ppAllowUngrouped` marker removed and a kind of its own -- Lean's comment says it exists only so `show`
+and `suffices` can be find-replaced safely -- and it is registered in no parser category, so
+`categoryParser.formatter` never wraps it and it owns no group. The group belongs to the `show`, which
+puts `by` far to the right of the column the separators break to: exactly the case the boundary exists
+for. Testing the immediate parent for `Term.byTactic` declined it, and
+`Mathlib/NumberTheory/LSeries/HurwitzZetaEven.lean` refused with the original D9 signature --
+`(show Function.Periodic … 1 by intro ξ;` joined at column 71, `simp` at column 8. The walk therefore
+carries the nearest node that *owns* a group, treating `Term.byTactic'`, `Tactic.tacticSeq`,
+`Conv.convSeq` and `null` as transparent. Confirmed against the live parser environment:
+
+| kind | in a category's `kinds` |
+| --- | --- |
+| `Term.byTactic` | yes |
+| `Term.show` | yes |
+| `Term.structInst` | yes |
+| `Term.byTactic'` | no |
+| `Tactic.tacticSeq` | no |
+| `Term.whereDecls` | no |
+
 A first attempt filtered the collected starts by the source instead, keeping only lists whose first
 item began a line. It repaired all three reproductions and `Archive/Arithcc.lean`, and it broke
 `{ base with first := 1, second := 2, … }` at width 40 — an inline record the source did not open on a

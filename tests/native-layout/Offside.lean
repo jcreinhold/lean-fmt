@@ -182,4 +182,13 @@ theorem focusedTactics (a : Nat) : a = a ∧ a = a := by
   · skip; rfl
   · skip; rfl
 
+/- `show`'s `by` is not `Term.byTactic`. `byTactic'` (`Term.lean:117`) is the same parser with the
+`ppAllowUngrouped` marker removed and its own kind, which Lean's comment says exists only so `show` and
+`suffices` can be find-replaced safely; it is registered in no parser category, so it owns no group and
+the group is the `show`'s. That puts `by` far to the right of the column the separators break to, which
+is the case the boundary exists for -- decline it and `constructor` joins the `by` line while `rfl`
+lands below the saved column. `Mathlib/NumberTheory/LSeries/HurwitzZetaEven.lean` refused for it. -/
+theorem showCarriedTactics (value : Nat) : value + 0 = value ∧ value + 0 = value :=
+  show value + 0 = value ∧ value + 0 = value by constructor; rfl; rfl
+
 end NativeLayoutOffside

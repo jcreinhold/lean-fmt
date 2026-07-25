@@ -572,13 +572,18 @@ private def delimiterIntervenes (owner list : Lean.Syntax) : Bool :=
   | some first => ((selectedLeafRanges owner).filter (·.start < first.start)).size > 1
   | none => false
 
-/- `Tactic.tacticSeq` and `Conv.convSeq` are the choice between the bracketed and the indented spelling,
-and a `null` node is a parser's own bookkeeping. None of the three spells a token, so none of them owns
-a delimiter for `delimiterIntervenes` to count or a `ppAllowUngrouped` to stand for; the walk carries
-the node above them rather than the immediate parent. -/
+/- The nodes that can sit between a `sepByIndent` list and the parser that decides how it is laid out.
+`Tactic.tacticSeq` and `Conv.convSeq` are the choice between the bracketed and the indented spelling, a
+`null` node is a parser's own bookkeeping, and `Term.byTactic'` (`Term.lean:117`) is `byTactic` with the
+`ppAllowUngrouped` removed and a different kind, which Lean's own comment says exists only so `show` and
+`suffices` can be find-replaced safely. None of the four is registered in a parser category, so
+`categoryParser.formatter` never wraps one in a `fill` and none of them owns a group: the group belongs
+to whatever encloses them, and that is the node the walk carries. Confirmed against the live parser
+environment -- `Term.byTactic` and `Term.show` are in a category's `kinds`, `Term.byTactic'` and
+`Tactic.tacticSeq` are not. -/
 private def sequenceWrapperKind (kind : Lean.Name) : Bool :=
   kind == ``Lean.Parser.Tactic.tacticSeq || kind == ``Lean.Parser.Tactic.Conv.convSeq ||
-    kind == Lean.nullKind
+    kind == ``Lean.Parser.Term.byTactic' || kind == Lean.nullKind
 
 private partial def collectIndentedSequenceStarts (stx : Lean.Syntax)
     (carrier? : Option Lean.Syntax := none) (starts : Array Nat := #[]) : Array Nat :=
