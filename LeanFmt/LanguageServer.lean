@@ -1182,7 +1182,7 @@ def serveLanguageServer (options : ServerOptions) : IO UInt32 := do
     sink.log 3 s!"lean-fmt: {notice}"
   -- The exact capability brackets the whole session, so its temporary storage is created and
   -- removed once rather than per request.
-  Application.withExactRun project options.maxMemoryGiB fun run => do
+  Application.withExactRun project options.maxMemoryGiB (action := fun run => do
     let queue : Std.CloseableChannel.Sync Work ←
       Std.CloseableChannel.Sync.new (capacity := some maxQueuedMessages)
     let settings ← IO.mkRef options
@@ -1213,6 +1213,6 @@ def serveLanguageServer (options : ServerOptions) : IO UInt32 := do
     discard <| IO.wait reader
     for (_, document) in (← session.documents.get).toList do
       document.analyzer.close
-    return code
+    return code)
 
 end LeanFmt.Internal.LanguageServer

@@ -32,6 +32,16 @@ budgeted what the parent can actually grant — the envelope minus what the pare
 refuses by name: the parent's aggregate trip or the child's own memory threshold. Statistics go to stderr so `--json`
 stdout remains one valid object.
 
+`--workers N` (batch modes: `check`, `format`, `diff`, `fix`) runs up to N frontend children in parallel instead of
+the default one. It changes scheduling, never results: everything is assembled by target index, so every file that
+fits its share of the envelope produces byte-identical output at any N. The envelope divides — each child is
+budgeted an Nth of what the parent can grant — so parallelism spends refusal headroom, not correctness: a file
+whose analysis needs more than its share is refused by name (with the share it was held to) while the batch
+continues, a status the serial run would not have produced for it. Measured on this repository's own 40-file cold
+run at `--max-memory 8`: two workers are byte-identical to one at 1.9× the speed; four divide the shares to
+~1.9 GiB, which the ~2 GiB own-source analyses exceed. N > 1 pays on cold runs of many files whose analyses fit
+the divided share; import-heavy files that already approach the envelope want the default, or a larger envelope.
+
 ## Formatting guarantees
 
 `docs/style.md` is the one canonical style; `line-width` is the only choice it offers. Every mode that renders canonical

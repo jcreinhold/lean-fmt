@@ -6,6 +6,8 @@ Authors: Jacob Reinhold
 
 module
 
+import Std.Sync.Mutex
+
 /-!
 # The profile channel
 
@@ -38,6 +40,16 @@ operation that has nothing to do with profiling.
 
 namespace LeanFmt.Internal.Profile
 
+/-- Serializes emission. With `--workers N` several workers bracket phases concurrently, and two
+unsynchronized `IO.eprintln` calls may interleave bytes inside a line — and the gates parse lines.
+The lock is taken only when the channel is on, so production runs pay nothing. -/
+initialize emitLock : Std.BaseMutex ← Std.BaseMutex.new
+
+/-- Write one record line, whole. -/
+private def emit (line : String) : IO Unit := do
+  emitLock.lock
+  try IO.eprintln line finally emitLock.unlock
+
 /-- Whether the channel is on.
 
 Read per emission rather than cached in a global. The cost is one `getenv` against a phase that is
@@ -49,7 +61,7 @@ def enabled : IO Bool :=
 /-- Report `nanos` under `name`, in milliseconds. -/
 def recordDuration (name : String) (nanos : Nat) : IO Unit := do
   if ← enabled then
-    IO.eprintln s!"phase.{name}_ms={nanos / 1000000}"
+    emit s!"phase.{name}_ms={nanos / 1000000}"
 
 /-- Report the interval between two `IO.monoNanosNow` readings under `name`. -/
 def recordPhase (name : String) (started finished : Nat) : IO Unit :=
@@ -62,7 +74,7 @@ Wall time alone cannot distinguish "the cache worked" from "the OS page cache wa
 `RCI-SPEC`). Every claim about invalidation is reported as a count. -/
 def recordCount (name : String) (value : Nat) : IO Unit := do
   if ← enabled then
-    IO.eprintln s!"cache.{name}={value}"
+    emit s!"cache.{name}={value}"
 
 /-- Run `action` and report how long it took under `name`.
 

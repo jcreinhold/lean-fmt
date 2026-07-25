@@ -205,10 +205,17 @@ PY
 
 # `--workers` changes scheduling, never output: the parallel run assembles results by target index,
 # so its report is byte-identical to the serial run's. Three fixtures with three different
-# outcomes (clean, findings, would-format) exercise the fold over every report shape.
-run_expect 1 "$work/serial.json" "$application" check --root . --json --no-cache \
+# outcomes (clean, findings, would-format) exercise the fold over every report shape. The env
+# vars force every fixture through a real frontend child — without them the module evidence can
+# serve all three and the comparison passes without a single child being spawned, which is how a
+# reaper double-reap once shipped past this gate while it was green.
+run_expect 1 "$work/serial.json" env LEAN_FMT_DISABLE_ARTIFACT=1 \
+  LEAN_FMT_TEST_DISABLE_MODULE_EVIDENCE=1 \
+  "$application" check --root . --json --no-cache \
   tests/check/Clean.lean tests/check/Findings.lean tests/check/Layout.lean
-run_expect 1 "$work/parallel.json" "$application" check --root . --json --no-cache --workers 2 \
+run_expect 1 "$work/parallel.json" env LEAN_FMT_DISABLE_ARTIFACT=1 \
+  LEAN_FMT_TEST_DISABLE_MODULE_EVIDENCE=1 \
+  "$application" check --root . --json --no-cache --workers 2 \
   tests/check/Clean.lean tests/check/Findings.lean tests/check/Layout.lean
 cmp "$work/serial.json" "$work/parallel.json"
 

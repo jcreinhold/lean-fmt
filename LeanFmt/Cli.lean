@@ -230,6 +230,9 @@ file options:\n\
   --staged             select only files staged for commit\n\
   --no-cache           neither read nor write result cache entries\n\
   --max-memory GIB     aggregate operating envelope (default: 8)\n\
+  --workers N             run up to N frontend children in parallel (default: 1);\n\
+                       each child is budgeted an Nth of the envelope and the\n\
+                       report is byte-identical at any N\n\
   --unsafe-fixes       apply/preview unsafe fixes too (default: safe only)\n\
   --check              format: report what would change, write nothing (CI preview)\n\
 \n\
@@ -330,6 +333,13 @@ private def parseFileArgs (mode : RunMode) (args : List String) : Except String 
       | some amount =>
         loop rest { command with run := { command.run with maxMemoryGiB := amount } }
       | none => .error "--max-memory expects a whole number of GiB"
+    | "--workers" :: value :: rest =>
+      match value.toNat? with
+      | some amount =>
+        if amount == 0 then .error "--workers expects a nonzero worker count"
+        else loop rest { command with run := { command.run with workers := amount } }
+      | none => .error "--workers expects a whole number of workers"
+    | "--workers" :: [] => .error "--workers expects a whole number of workers"
     -- `-` is a *target*, not an option, so it is matched before the `startsWith "-"` catch-all below.
     | "-" :: rest => loop rest { command with stdin := true }
     | "--stdin-filename" :: path :: rest =>

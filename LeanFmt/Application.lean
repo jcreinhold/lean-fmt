@@ -84,6 +84,12 @@ structure RunRequest where
   guarded path — the same publisher `fix` uses. When `true`, `format` renders but writes nothing and
   reports `would-format`/`clean`, the pre-`ruff-11d` default. `check`/`diff`/`fix` ignore it. -/
   formatCheck : Bool := false
+  /-- How many frontend children may run concurrently (`--workers`). One is the default: the serial
+  path, one child at a time, each told the whole envelope minus the parent's RSS. Above one, the
+  batch loop's unanswered targets are worked by that many dedicated workers and the envelope is
+  divided between their children (`withExactRun`). Scheduling only: every result is assembled by
+  target index, so the report is byte-identical at any value. -/
+  workers : Nat := 1
 
 /-- Whether this run publishes source. `fix` always does; `format` does unless `--check` demotes it to a
 preview (`ruff-11d` FIP-IMPL). A writer needs the validator child, so it must fall through to
@@ -135,6 +141,29 @@ private structure ChildOutput where
   stderr : String
   peakAggregateRssKiB : Nat
 
+/-- A child the reaper is enforcing the envelope against. Registered at spawn, removed when its
+worker reaps it; the reaper kills and records *why* in `reason`, which is how the worker learns its
+child died by the envelope rather than by the file. `peakKiB` is the largest parent-plus-group
+aggregate the reaper has sampled for this child, mirroring what `monitorChild` tracks serially. -/
+private structure LiveChild where
+  child : IO.Process.Child { stdin := .inherit, stdout := .piped, stderr := .piped }
+  stdoutTask : Task (Except IO.Error String)
+  stderrTask : Task (Except IO.Error String)
+  pgid : UInt32
+  /-- The group-RSS ceiling in KiB: the budget the child was told, sampled once more at registration. -/
+  shareKiB : Nat
+  reason : IO.Ref (Option String)
+  peakKiB : IO.Ref Nat
+
+/-- The reaper's shared state. `task` polls every 50 ms until `done` is set and the registry drains;
+`samplingError` carries a persistent sampling failure to the workers, because a reaper that cannot
+sample must degrade to per-file failures, not to an unenforced envelope or a whole-batch abort. -/
+private structure ReaperState where
+  registry : IO.Ref (Array LiveChild)
+  done : IO.Ref Bool
+  samplingError : IO.Ref (Option String)
+  task : Task (Except IO.Error Unit)
+
 /- A valid exact-analysis capability. Construction brackets its temporary storage, fixes the target
 project/toolchain and aggregate envelope once, and owns collision-free request names. No caller can
 observe setup paths or sequence cleanup. Batch envelopes use fresh child processes; the language
@@ -145,6 +174,10 @@ structure ExactRun where
   application : FilePath
   temporary : FilePath
   maxBytes : Nat
+  /-- How many frontend children may run concurrently (`--workers`). One is the default and takes the
+  serial `runBounded` path untouched; above one, spawns register with `reaper?` instead. -/
+  workers : Nat
+  reaper? : Option ReaperState
   nextIndex : IO.Ref Nat
   /-- Setups already resolved for this run: root-relative path to the **source they were resolved
   from** and the setup itself.
@@ -396,9 +429,6 @@ private def runBounded (arguments : IO.Process.SpawnArgs)
   let stderrTask ← IO.asTask child.stderr.readToEnd
   monitorChild child stdoutTask stderrTask maxBytes 0 cancel?
 
-private def ExactRun.nextPathIndex (run : ExactRun) : IO Nat :=
-  run.nextIndex.modifyGet fun index => (index, index + 1)
-
 /-- The budget a child may claim: the aggregate envelope minus what the parent already holds.
 
 The parent trips on parent RSS *plus* the child's process-group RSS against `maxBytes`
@@ -409,9 +439,168 @@ mathlib modules exhausted at 6.00–6.16 GiB against `--max-memory 6` and again 
 growth. Telling the child its honest headroom lets its own GC spend the envelope instead of the
 parent spending the child's life. The aggregate trip is unchanged: the envelope still bounds parent
 plus children together, and `Nat` subtraction saturates, so a parent already over the bound passes
-zero rather than wrapping. -/
-private def childMemoryBudget (maxBytes : Nat) : IO Nat := do
-  return maxBytes - (← residentKiB) * 1024
+zero rather than wrapping.
+
+With `--workers N` workers the headroom is divided `workers`-ways: each child is told one share, so
+the shares and the parent together cannot exceed the envelope at spawn time. The reaper enforces
+the same share against the child's RSS, which counts more than its heap. -/
+private def childMemoryBudget (maxBytes : Nat) (workers : Nat := 1) : IO Nat := do
+  return (maxBytes - (← residentKiB) * 1024) / (max workers 1)
+
+/-- Sample the parent and every live child group in one `ps` pass and enforce the envelope.
+
+The reaper is the only kill authority when `--workers N` admits several children; workers never kill
+each other's children. Per poll it enforces two limits:
+
+1. **Share.** A group over its registered share is killed and its file fails with the recorded
+   reason. The share is the budget the child was told at spawn, so a child respecting its own
+   `setMaxMemory` is never killed here over heap — but RSS also counts mmap'd `.olean`s, which the
+   heap limit does not, so this clause is load-bearing, not a backstop.
+2. **Aggregate.** Parent plus all groups over `maxBytes` kills the largest group — the serial
+   rule's "the child pays" generalized honestly to N children. Shares partition
+   `maxBytes - parentRSS` at spawn, so this trips only when the parent itself grew after spawn (it
+   accumulates candidates); it is the backstop for that drift, and its message is the serial one:
+   aggregate against the envelope.
+
+A `ps` failure is recorded in `samplingError` and retried next poll: workers surface it as per-file
+failures for the children that were live during the unsampled interval, rather than the batch dying
+or the envelope going silently unenforced. -/
+private def reaperSample (registry : IO.Ref (Array LiveChild)) (maxBytes : Nat) : IO Unit := do
+  let live ← registry.get
+  let parentPid ← IO.Process.getPID
+  let output ← IO.Process.output { cmd := "/bin/ps", args := #["-axo", "pid=,pgid=,rss="] }
+  unless output.exitCode == 0 do
+    throw <| IO.userError s!"could not sample process RSS: {output.stderr.trimAscii}"
+  let mut parentKiB := 0
+  let mut groups : Std.HashMap Nat Nat := {}
+  for line in output.stdout.splitOn "\n" do
+    match line.trimAscii.copy.splitOn " " |>.filter (!·.isEmpty) with
+    | [pid, group, rss] =>
+      match pid.toNat?, group.toNat?, rss.toNat? with
+      | some p, some g, some k =>
+        if p == parentPid.toNat then parentKiB := k
+        groups := groups.insert g (groups.getD g 0 + k)
+      | _, _, _ => pure ()
+    | _ => pure ()
+  let mut totalKiB := parentKiB
+  for entry in live do
+    let groupKiB := groups.getD entry.pgid.toNat 0
+    totalKiB := totalKiB + groupKiB
+    entry.peakKiB.modify fun peak => max peak (parentKiB + groupKiB)
+    if groupKiB > entry.shareKiB && (← entry.reason.get).isNone then
+      entry.reason.set (some s!"resource envelope exhausted during exact frontend child \
+        ({groupKiB} KiB > {entry.shareKiB} KiB)")
+      try entry.child.kill catch _ => pure ()
+  if totalKiB * 1024 > maxBytes then
+    let largest? := live.foldl (init := (none : Option LiveChild)) fun best? entry =>
+      match best? with
+      | none => some entry
+      | some best =>
+        some (if groups.getD entry.pgid.toNat 0 > groups.getD best.pgid.toNat 0 then entry
+          else best)
+    if let some largest := largest? then
+      if (← largest.reason.get).isNone then
+        largest.reason.set (some s!"resource envelope exhausted during exact frontend child \
+          ({totalKiB} KiB > {maxBytes / 1024} KiB)")
+        try largest.child.kill catch _ => pure ()
+
+private partial def reaperLoop (registry : IO.Ref (Array LiveChild)) (done : IO.Ref Bool)
+    (samplingError : IO.Ref (Option String)) (maxBytes : Nat) : IO Unit := do
+  let live ← registry.get
+  if live.isEmpty && (← done.get) then return
+  try
+    reaperSample registry maxBytes
+    samplingError.set none
+  catch error =>
+    samplingError.set (some (toString error))
+  IO.sleep 50
+  reaperLoop registry done samplingError maxBytes
+
+/-- Wait out one registered child: reap it on exit, fail with the reaper's recorded reason when the
+envelope killed it, abandon on cancellation. The mirror of `monitorChild`'s loop with the envelope
+arithmetic moved to the reaper; an exit code and a recorded reason together mean the reason caused
+the exit, so the reason is what the file is told. -/
+private partial def pollChild (samplingError : IO.Ref (Option String)) (entry : LiveChild)
+    (cancel? : Option Std.CancellationToken) : IO ChildOutput := do
+  match ← entry.child.tryWait with
+  | some exitCode =>
+    let output := {
+      exitCode
+      stdout := ← awaitRead entry.stdoutTask
+      stderr := ← awaitRead entry.stderrTask
+      peakAggregateRssKiB := ← entry.peakKiB.get : ChildOutput }
+    if let some reason ← entry.reason.get then
+      throw <| IO.userError reason
+    return output
+  | none =>
+    if let some reason ← entry.reason.get then
+      discard entry.child.wait
+      discard <| awaitRead entry.stdoutTask
+      discard <| awaitRead entry.stderrTask
+      throw <| IO.userError reason
+    if let some message ← samplingError.get then
+      throw <| IO.userError message
+    if let some token := cancel? then
+      if ← token.isCancelled then
+        try entry.child.kill catch _ => pure ()
+        discard entry.child.wait
+        discard <| awaitRead entry.stdoutTask
+        discard <| awaitRead entry.stderrTask
+        throw <| IO.userError cancellationMessage
+    IO.sleep 50
+    pollChild samplingError entry cancel?
+
+/-- Spawn a child under the run's concurrency regime. Without a reaper (`--workers 1`, the default)
+this is `runBounded` verbatim — the serial monitor, the serial admission count. With one, the child
+is registered before any poll can sample without it, pipes are drained on dedicated threads (the
+lesson of the two-child one-thread prototype: an undrained pipe deadlocks its holder), and the
+worker waits in `pollChild` while the reaper enforces shares and the aggregate. The `finally`
+cannot leave an orphan: a worker that is unwinding kills and drains the child it is abandoning, so
+the registry and the process table always agree. -/
+private def ExactRun.spawnBounded (run : ExactRun) (arguments : IO.Process.SpawnArgs)
+    (cancel? : Option Std.CancellationToken := none) : IO ChildOutput := do
+  let some reaper := run.reaper?
+    | runBounded arguments run.maxBytes cancel?
+  let child ← IO.Process.spawn {
+    cmd := arguments.cmd
+    args := arguments.args
+    cwd := arguments.cwd
+    env := arguments.env
+    inheritEnv := arguments.inheritEnv
+    stdin := .inherit
+    stdout := .piped
+    stderr := .piped
+    setsid := true
+  }
+  let entry : LiveChild := {
+    child
+    stdoutTask := ← IO.asTask child.stdout.readToEnd Task.Priority.dedicated
+    stderrTask := ← IO.asTask child.stderr.readToEnd Task.Priority.dedicated
+    pgid := child.pid
+    shareKiB := (← childMemoryBudget run.maxBytes run.workers) / 1024
+    reason := ← IO.mkRef none
+    peakKiB := ← IO.mkRef 0
+  }
+  reaper.registry.modify (·.push entry)
+  recordCount "active_children" (← reaper.registry.get).size
+  try
+    pollChild reaper.samplingError entry cancel?
+  finally
+    reaper.registry.modify (·.filter (·.pgid != entry.pgid))
+    -- `pollChild` may already have reaped the child (its exit branch), and Lean's `tryWait` does
+    -- not cache: a second successful-position `tryWait` raises ECHILD. A throw here therefore
+    -- means "already reaped" — exactly the case where there is nothing to kill.
+    let exited ← try
+      pure (← entry.child.tryWait).isSome
+    catch _ => pure true
+    unless exited do
+      try entry.child.kill catch _ => pure ()
+      discard entry.child.wait
+      discard <| awaitRead entry.stdoutTask
+      discard <| awaitRead entry.stderrTask
+
+private def ExactRun.nextPathIndex (run : ExactRun) : IO Nat :=
+  run.nextIndex.modifyGet fun index => (index, index + 1)
 
 /-- Resolve these targets' Lake setups in one graph traversal, before any of them is analyzed.
 
@@ -458,19 +647,19 @@ private def ExactRun.envelope (run : ExactRun)
         (limit {run.maxBytes} bytes)"
     let overrideName := if validator then "LEAN_FMT_TEST_VALIDATOR" else "LEAN_FMT_TEST_ANALYZER"
     let analyzer := (← IO.getEnv overrideName).map FilePath.mk |>.getD run.application
-    let output ← withPhase "exact_child" <| runBounded {
+    let output ← withPhase "exact_child" <| run.spawnBounded {
       cmd := analyzer.toString
       -- The trailing capture token encodes the demanded semantic capabilities: "0" none, "1" the two
       -- semantic diagnostics, "2" diagnostics plus the info-tree occurrence fold. A
       -- direct 4-argument invocation (every syntax-only harness) omits it and captures nothing.
       -- `occurrences` is only ever demanded together with the tier, so the token is a simple ladder.
       args := #["__analyze-exact", setupPath.toString, sourcePath.toString,
-        snapshot.path.toString, toString (← childMemoryBudget run.maxBytes),
+        snapshot.path.toString, toString (← childMemoryBudget run.maxBytes run.workers),
         match formatWidth? with
         | some width => s!"4:{width}"
         | none => if captureOccurrences then "2" else if captureSemantic then "1" else "0"]
       env := run.project.workspace.augmentedEnvVars.push ⟨"LEAN_NUM_THREADS", some "1"⟩
-    } run.maxBytes cancel?
+    } cancel?
     unless output.exitCode == 0 do
       throw <| IO.userError s!"exact frontend child failed for {snapshot.relativePath}: \
         {output.stderr.trimAscii}"
@@ -516,13 +705,13 @@ private def ExactRun.artifactEnvelope (run : ExactRun) (snapshot : SourceSnapsho
     if (← residentKiB) * 1024 >= run.maxBytes then
       throw <| IO.userError s!"resource envelope exhausted before artifact formatter child \
         (limit {run.maxBytes} bytes)"
-    let output ← withPhase "artifact_child" <| runBounded {
+    let output ← withPhase "artifact_child" <| run.spawnBounded {
       cmd := run.application.toString
       args := #["__analyze-artifact", setupPath.toString, moduleFile.toString,
         artifactPath.toString, sourcePath.toString, snapshot.path.toString,
-        toString (← childMemoryBudget run.maxBytes), toString width]
+        toString (← childMemoryBudget run.maxBytes run.workers), toString width]
       env := run.project.workspace.augmentedEnvVars.push ⟨"LEAN_NUM_THREADS", some "1"⟩
-    } run.maxBytes cancel?
+    } cancel?
     unless output.exitCode == 0 do
       throw <| IO.userError s!"artifact formatter child failed for {snapshot.relativePath}: \
         {output.stderr.trimAscii}"
@@ -695,8 +884,13 @@ def ExactRun.analyzeSnapshot (run : ExactRun) (snapshot : SourceSnapshot)
       (cancel? := cancel?))
 
 /- Bracket a complete exact-analysis run. The capability is constructed only after a real fallback
-or editor request needs it; cache-only and ordinary-evidence batch runs create no temporary state. -/
-def withExactRun (project : Project.Snapshot) (maxMemoryGiB : Nat)
+or editor request needs it; cache-only and ordinary-evidence batch runs create no temporary state.
+
+`workers` above one starts the reaper: the registry, the dedicated polling task, and the drain
+protocol in `finally`. The reaper task's own result is discarded on purpose — a sampling failure
+reaches workers through `samplingError` as per-file failures, and a reaper that outlived its
+usefulness must not fail a batch whose files all succeeded. -/
+def withExactRun (project : Project.Snapshot) (maxMemoryGiB : Nat) (workers : Nat := 1)
     (action : ExactRun → IO α) : IO α := do
   unless maxMemoryGiB > 0 do
     throw <| IO.userError "--max-memory must provide a nonzero operating envelope"
@@ -707,16 +901,32 @@ def withExactRun (project : Project.Snapshot) (maxMemoryGiB : Nat)
   let nextIndex ← IO.mkRef 0
   let setups ← IO.mkRef {}
   let documentSetups ← IO.mkRef {}
+  let reaper? ← if workers > 1 then do
+    let registry ← IO.mkRef #[]
+    let done ← IO.mkRef false
+    let samplingError ← IO.mkRef none
+    let task ← IO.asTask (reaperLoop registry done samplingError maxBytes) Task.Priority.dedicated
+    pure (some ({ registry, done, samplingError, task } : ReaperState))
+  else
+    pure none
   let run : ExactRun := {
     project
     application := ← IO.appPath
     temporary
     maxBytes
+    workers
+    reaper?
     nextIndex
     setups
     documentSetups
   }
-  try action run finally IO.FS.removeDirAll temporary
+  try
+    action run
+  finally
+    if let some reaper := reaper? then
+      reaper.done.set true
+      discard <| IO.wait reaper.task
+    IO.FS.removeDirAll temporary
 
 /-- The demand half of the shared cache decision.
 
@@ -1492,6 +1702,104 @@ structure RunOutcome where
   report : RunReport
   positions : PositionIndex
 
+/-- What one batch target produced, however it produced it. The worker writes this whole value at
+the target's index; the fold afterwards is the only place ordering exists, which is what makes the
+report byte-identical at any `--workers`. -/
+private structure FileOutcome where
+  report : FileReport
+  analysis? : Option SemanticAnalysis
+  failure? : Option String
+  pendingFormat? : Option (SourceSnapshot × String)
+
+/-- The per-target body of the batch loop: obtain the analysis the earlier decisions left
+unanswered, then run the mode's rule phase. Extracted so the serial path and the worker pool
+execute the same text; every throw becomes the target's `infrastructure-failure`, exactly what the
+serial loop's `catch` reported. -/
+private def processOneTarget (exactRun : ExactRun) (request : RunRequest)
+    (renderCanonical : Bool) (demanded : Tier) (demandedCaps : SemanticCaps)
+    (snapshot : SourceSnapshot) (available? : Option SemanticAnalysis)
+    (artifact? : Option ModuleArtifact) (ir : Array Finding × Nat) (plan : RulePlan) :
+    IO FileOutcome := do
+  try
+    let analysis ← match available? with
+      | some analysis => pure analysis
+      | none =>
+        if renderCanonical && plan.requiredTier != .semantic then
+          match artifact? with
+          | some artifact =>
+            match snapshot.module? with
+            | some mod =>
+              let artifactEnvelope? ← try
+                  some <$> exactRun.artifactEnvelope snapshot artifact mod.oleanFile
+                    snapshot.config.format.lineWidth
+                catch _ => pure none
+              match artifactEnvelope? with
+              | some envelope => canonicalAnalysis snapshot true envelope (artifactRender := true)
+              | none =>
+                recordCount "path_artifact_runtime_fallback" 1
+                exactRun.analyzeSnapshot snapshot true
+            | none => exactRun.analyzeSnapshot snapshot true
+          | none =>
+            exactRun.analyzeSnapshot snapshot true
+              (captureSemantic := demanded == .semantic)
+              (captureOccurrences := demandedCaps.occurrences)
+        else
+          exactRun.analyzeSnapshot snapshot renderCanonical
+            (captureSemantic := demanded == .semantic)
+            (captureOccurrences := demandedCaps.occurrences)
+    let (report, formatOutput?) ← withPhase "rules" <| match request.mode with
+      | .fix => do
+        let report ← fixFile exactRun plan request.unsafeFixes ir.1 ir.2 snapshot analysis
+        pure (report, none)
+      | .check => do
+        let report ← previewFile .check plan request.unsafeFixes ir.1 ir.2 snapshot analysis
+        pure (report, none)
+      -- `format` publishes in place by default (`ruff-11d`); `--check` demotes it to the preview.
+      | .format =>
+        if request.formatCheck then do
+          let report ← previewFile .format plan request.unsafeFixes ir.1 ir.2 snapshot analysis
+          pure (report, none)
+        else
+          pure <| prepareFormatFile plan request.unsafeFixes ir.1 ir.2 snapshot analysis
+      | .diff => do
+        let report ← previewFile .diff plan request.unsafeFixes ir.1 ir.2 snapshot analysis
+        pure (report, none)
+    return {
+      report
+      analysis? := some analysis
+      failure? := none
+      pendingFormat? := formatOutput?.map (snapshot, ·)
+    }
+  catch error =>
+    let message := toString error
+    return {
+      report := {
+        path := snapshot.relativePath
+        status := "infrastructure-failure"
+        diagnostics := #[message]
+      }
+      analysis? := none
+      failure? := some s!"{snapshot.relativePath}: {message}"
+      pendingFormat? := none
+    }
+
+/-- Pull targets from the shared index until none remain. One worker is the serial loop; several
+are `--workers N`. Workers write only their own outcomes slot; the shared refs they read (`setups`,
+the temp-file counter) are either immutable after `primeSetups` or atomic. -/
+private partial def batchWorker (exactRun : ExactRun) (request : RunRequest)
+    (renderCanonical : Bool) (demanded : Tier) (demandedCaps : SemanticCaps)
+    (work : Array ((((SourceSnapshot × Option SemanticAnalysis) × Option ModuleArtifact) ×
+      (Array Finding × Nat)) × RulePlan))
+    (next : IO.Ref Nat)
+    (outcomes : IO.Ref (Array (Option FileOutcome))) : IO Unit := do
+  let index ← next.modifyGet fun n => (n, n + 1)
+  if h : index < work.size then
+    let ((((snapshot, available?), artifact?), ir), plan) := work[index]
+    let outcome ← processOneTarget exactRun request renderCanonical demanded demandedCaps
+      snapshot available? artifact? ir plan
+    outcomes.modify (·.set! index (some outcome))
+    batchWorker exactRun request renderCanonical demanded demandedCaps work next outcomes
+
 /- Execute one immutable user request. This operation owns workspace discovery, exact module
 selection, source snapshots, trusted-artifact validation, fallback, deterministic aggregation, and
 resource intent. No caller can sequence or retain those mechanisms independently. -/
@@ -1644,77 +1952,46 @@ def execute (request : RunRequest) : IO RunOutcome := do
         withPhase "cache_write" <| cache.writeAll project snapshots available
       let positions ← profiledPositions snapshots files
       return { report := summarize request.mode.toString files, positions }
-  withExactRun project request.maxMemoryGiB fun exactRun => do
+  withExactRun project request.maxMemoryGiB request.workers fun exactRun => do
     -- Exactly the files the decisions above left unanswered, which is exactly the set that will
     -- spawn a frontend child and so need a Lake setup.
     exactRun.primeSetups <| (snapshots.zip available).filterMap fun (snapshot, available?) =>
       if available?.isNone then some snapshot else none
+    let work := (((snapshots.zip available).zip artifacts).zip importReports).zip plans
+    let outcomes ← IO.mkRef (Array.replicate work.size (none : Option FileOutcome))
+    let next ← IO.mkRef 0
+    if request.workers > 1 && work.size > 1 then
+      -- `--workers N`: dedicated workers, one reaper (started by `withExactRun`), outcomes by index.
+      -- Dedicated priority is load-bearing, not tuning: workers block on child pipes, and pooled
+      -- blocking tasks can starve a small pool (`LEAN_NUM_THREADS=1` is a supported setting).
+      let workers := min request.workers work.size
+      let tasks ← (List.range workers).mapM fun _ =>
+        IO.asTask (batchWorker exactRun request renderCanonical demanded demandedCaps work next
+          outcomes) Task.Priority.dedicated
+      let mut firstError? : Option IO.Error := none
+      for task in tasks do
+        match ← IO.wait task with
+        | .ok _ => pure ()
+        | .error error => if firstError?.isNone then firstError? := some error
+      if let some error := firstError? then throw error
+    else
+      batchWorker exactRun request renderCanonical demanded demandedCaps work next outcomes
     let mut files := #[]
     let mut failures := #[]
     let mut analyses := #[]
     let mut pendingFormats : Array PendingFormat := #[]
-    for ((((snapshot, available?), artifact?), ir), plan) in
-        (((snapshots.zip available).zip artifacts).zip importReports).zip plans do
-      try
-        let analysis ← match available? with
-          | some analysis => pure analysis
-          | none =>
-            if renderCanonical && plan.requiredTier != .semantic then
-              match artifact? with
-              | some artifact =>
-                match snapshot.module? with
-                | some mod =>
-                  let artifactEnvelope? ← try
-                      some <$> exactRun.artifactEnvelope snapshot artifact mod.oleanFile
-                        snapshot.config.format.lineWidth
-                    catch _ => pure none
-                  match artifactEnvelope? with
-                  | some envelope => canonicalAnalysis snapshot true envelope (artifactRender := true)
-                  | none =>
-                    recordCount "path_artifact_runtime_fallback" 1
-                    exactRun.analyzeSnapshot snapshot true
-                | none => exactRun.analyzeSnapshot snapshot true
-              | none =>
-                exactRun.analyzeSnapshot snapshot true
-                  (captureSemantic := demanded == .semantic)
-                  (captureOccurrences := demandedCaps.occurrences)
-            else
-              exactRun.analyzeSnapshot snapshot renderCanonical
-                (captureSemantic := demanded == .semantic)
-                (captureOccurrences := demandedCaps.occurrences)
-        analyses := analyses.push (some analysis)
-        let (report, formatOutput?) ← withPhase "rules" <| match request.mode with
-          | .fix => do
-            let report ← fixFile exactRun plan request.unsafeFixes ir.1 ir.2 snapshot analysis
-            pure (report, none)
-          | .check => do
-            let report ← previewFile .check plan request.unsafeFixes ir.1 ir.2 snapshot analysis
-            pure (report, none)
-          -- `format` publishes in place by default (`ruff-11d`); `--check` demotes it to the preview.
-          | .format =>
-            if request.formatCheck then do
-              let report ← previewFile .format plan request.unsafeFixes ir.1 ir.2 snapshot analysis
-              pure (report, none)
-            else
-              pure <| prepareFormatFile plan request.unsafeFixes ir.1 ir.2 snapshot analysis
-          | .diff => do
-            let report ← previewFile .diff plan request.unsafeFixes ir.1 ir.2 snapshot analysis
-            pure (report, none)
-        if let some output := formatOutput? then
-          pendingFormats := pendingFormats.push {
-            reportIndex := files.size
-            snapshot
-            output }
-        files := files.push report
-      catch error =>
-        analyses := analyses.push none
-        let message := toString error
-        failures := failures.push s!"{snapshot.relativePath}: {message}"
-        files := files.push {
-          path := snapshot.relativePath
-          status := "infrastructure-failure"
-          diagnostics := #[message]
-        }
+    for outcome? in ← outcomes.get do
+      let some outcome := outcome?
+        | throw <| IO.userError "a batch worker finished without reporting its target"
+      files := files.push outcome.report
+      analyses := analyses.push outcome.analysis?
+      if let some failure := outcome.failure? then
+        failures := failures.push failure
+      if let some (snapshot, output) := outcome.pendingFormat? then
+        pendingFormats := pendingFormats.push {
+          reportIndex := files.size - 1
+          snapshot
+          output }
     if request.writesFormat && !pendingFormats.isEmpty then
       let batchReady := failures.isEmpty && files.all fun report =>
         report.status != "broken" && report.status != "rejected" &&
@@ -1932,9 +2209,9 @@ def stream (request : StreamRequest) : IO StreamReport := do
     | .error message => throw <| IO.userError message
   for notice in target.config.notices ++ plan.notices do
     IO.eprintln s!"lean-fmt: {notice}"
-  withExactRun project request.maxMemoryGiB fun run =>
+  withExactRun project request.maxMemoryGiB (action := fun run =>
     run.streamSnapshot target plan request.mode (range? := request.range?)
-      (unsafeFixes := request.unsafeFixes) (formatCheck := request.formatCheck)
+      (unsafeFixes := request.unsafeFixes) (formatCheck := request.formatCheck))
 
 /-- Organize one unsaved buffer's imports, validated and returned rather than written.
 
@@ -2008,7 +2285,7 @@ def organize (request : OrganizeRequest) : IO RunReport := do
     let files := (snapshots.zip candidates).map fun (snapshot, candidate?) =>
       baseReport snapshot (if candidate?.isSome then "would-organize" else "clean")
     return summarize "organize" files
-  withExactRun project request.maxMemoryGiB fun exactRun => do
+  withExactRun project request.maxMemoryGiB (action := fun exactRun => do
     -- Only a snapshot with a candidate rewrite is validated, so only those reach the frontend.
     exactRun.primeSetups <| (snapshots.zip candidates).filterMap fun (snapshot, candidate?) =>
       if candidate?.isSome then some snapshot else none
@@ -2037,7 +2314,7 @@ def organize (request : OrganizeRequest) : IO RunReport := do
             status := "infrastructure-failure"
             diagnostics := #[message]
           }
-    return summarize "organize" files failures
+    return summarize "organize" files failures)
 
 private unsafe def runArtifactAnalyzeChild (args : List String) : IO UInt32 := do
   let [setupPath, moduleFile, artifactPath, snapshotPath, displayPath, maxBytes, width] := args
