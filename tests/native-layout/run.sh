@@ -338,7 +338,7 @@ check "tactic steps stay siblings" \
 # function of the width rather than of this line: measured threshold 136 columns for a line occupying
 # 50. A flat boundary at the `by` terminal is what holds it, since `Doc` delegates rendering to
 # `Std.Format.prettyM` on purpose and the adapter does not own that decision.
-check "by stays on the := line" "$(grep -c ' := by$' "$offside")" "4"
+check "by stays on the := line" "$(grep -c ' := by$' "$offside")" "5"
 check "and its first tactic still starts the next line" \
   "$(grep -A1 -Fx '    n + 0 = n := by' "$offside" | tail -1)" \
   "  have step : n + 0 = n := Nat.add_zero n"
@@ -408,9 +408,9 @@ check "  ... and is the only bar in these fixtures left bare" \
 # assertion is `grep -c '^#eval'` rather than a substring count because the whole claim is the column.
 check "a command nested in another command starts at column zero" \
   "$(grep -c '^#eval 1 + 2$' "$offside")" "1"
-# Two, not one: the D24 fixture below embeds a second command the same way.
+# Three, not one: the D24 and D27 fixtures below embed two more commands the same way.
 check "  ... and the enclosing command keeps its own line" \
-  "$(grep -c '^#guard_msgs in$' "$offside")" "2"
+  "$(grep -c '^#guard_msgs in$' "$offside")" "3"
 check "  ... and one Lean already dedented is spelled the same way" \
   "$(grep -c '^def afterOpen : Nat :=$' "$offside")" "1"
 # D24: the same dedent with a comment in the gap. Both columns are asserted, because the defect put
@@ -419,6 +419,12 @@ check "  ... and a comment in the gap keeps its own column zero" \
   "$(grep -c '^-- the comment the dedent has to survive$' "$offside")" "1"
 check "  ... and the command after that comment starts at column zero too" \
   "$(grep -c '^#eval 3 + 4$' "$offside")" "1"
+# D27: the rows *after* the one the boundary opened. A boundary sets one column; the body of the
+# nested command is laid out from the embedding's `nest` until that is cancelled too, and this landed
+# at four. Asserted at the exact column, because the defect is a column and the output parses either
+# way -- nothing else in this suite would notice.
+check "  ... and the nested command's own body lands one level in, not two" \
+  "$(grep -c '^  refine ⟨rfl, ?_⟩$' "$offside")" "1"
 
 # The `then` line ends at `then`. The suite-wide gate in §2 already forbids the space that used to
 # follow it; this names the construct that produced one, so that removing the fixture is visible.
@@ -434,7 +440,10 @@ check "an interior doc comment keeps its own line" \
 check "  ... and nothing shares the line the rec keyword ends" \
   "$(grep -c '^  let rec$' "$offside")" "1"
 
-printf -- '--- the defects these fixtures found: eighteen repaired, one pinned (§7) ---\n'
+# The tally this header used to carry read "eighteen repaired" and was already one short when D24
+# landed. A count nobody can re-derive from the ledger is worse than none, and the prose below states
+# the property that matters: every D but D7 is repaired, and D7 is pinned rather than absent.
+printf -- '--- the defects these fixtures found: all repaired but D7, which is pinned (§7) ---\n'
 # This section held six pins, each a defect these fixtures found, recorded exactly as measured so that
 # repairing one failed here instead of passing silently. All six are repaired, as is every later D but
 # one; the D1-D6 record is followed by D7, which is upstream and still live, and then by D8 onward in

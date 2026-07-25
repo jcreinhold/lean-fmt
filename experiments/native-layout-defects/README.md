@@ -695,18 +695,65 @@ Found on `MathlibTest/Linter/Multigoal.lean` (25 column-zero declarations to 23)
 `MathlibTest/Tactic/Linarith/Basic.lean` (157 to 155), two of 235 candidates. Gated in `Offside.lean`
 and §6 beside D13's.
 
-### D27, which D24 was hiding
+## D27 is a boundary asked to hold a column it can only set once
 
-With the nested command back at column zero, its *body* is visible one level too far in:
+D24 was hiding it. With the nested command back at column zero, its *body* is one level too far in:
 
 ```
 #guard_msgs in
-example : True ∧ True := by
-    constructor
+example : 1 + 1 = 2 ∧ 2 + 2 = 4 := by
+    refine ⟨rfl, ?_⟩
+    rfl
 ```
 
 `dedented` cancels the nest around **one** newline, so it corrects the break in front of the nested
 command and leaves every break *inside* it carrying the `nest` that `guardMsgsCmd`'s missing `ppDedent`
-introduced. This is not a regression -- it was true before D24 and invisible while the command itself
-was misplaced, and D13's fixture is `#eval 1 + 2`, a single line with no interior break to expose it.
-The output is legal Lean and reparses identically, so no gate catches it. Not yet repaired.
+introduced. Not a regression -- it was true before D24 and invisible while the command itself was
+misplaced, and D13's fixture is `#eval 1 + 2`, a single line with no interior break to expose it. The
+output is legal Lean and reparses identically, so no gate caught it; the fixture asserts the column
+directly for that reason.
+
+### Why the obvious repair is wrong
+
+The mechanism to reach a whole subtree already exists. `OffsideConstraint` with `carrier := .nest`
+wraps a source span in a `nest`, and `containingConstraintNest` already tells a `dedented` boundary
+about a constraint that will wrap it, so the two compose without cancelling the same level twice. So
+the obvious repair is to collect the nested command's whole span and push
+`{ range, indentAdjustment := -indent, carrier := .nest }`.
+
+The existing `open Nat in` fixture says why that is wrong. `dedented` is idempotent -- it *sets* a
+column rather than adjusting one, which is what lets one rule cover both `#guard_msgs in`, where Lean
+nests the embedded command, and `open … in`, where `ppDedent` means Lean does not. A `nest` constraint
+is not idempotent: it adjusts. A blanket `-indent` over an `open … in` body would pull it a level left
+of where the document correctly put it.
+
+What separates the two is not in the syntax, so no collector can see it: it is whether the *document*
+nested the embedded command, which is `ambientNest` where the boundary lands. Known during the walk,
+not before it.
+
+### The repair
+
+The span is collected statically and the amount is resolved dynamically. `collectNestedCommandRanges`
+returns each nested command's whole range rather than only its start; when the `dedented` boundary
+fires at that command's first terminal, `constrainBoundary` records the span together with
+`dedentColumns` -- the same quantity the boundary itself just cancelled. Every later boundary inside
+that span is wrapped in the same cancelling `nest` by `interiorDedent`. `open … in` records zero and
+its body is left exactly where the document put it, which is the boundary's own idempotence carried
+one level down.
+
+Two details are not incidental:
+
+- The cancellation is spelled at each interior *boundary*, not around the command's subtree. The
+  boundary in front of that subtree is a sibling leaf of it in some documents and part of it in
+  others, and one `nest` covering both would cancel twice in the second case.
+- A command nested inside another takes the innermost recorded amount, not the sum. Each amount is the
+  whole distance to the enclosing command's column measured from where its own boundary landed, so an
+  inner one already carries the outer.
+
+`boundaryNest` records the row's *effective* column now -- `ambientNest` less any interior
+cancellation -- because `finishTrailing` reads it to place a block's dangling comment at the column
+that block's items really got.
+
+Gated in `Offside.lean` and §6 beside D13's and D24's, asserting the body's column exactly. Measured
+before and after on the fixture above: `refine` at column 4, then at column 2, with `open Nat in`'s
+multi-line body unchanged at 2 in both.

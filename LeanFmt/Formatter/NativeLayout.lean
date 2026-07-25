@@ -693,24 +693,31 @@ idempotent -- it sets a column rather than adjusting one, so where Lean already 
 first child is the `open` command itself, so the category test matches at the command's own first
 terminal, where there is no boundary to correct -- only the leading padding that separates this command
 from the previous one. Constraining that spelled an extra blank line above every such command. A nested
-command that begins where its root begins has nothing in front of it to move. -/
-private partial def collectNestedCommandStarts (commandKinds : Lean.Parser.SyntaxNodeKindSet)
+command that begins where its root begins has nothing in front of it to move.
+
+The whole range is collected, not only the start, because the boundary is half the correction. See
+`interiorDedent` for the other half: the boundary sets the column of the row it opens, and every later
+row of the same nested command is laid out from the embedding's `nest` until something cancels that
+too. The range is the first selected leaf's start and the last one's stop, which is the span the walk
+matches terminal indices against. -/
+private partial def collectNestedCommandRanges (commandKinds : Lean.Parser.SyntaxNodeKindSet)
     (rootStart : Nat) (stx : Lean.Syntax) (root : Bool := true)
-    (starts : Array Nat := #[]) : Array Nat :=
+    (ranges : Array SourceRange := #[]) : Array SourceRange :=
   match stx with
   | .node _ kind children =>
-    let starts :=
+    let ranges :=
       if !root && commandKinds.contains kind then
-        match (selectedLeafRanges stx)[0]? with
-        | some range =>
-          if range.start == rootStart || starts.contains range.start then starts
-          else starts.push range.start
-        | none => starts
-      else starts
+        let leaves := selectedLeafRanges stx
+        match leaves[0]?, leaves.back? with
+        | some first, some last =>
+          if first.start == rootStart || ranges.any (·.start == first.start) then ranges
+          else ranges.push ⟨first.start, last.stop⟩
+        | _, _ => ranges
+      else ranges
     let children := if kind == Lean.choiceKind then children[0]?.toArray else children
-    children.foldl (init := starts) fun starts child =>
-      collectNestedCommandStarts commandKinds rootStart child false starts
-  | _ => starts
+    children.foldl (init := ranges) fun ranges child =>
+      collectNestedCommandRanges commandKinds rootStart child false ranges
+  | _ => ranges
 
 /- A guarded `let`'s bail-out, when the source already spells it on one line.
 
@@ -941,6 +948,10 @@ private structure TransformState where
   constraints : Array (OffsideConstraint × TokenSpan)
   boundaries : Array (Nat × BoundaryLayout)
   flattened : Array TokenSpan
+  /- Every nested command's terminal span. The `dedented` boundary in front of one is collected as a
+  boundary like any other; this is the same command's *extent*, which is what says how far that
+  boundary's column reaches. -/
+  nestedCommands : Array TokenSpan
   baseIndent : Nat
   terminalIndex : Nat := 0
   commentIndex : Nat := 0
@@ -960,6 +971,11 @@ private structure TransformState where
   A boundary is where the walk can see that column, and it passes there long before the node that will
   claim the comment finishes. -/
   boundaryNest : Array (Nat × Int) := #[]
+  /- Each nested command whose `dedented` boundary has fired, with the columns that boundary cancelled.
+  Recorded during the walk rather than collected before it, because the amount is not a property of the
+  syntax: it is `ambientNest` where the boundary lands, which says whether the embedding node nested
+  this command at all. `open … in` records zero and its body is left where the document put it. -/
+  dedents : Array (TokenSpan × Int) := #[]
   /- Islands whose interior the formatter has started to spell. See `insideIsland`. -/
   enteredIslands : Array String := #[]
   recentNativeLeaves : Array String := #[]
@@ -1297,24 +1313,49 @@ private def containingConstraintNest (state : TransformState) (span : TokenSpan)
       total + constraint.indentAdjustment
     else total
 
+/- Every column between the enclosing command's own and the one a row opened here would start at:
+`baseIndent`, the document's own `nest` depth, and every constraint that will wrap this terminal. A
+`dedented` boundary cancels exactly this, and so does every row inside the command that boundary
+opens. -/
+private def dedentColumns (state : TransformState) : Int :=
+  let span : TokenSpan := ⟨state.terminalIndex, state.terminalIndex⟩
+  state.baseIndent + state.ambientNest + containingConstraintNest state span
+
+/- The cancellation a row opened at this terminal inherits from a nested command it is *inside*.
+Nothing for a row that opens one -- `dedented` already sets that row's column, absolutely -- and
+nothing for a row past the command's last terminal, which the enclosing command lays out.
+
+A command nested inside another takes the innermost, not the sum. Each recorded amount is the whole
+distance to column zero from where its own boundary landed, so two of them do not compose; the inner
+one was measured inside the outer and already carries it. -/
+private def interiorDedent (state : TransformState) : Option Int :=
+  let containing := state.dedents.filter fun (span, _) =>
+    span.start < state.terminalIndex && state.terminalIndex < span.stop
+  (containing.foldl (init := none) fun best entry =>
+    match best with
+    | some (bestSpan, _) => if entry.1.start > bestSpan.start then some entry else best
+    | none => some entry).map (·.2)
+
 /- What the adapter spells at a boundary it corrects. Three of the four are fixed text; `dedented`
-cancels `baseIndent`, the document's own `nest` depth here, and every constraint that will wrap this
-terminal, so the line after it starts at the enclosing command's column whatever the document chose. -/
+cancels every column between the enclosing command's own and this one, so the line after it starts at
+that command's column whatever the document chose. -/
 private def boundaryFormat (state : TransformState) : BoundaryLayout → Std.Format
   | .flat => .text " "
   | .hard => .text "\n"
   | .elided => .nil
-  | .dedented =>
-    let span : TokenSpan := ⟨state.terminalIndex, state.terminalIndex⟩
-    .nest (-(state.baseIndent + state.ambientNest + containingConstraintNest state span))
-      (.text "\n")
+  | .dedented => .nest (-(dedentColumns state)) (.text "\n")
 
 private def constrainBoundary (format : Std.Format) :
     StateT TransformState (Except String) Std.Format := do
   let state ← get
   unless state.boundaryNest.any (·.1 == state.terminalIndex) do
+    -- The column this row is laid out at, which inside a nested command is not `ambientNest`: every
+    -- row there is cancelled back by the amount its command's boundary cancelled. `finishTrailing`
+    -- reads this to place a dangling comment at its block's own column, so it has to be the column the
+    -- block's items really got rather than the one the native document chose for them.
     modify fun state => { state with
-      boundaryNest := state.boundaryNest.push (state.terminalIndex, state.ambientNest) }
+      boundaryNest := state.boundaryNest.push
+        (state.terminalIndex, state.ambientNest - (interiorDedent state).getD 0) }
   let state ← get
   if insideIsland state then return .nil
   let mut format := format
@@ -1330,10 +1371,27 @@ private def constrainBoundary (format : Std.Format) :
     unless state.appliedBoundaries.contains state.terminalIndex do
       set { state with
         appliedBoundaries := state.appliedBoundaries.push state.terminalIndex
+        -- The command this boundary opens, and how far its rows are from the column the boundary just
+        -- set. Recorded here because this is where the amount is known: it is the ambient nest the
+        -- boundary cancelled, and a collector reading the syntax cannot tell whether the embedding
+        -- node nested the command or spelled `ppDedent` and did not.
+        dedents :=
+          if layout matches .dedented then
+            match state.nestedCommands.find? fun span : TokenSpan =>
+                span.start == state.terminalIndex with
+            | some span => state.dedents.push (span, dedentColumns state)
+            | none => state.dedents
+          else state.dedents
         metrics := { state.metrics with
           offsideConstraints := state.metrics.offsideConstraints + 1 } }
       format := boundaryFormat state layout
   let state ← get
+  -- Every row this boundary opens inside a nested command is cancelled the way that command's own
+  -- boundary was. `dedented` sets the column of one row and leaves the rest carrying the `nest` the
+  -- embedding node introduced -- one level in for the command's whole body, which is D27. The
+  -- correction is spelled here rather than around the command's subtree because the boundary in front
+  -- of that subtree is a sibling leaf, not part of it, and one `nest` covering both would cancel twice.
+  let interior := (interiorDedent state).getD 0
   let start := state.commentIndex
   let mut stop := start
   while h : stop < state.comments.size do
@@ -1346,10 +1404,12 @@ private def constrainBoundary (format : Std.Format) :
       metrics := { state.metrics with
         commentLeaves := state.metrics.commentLeaves + comments.size
         commentConstraints := state.metrics.commentConstraints + comments.size } }
-    let span : TokenSpan := ⟨state.terminalIndex, state.terminalIndex⟩
-    format := insertComments
-      (-(state.baseIndent + state.ambientNest + containingConstraintNest state span))
-      rowBreak comments format
+    -- A comment payload carries absolute source columns and has to reach column zero whatever row it
+    -- lands on, so the `interior` cancellation applied below is subtracted back out here rather than
+    -- left to compose with it.
+    format := insertComments (interior - dedentColumns state) rowBreak comments format
+  if interior != 0 then
+    format := .nest (-interior) format
   modify fun state => { state with separated := state.separated || !provablyEmpty format }
   return format
 
@@ -1577,7 +1637,8 @@ private def boundaryTable (terminals : Array Terminal) (starts : Array (Nat × B
 private def transform (source : String) (terminals : Array Terminal)
     (comments : Array InteriorComment) (blockDangling : Array (SourceRange × InteriorComment))
     (islands : Array ExactIsland) (constraints : Array OffsideConstraint)
-    (boundaryStarts : Array (Nat × BoundaryLayout)) (joined : Array SourceRange) (baseIndent : Nat)
+    (boundaryStarts : Array (Nat × BoundaryLayout)) (joined : Array SourceRange)
+    (nestedCommandRanges : Array SourceRange) (baseIndent : Nat)
     (native : Std.Format) : Except String (Std.Format × Metrics) := do
   let constraints := constraints.map fun constraint =>
     (constraint, spanForRange terminals constraint.range)
@@ -1595,6 +1656,7 @@ private def transform (source : String) (terminals : Array Terminal)
     !islands.any fun island => island.range.start < start && start < island.range.stop
   let boundaries ← boundaryTable terminals boundaryStarts
   let flattened := joined.map (spanForRange terminals)
+  let nestedCommands := nestedCommandRanges.map (spanForRange terminals)
   let trailing := blockDangling.map fun (range, comment) => (spanForRange terminals range, comment)
   let comments := comments.map fun comment =>
     { comment with
@@ -1604,7 +1666,7 @@ private def transform (source : String) (terminals : Array Terminal)
     if spelled.contains island.marker then none else some island.marker
   let initial : TransformState := {
     source, terminals, comments, trailing, islands, droppedIslands, constraints, boundaries,
-    flattened, baseIndent }
+    flattened, nestedCommands, baseIndent }
   let (result, state) ← (transformNative native).run initial
   if state.terminalIndex != terminals.size then
     throw s!"native formatter consumed {state.terminalIndex}/{terminals.size} terminals; \
@@ -1723,7 +1785,8 @@ alternatives: alternative 0 is {expected}, alternative {alternative} is {actual}
       `command).map (·.kinds) |>.getD {}
   let rootStart := ((selectedLeafRanges stripped)[0]?).map (·.start) |>.getD 0
   let ctorDocStarts := collectCtorDocStarts stripped
-  let nestedCommandStarts := collectNestedCommandStarts commandKinds rootStart stripped
+  let nestedCommandRanges := collectNestedCommandRanges commandKinds rootStart stripped
+  let nestedCommandStarts := nestedCommandRanges.map (·.start)
   -- The one boundary whose spelling is read off the source. Everything else here is decided by shape,
   -- because a shape is what native layout got wrong; this one asks the source because the question it
   -- answers -- which side of a break a comment is on -- is the source's to answer, and the comment
@@ -1766,7 +1829,7 @@ cannot tell from the placeholder that protects {marker.range.start}:{marker.rang
     let native ← Lean.PrettyPrinter.formatCommand formattedSyntax
     let native := (dropTrailingHardLine native).getD native
     match transform source terminals comments blockDangling islands constraints boundaryStarts
-        joined baseIndent native with
+        joined nestedCommandRanges baseIndent native with
     | .ok (native, metrics) =>
       return .ok { document := Doc.registered native, trace, metrics }
     | .error detail =>

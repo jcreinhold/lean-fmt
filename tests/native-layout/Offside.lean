@@ -141,6 +141,16 @@ still counted as applied so nothing refused. That was D24, found on
 -- the comment the dedent has to survive
 #eval 3 + 4
 
+/- The same embedding again, this time with a body of its own. The dedent above is a *boundary*: it
+sets the column of the row the command starts on and says nothing about the rows after it, which keep
+the `nest` the embedding node introduced and land one level further in than the command they belong to.
+That was D27, and it was invisible while D24 had the command itself misplaced and while D13's fixture
+was a single line with no interior break. -/
+#guard_msgs in
+example : 1 + 1 = 2 ∧ 2 + 2 = 4 := by
+  refine ⟨rfl, ?_⟩
+  rfl
+
 /- The negative half: `open … in` spells the same embedding and Lean *does* dedent it. The correction
 sets a column rather than adjusting one, so it spells here exactly the newline the document already
 had. -/
