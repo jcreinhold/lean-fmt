@@ -150,6 +150,14 @@ lean_exe «suite-discovery» where
   root := `Suites.Discovery
   supportInterpreter := true
 
+/- The LSP suite: lifecycle, recovery, admission, cancellation, and bounds over one-shot
+sessions, then diagnostics, formatting, and code actions over a live client. Workspace lane: the
+server shares the root cache. -/
+lean_exe «suite-lsp» where
+  srcDir := "tests"
+  root := `Suites.Lsp
+  supportInterpreter := true
+
 /- The scale suite: complete selection over a synthetic project, all-hit cacheability, and
 single-source invalidation. The fixture and its cache live in a temp dir; parallel lane. -/
 lean_exe «suite-scale» where

@@ -82,6 +82,7 @@ private def registered : Array Suite := #[
   { name := "imports", lane := .workspace },
   { name := "layout", lane := .«parallel» },
   { name := "lossless", lane := .«parallel» },
+  { name := "lsp", lane := .workspace },
   { name := "reporting", lane := .workspace },
   { name := "scale", lane := .«parallel» },
   { name := "semantic", lane := .«parallel» },
