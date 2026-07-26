@@ -75,6 +75,7 @@ private def registered : Array Suite := #[
   { name := "incremental", lane := .«parallel» },
   { name := "imports", lane := .workspace },
   { name := "layout", lane := .«parallel» },
+  { name := "lossless", lane := .«parallel» },
   { name := "lsp-acceptance", lane := .exclusive, slow := true }
 ]
 
@@ -169,7 +170,10 @@ private def report (outcome : Outcome) : IO Unit :=
 
 /-- Build every selected executable in one invocation, so the run itself contains no builds. -/
 private def buildSuites (root : System.FilePath) (suites : Array Suite) : IO Unit := do
-  let result ← runProc "lake" (#["-q", "build"] ++ suites.map (·.exeName)) (cwd? := some root)
+  -- The product binary is built alongside: every suite drives it, so a source edit that
+  -- only rebuilds the suite would test a stale product.
+  let result ← runProc "lake" (#["-q", "build", "lean-fmt"] ++ suites.map (·.exeName))
+    (cwd? := some root)
   ensure (result.exitCode == 0) s!"suite executables failed to build:\n{result.stderr}"
 
 /-- One worker of the lane pool: pull the next index, run it, record it, repeat. -/
