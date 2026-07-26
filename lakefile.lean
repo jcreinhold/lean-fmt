@@ -150,6 +150,13 @@ lean_exe «suite-discovery» where
   root := `Suites.Discovery
   supportInterpreter := true
 
+/- The scale suite: complete selection over a synthetic project, all-hit cacheability, and
+single-source invalidation. The fixture and its cache live in a temp dir; parallel lane. -/
+lean_exe «suite-scale» where
+  srcDir := "tests"
+  root := `Suites.Scale
+  supportInterpreter := true
+
 /- The native-layout suite: the four invariant families over the declared NativeLayoutFixtures
 modules, at three widths, with the hygiene gates and the pinned D7/D21 records. -/
 lean_exe «suite-native-layout» where
