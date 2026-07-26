@@ -150,6 +150,13 @@ lean_exe «suite-discovery» where
   root := `Suites.Discovery
   supportInterpreter := true
 
+/- The formatter-adapter suite: imported adapter syntax through the exact formatter, the typed
+throwing/extra-token refusals, and the invalid-token payload replacement. -/
+lean_exe «suite-formatter-adapter» where
+  srcDir := "tests"
+  root := `Suites.FormatterAdapter
+  supportInterpreter := true
+
 /- The formatter contract suite: thirteen injected candidate gates and the pinned-digest
 identity baseline, through the Test.Oracle admission protocol. -/
 lean_exe «suite-formatter» where

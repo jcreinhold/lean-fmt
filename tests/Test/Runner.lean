@@ -74,6 +74,7 @@ private def registered : Array Suite := #[
   { name := "compiler", lane := .exclusive },
   { name := "format-suppression", lane := .«parallel» },
   { name := "formatter", lane := .«parallel» },
+  { name := "formatter-adapter", lane := .«parallel» },
   { name := "application-formatter", lane := .workspace },
   { name := "boundary", lane := .«parallel» },
   { name := "incremental", lane := .«parallel» },
