@@ -142,6 +142,13 @@ lean_exe «suite-boundary» where
   root := `Suites.Boundary
   supportInterpreter := true
 
+/- The syntax-tier rule suite: the FMT006-FMT011 matrix against the exact frontend. Clears the
+root .lean-fmt-cache; workspace lane. -/
+lean_exe «suite-syntax» where
+  srcDir := "tests"
+  root := `Suites.Syntax
+  supportInterpreter := true
+
 /- The suppression suite: source-suppression acceptance over committed fixtures. Clears the root
 .lean-fmt-cache in its preamble, so it serializes with the other workspace-touching suites. -/
 lean_exe «suite-suppression» where
