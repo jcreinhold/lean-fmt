@@ -142,6 +142,13 @@ lean_exe «suite-boundary» where
   root := `Suites.Boundary
   supportInterpreter := true
 
+/- The command-formatter suite: command boundaries at three widths plus the self-module draft.
+Temp setups only; parallel. -/
+lean_exe «suite-command-formatter» where
+  srcDir := "tests"
+  root := `Suites.CommandFormatter
+  supportInterpreter := true
+
 /- The collection-formatter suite: collection layouts at four widths. Temp setup only; parallel. -/
 lean_exe «suite-collection-formatter» where
   srcDir := "tests"
