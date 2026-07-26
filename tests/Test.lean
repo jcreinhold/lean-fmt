@@ -1,5 +1,6 @@
 module
 
+public import Test.Analyze
 public import Test.Fixture
 public import Test.Golden
 public import Test.Harness
