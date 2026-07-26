@@ -68,6 +68,20 @@ public partial def copyTree (source destination : System.FilePath)
       else
         copyFile entry.path (destination / entry.fileName)
 
+/-- `rm -rf`: absent is fine. Suites clean state that may not exist yet. -/
+public def removeDirAll? (path : System.FilePath) : IO Unit := do
+  if ← path.pathExists then
+    IO.FS.removeDirAll path
+
+/-- A file's SHA-256 as lowercase hex, via the platform tool: the harness compares file bytes
+across edits, and an external digest doubles as a cross-check on the comparison. -/
+public def sha256 (path : System.FilePath) : IO String := do
+  let result ← runProc "shasum" #["-a", "256", path.toString]
+  ensure (result.exitCode == 0) s!"shasum failed on {path}: {result.stderr}"
+  match result.stdout.splitOn " " with
+  | hex :: _ => return hex
+  | [] => throw <| IO.userError s!"shasum produced no digest for {path}"
+
 /-- Write a file, creating its parents. -/
 public def writeFile (path : System.FilePath) (contents : String) : IO Unit := do
   if let some parent := path.parent then

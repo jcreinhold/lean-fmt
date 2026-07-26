@@ -57,6 +57,7 @@ line here; a name in either place but not the other fails loudly (the build step
 this list for the second). -/
 private def registered : Array Suite := #[
   { name := "block-formatter", lane := .«parallel» },
+  { name := "cache", lane := .workspace },
   { name := "boundary", lane := .«parallel» },
   { name := "incremental", lane := .«parallel» },
   { name := "lsp-acceptance", lane := .exclusive, slow := true }

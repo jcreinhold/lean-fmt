@@ -142,6 +142,14 @@ lean_exe «suite-boundary» where
   root := `Suites.Boundary
   supportInterpreter := true
 
+/- The cache suite: entry-granularity invalidation over the self-contained fixture project. It
+rebuilds that project's Lake workspace, edits and restores its sources, and stamps the main
+binary's mtime, so it serializes with every other workspace-touching suite. -/
+lean_exe «suite-cache» where
+  srcDir := "tests"
+  root := `Suites.Cache
+  supportInterpreter := true
+
 /- The block-formatter suite: exact-frontend renders of the block fixture at four widths. Temp
 setup file only; parallel lane. -/
 lean_exe «suite-block-formatter» where

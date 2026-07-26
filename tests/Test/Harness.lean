@@ -29,10 +29,9 @@ public def ensure (condition : Bool) (message : String) : IO Unit :=
 
 /-- Equality assertion that prints both sides on failure, so a regression names the drift instead
 of naming the line number of the `ensure`. -/
-public def ensureEq [BEq α] [Repr α] (actual expected : α) (message : String := "") : IO Unit := do
+public def ensureEq [BEq α] [Repr α] (label : String) (expected actual : α) : IO Unit := do
   unless actual == expected do
-    let header := if message.isEmpty then "values differ" else message
-    throw <| IO.userError s!"{header}\n  expected: {repr expected}\n  actual:   {repr actual}"
+    throw <| IO.userError s!"{label}\n  expected: {repr expected}\n  actual:   {repr actual}"
 
 /-- Which tests a run should execute, parsed from the runner's command line. -/
 public structure Selection where

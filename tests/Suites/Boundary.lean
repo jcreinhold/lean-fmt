@@ -96,14 +96,14 @@ private def testEntryPointSet (root : System.FilePath) : IO Unit := do
     "tests/Test/Runner.lean",
     "tests/Test/Unit.lean",
     "tests/lsp/Acceptance.lean"]
-  ensureEq (entries.qsort (· < ·)).toList expected.toList "active public entry-point set changed"
+  ensureEq "active public entry-point set changed" expected.toList (entries.qsort (· < ·)).toList
 
 private def testPluginImportBoundary (root : System.FilePath) : IO Unit := do
   -- Named rather than merely absent: while `LeanFmt.Rules` was in this set, editing one rule's
   -- message text invalidated every integrated module's Lake trace (`notes/01-rule-facts.md` §3).
   let imports := (← readRepoFile root "LeanFmt/CompilerPlugin.lean").splitOn "\n" |>.filterMap
     fun line => line.dropPrefix? "import all LeanFmt." |>.map (·.toString)
-  ensureEq (imports.toArray.qsort (· < ·)).toList ["ArtifactModel"] "compiler plugin import boundary changed"
+  ensureEq "compiler plugin import boundary changed" ["ArtifactModel"] (imports.toArray.qsort (· < ·)).toList
 
 private def testPluginGlobs (root : System.FilePath) : IO Unit := do
   -- The import graph is only half of it: a Lake library links every module it globs, so a module
