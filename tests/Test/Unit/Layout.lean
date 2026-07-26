@@ -41,7 +41,7 @@ namespace LeanFmt.Test.Unit.Layout
 
 /-! ## Layout
 
-`RLC-SPEC` froze the contract these check, and its numbers came from `experiments/layout-core/`, which
+`RLC-SPEC` froze the contract these check, and its numbers came from `experiments/layout-core/` (removed; see git history), which
 shares no module with this one. Several assertions below deliberately re-assert an exact figure from
 that experiment: if the product and the prototype ever disagree about margin 13, one of them is wrong
 and this is where it surfaces. -/
@@ -112,7 +112,7 @@ private partial def genDoc (depth : Nat) (seed : Nat) : GeneratedDoc :=
 
 private def testDoc : IO Unit := do
   -- The case the whole model was chosen for. A `do` block is `do act1; act2` flat and drops the
-  -- separator when broken. Measured in `experiments/layout-core`: Oppen *and* `Std.Format` both
+  -- separator when broken. Measured in `experiments/layout-core` (removed; see git history): Oppen *and* `Std.Format` both
   -- render `do\n  act1;\n  act2` here and strand the semicolon, because their break carries blanks
   -- only. This is the one thing `line (flat)` buys, so it is the first thing checked.
   let doBlock : Doc :=
@@ -121,7 +121,7 @@ private def testDoc : IO Unit := do
   ensure (renderText 12 doBlock == "do\n  act1\n  act2") "the broken do block stranded its separator"
 
   -- A group is decided against the line, not against itself: `f(arg)` is 6 columns but the line it
-  -- would produce is 14. The flip at 13/14 is the exact figure `experiments/layout-core` records.
+  -- would produce is 14. The flip at 13/14 is the exact figure `experiments/layout-core` recorded.
   let tail : Doc :=
     .group (.text "f(" ++ .nest 2 (.line "" ++ .text "arg") ++ .line "" ++ .text ")") ++ .text " => tail"
   ensure (renderText 14 tail == "f(arg) => tail") "a group that fits its line was broken"

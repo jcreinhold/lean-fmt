@@ -263,7 +263,7 @@ authority is Lean's own grammar: the formatter registered for each parser produc
 `LeanFmt.Formatter.NativeLayout` adapts those documents under source-owned trivia and parser-significant-column
 constraints — nothing keys layout on a kind name, a quoted atom, or a rewrite table. Artifact validation, fallback,
 cache sequencing, validation, stale checks, and writes remain behind one private execution operation. `LeanFmt.Cli` owns
-only parsing, presentation, statistics, and exit mapping. Design and exploratory code remains under `experiments/`.
+only parsing, presentation, statistics, and exit mapping.
 `docs/adding-a-rule.md` is the contributor guide for the rule engine, and `docs/toolchain-upgrade.md` is the maintainer
 checklist for moving the pinned Lean toolchain.
 

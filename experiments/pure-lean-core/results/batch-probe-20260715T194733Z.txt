@@ -1,6 +1,0 @@
-lean=4.32.0
-target_toolchain=leanprover/lean4:v4.32.0
-workspace=/Users/jcreinhold/Code/mathlib4 packages=9
-lean_path_entries=10 discovered_lean_files=8795
-source=/Users/jcreinhold/Code/mathlib4/Mathlib/Tactic.lean
-frontend=ok imported_modules=4448 local_declarations=0 elapsed_ms=5127

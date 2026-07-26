@@ -16,7 +16,6 @@
 # name fixture paths on purpose.
 exclude = [
   "docs/**",
-  "experiments/**",
   "tests/cache/**",
   "tests/check/**",
   "tests/compiler/**",

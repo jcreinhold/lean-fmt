@@ -1,2 +1,0 @@
-mathlib-sample.check.cold=c0dc55c33595cd4649502fe4ad5894bc85674b8ebd7c7b2e8ec6e7a6f8df1d1c
-mathlib-sample.check.warm=c0dc55c33595cd4649502fe4ad5894bc85674b8ebd7c7b2e8ec6e7a6f8df1d1c

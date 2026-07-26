@@ -82,7 +82,8 @@ in this order:
 - Module docstrings in `LeanFmt/` carry the reasoning — why a shape was picked and what was rejected. They are prose and
   can rot; when one contradicts the code, the code wins and the docstring is wrong.
 - `docs/` is the user-facing contract. `docs/ci.md` and `docs/adding-a-rule.md` are gated by suites; the rest is not.
-- Committed evidence under `experiments/evidence/` is a measurement with a date, not a decision. Regenerate it rather
+- Frozen evidence (removed with `experiments/`; recoverable from git history) is a measurement with a date,
+  not a decision. Regenerate it rather
   than arguing with it.
 
 If two records disagree, write down the disagreement and how you settled it. The design rationale that is *not*
@@ -174,7 +175,7 @@ you have found a ninth and it goes in this list.
   the `"\n| "` atom *after* `optional docComment`, so a constructor docstring renders as `where/-- doc -/` and reparses
   onto the wrong owner; `parserOfStack.formatter` reads one stack slot short of the `ident`, so `` `(cat| body) `` dies
   as ``Unknown constant «|»``; `guardMsgsCmd` omits the `ppDedent` every other command-embedding parser has. The ledger
-  with measurements is `experiments/native-layout-defects/README.md`.
+  with measurements was `experiments/native-layout-defects/README.md`, recoverable from git history.
 
 Do not reimplement what Lean does do. `pushToken` inserts a discretionary space exactly when concatenation would re-lex
 as one token, using the real tokenizer; an adapter-side merge rule over-fires. Read `format.indent` through

@@ -47,7 +47,7 @@ an internal this product happens to depend on, and the checklist exists because 
    lsp-acceptance editor`.
 4. Run everything — `lake test -- --all` — plus `git diff --check`.
 5. If canonical bytes legitimately changed, the frozen mathlib evidence no longer describes this toolchain: re-freeze a
-   sample under the new one (`experiments/workloads/`), record fresh identity and digests in `experiments/evidence/`,
-   and say in the commit message which upstream change moved which bytes.
+   sample under the new one (the old manifests and evidence were removed with `experiments/`; recover them from
+   git history if a baseline is wanted), and say in the commit message which upstream change moved which bytes.
 
 A bump that changes bytes without a named upstream cause is not done; it is an undiagnosed defect with a green suite.

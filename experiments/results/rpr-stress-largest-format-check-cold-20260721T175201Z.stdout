@@ -1,2 +1,0 @@
-Mathlib/Analysis/Normed/Module/Multilinear/Basic.lean:9:1: FMT007 import Mathlib.Data.Fintype.CardEmbedding is out of order (after Mathlib.Logic.Embedding.Basic)
-Mathlib/Analysis/Normed/Module/Multilinear/Basic.lean:12:1: FMT007 import Mathlib.Analysis.Normed.Operator.Bilinear is out of order (after Mathlib.Topology.Algebra.Module.Multilinear.Topology)

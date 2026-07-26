@@ -1,8 +1,0 @@
-Archive/Arithcc.lean
-Mathlib/Algebra/Algebra/Rat.lean
-Mathlib/Algebra/Category/ModuleCat/Ext/DimensionShifting.lean
-Mathlib/Algebra/Divisibility/Hom.lean
-Mathlib/Algebra/Group/Pointwise/Finset/Scalar.lean
-Mathlib/Algebra/Homology/DerivedCategory/Basic.lean
-Mathlib/Algebra/Jordan/Basic.lean
-Mathlib/Algebra/Module/Submodule/Union.lean

@@ -370,7 +370,7 @@ end Performance
 public def main (args : List String) : IO UInt32 := do
   let root ← repoRoot
   withTempDir fun work => do
-    let manifest ← IO.FS.readFile (root / "experiments" / "workloads" / "lean-fmt-self.txt")
+    let manifest ← IO.FS.readFile (root / "tests" / "performance" / "lean-fmt-self.txt")
     let files := ((manifest.splitOn "\n").filter (· != "")).map
       fun relative => root.toString ++ "/" ++ relative
     let ctx : Performance.Ctx := {
