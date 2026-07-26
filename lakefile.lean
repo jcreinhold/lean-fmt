@@ -150,6 +150,13 @@ lean_exe «suite-discovery» where
   root := `Suites.Discovery
   supportInterpreter := true
 
+/- The stream suite: the stdin/stdout and range surface through real pipes. Workspace lane
+(removes the root cache), slow (a 6,000-definition broken-pipe fixture). -/
+lean_exe «suite-stream» where
+  srcDir := "tests"
+  root := `Suites.Stream
+  supportInterpreter := true
+
 /- The watch suite: git/filesystem characterizations for the watch selection adapter, plus the
 CLI rejection surface. Exclusive lane (edits a tracked fixture in place). -/
 lean_exe «suite-watch» where
