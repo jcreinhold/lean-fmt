@@ -179,12 +179,21 @@ a consuming project takes `lean-fmt` as an ordinary Lake dependency and builds i
 Three levels, each independent of the ones below it. The downstream suite exercises all three against a real
 two-package workspace.
 
-**Run it.** With `require «lean-fmt» from git "..."` in the lakefile, the executable already resolves: Lake searches
-every package in the workspace for an executable target.
+**Run it.** Add the dependency and the executable resolves — Lake searches every package in the workspace for an
+executable target, so there is no clone and no install step:
+
+```lean
+require «lean-fmt» from git
+  "https://github.com/jcreinhold/lean-fmt" @ "v0.1.0"
+```
 
 ```sh
 lake exe lean-fmt check --root .
 ```
+
+The first invocation builds lean-fmt from source inside your workspace — minutes once, then Lake's build cache makes
+it free — and your project's `lean-toolchain` must be one lean-fmt builds against (its own pin; `compiler status`
+audits compatibility read-only). Pin the tag, not a branch: what CI runs is what you reviewed.
 
 **Wire it into `lake lint`.** Lake has a lint-driver protocol, and `leanprover/lean-action` probes `lake check-lint` and
 runs `lake lint` when a driver is configured. Two lines in the consuming package:
