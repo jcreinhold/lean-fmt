@@ -27,53 +27,46 @@ Read the nearest guide before working in a directory. A guide may add rules. It 
 lake build           # also builds LeanFmtCacheSpec; a broken proof fails the build
 lake exe lean-fmt
 lake exe lean-fmt-tests
-lake lint            # the formatter on itself, under lean-fmt.toml; this is what CI runs
+lake test            # the unit tier plus every non-slow suite; CI runs this
+lake test -- --all   # everything, including the slow suites
+lake test -- --suites modes watch   # exactly these suites, slow or not
+lake lint            # the formatter on itself, under lean-fmt.toml
 ```
 
-Suites live in `tests/*/run.sh`. Enumerate them, do not read them off a list — this one named 20 of 36 for long enough
-that `tests/lsp/run.sh` went unrun and stayed red through three prompts. All 36: application-formatter, block-formatter,
-boundary, cache, catalog, check, ci, collection-formatter, command-formatter, comments, compiler, declaration-formatter,
-discovery, downstream, format-suppression, formatter, formatter-adapter, imports, incremental, layout, lossless, lsp,
-modes, module-formatter, native-layout, performance, reporting, scale, semantic, stream, style, suppression, syntax,
+Suites are compiled Lean executables: `tests/Suites/<Name>.lean` builds as `suite-<name>`, and `tests/Test/Runner.lean`'s
+registry enumerates them with their lane. Enumerate the registry, not a list in prose — an unregistered suite file fails
+the boundary suite's entry-point pin, which is how `tests/lsp/run.sh` going unrun for three prompts cannot recur. The
+current set: application-formatter, block-formatter, boundary, cache, catalog, check, ci, collection-formatter,
+command-formatter, comments, compiler, declaration-formatter, discovery, downstream, editor, format-suppression,
+formatter, formatter-adapter, imports, incremental, layout, lossless, lsp, lsp-acceptance, modes, module-formatter,
+native-layout, performance, reporting, scale, security-bench, semantic, stream, style, suppression, syntax,
 term-formatter, validator, watch.
 
-`tests/lsp/run.sh` is the ordinary suite and belongs in the sweep; `tests/lsp/acceptance.sh` and `tests/lsp/editor.sh`
-are the two costly ones described below and do not.
+Each suite's own module docstring carries its per-suite notes: what it pins, which defect records (D-numbers, RPR/RWI/RSF
+numbers) the assertions come from, and what a failure means. Read those first when a suite fails.
 
 Match the checks to the change:
 
 - While working, build the modules you touched and read every error.
-- Run the suites that cover what you changed.
-- Before handoff, run `lake build`, `lake lint`, `lake exe lean-fmt-tests`, and every suite.
+- Run the suites that cover what you changed (`lake test -- --suites <name>`).
+- Before handoff, run `lake build`, `lake lint`, and `lake test`; run `lake test -- --all` when you touched a slow
+  suite's ground.
 - `lean-fmt.toml` is this repository's own discovered configuration, and `lake lint` runs the formatter under it with no
   `--config`. Its `exclude` list keeps the fixture trees out; anything absent from that list is linted, so a new
   directory is covered until someone says otherwise.
-- `tests/performance/run.sh` is the durable performance gate. It asserts **counts, ratios, and digests only** -- never a
-  wall time, because the same binary over the same warm corpus measured 3,977 ms and 19,968 ms depending only on machine
-  load. It primes its own cache in-run, so it does not care that editing any `LeanFmt/*.lean` renames the index. Its §0
-  runs `negative.sh`, which proves each gate can fail before the suite reports that none did. Add a gate here when you
-  optimize something, and state it as a quantity that does not move when the machine gets slower.
-- `tests/security/bench.sh` measures the linear-time claim. It is a benchmark, not a suite. Run it when you touch the
-  source scans, and record the numbers.
-- `tests/ci/run.sh` gates `docs/ci.md`: it builds a consuming project that takes lean-fmt as a git dependency and runs
-  all four published recipes, the cache instruction, and a `git archive` install. It costs about 90 s because it clones
-  and builds the dependency twice. It reads **committed** state only — a `file://` clone at `HEAD` and `git archive` —
-  so commit before running it, or it tests the previous commit and passes while your change is broken. Run it when you
-  touch `docs/ci.md`, the reporting formats, changed-file selection, or cache identity.
-- `tests/watch/run.sh` §9.6 runs `check --staged` against *this* repository, so it fails whenever a `.lean` file is
-  staged. That is a defect in the suite, not in your change; re-run it with a clean index. `ruff-20-acceptance` owns the
-  repair (move the assertion to a fixture repository).
-- `tests/stream/run.sh` is the sweep's longest suite at about 7.5 minutes, and nearly all of that is one check: it
-  streams a 20,001-declaration buffer into a reader that exits, and the `__analyze-exact` child it spawns runs several
-  minutes at full CPU and reaches about 4.6 GiB RSS. The suite hands that child an 8 GiB limit deliberately. A single
-  suite pinned at 100% CPU with multi-GiB RSS is this working, not a runaway — measured twice, 2026-07-24. Do not kill
-  it, and do not read the aggregate-RSS stop rule for memory *experiments* as covering it.
-- `tests/lsp/acceptance.sh` drives the language server with the toolchain's own LSP client (`Lean.Data.Lsp.Ipc`) and
-  measures cancellation latency and hundred-request memory stability. It costs about 90 s, so it is not in the
-  `tests/*/run.sh` sweep. Run it when you touch `LeanFmt/LanguageServer.lean`, and record the numbers.
-- `tests/lsp/editor.sh` drives the same server with Neovim's own LSP client, through the stanza `docs/editor-setup.md`
-  hands users. It needs Neovim 0.11 or newer and skips without it, so it is also outside the sweep. Run it when you
-  touch `LeanFmt/LanguageServer.lean` or the editor setup.
+- The slow tag exists for minutes-long suites: stream, performance, downstream, ci, lsp-acceptance, editor,
+  security-bench. They run under `--all`, under `--suites`, and in the `workflow_dispatch` CI job.
+- `performance` is the durable performance gate: **counts, ratios, and digests only**, never a wall time, because the
+  same binary over the same warm corpus measured 3,977 ms and 19,968 ms depending only on machine load. Its
+  gates-discriminate case feeds every gate input it must accept and input it must reject. Add a gate there when you
+  optimize something, stated as a quantity that does not move when the machine gets slower.
+- `ci` gates `docs/ci.md` and reads **committed** state only — a `file://` clone at `HEAD` and `git archive` — so commit
+  before running it, or it tests the previous commit and passes while your change is broken.
+- `watch`'s staged-empty case runs `check --staged` against *this* repository, so it fails whenever a `.lean` file is
+  staged. Re-run it with a clean index.
+- Two suites keep foreign adversaries on purpose: `validator` and `formatter` pipe through `tests/formatter/candidate.py`,
+  `style` through `tests/style/expected_candidate.py`, and `editor` drives `tests/lsp/editor.lua` — the real `vim.lsp`,
+  not a Lean model of it. Do not port those.
 
 Use the target project's exact Lean toolchain for frontend and plugin experiments. Keep experiments out of production
 modules until their owning prompt selects and verifies the interface.

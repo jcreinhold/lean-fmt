@@ -160,7 +160,7 @@ There is no prebuilt binary. Lean's ecosystem has no artifact server — Reservo
 status, it does not serve builds — so a consuming project takes `lean-fmt` as an ordinary Lake dependency and builds it
 from source, the way `doc-gen4` and `lake exe cache` are consumed.
 
-Three levels, each independent of the ones below it. `tests/downstream/run.sh` exercises all three against a real
+Three levels, each independent of the ones below it. The downstream suite exercises all three against a real
 two-package workspace.
 
 **Run it.** With `require «lean-fmt» from git "..."` in the lakefile, the executable already resolves: Lake searches
@@ -204,7 +204,7 @@ module and all its imports, once per module. And on macOS, Lake adds its own sha
 any plugin is present.
 
 Lake's `plugins` field is still officially experimental and its target-key syntax has been revised more than once. Pin
-the toolchain and re-run `tests/downstream/run.sh` after a bump.
+the toolchain and re-run the downstream suite after a bump.
 
 `docs/ci.md` carries the rest: CI recipes for GitHub Actions and generic runners, what may be cached between runs and
 what invalidates it, and how to pin and upgrade a revision.
@@ -270,11 +270,6 @@ checklist for moving the pinned Lean toolchain.
 ```sh
 LEAN_NUM_THREADS=1 lake build
 LEAN_NUM_THREADS=1 lake exe lean-fmt-tests
-tests/compiler/run.sh
-tests/check/run.sh
-tests/lossless/run.sh
-tests/modes/run.sh
-tests/scale/run.sh
-tests/boundary/run.sh
-tests/ci/run.sh
+lake test              # the unit tier plus every non-slow suite
+lake test -- --all     # everything, including compiler/downstream/ci
 ```

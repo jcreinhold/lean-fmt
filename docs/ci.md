@@ -5,9 +5,9 @@ the three consumption levels are. This document says how to run it in a CI job, 
 what pinning and upgrading change.
 
 Every command quoted here was executed against a scratch consuming repository before it was written down;
-`tests/ci/run.sh` builds and runs every recipe here against a real consuming project.
+the ci suite builds and runs every recipe here against a real consuming project.
 
-`tests/ci/run.sh` keeps it honest. It builds a consuming project that takes lean-fmt as a git dependency, with real
+The ci suite keeps it honest. It builds a consuming project that takes lean-fmt as a git dependency, with real
 commit history, and runs all four recipes, the cache instruction, and a `git archive` install against it. If a recipe
 here stops working, that suite fails.
 

@@ -153,11 +153,11 @@ that project's build graph. While the rules were reachable, editing one rule's m
 integrated module's Lake trace and changed the compiled bytes of any module that had a finding.
 
 So the compiler projects, and rules decide outside it, from the projection. If you want the plugin to know about your
-rule, you have crossed the boundary. `tests/boundary/run.sh` will stop you.
+rule, you have crossed the boundary. the boundary suite will stop you.
 
 ## Testing it
 
-- `LeanFmtTest.lean`'s `testRules` covers the formatting rules against a fixture with CRLF, trailing whitespace, and a
+- `lean-fmt-tests`' rule cases cover the formatting rules against a fixture with CRLF, trailing whitespace, and a
   missing final newline. Add your cases there.
 - `testSourceSecurityRules` covers the report-only rules: control/bidi bytes inside strings and comments, byte-exact
   ranges (including multibyte marks), and the TAB/LF/DEL boundary. Model a report-only rule's tests on it. `testConfig`
@@ -165,7 +165,7 @@ rule, you have crossed the boundary. `tests/boundary/run.sh` will stop you.
   any other.
 - `testApplicability` covers admission, per-rule reclassification, the display-only limit, and where a conflict came
   from. If your rule ships an `.unsafe` or `.displayOnly` fix, assert its applicability there and add a `--unsafe-fixes`
-  case to `tests/modes/run.sh`.
+  case to the modes suite.
 - All three tiers ship: `ruff-10` added the first `.syntax` rules (FMT006–FMT011) and `ruff-11` the first `.semantic`
   ones (FMT012–FMT015). `check` reports a rule of any tier, and `fix` applies a syntax fix by re-projecting the
   canonical text — the model `ruff-06`'s RFX-SPEC froze and `ruff-10b-syntax-fix-composition` finished.

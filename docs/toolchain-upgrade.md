@@ -12,7 +12,7 @@ an internal this product happens to depend on, and the checklist exists because 
 1. **The exact frontend's snapshot walk.** `LeanFmt/Analysis.lean` reads the command stream through
    `Lean.Language.Lean.InitialSnapshot`/`CommandParsedSnapshot` and `waitForFinalCmdState`. A change in snapshot
    structure shows up as wrong command boundaries or dropped commands, and the projection-tiling checks in
-   `tests/lossless/run.sh` are what see it first.
+   the lossless suite are what see it first.
 2. **The registered formatter documents.** Canonical layout is derived from the same `Std.Format` documents Lean's
    pretty-printer produces (`Lean.PrettyPrinter.formatCategory`/`formatCommand`; registry lookup in
    `LeanFmt/Formatter.lean`, adaptation in `LeanFmt/Formatter/NativeLayout.lean`). An upstream combinator change —
@@ -21,7 +21,7 @@ an internal this product happens to depend on, and the checklist exists because 
 3. **Stack-shape assumptions.** `parserOfStack`'s formatter reads a fixed number of stack slots, and `NativeLayout`
    works around that by name. A signature change in `Lean.PrettyPrinter.Formatter` breaks at compile time, which is the
    good case. Behavior changes in `pushToken`'s re-lexing or `Std.Format`'s `fill` measurement break silently at width
-   boundaries — `tests/native-layout`'s multi-width renders exist for exactly this.
+   boundaries — the native-layout suite's multi-width renders exist for exactly this.
 4. **The artifact schema and cache identity.** Both are pre-release; no backward compatibility is promised with
    artifacts or cache entries written under an earlier toolchain. Cache identity includes the toolchain, so a bump
    orphans every entry wholesale by design, and the first run after a bump pays full cost.
@@ -33,17 +33,19 @@ an internal this product happens to depend on, and the checklist exists because 
 2. `lake lint` — the formatter over its own sources. Drift in canonical bytes shows here first.
 3. Run the fixtures that should fail loudly on upstream layout drift, and read every failure as a claim about an
    upstream change before repairing anything:
-   - `tests/native-layout/run.sh` — pins D1–D28, the upstream document shapes the adapter repairs or refuses (attribute
+   - the native-layout suite — pins D1–D28, the upstream document shapes the adapter repairs or refuses (attribute
      lines, `sepByIndent` alignment, guarded `let` bail-outs, constructor docstrings, the `]do` separator).
-   - `tests/style/run.sh` — the golden candidate at widths 20/40/80/100.
-   - `tests/lossless/run.sh` — projection tiling and the `choice` gate.
-   - `tests/module-formatter/run.sh` — the `#exit` verbatim tail.
-   - `tests/compiler/run.sh` and `tests/downstream/run.sh` — the plugin, the facet, and artifact/exact route agreement.
+   - the style suite — the golden candidate at widths 20/40/80/100.
+   - the lossless suite — projection tiling and the `choice` gate.
+   - the module-formatter suite — the `#exit` verbatim tail.
+   - the compiler and downstream suites — the plugin, the facet, and artifact/exact route agreement.
      Lake's `plugins` field is experimental and its target-key syntax has been revised more than once; re-check it on
      every bump.
-   - `tests/lsp/run.sh`, then `tests/lsp/acceptance.sh` and `tests/lsp/editor.sh` — protocol, cancellation latency, and
+   - the lsp suite, then lsp-acceptance and editor — protocol, cancellation latency, and
      the editor stanza in `docs/editor-setup.md`.
-4. Run the full sweep — every `tests/*/run.sh`, enumerated from the directory — plus `git diff --check`.
+   Run them with `lake test -- --suites native-layout style lossless module-formatter compiler downstream lsp
+   lsp-acceptance editor`.
+4. Run everything — `lake test -- --all` — plus `git diff --check`.
 5. If canonical bytes legitimately changed, the frozen mathlib evidence no longer describes this toolchain: re-freeze a
    sample under the new one (`experiments/workloads/`), record fresh identity and digests in `experiments/evidence/`,
    and say in the commit message which upstream change moved which bytes.
