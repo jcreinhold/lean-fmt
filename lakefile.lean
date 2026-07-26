@@ -142,6 +142,13 @@ lean_exe «suite-boundary» where
   root := `Suites.Boundary
   supportInterpreter := true
 
+/- The import-rule suite: FMT003/004/005, the organizer, and the fix/format split, editing
+committed fixtures in place (restored via cp -p). Clears the root cache; workspace lane. -/
+lean_exe «suite-imports» where
+  srcDir := "tests"
+  root := `Suites.Imports
+  supportInterpreter := true
+
 /- The syntax-tier rule suite: the FMT006-FMT011 matrix against the exact frontend. Clears the
 root .lean-fmt-cache; workspace lane. -/
 lean_exe «suite-syntax» where
