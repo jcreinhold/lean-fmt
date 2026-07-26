@@ -150,6 +150,13 @@ lean_exe «suite-discovery» where
   root := `Suites.Discovery
   supportInterpreter := true
 
+/- The downstream suite: the committed consumer fixture, built against this checkout.
+Exclusive lane, slow (a full dependency build). -/
+lean_exe «suite-downstream» where
+  srcDir := "tests"
+  root := `Suites.Downstream
+  supportInterpreter := true
+
 /- The performance suite: durable count/ratio/digest gates plus the native negative battery
 that proves each gate can fail. Workspace lane (primes the root cache), slow. -/
 lean_exe «suite-performance» where
