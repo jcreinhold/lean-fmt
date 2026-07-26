@@ -56,6 +56,7 @@ def Suite.exeName (suite : Suite) : String := s!"suite-{suite.name}"
 line here; a name in either place but not the other fails loudly (the build step for the first,
 this list for the second). -/
 private def registered : Array Suite := #[
+  { name := "block-formatter", lane := .«parallel» },
   { name := "boundary", lane := .«parallel» },
   { name := "incremental", lane := .«parallel» },
   { name := "lsp-acceptance", lane := .exclusive, slow := true }

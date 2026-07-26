@@ -142,6 +142,13 @@ lean_exe «suite-boundary» where
   root := `Suites.Boundary
   supportInterpreter := true
 
+/- The block-formatter suite: exact-frontend renders of the block fixture at four widths. Temp
+setup file only; parallel lane. -/
+lean_exe «suite-block-formatter» where
+  srcDir := "tests"
+  root := `Suites.BlockFormatter
+  supportInterpreter := true
+
 /- The incremental-analyzer suite: the persistent frontend session contract over a temp setup
 file. Reads the workspace but builds and writes nothing in it; parallel lane. -/
 lean_exe «suite-incremental» where
