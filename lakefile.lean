@@ -142,6 +142,12 @@ lean_exe «suite-boundary» where
   root := `Suites.Boundary
   supportInterpreter := true
 
+/- The term-formatter suite: term reflow at four widths. Temp setup only; parallel. -/
+lean_exe «suite-term-formatter» where
+  srcDir := "tests"
+  root := `Suites.TermFormatter
+  supportInterpreter := true
+
 /- The declaration-formatter suite: declaration families at four widths. Temp setups; parallel. -/
 lean_exe «suite-declaration-formatter» where
   srcDir := "tests"
