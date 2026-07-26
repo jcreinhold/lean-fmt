@@ -142,6 +142,14 @@ lean_exe «suite-boundary» where
   root := `Suites.Boundary
   supportInterpreter := true
 
+/- The module-formatter suite: whole-module draft tiling. Builds two fixture libraries into the
+main workspace -- additive and idempotent, so the parallel lane admits it; the exclusive compiler
+suite is what owns LocalSyntax facet state. -/
+lean_exe «suite-module-formatter» where
+  srcDir := "tests"
+  root := `Suites.ModuleFormatter
+  supportInterpreter := true
+
 /- The term-formatter suite: term reflow at four widths. Temp setup only; parallel. -/
 lean_exe «suite-term-formatter» where
   srcDir := "tests"
