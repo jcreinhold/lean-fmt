@@ -150,6 +150,13 @@ lean_exe «suite-discovery» where
   root := `Suites.Discovery
   supportInterpreter := true
 
+/- The watch suite: git/filesystem characterizations for the watch selection adapter, plus the
+CLI rejection surface. Exclusive lane (edits a tracked fixture in place). -/
+lean_exe «suite-watch» where
+  srcDir := "tests"
+  root := `Suites.Watch
+  supportInterpreter := true
+
 /- The modes suite: every product mode over committed and scratch fixtures, with tracked
 fixtures restored through `cp -p` backups. Exclusive lane: clears the root cache, writes into
 `.lake/build`, and builds a downstream project. -/
