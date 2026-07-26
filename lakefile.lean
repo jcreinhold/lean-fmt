@@ -150,6 +150,13 @@ lean_exe «suite-discovery» where
   root := `Suites.Discovery
   supportInterpreter := true
 
+/- The ci suite: the docs/ci.md recipes executed against a scratch git consumer and a
+git-archive build. Exclusive lane, slow (two full dependency builds). -/
+lean_exe «suite-ci» where
+  srcDir := "tests"
+  root := `Suites.Ci
+  supportInterpreter := true
+
 /- The downstream suite: the committed consumer fixture, built against this checkout.
 Exclusive lane, slow (a full dependency build). -/
 lean_exe «suite-downstream» where
