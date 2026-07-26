@@ -150,6 +150,13 @@ lean_exe «suite-discovery» where
   root := `Suites.Discovery
   supportInterpreter := true
 
+/- The native-layout suite: the four invariant families over the declared NativeLayoutFixtures
+modules, at three widths, with the hygiene gates and the pinned D7/D21 records. -/
+lean_exe «suite-native-layout» where
+  srcDir := "tests"
+  root := `Suites.NativeLayout
+  supportInterpreter := true
+
 /- The formatter-adapter suite: imported adapter syntax through the exact formatter, the typed
 throwing/extra-token refusals, and the invalid-token payload replacement. -/
 lean_exe «suite-formatter-adapter» where
