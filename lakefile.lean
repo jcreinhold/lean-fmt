@@ -142,6 +142,13 @@ lean_exe «suite-boundary» where
   root := `Suites.Boundary
   supportInterpreter := true
 
+/- The suppression suite: source-suppression acceptance over committed fixtures. Clears the root
+.lean-fmt-cache in its preamble, so it serializes with the other workspace-touching suites. -/
+lean_exe «suite-suppression» where
+  srcDir := "tests"
+  root := `Suites.Suppression
+  supportInterpreter := true
+
 /- The format-suppression suite: format-ignore-next unit copying, CRLF identity, FMT901s, the
 EOF comment. Temp setups only; parallel. -/
 lean_exe «suite-format-suppression» where
