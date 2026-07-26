@@ -1,0 +1,42 @@
+# Continuous integration for lean-fmt.
+#
+# test: every push to main and every pull request. leanprover/lean-action builds the package and
+# runs `lake lint` (the lakefile declares the formatter as its own lint driver, which is what
+# lean-action probes for); `lake test` then runs the unit tier plus every non-slow suite. Suites
+# that need a tool the runner lacks (Neovim, uv) skip rather than fail.
+#
+# slow: the complete set — the minutes-long stream, performance, downstream, ci, lsp-acceptance,
+# editor, and security-bench suites included — on manual dispatch only, because it costs minutes
+# rather than seconds.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A newer push supersedes a run still in flight on the same ref.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: leanprover/lean-action@v1
+      - run: lake test
+
+  slow:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: leanprover/lean-action@v1
+      - run: lake test -- --all
