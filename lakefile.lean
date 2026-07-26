@@ -142,6 +142,13 @@ lean_exe «suite-boundary» where
   root := `Suites.Boundary
   supportInterpreter := true
 
+/- The format-suppression suite: format-ignore-next unit copying, CRLF identity, FMT901s, the
+EOF comment. Temp setups only; parallel. -/
+lean_exe «suite-format-suppression» where
+  srcDir := "tests"
+  root := `Suites.FormatSuppression
+  supportInterpreter := true
+
 /- The comments suite: actual-syntax ownership counts and digests, CRLF stability, comment layout
 at three widths. Temp setups and scratch fixtures only; parallel. -/
 lean_exe «suite-comments» where
