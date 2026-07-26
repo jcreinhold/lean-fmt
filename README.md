@@ -5,7 +5,18 @@ executable configuration and is the one exception.
 
 ## Installation
 
-From source, into `~/.local/bin` (override with `make install PREFIX=/usr/local`, stage with `DESTDIR`):
+**Prebuilt binary** (Linux and macOS, x86-64 and ARM), into `~/.local/bin`:
+
+```sh
+curl -sSfL https://raw.githubusercontent.com/jcreinhold/lean-fmt/main/install.sh | sh
+```
+
+The script verifies the release's SHA-256 checksum before installing anything; `PREFIX` and `VERSION` environment
+variables override the prefix and the release. The binaries are statically self-contained; at runtime `lean-fmt`
+needs the *target* project's Lean toolchain, which a Lean project has by definition. There is no Windows build — the
+memory-envelope reaper is Unix-only — so on Windows take the Lake dependency below.
+
+**From source** (override with `make install PREFIX=/usr/local`, stage with `DESTDIR`):
 
 ```sh
 git clone https://github.com/jcreinhold/lean-fmt.git
@@ -13,10 +24,9 @@ cd lean-fmt
 make install
 ```
 
-With elan on `PATH`, the first build installs the pinned toolchain from `lean-toolchain` automatically. The binaries
-are statically self-contained; at runtime `lean-fmt` needs the *target* project's Lean toolchain, which a Lean project
-has by definition. `make uninstall` removes exactly what `make install` placed. Projects that want the compiler
-plugin or the cache facet take the Lake dependency described in "Using lean-fmt in another project" instead.
+With elan on `PATH`, the first build installs the pinned toolchain from `lean-toolchain` automatically.
+`make uninstall` removes exactly what `make install` placed. Projects that want the compiler plugin or the cache
+facet take the Lake dependency described in "Using lean-fmt in another project" instead.
 
 ## Commands
 

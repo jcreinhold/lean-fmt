@@ -1,0 +1,96 @@
+# Prebuilt release binaries for lean-fmt.
+#
+# Why this exists: the binary is statically self-contained — it links only system libraries
+# (libc++/libSystem on macOS, glibc on Linux) — so a tarball is genuinely relocatable, and a
+# consumer who only wants the CLI can skip the from-source build that the Lake dependency and
+# `make install` both pay once. At runtime the binary still needs the *target* project's Lean
+# toolchain (it spawns `lake env` children); every consumer has one by definition.
+#
+# Triggered two ways: pushing a `v*` tag, or manual dispatch with an existing tag name, which is
+# how binaries are backfilled onto a tag cut before this workflow existed.
+#
+# Platform choices: the Linux legs build on the oldest available runner (22.04) so the glibc
+# floor is 2.35 and the binary runs on anything newer. Windows has no leg: the memory-envelope
+# reaper is built on Unix `ps`, so Windows users take the Lake dependency or WSL.
+#
+# Publishing uses the preinstalled `gh` CLI rather than a third-party release action: one less
+# dependency with `contents: write` in the supply chain.
+
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing tag to build and publish (e.g. v0.1.0)
+        required: true
+
+permissions:
+  contents: write
+
+env:
+  TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-22.04, target: x86_64-unknown-linux-gnu }
+          - { os: ubuntu-22.04-arm, target: aarch64-unknown-linux-gnu }
+          - { os: macos-15-intel, target: x86_64-apple-darwin }
+          - { os: macos-14, target: aarch64-apple-darwin }
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ env.TAG }}
+      - uses: leanprover/lean-action@v1
+
+      # Verify what is about to ship: the binary starts, and a real check exercises the exact
+      # frontend child, not just argument parsing.
+      - name: build and smoke test
+        run: |
+          lake build lean-fmt artifactExtractor
+          .lake/build/bin/lean-fmt --help > /dev/null
+          .lake/build/bin/lean-fmt check LeanFmt.lean
+
+      - name: package
+        run: |
+          version="${TAG#v}"
+          name="lean-fmt-${version}-${{ matrix.target }}"
+          mkdir -p "$name/bin"
+          cp .lake/build/bin/lean-fmt .lake/build/bin/lean-fmt-artifact-extract "$name/bin/"
+          cp LICENSE README.md "$name/"
+          tar -czf "$name.tar.gz" "$name"
+          shasum -a 256 "$name.tar.gz" >> SHA256SUMS
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: package-${{ matrix.target }}
+          path: |
+            *.tar.gz
+            SHA256SUMS
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: package-*
+          merge-multiple: true
+
+      - name: publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view "$TAG" > /dev/null 2>&1 || gh release create "$TAG" --generate-notes
+          cat SHA256SUMS
+          gh release upload "$TAG" ./*.tar.gz ./SHA256SUMS --clobber

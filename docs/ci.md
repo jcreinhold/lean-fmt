@@ -39,7 +39,7 @@ job that collapses them reports a broken runner as a lint failure.
 
 ## Recipe 1 — the minimal job
 
-This is what `.github/workflows/lean_action_ci.yml` in this repository already runs, and it is the recipe to start from.
+This is what `.github/workflows/ci.yml` in this repository already runs, and it is the recipe to start from.
 It needs `lintDriver` configured in the consuming package (`README.md` §"Wire it into `lake lint`").
 
 ```yaml
@@ -247,9 +247,17 @@ wants.
 
 ## Installing and upgrading
 
-There is no prebuilt binary — Lean's ecosystem has no artifact server — so a consumer takes `lean-fmt` as an ordinary
-Lake dependency and builds it from source. `README.md` §"Using lean-fmt in another project" has the three consumption
-levels; this section is about the pin.
+Two ways in, by what the job needs. A job that only runs the **CLI** can skip the from-source build entirely — the
+release binaries are statically self-contained:
+
+```sh
+curl -sSfL https://github.com/jcreinhold/lean-fmt/main/install.sh | sh
+```
+
+A job that uses the **compiler plugin or the cache facet** cannot: a plugin has to be built against the consuming
+project's own toolchain, so that integration still takes `lean-fmt` as an ordinary Lake dependency and builds it from
+source. `README.md` §"Using lean-fmt in another project" has the three consumption levels; the rest of this section is
+about the dependency pin.
 
 **Pin a revision.** `require` without a revision follows the default branch, which makes CI non-reproducible: a push to
 lean-fmt changes your build with no commit of yours.
@@ -258,8 +266,9 @@ lean-fmt changes your build with no commit of yours.
 require «lean-fmt» from git "https://github.com/jcreinhold/lean-fmt" @ "<commit-sha-or-tag>"
 ```
 
-lean-fmt publishes no release tags yet, so a commit SHA is the pin to use today. The resolved revision lands in
-`lake-manifest.json` either way. **Commit that file.** It is what makes a CI run reproduce a local one.
+Releases are tagged (`v0.1.0` and later), so a tag is the pin to use; a commit SHA works the same way. The resolved
+revision lands in `lake-manifest.json` either way. **Commit that file.** It is what makes a CI run reproduce a local
+one.
 
 **Moving the pin.** Edit the revision in the lakefile, then `lake update «lean-fmt»` to re-resolve that one dependency
 and rewrite the manifest; bare `lake update` re-resolves everything. The manifest records the package under its
