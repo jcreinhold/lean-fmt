@@ -68,6 +68,11 @@ public partial def copyTree (source destination : System.FilePath)
       else
         copyFile entry.path (destination / entry.fileName)
 
+/-- `rm -f`: absent is fine. -/
+public def removeFile? (path : System.FilePath) : IO Unit := do
+  if ← path.pathExists then
+    IO.FS.removeFile path
+
 /-- `rm -rf`: absent is fine. Suites clean state that may not exist yet. -/
 public def removeDirAll? (path : System.FilePath) : IO Unit := do
   if ← path.pathExists then

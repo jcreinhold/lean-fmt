@@ -94,9 +94,11 @@ private def checkProjection (source : LosslessSource) (raw : String) : IO Unit :
     "the recorded header is not the module header"
 
 private unsafe def verifyPluginArtifact (moduleName : Lean.Name)
-    (sourcePath : System.FilePath) : IO Unit := do
+    (sourcePath : System.FilePath) (sp : Lean.SearchPath := ∅) : IO Unit := do
   Lean.enableInitializersExecution
-  Lean.initSearchPath (← Lean.findSysroot)
+  -- `sp` prepends the caller's workspace library: under `lake exe` the ambient `LEAN_PATH` covers
+  -- it, but the compiler suite runs as a plain executable and passes its root explicitly.
+  Lean.initSearchPath (← Lean.findSysroot) sp
   let environment ← Lean.importModules #[{ module := moduleName }] {}
     (trustLevel := 1024) (loadExts := true) (level := .exported)
   let source ← IO.FS.readFile sourcePath

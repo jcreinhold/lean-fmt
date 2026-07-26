@@ -142,6 +142,14 @@ lean_exe «suite-boundary» where
   root := `Suites.Boundary
   supportInterpreter := true
 
+/- The compiler facet suite: builds main-workspace targets, edits LeanFmt/ sources in place, and
+corrupts and rebuilds .lake outputs. Exclusive lane -- nothing else may run against this workspace
+meanwhile. -/
+lean_exe «suite-compiler» where
+  srcDir := "tests"
+  root := `Suites.Compiler
+  supportInterpreter := true
+
 /- The cache suite: entry-granularity invalidation over the self-contained fixture project. It
 rebuilds that project's Lake workspace, edits and restores its sources, and stamps the main
 binary's mtime, so it serializes with every other workspace-touching suite. -/
