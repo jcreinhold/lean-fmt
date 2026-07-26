@@ -29,7 +29,6 @@ public unsafe def main (args : List String) : IO UInt32 := do
   | ["doc-bench"] => Unit.Tools.docBench
   | ["doc-step-counts"] => Unit.Tools.docStepCounts
   | ["doc-dump"] => Unit.Tools.docDump
-  | ["validator-map-negative"] => Unit.Tools.validatorMapNegative
   | ["report-bench"] => Unit.Tools.reportBench
   | ["security-bench"] => Unit.Tools.securityBench
   | ["formatter-header", sourcePath] => Unit.Tools.formatterHeader sourcePath

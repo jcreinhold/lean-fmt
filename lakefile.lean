@@ -142,6 +142,13 @@ lean_exe «suite-boundary» where
   root := `Suites.Boundary
   supportInterpreter := true
 
+/- The validator suite: admission proof, eight candidate.py gate rejections, the malformed and
+throwing refusals, and the absorbed validator-map-negative defects. -/
+lean_exe «suite-validator» where
+  srcDir := "tests"
+  root := `Suites.Validator
+  supportInterpreter := true
+
 /- The import-rule suite: FMT003/004/005, the organizer, and the fix/format split, editing
 committed fixtures in place (restored via cp -p). Clears the root cache; workspace lane. -/
 lean_exe «suite-imports» where
