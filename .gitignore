@@ -38,3 +38,11 @@ experiments/results/
 
 # In-workspace scratch for native suites (Test.Fixture.withScratchDir).
 /tests/.scratch/
+
+# Python build artifacts
+*.pyc
+*.pyd
+*.pyo
+__pycache__/
+.ruff_cache/
+.pytest_cache/
