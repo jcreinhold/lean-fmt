@@ -153,6 +153,19 @@ public def canonical (report : Lean.Json) (label : String) : IO (Lean.Json × St
     | throw <| IO.userError s!"{label}: canonical text missing"
   return (canonical, text)
 
+/-- The envelope's ownership summary, validated: what the retired `comment-summary` subcommand
+checked, without decoding the envelope type — `valid`, and the counts partition. Returns the raw
+summary JSON; callers read counts and the payload digest off it. -/
+public def commentSummary (report : Lean.Json) (label : String) : IO Lean.Json := do
+  let some summary := jsonAt? report [.field "commentSummary"]
+    | throw <| IO.userError s!"{label}: exact frontend captured no comment ownership summary"
+  ensureJsonAt summary [.field "valid"] (Lean.toJson true) label
+  let comments := (natAt? summary [.field "comments"]).getD 0
+  let parts := (["leading", "trailing", "dangling"].map fun key =>
+    (natAt? summary [.field key]).getD 0).foldl (· + ·) 0
+  ensure (comments == parts) s!"{label}: ownership counts do not partition"
+  return summary
+
 /-- The format draft of a successful report: formatFailure absent-or-null, draft present. -/
 public def formatDraft (report : Lean.Json) (label : String) : IO Lean.Json := do
   ensure (jsonAt? report [.field "formatFailure"] |>.all (· == Lean.Json.null))

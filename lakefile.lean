@@ -142,6 +142,13 @@ lean_exe «suite-boundary» where
   root := `Suites.Boundary
   supportInterpreter := true
 
+/- The comments suite: actual-syntax ownership counts and digests, CRLF stability, comment layout
+at three widths. Temp setups and scratch fixtures only; parallel. -/
+lean_exe «suite-comments» where
+  srcDir := "tests"
+  root := `Suites.Comments
+  supportInterpreter := true
+
 /- The layout suite: comment ownership over the production corpus, absorbing the doc-properties
 and comment-summary subcommands. Read-only against the workspace; parallel. -/
 lean_exe «suite-layout» where

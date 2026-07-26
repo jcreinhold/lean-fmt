@@ -2,11 +2,6 @@ module
 
 public import Test
 
-public import LeanFmt.Analysis
-public import LeanFmt.Comments
-
-import all LeanFmt.Analysis
-import all LeanFmt.Comments
 import all Test.Unit.Layout
 
 /-!
@@ -22,8 +17,8 @@ The suite absorbs the two subcommands the old script called: `doc-properties` (t
 `testDoc`) and `comment-summary` (decoded in-process from the analysis envelope).
 -/
 
-open LeanFmt LeanFmt.Internal
 open LeanFmt.Test
+open LeanFmt.Test.Analyze
 
 namespace LayoutSuite
 
@@ -37,16 +32,6 @@ private partial def collectModules (root dir : System.FilePath) (acc : Array Str
     else if entry.path.extension == some "lean" then
       acc := acc.push (entry.path.toString.drop (root.toString.length + 1)).toString
   return acc
-
-/-- The envelope's ownership summary, validated — what the `comment-summary` subcommand printed
-and checked. -/
-private def commentSummary (report : Lean.Json) (label : String) : IO CommentSummary := do
-  let .ok (envelope : AnalysisEnvelope) := Lean.fromJson? report
-    | throw <| IO.userError s!"{label} is not an analysis envelope"
-  let some summary := envelope.commentSummary?
-    | throw <| IO.userError s!"{label}: exact frontend captured no comment ownership summary"
-  ensure summary.valid s!"{label}: comment ownership did not assign every payload exactly once"
-  return summary
 
 /-- The `doc-properties` subcommand: the unit tier's document-properties case, run here too so the
 suite stands alone. -/
@@ -70,8 +55,8 @@ private def testCorpus (root : System.FilePath) (application : String)
     let report ← LeanFmt.Test.Analyze.analyzeExact root application setup module module "3"
       (viaLakeEnv := true)
     let summary ← commentSummary report module
-    totalComments := totalComments + summary.comments
-    totalDangling := totalDangling + summary.dangling
+    totalComments := totalComments + (natAt? summary [.field "comments"]).getD 0
+    totalDangling := totalDangling + (natAt? summary [.field "dangling"]).getD 0
   IO.println s!"modules_checked={modules.size} comments_owned={totalComments} \
     dangling={totalDangling}"
   -- A floor rather than an exact count: a corpus that owned no comment would pass every assertion
@@ -98,10 +83,13 @@ private def testPositions (root : System.FilePath) (application : String)
   let report ← LeanFmt.Test.Analyze.analyzeExact root application setup positions.toString
     "positions.lean" "3" (viaLakeEnv := true)
   let summary ← commentSummary report "positions.lean"
-  ensureEq "every comment owned exactly once" 5 summary.comments
-  ensureEq "same-line comments trail their syntax leaf" 3 summary.trailing
-  ensureEq "an own-line comment leads the next syntax leaf" 1 summary.leading
-  ensureEq "a comment past the last token is file-dangling" 1 summary.dangling
+  ensureJsonAt summary [.field "comments"] (Lean.toJson (5 : Nat)) "every comment owned exactly once"
+  ensureJsonAt summary [.field "trailing"] (Lean.toJson (3 : Nat))
+    "same-line comments trail their syntax leaf"
+  ensureJsonAt summary [.field "leading"] (Lean.toJson (1 : Nat))
+    "an own-line comment leads the next syntax leaf"
+  ensureJsonAt summary [.field "dangling"] (Lean.toJson (1 : Nat))
+    "a comment past the last token is file-dangling"
 
 end LayoutSuite
 
