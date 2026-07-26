@@ -80,6 +80,7 @@ private def registered : Array Suite := #[
   { name := "layout", lane := .«parallel» },
   { name := "lossless", lane := .«parallel» },
   { name := "reporting", lane := .workspace },
+  { name := "semantic", lane := .«parallel» },
   { name := "lsp-acceptance", lane := .exclusive, slow := true }
 ]
 

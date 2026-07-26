@@ -150,6 +150,14 @@ lean_exe «suite-discovery» where
   root := `Suites.Discovery
   supportInterpreter := true
 
+/- The semantic suite: capture demand-gating, the diagnostics and occurrences differentials
+against lean --json, the fixable predicate, RMR-FINAL acceptance on a throwaway project, and the
+RSS/wall cost bounds. -/
+lean_exe «suite-semantic» where
+  srcDir := "tests"
+  root := `Suites.Semantic
+  supportInterpreter := true
+
 /- The check suite: producer parity and the JSON golden, check/format agreement, broken and
 sabotaged runs, the child budget, workers determinism, and the result-cache matrix. Edits
 committed fixtures and the root cache; workspace lane. -/
