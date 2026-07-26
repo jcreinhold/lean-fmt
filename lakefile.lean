@@ -142,6 +142,13 @@ lean_exe «suite-boundary» where
   root := `Suites.Boundary
   supportInterpreter := true
 
+/- The application-formatter suite: preview/diff/cache/publication through the real binary.
+Scratch-dir fixtures only; parallel. -/
+lean_exe «suite-application-formatter» where
+  srcDir := "tests"
+  root := `Suites.ApplicationFormatter
+  supportInterpreter := true
+
 /- The style suite: the matrix/doc gate, the oracle-admitted frozen candidate, and the safe and
 literal fixed points. Temp setups only; parallel. -/
 lean_exe «suite-style» where
