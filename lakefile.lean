@@ -425,6 +425,7 @@ lean_exe «lean-fmt-tests» where
   supportInterpreter := true
 
 lean_exe artifactExtractor where
+  srcDir := "tools"
   root := `LeanFmtArtifactExtract
   exeName := "lean-fmt-artifact-extract"
   supportInterpreter := true
@@ -432,7 +433,7 @@ lean_exe artifactExtractor where
 /- Structural checks on this package's own module layout. Deliberately not a default target: it reads
 the workspace and never contributes to it, so an ordinary `lake build` must not pay for it. -/
 lean_exe «check-modules» where
-  srcDir := "scripts"
+  srcDir := "tools"
   root := `CheckModules
   supportInterpreter := true
   -- Executables that import Lake must link it explicitly, as `lean-fmt` does.

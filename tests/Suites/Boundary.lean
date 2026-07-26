@@ -90,9 +90,7 @@ private def testEntryPointSet (root : System.FilePath) : IO Unit := do
       if line.startsWith "public def main" || line.startsWith "public unsafe def main" then
         entries := entries.push path
   let expected := #[
-    "LeanFmtArtifactExtract.lean",
     "Main.lean",
-    "scripts/CheckModules.lean",
     "tests/Suites/ApplicationFormatter.lean", "tests/Suites/BlockFormatter.lean",
     "tests/Suites/Boundary.lean", "tests/Suites/Cache.lean", "tests/Suites/Catalog.lean",
     "tests/Suites/Check.lean", "tests/Suites/Ci.lean", "tests/Suites/CollectionFormatter.lean",
@@ -109,7 +107,8 @@ private def testEntryPointSet (root : System.FilePath) : IO Unit := do
     "tests/Suites/Syntax.lean",
     "tests/Suites/TermFormatter.lean", "tests/Suites/Validator.lean", "tests/Suites/Watch.lean",
     "tests/Test/Runner.lean", "tests/Test/Unit.lean",
-    "tests/lsp/Acceptance.lean"]
+    "tests/lsp/Acceptance.lean",
+    "tools/CheckModules.lean", "tools/LeanFmtArtifactExtract.lean"]
   ensureEq "active public entry-point set changed" expected.toList (entries.qsort (· < ·)).toList
 
 private def testPluginImportBoundary (root : System.FilePath) : IO Unit := do
