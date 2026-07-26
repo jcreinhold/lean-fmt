@@ -150,6 +150,14 @@ lean_exe «suite-discovery» where
   root := `Suites.Discovery
   supportInterpreter := true
 
+/- The check suite: producer parity and the JSON golden, check/format agreement, broken and
+sabotaged runs, the child budget, workers determinism, and the result-cache matrix. Edits
+committed fixtures and the root cache; workspace lane. -/
+lean_exe «suite-check» where
+  srcDir := "tests"
+  root := `Suites.Check
+  supportInterpreter := true
+
 /- The catalog suite (ruff-12): every live rule's documented example runs against the product,
 plus the explain lifecycle contract and the generated-docs drift/link checks. Clears the root
 cache; workspace lane. -/
