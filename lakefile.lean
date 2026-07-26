@@ -150,6 +150,14 @@ lean_exe «suite-discovery» where
   root := `Suites.Discovery
   supportInterpreter := true
 
+/- The modes suite: every product mode over committed and scratch fixtures, with tracked
+fixtures restored through `cp -p` backups. Exclusive lane: clears the root cache, writes into
+`.lake/build`, and builds a downstream project. -/
+lean_exe «suite-modes» where
+  srcDir := "tests"
+  root := `Suites.Modes
+  supportInterpreter := true
+
 /- The LSP suite: lifecycle, recovery, admission, cancellation, and bounds over one-shot
 sessions, then diagnostics, formatting, and code actions over a live client. Workspace lane: the
 server shares the root cache. -/
