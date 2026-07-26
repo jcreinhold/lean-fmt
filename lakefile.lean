@@ -150,6 +150,13 @@ lean_exe «suite-discovery» where
   root := `Suites.Discovery
   supportInterpreter := true
 
+/- The formatter contract suite: thirteen injected candidate gates and the pinned-digest
+identity baseline, through the Test.Oracle admission protocol. -/
+lean_exe «suite-formatter» where
+  srcDir := "tests"
+  root := `Suites.Formatter
+  supportInterpreter := true
+
 /- The semantic suite: capture demand-gating, the diagnostics and occurrences differentials
 against lean --json, the fixable predicate, RMR-FINAL acceptance on a throwaway project, and the
 RSS/wall cost bounds. -/
