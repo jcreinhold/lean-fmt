@@ -142,6 +142,13 @@ lean_exe «suite-boundary» where
   root := `Suites.Boundary
   supportInterpreter := true
 
+/- The style suite: the matrix/doc gate, the oracle-admitted frozen candidate, and the safe and
+literal fixed points. Temp setups only; parallel. -/
+lean_exe «suite-style» where
+  srcDir := "tests"
+  root := `Suites.Style
+  supportInterpreter := true
+
 /- The module-formatter suite: whole-module draft tiling. Builds two fixture libraries into the
 main workspace -- additive and idempotent, so the parallel lane admits it; the exclusive compiler
 suite is what owns LocalSyntax facet state. -/
