@@ -150,6 +150,13 @@ lean_exe «suite-discovery» where
   root := `Suites.Discovery
   supportInterpreter := true
 
+/- The performance suite: durable count/ratio/digest gates plus the native negative battery
+that proves each gate can fail. Workspace lane (primes the root cache), slow. -/
+lean_exe «suite-performance» where
+  srcDir := "tests"
+  root := `Suites.Performance
+  supportInterpreter := true
+
 /- The stream suite: the stdin/stdout and range surface through real pipes. Workspace lane
 (removes the root cache), slow (a 6,000-definition broken-pipe fixture). -/
 lean_exe «suite-stream» where

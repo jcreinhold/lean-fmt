@@ -33,7 +33,7 @@ LeanFmt/Validator.lean
 LeanFmt/Watch.lean
 LeanFmtArtifactExtract.lean
 LeanFmtCompilerPlugin.lean
-LeanFmtTest.lean
+tests/Test/Unit.lean
 Main.lean
 lakefile.lean
 scripts/CheckModules.lean
