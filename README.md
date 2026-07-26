@@ -3,6 +3,21 @@
 A native Lean formatter and linter for Lean 4. Every compiled source uses Lean's module system; `lakefile.lean` is
 executable configuration and is the one exception.
 
+## Installation
+
+From source, into `~/.local/bin` (override with `make install PREFIX=/usr/local`, stage with `DESTDIR`):
+
+```sh
+git clone https://github.com/jcreinhold/lean-fmt.git
+cd lean-fmt
+make install
+```
+
+With elan on `PATH`, the first build installs the pinned toolchain from `lean-toolchain` automatically. The binaries
+are statically self-contained; at runtime `lean-fmt` needs the *target* project's Lean toolchain, which a Lean project
+has by definition. `make uninstall` removes exactly what `make install` placed. Projects that want the compiler
+plugin or the cache facet take the Lake dependency described in "Using lean-fmt in another project" instead.
+
 ## Commands
 
 ```sh
@@ -156,9 +171,10 @@ and embedded module-artifact coverage; it neither builds modules nor publishes a
 
 ## Using lean-fmt in another project
 
-There is no prebuilt binary. Lean's ecosystem has no artifact server — Reservoir indexes packages and reports build
-status, it does not serve builds — so a consuming project takes `lean-fmt` as an ordinary Lake dependency and builds it
-from source, the way `doc-gen4` and `lake exe cache` are consumed.
+For the CLI, `make install` (above) is the entry point. As a Lake dependency there is no prebuilt binary: Lean's
+ecosystem has no artifact server — Reservoir indexes packages and reports build status, it does not serve builds — so
+a consuming project takes `lean-fmt` as an ordinary Lake dependency and builds it from source, the way `doc-gen4` and
+`lake exe cache` are consumed.
 
 Three levels, each independent of the ones below it. The downstream suite exercises all three against a real
 two-package workspace.
