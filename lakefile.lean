@@ -142,6 +142,14 @@ lean_exe «suite-boundary» where
   root := `Suites.Boundary
   supportInterpreter := true
 
+/- The catalog suite (ruff-12): every live rule's documented example runs against the product,
+plus the explain lifecycle contract and the generated-docs drift/link checks. Clears the root
+cache; workspace lane. -/
+lean_exe «suite-catalog» where
+  srcDir := "tests"
+  root := `Suites.Catalog
+  supportInterpreter := true
+
 /- The machine-readable report formats (ruff-15): flag surface, alias/golden equivalence,
 format-independent exit codes, concise/github/sarif/junit, output files, broken pipe, stdin, and
 URI encoding. Populates the root cache; workspace lane. -/
