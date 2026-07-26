@@ -184,17 +184,6 @@ private def verifyOfficialFacet (root sourcePath : System.FilePath) : IO Unit :=
   ensure (artifactResult.findings == runSourceRules normalized)
     "the artifact path and the source-only shortcut disagree about one unchanged file"
 
-/-- Report live-syntax ownership captured inside the exact frontend lifetime. -/
-private def commentSummaryReport (envelopePath : String) : IO UInt32 := do
-  let .ok json := Lean.Json.parse (← IO.FS.readFile envelopePath)
-    | throw <| IO.userError s!"{envelopePath} is not JSON"
-  let .ok (envelope : AnalysisEnvelope) := Lean.fromJson? json
-    | throw <| IO.userError s!"{envelopePath} is not an analysis envelope"
-  let some summary := envelope.commentSummary?
-    | throw <| IO.userError "exact frontend captured no comment ownership summary"
-  ensure summary.valid "comment ownership did not assign every extracted payload exactly once"
-  IO.println <| (Lean.toJson summary).compress
-  return 0
 /- Layout cost, including the zero-width shapes that exposed the former renderer's suffix-rescan
 defect. `docStepCounts` is the durable assertion; `docBench` remains a non-gating local timing probe.
 

@@ -26,7 +26,6 @@ public unsafe def main (args : List String) : IO UInt32 := do
   match args with
   | ["artifact-projection", artifactPath, sourcePath] =>
     Unit.Tools.artifactProjection artifactPath sourcePath
-  | ["comment-summary", envelopePath] => Unit.Tools.commentSummaryReport envelopePath
   | ["doc-bench"] => Unit.Tools.docBench
   | ["doc-step-counts"] => Unit.Tools.docStepCounts
   | ["doc-dump"] => Unit.Tools.docDump
@@ -34,8 +33,6 @@ public unsafe def main (args : List String) : IO UInt32 := do
   | ["report-bench"] => Unit.Tools.reportBench
   | ["security-bench"] => Unit.Tools.securityBench
   | ["formatter-header", sourcePath] => Unit.Tools.formatterHeader sourcePath
-  | ["doc-properties"] =>
-    runCases "lean-fmt-tests" (allCases.filter (·.name == "testDoc")) []
   | ["verify-plugin-artifact", moduleName, sourcePath] => do
     Unit.Tools.verifyPluginArtifact moduleName.toName sourcePath
     IO.println "lean-fmt compiler payload verified"

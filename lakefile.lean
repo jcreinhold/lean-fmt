@@ -142,6 +142,13 @@ lean_exe «suite-boundary» where
   root := `Suites.Boundary
   supportInterpreter := true
 
+/- The layout suite: comment ownership over the production corpus, absorbing the doc-properties
+and comment-summary subcommands. Read-only against the workspace; parallel. -/
+lean_exe «suite-layout» where
+  srcDir := "tests"
+  root := `Suites.Layout
+  supportInterpreter := true
+
 /- The application-formatter suite: preview/diff/cache/publication through the real binary.
 Scratch-dir fixtures only; parallel. -/
 lean_exe «suite-application-formatter» where
