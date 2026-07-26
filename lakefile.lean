@@ -142,6 +142,14 @@ lean_exe «suite-boundary» where
   root := `Suites.Boundary
   supportInterpreter := true
 
+/- The discovery suite (ruff-13): hierarchical configuration discovery on synthetic project
+trees in a temp dir -- nesting, extend, symlinks, ignore sources, force-exclude, migration,
+determinism, and the 1,200-file timing bound. -/
+lean_exe «suite-discovery» where
+  srcDir := "tests"
+  root := `Suites.Discovery
+  supportInterpreter := true
+
 /- The catalog suite (ruff-12): every live rule's documented example runs against the product,
 plus the explain lifecycle contract and the generated-docs drift/link checks. Clears the root
 cache; workspace lane. -/

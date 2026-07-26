@@ -63,6 +63,7 @@ private def registered : Array Suite := #[
   { name := "comments", lane := .«parallel» },
   { name := "command-formatter", lane := .«parallel» },
   { name := "declaration-formatter", lane := .«parallel» },
+  { name := "discovery", lane := .«parallel» },
   { name := "term-formatter", lane := .«parallel» },
   { name := "module-formatter", lane := .«parallel» },
   { name := "style", lane := .«parallel» },
