@@ -12,3 +12,17 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: leanprover/lean-action@v1
+      # The default set: the unit tier plus every non-slow suite (32 suites). Suites that need a
+      # tool the runner lacks (nvim, uv) skip gracefully, as their scripts did.
+      - run: lake test
+
+  # The slow set (stream, performance, downstream, ci, lsp-acceptance, editor, security-bench) is
+  # minutes, not seconds, so it runs on demand rather than on every push.
+  slow:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v5
+      - uses: leanprover/lean-action@v1
+      - run: lake test -- --all
