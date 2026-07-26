@@ -76,6 +76,7 @@ private def registered : Array Suite := #[
   { name := "imports", lane := .workspace },
   { name := "layout", lane := .«parallel» },
   { name := "lossless", lane := .«parallel» },
+  { name := "reporting", lane := .workspace },
   { name := "lsp-acceptance", lane := .exclusive, slow := true }
 ]
 

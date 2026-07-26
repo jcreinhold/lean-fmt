@@ -142,6 +142,14 @@ lean_exe «suite-boundary» where
   root := `Suites.Boundary
   supportInterpreter := true
 
+/- The machine-readable report formats (ruff-15): flag surface, alias/golden equivalence,
+format-independent exit codes, concise/github/sarif/junit, output files, broken pipe, stdin, and
+URI encoding. Populates the root cache; workspace lane. -/
+lean_exe «suite-reporting» where
+  srcDir := "tests"
+  root := `Suites.Reporting
+  supportInterpreter := true
+
 /- The lossless projection corpus and its mutation battery; carries the independent
 `Test.Projection` oracle. -/
 lean_exe «suite-lossless» where
