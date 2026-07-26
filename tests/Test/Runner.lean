@@ -60,6 +60,7 @@ private def registered : Array Suite := #[
   { name := "cache", lane := .workspace },
   { name := "collection-formatter", lane := .«parallel» },
   { name := "command-formatter", lane := .«parallel» },
+  { name := "declaration-formatter", lane := .«parallel» },
   { name := "compiler", lane := .exclusive },
   { name := "boundary", lane := .«parallel» },
   { name := "incremental", lane := .«parallel» },

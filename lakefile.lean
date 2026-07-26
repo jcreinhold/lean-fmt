@@ -142,6 +142,12 @@ lean_exe «suite-boundary» where
   root := `Suites.Boundary
   supportInterpreter := true
 
+/- The declaration-formatter suite: declaration families at four widths. Temp setups; parallel. -/
+lean_exe «suite-declaration-formatter» where
+  srcDir := "tests"
+  root := `Suites.DeclarationFormatter
+  supportInterpreter := true
+
 /- The command-formatter suite: command boundaries at three widths plus the self-module draft.
 Temp setups only; parallel. -/
 lean_exe «suite-command-formatter» where
