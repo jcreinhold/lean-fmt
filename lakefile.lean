@@ -142,6 +142,12 @@ lean_exe «suite-boundary» where
   root := `Suites.Boundary
   supportInterpreter := true
 
+/- The collection-formatter suite: collection layouts at four widths. Temp setup only; parallel. -/
+lean_exe «suite-collection-formatter» where
+  srcDir := "tests"
+  root := `Suites.CollectionFormatter
+  supportInterpreter := true
+
 /- The compiler facet suite: builds main-workspace targets, edits LeanFmt/ sources in place, and
 corrupts and rebuilds .lake outputs. Exclusive lane -- nothing else may run against this workspace
 meanwhile. -/

@@ -58,6 +58,7 @@ this list for the second). -/
 private def registered : Array Suite := #[
   { name := "block-formatter", lane := .«parallel» },
   { name := "cache", lane := .workspace },
+  { name := "collection-formatter", lane := .«parallel» },
   { name := "compiler", lane := .exclusive },
   { name := "boundary", lane := .«parallel» },
   { name := "incremental", lane := .«parallel» },
