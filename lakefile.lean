@@ -150,6 +150,21 @@ lean_exe «suite-discovery» where
   root := `Suites.Discovery
   supportInterpreter := true
 
+/- The editor suite: a real Neovim client against the live server (tests/lsp/editor.lua stays
+Lua -- the value is that the adversary is vim.lsp itself). Skips without nvim 0.11+. Exclusive
+lane, slow. -/
+lean_exe «suite-editor» where
+  srcDir := "tests"
+  root := `Suites.Editor
+  supportInterpreter := true
+
+/- The security-bench suite: source-rule scan linearity as growth ratios over the
+`security-bench` tool's measurements. Parallel lane, slow. -/
+lean_exe «suite-security-bench» where
+  srcDir := "tests"
+  root := `Suites.SecurityBench
+  supportInterpreter := true
+
 /- The ci suite: the docs/ci.md recipes executed against a scratch git consumer and a
 git-archive build. Exclusive lane, slow (two full dependency builds). -/
 lean_exe «suite-ci» where

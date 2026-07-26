@@ -67,6 +67,7 @@ private def registered : Array Suite := #[
   { name := "declaration-formatter", lane := .«parallel» },
   { name := "discovery", lane := .«parallel» },
   { name := "downstream", lane := .exclusive, slow := true },
+  { name := "editor", lane := .exclusive, slow := true },
   { name := "term-formatter", lane := .«parallel» },
   { name := "module-formatter", lane := .«parallel» },
   { name := "native-layout", lane := .workspace },
@@ -91,6 +92,7 @@ private def registered : Array Suite := #[
   { name := "modes", lane := .exclusive },
   { name := "reporting", lane := .workspace },
   { name := "scale", lane := .«parallel» },
+  { name := "security-bench", lane := .«parallel», slow := true },
   { name := "semantic", lane := .«parallel» },
   { name := "lsp-acceptance", lane := .exclusive, slow := true }
 ]
