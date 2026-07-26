@@ -142,6 +142,13 @@ lean_exe «suite-boundary» where
   root := `Suites.Boundary
   supportInterpreter := true
 
+/- The lossless projection corpus and its mutation battery; carries the independent
+`Test.Projection` oracle. -/
+lean_exe «suite-lossless» where
+  srcDir := "tests"
+  root := `Suites.Lossless
+  supportInterpreter := true
+
 /- The validator suite: admission proof, eight candidate.py gate rejections, the malformed and
 throwing refusals, and the absorbed validator-map-negative defects. -/
 lean_exe «suite-validator» where
