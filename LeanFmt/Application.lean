@@ -173,7 +173,7 @@ structure ExactRun where
   from** and the setup itself.
 
   `Project.exactSetups?` fills this in one graph traversal for the files a run has decided will reach
-  the frontend; `exactSetupResult` reads it and falls back to the per-target `exactSetup` on a miss.
+  the frontend; `ExactRun.setupResult` reads it and falls back to the per-target `exactSetup` on a miss.
   Empty is always correct — it just means every target pays its own traversal.
 
   **The source is stored and compared, not just the path.** A setup carries the header's imports
@@ -186,6 +186,12 @@ structure ExactRun where
   buffer: ordinary edits do not alter imports and must not rebuild Lake's setup graph on every
   keystroke. Separate from `setups`, which deliberately keys rewritten sources by all bytes. -/
   documentSetups : IO.Ref (Std.HashMap String (String × Lean.ModuleSetup))
+  /-- Held across every Lake call this run makes after its workers start. Lake is not safe to run
+  twice at once inside one process: two build contexts building the same module race on its output
+  file, and `Project.noBuildValue?` swaps the process-wide stdout and stderr for the duration.
+  `primeSetups` resolves the batch on one thread before any worker exists; this covers the per-target
+  fallback behind it, which a worker reaches for a target the batch could not answer. -/
+  lake : Std.Mutex Unit
 
 private structure FacetDescriptor where
   hash : String
@@ -291,14 +297,15 @@ private def diagnosticSetup (snapshot : SourceSnapshot) : Lean.ModuleSetup :=
     }
   | none => { name := `_unknown }
 
-private def exactSetupResult (project : Project.Snapshot)
-    (setups : Std.HashMap String (String × Lean.ModuleSetup))
-    (snapshot : SourceSnapshot) : IO (Except IO.Error Lean.ModuleSetup) := do
-  if let some (source, setup) := setups[snapshot.relativePath]? then
+/- The setup for one target: the batch's answer if it has one for these exact bytes, otherwise a
+per-target Lake resolution behind the run's lock. -/
+private def ExactRun.setupResult (run : ExactRun) (snapshot : SourceSnapshot) :
+    IO (Except IO.Error Lean.ModuleSetup) := do
+  if let some (source, setup) := (← run.setups.get)[snapshot.relativePath]? then
     if source == snapshot.source then
       return Except.ok setup
   try
-    return Except.ok (← Project.exactSetup project snapshot)
+    return Except.ok (← run.lake.atomically (Project.exactSetup run.project snapshot))
   catch error =>
     return Except.error error
 
@@ -314,7 +321,7 @@ def ExactRun.setupSnapshot (run : ExactRun) (snapshot : SourceSnapshot) : IO Lea
       toString <| Digest.ofString (header.raw.unsetTrailing.reprint.getD "")
   if let some (cachedIdentity, setup) := (← run.documentSetups.get)[snapshot.relativePath]? then
     if cachedIdentity == identity then return setup
-  let setup ← Project.exactSetup run.project snapshot
+  let setup ← run.lake.atomically (Project.exactSetup run.project snapshot)
   run.documentSetups.modify (·.insert snapshot.relativePath (identity, setup))
   return setup
 
@@ -455,8 +462,12 @@ traversal replaces 34, but on a large project where the cache and the source tie
 everything, priming the whole selection would resolve setups nothing asks for. On the frozen
 `mathlib-sample`, 1 of 62 targets reaches the frontend.
 
+It is also where every Lake build this run needs happens: `exactSetups?` builds what its probe
+cannot answer, here, on one thread, before a worker exists. Lake cannot run twice at once in one
+process, and the per-target fallback behind this used to put one build on each worker thread.
+
 Best effort by construction. Anything this fails to resolve is simply absent from the map, and
-`exactSetupResult` falls back to the per-target path that builds. -/
+`ExactRun.setupResult` falls back to the per-target path, holding `run.lake`. -/
 private def ExactRun.primeSetups (run : ExactRun) (targets : Array SourceSnapshot) : IO Unit := do
   if targets.size < 2 then return
   let resolved ← withPhase "setup_prime" <| Project.exactSetups? run.project targets
@@ -478,7 +489,7 @@ private def ExactRun.envelope (run : ExactRun)
   -- parses what came back. Only the middle one is elaboration; the outer two are this process's
   -- own cost and are the ones an optimization here could remove.
   let (setupResult, setupPath, sourcePath) ← withPhase "exact_setup" do
-    let setupResult ← exactSetupResult run.project (← run.setups.get) snapshot
+    let setupResult ← run.setupResult snapshot
     let setup := match setupResult with
       | .ok setup => setup
       | .error _ => diagnosticSetup snapshot
@@ -533,7 +544,7 @@ private def ExactRun.artifactEnvelope (run : ExactRun) (snapshot : SourceSnapsho
     (cancel? : Option Std.CancellationToken := none) : IO AnalysisEnvelope := do
   let index ← run.nextPathIndex
   let (setupResult, setupPath, sourcePath, artifactPath) ← withPhase "artifact_setup" do
-    let setupResult ← exactSetupResult run.project (← run.setups.get) snapshot
+    let setupResult ← run.setupResult snapshot
     let setup := match setupResult with
       | .ok setup => setup
       | .error _ => diagnosticSetup snapshot
@@ -750,6 +761,7 @@ def withExactRun (project : Project.Snapshot) (workers : Nat := 1)
     nextIndex
     setups
     documentSetups
+    lake := ← Std.Mutex.new ()
   }
   try
     action run
@@ -2473,22 +2485,30 @@ def compilerBuild (request : CompilerStatusRequest) : IO UInt32 := do
   let root ← IO.FS.realPath request.root
   let project ← Project.loadAll root
   let facetName := `module.leanFmtArtifact
-  if (project.workspace.findModuleFacetConfig? facetName).isNone then
-    throw <| IO.userError
-      "the leanFmtArtifact facet is not registered in this workspace; install the plugin first        (lean-fmt compiler setup)"
-  let mut seen : Std.HashSet String := {}
-  let mut targets := #[]
+  let some config := project.workspace.findModuleFacetConfig? facetName
+    | throw <| IO.userError
+        "the leanFmtArtifact facet is not registered in this workspace; install the plugin first        (lean-fmt compiler setup)"
+  let mut seen : Std.HashSet Lean.Name := {}
+  let mut modules := #[]
   for snapshot in project.targets do
     if let some mod := snapshot.module? then
-      let name := mod.name.toString
-      unless seen.contains name do
-        seen := seen.insert name
-        targets := targets.push s!"+{name}:leanFmtArtifact"
-  if targets.isEmpty then
+      unless seen.contains mod.name do
+        seen := seen.insert mod.name
+        modules := modules.push mod
+  if modules.isEmpty then
     IO.eprintln "lean-fmt: no modules selected; nothing to build"
     return 0
-  let child ← IO.Process.spawn { cmd := "lake", args := #["build"] ++ targets, cwd := root }
-  child.wait
+  -- The workspace this command already loaded, rather than whatever `lake` a PATH lookup finds.
+  -- Shelling out left a window where the two disagreed about the toolchain, and `officialArtifacts`
+  -- already reaches the same facet the same way.
+  try
+    discard <| project.workspace.runBuild do
+      let jobs ← modules.mapM (config.run (β := Lake.FacetOut facetName) ·)
+      return Lake.Job.collectArray jobs "lean-fmt artifact facets"
+    return 0
+  catch error =>
+    IO.eprintln s!"lean-fmt: {error}"
+    return 1
 
 /-- Dispatch only the private subprocess/profiling protocol. Ordinary product commands return
 `none` and cannot observe setup paths, module artifacts, or process limits. -/

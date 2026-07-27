@@ -525,35 +525,61 @@ def noBuildValue? {α : Type} (workspace : Lake.Workspace)
     recordDuration "nobuild_context" (← contextNanos.get)
     recordDuration "nobuild_fetch" (← fetchNanos.get)
 
-/-- Exact Lake setups for a whole batch, from **one** no-build graph traversal.
+/- Every target's setup job in one collection, so one graph traversal answers the whole batch.
+Each job's own failure becomes a `none` at that position rather than failing the collection: one
+module that cannot resolve must not zero the other 126. -/
+private def batchedSetupJob (targets : Array SourceTarget) :
+    Lake.FetchM (Lake.Job (Array (Option Lean.ModuleSetup))) := do
+  let jobs ← targets.mapM fun target => do
+    let job ← setupJob target
+    return job.mapResult fun
+      | .ok setup state => .ok (some setup) state
+      | .error _ state => .ok none state
+  return Lake.Job.collectArray jobs "lean-fmt exact setups"
+
+/-- Exact Lake setups for a whole batch: **one** no-build traversal, then **one** build of whatever
+that traversal could not answer.
 
 `exactSetup` constructs a Lake build context, starts a build, and monitors it once *per target*, over
 the same graph every time. Measured on this repository: 34 targets, 3,528 ms in `setup_probe`, one
-full traversal each, for 8% of a cold `format --check`. This collects every target's setup job into
-one `startBuild` — the shape `importClosures?` already uses for currency closures.
+full traversal each, for 8% of a cold `format --check`.
 
-`none` at a position means that target's setup did not resolve from current artifacts. It is not an
-answer: the caller falls back to `exactSetup`, which builds. This batches the *probe* only and can
-never decide a setup differently from the per-target path, which is why a batch that fails outright
-degrades to all-`none` rather than to an error. -/
+Batching the build matters for more than that traversal. A Lake build is not safe to run twice at
+once inside one process — two contexts building the same module race on its output file, and
+`noBuildValue?` swaps the process-wide stdout and stderr besides. Left to the per-target fallback,
+those builds happen on the batch's worker threads, one per unbuilt target, all at once: a 127-file
+`check` at twelve workers over an unbuilt tree reported five `broken` files and one infrastructure
+failure, all of them Lake builds clobbering each other, where the same run at one worker was clean.
+Here they are one build on the calling thread, before any worker starts.
+
+`none` at a position means that target's setup did not resolve, from artifacts or from a build. It
+is not an answer: the caller falls back to `exactSetup`, which reports the failure against that
+file's own name. A batch that fails outright degrades to all-`none` rather than to an error, so this
+can never decide a setup differently from the per-target path. -/
 def exactSetups? (snapshot : Snapshot) (targets : Array SourceTarget) :
     IO (Array (Option Lean.ModuleSetup)) := do
   if targets.isEmpty then return #[]
   let allMissing := Array.replicate targets.size none
+  let probed ←
+    try
+      match ← withPhase "setup_probe" <|
+          noBuildValue? snapshot.workspace (batchedSetupJob targets) with
+      -- A short array would silently mis-pair setups with targets, which is worse than not batching.
+      | some setups => pure (if setups.size == targets.size then setups else allMissing)
+      | none => pure allMissing
+    catch _ => pure allMissing
+  let stale := targets.zipIdx.filter fun (_, index) => probed[index]!.isNone
+  if stale.isEmpty then return probed
   try
-    let collected ← noBuildValue? snapshot.workspace do
-      let jobs ← targets.mapM fun target => do
-        let job ← setupJob target
-        return job.mapResult fun
-          | .ok setup state => .ok (some setup) state
-          | .error _ state => .ok none state
-      return Lake.Job.collectArray jobs "lean-fmt exact setups"
-    let some setups := collected
-      | return allMissing
-    -- A short array would silently mis-pair setups with targets, which is worse than not batching.
-    if setups.size == targets.size then return setups else return allMissing
+    let built ← withPhase "setup_build" <| snapshot.workspace.runBuild
+      (cfg := { verbosity := .quiet }) (batchedSetupJob (stale.map (·.1)))
+    if built.size != stale.size then return probed
+    return stale.zipIdx.foldl (init := probed) fun setups ((_, original), position) =>
+      match built[position]! with
+      | some setup => setups.set! original (some setup)
+      | none => setups
   catch _ =>
-    return allMissing
+    return probed
 
 def exactSetup (snapshot : Snapshot) (target : SourceTarget) : IO Lean.ModuleSetup := do
   match ← withPhase "setup_probe" <| noBuildValue? snapshot.workspace (setupJob target) with
