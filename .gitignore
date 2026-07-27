@@ -7,6 +7,8 @@
 /target/
 **/.lean-fmt-cache/
 **/.*.lean
+# Hidden .lean fixtures under tests/ are deliberate: the suites name them.
+!tests/**/.*.lean
 
 # Local editor state
 /.idea/
