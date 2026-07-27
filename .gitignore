@@ -6,6 +6,7 @@
 **/*.trace
 /target/
 **/.lean-fmt-cache/
+**/.*.lean
 
 # Local editor state
 /.idea/
