@@ -1,21 +1,10 @@
 # Running lean-fmt in CI
 
-`README.md` §"Using lean-fmt in another project" says how a consuming project takes `lean-fmt` as a dependency and what
-the three consumption levels are. This document says how to run it in a CI job, what may be cached between runs, and
-what pinning and upgrading change.
+`README.md` §"Using lean-fmt in another project" covers taking `lean-fmt` as a dependency. This document covers running it in CI: the recipes, what may be cached between runs, and what pinning and upgrading change.
 
-Every command quoted here was executed against a scratch consuming repository before it was written down;
-the ci suite builds and runs every recipe here against a real consuming project.
+The ci suite keeps these recipes honest. It builds a consuming project that takes lean-fmt as a git dependency, with real commit history, and runs all four recipes, the cache instruction, and a `git archive` install against it. If a recipe here stops working, that suite fails.
 
-The ci suite keeps it honest. It builds a consuming project that takes lean-fmt as a git dependency, with real
-commit history, and runs all four recipes, the cache instruction, and a `git archive` install against it. If a recipe
-here stops working, that suite fails.
-
-What that does **not** cover: the workflow YAML around the commands. Every `lean-fmt` and `lake` invocation below is
-executed by that suite, but the step ordering, `hashFiles`, `$GITHUB_OUTPUT`, `permissions`, and the `actions/cache` key
-are checked against `lean-action`'s `action.yml` and GitHub's documented syntax rather than by running them on a runner
-— uploading to code scanning is remote state this repository's test suite will not touch. Treat the shell as tested and
-the YAML as reviewed.
+What it does **not** cover: the workflow YAML around the commands. Every `lean-fmt` and `lake` invocation below is executed by the suite, but the step ordering, `hashFiles`, `$GITHUB_OUTPUT`, `permissions`, and the `actions/cache` key are checked against `lean-action`'s `action.yml` and GitHub's documented syntax rather than run on a runner — uploading to code scanning is remote state this repository's test suite will not touch. Treat the shell as tested and the YAML as reviewed.
 
 ## Exit codes are the whole interface
 
@@ -28,19 +17,19 @@ the YAML as reviewed.
 Three consequences a CI job depends on.
 
 **The exit code is independent of `--output-format`.** A job never parses a report to learn whether it succeeded.
-Choosing SARIF over text changes what the report looks like and nothing about the job's status.
+Choosing SARIF over text changes what the report looks like, nothing else.
 
 **A broken pipe keeps the run's own exit code.** `lean-fmt check … | head` still exits 1 when there were findings, so a
 recipe may use pipelines freely without turning a pipe into a way to silence CI.
 
-**1 and 2 mean different things and a recipe should keep them apart.** Exit 1 is the tool working and disagreeing with
-your source. Exit 2 is the tool not having run properly — a bad root, a missing named file, an unresolvable workspace. A
-job that collapses them reports a broken runner as a lint failure.
+**1 and 2 mean different things; keep them apart.** Exit 1 is the tool working and disagreeing with your source. Exit 2
+is the tool not having run properly — a bad root, a missing named file, an unresolvable workspace. A job that collapses
+them reports a broken runner as a lint failure.
 
 ## Recipe 1 — the minimal job
 
-This is what `.github/workflows/ci.yml` in this repository already runs, and it is the recipe to start from.
-It needs `lintDriver` configured in the consuming package (`README.md` §"Wire it into `lake lint`").
+This is what `.github/workflows/ci.yml` in this repository already runs, and the recipe to start from. It needs
+`lintDriver` configured in the consuming package (`README.md` §"Wire it into `lake lint`").
 
 ```yaml
 name: CI
@@ -55,8 +44,7 @@ jobs:
 ```
 
 `lean-action` probes `lake check-lint` and runs `lake lint` when a driver is configured, so no lean-fmt-specific step
-appears at all. Findings exit 1 and fail the job; infrastructure failures exit 2 and also fail it, distinguishably in
-the log.
+appears. Findings exit 1 and fail the job; infrastructure failures exit 2 and also fail it, distinguishably in the log.
 
 ## Recipe 2 — SARIF into GitHub code scanning
 
@@ -98,8 +86,8 @@ jobs:
 Four details, each measured rather than assumed.
 
 **The upload step runs unconditionally, and that is the point.** A clean run still writes a complete, schema-valid SARIF
-log with an empty `results` array. Uploading it is what tells code scanning the previous alerts are resolved; skipping
-the upload on success leaves stale alerts open forever.
+log with an empty `results` array. Uploading it tells code scanning the previous alerts are resolved; skipping the
+upload on success leaves stale alerts open forever.
 
 **The `hashFiles` guard is not decoration.** On exit 2 no report is written at all — the run failed before it had a
 report to write. Without the guard, `upload-sarif` fails on a missing file and masks the real error.
@@ -108,7 +96,7 @@ report to write. Without the guard, `upload-sarif` fails on a missing file and m
 after four minutes of work, and the file is renamed into place so a reader never sees a truncated log.
 
 **The status is captured, not inherited.** `set +e` plus an explicit `$GITHUB_OUTPUT` write keeps exit 1 and exit 2
-distinguishable in the final step. Using `continue-on-error: true` on the run step would collapse them.
+distinguishable in the final step. `continue-on-error: true` on the run step would collapse them.
 
 ## Recipe 3 — pull requests, changed files only
 
@@ -128,7 +116,7 @@ jobs:
       - run: lake exe lean-fmt check --root . --changed-since origin/${{ github.base_ref }}
 ```
 
-`fetch-depth: 0` is required. GitHub's default checkout is shallow, and a merge base that is not in the clone cannot be
+`fetch-depth: 0` is required. GitHub's default checkout is shallow, and a merge base not in the clone cannot be
 resolved.
 
 Selection provenance goes to **stderr**, not into the JSON report:
@@ -158,7 +146,7 @@ tree.
 ## Recipe 4 — generic CI, exit codes only
 
 Nothing above is GitHub-specific except the SARIF consumer and the `github` output format. On any other runner, exit
-codes alone are sufficient:
+codes alone suffice:
 
 ```sh
 #!/usr/bin/env bash
@@ -204,7 +192,7 @@ lake exe lean-fmt compiler status --root . # read-only audit of artifact coverag
 ## Caching between runs
 
 lean-fmt keeps successful semantic results in `.lean-fmt-cache/` at the project root. Caching it across CI runs is
-worthwhile, but only under one condition that is easy to get wrong.
+worthwhile, under one condition that is easy to get wrong.
 
 **Cache `.lean-fmt-cache` and `.lake` together, under the same key.** The cache's identity includes the formatter
 binary's **path, size, and modification time** — not a hash of its bytes (`ResultCache.open?`, `LeanFmt/Cache.lean`).
@@ -247,14 +235,14 @@ wants.
 
 ## Installing and upgrading
 
-Two ways in, by what the job needs. A job that only runs the **CLI** can skip the from-source build entirely — the
-release binaries are statically self-contained:
+Two ways in, by what the job needs. A job that only runs the **CLI** can skip the from-source build — the release
+binaries are statically self-contained:
 
 ```sh
 curl -sSfL https://github.com/jcreinhold/lean-fmt/main/install.sh | sh
 ```
 
-A job that uses the **compiler plugin or the cache facet** cannot: a plugin has to be built against the consuming
+A job that uses the **compiler plugin or the cache facet** cannot: a plugin must be built against the consuming
 project's own toolchain, so that integration still takes `lean-fmt` as an ordinary Lake dependency and builds it from
 source. `README.md` §"Using lean-fmt in another project" has the three consumption levels; the rest of this section is
 about the dependency pin.
@@ -281,11 +269,11 @@ package name, not resolution in general. `git diff lake-manifest.json` is the ch
 
 Expect three things to change:
 
-1. **New or changed findings.** A new rule, or a widened one, reports on source that passed before.
+1. **New or changed findings.** A new or widened rule reports on source that passed before.
    `lake exe lean-fmt rules` lists what is active; `lean-fmt explain RULE` says what one does. Pin selection explicitly
    (`[lint] select`) if a job must not acquire new rules on upgrade.
 2. **A cold cache.** The binary changes, so every entry is orphaned. The first run after an upgrade pays full cost —
-   this is expected, not a regression.
+   expected, not a regression.
 3. **Nothing about your source.** `check` and `diff` never write. Only `format` and `fix` do, and only when you run
    them.
 
@@ -303,8 +291,8 @@ lake check-lint
 lake exe lean-fmt compiler status --root .
 ```
 
-Lake's `plugins` field is still officially experimental and its target-key syntax has been revised more than once, so
-step 3 is not optional if you took the plugin. A consuming project that uses the plugin should treat a toolchain bump as
-an event to test, not a version-string edit.
+Lake's `plugins` field is still officially experimental and its target-key syntax has changed more than once, so step 3
+is not optional if you took the plugin. A consuming project that uses the plugin should treat a toolchain bump as an
+event to test, not a version-string edit.
 
-The cache is invalidated wholesale by the bump, so no stale result survives it.
+The bump invalidates the cache wholesale, so no stale result survives it.

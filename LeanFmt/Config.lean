@@ -15,12 +15,12 @@ namespace LeanFmt.Internal
 private structure PathPattern where
   source : String
   segments : List String
-  /-- The directory this pattern is anchored at, relative to the project root (`""` is the root
-  itself). A pattern means what its **declaring** config's directory says it means, never what the
-  consuming file's directory does (`notes/01-discovery.md` §7). With one root config the two agree, so
-  the field has to be explicit to keep them apart: a nested config's `exclude = ["Generated/**"]` means
-  `Generated/**` under *that* config's directory, and an `extend`ed pattern keeps its parent's anchor
-  rather than being re-anchored at the inheritor. -/
+  /-- The directory this pattern is anchored at, relative to the project root (`""` is the
+  root itself). A pattern means what its **declaring** config's directory says it means, never what
+  the consuming file's directory does (`notes/01-discovery.md` §7). With one root config the two
+  agree, so the field has to be explicit to keep them apart: a nested config's
+  `exclude = ["Generated/**"]` means `Generated/**` under *that* config's directory, and an
+  `extend`ed pattern keeps its parent's anchor rather than being re-anchored at the inheritor. -/
   anchor : String := ""
 
 private structure PerFileIgnore where
@@ -29,11 +29,12 @@ private structure PerFileIgnore where
 
 /-- The `[format]` section: settings that change the **canonical bytes** a run produces.
 
-The section split marks the cache-identity boundary, not a cosmetic grouping (`notes/01-discovery.md`
-§8.1, §9.2): every field here is folded into `Project.configurationIdentity`, because a cached
-`CanonicalLayout` rendered under one value must never be served under another. `[lint]` settings are the
-complement — they project over an unchanged canonical result and must stay out of identity, as
-`CLAUDE.md` requires of rule selection. -/
+The section split marks the cache-identity boundary, not a cosmetic grouping
+(`notes/01-discovery.md` §8.1, §9.2): every field here is folded into
+`Project.configurationIdentity`, because a cached `CanonicalLayout` rendered under one value must
+never be served under another. `[lint]` settings are the complement — they project over an
+unchanged canonical result and must stay out of identity, as `CLAUDE.md` requires of rule
+selection. -/
 structure FormatConfig where
   private mk ::
   /-- The render margin (`line-width`), default 100.
@@ -45,9 +46,9 @@ structure FormatConfig where
   lineWidth : Nat := 100
   deriving BEq
 
-/-- The `[format]` settings as one string, for the `configuration` component of the cache identity.
-Kept beside the fields so a new `[format]` key cannot be added without a visible decision about
-identity: forgetting to extend this is the bug §9.1 exists to prevent. -/
+/-- The `[format]` settings as one string, for the `configuration` component of the cache
+identity. Kept beside the fields so a new `[format]` key cannot be added without a visible decision
+about identity: forgetting to extend this is the bug §9.1 exists to prevent. -/
 def FormatConfig.identityString (format : FormatConfig) : String :=
   s!"line-width={format.lineWidth}"
 
@@ -55,68 +56,73 @@ structure FormatterConfig where
   private mk ::
   includePatterns : Array PathPattern
   excludePatterns : Array PathPattern
-  /-- `force-exclude`: apply the ignore sources and `exclude` to **explicitly named** paths too, not
-  only to discovered ones (`notes/01-discovery.md` §11). It exists because `format` writes since
-  `ruff-11d`: a pre-commit hook that passes staged paths must be able to say "still never write
-  these". It never re-enables the `include` list — naming a path is a statement, whereas `include`
-  answers "when I name nothing, format these". -/
+  /-- `force-exclude`: apply the ignore sources and `exclude` to **explicitly named**
+  paths too, not only to discovered ones (`notes/01-discovery.md` §11). It exists because `format`
+  writes since `ruff-11d`: a pre-commit hook that passes staged paths must be able to say "still
+  never write these". It never re-enables the `include` list — naming a path is a statement,
+  whereas `include` answers "when I name nothing, format these". -/
   forceExclude : Bool
-  /-- `respect-gitignore`: honor `.gitignore`, `.ignore`, `.git/info/exclude`, and the global git
-  ignore file when discovering sources. The `.lake` exclusion is *not* one of these sources and does
-  not turn off with them. -/
+  /-- `respect-gitignore`: honor `.gitignore`, `.ignore`, `.git/info/exclude`, and the
+  global git ignore file when discovering sources. The `.lake` exclusion is *not* one of these
+  sources and does not turn off with them. -/
   respectGitignore : Bool
   /-- The `[format]` section — identity-bearing (`FormatConfig`). -/
   format : FormatConfig
-  /-- Non-fatal notices raised while **loading** this configuration: a linter key still spelled at the
-  top level (`notes/01-discovery.md` §8.2). They follow the same contract as `RulePlan.notices` —
-  stderr, never changing exit status or which rules run — but cannot live there, because a `[format]`
-  or discovery notice has no plan to hang off. The freeze named this widening of the channel. -/
+  /-- Non-fatal notices raised while **loading** this configuration: a linter key still
+  spelled at the top level (`notes/01-discovery.md` §8.2). They follow the same contract as
+  `RulePlan.notices` — stderr, never changing exit status or which rules run — but cannot live
+  there, because a `[format]` or discovery notice has no plan to hang off. The freeze named this
+  widening of the channel. -/
   notices : Array String
-  /-- Where each setting came from, in composition order: `(key, file, line)`. For a scalar or base
-  array the **last** entry won; for an additive `extend-*` key every entry contributed, which is why
-  §6.2 preserves order and duplicates. Consumed by `config show` (§12); `Lake.Toml.Value` carries a
-  `ref : Syntax` on every constructor, so the position is recoverable without a second parse. -/
+  /-- Where each setting came from, in composition order: `(key, file, line)`. For a scalar
+  or base array the **last** entry won; for an additive `extend-*` key every entry contributed,
+  which is why §6.2 preserves order and duplicates. Consumed by `config show` (§12);
+  `Lake.Toml.Value` carries a `ref : Syntax` on every constructor, so the position is recoverable
+  without a second parse. -/
   origins : Array (String × String × Nat)
   selectedSelectors : Array String
-  /-- `extend-select` (`ruff-12` RRL-IMPL): selectors that *add* to the chosen selection without
-  replacing it, so a project extends `default` without restating it. -/
+  /-- `extend-select` (`ruff-12` RRL-IMPL): selectors that *add* to the chosen selection
+  without replacing it, so a project extends `default` without restating it. -/
   extendSelectSelectors : Array String
   ignoredSelectors : Array String
   perFileIgnores : Array PerFileIgnore
   extendSafeFixes : Array String
   extendUnsafeFixes : Array String
-  /-- The fix-selection axis (`ruff-12`), orthogonal to rule selection and to safe/unsafe: which rules'
-  fixes `fix` may apply. `fixable` replaces the base (default `all`), `extend-fixable` adds, `unfixable`
-  removes; resolved by the same specificity model as select/ignore. A selected-but-unfixable rule is
-  still reported — only its fix is withheld. -/
+  /-- The fix-selection axis (`ruff-12`), orthogonal to rule selection and to safe/unsafe:
+  which rules' fixes `fix` may apply. `fixable` replaces the base (default `all`),
+  `extend-fixable` adds, `unfixable` removes; resolved by the same specificity model as
+  select/ignore. A selected-but-unfixable rule is still reported — only its fix is withheld. -/
   fixableSelectors : Array String
   unfixableSelectors : Array String
   extendFixableSelectors : Array String
-  /-- Preview mode (`ruff-12`): with it off, `all`/`default`/category expand to stable rules only and an
-  explicit preview-code selection is an error; with it on, preview rules become reachable. -/
+  /-- Preview mode (`ruff-12`): with it off, `all`/`default`/category expand to stable
+  rules only and an explicit preview-code selection is an error; with it on, preview rules become
+  reachable. -/
   preview : Bool
 
 structure RulePlan where
   private mk ::
   selected : Array String
-  /-- Codes whose fixes `fix` may apply — the fix-selection axis resolved over the selected set
-  (`fixable`/`unfixable`/`extend-fixable`, `notes/01-schema.md` §6). A selected code absent here is
-  reported but its fix is withheld from the patch, as an unadmitted unsafe fix is. -/
+  /-- Codes whose fixes `fix` may apply — the fix-selection axis resolved over the
+  selected set (`fixable`/`unfixable`/`extend-fixable`, `notes/01-schema.md` §6). A selected code
+  absent here is reported but its fix is withheld from the patch, as an unadmitted unsafe fix
+  is. -/
   fixableSelected : Array String := #[]
   perFileIgnores : Array PerFileIgnore
   /-- Rule codes whose fixes are promoted to safe, and demoted to unsafe. Resolved from
-  `extend-safe-fixes`/`extend-unsafe-fixes`; a code in both is rejected at plan construction, so the
-  two arrays here are disjoint. Display-only is never in either — it is a limit configuration cannot
-  lift (`notes/01-model.md` §2). -/
+  `extend-safe-fixes`/`extend-unsafe-fixes`; a code in both is rejected at plan construction, so
+  the two arrays here are disjoint. Display-only is never in either — it is a limit configuration
+  cannot lift (`notes/01-model.md` §2). -/
   extendSafe : Array String
   extendUnsafe : Array String
-  /-- Non-fatal notices raised while resolving selectors — a retired/reserved code named in a selector,
-  or a deprecated rule selected explicitly (`notes/01-schema.md` §7). The IO caller (`Application`,
-  `Service`) prints these to stderr; they never change exit status or which rules run. -/
+  /-- Non-fatal notices raised while resolving selectors — a retired/reserved code named in
+  a selector, or a deprecated rule selected explicitly (`notes/01-schema.md` §7). The IO caller
+  (`Application`, `Service`) prints these to stderr; they never change exit status or which rules
+  run. -/
   notices : Array String := #[]
 
-/-- Every CLI-side selection input, bundled so `rulePlan` takes one argument instead of seven. Each
-field mirrors a `--flag`; empty/false is "not given on the CLI". -/
+/-- Every CLI-side selection input, bundled so `rulePlan` takes one argument instead of
+seven. Each field mirrors a `--flag`; empty/false is "not given on the CLI". -/
 structure CliSelection where
   select : Array String := #[]
   extendSelect : Array String := #[]
@@ -192,19 +198,19 @@ private def keyString : Lean.Name → String
   | .str .anonymous value => value
   | name => name.toString
 
-/-- A selector names a category iff some rule declares it. Categories are derived from the full rule
-identity set (`allRuleInfos` = engine rules + import rules), never a hardcoded list: a new category
-(`security`, `imports`) becomes selectable the moment a rule carries it, and
-`expandSelector`/`selectorsValid` cannot drift apart. Reading `allRuleInfos` rather than `ruleRegistry`
-keeps `--select imports` and FMT003/6/7 selectable even though those rules live outside the
-linear-tier engine. -/
+/-- A selector names a category iff some rule declares it. Categories are derived from the
+full rule identity set (`allRuleInfos` = engine rules + import rules), never a hardcoded list: a
+new category (`security`, `imports`) becomes selectable the moment a rule carries it, and
+`expandSelector`/`selectorsValid` cannot drift apart. Reading `allRuleInfos` rather than
+`ruleRegistry` keeps `--select imports` and FMT003/04/05 selectable even though those rules live
+outside the linear-tier engine. -/
 private def isCategory (selector : String) : Bool :=
   allRuleInfos.any (·.category == selector)
 
-/-- A selector token is valid if it is a meta selector, a category, a live code, or a **reserved/retired
-code** (`notes/01-schema.md` §7). Reserved codes are accepted rather than rejected so a legacy config
-that still names a retired code keeps loading; it resolves to no live rule and raises a notice at plan
-time (`rulePlan`). -/
+/-- A selector token is valid if it is a meta selector, a category, a live code, or a
+**reserved/retired code** (`notes/01-schema.md` §7). Reserved codes are accepted rather than
+rejected so a legacy config that still names a retired code keeps loading; it resolves to no live
+rule and raises a notice at plan time (`rulePlan`). -/
 private def selectorsValid (selectors : Array String) : Except String Unit := do
   for selector in selectors do
     unless selector == "all" || selector == "default" || isCategory selector ||
@@ -223,11 +229,11 @@ private def parsePerFileIgnores (anchor : String) (value : Lake.Toml.Value) :
 
 /-- One configuration file's contents, before defaults and before composition with an `extend` parent.
 
-Every base setting is an `Option` so that "absent" differs from "set to the default value". Without
-that split, `extend` composition cannot tell a silent child from one that restates the default, and
-the child would clobber its parent either way (`notes/01-discovery.md` §6.2). The additive `extend-*`
-fields are plain arrays because they concatenate rather than override, the rule those keys already
-follow within a single file. -/
+Every base setting is an `Option` so that "absent" differs from "set to the default
+value". Without that split, `extend` composition cannot tell a silent child from one that restates
+the default, and the child would clobber its parent either way (`notes/01-discovery.md` §6.2). The
+additive `extend-*` fields are plain arrays because they concatenate rather than override, the rule
+those keys already follow within a single file. -/
 private structure PartialConfig where
   extend? : Option String := none
   includePatterns? : Option (Array PathPattern) := none
@@ -255,14 +261,15 @@ private def orParent (child parent : Option α) : Option α :=
 
 /-- Compose a parent configuration with the child that `extend`s it (`notes/01-discovery.md` §6.2).
 
-Scalars and base arrays: the child replaces the parent whole, which is what lets a child *narrow* a
-parent. The `extend-*` family concatenates parent-then-child, the same additive rule those keys have
-within one file. `per-file-ignores` merges key-wise, the child winning on an identical anchored
-pattern. `extend` itself is never inherited: each file names only its own parent.
+Scalars and base arrays: the child replaces the parent whole, which is what lets a child
+*narrow* a parent. The `extend-*` family concatenates parent-then-child, the same additive rule
+those keys have within one file. `per-file-ignores` merges key-wise, the child winning on an
+identical anchored pattern. `extend` itself is never inherited: each file names only its own
+parent.
 
-Duplicates and order survive concatenation on purpose. `resolveAxis` folds selector specificity with
-`Nat.max`, so a repeated token is idempotent and neither duplicates nor order show up in the resolved
-plan — but `origins` needs every contributing file to answer `config show`. -/
+Duplicates and order survive concatenation on purpose. `resolveAxis` folds selector specificity
+with `Nat.max`, so a repeated token is idempotent and neither duplicates nor order show up in the
+resolved plan — but `origins` needs every contributing file to answer `config show`. -/
 private def PartialConfig.compose (parent child : PartialConfig) : PartialConfig where
   extend? := none
   includePatterns? := orParent child.includePatterns? parent.includePatterns?
@@ -287,8 +294,8 @@ private def PartialConfig.compose (parent child : PartialConfig) : PartialConfig
   notices := parent.notices ++ child.notices
   origins := parent.origins ++ child.origins
 
-/-- Apply defaults and validate. Selector validation happens here rather than per file so that a
-composed chain is checked once, in its resolved form. -/
+/-- Apply defaults and validate. Selector validation happens here rather than per file so
+that a composed chain is checked once, in its resolved form. -/
 private def PartialConfig.resolve (config : PartialConfig) : Except String FormatterConfig := do
   let selectedSelectors := config.selectedSelectors?.getD #["default"]
   let ignoredSelectors := config.ignoredSelectors?.getD #[]
@@ -348,16 +355,17 @@ private def lintKeys : Array String :=
   #["select", "extend-select", "ignore", "per-file-ignores", "extend-safe-fixes",
     "extend-unsafe-fixes", "fixable", "unfixable", "extend-fixable"]
 
-/-- The line a TOML value sits on, for provenance (`config show`, §12) and error messages. Every
-`Lake.Toml.Value` constructor carries a `ref : Syntax`, so the position of the value that won is
-recoverable without parsing the file a second time. -/
+/-- The line a TOML value sits on, for provenance (`config show`, §12) and error messages.
+Every `Lake.Toml.Value` constructor carries a `ref : Syntax`, so the position of the value that won
+is recoverable without parsing the file a second time. -/
 private def valueLine (fileMap : Lean.FileMap) (value : Lake.Toml.Value) : Nat :=
   match value.ref.getPos? with
   | some pos => (fileMap.toPosition pos).line
   | none => 0
 
-/-- Assign one `[lint]` key into a partial configuration. Shared by the `[lint]` section and by the
-deprecated top-level spelling, so the two cannot drift in meaning — only in provenance and notices. -/
+/-- Assign one `[lint]` key into a partial configuration. Shared by the `[lint]` section
+and by the deprecated top-level spelling, so the two cannot drift in meaning — only in provenance
+and notices. -/
 private def assignLintKey (anchor file : String) (fileMap : Lean.FileMap)
     (config : PartialConfig) (key : String) (value : Lake.Toml.Value) :
     Except String PartialConfig := do
@@ -384,14 +392,15 @@ private def assignLintKey (anchor file : String) (fileMap : Lean.FileMap)
       perFileIgnores := config.perFileIgnores ++ (← parsePerFileIgnores anchor value), origins }
   | _ => throw s!"unknown configuration key: {key}"
 
-/-- Parse one configuration file into its pre-composition form (`notes/01-discovery.md` §8).
+/-- Parse one configuration file into its pre-composition form (`notes/01-discovery.md`
+§8).
 
 `anchor` is the directory this file's path patterns are anchored at, relative to the project root;
 `file` is its displayed path, used for provenance and diagnostics. -/
 private def parseFile (anchor file : String) (fileMap : Lean.FileMap) (table : Lake.Toml.Table) :
     Except String PartialConfig := do
-  -- Split the document before interpreting it: a key's *section* decides whether it is identity-bearing
-  -- (§9.2), and the both-set check needs the two key sets in hand at once.
+  -- Split the document before interpreting it: a key's *section* decides whether it is
+  -- identity-bearing (§9.2), and the both-set check needs the two key sets in hand at once.
   let mut topLevel : Array (String × Lake.Toml.Value) := #[]
   let mut formatSection : Array (String × Lake.Toml.Value) := #[]
   let mut lintSection : Array (String × Lake.Toml.Value) := #[]
@@ -406,14 +415,14 @@ private def parseFile (anchor file : String) (fileMap : Lean.FileMap) (table : L
         | throw "configuration section '[lint]' expects a table"
       lintSection := entries.items.map fun (key, value) => (keyString key, value)
     | other => topLevel := topLevel.push (other, value)
-  -- A key set in both places is a contradiction the user can resolve in one edit, so it does not
-  -- resolve itself (§8.2, as with `extend-safe-fixes` ∩ `extend-unsafe-fixes` below).
+  -- A key set in both places is a contradiction the user can resolve in one edit, so it
+  -- does not resolve itself (§8.2, as with `extend-safe-fixes` ∩ `extend-unsafe-fixes` below).
   for (key, _) in topLevel do
     if lintSection.any (·.1 == key) then
       throw s!"configuration key '{key}' is set both at the top level and in [lint]"
   let mut config : PartialConfig := {}
-  -- Deprecated flat spelling first, so an `extend-*` key set in both a flat parent and a sectioned
-  -- child still concatenates in document order.
+  -- Deprecated flat spelling first, so an `extend-*` key set in both a flat parent and a
+  -- sectioned child still concatenates in document order.
   for (key, value) in topLevel do
     if lintKeys.contains key then
       config ← assignLintKey anchor file fileMap config key value
@@ -445,8 +454,8 @@ private def parseFile (anchor file : String) (fileMap : Lean.FileMap) (table : L
         let .boolean _ flag := value
           | throw "configuration key 'preview' expects a boolean"
         config := { config with preview? := some flag, origins }
-      -- `line-width` is new, so it has no legacy spelling to protect: a top-level use is an error
-      -- rather than a notice, so the key never acquires an ambiguous section (§8.2).
+      -- `line-width` is new, so it has no legacy spelling to protect: a top-level use is
+      -- an error rather than a notice, so the key never acquires an ambiguous section (§8.2).
       | "line-width" =>
         throw "configuration key 'line-width' belongs in the [format] section"
       | unknown => throw s!"unknown configuration key: {unknown}"
@@ -476,8 +485,8 @@ private def loadDocument (path : System.FilePath) : IO (Lake.Toml.Table × Lean.
     throw <| IO.userError s!"invalid formatter configuration {path}: \
       {String.intercalate "; " rendered.toList}"
 
-/-- The directory a config file's patterns anchor at, relative to `root`, or `none` when the file lies
-outside the project entirely (`notes/01-discovery.md` §7). -/
+/-- The directory a config file's patterns anchor at, relative to `root`, or `none` when the
+file lies outside the project entirely (`notes/01-discovery.md` §7). -/
 def anchorFor (root directory : System.FilePath) : IO (Option String) := do
   let root ← IO.FS.realPath root
   let directory ← IO.FS.realPath directory
@@ -488,16 +497,16 @@ def anchorFor (root directory : System.FilePath) : IO (Option String) := do
     return some (normalizePath ((text.drop rootPrefix.length).toString))
   return none
 
-/-- The maximum `extend` chain length. Cycle detection alone terminates, so this is a resource bound,
-not a correctness one (`notes/01-discovery.md` §6.1). -/
+/-- The maximum `extend` chain length. Cycle detection alone terminates, so this is a
+resource bound, not a correctness one (`notes/01-discovery.md` §6.1). -/
 private def maxExtendDepth : Nat := 32
 
 /-- Load one configuration file and every ancestor it `extend`s, composing parent-first.
 
-Chain members are identified by **realpath**, so a symlinked alias of an ancestor is still caught as a
-cycle. A parent outside the project root keeps the extending file's anchor rather than acquiring one
-outside the tree, which is what makes an out-of-tree shared config usable at all; a parent inside the
-root anchors at its own directory like any discovered config. -/
+Chain members are identified by **realpath**, so a symlinked alias of an ancestor is
+still caught as a cycle. A parent outside the project root keeps the extending file's anchor rather
+than acquiring one outside the tree, which is what makes an out-of-tree shared config usable at
+all; a parent inside the root anchors at its own directory like any discovered config. -/
 private partial def loadChain (root : System.FilePath) (path : System.FilePath) (anchor : String)
     (seen : Array System.FilePath) : IO PartialConfig := do
   let resolved ← IO.FS.realPath path
@@ -518,8 +527,8 @@ private partial def loadChain (root : System.FilePath) (path : System.FilePath) 
     let targetPath := if (System.FilePath.mk target).isAbsolute then System.FilePath.mk target
       else directory / target
     unless ← targetPath.pathExists do
-      -- Name the path as written, beside the file that wrote it: the caller's own argument, per the
-      -- `CLAUDE.md` path-error rule.
+      -- Name the path as written, beside the file that wrote it: the caller's own
+      -- argument, per the `CLAUDE.md` path-error rule.
       throw <| IO.userError
         s!"configuration extend target does not exist: {target} (extended by {resolved})"
     let parentAnchor := (← anchorFor root (targetPath.parent.getD root)).getD anchor
@@ -537,9 +546,9 @@ def FormatterConfig.loadFrom (root : System.FilePath) (path : System.FilePath) (
 (`notes/01-discovery.md` §3). -/
 def recognizedConfigNames : Array String := #[".lean-fmt.toml", "lean-fmt.toml"]
 
-/-- The recognized configuration file in one directory, or `none`. Both names present is a hard error
-naming both paths rather than a silent priority win — the same reasoning as every other configuration
-contradiction here. -/
+/-- The recognized configuration file in one directory, or `none`. Both names present is a
+hard error naming both paths rather than a silent priority win — the same reasoning as every other
+configuration contradiction here. -/
 def recognizedConfigIn? (directory : System.FilePath) : IO (Option System.FilePath) := do
   let present : Array String ←
     recognizedConfigNames.filterM fun name => (directory / name).pathExists
@@ -553,10 +562,10 @@ def recognizedConfigIn? (directory : System.FilePath) : IO (Option System.FilePa
 /-- Load all formatter policy in one step. An explicit path must exist; an absent conventional
 configuration is the default policy rather than an error.
 
-An explicit `--config` anchors its path patterns at the **project root**, not at its own directory: it
-is a run-wide override rather than a config that governs the subtree it sits in, and anchoring it at
-its own directory would make `include`/`exclude` in a config outside the tree match nothing
-(`notes/01-discovery.md` §5.1, §7). A *discovered* config anchors at its own directory. -/
+An explicit `--config` anchors its path patterns at the **project root**, not at its own
+directory: it is a run-wide override rather than a config that governs the subtree it sits in, and
+anchoring it at its own directory would make `include`/`exclude` in a config outside the tree match
+nothing (`notes/01-discovery.md` §5.1, §7). A *discovered* config anchors at its own directory. -/
 def FormatterConfig.load (root : System.FilePath)
     (explicit? : Option System.FilePath := none) : IO FormatterConfig := do
   match explicit? with
@@ -569,8 +578,8 @@ def FormatterConfig.load (root : System.FilePath)
     | none => return defaultConfig
     | some path => FormatterConfig.loadFrom root path ""
 
-/-- The `file:line` origins recorded for one key, in composition order. Empty when the setting was
-never written and the default applies. -/
+/-- The `file:line` origins recorded for one key, in composition order. Empty when the
+setting was never written and the default applies. -/
 private def FormatterConfig.originsOf (config : FormatterConfig) (key : String) : Array String :=
   config.origins.filterMap fun (recorded, file, line) =>
     if recorded == key then some s!"{file}:{line}" else none
@@ -585,13 +594,14 @@ private def renderPatterns (patterns : Array PathPattern) : String :=
 /-- Every effective setting as `(key, rendered value, origin)`, in schema order — the payload
 `config show` presents (`notes/01-discovery.md` §12).
 
-Origin is `default` when nothing wrote the setting, otherwise `file:line`. A setting written by several
-files in one `extend` chain lists **every** contributing origin for the additive `extend-*` keys and the
-winning one for the rest, which is why composition preserves order and duplicates (§6.2).
+Origin is `default` when nothing wrote the setting, otherwise `file:line`. A setting
+written by several files in one `extend` chain lists **every** contributing origin for the additive
+`extend-*` keys and the winning one for the rest, which is why composition preserves order and
+duplicates (§6.2).
 
-This lives here rather than in the CLI because `PathPattern` is private to this module: only code that
-can see the anchor can render a pattern's anchored form, and leaking the type to a presenter would be
-the wrong trade. -/
+This lives here rather than in the CLI because `PathPattern` is private to this module: only code
+that can see the anchor can render a pattern's anchored form, and leaking the type to a presenter
+would be the wrong trade. -/
 def FormatterConfig.describe (config : FormatterConfig) : Array (String × String × String) :=
   let winner := fun (key : String) =>
     match (config.originsOf key).back? with
@@ -619,24 +629,26 @@ def FormatterConfig.describe (config : FormatterConfig) : Array (String × Strin
       renderStrings (config.perFileIgnores.map (·.pattern.source)), all "per-file-ignores")
   ]
 
-/-- The configuration files that contributed to this value, in composition order: the `extend` chain
-plus the file that started it. Derived from `origins`, so a file that set nothing contributes nothing —
-which is the honest answer for provenance. -/
+/-- The configuration files that contributed to this value, in composition order: the
+`extend` chain plus the file that started it. Derived from `origins`, so a file that set nothing
+contributes nothing — which is the honest answer for provenance. -/
 def FormatterConfig.contributingFiles (config : FormatterConfig) : Array String :=
   config.origins.foldl (init := #[]) fun files (_, file, _) =>
     if files.contains file then files else files.push file
 
-/-- Whether a discovered root-package module survives configured path selection. Empty `include`
-means every root module; excludes always win. Explicit CLI files bypass this predicate. -/
+/-- Whether a discovered root-package module survives configured path selection. Empty
+`include` means every root module; excludes always win. Explicit CLI files bypass this
+predicate. -/
 def FormatterConfig.includesPath (config : FormatterConfig) (path : String) : Bool :=
   (config.includePatterns.isEmpty || config.includePatterns.any (·.matches path)) &&
     !config.excludePatterns.any (·.matches path)
 
-/-- Expand a selector to the codes it names, for the **subtractive** contexts (per-file-ignores and
-`extend-safe/unsafe-fixes`) that project a set of codes and test containment. `all`/`default`/category
-follow `defaultEnabled`/category; a bare code (live or reserved) is itself. These contexts never need
-the preview gate or specificity — they only remove or reclassify — so they keep the flat expansion.
-Positive selection (`select`/`ignore`/`fixable`) instead goes through `resolveAxis`. -/
+/-- Expand a selector to the codes it names, for the **subtractive** contexts
+(per-file-ignores and `extend-safe/unsafe-fixes`) that project a set of codes and test containment.
+`all`/`default`/category follow `defaultEnabled`/category; a bare code (live or reserved) is
+itself. These contexts never need the preview gate or specificity — they only remove or reclassify
+— so they keep the flat expansion. Positive selection (`select`/`ignore`/`fixable`) instead goes
+through `resolveAxis`. -/
 private def expandSelector (selector : String) : Array String :=
   if selector == "all" then
     allRuleInfos.map (·.code)
@@ -652,19 +664,19 @@ private def expandSelectors (selectors : Array String) : Array String :=
     (expandSelector selector).foldl (init := codes) fun codes code =>
       if codes.contains code then codes else codes.push code
 
-/-- The specificity of a selector token (`notes/01-schema.md` §5.4): an exact code (3) is more specific
-than a category (2), which is more specific than `all`/`default` (1). A reserved code or unrecognized
-token has specificity 0 and mentions no live rule. -/
+/-- The specificity of a selector token (`notes/01-schema.md` §5.4): an exact code (3) is
+more specific than a category (2), which is more specific than `all`/`default` (1). A reserved code
+or unrecognized token has specificity 0 and mentions no live rule. -/
 private def selectorSpecificity (selector : String) : Nat :=
   if selector == "all" || selector == "default" then 1
   else if isCategory selector then 2
   else if allRuleInfos.any (·.code == selector) then 3
   else 0
 
-/-- Whether `selector` names live rule `info`, honoring the **preview gate** (§5.3): `all` and a
-category expand to stable rules only unless `preview` is on (then their preview rules too); `default`
-follows `defaultEnabled` (only stable rules are default-on); a deprecated rule is reached only by its
-exact code; an exact-code selector names only its own code. -/
+/-- Whether `selector` names live rule `info`, honoring the **preview gate** (§5.3): `all`
+and a category expand to stable rules only unless `preview` is on (then their preview rules too);
+`default` follows `defaultEnabled` (only stable rules are default-on); a deprecated rule is reached
+only by its exact code; an exact-code selector names only its own code. -/
 private def selectorMentions (preview : Bool) (selector : String) (info : RuleInfo) : Bool :=
   let gated := info.lifecycle == .stable || (info.lifecycle == .preview && preview)
   if selector == "all" then gated
@@ -672,9 +684,9 @@ private def selectorMentions (preview : Bool) (selector : String) (info : RuleIn
   else if isCategory selector then info.category == selector && gated
   else selector == info.code
 
-/-- Resolve one selection axis over `universe` by specificity (§5.4): a rule is enabled iff some
-`enable` selector names it and **strictly outranks** every `disable` selector that names it — a tie goes
-to the disabler ("ignore wins"). `preview` gates what `all`/category mention. -/
+/-- Resolve one selection axis over `universe` by specificity (§5.4): a rule is enabled
+iff some `enable` selector names it and **strictly outranks** every `disable` selector that names
+it — a tie goes to the disabler ("ignore wins"). `preview` gates what `all`/category mention. -/
 private def resolveAxis (pool : Array RuleInfo) (preview : Bool)
     (enable disable : Array String) : Array String :=
   let best := fun (tokens : Array String) (info : RuleInfo) =>
@@ -685,12 +697,13 @@ private def resolveAxis (pool : Array RuleInfo) (preview : Bool)
     let d := best disable info
     if e > 0 && e > d then some info.code else none
 
-/-- Resolve CLI/config selection into a `RulePlan` (`notes/01-schema.md` §5–§6). A nonempty CLI
-`--select` replaces configured `select` and its configured ignores; `extend-select` always adds;
-ignores within the chosen layer always apply. Resolution is by specificity (`resolveAxis`), not flat
-subtraction: `--select FMT008 --ignore redundancy` keeps FMT008, because an exact selector outranks a
-category. The preview gate (§5.3) errors on an explicit preview-code selection when preview is off, and
-raises a non-fatal notice for a reserved/retired or deprecated code named in a selector. -/
+/-- Resolve CLI/config selection into a `RulePlan` (`notes/01-schema.md` §5–§6). A
+nonempty CLI `--select` replaces configured `select` and its configured ignores; `extend-select`
+always adds; ignores within the chosen layer always apply. Resolution is by specificity
+(`resolveAxis`), not flat subtraction: `--select FMT008 --ignore redundancy` keeps FMT008, because
+an exact selector outranks a category. The preview gate (§5.3) errors on an explicit preview-code
+selection when preview is off, and raises a non-fatal notice for a reserved/retired or deprecated
+code named in a selector. -/
 def FormatterConfig.rulePlan (config : FormatterConfig) (cli : CliSelection) :
     Except String RulePlan := do
   selectorsValid cli.select
@@ -705,13 +718,15 @@ def FormatterConfig.rulePlan (config : FormatterConfig) (cli : CliSelection) :
   let extendSelectTokens := config.extendSelectSelectors ++ cli.extendSelect
   let ignoreTokens := (if cliOwnsSelection then #[] else config.ignoredSelectors) ++ cli.ignore
   let enableTokens := selectTokens ++ extendSelectTokens
-  -- Preview gate: an explicit exact-code selection of a preview rule is an error unless preview is on —
-  -- a specific message, never a silent drop. A category/`all` simply omits preview rules when off.
+  -- Preview gate: an explicit exact-code selection of a preview rule is an error unless
+  -- preview is on — a specific message, never a silent drop. A category/`all` simply omits preview
+  -- rules when off.
   for t in enableTokens do
     if let some info := allRuleInfos.find? (·.code == t) then
       if info.lifecycle == .preview && !preview then
         throw s!"rule {t} is in preview; enable preview mode (--preview) to select it"
-  -- Non-fatal notices: a reserved/retired code, or a deprecated rule, named in any selector.
+  -- Non-fatal notices: a reserved/retired code, or a deprecated rule, named in any
+  -- selector.
   let mut notices := #[]
   for t in enableTokens ++ ignoreTokens do
     if isReservedCode t then
@@ -722,9 +737,10 @@ def FormatterConfig.rulePlan (config : FormatterConfig) (cli : CliSelection) :
         let migration := match info.replacement? with | some r => s!"; use {r} instead" | none => ""
         notices := notices.push s!"rule {t} is deprecated{migration}"
   let selected := resolveAxis allRuleInfos preview enableTokens ignoreTokens
-  -- Fix-selection axis, resolved over the *selected* set (already preview-gated, so mention with
-  -- `preview := true`). Base is `all` unless `fixable` is configured; `extend-fixable` adds, `unfixable`
-  -- removes. A selected-but-unfixable code stays reported; only its fix is withheld (`prepareFile`).
+  -- Fix-selection axis, resolved over the *selected* set (already preview-gated, so
+  -- mention with `preview := true`). Base is `all` unless `fixable` is configured;
+  -- `extend-fixable` adds, `unfixable` removes. A selected-but-unfixable code stays reported; only
+  -- its fix is withheld (`prepareFile`).
   let fixableOwns := !cli.fixable.isEmpty
   let fixEnable := (if fixableOwns then cli.fixable
       else if config.fixableSelectors.isEmpty then #["all"] else config.fixableSelectors)
@@ -732,8 +748,8 @@ def FormatterConfig.rulePlan (config : FormatterConfig) (cli : CliSelection) :
   let fixDisable := (if fixableOwns then #[] else config.unfixableSelectors) ++ cli.unfixable
   let selectedInfos := allRuleInfos.filter (selected.contains ·.code)
   let fixableSelected := resolveAxis selectedInfos true fixEnable fixDisable
-  -- Reclassification is config-only; there is no CLI spelling, so it is resolved once here from the
-  -- config's own lists. A rule in both is a contradiction, not last-writer-wins.
+  -- Reclassification is config-only; there is no CLI spelling, so it is resolved once here
+  -- from the config's own lists. A rule in both is a contradiction, not last-writer-wins.
   let extendSafe := expandSelectors config.extendSafeFixes
   let extendUnsafe := expandSelectors config.extendUnsafeFixes
   for code in extendSafe do
@@ -752,12 +768,13 @@ private def ignoredForPath (plan : RulePlan) (path code : String) : Bool :=
   plan.perFileIgnores.any fun entry =>
     entry.pattern.matches path && (expandSelectors entry.selectors).contains code
 
-/-- The effective applicability of `code`'s fix, after per-rule reclassification. No promotion lifts
-display-only; otherwise `extend-safe-fixes` promotes and `extend-unsafe-fixes` demotes. The two lists
-are disjoint (checked at plan construction), so the order of these tests does not matter.
+/-- The effective applicability of `code`'s fix, after per-rule reclassification. No
+promotion lifts display-only; otherwise `extend-safe-fixes` promotes and `extend-unsafe-fixes`
+demotes. The two lists are disjoint (checked at plan construction), so the order of these tests
+does not matter.
 
-A projection, never read by a rule: like selection, reclassification lives in the plan so that turning
-a fix safe cannot re-elaborate anything and a rule cannot decide its own admission. -/
+A projection, never read by a rule: like selection, reclassification lives in the plan so that
+turning a fix safe cannot re-elaborate anything and a rule cannot decide its own admission. -/
 def RulePlan.effectiveApplicability (plan : RulePlan) (code : String)
     (base : Applicability) : Applicability :=
   match base with
@@ -767,10 +784,10 @@ def RulePlan.effectiveApplicability (plan : RulePlan) (code : String)
     else if plan.extendUnsafe.contains code then .unsafe
     else base
 
-/-- Project canonical findings onto this plan: keep the selected, non-per-file-ignored ones, and
-rewrite each surviving fix's applicability to its effective value. The reported findings therefore
-carry the applicability a user will act on; admission (which of them `fix` applies) is a separate,
-downstream decision (`Applicability.admitted`). -/
+/-- Project canonical findings onto this plan: keep the selected, non-per-file-ignored
+ones, and rewrite each surviving fix's applicability to its effective value. The reported findings
+therefore carry the applicability a user will act on; admission (which of them `fix` applies) is a
+separate, downstream decision (`Applicability.admitted`). -/
 def RulePlan.findings (plan : RulePlan) (path : String)
     (findings : Array Finding) : Array Finding :=
   (findings.filter fun finding =>
@@ -786,16 +803,17 @@ def RulePlan.activeCount (plan : RulePlan) : Nat := plan.selected.size
 
 /-- The cheapest facts that can answer every selected rule of `rules`.
 
-This is the projection the roadmap asks for: selection derives what a run must *obtain*, and nothing
-else. It does not decide a worker, an artifact strategy, a cache identity, or an order — a run that
-selects nothing costs `source`, and turning a rule on can never rebuild or re-elaborate anything.
+This is the projection the roadmap asks for: selection derives what a run must *obtain*,
+and nothing else. It does not decide a worker, an artifact strategy, a cache identity, or an order
+— a run that selects nothing costs `source`, and turning a rule on can never rebuild or
+re-elaborate anything.
 
 The mode contributes separately (`RunMode.rendersCanonical`): a rendering mode needs the projection
 whatever its rules need.
 
-`rules` is a parameter for the same reason `runRulesOf` takes one, and must stay in step with it: the
-two derive from one array or they can disagree about what a selection costs. Only tests pass their
-own; every production caller goes through `requiredTier`. -/
+`rules` is a parameter for the same reason `runRulesOf` takes one, and must stay in step with it:
+the two derive from one array or they can disagree about what a selection costs. Only tests pass
+their own; every production caller goes through `requiredTier`. -/
 def RulePlan.requiredTierOf (plan : RulePlan) (rules : Array Rule) : Tier :=
   rules.foldl (init := .source) fun tier rule =>
     if plan.selected.contains rule.code then tier.max rule.tier else tier
@@ -806,24 +824,24 @@ def RulePlan.requiredTier (plan : RulePlan) : Tier := plan.requiredTierOf ruleRe
 /-- The tier selected rules require. Formatting is an exact-frontend demand, not a semantic fact. -/
 def RulePlan.demandedTier (plan : RulePlan) : Tier := plan.requiredTier
 
-/-- Whether the plan selects a rule whose fix reads the owned deprecation-occurrence fact. Governs the
-`occurrences` capability and the info-tree fold's cost (`RuleInfo.needsOccurrences`). `rules` is a
-parameter for the same reason `requiredTierOf` takes one — capture cost and rule execution derive from
-one registry or they disagree about what a selection costs. -/
+/-- Whether the plan selects a rule whose fix reads the owned deprecation-occurrence
+fact. Governs the `occurrences` capability and the info-tree fold's cost
+(`RuleInfo.needsOccurrences`). `rules` is a parameter for the same reason `requiredTierOf` takes
+one — capture cost and rule execution derive from one registry or they disagree about what a
+selection costs. -/
 def RulePlan.selectsOccurrenceRuleOf (plan : RulePlan) (rules : Array Rule) : Bool :=
   rules.any fun rule => plan.selected.contains rule.code && rule.info.needsOccurrences
 
 def RulePlan.selectsOccurrenceRule (plan : RulePlan) : Bool :=
   plan.selectsOccurrenceRuleOf ruleRegistry
 
-/-- The semantic rule sub-fact a run demands beyond the semantic tier itself: `occurrences` when a
-run that **applies** fixes selects an occurrence-fix rule (FMT012's rename) — the
-  one capability that gates the whole-file info-tree fold.
+/-- The semantic rule sub-fact a run demands beyond the semantic tier itself:
+`occurrences` when a run that **applies** fixes selects an occurrence-fix rule (FMT012's rename) —
+the one capability that gates the whole-file info-tree fold.
 
 The `occurrences` demand keys off `applies` (true only for `fix`). A check does not pay the fold.
-`cacheHitServes`
-serves a `.semantic` entry only when `demandedCaps.subset entry.caps`, so a fix's `occurrences` demand
-misses a report-only check entry that never captured it. -/
+`cacheHitServes` serves a `.semantic` entry only when `demandedCaps.subset entry.caps`, so a fix's
+`occurrences` demand misses a report-only check entry that never captured it. -/
 def RulePlan.demandedCaps (plan : RulePlan) (applies : Bool) : SemanticCaps :=
   if plan.demandedTier == .semantic then
     { occurrences := applies && plan.selectsOccurrenceRule }

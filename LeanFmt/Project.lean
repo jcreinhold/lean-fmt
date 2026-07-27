@@ -147,10 +147,10 @@ private def snapshotTarget (workspace : Lake.Workspace) (discovery : Discovery.D
 
 /-- Resolve `.` and `..` without touching the filesystem.
 
-`FilePath.normalize` only canonicalizes separators (`Init/System/FilePath.lean:83-89`), and `realPath`
-is unusable here: an unsaved buffer's path need not exist. So the walk runs over `components` instead.
-A `..` that would escape an absolute root is dropped rather than allowed to climb past it, which keeps
-`insideRoot` below meaningful on a path like `<root>/../etc`. -/
+`FilePath.normalize` only canonicalizes separators (`Init/System/FilePath.lean:83-89`), and
+`realPath` is unusable here: an unsaved buffer's path need not exist. So the walk runs over
+`components`. A `..` that would escape an absolute root is dropped rather than allowed to climb past
+it, keeping `insideRoot` below meaningful on a path like `<root>/../etc`. -/
 private def resolveLexically (path : FilePath) : FilePath :=
   let leadingSlash := path.toString.startsWith FilePath.pathSeparator.toString
   let resolved := path.components.foldl (init := ([] : List String)) fun acc component =>
@@ -162,18 +162,18 @@ private def resolveLexically (path : FilePath) : FilePath :=
 
 /-- One **unsaved** buffer as a target: bytes and an identity, with no filesystem read for content.
 
-`ruff-14` RSF-IMPL, `notes/01-stream-range.md` §2. This is the one place the stdin surface cannot reuse
-`snapshotTarget`, which calls `realPath` and `readFile` — an editor formatting a buffer that has never
-been saved has a path with nothing behind it. Every *gate* `snapshotTarget` applies still applies here,
-in the same order and with the same messages, and each names `argument`, the string the caller wrote,
-as `CLAUDE.md` requires of path-taking surface.
+`ruff-14` RSF-IMPL, `notes/01-stream-range.md` §2. This is the one place the stdin surface cannot
+reuse `snapshotTarget`, which calls `realPath` and `readFile` — an editor formatting a never-saved
+buffer has a path with nothing behind it. Every *gate* `snapshotTarget` applies still applies here,
+in the same order with the same messages, each naming `argument`, the string the caller wrote, as
+`CLAUDE.md` requires of path-taking surface.
 
 Gate 1 rules out `.lake` on this path as firmly as on an explicit file argument — that was `ruff-13`'s
 closed write-safety defect, and arriving through a pipe does not reopen it. The stdin path never
 publishes, so this guard is not the only one; it is here because a gate some entry points skip guards
 nothing.
 
-`module?` is resolved from the *real* path when the file happens to exist, so a saved-but-modified
+`module?` resolves from the *real* path when the file happens to exist, so a saved-but-modified
 buffer keeps the module identity its on-disk twin has and gets the same exact Lake setup. A path with
 nothing behind it resolves to `none` and takes the standalone route `diagnosticSetup` already serves.
 
@@ -208,9 +208,9 @@ def unsavedTarget (workspace : Lake.Workspace) (discovery : Discovery.Discovery)
 /- Load executable Lake configuration, select every requested source exactly once, and snapshot all
 bytes before analysis. Module/standalone classification is hidden in `SourceTarget`.
 
-Selection is driven by one `Discovery` walk rather than a walk of its own plus a root-only config
-(`ruff-13` `notes/01-discovery.md` §4.2, §11). With no requested files the selected set is what
-discovery kept: gate 1, the ignore sources, and each file's *own* effective `include`/`exclude`.
+One `Discovery` walk drives selection, not a walk of its own plus a root-only config (`ruff-13`
+`notes/01-discovery.md` §4.2, §11). With no requested files the selected set is what discovery kept:
+gate 1, the ignore sources, and each file's *own* effective `include`/`exclude`.
 
 An explicitly named file skips gates 2-4 unless its effective configuration sets `force-exclude`, and
 never consults `include` even then — `include` answers "when I say nothing, format these", and naming
@@ -226,11 +226,12 @@ def load (requestedRoot : FilePath) (discovery : Discovery.Discovery)
     discovery.selectedSources.mapM fun relative => IO.FS.realPath (root / FilePath.mk relative)
   else
     requested.mapM fun path => do
-      -- Resolve against the root, but report a missing file in the caller's own terms. `realPath` on a
-      -- path that does not exist throws `noFileOrDirectory` naming its partially-resolved buffer, which
-      -- absolutizes the leading component and mangles the rest — unreadable when a whole argument list
-      -- was passed as one path (an unquoted shell variable under a non-splitting shell). Name what the
-      -- caller wrote, consistent with the outside-root / not-a-source siblings and `Config` above.
+      -- Resolve against the root, but report a missing file in the caller's own terms. `realPath`
+      -- on a path that does not exist throws `noFileOrDirectory` naming its partially-resolved
+      -- buffer, which absolutizes the leading component and mangles the rest — unreadable when a
+      -- whole argument list arrives as one path (an unquoted shell variable under a non-splitting
+      -- shell). Name what the caller wrote, consistent with the outside-root / not-a-source siblings
+      -- and `Config` above.
       let candidate := if path.isAbsolute then path else root / path
       unless ← candidate.pathExists do
         throw <| IO.userError s!"selected file does not exist: {path}"
@@ -254,11 +255,11 @@ def load (requestedRoot : FilePath) (discovery : Discovery.Discovery)
 
 /-- The Lake workspace alone, selecting nothing.
 
-`ruff-14` RSF-IMPL. A stdin request formats just the bytes it was handed, so it must not pay to select
-the project: `load` snapshots every discovered source, which is the right cost for a batch run over a
+`ruff-14` RSF-IMPL. A stdin request formats just the bytes it was handed, so it must not pay to
+select the project: `load` snapshots every discovered source, the right cost for a batch run over a
 tree and the wrong cost for one buffer an editor is waiting on. `ExactRun` reads only `workspace` and
-`root` from a `Snapshot` — `envelope` and `exactSetup` never consult `targets` — so an empty selection
-is a complete capability here rather than a stub.
+`root` from a `Snapshot` — `envelope` and `exactSetup` never consult `targets` — so an empty
+selection is a complete capability here, not a stub.
 
 A long-lived session takes the other trade deliberately: it loads once and answers many requests, so
 it wants `findTarget?`. A one-shot CLI invocation has no session to spread that cost over. -/
@@ -311,19 +312,19 @@ def SourceTarget.withSource (target : SourceTarget) (source : String) : SourceTa
 
 /- Can Lake validate `build` without building anything? Asked silently.
 
-Every caller wants both halves, so both live here rather than at each call site.
+Every caller wants both halves — the answer and the silence — so both live here.
 
-**Why `checkNoBuild` and not `runBuild`.** Under `noBuild`, an out-of-date target makes `finalizeBuild`
-call `IO.Process.exit noBuildCode` (`Lake/Build/Run.lean:368`). That is a process exit, not an
-exception, so no `catch` below it runs. `checkNoBuild` asks the same question and returns a `Bool`
-(`:405-414`).
+**Why `checkNoBuild` and not `runBuild`.** Under `noBuild`, an out-of-date target makes
+`finalizeBuild` call `IO.Process.exit noBuildCode` (`Lake/Build/Run.lean:368`). That is a process
+exit, not an exception, so no `catch` below it runs. `checkNoBuild` asks the same question and
+returns a `Bool` (`:405-414`).
 
 **Why the buffer swap.** `checkNoBuild` is the one Lake entry point a caller cannot quiet. It builds
 its own monitor from a hardcoded `{noBuild := true}`, leaving `verbosity` at `.normal`, so
 `BuildConfig.showProgress` is true and Lake redraws a spinner over our stderr whenever that is a
 terminal. `runBuild` takes a config and `startBuild` runs no monitor at all; this one takes nothing.
-Buffering is safe only because `checkNoBuild` returns rather than exits: the same buffer around a
-call that exits would hold the unflushed report while the process died. -/
+Buffering is safe only because `checkNoBuild` returns rather than exits: around a call that exits,
+the same buffer would hold the unflushed report while the process died. -/
 def isCurrent {α : Type} (workspace : Lake.Workspace)
     (build : Lake.FetchM (Lake.Job α)) : IO Bool := do
   let buffer ← IO.mkRef { : IO.FS.Stream.Buffer }
@@ -477,17 +478,17 @@ private def setupJob (target : SourceTarget) : Lake.FetchM (Lake.Job Lean.Module
 /- Ask `isCurrent`'s question and keep the answer's *value*.
 
 `checkNoBuild` computes the build and returns whether it succeeded, discarding what it produced
-(`Lake/Build/Run.lean:405-414`); `BuildResult.isOk` is definitionally `out.isOk` (`:320-321`), so the
-`Bool` it returns is exactly "`out` was `.ok`". Every caller that then wants the value has to run the
-identical graph a second time to get it.
+(`Lake/Build/Run.lean:405-414`); `BuildResult.isOk` is definitionally `out.isOk` (`:320-321`), so
+its `Bool` is exactly "`out` was `.ok`". Every caller that then wants the value runs the identical
+graph a second time to get it.
 
 That second traversal was measured: over 34 modules, the probe cost 3,676 ms and the build that
 repeated it 3,663 ms — the same work, twice, for 16% of a cold run. This returns `out` itself, so the
 up-to-date case traverses once.
 
-It is written out rather than delegated to `checkNoBuild` because there is nothing to delegate to:
-Lake exposes the decision or the value, never both. The pieces below are Lake's own, reached through
-the exact-toolchain `import all` boundary, exactly as `batchModuleStatuses` reaches them. The buffer
+Written out rather than delegated to `checkNoBuild` because there is nothing to delegate to: Lake
+exposes the decision or the value, never both. The pieces below are Lake's own, reached through the
+exact-toolchain `import all` boundary, exactly as `batchModuleStatuses` reaches them. The buffer
 swap is `isCurrent`'s, for `isCurrent`'s reason: this builds its own monitor from a hardcoded
 `noBuild` config and would otherwise redraw a spinner over our stderr. -/
 def noBuildValue? {α : Type} (workspace : Lake.Workspace)
@@ -495,9 +496,9 @@ def noBuildValue? {α : Type} (workspace : Lake.Workspace)
   let buffer ← IO.mkRef { : IO.FS.Stream.Buffer }
   let stdout ← IO.setStdout (.ofBuffer buffer)
   let stderr ← IO.setStderr (.ofBuffer buffer)
-  -- The two halves are timed rather than bracketed, and reported after the streams are restored.
-  -- `withPhase` writes to stderr, and stderr is this operation's own buffer for its whole duration --
-  -- a phase emitted in here goes into the buffer and is discarded with it. Nothing inside this
+  -- The two halves are timed rather than bracketed, and reported after the streams are restored:
+  -- `withPhase` writes to stderr, which is this operation's own buffer for its whole duration — a
+  -- phase emitted in here goes into the buffer and is discarded with it. Nothing inside this
   -- function can report on itself.
   let contextNanos ← IO.mkRef 0
   let fetchNanos ← IO.mkRef 0
@@ -527,11 +528,10 @@ def noBuildValue? {α : Type} (workspace : Lake.Workspace)
 
 /-- Exact Lake setups for a whole batch, from **one** no-build graph traversal.
 
-`exactSetup` constructs a Lake build context, starts a build and monitors it once *per target*, and
-the graph it walks is the same graph every time. Measured on this repository: 34 targets, 3,528 ms in
-`setup_probe`, one full traversal each, for 8% of a cold `format --check`. This collects every
-target's setup job into a single `startBuild` -- the shape `importClosures?` already uses for currency
-closures.
+`exactSetup` constructs a Lake build context, starts a build, and monitors it once *per target*, over
+the same graph every time. Measured on this repository: 34 targets, 3,528 ms in `setup_probe`, one
+full traversal each, for 8% of a cold `format --check`. This collects every target's setup job into
+one `startBuild` — the shape `importClosures?` already uses for currency closures.
 
 `none` at a position means that target's setup did not resolve from current artifacts. It is not an
 answer: the caller falls back to `exactSetup`, which builds. This batches the *probe* only and can

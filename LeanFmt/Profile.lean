@@ -15,34 +15,34 @@ import Std.Sync.Mutex
 `cache.<name>=<n>` records. `tests/performance/gates.sh` is the schema in force: which names exist,
 what each brackets, and the completeness gate they answer to.
 
-This is a diagnostic channel, not a reporting surface. It is off by default, writes to stderr, never
+This is a diagnostic channel, not a reporting surface: off by default, writes to stderr, never
 enters `RunReport`, and no exit code depends on it. Nothing gated on it may allocate into, order, or
 short-circuit production work — it reads clocks that already tick and counters that already exist.
 
 ## Why this is its own module
 
-It began inside `LeanFmt.Application`, which is where the first phases were. `RPR-IMPL` then needed to
-bracket `LeanFmt.Project.exactSetup`, which `Application` imports — a phase cannot be emitted from
-below the module that owns the emitter. The channel is infrastructure for every layer, so it is a leaf
-that every layer may import.
+It began inside `LeanFmt.Application`, where the first phases were. `RPR-IMPL` then needed to bracket
+`LeanFmt.Project.exactSetup`, which `Application` imports — a phase cannot be emitted from below the
+module that owns the emitter. The channel is infrastructure for every layer, so it is a leaf every
+layer may import.
 
-It is deliberately **not** in `LeanFmt.Basic`. `lakefile.lean` globs `Basic` into
-`LeanFmtCompilerPlugin`, which links into every compilation of every module of an integrating project;
-a diagnostic that lives there makes editing a timer invalidate every integrated module's Lake trace.
-Nothing globs this module, and nothing in the plugin's import closure reaches it, so it stays out of
-that closure the way `LeanFmt.Rules` had to.
+Deliberately **not** in `LeanFmt.Basic`. `lakefile.lean` globs `Basic` into `LeanFmtCompilerPlugin`,
+which links into every compilation of every module of an integrating project; a diagnostic living
+there makes editing a timer invalidate every integrated module's Lake trace. Nothing globs this
+module, and nothing in the plugin's import closure reaches it, so it stays out of that closure the
+way `LeanFmt.Rules` had to.
 
 **A phase name may be emitted many times in one run.** Per-file phases report per file; the consumer
 sums by name (`experiments/profile-run.sh` retains every line). Emitting one total instead would need
-an accumulator threaded through the analysis path, putting profiling state into the type of every
-operation that has nothing to do with profiling.
+an accumulator threaded through the analysis path — profiling state in the type of every operation
+that has nothing to do with profiling.
 -/
 
 namespace LeanFmt.Internal.Profile
 
 /-- Serializes emission. With `--workers N` several workers bracket phases concurrently, and two
-unsynchronized `IO.eprintln` calls may interleave bytes inside a line — and the gates parse lines.
-The lock is taken only when the channel is on, so production runs pay nothing. -/
+unsynchronized `IO.eprintln` calls may interleave bytes inside a line, and the gates parse lines. The
+lock is taken only when the channel is on; production runs pay nothing. -/
 initialize emitLock : Std.BaseMutex ← Std.BaseMutex.new
 
 /-- Write one record line, whole. -/
@@ -52,9 +52,9 @@ private def emit (line : String) : IO Unit := do
 
 /-- Whether the channel is on.
 
-Read per emission rather than cached in a global. The cost is one `getenv` against a phase that is
-being measured *because* it is expensive, and a cached flag would need mutable module state that
-outlives every operation here. -/
+Read per emission rather than cached in a global. The cost is one `getenv` against a phase measured
+*because* it is expensive, and a cached flag would need mutable module state that outlives every
+operation here. -/
 def enabled : IO Bool :=
   return (← IO.getEnv "LEAN_FMT_PROFILE_PHASES") == some "1"
 
@@ -78,7 +78,7 @@ def recordCount (name : String) (value : Nat) : IO Unit := do
 
 /-- Run `action` and report how long it took under `name`.
 
-The duration is reported even when `action` throws: a phase that only reported on success would hide
+The duration is reported even when `action` throws: a phase reporting only on success would hide
 exactly the failure whose cost is worth knowing, and the exact frontend child can fail after spending
 its whole budget. -/
 def withPhase (name : String) (action : IO α) : IO α := do

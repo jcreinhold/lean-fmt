@@ -8,8 +8,8 @@ module
 
 /- Formatter-only trivia policy.
 
-Rule suppression remains in `LeanFmt.Suppression`. The one formatter directive is recognized only as
-an exact line-comment payload leading a complete ordinary command. Mid-expression, trailing, doc, and
+Rule suppression remains in `LeanFmt.Suppression`. The one formatter directive is recognized only as an
+exact line-comment payload leading a complete ordinary command; mid-expression, trailing, doc, and
 block comments cannot select a formatting unit. -/
 
 import all LeanFmt.Comments
@@ -38,8 +38,8 @@ private def commentDocument (ownership : CommentOwnership) (comment : Comment) :
 /- Join a run of comments that lead something, preserving a blank line the source put between two of
 them.
 
-A blank line is a source fact that nothing else in the pipeline supplies. `Command.place` decides the
-boundary *between* commands from their roles, and these comments are inside one command's unit, so the
+A blank line is a source fact nothing else in the pipeline supplies: `Command.place` decides the
+boundary *between* commands from their roles, and these comments sit inside one command's unit. So the
 gap between a copyright block and the `module` it precedes is owned by neither and was simply dropped.
 Every file in a Lean project has one. -/
 private def joinLeading (ownership : CommentOwnership) (comments : Array Comment) : Option Doc :=
@@ -53,8 +53,8 @@ private def joinLeading (ownership : CommentOwnership) (comments : Array Comment
       | _, _ => commentDocument ownership comment
     (some next, some comment.range.stop)).1
 
-/- The boundary between a leading run and the thing it leads. The callers below emit this themselves,
-so they have to ask rather than be handed it. -/
+/- The boundary between a leading run and the thing it leads. The callers below emit that boundary
+themselves, so they have to ask for it rather than be handed it. -/
 private def ownerBoundary (ownership : CommentOwnership) (comments : Array Comment)
     (stx : Lean.Syntax) : Doc :=
   match comments.back?, stx.getRange?.map (·.start.byteIdx) with
@@ -66,16 +66,16 @@ private def ownerBoundary (ownership : CommentOwnership) (comments : Array Comme
 `Comments.leading` answers the narrower question about one exact node.
 
 A `doc`-kind comment is never one of them. Lean stores a docstring's opening token in the following
-token's `SourceInfo`, so comment ownership sees it as a comment leading that token, but the docstring
-is *command syntax* and the command's own structural document is its sole emitter. Emitting it here as
-well duplicates that opening and makes the candidate an unterminated nested comment.
+token's `SourceInfo`, so comment ownership sees it leading that token — but the docstring is *command
+syntax*, and the command's own structural document is its sole emitter. Emitting it here too duplicates
+that opening and makes the candidate an unterminated nested comment.
 
-The range filter alone almost does this -- a docstring the command owns starts exactly where the
-command starts, so `stop <= start` is false for it -- but "almost" is not a guarantee to leave a
-duplication hazard resting on. `Analysis` used to guard the same hazard by dropping the command's
-*entire* leading trivia whenever it contained doc syntax, which also dropped every ordinary comment
-sitting above the docstring; that is the defect this replaces. Excluding by kind is the rule that was
-meant, and it is stated once, here, where the comments are selected. -/
+The range filter alone almost does this — a docstring the command owns starts exactly where the
+command starts, so `stop <= start` is false for it — but "almost" is no guarantee to rest a duplication
+hazard on. `Analysis` used to guard the same hazard by dropping the command's *entire* leading trivia
+whenever it contained doc syntax, which also dropped every ordinary comment above the docstring; that
+is the defect this replaces. Excluding by kind is the rule that was meant, stated once, here, where the
+comments are selected. -/
 private def commandLeading (ownership : CommentOwnership) (stx : Lean.Syntax) : Array Comment :=
   let start := stx.getRange?.map (·.start.byteIdx) |>.getD 0
   Comments.subtreeAt ownership stx .leading |>.filter fun comment =>
@@ -121,7 +121,7 @@ def decorateLeading (ownership : CommentOwnership) (stx : Lean.Syntax) (document
   | none => document
 
 /-- Add only comments trailing this exact node when the enclosing structural owner supplies the next
-hard boundary. This is the command-internal counterpart of `decorateLeading`. -/
+hard boundary: the command-internal counterpart of `decorateLeading`. -/
 def decorateTrailingBeforeBoundary (ownership : CommentOwnership) (stx : Lean.Syntax)
     (document : Doc) : Doc :=
   match exactTrailing ownership stx (terminateLine := false) with
@@ -130,8 +130,8 @@ def decorateTrailingBeforeBoundary (ownership : CommentOwnership) (stx : Lean.Sy
 
 /-- Add exact-node comments when the enclosing structural owner already supplies the following hard
 boundary. A trailing line comment must end the current row, but emitting that boundary twice would
-invent a blank line. This is intentionally separate from `decorate`: inline term composition still
-needs the comment itself to force the break. -/
+invent a blank line. Kept separate from `decorate` on purpose: inline term composition still needs the
+comment itself to force the break. -/
 def decorateBeforeBoundary (ownership : CommentOwnership) (stx : Lean.Syntax)
     (document : Doc) : Doc :=
   let document := match exactLeading ownership stx with
@@ -162,7 +162,7 @@ def decorateSubtreeTrailingAfter (ownership : CommentOwnership) (owner included 
       (if comment.kind == .line then Doc.hard else Doc.empty)
 
 /-- Comments logically leading the complete command, independent of which adjacent token physically
-stores their trivia. A blank line the source put between two of them is preserved; see `joinLeading`. -/
+stores their trivia. A blank line between two of them is preserved; see `joinLeading`. -/
 def leading (ownership : CommentOwnership) (stx : Lean.Syntax) : Option Doc :=
   joinLeading ownership (commandLeading ownership stx)
 
@@ -185,7 +185,7 @@ def trailing (ownership : CommentOwnership) (stx : Lean.Syntax) (boundaryStop : 
     (some <| document?.map (· ++ next) |>.getD next, comment.range.stop)
   document?
 
-/-- Comments after the final selected syntax leaf. They belong to the module boundary, not to an
+/-- Comments after the final selected syntax leaf: they belong to the module boundary, not to an
 invented trailing child of the last command. -/
 def fileDangling (ownership : CommentOwnership) : Option Doc :=
   Comments.fileDangling ownership |>.foldl (init := none) fun document? comment =>

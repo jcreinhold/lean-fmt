@@ -16,8 +16,8 @@ over findings**, applied after canonical results and after config selection; lik
 enters the result-cache identity.
 
 Placement in the pipeline: `runRules` (engine) → `RulePlan.findings` (config layer) → `Suppression`
-(this module, source layer) → report. The report gains the surviving findings, a suppressed count, and
-the `FMT900`/`FMT901` self-diagnostics. -/
+(this module, source layer) → report. The report gains the surviving findings, a suppressed count,
+and the `FMT900`/`FMT901` self-diagnostics. -/
 
 import all LeanFmt.LosslessSource
 import all LeanFmt.Rules
@@ -53,8 +53,8 @@ instance : Lean.FromJson DirectiveScope := ⟨fun j => do
 `codes?` is `none` for a blanket directive; `some codes` names specific rule codes (`codes` is
 nonempty — an empty `[]` is malformed and never reaches here). `scopeRange` is the byte range whose
 findings this suppresses, and `commentRange` is the directive comment's own range, needed by the
-`FMT900` removal fix. Both ranges are derived from the comment's position every run (§3 of the spec),
-so they are stable under formatting rather than stored offsets a reflow could invalidate. -/
+`FMT900` removal fix. Both ranges derive from the comment's position every run (§3 of the spec), so
+they are stable under formatting, not stored offsets a reflow could invalidate. -/
 structure Directive where
   scope : DirectiveScope
   codes? : Option (Array String)
@@ -78,14 +78,13 @@ namespace Suppression
 line comment (`RSP-SPEC` stop rule). -/
 def sigil : String := "lean-fmt:"
 
-/-- A cheap, whole-source superset test for "could this file carry a directive?". It is a substring
-scan of the *raw* source and is deliberately over-broad: it fires on the sigil wherever it appears —
-inside a string, a doc comment, even a rule message — none of which `collect` will treat as a
-directive. That asymmetry is the point. `collect` is exact but needs the syntax projection; this gate
-needs none, so `availableAnalysis` uses it to decide when a file that would otherwise take the
-source-only shortcut must instead demand the projection. A false positive costs one file its shortcut;
-a false negative would silently drop a real directive, so the test must never miss and a substring
-scan cannot. -/
+/-- A cheap whole-source superset test for "could this file carry a directive?". A substring scan of
+the *raw* source, deliberately over-broad: it fires on the sigil anywhere — inside a string, a doc
+comment, even a rule message — none of which `collect` treats as a directive. That asymmetry is the
+point. `collect` is exact but needs the syntax projection; this gate needs none, so
+`availableAnalysis` uses it to decide when a file that would otherwise take the source-only shortcut
+must instead demand the projection. A false positive costs one file its shortcut; a false negative
+would silently drop a real directive, so the test must never miss — and a substring scan cannot. -/
 def mayContainDirective (source : String) : Bool := (source.splitOn sigil).length > 1
 
 private def isUpper (c : Char) : Bool := 'A' ≤ c && c ≤ 'Z'
@@ -189,12 +188,12 @@ private def directiveScope (src : LosslessSource) (bytes : ByteArray)
       let stop := (after[1]?.map (·.range.start)).getD src.terminalStop
       ⟨cmd.range.start, max stop cmd.range.stop⟩
 
-/-- Whether a finding's anchor lies in a scope. Anchoring on `range.start` (not full containment) keeps
-line rules robust against findings whose range ends on a line boundary or is empty: a finding whose
-range ends at the trailing newline still anchors on its line, and a zero-width `[eof, eof]` finding
-anchors at end of file. The empty-finding clause admits a zero-width finding sitting exactly on the
-scope's upper bound, which is how an end-of-file finding is caught by a `file`- or last-line-`line`-scoped
-directive. (The retired line-boundary and final-newline rules were the original examples.) -/
+/-- Whether a finding's anchor lies in a scope. Anchoring on `range.start` (not full containment)
+keeps line rules robust against findings whose range ends on a line boundary or is empty: a finding
+whose range ends at the trailing newline still anchors on its line, and a zero-width `[eof, eof]`
+finding anchors at end of file. The empty-finding clause admits a zero-width finding sitting exactly
+on the scope's upper bound, which is how a `file`- or last-line-`line`-scoped directive catches an
+end-of-file finding. (The retired line-boundary and final-newline rules were the original examples.) -/
 def inScope (scope : SourceRange) (finding : Finding) : Bool :=
   scope.start ≤ finding.range.start &&
     (finding.range.start < scope.stop ||
@@ -211,20 +210,20 @@ private def malformedFinding (comment : SourceRange) (reason : String) : Finding
 
 /-- Comments in the module header `[0, headerStop)`, which the compiler artifact deliberately omits.
 
-The header is not in the artifact's trivia projection, so a directive placed at the top of a file,
-the natural home for `ignore-file`, would otherwise be silently dropped: no suppression and, worse,
+The header is not in the artifact's trivia projection, so a directive placed at the top of a file —
+the natural home for `ignore-file` — would otherwise be silently dropped: no suppression and, worse,
 no diagnostic. This recovers those comments so they parse like any other.
 
-A dedicated scanner is safe here because the header grammar is so small. In the module
-system, the header holds only the `module` marker, `import` statements, and interspersed whitespace
-and comments: `headerStop` is the *first command's* leading start (`LosslessSource.lean`
-`firstLeadingStart?`), and module/doc docstrings parse as commands, so they sit past `headerStop`,
-never inside this region. That leaves no string literal and no docstring here to misread — the two
-things a substring scan cannot survive. So the scan skips non-comment bytes one at a time (which
-handles `module`, `import`, and identifiers uniformly) and records line and block comments by range.
-A stray block comment is skipped whole with nested counting, so a directive-looking line *inside* one
-is never torn out; and were a docstring ever to appear, its body begins with a bang or dash once the
-block delimiters are stripped, so `commentBody` yields no sigil match. -/
+A dedicated scanner is safe here because the header grammar is so small. In the module system, the
+header holds only the `module` marker, `import` statements, and interspersed whitespace and comments:
+`headerStop` is the *first command's* leading start (`LosslessSource.lean` `firstLeadingStart?`), and
+module/doc docstrings parse as commands, so they sit past `headerStop`, never inside this region.
+That leaves no string literal and no docstring here to misread — the two things a substring scan
+cannot survive. So the scan skips non-comment bytes one at a time (handling `module`, `import`, and
+identifiers uniformly) and records line and block comments by range. A stray block comment is skipped
+whole with nested counting, so a directive-looking line *inside* one is never torn out; and were a
+docstring ever to appear, its body begins with a bang or dash once the block delimiters are stripped,
+so `commentBody` yields no sigil match. -/
 private def headerComments (bytes : ByteArray) (headerStop : Nat) :
     Array (TriviaKind × SourceRange) := Id.run do
   let mut out := #[]
@@ -284,10 +283,10 @@ private def bodyComments (src : LosslessSource) : Array (TriviaKind × SourceRan
 /-- Parse every directive comment in a module into `SuppressionFacts`.
 
 Directives are read from recorded artifact trivia for the command body plus `headerComments` for the
-module header the artifact omits. Formatter ownership is neither required nor serialized on this
-independent rule-only path. A comment whose body does not open with the sigil is ordinary prose and
-produces nothing; one that opens with the sigil but breaks the grammar becomes an `FMT901` finding
-and suppresses nothing. -/
+module header the artifact omits; formatter ownership is neither required nor serialized on this
+rule-only path. A comment whose body does not open with the sigil is ordinary prose and produces
+nothing; one that opens with the sigil but breaks the grammar becomes an `FMT901` finding and
+suppresses nothing. -/
 def collect (src : LosslessSource) (normalized : String) : SuppressionFacts := Id.run do
   let bytes := normalized.toUTF8
   let mut directives := #[]
@@ -338,11 +337,9 @@ private def removalRange (bytes : ByteArray) (comment : SourceRange) : SourceRan
       i := i + 1
     return true
   if precededOnlyByWhitespace then
-    -- eat the whole line and its terminating newline (if any)
     let stop := lineStop bytes comment.start
     ⟨ls, if stop < bytes.size then stop + 1 else stop⟩
   else
-    -- eat back over horizontal whitespace before the comment
     let start := Id.run do
       let mut start := comment.start
       while start > ls && (bytes[start - 1]! == 0x20 || bytes[start - 1]! == 0x09) do
@@ -382,7 +379,6 @@ def apply (facts : SuppressionFacts) (bytes : ByteArray) (findings : Array Findi
     else
       kept := kept.push finding
   let suppressed := findings.size - kept.size
-  -- Per-directive unused analysis.
   let mut unused := #[]
   for directive in facts.directives do
     match directive.codes? with
@@ -395,10 +391,11 @@ def apply (facts : SuppressionFacts) (bytes : ByteArray) (findings : Array Findi
     | some codes =>
       let used := codes.filter fun code =>
         findings.any fun f => f.code == code && inScope directive.scopeRange f
-      -- A reserved/retired code (`ruff-12` §7 non-breaking floor) is **inert**: it suppresses nothing
-      -- but is never flagged unused, so it stays out of the dead set that raises `FMT900`. A
-      -- retired-only directive therefore raises nothing (dead is empty); a mixed directive keeps normal
-      -- per-code analysis for its live codes, and a trim preserves the inert retired codes in place.
+      -- A reserved/retired code (`ruff-12` §7 non-breaking floor) is **inert**: it suppresses
+      -- nothing but is never flagged unused, so it stays out of the dead set that raises `FMT900`.
+      -- A retired-only directive therefore raises nothing (`dead` is empty); a mixed directive keeps
+      -- normal per-code analysis for its live codes, and a trim preserves the inert retired codes in
+      -- place.
       let dead := codes.filter fun code => !used.contains code && !isReservedCode code
       let keep := codes.filter fun code => used.contains code || isReservedCode code
       if used.isEmpty then

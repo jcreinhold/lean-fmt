@@ -2,13 +2,13 @@ import Lake
 
 open Lake DSL System
 
-/- The drivers are Lake's own protocol for "run this project's tests" and "run this project's linter".
-Configuring them here means `lake test` and `lake lint` work in this repository, and that a consuming
-project can copy a working example rather than a printed instruction. `leanprover/lean-action` probes
-`lake check-lint` and runs `lake lint` when it succeeds, so this is also the CI integration.
+/- The drivers are Lake's protocol for "run this project's tests" and "run this project's
+linter". Setting them here makes `lake test` and `lake lint` work in this repository and gives a
+consuming project a working example to copy. `leanprover/lean-action` probes `lake check-lint` and
+runs `lake lint` when it succeeds, so this is also the CI integration.
 
-Both driver names need guillemets. `lean-fmt` is not a legal Lean identifier, and Lake resolves a
-driver by `String.toName`, so the bare spelling does not find the executable — `tests/downstream/run.sh`
+Both driver names need guillemets: `lean-fmt` is not a legal Lean identifier and Lake resolves a
+driver by `String.toName`, so the bare spelling does not find the executable. `tests/downstream/run.sh`
 §5 pins the consuming form, which needs them in the package half too. -/
 package «lean-fmt» where
   version := v!"0.1.0"
@@ -22,12 +22,12 @@ lean_exe «lean-fmt» where
   supportInterpreter := true
   weakLinkArgs := #["-lLake"]
 
-/- This library is what gets linked into every compilation of every module of an integrating project,
-so its member list is that project's exposure to the formatter. `LeanFmt.Rules` was in it and is not
-any more: nothing here imports it, and while it was listed, editing a rule's message text rebuilt the
-plugin, invalidated every integrated module's Lake trace, and changed the compiled bytes of any
-module that had a finding — `notes/01-rule-facts.md` §3 measured all three. The import graph alone was
-never enough to prevent that; this list is the other half of the same boundary. -/
+/- This library is linked into every compilation of every module of an integrating project,
+so its member list is that project's exposure to the formatter. `LeanFmt.Rules` was listed here and
+is not any more: nothing here imports it, and while it was listed, editing a rule's message text
+rebuilt the plugin, invalidated every integrated module's Lake trace, and changed the compiled bytes
+of any module with a finding — `notes/01-rule-facts.md` §3 measured all three. The import graph
+alone never prevented that; this list is the other half of the same boundary. -/
 lean_lib LeanFmtCompilerPlugin where
   roots := #[`LeanFmtCompilerPlugin]
   globs := #[
@@ -71,13 +71,13 @@ lean_lib LeanFmtApplication where
     Glob.one `LeanFmt.Cli
   ]
 
-/- The plugin shared library deliberately bundles the small semantic core at the process boundary.
-This later declaration remains the canonical owner for ordinary application imports, so changing
+/- The plugin shared library bundles the small semantic core at the process boundary. This
+later declaration stays the canonical owner for ordinary application imports, so changing
 application orchestration cannot invalidate compiler-integrated project modules.
 
-`LeanFmt.Doc`, `LeanFmt.Comments`, and `LeanFmt.Formatter` are deliberately *not* in the plugin library
-above. The plugin runs inside every compilation of every downstream module, so its surface is the
-semantic core and nothing else; layout is an application-only frontend capability. -/
+`LeanFmt.Doc`, `LeanFmt.Comments`, and `LeanFmt.Formatter` are deliberately *not* in the plugin
+library above: the plugin runs inside every compilation of every downstream module, so its surface
+is the semantic core and nothing else. Layout is an application-only frontend capability. -/
 lean_lib LeanFmtCore where
   roots := #[`LeanFmt]
   globs := #[
@@ -91,19 +91,19 @@ lean_lib LeanFmtCore where
     Glob.one `LeanFmt.Imports
   ]
 
-/- The `RCI-MODEL` proof library. It has its own target, and is globbed explicitly and alone, for the
+/- The `RCI-MODEL` proof library has its own target, globbed explicitly and alone, for the
 same reason `LeanFmt.Rules` was removed from the plugin target: Lake links every module a library
 globs, imported or not. Nothing in the shipped binary or the compiler plugin imports
 `LeanFmt.Cache.Spec`, and nothing globs it alongside them, so the model cannot reach either link
 closure. A proof about the cache must not be able to rebuild an integrating project.
 
 It *is* a default target, so `lake build` builds it and a proof that stops compiling fails the build
-that broke it. A proof library that only builds when someone names it is a proof library that silently
-rots. Being a default target does not put it in any link closure — that follows the executable's
-import graph, and nothing imports this.
+that broke it. A proof library that builds only when someone names it silently rots. A default
+target enters no link closure — that follows the executable's import graph, and nothing imports
+this.
 
 The `#print axioms` audit is **not** in the module; its output is recorded in `results/02-model.md`
-and re-running it is a manual step before marking a claim verified. That is a real reduction in
+and re-running it is a manual step before marking a claim verified. That is a real loss of
 enforcement over keeping it inline: an assumption introduced later will not announce itself in the
 build that introduced it. -/
 @[default_target]
@@ -112,9 +112,9 @@ lean_lib LeanFmtCacheSpec where
   globs := #[Glob.one `LeanFmt.Cache.Spec]
 
 /- The shared test harness: assertions, process spawning, golden files, JSON projection, and
-filesystem fixtures for both the unit tier (`tests/Unit`) and the per-suite executables
-(`tests/Suites`). A library rather than part of each executable's root so the harness compiles
-once and the suite executables stay thin. Nothing in the product imports it. -/
+filesystem fixtures for the unit tier (`tests/Unit`) and the per-suite executables
+(`tests/Suites`). A library, so the harness compiles once and the suite executables stay thin.
+Nothing in the product imports it. -/
 lean_lib TestSupport where
   srcDir := "tests"
   roots := #[`Test]
@@ -129,11 +129,15 @@ lean_lib TestSupport where
   ]
 
 /- The suite orchestrator and the package's testDriver: `lake test` runs the unit tier in-process
-and then every non-slow registered suite as an executable. See `tests/Test/Runner.lean`. -/
+and then every non-slow registered suite as an executable. See `tests/Test/Runner.lean`.
+`check-modules` is an extra dependency because the unit tier's trace characterization walks every
+trace in the build tree: building it here keeps its own trace from going stale against modules the
+suites rebuild, which the test would report as a Lake format change. -/
 lean_exe «test-suites» where
   srcDir := "tests"
   root := `Test.Runner
   supportInterpreter := true
+  extraDepTargets := #[`«check-modules»]
 
 /- The boundary suite: repo hygiene (module headers, tracked artifacts, the plugin import and
 link-closure boundaries). Pure reads against the tracked tree, so it runs in the parallel lane. -/
@@ -150,9 +154,9 @@ lean_exe «suite-discovery» where
   root := `Suites.Discovery
   supportInterpreter := true
 
-/- The editor suite: a real Neovim client against the live server (tests/lsp/editor.lua stays
-Lua -- the value is that the adversary is vim.lsp itself). Skips without nvim 0.11+. Exclusive
-lane, slow. -/
+/- The editor suite: a real Neovim client against the live server (tests/lsp/editor.lua
+stays Lua -- the value is that the adversary is vim.lsp itself). Skips without nvim 0.11+.
+Exclusive lane, slow. -/
 lean_exe «suite-editor» where
   srcDir := "tests"
   root := `Suites.Editor
@@ -304,8 +308,8 @@ lean_exe «suite-syntax» where
   root := `Suites.Syntax
   supportInterpreter := true
 
-/- The suppression suite: source-suppression acceptance over committed fixtures. Clears the root
-.lean-fmt-cache in its preamble, so it serializes with the other workspace-touching suites. -/
+/- The suppression suite: source-suppression acceptance over committed fixtures. Clears the
+root .lean-fmt-cache in its preamble, so it serializes with the other workspace-touching suites. -/
 lean_exe «suite-suppression» where
   srcDir := "tests"
   root := `Suites.Suppression
@@ -379,16 +383,16 @@ lean_exe «suite-collection-formatter» where
   root := `Suites.CollectionFormatter
   supportInterpreter := true
 
-/- The compiler facet suite: builds main-workspace targets, edits LeanFmt/ sources in place, and
-corrupts and rebuilds .lake outputs. Exclusive lane -- nothing else may run against this workspace
-meanwhile. -/
+/- The compiler facet suite: builds main-workspace targets, edits LeanFmt/ sources in place,
+and corrupts and rebuilds .lake outputs. Exclusive lane -- nothing else may run against this
+workspace meanwhile. -/
 lean_exe «suite-compiler» where
   srcDir := "tests"
   root := `Suites.Compiler
   supportInterpreter := true
 
-/- The cache suite: entry-granularity invalidation over the self-contained fixture project. It
-rebuilds that project's Lake workspace, edits and restores its sources, and stamps the main
+/- The cache suite: entry-granularity invalidation over the self-contained fixture project.
+It rebuilds that project's Lake workspace, edits and restores its sources, and stamps the main
 binary's mtime, so it serializes with every other workspace-touching suite. -/
 lean_exe «suite-cache» where
   srcDir := "tests"
@@ -409,16 +413,17 @@ lean_exe «suite-incremental» where
   root := `Suites.Incremental
   supportInterpreter := true
 
-/- The LSP acceptance run, compiled rather than interpreted: `Lean.Data.Lsp.Ipc` is the client,
-and an interpreted generic against compiled library code does not link. A slow-lane suite; the
-orchestrator picks it up when it exists. -/
+/- The LSP acceptance run, compiled rather than interpreted: `Lean.Data.Lsp.Ipc` is the
+client, and an interpreted generic against compiled library code does not link. A slow-lane suite;
+the orchestrator picks it up when it exists. -/
 lean_exe «suite-lsp-acceptance» where
   srcDir := "tests"
   root := `Lsp.Acceptance
   supportInterpreter := true
 
-/- The unit tier: `LeanFmtTest.lean` split into per-domain modules under `tests/Test/Unit`, run by
-the shared harness. The executable's import closure, not a glob, determines what it builds. -/
+/- The unit tier: `LeanFmtTest.lean` split into per-domain modules under `tests/Test/Unit`,
+run by the shared harness. The executable's import closure, not a glob, determines what it
+builds. -/
 lean_exe «lean-fmt-tests» where
   srcDir := "tests"
   root := `Test.Unit
@@ -503,10 +508,10 @@ lean_lib FormatterAdapterFixtures where
   roots := #[`AdapterSyntax]
 
 /- The native grammar adapter's four invariant families, one module each: positional terminal
-alignment, comment ownership at every boundary, typed exact islands, and offside carriers. They are
-declared modules rather than generated buffers because each has to reach the adapter through the same
-exact Lake setup a project file does, and because `tests/native-layout/run.sh` formats them and then
-formats the result again -- an idempotence claim needs a module the frontend can elaborate twice.
+alignment, comment ownership at every boundary, typed exact islands, and offside carriers. Declared
+modules, not generated buffers: each must reach the adapter through the same exact Lake setup a
+project file does, and `tests/native-layout/run.sh` formats them and then formats the result again
+-- an idempotence claim needs a module the frontend can elaborate twice.
 
 They are deliberately *not* canonically laid out; that is the input the suite reflows. `lean-fmt.toml`
 still lints them, and that is intended: they are valid, finding-free Lean, and layout is not a rule. -/

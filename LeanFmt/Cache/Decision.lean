@@ -34,9 +34,8 @@ Generic in `Mod`, `SDigest`, `GDigest`, `Schema` and `Analysis` because the proo
 * `Provided.meets` — does this entry *answer what this run asked*? `LeanFmt.Application` applies it,
   because only the caller knows the rule plan.
 
-They are separate functions so each can run where its inputs are, and `serves` is defined as their
-conjunction so that neither can drift from the whole. A caller that applied only one of them would be
-visibly not applying `serves`.
+They are separate functions so each can run where its inputs are, and `serves` is their conjunction so
+neither can drift from the whole. A caller applying only one would be visibly not applying `serves`.
 -/
 
 namespace LeanFmt.Internal.Cache.Decision
@@ -82,7 +81,7 @@ def Provided.meets (p : Provided) (d : Demand) : Bool :=
 /-- What the cache can observe **without running the frontend**: the deserializer's own schema, and,
 per module, a source digest and a closure digest recomputed from Lake's recorded traces.
 
-`closureDigest` carries `RCI-SPEC`'s correction. It is derived from each import's `X:importAllArts`,
+`closureDigest` carries `RCI-SPEC`'s correction: derived from each import's `X:importAllArts`,
 recomputed from `X`'s own trace outputs — **not** from `X transitive imports (all)`, which excludes
 `X` itself and would have passed on the stale case the check exists to catch. -/
 structure Obs (Mod SDigest GDigest Schema : Type) where

@@ -39,7 +39,7 @@ open LeanFmt LeanFmt.Internal
 
 namespace LeanFmt.Test.Unit.Fixtures
 
-/- The projection of `def x := 1\n`, written out by hand so the tiling invariant is legible: every
+/- The projection of `def x := 1\n`, written by hand so the tiling invariant is legible: every
 token's span and trivia runs abut, covering `[headerStop, terminalStop)` exactly once.
 
     byte 0    3 4 5 6  8 9 10 11

@@ -44,14 +44,14 @@ def RunMode.toString : RunMode → String
   | .diff => "diff"
   | .fix => "fix"
 
-/-- Whether this mode's answer contains canonical text, and therefore needs a projection to render.
+/-- Whether this mode's answer contains canonical text and so needs a projection to render.
 
 `format` and `diff` render it; `check` and `fix` do not. `check` reports selected rules, so a
-badly-laid-out but lint-clean file is `check`-clean. `fix` stopped rendering at `ruff-11c` RDF-IMPL: it
-applies admitted rule fixes at the file's **original** coordinates and does not reflow, like
-`ruff check --fix` (run `fix` then `format` for both). A fixed file keeps its layout until `format`
-runs, and a fix `Edit` applies to the bytes the user sees. Keeping `check`/`fix` off this path also
-lets them take the source-only fast path on a source-only selection, which needs no artifact. -/
+badly-laid-out but lint-clean file is `check`-clean. Since `ruff-11c` RDF-IMPL, `fix` applies
+admitted rule fixes at the file's **original** coordinates and does not reflow, like
+`ruff check --fix` (run `fix` then `format` for both); a fixed file keeps its layout until `format`
+runs. Keeping `check`/`fix` off this path also lets them take the source-only fast path on a
+source-only selection, which needs no artifact. -/
 def RunMode.rendersCanonical : RunMode → Bool
   | .check | .fix => false
   | .format | .diff => true
@@ -65,30 +65,32 @@ structure RunRequest where
   configPath? : Option FilePath := none
   select : Array String := #[]
   ignore : Array String := #[]
-  /-- Lifecycle/fixability selection (`ruff-12` RRL-IMPL), passed verbatim into `FormatterConfig.rulePlan`
-  through a `CliSelection`. `extendSelect` adds to the selection; `fixable`/`unfixable`/`extendFixable`
-  choose which selected rules' fixes `fix` applies; `preview` unlocks preview rules. -/
+  /-- Lifecycle/fixability selection (`ruff-12` RRL-IMPL), passed verbatim into
+  `FormatterConfig.rulePlan` through a `CliSelection`. `extendSelect` adds to the selection;
+  `fixable`/`unfixable`/`extendFixable` choose which selected rules' fixes `fix` applies; `preview`
+  unlocks preview rules. -/
   extendSelect : Array String := #[]
   fixable : Array String := #[]
   unfixable : Array String := #[]
   extendFixable : Array String := #[]
   preview : Bool := false
-  /-- Apply unsafe fixes too, not just safe ones. Decides which fixes `fix` admits into its patch (and
-  `check`'s preview of it), never relaxing validation or conflict rejection. Since `ruff-11c` the
+  /-- Apply unsafe fixes too, not just safe ones. Decides which fixes `fix` admits into its patch
+  (and `check`'s preview of it), never relaxing validation or conflict rejection. Since `ruff-11c` the
   rendering modes carry no rule fix — `format` publishes only layout (`ruff-11d`), `diff` diffs only
-  layout — so this flag changes only their reported withheld-unsafe count, not their bytes. Display-only
-  fixes are unaffected: nothing applies them. -/
+  layout — so this flag changes only their reported withheld-unsafe count, not their bytes.
+  Display-only fixes are unaffected: nothing applies them. -/
   unsafeFixes : Bool := false
-  /-- `format --check` (`ruff-11d` FIP-IMPL): the non-writing CI preview. Meaningful only for `.format`.
-  When `false` (the default), `format` publishes the canonical layout in place through the `ruff-06`
-  guarded path — the same publisher `fix` uses. When `true`, `format` renders but writes nothing and
-  reports `would-format`/`clean`, the pre-`ruff-11d` default. `check`/`diff`/`fix` ignore it. -/
+  /-- `format --check` (`ruff-11d` FIP-IMPL): the non-writing CI preview, meaningful only for
+  `.format`. When `false` (the default), `format` publishes the canonical layout in place through the
+  `ruff-06` guarded path — the same publisher `fix` uses. When `true`, `format` renders but writes
+  nothing and reports `would-format`/`clean`, the pre-`ruff-11d` default. `check`/`diff`/`fix` ignore
+  it. -/
   formatCheck : Bool := false
   /-- How many frontend children may run concurrently (`--workers`). One is the default: the serial
-  path, one child at a time, each told the whole envelope minus the parent's RSS. Above one, the
-  batch loop's unanswered targets are worked by that many dedicated workers and the envelope is
-  divided between their children (`withExactRun`). Scheduling only: every result is assembled by
-  target index, so the report is byte-identical at any value. -/
+  path, one child at a time, each told the whole envelope minus the parent's RSS. Above one, that many
+  dedicated workers serve the batch loop's unanswered targets and the envelope is divided between
+  their children (`withExactRun`). Scheduling only: every result is assembled by target index, so the
+  report is byte-identical at any value. -/
   workers : Nat := 1
 
 /-- Whether this run publishes source. `fix` always does; `format` does unless `--check` demotes it to a
@@ -108,9 +110,9 @@ structure FileReport where
   formatted : Option String := none
   diff : Option String := none
   written : Bool := false
-  /-- Fixes this file has that were withheld because they are unsafe and `--unsafe-fixes` was off.
-  Zero once the run opts in. It tells the user what `--unsafe-fixes` would add rather than leaving
-  the withheld fixes invisible. -/
+  /-- Fixes this file has that were withheld because they are unsafe and `--unsafe-fixes` was off —
+  zero once the run opts in. Tells the user what `--unsafe-fixes` would add rather than leaving the
+  withheld fixes invisible. -/
   withheldUnsafe : Nat := 0
   /-- Findings this file's source-suppression directives removed from the report. A nonzero count
   with an empty finding list means the file is clean only because a directive said so. -/
@@ -141,10 +143,10 @@ private structure ChildOutput where
   stderr : String
   peakAggregateRssKiB : Nat
 
-/-- A child the reaper is enforcing the envelope against. Registered at spawn, removed when its
-worker reaps it; the reaper kills and records *why* in `reason`, which is how the worker learns its
-child died by the envelope rather than by the file. `peakKiB` is the largest parent-plus-group
-aggregate the reaper has sampled for this child, mirroring what `monitorChild` tracks serially. -/
+/-- A child the reaper enforces the envelope against. Registered at spawn, removed when its worker
+reaps it; the reaper kills and records *why* in `reason`, which is how the worker learns its child
+died by the envelope rather than by the file. `peakKiB` is the largest parent-plus-group aggregate
+sampled for this child, mirroring what `monitorChild` tracks serially. -/
 private structure LiveChild where
   child : IO.Process.Child { stdin := .inherit, stdout := .piped, stderr := .piped }
   stdoutTask : Task (Except IO.Error String)
@@ -184,19 +186,18 @@ structure ExactRun where
 
   `Project.exactSetups?` fills this in one graph traversal for the files a run has decided will reach
   the frontend; `exactSetupResult` reads it and falls back to the per-target `exactSetup` on a miss.
-  Empty is always correct -- it just means every target pays for its own traversal, which is what
-  happened before `RPR-IMPL`.
+  Empty is always correct — it just means every target pays its own traversal, the pre-`RPR-IMPL`
+  behavior.
 
   **The source is stored and compared, not just the path.** A setup carries the header's imports
   (`setupJob` parses them out of the target's own bytes), and this run's writing modes hand the
   frontend a *rewritten* snapshot at the same path: `fix` may reorder or drop an import (FMT004,
   FMT005) and `organize` exists to. Keying on the path alone would validate a rewritten file against
-  the imports it no longer has, which is precisely the check those modes are performing. -/
+  the imports it no longer has — precisely the check those modes perform. -/
   setups : IO.Ref (Std.HashMap String (String × Lean.ModuleSetup))
   /-- Setups retained for editor documents, keyed by the parsed module header rather than the whole
-  buffer. Ordinary command edits do not alter imports and must not rebuild Lake's setup graph on
-  every keystroke. This is separate from `setups`: batch validation deliberately keys rewritten
-  sources by all bytes. -/
+  buffer: ordinary edits do not alter imports and must not rebuild Lake's setup graph on every
+  keystroke. Separate from `setups`, which deliberately keys rewritten sources by all bytes. -/
   documentSetups : IO.Ref (Std.HashMap String (String × Lean.ModuleSetup))
 
 private structure FacetDescriptor where
@@ -218,22 +219,22 @@ private def decodeFacetDescriptor? (encoded : String) : Option Lake.Artifact := 
 
 /- Fetch the target workspace's registered formatter facet jobs together under Lake's no-build
 policy. Returned descriptors never escape this operation: every content hash is recomputed and
-every payload is matched to its immutable module/source snapshot. A missing, stale, corrupt, or
+every payload matched to its immutable module/source snapshot. A missing, stale, corrupt, or
 failing facet is an ordered miss, never an extractor launch or a partial batch failure.
 
-**`Project.noBuildValue?`, and a `catch` cannot replace it.** Under `noBuild`, a target that is out of
-date makes `finalizeBuild` call `IO.Process.exit noBuildCode` — `Lake/Build/Run.lean:367-368`, and
-`noBuildCode` is 3 (`:275`). That is a process exit, not an exception: nothing below catches it and the
-run dies silently mid-batch. `noBuildValue?` stops short of `finalizeBuild`, so staleness reaches this
-operation as a `none` — an ordered miss like any other — and it owns the output buffering the Lake
-monitor needs.
+**`Project.noBuildValue?`, and a `catch` cannot replace it.** Under `noBuild`, an out-of-date target
+makes `finalizeBuild` call `IO.Process.exit noBuildCode` — `Lake/Build/Run.lean:367-368`, with
+`noBuildCode` 3 (`:275`). That is a process exit, not an exception: nothing below catches it and the
+run dies silently mid-batch. `noBuildValue?` stops short of `finalizeBuild`, so staleness reaches
+this operation as a `none` — an ordered miss like any other — and it owns the output buffering the
+Lake monitor needs.
 
-This asked `Project.isCurrent` and then re-ran the identical graph under `runBuild`, because the probe
-returns a `Bool` and threw the built value away. `RPR-IMPL` measured the same duplication on the module
-setup path at 3.7 s per cold 34-module run and removed both.
+This once asked `Project.isCurrent` and then re-ran the identical graph under `runBuild`, because
+the probe returns a `Bool` and threw the built value away. `RPR-IMPL` measured the same duplication
+on the module setup path at 3.7 s per cold 34-module run and removed both.
 
-This operation once asked Lake directly and could not have been caught doing it: every registry rule
-was `input := .source`, so `RulePlan.requiresSyntax` was always `false` and no product path called this
+It also once asked Lake directly and could not have been caught doing it: every registry rule was
+`input := .source`, so `RulePlan.requiresSyntax` was always `false` and no product path called this
 with a stale module until `RFP-IMPL` made rendering modes need a projection. -/
 def officialArtifacts (workspace : Lake.Workspace)
     (snapshots : Array SourceSnapshot) : IO (Array (Option ModuleArtifact)) := do
@@ -247,11 +248,11 @@ def officialArtifacts (workspace : Lake.Workspace)
   -- per module — it fails the whole no-build traversal, zeroing every *other* module's artifact
   -- (measured in Prompt 26: `ArtifactLayout` + `Main` went `official_artifact_miss=2` until Main's
   -- facet was built once, whereupon the same selection degraded per module). Such modules are
-  -- therefore excluded before the traversal rather than mapped after it. The path is the facet's
-  -- own convention — `artifactFile` in the lakefile that declares `leanFmtArtifact`; the two are
-  -- versioned together, and `tests/compiler/run.sh`'s mixed-selection gate is what notices if they
-  -- drift. The trace is probed alongside the sidecar because a stale or missing trace fails the
-  -- no-build job the same way.
+  -- therefore excluded before the traversal, not mapped after it. The path is the facet's own
+  -- convention — `artifactFile` in the lakefile that declares `leanFmtArtifact`; the two are
+  -- versioned together, and `tests/compiler/run.sh`'s mixed-selection gate notices if they drift.
+  -- The trace is probed alongside the sidecar because a stale or missing trace fails the no-build
+  -- job the same way.
   let sidecarBuilt ← snapshots.mapM fun snapshot =>
     match snapshot.module? with
     | none => pure false
@@ -271,9 +272,9 @@ def officialArtifacts (workspace : Lake.Workspace)
           | .error _ state => .ok none state
     return Lake.Job.collectArray jobs "lean-fmt official artifacts"
   try
-    -- One traversal, not two. This asked `isCurrent` and then re-ran the identical graph under
-    -- `runBuild` to get the value the probe had already computed and discarded; `noBuildValue?`
-    -- returns that value, and `none` is the staleness the `unless` used to catch (`RPR-IMPL`).
+    -- One traversal, not two: this asked `isCurrent` and then re-ran the identical graph under
+    -- `runBuild` for the value the probe had computed and discarded; `noBuildValue?` returns that
+    -- value, and `none` is the staleness the `unless` used to catch (`RPR-IMPL`).
     let some encoded ← Project.noBuildValue? workspace build
       | return Array.replicate snapshots.size none
     (snapshots.zip encoded).mapM fun (snapshot, encoded?) => do
@@ -374,10 +375,9 @@ def cancelled? (error : IO.Error) : Bool :=
 /- Cancellation is checked in the poll that already enforces the memory envelope.
 
 `ruff-17` RLP-PROTOCOL `notes/01-protocol.md` §9 obligation 3: a long-running server must be able to
-abandon an in-flight request, and the only thing to abandon is this child. Checking here rather than
-building a second supervision path reuses the kill/drain sequence the envelope-exhaustion branch
-already uses, and bounds cancellation latency at one poll — 50 ms — without polling faster. A batch
-run passes `none` and pays nothing. -/
+abandon an in-flight request, and the only thing to abandon is this child. Checking here reuses the
+kill/drain sequence the envelope-exhaustion branch already uses and bounds cancellation latency at
+one poll — 50 ms — without polling faster. A batch run passes `none` and pays nothing. -/
 private partial def monitorChild (child : IO.Process.Child {
       stdin := .inherit, stdout := .piped, stderr := .piped })
     (stdoutTask stderrTask : Task (Except IO.Error String))
@@ -441,9 +441,9 @@ parent spending the child's life. The aggregate trip is unchanged: the envelope 
 plus children together, and `Nat` subtraction saturates, so a parent already over the bound passes
 zero rather than wrapping.
 
-With `--workers N` workers the headroom is divided `workers`-ways: each child is told one share, so
-the shares and the parent together cannot exceed the envelope at spawn time. The reaper enforces
-the same share against the child's RSS, which counts more than its heap. -/
+With `--workers N` the headroom is divided `workers`-ways: each child is told one share, so the
+shares and the parent together cannot exceed the envelope at spawn time. The reaper enforces the
+same share against the child's RSS, which counts more than its heap. -/
 private def childMemoryBudget (maxBytes : Nat) (workers : Nat := 1) : IO Nat := do
   return (maxBytes - (← residentKiB) * 1024) / (max workers 1)
 
@@ -457,14 +457,14 @@ each other's children. Per poll it enforces two limits:
    `setMaxMemory` is never killed here over heap — but RSS also counts mmap'd `.olean`s, which the
    heap limit does not, so this clause is load-bearing, not a backstop.
 2. **Aggregate.** Parent plus all groups over `maxBytes` kills the largest group — the serial
-   rule's "the child pays" generalized honestly to N children. Shares partition
-   `maxBytes - parentRSS` at spawn, so this trips only when the parent itself grew after spawn (it
-   accumulates candidates); it is the backstop for that drift, and its message is the serial one:
-   aggregate against the envelope.
+   rule's "the child pays" generalized to N children. Shares partition `maxBytes - parentRSS` at
+   spawn, so this trips only when the parent itself grew after spawn (it accumulates candidates);
+   it is the backstop for that drift, and its message is the serial one: aggregate against the
+   envelope.
 
 A `ps` failure is recorded in `samplingError` and retried next poll: workers surface it as per-file
-failures for the children that were live during the unsampled interval, rather than the batch dying
-or the envelope going silently unenforced. -/
+failures for the children live during the unsampled interval, rather than the batch dying or the
+envelope going silently unenforced. -/
 private def reaperSample (registry : IO.Ref (Array LiveChild)) (maxBytes : Nat) : IO Unit := do
   let live ← registry.get
   let parentPid ← IO.Process.getPID
@@ -604,7 +604,7 @@ private def ExactRun.nextPathIndex (run : ExactRun) : IO Nat :=
 
 /-- Resolve these targets' Lake setups in one graph traversal, before any of them is analyzed.
 
-Called with exactly the files a run has already decided will reach the frontend -- never the whole
+Called with exactly the files a run has already decided will reach the frontend — never the whole
 selection. The distinction is the whole point: on this repository all 34 targets reach it and one
 traversal replaces 34, but on a large project where the cache and the source tier answer almost
 everything, priming the whole selection would resolve setups nothing asks for. On the frozen
@@ -627,11 +627,11 @@ private def ExactRun.envelope (run : ExactRun)
     (formatWidth? : Option Nat := none)
     (cancel? : Option Std.CancellationToken := none) : IO AnalysisEnvelope := do
   let index ← run.nextPathIndex
-  -- Three phases, because `RPR-SPEC` found this operation reported as one unnamed 43-second gap and
-  -- the three do entirely different work: `exact_setup` resolves the module's Lake setup in *this*
-  -- process, `exact_child` is the frontend round trip in another one, and `envelope_decode` parses
-  -- what came back. Only the middle one is elaboration; the outer two are this process's own cost and
-  -- are the ones an optimization here could remove.
+  -- Three phases, because `RPR-SPEC` found this operation reported as one unnamed 43-second gap
+  -- and the three do entirely different work: `exact_setup` resolves the module's Lake setup in
+  -- *this* process, `exact_child` is the frontend round trip in another one, and `envelope_decode`
+  -- parses what came back. Only the middle one is elaboration; the outer two are this process's
+  -- own cost and are the ones an optimization here could remove.
   let (setupResult, setupPath, sourcePath) ← withPhase "exact_setup" do
     let setupResult ← exactSetupResult run.project (← run.setups.get) snapshot
     let setup := match setupResult with
@@ -649,9 +649,9 @@ private def ExactRun.envelope (run : ExactRun)
     let analyzer := (← IO.getEnv overrideName).map FilePath.mk |>.getD run.application
     let output ← withPhase "exact_child" <| run.spawnBounded {
       cmd := analyzer.toString
-      -- The trailing capture token encodes the demanded semantic capabilities: "0" none, "1" the two
-      -- semantic diagnostics, "2" diagnostics plus the info-tree occurrence fold. A
-      -- direct 4-argument invocation (every syntax-only harness) omits it and captures nothing.
+      -- The trailing capture token encodes the demanded semantic capabilities: "0" none, "1" the
+      -- two semantic diagnostics, "2" diagnostics plus the info-tree occurrence fold. A direct
+      -- 4-argument invocation (every syntax-only harness) omits it and captures nothing.
       -- `occurrences` is only ever demanded together with the tier, so the token is a simple ladder.
       args := #["__analyze-exact", setupPath.toString, sourcePath.toString,
         snapshot.path.toString, toString (← childMemoryBudget run.maxBytes run.workers),
@@ -663,9 +663,9 @@ private def ExactRun.envelope (run : ExactRun)
     unless output.exitCode == 0 do
       throw <| IO.userError s!"exact frontend child failed for {snapshot.relativePath}: \
         {output.stderr.trimAscii}"
-    -- The child's own phase records ride back on its stderr, which is captured rather than inherited.
-    -- Forwarding them here is what makes the elaboration/encode split visible from a parent profile;
-    -- without it the child's internal cost is a single opaque `exact_child`.
+    -- The child's own phase records ride back on its stderr, which is captured rather than
+    -- inherited. Forwarding them here makes the elaboration/encode split visible from a parent
+    -- profile; without it the child's internal cost is a single opaque `exact_child`.
     if ← Profile.enabled then
       for line in output.stderr.splitOn "\n" do
         if line.startsWith "phase." then IO.eprintln line
@@ -748,10 +748,10 @@ private def byteBefore? (bytes : ByteArray) (stop : Nat) : Option UInt8 :=
 /-- Does this unit's *rendered* output end at a line boundary?
 
 This is the reflow-stability test, and it asks about the **output** rather than the source because
-`Doc.fits` walks the tail of the work list: a unit whose rendering ends in a break
-(`hard`, a broken `line`, or a newline-bearing `verbatim` — `Doc.lean:174-188`) stops that walk, so
-nothing after it can re-decide its layout. Measured in `ruff-14` `evidence/01-stream-range-baseline.md`
-§3: a unit that is *not* so terminated is rebroken by a one-character tail. -/
+`Doc.fits` walks the tail of the work list: a unit whose rendering ends in a break (`hard`, a
+broken `line`, or a newline-bearing `verbatim` — `Doc.lean:174-188`) stops that walk, so nothing
+after it can re-decide its layout. Measured in `ruff-14` `evidence/01-stream-range-baseline.md` §3:
+a unit that is *not* so terminated is rebroken by a one-character tail. -/
 private def unitEndsAtLineBoundary (rendered : ByteArray) (mark : Mark) : Bool :=
   byteBefore? rendered mark.output.stop == some 10  -- '\n'
 
@@ -800,16 +800,16 @@ structure RangeResult where
 
 /-- Splice one whole-file render down to the units a request expands to.
 
-`normalized` and `rendered` are the same file before and after layout; `marks` is the source map the
-admitted frontend-native layout produced. The result is
+`normalized` and `rendered` are the same file before and after layout; `marks` is the source map
+the admitted frontend-native layout produced. The result is
 
     normalized[0, actual.start)  ++  rendered[out.start, out.stop)  ++  normalized[actual.stop, end)
 
 so every byte outside the actual range is the caller's own, unmoved. Selecting every unit reproduces
-`rendered` exactly, which is the roadmap's whole-file/full-range equivalence. The whitespace prefix of
-the next unit is part of the preceding boundary: include it without including the next unit's first
-token, so formatting a scope opener can establish the following unit's vertical separation and
-owner-relative indentation through a narrow edit. `RSF-FINAL` and the LSP range test cover both
+`rendered` exactly, which is the roadmap's whole-file/full-range equivalence. The whitespace prefix
+of the next unit is part of the preceding boundary: include it without including the next unit's
+first token, so formatting a scope opener can establish the following unit's vertical separation
+and owner-relative indentation through a narrow edit. `RSF-FINAL` and the LSP range test cover both
 cases. -/
 def sliceRange (normalized rendered : String) (marks : Array Mark)
     (requested : SourceRange) : Option RangeResult := Id.run do
@@ -868,12 +868,13 @@ private def canonicalAnalysis (snapshot : SourceSnapshot) (renderCanonical : Boo
 layout when `renderCanonical`.
 
 Every finding — source, syntax, and the owned `.semantic` FMT012 rename — is computed once, on the
-**original** projection (`canonicalAnalysis` → `ofArtifact?`), at the file's own coordinates, and `fix`
-applies it there. `ruff-11c` RDF-IMPL retired `reprojectCanonical`, which re-ran the whole registry over
-the *rendered* text so a fix could land in canonical coordinates: with the layout/fix split, no fix is
-computed or applied at canonical coordinates, so there is nothing to re-project. `captureOccurrences`
-still gates the info-tree fold that supplies FMT012's occurrence at original coordinates (the walk
-already runs here for diagnostics); `captureSemantic` and `validator` are unchanged. -/
+**original** projection (`canonicalAnalysis` → `ofArtifact?`), at the file's own coordinates, and
+`fix` applies it there. `ruff-11c` RDF-IMPL retired `reprojectCanonical`, which re-ran the whole
+registry over the *rendered* text so a fix could land in canonical coordinates: with the layout/fix
+split, no fix is computed or applied at canonical coordinates, so there is nothing to re-project.
+`captureOccurrences` still gates the info-tree fold that supplies FMT012's occurrence at original
+coordinates (the walk already runs here for diagnostics); `captureSemantic` and `validator` are
+unchanged. -/
 def ExactRun.analyzeSnapshot (run : ExactRun) (snapshot : SourceSnapshot)
     (renderCanonical : Bool) (validator := false)
     (captureSemantic : Bool := false) (captureOccurrences : Bool := false)
@@ -931,10 +932,9 @@ def withExactRun (project : Project.Snapshot) (maxMemoryGiB : Nat) (workers : Na
 /-- The demand half of the shared cache decision.
 
 This *is* `Cache.Decision.Provided.meets`, the function `LeanFmt.Cache.Spec` proves `demand_met`
-about. It used to be a separate reimplementation here, and the model knew nothing of two of its three
-clauses -- so `serves_complete` was proved about a decision more permissive than the one running. The
-clauses are documented on `Provided.meets` itself now, next to the definition rather than next to one
-of its callers.
+about. It used to be a separate reimplementation here, and the model knew nothing of two of its
+three clauses — so `serves_complete` was proved about a decision more permissive than the one
+running. The clauses are documented on `Provided.meets` itself, next to the definition.
 
 The other half, `Entry.identityCurrent`, runs in `LeanFmt.Cache`, which is where digests can be
 observed. `Cache.Decision.serves` is their conjunction and is the whole decision. -/
@@ -960,13 +960,14 @@ private def availableAnalysis (plan : RulePlan) (renderCanonical applies : Bool)
     -- `true` where the artifact path passed the artifact's own flag (`notes/01-rule-facts.md` §2).
     -- Gated on `renderCanonical` because it takes no artifact, and canonical text cannot be
     -- rendered without the projection an artifact carries. `check` and — since `ruff-11c` RDF-IMPL —
-    -- `fix` both reach it on a source-only selection: `fix` no longer renders, so a `fix --select FMT003`
-    -- takes the shortcut and applies the dedup at original coordinates without a frontend run. Also
-    -- gated on the absence of a directive sigil: suppression is parsed only from the syntax projection
-    -- (`ofArtifact?`), so a directive-bearing file must take the artifact path even when its selected
-    -- rules are all source-tier — otherwise its `SuppressionFacts` would default empty and the directive
-    -- silently do nothing. `mayContainDirective` is a superset test, so this over-fetches only on files
-    -- that mention the sigil without a valid directive, never under-fetches.
+    -- `fix` both reach it on a source-only selection: `fix` no longer renders, so a
+    -- `fix --select FMT003` takes the shortcut and applies the dedup at original coordinates
+    -- without a frontend run. Also gated on the absence of a directive sigil: suppression is parsed
+    -- only from the syntax projection (`ofArtifact?`), so a directive-bearing file must take the
+    -- artifact path even when its selected rules are all source-tier — otherwise its
+    -- `SuppressionFacts` would default empty and the directive silently do nothing.
+    -- `mayContainDirective` is a superset test, so this over-fetches only on files that mention the
+    -- sigil without a valid directive, never under-fetches.
     let normalized := (LosslessSource.normalize snapshot.source).1
     recordCount "path_source_shortcut" 1
     return some <| SemanticAnalysis.success normalized (runSourceRules normalized)
@@ -974,11 +975,12 @@ private def availableAnalysis (plan : RulePlan) (renderCanonical applies : Bool)
     return none
   else if let some artifact := officialArtifact? then
     -- A non-rendering syntax/semantic run with a current artifact — `check`/`fix --select FMT01x` — is
-    -- served here from the plugin projection, no frontend run. Since `ruff-11c` RDF-IMPL there is no
-    -- longer a syntax branch that declines here to force an `ExactRun` re-projection: it retired with
-    -- `reprojectCanonical` (no fix is computed at canonical coordinates), so a syntax `--select` costs
-    -- one artifact read, never a second frontend pass. A rendering run is deliberately deferred to
-    -- `artifactEnvelope`, which loads the owning `.olean` and admits the result through the validator.
+    -- served here from the plugin projection, no frontend run. Since `ruff-11c` RDF-IMPL there is
+    -- no longer a syntax branch that declines here to force an `ExactRun` re-projection: it retired
+    -- with `reprojectCanonical` (no fix is computed at canonical coordinates), so a syntax
+    -- `--select` costs one artifact read, never a second frontend pass. A rendering run is
+    -- deliberately deferred to `artifactEnvelope`, which loads the owning `.olean` and admits the
+    -- result through the validator.
     return some (← canonicalAnalysis snapshot renderCanonical { artifact? := some artifact })
   else
     return none
@@ -999,10 +1001,10 @@ private def diffSource (source : String) : DiffSource :=
 
 The flag is part of the line's **identity**, not decoration, which is why this type exists.
 `diffSource` reads the terminator into `finalNewline` and drops it from `lines`, so `"a\n"` and `"a"`
-both project to `["a"]`. A diff over bare strings would pair them as unchanged and print nothing — for
-the one edit the retired final-newline rule existed to make. Carrying the flag into the compared element makes those two lines
-unequal, so the edit appears. It also places the `\ No newline` marker correctly: the marker belongs to
-whichever side holds the flag. -/
+both project to `["a"]`. A diff over bare strings would pair them as unchanged and print nothing —
+for the one edit the retired final-newline rule existed to make. Carrying the flag into the compared
+element makes those two lines unequal, so the edit appears. It also places the `\ No newline` marker
+correctly: the marker belongs to whichever side holds the flag. -/
 private abbrev DiffLine := String × Bool
 
 private def diffLines (source : DiffSource) : Array DiffLine :=
@@ -1014,23 +1016,25 @@ private def diffContext : Nat := 3
 
 /-- Render an edit script as unified diff.
 
-`Lean.Diff.diff` (`Lean/Util/Diff.lean:170`) supplies the edit script — a histogram diff, the family
-`git diff --histogram` uses. Only the hunking is ours: core's `linesToString` (`:201`) prints the whole
-script with `-`/`+`/` ` markers and no `@@` headers, which is not a format any tool consumes.
+`Lean.Diff.diff` (`Lean/Util/Diff.lean:170`) supplies the edit script — a histogram diff, the
+family `git diff --histogram` uses. Only the hunking is ours: core's `linesToString` (`:201`) prints
+the whole script with `-`/`+`/` ` markers and no `@@` headers, which is not a format any tool
+consumes.
 
-This replaced a `unifiedDiff` that was not a diff: it emitted every old line as `-` and every new line
-as `+` under one synthesized header, having never looked for a common line. That was correct output —
+This replaced a `unifiedDiff` that was not a diff: it emitted every old line as `-` and every new
+line as `+` under one synthesized header, having never looked for a common line. Correct output —
 applying it reproduces the file — and useless, because a one-line change reprinted the file. It only
-ever ran on the retired trailing-whitespace / final-newline fixes, so it was tolerable; `RFP-IMPL` points `diff` at canonical layout
-and makes it the surface on which formatting is reviewed, where a whole-file rewrite defeats the mode's
-only purpose. The roadmap names `diffs` in this claim's contract, so it is fixed here. -/
+ever ran on the retired trailing-whitespace / final-newline fixes, so it was tolerable; `RFP-IMPL`
+points `diff` at canonical layout and makes it the surface on which formatting is reviewed, where a
+whole-file rewrite defeats the mode's only purpose. The roadmap names `diffs` in this claim's
+contract, so it is fixed here. -/
 private def unifiedDiff (path before after : String) : String := Id.run do
   let old := diffLines (diffSource before)
   let new := diffLines (diffSource after)
   let script := Lean.Diff.diff old new
-  -- How many lines of each side precede entry `i`. Line numbers in a hunk header are counted, not
-  -- searched for: an entry absent from one side still has a position *in* that side, and it is the
-  -- count of what came before it.
+  -- How many lines of each side precede entry `i`. Line numbers in a hunk header are counted,
+  -- not searched for: an entry absent from one side still has a position *in* that side, the count
+  -- of what came before it.
   let mut oldBefore : Array Nat := Array.emptyWithCapacity script.size
   let mut newBefore : Array Nat := Array.emptyWithCapacity script.size
   let mut oldSeen := 0
@@ -1218,8 +1222,8 @@ private structure PreparedFile where
   normalized : String
   lineEndings : LineEndings
   patch : Patch
-  /-- Reported findings whose fix is unsafe and was not admitted into `patch` (opt-in was off). What
-  `--unsafe-fixes` would additionally apply. -/
+  /-- Reported findings whose fix is unsafe and was not admitted into `patch` (opt-in was off):
+  what `--unsafe-fixes` would additionally apply. -/
   withheldUnsafe : Nat
   /-- How many config-selected findings a source directive suppressed. -/
   suppressed : Nat
@@ -1232,11 +1236,11 @@ private def PreparedFile.output (prepared : PreparedFile) : String :=
 
 /-- Whether publishing this would alter the file.
 
-**Not `patch.changed`.** That asks whether the patch carries fix edits, which was the same question
-only while the patch was based on the file's own bytes. Based on canonical text it is a different
-question and the wrong one: a file needing layout but no fixes has an empty edit set, so
-`patch.changed` is `false` while the output differs on every line. Comparing the output to the source
-is the question all three callers actually meant. -/
+**Not `patch.changed`.** That asks whether the patch carries fix edits, which was the same
+question only while the patch was based on the file's own bytes. Based on canonical text it is a
+different question and the wrong one: a file needing layout but no fixes has an empty edit set, so
+`patch.changed` is `false` while the output differs on every line. Comparing the output to the
+source is the question all three callers actually meant. -/
 private def PreparedFile.changed (prepared : PreparedFile) : Bool :=
   prepared.patch.formatted != prepared.normalized
 
@@ -1249,19 +1253,18 @@ private def reportOrder (left right : Finding) : Bool :=
 
 /-- Project the source-suppression layer over the config-selected findings.
 
-Applied **after** `plan.findings` (config selection), so unused is computed against the config-selected
-set (`notes/01-spec.md` §8). Returns the reported findings — survivors plus the `FMT900` unused and
-`FMT901` malformed self-diagnostics, which are *not* themselves suppressible and bypass config
-selection (they are formatter self-diagnostics, always on in v1) — and the suppressed count.
+Applied **after** `plan.findings` (config selection), so unused is computed against the
+config-selected set (`notes/01-spec.md` §8). Returns the reported findings — survivors plus the
+`FMT900` unused and `FMT901` malformed self-diagnostics, which are *not* themselves suppressible and
+bypass config selection (formatter self-diagnostics, always on in v1) — and the suppressed count.
 
-Coordinate note: directive scopes index the normalized source, so this projection is exact for the
-**report**, which the user reads against their own unmoved bytes. Suppression shapes only the report;
-it never touches a patch. A directive silences a diagnostic without changing the bytes a write
-publishes — so `prepareFile` builds its patch from the config-selected findings, suppression-free, and
-`FMT900`/`FMT901` (themselves report-only, and not suppressible) never enter one. This keeps `check`'s
-report patch and `fix`'s applied patch in agreement: since `ruff-11c` RDF-IMPL both index the same
-normalized bytes the directive scopes do, so no scope ever has to be mapped onto reflowed canonical
-offsets. An editor may still apply an `FMT900` removal from the report; batch `fix` does not. -/
+Directive scopes index the normalized source, so this projection is exact for the **report**, which
+the user reads against their own unmoved bytes. Suppression shapes only the report; it never touches
+a patch. `prepareFile` builds its patch from the config-selected findings, suppression-free, and
+`FMT900`/`FMT901` (report-only, not suppressible) never enter one — keeping `check`'s report patch
+and `fix`'s applied patch in agreement: since `ruff-11c` RDF-IMPL both index the same normalized
+bytes the directive scopes do, so no scope ever maps onto reflowed canonical offsets. An editor may
+still apply an `FMT900` removal from the report; batch `fix` does not. -/
 private def projectSuppression (result : SemanticResult) (bytes : ByteArray)
     (selected : Array Finding) : Array Finding × Nat :=
   let outcome := Suppression.apply result.suppression bytes selected
@@ -1270,12 +1273,13 @@ private def projectSuppression (result : SemanticResult) (bytes : ByteArray)
 
 /-! ## Import findings — computed fresh in IO, merged pre-selection
 
-The import family (FMT003/06/07) is not in the `RuleImpl` engine, so it is not stored in the cached
-`SemanticResult`. FMT003/07 are pure over the file's own header, but FMT004 depends on *other* files
-through the Lake graph, so **none** of it enters the source-digest result cache — caching a graph fact
-under a single file's digest would serve a stale answer the moment an unrelated import changed. Import
-findings are recomputed every run here and merged into the report before selection (`plan.findings`),
-so `--select imports`, per-file ignores, and suppression all apply to them uniformly. -/
+The import family (FMT003/04/05) is not in the `RuleImpl` engine, so it is not stored in the
+cached `SemanticResult`. FMT003/05 are pure over the file's own header, but FMT004 depends on
+*other* files through the Lake graph, so **none** of it enters the source-digest result cache —
+caching a graph fact under a single file's digest would serve a stale answer the moment an
+unrelated import changed. Import findings are recomputed every run here and merged into the report
+before selection (`plan.findings`), so `--select imports`, per-file ignores, and suppression all
+apply to them uniformly. -/
 
 private def anyImportSelected (plan : RulePlan) : Bool :=
   importRuleInfos.any (plan.selected.contains ·.code)
@@ -1348,40 +1352,40 @@ private def computeImportReports (plans : Array RulePlan) (workspace : Lake.Work
 /-- The fix this product would actually apply for a finding, or `none`.
 
 Two independent conditions, both easy to forget. The rule must be *fix*-selected — the
-`fixable`/`unfixable` axis (`ruff-12`), which is not the same axis as being reported — and the fix's
+`fixable`/`unfixable` axis (`ruff-12`), not the same axis as being reported — and the fix's
 effective applicability must be admitted under this run's `--unsafe-fixes`.
 
-It is a named function because it has more than one caller and they must not drift: `prepareFile`
-decides which edits a write publishes, and the language server decides which code actions it offers.
-An editor offering a quickfix the command line would refuse is the same defect as an editor reporting a
+Named because it has more than one caller and they must not drift: `prepareFile` decides which
+edits a write publishes, and the language server decides which code actions it offers. An editor
+offering a quickfix the command line would refuse is the same defect as an editor reporting a
 finding the command line does not — a second answer for the same bytes. -/
 def admittedFix? (plan : RulePlan) (unsafeFixes : Bool) (finding : Finding) : Option Fix := do
   let fix ← finding.fix?
   guard <| plan.fixableSelected.contains finding.code && fix.applicability.admitted unsafeFixes
   return fix
 
-/-- Project one analysis into the edits a preview or write would apply — one of two independent patches,
-keyed on `renderCanonical` (`ruff-11c` RDF-IMPL, `notes/01-model.md` §2):
+/-- Project one analysis into the edits a preview or write would apply — one of two independent
+patches, keyed on `renderCanonical` (`ruff-11c` RDF-IMPL, `notes/01-model.md` §2):
 
-- **Layout patch** (`format`/`diff`, `renderCanonical`). `base := canonical.text`, the reflowed bytes,
-  and the patch carries **no** rule fix. The render is the whole answer: `format` publishes `output` in
-  place (`ruff-11d`, `prepareFormatFile`; `format --check` previews it), `diff` diffs `normalized`
-  against it.
-  A rule fix belongs to `fix`, never layout.
-- **Fix patch** (`fix`; `check` computes it for the report). `base := normalized`, the file's own bytes,
-  and the patch carries the admitted fixes from `selected` at **original** coordinates. `fix` validates
-  and publishes it; it does not reflow. Because layout and fix never share a coordinate system here, the
-  `RFP-SPEC` §6 gap — canonicalizing `namespace     Alpha` deletes four bytes — can no longer move a fix
-  off the bytes it was reported against.
+- **Layout patch** (`format`/`diff`, `renderCanonical`). `base := canonical.text`, the reflowed
+  bytes, and the patch carries **no** rule fix. The render is the whole answer: `format` publishes
+  `output` in place (`ruff-11d`, `prepareFormatFile`; `format --check` previews it), `diff` diffs
+  `normalized` against it. A rule fix belongs to `fix`, never layout.
+- **Fix patch** (`fix`; `check` computes it for the report). `base := normalized`, the file's own
+  bytes, and the patch carries the admitted fixes from `selected` at **original** coordinates.
+  `fix` validates and publishes it; it does not reflow. Because layout and fix never share a
+  coordinate system here, the `RFP-SPEC` §6 gap — canonicalizing `namespace     Alpha` deletes four
+  bytes — can no longer move a fix off the bytes it was reported against.
 
-The report (`findings`) is `result.findings` (joined with `reportImports`) at original coordinates in
-every mode, independent of which patch is built — it is what the user, whose file has not moved, sees.
+The report (`findings`) is `result.findings` (joined with `reportImports`) at original coordinates
+in every mode, independent of which patch is built — it is what the user, whose file has not moved,
+sees.
 
 **Applicability gates the patch, not the report.** Every finding with a fix is reported (with its
-effective applicability, already resolved by `plan.findings`), but only the *admitted* fixes enter the
-patch: a non-admitted fix is stripped to `none` before `preparePatch`, which then only ever assembles
-edits that will actually be published. Admission is `Applicability.admitted unsafeFixes`, the one rule
-`fix` and its `check` preview share, so a preview shows what a write would do. -/
+effective applicability, already resolved by `plan.findings`), but only the *admitted* fixes enter
+the patch: a non-admitted fix is stripped to `none` before `preparePatch`, which then only ever
+assembles edits that will actually be published. Admission is `Applicability.admitted unsafeFixes`,
+the one rule `fix` and its `check` preview share, so a preview shows what a write would do. -/
 private def prepareFile (plan : RulePlan) (renderCanonical unsafeFixes : Bool)
     (reportImports : Array Finding) (withheldRedundant : Nat)
     (snapshot : SourceSnapshot) (analysis : SemanticAnalysis) : Except FileReport PreparedFile := do
@@ -1389,16 +1393,16 @@ private def prepareFile (plan : RulePlan) (renderCanonical unsafeFixes : Bool)
     | throw (baseReport snapshot "broken" #[] analysis.diagnostics)
   let (normalized, lineEndings) := LosslessSource.normalize snapshot.source
   -- Import findings (`reportImports`, normalized coordinates) join the engine's findings *before*
-  -- selection, so `--select imports`, per-file ignores, and suppression treat them like any rule. FMT003
-  -- applies at original coordinates and needs no canonical recomputation: the fix patch applies it on
-  -- `normalized`, and the layout patch carries no fix at all.
+  -- selection, so `--select imports`, per-file ignores, and suppression treat them like any rule.
+  -- FMT003 applies at original coordinates and needs no canonical recomputation: the fix patch
+  -- applies it on `normalized`, and the layout patch carries no fix at all.
   let selected := plan.findings snapshot.relativePath (result.findings ++ reportImports)
   let (findings, suppressed) := projectSuppression result normalized.toUTF8 selected
-  -- The fix patch is built from the config-selected findings *unaffected by suppression*: suppression
-  -- shapes the report (`findings`), never the bytes a write publishes, so a directive silences a
-  -- diagnostic without changing output. Feeding the suppression-projected set here would put the
-  -- `FMT900`/`FMT901` removal edits into the patch, so `check` would report a change `fix` never makes;
-  -- both stay agreed by ignoring the self-diagnostics for the patch.
+  -- The fix patch is built from the config-selected findings *unaffected by suppression*:
+  -- suppression shapes the report (`findings`), never the bytes a write publishes, so a directive
+  -- silences a diagnostic without changing output. Feeding the suppression-projected set here would
+  -- put the `FMT900`/`FMT901` removal edits into the patch, so `check` would report a change `fix`
+  -- never makes; both stay agreed by ignoring the self-diagnostics for the patch.
   let (base, baseFindings) :=
     match (if renderCanonical then result.canonical? else none) with
     -- Layout patch: reflow only, no rule fix. `canonical?` is populated for any rendering run
@@ -1406,9 +1410,10 @@ private def prepareFile (plan : RulePlan) (renderCanonical unsafeFixes : Bool)
     | some canonical => (canonical.text, (#[] : Array Finding))
     -- Fix patch (`fix`) / report patch (`check`): admitted fixes on the file's own bytes.
     | none => (normalized, selected)
-  -- A fix enters the patch only when its rule is fix-selected (`fixable`/`unfixable` axis, `ruff-12`)
-  -- *and* its applicability is admitted. A selected-but-unfixable rule is still reported (its finding is
-  -- in `findings`); only the patch drops the fix — the same shape as a withheld unsafe fix.
+  -- A fix enters the patch only when its rule is fix-selected (`fixable`/`unfixable` axis,
+  -- `ruff-12`) *and* its applicability is admitted. A selected-but-unfixable rule is still reported
+  -- (its finding is in `findings`); only the patch drops the fix — the same shape as a withheld
+  -- unsafe fix.
   let admitted := baseFindings.map fun finding =>
     if (admittedFix? plan unsafeFixes finding).isSome then finding
     else { finding with fix? := none }
@@ -1416,8 +1421,8 @@ private def prepareFile (plan : RulePlan) (renderCanonical unsafeFixes : Bool)
     | .ok patch => pure patch
     | .error error =>
       throw (baseReport snapshot "rejected" findings #[toString error])
-  -- Counted over reported findings (original coordinates), which are the same rules as `baseFindings`
-  -- in the same number, so the coordinate system does not matter to a count.
+  -- Counted over reported findings (original coordinates), which are the same rules as
+  -- `baseFindings` in the same number, so the coordinate system does not matter to a count.
   let withheldUnsafe := findings.foldl (init := 0) fun total finding =>
     match finding.fix? with
     | some fix => if !fix.applicability.admitted unsafeFixes && fix.applicability == .unsafe then
@@ -1472,9 +1477,9 @@ private def previewFile (mode : PreviewMode) (plan : RulePlan) (unsafeFixes : Bo
 private def fixFile (run : ExactRun) (plan : RulePlan) (unsafeFixes : Bool)
     (reportImports : Array Finding) (withheldRedundant : Nat)
     (snapshot : SourceSnapshot) (analysis : SemanticAnalysis) : IO FileReport := do
-  -- `fix` does not render (`ruff-11c` RDF-IMPL): the patch bases on the file's own `normalized` bytes and
-  -- applies the admitted fixes from `selected` — FMT003 among them — at original coordinates. No reflow,
-  -- no canonical recomputation.
+  -- `fix` does not render (`ruff-11c` RDF-IMPL): the patch bases on the file's own `normalized`
+  -- bytes and applies the admitted fixes from `selected` — FMT003 among them — at original
+  -- coordinates. No reflow, no canonical recomputation.
   match prepareFile plan (renderCanonical := false) unsafeFixes reportImports
       withheldRedundant snapshot analysis with
   | .error report => return report
@@ -1486,9 +1491,9 @@ private def fixFile (run : ExactRun) (plan : RulePlan) (unsafeFixes : Bool)
     unless prepared.changed do
       return { (baseReport snapshot "clean" findings) with withheldUnsafe, suppressed, withheldRedundant }
     let output := prepared.output
-    -- The validator re-elaborates the bytes a write would publish, line endings included. It renders
-    -- no canonical text: the question is whether these bytes elaborate, and rendering a layout for a
-    -- candidate nothing will print is wasted work.
+    -- The validator re-elaborates the bytes a write would publish, line endings included. It
+    -- renders no canonical text: the question is whether these bytes elaborate, and rendering a
+    -- layout for a candidate nothing will print is wasted work.
     let candidate := snapshot.withSource output
     let validation ← withPhase "validation" <|
       run.analyzeSnapshot candidate (renderCanonical := false) (validator := true)
@@ -1505,14 +1510,13 @@ private def fixFile (run : ExactRun) (plan : RulePlan) (unsafeFixes : Bool)
 
 /-- Publish the canonical layout in place (`ruff-11d` FIP-IMPL) — `format`'s default disposition.
 
-Structurally `fixFile` with the *layout* base: it renders the `ruff-11c` layout patch
-(`renderCanonical := true`, so `patch.formatted = canonical.text` and the patch carries no rule fix),
-short-circuits `clean` when the file already is canonical, and publishes the already admitted bytes
-through `publishAtomic` — the same guarded path (stale-source check + atomic lossless write) `fix` and
-`organize` use. The candidate frontend inside admission has already parsed and elaborated those exact
-bytes. `format` applies no rule fix; those belong to `fix`. Status `formatted` +
-`written` mirrors `fix`'s `fixed`; the write bytes are `prepared.output`, denormalized to the file's own
-line endings, so a CRLF file stays CRLF. -/
+Structurally `fixFile` with the *layout* base: renders the `ruff-11c` layout patch
+(`renderCanonical := true`, so `patch.formatted = canonical.text` and the patch carries no rule
+fix), short-circuits `clean` when the file already is canonical, and publishes the admitted bytes
+through `publishAtomic` — the same guarded path (stale-source check + atomic lossless write) `fix`
+and `organize` use. `format` applies no rule fix; those belong to `fix`. Status `formatted` +
+`written` mirrors `fix`'s `fixed`; the write bytes are `prepared.output`, denormalized to the
+file's own line endings, so a CRLF file stays CRLF. -/
 private def prepareFormatFile (plan : RulePlan) (unsafeFixes : Bool)
     (reportImports : Array Finding) (withheldRedundant : Nat)
     (snapshot : SourceSnapshot) (analysis : SemanticAnalysis) : FileReport × Option String :=
@@ -1529,8 +1533,9 @@ private def prepareFormatFile (plan : RulePlan) (unsafeFixes : Bool)
         none)
     else
       let output := prepared.output
-      -- The admitted layout's second frontend pass already parsed and elaborated these exact normalized
-      -- bytes under this setup. Publication is deferred until every file has an admitted candidate.
+      -- The admitted layout's second frontend pass already parsed and elaborated these exact
+      -- normalized bytes under this setup. Publication is deferred until every file has an
+      -- admitted candidate.
       ({ (baseReport snapshot "formatted" findings) with
           formatted := some output
           withheldUnsafe, suppressed, withheldRedundant }, some output)
@@ -1543,9 +1548,9 @@ private structure PendingFormat where
 def ExactRun.checkSnapshot (run : ExactRun) (plan : RulePlan)
     (snapshot : SourceSnapshot) : IO FileReport := do
   let analysis ← run.analyzeSnapshot snapshot (renderCanonical := false)
-  -- The editor `check` path never applies fixes, so opt-in is irrelevant to its output; it reports
-  -- every finding's applicability and withholds nothing itself. It computes its own single-file import
-  -- report (batch runs share one closure fetch via `computeImportReports`).
+  -- The editor `check` path never applies fixes, so opt-in is irrelevant to its output; it
+  -- reports every finding's applicability and withholds nothing itself. It computes its own
+  -- single-file import report (batch runs share one closure fetch via `computeImportReports`).
   let (normalized, _) := LosslessSource.normalize snapshot.source
   let (reportImports, withheldRedundant) ← singleImportReport plan run.project.workspace normalized
   previewFile .check plan (unsafeFixes := false) reportImports withheldRedundant snapshot analysis
@@ -1571,23 +1576,23 @@ private def summarize (modeString : String) (files : Array FileReport)
 /-! ## Report positions (`ruff-15` RRF-IMPL)
 
 Every offset in this product is a normalized-source **byte** offset, but a compiler-style line, a
-GitHub annotation, a SARIF region, and a JUnit case name all want a line and a column. That conversion
-needs the source text, and `RunReport` deliberately does not carry it.
+GitHub annotation, a SARIF region, and a JUnit case name all want a line and a column. That
+conversion needs the source text, and `RunReport` deliberately does not carry it.
 
-Re-reading each file inside the renderer was rejected: it would put IO inside a renderer the roadmap
-requires to be pure, and — worse — it would race the run itself. `fix` and `format` publish in place,
-so by the time a renderer ran, the bytes on disk would be the *rewritten* ones while every finding
-still indexes the original coordinates. Every position in the report would be silently wrong on the
-runs that changed something.
+Re-reading each file inside the renderer was rejected: it would put IO inside a renderer the
+roadmap requires to be pure, and — worse — it would race the run itself. `fix` and `format` publish
+in place, so by the time a renderer ran, the bytes on disk would be the *rewritten* ones while
+every finding still indexes the original coordinates. Every position in the report would be
+silently wrong on the runs that changed something.
 
-Adding the positions to `FileReport` was also rejected: that structure is the canonical report and its
-derived `ToJson` is a compatibility surface (`ruff-15` `notes/01-report-formats.md` §8.1). A rendering
-aid does not belong in it.
+Adding the positions to `FileReport` was also rejected: that structure is the canonical report and
+its derived `ToJson` is a compatibility surface (`ruff-15` `notes/01-report-formats.md` §8.1). A
+rendering aid does not belong in it.
 
 So execution — which holds the original bytes and nothing else does — resolves only the offsets the
-finished report mentions, and hands them to presentation beside the report. Allocation is bounded by
-the **number of findings**, not by project size: a clean file contributes nothing, and a file with one
-finding stores two positions rather than a line table for its whole source. -/
+finished report mentions, and hands them to presentation beside the report. Allocation is bounded
+by the **number of findings**, not by project size: a clean file contributes nothing, and a file
+with one finding stores two positions rather than a line table for its whole source. -/
 
 /-- 1-based line, 1-based **codepoint** column. The encoding `ruff-14` froze for `--range-lines`
 (`Cli.offsetOfLineColumn`), so what a caller sends and what a report returns are one encoding. -/
@@ -1614,10 +1619,10 @@ def PositionIndex.position? (index : PositionIndex) (path : String) (offset : Na
 
 /-- Resolve a set of normalized byte offsets in one forward pass.
 
-Offsets are sorted so the walk is linear in the source rather than one walk per offset. An offset past
-the end clamps to the end, for the same reason `offsetOfLineColumn` clamps — an end-of-file position is
-legitimate for a zero-width finding to name, and failing on it would be worse than pointing at the last
-character. -/
+Offsets are sorted so the walk is linear in the source rather than one walk per offset. An
+offset past the end clamps to the end, for the same reason `offsetOfLineColumn` clamps — an
+end-of-file position is legitimate for a zero-width finding to name, and failing on it would be
+worse than pointing at the last character. -/
 private def positionsOf (normalized : String) (offsets : Array Nat) : Std.HashMap Nat Position :=
   Id.run do
     let sorted := offsets.qsort (· < ·)
@@ -1639,8 +1644,8 @@ private def positionsOf (normalized : String) (offsets : Array Nat) : Std.HashMa
       else
         column := column + 1
         offset := offset + 1
-        -- Advance past this codepoint's continuation bytes (0b10xxxxxx), so a column counts code
-        -- points and not bytes. The inverse of `Cli.offsetOfLineColumn`'s own inner walk.
+        -- Advance past this codepoint's continuation bytes (0b10xxxxxx), so a column counts
+        -- code points and not bytes. The inverse of `Cli.offsetOfLineColumn`'s own inner walk.
         while offset < bytes.size && bytes[offset]! &&& 0xC0 == 0x80 do
           offset := offset + 1
     return resolved
@@ -1662,9 +1667,9 @@ private def resolvePositions (snapshots : Array SourceSnapshot) (files : Array F
 
 /-- The index for one buffer whose bytes the caller already holds.
 
-The stdin surface needs this: its source never became a project snapshot, so `resolvePositions` has
-nothing to look it up in, and the CLI that decoded the bytes is the only holder. `normalized` must be
-the normalized form, since that is what findings index. -/
+The stdin surface needs this: its source never became a project snapshot, so `resolvePositions`
+has nothing to look it up in, and the CLI that decoded the bytes is the only holder. `normalized`
+must be the normalized form, since that is what findings index. -/
 def PositionIndex.ofSource (path : String) (normalized : String) (findings : Array Finding) :
     PositionIndex :=
   if findings.isEmpty then .empty
@@ -1674,10 +1679,10 @@ def PositionIndex.ofSource (path : String) (normalized : String) (findings : Arr
 
 /-- `resolvePositions` under the `positions` phase.
 
-`ruff-15` measured the index's *lookups* and explicitly left its **build** unmeasured — `report-bench`
-constructs the index before any clock starts (`LeanFmtTest.lean`). The build is the one part of
-rendering that is O(source bytes) rather than O(findings), so it is the part a pathological source
-could make expensive, and it had never been timed. This is where.
+`ruff-15` measured the index's *lookups* and explicitly left its **build** unmeasured —
+`report-bench` constructs the index before any clock starts (`LeanFmtTest.lean`). The build is the
+one part of rendering that is O(source bytes) rather than O(findings), so it is the part a
+pathological source could make expensive, and it had never been timed. This is where.
 
 Lean is strict, so binding the result inside the phase evaluates it inside the phase; nothing here
 relies on the caller forcing it. -/
@@ -1694,17 +1699,17 @@ private def profiledPositions (snapshots : Array SourceSnapshot) (files : Array 
     -- thunk is forced when the action runs, which is inside the bracket by construction.
     IO.lazyPure fun _ => resolvePositions snapshots files
 
-/-- What one run produced: the canonical report, and the line/column resolution presentation needs to
-render it. Two values rather than one enriched report, because `RunReport` is a compatibility surface
-and `PositionIndex` is a rendering aid — folding the second into the first would put presentation data
-in the canonical semantic report. -/
+/-- What one run produced: the canonical report, and the line/column resolution presentation
+needs to render it. Two values rather than one enriched report, because `RunReport` is a
+compatibility surface and `PositionIndex` is a rendering aid — folding the second into the first
+would put presentation data in the canonical semantic report. -/
 structure RunOutcome where
   report : RunReport
   positions : PositionIndex
 
-/-- What one batch target produced, however it produced it. The worker writes this whole value at
-the target's index; the fold afterwards is the only place ordering exists, which is what makes the
-report byte-identical at any `--workers`. -/
+/-- What one batch target produced, however it produced it. The worker writes this whole value
+at the target's index; the fold afterwards is the only place ordering exists, which is what makes
+the report byte-identical at any `--workers`. -/
 private structure FileOutcome where
   report : FileReport
   analysis? : Option SemanticAnalysis
@@ -1813,14 +1818,14 @@ def execute (request : RunRequest) : IO RunOutcome := do
     select := request.select, extendSelect := request.extendSelect, ignore := request.ignore,
     fixable := request.fixable, unfixable := request.unfixable,
     extendFixable := request.extendFixable, preview := request.preview }
-  -- Discovery is timed separately from the workspace load and the selection snapshot because it is
-  -- the one phase this feature added to every run's critical path: a single tree walk. Folding it into
-  -- an existing phase would hide the cost `ruff-13` RCD-FINAL must measure.
+  -- Discovery is timed separately from the workspace load and the selection snapshot because it
+  -- is the one phase this feature added to every run's critical path: a single tree walk. Folding
+  -- it into an existing phase would hide the cost `ruff-13` RCD-FINAL must measure.
   let discoveryStarted ← IO.monoNanosNow
   let discovery ← Discovery.run root configPath?
   recordDuration "discovery" ((← IO.monoNanosNow) - discoveryStarted)
-  -- The fallback plan is resolved first and unconditionally, so an invalid CLI selector is still a
-  -- hard error on a run that selects no files at all — the behavior before configuration became
+  -- The fallback plan is resolved first and unconditionally, so an invalid CLI selector is still
+  -- a hard error on a run that selects no files at all — the behavior before configuration became
   -- per-file. It is also the strategy plan's seed.
   let basePlan ← match discovery.fallback.rulePlan cli with
     | .ok plan => pure plan
@@ -1834,10 +1839,11 @@ def execute (request : RunRequest) : IO RunOutcome := do
   recordDuration "workspace_load" project.workspaceLoadNanos
   recordDuration "selection_snapshot" project.selectionNanos
   let snapshots := project.targets
-  -- One `RulePlan` per **distinct effective configuration**, not one per file: `configKey` is the
-  -- directory whose config governs a target, so files sharing a config share a plan and a project with
-  -- one config still resolves exactly one. Selection stays a projection — this changes which findings
-  -- are shown per file, never what a run obtains or what a cache entry is keyed on.
+  -- One `RulePlan` per **distinct effective configuration**, not one per file: `configKey` is
+  -- the directory whose config governs a target, so files sharing a config share a plan and a
+  -- project with one config still resolves exactly one. Selection stays a projection — this
+  -- changes which findings are shown per file, never what a run obtains or what a cache entry is
+  -- keyed on.
   let mut planByKey : Std.HashMap String RulePlan := {}
   let mut plans : Array RulePlan := #[]
   for target in snapshots do
@@ -1853,10 +1859,11 @@ def execute (request : RunRequest) : IO RunOutcome := do
         unless announced.contains notice do
           announced := announced.push notice
           IO.eprintln s!"lean-fmt: {notice}"
-  -- Import findings are computed fresh here, once, before any cache path: FMT003/07 are pure over each
-  -- file's header, but FMT004 reads the Lake graph, so none of it is cacheable under a file's own
-  -- digest (`computeImportReports`). One shared closure fetch covers every file; the result is threaded
-  -- into `previewFile`/`fixFile` so selection and suppression apply to import findings like any rule's.
+  -- Import findings are computed fresh here, once, before any cache path: FMT003/05 are pure
+  -- over each file's header, but FMT004 reads the Lake graph, so none of it is cacheable under a
+  -- file's own digest (`computeImportReports`). One shared closure fetch covers every file; the
+  -- result is threaded into `previewFile`/`fixFile` so selection and suppression apply to import
+  -- findings like any rule's.
   let importStarted ← IO.monoNanosNow
   let importReports ← computeImportReports plans project.workspace snapshots
   recordDuration "import_findings" ((← IO.monoNanosNow) - importStarted)
@@ -1875,21 +1882,22 @@ def execute (request : RunRequest) : IO RunOutcome := do
   let lookupFinished ← IO.monoNanosNow
   recordPhase "cache_lookup" lookupStarted lookupFinished
   -- An entry that cannot serve this run is demoted to a miss here, once, so that every path below
-  -- treats it as one. A `check` run caches a result with no canonical text; a later `format` hitting
-  -- it would otherwise short-circuit straight to "clean" for every file in the project.
+  -- treats it as one. A `check` run caches a result with no canonical text; a later `format`
+  -- hitting it would otherwise short-circuit straight to "clean" for every file in the project.
   let renderCanonical := request.mode.rendersCanonical
-  -- The apply signal (`ruff-11c` RDF-IMPL): only `fix` applies rule fixes, so only `fix` demands the
-  -- FMT012 occurrence fold. It is distinct from `renderCanonical` now that layout and fix are split —
-  -- `format`/`diff` render but apply nothing; `fix` applies but no longer renders.
+  -- The apply signal (`ruff-11c` RDF-IMPL): only `fix` applies rule fixes, so only `fix` demands
+  -- the FMT012 occurrence fold. It is distinct from `renderCanonical` now that layout and fix are
+  -- split — `format`/`diff` render but apply nothing; `fix` applies but no longer renders.
   let applies := request.mode == .fix
-  -- What selected rules must obtain. Formatting is tracked independently by `renderCanonical` and
-  -- always reaches the exact frontend.
+  -- What selected rules must obtain. Formatting is tracked independently by `renderCanonical`
+  -- and always reaches the exact frontend.
   --
-  -- Selection is per file since `ruff-13`, but what a run must *obtain* is decided once, for the whole
-  -- batch, as the **union** of what any file demands. Two facts force that: the artifact fetch and the
-  -- semantic capture are batch operations, and over-obtaining is only a cost while under-obtaining is a
-  -- wrong answer. The union is seeded at `.source`, not at the fallback plan's tier, so a root config
-  -- that selects syntax rules cannot make a project whose files all override it pay for syntax.
+  -- Selection is per file since `ruff-13`, but what a run must *obtain* is decided once, for the
+  -- whole batch, as the **union** of what any file demands. Two facts force that: the artifact
+  -- fetch and the semantic capture are batch operations, and over-obtaining is only a cost while
+  -- under-obtaining is a wrong answer. The union is seeded at `.source`, not at the fallback
+  -- plan's tier, so a root config that selects syntax rules cannot make a project whose files all
+  -- override it pay for syntax.
   let unionRequiredTier := plans.foldl (init := Tier.source) fun tier plan => tier.max plan.requiredTier
   let demanded := unionRequiredTier
   let demandedCaps : SemanticCaps := plans.foldl (init := {}) fun caps plan =>
@@ -1901,17 +1909,18 @@ def execute (request : RunRequest) : IO RunOutcome := do
   let cached := (cached.zip plans).map fun (cached?, plan) =>
     cached?.filter (cacheHitServes plan.requiredTier (plan.demandedCaps applies)
       renderCanonical)
-  -- `index_hits` counts entries the index answered with; `served` counts those that survived the
-  -- tier/caps demotion above. They differ exactly when a stored result cannot answer this run's mode,
-  -- so reporting both separates "the entry was invalidated" from "the entry was inadequate".
+  -- `index_hits` counts entries the index answered with; `served` counts those that survived
+  -- the tier/caps demotion above. They differ exactly when a stored result cannot answer this
+  -- run's mode, so reporting both separates "the entry was invalidated" from "the entry was
+  -- inadequate".
   recordCount "targets" snapshots.size
   recordCount "index_hits" indexHits
   let served := cached.foldl (init := 0) fun n c? => if c?.isSome then n + 1 else n
   recordCount "served" served
   recordCount "path_cache_hit" served
-  -- A writing `format` (`ruff-11d`) is not served here: it must reach `withExactRun` for the validator
-  -- child before it publishes, so it is excluded from both cache-only preview fast paths. `format
-  -- --check`, which writes nothing, keeps them.
+  -- A writing `format` (`ruff-11d`) is not served here: it must reach `withExactRun` for the
+  -- validator child before it publishes, so it is excluded from both cache-only preview fast
+  -- paths. `format --check`, which writes nothing, keeps them.
   if !request.writesFormat && cached.all Option.isSome then
     if let some previewMode := request.mode.preview? then
       let mut files := #[]
@@ -1928,8 +1937,9 @@ def execute (request : RunRequest) : IO RunOutcome := do
   recordPhase "module_evidence" evidenceStarted evidenceFinished
   let artifactStarted ← IO.monoNanosNow
   -- The plugin artifact carries reconstructible syntax but never semantic diagnostics. Formatting
-  -- fetches it because layout can run from syntax under the owning `.olean`; semantic selections still
-  -- fall through to exact analysis because the always-on plugin does not tax builds for those facts.
+  -- fetches it because layout can run from syntax under the owning `.olean`; semantic selections
+  -- still fall through to exact analysis because the always-on plugin does not tax builds for
+  -- those facts.
   let artifacts ← if renderCanonical || unionRequiredTier != Tier.source then
     officialArtifacts project.workspace snapshots
   else
@@ -1953,17 +1963,18 @@ def execute (request : RunRequest) : IO RunOutcome := do
       let positions ← profiledPositions snapshots files
       return { report := summarize request.mode.toString files, positions }
   withExactRun project request.maxMemoryGiB request.workers fun exactRun => do
-    -- Exactly the files the decisions above left unanswered, which is exactly the set that will
-    -- spawn a frontend child and so need a Lake setup.
+    -- Exactly the files the decisions above left unanswered, which is exactly the set that
+    -- will spawn a frontend child and so need a Lake setup.
     exactRun.primeSetups <| (snapshots.zip available).filterMap fun (snapshot, available?) =>
       if available?.isNone then some snapshot else none
     let work := (((snapshots.zip available).zip artifacts).zip importReports).zip plans
     let outcomes ← IO.mkRef (Array.replicate work.size (none : Option FileOutcome))
     let next ← IO.mkRef 0
     if request.workers > 1 && work.size > 1 then
-      -- `--workers N`: dedicated workers, one reaper (started by `withExactRun`), outcomes by index.
-      -- Dedicated priority is load-bearing, not tuning: workers block on child pipes, and pooled
-      -- blocking tasks can starve a small pool (`LEAN_NUM_THREADS=1` is a supported setting).
+      -- `--workers N`: dedicated workers, one reaper (started by `withExactRun`), outcomes by
+      -- index. Dedicated priority is load-bearing, not tuning: workers block on child pipes, and
+      -- pooled blocking tasks can starve a small pool (`LEAN_NUM_THREADS=1` is a supported
+      -- setting).
       let workers := min request.workers work.size
       let tasks ← (List.range workers).mapM fun _ =>
         IO.asTask (batchWorker exactRun request renderCanonical demanded demandedCaps work next
@@ -2033,13 +2044,13 @@ structure StreamRequest where
   mode : RunMode
   root : FilePath
   /-- The caller's own `--stdin-filename` argument, verbatim. It is an identity, **never** a
-  destination: nothing in this operation can write it, and it need not exist. Errors name this string
-  rather than a resolved path, as every other path-taking surface does. -/
+  destination: nothing in this operation can write it, and it need not exist. Errors name this
+  string rather than a resolved path, as every other path-taking surface does. -/
   filename : String
   /-- The buffer, already decoded from stdin. -/
   source : String
-  /-- A normalized-source byte range to format, or the whole buffer. Meaningful only for a rendering
-  mode; `notes/01-stream-range.md` §7.4 confines it to this operation. -/
+  /-- A normalized-source byte range to format, or the whole buffer. Meaningful only for a
+  rendering mode; `notes/01-stream-range.md` §7.4 confines it to this operation. -/
   range? : Option SourceRange := none
   maxMemoryGiB : Nat := 8
   configPath? : Option FilePath := none
@@ -2053,12 +2064,13 @@ structure StreamReport where
   findings : Array Finding := #[]
   diagnostics : Array String := #[]
   /-- The bytes to stream, in the buffer's own line-ending form. `none` for a non-emitting mode
-  (`check`, `format --check`) and for a buffer that did not analyze — a broken buffer streams nothing
-  rather than echoing its input, so a shell redirect cannot write it back over a good file. -/
+  (`check`, `format --check`) and for a buffer that did not analyze — a broken buffer streams
+  nothing rather than echoing its input, so a shell redirect cannot write it back over a good
+  file. -/
   output : Option String := none
   diff : Option String := none
-  /-- Set only for a range request. `actual` is the hull of the selected layout units and may span
-  lines the caller did not edit. -/
+  /-- Set only for a range request. `actual` is the hull of the selected layout units and may
+  span lines the caller did not edit. -/
   requested? : Option SourceRange := none
   actual? : Option SourceRange := none
   /-- The selected units' source map, indexing `output`. -/
@@ -2082,9 +2094,9 @@ def StreamReport.toJson (report : StreamReport) : Lean.Json :=
     ("findings", Lean.toJson report.findings),
     ("diagnostics", Lean.toJson report.diagnostics)
   ] ++ (match report.output with
-    -- The bytes go in the JSON too. Text mode puts them on stdout bare; a `--json` caller asked for one
-    -- structured document and must not have to run the command twice to get the result out of it.
-    -- Named `formatted` to match the file-target report's `FileReport.formatted`.
+    -- The bytes go in the JSON too. Text mode puts them on stdout bare; a `--json` caller asked
+    -- for one structured document and must not have to run the command twice to get the result out
+    -- of it. Named `formatted` to match the file-target report's `FileReport.formatted`.
     | some output => [("formatted", Lean.Json.str output)] | none => [])
     ++ (match report.diff with
     | some diff => [("diff", Lean.Json.str diff)] | none => [])
@@ -2097,17 +2109,18 @@ def StreamReport.toJson (report : StreamReport) : Lean.Json :=
 
 /-- The exact half of `stream`, against a run the caller already holds.
 
-`stream` resolves a root, a discovery, a workspace, and an envelope on every call, which is right for
-a one-shot pipe and wrong for a session: a language server holds all four for its lifetime and would
-otherwise pay `Project.loadWorkspaceOnly` per keystroke. Everything below the resolution is identical,
-so it lives here and `stream` is the resolving wrapper.
+`stream` resolves a root, a discovery, a workspace, and an envelope on every call, which is
+right for a one-shot pipe and wrong for a session: a language server holds all four for its
+lifetime and would otherwise pay `Project.loadWorkspaceOnly` per keystroke. Everything below the
+resolution is identical, so it lives here and `stream` is the resolving wrapper.
 
-This is what "no second formatter" means concretely (`ruff-17` roadmap): the LSP surface enters *here*,
-not through a parallel rendering path, so a range answer served to an editor and the same range piped
-through `--stdin` are the same bytes computed by the same code.
+This is what "no second formatter" means concretely (`ruff-17` roadmap): the LSP surface enters
+*here*, not through a parallel rendering path, so a range answer served to an editor and the same
+range piped through `--stdin` are the same bytes computed by the same code.
 
-The supplied envelope may come from the isolated child path or a document-owned incremental frontend;
-projection, rule execution, validation, range slicing, and rendering do not distinguish them. -/
+The supplied envelope may come from the isolated child path or a document-owned incremental
+frontend; projection, rule execution, validation, range slicing, and rendering do not distinguish
+them. -/
 def ExactRun.streamEnvelope (run : ExactRun) (target : Project.SourceTarget) (plan : RulePlan)
     (mode : RunMode) (envelope : AnalysisEnvelope) (range? : Option SourceRange := none)
     (unsafeFixes : Bool := false) (formatCheck : Bool := false) : IO StreamReport := do
@@ -2181,20 +2194,22 @@ def ExactRun.streamSnapshot (run : ExactRun) (target : Project.SourceTarget) (pl
 
 Every clause the freeze fixes is enforced here:
 
-- **No write.** `publishAtomic` is not reachable from this operation. `fix`/`format` return their bytes
-  in `output` for the caller to redirect; the file, if there even is one, is untouched.
-- **No persistent cache.** `ResultCache` is never opened. A cache entry is keyed on a digest bound to a
-  file on disk, and unsaved bytes have no disk state to bind — the same rule an editor session follows.
+- **No write.** `publishAtomic` is not reachable from this operation. `fix`/`format` return their
+  bytes in `output` for the caller to redirect; the file, if there even is one, is untouched.
+- **No persistent cache.** `ResultCache` is never opened. A cache entry is keyed on a digest bound
+  to a file on disk, and unsaved bytes have no disk state to bind — the same rule an editor session
+  follows.
 - **The isolated stream envelope.** One `withExactRun`, a fresh bounded child, and the
-  `--max-memory` aggregate limit. The language server uses the same capability's setup and projection
-  operations around its persistent document frontend, without introducing a second formatter.
-- **Identity is required.** `Project.unsavedTarget` applies every gate the file path applies, including
-  the `.lake` floor, and resolves the effective configuration from the buffer's location, so the same
-  bytes get the same answer whether they arrive by path or by pipe.
+  `--max-memory` aggregate limit. The language server uses the same capability's setup and
+  projection operations around its persistent document frontend, without introducing a second
+  formatter.
+- **Identity is required.** `Project.unsavedTarget` applies every gate the file path applies,
+  including the `.lake` floor, and resolves the effective configuration from the buffer's location,
+  so the same bytes get the same answer whether they arrive by path or by pipe.
 
 The exact frontend response retains the complete admitted layout for this surface. Batch cache hits
-and unsaved streams consume the same text, source map, formatter metrics, and validation metrics; no
-caller reaches back into the transport envelope for a second partial representation. -/
+and unsaved streams consume the same text, source map, formatter metrics, and validation metrics;
+no caller reaches back into the transport envelope for a second partial representation. -/
 def stream (request : StreamRequest) : IO StreamReport := do
   unless request.maxMemoryGiB > 0 do
     throw <| IO.userError "--max-memory must provide a nonzero operating envelope"
@@ -2215,12 +2230,12 @@ def stream (request : StreamRequest) : IO StreamReport := do
 
 /-- Organize one unsaved buffer's imports, validated and returned rather than written.
 
-`organize` below is the batch operation: it walks a selection, validates, and publishes atomically. An
-editor cannot use it — the bytes belong to a buffer that may never have been saved, and the client, not
-this process, applies the edit. What the two must not disagree about is *which* rewrite happens and
-whether it is allowed to happen, so both call `Imports.parseHeaderModel` + `Imports.organize` for the
-candidate and `analyzeSnapshot (validator := true)` for the verdict. Only the last step differs:
-`publishAtomic` there, a returned `String` here.
+`organize` below is the batch operation: it walks a selection, validates, and publishes
+atomically. An editor cannot use it — the bytes belong to a buffer that may never have been saved,
+and the client, not this process, applies the edit. What the two must not disagree about is *which*
+rewrite happens and whether it is allowed to happen, so both call `Imports.parseHeaderModel` +
+`Imports.organize` for the candidate and `analyzeSnapshot (validator := true)` for the verdict.
+Only the last step differs: `publishAtomic` there, a returned `String` here.
 
 Validation is not optional just because this path does not write. The reorder is observable to
 elaboration (`notes/01-semantics.md` §2) — which is why it is opt-in — so a header that stops
@@ -2252,15 +2267,16 @@ structure OrganizeRequest where
   /-- Report what would change without writing (like `check` for the organizer). -/
   check : Bool := false
 
-/-- The opt-in "organize imports" capability the roadmap owes CLI and LSP, exposing no graph internals
-— text in, text out. It rewrites each target's surface header to canonical form: duplicates removed
-(FMT003's safe edit) and each blank-line/comment group sorted by module name (FMT005's reorder). The
-reorder is *observable to elaboration* (`notes/01-semantics.md` §2), which is why it is opt-in and never
-part of unattended `fix`; redundant imports (FMT004) are report-only and are **not** removed here.
+/-- The opt-in "organize imports" capability the roadmap owes CLI and LSP, exposing no graph
+internals — text in, text out. It rewrites each target's surface header to canonical form:
+duplicates removed (FMT003's safe edit) and each blank-line/comment group sorted by module name
+(FMT005's reorder). The reorder is *observable to elaboration* (`notes/01-semantics.md` §2), which
+is why it is opt-in and never part of unattended `fix`; redundant imports (FMT004) are report-only
+and are **not** removed here.
 
 Every rewrite that changes a file is validated by re-elaboration before it is written — the same
-trusted-artifact discipline `fix` uses (`fixFile`) — so an organized header that fails to elaborate is
-rejected, never published. A clean project never constructs the validator. -/
+trusted-artifact discipline `fix` uses (`fixFile`) — so an organized header that fails to elaborate
+is rejected, never published. A clean project never constructs the validator. -/
 def organize (request : OrganizeRequest) : IO RunReport := do
   if request.maxMemoryGiB == 0 then
     throw <| IO.userError "--max-memory must provide a nonzero operating envelope"
@@ -2271,8 +2287,8 @@ def organize (request : OrganizeRequest) : IO RunReport := do
   for notice in discovery.fallback.notices do IO.eprintln s!"lean-fmt: {notice}"
   let project ← Project.load root discovery request.files
   let snapshots := project.targets
-  -- The canonical header rewrite is pure (no graph): compute every candidate first, and only pay for
-  -- the validator if some file actually changes.
+  -- The canonical header rewrite is pure (no graph): compute every candidate first, and only
+  -- pay for the validator if some file actually changes.
   let candidates ← snapshots.mapM fun snapshot => do
     let (normalized, lineEndings) := LosslessSource.normalize snapshot.source
     match ← Imports.parseHeaderModel normalized with
@@ -2332,8 +2348,8 @@ private unsafe def runArtifactAnalyzeChild (args : List String) : IO UInt32 := d
   return 0
 
 private unsafe def runAnalyzeChild (args : List String) : IO UInt32 := do
-  -- The capture mode is a trailing optional argument: a direct 4-argument invocation omits it and
-  -- captures no optional frontend fact.
+  -- The capture mode is a trailing optional argument: a direct 4-argument invocation omits it
+  -- and captures no optional frontend fact.
   let (setupPath, snapshotPath, displayPath, maxBytes, captureMode) ← match args with
     | [setupPath, snapshotPath, displayPath, maxBytes] =>
       pure (setupPath, snapshotPath, displayPath, maxBytes, "0")
@@ -2360,11 +2376,12 @@ private unsafe def runAnalyzeChild (args : List String) : IO UInt32 := do
   -- hook, and "4[:WIDTH]" the structurally/idempotently admitted layout. Product callers do not
   -- request the last two yet; Prompt 10 wires the width-bearing validated demand.
   --
-  -- Two phases, on this side of the process boundary where the parent cannot see: `child_analyze` is
-  -- the frontend itself, `child_encode` is turning its result into the JSON the parent reads back. A
-  -- projection runs about 10x the size of its source (`ruff-01`), so the second is not obviously
-  -- small, and the parent's `exact_child` covers both without distinguishing them. These records go
-  -- to stderr, which the parent captures and forwards; stdout is the envelope and takes no passengers.
+  -- Two phases, on this side of the process boundary where the parent cannot see: `child_analyze`
+  -- is the frontend itself, `child_encode` is turning its result into the JSON the parent reads
+  -- back. A projection runs about 10x the size of its source (`ruff-01`), so the second is not
+  -- obviously small, and the parent's `exact_child` covers both without distinguishing them. These
+  -- records go to stderr, which the parent captures and forwards; stdout is the envelope and takes
+  -- no passengers.
   let validatedWidth? := match captureMode.splitOn ":" with
     | ["4"] => some 100
     | ["4", width] => width.toNat?
@@ -2383,13 +2400,14 @@ private unsafe def runAnalyzeChild (args : List String) : IO UInt32 := do
       (validateFormatDraft := validatedWidth?.isSome)
       (formatWidth := formatWidth)
   let encoded ← withPhase "child_encode" do
-    -- `IO.lazyPure` for the reason `profiledPositions` documents: a plain `let` of a pure value can be
-    -- floated out of the action's closure, and then the bracket times nothing. The `utf8ByteSize`
-    -- check below is not sufficient on its own -- it forces the value, but not necessarily *here*.
+    -- `IO.lazyPure` for the reason `profiledPositions` documents: a plain `let` of a pure value
+    -- can be floated out of the action's closure, and then the bracket times nothing. The
+    -- `utf8ByteSize` check below is not sufficient on its own — it forces the value, but not
+    -- necessarily *here*.
     let encoded ← IO.lazyPure fun _ => (Lean.toJson envelope).compress
-    -- `utf8ByteSize` is O(1) and forces the encoding inside the phase rather than at the `IO.println`
-    -- below, where it would be attributed to nothing. An empty encoding is also not a thing a real
-    -- envelope produces, so the check is worth its line independent of the timing.
+    -- `utf8ByteSize` is O(1) and forces the encoding inside the phase rather than at the
+    -- `IO.println` below, where it would be attributed to nothing. An empty encoding is also not a
+    -- thing a real envelope produces, so the check is worth its line independent of the timing.
     if encoded.utf8ByteSize == 0 then
       throw <| IO.userError "exact frontend produced an empty analysis encoding"
     pure encoded
@@ -2460,10 +2478,10 @@ private unsafe def measureCacheEpoch (args : List String) : IO UInt32 := do
 setting is and where it came from, which ignore sources are in force, and whether the file would be
 selected — with the deciding gate. `notes/01-discovery.md` §12.
 
-This is read-only and deterministic. It runs the same `Discovery.run` a real run does and asks it the
-same questions, rather than re-deriving selection independently: an introspection command that answers
-from its own model of the rules is worth less than no command, because it agrees with the rules until
-the moment it matters. -/
+This is read-only and deterministic. It runs the same `Discovery.run` a real run does and asks it
+the same questions, rather than re-deriving selection independently: an introspection command that
+answers from its own model of the rules is worth less than no command, because it agrees with the
+rules until the moment it matters. -/
 structure ConfigSetting where
   key : String
   value : String
@@ -2494,9 +2512,9 @@ def describeConfig (requestedRoot : FilePath) (configPath? : Option FilePath)
     throw <| IO.userError s!"selected file does not exist: {argument}"
   let absolute ← IO.FS.realPath (System.FilePath.mk argument)
   let relative := (Lake.relPathFrom root absolute).toString
-  -- Timed here as well as in `execute`, and for the same reason: this is the one entry point that runs
-  -- discovery and nothing else, so it is how the walk's cost is measured without the per-file pipeline
-  -- on top of it (`ruff-13` `results/03-acceptance.md`).
+  -- Timed here as well as in `execute`, and for the same reason: this is the one entry point
+  -- that runs discovery and nothing else, so it is how the walk's cost is measured without the
+  -- per-file pipeline on top of it (`ruff-13` `results/03-acceptance.md`).
   let discoveryStarted ← IO.monoNanosNow
   let discovery ← Discovery.run root configPath?
   recordDuration "discovery" ((← IO.monoNanosNow) - discoveryStarted)

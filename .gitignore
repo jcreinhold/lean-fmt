@@ -49,3 +49,4 @@ __pycache__/
 
 # Agent plans
 PLAN.md
+.pi-subagents/

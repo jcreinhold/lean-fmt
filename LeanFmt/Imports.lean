@@ -12,11 +12,10 @@ Two facts this module rests on:
 
   1. **The surface header is not the abstract import list.** `Lean.parseImports'` prepends two
      synthesized `Init` imports on an ordinary file, a `prelude` marker suppresses them, and it drops
-     every source range, comment, and modifier spelling (measured, `evidence/01-semantics.txt`). So an
-     import rule cannot count occurrences in `parseImports'.imports`; it must read the *written*
-     header. This module reads it by parsing the header to `Lean.Syntax`, which builds an empty
-     environment and is not a frontend run,
-     and dispatching on the header grammar's node kinds
+     every source range, comment, and modifier spelling (measured, `evidence/01-semantics.txt`). So
+     an import rule cannot count occurrences in `parseImports'.imports`; it must read the *written*
+     header. This module reads it by parsing the header to `Lean.Syntax` — which builds an empty
+     environment and is not a frontend run — and dispatching on the header grammar's node kinds
      (`Lean/Parser/Module/Syntax.lean:16-29`): `moduleTk`, `«prelude»`, `«import»`, and inside an
      import the `«public»`/`«meta»`/`«all»` modifier nodes.
 
@@ -47,12 +46,12 @@ private def slice (s : String) (start stop : Nat) : String :=
 
 /-- One written `import` statement, exactly as the surface text spells it.
 
-The modifier flags are the `«public»`/`«meta»`/`«all»` child nodes' presence, not a re-derivation from
-the abstract `Import` — so `import all A` and `import A`, or `meta import A` and `import A`, are two
-different statements, which is what makes them *not* duplicates (`notes/01-semantics.md` §3).
-`isExported` folds in the `module`-marker interaction the surface keyword alone does not carry: a
-`public import` is exported, a plain import is exported iff the file has no `module` marker (measured,
-`evidence/01-semantics.txt` §A). -/
+The modifier flags are the presence of the `«public»`/`«meta»`/`«all»` child nodes, not a
+re-derivation from the abstract `Import` — so `import all A` and `import A`, or `meta import A` and
+`import A`, are different statements, which is what makes them *not* duplicates
+(`notes/01-semantics.md` §3). `isExported` folds in the `module`-marker interaction the surface
+keyword alone does not carry: a `public import` is exported, a plain import is exported iff the file
+has no `module` marker (measured, `evidence/01-semantics.txt` §A). -/
 structure ImportStmt where
   «module» : Lean.Name
   importAll : Bool
@@ -135,11 +134,10 @@ private partial def importNodes (stx : Lean.Syntax) (acc : Array Lean.Syntax) : 
 private def hasNodeOfKind (stx : Lean.Syntax) (kind : Lean.SyntaxNodeKind) : Bool :=
   hasKind stx kind
 
-/-- Parse the surface header of `normalized` into the model, or `none` if the header parser emits any
-message. Any message is a refusal: on an
-accepted module the header log is empty, and a partial parse would fabricate positions a rule must not
-read. `headerStop` is the parser's own post-header position (`state.pos`), so the caller need not build
-a `LosslessSource` to supply it — this parse already knows where the header ends. -/
+/-- Parse the surface header of `normalized` into the model, or `none` if the header parser emits
+any message. Any message is a refusal: on an accepted module the header log is empty, and a partial
+parse would fabricate positions a rule must not read. `headerStop` is the parser's own post-header
+position (`state.pos`), so the caller need not build a `LosslessSource` to supply it. -/
 def parseHeaderModel (normalized : String) : IO (Option HeaderModel) := do
   let (stx, state, messages) ← Lean.Parser.parseHeader (Lean.Parser.mkInputContext normalized "<header>")
   if !messages.toList.isEmpty then return none

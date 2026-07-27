@@ -22,22 +22,21 @@ structure Edit where
 
 - `safe`: the rule's stated evidence guarantees the intended runtime/proof meaning is preserved.
   Applied by default.
-- `unsafe`: the fix is plausibly intended, but the rule cannot prove it preserves behavior, comments,
-  or intent. Shown by default; applied only under explicit opt-in (`--unsafe-fixes`, or a per-rule
+- `unsafe`: plausibly intended, but the rule cannot prove it preserves behavior, comments, or
+  intent. Shown by default; applied only under explicit opt-in (`--unsafe-fixes` or a per-rule
   `extend-safe-fixes` promotion).
 - `displayOnly`: never applied. It illustrates the finding for a reader or an editor; configuration
   cannot promote it, because the rule itself declined to make the edit applicable.
 
-"Safe" is a claim under the rule's evidence and is tied to the rule's tier — never merely "it
-reparses". -/
+"Safe" is a claim under the rule's evidence, tied to the rule's tier — never merely "it reparses". -/
 inductive Applicability where
   | safe
   | «unsafe»
   | displayOnly
   deriving Inhabited, BEq, DecidableEq, Repr
 
-/-- The wire spelling. Explicit and kebab-cased to match the product's config vocabulary
-(`extend-safe-fixes`, `per-file-ignores`) rather than relying on a derived enum encoding. -/
+/-- Wire spelling, explicit and kebab-cased to match config vocabulary
+(`extend-safe-fixes`, `per-file-ignores`), not a derived enum encoding. -/
 def Applicability.toWire : Applicability → String
   | .safe => "safe"
   | .unsafe => "unsafe"
@@ -45,9 +44,8 @@ def Applicability.toWire : Applicability → String
 
 instance : ToString Applicability := ⟨Applicability.toWire⟩
 
-/-- Whether a fix of this applicability is applied under the current opt-in. Safe always; unsafe only
-with `--unsafe-fixes`; display-only never. This is the one admission rule the whole product uses, so
-`format`, `diff`, and `fix` agree on what a run would apply. -/
+/-- The one admission rule the product uses: safe always, unsafe only with `--unsafe-fixes`,
+display-only never — so `format`, `diff`, and `fix` agree on what a run would apply. -/
 def Applicability.admitted (unsafeFixes : Bool) : Applicability → Bool
   | .safe => true
   | .unsafe => unsafeFixes
@@ -64,9 +62,9 @@ instance : Lean.FromJson Applicability := ⟨fun json => do
 
 /-- A proposed transformation attached to a finding: one applicability governing the whole edit set.
 
-Several edits form one atomic fix — they never overlap — so applicability is a property of the
-fix and not of any single `Edit`, which is a byte fact carrying no judgment. `notes/01-model.md` §1
-records why this is a structure rather than a field on `Edit` or on `Finding`. -/
+Edits in one fix are atomic and never overlap, so applicability belongs to the fix, not to a single
+`Edit`, which is a byte fact carrying no judgment. `notes/01-model.md` §1 records why this is a
+structure rather than a field on `Edit` or on `Finding`. -/
 structure Fix where
   applicability : Applicability
   edits : Array Edit
@@ -78,8 +76,8 @@ inductive Severity where
   | error
   deriving Inhabited, BEq, DecidableEq, Repr, Lean.ToJson, Lean.FromJson
 
-/-- What a rule concluded. Rules run outside the compiler, so this is never produced here; it is the
-shape a finding takes in a report and in a fix. -/
+/-- What a rule concluded. Rules run outside the compiler, so nothing here produces it; this is a
+finding's shape in a report and in a fix. -/
 structure Finding where
   code : String
   severity : Severity
@@ -88,19 +86,19 @@ structure Finding where
   fix? : Option Fix := none
   deriving Inhabited, BEq, DecidableEq, Repr, Lean.ToJson, Lean.FromJson
 
-/-- One compiler diagnostic the exact frontend emitted, normalized into immutable data a semantic-tier
-rule reads. A *fact*, never a *finding*: only the frontend could produce it (it ran the linters and
-the elaborator), and a reader cannot recompute it from the bytes it holds; the rule that surfaces it
-concludes the lean-fmt code, applicability, and reporting shape. Carried in the artifact only when a
-consumer demanded the `.semantic` tier (`ruff-11` RMR-SPEC `notes/01-authority.md` §4).
+/-- One compiler diagnostic the exact frontend emitted, as immutable data a semantic-tier rule reads.
+A *fact*, never a *finding*: only the frontend could produce it (it ran the linters and elaborator),
+and a reader cannot recompute it from these bytes; the surfacing rule concludes the lean-fmt code,
+applicability, and reporting shape. Carried in the artifact only when a consumer demanded the
+`.semantic` tier (`ruff-11` RMR-SPEC `notes/01-authority.md` §4).
 
 - `kind` is the message's top-level tag (`Lean.Message.kind`) — the linter's option name
   (`linter.unusedVariables`) or the deprecation attribute (`Lean.Linter.deprecatedAttr`). It is the
-  **stable** identity a rule keys on; the message *text* is version-volatile and is preserved as
-  `message` detail, never asserted as the rule's own claim.
-- `range` is normalized-source byte offsets, recovered from the message's `Position` through the exact
-  frontend's `FileMap` (which `mkInputContext` builds on `crlfToLf`-normalized source), so it shares
-  the projection's one coordinate system. Clamped to the module's own byte span at capture, so a
+  **stable** identity a rule keys on; the message *text* is version-volatile and stays `message`
+  detail, never the rule's own claim.
+- `range` is normalized-source byte offsets, recovered from the message's `Position` through the
+  exact frontend's `FileMap` (which `mkInputContext` builds on `crlfToLf`-normalized source), sharing
+  the projection's one coordinate system. Clamped to the module's byte span at capture, so a
   macro-reattributed position never yields a finding off the file. -/
 structure Diagnostic where
   kind : String
@@ -109,25 +107,26 @@ structure Diagnostic where
   message : String
   deriving Inhabited, BEq, Repr, Lean.ToJson, Lean.FromJson
 
-/-- One use of a `@[deprecated]` declaration, re-derived from the whole-file info trees where the
-elaborator recorded the resolved constant at each source occurrence. A *fact*, never a *finding*: only
-the frontend, having elaborated the module, knows which constant a bare identifier resolved to; a
-reader holding only bytes cannot. Carried in the artifact only when a run demanded the **occurrences**
-capability (a rendering mode selecting the owned FMT012 rule), so the whole-file info-tree fold is paid
-only when the fix is asked for (`ruff-11b` `notes/01-model.md` §§2-5).
+/-- One use of a `@[deprecated]` declaration, re-derived from the whole-file info trees, where the
+elaborator recorded the resolved constant at each source occurrence. A *fact*, never a *finding*:
+only the frontend, having elaborated the module, knows which constant a bare identifier resolved to;
+a reader holding only bytes cannot. Carried in the artifact only when a run demanded the
+**occurrences** capability (a rendering mode selecting the owned FMT012 rule), so the whole-file
+info-tree fold is paid only when the fix is asked for (`ruff-11b` `notes/01-model.md` §§2-5).
 
 The owned analog of `Diagnostic`: FMT012's report is a `Diagnostic` (surfaced, always cheap), but its
-`unsafe` rename fix needs the *resolved constant and its replacement*, which only the info tree carries.
+`unsafe` rename fix needs the *resolved constant and its replacement*, which only the info tree
+carries.
 
 - `range` is normalized-source byte offsets of the occurrence identifier token, from
   `Info.range? (canonicalOnly := true)` through the exact frontend's `FileMap` — the same coordinate
   system as `Diagnostic.range` and the projection.
-- `declName`/`newName?` are the **user-facing** display spellings (the module-private mangling stripped
-  at capture where the `Environment` is live), so no `Name` or `Environment` crosses into a rule. The
+- `declName`/`newName?` are the **user-facing** display spellings (module-private mangling stripped at
+  capture while the `Environment` is live), so no `Name` or `Environment` crosses into a rule. The
   rename fix substitutes `newName?`.
 - `fixable` is decided at capture from the bare-identifier predicate (`notes/01-model.md` §5): a
   non-binder occurrence resolving to a bare `.const` with a `newName?` whose display is a single
-  identifier. Every non-qualifying occurrence stays `fixable := false` and report-only; the output
+  identifier. Non-qualifying occurrences stay `fixable := false` and report-only; the output
   re-elaboration validator backstops a rename that does not resolve. -/
 structure DeprecatedOccurrence where
   range : SourceRange
@@ -144,7 +143,7 @@ structure SemanticCaps where
   occurrences : Bool := false
   deriving Inhabited, BEq, Repr, Lean.ToJson, Lean.FromJson
 
-/-- `demanded ⊆ provided`: every capability the run demanded is present in the entry. Total (never a
+/-- `demanded ⊆ provided`: every demanded capability is present in the entry. Total (never
 `satisfies`-style partial), so it composes with `Tier.satisfies` as a plain conjunction in
 `cacheHitServes`. -/
 def SemanticCaps.subset (demanded provided : SemanticCaps) : Bool :=
@@ -162,14 +161,13 @@ def SemanticProjection.caps (projection : SemanticProjection) : SemanticCaps := 
   occurrences := projection.occurrences?.isSome
 }
 
-/- The artifact is stored inside the successful module's `.olean`; exact toolchain, options,
-plugins, ordered imports, and dependency identity therefore belong to the module artifact itself
-rather than to a parallel cache identity.
+/- The artifact is stored inside the successful module's `.olean`, so exact toolchain, options,
+plugins, ordered imports, and dependency identity belong to the module artifact itself, not to a
+parallel cache identity.
 
-The payload contains facts a reader cannot recompute: the parser's reconstructible syntax and,
-when demanded,
-frontend semantic evidence. It contains no formatter policy, findings, rule selection, or canonical
-bytes. Rules remain outside the compiler plugin and derive conclusions from these facts. -/
+The payload holds facts a reader cannot recompute: the parser's reconstructible syntax and, when
+demanded, frontend semantic evidence. It contains no formatter policy, findings, rule selection, or
+canonical bytes. Rules stay outside the compiler plugin and derive conclusions from these facts. -/
 structure ModuleArtifact where
   schema : String
   mainModule : String
@@ -199,9 +197,10 @@ Exact analysis reaches this aggregate builder directly. The compiler plugin emit
 `ModuleSyntax.ofRecords` compaction, avoiding an async process-global accumulator.
 
 It takes no rule configuration, deliberately: an artifact is a function of the module and its source
-alone, so turning a rule on cannot rebuild or re-elaborate anything. The optional `semantic` projection is likewise a function of the module and its environment;
-it defaults to `none` so the always-on plugin producer stays on the syntax-only path, and only
-`analyzeExact` passes `some` under demand. -/
+alone, so turning a rule on cannot rebuild or re-elaborate anything. The optional `semantic`
+projection is likewise a function of the module and its environment; it defaults to `none` so the
+always-on plugin producer stays on the syntax-only path, and only `analyzeExact` passes `some` under
+demand. -/
 def ModuleArtifact.ofParsedModule (mainModule normalized : String)
     (commands : Array (Lean.Syntax × Lean.Options)) (terminal : Lean.Syntax)
     (terminalOptions : Lean.Options) (semantic : Option SemanticProjection := none) :

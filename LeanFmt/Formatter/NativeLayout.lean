@@ -12,8 +12,7 @@ Lean's registered formatter remains the grammar authority. This module transform
 `Std.Format` algebra directly: native non-comment leaves are aligned with the selected source-covering
 terminals and replaced by their original bytes, while groups, fills, nesting, alignment, and tags
 remain native. Source-data syntax is replaced before formatter execution by a typed marker and restored
-at that marker; this prevents a private formatter failure or normalization from becoming a source-text
-fallback.
+at that marker, so a private formatter failure or normalization cannot become a source-text fallback.
 
 Two corrections sit on top of that, both collected from grammar shape and both refusing the command if
 the document turns out not to have the node they name. A `BoundaryLayout` replaces the layout between
@@ -25,7 +24,7 @@ boundary is not free.
 
 Doc comments are syntax, not trivia, so they are ordinary terminals: their opening token and body align
 and emit original bytes exactly where their owner spells them. Hoisting them to a command prefix moved
-a field or constructor docstring off its owner and left the native separator behind, which is why no
+a field or constructor docstring off its owner and left the native separator behind — which is why no
 prefix mechanism exists here.
 
 An exact island whose payload spans lines carries its own absolute source columns. `Std.Format`
@@ -61,7 +60,7 @@ private structure ExactIsland where
   /- Whether the payload is a comment. Lean ends a token's trailing trivia at the end of its line, so
   which side of a line break a comment falls on decides whether it is the previous token's trailing
   comment or the next token's leading one. That is the one layout question a comment's own bytes
-  cannot answer, and it is the only reason this flag exists. -/
+  cannot answer, and the only reason this flag exists. -/
   comment : Bool := false
   deriving Inhabited
 
@@ -81,7 +80,7 @@ candidates, and they mean different things. The `append` moves the break *and* w
 is what an offside sibling needs. The `nest` moves only what is inside it, which is what a wrong nest
 needs cancelled.
 
-Left to a single predicate this is not a choice at all -- the walk is post-order, so whichever node is
+Left to a single predicate this is not a choice at all — the walk is post-order, so whichever node is
 deeper claims the constraint, and for a guarded `let` that is the `nest`, which dedents the body
 without moving the break above it and puts the siblings back inside the guard. So the constraint
 carries its carrier and `finishConstraint` matches on it. A carrier that never appears leaves the
@@ -201,14 +200,14 @@ private partial def terminalsFrom (source : String) (stx : Lean.Syntax)
 
 `Lean.Syntax.reprint` (`Syntax.lean:400`) reprints *every* alternative of a `choice` node and refuses
 when they disagree. `terminalsFrom` takes `children[0]?` and assumes agreement, and so do the three
-other walks below that spell `children[0]?` for the same reason -- `selectedLeafRanges`,
+other walks below that spell `children[0]?` for the same reason — `selectedLeafRanges`,
 `collectIndentedSequenceStarts`, and `collectOffsideConstraints`. That is four assumptions, not four
-checks, on a node this repository records hitting 1 of 5 sampled mathlib modules. One gate at the entry
-point makes the assumption true for all of them rather than repeating the comparison four times.
+checks, on a node this repository records hitting 1 of 5 sampled mathlib modules. One gate at the
+entry point makes the assumption true for all four rather than repeating the comparison four times.
 
 What has to agree is what the adapter consumes: each alternative's ordered terminal sequence, compared
-on `(range, sourceSpelling)`. Those two are not independent -- `terminalsFrom` sets
-`sourceSpelling := slice source range` -- so the comparison reduces to range-sequence equality, and
+on `(range, sourceSpelling)`. Those two are not independent — `terminalsFrom` sets
+`sourceSpelling := slice source range` — so the comparison reduces to range-sequence equality, and
 carrying the spelling along only makes the refusal message readable. That reduction is the point: for
 leaves that carry original `SourceInfo`, equal range sequences are exactly what makes `reprint`'s
 `lead ++ val ++ trail` agree, so this checks the same property `reprint` does.
@@ -221,8 +220,8 @@ alternative is still found. `reprint` does the same.
 
 What this gate does *not* cover is a question about a leaf's *constructor* rather than its bytes: two
 alternatives could in principle spell identical source with an atom on one side and an ident on the
-other. No walk below asks that today -- `containsAtom` did, and went with the record-update rule that
-used it -- and no such node has been observed, so it is recorded here rather than guarded. -/
+other. No walk below asks that today — `containsAtom` did, and went with the record-update rule that
+used it — and no such node has been observed, so it is recorded here rather than guarded. -/
 private def choiceSpelling (source : String) (alternative : Lean.Syntax) :
     Array (SourceRange × String) :=
   (terminalsFrom source alternative).map fun terminal => (terminal.range, terminal.sourceSpelling)
@@ -275,18 +274,18 @@ on it:
 - a **category position** formats only that category's own pseudo antiquotation.
   `categoryFormatterCore` (`Lean/PrettyPrinter/Formatter.lean:288-301`) wraps the dispatch in
   `withAntiquot.formatter (mkAntiquot.formatter' cat.toString cat (isPseudoKind := true))` and, when
-  that backtracks, falls through to `formatterForKind stx.getKind` -- which is `runForNodeKind`, which
+  that backtracks, falls through to `formatterForKind stx.getKind` — which is `runForNodeKind`, which
   treats the kind as a declaration name. A category is not a declaration, so `env.contains base` fails
   and so does the lookup: `Unknown constant term.pseudo.antiquot`, `Unknown constant ident.antiquot`.
 
-The second case is an upstream gap, not a lean-fmt one. `fun $_:ident ↦ $body` parses -- `funBinder`
-admits `ident` -- and then cannot be re-printed, because the formatter asks the *category* first and
+The second case is an upstream gap, not a lean-fmt one. `fun $_:ident ↦ $body` parses — `funBinder`
+admits `ident` — and then cannot be re-printed, because the formatter asks the *category* first and
 the node carries the *token's* kind. Nothing about the node says which category will ask.
 
 So the test is what the base *is*: a syntax category or a token kind, which only a category position
 can dispatch on, versus a parser declaration, whose own formatter accepts its own antiquotation. The
 registered categories answer the first half directly. The second half is `Name.isAtomic`, because a
-token kind is a one-component name -- `ident`, `str`, `num` -- and a parser declaration never is.
+token kind is a one-component name — `ident`, `str`, `num` — and a parser declaration never is.
 
 It is exact on the four shapes that pin it. `Lean.Parser.Command.declId.antiquot` in
 `` `(def $name : Nat := 1) `` is neither, and must be left alone: protecting it is what made
@@ -316,20 +315,20 @@ private def sourceDataKind (kind : Lean.Name) : Bool :=
 /- A quotation whose body was parsed by a parser named at runtime, which Lean's formatter cannot
 recover. This is the second ordinary upstream bug the module works around.
 
-`Lean.Parser.Term.dynamicQuot` -- `` `(cat| body) ``, `Lean/Parser/Term.lean:1033` -- parses `body` with
-`parserOfStack 1`, which reads the parser's name off the syntax stack. At parse time that is the `ident`:
-`parserOfStackFn` takes `stack.get! (stack.size - offset - 1)` and the stack top is the `"| "` atom
-(`Lean/Parser/Extension.lean:772`). At format time `parserOfStack.formatter` takes
-`parents.back!.getArg (idxs.back! - offset)` (`Lean/PrettyPrinter/Formatter.lean:319`), and `idxs.back!`
-is the index of the argument being visited, so the same `offset` lands one slot short -- on the `"| "`
-atom rather than the `ident`. The formatter then asks `formatterForKind` about an atom, whose kind is
-`Name.mkSimple "|"`, and the command dies as `Unknown constant «|»`. Four of the seventy-two sampled
-mathlib modules refused on exactly that.
+`Lean.Parser.Term.dynamicQuot` — `` `(cat| body) ``, `Lean/Parser/Term.lean:1033` — parses `body` with
+`parserOfStack 1`, which reads the parser's name off the syntax stack. At parse time that is the
+`ident`: `parserOfStackFn` takes `stack.get! (stack.size - offset - 1)` and the stack top is the
+`"| "` atom (`Lean/Parser/Extension.lean:772`). At format time `parserOfStack.formatter` takes
+`parents.back!.getArg (idxs.back! - offset)` (`Lean/PrettyPrinter/Formatter.lean:319`), and
+`idxs.back!` is the index of the argument being visited, so the same `offset` lands one slot short —
+on the `"| "` atom rather than the `ident`. The formatter then asks `formatterForKind` about an atom,
+whose kind is `Name.mkSimple "|"`, and the command dies as `Unknown constant «|»`. Four of the
+seventy-two sampled mathlib modules refused on exactly that.
 
 Keying on this kind is keying on the *only* call site of `parserOfStack` in the toolchain, so no other
 node can reach that formatter; it is not a shape added because it was seen to fail. The body's category
 is chosen at parse time, so there is no grammar here whose layout lean-fmt could validate either. The
-quotation is therefore one exact island, and its source bytes are its whole rendering. -/
+quotation is therefore one exact island; its source bytes are its whole rendering. -/
 private def dynamicQuotationKind (kind : Lean.Name) : Bool :=
   kind == ``Lean.Parser.Term.dynamicQuot
 
@@ -340,8 +339,9 @@ private def markerFor (range : SourceRange) : String :=
   s!"leanFmtExact{range.start}x{range.stop}"
 
 /- A placeholder replaces the syntax it protects, so it must keep that syntax's leaf constructor:
-Lean's formatter for a literal token calls the atom printer and refuses an identifier with `not an
-atom`. Only a protected interior node, which has no single spelling of its own, becomes an identifier. -/
+Lean's formatter for a literal token calls the atom printer and refuses an identifier with
+`not an atom`. Only a protected interior node, which has no single spelling of its own, becomes an
+identifier. -/
 private def placeholder (protected? : Lean.Syntax) (info : Lean.SourceInfo)
     (marker : String) : Lean.Syntax :=
   match protected? with
@@ -381,19 +381,19 @@ private def exactPlaceholder (source : String) (stx : Lean.Syntax)
 /- A leaf whose own bytes begin or end with whitespace, which no ordinary token's can.
 
 A token's range stops where its trivia begins, so leading or trailing whitespace *inside* the range is
-whitespace the parser captured as payload rather than skipped as separator -- and a parser that
+whitespace the parser captured as payload rather than skipped as separator — and a parser that
 captures it is one whose token the surrounding gap belongs to. `ProofWidgets.Jsx.jsxText` is the case
 this was measured on: `<div> <strong …>⊢ </strong> …` spells four of them, three pure whitespace, and
 the adapter's boundary in front of each is a layout decision that reparses *into* the token. That is
 D25, caught by the `tokens` gate as `token 451 (ProofWidgets.Jsx.jsxText) changed spelling`.
 
-Protecting the leaf alone does not fix it, and that is why this returns `pendingEnvelope` rather than
-an island: an island keeps the boundary in *front* of it, which is exactly the gap in question. The
-enclosing node has to be the island, which is the escalation an interpolated string already uses.
+Protecting the leaf alone does not fix it, which is why this returns `pendingEnvelope` rather than an
+island: an island keeps the boundary in *front* of it, which is exactly the gap in question. The
+enclosing node has to be the island — the escalation an interpolated string already uses.
 
-A leaf whose whitespace is interior only -- `<div>hello world</div>` -- is not covered, because
-nothing in its bytes distinguishes it from a string literal, which is common and must not escalate.
-Lean publishes no protocol for whitespace-significant syntax (there is no attribute, and the kind is a
+A leaf whose whitespace is interior only — `<div>hello world</div>` — is not covered, because nothing
+in its bytes distinguishes it from a string literal, which is common and must not escalate. Lean
+publishes no protocol for whitespace-significant syntax (there is no attribute, and the kind is a
 downstream library's), so this is what can be decided from the leaf itself. -/
 private def whitespaceEnvelope (text : String) : Bool :=
   match text.front?, text.back? with
@@ -439,7 +439,7 @@ private partial def protectSourceDataFrom (categories : Lean.Parser.ParserCatego
       exactPlaceholder source stx info
     else if dynamicQuotationKind kind then
       -- Protected here, not escalated: the quotation is a complete term, so a marker leaf standing in
-      -- for it leaves the grammar around it intact and the island stays as small as the defect.
+      -- for it keeps the grammar around it intact and the island as small as the defect.
       exactPlaceholder source stx info
     else
       let (rewrittenChildren, islands, pending) := children.foldl (init := (#[], #[], false))
@@ -449,12 +449,12 @@ private partial def protectSourceDataFrom (categories : Lean.Parser.ParserCatego
             pending || child.pendingEnvelope)
       let rewritten := Lean.Syntax.node info kind rewrittenChildren
       if pending then
-        -- Every range here is read off `stx`, the node as the source wrote it, and never off
-        -- `rewritten`. A placeholder is a leaf built from its node's own `SourceInfo`, which for an
-        -- interior node is `.none`, so a subtree that already escalated contributes no position at
-        -- all: `Syntax.getRange?` on `rewritten` then stops at the last leaf the rewrite left intact.
+        -- Every range here is read off `stx`, the node as the source wrote it, never off `rewritten`.
+        -- A placeholder is a leaf built from its node's own `SourceInfo`, which for an interior node is
+        -- `.none`, so a subtree that already escalated contributes no position at all:
+        -- `Syntax.getRange?` on `rewritten` then stops at the last leaf the rewrite left intact.
         -- `` `($(_) fun $x:ident ↦ $b) `` escalated its `basicFun` first, so the enclosing application
-        -- measured 112:120 -- `$(_) fun` -- while the marker it produced stood for all of 112:136. The
+        -- measured 112:120 — `$(_) fun` — while the marker it produced stood for all of 112:136. The
         -- island was then too small to cover the terminals its own marker replaced, and the transform
         -- refused with `exact island 112:120 cuts terminal ...`. Escalation must be able to run twice.
         match sourceRange? stx with
@@ -541,20 +541,20 @@ private partial def collectReturnTermStarts (stx : Lean.Syntax)
 column it measures every later item against is the column of the *first* item. Its formatter
 (`:211-223`) spells that in one of two ways, and which one it picks is a property of the source:
 
-- `hasNewlineSep` -- some separator slot is an empty null node, meaning the source separated two items
+- `hasNewlineSep` — some separator slot is an empty null node, meaning the source separated two items
   by a line break rather than by the written separator. The formatter then emits `pushWhitespace "\n"`
   for each such slot and one `pushAlign (force := true)` before the list. The align pads to the current
   indent and every `"\n"` lands on it, so the first item and every later one share one column and the
   parser's reference column is satisfied by construction. Nothing to correct.
-- otherwise -- every separator is written (`,` or `;`), the formatter emits none of that, and the list
+- otherwise — every separator is written (`,` or `;`), the formatter emits none of that, and the list
   is laid out by the soft `line`s the enclosing document already has. Those `line`s break to the
   enclosing `nest`, which has no reason to equal the column the *first* item happens to land on. Break
   one and not the one before the first item, and a later item is dedented below the reference column.
 
-The correction for the second case is one boundary: break before the first item, so that the first
-item lands on the same `nest` every later break lands on. `hard` is what makes this sound rather than
-merely likely -- it cannot lengthen a line, so unlike a `flat` join it cannot push a break somewhere
-else and it needs no accompanying flatten. Everything inside the list still lays itself out.
+The correction for the second case is one boundary: break before the first item, so the first item
+lands on the same `nest` every later break lands on. `hard` is what makes this sound rather than
+merely likely — it cannot lengthen a line, so unlike a `flat` join it cannot push a break somewhere
+else and needs no accompanying flatten. Everything inside the list still lays itself out.
 
 But "has no reason to equal" is not "does not equal", and forcing the boundary where the two already
 coincide is a gratuitous break. They coincide exactly when the first item's unbroken column *is* the
@@ -564,34 +564,34 @@ coincide is a gratuitous break. They coincide exactly when the first item's unbr
   is the one: `{ ` is `format.indent` columns wide, and `fill` breaks the line *before* a group it
   cannot fit rather than inside it, so `{` reaches the current indent before any comma breaks and the
   first field sits exactly on the `nest`. Verified by rendering an inline record at widths 100, 90, 80
-  and 70 -- the fields stay aligned at every one. Content between the delimiter and the first item is
+  and 70 — the fields stay aligned at every one. Content between the delimiter and the first item is
   what breaks it: `{ base with ` is wider than the indent, so the fields sit right of the `nest` and a
   later comma dedents below them. The test is therefore *whether a terminal intervenes*, not whether
   the intervening terminal is `with`.
 - A carrier `ppAllowUngrouped` left outside any group of its own. `Term.byTactic` (`Term.lean:108`) is
-  the only one that carries a `sepByIndent` list -- `categoryParser.formatter`
+  the only one that carries a `sepByIndent` list — `categoryParser.formatter`
   (`Formatter.lean:302-310`) skips its `fill` wrapping, so `by` and its tactics are direct children of
   whatever `nest` encloses the declaration. The separators then break to *that* indent, which is
   unrelated to the column `by` happens to sit at, so the two never reliably coincide and the boundary
-  is always needed. This is the same mechanism `collectUngroupedBodyStarts` above turns to the other
+  is always needed. This is the same mechanism `collectUngroupedBodyStarts` turns to the other
   purpose; the two are the joined `:= by` and the broken `by`-to-first-tactic halves of one line.
 
 Being ungrouped is a property of the *carrier*, not of the sequence's own kind, and the two come apart
-because `tacticSeq1Indented` is what `tacticSeq` reduces to everywhere -- under `by`, and equally under
+because `tacticSeq1Indented` is what `tacticSeq` reduces to everywhere — under `by`, and equally under
 `(`, `·`, `case`, `try`. `ppAllowUngrouped` is `skip` (`Extra.lean:268`), so it leaves no node to test
 for; what stands in for it is the parent, and the four core parsers that carry it (`Do.lean:326`,
 `Term.lean:108,387`, `Extra.lean:262`) put a `sepByIndent` list under exactly one of them. Every other
 parent wraps the sequence in its own `fill`, which makes it the delimited case and `delimiterIntervenes`
-the right question -- `(` alone does not intervene and needs no boundary, `case h => ` does and gets
+the right question — `(` alone does not intervene and needs no boundary, `case h => ` does and gets
 one. Reading the kind as ungrouped wherever it appeared forced a break into `constructor <;> (skip; rfl)`
 that the document had nowhere to put: one `nest` past the separators rather than on them, leaving `rfl`
 to reparse outside the parentheses. That was D18, and `Archive/Arithcc.lean` refused for it.
 
 `whereDecls` and the two bracketed sequences are the delimited case; no terminal can intervene in any
-of them, so the test says no and they are walked anyway rather than assumed. The one carrier not walked
-is `structInstFields` spelled
-after `where` (`Command.lean:174`) instead of inside `{ }`: `where` is its delimiter and the list is
-the very next thing, so nothing can come between them and there is no shape for the test to find.
+of them, so the test says no and they are walked anyway rather than assumed. The one carrier not
+walked is `structInstFields` spelled after `where` (`Command.lean:174`) instead of inside `{ }`:
+`where` is its delimiter and the list is the very next thing, so nothing can come between them and
+there is no shape for the test to find.
 
 Which nodes carry such a list is a fact about Lean's grammar, not a list of shapes observed to fail.
 These are the `sepByIndent`/`sepBy1Indent` call sites reachable from a Lean source file:
@@ -624,7 +624,7 @@ private def hasNewlineSeparator (list : Lean.Syntax) : Bool :=
 
 /- `structInstFields` is the list's own wrapper, so the delimiter and anything between it and the list
 belong to the *parent*. Every other delimited carrier holds its own delimiter, and this walk sees the
-node that holds the list either way -- so the terminals to count are the ones under `owner` that start
+node that holds the list either way — so the terminals to count are the ones under `owner` that start
 before the list does, and "more than the delimiter itself" is more than one of them. -/
 private def delimiterIntervenes (owner list : Lean.Syntax) : Bool :=
   match (selectedLeafRanges list)[0]? with
@@ -633,12 +633,12 @@ private def delimiterIntervenes (owner list : Lean.Syntax) : Bool :=
 
 /- The nodes that can sit between a `sepByIndent` list and the parser that decides how it is laid out.
 `Tactic.tacticSeq` and `Conv.convSeq` are the choice between the bracketed and the indented spelling, a
-`null` node is a parser's own bookkeeping, and `Term.byTactic'` (`Term.lean:117`) is `byTactic` with the
-`ppAllowUngrouped` removed and a different kind, which Lean's own comment says exists only so `show` and
-`suffices` can be find-replaced safely. None of the four is registered in a parser category, so
-`categoryParser.formatter` never wraps one in a `fill` and none of them owns a group: the group belongs
-to whatever encloses them, and that is the node the walk carries. Confirmed against the live parser
-environment -- `Term.byTactic` and `Term.show` are in a category's `kinds`, `Term.byTactic'` and
+`null` node is a parser's own bookkeeping, and `Term.byTactic'` (`Term.lean:117`) is `byTactic` with
+the `ppAllowUngrouped` removed and a different kind, which Lean's own comment says exists only so
+`show` and `suffices` can be find-replaced safely. None of the four is registered in a parser category,
+so `categoryParser.formatter` never wraps one in a `fill` and none of them owns a group: the group
+belongs to whatever encloses them, and that is the node the walk carries. Confirmed against the live
+parser environment — `Term.byTactic` and `Term.show` are in a category's `kinds`, `Term.byTactic'` and
 `Tactic.tacticSeq` are not. -/
 private def sequenceWrapperKind (kind : Lean.Name) : Bool :=
   kind == ``Lean.Parser.Tactic.tacticSeq || kind == ``Lean.Parser.Tactic.Conv.convSeq ||
@@ -697,7 +697,7 @@ so this adapter does not own that decision and must not reimplement the renderer
 flat boundary at the `by` terminal is the whole repair.
 
 Only `by`, not the other two parsers that declare `ppAllowUngrouped`. Measured: `fun` and a bare `do`
-are already correct, so there is nothing to force. `by` is also the only one safe to force -- its
+are already correct, so there is nothing to force. `by` is also the only one safe to force — its
 tactic sequence begins its own line, so joining `by` to `:=` adds exactly three columns and cannot
 overflow, where forcing `fun` flat would pull an arbitrarily long body onto the `:=` line. The one cost
 is `:= by rfl` at a width narrow enough that Lean would have broken it; that stays joined, three
@@ -735,7 +735,7 @@ elsewhere, and this module's acceptance bar says top-level declarations must rem
 A command written as a child of another command is still a command.
 
 Lean's own document usually agrees, because the parser that embeds a command wraps the embedded one in
-`ppDedent` -- `open Nat in` spells `nest -2 [text" in" text"\n" <command>]`, which cancels the enclosing
+`ppDedent` — `open Nat in` spells `nest -2 [text" in" text"\n" <command>]`, which cancels the enclosing
 node's `nest` exactly. `guardMsgsCmd` (`Init/Notation.lean:938`) does not: it spells
 `" in" ppLine command`, and `categoryParser`'s formatter puts the embedded command inside the node's
 `nest`, so `#guard_msgs in` indents the command after it by `format.indent`. The candidate then trips
@@ -745,12 +745,12 @@ mathlib's own `linter.style.whitespace` on `Mathlib/Tactic/Linter/ValidatePRTitl
 Rather than name the parsers that forgot, ask the *category*: `commandKinds` is the live parser
 environment's `command` category, so a node is a command exactly when the parser that could produce it
 is registered in it. Nothing here is keyed on a shape observed to fail, and a `dedented` boundary is
-idempotent -- it sets a column rather than adjusting one, so where Lean already dedented, as
+idempotent — it sets a column rather than adjusting one, so where Lean already dedented, as
 `open … in` does, the correction spells the same newline the document did.
 
 `rootStart` is what keeps this a *boundary* correction. `open Nat in def f := 0` is one node whose
 first child is the `open` command itself, so the category test matches at the command's own first
-terminal, where there is no boundary to correct -- only the leading padding that separates this command
+terminal, where there is no boundary to correct — only the leading padding that separates this command
 from the previous one. Constraining that spelled an extra blank line above every such command. A nested
 command that begins where its root begins has nothing in front of it to move.
 
@@ -784,8 +784,8 @@ Lean's document spells this boundary as a literal `text" |" text"\n"`, a hard ne
 flatten, so `let some current := value | return 0` always breaks after the bar. The bar and its
 bail-out are one construct: the bar reads as a guard only with the bail-out beside it.
 
-`doLetElse` (`Lean/Parser/Do.lean:79-81`) spells two `doSeqIndent`s --
-`(checkColGe >> " | " >> doSeqIndent) >> optional (checkColGe >> doSeqIndent)` -- the guard body and
+`doLetElse` (`Lean/Parser/Do.lean:79-81`) spells two `doSeqIndent`s —
+`(checkColGe >> " | " >> doSeqIndent) >> optional (checkColGe >> doSeqIndent)` — the guard body and
 the rest of the enclosing block, which is why `collectOffsideConstraints` finds two sequences past the
 bar and takes the *last* for its constraint. The bail-out is the first. `pipes.back?` for the reason
 that collector uses it: a pattern may spell alternatives with earlier bars, and only the last one is
@@ -793,18 +793,18 @@ the guard.
 
 Joining alone is width-unsound and was reverted once (`7e838a1`). `.text " "` cannot break, so the
 renderer re-measures and breaks at the next soft line, which is now *inside* the bail-out at an
-indentation the enclosing `nest` chose rather than the bar's column -- and `many1Indent` saved the
+indentation the enclosing `nest` chose rather than the bar's column — and `many1Indent` saved the
 bail-out's first token as the column every later item is measured against, so the continuation
 reparsed as a sibling of the outer `do`. `Std.Format` has no shape that fixes this: `nest` is relative
 to the current indent and `align` pads to it, so nothing in the algebra means "indent this subtree's
-continuations to the column where it starts". The repair is instead to leave no soft line to break --
+continuations to the column where it starts". The repair is instead to leave no soft line to break —
 the boundary joins, and `flattenNative` removes every break inside the bail-out.
 
 Only a bail-out the *source* already spells on one line is collected, and that one condition buys both
 halves. It is what makes the flatten free of newline-emitting leaves: `sepByIndent.formatter`
 (`Lean/Parser/Extra.lean:212-224`) is the sole producer of both `pushWhitespace "\n"` and
 `pushAlign (force := true)` in the tree, and emits them only on its `hasNewlineSep` path, which is a
-property of the source argument list. And it bounds the cost -- a line the source already fit on is a
+property of the source argument list. And it bounds the cost — a line the source already fit on is a
 line, not a paragraph. Measured 2026-07-24 over this repository's own `LeanFmt/`: 102 guarded `let`s
 already sit on one line, median 60 columns and widest 99, every body a short bail-out
 (`return false`, `none`, `continue`, `.error "unknown directive scope"`); 10 more spell the bail-out
@@ -855,23 +855,23 @@ the ambient indent, cannot reach. Both are upstream shapes, not adapter ones: Le
   `Format` constructor names.
 
 The precondition is the one that collector states: only a run the source already spells on one line is
-collected. It bounds the cost -- a line the source fit on is a line -- and it is what keeps the
-correction from having to remove a newline-emitting leaf, since `sepByIndent`'s `hasNewlineSep` path
-is their sole producer and neither run is a `sepByIndent`.
+collected. It bounds the cost — a line the source fit on is a line — and it keeps the correction from
+having to remove a newline-emitting leaf, since `sepByIndent`'s `hasNewlineSep` path is their sole
+producer and neither run is a `sepByIndent`.
 
 The correction is a `.flat` boundary in front of each *item* of the run, not a flatten of its span.
 A flatten is keyed by span and taken by the deepest node spelling exactly it, and no node spells
 exactly these: `many.formatter` concatenates `ppSpace >> binder` straight into its parent's `fill`,
 so the binder run has no document node of its own and a collected span of it goes unapplied
 (`joined 0/1`, measured before this took the boundary route). A boundary is keyed by terminal, which
-the walk visits whatever the document's shape, and `.flat` is already `.text " "` -- the same leaf a
+the walk visits whatever the document's shape, and `.flat` is already `.text " "` — the same leaf a
 flatten would have left.
 
 The gap the source spells with a space, and only those. `.flat` *spells* a space rather than removing
 a break, so a boundary at every terminal the run covers writes one into gaps the source left empty and
 `coverLift {u} s hs` comes back as `coverLift { u } s hs` (measured). Taking only the item starts is
 the other wrong answer: `{g₁ g₂}` is one item and the break moves *inside* it, which parses but is not
-what the source spells -- and the next run over that output no longer sees a one-line run, so the
+what the source spells — and the next run over that output no longer sees a one-line run, so the
 correction stops firing and the candidate is not idempotent (measured, `NoZeroDivisors.lean`). Every
 single-space gap inside the run, including the one in front of it, is exactly the set that is both
 safe and stable. -/
@@ -959,20 +959,20 @@ private def ctorDocComment? (stx : Lean.Syntax) : Option Lean.Syntax := do
 
 Lean's document is `text" where" nest-2[text"/--" line text"…-/" text"\n"] text"\n|" …`, which spells
 the boundary between the docstring and its constructor twice and dedents the docstring by one level.
-Rendered, that is a docstring at column zero followed by a blank line -- and reparsed, a docstring
+Rendered, that is a docstring at column zero followed by a blank line — and reparsed, a docstring
 that no longer sits on its constructor.
 
-Both corrections are ordinary. The `elided` boundary at the `|` removes the first of the two newlines,
-leaving the one inside the `"\n| "` atom, which carries the constructor's own indentation. The
-constraint cancels the `nest -2` over exactly the docstring's range, so the line the island opens
-lands at the same column as the `|` below it.
+The `elided` boundary at the `|` removes the first of the two newlines, leaving the one inside the
+`"\n| "` atom, which carries the constructor's own indentation. The constraint cancels the `nest -2`
+over exactly the docstring's range, so the line the island opens lands at the same column as the `|`
+below it.
 
 Eliding rather than flattening matters: `.text " "` here would leave a space at the end of the
 docstring's line, and the `elided` spelling exists because a doubled separator is a different defect
 from a badly placed one.
 
 This half is the boundary; `collectOffsideConstraints` carries the other. The offset is the
-docstring's own end, which `boundaryTable` resolves to the `|` -- the first terminal at or after it. -/
+docstring's own end, which `boundaryTable` resolves to the `|` — the first terminal at or after it. -/
 private partial def collectCtorDocStarts (stx : Lean.Syntax)
     (starts : Array Nat := #[]) : Array Nat :=
   match stx with
@@ -1023,8 +1023,8 @@ private partial def collectDocCommentRanges (stx : Lean.Syntax)
 
 /- `indent` is `Std.Format.getIndent`, the `format.indent` option Lean's own `ppIndent`/`ppDedent`
 read. A constraint here cancels one level of the indentation native layout introduced, so it is that
-same quantity negated -- not the literal `-2` this used to spell. The default happens to be 2, which is
-why the constant went unnoticed; a project that sets `format.indent` would have silently drifted.
+same quantity negated — not the literal `-2` this used to spell. The default happens to be 2, which is
+why the constant went unnoticed; a project setting `format.indent` would have silently drifted.
 
 The constructor-docstring branch cancels a `nest -2` rather than introducing one, so its adjustment is
 that same quantity un-negated. Both are one level; nothing here knows how to ask for two. -/
@@ -1242,27 +1242,6 @@ private partial def opensWithNewline : Std.Format → Bool
     if provablyEmpty left then opensWithNewline right else opensWithNewline left
   | _ => false
 
-/- The same document without its last discretionary break, or `none` where the outermost thing on that
-side is not one.
-
-`Std.Format.line` renders as a space when its group flattens and as a newline when it does not. Sitting
-directly in front of a `text` that carries its own newline it is redundant either way: flattened it is a
-space at the end of a line, which is trailing whitespace no formatter may emit, and broken it is a blank
-line the source never had. Lean's `doIf` spells exactly this -- `ppSpace` before a `doSeq` that begins
-with its own hard newline -- so before this every `if c then` with an indented body ended its line with a
-space, five of them in `Mathlib/Util/Superscript.lean`. A printer has no reason to care: a trailing space
-is invisible in an error message and a re-print is never diffed against source.
-
-The mirror rule, removing a break that *follows* a hard newline, looks equally sound and is not here. It
-is not safe: `sepByIndent` spells its first item after an `align` and every later item after a
-`text "\n"`, so the mirror fires on the later items only and leaves the first one a column to their
-right -- which is `checkColGe`'s reference column, so the second `where` binding parses outside the
-block. Measured on the `where` block of `Mathlib/Util/Superscript.lean:312`. A break before a newline
-cannot move a column because nothing follows it on that line; a break after one always can.
-
-The walk stops at the first leaf that emits anything: it descends through `nest`, `group`, `tag`, and a
-provably empty sibling, and gives up at a `text` or an `align`. So the break it removes is the one
-*adjacent* to the newline that asked, never a break further in with content between. -/
 /- The separator between two commands belongs to the adapter: it renders each command and then spells
 the blank lines the source wrote between them. One command's document carries that separator inside
 itself: `moduleDoc` (`Command.lean:60-61`) ends with `ppLine`, whose formatter is
@@ -1285,6 +1264,27 @@ private partial def dropTrailingHardLine : Std.Format → Option Std.Format
     else (dropTrailingHardLine right).map (.append left ·)
   | _ => none
 
+/- The same document without its last discretionary break, or `none` where the outermost thing on that
+side is not one.
+
+`Std.Format.line` renders as a space when its group flattens and as a newline when it does not. Sitting
+directly in front of a `text` that carries its own newline it is redundant either way: flattened it is a
+space at the end of a line, which is trailing whitespace no formatter may emit, and broken it is a blank
+line the source never had. Lean's `doIf` spells exactly this — `ppSpace` before a `doSeq` that begins
+with its own hard newline — so before this every `if c then` with an indented body ended its line with a
+space, five of them in `Mathlib/Util/Superscript.lean`. A printer has no reason to care: a trailing space
+is invisible in an error message and a re-print is never diffed against source.
+
+The mirror rule, removing a break that *follows* a hard newline, looks equally sound and is not here. It
+is not safe: `sepByIndent` spells its first item after an `align` and every later item after a
+`text "\n"`, so the mirror fires on the later items only and leaves the first one a column to their
+right — which is `checkColGe`'s reference column, so the second `where` binding parses outside the
+block. Measured on the `where` block of `Mathlib/Util/Superscript.lean:312`. A break before a newline
+cannot move a column because nothing follows it on that line; a break after one always can.
+
+The walk stops at the first leaf that emits anything: it descends through `nest`, `group`, `tag`, and a
+provably empty sibling, and gives up at a `text` or an `align`. So the break it removes is the one
+*adjacent* to the newline that asked, never a break further in with content between. -/
 private partial def dropTrailingBreak : Std.Format → Option Std.Format
   | .line => some .nil
   | .nest indent inner => (dropTrailingBreak inner).map (.nest indent ·)
@@ -1455,7 +1455,7 @@ compares. A comment that shared its owner's line has no such constraint: staying
 keeps it trailing.
 
 This is only consulted where the document native layout produced since the previous terminal is
-provably empty, which is the one case where the output is certainly on the previous token's line. -/
+provably empty — the one case where the output is certainly on the previous token's line. -/
 private def beganLine (state : TransformState) (index : Nat) : Bool :=
   if index == 0 then false else
     match state.terminals[index - 1]?, state.terminals[index]? with
@@ -1602,8 +1602,8 @@ private def consumeIsland (value : String) (island : ExactIsland) :
   let (leading, trailing) := splitPadding value
   -- The boundary in front of the island, asked for at the island's own first terminal and asked here
   -- because this is one of the two places that terminal is ever visited. `transform` keeps a boundary
-  -- collected at an island's first terminal on purpose -- it separates the island from the token
-  -- before it, and that separator is the adapter's -- but this consumed `start`..`stop` in one step
+  -- collected at an island's first terminal on purpose — it separates the island from the token
+  -- before it, and that separator is the adapter's — but this consumed `start`..`stop` in one step
   -- and never called `constrainBoundary`, so the boundary stayed collected and unapplied and the
   -- command was refused. That was D26.
   let boundary ← constrainBoundary (.text leading)
@@ -1879,7 +1879,7 @@ nearby: {nearbyTerminals state}; recent native leaves: {repr state.recentNativeL
     throw s!"native formatter inserted {state.commentIndex}/{comments.size} interior comments; \
 next expected range: {repr nextRange}; recent native leaves: \
 {repr state.recentNativeLeaves}"
-  -- A count alone says a rule went unapplied and nothing about which one, and every one of these was
+  -- A count alone says a rule went unapplied and nothing about which one; every one of these was
   -- minimized by hand from a whole mathlib module because of it. Each refusal below names the first
   -- unapplied entry and the source it was collected at.
   if state.appliedIslands.size != islands.size then
@@ -1943,8 +1943,8 @@ trivia. Where the next statement is the next *command* the indent is column zero
 the declaration entirely; that was D3, and it is the same defect one nesting level out.
 
 `finishTrailing` places these instead, by hanging the comment off the owning block's own subtree, where
-`Format.text "\n"` re-indents to the indent that block was rendered at whatever the renderer chose.
-That is the one column here nobody has to know in advance.
+`Format.text "\n"` re-indents to the indent that block was rendered at whatever the renderer chose —
+the one column here nobody has to know in advance.
 
 Nothing is in both sets: `interiorComments` skips exactly the ranges this returns. The two used to be
 split by a range test — this took what lay past the command's end — and that test was a proxy for the

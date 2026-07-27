@@ -9,18 +9,14 @@ import all Test.Unit.Tools
 
 What was `LeanFmtTest.lean`'s `main`, split two ways. The ~30 test functions are `Case`s now,
 run by the shared harness with per-test names, isolation, and `--list`/`--filter`/`--shard`
-selection — one failing test no longer hides the twenty-nine behind it. Two imports carry an
-inline FMT004 ignore: the rule's "transitively available" note is the over-approximation its own
-message warns about, and removing the import breaks the build. The argv subcommands are
-unchanged: they exist for the shell suites (which call back into Lean for artifact verification and
-benchmarks), and they keep their exact names, arities, and output until their consuming suites are
-ported and absorb them.
+selection — one failure no longer hides the other twenty-nine. The argv subcommands keep their
+exact names, arities, and output until their consuming shell suites are ported and absorb them.
 -/
 
 open LeanFmt.Test
 
-/-- `doc-properties` is the one legacy subcommand that names a unit case; everything else dispatches
-into `Test.Unit.Tools`. -/
+/-- Legacy argv subcommands dispatch into `Test.Unit.Tools`; anything else runs the shared case
+list. -/
 
 public unsafe def main (args : List String) : IO UInt32 := do
   match args with

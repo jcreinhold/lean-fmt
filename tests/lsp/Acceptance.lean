@@ -101,8 +101,8 @@ private def lifecycle (h : Harness) : IO Unit := do
 /-! ## 2. Malformed messages (§11)
 
 The freeze's claim is not "malformed input is answered" but "malformed input never terminates the
-server". Both halves are asserted here, and the second is the one that needs a process: after each bad
-message the session is asked a real question and must answer it. -/
+server". Both halves are asserted here, and the second needs a process: after each bad message the
+session is asked a real question and must answer it. -/
 
 private def malformed (h : Harness) : IO Unit := do
   let (_, code) ← withServer h.application h.root do
@@ -143,8 +143,8 @@ The conversion layer is UTF-16 in both directions and clamps rather than validat
 distinguishable on the fixture below — 12 UTF-16 units, 10 codepoints, 16 bytes — so an assertion on
 the end position tells them apart instead of agreeing with all three. -/
 
-/-- Ends without a newline so that the last line is the interesting one, and the astral characters sit
-on it: `𝔽` is one codepoint, two UTF-16 units, four bytes. -/
+/-- Ends without a newline so the last line is the interesting one, and the astral characters
+sit on it: `𝔽` is one codepoint, two UTF-16 units, four bytes. -/
 private def unicodeSource : String :=
   "module\n\nnamespace     Alpha\n\ndef layoutValue : Nat := 1\n\nend Alpha\n-- 𝔽𝔽 tail"
 
@@ -293,10 +293,10 @@ private def cancellation (h : Harness) : IO Unit := do
   let ((uncancelled, cancelled), code) ← withServer h.application h.root do
     discard <| initializeSession h.root
     openDocument uri source
-    -- Wait for the debounced analysis first. It is one incremental run of this same slow module, and it
-    -- rides the same FIFO, so timing a request while it is still queued measures the queue rather than
-    -- the child — which is exactly the mistake the first version of this check made, reporting a
-    -- "cancelled" request that had not begun.
+    -- Wait for the debounced analysis first: it is one incremental run of this same slow module on
+    -- the same FIFO, so timing a request while it is still queued measures the queue, not the child —
+    -- the mistake the first version of this check made, reporting a "cancelled" request that had not
+    -- begun.
     discard <| awaitDiagnostics uri
     -- What the request costs when nobody interrupts it.
     let started ← IO.monoMsNow
@@ -330,10 +330,9 @@ private def cancellation (h : Harness) : IO Unit := do
     return (uncancelled, cancelled)
   h.checkEq "the cancellation session exits cleanly" code 0
   IO.println s!"     uncancelled {uncancelled} ms, cancelled {cancelled} ms"
-  -- Cancellation is sent at 400 ms, so a cancellation that reached the active snapshot returns well
-  -- inside the uncancelled cost. Half is a wide
-  -- margin chosen so the check does not depend on this machine's speed; the printed pair is the
-  -- measurement.
+  -- Cancellation is sent at 400 ms, so a cancellation that reached the active snapshot returns
+  -- well inside the uncancelled cost. Half is a wide margin, chosen so the check does not depend on
+  -- this machine's speed; the printed pair is the measurement.
   h.check "and it returned in a fraction of the uncancelled cost"
     (cancelled * 2 < uncancelled) s!"uncancelled {uncancelled} ms, cancelled {cancelled} ms"
 

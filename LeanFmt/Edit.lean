@@ -10,8 +10,8 @@ import all LeanFmt.ArtifactModel
 
 namespace LeanFmt.Internal
 
-/-- Why a complete patch could not be constructed. The constructor rejects the whole edit set on
-the first error; callers never receive partially assembled output. -/
+/-- Why a complete patch could not be constructed. The constructor rejects the whole edit set on the
+first error; callers never get partially assembled output. -/
 inductive PatchError where
   | invalidRange (index : Nat) (range : SourceRange) (sourceBytes : Nat)
   | invalidBoundary (index position : Nat)
@@ -33,9 +33,9 @@ instance : ToString PatchError where
         ({right.start}-{right.stop}) conflict"
     | .invalidOutputEncoding => "checked edits unexpectedly produced invalid UTF-8"
 
-/-- An edit paired with the finding it came from, so a conflict rejection can name the rule and its
-finding range rather than an anonymous array index. The inverse-patch path, which has no finding,
-uses an empty code and the edit's own range. -/
+/-- An edit paired with the finding it came from, so a conflict rejection names the rule and its
+finding range, not an anonymous array index. The inverse-patch path, which has no finding, uses an
+empty code and the edit's own range. -/
 private structure ProvenancedEdit where
   code : String
   findingRange : SourceRange
@@ -127,11 +127,11 @@ private def assemble (source : String)
   output := output ++ sourceBytes.extract cursor sourceBytes.size
   return (← decode output, inverse)
 
-/-- Construct one complete patch from selected fixes. Findings without a fix are deliberately ignored,
-and so are fixes the caller has already withheld by applicability (`Application.prepareFile` strips a
-non-admitted fix to `none` before reaching here — admission is a policy decision that does not belong
-in the assembler). Every remaining fix's edits participate in the same validation and conflict
-transaction, tagged with their rule so a conflict names it. -/
+/-- Construct one complete patch from selected fixes. Findings without a fix are ignored, as are fixes
+the caller withheld by applicability (`Application.prepareFile` strips a non-admitted fix to `none`
+before reaching here — admission is policy and does not belong in the assembler). Every remaining
+fix's edits share one validation and conflict transaction, tagged with their rule so a conflict names
+it. -/
 def preparePatch (source : String) (findings : Array Finding) : Except PatchError Patch := do
   let provenanced := findings.flatMap fun finding =>
     match finding.fix? with
@@ -149,8 +149,8 @@ def preparePatch (source : String) (findings : Array Finding) : Except PatchErro
     inverse
   }
 
-/-- Reconstruct the exact input snapshot from a checked patch. This is primarily a characterization
-and test capability; publication never relies on a lossy formatter being invertible by convention. -/
+/-- Reconstruct the exact input snapshot from a checked patch. Primarily a characterization and test
+capability; publication never relies on a lossy formatter being invertible. -/
 def Patch.revert (patch : Patch) : Except PatchError String := do
   validateEdits patch.output patch.inverse
   let provenanced := patch.inverse.map fun edit =>

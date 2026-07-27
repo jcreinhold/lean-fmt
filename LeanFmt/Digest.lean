@@ -10,8 +10,8 @@ import Lean.Data.Json
 
 namespace LeanFmt
 
-/-- A lowercase SHA-256 digest. The constructor stays private so identities cannot contain
-malformed or truncated digests. -/
+/-- A lowercase SHA-256 digest. The private constructor keeps malformed or truncated digests out of
+identities. -/
 structure Digest where
   private mk ::
   hex : String
@@ -129,16 +129,16 @@ private def appendWordHex (output : String) (word : UInt32) : String := Id.run d
     result := result.push (Nat.digitChar nibble.toNat)
   return result
 
-/-- Hash an exact byte sequence. Only the bytes; no filesystem metadata. -/
+/-- Hash exact bytes; no filesystem metadata. -/
 def ofBytes (bytes : ByteArray) : Digest :=
   let hex := (hashBytes bytes).foldl appendWordHex ""
   .mk hex
 
-/-- Hash exact UTF-8 source bytes. No newline normalization happens first. -/
+/-- Hash exact UTF-8 source bytes; no newline normalization happens first. -/
 def ofString (source : String) : Digest :=
   ofBytes source.toUTF8
 
-/-- Parse an externally supplied digest only when it is exactly 64 lowercase hexadecimal digits. -/
+/-- Parse an externally supplied digest only if it is exactly 64 lowercase hex digits. -/
 def parse? (value : String) : Option Digest :=
   if value.length == 64 && value.toList.all fun char =>
       ('0' ≤ char && char ≤ '9') || ('a' ≤ char && char ≤ 'f') then

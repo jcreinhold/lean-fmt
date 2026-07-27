@@ -2,9 +2,10 @@ module
 
 /-! Adversarial fixture for the FMT012 fixable-occurrence predicate (`ruff-11b` ROS-FINAL). Each
 deprecated declaration carries a `newName?` replacement; the uses below exercise the predicate's
-boundary: a bare identifier (fixable), and non-bare spellings — namespace-qualified, `open`-shadowed,
-dot-projection — that a textual single-token rename must NOT claim, plus a `newName? = none` entry that
-stays report-only. Every use is a **warning**, so the module elaborates and `analyzeExact` captures. -/
+boundary: a bare identifier (fixable); non-bare spellings — namespace-qualified, `open`-shadowed,
+dot-projection — that a textual single-token rename must NOT claim; and a `newName? = none` entry
+that stays report-only. Every use is a **warning**, so the module elaborates and `analyzeExact`
+captures. -/
 
 def newBare : Nat := 1
 @[deprecated newBare (since := "2024-01-01")]

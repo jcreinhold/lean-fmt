@@ -18,7 +18,7 @@ root's range lies within the file, that command ranges do not overlap, and that 
 ends exactly at the array boundary. It never compares one leaf's `trailingStop` to the next leaf's
 `leadingStart`, so a projection that silently drops a token's bytes, or claims the same bytes
 twice, passes it. That is the failure this oracle exists to catch, and the lossless suite's
-mutation case is what keeps the catching non-vacuous.
+mutation case keeps the catching non-vacuous.
 
 Offsets are UTF-8 byte offsets into the *normalized* source (`raw.crlfToLf`), because
 `Parser.mkInputContext` normalizes before it assigns any position.

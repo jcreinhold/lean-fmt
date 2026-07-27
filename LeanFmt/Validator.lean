@@ -8,10 +8,10 @@ module
 
 /- Pure admission checks for a whole-module formatting draft.
 
-The comparator consumes lossless projections produced by two independent frontend runs. Locations
-and whitespace lengths may change; node kind/parent order, token ownership and spelling, header
+The comparator consumes lossless projections from two independent frontend runs. Locations and
+whitespace lengths may change; node kind/parent order, token ownership and spelling, header
 structure/token spelling, comment payload/logical ownership, and terminal tail may not. Keeping this
-module pure makes the comparison independently testable and prevents it from acquiring frontend
+module pure makes the comparison independently testable and keeps it from acquiring frontend
 authority. -/
 
 import all LeanFmt.Formatter

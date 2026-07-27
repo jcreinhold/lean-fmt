@@ -14,13 +14,12 @@ namespace LeanFmt.Internal.Discovery
 
 /-! # Hierarchical configuration discovery and ignore sources
 
-The private capability `ruff-13` RCD-IMPL owes: one filesystem walk that simultaneously collects
-candidate sources, recognized configuration files, and ignore files, so that resolving one file's
-effective configuration is an **in-memory** ascent rather than a walk of its own
-(`notes/01-discovery.md` §4.2).
+The private capability `ruff-13` RCD-IMPL owes: one filesystem walk that collects candidate sources,
+recognized configuration files, and ignore files together, so resolving one file's effective
+configuration is an **in-memory** ascent, not a walk of its own (`notes/01-discovery.md` §4.2).
 
-Nothing here interprets project semantics. Executable Lake configuration remains separately evaluated
-by `Project.loadWorkspace`; this module reads TOML policy and ignore files and nothing else.
+Nothing here interprets project semantics. Executable Lake configuration is evaluated separately by
+`Project.loadWorkspace`; this module reads TOML policy and ignore files only.
 -/
 
 /-! ## Git ignore patterns
@@ -42,9 +41,8 @@ private structure IgnorePattern where
   base : String
   source : String
 
-/-- Match one character class, `[abc]`, `[a-z]`, `[!abc]`/`[^abc]`. Returns the matched-ness and the
-remainder of the pattern after the closing `]`; an unterminated class is treated as a literal `[`,
-which is what git does. -/
+/-- Match one character class — `[abc]`, `[a-z]`, `[!abc]`/`[^abc]` — returning matched-ness and the
+pattern remainder after `]`; an unterminated class is a literal `[`, as git treats it. -/
 private def matchClass (pattern : List Char) (actual : Char) : Option (Bool × List Char) :=
   let (negated, pattern) := match pattern with
     | '!' :: rest => (true, rest)
@@ -95,10 +93,10 @@ private partial def pathMatches : List String → List String → Bool
     segmentMatches expected.toList actual.toList && pathMatches pattern path
   | _ :: _, [] => false
 
-/-- A pattern matches a *prefix* of the path when it names an ancestor directory. Git's rule that an
-excluded directory cannot have its contents re-included is why this is the right test: once a
-directory matches, everything beneath it is excluded, so a directory-only pattern must match a file
-by matching one of its ancestors. -/
+/-- A pattern matches a *prefix* of the path when it names an ancestor directory. This is the right
+test because git never re-includes the contents of an excluded directory: once a directory matches,
+everything beneath it is excluded, so a directory-only pattern must match a file through one of its
+ancestors. -/
 private partial def prefixMatches (pattern path : List String) : Bool :=
   match path with
   | [] => false
@@ -143,9 +141,9 @@ private def IgnorePattern.matches (pattern : IgnorePattern) (path : String) (isD
       pathMatches pattern.segments components ||
         prefixMatches pattern.segments components.dropLast
 
-/-- One ignore file's patterns, in file order. Layers are held in **increasing precedence**, so a
-later layer overrides an earlier one and, within a layer, a later pattern overrides an earlier one —
-git's "nearer file wins, last match in a file wins" (`notes/01-discovery.md` §10.1). -/
+/-- One ignore file's patterns, in file order. Layers are held in **increasing precedence**: a later
+layer overrides an earlier one and, within a layer, a later pattern overrides an earlier one — git's
+"nearer file wins, last match in a file wins" (`notes/01-discovery.md` §10.1). -/
 private structure IgnoreLayer where
   patterns : Array IgnorePattern
   origin : String
@@ -164,10 +162,10 @@ private def ignored (layers : Array IgnoreLayer) (path : String) (isDirectory : 
 /-! ## Git configuration, without spawning `git`
 
 Reading `core.excludesFile` from git's own configuration files keeps `git` out of discovery:
-lean-fmt does not need it on `PATH` to format a repository, and discovery spawns no process. This is
-deliberately **partial** — it does not follow `include`/`includeIf` directives, so it never applies a
-global ignore file reachable only through a conditional include
-(`notes/01-discovery.md` §10.2, open question 5). -/
+lean-fmt needs no `git` on `PATH` to format a repository, and discovery spawns no process.
+Deliberately **partial** — it does not follow `include`/`includeIf` directives, so it never applies a
+global ignore file reachable only through a conditional include (`notes/01-discovery.md` §10.2, open
+question 5). -/
 
 private def expandHome (path : String) : IO String := do
   if path.startsWith "~/" then
@@ -218,9 +216,9 @@ private def globalIgnoreFile? : IO (Option FilePath) := do
   return none
 
 /-- The repository root governing `root`: the nearest ancestor holding `.git`, ascending to the
-filesystem root. This may sit **above** the project root, because a Lean project is commonly a
+filesystem root. May sit **above** the project root, because a Lean project is commonly a
 subdirectory of a larger repository (`notes/01-discovery.md` §10.3). `.git` may be a directory or a
-file (a worktree or submodule gitlink), so both forms are accepted. -/
+file (a worktree or submodule gitlink); both forms are accepted. -/
 private partial def repositoryRoot? (directory : FilePath) : IO (Option FilePath) := do
   if ← (directory / ".git").pathExists then return some directory
   match directory.parent with
@@ -250,7 +248,7 @@ private def repositoryExclude? (repository : FilePath) : IO (Option FilePath) :=
 sources, and the configuration governing each directory that declared one.
 
 `configs` is keyed by the **root-relative directory** the config governs, so resolving a file is a
-prefix search over an array held in memory — never a filesystem ascent per file. -/
+prefix search over an in-memory array — never a filesystem ascent per file. -/
 structure Discovery where
   private mk ::
   root : FilePath
@@ -290,10 +288,9 @@ private def isLeanSource (path : FilePath) : Bool := path.extension == some "lea
 
 /-- Walk the project once, collecting sources, configurations, and ignore state together.
 
-The single walk is the shape `RCD-IMPL`'s stop rule demands: this structure exists to avoid a
-per-file filesystem ascent. Pruning is sound because git's directory-exclusion rule holds — an
-ignored directory can hold no re-included file, so not descending into it cannot lose one
-(`notes/01-discovery.md` §4.2, §10.1). -/
+The single walk is the shape `RCD-IMPL`'s stop rule demands: it exists to avoid a per-file filesystem
+ascent. Pruning is sound because git's directory-exclusion rule holds — an ignored directory can hold
+no re-included file, so not descending cannot lose one (`notes/01-discovery.md` §4.2, §10.1). -/
 private partial def walkDirectory (root : FilePath) (explicit? : Option FormatterConfig)
     (directory : FilePath) (relative : String) (current : FormatterConfig)
     (layers : Array IgnoreLayer) (accumulated : Discovery) : IO Discovery := do
@@ -320,10 +317,10 @@ private partial def walkDirectory (root : FilePath) (explicit? : Option Formatte
     let childRelative := if relative.isEmpty then entry.fileName else relative ++ "/" ++ entry.fileName
     -- `isDir` follows symlinks; this does not. The link itself, not its target, decides whether an
     -- entry is a directory, so the walk never descends through one. That is git's own work-tree rule,
-    -- and it is what keeps the walk finite: `dir/loop -> ..` otherwise recurses until the operating
-    -- system refuses the path, and the extra results hide afterwards because they realpath back onto
-    -- files already found. Before the fix, discovery on a three-file project took far longer than the
-    -- project warranted (`ruff-13` `results/03-acceptance.md`).
+    -- and it keeps the walk finite: `dir/loop -> ..` would otherwise recurse until the operating
+    -- system refuses the path, and the extra results would hide afterwards by realpathing back onto
+    -- files already found. Before the fix, discovery on a three-file project took far longer than
+    -- the project warranted (`ruff-13` `results/03-acceptance.md`).
     let linkType := (← entry.path.symlinkMetadata).type
     if linkType == .dir then
       -- Gate 1: `.lake` is never descended into and never selected, by any path form.
@@ -417,8 +414,8 @@ def Gate.describe : Gate → String
   | .configExclude => "gate 3: excluded by the configuration's exclude"
   | .configInclude => "gate 4: not matched by the configuration's include"
 
-/-- Decide selection for a **discovered** path. Gates 2 and 3 already ran during the walk (they prune),
-so what remains is gate 3 for files (directories were pruned) and gate 4.
+/-- Decide selection for a **discovered** path. Gates 2 and 3 already ran during the walk (they
+prune), so what remains is gate 3 for files (directories were pruned) and gate 4.
 
 Explicit paths take the other route: they skip gates 2–4 unless `force-exclude` is on, and never
 consult gate 4 at all (`notes/01-discovery.md` §11). -/
@@ -432,11 +429,11 @@ def Discovery.gateFor (discovery : Discovery) (path : String) : Gate :=
 /-- Selection for an **arbitrary** path, discovered or not — the question `config show` asks
 (`notes/01-discovery.md` §12).
 
-`gateFor` above is only defined on paths the walk produced, so it may assume gates 2 and 3 already
-pruned. This one cannot: it is handed a path from the command line, which may sit under a directory the
-walk never descended into. So it re-asks gate 3 against every ancestor directory as well as the file
-itself, because an `exclude = ["vendor"]` pattern names the directory and never the files beneath it —
-the walk expresses that by pruning, and pruning leaves no per-file record to read back.
+`gateFor` is defined only on paths the walk produced, so it may assume gates 2 and 3 already pruned.
+This one cannot: it is handed a command-line path that may sit under a directory the walk never
+descended into. So it re-asks gate 3 against every ancestor directory as well as the file itself,
+because an `exclude = ["vendor"]` pattern names the directory and never the files beneath it — the
+walk expresses that by pruning, and pruning leaves no per-file record to read back.
 
 Order matters: gate 3 is asked *before* absence-from-`sources`, since a config-excluded directory is
 also absent, and reporting "excluded by a git ignore source" for a path the user's own `exclude` key

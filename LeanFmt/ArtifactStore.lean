@@ -15,16 +15,16 @@ namespace LeanFmt.Internal
 
 /-- Structural validity, checkable without the source.
 
-This used to also bound every finding's range by the projection's byte count. There are no findings
-in an artifact any more, and dropping that check lost nothing: the process that reports a finding now
-computes it, from facts `validFor` has already matched to the bytes in hand, so its range fits those
+This used to also bound every finding's range by the projection's byte count. Artifacts hold no
+findings any more, and dropping that check lost nothing: the process that reports a finding now
+computes it from facts `validFor` has already matched to the bytes in hand, so its range fits those
 bytes without a separate audit. -/
 def structurallyValid (artifact : ModuleArtifact) : Bool :=
   artifact.schema == artifactSchema &&
     artifact.syntaxData.structurallyValid artifact.normalizedBytes
 
-/-- Validity against the file a caller actually read. Normalizing is the caller's only correct move:
-no compiler-produced offset or digest indexes the bytes on disk. -/
+/-- Validity against the file a caller actually read. Normalizing is the caller's only correct
+move: no compiler-produced offset or digest indexes the bytes on disk. -/
 def ModuleArtifact.validFor (artifact : ModuleArtifact) (moduleName : Lean.Name)
     (raw : String) : Bool :=
   let normalized := (LosslessSource.normalize raw).1
@@ -69,8 +69,8 @@ private def temporaryPath (target : System.FilePath) : IO System.FilePath := do
   let nonce ← IO.monoNanosNow
   return System.FilePath.mk s!"{target}.tmp-{pid}-{nonce}"
 
-/- Write the declared facet output atomically. This is not a promotion operation: the caller owns
-the extraction and the output in one build action. -/
+/- Write the declared facet output atomically. Not a promotion operation: the caller owns the
+extraction and the output in one build action. -/
 def writeArtifactAtomic (path : System.FilePath) (artifact : ModuleArtifact) : IO Unit := do
   unless structurallyValid artifact do
     throw <| IO.userError "refusing to write an invalid lean-fmt module artifact"
@@ -92,10 +92,10 @@ private def headerBoundaryValid (artifact : ModuleArtifact) (source : String) : 
   return !messages.hasErrors && state.pos.byteIdx == materialized.source.headerStop
 
 /- Validate the descriptor returned by the Lake-owning orchestration immediately after a facet
-fetch. `Lake.Artifact` itself is publicly constructible and is not authority by type alone; this
-primitive must remain behind that orchestration boundary. The content hash is recomputed instead of
-trusting Lake's adjacent `.hash` accelerator, then the semantic payload is matched to the caller's
-current module and source snapshot. Every integrity or identity failure is an ordinary miss. -/
+fetch. `Lake.Artifact` is publicly constructible and not authority by type alone; this primitive must
+stay behind that orchestration boundary. The content hash is recomputed rather than trusting Lake's
+adjacent `.hash` accelerator, then the payload is matched to the caller's current module and source
+snapshot. Every integrity or identity failure is an ordinary miss. -/
 def readFacet? (facet : Lake.Artifact) (moduleName : Lean.Name)
     (source : String) : IO (Option ModuleArtifact) := do
   try

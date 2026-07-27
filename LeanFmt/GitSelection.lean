@@ -14,17 +14,17 @@ namespace LeanFmt.Internal.GitSelection
 
 /-! # Version-control changed-file selection
 
-The private adapter behind changed-file selection. It answers exactly one
-question — *which paths did version control change* — and produces a path list plus the provenance a
-partial run must report. It does not decide what a path means: `.lean`-ness, `.lake` exclusion,
-configured `include`/`exclude`, ordering, and snapshotting all stay in `LeanFmt.Project` and
-`LeanFmt.Discovery`, reached through the ordinary `execute` (§9.5 steps 3–4).
+The private adapter behind changed-file selection. It answers one question — *which paths did
+version control change* — and produces a path list plus the provenance a partial run must report. It
+does not decide what a path means: `.lean`-ness, `.lake` exclusion, configured `include`/`exclude`,
+ordering, and snapshotting stay in `LeanFmt.Project` and `LeanFmt.Discovery`, reached through the
+ordinary `execute` (§9.5 steps 3–4).
 
 Two observed facts shape everything here, both recorded in `evidence/01-watch-baseline.md`:
 
 * Only `-z` yields byte-exact paths. Default `git diff` C-quotes non-ASCII into octal escapes, and
   `core.quotePath=false` fixes that case while **still** quoting an embedded double quote. A
-  line-splitting adapter is therefore wrong on ordinary Unicode filenames (§9.2).
+  line-splitting adapter is wrong on ordinary Unicode filenames (§9.2).
 * A missing binary is an exit code, not an exception. `IO.Process.output` returns 255 rather than
   throwing, so the natural `try`/`catch` spelling of "Git absence is a request error" never fires
   (§9.7).
@@ -143,10 +143,9 @@ NUL-terminated fields with a **status-dependent field count**: a rename is three
 path, new path), every other status is two (§9.2). A parser that assumes pairs desynchronizes on the
 first rename and mis-assigns every path after it, so the arity is read from the status letter. -/
 
-/-- Split a NUL-terminated stream into its fields, discarding the empty tail after the final NUL.
+/-- Split a NUL-terminated stream into fields, discarding the empty tail after the final NUL.
 
-This splits on NUL rather than reading lines because the payload may contain newlines: a filename is
-allowed to, and `-z` exists so that it can. -/
+Splits on NUL, not lines, because a filename may contain newlines — `-z` exists so that it can. -/
 private def nulFields (stream : String) : Array String :=
   let parts := stream.splitOn "\x00"
   (parts.filter (!·.isEmpty)).toArray
@@ -213,16 +212,16 @@ private def includesUntracked : Comparison → Bool
 /-- Whether a path git named is even a candidate for formatting: gate 1.
 
 **The adapter must apply this itself.** `notes` §9.5 step 3 assumed the ordinary selection would drop
-non-`.lean` and `.lake` paths once they were handed to `execute` as the request's file list. It does
-not: an *explicitly named* file deliberately bypasses discovery's gates 2–4 — "naming a path is saying
+non-`.lean` and `.lake` paths once handed to `execute` as the request's file list. It does not: an
+*explicitly named* file deliberately bypasses discovery's gates 2–4 — "naming a path is saying
 something" (`ruff-13` `notes/01-discovery.md` §11) — and the one gate it cannot skip raises a hard
-error, `selected file is not a Lean source`. Since **git** named these paths and the user did not, an
-error is the wrong answer: an ordinary untracked `README.md`, or the `.lake` build tree in a repository
-that does not ignore it, would abort the whole run. A fixture repository showed it aborting `--changed`
+error, `selected file is not a Lean source`. **Git** named these paths, not the user, so an error is
+the wrong answer: an ordinary untracked `README.md`, or the `.lake` build tree in a repository that
+does not ignore it, would abort the whole run. A fixture repository showed it aborting `--changed`
 outright (`results/03-acceptance.md`).
 
-Dropped silently rather than disclosed. §9.6 reports paths withheld "for a reason the caller would want
-to know"; that a `README.md` is not a Lean source is not such a reason, and git names all manner of
+Dropped silently rather than disclosed. §9.6 reports paths withheld "for a reason the caller would
+want to know"; that a `README.md` is not a Lean source is not one, and git names all manner of
 files. Configured `include`/`exclude` still belong to `Discovery` and are not repeated here. -/
 private def isCandidate (relative : String) : Bool :=
   let components := relative.splitOn "/"

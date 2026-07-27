@@ -6,8 +6,8 @@ public import Test
 # The editor suite
 
 Port of `tests/lsp/editor.sh`: the editor check. `suite-lsp` and `suite-lsp-acceptance` drive the
-protocol; this drives a real editor's client against it, which is the one thing neither of them
-can do. The client checks live in `tests/lsp/editor.lua` and stay there — like
+protocol; this drives a real editor's client against it, the one thing neither of them can do. The
+client checks live in `tests/lsp/editor.lua` and stay there — like
 `tests/formatter/candidate.py`, the value of the check is that the adversary is the *real*
 `vim.lsp`, not a Lean model of it.
 
@@ -25,8 +25,8 @@ public def main (args : List String) : IO UInt32 := do
   if nvim.exitCode != 0 then
     IO.println "lean-fmt editor check SKIPPED (no nvim on PATH)"
     return 0
-  -- `--clean -u NONE`, so the developer's own configuration cannot decide the result. The
-  -- version floor is the one the script enforced: 0.11 for `vim.lsp.config`.
+  -- `--clean -u NONE`, so the developer's own configuration cannot decide the result. The version
+  -- floor is the one the script enforced: 0.11 for `vim.lsp.config`.
   let version ← expectExit 0 "nvim --version" "nvim" #["--version"]
   let firstLine := (version.stdout.splitOn "\n").head?.getD ""
   let parts := (((firstLine.drop 6).takeWhile (· != ' ')).toString).splitOn "."

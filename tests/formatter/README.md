@@ -14,8 +14,8 @@ To admit a prototype through the same gates, append its command and arguments:
 tests/formatter/run.sh path/to/candidate --its-options
 ```
 
-The oracle reparses original and candidate bytes through `__analyze-exact`, compares parsed ordered imports, exact
+The oracle reparses original and candidate bytes through `__analyze-exact`, compares ordered imports, exact
 terminal/tail bytes, token spelling/order, comment kind/payload/owner, and normalized node kind/parent/child order, then
-runs a second formatter pass. It deliberately erases byte positions, source-info tags, and whitespace trivia only. It
-does not erase syntax kinds, parents, child order, the selected first `choice` branch represented by the projection,
-token-to-node ownership, command order, or terminal boundaries.
+runs a second formatter pass. It erases only byte positions, source-info tags, and whitespace trivia. It does not erase
+syntax kinds, parents, child order, the selected first `choice` branch, token-to-node ownership, command order, or
+terminal boundaries.

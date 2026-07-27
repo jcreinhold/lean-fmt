@@ -16,12 +16,13 @@ namespace LeanFmt.Internal.Cli
 
 open LeanFmt.Internal LeanFmt.Internal.Application LeanFmt.Internal.Profile
 
-/-- How a run's report is rendered (`ruff-15` RRF-IMPL, frozen in `notes/01-report-formats.md` §2).
+/-- How a run's report is rendered (`ruff-15` RRF-IMPL, frozen in `notes/01-report-formats.md`
+§2).
 
-`text` and `json` existed before this stack and their bytes are unchanged. `text` is **not** renamed
-to ruff's `full`, because this report renders no source excerpt and the name would promise one. The
-four added formats are projections over the finished `RunReport`: they cannot trigger analysis,
-alter rule selection, or reorder results, which the roadmap requires for completion. -/
+`text` and `json` existed before this stack and their bytes are unchanged. `text` is **not**
+renamed to ruff's `full`, because this report renders no source excerpt and the name would promise
+one. The four added formats are projections over the finished `RunReport`: they cannot trigger
+analysis, alter rule selection, or reorder results, which the roadmap requires for completion. -/
 private inductive ReportFormat where
   | text
   | concise
@@ -52,9 +53,10 @@ private def ReportFormat.ofWire? : String → Option ReportFormat
 
 /-- Whether this format reports *findings* rather than the mode's own product.
 
-`diff`'s product is a patch and carries no findings (`ruff-15` `evidence/01-report-baseline.md` §3),
-so these four have nothing to say about it and are rejected for it, following `ruff-14`: refuse a
-flag a mode cannot honor rather than emit a well-formed, empty, misleading report. -/
+`diff`'s product is a patch and carries no findings (`ruff-15`
+`evidence/01-report-baseline.md` §3), so these four have nothing to say about it and are rejected
+for it, following `ruff-14`: refuse a flag a mode cannot honor rather than emit a well-formed,
+empty, misleading report. -/
 private def ReportFormat.findingShaped : ReportFormat → Bool
   | .concise | .github | .sarif | .junit => true
   | .text | .json => false
@@ -66,9 +68,9 @@ Presentation only: this file decides what the caller typed and how to print the 
 
 /-- A `--range`/`--range-lines` argument, before it is resolved against the received bytes.
 
-Line/column stays symbolic until the source is in hand: a column is a **codepoint** offset into a
-line and cannot become a byte offset without the line (`notes/01-stream-range.md` §3). Byte form is
-already the internal encoding and passes straight through. -/
+Line/column stays symbolic until the source is in hand: a column is a **codepoint** offset
+into a line and cannot become a byte offset without the line (`notes/01-stream-range.md` §3). Byte
+form is already the internal encoding and passes straight through. -/
 private inductive RangeSpec where
   | bytes (start stop : Nat)
   | lineColumn (startLine startColumn stopLine stopColumn : Nat)
@@ -90,9 +92,9 @@ private def parseLineRange? (value : String) : Option RangeSpec := do
 
 /-- Byte offset of a 1-based (line, codepoint column) position in `normalized`, clamped to the end.
 
-Clamping rather than failing is deliberate: an editor's end-of-selection often sits one past the
-last character of a line, and a formatter that rejected that would be unusable. A position past the
-file end resolves to the file end, which selects the final unit. -/
+Clamping rather than failing is deliberate: an editor's end-of-selection often sits one past
+the last character of a line, and a formatter that rejected that would be unusable. A position past
+the file end resolves to the file end, which selects the final unit. -/
 private def offsetOfLineColumn (normalized : String) (line column : Nat) : Nat := Id.run do
   let bytes := normalized.toUTF8
   let mut offset := 0
@@ -104,7 +106,8 @@ private def offsetOfLineColumn (normalized : String) (line column : Nat) : Nat :
   -- Then `column - 1` codepoints into it, stopping at the newline that ends the line.
   let mut remaining := column - min column 1
   while remaining > 0 && offset < bytes.size && bytes[offset]! != 10 do
-    -- Advance one UTF-8 codepoint: skip the lead byte, then every continuation byte (0b10xxxxxx).
+    -- Advance one UTF-8 codepoint: skip the lead byte, then every continuation byte
+    -- (0b10xxxxxx).
     offset := offset + 1
     while offset < bytes.size && bytes[offset]! &&& 0xC0 == 0x80 do
       offset := offset + 1
@@ -243,9 +246,9 @@ stdin options (target `-`; never writes a file or a cache entry):\n\
 
 /-- Reconcile the two spellings of one choice, and refuse a mode the chosen format cannot describe.
 
-Both checks are deliberately errors rather than precedence rules. A caller who typed two different
-formats does not have a preference for us to guess, and a caller who asked `diff` for SARIF wants
-findings `diff` does not produce. -/
+Both checks are deliberately errors rather than precedence rules. A caller who typed two
+different formats does not have a preference for us to guess, and a caller who asked `diff` for
+SARIF wants findings `diff` does not produce. -/
 private def resolveOutputFormat (mode : RunMode) (command : FileCommand) :
     Except String FileCommand :=
   let chosen := match command.formatFlag?, command.jsonFlag with
@@ -306,10 +309,10 @@ private def parseFileArgs (mode : RunMode) (args : List String) : Except String 
         if amount == 0 then .error "--poll-interval expects a nonzero interval in milliseconds"
         else loop rest { command with pollMillis := amount }
       | none => .error "--poll-interval expects a whole number of milliseconds"
-    -- Three separate spellings rather than one `--changed [BASE]` with an optional argument. An
-    -- optional-argument flag cannot be told from a file target — `check --changed main` would be
-    -- ambiguous between "compare against main" and "compare the worktree, and format `main`" — and
-    -- guessing there makes a caller format the wrong set without knowing
+    -- Three separate spellings rather than one `--changed [BASE]` with an optional argument.
+    -- An optional-argument flag cannot be told from a file target — `check --changed main` would
+    -- be ambiguous between "compare against main" and "compare the worktree, and format `main`" —
+    -- and guessing there makes a caller format the wrong set without knowing
     -- (`results/02-implementation.md`, decisions changed).
     | "--changed" :: rest =>
       loop rest { command with changed? := some .worktree, changedFlag := "--changed" }
@@ -340,7 +343,8 @@ private def parseFileArgs (mode : RunMode) (args : List String) : Except String 
         else loop rest { command with run := { command.run with workers := amount } }
       | none => .error "--workers expects a whole number of workers"
     | "--workers" :: [] => .error "--workers expects a whole number of workers"
-    -- `-` is a *target*, not an option, so it is matched before the `startsWith "-"` catch-all below.
+    -- `-` is a *target*, not an option, so it is matched before the `startsWith "-"` catch-all
+    -- below.
     | "-" :: rest => loop rest { command with stdin := true }
     | "--stdin-filename" :: path :: rest =>
       loop rest { command with stdinFilename? := some path }
@@ -362,8 +366,8 @@ private def parseFileArgs (mode : RunMode) (args : List String) : Except String 
 
 /-- The stdin form's own consistency, checked once after parsing rather than at each use.
 
-Each rejection is a frozen clause of `notes/01-stream-range.md` §2. Each is an error rather than a
-fallback because the quiet alternative is worse: a `-` with no identity would format against
+Each rejection is a frozen clause of `notes/01-stream-range.md` §2. Each is an error rather
+than a fallback because the quiet alternative is worse: a `-` with no identity would format against
 built-in defaults and silently disagree with the same bytes on disk, and a `--range` without `-`
 would have to mean a partial in-place write, which this stack deliberately does not build.
 
@@ -388,9 +392,9 @@ private def validateStdin (mode : RunMode) (command : FileCommand) : Except Stri
 
 /-- Whether this format is a self-contained document rather than a line stream.
 
-`json`, `sarif` and `junit` each emit **one complete document per run** — a SARIF log has a single
-`runs` array and a JUnit file a single root element — so no parser accepts a stream of generations
-concatenated onto stdout (`notes/01-watch-generations.md` §7). -/
+`json`, `sarif` and `junit` each emit **one complete document per run** — a SARIF log has a
+single `runs` array and a JUnit file a single root element — so no parser accepts a stream of
+generations concatenated onto stdout (`notes/01-watch-generations.md` §7). -/
 private def ReportFormat.documentShaped : ReportFormat → Bool
   | .json | .sarif | .junit => true
   | .text | .concise | .github => false
@@ -401,9 +405,9 @@ Each rejection follows `ruff-14`/`ruff-15`: refuse a flag a mode cannot honor ra
 well-formed misleading output. -/
 private def validateWatch (mode : RunMode) (command : FileCommand) : Except String Unit := do
   if command.watch then
-    -- §10. A writing mode under watch publishes source, which changes the `mtime`/`byteSize` tuples
-    -- the poll observes, which triggers the next generation, which publishes again. The loop
-    -- sustains itself — not a race, a certainty.
+    -- §10. A writing mode under watch publishes source, which changes the `mtime`/`byteSize`
+    -- tuples the poll observes, which triggers the next generation, which publishes again. The
+    -- loop sustains itself — not a race, a certainty.
     if mode == .fix then
       .error "--watch is not available for fix; watch runs previews, and a writing mode retriggers itself"
     else if command.run.writesFormat then
@@ -411,8 +415,8 @@ private def validateWatch (mode : RunMode) (command : FileCommand) : Except Stri
         or a writing mode retriggers itself"
     else if command.stdin then
       .error "--watch is not available for the - stdin target; watch observes files on disk"
-    -- §7. One complete document per generation, replacing the previous, needs a destination that can
-    -- be replaced.
+    -- §7. One complete document per generation, replacing the previous, needs a destination
+    -- that can be replaced.
     else if command.outputFormat.documentShaped && command.outputFile?.isNone then
       .error s!"--output-format {command.outputFormat} requires --output-file with --watch; \
         a stream of {command.outputFormat} documents is not a {command.outputFormat} document"
@@ -429,8 +433,8 @@ private def validateChanged (command : FileCommand) : Except String Unit := do
       .error s!"{command.changedFlag} is not available for the - stdin target; \
         version control selects files on disk"
     else if !command.run.files.isEmpty then
-      -- Naming files and asking git to name them are two answers to one question, and silently
-      -- letting one win makes a caller format a set they did not intend.
+      -- Naming files and asking git to name them are two answers to one question, and
+      -- silently letting one win makes a caller format a set they did not intend.
       .error s!"{command.changedFlag} selects the files; do not also name them"
     else .ok ()
 
@@ -488,10 +492,10 @@ private def parseOrganizeArgs (args : List String) : Except String OrganizeComma
 
 /-! ## Report renderers (`ruff-15` RRF-IMPL)
 
-Every renderer below is a **pure** `RunReport → String` (plus, where it needs line/column, the
-`PositionIndex` execution resolved beside the report). None of them reads a file, runs analysis, or
-touches rule selection, which makes them golden-testable and is what the roadmap requires for
-completion. `emitReport` is the single IO boundary. -/
+Every renderer below is a **pure** `RunReport → String` (plus, where it needs line/column,
+the `PositionIndex` execution resolved beside the report). None of them reads a file, runs
+analysis, or touches rule selection, which makes them golden-testable and is what the roadmap
+requires for completion. `emitReport` is the single IO boundary. -/
 
 private def textReport (report : RunReport) : String := Id.run do
   let mut out := ""
@@ -501,9 +505,9 @@ private def textReport (report : RunReport) : String := Id.run do
       unless file.status == "clean" do out := out ++ s!"{file.path}: {file.status}\n"
       for diagnostic in file.diagnostics do out := out ++ s!"  {diagnostic}\n"
   | "format" =>
-    -- `format` publishes in place by default (`ruff-11d`): a short per-file summary, never the file
-    -- body. `formatted` means written; `would-format` is the `--check` preview of a file that would
-    -- change. A clean file is silent. `--json` still carries the full canonical text
+    -- `format` publishes in place by default (`ruff-11d`): a short per-file summary, never
+    -- the file body. `formatted` means written; `would-format` is the `--check` preview of a file
+    -- that would change. A clean file is silent. `--json` still carries the full canonical text
     -- (`file.formatted`).
     for file in report.files do
       unless file.status == "clean" do out := out ++ s!"{file.path}: {file.status}\n"
@@ -524,8 +528,9 @@ private def textReport (report : RunReport) : String := Id.run do
   | _ =>
     for file in report.files do
       for finding in file.findings do
-        -- A fix's applicability is shown next to the finding so a reader knows whether `fix` would
-        -- apply it by default (safe), only under `--unsafe-fixes` (unsafe), or never (display-only).
+        -- A fix's applicability is shown next to the finding so a reader knows whether `fix`
+        -- would apply it by default (safe), only under `--unsafe-fixes` (unsafe), or never
+        -- (display-only).
         let fixTag := match finding.fix? with
           | some fix => s!" [{fix.applicability}]"
           | none => ""
@@ -540,9 +545,9 @@ private def textReport (report : RunReport) : String := Id.run do
 
 /-! ### Shared projections
 
-The four finding-shaped formats disagree about syntax and agree about content. These helpers are that
-content, resolved once, so a change of policy (which statuses report, how a message is flattened)
-cannot reach three formats and miss the fourth. -/
+The four finding-shaped formats disagree about syntax and agree about content. These helpers are
+that content, resolved once, so a change of policy (which statuses report, how a message is
+flattened) cannot reach three formats and miss the fourth. -/
 
 /-- One line/column pair for a finding's start, or `1:1` when the index has no answer.
 
@@ -556,22 +561,23 @@ private def stopPosition (positions : PositionIndex) (path : String) (finding : 
     Position :=
   (positions.position? path finding.range.stop).getD (startPosition positions path finding)
 
-/-- Collapse a message to one line. No live rule message contains a newline; this is defensive, and
-`tests/reporting` pins it with a synthetic finding rather than trusting the invariant to hold. -/
+/-- Collapse a message to one line. No live rule message contains a newline; this is
+defensive, and `tests/reporting` pins it with a synthetic finding rather than trusting the
+invariant to hold. -/
 private def flattenMessage (message : String) : String :=
   (message.replace "\r\n" " ").replace "\n" " " |>.replace "\r" " "
 
 /-- The severity a format shows for a file-level status that is not a rule finding.
 
-`format --check` reporting "this file would be reformatted" has no `FMT###` code — there is no rule
-involved — so it needs an identity of its own. `format` is deliberately outside the `FMT` namespace so
-it can never collide with a live, reserved, or retired rule code (`ruff-12`). -/
+`format --check` reporting "this file would be reformatted" has no `FMT###` code — there is
+no rule involved — so it needs an identity of its own. `format` is deliberately outside the `FMT`
+namespace so it can never collide with a live, reserved, or retired rule code (`ruff-12`). -/
 private def statusRuleId : String := "format"
 
 /-- Statuses a finding-shaped format reports as a file-level problem, with the message it prints.
 
-A `clean` file, and a file whose only news is its findings, produce nothing here; the findings
-already report it. -/
+A `clean` file, and a file whose only news is its findings, produce nothing here; the
+findings already report it. -/
 private def statusMessage? (status : String) : Option String :=
   match status with
   | "would-format" => some "file would be reformatted"
@@ -583,16 +589,16 @@ private def statusMessage? (status : String) : Option String :=
 
 /-- Whether a status is an *infrastructure* problem rather than a finding.
 
-The distinction SARIF draws between a result and a notification (§3.20.21), JUnit draws between
-`<failure>` and `<error>`, and `reportExitCode` already draws between exit 1 and exit 2. One predicate
-so the three cannot drift. -/
+The distinction SARIF draws between a result and a notification (§3.20.21), JUnit draws
+between `<failure>` and `<error>`, and `reportExitCode` already draws between exit 1 and exit 2.
+One predicate so the three cannot drift. -/
 private def statusIsInfrastructure (status : String) : Bool :=
   status == "broken" || status == "rejected" || status == "infrastructure-failure"
 
 /-! ### `concise`
 
-`PATH:LINE:COLUMN: CODE MESSAGE`, one line per finding, and nothing else — no summary line and no
-applicability tag. The format exists to be piped into `grep` and editor error-parsers, and a
+`PATH:LINE:COLUMN: CODE MESSAGE`, one line per finding, and nothing else — no summary line and
+no applicability tag. The format exists to be piped into `grep` and editor error-parsers, and a
 trailing line that does not match the grammar breaks them (`notes/01-report-formats.md` §4). -/
 
 private def conciseReport (positions : PositionIndex) (report : RunReport) : String := Id.run do
@@ -613,11 +619,11 @@ private def conciseReport (positions : PositionIndex) (report : RunReport) : Str
 /-! ### `github`
 
 GitHub Actions workflow commands. Escaping matches the runner's own (`actions/toolkit`,
-`packages/core/src/command.ts`). Property values take stricter escaping than the message because an
-unescaped `:` or `,` in a path would end the property list. -/
+`packages/core/src/command.ts`). Property values take stricter escaping than the message because
+an unescaped `:` or `,` in a path would end the property list. -/
 
-/-- `escapeData` from the toolkit: the message body. `%` first, or the `%` this introduces for
-`\r`/`\n` would be double-escaped on the next pass. -/
+/-- `escapeData` from the toolkit: the message body. `%` first, or the `%` this introduces
+for `\r`/`\n` would be double-escaped on the next pass. -/
 private def githubEscapeData (value : String) : String :=
   value.replace "%" "%25" |>.replace "\r" "%0D" |>.replace "\n" "%0A"
 
@@ -642,8 +648,8 @@ private def githubCommand (severity : String) (path : String) (code : String)
       s!",line={start.line},col={start.column},endLine={stop.line},endColumn={stop.column}"
     else
       s!",line={start.line},endLine={stop.line}"
-  -- The message repeats the location because an annotation GitHub cannot attach to a file still
-  -- appears in the log, and without the prefix it would name no file at all.
+  -- The message repeats the location because an annotation GitHub cannot attach to a file
+  -- still appears in the log, and without the prefix it would name no file at all.
   s!"::{severity} title=lean-fmt ({githubEscapeProperty code}),\
     file={githubEscapeProperty path}{location}::\
     {githubEscapeData s!"{path}:{start.line}:{start.column}: {code} {message}"}"
@@ -670,18 +676,18 @@ private def githubReport (positions : PositionIndex) (report : RunReport) : Stri
 
 SARIF 2.1.0 (OASIS Standard). Section numbers below are that document's.
 
-Regions carry **line/column only**. `charOffset` is a *character* offset (§3.30.9) and `byteOffset`
-indexes the *artifact* (§3.30.11) while ours index the CRLF-normalized source, and §3.30.4 makes a
-region whose text and binary properties disagree invalid, not merely imprecise. The exact byte range
-goes in the region's property bag, which §3.8.1 allows. -/
+Regions carry **line/column only**. `charOffset` is a *character* offset (§3.30.9) and
+`byteOffset` indexes the *artifact* (§3.30.11) while ours index the CRLF-normalized source, and
+§3.30.4 makes a region whose text and binary properties disagree invalid, not merely imprecise.
+The exact byte range goes in the region's property bag, which §3.8.1 allows. -/
 
 private def sarifLevel : Severity → String
   | .error => "error"
   | .warning => "warning"
   | .information => "note"
 
-/-- One `reportingDescriptor`, projected from the live rule catalog — never re-authored here.
-`docs/adding-a-rule.md` and `ruff-12` make one metadata source the invariant, and a second
+/-- One `reportingDescriptor`, projected from the live rule catalog — never re-authored
+here. `docs/adding-a-rule.md` and `ruff-12` make one metadata source the invariant, and a second
 description table in this renderer is the drift they closed. -/
 private def sarifRuleDescriptor (info : RuleInfo) : Lean.Json :=
   Lean.Json.mkObj <| [
@@ -689,9 +695,9 @@ private def sarifRuleDescriptor (info : RuleInfo) : Lean.Json :=
     ("name", .str info.code),
     ("shortDescription", Lean.Json.mkObj [("text", .str info.summary)]),
     ("fullDescription", Lean.Json.mkObj [("text", .str info.explanation)]),
-    -- The generated rule page. `ruff-15` RRF-FINAL verified that `docs/rules/` covers every live
-    -- code, import family included, so this cannot link at a page that does not exist. The host is
-    -- the repository's own remote, the same one `informationUri` names.
+    -- The generated rule page. `ruff-15` RRF-FINAL verified that `docs/rules/` covers every
+    -- live code, import family included, so this cannot link at a page that does not exist. The
+    -- host is the repository's own remote, the same one `informationUri` names.
     ("helpUri", .str
       s!"https://github.com/jcreinhold/lean-fmt/blob/main/docs/rules/{info.code}.md"),
     ("properties", Lean.Json.mkObj [
@@ -710,8 +716,8 @@ is no such thing as percent-encoding a codepoint.
 
 The characters this handles are common ones. A space is forbidden in a URI outright; `#` would cut
 the reference short at a fragment; `?` would start a query; `%` would make any following pair look
-like an escape the consumer must decode. `lean-fmt` accepts whatever path the caller selects, so none
-of these are hypothetical — they are ordinary macOS and Windows filenames. -/
+like an escape the consumer must decode. `lean-fmt` accepts whatever path the caller selects, so
+none of these are hypothetical — they are ordinary macOS and Windows filenames. -/
 private def uriPathEncode (path : String) : String := Id.run do
   let hexDigit (n : Nat) : Char :=
     if n < 10 then Char.ofNat ('0'.toNat + n) else Char.ofNat ('A'.toNat + (n - 10))
@@ -754,15 +760,16 @@ private def sarifResult (positions : PositionIndex) (path : String) (finding : F
     ("locations", Lean.Json.arr #[sarifLocation path (some (sarifRegion start stop finding.range))])
   ] ++ (match finding.fix? with
     | some fix =>
-      -- Applicability, not `result.fixes`. A SARIF fix names regions in character or line/column
-      -- terms while our edits are normalized byte ranges, and §3.30.4 forbids stating both.
-      -- `--output-format json` carries the exact edits (`notes/01-report-formats.md` §6.4).
+      -- Applicability, not `result.fixes`. A SARIF fix names regions in character or
+      -- line/column terms while our edits are normalized byte ranges, and §3.30.4 forbids stating
+      -- both. `--output-format json` carries the exact edits (`notes/01-report-formats.md` §6.4).
       [("properties", Lean.Json.mkObj [("fixApplicability", .str fix.applicability.toWire)])]
     | none => [])
 
-/-- A notification, not a result. §3.20.21: an `error` notification "SHALL mean that the run failed",
-and "A SARIF consumer SHALL NOT assume that a failed run contains a complete set of analysis results."
-A `result` cannot say the analysis did not complete, which is what exit code 2 means. -/
+/-- A notification, not a result. §3.20.21: an `error` notification "SHALL mean that the run
+failed", and "A SARIF consumer SHALL NOT assume that a failed run contains a complete set of
+analysis results." A `result` cannot say the analysis did not complete, which is what exit code 2
+means. -/
 private def sarifNotification (path? : Option String) (message : String) : Lean.Json :=
   Lean.Json.mkObj <| [
     ("level", .str "error"),
@@ -793,8 +800,8 @@ private def sarifReport (positions : PositionIndex) (root : String) (report : Ru
         notifications := notifications.push (sarifNotification (some file.path) diagnostic)
     for failure in report.infrastructureFailures do
       notifications := notifications.push (sarifNotification none failure)
-    -- Descriptors for the codes this run reported. A descriptor for a rule that could not have
-    -- fired describes a run that did not happen.
+    -- Descriptors for the codes this run reported. A descriptor for a rule that could not
+    -- have fired describes a run that did not happen.
     let descriptors := codes.filterMap fun code =>
       (ruleInfoByCode? code).map sarifRuleDescriptor
     let log := Lean.Json.mkObj [
@@ -806,8 +813,8 @@ private def sarifReport (positions : PositionIndex) (root : String) (report : Ru
           ("name", .str "lean-fmt"),
           ("informationUri", .str "https://github.com/jcreinhold/lean-fmt"),
           ("rules", Lean.Json.arr descriptors)])]),
-        -- §3.14.27 makes this a SHALL whenever results are non-empty, and the JSON schema does not
-        -- encode it. `unicodeCodePoints` names the encoding `ruff-14` already froze.
+        -- §3.14.27 makes this a SHALL whenever results are non-empty, and the JSON schema
+        -- does not encode it. `unicodeCodePoints` names the encoding `ruff-14` already froze.
         ("columnKind", .str "unicodeCodePoints"),
         ("originalUriBaseIds", Lean.Json.mkObj [
           ("%SRCROOT%", Lean.Json.mkObj [("uri", .str root)])]),
@@ -829,15 +836,15 @@ private def sarifReport (positions : PositionIndex) (root : String) (report : Ru
 
 /-! ### `junit`
 
-There is no official JUnit XML specification — `testmoapp/junitxml`, the reference this targets, says
-so in its first paragraph. This renders the documented common subset and claims nothing more. -/
+There is no official JUnit XML specification — `testmoapp/junitxml`, the reference this targets,
+says so in its first paragraph. This renders the documented common subset and claims nothing more. -/
 
 /-- XML escaping for text and attribute values. `&` first, for the same reason `%` goes first in the
 GitHub escaper.
 
-XML 1.0 cannot represent most C0 controls at all, not even escaped, so anything below U+0020 other
-than tab/LF/CR becomes U+FFFD. A rule message cannot contain one today — but a **path** can, and one
-stray control byte in a filename would otherwise stop a parser reading the whole report. -/
+XML 1.0 cannot represent most C0 controls at all, not even escaped, so anything below U+0020
+other than tab/LF/CR becomes U+FFFD. A rule message cannot contain one today — but a **path** can,
+and one stray control byte in a filename would otherwise stop a parser reading the whole report. -/
 private def xmlEscape (value : String) : String :=
   let replaced := value.replace "&" "&amp;" |>.replace "<" "&lt;" |>.replace ">" "&gt;"
     |>.replace "\"" "&quot;" |>.replace "'" "&apos;"
@@ -887,8 +894,8 @@ private def junitReport (positions : PositionIndex) (report : RunReport) : Strin
         type := statusRuleId, detail := flattenMessage diagnostic, isError := true }
     let failures := cases.foldl (fun total case => if case.isError then total else total + 1) 0
     let errors := cases.size - failures
-    -- A clean file emits a *passing* case, not an empty suite: a suite with zero cases reads to most
-    -- CI dashboards as "no tests ran", not "nothing wrong".
+    -- A clean file emits a *passing* case, not an empty suite: a suite with zero cases reads
+    -- to most CI dashboards as "no tests ran", not "nothing wrong".
     let body :=
       if cases.isEmpty then
         s!"    <testcase name=\"{xmlEscape file.path}\" classname=\"{xmlEscape file.path}\" />\n"
@@ -941,10 +948,10 @@ private def writeReportFile (path : String) (contents : String) : IO Unit := do
 
 /-- Emit a report to stdout or to `--output-file`.
 
-**A closed stdout is not an error.** `lean-fmt check … | head -1` is the standard idiom, and a
-`lean-fmt: broken pipe` in the user's terminal — or a failed pipeline — would be the wrong answer to
-it. Nothing handled `EPIPE` before this stack; that gap predates the new formats and this closes it
-for all six. A failure to write an `--output-file` is a different case and stays fatal (§9.2):
+**A closed stdout is not an error.** `lean-fmt check … | head -1` is the standard idiom, and
+a `lean-fmt: broken pipe` in the user's terminal — or a failed pipeline — would be the wrong answer
+to it. Nothing handled `EPIPE` before this stack; that gap predates the new formats and this closes
+it for all six. A failure to write an `--output-file` is a different case and stays fatal (§9.2):
 otherwise it loses data silently. -/
 private def emitReport (outputFile? : Option String) (contents : String) : IO Unit :=
   match outputFile? with
@@ -956,8 +963,8 @@ private def renderReport (format : ReportFormat) (report : RunReport) : IO Unit 
 
 /-- Reject an `--output-file` this run could not write, **before** the run happens.
 
-An analysis that then cannot write its report has wasted the whole run. The message names the
-caller's own argument, as every other path-taking surface here does. -/
+An analysis that then cannot write its report has wasted the whole run. The message names
+the caller's own argument, as every other path-taking surface here does. -/
 private def validateOutputFile (path : String) : IO (Except String Unit) := do
   let target := FilePath.mk path
   if ← target.isDir then
@@ -971,8 +978,8 @@ private def validateOutputFile (path : String) : IO (Except String Unit) := do
 /-- The absolute `file://` URI SARIF's `%SRCROOT%` resolves relative paths against, with the trailing
 slash the base of a relative reference needs.
 
-The same rule encodes the root as a result's path: a checkout under `~/My Projects/` is not a corner
-case, and a space here would break every URI in the run rather than one. -/
+The same rule encodes the root as a result's path: a checkout under `~/My Projects/` is not
+a corner case, and a space here would break every URI in the run rather than one. -/
 private def rootUri (root : FilePath) : IO String := do
   let absolute ← try IO.FS.realPath root catch _ => pure root
   return s!"file://{uriPathEncode absolute.toString}/"
@@ -983,10 +990,10 @@ private def renderStatistics (report : RunReport) : IO Unit :=
     broken={report.broken} rejected={report.rejected} withheld_unsafe={report.withheldUnsafe} \
     suppressed={report.suppressed} infrastructure_failures={report.infrastructureFailures.size}"
 
-/-- `writer` is whether this run publishes source (`fix`, or `format` without `--check`). A writer that
-successfully published a change exits 0, like `ruff format`/`ruff check --fix`; a non-writing preview
-(`check`, `diff`, `format --check`) exits 1 when anything would change (the CI code). Both exit 2 on
-infrastructure failure and 1 on a broken/rejected file. -/
+/-- `writer` is whether this run publishes source (`fix`, or `format` without `--check`). A
+writer that successfully published a change exits 0, like `ruff format`/`ruff check --fix`; a
+non-writing preview (`check`, `diff`, `format --check`) exits 1 when anything would change (the CI
+code). Both exit 2 on infrastructure failure and 1 on a broken/rejected file. -/
 private def reportExitCode (writer : Bool) (report : RunReport) : UInt32 :=
   if !report.infrastructureFailures.isEmpty then 2
   else if report.broken > 0 || report.rejected > 0 then 1
@@ -1001,11 +1008,11 @@ private def renderRules (format : ReportFormat) : IO Unit :=
       let enabled := if info.defaultEnabled then "default" else "optional"
       IO.println s!"{info.code}\t{info.category}\t{info.lifecycle.toWire}\t{fix}\t{enabled}\t{info.summary}"
 
-/-- `explain RULE` — one rule's full description, all of it from the registry. A live rule prints
-its `explainText`/`ruleInfoJson`; a retired code prints its disposition; a meta self-diagnostic
-(`FMT900`/`FMT901`, which no registry holds because neither is selectable) prints its description.
-All three exit 0, because `explain` is discovery. Only a token the product could never have emitted
-errors (exit 2). -/
+/-- `explain RULE` — one rule's full description, all of it from the registry. A live rule
+prints its `explainText`/`ruleInfoJson`; a retired code prints its disposition; a meta
+self-diagnostic (`FMT900`/`FMT901`, which no registry holds because neither is selectable) prints
+its description. All three exit 0, because `explain` is discovery. Only a token the product could
+never have emitted errors (exit 2). -/
 private def renderExplain (format : ReportFormat) (code : String) : IO UInt32 := do
   match ruleInfoByCode? code with
   | some info =>
@@ -1033,8 +1040,9 @@ private def renderExplain (format : ReportFormat) (code : String) : IO UInt32 :=
         IO.eprintln s!"unknown rule: {code}"
         return 2
 
-/-- `docs` — generate `docs/rules/{index,FMT###}.md` from the registry, or (`--check`) verify the
-committed tree matches, which is the doc-drift / undocumented-rule invariant (`notes/01-schema.md` §9). -/
+/-- `docs` — generate `docs/rules/{index,FMT###}.md` from the registry, or (`--check`)
+verify the committed tree matches, which is the doc-drift / undocumented-rule invariant
+(`notes/01-schema.md` §9). -/
 private def runDocs (root : FilePath) (check : Bool) : IO UInt32 := do
   let dir := root / "docs" / "rules"
   if check then
@@ -1106,9 +1114,9 @@ private def parseConfigShowArgs (args : List String) :
       else loop rest root config? (some option) format
   loop args "." none none .text
 
-/- Text rendering is deliberately one `key = value  (origin)` line per setting with no alignment
-padding: callers diff and grep this output between runs, and column padding lets an unrelated key's
-length change every other line. -/
+/- Text rendering is deliberately one `key = value  (origin)` line per setting with no
+alignment padding: callers diff and grep this output between runs, and column padding lets an
+unrelated key's length change every other line. -/
 private def renderConfigShow (format : ReportFormat) (report : ConfigReport) : IO Unit :=
   match format with
   | .json => IO.println (Lean.toJson report).compress
@@ -1130,8 +1138,8 @@ private def renderConfigShow (format : ReportFormat) (report : ConfigReport) : I
     for setting in report.settings do
       IO.println s!"  {setting.key} = {setting.value}  ({setting.origin})"
 
-/-- One stream answer viewed as a one-file run report, so the four finding-shaped renderers serve the
-stdin surface without a second implementation of any of them. -/
+/-- One stream answer viewed as a one-file run report, so the four finding-shaped renderers
+serve the stdin surface without a second implementation of any of them. -/
 private def streamAsRunReport (mode : RunMode) (report : StreamReport) : RunReport :=
   { mode := mode.toString
     files := #[{ path := report.path, status := report.status,
@@ -1146,10 +1154,10 @@ private def streamAsRunReport (mode : RunMode) (report : StreamReport) : RunRepo
 
 /-- Render one stream answer.
 
-**stdout carries the result and nothing else** — bytes for `format`/`fix`, a unified diff for `diff`,
-nothing for `check`/`format --check`. Findings and the range report go to stderr in text mode so a
-pipe consumer needs no framing (`notes/01-stream-range.md` §5.1). `--json` puts the whole answer,
-source map included, on stdout instead, because a machine consumer asked for structure.
+**stdout carries the result and nothing else** — bytes for `format`/`fix`, a unified diff for
+`diff`, nothing for `check`/`format --check`. Findings and the range report go to stderr in text
+mode so a pipe consumer needs no framing (`notes/01-stream-range.md` §5.1). `--json` puts the whole
+answer, source map included, on stdout instead, because a machine consumer asked for structure.
 
 The reported actual range is printed even when it is wider than the request: a caller cannot work
 that widening out for itself, and hiding it would leave the "outside this range is untouched"
@@ -1169,9 +1177,10 @@ private def renderStream (mode : RunMode) (format : ReportFormat) (outputFile? :
     if let some actual := report.actual? then
       IO.eprintln s!"{report.path}: formatted range {actual.start}-{actual.stop}"
   | _ =>
-    -- stdout still carries the result and nothing else (`ruff-14` §5.1), so a finding-shaped report
-    -- goes to stderr — beside where text mode already puts findings — unless the caller named a file
-    -- for it. Putting it on stdout would corrupt the bytes a `format -` consumer is piping.
+    -- stdout still carries the result and nothing else (`ruff-14` §5.1), so a finding-shaped
+    -- report goes to stderr — beside where text mode already puts findings — unless the caller
+    -- named a file for it. Putting it on stdout would corrupt the bytes a `format -` consumer is
+    -- piping.
     if let some diff := report.diff then IO.print diff
     if let some output := report.output then IO.print output
     let rendered := formatReport format positions root (streamAsRunReport mode report)
@@ -1181,22 +1190,25 @@ private def renderStream (mode : RunMode) (format : ReportFormat) (outputFile? :
 
 /-- Exit code for a stream answer.
 
-The file-target rule (`reportExitCode`) with one substitution: a stdin mode that **emits** its result
-is the writer, so `format -` and `fix -` exit 0 having streamed, as their file-target forms exit 0
-having published. `check`, `diff`, and `format --check` stay previews and keep the CI code. -/
+The file-target rule (`reportExitCode`) with one substitution: a stdin mode that **emits**
+its result is the writer, so `format -` and `fix -` exit 0 having streamed, as their file-target
+forms exit 0 having published. `check`, `diff`, and `format --check` stay previews and keep the CI
+code. -/
 private def streamExitCode (writer : Bool) (report : StreamReport) : UInt32 :=
   if report.status == "broken" || report.status == "rejected" then 1
   else if !writer && report.changed then 1 else 0
 
 private unsafe def runStreamCommand (mode : RunMode) (command : FileCommand)
     (filename : String) : IO UInt32 := do
-  -- Read bytes and decode here rather than through `IO.FS.Stream.readToEnd`, which throws its own
-  -- wording ("Tried to read from stream containing non UTF-8 data"). §6 names the message a caller
-  -- sees, and the contract fixes that message, so it must not be the runtime's chance phrasing.
+  -- Read bytes and decode here rather than through `IO.FS.Stream.readToEnd`, which throws
+  -- its own wording ("Tried to read from stream containing non UTF-8 data"). §6 names the message
+  -- a caller sees, and the contract fixes that message, so it must not be the runtime's chance
+  -- phrasing.
   let bytes ← (← IO.getStdin).readBinToEnd
   let some raw := String.fromUTF8? bytes
     | IO.eprintln "lean-fmt: stdin is not valid UTF-8"; return 2
-  -- Ranges index the normalized source, the one coordinate system every offset in this product uses.
+  -- Ranges index the normalized source, the one coordinate system every offset in this
+  -- product uses.
   let (normalized, _) := LosslessSource.normalize raw
   let range? ← match command.range? with
     | none => pure none
@@ -1220,8 +1232,8 @@ private unsafe def runStreamCommand (mode : RunMode) (command : FileCommand)
     unsafeFixes := command.run.unsafeFixes
     formatCheck := command.run.formatCheck
   }
-  -- The buffer never became a project snapshot, so the CLI that decoded it is the only holder of the
-  -- bytes a line/column resolution needs.
+  -- The buffer never became a project snapshot, so the CLI that decoded it is the only
+  -- holder of the bytes a line/column resolution needs.
   let positions := PositionIndex.ofSource report.path normalized report.findings
   renderStream mode command.outputFormat command.outputFile? positions
     (← rootUri command.run.root) report
@@ -1232,10 +1244,10 @@ generation is *the same thing* a plain run is — there is no second execution o
 (`notes/01-watch-generations.md` §3, §4). -/
 private unsafe def runOneGeneration (command : FileCommand) : IO UInt32 := do
   let outcome ← execute command.run
-  -- The one presentation phase on the profile channel. `ruff-15` measured rendering as linear in
-  -- report size and *not* a scale risk, so this exists to keep the accounted fraction honest rather
-  -- than because it is suspected — a phase schema that omits a step because someone expects it to be
-  -- cheap cannot notice the day it stops being cheap.
+  -- The one presentation phase on the profile channel. `ruff-15` measured rendering as
+  -- linear in report size and *not* a scale risk, so this exists to keep the accounted fraction
+  -- honest rather than because it is suspected — a phase schema that omits a step because someone
+  -- expects it to be cheap cannot notice the day it stops being cheap.
   let rendered ← withPhase "render_report" <|
     pure (formatReport command.outputFormat outcome.positions (← rootUri command.run.root)
       outcome.report)
@@ -1245,19 +1257,20 @@ private unsafe def runOneGeneration (command : FileCommand) : IO UInt32 := do
 
 /-- Resolve a `--changed` selection into the request's file list.
 
-Returns `none` when version control selected nothing, which is a **success that must not run**: an
-empty `files` array means "the whole project" to `execute`, so passing an empty selection through
-would format everything — the opposite of what the caller asked for. §9.6 requires an explicit
-notice rather than a silent clean report, because "nothing changed" and "the project is clean" are
-two facts a CI log must be able to tell apart. -/
+Returns `none` when version control selected nothing, which is a **success that must not
+run**: an empty `files` array means "the whole project" to `execute`, so passing an empty selection
+through would format everything — the opposite of what the caller asked for. §9.6 requires an
+explicit notice rather than a silent clean report, because "nothing changed" and "the project is
+clean" are two facts a CI log must be able to tell apart. -/
 private def resolveChanged (command : FileCommand) (comparison : GitSelection.Comparison) :
     IO (Except String (Option FileCommand)) := do
   match ← GitSelection.select command.run.root comparison with
   | .error message => return .error message
   | .ok selection =>
-    -- Provenance goes to stderr rather than into `RunReport`. `RunReport` is `ruff-15`'s frozen JSON
-    -- compatibility surface, compared byte-for-byte against `01-json-golden-check.json`; adding a
-    -- field would break that contract to carry presentation (`results/02-implementation.md`).
+    -- Provenance goes to stderr rather than into `RunReport`. `RunReport` is `ruff-15`'s
+    -- frozen JSON compatibility surface, compared byte-for-byte against
+    -- `01-json-golden-check.json`; adding a field would break that contract to carry presentation
+    -- (`results/02-implementation.md`).
     IO.eprintln s!"lean-fmt: changed-file selection: {selection.comparison.describe}"
     if let some resolved := selection.resolvedBase? then
       IO.eprintln s!"lean-fmt: resolved base: {resolved}"
@@ -1274,10 +1287,10 @@ private def resolveChanged (command : FileCommand) (comparison : GitSelection.Co
 
 /-- The child argv for one watch generation: the caller's own arguments with the watch flags removed.
 
-Rebuilt from the raw argument list rather than re-rendered from the parsed `FileCommand`, so a child
-runs *exactly* what the user asked for. Re-rendering would mean keeping a second, silently diverging
-spelling of every flag, and once those diverge the watched run and the plain run analyze different
-things. -/
+Rebuilt from the raw argument list rather than re-rendered from the parsed `FileCommand`, so
+a child runs *exactly* what the user asked for. Re-rendering would mean keeping a second, silently
+diverging spelling of every flag, and once those diverge the watched run and the plain run analyze
+different things. -/
 private def generationArgs (mode : RunMode) (args : List String) : Array String := Id.run do
   let mut out : Array String := #[mode.toString]
   let mut remaining := args
@@ -1314,9 +1327,9 @@ private unsafe def runFileCommand (mode : RunMode) (args : List String) : IO UIn
       return 2
   try
     if command.watch then
-      -- Each generation is a complete `execute` over the whole project, not a changed-file subset:
-      -- the fixed per-run cost (workspace load, discovery and cache epoch) does not vary with file
-      -- count, so selecting a subset would save little and give up the completeness guarantee
+      -- Each generation is a complete `execute` over the whole project, not a changed-file
+      -- subset: the fixed per-run cost (workspace load, discovery and cache epoch) does not vary
+      -- with file count, so a subset would save little and give up the completeness guarantee
       -- (`notes` §4, `evidence` §3). The aggregate result cache already supplies the
       -- incrementality, per file and keyed on content.
       -- **Each generation is a fresh child process**, not a second in-process `execute`.
@@ -1324,26 +1337,25 @@ private unsafe def runFileCommand (mode : RunMode) (args : List String) : IO UIn
       -- The reason first written here was wrong; `ruff-16b` RCI-FINAL corrected it. It claimed a
       -- second `execute` in one process cannot reuse the result cache. `execute` opens a fresh
       -- `ResultCache` per call and retains no in-process state to go stale, and the comparison
-      -- behind the claim timed two different workloads, cold-after-edit against an unchanged tree.
-      -- Its slow side was the whole-project cache invalidation `ruff-16b` then removed.
+      -- behind the claim timed two different workloads, cold-after-edit against an unchanged tree;
+      -- its slow side was the whole-project cache invalidation `ruff-16b` then removed.
       --
-      -- Re-exec stays, on its own measurement rather than that one: spawning costs little beside a
-      -- warm generation. The fixed cost is workspace load, discovery and epoch computation, which
-      -- an in-process generation pays too, *unless* it retains the workspace across generations.
-      -- Retention is the only real saving, and it is the one to refuse: deciding a generation
-      -- against build state observed before the edit is the staleness class `ruff-16b` exists to
-      -- remove, and it would need `open?`'s refusal to manufacture a partial epoch weakened to be
-      -- worth anything.
+      -- Re-exec stays on its own measurement: spawning costs little beside a warm generation. The
+      -- fixed cost is workspace load, discovery and epoch computation, which an in-process
+      -- generation pays too, *unless* it retains the workspace across generations. Retention is
+      -- the only real saving, and the one to refuse: deciding a generation against build state
+      -- observed before the edit is the staleness class `ruff-16b` exists to remove, and it would
+      -- need `open?`'s refusal to manufacture a partial epoch weakened to be worth anything.
       --
-      -- Re-exec buys the parent's memory staying flat across generations, which is "no workspace
+      -- Re-exec buys the parent's memory staying flat across generations — "no workspace
       -- retention" as `notes` §6 permitted, now measured rather than assumed. The child inherits
       -- this process's stdout and stderr, so framing (§7) is unchanged, and a generation that dies
       -- cannot take the session with it.
       let self ← IO.appPath
       Watch.run { root := command.run.root, configPath? := command.run.configPath?,
                   pollMillis := command.pollMillis } fun counter => do
-        -- The banner goes to stderr so a line-oriented consumer's stdout stays uncontaminated, and a
-        -- document-format consumer is reading `--output-file` anyway (§7).
+        -- The banner goes to stderr so a line-oriented consumer's stdout stays
+        -- uncontaminated, and a document-format consumer is reading `--output-file` anyway (§7).
         IO.eprintln s!"lean-fmt: generation {counter}"
         try
           let child ← IO.Process.spawn {
@@ -1354,12 +1366,12 @@ private unsafe def runFileCommand (mode : RunMode) (args : List String) : IO UIn
           if code != 0 && code != 1 then
             IO.eprintln s!"lean-fmt: generation {counter} exited {code}"
         catch error =>
-          -- One generation's failure must not end the session: the user's next edit is often the
-          -- fix. Report it and keep watching (roadmap: "failure recovery").
+          -- One generation's failure must not end the session: the user's next edit is often
+          -- the fix. Report it and keep watching (roadmap: "failure recovery").
           IO.eprintln s!"lean-fmt: generation {counter} failed: {error}"
-      -- `Watch.run` does not return; a signal ends the session. Exit 0 because asking a long-running
-      -- service to stop is not a failure, and because every write is atomic temp-then-rename, an
-      -- abrupt exit cannot leave a torn report (§8).
+      -- `Watch.run` does not return; a signal ends the session. Exit 0 because asking a
+      -- long-running service to stop is not a failure, and because every write is atomic
+      -- temp-then-rename, an abrupt exit cannot leave a torn report (§8).
       return 0
     let command ← match command.changed? with
       | none => pure command

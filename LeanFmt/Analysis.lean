@@ -23,8 +23,9 @@ import Std.Sync.Mutex
 
 namespace LeanFmt.Internal
 
-/- The process response is deliberately semantic. It contains neither setup paths nor execution
-strategy, so the parent cannot accidentally key reporting on how it obtained the analysis. -/
+/- The process response is deliberately semantic. It contains neither setup paths nor
+execution strategy, so the parent cannot accidentally key reporting on how it obtained the
+analysis. -/
 structure AnalysisEnvelope where
   artifact? : Option ModuleArtifact
   commentSummary? : Option CommentSummary := none
@@ -44,21 +45,23 @@ private def candidateFailure (gate : ValidationGate) (detail : String) :
     CandidateValidationEnvelope :=
   { failure? := some { gate, detail } }
 
-/- Silent messages are carriers, not diagnostics. The compiler plugin writes command records into
-the persistent lint log as a silent `.information` message, so an integrated project's own frontend run
-sees it in the log alongside real errors. Reporting it would print the whole serialized projection as
-a broken-source diagnostic. Found by `tests/downstream/run.sh`: it needs a plugin-enabled project *and*
-a file that elaborates far enough for a command linter to run, which is why no in-repo broken fixture
-caught it — `MalformedHeader` and `UnresolvedImport` both fail before the linter fires. -/
+/- Silent messages are carriers, not diagnostics. The compiler plugin writes command
+records into the persistent lint log as a silent `.information` message, so an integrated project's
+own frontend run sees it in the log alongside real errors. Reporting it would print the whole
+serialized projection as a broken-source diagnostic. Found by `tests/downstream/run.sh`: it needs a
+plugin-enabled project *and* a file that elaborates far enough for a command linter to run, which
+is why no in-repo broken fixture caught it — `MalformedHeader` and `UnresolvedImport` both fail
+before the linter fires. -/
 private def messageStrings (messages : Lean.MessageLog) : IO (Array String) :=
   messages.toArray.filter (!·.isSilent) |>.mapM (·.toString true)
 
 private def broken (messages : Lean.MessageLog) : IO AnalysisEnvelope := do
   return { artifact? := none, diagnostics := ← messageStrings messages }
 
-/-- An actual parsed command paired with the frontend state immediately before elaborating it. The
-pre-state supplies precisely the options and formatter registrations under which the parser accepted
-that command; persistent environments share their unchanged structure across these short-lived rows. -/
+/-- An actual parsed command paired with the frontend state immediately before
+elaborating it. The pre-state supplies precisely the options and formatter registrations under
+which the parser accepted that command; persistent environments share their unchanged structure
+across these short-lived rows. -/
 private structure LiveCommand where
   stx : Lean.Syntax
   env : Lean.Environment
@@ -182,21 +185,23 @@ private def buildFormatDraft (normalized : String) (source : LosslessSource)
     | .explicit _ => explicitDocuments := explicitDocuments + 1
     | .descriptor => descriptorDocuments := descriptorDocuments + 1
     let indentation := Doc.text ("".pushn ' ' placement.indent)
-    -- Command-boundary trivia belongs to whole-module composition. Registered command syntax is
-    -- boundary-stripped before delegation, so the ownership layer remains its sole outer emitter.
+    -- Command-boundary trivia belongs to whole-module composition. Registered command
+    -- syntax is boundary-stripped before delegation, so the ownership layer remains its sole
+    -- outer emitter.
     --
     -- A docstring is command syntax even though Lean stores its opening token in the following
-    -- token's `SourceInfo`, so its structural document is that opening's sole emitter. This
-    -- used to be enforced here, by dropping the command's *entire* leading trivia whenever it
-    -- contained doc syntax -- which also dropped an ordinary line comment written above the
-    -- docstring, silently, and is the defect 23e names D8. The exclusion is by comment kind now, and
-    -- it lives in `Trivia.commandLeading` where the comments are selected.
+    -- token's `SourceInfo`, so its structural document is that opening's sole emitter. This used
+    -- to be enforced here, by dropping the command's *entire* leading trivia whenever it contained
+    -- doc syntax — which also dropped an ordinary line comment written above the docstring,
+    -- silently, and is the defect 23e names D8. The exclusion is by comment kind now, and it lives
+    -- in `Trivia.commandLeading` where the comments are selected.
     let leadingTrivia :=
       match Formatter.Trivia.leading ownership command.stx with
       | some comments =>
-        -- The source's own blank line between a leading comment and its command. `Command.place` owns
-        -- the boundary between commands, and this gap is inside one command's unit, so nothing else
-        -- supplies it -- which is why every file's copyright block ended flush against `module`.
+        -- The source's own blank line between a leading comment and its command.
+        -- `Command.place` owns the boundary between commands, and this gap is inside one
+        -- command's unit, so nothing else supplies it — which is why every file's copyright block
+        -- ended flush against `module`.
         comments ++ Formatter.Trivia.leadingBoundary ownership command.stx
       | none => Doc.empty
     let trailingTrivia := match Formatter.Trivia.trailing ownership command.stx stop with
@@ -250,15 +255,16 @@ private def ofMessageSeverity : Lean.MessageSeverity → Severity
   | .warning => .warning
   | .error => .error
 
-/- Normalize the compiler diagnostics the exact frontend emitted into immutable rule facts. Only the
-`kind`s the semantic rules surface (`surfacedDiagnosticKinds`) are kept — one source of truth shared
-with the rules — so the artifact never carries a diagnostic no rule reads. `msg.kind` is the pure
-top-level tag; only matching messages are serialized (`msg.serialize`, which renders `data` and needs
-`BaseIO`). Each message's `Position` is converted to a normalized-source byte offset through the
-frontend's `FileMap` — `mkInputContext` built it on `crlfToLf`-normalized source, so it shares the
-projection's coordinate system — and the range is clamped to `[0, sourceBytes]`, dropping any position
-that a macro reattribution placed outside this module's own bytes (`ruff-11` `notes/01-authority.md`
-§§4-5,12). No `Environment`, `Position`, or `FileMap` crosses into a rule; only this data. -/
+/- Normalize the compiler diagnostics the exact frontend emitted into immutable rule facts.
+Only the `kind`s the semantic rules surface (`surfacedDiagnosticKinds`) are kept — one source of
+truth shared with the rules — so the artifact never carries a diagnostic no rule reads. `msg.kind`
+is the pure top-level tag; only matching messages are serialized (`msg.serialize`, which renders
+`data` and needs `BaseIO`). Each message's `Position` is converted to a normalized-source byte
+offset through the frontend's `FileMap` — `mkInputContext` built it on `crlfToLf`-normalized
+source, so it shares the projection's coordinate system — and the range is clamped to
+`[0, sourceBytes]`, dropping any position that a macro reattribution placed outside this module's
+own bytes (`ruff-11` `notes/01-authority.md` §§4-5,12). No `Environment`, `Position`, or `FileMap`
+crosses into a rule; only this data. -/
 private def captureDiagnostics (fileMap : Lean.FileMap) (sourceBytes : Nat)
     (messages : Lean.MessageLog) : IO (Array Diagnostic) := do
   let mut diagnostics := #[]
@@ -279,28 +285,28 @@ private def captureDiagnostics (fileMap : Lean.FileMap) (sourceBytes : Nat)
         }
   return diagnostics
 
-/- The user-facing display of a resolved constant: the module-private mangling (`_private.M.0.foo`)
-stripped to what the source writes (`foo`, or a qualified `Foo.bar`). Pure on `Name` — no `Environment`
-— so it is a fact the rule reads as a plain string, never a `Name`. -/
+/- The user-facing display of a resolved constant: the module-private mangling
+(`_private.M.0.foo`) stripped to what the source writes (`foo`, or a qualified `Foo.bar`). Pure on
+`Name` — no `Environment` — so it is a fact the rule reads as a plain string, never a `Name`. -/
 private def occurrenceDisplay (n : Lean.Name) : String := (Lean.privateToUserName n).toString
 
-/- Re-derive the owned deprecation-occurrence facts from the whole-file info trees. This is the fold
-`ruff-11b` `ROS-SPEC` proved reachable through the same snapshot tree `analyzeExact` already walks for
-the message log (`notes/01-model.md` §2, `evidence/infotree_probe.lean`): every command's info tree
-lives on its `Snapshot.infoTree?`, so `tree.getAll.filterMap (·.infoTree?)` — a *consumer-side* fold,
-not a producer change — surfaces the whole file, avoiding the per-command info reset that would limit
-`waitForFinalCmdState?` to the last command.
+/- Re-derive the owned deprecation-occurrence facts from the whole-file info trees. This
+is the fold `ruff-11b` `ROS-SPEC` proved reachable through the same snapshot tree `analyzeExact`
+already walks for the message log (`notes/01-model.md` §2, `evidence/infotree_probe.lean`): every
+command's info tree lives on its `Snapshot.infoTree?`, so `tree.getAll.filterMap (·.infoTree?)` —
+a *consumer-side* fold, not a producer change — surfaces the whole file, avoiding the per-command
+info reset that would limit `waitForFinalCmdState?` to the last command.
 
-For each `TermInfo` whose elaborated `expr` *is* a constant (`.constName?` is `some` — which already
-excludes an applied receiver, whose term is an `.app`, and dot-notation, whose term is the application)
-that carries `@[deprecated]`, and which is a use rather than the declaration binder (`isBinder`), one
-occurrence is recorded. Ranges come straight from `Info.range?` — already normalized-source byte
-offsets (the parser positions index the string `mkInputContext` normalized), so unlike a diagnostic's
-`Position` they need no `FileMap` round-trip — clamped to the module's byte span. Each use-site emits
-its `TermInfo` more than once, so this deduplicates by range. `fixable` is decided here
-(`notes/01-model.md` §5): a `newName?` must exist and the occurrence must spell a single bare
-identifier token, the conservative predicate a textual rename preserves; everything else is
-report-only and the output re-elaboration validator backstops the rest. -/
+For each `TermInfo` whose elaborated `expr` *is* a constant (`.constName?` is `some` — which
+already excludes an applied receiver, whose term is an `.app`, and dot-notation, whose term is the
+application) that carries `@[deprecated]`, and which is a use rather than the declaration binder
+(`isBinder`), one occurrence is recorded. Ranges come straight from `Info.range?` — already
+normalized-source byte offsets (the parser positions index the string `mkInputContext` normalized),
+so unlike a diagnostic's `Position` they need no `FileMap` round-trip — clamped to the module's
+byte span. Each use-site emits its `TermInfo` more than once, so this deduplicates by range.
+`fixable` is decided here (`notes/01-model.md` §5): a `newName?` must exist and the occurrence must
+spell a single bare identifier token, the conservative predicate a textual rename preserves;
+everything else is report-only and the output re-elaboration validator backstops the rest. -/
 private def occurrenceOfInfo (ci : Lean.Elab.ContextInfo) (info : Lean.Elab.Info)
     (normalized : String) (sourceBytes : Nat) : Option DeprecatedOccurrence := do
   let .ofTermInfo ti := info | none
@@ -313,14 +319,15 @@ private def occurrenceOfInfo (ci : Lean.Elab.ContextInfo) (info : Lean.Elab.Info
   let spelled := String.fromUTF8! (normalized.toUTF8.extract start stop)
   let displayName := occurrenceDisplay declName
   let newName? := entry.newName?.map occurrenceDisplay
-  -- The occurrence is fixable only when its source spelling is *exactly* the resolved constant's own
-  -- full display name (`notes/01-model.md` §5.3-5.4): then replacing that whole span with the
-  -- replacement's full display re-resolves unambiguously to the new constant, independent of `open`/dot
-  -- context. A spelling that differs from the full name — an `open`-shadowed short name (`oldNs`
-  -- resolving to `N.oldNs`), a dot-notation projection head (`x.foo` resolving to `T.foo`), an applied
-  -- receiver with the constant implicit — is *not* a rename we can prove, so it stays report-only and
-  -- the compiler's own FMT012 diagnostic still reports it. Backstopped by the re-elaboration validator
-  -- (§6): even an accepted spelling that fails to resolve is caught before publish, never on disk.
+  -- The occurrence is fixable only when its source spelling is *exactly* the resolved
+  -- constant's own full display name (`notes/01-model.md` §5.3-5.4): then replacing that whole
+  -- span with the replacement's full display re-resolves unambiguously to the new constant,
+  -- independent of `open`/dot context. A spelling that differs from the full name — an
+  -- `open`-shadowed short name (`oldNs` resolving to `N.oldNs`), a dot-notation projection head
+  -- (`x.foo` resolving to `T.foo`), an applied receiver with the constant implicit — is *not* a
+  -- rename we can prove, so it stays report-only and the compiler's own FMT012 diagnostic still
+  -- reports it. Backstopped by the re-elaboration validator (§6): even an accepted spelling that
+  -- fails to resolve is caught before publish, never on disk.
   let fixable := newName?.isSome && spelled == displayName
   return {
     range := { start, stop }
@@ -364,18 +371,20 @@ private unsafe def processSource (setup : Lean.ModuleSetup) (source : String)
       opts := options
       trustLevel := 0
       importArts := setup.importArts
-      -- This executable already imports and links Lake, and the formatter's own compiler plugin only
-      -- records artifacts during builds. Reinitializing either in a persistent analyzer duplicates
-      -- runtime state (and the compiler plugin is not loadable from a direct editor launch on macOS).
-      -- Other target plugins remain: they may own syntax or elaborators the document needs.
+      -- This executable already imports and links Lake, and the formatter's own compiler
+      -- plugin only records artifacts during builds. Reinitializing either in a persistent
+      -- analyzer duplicates runtime state (and the compiler plugin is not loadable from a direct
+      -- editor launch on macOS). Other target plugins remain: they may own syntax or elaborators
+      -- the document needs.
       plugins := setup.plugins.filter (!isApplicationRuntimePlugin ·)
     }
   let context : Lean.Language.ProcessingContext := { input with }
   let snapshot ← Lean.Language.Lean.process setupImports old? context
   return { input, snapshot }
 
-/- Convert one completed frontend snapshot into the product's semantic envelope. Incremental
-processing changes only where the snapshot came from, never how formatter facts are derived. -/
+/- Convert one completed frontend snapshot into the product's semantic envelope.
+Incremental processing changes only where the snapshot came from, never how formatter facts are
+derived. -/
 private unsafe def analyzeSnapshot (setup : Lean.ModuleSetup) (source : String)
     (sourcePath : System.FilePath) (input : Lean.Parser.InputContext)
     (snapshot : Lean.Language.Lean.InitialSnapshot) (captureSemantic : Bool := false)
@@ -397,8 +406,8 @@ private unsafe def analyzeSnapshot (setup : Lean.ModuleSetup) (source : String)
   let (liveCommands, terminal?) ← processedLiveCommands snapshot checkCancelled
   checkCancelled
   let commands := liveCommands.map (·.stx)
-  -- Semantic rule facts are captured only under rule demand. The whole-file occurrence fold remains
-  -- separately gated, so report-only semantic checks do not pay for fix ownership.
+  -- Semantic rule facts are captured only under rule demand. The whole-file occurrence
+  -- fold remains separately gated, so report-only semantic checks do not pay for fix ownership.
   let normalizedSource := (LosslessSource.normalize source).1
   let semantic ← if captureSemantic then do
       let diagnostics ← captureDiagnostics input.fileMap normalizedSource.utf8ByteSize messages
@@ -407,8 +416,8 @@ private unsafe def analyzeSnapshot (setup : Lean.ModuleSetup) (source : String)
         else none
       pure (some { diagnostics, occurrences? })
     else pure none
-  -- `mkInputContext` normalized `source` before parsing it, so every offset above indexes the
-  -- normalized string. Measuring the artifact against `source` itself would mix two coordinate
+  -- `mkInputContext` normalized `source` before parsing it, so every offset above indexes
+  -- the normalized string. Measuring the artifact against `source` itself would mix two coordinate
   -- systems inside one artifact for any file that uses CRLF.
   let some terminal := terminal?
     | throw <| IO.userError "successful frontend produced no terminal command"
@@ -474,8 +483,8 @@ private unsafe def analyzeSnapshot (setup : Lean.ModuleSetup) (source : String)
     canonical? := canonical?
     validationFailure? := validationFailure? }
 
-/- Execute Lean's frontend under the exact target setup without retaining parser or environment
-state. Batch exact analysis remains deliberately one-shot. -/
+/- Execute Lean's frontend under the exact target setup without retaining parser or
+environment state. Batch exact analysis remains deliberately one-shot. -/
 unsafe def analyzeExact (setup : Lean.ModuleSetup) (source : String)
     (sourcePath : System.FilePath) (captureSemantic : Bool := false)
     (captureOccurrences : Bool := false) (captureComments : Bool := false)
@@ -519,9 +528,9 @@ private structure IncrementalState where
   counters : IncrementalCounters := {}
   closed : Bool := false
 
-/-- A single-document frontend session. Its constructor and state are private so callers can only
-use the bounded lifecycle operations below; in particular, no caller can retain snapshot history or
-invoke parse/elaboration stages out of order. -/
+/-- A single-document frontend session. Its constructor and state are private so callers
+can only use the bounded lifecycle operations below; in particular, no caller can retain snapshot
+history or invoke parse/elaboration stages out of order. -/
 structure IncrementalAnalyzer where
   private mk ::
     private state : Std.Mutex IncrementalState
@@ -642,8 +651,8 @@ opaque IncrementalAnalyzer.analyze (analyzer : IncrementalAnalyzer)
     (captureSemantic : Bool := false) (captureOccurrences : Bool := false)
     (captureComments : Bool := false) : IO IncrementalResult
 
-/-- Format the current document version through the same two-pass admission path as one-shot exact
-formatting. The validated canonical layout, if any, is in `result.envelope.canonical?`. -/
+/-- Format the current document version through the same two-pass admission path as one-shot
+exact formatting. The validated canonical layout, if any, is in `result.envelope.canonical?`. -/
 private unsafe def IncrementalAnalyzer.formatUnsafe (analyzer : IncrementalAnalyzer)
     (setup : Lean.ModuleSetup) (source : String) (sourcePath : System.FilePath)
     (width : Nat := 100) (captureSemantic : Bool := false)
@@ -656,8 +665,9 @@ opaque IncrementalAnalyzer.format (analyzer : IncrementalAnalyzer)
     (width : Nat := 100) (captureSemantic : Bool := false)
     (captureOccurrences : Bool := false) : IO IncrementalResult
 
-/-- Cancel the current update, if any. Lean recursively cancels only snapshot subtrees it has ruled
-out for reuse; the session marks the generation so it can never become the last-good snapshot. -/
+/-- Cancel the current update, if any. Lean recursively cancels only snapshot subtrees it
+has ruled out for reuse; the session marks the generation so it can never become the last-good
+snapshot. -/
 private unsafe def IncrementalAnalyzer.cancelUnsafe (analyzer : IncrementalAnalyzer) : IO Unit := do
   if let some flight ← analyzer.state.atomically fun ref => return (← ref.get).flight? then
     flight.cancelled.set true
@@ -672,7 +682,8 @@ def IncrementalAnalyzer.counters (analyzer : IncrementalAnalyzer) : IO Increment
 private def IncrementalAnalyzer.isRunning (analyzer : IncrementalAnalyzer) : IO Bool :=
   analyzer.state.atomically fun ref => return (← ref.get).flight?.isSome
 
-/-- Release the retained snapshot and reject all later operations. Closing twice is harmless. -/
+/-- Release the retained snapshot and reject all later operations. Closing twice is
+harmless. -/
 private unsafe def IncrementalAnalyzer.closeUnsafe (analyzer : IncrementalAnalyzer) : IO Unit := do
   let state ← analyzer.state.atomically fun ref => do
     let state ← ref.get
@@ -686,9 +697,9 @@ private unsafe def IncrementalAnalyzer.closeUnsafe (analyzer : IncrementalAnalyz
 @[implemented_by IncrementalAnalyzer.closeUnsafe]
 opaque IncrementalAnalyzer.close (analyzer : IncrementalAnalyzer) : IO Unit
 
-/-- Test-only admission of externally supplied candidate bytes through the same production
-comparator and second formatting pass. Product formatting never accepts candidate bytes from a
-caller; this operation exists so mutation fixtures can exercise the real gates. -/
+/-- Test-only admission of externally supplied candidate bytes through the same
+production comparator and second formatting pass. Product formatting never accepts candidate bytes
+from a caller; this operation exists so mutation fixtures can exercise the real gates. -/
 unsafe def validateCandidateExact (setup : Lean.ModuleSetup) (source candidate : String)
     (sourcePath : System.FilePath) (width : Nat) : IO CandidateValidationEnvelope := do
   let original ← analyzeExact setup source sourcePath (captureFormatDraft := true)
@@ -722,9 +733,10 @@ unsafe def validateCandidateExact (setup : Lean.ModuleSetup) (source candidate :
     return candidateFailure .structure
       "candidate validation did not produce both frontend projections"
 
-/- Render from a compiler-owned syntax artifact under the environment serialized in the matching
-target `.olean`. The original source is not elaborated. Only the produced candidate takes the exact
-frontend, which preserves the same structural and idempotence admission gates as `analyzeExact`. -/
+/- Render from a compiler-owned syntax artifact under the environment serialized in the
+matching target `.olean`. The original source is not elaborated. Only the produced candidate takes
+the exact frontend, which preserves the same structural and idempotence admission gates as
+`analyzeExact`. -/
 unsafe def analyzeArtifact (setup : Lean.ModuleSetup) (moduleFile : System.FilePath)
     (artifact : ModuleArtifact) (source : String) (sourcePath : System.FilePath)
     (formatWidth : Nat := 100) : IO AnalysisEnvelope := do
@@ -786,8 +798,9 @@ unsafe def analyzeArtifact (setup : Lean.ModuleSetup) (moduleFile : System.FileP
         gate := .structure
         detail := "candidate frontend returned no artifact or second draft" } }
 
-/- Extract the compiler-owned payload from one exact module artifact. Process exit remains the
-reclamation boundary; the returned value is compact and contains no environment-owned reference. -/
+/- Extract the compiler-owned payload from one exact module artifact. Process exit
+remains the reclamation boundary; the returned value is compact and contains no environment-owned
+reference. -/
 unsafe def compilerArtifact? (moduleName : Lean.Name)
     (moduleFile : System.FilePath) : IO (Option ModuleArtifact) := do
   Lean.initSearchPath (← Lean.findSysroot)

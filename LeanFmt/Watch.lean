@@ -14,10 +14,10 @@ namespace LeanFmt.Internal.Watch
 
 /-! # Bounded filesystem observation
 
-The private observer behind `watch`. It owns polling,
-debouncing, and the two retained snapshots that make coalescing bounded — and nothing else. It never
-runs an analysis, never renders, and never decides what a generation *does*: the caller supplies that
-as an action, so execution stays in `LeanFmt.Application` and rendering in `LeanFmt.Cli`.
+The private observer behind `watch`. It owns polling, debouncing, and the two retained snapshots
+that make coalescing bounded — and nothing else. It never runs an analysis, never renders, and never
+decides what a generation *does*: the caller supplies that as an action, so execution stays in
+`LeanFmt.Application` and rendering in `LeanFmt.Cli`.
 
 **Why polling.** `Std.Internal.UV` binds Signal, Timer, TCP, UDP, DNS and System, and not
 `uv_fs_event`/`uv_fs_poll`; no `inotify`/`FSEvents`/`kqueue` appears anywhere in `Init/` or `Std/`
@@ -38,8 +38,7 @@ rule (§5).
 control files of §6.
 
 Nanoseconds carry real values: repeated writes inside one wall-clock second produce distinct stamps,
-and a same-size rewrite stays distinguishable (`evidence` §2). Detection therefore needs no content
-digest.
+and a same-size rewrite stays distinguishable (`evidence` §2), so detection needs no content digest.
 
 **This bounds latency, never correctness.** On a filesystem with coarse `mtime` granularity a
 same-second same-size edit can produce an identical tuple and be missed by that poll. A generation

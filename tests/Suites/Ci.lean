@@ -8,8 +8,7 @@ public import Test
 Port of `tests/ci/run.sh`: the CI recipes in `docs/ci.md`, executed. A documented command nobody
 runs is a claim, not a recipe, and every claim in that document is about a *consuming* project: a
 git `require`, real commit history, and no warm state. This repository's own tree has none of
-those properties, so the suite builds a scratch consumer in a temporary directory and throws it
-away.
+those properties, so the suite builds a scratch consumer in a temp dir and throws it away.
 
 The pin is this working tree's HEAD, cloned over `file://`; the archive section reads
 `git archive`. Both read **committed** state, so uncommitted changes are not under test here —

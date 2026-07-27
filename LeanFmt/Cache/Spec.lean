@@ -25,23 +25,23 @@ What is statable, and what this module does: make the currency decision a pure f
 observation, specify what a correct answer is *independently* of that function, and prove both
 directions **under hypotheses that name every unprovable step**.
 
-The value is not the proof. It is that A1-A4 below must be listed, so "we think the cache is safe"
+The value is not the proof; it is that A1-A4 below must be listed. "We think the cache is safe"
 becomes "the cache is safe if and only if A1-A4 hold", and each can then be argued, tested, or
-rejected on its own. A2 is *false in general* and is accepted as a bounded race; that is the kind of
-fact this exercise is for.
+rejected on its own. A2 is *false in general* and is accepted as a bounded race — the kind of fact
+this exercise is for.
 
 ## Why `analyze` is a parameter, not a definition
 
-`notes/01-what-is-provable.md` §2 records the trap: if the specification of "what a run should
-compute" is defined as "whatever the cache returns", every theorem below is vacuous.
+`notes/01-what-is-provable.md` §2 records the trap: if "what a run should compute" is specified as
+"whatever the cache returns", every theorem below is vacuous.
 
 This module avoids that structurally rather than by discipline. `analyze` is **universally
 quantified** in every theorem. A definition could be written to match the implementation; a bound
 variable cannot. The theorems hold for *every* function of `(Grammar, Source)`, so nothing about the
 cache's own behavior can leak into the specification.
 
-That quantification is also how **A4 (analysis purity)** is discharged: by modelling analysis as a
-function of `(Grammar, Source)` alone, purity is assumed rather than proved. The justification is
+That quantification is also how **A4 (analysis purity)** is discharged: modelling analysis as a
+function of `(Grammar, Source)` alone assumes purity rather than proving it. The justification is
 external and type-level, not a proof — `Rules.lean` records that a rule "cannot reach a workspace, a
 cache, an `Environment`, or `IO` — not by convention but because `run`'s argument type is a fact
 view". A4 is the one assumption the repository's own types nearly enforce.
@@ -49,7 +49,7 @@ view". A4 is the one assumption the repository's own types nearly enforce.
 ## Why both directions
 
 `serves := fun _ _ _ => false` satisfies soundness perfectly: a cache that never hits never serves a
-stale result. "Prove the cache is valid" is discharged by disabling the cache. So soundness alone is
+stale result, so "prove the cache is valid" is discharged by disabling the cache. Soundness alone is
 worthless, and `serves_complete` is not a bonus theorem — it is half the content.
 `serves_hits_somewhere` below is the blunt version of the same check.
 
@@ -173,14 +173,14 @@ theorem source_current (hsd : Function.Injective sd) (hobs : Faithful sd gd o w)
 /-- **`grammar_current`** — the entry's artifact was built under `g`; establish `g` is the grammar the
 module is under *now*.
 
-This is the lemma the stack depends on, and stating it has already refuted two designs. It refuted
-per-module self-consistency (`notes/01-what-is-provable.md` §6: edit `A`, `A` rebuilds, `B` fails to
-build, and nothing is detected anywhere). Then `RCI-SPEC` refuted that note's proposed repair by
+This is the lemma the stack depends on, and stating it has already refuted two designs: per-module
+self-consistency (`notes/01-what-is-provable.md` §6: edit `A`, `A` rebuilds, `B` fails to build, and
+nothing is detected anywhere), then that note's proposed repair, which `RCI-SPEC` refuted by
 measurement — `X transitive imports (all)` excludes `X`, so comparing it would have passed on the
 stale grammar case.
 
-Uses **A1/A3** as injectivity of `gd`. That injectivity is a strong assumption: it says a change in
-the grammar a module was parsed under always changes the closure digest derived from Lake's traces.
+Uses **A1/A3** as injectivity of `gd`. That injectivity is a strong assumption: a change in the
+grammar a module was parsed under must always change the closure digest derived from Lake's traces.
 It is a claim about *Lake's implementation*, checked by reading `computeExportInfo`, confirmed by
 measurement, and pinned by `testLakeTraceCharacterization` — but still a hypothesis, not a
 theorem. -/
@@ -198,8 +198,8 @@ a `.source` entry never serves a selection requiring a syntax rule, an entry tha
 canonical text never serves a run that renders it, and an entry that captured fewer semantic sub-facts
 than the run demanded never serves it.
 
-Needs no assumption at all: it is a projection of the decision. It comes free because it is the one of
-the four obstacles wholly within this repository's control. -/
+Needs no assumption at all: it is a projection of the decision, and comes free because it is the one
+of the four obstacles wholly within this repository's control. -/
 theorem demand_met (h : serves e o demand = true) : e.provided.meets demand = true :=
   (serves_conjuncts h).2.2.2
 
@@ -207,8 +207,8 @@ theorem demand_met (h : serves e o demand = true) : e.provided.meets demand = tr
 
 /-- **If the cache serves an entry, that entry is what a fresh analysis would produce.**
 
-Assembly, and deliberately so: `analyze` is a function, so equal `(grammar, source)` gives equal
-analyses. All the content is in the three lemmas above and the hypotheses they carry.
+Assembly, deliberately: `analyze` is a function, so equal `(grammar, source)` gives equal analyses.
+All the content is in the three lemmas above and the hypotheses they carry.
 
 Depends on **A1** (`hsd`, `hgd`), **A2** (`hobs`), **A3** (folded into `hgd`), and **A4** (discharged
 by `analyze`'s type). `hbuilt` is not an assumption about the world — every entry the cache wrote
@@ -228,8 +228,8 @@ Without this, `serves := fun _ _ _ => false` would satisfy everything above. -/
 
 Note the difference from soundness: this needs **no injectivity**. Soundness needs digests to separate
 distinct values; completeness needs only that they are *functions*. So A1 and A3 matter for "never
-serve a stale result" and not at all for "do not needlessly miss", which is right: a digest collision
-causes a wrong answer, never a spurious recomputation. -/
+serve a stale result" and not at all for "do not needlessly miss" — rightly: a digest collision causes
+a wrong answer, never a spurious recomputation. -/
 theorem serves_complete (hobs : Faithful sd gd o w)
     (hschema : e.schema = w.schema)
     (hbuilt : BuiltFrom analyze sd gd e (w.grammar e.mod) (w.source e.mod))
@@ -248,9 +248,9 @@ completion contract's first bullet rather than a proof step. -/
 
 /-- **An entry built under a grammar that is no longer current is never served.**
 
-This is the stale-parse hazard in one line. Lean's grammar is open: a `notation` in `A` changes how
-`B`'s *unchanged bytes* parse, so `B`'s cached projection describes a tree those bytes no longer
-denote — and canonical text rendered from it can change what the code means. -/
+The stale-parse hazard in one line. Lean's grammar is open: a `notation` in `A` changes how `B`'s
+*unchanged bytes* parse, so `B`'s cached projection describes a tree those bytes no longer denote —
+and canonical text rendered from it can change what the code means. -/
 theorem stale_grammar_refused (hgd : Function.Injective gd) (hobs : Faithful sd gd o w)
     (hbuilt : BuiltFrom analyze sd gd e g s) (hstale : g ≠ w.grammar e.mod) :
     serves e o demand = false := by
@@ -304,8 +304,8 @@ private abbrev Asks : Demand := ⟨.source, {}, false⟩
 private abbrev Fresh : Entry Unit (Bool × Bool) Bool Bool Unit :=
   ⟨(), (), true, true, Provides, (true, true)⟩
 
-/-- The same entry built under the *old* grammar (`false`) — the stale-parse case. Note its analysis
-differs, which is exactly why serving it would be wrong. -/
+/-- The same entry built under the *old* grammar (`false`) — the stale-parse case. Its analysis differs,
+which is exactly why serving it would be wrong. -/
 private abbrev Stale : Entry Unit (Bool × Bool) Bool Bool Unit :=
   ⟨(), (), true, false, Provides, (false, true)⟩
 

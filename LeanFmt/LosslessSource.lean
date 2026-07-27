@@ -11,9 +11,7 @@ module
 Every offset in this module indexes the *normalized* source: `raw.crlfToLf`, the string
 `Lean.Parser.mkInputContext` parses. No offset the compiler produces indexes the bytes on disk.
 `LosslessSource.ofSource` is the only supported way to get both forms together, so a caller cannot
-mix them by accident.
-
--/
+mix them by accident. -/
 
 import all LeanFmt.Digest
 
@@ -30,9 +28,9 @@ structure SourceRange where
 /-- The line-ending form observed on disk.
 
 Lean rejects isolated `\r`, so an accepted file's endings are uniformly one form or the other; a
-mixed file is not accepted source. This is deliberately *not* part of `LosslessSource`: only a
-producer holding the file's bytes can observe it, and the compiler plugin never does. It belongs to
-whoever read the file, and it is what that reader needs in order to write one back. -/
+mixed file is not accepted source. Deliberately *not* part of `LosslessSource`: only a producer
+holding the file's bytes can observe it, and the compiler plugin never does. It belongs to whoever
+read the file; it is what that reader needs to write one back. -/
 inductive LineEndings where
   | lf
   | crlf
@@ -174,13 +172,11 @@ instance : Lean.FromJson Node where
 /-- The exact, compact representation of one accepted module.
 
 Identity binds the normalized string and the module, and nothing else. It records no property of the
-file on disk on purpose: a module linter is handed `fileMap.source`, which is already normalized, so
-raw byte identity cannot be seen from inside the compiler. A schema carrying it could not be produced
-by both mandated producers, and the two would disagree on the CRLF files that miss today. A consumer
-holds the file, so it can recover line endings itself.
-
-A consumer that holds a source file can check every claim here without a frontend and without
-trusting the producer. -/
+file on disk, deliberately: a module linter is handed `fileMap.source`, already normalized, so raw
+byte identity is invisible inside the compiler. A schema carrying it could not be produced by both
+mandated producers, and the two would disagree on the CRLF files that miss today. A consumer holds
+the file, so it can recover line endings itself — and can check every claim here without a frontend
+and without trusting the producer. -/
 structure LosslessSource where
   schema : String
   mainModule : String
@@ -208,9 +204,8 @@ namespace LosslessSource
 /-- Read the two forms of a source together.
 
 This is the only place the product is permitted to normalize. `Lean.Parser.mkInputContext` applies
-`crlfToLf` by default, so the parser never sees a `\r` that was part of a `\r\n`; a caller that
-digests the raw bytes and compares them against compiler-produced offsets is comparing two different
-strings. -/
+`crlfToLf` by default, so the parser never sees a `\r` that was part of a `\r\n`; a caller digesting
+the raw bytes and comparing against compiler-produced offsets compares two different strings. -/
 def normalize (raw : String) : String × LineEndings :=
   let normalized := raw.crlfToLf
   (normalized, if normalized == raw then .lf else .crlf)
@@ -302,10 +297,10 @@ private partial def collect (source : String) (parent : Option Nat) (stx : Lean.
     let build := { build with nodes := build.nodes.push placeholder }
     -- A `choice` node holds several parses of *one* byte range, so walking every alternative would
     -- emit those bytes once per alternative and the token stream would run backwards. Only the
-    -- first contributes; the `choice` node itself stays, so the ambiguity stays visible rather than
-    -- silently resolved. `Parser/Basic.lean:1418-1440` licenses picking any one of them:
-    -- `longestMatchStep` restores each alternative to the same `startPos` and keeps it only when
-    -- its score ties, whose first component is the stop position. Equal start, equal stop, one
+    -- first contributes; the `choice` node itself stays, keeping the ambiguity visible rather than
+    -- silently resolved. `Parser/Basic.lean:1418-1440` licenses picking any one:
+    -- `longestMatchStep` restores each alternative to the same `startPos` and keeps it only when its
+    -- score ties, whose first component is the stop position. Equal start, equal stop, one
     -- tokenizer: the alternatives differ in tree shape alone and spell the same text.
     let args := if kind == Lean.choiceKind then args.extract 0 1 else args
     let (span, build) := args.foldl (init := (none, build)) fun (span, build) arg =>
@@ -463,9 +458,9 @@ error channel. `structurallyValid` (checked before any rule runs) guarantees `no
 kinds.size` and `token.node < nodes.size`, so the `getD` fallbacks below never fire on a validated
 projection; they exist so the type, not a convention, keeps a rule total.
 
-The adjacency builders are one O(n) pass each and are meant to be called **once** per rule
-invocation, not per node — a rule that scans many nodes (FMT011 over every `paren`) builds the map
-first and then does O(1) lookups, so the whole scan stays linear. -/
+The adjacency builders are one O(n) pass each; call them **once** per rule invocation, not per node —
+a rule scanning many nodes (FMT011 over every `paren`) builds the map first and then does O(1)
+lookups, so the whole scan stays linear. -/
 
 /-- Kind string of node `i`. -/
 def kindOf (source : LosslessSource) (i : Nat) : String :=
@@ -507,8 +502,8 @@ def topLevelNodes (source : LosslessSource) : Array Nat := Id.run do
 The interior of one of these is parsed with the ordinary grammar, so `paren`/`attributes`/`set_option`
 nodes appear inside it byte-for-byte as in code — but they are *data* a macro constructs, not code the
 author wrote to run. Every such kind carries the substring `quot`, and no other kind in the v4.32.0
-grammar does (checked against the `Lean.Parser.*` node-kind names), so this substring test is exact
-rather than a guess. -/
+grammar does (checked against the `Lean.Parser.*` node-kind names), so the substring test is exact,
+not a guess. -/
 private def isQuotationKind (kind : String) : Bool :=
   (kind.toLower.splitOn "quot").length > 1
 

@@ -15,7 +15,7 @@ import Test.Unit.Source
 /-!
 # The unit tier's case list
 
-Every unit case, concatenated module by module, in one place both executables can share: the unit
+Every unit case, concatenated module by module, shared by both executables: the unit
 runner (`Test.Unit`, the `lean-fmt-tests` executable) and the orchestrator (`Test.Runner`, the
 `test-suites` executable). Two imports carry an inline FMT004 ignore: the rule's "transitively
 available" note is the over-approximation its own message warns about, and removing the import

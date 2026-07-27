@@ -12,7 +12,7 @@ public import Test.Proc
 /-!
 # The shared test library
 
-One import (`import Test`) gives a suite the whole harness. The pieces are separate modules so the
-import graph records what a suite actually uses; this root exists so the lakefile can glob one
-namespace and suites can write one import line.
+`import Test` gives a suite the whole harness. The pieces stay separate modules so the import graph
+records what each suite uses; this root lets the lakefile glob one namespace and suites write one
+import line.
 -/

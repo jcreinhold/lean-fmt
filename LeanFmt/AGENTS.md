@@ -13,14 +13,14 @@ record.
 
 Do not commit `sorry`, `admit`, or a new `axiom`.
 
-Quantify over the operation you are proving about; do not define it. A proof about "whatever the cache returns" says
-nothing. Carry an assumption as a hypothesis, not an axiom. Show that the hypotheses can hold together, as
-`serves_hits_somewhere` does, or the theorem is empty.
+Quantify over the operation you prove about; do not define it. A proof about "whatever the cache returns" says nothing.
+Carry an assumption as a hypothesis, not an axiom. Show the hypotheses can hold together, as `serves_hits_somewhere`
+does, or the theorem is empty.
 
 ## Comments
 
-Comment what the code does not state: why a step is needed, which constraint it serves, an invariant, a convention. Do
-not restate the code or name the declaration again. A docstring tells a caller what a declaration means and how to use
+Comment what the code does not state: why a step exists, which constraint it serves, an invariant, a convention. Do not
+restate the code or repeat the declaration's name. A docstring tells a caller what a declaration means and how to use
 it.
 
 ## Names
@@ -34,4 +34,4 @@ Do not commit a `set_option` in a production module. FMT010 reports them in the 
 too.
 
 `unsafe` is confined to `LeanFmt/Analysis.lean`, where the frontend requires it. A new `unsafe` anywhere else needs a
-reason in the commit.
+reason in the commit message.

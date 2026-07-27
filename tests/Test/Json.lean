@@ -11,7 +11,7 @@ The shell suites asserted over `--json` output with inline Python (`data["files"
 == …`, two hundred and thirty-one times across the corpus). The assertions were fine; the medium
 was a third implementation language. `jsonAt?` walks a path of fields and indices; `ensureJsonAt`
 pins the value at the end of one, rendering the path so a failure says *where* the report changed
-shape, which is the question a JSON regression always asks first.
+shape — the first question a JSON regression asks.
 -/
 
 namespace LeanFmt.Test
@@ -39,7 +39,7 @@ public def jsonAt? (json : Lean.Json) (path : List JsonStep) : Option Lean.Json 
     | .field name => (current.getObjVal? name).toOption
     | .index position => (current.getArr?).toOption >>= (·[position]?)
 
-/-- Parse `text` as JSON or fail the test with `label` naming what was being parsed — a suite that
+/-- Parse `text` as JSON, or fail the test with `label` naming what was being parsed — a suite that
 fed the binary bad flags should hear "check --json did not emit JSON", not a raw parse error. -/
 public def parseJson (text : String) (label : String) : IO Lean.Json :=
   match Lean.Json.parse text with
@@ -47,7 +47,7 @@ public def parseJson (text : String) (label : String) : IO Lean.Json :=
   | .error error => throw <| IO.userError s!"{label}: output is not JSON: {error}\n{text}"
 
 /-- Assert the value at `path` equals `expected`. A missing path and a wrong value are the same
-failure class here: the report stopped containing what the suite recorded. -/
+failure here: the report stopped containing what the suite recorded. -/
 public def ensureJsonAt (json : Lean.Json) (path : List JsonStep) (expected : Lean.Json)
     (message : String := "") : IO Unit := do
   let location := JsonStep.render path

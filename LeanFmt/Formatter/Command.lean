@@ -10,18 +10,18 @@ module
 between two ordinary commands.
 
 Every ordinary command's layout belongs to `LeanFmt.Formatter.NativeLayout`, which drives Lean's own
-registered formatter. This module owns only what sits *between* those documents and the one command
-Lean's registry cannot supply: the module header, which is parsed before any environment exists.
+registered formatter. This module owns only what sits *between* those documents, plus the one command
+Lean's registry cannot supply: the module header, parsed before any environment exists.
 
-The header is the one place lean-fmt still spells tokens itself, and it is small enough to say what
-that costs. `Lean.Parser.Module.header` is `optional module >> optional prelude >> many import`, and
-`import` is `optional public >> optional meta >> "import " >> optional all >> ident`. That closed
-token set contains no delimiter, no projection dot, and no antiquotation, so the separator between
-two adjacent header tokens is always one space -- which is why this module carries no spacing table.
-`headerDocument?` refuses anything that is not a header node and falls back to the registry.
+The header is the one place lean-fmt still spells tokens itself. `Lean.Parser.Module.header` is
+`optional module >> optional prelude >> many import`, and `import` is
+`optional public >> optional meta >> "import " >> optional all >> ident`. That closed token set has no
+delimiter, no projection dot, and no antiquotation, so the separator between two adjacent header tokens
+is always one space — which is why this module carries no spacing table. `headerDocument?` refuses
+anything that is not a header node and falls back to the registry.
 
-`place` decides blank lines between commands, not indentation: Lean's command style keeps top-level
-commands at column zero even inside a namespace, so indentation is a command's own business. -/
+`place` decides blank lines between commands, not indentation: top-level commands stay at column zero
+even inside a namespace, so indentation is a command's own business. -/
 
 import Lean.Parser.Module
 import all LeanFmt.Formatter
@@ -72,9 +72,8 @@ private def separated (previous current : CommandRole) : Bool :=
   | .scopeOpen, .scopeClose => false
   | _, _ => true
 
-/-- Advance the structural module stream and return its vertical boundary. Lean's command style keeps
-top-level commands at column zero even inside namespaces and sections; indentation belongs to command
-internals, not to the module stream. -/
+/-- Advance the structural module stream and return its vertical boundary. Top-level commands stay at
+column zero even inside namespaces and sections; indentation belongs to command internals. -/
 def place (state : CommandSequence) (stx : Lean.Syntax) : CommandSequence × CommandPlacement :=
   let current := role stx
   let blankBefore := state.previous?.any (separated · current)
@@ -120,7 +119,7 @@ private def hasTrailingLine (ownership : CommentOwnership) (stx : Lean.Syntax) :
   (Comments.trailing ownership stx).any fun comment => comment.kind == .line
 
 /-- One `import` row. The caller owns the row's own leading and trailing comments, so the tokens
-inside carry only the comments physically between them; a line comment there forces a break, because
+inside carry only the comments physically between them; a line comment there forces a break, since
 everything after it on that line would otherwise be commented out. -/
 private def importDocument (ownership : CommentOwnership) (stx : Lean.Syntax) : Doc := Id.run do
   let tokens := headerTokens stx
@@ -169,7 +168,7 @@ private def headerDocument? (ownership : CommentOwnership) (stx : Lean.Syntax) :
   else none
 
 /-- Format the parsed module/import header as one closed structural document. Import order, modifiers,
-and exact-node comments remain those of the actual selected header syntax. -/
+and exact-node comments remain those of the selected header syntax. -/
 def header (ownership : CommentOwnership) (stx : Lean.Syntax) :
     Lean.CoreM (Except FormatterFailure RegisteredDocument) := do
   if let some document := headerDocument? ownership stx then

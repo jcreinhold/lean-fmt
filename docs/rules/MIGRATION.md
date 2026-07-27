@@ -2,7 +2,7 @@
 
 The live catalog was renumbered to start at `FMT001`. Every code shifted down by two.
 
-This is a **breaking change to the public code namespace** and it was made exactly once, before the package had users.
+This is a **breaking change to the public code namespace**, made exactly once, before the package had users.
 It is recorded here rather than in a changelog line because it reuses two retired codes, which the catalog's own rules
 forbid.
 
@@ -35,12 +35,12 @@ forbid.
 purpose — so that a stale `lean-fmt.toml` or a `-- lean-fmt: ignore[FMT001]` comment written against an old version
 stays *inert* rather than silently binding to a different rule.
 
-Reusing them is precisely the hazard that machinery prevents. It was allowed here because the package is pre-release
-with no users, so no config file and no suppression comment anywhere could be pointing at the old meanings. **That
+Reusing them is exactly the hazard that machinery prevents. It was allowed here because the package is pre-release
+with no users, so no config file and no suppression comment anywhere could point at the old meanings. **That
 argument expires the moment someone depends on this package.** After that, a retired code is permanent and the next
 renumbering is not available.
 
-Had there been users, the failure mode would have been silent and bad: an old `-- lean-fmt: ignore[FMT001]` written to
+Had there been users, the failure would have been silent and bad: an old `-- lean-fmt: ignore[FMT001]` written to
 silence trailing-whitespace warnings would now suppress **FMT001, the forbidden-control-byte security rule**, in
 whatever file carried it.
 
@@ -60,6 +60,6 @@ would prove the placeholder exists, not that the machinery works. Coverage retur
 
 ## Historical records
 
-The prompt stacks under `docs/projects/` used the old codes throughout and were deleted wholesale after this
-renumbering, so no record outside this file still refers to them. Anything predating this table — an old branch, a saved
-report, a downstream `ignore[…]` written before release — must be read against it.
+The prompt stacks under `docs/projects/` used the old codes throughout and were deleted after this renumbering, so no
+record outside this file still refers to them. Anything predating this table — an old branch, a saved report, a
+downstream `ignore[…]` written before release — must be read against it.

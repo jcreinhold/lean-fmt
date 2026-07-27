@@ -6,12 +6,12 @@
 ## Current state
 
 The production tree is a native `lake init` project on Lean's private-by-default module system. Every compiled
-production, entry-point, test, and fixture source opens with `module` as its first token — a copyright block or other
-comment may precede it, exactly as Lean allows; only the `lakefile.lean` is exempt. The product has one private
-intent-to-report operation, an atomic aggregate semantic-result cache, preview/fix modes, read-only compiler-integration
-audit, and a language server. A compiler plugin writes a silent formatter record into the successful module `.olean`; a
-Lake module facet extracts it into a compact content-addressed sidecar. The application reads that facet through one
-private no-build Lake operation, and only when a selected rule needs syntax.
+production, entry-point, test, and fixture source opens with `module` as its first token — a comment block may precede
+it; only `lakefile.lean` is exempt. The product has one private intent-to-report operation, an atomic aggregate
+semantic-result cache, preview/fix modes, a read-only compiler-integration audit, and a language server. A compiler
+plugin writes a silent formatter record into the successful module `.olean`; a Lake module facet extracts it into a
+compact content-addressed sidecar. The application reads that facet through one private no-build Lake operation, and
+only when a selected rule needs syntax.
 
 Do not restore the archived Rust workspace, worker protocol, `libleanshared` boundary, or seven-crate split.
 
@@ -35,15 +35,14 @@ lake lint            # the formatter on itself, under lean-fmt.toml
 
 Suites are compiled Lean executables: `tests/Suites/<Name>.lean` builds as `suite-<name>`, and `tests/Test/Runner.lean`'s
 registry enumerates them with their lane. Enumerate the registry, not a list in prose — an unregistered suite file fails
-the boundary suite's entry-point pin, which is how `tests/lsp/run.sh` going unrun for three prompts cannot recur. The
-current set: application-formatter, block-formatter, boundary, cache, catalog, check, ci, collection-formatter,
-command-formatter, comments, compiler, declaration-formatter, discovery, downstream, editor, format-suppression,
-formatter, formatter-adapter, imports, incremental, layout, lossless, lsp, lsp-acceptance, modes, module-formatter,
-native-layout, performance, reporting, scale, security-bench, semantic, stream, style, suppression, syntax,
-term-formatter, validator, watch.
+the boundary suite's entry-point pin. The current set: application-formatter, block-formatter, boundary, cache, catalog,
+check, ci, collection-formatter, command-formatter, comments, compiler, declaration-formatter, discovery, downstream,
+editor, format-suppression, formatter, formatter-adapter, imports, incremental, layout, lossless, lsp, lsp-acceptance,
+modes, module-formatter, native-layout, performance, reporting, scale, security-bench, semantic, stream, style,
+suppression, syntax, term-formatter, validator, watch.
 
-Each suite's own module docstring carries its per-suite notes: what it pins, which defect records (D-numbers, RPR/RWI/RSF
-numbers) the assertions come from, and what a failure means. Read those first when a suite fails.
+Each suite's module docstring carries its notes: what it pins, which defect records (D-numbers, RPR/RWI/RSF numbers) the
+assertions come from, and what a failure means. Read those first when a suite fails.
 
 Match the checks to the change:
 
@@ -82,13 +81,12 @@ in this order:
 - Module docstrings in `LeanFmt/` carry the reasoning — why a shape was picked and what was rejected. They are prose and
   can rot; when one contradicts the code, the code wins and the docstring is wrong.
 - `docs/` is the user-facing contract. `docs/ci.md` and `docs/adding-a-rule.md` are gated by suites; the rest is not.
-- Frozen evidence (removed with `experiments/`; recoverable from git history) is a measurement with a date,
-  not a decision. Regenerate it rather
-  than arguing with it.
+- Frozen evidence (removed with `experiments/`; recoverable from git history) is a measurement with a date, not a
+  decision. Regenerate it rather than arguing with it.
 
-If two records disagree, write down the disagreement and how you settled it. The design rationale that is *not*
-recoverable from code or tests is gone with the stacks — when you cannot find why something is the way it is, say so
-rather than inventing a reason.
+If two records disagree, write down the disagreement and how you settled it. Design rationale that is not recoverable
+from code or tests is gone with the stacks — when you cannot find why something is the way it is, say so rather than
+inventing a reason.
 
 ## Design constraints
 
@@ -154,9 +152,9 @@ you have found a ninth and it goes in this list.
   syntax and not for syntax parsed from source, so a parsed command yields zero `Format.tag` nodes. Correspondence is
   positional; a divergence is a refusal, not a lookup.
 - **Parser-significant columns are not in the document.** See the `align`/`sepByIndent` note under *Exactness and
-  coordinates* below and in the module docstring.
-- **A parser-significant column cannot be expressed even where it is known.** The one above is that the document does
-  not say which columns matter; this is that knowing one does not help. `nest n` is relative to the current *indent* and
+  coordinates* above and in the module docstring.
+- **A parser-significant column cannot be expressed even where it is known.** The note above says the document does not
+  say which columns matter; this one says knowing one does not help. `nest n` is relative to the current *indent* and
   `align force` pads *to* that indent, so no constructor means "indent this subtree's continuations to the column where
   it starts" — which is what `many1Indent` saves and `checkColGe` measures against. A break that has to land at such a
   column cannot be *placed*, so `collectGuardBailouts`/`flattenNative` *remove* it instead, under a source precondition
@@ -210,8 +208,8 @@ is unchecked.
   measurement. Keep measured results apart from expected ones, and run the cheap check before you record either.
 - Treat formatter-cache cold, ordinary-project-built, formatter-integrated-built, and cache-warm as distinct workloads.
 - Stop memory experiments at 8 GiB aggregate RSS, abnormal pressure, or 256 MiB new swap.
-- Do not repeatedly run full mathlib during development. Prompt 10 uses the frozen sample and named stress cases; save
-  the 8,795-file run for a plausible late candidate.
+- Do not repeatedly run full mathlib during development. Use the frozen sample and named stress cases; save the
+  8,795-file run for a plausible late candidate.
 
 ## Sharing this worktree
 

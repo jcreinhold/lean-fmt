@@ -45,7 +45,6 @@ early): the ownership walk must validate everywhere, and the corpus must own eno
 the walk is proving something. -/
 private def testCorpus (root : System.FilePath) (application : String)
     (work : System.FilePath) : IO Unit := do
-  -- The corpus is every production module.
   let modules₀ ← collectModules root (root / "LeanFmt") #[]
   let mut totalComments := 0
   let modules := (modules₀.qsort (· < ·)).push "Main.lean"

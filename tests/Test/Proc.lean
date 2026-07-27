@@ -11,7 +11,7 @@ lives here once instead of being re-derived per suite from `IO.Process.output` p
 gave the invocation so a failure reads as the behavior that broke, not as a line number.
 
 The optional timeout is a kill, not a deadline hint: a hung child would otherwise hang the whole
-sweep, and the stream/LSP suites exist precisely to test children that are *supposed* to finish.
+sweep, and the stream/LSP suites test children that are *supposed* to finish.
 -/
 
 namespace LeanFmt.Test
@@ -35,7 +35,7 @@ public def runProc (cmd : String) (args : Array String := #[])
     return { exitCode := output.exitCode, stdout := output.stdout, stderr := output.stderr }
   | some budget =>
     -- `stdin` is always piped so the child's type does not depend on `input?`; with no input the
-    -- handle is dropped unwritten, which is the same EOF `.null` would have given the child.
+    -- handle is dropped unwritten, the same EOF `.null` would give.
     let child ← IO.Process.spawn {
       cmd, args, cwd := cwd?, env
       stdin := .piped
@@ -66,8 +66,8 @@ public def runProc (cmd : String) (args : Array String := #[])
     let stderr ← IO.ofExcept stderrTask.get
     return { exitCode, stdout, stderr }
 
-/-- `runProc` plus the exit-code assertion every suite makes. On a mismatch the error carries both
-captured streams, because the first thing a debugging run needs is what the child actually said. -/
+/-- `runProc` plus the exit-code assertion every suite makes. On mismatch the error carries both
+captured streams — the first thing a debugging run needs is what the child actually said. -/
 public def expectExit (expected : UInt32) (label : String) (cmd : String)
     (args : Array String := #[]) (input? : Option String := none)
     (cwd? : Option System.FilePath := none) (env : Array (String × Option String) := #[])

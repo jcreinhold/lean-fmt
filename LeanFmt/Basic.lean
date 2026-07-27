@@ -8,7 +8,7 @@ module
 
 namespace LeanFmt
 
-/-- Version of the fresh native-Lean execution-core foundation. -/
+/-- Version of the native-Lean execution core. -/
 def version : String := "0.1.0"
 
 end LeanFmt

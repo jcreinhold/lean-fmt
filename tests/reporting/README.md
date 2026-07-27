@@ -6,14 +6,14 @@ section of `docs/ci.md`.
 ## Vendored schema
 
 `sarif-schema-2.1.0.json` is the SARIF 2.1.0 JSON schema, fetched from `https://json.schemastore.org/sarif-2.1.0.json`.
-It is vendored so the suite validates offline and so a schema revision upstream cannot silently change what this
+It is vendored so the suite validates offline and an upstream schema revision cannot silently change what this
 repository claims to have verified.
 
 The OASIS specification (§3.13.3, NOTE 2) names
 `https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json` as the canonical
-location; that URL now 404s, which is why the SchemaStore copy is the one used. The `$schema` property our renderer
-emits still points at the specification's own URI, because that is the identifier the format defines, not a promise that
-the URL resolves.
+location; that URL now 404s, which is why the SchemaStore copy is used. The `$schema` property our renderer emits still
+points at the specification's own URI, because that is the identifier the format defines, not a promise that the URL
+resolves.
 
 ## Independent parsers
 

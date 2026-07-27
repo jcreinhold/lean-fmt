@@ -9,20 +9,20 @@ module
 /- A width-independent formatting document and its bounded renderer.
 
 The document has one flat/broken choice: `group`. A break carries its flat spelling, so separators
-such as `"; "` can disappear when a construct opens. There is no generic alternative, alignment, or
+such as `"; "` can disappear when a construct opens. No generic alternative, alignment, or
 best-fitting search.
 
-The custom renderer is linear in document nodes plus emitted bytes. Each document caches the width
-up to its first forced break in flat and broken modes. The work stack caches the same summary for its
-suffix, so deciding a group is constant-time even for adversarial zero-width siblings. This avoids
-the repeated suffix walk used by the former renderer. Opaque leaves use Lean's own bounded work-list
-renderer and expose its output events separately from custom work counts.
+The renderer is linear in document nodes plus emitted bytes. Each document caches the width up to its
+first forced break in flat and broken modes; the work stack caches the same summary for its suffix,
+so deciding a group is constant-time even for adversarial zero-width siblings. This avoids the
+repeated suffix walk of the former renderer. Opaque leaves use Lean's own bounded work-list renderer
+and expose its output events separately from custom work counts.
 
-Registered Lean formatter output remains opaque. `registered` stores one `Std.Format` and interprets
-it incrementally at the active width and column through `Std.Format.prettyM`; it neither clones the
+Registered Lean formatter output stays opaque. `registered` stores one `Std.Format` and interprets it
+incrementally at the active width and column through `Std.Format.prettyM`; it neither clones the
 native tree nor renders it before width selection. A registered leaf is a fit boundary for enclosing
-custom groups. Core rules therefore compose it as a leaf, rather than putting it inside a custom
-group whose decision would require inspecting Lean's private layout tree.
+custom groups, so core rules compose it as a leaf rather than inside a custom group whose decision
+would require inspecting Lean's private layout tree.
 
 Columns count codepoints, matching `Std.Format`; source and output ranges count UTF-8 bytes. -/
 
@@ -57,8 +57,8 @@ mutual
     | mark (source : SourceRange) (body : Doc)
     | registered (format : Std.Format)
 
-  /-- A formatting document. Construct values through the operations in `Doc`; its cached measures
-  and well-formedness bit are intentionally not caller-settable. -/
+  /-- A formatting document. Construct values through the operations in `Doc`; the cached measures
+  and well-formedness bit are not caller-settable, deliberately. -/
   inductive Doc where
     | private mk (kind : DocKind) (flat broken : LineMeasure) (nodes : Nat) (valid : Bool)
 end

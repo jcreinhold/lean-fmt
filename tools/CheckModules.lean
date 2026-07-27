@@ -18,25 +18,24 @@ open System Lean LeanFmt.Internal
 /-!
 # Structural checks on the package's module layout
 
-Taken from mathlib's `scripts/mk_all.lean`: the guarantee, and the shape of its `--check` mode. None
-of its code survives. mk_all keeps `Mathlib.lean` importing every source file so that no file escapes
+Taken from mathlib's `scripts/mk_all.lean`: the guarantee and the shape of its `--check` mode; none
+of its code survives. mk_all keeps `Mathlib.lean` importing every source file so no file escapes
 the build, and `--check` verifies that file is current. lean-fmt cannot generate such a file — its
 four libraries are carved out of one directory by hand, `LeanFmt.lean` deliberately exports nothing,
 and `lakefile.lean` records measured reasons for individual glob entries — so the guarantee is
 expressed directly, as a check with no generator behind it.
 
-A module escapes the build when no `lean_lib` glob expansion contains it and nothing that is itself
-built imports it. Lake then never compiles it and `lake build` stays green while the file rots.
-Measured against Lake v4.33.0-rc1: a file holding `def n : Nat := "not a Nat"`, unglobbed and
-unimported, builds clean.
+A module escapes the build when no `lean_lib` glob expansion contains it and nothing built imports
+it: Lake never compiles it, and `lake build` stays green while the file rots. Measured against Lake
+v4.33.0-rc1: a file holding `def n : Nat := "not a Nat"`, unglobbed and unimported, builds clean.
 
-Two Lake predicates decide a module's fate, and conflating them gives the wrong answer.
+Two Lake predicates decide a module's fate; conflating them gives the wrong answer.
 `LeanLibConfig.isLocalModule` (root prefix **or** glob) decides whether a library *claims* a module,
-which is what makes it resolvable and buildable on demand. `LeanLibConfig.isBuildableModule` decides
-whether the library will build it when asked. Neither is "the library target compiles it": that is
-the glob expansion alone, which is why `LeanFmt.Suppression` is in no glob yet compiles — the
-executable's import closure reaches it. So the seeds below are glob expansions and executable roots,
-and reachability is taken over imports from there.
+which makes it resolvable and buildable on demand. `LeanLibConfig.isBuildableModule` decides whether
+the library builds it when asked. Neither is "the library target compiles it" — that is the glob
+expansion alone, which is why `LeanFmt.Suppression` is in no glob yet compiles: the executable's
+import closure reaches it. So the seeds below are glob expansions and executable roots, and
+reachability is taken over imports from there.
 -/
 
 namespace LeanFmt.CheckModules
@@ -49,10 +48,10 @@ private structure Violation where
 
 /-- Everything a rule is allowed to know, resolved once.
 
-Rules are pure functions over this record. That is the design and not an incidental choice: a rule
-cannot read the filesystem, cannot start a Lake build, and cannot depend on what happens to be built
-already — so it cannot report a different answer on a clean checkout than on a warm one. Adding a
-rule is a pure function plus one entry in `rules`. -/
+Rules are pure functions over this record, by design: a rule cannot read the filesystem, cannot
+start a Lake build, and cannot depend on what happens to be built already — so it cannot report a
+different answer on a clean checkout than on a warm one. Adding a rule is a pure function plus one
+entry in `rules`. -/
 private structure Layout where
   /-- Package source modules, from `Project`'s complete non-`.lake` selection. -/
   sources : Array Name
@@ -63,9 +62,9 @@ private structure Layout where
   can have an opinion about them, and keeping them would walk the closure into the toolchain. -/
   importsOf : Std.HashMap Name (Array Name)
   /-- Modules whose header would not parse, and which therefore contribute no edges to `importsOf`.
-  Dropping their edges is the right answer to what the build compiles — a module that does not parse
-  compiles nothing, and reaches nothing through itself — but it does leave the closure incomplete, so
-  the run states it instead of degrading in silence. This package holds such files deliberately:
+  Dropping their edges matches what the build compiles — a module that does not parse compiles
+  nothing and reaches nothing through itself — but it leaves the closure incomplete, so the run
+  states it instead of degrading in silence. This package holds such a file deliberately:
   `tests/check/MalformedHeader.lean` is a fixture for exactly that condition. -/
   unparsedHeaders : Array Name
 
@@ -112,8 +111,8 @@ private def headerImports (known : Std.HashSet Name) (source relativePath : Stri
   catch _ =>
     return none
 
-/-- A resolved layout, with where its cost went. The timings sit here rather than in `Layout`
-deliberately: a rule that could read a clock would no longer be a pure function of the layout. -/
+/-- A resolved layout, and where its cost went. The timings sit here, not in `Layout`: a rule
+that could read a clock would no longer be a pure function of the layout. -/
 private structure Resolution where
   layout : Layout
   workspaceNanos : Nat

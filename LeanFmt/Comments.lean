@@ -8,14 +8,14 @@ module
 
 /- Deterministic comment ownership over actual source-covering syntax.
 
-The parser stores comments in leaf `SourceInfo`, not as ordinary tree children. This module selects
-the first spelling of every `choice`, scans each selected trivia region once, recognizes doc-comment
-tokens separately, and assigns every payload to one leading, trailing, dangling, or file owner.
-Ownership depends only on source positions, physical-line relation, and delimiter context; render
-width never enters this module.
+The parser stores comments in leaf `SourceInfo`, not as tree children. This module selects the first
+spelling of every `choice`, scans each selected trivia region once, recognizes doc-comment tokens
+separately, and assigns every payload to one leading, trailing, dangling, or file owner. Ownership
+depends only on source positions, physical-line relation, and delimiter context; render width never
+enters this module.
 
-The assignment table is private. Formatter rules can ask for comments leading, trailing, or dangling
-from the actual `Syntax` value they are rendering. -/
+The assignment table is private. Formatter rules ask for comments leading, trailing, or dangling from
+the actual `Syntax` value they render. -/
 
 import Lean.Syntax
 import all LeanFmt.LosslessSource
@@ -130,9 +130,9 @@ private partial def collectSitesFrom (bytes : ByteArray) (stx : Lean.Syntax) (de
     | none => (sites, comments)
     | some range =>
       let spelling := slice bytes range
-      -- Zero-width parser sentinels (notably end-of-input) do not spell source and therefore cannot
-      -- own source trivia. Keeping one as the following leaf turns a final comment into leading
-      -- trivia of an unrenderable node instead of file-dangling trivia.
+      -- Zero-width parser sentinels (notably end-of-input) spell no source and cannot own source
+      -- trivia. Kept as the following leaf, one would turn a final comment into leading trivia of an
+      -- unrenderable node instead of file-dangling trivia.
       let sites := if spelling.isEmpty || isDocSpelling spelling then sites else
         sites.push { stx, range, depth, path, leaf := true, spelling }
       let comments := if isDocSpelling spelling then
@@ -215,9 +215,9 @@ private def suppressedBy (regions : Array SourceRange) (comment : Comment) : Com
 
 /- The column a byte offset sits at, counted from the last newline before it.
 
-Bytes, not codepoints: the only comparison this feeds is between two columns on two lines of the same
-file, and the two disagree only if the indentation before one of them holds a multi-byte character.
-Indentation is whitespace, so it cannot. -/
+Bytes, not codepoints: this feeds only comparisons between two columns on two lines of the same file,
+which disagree only if the indentation before one holds a multi-byte character. Indentation is
+whitespace, so it cannot. -/
 private def columnOf (bytes : ByteArray) (offset : Nat) : Nat := Id.run do
   let offset := min offset bytes.size
   let mut cursor := offset
@@ -231,20 +231,18 @@ private def columnOf (bytes : ByteArray) (offset : Nat) : Nat := Id.run do
 This is the whole of the offside case. A comment on its own line, indented strictly deeper than the
 token that follows it, cannot be that token's leading trivia in any layout that keeps the source's
 block structure -- the block it sits in closed before that token, and it closed *after* the comment.
-`assignWithNeighbors` would otherwise hand it to the following token and the formatter would render it
-at that token's column, outside the block it was written in.
+`assignWithNeighbors` would otherwise hand it to the following token, and the formatter would render
+it at that token's column, outside the block it was written in.
 
 The owner is the innermost node that ends where the token before the comment ends and *starts at
-exactly the comment's column*. Ending there is what makes it a construct the comment sits at the end
-of; starting at the comment's column is what makes the comment a member of the same item list rather
-than something indented arbitrarily. Both are byte-level facts about lines, and neither names a
-syntax kind.
+exactly the comment's column*. Ending there makes it a construct the comment sits at the end of;
+starting at the comment's column makes the comment a member of the same item list rather than
+something indented arbitrarily. Both are byte-level facts about lines; neither names a syntax kind.
 
-Equality rather than `<=` on the column is deliberate and is what keeps the rule narrow. A comment
-indented deeper than every enclosing block's items -- say two spaces inside a `namespace` whose
-commands are at column zero -- selects nothing here and keeps the leading-trivia assignment it has
-always had. Widening it to `<=` selects the command root instead, which is a block the adapter has no
-break to attach to. -/
+Equality rather than `<=` on the column is deliberate and keeps the rule narrow. A comment indented
+deeper than every enclosing block's items -- say two spaces inside a `namespace` whose commands are
+at column zero -- selects nothing here and keeps the leading-trivia assignment it has always had.
+Widening to `<=` selects the command root instead, a block the adapter has no break to attach to. -/
 private def enclosingBlock? (bytes : ByteArray) (sites : Array Site) (left : Site)
     (comment : Comment) : Option Site :=
   let column := columnOf bytes comment.range.start
@@ -294,7 +292,7 @@ private def assignWithNeighbors (bytes : ByteArray) (sites : Array Site) (commen
     else { comment, placement := .dangling, owner := .file }
   | none, none => { comment, placement := .dangling, owner := .file }
 
-/-- Merge source-sorted comments with source-sorted leaves. Each leaf cursor advances once; comment
+/-- Merge source-sorted comments with source-sorted leaves. Each leaf cursor advances once, so
 ownership is linear except for the rare closing-delimiter query for the smallest enclosing node. -/
 private def assignAll (bytes : ByteArray) (sites leaves : Array Site)
     (comments : Array Comment) : Array Assignment := Id.run do
@@ -319,8 +317,8 @@ def build (normalized : String) (header : Lean.Syntax) (commands : Array Lean.Sy
   let bytes := normalized.toUTF8
   let roots := #[header] ++ commands ++ terminal?.toArray
   let (sites, rawComments) := collectSites bytes roots
-  -- A terminal command begins the verbatim tail. Its syntax remains an owner for comments immediately
-  -- before it, but trivia after `#exit` is outside the parsed region and is not formatter input.
+  -- A terminal command begins the verbatim tail. Its syntax still owns comments immediately before
+  -- it, but trivia after `#exit` is outside the parsed region and is not formatter input.
   let parsedStop := terminal?.bind sourceRange? |>.map (·.start) |>.getD bytes.size
   let rawComments := rawComments.filter (·.range.start < parsedStop)
   let sites := sites.qsort siteOrder
@@ -364,14 +362,14 @@ def payload (ownership : CommentOwnership) (comment : Comment) : String :=
 def hasNewlineBetween (ownership : CommentOwnership) (start stop : Nat) : Bool :=
   hasNewline ownership.normalized.toUTF8 start stop
 
-/-- Whether normalized source put a blank line between two byte offsets.
+/-- Whether normalized source put a blank line between two byte offsets: two line breaks with
+nothing but horizontal whitespace between them.
 
-Two line breaks with nothing but horizontal whitespace between them. This is the one vertical fact a
-comment's own bytes cannot carry and the structural command stream cannot supply either: `place`
-decides spacing *between commands* from their roles, and a comment leading a command is inside that
-command's unit, so the gap between a copyright block and the `module` it precedes belongs to neither.
-Anything other than whitespace between the breaks means the caller asked about a range containing
-another token, and the answer is no. -/
+This is the one vertical fact a comment's own bytes cannot carry and the structural command stream
+cannot supply either: `place` decides spacing *between commands* from their roles, and a comment
+leading a command sits inside that command's unit, so the gap between a copyright block and the
+`module` it precedes belongs to neither. Anything other than whitespace between the breaks means the
+caller asked about a range containing another token, and the answer is no. -/
 def hasBlankLineBetween (ownership : CommentOwnership) (start stop : Nat) : Bool := Id.run do
   let bytes := ownership.normalized.toUTF8
   let mut cursor := min start bytes.size
@@ -388,8 +386,8 @@ def hasBlankLineBetween (ownership : CommentOwnership) (start stop : Nat) : Bool
   return false
 
 /-- Comments logically owned by the node itself or one of its selected source-covering descendants.
-Lean may physically store boundary trivia on an adjacent token, so this is an ownership count, not a
-claim that one isolated registered document emits those same comments. -/
+Lean may physically store boundary trivia on an adjacent token, so this counts ownership; it does not
+claim one isolated registered document emits those same comments. -/
 def subtree (ownership : CommentOwnership) (stx : Lean.Syntax) : Array Comment :=
   match sourceRange? stx with
   | none => #[]
@@ -401,14 +399,14 @@ def subtree (ownership : CommentOwnership) (stx : Lean.Syntax) : Array Comment :
       | some range => if containsRange root range then some assignment.comment else none
       | none => if sameSyntax owner stx then some assignment.comment else none
 
-/-- Comments a block inside this subtree owns that lie *after* that block's own last token, each with
+/-- Comments a block inside this subtree owns that lie *after* that block's last token, each with
 the owning block's range.
 
-Every other accessor here answers "which comments does this subtree own", which is all a renderer needs
-when the comment sits between two of the subtree's tokens: the boundary it belongs at is between them.
-A comment dangling at the end of a block is the one placement where it is not — the block closed, so
-the comment is past every token the subtree spells, and the renderer has to be told *which* block ended
-in order to put it back at that block's indentation rather than at the subtree's. -/
+Every other accessor here answers "which comments does this subtree own", which is all a renderer
+needs when the comment sits between two of the subtree's tokens: the boundary it belongs at is between
+them. A comment dangling at the end of a block is the one placement where it is not -- the block
+closed, so the comment is past every token the subtree spells, and the renderer must be told *which*
+block ended to put it back at that block's indentation rather than at the subtree's. -/
 def blockDangling (ownership : CommentOwnership) (stx : Lean.Syntax) :
     Array (SourceRange × Comment) :=
   match sourceRange? stx with

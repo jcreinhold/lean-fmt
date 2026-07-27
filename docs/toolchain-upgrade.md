@@ -11,17 +11,17 @@ an internal this product happens to depend on, and the checklist exists because 
 
 1. **The exact frontend's snapshot walk.** `LeanFmt/Analysis.lean` reads the command stream through
    `Lean.Language.Lean.InitialSnapshot`/`CommandParsedSnapshot` and `waitForFinalCmdState`. A change in snapshot
-   structure shows up as wrong command boundaries or dropped commands, and the projection-tiling checks in
-   the lossless suite are what see it first.
-2. **The registered formatter documents.** Canonical layout is derived from the same `Std.Format` documents Lean's
+   structure shows up as wrong command boundaries or dropped commands, and the projection-tiling checks in the lossless
+   suite see it first.
+2. **The registered formatter documents.** Canonical layout derives from the same `Std.Format` documents Lean's
    pretty-printer produces (`Lean.PrettyPrinter.formatCategory`/`formatCommand`; registry lookup in
    `LeanFmt/Formatter.lean`, adaptation in `LeanFmt/Formatter/NativeLayout.lean`). An upstream combinator change —
    `sepByIndent.formatter`, `declModifiers`, `pushToken`, a parser's `ppLine`/`ppDedent` placement — changes canonical
    bytes. That can be legitimate. Make the change deliberately, with fixtures, never to silence a suite.
 3. **Stack-shape assumptions.** `parserOfStack`'s formatter reads a fixed number of stack slots, and `NativeLayout`
-   works around that by name. A signature change in `Lean.PrettyPrinter.Formatter` breaks at compile time, which is the
-   good case. Behavior changes in `pushToken`'s re-lexing or `Std.Format`'s `fill` measurement break silently at width
-   boundaries — the native-layout suite's multi-width renders exist for exactly this.
+   works around that by name. A signature change in `Lean.PrettyPrinter.Formatter` breaks at compile time — the good
+   case. Behavior changes in `pushToken`'s re-lexing or `Std.Format`'s `fill` measurement break silently at width
+   boundaries; the native-layout suite's multi-width renders exist for exactly this.
 4. **The artifact schema and cache identity.** Both are pre-release; no backward compatibility is promised with
    artifacts or cache entries written under an earlier toolchain. Cache identity includes the toolchain, so a bump
    orphans every entry wholesale by design, and the first run after a bump pays full cost.
@@ -39,15 +39,15 @@ an internal this product happens to depend on, and the checklist exists because 
    - the lossless suite — projection tiling and the `choice` gate.
    - the module-formatter suite — the `#exit` verbatim tail.
    - the compiler and downstream suites — the plugin, the facet, and artifact/exact route agreement.
-     Lake's `plugins` field is experimental and its target-key syntax has been revised more than once; re-check it on
-     every bump.
-   - the lsp suite, then lsp-acceptance and editor — protocol, cancellation latency, and
-     the editor stanza in `docs/editor-setup.md`.
+     Lake's `plugins` field is experimental and its target-key syntax has changed more than once; re-check it on every
+     bump.
+   - the lsp suite, then lsp-acceptance and editor — protocol, cancellation latency, and the editor stanza in
+     `docs/editor-setup.md`.
    Run them with `lake test -- --suites native-layout style lossless module-formatter compiler downstream lsp
    lsp-acceptance editor`.
 4. Run everything — `lake test -- --all` — plus `git diff --check`.
 5. If canonical bytes legitimately changed, the frozen mathlib evidence no longer describes this toolchain: re-freeze a
-   sample under the new one (the old manifests and evidence were removed with `experiments/`; recover them from
-   git history if a baseline is wanted), and say in the commit message which upstream change moved which bytes.
+   sample under the new one (the old manifests and evidence were removed with `experiments/`; recover them from git
+   history if a baseline is wanted), and say in the commit message which upstream change moved which bytes.
 
 A bump that changes bytes without a named upstream cause is not done; it is an undiagnosed defect with a green suite.

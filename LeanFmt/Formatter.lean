@@ -8,19 +8,19 @@ module
 
 /- The actual-syntax adapter for Lean's registered formatter.
 
-This module deliberately pins one small portion of Lean's pretty-printer API. `formatCategory` runs
+This module deliberately pins a small portion of Lean's pretty-printer API. `formatCategory` runs
 `categoryFormatter`, which asks `formatterAttribute` for an explicit formatter before deriving one
 from a `ParserDescr`; both run against the supplied syntax traverser under the current `CoreM`
 environment and options. `formatCategory` also obtains the current environment's token table.
 
-The returned `Std.Format` remains one opaque `Doc.registered` leaf. This module never copies its
-tree, renders it early, reparses text, or substitutes source bytes on failure.
+The returned `Std.Format` stays one opaque `Doc.registered` leaf. This module never copies its tree,
+renders it early, reparses text, or substitutes source bytes on failure.
 
-Lean's formatter emits comments from `SourceInfo` in `pushToken`. It is the sole emitter here:
-Prompt 06 ownership is used for logical accounting, not to emit a second copy. Boundary trivia may
-be stored on the preceding command even when its logical owner is in the next command, so ordered
-whole-module composition—not an isolated leaf's count—is the exact-once boundary. The focused
-adapter fixture is the upgrade tripwire for these private implementation assumptions. -/
+Lean's formatter emits comments from `SourceInfo` in `pushToken`, and it is the sole emitter here:
+Prompt 06 ownership does logical accounting, not a second copy. Boundary trivia may be stored on the
+preceding command even when its logical owner is in the next command, so ordered whole-module
+composition — not an isolated leaf's count — is the exact-once boundary. The focused adapter fixture
+is the upgrade tripwire for these private implementation assumptions. -/
 
 import Lean.PrettyPrinter
 import all LeanFmt.Comments
@@ -61,7 +61,7 @@ structure FormatterTrace where
   commentOwners : Nat
   deriving Inhabited, BEq, Repr, Lean.ToJson, Lean.FromJson
 
-/-- A hard registry failure. There is intentionally no source-text fallback constructor. -/
+/-- A hard registry failure. No source-text fallback constructor exists, deliberately. -/
 structure FormatterFailure where
   category : FormatterCategory
   kind : Lean.Name
@@ -124,9 +124,9 @@ private def resolution (kind : Lean.Name) : Lean.CoreM FormatterResolution := do
   let registrations := Lean.PrettyPrinter.formatterAttribute.getValues (← Lean.getEnv) kind |>.length
   return if registrations == 0 then .descriptor else .explicit registrations
 
-/-- Record how the registry resolves a syntax root without invoking its formatter. The one caller that
-builds a document itself -- the module header, which is parsed before any environment exists -- uses
-this so its trace cannot be confused with a registry execution. -/
+/-- Record how the registry resolves a syntax root without invoking its formatter. The one caller
+that builds a document itself — the module header, parsed before any environment exists — uses this
+so its trace cannot be confused with a registry execution. -/
 def trace (ownership : CommentOwnership) (category : FormatterCategory)
     (stx : Lean.Syntax) : Lean.CoreM FormatterTrace := do
   let kind := stx.getKind

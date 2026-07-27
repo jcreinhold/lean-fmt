@@ -60,7 +60,7 @@ syntax (name := invalidCommand) "invalid_command" : command
 macro_rules
   | `(invalid_command) => `(def invalidFormatterFixture : Nat := 0)
 
-/-- An intentionally unsafe extension formatter: it consumes the accepted token but emits a
+/-- A deliberately unsafe extension formatter: consumes the accepted token but emits a
 different, incomplete command. Exact admission must reject its output after reparsing. -/
 @[formatter AdapterSyntax.invalidCommand]
 meta def invalidCommandFormatter : Lean.PrettyPrinter.Formatter := do
