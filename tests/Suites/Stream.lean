@@ -5,7 +5,7 @@ public import Test
 /-!
 # The stream suite
 
-Port of `tests/stream/run.sh` (`ruff-14` RSF-IMPL + RSF-FINAL): the stdin/stdout and range
+Port of `tests/stream/run.sh`: the stdin/stdout and range
 surface. Every case drives the real executable through a pipe, because the thing under test *is*
 the pipe behavior: what reaches stdout, what reaches stderr, what the exit code is, and what is
 NOT written. The frozen contract is the range-formatting section of `LeanFmt/Application.lean`;
@@ -315,8 +315,8 @@ private def testSuppressionAndOwnership (ctx : Ctx) : IO Unit := do
     (resumedLines[headerIndex + 1]?.getD "<missing>")
   ensureEq "formatting the next unit disturbed suppressed bytes"
     "def preserved(alpha:Nat):Nat:=alpha+1" (resumedLines[3]?.getD "<missing>")
-  -- A comment written *above* a declaration is in the *earlier* command's extent — the frozen
-  -- RLC-SPEC verdict, surprising enough to assert.
+  -- A comment written *above* a declaration is in the *earlier* command's extent — a frozen
+  -- verdict, surprising enough to assert.
   let cmt := ctx.work / "cmt.lean"
   writeFile cmt "module\n\ndef  a   :=   1\n\n-- a comment written above b\ndef  b   :=   2\n"
   ensureEq "the comment above b belongs to a's unit" "0-8 8-54 54-70" (← units ctx cmt)

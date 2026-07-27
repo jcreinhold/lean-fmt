@@ -405,8 +405,8 @@ private def triviaTiles (runs : Array Trivia) (start stop : Nat) : Bool := Id.ru
 /-- Structural validity, independent of any source.
 
 The tiling clause carries the weight: token spans and their trivia must cover `[headerStop,
-terminalStop)` once each, contiguously, with no gap and no overlap. `RLS-SPEC` checked that
-invariant, and it is what makes this projection lossless rather than merely plausible. -/
+terminalStop)` once each, contiguously, with no gap and no overlap. That invariant is what makes
+this projection lossless rather than merely plausible. -/
 def structurallyValid (source : LosslessSource) : Bool := Id.run do
   unless source.schema == losslessSourceSchema do
     return false

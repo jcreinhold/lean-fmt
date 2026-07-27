@@ -33,8 +33,8 @@ an internal this product happens to depend on, and the checklist exists because 
 2. `lake lint` — the formatter over its own sources. Drift in canonical bytes shows here first.
 3. Run the fixtures that should fail loudly on upstream layout drift, and read every failure as a claim about an
    upstream change before repairing anything:
-   - the native-layout suite — pins D1–D28, the upstream document shapes the adapter repairs or refuses (attribute
-     lines, `sepByIndent` alignment, guarded `let` bail-outs, constructor docstrings, the `]do` separator).
+   - the native-layout suite — pins the upstream document shapes the adapter repairs or refuses (attribute lines,
+     `sepByIndent` alignment, guarded `let` bail-outs, constructor docstrings, the `]do` separator).
    - the style suite — the golden candidate at widths 20/40/80/100.
    - the lossless suite — projection tiling and the `choice` gate.
    - the module-formatter suite — the `#exit` verbatim tail.
@@ -47,7 +47,6 @@ an internal this product happens to depend on, and the checklist exists because 
    lsp-acceptance editor`.
 4. Run everything — `lake test -- --all` — plus `git diff --check`.
 5. If canonical bytes legitimately changed, the frozen mathlib evidence no longer describes this toolchain: re-freeze a
-   sample under the new one (the old manifests and evidence were removed with `experiments/`; recover them from git
-   history if a baseline is wanted), and say in the commit message which upstream change moved which bytes.
+   sample under the new one, and say in the commit message which upstream change moved which bytes.
 
 A bump that changes bytes without a named upstream cause is not done; it is an undiagnosed defect with a green suite.

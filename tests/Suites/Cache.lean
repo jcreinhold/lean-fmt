@@ -3,10 +3,10 @@ module
 public import Test
 
 /-!
-# The cache suite: entry-granularity cache invalidation (`ruff-16b` RCI-IMPL)
+# The cache suite: entry-granularity cache invalidation
 
-Port of `tests/cache/run.sh`. The claim under test is the one `RCI-SPEC` froze and
-`LeanFmt/Cache/Spec.lean` proved over a pure decision function: an entry is served only when its
+Port of `tests/cache/run.sh`. The claim under test is the one `LeanFmt/Cache/Spec.lean` proved
+over a pure decision function: an entry is served only when its
 source **and its grammar** are current, and an edit invalidates the entries that depend on it and
 no others.
 
@@ -308,7 +308,7 @@ private def testEpochChange (ctx : Ctx) : IO Unit := do
   discard <| expectExit 0 "touch the formatter binary" "touch" #["-m", ctx.fmt]
   let servedCount ← probe ctx "formatter rebuild"
   ensureEq "a formatter rebuild invalidates every entry" 0 servedCount
-  -- Repeated epoch changes must not grow the directory without bound. Before RCI-FINAL nothing
+  -- Repeated epoch changes must not grow the directory without bound. Originally nothing
   -- collected indexes at all: three simulated rebuilds left four files, and it kept climbing.
   for stamp in ["203001010001", "203001010002", "203001010003", "203001010004", "203001010005",
       "203001010006"] do
@@ -353,7 +353,7 @@ public def main (args : List String) : IO UInt32 := do
   let fmt := (root / ".lake" / "build" / "bin" / "lean-fmt").toString
   ensure (← (root / ".lake" / "build" / "bin" / "lean-fmt").pathExists)
     "lean-fmt binary not built; run 'lake build' first"
-  -- Precondition for the absent-search-path-root regression (`RCI-FINAL`): `tests/cache/dep` is
+  -- Precondition for the absent-search-path-root regression: `tests/cache/dep` is
   -- required by the fixture and imported by nothing, so Lake never builds its library and this
   -- directory never exists -- while still being on the workspace's `LEAN_PATH`. That is mathlib's
   -- `Cli` shape, and it disabled the cache for entire projects. Guard the precondition, or a

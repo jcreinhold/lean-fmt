@@ -149,7 +149,7 @@ private def testPreviews (ctx : Ctx) : IO Unit := do
     "mode=diff files=1 findings=1 changed=1 written=0 broken=0 rejected=0 \
      withheld_unsafe=0 suppressed=0 infrastructure_failures=0\n") "the diff trailer"
 
-/-- `format` formats — the RFP-IMPL pin on the layout-only fixture, with the exact canonical
+/-- `format` formats — the pin on the layout-only fixture, with the exact canonical
 bytes. The body breaks after `:=` at every width: `declValSimple` is a hard newline unless the
 body is one of the three `ppAllowUngrouped` parsers, and a literal is none of them. -/
 private def testLayoutFormat (ctx : Ctx) : IO Unit := do
@@ -490,7 +490,7 @@ private def testClean (ctx : Ctx) : IO Unit := do
   ensureEq "clean touched the source" before (← metadataLine ctx.findings)
 
 -- -----------------------------------------------------------------------------------------------
--- RDF-IMPL / RDF-LAYOUT / RDF-FINAL: layout and fix are decoupled
+-- Layout and fix are decoupled
 
 /-- On a fixture with both a layout defect and an admitted fix, `format` reflows and leaves the
 finding while `fix` applies the finding at original coordinates and does not reflow. -/
@@ -750,7 +750,7 @@ private def testFipPreviewsNeverWrite (ctx : Ctx) : IO Unit := do
   ensureEq "check or diff wrote" before (← metadataLine fixture)
 
 -- -----------------------------------------------------------------------------------------------
--- RCD-IMPL: the selection gates
+-- The selection gates
 
 /-- Gate 1: a path inside `.lake` is refused by every mode under every configuration. The floor
 is absolute, so each setting is asserted separately rather than once with the default. -/

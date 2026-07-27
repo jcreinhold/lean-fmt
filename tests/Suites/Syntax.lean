@@ -29,7 +29,7 @@ private def sfmtEnv : Array (String × Option String) :=
   #[("LEAN_FMT_DISABLE_ARTIFACT", some "1"), ("LEAN_FMT_TEST_DISABLE_MODULE_EVIDENCE", some "1")]
 
 /-- The six syntax-tier rules named explicitly: five are preview and FMT011 is `stable` with
-default off (`ruff-12b`), so `--preview` is not what makes the set reachable; naming each code is.
+default off, so `--preview` is not what makes the set reachable; naming each code is.
 One selector per flag, so a negative fixture is measured against every rule at once. -/
 private def allSix : Array String :=
   #["--select", "FMT006", "--select", "FMT007", "--select", "FMT008", "--select", "FMT009",
@@ -185,7 +185,7 @@ private def testFormatNeverFixes (ctx : Ctx) : IO Unit := do
   | some out => ensureContains out "((1))" "format applied the syntax fix -- it must not"
   | none => pure ()
 
-/-- The RYC-FINAL adversarial compositions: a fix range abutting a multibyte glyph (every
+/-- The adversarial compositions: a fix range abutting a multibyte glyph (every
 compiler-produced offset indexes the normalized bytes), and two nested defects whose point
 deletions compose in one transaction. -/
 private def testAdversarial (ctx : Ctx) : IO Unit := do

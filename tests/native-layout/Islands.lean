@@ -45,7 +45,7 @@ def quoted (value : Nat) : Lean.Syntax → Lean.MacroM Lean.Syntax := fun _ => `
 inner one replaces a subtree with a marker leaf, and the outer one then has to measure a node one of
 whose children no longer carries a position. Measuring the rewritten node instead of the original
 truncates the island to the last surviving leaf, and it no longer covers the terminals its own marker
-stands for. That was D12. -/
+stands for. -/
 def nestedEscalation (stx : Lean.Syntax) : Lean.MacroM Lean.Syntax :=
   match stx with
   | `($(_) fun $_:ident ↦ $body) => return body
@@ -55,7 +55,7 @@ def nestedEscalation (stx : Lean.Syntax) : Lean.MacroM Lean.Syntax :=
 read off the syntax stack, and Lean's formatter reads one slot short of where its parser wrote it, so
 the formatter asks for a formatter registered under the bar and the command dies as
 `Unknown constant «|»`. The class is the sole call site of `parserOfStack`, and its body is in a
-category picked at parse time, so the quotation is one island. That was D11. -/
+category picked at parse time, so the quotation is one island. -/
 def dynamicallyQuoted : Lean.MacroM Lean.Syntax := do
   let binders ← `(Lean.explicitBinders| (x : Nat))
   return binders
@@ -66,11 +66,11 @@ boundary that sets column zero. Those bytes belong to the island, which spells t
 boundary through, and a collected boundary that is never applied refuses the command:
 `Mathlib/Util/ParseCommand.lean` reported `applied 0/2 boundaries` for the two `command` quotations in
 its `elab_rules`. A boundary that falls strictly inside an island is dropped once, for every rule.
-That was D16. -/
+-/
 def quotedCommand (value : Lean.Term) : Lean.MacroM Lean.Syntax :=
   `(command| #eval $value)
 
-/- The two sides of D23, which is one question asked of every antiquotation: will anything in scope
+/- The two sides, which is one question asked of every antiquotation: will anything in scope
 format this node, or will the lookup fall through to its kind?
 
 Below, `$_` heads an application and `$as:term` sits inside a splice group. Both carry a *category's*

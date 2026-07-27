@@ -57,13 +57,13 @@ private def testRules : IO Unit := do
   ensure ((LosslessSource.normalize normalized) == (normalized, .lf))
     "normalization is not idempotent"
 
-  -- Trailing-whitespace and final-newline normalization is the **formatter's** layout, not a lint rule
-  -- (`ruff-11c` RDF-LAYOUT): both rules were retired, so the source rules are silent on both, even on
+  -- Trailing-whitespace and final-newline normalization is the **formatter's** layout, not a lint rule:
+  -- both rules were retired, so the source rules are silent on both, even on
   -- this trailing-whitespace, no-final-newline fixture. The printer owns the normalization; that it does
   -- so soundly (never touching a string literal's interior) is proved in formatter/mode suites.
   --
   -- This once named the retired codes FMT001/FMT002 explicitly, in a `f.code != …` guard. The
-  -- renumbering (`docs/rules/MIGRATION.md`) reassigned both codes to the live security rules, which
+  -- renumbering reassigned both codes to the live security rules, which
   -- would have turned that guard into "the security rules never fire" -- vacuously true on this
   -- fixture, and a silent hole exactly where the strongest rules are. The by-name guard is gone; the
   -- emptiness assertion below is what the case was always really claiming.
@@ -73,7 +73,7 @@ private def testRules : IO Unit := do
 
 /-- `FMT001`/`FMT002`: forbidden control bytes and suspicious bidirectional controls. A control byte
 or bidi mark only reaches accepted source inside a string literal or comment (bare occurrences are
-parse errors, `notes/01-catalog.md` §2), so those are the positions exercised here; ranges are
+parse errors), so those are the positions exercised here; ranges are
 byte-exact in normalized coordinates and both rules are report-only. -/
 private def testSourceSecurityRules : IO Unit := do
   let ctl (n : Nat) : String := String.ofList [Char.ofNat n]
@@ -162,7 +162,7 @@ private def testSourceSecurityProperties : IO Unit := do
   check (String.ofList [Char.ofNat 0x00, Char.ofNat 0x202e, Char.ofNat 0x1b])
   check (String.ofList [Char.ofNat 0x41, Char.ofNat 0x4e2d, Char.ofNat 0x202e])
 
-/-- Catalog metadata invariants (`ruff-12` RRL-IMPL; `notes/01-schema.md` §10). Pure over the registry:
+/-- Catalog metadata invariants. Pure over the registry:
 unique/well-shaped codes, namespace disjointness, lifecycle/default coherence, and documentation
 presence. The *executable*-example check (each `bad` fires, each fix yields `good?`) runs through the
 real frontend in `tests/catalog/run.sh`; this test pins everything answerable without a projection. -/
@@ -197,8 +197,8 @@ private def testCatalogInvariants : IO Unit := do
         s!"deprecated rule {info.code} names an unknown replacement: {r}"
     else
       ensure info.replacement?.isNone s!"non-deprecated rule {info.code} carries a replacement"
-  -- 3b. Every preview rule states what would graduate it, and no other rule pretends to
-  --     (`ruff-12b` RGR-SPEC §4 DOC-3). Pinned in BOTH directions on purpose: a field that is merely
+  -- 3b. Every preview rule states what would graduate it, and no other rule pretends to.
+  --     Pinned in BOTH directions on purpose: a field that is merely
   --     *allowed* is a field that goes unset, and "not yet" with no condition is how a preview rule
   --     becomes permanent.
   for info in infos do
@@ -224,8 +224,8 @@ private def testCatalogInvariants : IO Unit := do
       else
         ensure (info.examples.all (·.good?.isNone))
           s!"report-only rule {info.code} has a `good` example but nothing to fix"
-  -- 5. Reserved integrity. `reservedCodes` is EMPTY after the pre-release renumbering
-  -- (`docs/rules/MIGRATION.md`), which reused the retired FMT001/FMT002. So the old form of this
+  -- 5. Reserved integrity. `reservedCodes` is EMPTY after the pre-release renumbering, which reused
+  -- the retired FMT001/FMT002 (docs/adding-a-rule.md §"Retiring a rule"). So the old form of this
   -- check -- "FMT001 and FMT002 are reserved and not live" -- is not merely failing, it asserts the
   -- opposite of what now holds, and it is gone rather than adjusted.
   --
@@ -282,7 +282,7 @@ private def testApplicability : IO Unit := do
     "extend-safe-fixes promoted a display-only fix"
 
   -- `RulePlan.findings` carries the effective applicability onto the reported fix. Driven by a synthetic
-  -- `.safe` fix (no source-tier fixable rule survives RDF-LAYOUT), which `extend-unsafe-fixes` demotes.
+  -- `.safe` fix (no source-tier fixable rule survives the layout retirement), which `extend-unsafe-fixes` demotes.
   let demote : RulePlan := { selected := #["FMT011"], perFileIgnores := #[], extendSafe := #[], extendUnsafe := #["FMT011"] }
   let projected := demote.findings "A.lean" #[findingWithEdit { start := 0, stop := 1 } "" .safe "FMT011"]
   ensure (projected.size == 1 && (projected[0]!.fix?.map (·.applicability)) == some .unsafe)
@@ -312,12 +312,12 @@ private def testApplicability : IO Unit := do
 
 /-! ## The engine, exercised at both tiers
 
-`ruff-10` shipped `syntax`-tier product rules, so `ruleRegistry` now mixes tiers — but it still cannot
+`ruleRegistry` now mixes `syntax`-tier product rules with source ones — but it still cannot
 exercise the *adversarial* seam this section pins: a `syntax` finding sorting **ahead** of a `source`
 one despite being registered **after** it, and a `syntax` rule skipped cleanly when only `source`
 facts are on hand. Pinning those needs two rules at controlled codes and ranges, which product rules
-do not guarantee. `RRE-FINAL`'s work order asks for "a representative rule at each tier"; its stop
-rule says "do not retain fake product rules merely for coverage". Both hold at once only if the
+do not guarantee. The seam needs a representative rule at each tier, and fake product rules must not
+be retained merely for coverage. Both hold at once only if the
 representative rules live here and never enter `ruleRegistry` — which is what `runRulesOf` and
 `requiredTierOf` take an array for.
 
@@ -402,8 +402,8 @@ private def testEngineTiers : IO Unit := do
   let encoded := Lean.toJson probeSyntax
   ensure ((encoded.getObjValAs? String "input").toOption == some "syntax")
     "the rules wire shape does not derive input from the implementation"
-  -- `ruff-10` shipped the first `.syntax`-tier rules (FMT006–FMT011) and `ruff-11` the first
-  -- `.semantic`-tier ones (FMT012–FMT015), so the registry now spans the whole lattice. The seams that
+  -- The first `.syntax`-tier rules (FMT006–FMT011) and the first `.semantic`-tier ones
+  -- (FMT012–FMT015) shipped, so the registry now spans the whole lattice. The seams that
   -- once assumed it was uniformly source-tier are all tier-aware: `ofArtifact?` tags its cache entry
   -- with the tier the facts reached (`.semantic` for a demanded artifact, else `.syntax`) and the
   -- source-only shortcut tags `.source`, and `cacheHitServes` serves an entry only when
@@ -411,10 +411,10 @@ private def testEngineTiers : IO Unit := do
   -- semantic `--select`. This asserts the shape: all three tiers now ship.
   ensure (ruleRegistry.any (·.tier == .source) && ruleRegistry.any (·.tier == .syntax) &&
       ruleRegistry.any (·.tier == .semantic))
-    "ruleRegistry lost a tier: ruff-10 shipped source+syntax, ruff-11 added semantic (FMT012–FMT015)"
+    "ruleRegistry lost a tier: source+syntax shipped first, semantic was added later (FMT012–FMT015)"
 
-  -- The lattice gained `semantic` above `syntax` (`ruff-05b`): richer facts serve any cheaper
-  -- requirement, and the cheaper cannot serve the dearer. `ruff-11`'s FMT012–FMT015 are the first
+  -- The lattice has `semantic` above `syntax`: richer facts serve any cheaper
+  -- requirement, and the cheaper cannot serve the dearer. FMT012–FMT015 are the first
   -- shipped `.semantic`-tier rules, so both demanders now reach that tier — a `.semantic`-rule
   -- selection (below) and the canonical-rendering mode (`RulePlan.demandedTier`).
   ensure (Tier.satisfies .semantic .syntax && Tier.satisfies .semantic .source)
@@ -427,8 +427,8 @@ private def testEngineTiers : IO Unit := do
 
 /-- Selection derives what a run must *obtain*, and nothing else.
 
-The completion contract's first clause — selection "never selects worker, artifact, cache, or
-scheduling strategy" — has two halves. This is the half about cost: what a selection is allowed to
+Selection "never selects worker, artifact, cache, or
+scheduling strategy" — the clause has two halves. This is the half about cost: what a selection is allowed to
 make a run pay for. The other half, that selection stays out of cache identity, is
 `tests/check/run.sh`'s one-entry-two-selections check, which needs a real cache and a real project.
 
@@ -462,7 +462,7 @@ private def testMixedSelection : IO Unit := do
       #["TST901"])
     "requiredTierOf and runRulesOf disagree about what source facts can answer"
   -- Selecting exactly one shipped rule must cost exactly that rule's own tier — no more (paying for
-  -- facts it will not read) and no less (skipping facts it needs). `ruff-10`'s syntax rules make the
+  -- facts it will not read) and no less (skipping facts it needs). The shipped syntax rules make the
   -- `.syntax` side of this non-vacuous; before them every shipped rule was `.source`.
   ensure (ruleRegistry.all (fun rule => ({ selected := #[rule.code], perFileIgnores := #[], extendSafe := #[], extendUnsafe := #[] } : RulePlan).requiredTier == rule.tier))
     "a shipped rule's single selection costs a different tier than the rule's own"
@@ -472,7 +472,7 @@ private def testMixedSelection : IO Unit := do
     { selected := #["FMT001"], perFileIgnores := #[], extendSafe := #[], extendUnsafe := #[] }
   ensure (shippedPlan.demandedTier == .source)
     "a non-rendering run demanded more than its rules needed"
-  -- `ruff-11`: selecting a shipped `.semantic`-tier rule demands the semantic fact on its own, with no
+  -- Selecting a shipped `.semantic`-tier rule demands the semantic fact on its own, with no
   -- rendering — the second demander the mode is not. This is what makes a `check --select FMT012` run
   -- capture the compiler diagnostics rather than serve a syntax-only artifact that never held them.
   let semanticPlan : RulePlan :=

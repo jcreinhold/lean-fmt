@@ -5,8 +5,7 @@ public import Test
 /-!
 # The suppression suite
 
-Port of `tests/suppression/run.sh`: end-to-end acceptance for the source-suppression layer
-(`RSP-FINAL`), driving the real CLI over committed fixtures parsed by the real frontend — nested
+Port of `tests/suppression/run.sh`: end-to-end acceptance for the source-suppression layer, driving the real CLI over committed fixtures parsed by the real frontend — nested
 syntax, doc comments, custom commands, formatting movement, unknown rules, per-file config, and
 unused fixes. Where the unit tier's `testSuppression` checks `apply`/`collect` against a hand-built
 projection, this is the acceptance matrix.

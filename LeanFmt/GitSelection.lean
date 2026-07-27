@@ -194,7 +194,7 @@ private def diffArguments : Comparison → Array String
   | .staged => #["diff", "--cached", "--name-status", "-z", "--find-renames", "HEAD"]
 
 /-- `--find-renames` is passed explicitly rather than relying on the `diff.renames` default, which a
-user's configuration can turn off (`results/01-contract.md`, remaining uncertainty). -/
+user's configuration can turn off. -/
 private def untrackedArguments : Array String :=
   #["ls-files", "--others", "--exclude-standard", "-z"]
 
@@ -211,14 +211,12 @@ private def includesUntracked : Comparison → Bool
 
 /-- Whether a path git named is even a candidate for formatting: gate 1.
 
-**The adapter must apply this itself.** `notes` §9.5 step 3 assumed the ordinary selection would drop
-non-`.lean` and `.lake` paths once handed to `execute` as the request's file list. It does not: an
-*explicitly named* file deliberately bypasses discovery's gates 2–4 — "naming a path is saying
-something" (`ruff-13` `notes/01-discovery.md` §11) — and the one gate it cannot skip raises a hard
+**The adapter must apply this itself.** It does not: an
+*explicitly named* file deliberately bypasses discovery's gates 2–4
+and the one gate it cannot skip raises a hard
 error, `selected file is not a Lean source`. **Git** named these paths, not the user, so an error is
 the wrong answer: an ordinary untracked `README.md`, or the `.lake` build tree in a repository that
-does not ignore it, would abort the whole run. A fixture repository showed it aborting `--changed`
-outright (`results/03-acceptance.md`).
+does not ignore it, would abort the whole run.
 
 Dropped silently rather than disclosed. §9.6 reports paths withheld "for a reason the caller would
 want to know"; that a `README.md` is not a Lean source is not one, and git names all manner of

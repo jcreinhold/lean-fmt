@@ -8,7 +8,7 @@ public import Test
 Port of `tests/boundary/run.sh`. Repo hygiene, not product behavior: lakefiles are executable
 configuration, every compiled Lean source uses private-by-default modules, and no Rust workspace,
 cache, build output, or generated binary is tracked. The link-closure probes at the end are the
-RCI-MODEL invariant in its observable form: the proof library is globbed alone and builds with
+invariant in its observable form: the proof library is globbed alone and builds with
 every `lake build`, but it must never enter a link closure an integrating project pays for.
 -/
 
@@ -78,7 +78,7 @@ private def testNoPublicDeclarations (root : System.FilePath) : IO Unit := do
 
 /-- Files carrying a public entry point. The old suite named three files; this scans every compiled
 source, which is the check the comment above it always described: only executable/test entry points
-are public in the active package. `experiments/` is out of scope for the same reason `docs/` is:
+are public in the active package. `docs/` is out of scope:
 hand-run probes, not package entry points. -/
 private def testEntryPointSet (root : System.FilePath) : IO Unit := do
   let result ← expectExit 0 "git ls-files" "git" #["ls-files", "*.lean"] (cwd? := some root)
@@ -113,7 +113,7 @@ private def testEntryPointSet (root : System.FilePath) : IO Unit := do
 
 private def testPluginImportBoundary (root : System.FilePath) : IO Unit := do
   -- Named rather than merely absent: while `LeanFmt.Rules` was in this set, editing one rule's
-  -- message text invalidated every integrated module's Lake trace (`notes/01-rule-facts.md` §3).
+  -- message text invalidated every integrated module's Lake trace.
   let imports := (← readRepoFile root "LeanFmt/CompilerPlugin.lean").splitOn "\n" |>.filterMap
     fun line => line.dropPrefix? "import all LeanFmt." |>.map (·.toString)
   ensureEq "compiler plugin import boundary changed" ["ArtifactModel"] (imports.toArray.qsort (· < ·)).toList
@@ -143,8 +143,7 @@ private def testLayerImports (root : System.FilePath) : IO Unit := do
 
 private def testNoLeanServer (root : System.FilePath) : IO Unit := do
   -- `Lean.Server.Utils` converts client positions **without clamping** them, and an unclamped LSP
-  -- position resolves past the end of the buffer, measured (`ruff-17`
-  -- `evidence/01-position-probe.txt`; `notes/01-protocol.md` §4). Scoped to this module on purpose:
+  -- position resolves past the end of the buffer. Scoped to this module on purpose:
   -- `LeanFmt/Analysis.lean` imports `Lean.Server.InfoUtils` and should.
   for line in (← readRepoFile root "LeanFmt/LanguageServer.lean").splitOn "\n" do
     let trimmed := line.trimLeft

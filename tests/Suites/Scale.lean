@@ -7,7 +7,7 @@ public import Test
 
 Port of `tests/scale/run.sh`: complete selection over a small Lake project — every source kind
 (workspace module, nested Lake configuration, standalone script) is discovered, checked, and
-cached, and a single-source edit invalidates exactly that source's entry (`ruff-16b` RCI-IMPL).
+cached, and a single-source edit invalidates exactly that source's entry.
 
 Lane: parallel — the fixture project and its `.lean-fmt-cache` live under a temp dir.
 -/

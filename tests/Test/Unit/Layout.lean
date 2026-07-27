@@ -41,9 +41,8 @@ namespace LeanFmt.Test.Unit.Layout
 
 /-! ## Layout
 
-`RLC-SPEC` froze the contract these check, and its numbers came from `experiments/layout-core/` (removed; see git history), which
-shares no module with this one. Several assertions below deliberately re-assert an exact figure from
-that experiment: if the product and the prototype ever disagree about margin 13, one of them is wrong
+Several assertions below deliberately re-assert exact figures from a removed experiment (see git history):
+if the product and the prototype ever disagree about margin 13, one of them is wrong
 and this is where it surfaces. -/
 
 private def hugeWidth : Nat := 1000000
@@ -112,7 +111,7 @@ private partial def genDoc (depth : Nat) (seed : Nat) : GeneratedDoc :=
 
 private def testDoc : IO Unit := do
   -- The case the whole model was chosen for. A `do` block is `do act1; act2` flat and drops the
-  -- separator when broken. Measured in `experiments/layout-core` (removed; see git history): Oppen *and* `Std.Format` both
+  -- separator when broken. Oppen *and* `Std.Format` both
   -- render `do\n  act1;\n  act2` here and strand the semicolon, because their break carries blanks
   -- only. This is the one thing `line (flat)` buys, so it is the first thing checked.
   let doBlock : Doc :=
@@ -121,7 +120,7 @@ private def testDoc : IO Unit := do
   ensure (renderText 12 doBlock == "do\n  act1\n  act2") "the broken do block stranded its separator"
 
   -- A group is decided against the line, not against itself: `f(arg)` is 6 columns but the line it
-  -- would produce is 14. The flip at 13/14 is the exact figure `experiments/layout-core` recorded.
+  -- would produce is 14.
   let tail : Doc :=
     .group (.text "f(" ++ .nest 2 (.line "" ++ .text "arg") ++ .line "" ++ .text ")") ++ .text " => tail"
   ensure (renderText 14 tail == "f(arg) => tail") "a group that fits its line was broken"
@@ -142,7 +141,7 @@ private def testDoc : IO Unit := do
   ensure (renderText hugeWidth (.nest 2 (.text "a" ++ .blank ++ .text "b")) == "a\n\n  b")
     "a structural blank line contained indentation whitespace"
 
-  -- `verbatim` is the constructor `RLC-IMPL` added, and this is the reason: a block comment's
+  -- `verbatim` is the constructor added for exactly this reason: a block comment's
   -- interior is content, and `hard` would re-indent it. `Std.Format` re-indents it too.
   let block : Doc := .nest 4 (.hard ++ .verbatim "/- a\n b -/" ++ .hard ++ .text "x")
   ensure (renderText hugeWidth block == "\n    /- a\n b -/\n    x")
@@ -193,16 +192,16 @@ private def testDoc : IO Unit := do
   ensure (spanMarks.size == 1 && slice spanOut spanMarks[0]!.output.start spanMarks[0]!.output.stop == spanOut)
     "a mark spanning a break lost part of its output"
 
-  -- `RSF-SPEC` (`ruff-14`) characterization: **when is a rendered unit's bytes independent of what
-  -- follows it?** Range formatting reports an actual range and promises the text outside it is
-  -- byte-identical, so it may only expand to a unit whose rendering the rest of the document cannot
-  -- re-decide. That is not a property of commands — it is a property of `fits`, which walks the
-  -- *tail* of the work list (`Doc.lean:168-188`). A group at the end of a unit therefore measures
-  -- itself against whatever comes after, unless something between them stops the walk.
+  -- **When is a rendered unit's bytes independent of what follows it?** Range formatting reports an
+  -- actual range and promises the text outside it is byte-identical, so it may only expand to a unit
+  -- whose rendering the rest of the document cannot re-decide. That is not a property of commands —
+  -- it is a property of `fits`, which walks the *tail* of the work list (`Doc.lean:168-188`). A group
+  -- at the end of a unit therefore measures itself against whatever comes after, unless something
+  -- between them stops the walk.
   --
   -- Exactly one thing does: a `verbatim` holding a newline, which `fits` treats like `hard`
   -- (`Doc.lean:174-176`). So "ends in trivia containing a newline" is the frozen unit boundary
-  -- condition, and `notes/01-stream-range.md` §4 states it as such.
+  -- condition.
   let unitEndingIn (trailing : String) : Doc :=
     .group (.text "aaaa" ++ .line " " ++ .text "bbbb") ++ .verbatim trailing
   -- At margin 10 the group is 9 columns and fits flat on its own either way.
@@ -364,7 +363,7 @@ private def testAlignmentSequences : IO Unit := do
     s!"expected the two moved leaves to count as normalized, got \
 {reorderedMetrics.normalizedTokens}"
 
-/- D25: a leaf whose own bytes carry whitespace escalates to an enclosing island.
+/- A leaf whose own bytes carry whitespace escalates to an enclosing island.
 
 `ProofWidgets.Jsx.jsxText` is the measured case and no such parser exists in this project, so the tree
 is built by hand -- which is also the sharper test, because it asserts the rule the leaf's bytes

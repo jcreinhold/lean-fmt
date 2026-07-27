@@ -76,7 +76,7 @@ private def testSemanticArtifact : IO Unit := do
   match (Lean.fromJson? v4none : Except String ModuleArtifact) with
   | .ok _ => throw <| IO.userError "the v9 decoder retained the deleted v4 payload shape"
   | .error _ => pure ()
-/- The shipped semantic-tier rules (`ruff-11` FMT012–FMT015) surface the compiler's own diagnostics:
+/- The shipped semantic-tier rules (FMT012–FMT015) surface the compiler's own diagnostics:
 each keys on one stable `kind` tag and re-emits it as a report-only finding under its own code,
 preserving the compiler's message, severity, and range. This exercises the whole engine seam over
 `.semantic` facts without the exact frontend — the production `runRulesOf` reads `SemanticFacts`
@@ -131,11 +131,11 @@ private def testSemanticRules : IO Unit := do
   ensure (onSource.all (fun f => !semanticCodes.contains f.code))
     "a semantic rule fired on source facts that never carried a diagnostic"
 
-/- The owned FMT012 rename fix (`ruff-11b`, ROS-IMPL). The report is surfaced from the diagnostic
+/- The owned FMT012 rename fix. The report is surfaced from the diagnostic
 (unchanged, always cheap); the `unsafe` rename fix is attached from the owned occurrence fact — and
 only when a *fixable* occurrence sits at the surfaced finding's own range with a `newName?`. This pins
 the rule half as pure data: the report never changes across the occurrence cases, only `fix?` does, so
-a `check` (empty occurrences) is byte-identical to the surfaced-only `ruff-11` behavior. `run.sh` proves
+a `check` (empty occurrences) is byte-identical to the original surfaced-only behavior. `run.sh` proves
 the fix *applies* end to end through canonical re-projection; this pins the *attachment* predicate. -/
 private def testOwnedDeprecationFix : IO Unit := do
   let depRange : SourceRange := { start := 0, stop := 4 }
@@ -189,7 +189,7 @@ private def testOwnedDeprecationFix : IO Unit := do
   ensure (d.fix?.isNone) "FMT012 attached a fix from an occurrence at a different range"
 
   -- E. No occurrences (the `check` path, or any run that did not demand the capability): report-only,
-  -- byte-identical to the surfaced-only behavior FMT012 shipped with in `ruff-11`.
+  -- byte-identical to the surfaced-only behavior FMT012 shipped with.
   let e ← fmt014 #[]
   reportUnchanged e "empty"
   ensure (e.fix?.isNone) "FMT012 was not report-only when no occurrences were captured"

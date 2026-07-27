@@ -12,7 +12,7 @@ Two facts this module rests on:
 
   1. **The surface header is not the abstract import list.** `Lean.parseImports'` prepends two
      synthesized `Init` imports on an ordinary file, a `prelude` marker suppresses them, and it drops
-     every source range, comment, and modifier spelling (measured, `evidence/01-semantics.txt`). So
+     every source range, comment, and modifier spelling (measured). So
      an import rule cannot count occurrences in `parseImports'.imports`; it must read the *written*
      header. This module reads it by parsing the header to `Lean.Syntax` — which builds an empty
      environment and is not a frontend run — and dispatching on the header grammar's node kinds
@@ -48,10 +48,10 @@ private def slice (s : String) (start stop : Nat) : String :=
 
 The modifier flags are the presence of the `«public»`/`«meta»`/`«all»` child nodes, not a
 re-derivation from the abstract `Import` — so `import all A` and `import A`, or `meta import A` and
-`import A`, are different statements, which is what makes them *not* duplicates
-(`notes/01-semantics.md` §3). `isExported` folds in the `module`-marker interaction the surface
+`import A`, are different statements, which is what makes them *not* duplicates.
+`isExported` folds in the `module`-marker interaction the surface
 keyword alone does not carry: a `public import` is exported, a plain import is exported iff the file
-has no `module` marker (measured, `evidence/01-semantics.txt` §A). -/
+has no `module` marker (measured). -/
 structure ImportStmt where
   «module» : Lean.Name
   importAll : Bool
@@ -67,8 +67,7 @@ structure ImportStmt where
   deriving Inhabited, Repr
 
 /-- The written header: the `module` marker, the imports in source order, and the header's end. Phantom
-`Init` never appears here — this is the surface text, and `Init` is synthesized past the parser
-(`notes/01-semantics.md` §1a). -/
+`Init` never appears here — this is the surface text, and `Init` is synthesized past the parser. -/
 structure HeaderModel where
   hasModule : Bool
   hasPrelude : Bool
@@ -166,8 +165,7 @@ def parseHeaderModel (normalized : String) : IO (Option HeaderModel) := do
 /-! ## FMT003 — duplicate import -/
 
 /-- Whether two written imports are the same statement: same module and the same exposure. A differing
-`all`/`meta`/exported flag makes them distinct imports that expose different data, never duplicates
-(`notes/01-semantics.md` §3). -/
+`all`/`meta`/exported flag makes them distinct imports that expose different data, never duplicates. -/
 private def sameImport (a b : ImportStmt) : Bool :=
   a.module == b.module && a.importAll == b.importAll && a.isMeta == b.isMeta &&
     a.isExported == b.isExported
@@ -182,10 +180,9 @@ private def lineIsSolelyImport (normalized : String) (stmt : ImportStmt) : Bool 
 /-- FMT003: each written import after the first occurrence of the same statement is a duplicate.
 
 The fix deletes the *later* line (`.safe`) — the surviving first occurrence keeps the exact ordered
-header the environment replays, and a repeated identical import is an elaboration no-op (measured,
-`evidence/01-semantics.txt` §B). The fix is emitted only when the duplicate's line holds nothing but
-the import; otherwise the finding is report-only so no comment is dropped (`notes/01-semantics.md` §3,
-"preserving any comment"). -/
+header the environment replays, and a repeated identical import is an elaboration no-op (measured).
+The fix is emitted only when the duplicate's line holds nothing but
+the import; otherwise the finding is report-only so no comment is dropped. -/
 def duplicateFindings (header : HeaderModel) (normalized : String) : Array Finding := Id.run do
   let mut findings : Array Finding := #[]
   for h : i in [0:header.imports.size] do
@@ -211,8 +208,8 @@ def duplicateFindings (header : HeaderModel) (normalized : String) : Array Findi
 /-! ## FMT005 — non-canonical import order within a group -/
 
 /-- Whether two adjacent imports are separated by a blank line or a comment in `normalized` — the
-boundary between two organization *groups*, which the canonical order never crosses
-(`notes/01-semantics.md` §3: blank-line groups are organization). -/
+boundary between two organization *groups*, which the canonical order never crosses: blank-line
+groups are organization. -/
 private def groupBreakBetween (normalized : String) (a b : ImportStmt) : Bool :=
   let gap := slice normalized a.range.stop b.range.start
   let newlines := gap.foldl (fun n c => if c == '\n' then n + 1 else n) 0
@@ -220,7 +217,7 @@ private def groupBreakBetween (normalized : String) (a b : ImportStmt) : Bool :=
 
 /-- FMT005: within a maximal run of imports uninterrupted by a blank line or comment, the module names
 are not in ascending order. Reported at the first out-of-order import; report-only, because reordering
-imports is observable to elaboration (`notes/01-semantics.md` §2) — the canonical rewrite is delivered
+imports is observable to elaboration — the canonical rewrite is delivered
 only through the opt-in organizer, never an unattended `fix`. -/
 def orderFindings (header : HeaderModel) (normalized : String) : Array Finding := Id.run do
   let mut findings : Array Finding := #[]
@@ -245,7 +242,7 @@ in. A rule cannot fetch it (`Rules.lean:17-19`); this function is pure over the 
 
 /-- Whether `stmt` may be *reported* as a redundancy candidate at all. `import all`, `meta import`, and
 a re-exported `public import` are **withheld**: reachability cannot reason about the private data, IR,
-or downstream re-export they carry (`notes/01-semantics.md` §3). Only plain, non-re-exported imports
+or downstream re-export they carry. Only plain, non-re-exported imports
 are eligible. -/
 def redundancyEligible (header : HeaderModel) (stmt : ImportStmt) : Bool :=
   !stmt.importAll && !stmt.isMeta && !(header.hasModule && stmt.isExported)
@@ -254,7 +251,7 @@ def redundancyEligible (header : HeaderModel) (stmt : ImportStmt) : Bool :=
 import is a redundancy candidate. `closureOf name` returns the modules `name` transitively imports (or
 `none` if the graph could not resolve it). Report-only always — reachability is necessary, not
 sufficient, for safe removal. Duplicates are excluded (they are FMT003's). Returns the findings and the
-withheld count (candidates skipped by `redundancyEligible`), which `RIR-FINAL` records. -/
+withheld count (candidates skipped by `redundancyEligible`). -/
 def redundantFindings (header : HeaderModel) (closureOf : Lean.Name → Option (Array Lean.Name)) :
     Array Finding × Nat := Id.run do
   let mut findings : Array Finding := #[]
@@ -297,7 +294,7 @@ comment-delimited group's imports sorted by module name, everything else — the
 LSP "organize imports" capability calls; it exposes no graph internals, only text in, text out.
 
 Redundancy (FMT004) is **not** removed here — it is report-only, so the organizer surfaces candidates
-through `redundantFindings` but never deletes them (`notes/01-semantics.md` §4). -/
+through `redundantFindings` but never deletes them. -/
 def organize (header : HeaderModel) (normalized : String) : String := Id.run do
   if header.imports.isEmpty then return normalized
   -- Partition imports into groups separated by a blank line or comment.

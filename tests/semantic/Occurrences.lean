@@ -1,6 +1,6 @@
 module
 
-/-! Adversarial fixture for the FMT012 fixable-occurrence predicate (`ruff-11b` ROS-FINAL). Each
+/-! Adversarial fixture for the FMT012 fixable-occurrence predicate. Each
 deprecated declaration carries a `newName?` replacement; the uses below exercise the predicate's
 boundary: a bare identifier (fixable); non-bare spellings — namespace-qualified, `open`-shadowed,
 dot-projection — that a textual single-token rename must NOT claim; and a `newName? = none` entry

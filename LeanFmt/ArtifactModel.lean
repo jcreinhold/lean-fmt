@@ -63,7 +63,7 @@ instance : Lean.FromJson Applicability := ⟨fun json => do
 /-- A proposed transformation attached to a finding: one applicability governing the whole edit set.
 
 Edits in one fix are atomic and never overlap, so applicability belongs to the fix, not to a single
-`Edit`, which is a byte fact carrying no judgment. `notes/01-model.md` §1 records why this is a
+`Edit`, which is a byte fact carrying no judgment. This is a
 structure rather than a field on `Edit` or on `Finding`. -/
 structure Fix where
   applicability : Applicability
@@ -90,7 +90,7 @@ structure Finding where
 A *fact*, never a *finding*: only the frontend could produce it (it ran the linters and elaborator),
 and a reader cannot recompute it from these bytes; the surfacing rule concludes the lean-fmt code,
 applicability, and reporting shape. Carried in the artifact only when a consumer demanded the
-`.semantic` tier (`ruff-11` RMR-SPEC `notes/01-authority.md` §4).
+`.semantic` tier.
 
 - `kind` is the message's top-level tag (`Lean.Message.kind`) — the linter's option name
   (`linter.unusedVariables`) or the deprecation attribute (`Lean.Linter.deprecatedAttr`). It is the
@@ -112,7 +112,7 @@ elaborator recorded the resolved constant at each source occurrence. A *fact*, n
 only the frontend, having elaborated the module, knows which constant a bare identifier resolved to;
 a reader holding only bytes cannot. Carried in the artifact only when a run demanded the
 **occurrences** capability (a rendering mode selecting the owned FMT012 rule), so the whole-file
-info-tree fold is paid only when the fix is asked for (`ruff-11b` `notes/01-model.md` §§2-5).
+info-tree fold is paid only when the fix is asked for.
 
 The owned analog of `Diagnostic`: FMT012's report is a `Diagnostic` (surfaced, always cheap), but its
 `unsafe` rename fix needs the *resolved constant and its replacement*, which only the info tree
@@ -124,7 +124,7 @@ carries.
 - `declName`/`newName?` are the **user-facing** display spellings (module-private mangling stripped at
   capture while the `Environment` is live), so no `Name` or `Environment` crosses into a rule. The
   rename fix substitutes `newName?`.
-- `fixable` is decided at capture from the bare-identifier predicate (`notes/01-model.md` §5): a
+- `fixable` is decided at capture from the bare-identifier predicate: a
   non-binder occurrence resolving to a bare `.const` with a `newName?` whose display is a single
   identifier. Non-qualifying occurrences stay `fixable := false` and report-only; the output
   re-elaboration validator backstops a rename that does not resolve. -/

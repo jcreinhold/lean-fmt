@@ -5,7 +5,7 @@ public import Test
 /-!
 # The catalog suite
 
-Port of `tests/catalog/run.sh`: RRL-IMPL executable-example acceptance (ruff-12). Every live
+Port of `tests/catalog/run.sh`: executable-example acceptance. Every live
 rule's documented example is not decoration: it is *run* against the real product. Sourced from
 the registry (`explain CODE --json`, the one metadata object the docs are also generated from),
 the suite proves for each rule with examples that:
@@ -18,7 +18,7 @@ the suite proves for each rule with examples that:
 
 It also pins the CLI lifecycle contract (`explain` on a live / meta / unknown code) and the
 generated-docs drift check (`docs --check`), so a metadata edit that forgets to regenerate the
-pages fails here, and the generated-tree link check (RRL-FINAL).
+pages fails here, and the generated-tree link check.
 
 Snippets omit the private-module `module` header for readability; the suite prepends it before
 running. Preview rules are unlocked with `--preview`, exactly the gate a user hits. Every example
@@ -156,7 +156,7 @@ private def testExplainLifecycle (ctx : Ctx) : IO Unit := do
 private def testDocsCheck (ctx : Ctx) : IO Unit := do
   discard <| expectExit 0 "docs --check" ctx.application #["docs", "--check"] (cwd? := some ctx.root)
 
-/-- Documentation link check (RRL-FINAL): every relative link in the generated tree resolves,
+/-- Documentation link check: every relative link in the generated tree resolves,
 every live rule has a page, and the index links each one. -/
 private def testDocLinks (ctx : Ctx) : IO Unit := do
   let docsDir := ctx.root / "docs" / "rules"

@@ -125,7 +125,7 @@ def alternatives : Nat → Nat
 /- A command nested inside another command. `#guard_msgs`'s parser spells `" in" ppLine command` with
 no `ppDedent`, so Lean's document puts the embedded command inside the node's own `nest` and it lands
 one level in. A command starts at column zero, so the boundary before it is dedented to the enclosing
-command's column. That was D13. -/
+command's column. -/
 /-- info: 3 -/
 #guard_msgs in
 #eval 1 + 2
@@ -134,7 +134,7 @@ command's column. That was D13. -/
 and `insertComments` used to read that as "the boundary is spent" and drop it -- right for the three
 layouts that only say *whether* the next token is on this row, wrong for the one that says which
 *column* the row starts at. Both the comment and the command landed one level in, with the boundary
-still counted as applied so nothing refused. That was D24, found on
+still counted as applied so nothing refused. Found on
 `MathlibTest/Linter/Multigoal.lean`. -/
 /-- info: 7 -/
 #guard_msgs in
@@ -144,7 +144,7 @@ still counted as applied so nothing refused. That was D24, found on
 /- The same embedding again, this time with a body of its own. The dedent above is a *boundary*: it
 sets the column of the row the command starts on and says nothing about the rows after it, which keep
 the `nest` the embedding node introduced and land one level further in than the command they belong to.
-That was D27, and it was invisible while D24 had the command itself misplaced and while D13's fixture
+It stayed invisible while the case above had the command itself misplaced and while the first fixture
 was a single line with no interior break. -/
 #guard_msgs in
 example : 1 + 1 = 2 ∧ 2 + 2 = 4 := by
@@ -159,8 +159,8 @@ def afterOpen : Nat := 0
 
 /- A `do` block's `if` whose body is indented under it. Lean's `doIf` spells `ppSpace` before the
 `doSeq`, and the sequence begins with its own hard newline, so the document holds a discretionary break
-directly in front of a newline. Flattened that break is a space at the end of the `then` line. That was
-D15, and it is the one defect in this file whose evidence is what a line ends with rather than where it
+directly in front of a newline. Flattened, that break is a space at the end of the `then` line, so this
+is the one case in this file whose evidence is what a line ends with rather than where it
 starts. -/
 def indentedThen (limit : Nat) : Id Nat := do
   let mut total := 0
@@ -174,8 +174,7 @@ def indentedThen (limit : Nat) : Id Nat := do
 `nest` and then a discretionary break before the declaration's name -- so the name lands one column
 past the `let`, which is where the `where` bindings above land too and is the block's own reference
 column either way. What the comment must not do is change which side of the break it is on: the source
-put it on its own line, and a reparse that finds it trailing the `rec` hands it to a different owner.
-That was D14. -/
+put it on its own line, and a reparse that finds it trailing the `rec` hands it to a different owner. -/
 def documentedLetRec (value : Nat) : Nat :=
   let rec
     /-- Applies the mapping to a position. -/
@@ -188,7 +187,7 @@ and under `case` alike, so treating the kind itself as ungrouped fires the rule 
 carrier does group the list. Where the carrier's delimiter is the only thing in front of the list --
 `(` here, `·` below -- the first item already sits on the column the separators break to, and the break
 the rule wanted has nowhere to land but one `nest` past them, which puts `rfl` outside the parentheses.
-That was D18. `case left => ` is the contrast in the other direction: terminals intervene, so the list
+`case left => ` is the contrast in the other direction: terminals intervene, so the list
 does start right of the separators' column and the boundary is still needed. -/
 theorem delimitedTactics (a : Nat) : a = a ∧ a = a := by
   constructor <;> (skip; rfl)

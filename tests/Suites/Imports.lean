@@ -5,7 +5,7 @@ public import Test
 /-!
 # The imports suite
 
-Port of `tests/imports/run.sh`. The import-rule pipeline end-to-end (`RIR-IMPL`): the three
+Port of `tests/imports/run.sh`. The import-rule pipeline end-to-end: the three
 `imports`-category diagnostics and the opt-in organizer, on committed module fixtures. The unit
 tier pins the pure header rules and the organizer function; this pins the whole CLI path — read,
 normalize, parse the surface header, merge fresh import findings (FMT004 via the live Lake graph),

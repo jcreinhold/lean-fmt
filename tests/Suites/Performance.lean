@@ -5,10 +5,10 @@ public import Test
 /-!
 # The performance suite
 
-Port of `tests/performance/run.sh` (`ruff-19` RPR-FINAL): durable per-commit performance gates.
+Port of `tests/performance/run.sh`: durable per-commit performance gates.
 
-It does not assert a wall time. `RPR-IMPL` measured the same unchanged binary over the same warm
-corpus at 3,977 ms and at 19,968 ms depending on nothing but what else the machine was doing, so
+It does not assert a wall time. The same unchanged binary was measured
+over the same warm corpus at 3,977 ms and at 19,968 ms depending on nothing but what else the machine was doing, so
 every gate is a **count, a ratio, or a digest** — quantities that do not move when the machine
 gets slower. What they catch is a change in the work performed, which is what a performance
 regression actually is.

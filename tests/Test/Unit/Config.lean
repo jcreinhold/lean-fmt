@@ -43,8 +43,8 @@ private def testConfig : IO Unit := do
   let directory ← IO.FS.createTempDir
   let configPath := directory / "lean-fmt.toml"
   -- Category/selector machinery is exercised on the source-tier `security` category (FMT001 control
-  -- byte, FMT002 bidi mark), the sole source-tier vehicle after `ruff-11c` RDF-LAYOUT retired the
-  -- `text` category (FMT001/FMT002) into the formatter. `redundancy` (FMT008/11/13, syntax) is the
+  -- byte, FMT002 bidi mark), the sole source-tier vehicle after the `text` category (FMT001/FMT002)
+  -- was retired into the formatter. `redundancy` (FMT008/11/13, syntax) is the
   -- disjoint category that must select none of these findings.
   let ctl (n : Nat) : String := String.ofList [Char.ofNat n]
   let secBytes := "def s := \"a" ++ ctl 0x00 ++ "b\"\n-- x" ++ ctl 0x202e ++ "y\n"
@@ -65,7 +65,7 @@ ignore = [\"FMT002\"]\n\
     ensure (!(config.includesPath "Other.lean")) "unmatched path was included"
     let .ok plan := config.rulePlan {}
       | throw <| IO.userError "valid configured selectors were rejected"
-    -- Specificity precedence (`ruff-12`): config `ignore = [FMT002]` (exact) outranks `select = [security]`
+    -- Specificity precedence: config `ignore = [FMT002]` (exact) outranks `select = [security]`
     -- (category), so only FMT001 survives.
     ensure (plan.activeCount == 1) "configured ignore did not win"
     let findings := runSourceRules secBytes
@@ -86,10 +86,10 @@ ignore = [\"FMT002\"]\n\
       | throw <| IO.userError "the 'security' category selector was rejected"
     ensure ((secPlan.findings "A.lean" findings).map (·.code) == #["FMT001", "FMT002"])
       "the security category did not select both control-byte rules"
-    -- Preview gate on a category selector (`ruff-12`), now over a MIXED category: `redundancy` holds
-    -- FMT008 and FMT009 (preview) and FMT011 (stable, default-off — the `ruff-12b` "stable-optional"
+    -- Preview gate on a category selector, now over a MIXED category: `redundancy` holds
+    -- FMT008 and FMT009 (preview) and FMT011 (stable, default-off — the "stable-optional"
     -- outcome). So the category resolves to exactly the stable member without preview mode, and to all
-    -- three with it. The mixed case is the interesting one and did not exist before `ruff-12b`.
+    -- three with it. The mixed case is the interesting one.
     let .ok gated := config.rulePlan { select := #["redundancy"] }
       | throw <| IO.userError "a partly-preview category was rejected"
     ensure (gated.selected == #["FMT011"])
@@ -97,7 +97,7 @@ ignore = [\"FMT002\"]\n\
     let .ok previewed := config.rulePlan { select := #["redundancy"], preview := true }
       | throw <| IO.userError "the preview category was rejected under preview mode"
     ensure (previewed.activeCount == 3) "preview mode did not unlock the redundancy category"
-    -- `stable-optional`, stated directly (`ruff-12b` RGR-SPEC §1.1). FMT011 is reachable by `all`, by
+    -- `stable-optional`, stated directly. FMT011 is reachable by `all`, by
     -- its category, and by its exact code with NO preview gate, and is absent from `default`. That
     -- combination is the whole outcome: promoted out of preview on correctness, kept off the default
     -- path on cost.
@@ -124,8 +124,9 @@ ignore = [\"FMT002\"]\n\
       | throw <| IO.userError "exact-vs-category precedence rejected a valid plan"
     ensure (keep.selected == #["FMT011"]) "an exact select did not outrank a category ignore"
     -- A retired code is accepted (non-breaking), selects no rule, and raises a notice -- REMOVED with
-    -- the rest of the retired-code coverage (`docs/rules/MIGRATION.md`). It selected FMT001, which the
-    -- renumbering turned into a live default security rule, so the case would now assert that
+    -- the rest of the retired-code coverage (docs/adding-a-rule.md §"Retiring a rule"). It selected
+    -- FMT001, which the renumbering turned into a live default security rule, so the case would now
+    -- assert that
     -- selecting a live rule yields an empty plan. There is no code left that can exercise this path:
     -- with `reservedCodes` empty, `selectorsValid` rejects anything that is not live, so "accepted
     -- with a notice" has no possible input until a rule retires.
@@ -134,14 +135,14 @@ ignore = [\"FMT002\"]\n\
       | throw <| IO.userError "the unfixable axis rejected a valid plan"
     ensure (unfix.selected == #["FMT011"] && unfix.fixableSelected.isEmpty)
       "unfixable did not withhold FMT011's fix while keeping it selected"
-    -- RRL-FINAL precedence matrix — the remaining lattice edges beyond the cases above.
+    -- The remaining precedence-matrix edges beyond the cases above.
     -- (a) Tie → ignore: an exact select and an exact ignore of the same code are equal specificity, so
     -- ignore wins and the rule is dropped.
     let .ok tie := config.rulePlan { select := #["FMT002"], ignore := #["FMT002"] }
       | throw <| IO.userError "an exact select/ignore tie was rejected"
     ensure (tie.activeCount == 0) "an exact select/ignore tie did not resolve to ignore"
-    -- (b) `all` expands to the stable set; `default` expands to the default-ON set. Since `ruff-12b`
-    -- these DIFFER — FMT011 is stable and default-off — and that divergence is the point of the
+    -- (b) `all` expands to the stable set; `default` expands to the default-ON set. These now
+    -- DIFFER — FMT011 is stable and default-off — and that divergence is the point of the
     -- `stable-optional` outcome, so it is asserted rather than assumed away. Neither admits a preview
     -- rule without the gate; `all` + preview unlocks the whole registry.
     let stableCount := (allRuleInfos.filter (·.lifecycle == .stable)).size
@@ -162,7 +163,7 @@ ignore = [\"FMT002\"]\n\
       "'all' under preview did not unlock the whole registry"
     -- (c) `extend-select` always adds, across the CLI-owns-selection boundary: with no CLI `select`, the
     -- config selection (security minus the config's exact `ignore = [FMT002]`) still applies, and a CLI
-    -- extend-select adds FMT011 on top (no preview gate needed since `ruff-12b`). Result: FMT001 + FMT011.
+    -- extend-select adds FMT011 on top (no preview gate needed). Result: FMT001 + FMT011.
     let .ok extended := config.rulePlan { extendSelect := #["FMT011"] }
       | throw <| IO.userError "extend-select over the config selection was rejected"
     ensure (extended.selected == #["FMT001", "FMT011"])
@@ -176,17 +177,17 @@ ignore = [\"FMT002\"]\n\
   finally
     IO.FS.removeDirAll directory
 
-/-- Hierarchical configuration discovery (`ruff-13` RCD-IMPL; `notes/01-discovery.md` §3–§12).
+/-- Hierarchical configuration discovery.
 
 Everything here is filesystem-real: a temporary tree with actual config files, actual `.gitignore`
 files, and actual sources, walked by the same `Discovery.run` a real run uses. A unit test that hands a
 hand-built `FormatterConfig` to the matcher would pass while discovery picked the wrong file, which is
-the failure this stack exists to prevent.
+the failure this test exists to prevent.
 
 `.gitignore` handling is asserted through `Discovery.run` rather than against the pattern compiler
 directly, for the same reason: the compiler being right about `build/` is worth nothing if the walk
 does not prune `build/` — and pruning, not per-file matching, is what git's directory-exclusion rule
-licenses (§10). -/
+licenses. -/
 private def testDiscovery : IO Unit := do
   let directory ← IO.FS.createTempDir
   let root ← IO.FS.realPath directory
@@ -195,13 +196,13 @@ private def testDiscovery : IO Unit := do
     if let some parent := path.parent then IO.FS.createDirAll parent
     IO.FS.writeFile path content
   try
-    -- §3 both recognized names present is a hard error, never a silent precedence win.
+    -- Both recognized names present is a hard error, never a silent precedence win.
     write ".lean-fmt.toml" "[lint]\nselect = [\"security\"]\n"
     write "lean-fmt.toml" "[lint]\nselect = [\"all\"]\n"
     let ambiguous ← try discard <| Discovery.run root none; pure false catch _ => pure true
     ensure ambiguous "two recognized configuration names in one directory were accepted"
     IO.FS.removeFile (root / "lean-fmt.toml")
-    -- §5 the closest config wins outright: `sub` does not inherit the root's `exclude`, and the root
+    -- The closest config wins outright: `sub` does not inherit the root's `exclude`, and the root
     -- does not acquire `sub`'s width. No implicit merging.
     write ".lean-fmt.toml" "\
 exclude = [\"skipped\"]\n\
@@ -225,8 +226,8 @@ line-width = 60\n"
       "the root's exclude reached a subtree its own configuration governs"
     ensure (discovery.configKeyFor "A.lean" != discovery.configKeyFor "sub/B.lean")
       "two distinct effective configurations shared one plan key"
-    -- §6 `extend` composes: scalars and base arrays replace, `extend-*` concatenates, and `extend`
-    -- itself is not inherited. §7 patterns anchor at the *declaring* file's directory.
+    -- `extend` composes: scalars and base arrays replace, `extend-*` concatenates, and `extend`
+    -- itself is not inherited. Patterns anchor at the *declaring* file's directory.
     write "base.toml" "\
 [format]\n\
 line-width = 90\n\
@@ -247,14 +248,14 @@ extend-select = [\"FMT009\"]\n"
       "extend-select did not concatenate parent-then-child"
     ensure (child.contributingFiles.size == 2)
       "the extend chain did not record both contributing files"
-    -- §6 a cycle terminates as an error rather than a hang or a depth-limit surprise.
+    -- A cycle terminates as an error rather than a hang or a depth-limit surprise.
     write "cycle-a.toml" "extend = \"cycle-b.toml\"\n"
     write "cycle-b.toml" "extend = \"cycle-a.toml\"\n"
     write "sub/.lean-fmt.toml" "extend = \"../cycle-a.toml\"\n"
     let cyclic ← try discard <| Discovery.run root none; pure false catch _ => pure true
     ensure cyclic "an extend cycle was accepted"
     IO.FS.removeFile (root / "sub" / ".lean-fmt.toml")
-    -- §8.2 migration: a flat linter key still works and says so; setting it in both places is an
+    -- Migration: a flat linter key still works and says so; setting it in both places is an
     -- error; `line-width` at the top level is an error rather than a silent no-op.
     write ".lean-fmt.toml" "select = [\"security\"]\n"
     let migrated ← Discovery.run root none
@@ -268,12 +269,12 @@ extend-select = [\"FMT009\"]\n"
     write ".lean-fmt.toml" "line-width = 80\n"
     let misplaced ← try discard <| Discovery.run root none; pure false catch _ => pure true
     ensure misplaced "line-width at the top level was accepted"
-    -- §9.3 the width bound is enforced at load, not at render.
+    -- The width bound is enforced at load, not at render.
     for width in ["0", "1001"] do
       write ".lean-fmt.toml" s!"[format]\nline-width = {width}\n"
       let bounded ← try discard <| Discovery.run root none; pure false catch _ => pure true
       ensure bounded s!"line-width = {width} was accepted outside 1..1000"
-    -- §10 a `.gitignore` prunes, and a nearer file's negation wins over a farther file's exclusion.
+    -- A `.gitignore` prunes, and a nearer file's negation wins over a farther file's exclusion.
     write ".lean-fmt.toml" "[format]\nline-width = 100\n"
     write ".gitignore" "build/\n*.tmp.lean\n"
     write ".git/HEAD" "ref: refs/heads/main\n"
@@ -289,7 +290,7 @@ extend-select = [\"FMT009\"]\n"
       "a nearer .gitignore negation did not re-include a file"
     ensure (ignoring.ignoreSources.any (·.endsWith ".gitignore"))
       "the ignore sources were not reported"
-    -- §9.2 the sharp rule, asserted on the identity string itself: a `[format]` key moves it, a
+    -- The sharp rule, asserted on the identity string itself: a `[format]` key moves it, a
     -- `[lint]` key never does. This is the whole reason the sections are separate keys and not one
     -- flat namespace.
     write ".lean-fmt.toml" "[format]\nline-width = 100\n[lint]\nselect = [\"security\"]\n"
@@ -302,7 +303,7 @@ extend-select = [\"FMT009\"]\n"
     let formatOther ← Discovery.run root none
     ensure (lintOther.fallback.format.identityString != formatOther.fallback.format.identityString)
       "a [format] key did not change the configuration identity"
-    -- §12 introspection is deterministic and records provenance, not just values.
+    -- Introspection is deterministic and records provenance, not just values.
     let described := formatOther.fallback.describe
     ensure (described == formatOther.fallback.describe) "config introspection was not deterministic"
     ensure (described.any fun (key, value, origin) =>

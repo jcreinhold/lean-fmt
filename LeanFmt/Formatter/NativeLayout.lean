@@ -262,7 +262,7 @@ private def interpolationKind (kind : Lean.Name) : Bool :=
   kind == Lean.interpolatedStrKind || kind == Lean.interpolatedStrLitKind
 
 /- An antiquotation node no formatter in scope will accept, which is not the same as an antiquotation
-node. That is D23, and the discriminator is the whole of it.
+node. The discriminator is the whole of it.
 
 `mkAntiquot` builds the kind as `base ++ (if isPseudoKind then `pseudo else .anonymous) ++ `antiquot`,
 so the base is recoverable from the kind. Whether Lean can format the node depends on what dispatches
@@ -384,8 +384,8 @@ A token's range stops where its trivia begins, so leading or trailing whitespace
 whitespace the parser captured as payload rather than skipped as separator — and a parser that
 captures it is one whose token the surrounding gap belongs to. `ProofWidgets.Jsx.jsxText` is the case
 this was measured on: `<div> <strong …>⊢ </strong> …` spells four of them, three pure whitespace, and
-the adapter's boundary in front of each is a layout decision that reparses *into* the token. That is
-D25, caught by the `tokens` gate as `token 451 (ProofWidgets.Jsx.jsxText) changed spelling`.
+the adapter's boundary in front of each is a layout decision that reparses *into* the token. This was
+caught by the `tokens` gate as `token 451 (ProofWidgets.Jsx.jsxText) changed spelling`.
 
 Protecting the leaf alone does not fix it, which is why this returns `pendingEnvelope` rather than an
 island: an island keeps the boundary in *front* of it, which is exactly the gap in question. The
@@ -585,7 +585,7 @@ parent wraps the sequence in its own `fill`, which makes it the delimited case a
 the right question — `(` alone does not intervene and needs no boundary, `case h => ` does and gets
 one. Reading the kind as ungrouped wherever it appeared forced a break into `constructor <;> (skip; rfl)`
 that the document had nowhere to put: one `nest` past the separators rather than on them, leaving `rfl`
-to reparse outside the parentheses. That was D18, and `Archive/Arithcc.lean` refused for it.
+to reparse outside the parentheses. `Archive/Arithcc.lean` refused for it.
 
 `whereDecls` and the two bracketed sequences are the delimited case; no terminal can intervene in any
 of them, so the test says no and they are walked anyway rather than assumed. The one carrier not
@@ -947,7 +947,7 @@ private partial def collectStructInstEllipses (stx : Lean.Syntax)
 `ctor` (`Command.lean:210-212`) is `atomic (optional docComment >> "\n| ") >> ppGroup …`, so the
 docstring is the first child -- a `null` node, empty when the constructor has none -- and the `|` is
 the second. The newline the constructor needs sits *inside* the `"\n| "` atom, after the docstring
-that was supposed to follow it, which is the whole of D2: Lean emits the docstring where a separator
+that was supposed to follow it, which is the whole of it: Lean emits the docstring where a separator
 should be and the separator after it. -/
 private def ctorDocComment? (stx : Lean.Syntax) : Option Lean.Syntax := do
   guard (stx.isOfKind ``Lean.Parser.Command.ctor)
@@ -1003,8 +1003,8 @@ ownership change, because `leading` and `trailing` are exactly the question of w
 a comment is on. `Mathlib/Util/Superscript.lean` writes both spellings, one `let rec` with the
 docstring inline and one with it on the next line, so no fixed choice preserves both.
 
-The constructor docstring is excluded here because D2 already owns it with a different pair of
-corrections: `ctor`'s separator lives *inside* the `"\n| "` atom, so that one elides rather than
+The constructor docstring is excluded here because a different pair of
+corrections already owns it: `ctor`'s separator lives *inside* the `"\n| "` atom, so that one elides rather than
 breaks. A command's own leading docstring is excluded because there is no boundary in front of the
 command's first terminal. -/
 private partial def collectDocCommentRanges (stx : Lean.Syntax)
@@ -1192,9 +1192,9 @@ carry a *column* rather than a separator.
 Three of the four `BoundaryLayout`s say only whether the next token is on this row or the next, and a
 comment that ends the row has already answered that -- which is why `atLineStart` drops `suffix`
 below. `dedented` is the fourth, and it says which *column* the next row starts at: `boundaryFormat`
-spells it as the cancelling `nest` around the newline. Dropping that alongside the separators is D24 --
+spells it as the cancelling `nest` around the newline. Dropping that alongside the separators is a defect --
 `#guard_msgs in`, a line comment, then the nested command, and the command comes back at
-`format.indent` with the comment beside it, exactly the layout D13's dedent exists to prevent. The
+`format.indent` with the comment beside it, exactly the layout a dedent exists to prevent. The
 boundary was marked applied before the format was discarded, so `applied n/m` stayed level and nothing
 refused. Both breaks take it: the one before the comment and the one after, because the source wrote
 the comment at the command's own column too. -/
@@ -1557,7 +1557,7 @@ private def constrainBoundary (format : Std.Format) :
   let state ← get
   -- Every row this boundary opens inside a nested command is cancelled the way that command's own
   -- boundary was. `dedented` sets the column of one row and leaves the rest carrying the `nest` the
-  -- embedding node introduced -- one level in for the command's whole body, which is D27. The
+  -- embedding node introduced -- one level in for the command's whole body. The
   -- correction is spelled here rather than around the command's subtree because the boundary in front
   -- of that subtree is a sibling leaf, not part of it, and one `nest` covering both would cancel twice.
   let interior := (interiorDedent state).getD 0
@@ -1605,7 +1605,7 @@ private def consumeIsland (value : String) (island : ExactIsland) :
   -- collected at an island's first terminal on purpose — it separates the island from the token
   -- before it, and that separator is the adapter's — but this consumed `start`..`stop` in one step
   -- and never called `constrainBoundary`, so the boundary stayed collected and unapplied and the
-  -- command was refused. That was D26.
+  -- command was refused.
   let boundary ← constrainBoundary (.text leading)
   -- `startsLine` is the fallback for a comment island whose break the document did not spell. An
   -- applied boundary is the same decision made by a rule that read the grammar, so it wins outright
@@ -1651,8 +1651,8 @@ private def transformOrdinaryText (value : String) :
     -- tokens before the marker. `docSyntaxBody?` protects a doc comment by replacing its body and
     -- leaving `/--` a leaf of its own, so a docstring on an interior declaration always arrives this
     -- way: the entry was recorded, `insideIsland` then held, and the boundary the doc rule collected
-    -- at that terminal could never be applied by anyone. That is the other half of D26,
-    -- `Mathlib/Tactic/CasesM.lean`'s `where` binding, reported as `applied 4/5 boundaries`.
+    -- at that terminal could never be applied by anyone. `Mathlib/Tactic/CasesM.lean`'s `where` binding
+    -- reported this as `applied 4/5 boundaries`.
     let boundary ← if state.enteredIslands.contains island.marker then pure .nil
       else constrainBoundary (.text (splitPadding value).1)
     modify fun state => { state with
@@ -1940,7 +1940,7 @@ mechanism cannot put it there. A boundary is a gap between two terminals, and th
 last token is the same gap as the one before the next statement — so the comment renders at the *next*
 statement's indent, which is the enclosing block's, and a reparse hands it to that statement as leading
 trivia. Where the next statement is the next *command* the indent is column zero and the comment leaves
-the declaration entirely; that was D3, and it is the same defect one nesting level out.
+the declaration entirely; this is the same defect one nesting level out.
 
 `finishTrailing` places these instead, by hanging the comment off the owning block's own subtree, where
 `Format.text "\n"` re-indents to the indent that block was rendered at whatever the renderer chose —
@@ -1963,11 +1963,11 @@ private def blockDanglingComments (ownership : CommentOwnership) (stx : Lean.Syn
 /- A syntax node kind carrying a `_root_` component, with the name that component was meant to be.
 
 `macro (name := _root_.A.B) …` written inside `namespace N` leaves the two ends of one declaration
-disagreeing about what `_root_` means, exactly as D11's two ends disagreed about a stack index. The
+disagreeing about what `_root_` means, exactly as two ends disagreed about a stack index. The
 parser *constant* is elaborated as an ordinary declaration name, which honours `_root_`, and is `A.B`.
 The node *kind* is `(← getCurrNamespace) ++ declName.getId` (`Lean/Elab/Syntax.lean:465`), which does
 not, and is `N._root_.A.B`. So every node that parser produces carries a kind naming no constant, and
-`formatCommand` dies looking one up. That is D21.
+`formatCommand` dies looking one up.
 
 The obvious repair is to rewrite the kind to the suffix and format the corrected tree, and it does not
 work -- measured, not assumed. `runForNodeKind` (`Lean/PrettyPrinter/Basic.lean:20-30`) resolves the
@@ -2078,7 +2078,7 @@ alternatives: alternative 0 is {expected}, alternative {alternative} is {actual}
         if broken then some (start, BoundaryLayout.hard) else none
   let commentFree := withoutTrivia stripped
   let (formattedSyntax, islands) := protectSourceData categories source commentFree
-  -- D21, named before `formatCommand` reaches it. Both lookups this breaks fail with a message about
+  -- Named before `formatCommand` reaches it. Both lookups this breaks fail with a message about
   -- a name nobody wrote, and the one that fires depends on which end is asked first.
   if let some (kind, suffix) := rootedKindNode? (← Lean.getEnv) formattedSyntax then
     return .error {

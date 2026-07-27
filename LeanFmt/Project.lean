@@ -32,7 +32,7 @@ structure SourceTarget where
   relativePath : String
   source : String
   /-- The **effective** configuration for this file: the closest recognized config at or above its
-  directory, with its `extend` chain already composed (`ruff-13` `notes/01-discovery.md` §5). Carried
+  directory, with its `extend` chain already composed. Carried
   per target rather than per run because two files in one run may legitimately disagree about
   `line-width` or `[lint]`. -/
   config : FormatterConfig
@@ -114,7 +114,7 @@ private def insideRoot (root path : FilePath) : Bool :=
 
 /-- Whether a root-relative path lies inside Lake's build directory.
 
-Gate 1 of the selection table (`ruff-13` `notes/01-discovery.md` §11), and nothing lifts it: no
+Gate 1 of the selection table, and nothing lifts it: no
 configuration key, no `--config`, no explicit path, no `force-exclude` setting. `.lake` holds Lake's
 build outputs and vendored dependency sources; writing there corrupts a build the user did not ask us
 to touch. -/
@@ -130,9 +130,8 @@ private def snapshotTarget (workspace : Lake.Workspace) (discovery : Discovery.D
   unless path.extension == some "lean" do
     throw <| IO.userError s!"selected file is not a Lean source: {path}"
   -- Gate 1 runs here, beside the containment and extension checks, rather than only in
-  -- `discoverPaths`: both path forms reach this operation, and until `ruff-13` only the discovery form
-  -- was filtered — so `format .lake/packages/dep/Dep.lean` wrote a dependency's source
-  -- (`ruff-13-config-discovery/evidence/01-discovery-baseline.md` §3).
+  -- `discoverPaths`: both path forms reach this operation, and only the discovery form used to be
+  -- filtered — so `format .lake/packages/dep/Dep.lean` wrote a dependency's source.
   if insideLakeDirectory (Lake.relPathFrom root path).toString then
     throw <| IO.userError s!"selected file is inside the Lake build directory: {path}"
   let relativePath := (Lake.relPathFrom root path).toString
@@ -162,14 +161,14 @@ private def resolveLexically (path : FilePath) : FilePath :=
 
 /-- One **unsaved** buffer as a target: bytes and an identity, with no filesystem read for content.
 
-`ruff-14` RSF-IMPL, `notes/01-stream-range.md` §2. This is the one place the stdin surface cannot
+This is the one place the stdin surface cannot
 reuse `snapshotTarget`, which calls `realPath` and `readFile` — an editor formatting a never-saved
 buffer has a path with nothing behind it. Every *gate* `snapshotTarget` applies still applies here,
 in the same order with the same messages, each naming `argument`, the string the caller wrote, as
 `CLAUDE.md` requires of path-taking surface.
 
-Gate 1 rules out `.lake` on this path as firmly as on an explicit file argument — that was `ruff-13`'s
-closed write-safety defect, and arriving through a pipe does not reopen it. The stdin path never
+Gate 1 rules out `.lake` on this path as firmly as on an explicit file argument, and arriving
+through a pipe does not reopen it. The stdin path never
 publishes, so this guard is not the only one; it is here because a gate some entry points skip guards
 nothing.
 
@@ -178,7 +177,7 @@ buffer keeps the module identity its on-disk twin has and gets the same exact La
 nothing behind it resolves to `none` and takes the standalone route `diagnosticSetup` already serves.
 
 `spelling?` exists because "the string the caller wrote" and "the path to resolve" stopped being one
-string when `ruff-17` added a caller that speaks URIs. A language-server client names a document
+string once a caller spoke URIs. A language-server client names a document
 `file:///…`, and an error naming the decoded path would name something the client never sent. The
 gates are unchanged and there is still one implementation of them; only the noun in the message
 moves. Every path-taking caller passes `none` and reads as before. -/
@@ -208,13 +207,13 @@ def unsavedTarget (workspace : Lake.Workspace) (discovery : Discovery.Discovery)
 /- Load executable Lake configuration, select every requested source exactly once, and snapshot all
 bytes before analysis. Module/standalone classification is hidden in `SourceTarget`.
 
-One `Discovery` walk drives selection, not a walk of its own plus a root-only config (`ruff-13`
-`notes/01-discovery.md` §4.2, §11). With no requested files the selected set is what discovery kept:
+One `Discovery` walk drives selection, not a walk of its own plus a root-only config. With no
+requested files the selected set is what discovery kept:
 gate 1, the ignore sources, and each file's *own* effective `include`/`exclude`.
 
 An explicitly named file skips gates 2-4 unless its effective configuration sets `force-exclude`, and
 never consults `include` even then — `include` answers "when I say nothing, format these", and naming
-a path is saying something (§11). Gate 1 is not skippable and lives in `snapshotTarget`, so it covers
+a path is saying something. Gate 1 is not skippable and lives in `snapshotTarget`, so it covers
 both path forms. -/
 def load (requestedRoot : FilePath) (discovery : Discovery.Discovery)
     (requested : Array FilePath) : IO Snapshot := do
@@ -255,7 +254,7 @@ def load (requestedRoot : FilePath) (discovery : Discovery.Discovery)
 
 /-- The Lake workspace alone, selecting nothing.
 
-`ruff-14` RSF-IMPL. A stdin request formats just the bytes it was handed, so it must not pay to
+A stdin request formats just the bytes it was handed, so it must not pay to
 select the project: `load` snapshots every discovered source, the right cost for a batch run over a
 tree and the wrong cost for one buffer an editor is waiting on. `ExactRun` reads only `workspace` and
 `root` from a `Snapshot` — `envelope` and `exactSetup` never consult `targets` — so an empty
@@ -397,7 +396,7 @@ def importClosures (workspace : Lake.Workspace) (names : Array Lean.Name) :
 there loses at most one report-only redundancy finding and can never fabricate one. It is **wrong for
 cache currency**, where the closure decides what must be compared. An empty closure means "nothing to
 check", so folding the error into `#[]` would turn an unknown answer into a *permissive* one — a
-stale hit, which `RCI-SPEC` §6 froze as the one direction currency must never degrade toward.
+stale hit, the one direction currency must never degrade toward.
 
 So this returns `none` for a module whose closure could not be resolved, and the caller misses. The
 two operations stay separate rather than one calling the other, because they differ in which failure
@@ -593,8 +592,8 @@ def externalConfigurationIdentity (workspace : Lake.Workspace) : Digest :=
 
 /- Identify the evaluated setup **and the formatter settings that change canonical bytes**.
 
-The `[format]` fold is what `ruff-13` RCD-IMPL owes the moment `line-width` became a runtime key
-(`notes/01-discovery.md` §9.1). Formatter identity is `(path, byteSize, mtime)` of the executable
+The `[format]` fold exists because `line-width` is a runtime key.
+Formatter identity is `(path, byteSize, mtime)` of the executable
 (`Cache.lean`), so editing the old compile-time `canonicalWidth` still invalidated — a rebuild rewrites
 the file. A *runtime* override changes output without touching the binary, so without this component
 two projects on one machine at different widths would serve each other's cached `CanonicalLayout`.

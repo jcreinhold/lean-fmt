@@ -142,7 +142,7 @@ private def verifyFacetArtifact (path sourcePath : System.FilePath)
 
 /-- The registered facet, end to end, plus the agreement the product had no test for.
 
-`RRE-SPEC` §2 proved `check` and `format` could report different findings for one unchanged file,
+An earlier audit found that `check` and `format` could report different findings for one unchanged file,
 because each spelled the rule configuration its own way and only one path was ever tested. The
 assertion this ends on is that regression: the same file, both product paths, byte-identical
 findings. It is not a tautology — the two paths reach `runRules` through different `Facts`, and the
@@ -179,7 +179,7 @@ private def verifyOfficialFacet (root sourcePath : System.FilePath) : IO Unit :=
   -- registry. They agree on a file only when it triggers no `syntax`-tier rule, and `LocalSyntax`
   -- carries none (no duplicate attribute/deriving, `set_option`, unclosed scope, or nested paren) —
   -- so the full-registry findings still coincide with the source-only ones here. This is the
-  -- cross-path agreement `RRE-SPEC` §2 demanded; the tier tag on the cache entry, not finding
+  -- cross-path agreement this test exists to pin; the tier tag on the cache entry, not finding
   -- equality, is what keeps the paths honest when a file *does* trigger a syntax rule.
   ensure (artifactResult.findings == runSourceRules normalized)
     "the artifact path and the source-only shortcut disagree about one unchanged file"
@@ -225,7 +225,7 @@ private def nestedCalls (n : Nat) : Doc := Id.run do
   return d
 
 /-- `callArgs` with every argument marked, which is what a real printer does: one mark per token. The
-cost of `mark` is the open question `RLC-IMPL` left to this prompt. -/
+cost of `mark` is the open question this probe watches. -/
 private def markedCallArgs (n : Nat) : Doc := Id.run do
   let mut inner := Doc.empty
   for i in [0:n] do
@@ -248,7 +248,7 @@ out_bytes={out.utf8ByteSize} marks={marks.size}"
 /-- Every generated document rendered at every margin, as text.
 
 This exists to settle equivalence claims about the renderer by diffing two builds, rather than by
-arguing that a change "should not" alter output. `results/03-acceptance.md` records the one it settled. -/
+arguing that a change "should not" alter output. -/
 private def docDump : IO UInt32 := do
   let mut seed : Nat := 20260716
   for i in [0:400] do
@@ -258,7 +258,7 @@ private def docDump : IO UInt32 := do
       IO.println s!"{i} {w} {String.intercalate "⏎" ((renderText w generated.document).splitOn "\n")}"
   return 0
 
-/-! ## Source-security microbenchmark (`RSR-FINAL`)
+/-! ## Source-security microbenchmark
 
 The two source-security scans are linear in source size: `FMT001` is one pass over the byte array,
 `FMT002` one fold over the codepoints carrying a running offset. This measures that claim the way
@@ -374,9 +374,9 @@ steps={rendered.metrics.workSteps} marks={rendered.sourceMap.size} native={rende
     report "marked-call-args" n (markedCallArgs n)
   return 0
 
-/-! ## Report renderer scale (`ruff-15` RRF-FINAL)
+/-! ## Report renderer scale
 
-`evidence/02-renderer-cost.md` measured the six renderers at 109 findings and the append pattern in
+An earlier measurement covered the six renderers at 109 findings and the append pattern in
 isolation, and recorded what neither covered: `Lean.Json.pretty`, SARIF's serializer, at scale. This
 is that measurement. It is synthetic on purpose — the point is to vary report size by three orders of
 magnitude while holding everything else fixed, which no real project offers.

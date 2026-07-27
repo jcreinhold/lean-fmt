@@ -102,7 +102,7 @@ private def testLosslessSource : IO Unit := do
   | .ok actual => ensure (actual == source) "lossless-source JSON round trip failed"
   | .error message => throw <| IO.userError s!"lossless-source JSON decode failed: {message}"
 
-/-- `ruff-14` RSF-IMPL: unit selection and splicing over a layout source map.
+/-- Unit selection and splicing over a layout source map.
 
 Driven with a hand-built map rather than a real render, because the questions here are about the
 selection algebra — which units a request reaches, when the forward extension fires, what the actual
@@ -167,7 +167,7 @@ private def testRangeSelection : IO Unit := do
 
 `apply` is a pure projection over `Array Finding`; the first block checks it in isolation, with
 hand-built facts, so the scope arithmetic is tested without a parser. The second block is the
-regression that `RSP-IMPL` found and fixed: a directive in the module header `[0, headerStop)` — the
+regression that shipped broken once: a directive in the module header `[0, headerStop)` — the
 natural home for `ignore-file` — is invisible to artifact trivia, so `collect` scans the header
 itself. A hand-built single-command projection puts a directive above the first command and asserts it
 is both parsed and, when malformed, reported rather than dropped. -/
@@ -221,12 +221,12 @@ private def testSuppression : IO Unit := do
   ensure (mixed.suppressed == 1 && mixed.unused.map (·.code) == #["FMT900"])
     "a mixed live/dead code list did not both suppress and report"
 
-  -- `ruff-12` §7's non-breaking floor -- a retired/reserved code is inert in a suppression: it
+  -- The non-breaking floor on retired/reserved codes -- a retired/reserved code is inert in a suppression: it
   -- suppresses nothing but is never flagged unused, unlike a genuinely-unknown code (FMT999 above,
   -- which does raise FMT900) -- HAD three cases here. They used FMT001 as their retired instance.
   --
-  -- The pre-release renumbering (`docs/rules/MIGRATION.md`) made FMT001 a *live* security rule and
-  -- emptied `reservedCodes`, so those three cases would have kept running and kept passing while
+  -- The pre-release renumbering made FMT001 a *live* security rule and emptied `reservedCodes`
+  -- (docs/adding-a-rule.md §"Retiring a rule"), so those three cases would have kept running and kept passing while
   -- testing something else entirely: a live rule that happened not to fire. A test that still passes
   -- after its subject has been redefined underneath it is worse than a deleted one, so they are
   -- deleted rather than repointed.

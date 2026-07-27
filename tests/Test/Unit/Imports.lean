@@ -46,7 +46,7 @@ private def parseHeader! (source : String) : IO Imports.HeaderModel := do
   | none => throw <| IO.userError s!"header did not parse: {source}"
 
 /-- `FMT003`/`FMT004`/`FMT005` and the organizer, tested directly — import rules live outside the
-`RuleImpl` engine (`notes/01-semantics.md` §1b, §7), so the `runRulesOf` seam does not reach them; the
+`RuleImpl` engine, so the `runRulesOf` seam does not reach them; the
 header rules are pure functions of the parsed surface header, and `redundantFindings` is pure over the
 header plus a caller-supplied closure that stands in for the Lake graph. -/
 private def testImports : IO Unit := do
@@ -109,7 +109,7 @@ private def testImports : IO Unit := do
   ensure (Imports.organize (← parseHeader! dedupMe) dedupMe == "import Foo.A\n")
     "the organizer did not remove a duplicate"
 
-  -- RIR-FINAL: header rewrites preserve comments, modifiers, and group boundaries (`roadmap.md` §19).
+  -- Header rewrites preserve comments, modifiers, and group boundaries.
   -- A comment is a group boundary: each group sorts independently and the comment survives verbatim.
   let twoGroups := "import Foo.D\nimport Foo.A\n-- section\nimport Foo.Z\nimport Foo.B\n"
   ensure (Imports.organize (← parseHeader! twoGroups) twoGroups ==

@@ -1,6 +1,6 @@
 module
 
-/-! A **`module`-mode** fixture — the case the first RSF-IMPL missed. In module mode the module system
+/-! A **`module`-mode** fixture — the case the first implementation missed. In module mode the module system
 strips imported constants' kernel values (`ConstantInfo.value?`), so the original `value?` capture
 returned *nothing* here for the imported `+`/`*` operators (60/62 of the frozen sample and 8194/8264
 of `Mathlib/` are module-mode). The reopened capture reads the descriptor through the compiled meta IR

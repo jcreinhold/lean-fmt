@@ -14,9 +14,9 @@ namespace LeanFmt.Internal.Discovery
 
 /-! # Hierarchical configuration discovery and ignore sources
 
-The private capability `ruff-13` RCD-IMPL owes: one filesystem walk that collects candidate sources,
+One filesystem walk collects candidate sources,
 recognized configuration files, and ignore files together, so resolving one file's effective
-configuration is an **in-memory** ascent, not a walk of its own (`notes/01-discovery.md` §4.2).
+configuration is an **in-memory** ascent, not a walk of its own.
 
 Nothing here interprets project semantics. Executable Lake configuration is evaluated separately by
 `Project.loadWorkspace`; this module reads TOML policy and ignore files only.
@@ -27,7 +27,7 @@ Nothing here interprets project semantics. Executable Lake configuration is eval
 Deliberately **not** `Config.PathPattern`. That type is what `include`/`exclude` have always meant
 (segment-wise, no anchoring, no negation) and changing it would silently reinterpret every existing
 config. Git ignore *sources* are where users already expect git semantics, so they get a matcher that
-implements them (`notes/01-discovery.md` §7, §10). -/
+implements them. -/
 
 private structure IgnorePattern where
   /-- Pattern components, `/`-separated. A non-anchored pattern is stored with a leading `**`, which
@@ -143,7 +143,7 @@ private def IgnorePattern.matches (pattern : IgnorePattern) (path : String) (isD
 
 /-- One ignore file's patterns, in file order. Layers are held in **increasing precedence**: a later
 layer overrides an earlier one and, within a layer, a later pattern overrides an earlier one — git's
-"nearer file wins, last match in a file wins" (`notes/01-discovery.md` §10.1). -/
+"nearer file wins, last match in a file wins". -/
 private structure IgnoreLayer where
   patterns : Array IgnorePattern
   origin : String
@@ -164,8 +164,7 @@ private def ignored (layers : Array IgnoreLayer) (path : String) (isDirectory : 
 Reading `core.excludesFile` from git's own configuration files keeps `git` out of discovery:
 lean-fmt needs no `git` on `PATH` to format a repository, and discovery spawns no process.
 Deliberately **partial** — it does not follow `include`/`includeIf` directives, so it never applies a
-global ignore file reachable only through a conditional include (`notes/01-discovery.md` §10.2, open
-question 5). -/
+global ignore file reachable only through a conditional include. -/
 
 private def expandHome (path : String) : IO String := do
   if path.startsWith "~/" then
@@ -217,7 +216,7 @@ private def globalIgnoreFile? : IO (Option FilePath) := do
 
 /-- The repository root governing `root`: the nearest ancestor holding `.git`, ascending to the
 filesystem root. May sit **above** the project root, because a Lean project is commonly a
-subdirectory of a larger repository (`notes/01-discovery.md` §10.3). `.git` may be a directory or a
+subdirectory of a larger repository. `.git` may be a directory or a
 file (a worktree or submodule gitlink); both forms are accepted. -/
 private partial def repositoryRoot? (directory : FilePath) : IO (Option FilePath) := do
   if ← (directory / ".git").pathExists then return some directory
@@ -264,7 +263,7 @@ structure Discovery where
 
 /-- The configuration governing one root-relative path: the **closest** config at or above its
 directory. Hierarchy does not merge — the nearest config applies whole, and inheritance is explicit
-through `extend` (`notes/01-discovery.md` §5). -/
+through `extend`. -/
 def Discovery.governing (discovery : Discovery) (path : String) :
     String × FormatterConfig := Id.run do
   let mut best := ("", discovery.fallback)
@@ -288,9 +287,9 @@ private def isLeanSource (path : FilePath) : Bool := path.extension == some "lea
 
 /-- Walk the project once, collecting sources, configurations, and ignore state together.
 
-The single walk is the shape `RCD-IMPL`'s stop rule demands: it exists to avoid a per-file filesystem
+The single walk exists to avoid a per-file filesystem
 ascent. Pruning is sound because git's directory-exclusion rule holds — an ignored directory can hold
-no re-included file, so not descending cannot lose one (`notes/01-discovery.md` §4.2, §10.1). -/
+no re-included file, so not descending cannot lose one. -/
 private partial def walkDirectory (root : FilePath) (explicit? : Option FormatterConfig)
     (directory : FilePath) (relative : String) (current : FormatterConfig)
     (layers : Array IgnoreLayer) (accumulated : Discovery) : IO Discovery := do
@@ -320,7 +319,7 @@ private partial def walkDirectory (root : FilePath) (explicit? : Option Formatte
     -- and it keeps the walk finite: `dir/loop -> ..` would otherwise recurse until the operating
     -- system refuses the path, and the extra results would hide afterwards by realpathing back onto
     -- files already found. Before the fix, discovery on a three-file project took far longer than
-    -- the project warranted (`ruff-13` `results/03-acceptance.md`).
+    -- the project warranted.
     let linkType := (← entry.path.symlinkMetadata).type
     if linkType == .dir then
       -- Gate 1: `.lake` is never descended into and never selected, by any path form.
@@ -348,7 +347,7 @@ private partial def walkDirectory (root : FilePath) (explicit? : Option Formatte
 /-- Run discovery for one project root.
 
 `explicit?` is a `--config` override: it applies to every file, no directory is searched for a nested
-config, and a nested config that exists is inert (`notes/01-discovery.md` §5.1). -/
+config, and a nested config that exists is inert. -/
 def run (root : FilePath) (explicit? : Option FilePath) : IO Discovery := do
   let root ← IO.FS.realPath root
   let fallback ← match explicit? with
@@ -385,7 +384,7 @@ def run (root : FilePath) (explicit? : Option FilePath) : IO Discovery := do
   let seed := if explicit?.isNone then seed else seed
   walkDirectory root (explicit?.map fun _ => fallback) root "" fallback layers seed
 
-/-- Why a path was or was not selected, as the gate number of `notes/01-discovery.md` §11. `selected`
+/-- Why a path was or was not selected, as a gate number. `selected`
 is gate 0. Reported by `config show` so "would this file be formatted, and why not" has an answer. -/
 inductive Gate where
   /-- Selected. -/
@@ -418,7 +417,7 @@ def Gate.describe : Gate → String
 prune), so what remains is gate 3 for files (directories were pruned) and gate 4.
 
 Explicit paths take the other route: they skip gates 2–4 unless `force-exclude` is on, and never
-consult gate 4 at all (`notes/01-discovery.md` §11). -/
+consult gate 4 at all. -/
 def Discovery.gateFor (discovery : Discovery) (path : String) : Gate :=
   let config := discovery.configFor path
   if config.excludePatterns.any (·.matches path) then .configExclude
@@ -426,8 +425,7 @@ def Discovery.gateFor (discovery : Discovery) (path : String) : Gate :=
     .configInclude
   else .selected
 
-/-- Selection for an **arbitrary** path, discovered or not — the question `config show` asks
-(`notes/01-discovery.md` §12).
+/-- Selection for an **arbitrary** path, discovered or not — the question `config show` asks.
 
 `gateFor` is defined only on paths the walk produced, so it may assume gates 2 and 3 already pruned.
 This one cannot: it is handed a command-line path that may sit under a directory the walk never

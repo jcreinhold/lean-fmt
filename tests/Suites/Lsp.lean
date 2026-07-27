@@ -5,7 +5,7 @@ public import Test
 /-!
 # The LSP suite
 
-Port of `tests/lsp/run.sh` (`ruff-17` RLP-DOCUMENTS and RLP-FEATURES): the protocol surface
+Port of `tests/lsp/run.sh`: the protocol surface
 against the real binary over a real pipe. The unit tests cover the position layer and frame
 reader in isolation; this suite covers what only a process can show — lifecycle ordering, recovery
 that leaves the session usable, refusal of a document with no project location, cancellation,

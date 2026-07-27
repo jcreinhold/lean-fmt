@@ -193,7 +193,7 @@ private def buildFormatDraft (normalized : String) (source : LosslessSource)
     -- token's `SourceInfo`, so its structural document is that opening's sole emitter. This used
     -- to be enforced here, by dropping the command's *entire* leading trivia whenever it contained
     -- doc syntax — which also dropped an ordinary line comment written above the docstring,
-    -- silently, and is the defect 23e names D8. The exclusion is by comment kind now, and it lives
+    -- silently. The exclusion is by comment kind now, and it lives
     -- in `Trivia.commandLeading` where the comments are selected.
     let leadingTrivia :=
       match Formatter.Trivia.leading ownership command.stx with
@@ -263,7 +263,7 @@ is the pure top-level tag; only matching messages are serialized (`msg.serialize
 offset through the frontend's `FileMap` — `mkInputContext` built it on `crlfToLf`-normalized
 source, so it shares the projection's coordinate system — and the range is clamped to
 `[0, sourceBytes]`, dropping any position that a macro reattribution placed outside this module's
-own bytes (`ruff-11` `notes/01-authority.md` §§4-5,12). No `Environment`, `Position`, or `FileMap`
+own bytes. No `Environment`, `Position`, or `FileMap`
 crosses into a rule; only this data. -/
 private def captureDiagnostics (fileMap : Lean.FileMap) (sourceBytes : Nat)
     (messages : Lean.MessageLog) : IO (Array Diagnostic) := do
@@ -291,8 +291,9 @@ private def captureDiagnostics (fileMap : Lean.FileMap) (sourceBytes : Nat)
 private def occurrenceDisplay (n : Lean.Name) : String := (Lean.privateToUserName n).toString
 
 /- Re-derive the owned deprecation-occurrence facts from the whole-file info trees. This
-is the fold `ruff-11b` `ROS-SPEC` proved reachable through the same snapshot tree `analyzeExact`
-already walks for the message log (`notes/01-model.md` §2, `evidence/infotree_probe.lean`): every
+is the fold
+proved reachable through the same snapshot tree `analyzeExact`
+already walks for the message log: every
 command's info tree lives on its `Snapshot.infoTree?`, so `tree.getAll.filterMap (·.infoTree?)` —
 a *consumer-side* fold, not a producer change — surfaces the whole file, avoiding the per-command
 info reset that would limit `waitForFinalCmdState?` to the last command.
@@ -304,7 +305,7 @@ application) that carries `@[deprecated]`, and which is a use rather than the de
 normalized-source byte offsets (the parser positions index the string `mkInputContext` normalized),
 so unlike a diagnostic's `Position` they need no `FileMap` round-trip — clamped to the module's
 byte span. Each use-site emits its `TermInfo` more than once, so this deduplicates by range.
-`fixable` is decided here (`notes/01-model.md` §5): a `newName?` must exist and the occurrence must
+`fixable` is decided here: a `newName?` must exist and the occurrence must
 spell a single bare identifier token, the conservative predicate a textual rename preserves;
 everything else is report-only and the output re-elaboration validator backstops the rest. -/
 private def occurrenceOfInfo (ci : Lean.Elab.ContextInfo) (info : Lean.Elab.Info)
@@ -320,13 +321,13 @@ private def occurrenceOfInfo (ci : Lean.Elab.ContextInfo) (info : Lean.Elab.Info
   let displayName := occurrenceDisplay declName
   let newName? := entry.newName?.map occurrenceDisplay
   -- The occurrence is fixable only when its source spelling is *exactly* the resolved
-  -- constant's own full display name (`notes/01-model.md` §5.3-5.4): then replacing that whole
+  -- constant's own full display name: then replacing that whole
   -- span with the replacement's full display re-resolves unambiguously to the new constant,
   -- independent of `open`/dot context. A spelling that differs from the full name — an
   -- `open`-shadowed short name (`oldNs` resolving to `N.oldNs`), a dot-notation projection head
   -- (`x.foo` resolving to `T.foo`), an applied receiver with the constant implicit — is *not* a
   -- rename we can prove, so it stays report-only and the compiler's own FMT012 diagnostic still
-  -- reports it. Backstopped by the re-elaboration validator (§6): even an accepted spelling that
+  -- reports it. Backstopped by the re-elaboration validator: even an accepted spelling that
   -- fails to resolve is caught before publish, never on disk.
   let fixable := newName?.isSome && spelled == displayName
   return {

@@ -47,7 +47,7 @@ the rule, concretely enough that someone could test it:
       false positives on a corpus with no `set_option` linter of its own. …"
 ```
 
-Naming the corpus matters. `ruff-12b` ran ten preview rules over 85 mathlib modules and eight never fired — mathlib
+Naming the corpus matters. Ten preview rules ran over 85 mathlib modules and eight never fired — mathlib
 runs its own linters for most of what they check. That measured which rules mathlib already enforces, not which rules
 are correct; a graduation condition that does not say where the evidence comes from invites the same mistake. The
 string is shown by `lean-fmt explain`, in `docs/rules/FMTxxx.md`, and in the JSON, because a path out of preview that
@@ -56,6 +56,21 @@ lives only in a result note is a rule nobody will revisit.
 `Rule.tier` derives from `impl`, so there is no tier field to keep in sync and no way to declare one tier and read
 another. That is deliberate: the field that used to do this (`RuleInfo.input`) was a claim nothing had to honor, and it
 stayed wrong for years unnoticed. The constructor cannot be wrong, because it is what gives you your argument.
+
+## Retiring a rule
+
+A retired code moves to `reservedCodes` and stays there forever, so a stale `lean-fmt.toml` or `-- lean-fmt: ignore[…]`
+written against it stays *inert* rather than silently binding to a different rule. Never reuse a retired code. The one
+exception was the pre-release renumbering, which reused two retired codes because the package had no users; that
+argument expired with the first release.
+
+Today `reservedCodes` is empty, so the retirement machinery — `isReservedCode`, `reservedDisposition?`, `explain`'s
+`[retired]` branch, the reserved-selector branch in `Config.selectorsValid`, the inert-directive branch in
+`Suppression.apply` — has no live instance and **no test coverage**. That is deliberate. The tests that covered it were
+deleted rather than repointed at a live code: a test that still passes after its subject is redefined reads as coverage
+while testing nothing. A placeholder retired code was considered and rejected for the same reason — it would prove the
+placeholder exists, not that the machinery works. Coverage returns when a rule genuinely retires; write the tests then,
+against the real code.
 
 ## Picking a tier
 
@@ -70,7 +85,7 @@ Pick the cheapest one that answers your question. `RulePlan.requiredTier` folds 
 it never picks a worker, a cache identity, or a schedule.
 
 `SemanticFacts` carries the `SyntaxFacts`, the captured `Diagnostic`s in normalized-source coordinates, and
-`occurrences`, the deprecation-occurrence facts of `ruff-11b`. `occurrences` is empty unless the run demanded that
+`occurrences`, the deprecation-occurrence facts. `occurrences` is empty unless the run demanded that
 capability, and an empty array means *no fix to offer* — a semantic rule must stay report-only on empty rather than
 treat it as "nothing found".
 
@@ -116,11 +131,11 @@ Every fix declares how safe it is to apply, following ruff's `Applicability`:
 that moves tokens is not safe unless the projection proves meaning is preserved. When in doubt, choose `.unsafe`: a
 user opts into it, and a later rule revision can promote it once the evidence exists.
 
-The retired FMT001 is the warning here, and it argued exactly the way a new rule will want to. It edited "trivia the
-lexer cannot see", which sounds safe and is not: a per-line trailing-whitespace scan reaches inside a multi-line string
-literal, where those bytes are program data (`ruff-11c evidence/01-fusion-and-subsumption.md`, probe 4/6). Line-boundary
-and final-newline normalization moved into canonical formatting; both codes are retired and reserved — `check` says so
-if you select one. Before calling a fix safe, name the bytes it can reach, not the bytes you meant it to reach.
+The old trailing-whitespace rule is the warning here, and it argued exactly the way a new rule will want to. It edited
+"trivia the lexer cannot see", which sounds safe and is not: a per-line trailing-whitespace scan reaches inside a
+multi-line string literal, where those bytes are program data. Line-boundary and final-newline normalization moved into
+canonical formatting and the rule was retired. Before calling a fix safe, name the bytes it can reach, not the bytes
+you meant it to reach.
 
 Set applicability on the `Fix` you emit; do **not** read configuration to decide it. `extend-safe-fixes` and
 `extend-unsafe-fixes` reclassify per rule, resolved in `RulePlan.effectiveApplicability` as a projection over your
@@ -165,9 +180,9 @@ rule, you have crossed the boundary; the boundary suite will stop you.
 - `testApplicability` covers admission, per-rule reclassification, the display-only limit, and where a conflict came
   from. If your rule ships an `.unsafe` or `.displayOnly` fix, assert its applicability there and add a
   `--unsafe-fixes` case to the modes suite.
-- All three tiers ship: `ruff-10` added the first `.syntax` rules (FMT006–FMT011) and `ruff-11` the first `.semantic`
-  ones (FMT012–FMT015). `check` reports a rule of any tier, and `fix` applies a syntax fix by re-projecting the
-  canonical text — the model `ruff-06`'s RFX-SPEC froze and `ruff-10b-syntax-fix-composition` finished.
+- All three tiers ship. The first `.syntax` rules (FMT006–FMT011) and the first `.semantic`
+  ones (FMT012–FMT015) are present. `check` reports a rule of any tier, and `fix` applies a syntax fix by re-projecting the
+  canonical text.
   `SemanticResult.tier` and `cacheHitServes` gate the result cache, so a source-only shortcut entry never answers a
   `.syntax` or `.semantic` selection with a false negative. `testEngineTiers` asserts that the registry still holds all
   three.

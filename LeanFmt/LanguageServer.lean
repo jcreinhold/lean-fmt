@@ -37,7 +37,7 @@ open Lean Lean.JsonRpc
 /-! ## Bounds
 
 Exceeding a bound produces an error response and leaves the session running. Nothing is truncated.
-`notes/01-protocol.md` §6, §9, §13. -/
+-/
 
 /-- The largest framed message body accepted. -/
 def maxMessageBytes : Nat := 32 * 1024 * 1024
@@ -66,7 +66,7 @@ structure ServerOptions where
   (`notes` §8). -/
   unsafeFixes : Bool := false
   /-- Quiet interval before a changed document is analyzed. Every analysis is one exact
-  frontend run over the whole buffer (`ruff-14` `evidence/03-stream-cost.txt`), so this is the
+  frontend run over the whole buffer (`evidence/03-stream-cost.txt`), so this is the
   difference between one run per pause and one run per character. -/
   debounceMs : Nat := 150
 
@@ -92,8 +92,7 @@ The same split governs `Lean.Server.Utils`, whose `replaceLspRange` would otherw
 `applyChange` below: it converts both endpoints with `lspPosToUtf8Pos` and clamps neither, so an
 unclamped client position resolves past the end of the buffer (§4).
 
-`notes/01-protocol.md` §2 named Lean's reader as the framing layer; this is the amendment, and
-`results/02-documents.md` records it. -/
+Lean's reader was named as the framing layer; this is the amendment, and it records the decision. -/
 
 inductive Frame where
   /-- A framed body that parsed as JSON. The dispatcher decides whether it is a valid message. -/
@@ -198,7 +197,7 @@ def Sink.show (sink : Sink) (severity : Nat) (text : String) : IO Unit :=
 
 /-! ## Positions
 
-One layer, over the **normalized** document. `notes/01-protocol.md` §4. -/
+One layer, over the **normalized** document. -/
 
 /-- The index of the last addressable LSP line.
 
@@ -398,7 +397,7 @@ def Session.serveCancellable (session : Session) (id : RequestID)
 
 /-! ## Admission
 
-`notes/01-protocol.md` §5. Identity, not content, decides whether a buffer can be served at all. -/
+Identity, not content, decides whether a buffer can be served at all. -/
 
 /-- Resolve a document URI to a servable identity, or say why not.
 
@@ -442,7 +441,7 @@ def Session.targetOf (session : Session) (document : Document) : IO Project.Sour
 
 /-! ## Text synchronization
 
-Incremental; `applyChange` is all of it. `notes/01-protocol.md` §6. -/
+Incremental; `applyChange` is all of it. -/
 
 /-- Apply one content change to a normalized document.
 
@@ -688,7 +687,7 @@ private def handleHealth (session : Session) (id : RequestID) : IO Unit := do
 
 /-! ## Analysis
 
-`notes/01-protocol.md` §7. Every answer below consumes the current whole-buffer frontend
+Every answer below consumes the current whole-buffer frontend
 envelope. Successive versions reuse the document's last-good snapshot; projection and rendering
 remain the same `ExactRun.streamEnvelope` path used outside the editor. -/
 
@@ -696,7 +695,7 @@ remain the same `ExactRun.streamEnvelope` path used outside the editor. -/
 
 Both come from the *buffer's location*, never its content, which is why a document with no
 location cannot be served at all (§5). The plan is per document rather than per session because
-two files in one project can legitimately disagree about `line-width` or `[lint]` (`ruff-13`). -/
+two files in one project can legitimately disagree about `line-width` or `[lint]`. -/
 private def resolve (session : Session) (document : Document) :
     IO (Except String (Project.SourceTarget × RulePlan)) := do
   try
@@ -864,7 +863,7 @@ private def wholeEdit (document : Document) (output : String) : Json :=
 One operation, because they are one operation below: `streamEnvelope .format` with or
 without a range. A range answer replaces the **actual** range — the hull of the layout units the
 selection expands to — not the range the client asked for, because reflow can rebreak the enclosing
-unit past the selection (`ruff-14`, §8). Clients that re-format are expected to send back the range
+unit past the selection (§8). Clients that re-format are expected to send back the range
 the unit now occupies; repeated range formatting is a fixed point only in output coordinates. -/
 private def handleFormatting (session : Session) (id : RequestID) (params : Json)
     (ranged : Bool) (cancel : Std.CancellationToken) : IO Unit := do
@@ -925,7 +924,7 @@ private def handleFormatting (session : Session) (id : RequestID) (params : Json
 
 /-! ## Code actions
 
-`notes/01-protocol.md` §8. Every action carries its own `WorkspaceEdit` against a stated version; no
+Every action carries its own `WorkspaceEdit` against a stated version; no
 `executeCommandProvider` is advertised, because nothing here needs a round trip through the client. -/
 
 /-- A `WorkspaceEdit` in `documentChanges` form, so it names the version it was computed against.
@@ -1099,7 +1098,7 @@ def dispatch (session : Session) (json : Json) : IO Bool := do
 
 /-! ## The loop
 
-A reader task and a worker, joined by a bounded queue. `notes/01-protocol.md` §9.
+A reader task and a worker, joined by a bounded queue.
 
 The split exists for one reason: `$/cancelRequest` arrives *while* a request is being
 served, and a single-threaded server cannot read it until it has finished the very thing being

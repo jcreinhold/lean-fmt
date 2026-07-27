@@ -5,7 +5,7 @@ public import Test
 /-!
 # The security-bench suite
 
-Port of `tests/security/bench.sh` (`RSR-FINAL`): source-security scan cost, asserted rather than
+Port of `tests/security/bench.sh`: source-security scan cost, asserted rather than
 asserted-about. `FMT001` is one pass over the byte array and `FMT002` one fold over the
 codepoints, so each is O(n) by construction — but a note cannot notice a regression, and this
 can.

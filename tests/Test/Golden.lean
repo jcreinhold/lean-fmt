@@ -14,7 +14,7 @@ visible in `git diff`), not a flag that can leak into CI: the workflow never set
 golden fails there exactly as `cmp` did.
 
 The comparison is over bytes, not decoded text, because the goldens pin *byte* stability
-(`notes/01-report-formats.md` §8.1) and a UTF-8 decode hiccup must be a mismatch, not an exception
+and a UTF-8 decode hiccup must be a mismatch, not an exception
 from the wrong layer.
 -/
 

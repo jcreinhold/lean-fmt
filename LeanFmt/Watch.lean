@@ -86,7 +86,7 @@ A generation's meaning depends on inputs that are not themselves Lean sources (ย
 file changes which rules run; editing a lakefile changes the project. Both must start a generation
 even though neither is a source. -/
 
-/-- Recognized configuration filenames, in `ruff-13`'s precedence order. -/
+/-- Recognized configuration filenames, in precedence order. -/
 private def configNames : Array String := #[".lean-fmt.toml", "lean-fmt.toml"]
 
 /-- Root-relative control files whose change invalidates a retained workspace (ยง6). -/

@@ -5,7 +5,7 @@ public import Test
 /-!
 # The reporting suite
 
-Port of `tests/reporting/run.sh` (`ruff-15` RRF-IMPL): the machine-readable report formats.
+Port of `tests/reporting/run.sh`: the machine-readable report formats.
 
 Every case drives the real executable, because what is under test is the bytes a CI system
 receives: the grammar, the escaping, the exit code, and where the report lands. The structured
@@ -317,7 +317,7 @@ private def testBrokenPipe (ctx : Ctx) : IO Unit := do
     ensure (((lines[0]?.getD "").trimAsciiEnd).toString.isEmpty)
       s!"{format} printed a diagnostic on a closed pipe: {lines[0]?.getD ""}"
 
--- §2.5 — stdin: stdout still carries the result and nothing else (`ruff-14` §5.1), so a
+-- §2.5 — stdin: stdout still carries the result and nothing else, so a
 -- finding-shaped report goes to stderr — putting it on stdout would corrupt the bytes a
 -- `format -` consumer is piping.
 private def testStdin (ctx : Ctx) : IO String := do

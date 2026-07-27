@@ -17,7 +17,7 @@ private structure PathPattern where
   segments : List String
   /-- The directory this pattern is anchored at, relative to the project root (`""` is the
   root itself). A pattern means what its **declaring** config's directory says it means, never what
-  the consuming file's directory does (`notes/01-discovery.md` §7). With one root config the two
+  the consuming file's directory does. With one root config the two
   agree, so the field has to be explicit to keep them apart: a nested config's
   `exclude = ["Generated/**"]` means `Generated/**` under *that* config's directory, and an
   `extend`ed pattern keeps its parent's anchor rather than being re-anchored at the inheritor. -/
@@ -29,8 +29,8 @@ private structure PerFileIgnore where
 
 /-- The `[format]` section: settings that change the **canonical bytes** a run produces.
 
-The section split marks the cache-identity boundary, not a cosmetic grouping
-(`notes/01-discovery.md` §8.1, §9.2): every field here is folded into
+The section split marks the cache-identity boundary, not a cosmetic grouping:
+every field here is folded into
 `Project.configurationIdentity`, because a cached `CanonicalLayout` rendered under one value must
 never be served under another. `[lint]` settings are the complement — they project over an
 unchanged canonical result and must stay out of identity, as `CLAUDE.md` requires of rule
@@ -48,7 +48,7 @@ structure FormatConfig where
 
 /-- The `[format]` settings as one string, for the `configuration` component of the cache
 identity. Kept beside the fields so a new `[format]` key cannot be added without a visible decision
-about identity: forgetting to extend this is the bug §9.1 exists to prevent. -/
+about identity: forgetting to extend it is the bug to prevent. -/
 def FormatConfig.identityString (format : FormatConfig) : String :=
   s!"line-width={format.lineWidth}"
 
@@ -57,8 +57,8 @@ structure FormatterConfig where
   includePatterns : Array PathPattern
   excludePatterns : Array PathPattern
   /-- `force-exclude`: apply the ignore sources and `exclude` to **explicitly named**
-  paths too, not only to discovered ones (`notes/01-discovery.md` §11). It exists because `format`
-  writes since `ruff-11d`: a pre-commit hook that passes staged paths must be able to say "still
+  paths too, not only to discovered ones. It exists because `format`
+  writes: a pre-commit hook that passes staged paths must be able to say "still
   never write these". It never re-enables the `include` list — naming a path is a statement,
   whereas `include` answers "when I name nothing, format these". -/
   forceExclude : Bool
@@ -69,33 +69,33 @@ structure FormatterConfig where
   /-- The `[format]` section — identity-bearing (`FormatConfig`). -/
   format : FormatConfig
   /-- Non-fatal notices raised while **loading** this configuration: a linter key still
-  spelled at the top level (`notes/01-discovery.md` §8.2). They follow the same contract as
+  spelled at the top level. They follow the same contract as
   `RulePlan.notices` — stderr, never changing exit status or which rules run — but cannot live
   there, because a `[format]` or discovery notice has no plan to hang off. The freeze named this
   widening of the channel. -/
   notices : Array String
   /-- Where each setting came from, in composition order: `(key, file, line)`. For a scalar
   or base array the **last** entry won; for an additive `extend-*` key every entry contributed,
-  which is why §6.2 preserves order and duplicates. Consumed by `config show` (§12);
+  which is why composition preserves order and duplicates. Consumed by `config show`;
   `Lake.Toml.Value` carries a `ref : Syntax` on every constructor, so the position is recoverable
   without a second parse. -/
   origins : Array (String × String × Nat)
   selectedSelectors : Array String
-  /-- `extend-select` (`ruff-12` RRL-IMPL): selectors that *add* to the chosen selection
+  /-- `extend-select`: selectors that *add* to the chosen selection
   without replacing it, so a project extends `default` without restating it. -/
   extendSelectSelectors : Array String
   ignoredSelectors : Array String
   perFileIgnores : Array PerFileIgnore
   extendSafeFixes : Array String
   extendUnsafeFixes : Array String
-  /-- The fix-selection axis (`ruff-12`), orthogonal to rule selection and to safe/unsafe:
+  /-- The fix-selection axis, orthogonal to rule selection and to safe/unsafe:
   which rules' fixes `fix` may apply. `fixable` replaces the base (default `all`),
   `extend-fixable` adds, `unfixable` removes; resolved by the same specificity model as
   select/ignore. A selected-but-unfixable rule is still reported — only its fix is withheld. -/
   fixableSelectors : Array String
   unfixableSelectors : Array String
   extendFixableSelectors : Array String
-  /-- Preview mode (`ruff-12`): with it off, `all`/`default`/category expand to stable
+  /-- Preview mode: with it off, `all`/`default`/category expand to stable
   rules only and an explicit preview-code selection is an error; with it on, preview rules become
   reachable. -/
   preview : Bool
@@ -104,7 +104,7 @@ structure RulePlan where
   private mk ::
   selected : Array String
   /-- Codes whose fixes `fix` may apply — the fix-selection axis resolved over the
-  selected set (`fixable`/`unfixable`/`extend-fixable`, `notes/01-schema.md` §6). A selected code
+  selected set (`fixable`/`unfixable`/`extend-fixable`). A selected code
   absent here is reported but its fix is withheld from the patch, as an unadmitted unsafe fix
   is. -/
   fixableSelected : Array String := #[]
@@ -112,11 +112,11 @@ structure RulePlan where
   /-- Rule codes whose fixes are promoted to safe, and demoted to unsafe. Resolved from
   `extend-safe-fixes`/`extend-unsafe-fixes`; a code in both is rejected at plan construction, so
   the two arrays here are disjoint. Display-only is never in either — it is a limit configuration
-  cannot lift (`notes/01-model.md` §2). -/
+  cannot lift. -/
   extendSafe : Array String
   extendUnsafe : Array String
   /-- Non-fatal notices raised while resolving selectors — a retired/reserved code named in
-  a selector, or a deprecated rule selected explicitly (`notes/01-schema.md` §7). The IO caller
+  a selector, or a deprecated rule selected explicitly. The IO caller
   (`Application`, `Service`) prints these to stderr; they never change exit status or which rules
   run. -/
   notices : Array String := #[]
@@ -182,7 +182,7 @@ private def stripAnchor (anchor path : String) : Option String :=
     let directory := anchor ++ "/"
     if path.startsWith directory then some ((path.drop directory.length).toString) else none
 
-/-- Match a root-relative path against an anchored pattern (`notes/01-discovery.md` §7). -/
+/-- Match a root-relative path against an anchored pattern. -/
 private def PathPattern.matches (pattern : PathPattern) (path : String) : Bool :=
   match stripAnchor pattern.anchor (normalizePath path) with
   | none => false
@@ -208,7 +208,7 @@ private def isCategory (selector : String) : Bool :=
   allRuleInfos.any (·.category == selector)
 
 /-- A selector token is valid if it is a meta selector, a category, a live code, or a
-**reserved/retired code** (`notes/01-schema.md` §7). Reserved codes are accepted rather than
+**reserved/retired code**. Reserved codes are accepted rather than
 rejected so a legacy config that still names a retired code keeps loading; it resolves to no live
 rule and raises a notice at plan time (`rulePlan`). -/
 private def selectorsValid (selectors : Array String) : Except String Unit := do
@@ -231,7 +231,7 @@ private def parsePerFileIgnores (anchor : String) (value : Lake.Toml.Value) :
 
 Every base setting is an `Option` so that "absent" differs from "set to the default
 value". Without that split, `extend` composition cannot tell a silent child from one that restates
-the default, and the child would clobber its parent either way (`notes/01-discovery.md` §6.2). The
+the default, and the child would clobber its parent either way. The
 additive `extend-*` fields are plain arrays because they concatenate rather than override, the rule
 those keys already follow within a single file. -/
 private structure PartialConfig where
@@ -259,7 +259,7 @@ private def orParent (child parent : Option α) : Option α :=
   | some value => some value
   | none => parent
 
-/-- Compose a parent configuration with the child that `extend`s it (`notes/01-discovery.md` §6.2).
+/-- Compose a parent configuration with the child that `extend`s it.
 
 Scalars and base arrays: the child replaces the parent whole, which is what lets a child
 *narrow* a parent. The `extend-*` family concatenates parent-then-child, the same additive rule
@@ -349,13 +349,12 @@ private def defaultConfig : FormatterConfig := {
   preview := false
 }
 
-/-- The `[lint]` keys, which are also still accepted at the top level for migration
-(`notes/01-discovery.md` §8.2). -/
+/-- The `[lint]` keys, which are also still accepted at the top level for migration. -/
 private def lintKeys : Array String :=
   #["select", "extend-select", "ignore", "per-file-ignores", "extend-safe-fixes",
     "extend-unsafe-fixes", "fixable", "unfixable", "extend-fixable"]
 
-/-- The line a TOML value sits on, for provenance (`config show`, §12) and error messages.
+/-- The line a TOML value sits on, for provenance (`config show`) and error messages.
 Every `Lake.Toml.Value` constructor carries a `ref : Syntax`, so the position of the value that won
 is recoverable without parsing the file a second time. -/
 private def valueLine (fileMap : Lean.FileMap) (value : Lake.Toml.Value) : Nat :=
@@ -392,15 +391,14 @@ private def assignLintKey (anchor file : String) (fileMap : Lean.FileMap)
       perFileIgnores := config.perFileIgnores ++ (← parsePerFileIgnores anchor value), origins }
   | _ => throw s!"unknown configuration key: {key}"
 
-/-- Parse one configuration file into its pre-composition form (`notes/01-discovery.md`
-§8).
+/-- Parse one configuration file into its pre-composition form.
 
 `anchor` is the directory this file's path patterns are anchored at, relative to the project root;
 `file` is its displayed path, used for provenance and diagnostics. -/
 private def parseFile (anchor file : String) (fileMap : Lean.FileMap) (table : Lake.Toml.Table) :
     Except String PartialConfig := do
   -- Split the document before interpreting it: a key's *section* decides whether it is
-  -- identity-bearing (§9.2), and the both-set check needs the two key sets in hand at once.
+  -- identity-bearing, and the both-set check needs the two key sets in hand at once.
   let mut topLevel : Array (String × Lake.Toml.Value) := #[]
   let mut formatSection : Array (String × Lake.Toml.Value) := #[]
   let mut lintSection : Array (String × Lake.Toml.Value) := #[]
@@ -416,7 +414,7 @@ private def parseFile (anchor file : String) (fileMap : Lean.FileMap) (table : L
       lintSection := entries.items.map fun (key, value) => (keyString key, value)
     | other => topLevel := topLevel.push (other, value)
   -- A key set in both places is a contradiction the user can resolve in one edit, so it
-  -- does not resolve itself (§8.2, as with `extend-safe-fixes` ∩ `extend-unsafe-fixes` below).
+  -- does not resolve itself (as with `extend-safe-fixes` ∩ `extend-unsafe-fixes` below).
   for (key, _) in topLevel do
     if lintSection.any (·.1 == key) then
       throw s!"configuration key '{key}' is set both at the top level and in [lint]"
@@ -455,7 +453,7 @@ private def parseFile (anchor file : String) (fileMap : Lean.FileMap) (table : L
           | throw "configuration key 'preview' expects a boolean"
         config := { config with preview? := some flag, origins }
       -- `line-width` is new, so it has no legacy spelling to protect: a top-level use is
-      -- an error rather than a notice, so the key never acquires an ambiguous section (§8.2).
+      -- an error rather than a notice, so the key never acquires an ambiguous section.
       | "line-width" =>
         throw "configuration key 'line-width' belongs in the [format] section"
       | unknown => throw s!"unknown configuration key: {unknown}"
@@ -486,7 +484,7 @@ private def loadDocument (path : System.FilePath) : IO (Lake.Toml.Table × Lean.
       {String.intercalate "; " rendered.toList}"
 
 /-- The directory a config file's patterns anchor at, relative to `root`, or `none` when the
-file lies outside the project entirely (`notes/01-discovery.md` §7). -/
+file lies outside the project entirely. -/
 def anchorFor (root directory : System.FilePath) : IO (Option String) := do
   let root ← IO.FS.realPath root
   let directory ← IO.FS.realPath directory
@@ -498,7 +496,7 @@ def anchorFor (root directory : System.FilePath) : IO (Option String) := do
   return none
 
 /-- The maximum `extend` chain length. Cycle detection alone terminates, so this is a
-resource bound, not a correctness one (`notes/01-discovery.md` §6.1). -/
+resource bound, not a correctness one. -/
 private def maxExtendDepth : Nat := 32
 
 /-- Load one configuration file and every ancestor it `extend`s, composing parent-first.
@@ -542,8 +540,7 @@ def FormatterConfig.loadFrom (root : System.FilePath) (path : System.FilePath) (
   | .ok config => return config
   | .error message => throw <| IO.userError s!"invalid formatter configuration {path}: {message}"
 
-/-- The configuration file names this product recognizes, in descending priority
-(`notes/01-discovery.md` §3). -/
+/-- The configuration file names this product recognizes, in descending priority. -/
 def recognizedConfigNames : Array String := #[".lean-fmt.toml", "lean-fmt.toml"]
 
 /-- The recognized configuration file in one directory, or `none`. Both names present is a
@@ -565,7 +562,7 @@ configuration is the default policy rather than an error.
 An explicit `--config` anchors its path patterns at the **project root**, not at its own
 directory: it is a run-wide override rather than a config that governs the subtree it sits in, and
 anchoring it at its own directory would make `include`/`exclude` in a config outside the tree match
-nothing (`notes/01-discovery.md` §5.1, §7). A *discovered* config anchors at its own directory. -/
+nothing. A *discovered* config anchors at its own directory. -/
 def FormatterConfig.load (root : System.FilePath)
     (explicit? : Option System.FilePath := none) : IO FormatterConfig := do
   match explicit? with
@@ -592,12 +589,12 @@ private def renderPatterns (patterns : Array PathPattern) : String :=
     if pattern.anchor.isEmpty then pattern.source else pattern.anchor ++ "/" ++ pattern.source)
 
 /-- Every effective setting as `(key, rendered value, origin)`, in schema order — the payload
-`config show` presents (`notes/01-discovery.md` §12).
+`config show` presents.
 
 Origin is `default` when nothing wrote the setting, otherwise `file:line`. A setting
 written by several files in one `extend` chain lists **every** contributing origin for the additive
 `extend-*` keys and the winning one for the rest, which is why composition preserves order and
-duplicates (§6.2).
+duplicates.
 
 This lives here rather than in the CLI because `PathPattern` is private to this module: only code
 that can see the anchor can render a pattern's anchored form, and leaking the type to a presenter
@@ -664,7 +661,7 @@ private def expandSelectors (selectors : Array String) : Array String :=
     (expandSelector selector).foldl (init := codes) fun codes code =>
       if codes.contains code then codes else codes.push code
 
-/-- The specificity of a selector token (`notes/01-schema.md` §5.4): an exact code (3) is
+/-- The specificity of a selector token: an exact code (3) is
 more specific than a category (2), which is more specific than `all`/`default` (1). A reserved code
 or unrecognized token has specificity 0 and mentions no live rule. -/
 private def selectorSpecificity (selector : String) : Nat :=
@@ -673,7 +670,7 @@ private def selectorSpecificity (selector : String) : Nat :=
   else if allRuleInfos.any (·.code == selector) then 3
   else 0
 
-/-- Whether `selector` names live rule `info`, honoring the **preview gate** (§5.3): `all`
+/-- Whether `selector` names live rule `info`, honoring the **preview gate**: `all`
 and a category expand to stable rules only unless `preview` is on (then their preview rules too);
 `default` follows `defaultEnabled` (only stable rules are default-on); a deprecated rule is reached
 only by its exact code; an exact-code selector names only its own code. -/
@@ -684,7 +681,7 @@ private def selectorMentions (preview : Bool) (selector : String) (info : RuleIn
   else if isCategory selector then info.category == selector && gated
   else selector == info.code
 
-/-- Resolve one selection axis over `universe` by specificity (§5.4): a rule is enabled
+/-- Resolve one selection axis over `universe` by specificity: a rule is enabled
 iff some `enable` selector names it and **strictly outranks** every `disable` selector that names
 it — a tie goes to the disabler ("ignore wins"). `preview` gates what `all`/category mention. -/
 private def resolveAxis (pool : Array RuleInfo) (preview : Bool)
@@ -697,11 +694,11 @@ private def resolveAxis (pool : Array RuleInfo) (preview : Bool)
     let d := best disable info
     if e > 0 && e > d then some info.code else none
 
-/-- Resolve CLI/config selection into a `RulePlan` (`notes/01-schema.md` §5–§6). A
+/-- Resolve CLI/config selection into a `RulePlan`. A
 nonempty CLI `--select` replaces configured `select` and its configured ignores; `extend-select`
 always adds; ignores within the chosen layer always apply. Resolution is by specificity
 (`resolveAxis`), not flat subtraction: `--select FMT008 --ignore redundancy` keeps FMT008, because
-an exact selector outranks a category. The preview gate (§5.3) errors on an explicit preview-code
+an exact selector outranks a category. The preview gate errors on an explicit preview-code
 selection when preview is off, and raises a non-fatal notice for a reserved/retired or deprecated
 code named in a selector. -/
 def FormatterConfig.rulePlan (config : FormatterConfig) (cli : CliSelection) :
@@ -803,7 +800,7 @@ def RulePlan.activeCount (plan : RulePlan) : Nat := plan.selected.size
 
 /-- The cheapest facts that can answer every selected rule of `rules`.
 
-This is the projection the roadmap asks for: selection derives what a run must *obtain*,
+Selection derives what a run must *obtain*,
 and nothing else. It does not decide a worker, an artifact strategy, a cache identity, or an order
 — a run that selects nothing costs `source`, and turning a rule on can never rebuild or
 re-elaborate anything.

@@ -26,7 +26,7 @@ lean_exe «lean-fmt» where
 so its member list is that project's exposure to the formatter. `LeanFmt.Rules` was listed here and
 is not any more: nothing here imports it, and while it was listed, editing a rule's message text
 rebuilt the plugin, invalidated every integrated module's Lake trace, and changed the compiled bytes
-of any module with a finding — `notes/01-rule-facts.md` §3 measured all three. The import graph
+of any module with a finding. The import graph
 alone never prevented that; this list is the other half of the same boundary. -/
 lean_lib LeanFmtCompilerPlugin where
   roots := #[`LeanFmtCompilerPlugin]
@@ -91,7 +91,7 @@ lean_lib LeanFmtCore where
     Glob.one `LeanFmt.Imports
   ]
 
-/- The `RCI-MODEL` proof library has its own target, globbed explicitly and alone, for the
+/- The proof library has its own target, globbed explicitly and alone, for the
 same reason `LeanFmt.Rules` was removed from the plugin target: Lake links every module a library
 globs, imported or not. Nothing in the shipped binary or the compiler plugin imports
 `LeanFmt.Cache.Spec`, and nothing globs it alongside them, so the model cannot reach either link
@@ -102,8 +102,7 @@ that broke it. A proof library that builds only when someone names it silently r
 target enters no link closure — that follows the executable's import graph, and nothing imports
 this.
 
-The `#print axioms` audit is **not** in the module; its output is recorded in `results/02-model.md`
-and re-running it is a manual step before marking a claim verified. That is a real loss of
+The `#print axioms` audit is **not** in the module; re-running it is a manual step before marking a claim verified. That is a real loss of
 enforcement over keeping it inline: an assumption introduced later will not announce itself in the
 build that introduced it. -/
 @[default_target]
@@ -146,7 +145,7 @@ lean_exe «suite-boundary» where
   root := `Suites.Boundary
   supportInterpreter := true
 
-/- The discovery suite (ruff-13): hierarchical configuration discovery on synthetic project
+/- The discovery suite: hierarchical configuration discovery on synthetic project
 trees in a temp dir -- nesting, extend, symlinks, ignore sources, force-exclude, migration,
 determinism, and the 1,200-file timing bound. -/
 lean_exe «suite-discovery» where
@@ -228,7 +227,7 @@ lean_exe «suite-scale» where
   supportInterpreter := true
 
 /- The native-layout suite: the four invariant families over the declared NativeLayoutFixtures
-modules, at three widths, with the hygiene gates and the pinned D7/D21 records. -/
+modules, at three widths, with the hygiene gates. -/
 lean_exe «suite-native-layout» where
   srcDir := "tests"
   root := `Suites.NativeLayout
@@ -264,7 +263,7 @@ lean_exe «suite-check» where
   root := `Suites.Check
   supportInterpreter := true
 
-/- The catalog suite (ruff-12): every live rule's documented example runs against the product,
+/- The catalog suite: every live rule's documented example runs against the product,
 plus the explain lifecycle contract and the generated-docs drift/link checks. Clears the root
 cache; workspace lane. -/
 lean_exe «suite-catalog» where
@@ -272,7 +271,7 @@ lean_exe «suite-catalog» where
   root := `Suites.Catalog
   supportInterpreter := true
 
-/- The machine-readable report formats (ruff-15): flag surface, alias/golden equivalence,
+/- The machine-readable report formats: flag surface, alias/golden equivalence,
 format-independent exit codes, concise/github/sarif/junit, output files, broken pipe, stdin, and
 URI encoding. Populates the root cache; workspace lane. -/
 lean_exe «suite-reporting» where
@@ -491,7 +490,7 @@ lean_lib BrokenCompilerFixtures where
 /- `Layout` is lint-clean and deliberately not canonically laid out: `namespace     Alpha` is five
 spaces where the frontend-native formatter renders one.
 It is the one fixture that separates "has no findings" from "needs no formatting", which is the
-distinction `RFP-SPEC` exists to name. -/
+distinction exists to name. -/
 lean_lib CheckFixtures where
   srcDir := "tests/check"
   roots := #[`Clean, `Findings, `Layout]

@@ -42,8 +42,7 @@ structure CacheIdentity where
   environment : Digest
   formatter : Digest
   configuration : Digest
-  /-- Currency of the grammar this module's artifact was produced under (`ruff-16b`
-  `RCI-IMPL`).
+  /-- Currency of the grammar this module's artifact was produced under.
 
   `source` covers the module's own bytes. This covers the other half of what a cached analysis
   depends on: Lean's grammar is open, so a `notation` in `A` changes how `B`'s unchanged bytes
@@ -51,7 +50,7 @@ structure CacheIdentity where
 
   It is per entry, not per epoch. Folding every project source into `environment` used to cover it,
   far too coarsely: `environment` names the index file, so any edit invalidated the whole project
-  and no entry hit (`results/01-contract.md` §2). -/
+  and no entry hit. -/
   closure : Digest
   deriving BEq, Lean.ToJson, Lean.FromJson
 
@@ -93,7 +92,7 @@ The distinction `unbuilt` draws from `unreadable` is the whole point. A module L
 about but has never built has no `.olean` in any form and no trace: it contributed no grammar to
 anything, so it is a *fact* about the closure and belongs in the digest as one. A module whose
 output exists but whose trace is absent, unparseable, or of an unrecognized schema is an *unknown*,
-and `RCI-SPEC` froze which way an unknown degrades — toward a miss, never a hit. -/
+and which way an unknown degrades is settled — toward a miss, never a hit. -/
 private inductive MemberFact where
   /-- The module's recomputed `importAllArts`. -/
   | hash (value : Lake.Hash)
@@ -125,7 +124,7 @@ structure ResultCache where
   A closure digest reads one trace file per closure member, and closures overlap almost completely
   on a real project, so without this the same trace is read and parsed once for every module that
   transitively imports it. On mathlib modules with closures of thousands of members, those re-reads
-  took nearly all of a warm run (`RCI-FINAL`).
+  took nearly all of a warm run.
 
   Memoizing per run, not per batch, is the scope `closureDigestsByModule` already takes: a trace
   changing mid-run is A2 (observation faithfulness), a named hypothesis and false in general either
@@ -217,7 +216,7 @@ private def insideToolchain (toolchain path : System.FilePath) : Bool :=
   path == toolchain || path.toString.startsWith
     (toolchain.toString ++ System.FilePath.pathSeparator.toString)
 
-/- ## Per-module currency (`ruff-16b` `RCI-IMPL`)
+/- ## Per-module currency
 
 What used to be here was `sourceRootParts?`: a walk of every non-`.lake` `.lean` file under
 every source root, digesting each one's bytes into `environment`. `environment` feeds `baseDigest`,
@@ -237,14 +236,13 @@ The replacement is exact and per entry. For a module `X`, Lake's `computeExportI
 
 and each mixed value is the content hash Lake writes as the leading 16 hex digits of the
 corresponding entry in `X`'s own `outputs`. So the value a dependent recorded for `X` is
-recomputable from `X`'s own trace file — no import resolution and no closure walk here, which this
-stack's stop rules forbid. `testLakeTraceCharacterization` pins that identity across every
+recomputable from `X`'s own trace file — no import resolution and no closure walk belong in this
+layer. `testLakeTraceCharacterization` pins that identity across every
 (importer, importee) pair in the built tree, mutation-checked.
 
 **Do not "simplify" this to `X transitive imports (all)`.** That key hashes the closure of `X`'s
-imports and excludes `X` itself. This stack's roadmap proposed it and measurement refuted it
-(`evidence/01-invalidation-and-traces.md` section 3.1): reading it would pass on the stale grammar
-case the check exists to catch. -/
+imports and excludes `X` itself. It was tried and measurement refuted it: reading it would pass on
+the stale grammar case the check exists to catch. -/
 
 /-- Recompute Lake's `importAllArts` for one module from its own recorded trace outputs.
 
@@ -275,10 +273,10 @@ private def moduleArtifactHash? (tracePath : System.FilePath) : IO (Option Lake.
 
 /-- What Lake's recorded outputs say about one closure member.
 
-`unreadable` is the degradation `RCI-SPEC` froze; `unbuilt` is not a degradation at all
+`unreadable` is the degradation an unknown takes; `unbuilt` is not a degradation at all
 but a fact, and the difference is worth a filesystem check. On mathlib, one unbuilt module in a
 62-file batch used to send every closure through the whole-workspace fallback digest: 7,018 ms, 30%
-of a cold `check` (`results/02-optimize.md`). -/
+of a cold `check`. -/
 private def memberFact (workspace : Lake.Workspace) (name : Lean.Name) : IO MemberFact := do
   let some tracePath := Project.moduleTracePath? workspace name
     | return .unreadable
@@ -300,7 +298,7 @@ with its module artifacts as they are on disk **right now**.
 
 `none` — meaning the entry misses — whenever currency cannot be established: the closure could
 not be resolved, a member is not a workspace module, or a member's trace is absent, unparseable, or
-of an unrecognized schema. `RCI-SPEC` froze this direction: currency that cannot be determined
+of an unrecognized schema. This direction is fixed: currency that cannot be determined
 degrades to a miss, never to a hit, and such an entry is not written either, since a placeholder
 value would be indistinguishable from a real one on the next run.
 
@@ -334,8 +332,8 @@ private def closureDigest? (workspace : Lake.Workspace)
 Lake puts a directory on the search path whether or not anything has built there yet, so an
 absent root is ordinary rather than suspicious. `IO.FS.realPath` throws on one, and that exception
 used to escape this function into `ResultCache.open?`'s catch-all and disable the cache for the
-**whole project** — silently, since a disabled cache is a supported outcome. Measured under
-`RCI-FINAL` on mathlib: one absent root, and not a single entry was ever written.
+**whole project** — silently, since a disabled cache is a supported outcome. Measured on mathlib:
+one absent root, and not a single entry was ever written.
 
 Absence is recorded as its own part rather than skipped, so that the root later appearing with
 artifacts moves `environment`. This does not weaken `open?`'s refusal to manufacture a partial
@@ -368,8 +366,8 @@ private def environmentDigest? (workspace : Lake.Workspace) : IO (Option Digest)
   -- — the same defect as the project-source walk, one layer down, and removing only the source
   -- walk would not have fixed it.
   --
-  -- Dependency package roots keep the coverage they had. The completion contract scopes this
-  -- stack to project-source coverage, and a dependency's artifacts are an epoch property: they
+  -- Dependency package roots keep the coverage they had. Coverage here is scoped to project
+  -- sources, and a dependency's artifacts are an epoch property: they
   -- change when the manifest or a dependency build changes, not when the user edits their own
   -- file.
   let ownLibDir ← try IO.FS.realPath workspace.root.leanLibDir catch _ => pure workspace.root.leanLibDir
@@ -393,7 +391,7 @@ private def environmentDigest? (workspace : Lake.Workspace) : IO (Option Digest)
     parts := parts ++ rootParts
   -- Project source *content* deliberately does not appear here. `environment` names the
   -- index file through `baseDigest`, so folding project sources in made one edit rename the index
-  -- and orphan every entry (`ruff-16b` `RCI-SPEC`). Project-source currency is per entry now, in
+  -- and orphan every entry. Project-source currency is per entry now, in
   -- `CacheIdentity.closure`. The ordered *paths* above stay: search-path precedence is an epoch
   -- property and changing it changes what every module resolves to.
   return some (digestParts parts)
@@ -415,10 +413,10 @@ private def identity (cache : ResultCache) (project : Project.Snapshot)
 /-- Conservative currency for any target whose precise closure cannot be established: the digest of
 every artifact in the workspace's own build directory.
 
-Three kinds of target use it, and no header resolution happens for any of them — this
-stack's stop rules forbid a second import resolver in the cache layer:
+Three kinds of target use it, and no header resolution happens for any of them — the cache layer
+has no second import resolver:
 
-* a **standalone file** with no Lake module at all (`experiments/`, ungrabbed fixtures);
+* a **standalone file** with no Lake module at all (ungrabbed fixtures);
 * an **executable root** such as `Main`, which is a real module with a real trace but is not
   reachable through `Lake.Workspace.findModule?`, since that searches libraries only;
 * a **module that does not compile**, whose closure resolves but whose members have no artifacts.
@@ -429,7 +427,7 @@ directory, and a module with no compiled output contributes no grammar. So anyth
 closure digest would have noticed, this notices too.
 
 It is coarse in exchange: any module rebuild invalidates every entry keyed this way. That is as
-wide as these files reached before this stack, but it now sits in a **per-entry** key instead of
+wide as these files' currency used to reach, but it now sits in a **per-entry** key instead of
 the index *filename* — so it no longer orphans the index and no longer touches the entries that do
 have a precise closure.
 
@@ -460,7 +458,7 @@ private def ResultCache.closureDigests (cache : ResultCache) (project : Project.
     -- The fallback is computed **on demand**, not up front. It digests every artifact in
     -- the workspace's build directory, which is slow on a large project, and on a project where
     -- every target is a workspace module whose closure resolves it is never used. Computing it
-    -- eagerly spent most of a warm run on a value nothing read (`RCI-FINAL` section 2).
+    -- eagerly spent most of a warm run on a value nothing read.
     -- `workspaceArtifactsDigest` memoizes, so this stays at most one walk per run.
     let fallback : IO (Option Digest) := cache.workspaceArtifactsDigest project.workspace
     let known ← cache.closureDigestsByModule.get
@@ -524,7 +522,7 @@ private def temporaryPath (target : System.FilePath) : IO System.FilePath := do
 /-- How many index files a project keeps besides the one currently in use.
 
 The index name is a digest of the *epoch* — toolchain, search-path order, dependency roots,
-and the formatter binary's own identity. `ruff-16b` made project edits stop moving it, but an epoch
+and the formatter binary's own identity. Project edits no longer move it, but an epoch
 change still does, and each change orphans the previous index with nothing collecting it. Measured
 before this: repeated formatter rebuilds left index files piling up without bound.
 
@@ -667,7 +665,7 @@ def ResultCache.readAll (cache : ResultCache) (project : Project.Snapshot)
   let closures ← cache.closureDigests project targets
   (targets.zip closures).mapM fun (target, closure?) => do
     try
-      -- Undeterminable currency is an ordinary miss, never a hit (`RCI-SPEC`). It is not
+      -- Undeterminable currency is an ordinary miss, never a hit. It is not
       -- a cache-disabling condition: one target degrades, the rest of the batch is unaffected.
       let some closure := closure?
         | return none
@@ -711,7 +709,7 @@ def ResultCache.writeAll (cache : ResultCache) (project : Project.Snapshot)
         continue
       -- A target whose currency could not be established is not written. Writing it under
       -- a placeholder closure would make it indistinguishable from a genuinely current entry on
-      -- the next run, which is the stale hit this stack exists to remove.
+      -- the next run, which is the stale hit this cache exists to remove.
       let some closure := closure?
         | continue
       let expected ← identity cache project target closure

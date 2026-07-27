@@ -11,7 +11,7 @@ import all LeanFmt.Cache.Decision
 /-!
 # The result cache's currency decision, as a pure model
 
-This module is `RCI-MODEL`. It exists because the informal claim "the cache is always valid" is not a
+This module exists because the informal claim "the cache is always valid" is not a
 Lean theorem, and the shape that *is* a theorem needs stating before anyone writes tactics.
 
 ## What is and is not claimed
@@ -32,7 +32,7 @@ this exercise is for.
 
 ## Why `analyze` is a parameter, not a definition
 
-`notes/01-what-is-provable.md` §2 records the trap: if "what a run should compute" is specified as
+Here is the trap: if "what a run should compute" is specified as
 "whatever the cache returns", every theorem below is vacuous.
 
 This module avoids that structurally rather than by discipline. `analyze` is **universally
@@ -59,12 +59,12 @@ worthless, and `serves_complete` is not a bonus theorem — it is half the conte
 `Provided` are imported from `LeanFmt.Cache.Decision`, and `LeanFmt.Cache.readAll` and
 `LeanFmt.Application` call those same definitions. There is no second copy to drift.
 
-`RCI-MODEL` shipped without that, and `results/02-model.md` §6 recorded the gap: the model defined its
+This shipped without that, and the gap was recorded: the model defined its
 own `serves`, the production path re-implemented the idea across two modules, and nothing forced them
 to agree. They had already diverged — the model checked schema, source, closure and tier, while the
 shipped gate also required canonical text when the run renders it and demanded semantic sub-facts. So
 `serves_complete` was proved about a decision more permissive than the one running, which is the
-direction that makes a completeness theorem worthless. `RCI-FINAL` closed it by moving the decision
+direction that makes a completeness theorem worthless. This was closed by moving the decision
 into a module both sides import.
 
 What remains reviewed rather than typechecked is narrower and named: that the *instantiation* is
@@ -174,8 +174,8 @@ theorem source_current (hsd : Function.Injective sd) (hobs : Faithful sd gd o w)
 module is under *now*.
 
 This is the lemma the stack depends on, and stating it has already refuted two designs: per-module
-self-consistency (`notes/01-what-is-provable.md` §6: edit `A`, `A` rebuilds, `B` fails to build, and
-nothing is detected anywhere), then that note's proposed repair, which `RCI-SPEC` refuted by
+self-consistency (edit `A`, `A` rebuilds, `B` fails to build, and
+nothing is detected anywhere), then the proposed repair, which was refuted by
 measurement — `X transitive imports (all)` excludes `X`, so comparing it would have passed on the
 stale grammar case.
 

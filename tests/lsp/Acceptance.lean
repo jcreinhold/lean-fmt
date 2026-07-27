@@ -6,7 +6,7 @@ import Lean.Data.Lsp.CodeActions
 import Lean.Data.Lsp.Ipc
 
 /-!
-# `ruff-17` RLP-FINAL — protocol acceptance, driven by a client we did not write
+# Protocol acceptance, driven by a client we did not write
 
 `tests/lsp/run.sh` drives the server from Python: it frames its own messages and parses its own
 replies. That is a real independent implementation, but it is *our* independent implementation, and
@@ -17,9 +17,8 @@ comes from `Lean.Data.Lsp.Communication`, the message algebra from `Lean.JsonRpc
 decoder from `Lean.JsonRpc.ErrorCode`, so a code we emit that the toolchain does not recognize fails
 here rather than being compared against our own spelling of it.
 
-It covers what `notes/01-protocol.md` §15 hands to RLP-FINAL: lifecycle (§3), concurrent cancellation
-at the running child (§9), Unicode positions (§4), dynamic reconfiguration (§10), malformed-message
-recovery (§11), code actions (§8), and the 100-request memory stability of §13.
+It covers lifecycle, concurrent cancellation at the running child, Unicode positions, dynamic
+reconfiguration, malformed-message recovery, code actions, and the 100-request memory stability.
 
 Run it through `tests/lsp/acceptance.sh`, which builds the binary and passes its path.
 -/
@@ -48,7 +47,7 @@ def Harness.checkEq [BEq α] [ToString α] (h : Harness) (label : String) (actua
     IO Unit :=
   h.check label (actual == expected) s!"expected: {expected}\n  actual:   {actual}"
 
-/-! ## 1. Lifecycle (§3)
+/-! ## 1. Lifecycle
 
 `initialize` is answered before anything else is served; `shutdown` then `exit` leaves zero; `exit`
 without `shutdown` leaves one, which the specification requires and which no ordinary client will ever
@@ -98,7 +97,7 @@ private def lifecycle (h : Harness) : IO Unit := do
     Ipc.shutdown 2
   h.checkEq "and the session survives to be initialized afterwards" code 0
 
-/-! ## 2. Malformed messages (§11)
+/-! ## 2. Malformed messages
 
 The freeze's claim is not "malformed input is answered" but "malformed input never terminates the
 server". Both halves are asserted here, and the second needs a process: after each bad message the
@@ -137,7 +136,7 @@ private def malformed (h : Harness) : IO Unit := do
     Ipc.shutdown 5
   h.checkEq "and the whole malformed session still exits cleanly" code 0
 
-/-! ## 3. Unicode positions (§4)
+/-! ## 3. Unicode positions
 
 The conversion layer is UTF-16 in both directions and clamps rather than validates. Three sizes are
 distinguishable on the fixture below — 12 UTF-16 units, 10 codepoints, 16 bytes — so an assertion on
@@ -166,7 +165,7 @@ private def unicode (h : Harness) : IO Unit := do
       -- 12 is UTF-16 units. Codepoints would be 10 and bytes 16, so this discriminates all three.
       h.checkEq "and at the last line's length in UTF-16 code units" character 12
     | .error _ message => h.check "the document formats to one whole-document edit" false message
-    -- A position that splits an astral pair. §4 clamps; it does not raise.
+    -- A position that splits an astral pair. The server clamps; it does not raise.
     request 2 "textDocument/rangeFormatting" (Json.mkObj [
       ("textDocument", Json.mkObj [("uri", Json.str uri)]),
       ("range", range 2 0 7 4), ("options", Json.mkObj [])])
@@ -200,7 +199,7 @@ private def unicode (h : Harness) : IO Unit := do
     Ipc.shutdown 5
   h.checkEq "the Unicode session exits cleanly" code 0
 
-/-! ## 4. Dynamic reconfiguration (§10)
+/-! ## 4. Dynamic reconfiguration
 
 The configuration a client names at startup governs the session, and rewriting that file and sending
 `workspace/didChangeConfiguration` changes what the open documents report — without reopening them and
@@ -239,7 +238,7 @@ private def reconfiguration (h : Harness) : IO Unit := do
   h.checkEq "the reconfigured session exits cleanly" code 0
   IO.FS.removeDirAll directory
 
-/-! ## 5. Code actions (§8)
+/-! ## 5. Code actions
 
 Read from the client's side: an action must carry an edit a client can apply without asking anything
 further, and must name the version it was computed against. -/
@@ -274,7 +273,7 @@ private def codeActions (h : Harness) : IO Unit := do
     Ipc.shutdown 2
   h.checkEq "the code-action session exits cleanly" code 0
 
-/-! ## 6. Concurrent cancellation (§9)
+/-! ## 6. Concurrent cancellation
 
 The claim under test is not "a cancelled request is answered" — `tests/lsp/run.sh` already shows that
 for a *queued* request. It is that a `$/cancelRequest` naming the request already running reaches the
@@ -336,9 +335,9 @@ private def cancellation (h : Harness) : IO Unit := do
   h.check "and it returned in a fraction of the uncancelled cost"
     (cancelled * 2 < uncancelled) s!"uncancelled {uncancelled} ms, cancelled {cancelled} ms"
 
-/-! ## 7. Memory stability over 100 requests (§13)
+/-! ## 7. Memory stability over 100 requests
 
-§13's promise is one bounded document snapshot and one richest current-version envelope, with no
+The protocol promises one bounded document snapshot and one richest current-version envelope, with no
 per-request snapshot chain or report history. The observable form is that the session's resident size
 after a hundred requests is not meaningfully above its resident size after the first. -/
 

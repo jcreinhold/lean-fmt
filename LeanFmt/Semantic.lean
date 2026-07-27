@@ -103,7 +103,7 @@ more. A rule is a pure total function of its facts, and `validFor` on the line a
 this artifact describes exactly these bytes: one input, one function, no second opinion to have.
 
 Empirically: carrying findings in the artifact did not prevent disagreement; it caused the one
-`notes/01-rule-facts.md` §2 measured, where `check` reported a rule the artifact said was off. Two
+measured disagreement: `check` reported a rule the artifact said was off. Two
 deciders disagreed, so there is now one. -/
 def SemanticAnalysis.ofArtifact? (raw : String) (artifact? : Option ModuleArtifact)
     (diagnostics : Array String := #[]) : Option SemanticAnalysis :=
@@ -123,7 +123,7 @@ def SemanticAnalysis.ofArtifact? (raw : String) (artifact? : Option ModuleArtifa
       -- (captured under demand by a render or a `.semantic`-rule selection) carries the compiler
       -- diagnostics, so the whole registry — including FMT012–FMT015 — runs against `.semantic`
       -- facts and the result is tagged `.semantic`, complete for any run (monolithic capture,
-      -- `ruff-11` `notes/01-authority.md` §6). An artifact without the projection runs the
+      -- §6). An artifact without the projection runs the
       -- source/syntax registry against `.syntax` facts and is tagged `.syntax`, exactly as before —
       -- a `.syntax` entry then misses a `.semantic` selection through `cacheHitServes` rather than
       -- reporting a false clean. The caps a `.semantic` entry provides are the projection's own

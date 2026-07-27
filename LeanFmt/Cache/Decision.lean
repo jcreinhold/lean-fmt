@@ -81,7 +81,7 @@ def Provided.meets (p : Provided) (d : Demand) : Bool :=
 /-- What the cache can observe **without running the frontend**: the deserializer's own schema, and,
 per module, a source digest and a closure digest recomputed from Lake's recorded traces.
 
-`closureDigest` carries `RCI-SPEC`'s correction: derived from each import's `X:importAllArts`,
+`closureDigest` carries the correction: derived from each import's `X:importAllArts`,
 recomputed from `X`'s own trace outputs — **not** from `X transitive imports (all)`, which excludes
 `X` itself and would have passed on the stale case the check exists to catch. -/
 structure Obs (Mod SDigest GDigest Schema : Type) where
@@ -117,7 +117,7 @@ def Entry.identityCurrent (e : Entry Mod Analysis SDigest GDigest Schema)
   decide (e.sourceDigest = o.sourceDigest e.mod) &&
   decide (e.closureDigest = o.closureDigest e.mod)
 
-/-- The currency decision, pure and entire. `RCI-SPEC` §4 Design B. -/
+/-- The currency decision, pure and entire. -/
 def serves (e : Entry Mod Analysis SDigest GDigest Schema)
     (o : Obs Mod SDigest GDigest Schema) (d : Demand) : Bool :=
   e.identityCurrent o && e.provided.meets d

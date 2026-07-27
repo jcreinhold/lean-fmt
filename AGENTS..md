@@ -41,7 +41,7 @@ editor, format-suppression, formatter, formatter-adapter, imports, incremental, 
 modes, module-formatter, native-layout, performance, reporting, scale, security-bench, semantic, stream, style,
 suppression, syntax, term-formatter, validator, watch.
 
-Each suite's module docstring carries its notes: what it pins, which defect records (D-numbers, RPR/RWI/RSF numbers) the
+Each suite's module docstring carries its notes: what it pins, which defect records the
 assertions come from, and what a failure means. Read those first when a suite fails.
 
 Match the checks to the change:
@@ -68,12 +68,11 @@ Match the checks to the change:
   not a Lean model of it. Do not port those.
 
 Use the target project's exact Lean toolchain for frontend and plugin experiments. Keep experiments out of production
-modules until their owning prompt selects and verifies the interface.
+modules until their interface is selected and verified.
 
 ## Which record wins
 
-The prompt stacks that built this product (`docs/projects/`) were deleted once it shipped. What remains is the record,
-in this order:
+When records disagree, this is the order of authority:
 
 - Built code decides what the product does. No record outranks it.
 - A suite under `tests/` decides whether a behaviour is intended. A test asserting something is the strongest surviving
@@ -81,11 +80,10 @@ in this order:
 - Module docstrings in `LeanFmt/` carry the reasoning — why a shape was picked and what was rejected. They are prose and
   can rot; when one contradicts the code, the code wins and the docstring is wrong.
 - `docs/` is the user-facing contract. `docs/ci.md` and `docs/adding-a-rule.md` are gated by suites; the rest is not.
-- Frozen evidence (removed with `experiments/`; recoverable from git history) is a measurement with a date, not a
-  decision. Regenerate it rather than arguing with it.
+- A measurement has a date, not authority — regenerate rather than argue.
 
 If two records disagree, write down the disagreement and how you settled it. Design rationale that is not recoverable
-from code or tests is gone with the stacks — when you cannot find why something is the way it is, say so rather than
+from code or tests is gone — when you cannot find why something is the way it is, say so rather than
 inventing a reason.
 
 ## Design constraints
@@ -172,8 +170,7 @@ you have found a ninth and it goes in this list.
 - Ordinary upstream bugs, each repaired against the mechanism rather than the parser: `def ctor` puts the newline inside
   the `"\n| "` atom *after* `optional docComment`, so a constructor docstring renders as `where/-- doc -/` and reparses
   onto the wrong owner; `parserOfStack.formatter` reads one stack slot short of the `ident`, so `` `(cat| body) `` dies
-  as ``Unknown constant «|»``; `guardMsgsCmd` omits the `ppDedent` every other command-embedding parser has. The ledger
-  with measurements was `experiments/native-layout-defects/README.md`, recoverable from git history.
+  as ``Unknown constant «|»``; `guardMsgsCmd` omits the `ppDedent` every other command-embedding parser has.
 
 Do not reimplement what Lean does do. `pushToken` inserts a discretionary space exactly when concatenation would re-lex
 as one token, using the real tokenizer; an adapter-side merge rule over-fires. Read `format.indent` through

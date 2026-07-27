@@ -221,7 +221,7 @@ private unsafe def testUpToDateFacet (ctx : Ctx) : IO Unit := do
 
 /-- The matched pair from the old script: editing one rule's message text must change *nothing*
 here, because a rule's prose has no business in an `.olean` — before the boundary moved, this edit
-invalidated every integrated module's Lake trace (`notes/01-rule-facts.md` §3). The captured trace
+invalidated every integrated module's Lake trace. The captured trace
 feeds the plugin control below, and neither probe means anything alone: a harness that rebuilt no
 module at all would pass the first, and the second proves the harness still notices real changes.
 Returns the pre-edit trace for the control. -/

@@ -129,7 +129,7 @@ private def findingWithEdits (edits : Array Edit) (applicability : Applicability
   fix? := some { applicability, edits }
 }
 
-/-- Adversarial fix-all cases for `RFX-FINAL`: mixed insert/delete/replace conflicts, multi-edit fixes
+/-- Adversarial fix-all cases: mixed insert/delete/replace conflicts, multi-edit fixes
 inside one transaction, that applicability is never an edit property, and that a safe rule fix leaves a
 comment's text intact. The atomic-publish crash/stale cases live in `tests/modes/run.sh`, where a real
 temp-file-then-rename is exercised. -/
@@ -164,12 +164,12 @@ private def testFixAllAdversarial : IO Unit := do
     ensure (left == "MULTI" && right == "MULTI") "an intra-fix conflict lost the fix's own provenance"
   | _ => throw <| IO.userError "overlapping edits within one fix were accepted"
 
-  -- Mixed-tier conflict (`RYC-FINAL`): the conflict path carries no tier. A syntax-rule fix (`FMT011`)
+  -- Mixed-tier conflict: the conflict path carries no tier. A syntax-rule fix (`FMT011`)
   -- and an import-rule fix (`FMT003`) that overlap on the same original bytes reject and name BOTH
   -- rules. No file drives this — the shipped fixes are disjoint by design (the syntax `.safe` fixes edit
   -- paren/attribute ranges, FMT003 edits an import line, FMT012 renames a deprecated ident; none
-  -- intersect), so the composition is exercised here at `preparePatch`, its owning layer. (After
-  -- `ruff-11c` RDF-LAYOUT there is no source-tier fixable rule — trailing whitespace and the final
+  -- intersect), so the composition is exercised here at `preparePatch`, its owning layer. (There is no
+  -- source-tier fixable rule — trailing whitespace and the final
   -- newline are the formatter's layout, not lint rules.)
   match preparePatch "abc" #[
       findingWithEdit { start := 0, stop := 2 } "" .safe "FMT011",

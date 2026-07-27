@@ -19,7 +19,7 @@ An ordinary comment written *above* a docstring is the case that must not be swe
 stores a docstring's opening token in the following token's trivia, so both comments arrive at the
 ownership layer as leading trivia of one command; the rule that keeps the command's own docstring from
 being emitted twice has to select by comment kind, because dropping the whole run drops the ordinary
-comment with it. That was D8, and mathlib writes the shape often. -/
+comment with it. Mathlib writes the shape often. -/
 
 public section
 
@@ -100,7 +100,7 @@ statement, so a boundary can only render the comment at the following statement'
 reparse makes it that statement's leading trivia. Two of them, because a block can end in more than one
 and they have to leave together, and the block's last item is itself an `if`/`else` chain, because that
 puts one more `nest` between the node that claims the span and the indent the block's items were laid
-out at. That was D17. -/
+out at. -/
 def danglingInnerBlock (flag : Bool) (n : Nat) : Nat := Id.run do
   let mut total := 0
   if flag then
@@ -118,7 +118,7 @@ boundary was collected at, because it is neither the command's own docstring nor
 island consumed that terminal in one step and never asked for the boundary in front of it, so the
 boundary stayed collected and the command was refused -- `Mathlib/Tactic/CasesM.lean` reported
 `applied 4/5 boundaries`. Two bindings, because the second is where a column that moved would show:
-`where` bindings are `checkColGe` against the first. That was D26. -/
+`where` bindings are `checkColGe` against the first. -/
 def documentedWhere (n : Nat) : Nat := twice n + once n
 where
   /-- Doubles its argument. -/
@@ -129,7 +129,7 @@ where
 /- Three runs the source spells on one line that a break inside would reparse. All three are Lean's own
 `formatCommand` -- each was checked against it directly before the adapter was touched -- and all three
 are the same failure `many1Indent` produces for a guarded `let`'s bail-out: a continuation lands at a
-column the parser reads as the next item of the enclosing list. That was D22. -/
+column the parser reads as the next item of the enclosing list. -/
 
 /- A structure-instance field's binders. The group deciding the `ppSpace`s between them also holds the
 field's body, so a multi-line body breaks the binders however short they are -- 21 columns here, and

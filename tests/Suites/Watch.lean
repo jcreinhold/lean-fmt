@@ -5,11 +5,11 @@ public import Test
 /-!
 # The watch suite
 
-Port of `tests/watch/run.sh`: the characterization suite for the platform behaviors `ruff-16`
-RWI-SPEC froze (see `LeanFmt/Watch.lean`), plus the CLI rejection surface RWI-IMPL shipped.
+Port of `tests/watch/run.sh`: the characterization suite for the platform behaviors
+`LeanFmt/Watch.lean` is built on, plus the CLI rejection surface.
 
 The first half deliberately tests **git and the filesystem**, not `lean-fmt`. Every assertion is a
-premise the RWI-IMPL selection adapter is built on; if a future git changes one of them, the
+premise the selection adapter is built on; if a future git changes one of them, the
 adapter is silently wrong and this suite makes it fail loudly instead. The second half is all
 rejections and error paths, checked before any project load, so it stays fast.
 
@@ -45,7 +45,7 @@ private def testMtimeGranularity (ctx : Ctx) : IO Unit := do
   let second ← probe.metadata
   let nanos (m : IO.FS.Metadata) : Int := m.modified.sec * 1000000000 + m.modified.nsec.toNat
   ensure (nanos first != nanos second)
-    "same-size rewrite produced an identical mtime; RWI-SPEC §2 assumed sub-second granularity"
+    "same-size rewrite produced an identical mtime; the adapter assumes sub-second granularity"
   ensureEq "same-size rewrite kept its size (that is the point)" 4 second.byteSize
 
 /-- §9.4 `git diff` never reports untracked files — the assertion that protects users from the
@@ -115,10 +115,10 @@ private def testRevParseProbe (ctx : Ctx) : IO Unit := do
   let diffLines := ((diff.stdout ++ diff.stderr).splitOn "\n").filter (· != "")
   ensure (diffLines.length >= 10)
     s!"git diff outside a repository no longer dumps usage ({diffLines.length} lines); \
-      revisit RWI-SPEC §9.7"
+      revisit the rev-parse choice"
 
 -- -----------------------------------------------------------------------------------------------
--- The CLI surface RWI-IMPL shipped: rejections and error paths.
+-- The CLI surface: rejections and error paths.
 
 private def expectRejection (ctx : Ctx) (what fragment : String) (args : Array String)
     (cwd : Option System.FilePath := none) : IO Unit := do

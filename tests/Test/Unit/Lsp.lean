@@ -39,7 +39,7 @@ open LeanFmt LeanFmt.Internal
 
 namespace LeanFmt.Test.Unit.Lsp
 
-/-- `ruff-17` RLP-PROTOCOL, `notes/01-protocol.md` §4: the LSP position layer, characterized before
+/-- The LSP position layer, characterized before
 anything is built on it.
 
 Two claims, both of which survive casual testing if they go untested. First, LSP columns are UTF-16
@@ -50,7 +50,7 @@ an out-of-range position produces an offset past the end of the document rather 
 server clamps every inbound position itself.
 
 `𝔘` (U+1D518) is 4 UTF-8 bytes, 2 UTF-16 code units, and 1 codepoint, so one character separates all
-three encodings. It is the same fixture `ruff-15` used for the reporting columns
+three encodings. It is the same fixture used for the reporting columns
 (`tests/reporting/run.sh`, "codepoint columns are neither bytes nor UTF-16"). -/
 private def testLspPositions : IO Unit := do
   let source := "theorem t : 𝔘 = 𝔘 := rfl\nsecond line\n"
@@ -106,9 +106,9 @@ private def testLspPositions : IO Unit := do
   ensure ((normalizedMap.lspPosToUtf8Pos ⟨1, 0⟩).byteIdx == 11)
     "the normalized line start moved"
 
-/-! ### The language server's document layer (`ruff-17` RLP-DOCUMENTS)
+/-! ### The language server's document layer
 
-`notes/01-protocol.md` §4 and §6. The differential test below is obligation 2 of the freeze, and it is
+The differential test below is obligation 2 of the freeze, and it is
 the one obligation whose failure would corrupt a user's file rather than merely annoy them. -/
 
 section LanguageServerDocuments

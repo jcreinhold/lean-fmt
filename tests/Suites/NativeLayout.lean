@@ -140,7 +140,7 @@ private def testHygiene (ctx : Ctx) : IO Unit := do
       ensureEq s!"{fixture} leaves trailing whitespace" 0 trailing
       ensureEq s!"{fixture} holds a double blank line" 0 ((render.splitOn "\n\n\n").length - 1)
 
-/-- §3: terminal payloads are original bytes, matched by position. Includes the live D7 pin: the
+/-- §3: terminal payloads are original bytes, matched by position. Includes the live upstream pin: the
 space Lean's `pushToken` does not put between `]` and `do`. -/
 private def testAlignment (ctx : Ctx) : IO Unit := do
   let alignment ← ctx.once "Alignment"
@@ -159,14 +159,14 @@ private def testAlignment (ctx : Ctx) : IO Unit := do
     (count alignment "Nat.succ pair.fst + Nat.succ pair.snd")
   ensureEq "an escaped string is not re-escaped" 1 (count alignment "\"tab\\there\"")
   -- A blank line the source put between a leading comment and its owner: the copyright block
-  -- ends flush against `module` in neither direction. Was D6.
+  -- ends flush against `module` in neither direction.
   let lines := alignment.splitOn "\n"
   let some closer := lines.findIdx? (· == "-/")
     | throw <| IO.userError "alignment: no copyright block"
   ensureEq "the blank line after the copyright block survives" ""
     (lines[closer + 1]?.getD "<missing>")
   ensureEq "and module follows it directly" "module" (lines[closer + 2]?.getD "<missing>")
-  -- §7, D7 (upstream, still live): a keyword whose parser spells no leading space sits flush
+  -- §7 (upstream, still live): a keyword whose parser spells no leading space sits flush
   -- against a delimiter before it. The output still parses and still validates, which is why no
   -- gate catches it and why it needs a pin.
   ensureEq "a for over a bracketed collection loses the space before do" 1
@@ -194,18 +194,18 @@ private def testBoundaries (ctx : Ctx) : IO Unit := do
   -- Ownership, not just presence: the field docstring pins to the line directly above the field.
   ensureEq "the field docstring still precedes its field" "  first : Nat"
     (← lineAfter boundaries "/-- A field doc comment")
-  -- D26: a docstring on a `where` binding is an exact island *and* the terminal a doc boundary
+  -- A docstring on a `where` binding is an exact island *and* the terminal a doc boundary
   -- was collected at. Both bindings, because `where` is `checkColGe` against the first.
-  ensureEq "a where binding's docstring keeps its own line (D26)" 1
+  ensureEq "a where binding's docstring keeps its own line" 1
     (countExact boundaries "  /-- Doubles its argument. -/")
   ensureEq "  ... and so does the second one, whose column the first fixes" 1
     (countExact boundaries "  /-- Adds one to its argument. -/")
   ensureEq "  ... and both bindings land on one column" 2
     (countPrefix boundaries "   twice (n : Nat) : Nat := n + " +
       countPrefix boundaries "   once (n : Nat) : Nat := n + ")
-  -- D22: three runs the source spells on one line, each a list whose items the parser measures
+  -- Three runs the source spells on one line, each a list whose items the parser measures
   -- against a column no `Format` constructor names.
-  ensureEq "a field's binders stay on one line however its body breaks (D22)" 1
+  ensureEq "a field's binders stay on one line however its body breaks" 1
     (countExact boundaries "  bounded {n} m h := by")
   ensureEq "  ... an induction's generalized variables stay together" 1
     (count boundaries "generalizing firstGeneralized secondGeneralized with")
@@ -221,7 +221,7 @@ private def testBoundaries (ctx : Ctx) : IO Unit := do
     (← lineAfter boundaries "A constructor doc comment can run onto a second line" 2)
   ensureEq "  ... and its constructor still follows it" "  | only"
     (← lineAfter boundaries "A constructor doc comment can run onto a second line" 3)
-  -- D10: the comment is placed at the forced alignment between `by` and its first tactic, and its
+  -- The comment is placed at the forced alignment between `by` and its first tactic, and its
   -- continuation line keeps the column the source gave it.
   ensureEq "a comment in a forced alignment is placed on the align's own column" 1
     (countExact boundaries
@@ -231,7 +231,7 @@ private def testBoundaries (ctx : Ctx) : IO Unit := do
   ensureEq "  ... and the tactic it leads at that same column, with its siblings"
     "  let doubled := n\n  have step : doubled + 0 = doubled := Nat.add_zero doubled"
     (← linesAfterExact boundaries "  continuation line that owns its own column. -/" 2)
-  -- D8: the ordinary comment stays *above* the docstring, and the docstring appears once. The
+  -- The ordinary comment stays *above* the docstring, and the docstring appears once. The
   -- defect dropped the command's entire leading trivia whenever it contained doc syntax.
   ensureEq "an ordinary comment stays above the docstring it precedes"
     "/-- A doc comment can be preceded by ordinary comments the command does not own. -/"
@@ -244,7 +244,7 @@ private def testBoundaries (ctx : Ctx) : IO Unit := do
   ensureEq "the trailing comment stays on its owner's last line"
     "  0 -- trailing line comment"
     ((boundaries.splitOn "\n").filter (·.contains "-- trailing line comment") |>.head?.getD "")
-  -- D3: an *ownership* defect. The comment lines up with the statement it follows, and the
+  -- An *ownership* defect. The comment lines up with the statement it follows, and the
   -- statement is still the last thing in the block.
   ensureEq "a block's dangling comment stays inside the block" "    return value"
     (← lineBefore boundaries "-- dangling comment after the last statement")
@@ -254,7 +254,7 @@ private def testBoundaries (ctx : Ctx) : IO Unit := do
   -- assignment.
   ensureEq "a comment aligned with no block item keeps its leading assignment" 1
     (countExact boundaries "-- indented past every block, aligned with none of them")
-  -- D17: the same rule one nesting level in. At 6 the comment reparses as dangling on the `if`'s
+  -- The same rule one nesting level in. At 6 the comment reparses as dangling on the `if`'s
   -- block, at 4 as leading trivia of the next statement, at 8 as dangling on the branch. All
   -- three parse; only one is the comment the source wrote.
   ensureEq "a comment closing an inner block stays at that block's column" 1
@@ -265,7 +265,7 @@ private def testBoundaries (ctx : Ctx) : IO Unit := do
     (countExact boundaries "    total := total + 3")
   ensureEq "the interior comment stays between the operator and its continuation" "    4"
     (← lineAfter boundaries "-- interior line comment")
-  -- D1: the adapter owns *both* sides of a comment. `[` and `5` are adjacent in the list grammar,
+  -- The adapter owns *both* sides of a comment. `[` and `5` are adjacent in the list grammar,
   -- so the native boundary between them is empty.
   ensureEq "a block comment closing mid-row is separated from the token after it"
     "  [ /- interior block comment inside a delimiter -/ 5, 6]"
@@ -285,13 +285,13 @@ private def testIslands (ctx : Ctx) : IO Unit := do
   ensureEq "a quotation with an antiquotation survives" 1 (count islands "`($(Lean.quote value))")
   ensureEq "a multiline doc comment keeps its second line at column zero" 1
     (countExact islands "Its second line owns its own column. -/")
-  -- D11: the dynamic quotation is an island because Lean's formatter cannot reach it at all.
+  -- The dynamic quotation is an island because Lean's formatter cannot reach it at all.
   ensureEq "a dynamic quotation survives as its own bytes" 1
     (count islands "`(Lean.explicitBinders| (x : Nat))")
-  -- D12: twice-escalated protection; the island covers every terminal the first one replaced.
+  -- Twice-escalated protection; the island covers every terminal the first one replaced.
   ensureEq "a twice-escalated quotation covers all of its own terminals" 1
     (count islands "`($(_) fun $_:ident ↦ $body)")
-  -- D16: a quotation whose body the grammar calls a command; an unapplied boundary is a refusal.
+  -- A quotation whose body the grammar calls a command; an unapplied boundary is a refusal.
   ensureEq "a command quotation keeps its body inside the island" 1
     (count islands "`(command| #eval $value)")
 
@@ -315,7 +315,7 @@ private def testOffside (ctx : Ctx) : IO Unit := do
   ensureEq "and its first tactic still starts the next line"
     "  have step : n + 0 = n := Nat.add_zero n"
     (← lineAfterExact offside "    n + 0 = n := by")
-  -- D9: a `;`-separated tactic sequence is a `sepByIndent` list, and `by ` lands its first tactic
+  -- A `;`-separated tactic sequence is a `sepByIndent` list, and `by ` lands its first tactic
   -- at one column past the indent the separators break to.
   ensureEq "a semicolon-separated tactic sequence opens on its own line"
     "  constructor; exact Nat.add_zero n; exact Nat.add_zero n"
@@ -323,7 +323,7 @@ private def testOffside (ctx : Ctx) : IO Unit := do
   -- The negative half: one item has no separator, so there is nothing to position.
   ensureEq "a single tactic stays on the by line" 1
     (countExact offside "theorem singleTactic (n : Nat) : n + 0 = n := by rfl")
-  -- D18: the rule reads the *carrier* rather than the sequence's own kind.
+  -- The rule reads the *carrier* rather than the sequence's own kind.
   ensureEq "a parenthesised tactic sequence stays on its carrier's line" 1
     (count offside "by constructor <;> (skip; rfl)")
   ensureEq "  ... as does a focus dot's" 2 (countExact offside "  · skip; rfl")
@@ -331,7 +331,7 @@ private def testOffside (ctx : Ctx) : IO Unit := do
     (← lineAfterExact offside "  case left =>")
   ensureEq "  ... and a show's by opens its sequence as by's own does" "    constructor; rfl; rfl"
     (← lineAfterExact offside "  show value + 0 = value ∧ value + 0 = value by")
-  -- The other half of D9: `sepByIndent.formatter` emits a forced `align` when the source spelled
+  -- The other half of that rule: `sepByIndent.formatter` emits a forced `align` when the source spelled
   -- the separators as line breaks, which already positions the sequence.
   ensureEq "a line-break-separated record update keeps its own alignment" "    first := 1"
     (← lineAfterExact offside "def relaid (base : Packet) : Packet :=" 2)
@@ -358,34 +358,34 @@ private def testOffside (ctx : Ctx) : IO Unit := do
   ensureEq "  ... and is the only bar in these fixtures left bare" 1
     ((offside.splitOn "\n").filter (fun line =>
       line.startsWith "    let some " && line.endsWith " |") |>.length)
-  -- A nested command starts at column zero, whatever the embedding node's `nest` chose (D13).
+  -- A nested command starts at column zero, whatever the embedding node's `nest` chose.
   ensureEq "a command nested in another command starts at column zero" 1
     (countExact offside "#eval 1 + 2")
   ensureEq "  ... and the enclosing command keeps its own line" 3
     (countExact offside "#guard_msgs in")
   ensureEq "  ... and one Lean already dedented is spelled the same way" 1
     (countExact offside "def afterOpen : Nat :=")
-  -- D24: the same dedent with a comment in the gap. Both columns are asserted.
+  -- The same dedent with a comment in the gap. Both columns are asserted.
   ensureEq "  ... and a comment in the gap keeps its own column zero" 1
     (countExact offside "-- the comment the dedent has to survive")
   ensureEq "  ... and the command after that comment starts at column zero too" 1
     (countExact offside "#eval 3 + 4")
-  -- D27: the rows *after* the one the boundary opened. Asserted at the exact column, because the
+  -- The rows *after* the one the boundary opened. Asserted at the exact column, because the
   -- defect is a column and the output parses either way.
   ensureEq "  ... and the nested command's own body lands one level in, not two" 1
     (countExact offside "  refine ⟨rfl, ?_⟩")
-  -- D15: the `then` line ends at `then`.
+  -- The `then` line ends at `then`.
   ensureEq "a do-block's indented if body leaves nothing after then" 1
     (countExact offside "    if value != 0 then")
   ensureEq "  ... and the body is still indented under it" 1
     (countExact offside "      total := total + value")
-  -- D14: an interior doc comment keeps the side of the break the source put it on.
+  -- An interior doc comment keeps the side of the break the source put it on.
   ensureEq "an interior doc comment keeps its own line" 1
     (countExact offside "    /-- Applies the mapping to a position. -/")
   ensureEq "  ... and nothing shares the line the rec keyword ends" 1
     (countExact offside "  let rec")
 
-/-- §6a, D21: `RootedKind.lean` is the one fixture here that must not format — its command's node
+/-- §6a: `RootedKind.lean` is the one fixture here that must not format — its command's node
 kind names no constant. The escape the message offers has to work, or the message is advice
 nobody can take. -/
 private def testRootedKind (ctx : Ctx) : IO Unit := do
@@ -397,7 +397,7 @@ private def testRootedKind (ctx : Ctx) : IO Unit := do
     "Lean._root_.Lean.Parser.Command.registerLabelAttr names no constant"
     "a _root_-bearing node kind is not refused by name"
   ensureContains refused.stderr "Lean/Elab/Syntax.lean:465"
-    "the D21 refusal named no upstream cause"
+    "the refusal named no upstream cause"
   let ignored := (← IO.FS.readFile fixture).replace "register_label_attr"
     "-- lean-fmt: format-ignore-next\nregister_label_attr"
   let formatted ← expectExit 0 "RootedKind with the directive" ctx.application

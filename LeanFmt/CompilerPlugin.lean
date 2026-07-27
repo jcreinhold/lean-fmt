@@ -18,8 +18,7 @@ namespace LeanFmt.Internal.CompilerPlugin
 linked into every compilation of every module of any project integrating the formatter, so its whole
 import closure enters the target project's build graph. While the rules were in here, editing one
 rule's message text invalidated every module's Lake trace and changed the compiled bytes of any
-module with a finding — measured, `notes/01-rule-facts.md` §3. A rule's prose does not belong in an
-`.olean`.
+module with a finding — measured. A rule's prose does not belong in an `.olean`.
 
 What belongs here is what a later reader cannot recompute: the exact frontend's projection. Whoever
 holds these facts computes the findings outside. -/

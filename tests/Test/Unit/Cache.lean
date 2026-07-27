@@ -58,7 +58,7 @@ private def testCacheIdentity : IO Unit := do
     cacheIdentityDigest { base with environment := Digest.ofString "other-environment" },
     cacheIdentityDigest { base with formatter := Digest.ofString "other-formatter" },
     cacheIdentityDigest { base with configuration := Digest.ofString "other-configuration" },
-    -- `ruff-16b` `RCI-IMPL`: the grammar a module was parsed under is an identity component, so a
+    -- The grammar a module was parsed under is an identity component, so a
     -- change in the import closure's artifacts must move the key on its own. Without this row the
     -- suite would pass under the naive fix that rekeys on nothing but the module's own bytes.
     cacheIdentityDigest { base with closure := Digest.ofString "other-closure" }
@@ -68,11 +68,10 @@ private def testCacheIdentity : IO Unit := do
   ensure (changes.toList.Pairwise (· != ·))
     "distinct cache identity components collided in the test fixture"
 
-/- Characterization of the Lake module trace facts `ruff-16b` `RCI-IMPL` will consume.
+/- Characterization of the Lake module trace facts.
 
 This test exists because the currency design rests on a reading of Lake's trace format that is not
-documented and was, in this stack's first draft, **wrong**. The roadmap and
-`notes/01-what-is-provable.md` both described the check as comparing `B`'s recorded
+documented and was, in this stack's first draft, **wrong**. The roadmap described the check as comparing `B`'s recorded
 `["A transitive imports (all)", h]` against `A`'s current value. Measurement refuted that: editing `A`
 so its `.olean` changed left every `"A transitive imports (all)"` entry in `A`'s own dependents
 untouched, because that key hashes the closure of `A`'s *imports* and excludes `A` itself. The key

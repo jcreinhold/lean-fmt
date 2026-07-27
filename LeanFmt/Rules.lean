@@ -17,7 +17,7 @@ namespace LeanFmt.Internal
 A rule declares what it needs to decide, and gets that and nothing more. The declaration is
 `RuleImpl`'s constructor rather than a field, because the field drifted: `RuleInfo.input` was a
 claim no code had to honor, and `RulePlan.requiresSyntax` answered `false` for the product's whole
-life as a result. `notes/01-rule-facts.md` §1 and §7 give the argument; the shape is Lean's own
+life as a result. The shape is Lean's own
 `Linter` (`Lean/Elab/Command.lean:64-70`) without the mutable ref that plugin loading needs and
 this does not.
 
@@ -31,10 +31,9 @@ run that selects any `syntax` rule needs a current `.olean` and its facet, or a 
 invocation. `semantic` facts add the exact frontend's normalized compiler diagnostics, captured
 only under rule demand, and the deprecation-occurrence facts a `.semantic` fix may read.
 
-`ruff-05b` (`RSF-IMPL`) added the `semantic` case with the producer, consumer, and test `ruff-05`
-required before a tier may exist, so it is not the empty tier `RuleInfo.input` rotted into. The
-producer is `analyzeExact` (`Analysis.lean`), gated by `captureSemantic`; `ruff-11` added the first
-semantic rules. Formatting itself does not demand this tier — canonical layout is derived from the
+The `semantic` case has a producer, a consumer, and a test, so it is not the empty tier
+`RuleInfo.input` rotted into. The producer is `analyzeExact` (`Analysis.lean`), gated by
+`captureSemantic`. Formatting itself does not demand this tier — canonical layout is derived from the
 syntax projection and validated independently — so a run pays for diagnostics only when a selected
 rule reads them. -/
 inductive Tier where
@@ -98,12 +97,12 @@ normalized compiler diagnostics. A semantic rule needs the syntax facts too — 
 system and suppression are the projection's — so this nests `SyntaxFacts` as `SyntaxFacts` nests
 `SourceFacts`. `diagnostics` are the immutable facts (`ArtifactModel.Diagnostic`) the surfaced
 rules FMT012–FMT015 key on; a rule never sees an `Environment`, a `Position`, or a `FileMap`, only
-this data (`ruff-11` `notes/01-authority.md` §7). -/
+this data. -/
 structure SemanticFacts where
   private mk ::
   «syntax» : SyntaxFacts
   diagnostics : Array Diagnostic
-  /-- The owned deprecation-occurrence facts (`ruff-11b`), empty unless the run demanded
+  /-- The owned deprecation-occurrence facts, empty unless the run demanded
   the `occurrences` capability. A rule reads this as plain data; an empty array is *no fixes to
   offer* (whether because nothing was captured or nothing was found — the two are distinguished at
   the cache layer, not here), so a rule stays report-only on empty and the `check` path never
@@ -148,7 +147,7 @@ def RuleImpl.tier : RuleImpl → Tier
   | .syntax _ => .syntax
   | .semantic _ => .semantic
 
-/-- A rule's **stability promise** (`ruff-12` RRL-SPEC `notes/01-schema.md` §4), orthogonal
+/-- A rule's **stability promise**, orthogonal
 to `defaultEnabled`:
 
 - `stable` — the rule's meaning is frozen; a change of meaning requires a *new* code. Selectable by
@@ -182,8 +181,7 @@ instance : Lean.FromJson Lifecycle := ⟨fun j => do
   | "deprecated" => pure .deprecated
   | other => .error s!"unknown lifecycle: {other}"⟩
 
-/-- One **executable** documentation example for a rule (`notes/01-schema.md` §8, §10
-invariant 6). `bad` is source the rule must flag; `good?` is the post-fix source for a fixable rule
+/-- One **executable** documentation example for a rule. `bad` is source the rule must flag; `good?` is the post-fix source for a fixable rule
 and `none` for a report-only one. The catalog-invariant test runs each `bad` through the rule
 (source-tier in process; syntax/semantic through the real-frontend harnesses) and, for a fixable
 rule, asserts the emitted fix turns `bad` into `good?`. So an example that does not fire, or a fix
@@ -203,31 +201,30 @@ structure RuleInfo where
   defaultEnabled : Bool
   /-- The stability promise (`Lifecycle`). Orthogonal to `defaultEnabled`: a `stable` rule
   may be default-on or default-off, but a `preview`/`deprecated` rule is never default-on (a test
-  pins this, `notes/01-schema.md` §10 invariant 4). -/
+  pins this). -/
   lifecycle : Lifecycle
   /-- Long-form explanation shown by `explain` and the generated rule page. One or more
-  paragraphs; must be nonempty for a live rule (invariant 5). -/
+  paragraphs; must be nonempty for a live rule. -/
   explanation : String
-  /-- Executable bad→good examples (≥1 for a live rule, invariant 5/6). -/
+  /-- Executable bad→good examples (≥1 for a live rule). -/
   examples : Array RuleExample
   /-- The successor code for a `deprecated` rule (its migration path); `none` otherwise.
-  Required to be `some` iff `lifecycle == .deprecated` (invariant 4). -/
+  Required to be `some` iff `lifecycle == .deprecated`. -/
   replacement? : Option String := none
-  /-- What would graduate this rule out of preview (`ruff-12b` RGR-SPEC `results/01-criteria.md`
-  §1.5, §4 DOC-3). Required to be `some` and nonempty **iff** `lifecycle == .preview` (invariant
-  4b), and surfaced by `explain` and the generated page, because a preview rule whose path out
+  /-- What would graduate this rule out of preview. Required to be `some` and nonempty **iff**
+  `lifecycle == .preview`, and surfaced by `explain` and the generated page, because a preview rule whose path out
   lives only in a result note is a rule nobody will revisit.
 
   It states a *checkable* condition, not a sentiment: "graduates when it produces ≥10 audited true
-  positives with zero false positives on a corpus that …" and not "needs more evidence". `ruff-12b`
-  `results/02-evidence.md` derives the current ten from measured corpus behaviour — eight of these
+  positives with zero false positives on a corpus that …" and not "needs more evidence". The
+  current ten are derived from measured corpus behaviour — eight of these
   rules never fired on 85 real mathlib modules, so what each one names is the corpus that would
   actually exercise it.
 
   The invariant is what keeps this honest. An unenforced field rots exactly as a declared tier
   field would (`CLAUDE.md`), so `testCatalogInvariants` pins it in both directions. -/
   previewPath? : Option String := none
-  /-- Whether this rule's fix reads the owned deprecation-occurrence fact (`ruff-11b`). It
+  /-- Whether this rule's fix reads the owned deprecation-occurrence fact. It
   governs *capture cost only*: `RulePlan.demandedCaps` sets the `occurrences` capability — and pays
   the whole-file info-tree fold — when and only when a selected rule declares this in a rendering
   mode. A wrong value never corrupts a file, since the output re-elaboration validator still checks
@@ -262,17 +259,17 @@ instance : Lean.ToJson Rule where
 
 `FMT001` and `FMT002` flag bytes that survive into accepted source only inside a string
 literal or a comment: a bare control byte or bidirectional mark in the command stream is a hard
-parse error, so a file carrying one in code is not accepted source and no source rule runs on it
-(`notes/01-catalog.md` §2). The parser's acceptance therefore supplies the token context these
+parse error, so a file carrying one in code is not accepted source and no source rule runs on it.
+The parser's acceptance therefore supplies the token context these
 rules would otherwise need: they scan bytes, and every byte they can see already sits in a string
 or comment. Both are **report-only**: deleting the byte would change string data or comment text,
-which no byte-level argument can call safe (`notes/01-catalog.md` §3). -/
+which no byte-level argument can call safe. -/
 
 private def hexDigit (n : Nat) : Char :=
   if n < 10 then Char.ofNat (n + '0'.toNat) else Char.ofNat (n - 10 + 'A'.toNat)
 
 /-- Uppercase four-digit hex, for the `U+XXXX` in a message. Every code these rules name is
-`≤ 0xFFFF` (`notes/01-catalog.md` §3), so four digits is exact, not a truncation. -/
+`≤ 0xFFFF`, so four digits is exact, not a truncation. -/
 private def hex4 (n : Nat) : String :=
   String.ofList [hexDigit (n / 4096 % 16), hexDigit (n / 256 % 16), hexDigit (n / 16 % 16),
     hexDigit (n % 16)]
@@ -291,7 +288,7 @@ private def controlFinding (start : Nat) (codepoint : Nat) : Finding :=
     message := s!"forbidden control byte U+{hex4 codepoint}"
     range := { start, stop := start + 1 }
     -- Report-only: the byte is inside a string literal or comment, so removing it changes
-    -- program data or comment text — not a safe byte-level edit (`notes/01-catalog.md` §3).
+    -- program data or comment text — not a safe byte-level edit.
     fix? := none
   }
 
@@ -395,8 +392,8 @@ private def moduleDocRequired (facts : SyntaxFacts) : Array Finding := Id.run do
 
 /-! ### FMT007 — unclosed `section` or `namespace`
 
-Matching is a name stack over the top-level command stream, as `notes/01-catalog.md` §2
-specifies and as `Lean.Elab.Command`'s scope stack works. `namespace Foo` pushes the name `Foo`;
+Matching is a name stack over the top-level command stream, as
+`Lean.Elab.Command`'s scope stack works. `namespace Foo` pushes the name `Foo`;
 `section` pushes an anonymous scope; `section Bar` pushes `Bar`. A bare `end` pops one scope (the
 innermost, an anonymous section in accepted source). An `end Foo` pops the scopes whose names,
 concatenated outer→inner with `.`, spell `Foo` — so **one** `end A.B` closes both a single
@@ -629,15 +626,13 @@ They read `SemanticFacts.diagnostics` — normalized `Diagnostic`s already in th
 coordinate system, captured from the `MessageLog` in `Analysis.lean` — and conclude a report-only
 `Finding` that preserves the compiler's own message as detail. They re-derive nothing:
 reconstructing an unused-variable diagnostic would mean reimplementing a linter from info trees and
-the metavariable context, the brittle invention the roadmap stop-rule forbids (`ruff-11`
-`notes/01-authority.md` §§1,3-4).
+the metavariable context — a brittle invention.
 
 Every rule is **report-only**: removing a binder or a section variable, or renaming a deprecated
 reference, is not an edit any byte-level or projection fact here can prove safe. The four `kind`
-strings were read first-hand off the v4.32.0 compiler and recorded in
-`evidence/01-semantic-diagnostics.txt`; a wrong string is a rule that silently never fires. A
+strings were read first-hand off the v4.32.0 compiler; a wrong string is a rule that silently never fires. A
 toolchain that stops emitting one of these kinds yields no findings, because surfacing only ever
-reads a tag the running compiler produced (`notes/01-authority.md` §10). -/
+reads a tag the running compiler produced. -/
 
 private def kDeprecatedAttr := "Lean.Linter.deprecatedAttr"
 private def kUnusedVariables := "linter.unusedVariables"
@@ -664,13 +659,13 @@ private def surfaceDiagnostics (kind code : String) (facts : SemanticFacts) : Ar
 
 The **report** is surfaced from the compiler diagnostic — unchanged, always available,
 cheap. The **unsafe rename fix** is attached from the owned occurrence fact only when it was
-captured (`ruff-11b`): for each surfaced finding, a *fixable* occurrence at the same range
+captured: for each surfaced finding, a *fixable* occurrence at the same range
 contributes a `Fix` that replaces the identifier with the deprecation's `newName?`. When
 occurrences were not captured — `check`, or any run that did not demand the `occurrences`
 capability — `facts.occurrences` is empty and every finding is report-only, byte-identical to the
 surfaced-only behavior. The fix is `unsafe`: a textual name swap is plausibly intended but
 unproven, applied only under `--unsafe-fixes` and backstopped by the output re-elaboration
-validator (`ruff-06` `notes/01-model.md` §1, `ruff-11b` `notes/01-model.md` §6). -/
+validator. -/
 private def deprecatedUse (facts : SemanticFacts) : Array Finding :=
   (surfaceDiagnostics kDeprecatedAttr "FMT012" facts).map fun finding =>
     match facts.occurrences.find? (fun o => o.fixable && o.range == finding.range) with
@@ -701,8 +696,7 @@ Static, not an attribute or an environment extension. The rule set is compiled a
 so a dynamic table would buy nothing and cost determinism: `lean-fmt rules` output and pre-sort
 finding order would depend on import order. Lean stores its own linters in a mutable ref for one
 stated reason — "Linters should be loadable as plugins" (`Lean/Elab/Command.lean:108-109`) — and
-this product has no public runtime plugin interface. `notes/01-rule-facts.md` §7 compares the four
-designs.
+this product has no public runtime plugin interface.
 
 Accepted source cannot contain an isolated `\r`, so after normalization no carriage return
 survives for a line-oriented rule to consider. -/
@@ -869,10 +863,9 @@ modules says what mathlib already enforces and nothing about whether this rule i
       category := "redundancy"
       summary := "remove redundant nested parentheses"
       fixable := true
-      -- `stable` but default-OFF: the "stable-optional" outcome (`ruff-12b` RGR-SPEC §1,
-      -- RGR-IMPL). Its meaning is frozen and it is selectable by `all`, by `redundancy`, and by
-      -- code with no `--preview` gate; it is absent from `default` because it is syntax tier, and
-      -- `RGR-EVIDENCE` measured a default syntax-tier rule at 33x the cold-path budget on an
+      -- `stable` but default-OFF. Its meaning is frozen and it is selectable by `all`, by
+      -- `redundancy`, and by code with no `--preview` gate; it is absent from `default` because it
+      -- is syntax tier, and a default syntax-tier rule measured at 33x the cold-path budget on an
       -- ordinary-built project (62 frontend children against the baseline's 1). Correctness earned
       -- the promotion; cost kept it off the default path. These are separate axes and `Lifecycle`
       -- is orthogonal to `defaultEnabled` exactly so this state can be expressed.
@@ -966,7 +959,7 @@ A bound variable's name matches a nullary constructor in scope, surfaced from th
 variable. Report-only."
       previewPath? := "\
 Graduates when it produces at least 10 audited true positives on a corpus that exercises it AND its \
-opinionation rate is measured under RGR-SPEC §2.4 — not just its false-positive rate. Of the ten \
+opinionation rate is measured — not just its false-positive rate. Of the ten \
 preview rules this is the most likely to be true-but-unwanted: naming a binder after a nullary \
 constructor can be deliberate and readable, so a clean false-positive count would not by itself show \
 the rule is worth imposing."
@@ -997,9 +990,9 @@ product. A rule whose tier the facts cannot serve is skipped. That is not a sile
 
 The registry is a parameter here and fixed in `runRules`, so that a test can substitute one.
 The engine's tier behavior — skipping, mixed-tier ordering, tie-breaking — is hard to exercise
-through `ruleRegistry`, and the roadmap forbids shipping a fake rule for coverage, so tests pass
+through `ruleRegistry`, and shipping a fake rule for coverage is not an option, so tests pass
 their own array. No production caller does, and none should: a rule set chosen per call site can
-differ per call site, the defect this stack exists to close. -/
+differ per call site. -/
 def runRulesOf (rules : Array Rule) (facts : Facts) : Array Finding :=
   let findings := rules.foldl (init := #[]) fun findings rule =>
     -- The skip is the third case, not a guard. A `facts.tier.satisfies rule.tier` test here
@@ -1029,7 +1022,7 @@ The import family (`FMT003` duplicate, `FMT004` redundant, `FMT005` order/groupi
 facts sit outside the `source ≤ syntax ≤ semantic` chain — the syntax projection drops the header —
 and redundancy needs the Lake graph, which a `RuleImpl` cannot fetch (see the module note above).
 `LeanFmt.Internal.Imports` and the `Project` graph operation produce their findings and merge them
-into the report stream (`RIR-IMPL`).
+into the report stream.
 
 Their *identities* — code, category, summary, fixability, default — belong with every other rule's,
 so that selection, `--select imports`, suppression, and `lean-fmt rules` treat them the same way
@@ -1082,12 +1075,11 @@ initialization order in principle, so the reordering is surfaced rather than app
 
 /-- The **reserved / retired** codes: codes that name no live rule but remain part of the
 catalog namespace forever, so a future rule never silently reuses one and a legacy config or
-suppression that still names one degrades gracefully rather than breaking (`notes/01-schema.md`
-§7). Each maps to a one-line disposition shown by a retirement notice and by `explain`.
+suppression that still names one degrades gracefully rather than breaking. Each maps to a one-line disposition shown by a retirement notice and by `explain`.
 
 **This table is empty, and that is a deliberate state, not a cleared one.** It held `FMT001` and
 `FMT002` — the retired line-boundary and trailing-newline rules — until the pre-release renumbering
-(`docs/rules/MIGRATION.md`) shifted the live catalog down to start at `FMT001`. That renumbering
+(docs/adding-a-rule.md §"Retiring a rule") shifted the live catalog down to start at `FMT001`. That renumbering
 *reuses* two retired codes, which is exactly what this table exists to prevent; it was allowed
 once, knowingly, because the package had no users and therefore no config or suppression comment
 anywhere could be pointing at the old meanings. It is not a precedent. Once a real user exists, a
@@ -1099,11 +1091,11 @@ They were covered by `FMT001` before, and inventing a placeholder retired rule t
 green would be a fake fixture proving nothing. They stay untested until a rule genuinely retires.
 
 FMT900/FMT901 are **meta** self-diagnostics of the suppression engine (`Suppression.lean`), always
-active and never selectable; they are not in this table but §10 invariant 1 forbids any live rule
-from reusing them. -/
+active and never selectable; they are not in this table but the catalog-invariant test forbids any
+live rule from reusing them. -/
 def reservedCodes : Array (String × String) := #[]
 
-/-- Whether `code` names a reserved/retired code (§7). -/
+/-- Whether `code` names a reserved/retired code. -/
 def isReservedCode (code : String) : Bool := reservedCodes.any (·.1 == code)
 
 /-- The retirement disposition for a reserved code, if any. -/
@@ -1112,11 +1104,11 @@ def reservedDisposition? (code : String) : Option String :=
 
 /-- The **meta** self-diagnostic codes and what each one means. These are emitted by the
 suppression projection (`Suppression.lean`), not by any rule: they are deliberately absent from
-`ruleRegistry` because they are never selectable and never suppressible, and §10 invariant 1
-forbids a live rule from reusing them.
+`ruleRegistry` because they are never selectable and never suppressible, and the catalog-invariant
+test forbids a live rule from reusing them.
 
 They are here so `explain` can answer for them. A user meets `FMT900` by seeing it in a report and
-then looks it up; before `ruff-12b` that lookup returned `unknown rule: FMT900` and exit 2, which
+then looks it up; that lookup once returned `unknown rule: FMT900` and exit 2, which
 is a false statement about a code the product had just printed. Not being in the registry is a fact
 about selection, not a licence to deny the code exists. -/
 def metaCodes : Array (String × String) := #[
@@ -1132,7 +1124,7 @@ suppresses nothing. Always active, never selectable, and not itself suppressible
 def metaDescription? (code : String) : Option String :=
   (metaCodes.find? (·.1 == code)).map (·.2)
 
-/-- Rules exempt from the "≥1 executable example" invariant (§10 invariant 5/6), each for
+/-- Rules exempt from the "≥1 executable example" invariant, each for
 a stated structural reason: FMT001/FMT002 flag an invisible/dangerous byte that cannot be embedded
 verbatim in documentation, and FMT004 flags a cross-module graph fact that has no self-contained
 single-file snippet. Their `explanation` carries an escaped/illustrative example instead. Every
@@ -1167,7 +1159,7 @@ def allRulesJson : Array Lean.Json :=
 
 /-- The full metadata for one rule as JSON — every field, including `explanation` and
 `examples` — the object `explain --json` and the documentation generator both consume, so they can
-never disagree (`notes/01-schema.md` §8). `input`/`tier` is supplied by the caller (derived from
+never disagree. `input`/`tier` is supplied by the caller (derived from
 the `RuleImpl` for an engine rule, `source` for an import rule). -/
 def ruleInfoJson (info : RuleInfo) (tier : String) : Lean.Json :=
   Lean.Json.mkObj [
@@ -1200,7 +1192,7 @@ def ruleInfoByCode? (code : String) : Option RuleInfo := allRuleInfos.find? (·.
 /-! ## Catalog rendering — one metadata source, every surface
 
 `explain`, the generated rule pages, and the `lean-fmt.toml` schema are **projections over
-the same `RuleInfo`** (`notes/01-schema.md` §3, §8, §9). Keeping the pure string-building here,
+the same `RuleInfo`**. Keeping the pure string-building here,
 beside `allRulesJson`, stops them disagreeing, and it costs nothing at the compiler-plugin
 boundary, because `LeanFmt.Rules` is not in the plugin closure (`docs/adding-a-rule.md`).
 `LeanFmt.Cli` does the IO (printing, writing, drift-checking); it adds no content of its own. -/
@@ -1213,7 +1205,7 @@ private def lifecycleLabel : Lifecycle → String
 private def fixLabel (info : RuleInfo) : String := if info.fixable then "fixable" else "report-only"
 private def defaultLabel (info : RuleInfo) : String := if info.defaultEnabled then "on" else "off"
 
-/-- The human `explain RULE` text block (`notes/01-schema.md` §8): heading, metadata line,
+/-- The human `explain RULE` text block: heading, metadata line,
 explanation, each example, and the select/suppress/docs footer. -/
 def explainText (info : RuleInfo) : String := Id.run do
   let tier := tierWireOf info.code
@@ -1242,10 +1234,10 @@ def explainText (info : RuleInfo) : String := Id.run do
 /-- A fenced code block, language-tagged `lean`. -/
 private def fence (body : String) : String := "```lean\n" ++ body.trimAsciiEnd.copy ++ "\n```\n"
 
-/-- One rule's generated markdown page (`docs/rules/FMT###.md`, §9). Deterministic: pure over
+/-- One rule's generated markdown page (`docs/rules/FMT###.md`). Deterministic: pure over
 `info`. Opens with a YAML frontmatter block carrying the machine-readable fields (code, category,
 tier, lifecycle, fix, default, replacement), so a tool — the executable-example harness among them
-— reads the catalog straight from the pages without re-deriving it (`notes/01-schema.md` §9). The
+— reads the catalog straight from the pages without re-deriving it. The
 body below repeats the same facts for a human reader. -/
 def rulePageMarkdown (info : RuleInfo) : String := Id.run do
   let tier := tierWireOf info.code
@@ -1283,7 +1275,7 @@ def rulePageMarkdown (info : RuleInfo) : String := Id.run do
   out := out ++ s!"- Suppress: `-- lean-fmt: ignore[{info.code}]`\n"
   return out
 
-/-- The generated catalog index (`docs/rules/index.md`, §9): a table of every live rule
+/-- The generated catalog index (`docs/rules/index.md`): a table of every live rule
 grouped by category, sorted by code within a group, plus the retired-code table.
 Deterministic. -/
 def catalogIndexMarkdown : String := Id.run do
@@ -1319,7 +1311,7 @@ def selectorVocabulary : Array String :=
   let reserved := (reservedCodes.map (·.1)).qsort (· < ·)
   #["all", "default"] ++ categories ++ codes ++ reserved
 
-/-- The generated JSON-schema fragment for `lean-fmt.toml` (`notes/01-schema.md` §9, §11):
+/-- The generated JSON-schema fragment for `lean-fmt.toml`:
 every config key `Config.lean`'s `parseFile` accepts, with each selector-valued array constrained
 to `selectorVocabulary` and `preview` to a boolean. Built as a byte-stable pretty string beside the
 rule pages — deterministic, so `docs --check` drift-checks it like every other page. -/

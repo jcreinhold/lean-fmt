@@ -10,8 +10,7 @@ absent from this capability: the exact formatter uses live syntax and registry s
 suite gates compiler diagnostics and owned deprecation occurrences.
 
 The differentials never touch the capture code: Lean's own `--json` frontend is the independent
-oracle for both the surfaced-diagnostics fact (`ruff-11` RMR-IMPL) and the owned-occurrence fact
-(`ruff-11b` ROS-IMPL).
+oracle for both the surfaced-diagnostics fact and the owned-occurrence fact.
 
 Lane: parallel — the acceptance project is a throwaway under a temp dir, repo-root invocations are
 all `--no-cache`, and the preamble's facet build is Lake-cached.
@@ -262,7 +261,7 @@ private def writeAcceptanceProject (proj : System.FilePath) (root : System.FileP
     "module\n\ndef newName : Nat := 1\n@[deprecated newName (since := \"2024-01-01\")]\n\
      def oldName : Nat := 0\ndef useOld : Nat := oldName\ndef parened : Nat := ((1))\n"
 
-/-- `ruff-11` RMR-FINAL end-to-end acceptance: error surfaced broken, mixed-tier selection,
+/-- End-to-end acceptance: error surfaced broken, mixed-tier selection,
 withheld vs admitted owned fixes, `format` never renames, idempotence, and pass-order
 independence. -/
 private def testAcceptance (ctx : Ctx) : IO Unit := do
@@ -365,7 +364,7 @@ private def testAcceptance (ctx : Ctx) : IO Unit := do
   IO.FS.removeFile orderB
   writeFile mixed original
 
-/-- `ruff-11b` ROS-FINAL cost: the info-tree walk is the demanded delta the capability split
+/-- Cost: the info-tree walk is the demanded delta the capability split
 bounds. Peak RSS and wall time across the three capture levels, best-effort under
 `/usr/bin/time -l` (Darwin); the source projection is already proven byte-identical either way. -/
 private def testCost (ctx : Ctx) : IO Unit := do

@@ -75,7 +75,7 @@ structure SuppressionFacts where
 namespace Suppression
 
 /-- The sigil every directive comment opens with. Chosen over ruff's `noqa` because Lean has no `#`
-line comment (`RSP-SPEC` stop rule). -/
+line comment. -/
 def sigil : String := "lean-fmt:"
 
 /-- A cheap whole-source superset test for "could this file carry a directive?". A substring scan of
@@ -391,7 +391,7 @@ def apply (facts : SuppressionFacts) (bytes : ByteArray) (findings : Array Findi
     | some codes =>
       let used := codes.filter fun code =>
         findings.any fun f => f.code == code && inScope directive.scopeRange f
-      -- A reserved/retired code (`ruff-12` §7 non-breaking floor) is **inert**: it suppresses
+      -- A reserved/retired code is **inert**: it suppresses
       -- nothing but is never flagged unused, so it stays out of the dead set that raises `FMT900`.
       -- A retired-only directive therefore raises nothing (`dead` is empty); a mixed directive keeps
       -- normal per-code analysis for its live codes, and a trim preserves the inert retired codes in

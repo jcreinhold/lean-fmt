@@ -5,7 +5,7 @@ public import Test
 /-!
 # The discovery suite
 
-Port of `tests/discovery/run.sh` (`ruff-13` RCD-FINAL): hierarchical configuration discovery end
+Port of `tests/discovery/run.sh`: hierarchical configuration discovery end
 to end, through the shipped binary, on real project trees.
 
 This suite is deliberately separate from the modes suite. That one owns the *write* path inside
@@ -331,7 +331,7 @@ private def testLargeTree (ctx : Ctx) : IO Unit := do
     (← gate (← showConfig ctx big (big / "ignored" / "I0.lean")) "big")
   let discoveryMillis ← discoveryMs deepRun.stderr "big"
   IO.println s!"   info discovery over 1,200 files with 10 nested configs: {discoveryMillis} ms"
-  -- A bound, not a benchmark. The claim RCD-FINAL owes is that one walk is not on the critical
+  -- A bound, not a benchmark. The claim is that one walk is not on the critical
   -- path; a walk per file would be. The threshold is loose so this fails on a design regression
   -- rather than on a slow machine.
   ensure (discoveryMillis < 2000)

@@ -21,7 +21,7 @@ short-circuit production work — it reads clocks that already tick and counters
 
 ## Why this is its own module
 
-It began inside `LeanFmt.Application`, where the first phases were. `RPR-IMPL` then needed to bracket
+It began inside `LeanFmt.Application`, where the first phases were. It then needed to bracket
 `LeanFmt.Project.exactSetup`, which `Application` imports — a phase cannot be emitted from below the
 module that owns the emitter. The channel is infrastructure for every layer, so it is a leaf every
 layer may import.
@@ -33,7 +33,7 @@ module, and nothing in the plugin's import closure reaches it, so it stays out o
 way `LeanFmt.Rules` had to.
 
 **A phase name may be emitted many times in one run.** Per-file phases report per file; the consumer
-sums by name (`experiments/profile-run.sh` retains every line). Emitting one total instead would need
+sums by name. Emitting one total instead would need
 an accumulator threaded through the analysis path — profiling state in the type of every operation
 that has nothing to do with profiling.
 -/
@@ -69,9 +69,8 @@ def recordPhase (name : String) (started finished : Nat) : IO Unit :=
 
 /-- Report a count under `name`.
 
-Wall time alone cannot distinguish "the cache worked" from "the OS page cache was warm", which is how
-`ruff-16` misread a whole-project cache invalidation as an in-process reuse defect (`ruff-16b`
-`RCI-SPEC`). Every claim about invalidation is reported as a count. -/
+Wall time alone cannot distinguish "the cache worked" from "the OS page cache was warm".
+Every claim about invalidation is reported as a count. -/
 def recordCount (name : String) (value : Nat) : IO Unit := do
   if ← enabled then
     emit s!"cache.{name}={value}"

@@ -15,7 +15,7 @@ inside `namespace Lean`. The two ends of that one declaration disagree about wha
 parser constant is `Lean.Parser.Command.registerLabelAttr`, and the node kind is
 `(← getCurrNamespace) ++ declName.getId` (`Lean/Elab/Syntax.lean:465`), which is
 `Lean._root_.Lean.Parser.Command.registerLabelAttr`. Every node this parser produces carries a kind
-naming no constant, so no formatter can be resolved for it. That is D21.
+naming no constant, so no formatter can be resolved for it.
 
 This file is not in the `fixtures` array with the others: it is the one fixture here that must
 *not* format. §6a asserts the refusal names the declaration rather than whichever lookup failed

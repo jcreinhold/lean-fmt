@@ -8,7 +8,7 @@ public import Test
 Port of `tests/check/run.sh`: the core `check`/`format` pipeline end to end — the two producers
 (artifact and exact frontend) agreeing, the check/format agreement invariant, broken and sabotaged
 runs, the child memory budget, `--workers` determinism, the result-cache strategy and invalidation
-matrix, and the RDF-FINAL efficiency probes.
+matrix, and the fix/render-path efficiency probes.
 
 Lane: workspace — the suite clears and populates the root `.lean-fmt-cache`, edits
 `tests/check/Findings.lean` and `LeanFmt/Cli.lean` in place (restored via `cp -p` backups), and
@@ -92,7 +92,7 @@ private def testFlagSurface (ctx : Ctx) : IO Unit := do
   ensure (!(help.stdout.contains "--check-elab")) "--check-elab leaked into help"
   discard <| checkRaw ctx 2 #["fix", "--check-elab", "tests/check/Clean.lean"] "removed --check-elab"
 
-/-- The two producers agree on Findings, and both reproduce the pre-`ruff-15` golden byte for
+/-- The two producers agree on Findings, and both reproduce the recorded golden byte for
 byte. The golden was recorded *before* any renderer shipped, so it is evidence and not a
 restatement of current behavior. -/
 private def testProducerParity (ctx : Ctx) : IO Unit := do
@@ -434,7 +434,7 @@ private def testCacheInvalidation (ctx : Ctx) : IO System.FilePath := do
   return reference.stdout
 
 /-- Editing an unrelated project source, without rebuilding, does **not** invalidate another
-file's entry (`ruff-16b` RCI-IMPL) — the reversal of the old per-source epoch is the point of that
+file's entry — the reversal of the old per-source epoch is the point of that
 stack. `lean-fmt` fetches its Lake graph with `noBuild := true`, so the grammar available to an
 uncached run is the one in the artifacts on disk, which this edit does not touch. -/
 private def testDependencySourceEdit (ctx : Ctx) (reference : System.FilePath) : IO Unit := do
@@ -505,7 +505,7 @@ private def testSecurity (ctx : Ctx) : IO Unit := do
   ensureJsonAt report [.field "withheldUnsafe"] (Lean.toJson (0 : Nat)) "security"
   ensureJsonAt report [.field "written"] (Lean.toJson (0 : Nat)) "security"
 
-/-- RDF-FINAL case 9a: `fix` on a source-only selection takes the source shortcut — with both the
+/-- `fix` on a source-only selection takes the source shortcut — with both the
 analyzer and the artifact disabled the fix still succeeds, proof it consulted neither. -/
 private def testFixShortcut (ctx : Ctx) : IO Unit := do
   let findingsPath := ctx.root / "tests" / "check" / "Findings.lean"
@@ -519,7 +519,7 @@ private def testFixShortcut (ctx : Ctx) : IO Unit := do
   ensureJsonAt report [.field "infrastructureFailures"] (.arr #[]) "fix shortcut"
   ensureJsonAt report [.field "written"] (Lean.toJson (1 : Nat)) "fix shortcut"
 
-/-- RDF-FINAL case 9b: a syntax `--select` does not choose execution strategy. Plain
+/-- A syntax `--select` does not choose execution strategy. Plain
 `format --check` and the syntax-rule selection both take exactly one artifact renderer path. -/
 private def testRenderPath (ctx : Ctx) : IO Unit := do
   let profileEnv := #[("LEAN_FMT_PROFILE_PHASES", some "1")]

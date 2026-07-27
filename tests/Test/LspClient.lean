@@ -18,8 +18,7 @@ Two deliberate exceptions live here rather than in `Ipc`, with their reasons:
 - `awaitResponse` reports an error response instead of throwing. `Ipc.readResponseAs` throws on
   one, and half of what a server suite asserts is *which* error came back.
 - `readFrameJson` reads one frame at the JSON level. JSON-RPC 2.0 §5 requires that a response to a
-  message whose id could not be recovered — a parse error — carry `"id": null`, and
-  `notes/01-protocol.md` §11 adopts that. `Lean.JsonRpc`'s `RequestID` decoder does not accept it,
+  message whose id could not be recovered — a parse error — carry `"id": null`. `Lean.JsonRpc`'s `RequestID` decoder does not accept it,
   so `Ipc.readMessage` throws on a spec-conforming parse-error response. Real clients accept it
   (`vscode-languageclient` and `lsp-mode` both do), the specification mandates it, and the server
   keeps sending it. The header parsing and the JSON parser are still the toolchain's.
