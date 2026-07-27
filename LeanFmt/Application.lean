@@ -516,12 +516,14 @@ private def ExactRun.envelope (run : ExactRun)
     unless output.exitCode == 0 do
       throw <| IO.userError s!"exact frontend child failed for {snapshot.relativePath}: \
         {output.stderr.trimAscii}"
-    -- The child's own phase records ride back on its stderr, which is captured rather than
-    -- inherited. Forwarding them here makes the elaboration/encode split visible from a parent
-    -- profile; without it the child's internal cost is a single opaque `exact_child`.
+    -- The child's own records ride back on its stderr, which is captured rather than inherited.
+    -- Forwarding them here makes the elaboration/encode split visible from a parent profile;
+    -- without it the child's internal cost is a single opaque `exact_child`. The counts come too:
+    -- whether the candidate was reparsed or escalated to a second frontend is decided in the child
+    -- and is invisible from outside it.
     if ← Profile.enabled then
       for line in output.stderr.splitOn "\n" do
-        if line.startsWith "phase." then IO.eprintln line
+        if line.startsWith "phase." || line.startsWith "cache." then IO.eprintln line
     let envelope ← withPhase "envelope_decode" do
       let .ok json := Lean.Json.parse output.stdout
         | throw <| IO.userError s!"exact frontend child returned invalid JSON for \
@@ -564,13 +566,13 @@ private def ExactRun.artifactEnvelope (run : ExactRun) (snapshot : SourceSnapsho
     unless output.exitCode == 0 do
       throw <| IO.userError s!"artifact formatter child failed for {snapshot.relativePath}: \
         {output.stderr.trimAscii}"
-    -- This child's stderr is captured, not inherited, so its own phase records reach a parent
-    -- profile only if we print them here. Without them `artifact_child` is a single number, and the
-    -- split inside it — module import against candidate frontend — cannot be measured.
+    -- This child's stderr is captured, not inherited, so its own records reach a parent profile
+    -- only if we print them here. Without them `artifact_child` is a single number, and the split
+    -- inside it — module import against candidate frontend — cannot be measured.
     -- `ExactRun.envelope` forwards for the same reason.
     if ← Profile.enabled then
       for line in output.stderr.splitOn "\n" do
-        if line.startsWith "phase." then IO.eprintln line
+        if line.startsWith "phase." || line.startsWith "cache." then IO.eprintln line
     let .ok json := Lean.Json.parse output.stdout
       | throw <| IO.userError s!"artifact formatter child returned invalid JSON for \
           {snapshot.relativePath}"
@@ -1371,9 +1373,11 @@ private def prepareFormatFile (plan : RulePlan) (unsafeFixes : Bool)
         none)
     else
       let output := prepared.output
-      -- The admitted layout's second frontend pass already parsed and elaborated these exact
-      -- normalized bytes under this setup. Publication is deferred until every file has an
-      -- admitted candidate.
+      -- Admission already read these exact normalized bytes back under this setup and found the
+      -- same commands, so nothing here re-reads them. What that reading proves is `Validator.admit`'s
+      -- business, and on the reparse path it is a parse, not an elaboration — see
+      -- `Analysis.reparseCandidate`. Publication is deferred until every file has an admitted
+      -- candidate.
       ({ (baseReport snapshot "formatted" findings) with
           formatted := some output
           withheldUnsafe, suppressed, withheldRedundant }, some output)

@@ -123,6 +123,16 @@ private def gateArtifactAvoidsExact (artifactCapture exactCapture : String) : Bo
     && phaseCount "exact_child" exactCapture == 1
     && counter "cache.path_exact_render" exactCapture == some 1
 
+/-- §1h. Every validated file confirmed its candidate by reparsing it, and none escalated to a
+second frontend. The exact child forwards these counts, so one `cache.candidate_reparse=1` line
+arrives per file that validated and any `cache.candidate_miss_` line is an escalation, whatever its
+tag. A capture with neither fails: that is a run that validated nothing, not a fast one. -/
+private def gateCandidateReparsed (capture : String) (expected : Nat) : Bool :=
+  let lines := capture.splitOn "\n"
+  expected > 0
+    && (lines.filter (· == "cache.candidate_reparse=1")).length == expected
+    && !(lines.any (·.startsWith "cache.candidate_miss_"))
+
 /-- §2. Gate G3, recalibrated onto the remainder: the unaccounted time is a ~51 ms startup
 constant, so a percentage threshold is workload-length-dependent and a remainder threshold is
 not. -/
@@ -204,6 +214,14 @@ private def testGatesDiscriminate : IO Unit := do
   expect (!(gateWorkers "cache.workers=1\n" 6))
     "rejects a run that fell back to one worker (the pre-uncapped default)"
   expect (!(gateWorkers healthy 6)) "rejects a capture that recorded no worker count"
+  -- §1h the candidate was reparsed, not elaborated a second time.
+  let reparsed := "cache.candidate_reparse=1\ncache.candidate_reparse=1\n"
+  expect (gateCandidateReparsed reparsed 2) "accepts two files whose candidates were reparsed"
+  expect (!(gateCandidateReparsed (reparsed ++ "cache.candidate_miss_structure=1\n") 2))
+    "rejects a third file that escalated to a second frontend"
+  expect (!(gateCandidateReparsed reparsed 3))
+    "rejects a run that validated fewer files than it was given"
+  expect (!(gateCandidateReparsed healthy 0)) "rejects a capture that validated nothing"
   -- §1e artifact formatting avoids exact-source analysis.
   let artifactCapture := "phase.artifact_child_ms=900\ncache.path_artifact_render=1\n"
   let exactCapture := "phase.exact_child_ms=1500\ncache.path_exact_render=1\n"
@@ -256,7 +274,10 @@ private def testDocSteps (ctx : Ctx) : IO Unit := do
     s!"renderer work is no longer steps = nodes + marks, or the step report is incomplete:\n\
       {result.stdout}"
 
-/-- §0c validation performs exactly two frontend renders. -/
+/-- §0c validation performs exactly two renders over one frontend. The second projection comes from
+reparsing the candidate command by command under the contexts the first run parsed under, so the
+frontend count is 1 and `reparsedCommands` is the fixture's one command. A regression to a second
+frontend shows here as 2/0 and doubles the cost of every validated file. -/
 private def testValidationCounts (ctx : Ctx) : IO Unit := do
   let fixture := ctx.root / "tests" / "performance" / "validator-gate" / "Accepted.lean"
   let setup ← expectExit 0 "lake setup-file" "lake" #["setup-file", fixture.toString]
@@ -268,11 +289,13 @@ private def testValidationCounts (ctx : Ctx) : IO Unit := do
     (cwd? := some ctx.root) (timeoutMs := some 600000)
   let json ← parseJson result.stdout "validator"
   ensureJsonAt json [.field "canonical", .field "validation"] (Lean.Json.mkObj [
-    ("frontendRuns", Lean.toJson (2 : Nat)), ("renders", Lean.toJson (2 : Nat)),
-    ("structuralComparisons", Lean.toJson (1 : Nat)), ("idempotencePasses", Lean.toJson (1 : Nat))])
-    "validation work counts changed from frontend/renders/comparisons/idempotence = 2/2/1/1"
+    ("frontendRuns", Lean.toJson (1 : Nat)), ("renders", Lean.toJson (2 : Nat)),
+    ("structuralComparisons", Lean.toJson (1 : Nat)), ("idempotencePasses", Lean.toJson (1 : Nat)),
+    ("reparsedCommands", Lean.toJson (1 : Nat))])
+    "validation work counts changed from \
+      frontend/renders/comparisons/idempotence/reparsed = 1/2/1/1/1"
   ensureJsonAt json [.field "canonical", .field "metrics", .field "frontendRuns"]
-    (Lean.toJson (2 : Nat)) "validation metrics"
+    (Lean.toJson (1 : Nat)) "validation metrics"
   ensure ((jsonAt? json [.field "validationFailure"]).getD .null == .null)
     "validation failed the accepted fixture"
 
@@ -293,7 +316,7 @@ private def testWarmFullyServed (ctx : Ctx) : IO Unit := do
   ensure (gateReportsIdentical prime.stdout warm.stdout)
     "cold and warm reports differ; the cache is not serving what it stored"
 
-/-- §1d/§1e bounded child lifetime and artifact acceleration. -/
+/-- §1d/§1e/§1h bounded child lifetime, artifact acceleration, and a reparsed candidate. -/
 private def testArtifactAcceleration (ctx : Ctx) : IO Unit := do
   let fixture := ctx.root / "tests" / "compiler" / "ArtifactLayout.lean"
   discard <| expectExit 0 "artifact build" "lake"
@@ -309,6 +332,8 @@ private def testArtifactAcceleration (ctx : Ctx) : IO Unit := do
     "child admission was absent or exceeded one active child"
   ensure (gateArtifactAvoidsExact artifact.stderr exact.stderr)
     "artifact/exact strategy counts no longer distinguish their frontend work"
+  ensure (gateCandidateReparsed exact.stderr 1)
+    "the exact route stopped reparsing its candidate, or escalated to a second frontend"
   ensure (gateReportsIdentical artifact.stdout exact.stdout)
     "artifact-built and exact-source reports differ"
 

@@ -15,13 +15,14 @@ open LeanFmt.Test.Analyze
 
 namespace CommandFormatter
 
-/-- The exact validation shape every CoreInput width asserted: two frontend runs, two renders, one
-structural comparison, one idempotence pass. -/
+/-- The exact validation shape every CoreInput width asserted: one frontend run, two renders, one
+structural comparison, one idempotence pass, and the fixture's 22 commands reparsed. -/
 private def expectedValidation : Lean.Json := Lean.Json.mkObj [
-  ("frontendRuns", Lean.toJson (2 : Nat)),
+  ("frontendRuns", Lean.toJson (1 : Nat)),
   ("renders", Lean.toJson (2 : Nat)),
   ("structuralComparisons", Lean.toJson (1 : Nat)),
-  ("idempotencePasses", Lean.toJson (1 : Nat))
+  ("idempotencePasses", Lean.toJson (1 : Nat)),
+  ("reparsedCommands", Lean.toJson (22 : Nat))
 ]
 
 /-- One CoreInput width: the exact validation dict, the descriptor and alignment invariants, the

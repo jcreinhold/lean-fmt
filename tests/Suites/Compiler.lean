@@ -146,10 +146,27 @@ private unsafe def testArtifactExactRendering (ctx : Ctx) : IO Unit := do
       (cwd? := some ctx.root) (env := lakeEnv)
     let artifactJson ← parseJson artifactEnvelope.stdout "__analyze-artifact"
     let exactJson ← parseJson exactEnvelope.stdout "__analyze-exact"
-    for field in ["text", "sourceMap", "metrics", "validation"] do
+    -- The two routes must agree on the answer. They no longer agree on the work: the exact route
+    -- reparses its candidate under the original run's parser contexts, the artifact route hands one
+    -- imported environment to every command and so has no per-command context to reparse under and
+    -- still runs a second frontend. Asserting one ledger for both would pin them together and make
+    -- either route's cost invisible, so each is stated on its own.
+    for field in ["text", "sourceMap"] do
       ensure (jsonAt? artifactJson [.field "canonical", .field field] ==
           jsonAt? exactJson [.field "canonical", .field field])
         s!"artifact/exact canonical {field} differ"
+    let runs (json : Lean.Json) (route : String) : IO Nat := do
+      let some value := Analyze.natAt? json [.field "canonical", .field "validation", .field "frontendRuns"]
+        | throw <| IO.userError s!"{route} reported no frontendRuns"
+      ensureEq s!"{route} metrics/validation frontendRuns disagree" (some value)
+        (Analyze.natAt? json [.field "canonical", .field "metrics", .field "frontendRuns"])
+      return value
+    ensureEq "artifact route frontendRuns" 2 (← runs artifactJson "the artifact route")
+    ensureEq "exact route frontendRuns" 1 (← runs exactJson "the exact route")
+    for field in ["renders", "structuralComparisons", "idempotencePasses"] do
+      ensure (jsonAt? artifactJson [.field "canonical", .field "validation", .field field] ==
+          jsonAt? exactJson [.field "canonical", .field "validation", .field field])
+        s!"artifact/exact validation {field} differ"
 
 /-- Corruption is a counted exact fallback, not a rebuild, partial result, or hard failure. -/
 private unsafe def testCorruptArtifactFallback (ctx : Ctx) : IO Unit := do

@@ -128,14 +128,15 @@ public def setupFile (root work : System.FilePath) (fixture : String) : IO Syste
 (`"4:80"`, `"draft:72"`, `"100"`, ...). The module suite's drafts go through `lake env`; the
 formatter suites call the binary directly, as the old scripts did. -/
 public def analyzeExact (root : System.FilePath) (application : String) (setup : System.FilePath)
-    (source moduleName mode : String) (viaLakeEnv : Bool := false) : IO Lean.Json := do
+    (source moduleName mode : String) (viaLakeEnv : Bool := false)
+    (env : Array (String × Option String) := #[]) : IO Lean.Json := do
   let args := #["__analyze-exact", setup.toString, source, moduleName, mode]
   let label := s!"__analyze-exact {source} at {mode}"
   let result ←
     if viaLakeEnv then
-      expectExit 0 label "lake" (#["env", application] ++ args) (cwd? := some root)
+      expectExit 0 label "lake" (#["env", application] ++ args) (cwd? := some root) (env := env)
     else
-      expectExit 0 label application args (cwd? := some root)
+      expectExit 0 label application args (cwd? := some root) (env := env)
   parseJson result.stdout label
 
 /-- The canonical render of a successful report: validation absent-or-null (the binary omits the

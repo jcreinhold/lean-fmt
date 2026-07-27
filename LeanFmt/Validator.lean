@@ -8,10 +8,14 @@ module
 
 /- Pure admission checks for a whole-module formatting draft.
 
-The comparator consumes lossless projections from two independent frontend runs. Locations and
-whitespace lengths may change; node kind/parent order, token ownership and spelling, header
-structure/token spelling, comment payload/logical ownership, and terminal tail may not. Keeping this
-module pure makes the comparison independently testable and keeps it from acquiring frontend
+The comparator consumes two lossless projections: the source's, and the candidate's from an
+independent reading of the rendered bytes. Locations and whitespace lengths may change; node
+kind/parent order, token ownership and spelling, header structure/token spelling, comment
+payload/logical ownership, and terminal tail may not.
+
+How the caller obtained the second projection — a second frontend, or a reparse under the first
+run's parser contexts — arrives as `ValidationEvidence` and is recorded, never inferred. Keeping
+this module pure makes the comparison independently testable and keeps it from acquiring frontend
 authority. -/
 
 import all LeanFmt.Formatter
@@ -40,9 +44,23 @@ structure ValidationMetrics where
   renders : Nat
   structuralComparisons : Nat
   idempotencePasses : Nat
+  /-- Commands the candidate's parse confirmed against the original's, one by one. Zero when a
+  second frontend elaborated the candidate instead. -/
+  reparsedCommands : Nat := 0
   deriving Inhabited, BEq, Repr, Lean.ToJson, Lean.FromJson
 
-/-- A layout admitted after a fresh candidate frontend and byte-identical second formatting pass. -/
+/-- How the caller obtained the second projection. `admit` records it rather than inferring it: the
+comparison is the same either way, and this module stays free of any notion of a frontend.
+
+`frontendRuns` is 2 when a second Lean frontend elaborated the candidate, 1 when the candidate was
+reparsed under the first run's own parser contexts. `reparsedCommands` counts what that reparse
+confirmed. -/
+structure ValidationEvidence where
+  frontendRuns : Nat
+  reparsedCommands : Nat := 0
+
+/-- A layout admitted after a fresh reading of the candidate and a byte-identical second formatting
+pass. -/
 structure CanonicalLayout where
   text : String
   sourceMap : Array Mark
@@ -121,7 +139,8 @@ def compare (beforeText : String) (before : LosslessSource)
 
 /-- Admit the first draft using a freshly parsed/formatted second draft. -/
 def admit (beforeText : String) (before : LosslessSource) (first : FormatDraft)
-    (after : LosslessSource) (second : FormatDraft) : Except ValidationFailure CanonicalLayout := do
+    (after : LosslessSource) (second : FormatDraft) (evidence : ValidationEvidence) :
+    Except ValidationFailure CanonicalLayout := do
   validateMap first
   validateMap second
   compare beforeText before first.text after
@@ -142,12 +161,13 @@ def admit (beforeText : String) (before : LosslessSource) (first : FormatDraft)
   return {
     text := first.text
     sourceMap := first.sourceMap
-    metrics := { first.metrics with frontendRuns := 2 }
+    metrics := { first.metrics with frontendRuns := evidence.frontendRuns }
     validation := {
-      frontendRuns := 2
+      frontendRuns := evidence.frontendRuns
       renders := 2
       structuralComparisons := 1
-      idempotencePasses := 1 } }
+      idempotencePasses := 1
+      reparsedCommands := evidence.reparsedCommands } }
 
 end Validator
 

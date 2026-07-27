@@ -95,6 +95,11 @@ private unsafe def incrementalAnalyzerSpec (setupPath sourcePath : String) : IO 
     (formatWidth := 72) (loadDynlibs := false)
   ensure (sameEnvelope formatted.envelope formattedFresh)
     "incremental format differs from fresh validated formatting"
+  -- An editor keystroke pays one frontend, not two: the candidate is reparsed under the contexts
+  -- this run already holds. The escalation path is correct but reimports, which on a mathlib
+  -- document is the whole latency budget.
+  ensure (formatted.envelope.canonical?.any (·.validation.frontendRuns == 1))
+    "an interactive format elaborated its candidate a second time"
 
   let mut rss : Array Nat := #[]
   for i in [0:100] do

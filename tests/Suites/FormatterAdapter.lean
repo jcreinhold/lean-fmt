@@ -50,7 +50,7 @@ private def testMetrics (ctx : Ctx) : IO Unit := do
   let (_, narrowOutput) ← Analyze.canonical narrowEnvelope "adapter narrow"
   ensure (narrowOutput != output) "narrow and wide outputs agree; width sensitivity lost"
   let metric (key : String) : Nat := natAt? canonical [.field "metrics", .field key] |>.getD 0
-  ensureEq "adapter: frontendRuns" 2 (metric "frontendRuns")
+  ensureEq "adapter: frontendRuns" 1 (metric "frontendRuns")
   ensure (metric "commands" >= 10) s!"adapter: commands {metric "commands"}"
   ensureEq "adapter: nativeDocuments != commands" (metric "commands") (metric "nativeDocuments")
   ensure (metric "alignedTokens" > metric "commands") "adapter: alignedTokens"

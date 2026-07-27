@@ -74,8 +74,8 @@ private def testLocalSyntax (root : System.FilePath) (application : String)
     "e0e388ff4e428c9b7892288a3b908ae25640f0797eb1d18a1d17fc5cd99481e7"
 
 /-- Structural comment layout across constructs, widths, and line endings: thirteen exact payloads
-retain one logical owner through two frontend passes, and the contract is width- and
-line-ending-stable. -/
+retain one logical owner through both of admission's readings of the module, and the contract is
+width- and line-ending-stable. -/
 private def testLayoutWidths (root : System.FilePath) (application : String)
     (work : System.FilePath) : IO Unit := do
   let setup ← setupFile root work "tests/comments/Layout.lean"

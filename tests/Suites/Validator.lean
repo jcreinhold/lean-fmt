@@ -8,11 +8,15 @@ import all LeanFmt.Validator
 /-!
 # The validator suite
 
-Port of `tests/validator/run.sh`. Production admission: a candidate is canonical only after a
-fresh frontend, structural comparison, logical-comment comparison, complete source maps, and a
-byte-identical second rendering. The mutated candidates come from `tests/formatter/candidate.py`,
-the deliberately foreign adversary — it stays Python and the suite pipes through it, so the
-validator is still exercised by output nobody in this repo controls.
+Port of `tests/validator/run.sh`. Production admission: a candidate is canonical only after a fresh
+parse, structural comparison, logical-comment comparison, complete source maps, and a byte-identical
+second rendering. The mutated candidates come from `tests/formatter/candidate.py`, the deliberately
+foreign adversary — it stays Python and the suite pipes through it, so the validator is still
+exercised by output nobody in this repo controls.
+
+`reparse-agrees` pins the one thing the fast path could break: the reparsed and elaborated routes
+must produce the same bytes. A failure there means reparsing the candidate under the original run's
+parser contexts admitted a different layout, and the fast path must come out.
 
 Also absorbs the unit exe's `validator-map-negative` subcommand (this suite was its only
 consumer): the six defect maps, plus the complete map that must be admitted.
@@ -65,9 +69,12 @@ private def testGate (ctx : Ctx) (fixture mode expected : String) : IO Unit := d
   ensure ((jsonAt? result [.field "canonical"]).isNone) s!"{label}: canonical escaped"
   ensureJsonAt result [.field "failure", .field "gate"] (Lean.toJson expected) label
 
-/-- The admission proof: the custom-command candidate is canonical after exactly two frontend
-renders, the validation ledger is exact, the source map tiles the output, and both logical
-comments survive exactly once. -/
+/-- The admission proof: the custom-command candidate is canonical after one frontend and two
+renders, the validation ledger is exact, the source map tiles the output, and both logical comments
+survive exactly once.
+
+`frontendRuns` is 1 because the candidate is reparsed under the original run's own parser contexts;
+`reparsedCommands` counts what that confirmed, and this fixture has two commands after its header. -/
 private def testAdmission (ctx : Ctx) : IO Unit := do
   let label := "admission"
   let source := ctx.work / "Accepted.lean"
@@ -84,11 +91,12 @@ private def testAdmission (ctx : Ctx) : IO Unit := do
     s!"{label}: unvalidated draft escaped validated operation"
   let some canonicalJson := jsonAt? envelope [.field "canonical"]
     | throw <| IO.userError s!"{label}: no canonical"
-  ensureJsonAt canonicalJson [.field "metrics", .field "frontendRuns"] (Lean.toJson (2 : Nat)) label
+  ensureJsonAt canonicalJson [.field "metrics", .field "frontendRuns"] (Lean.toJson (1 : Nat)) label
   let expectedValidation := Lean.Json.mkObj [
-    ("frontendRuns", Lean.toJson (2 : Nat)), ("renders", Lean.toJson (2 : Nat)),
+    ("frontendRuns", Lean.toJson (1 : Nat)), ("renders", Lean.toJson (2 : Nat)),
     ("structuralComparisons", Lean.toJson (1 : Nat)),
-    ("idempotencePasses", Lean.toJson (1 : Nat))]
+    ("idempotencePasses", Lean.toJson (1 : Nat)),
+    ("reparsedCommands", Lean.toJson (2 : Nat))]
   ensureJsonAt canonicalJson [.field "validation"] expectedValidation label
   let some text := (canonicalJson.getObjValAs? String "text").toOption
     | throw <| IO.userError s!"{label}: canonical has no text"
@@ -104,6 +112,39 @@ private def testAdmission (ctx : Ctx) : IO Unit := do
   ensureEq s!"{label}: source map does not tile the output" text.utf8ByteSize outputPos
   ensureEq s!"{label}: custom lead count" 1 ((text.splitOn "custom lead").length - 1)
   ensureEq s!"{label}: custom trail count" 1 ((text.splitOn "custom trail").length - 1)
+
+/-- The fast path did not change the answer. One source admitted twice: once with the candidate
+reparsed under the original run's parser contexts, once with `LEAN_FMT_DISABLE_CANDIDATE_REPARSE=1`
+forcing the second frontend. Text and source map must be byte-identical.
+
+The ledgers must *differ*, and that half is the load-bearing one: comparing outputs alone would pass
+just as well if the hook did nothing and both runs elaborated. -/
+private def testReparseAgrees (ctx : Ctx) : IO Unit := do
+  let label := "reparse agrees"
+  let source := ctx.work / "Agreed.lean"
+  writeFile source
+    "module\n\nimport AdapterSyntax\n\nopen AdapterSyntax\n\n-- custom lead\n\
+     explicit_command selectedName -- custom trail\n"
+  let setup ← setupFile ctx.root ctx.work source.toString
+  let admit (env : Array (String × Option String)) (what : String) : IO (Lean.Json × Nat) := do
+    let envelope ← analyzeExact ctx.root ctx.application setup source.toString "Agreed.lean" "4:80"
+      (env := env)
+    let some canonical := jsonAt? envelope [.field "canonical"]
+      | throw <| IO.userError s!"{label}: {what} produced no canonical"
+    let some runs := natAt? canonical [.field "validation", .field "frontendRuns"]
+      | throw <| IO.userError s!"{label}: {what} reported no frontendRuns"
+    return (canonical, runs)
+  let (reparsed, reparsedRuns) ← admit #[] "the reparsed run"
+  let (elaborated, elaboratedRuns) ←
+    admit #[("LEAN_FMT_DISABLE_CANDIDATE_REPARSE", some "1")] "the elaborated run"
+  ensureEq s!"{label}: reparsed frontendRuns" 1 reparsedRuns
+  ensureEq s!"{label}: elaborated frontendRuns" 2 elaboratedRuns
+  let some elaboratedText := jsonAt? elaborated [.field "text"]
+    | throw <| IO.userError s!"{label}: the elaborated run has no text"
+  let some elaboratedMap := jsonAt? elaborated [.field "sourceMap"]
+    | throw <| IO.userError s!"{label}: the elaborated run has no sourceMap"
+  ensureJsonAt reparsed [.field "text"] elaboratedText label
+  ensureJsonAt reparsed [.field "sourceMap"] elaboratedMap label
 
 /-- A candidate that does not parse is rejected by the diagnostics gate, before any structural
 comparison runs. -/
@@ -188,7 +229,8 @@ public def main (args : List String) : IO UInt32 := do
       ("Contract.lean", "second-pass-drift", "idempotence")
     ]
     let cases : Array Case :=
-      #[{ name := "admission", run := ValidatorSuite.testAdmission ctx }]
+      #[{ name := "admission", run := ValidatorSuite.testAdmission ctx },
+        { name := "reparse-agrees", run := ValidatorSuite.testReparseAgrees ctx }]
         ++ (mutations.map fun (fixture, mode, gate) =>
           ({ name := mode, run := ValidatorSuite.testGate ctx fixture mode gate } : Case))
         ++ #[

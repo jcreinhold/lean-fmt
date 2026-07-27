@@ -61,26 +61,52 @@ private def messageStrings (messages : Lean.MessageLog) : IO (Array String) :=
 private def broken (messages : Lean.MessageLog) : IO AnalysisEnvelope := do
   return { artifact? := none, diagnostics := ← messageStrings messages }
 
+/-- Everything the parser reads from the frontend state before a command: the four fields Lean
+itself puts in a `ParserModuleContext` (`Lean/Language/Lean.lean`'s command loop), taken from the
+same place — the head scope of the state left by the command before.
+
+The namespace and the open declarations are here because `resolveParserNameCore` takes them
+explicitly: inside a `namespace`/`open` region they decide which syntax a name refers to, so a
+context missing them parses a different language from the one Lean parsed. -/
+private structure ParseContext where
+  env : Lean.Environment
+  options : Lean.Options
+  currNamespace : Lean.Name
+  openDecls : List Lean.OpenDecl
+
+private def ParseContext.ofState (state : Lean.Elab.Command.State) : ParseContext :=
+  let scope := state.scopes.head!
+  { env := state.env, options := scope.opts, currNamespace := scope.currNamespace,
+    openDecls := scope.openDecls }
+
+private def ParseContext.toModuleContext (context : ParseContext) :
+    Lean.Parser.ParserModuleContext :=
+  { env := context.env, options := context.options, currNamespace := context.currNamespace,
+    openDecls := context.openDecls }
+
 /-- An actual parsed command paired with the frontend state immediately before
 elaborating it. The pre-state supplies precisely the options and formatter registrations under
 which the parser accepted that command; persistent environments share their unchanged structure
 across these short-lived rows. -/
 private structure LiveCommand where
   stx : Lean.Syntax
-  env : Lean.Environment
-  options : Lean.Options
+  parse : ParseContext
+
+private def LiveCommand.env (command : LiveCommand) : Lean.Environment := command.parse.env
+
+private def LiveCommand.options (command : LiveCommand) : Lean.Options := command.parse.options
 
 private partial def collectLiveCommands (snapshot : Lean.Language.Lean.CommandParsedSnapshot)
     (state : Lean.Elab.Command.State) (commands : Array LiveCommand := #[])
-    (terminal? : Option Lean.Syntax := none) (checkCancelled : IO Unit := pure ()) :
-    IO (Array LiveCommand × Option Lean.Syntax) := do
+    (terminal? : Option LiveCommand := none) (checkCancelled : IO Unit := pure ()) :
+    IO (Array LiveCommand × Option LiveCommand) := do
   checkCancelled
   let isTerminal := Lean.Parser.isTerminalCommand snapshot.stx
-  let commands := if isTerminal then commands else commands.push {
-    stx := snapshot.stx
-    env := state.env
-    options := state.scopes.head!.opts }
-  let terminal? := if isTerminal then terminal? <|> some snapshot.stx else terminal?
+  -- The terminal carries its pre-state for the same reason every other command does: a reparse
+  -- has to parse it under the context Lean parsed it under, and it is the last thing parsed.
+  let live : LiveCommand := { stx := snapshot.stx, parse := ParseContext.ofState state }
+  let commands := if isTerminal then commands else commands.push live
+  let terminal? := if isTerminal then terminal? <|> some live else terminal?
   let nextState := snapshot.elabSnap.resultSnap.get.cmdState
   match snapshot.nextCmdSnap? with
   | some next => collectLiveCommands next.get nextState commands terminal? checkCancelled
@@ -119,7 +145,7 @@ private def ProcessedModule.finalCmdState? (module : ProcessedModule) :
   module.start?.map fun (first, _) => finalCmdState first
 
 private def ProcessedModule.liveCommands (module : ProcessedModule)
-    (checkCancelled : IO Unit := pure ()) : IO (Array LiveCommand × Option Lean.Syntax) :=
+    (checkCancelled : IO Unit := pure ()) : IO (Array LiveCommand × Option LiveCommand) :=
   match module.start? with
   | none => pure (#[], none)
   | some (first, headerState) =>
@@ -424,6 +450,86 @@ private unsafe def processSource (setup : Lean.ModuleSetup) (source : String)
   let snapshot ← Lean.Language.Lean.process setupImports old? context
   return { input, snapshot }
 
+/- The comment ownership a set of commands implies over its own source. Both the original module and
+a reparsed candidate derive it the same way, from their own projection, so a difference between the
+two drafts' comment contracts is a difference in the commands and not in how they were read. -/
+private def commentOwnership (normalized : String) (projection : LosslessSource)
+    (headerStx : Lean.Syntax) (commands : Array Lean.Syntax) (terminal? : Option Lean.Syntax) :
+    CommentOwnership :=
+  let suppressed := (Suppression.collect projection normalized).directives.map (·.scopeRange)
+  Comments.build normalized headerStx commands terminal? suppressed
+
+/- Project a set of parsed commands over their source and lay them out: the two things, and the only
+two things, a candidate is admitted on. The candidate path calls this instead of running a second
+frontend and reading the same two facts back out of its envelope. -/
+private def projectAndRender (mainModule : String) (normalized : String)
+    (sourcePath : System.FilePath) (fileMap : Lean.FileMap) (headerStx : Lean.Syntax)
+    (headerEnv : Lean.Environment) (headerOptions : Lean.Options)
+    (commands : Array LiveCommand) (terminal : LiveCommand) (width : Nat)
+    (checkCancelled : IO Unit := pure ()) :
+    IO (LosslessSource × Except FormatterFailure FormatDraft) := do
+  let stxs := commands.map (·.stx)
+  let projection := LosslessSource.ofSource mainModule normalized stxs (some terminal.stx)
+  let ownership := commentOwnership normalized projection headerStx stxs (some terminal.stx)
+  let draft ← buildFormatDraft normalized projection sourcePath fileMap ownership headerStx
+    headerEnv headerOptions commands width checkCancelled
+  return (projection, draft)
+
+/-- Parse the candidate command by command under the contexts Lean used for the original, and accept
+only if every command comes back structurally identical.
+
+This is the induction that replaces the candidate's elaboration. Command `i` is parsed under the
+`ParserModuleContext` the original run parsed *its* command `i` under. If the result is `structEq` to
+the original's — equal modulo source info, and so equal in everything the elaborator reads except
+positions — then elaborating it leaves the state the original's elaboration left, and the recorded
+context for `i + 1` is the right one. Every step checks the hypothesis the next step stands on.
+
+`structEq`, not `Validator.compare`: `LosslessSource.collect` walks only `args[0]` of a `choice`
+node, so the lossless comparison cannot tell a three-alternative `choice` from a two-alternative
+one, and `choice` nodes appear in ordinary files (1 of 5 sampled mathlib modules). `structEq`
+compares every child. `Validator.compare` still runs afterwards, for the gate and the detail it
+reports; after this it is implied.
+
+**What this stops catching, stated plainly.** The candidate's `.diagnostics` gate had two halves. A
+parse error or a failed import is caught here, earlier and exactly. An *elaboration* error in a
+candidate whose syntax is `structEq`-identical to the original's is not — that needs an elaborator
+that reads source positions, such as a project's own position-reading command elaborator, or
+`warningAsError` with a line-length linter. Lean's own incremental engine refuses this assumption,
+reusing an elaboration only under `eqWithInfo`, positions included; what is reused here is a parser
+context, not an elaboration result, which is why the weaker equality is the right one.
+
+Every deviation is an `.error` carrying a counter tag, never a verdict. The caller then runs the real
+candidate frontend, so a candidate this refuses is judged exactly as it was before. -/
+private def reparseCandidate (text : String) (sourcePath : System.FilePath)
+    (headerStx : Lean.Syntax) (commands : Array LiveCommand) (terminal : LiveCommand)
+    (checkCancelled : IO Unit := pure ()) :
+    IO (Except String (Array LiveCommand × LiveCommand)) := do
+  let input := Lean.Parser.mkInputContext text sourcePath.toString
+  let (header, parserState, headerMessages) ← Lean.Parser.parseHeader input
+  if headerMessages.hasErrors then return .error "header_parse"
+  unless header.raw.structEq headerStx do return .error "header"
+  let mut state := parserState
+  let mut reparsed := #[]
+  for command in commands do
+    checkCancelled
+    let (stx, next, messages) :=
+      Lean.Parser.parseCommand input command.parse.toModuleContext state .empty
+    if messages.hasErrors || next.recovering then return .error "parse"
+    unless stx.structEq command.stx do
+      -- A terminal here means the candidate ran out of commands early, which is a different defect
+      -- from a command that changed shape, and worth its own counter.
+      return .error (if Lean.Parser.isTerminalCommand stx then "short" else "structure")
+    reparsed := reparsed.push { command with stx }
+    state := next
+  checkCancelled
+  let (stx, _, messages) :=
+    Lean.Parser.parseCommand input terminal.parse.toModuleContext state .empty
+  if messages.hasErrors then return .error "terminal_parse"
+  -- Also how a candidate with *more* commands than the original is caught: an ordinary command
+  -- parsed where the terminal belongs is not `structEq` to it.
+  unless stx.structEq terminal.stx do return .error "terminal"
+  return .ok (reparsed, { terminal with stx })
+
 /-- Elaborate the candidate draft, starting from this run's imports when the draft asks for the same
 ones.
 
@@ -511,14 +617,15 @@ private unsafe def analyzeSnapshot (setup : Lean.ModuleSetup) (source : String)
     | throw <| IO.userError "successful frontend produced no terminal command"
   let commandOptions := liveCommands.map fun command => (command.stx, command.options)
   let artifact ← match ModuleArtifact.ofParsedModule setup.name.toString normalizedSource
-      commandOptions terminal commandState.scopes.head!.opts semantic with
+      commandOptions terminal.stx commandState.scopes.head!.opts semantic with
     | .ok artifact => pure artifact
     | .error error => throw <| IO.userError s!"could not encode syntax artifact: {error}"
-  let projection := LosslessSource.ofSource setup.name.toString normalizedSource commands terminal?
+  let projection :=
+    LosslessSource.ofSource setup.name.toString normalizedSource commands (some terminal.stx)
   let needsDraft := captureFormatDraft || validateFormatDraft
   let ownership? := if captureComments || needsDraft then
-      let suppressed := (Suppression.collect projection normalizedSource).directives.map (·.scopeRange)
-      some <| Comments.build normalizedSource module.headerStx commands terminal? suppressed
+      some <| commentOwnership normalizedSource projection module.headerStx commands
+        (some terminal.stx)
     else none
   let commentSummary? := if captureComments then
       ownership?.map (Comments.summary normalizedSource)
@@ -540,28 +647,60 @@ private unsafe def analyzeSnapshot (setup : Lean.ModuleSetup) (source : String)
           | none => pure (none, some {
               gate := .formatter
               detail := "format draft was not produced" })
-      let (candidateInput, candidateModule) ←
-        candidateFrontend setup module first.text sourcePath trackSnapshot?
+      let candidateText := (LosslessSource.normalize first.text).1
+      let reparsed ←
+        if (← IO.getEnv "LEAN_FMT_DISABLE_CANDIDATE_REPARSE") == some "1" then
+          pure (.error "disabled")
+        else
+          reparseCandidate candidateText sourcePath module.headerStx liveCommands terminal
+            checkCancelled
       checkCancelled
-      let candidate ← analyzeSnapshot setup first.text sourcePath candidateInput
-        candidateModule (captureFormatDraft := true) (formatWidth := formatWidth)
-        (trackSnapshot? := trackSnapshot?) (checkCancelled := checkCancelled)
-      if !candidate.diagnostics.isEmpty then
-        pure (none, some {
-          gate := .diagnostics
-          detail := String.intercalate "\n" candidate.diagnostics.toList })
-      else match candidate.artifact?, candidate.formatDraft?, candidate.formatFailure? with
-        | some candidateArtifact, some second, none =>
-          match candidateArtifact.materialize first.text with
-          | .error error => pure (none, some { gate := .structure, detail := error })
-          | .ok candidateMaterialized =>
-            match Validator.admit normalizedSource projection first candidateMaterialized.source second with
+      match reparsed with
+      | .ok (candidateCommands, candidateTerminal) =>
+        recordCount "candidate_reparse" 1
+        -- The candidate's own text decides its coordinates, so its own input context supplies the
+        -- file map. Its final environment is the original's: that is what the induction concluded.
+        let candidateInput := Lean.Parser.mkInputContext candidateText sourcePath.toString
+        let (candidateProjection, second?) ← projectAndRender setup.name.toString candidateText
+          sourcePath candidateInput.fileMap module.headerStx commandState.env options
+          candidateCommands candidateTerminal formatWidth checkCancelled
+        match second? with
+        | .error failure => pure (none, some { gate := .formatter, detail := failure.detail })
+        | .ok second =>
+          if !candidateProjection.validFor candidateText then
+            pure (none, some {
+              gate := .structure
+              detail := "reparsed candidate did not project losslessly over its own bytes" })
+          else
+            match Validator.admit normalizedSource projection first candidateProjection second
+                { frontendRuns := 1, reparsedCommands := candidateCommands.size } with
             | .ok layout => pure (some layout, none)
             | .error failure => pure (none, some failure)
-        | _, _, some failure => pure (none, some { gate := .formatter, detail := failure.detail })
-        | _, _, _ => pure (none, some {
-            gate := .structure
-            detail := "candidate frontend returned no artifact or second draft" })
+      | .error tag =>
+        recordCount s!"candidate_miss_{tag}" 1
+        let (candidateInput, candidateModule) ←
+          candidateFrontend setup module first.text sourcePath trackSnapshot?
+        checkCancelled
+        let candidate ← analyzeSnapshot setup first.text sourcePath candidateInput
+          candidateModule (captureFormatDraft := true) (formatWidth := formatWidth)
+          (trackSnapshot? := trackSnapshot?) (checkCancelled := checkCancelled)
+        if !candidate.diagnostics.isEmpty then
+          pure (none, some {
+            gate := .diagnostics
+            detail := String.intercalate "\n" candidate.diagnostics.toList })
+        else match candidate.artifact?, candidate.formatDraft?, candidate.formatFailure? with
+          | some candidateArtifact, some second, none =>
+            match candidateArtifact.materialize first.text with
+            | .error error => pure (none, some { gate := .structure, detail := error })
+            | .ok candidateMaterialized =>
+              match Validator.admit normalizedSource projection first candidateMaterialized.source
+                  second { frontendRuns := 2 } with
+              | .ok layout => pure (some layout, none)
+              | .error failure => pure (none, some failure)
+          | _, _, some failure => pure (none, some { gate := .formatter, detail := failure.detail })
+          | _, _, _ => pure (none, some {
+              gate := .structure
+              detail := "candidate frontend returned no artifact or second draft" })
     else pure (none, none)
   let formatDraft? := if captureFormatDraft then firstDraft? else none
   return {
@@ -689,9 +828,11 @@ private unsafe def IncrementalAnalyzer.run (analyzer : IncrementalAnalyzer)
       throw <| IO.userError "incremental analysis cancelled"
   trackSnapshot run.snapshot
   let envelope ← try
-      -- A tracked candidate is the reason this path keeps a full frontend run for it: the analyzer
-      -- must be able to cancel a superseded analysis, and only a snapshot `processSource` produced
-      -- can be cancelled.
+      -- When the candidate does get elaborated — a reparse miss — `candidateFrontend` gives it a
+      -- full `processSource` run rather than reusing this one's imports, because only a snapshot
+      -- `processSource` produced can be cancelled and the analyzer must be able to drop a
+      -- superseded analysis. The reparse itself has no snapshot to cancel and stops at
+      -- `checkCancelled` between commands instead.
       analyzeSnapshot setup source sourcePath run.input (ProcessedModule.ofInitial run.snapshot)
         captureSemantic captureOccurrences captureComments captureFormatDraft validateFormatDraft
         formatWidth (some trackSnapshot) checkCancelled
@@ -816,7 +957,8 @@ unsafe def validateCandidateExact (setup : Lean.ModuleSetup) (source candidate :
         output := ⟨0, normalizedCandidate.utf8ByteSize⟩ }] }
     match beforeArtifact.materialize source, afterArtifact.materialize candidate with
     | .ok beforeMaterialized, .ok afterMaterialized =>
-      match Validator.admit normalizedSource beforeMaterialized.source first afterMaterialized.source second with
+      match Validator.admit normalizedSource beforeMaterialized.source first
+          afterMaterialized.source second { frontendRuns := 2 } with
       | .ok canonical => return { canonical? := some canonical }
       | .error failure => return { failure? := some failure }
     | .error error, _ | _, .error error => return candidateFailure .structure error
@@ -850,11 +992,15 @@ unsafe def analyzeArtifact (setup : Lean.ModuleSetup) (moduleFile : System.FileP
     ({} : Lean.NameMap Lean.ImportArtifacts).insert setup.name (.ofArrays #[#[moduleFile]])
   let environment ← Lean.importModules #[{ module := setup.name }] setup.options.toOptions
     (trustLevel := 1024) (loadExts := true) (level := level) (arts := artifacts)
+  -- One imported environment for every command, and so no per-command pre-state: this path has no
+  -- base for the reparse induction and keeps the full candidate frontend, permanently. Parsing under
+  -- the module's final environment would let a notation declared at line 40 govern the parse of line
+  -- 5, which is the one direction that produces a false accept.
   let commands := materialized.commands.zip materialized.options |>.map fun (stx, options) =>
-    { stx, env := environment, options : LiveCommand }
-  let suppressed := (Suppression.collect materialized.source normalized).directives.map (·.scopeRange)
-  let ownership := Comments.build normalized header.raw materialized.commands
-    (some materialized.terminal) suppressed
+    { stx, parse := { env := environment, options, currNamespace := .anonymous, openDecls := [] } :
+      LiveCommand }
+  let ownership := commentOwnership normalized materialized.source header.raw
+    materialized.commands (some materialized.terminal)
   let draft ← match ← buildFormatDraft normalized materialized.source sourcePath input.fileMap
       ownership header.raw environment (materialized.options[0]?.getD setup.options.toOptions)
       commands formatWidth with
@@ -879,7 +1025,8 @@ unsafe def analyzeArtifact (setup : Lean.ModuleSetup) (moduleFile : System.FileP
         artifact? := some artifact
         validationFailure? := some { gate := .structure, detail := error } }
     | .ok candidateMaterialized =>
-      match Validator.admit normalized materialized.source draft candidateMaterialized.source second with
+      match Validator.admit normalized materialized.source draft candidateMaterialized.source
+          second { frontendRuns := 2 } with
       | .ok canonical => return { artifact? := some artifact, canonical? := some canonical }
       | .error failure => return { artifact? := some artifact, validationFailure? := some failure }
   | _, _, some failure => return {

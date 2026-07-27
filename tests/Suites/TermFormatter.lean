@@ -15,12 +15,14 @@ open LeanFmt.Test.Analyze
 
 namespace TermFormatter
 
-/-- The exact validation shape every width asserted. -/
+/-- The exact validation shape every width asserted. The fixture's 23 commands are reparsed under
+the contexts the one frontend run left, so the count does not move with the width. -/
 private def expectedValidation : Lean.Json := Lean.Json.mkObj [
-  ("frontendRuns", Lean.toJson (2 : Nat)),
+  ("frontendRuns", Lean.toJson (1 : Nat)),
   ("renders", Lean.toJson (2 : Nat)),
   ("structuralComparisons", Lean.toJson (1 : Nat)),
-  ("idempotencePasses", Lean.toJson (1 : Nat))
+  ("idempotencePasses", Lean.toJson (1 : Nat)),
+  ("reparsedCommands", Lean.toJson (23 : Nat))
 ]
 
 /-- The spellings every width asserted: operator and projection shapes, the project notation, one

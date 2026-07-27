@@ -298,9 +298,15 @@ where
     (((jsonAt? result [.field "findings"]).bind (·.getArr?.toOption)).getD #[]).toList.map
       fun finding => (finding.getObjValAs? String "code").toOption.getD ""
 
-/-- Canonical artifact and exact production are cache-interchangeable: same identity and
-byte-identical payload. The compiler fixture carries file-local syntax, so this is not a
-source-only shortcut. -/
+/-- Canonical artifact and exact production are cache-interchangeable: same identity, same answer.
+The compiler fixture carries file-local syntax, so this is not a source-only shortcut.
+
+The entries are no longer byte-identical, and should not be. Each records how it was produced: the
+exact route reparses its candidate under the original run's parser contexts and reports one frontend
+run, the artifact route has no per-command contexts to reparse under and still runs a second
+frontend. Everything a lookup or a report reads — identity, digests, findings, canonical text and
+source map, and the rest of the formatter metrics — must still agree exactly, and the two ledgers
+are asserted separately so neither route's cost can hide behind the other's. -/
 private def testCacheCanonical (ctx : Ctx) : IO Unit := do
   discard <| expectExit 0 "lake build +ArtifactLayout:leanFmtArtifact" "lake"
     #["build", "+ArtifactLayout:leanFmtArtifact"] (cwd? := some ctx.root)
@@ -308,14 +314,50 @@ private def testCacheCanonical (ctx : Ctx) : IO Unit := do
   let artifact ← checkRaw ctx 1 #["format", "--check", "--root", ".", "--json",
     "tests/compiler/ArtifactLayout.lean"] "canonical artifact"
   let artifactEntry ← theCacheEntry ctx "canonical artifact"
-  let artifactEntryText ← IO.FS.readFile artifactEntry
+  let artifactJson ← parseJson (← IO.FS.readFile artifactEntry) "canonical artifact entry"
   removeDirAll? ctx.cacheRoot
   let exact ← checkRaw ctx 1 #["format", "--check", "--root", ".", "--json",
     "tests/compiler/ArtifactLayout.lean"] "canonical exact"
     (env := #[("LEAN_FMT_DISABLE_ARTIFACT", some "1")])
-  let exactEntryText ← IO.FS.readFile (← theCacheEntry ctx "canonical exact")
-  ensureEq "canonical artifact and exact entries are not byte-identical"
-    artifactEntryText exactEntryText
+  let exactJson ← parseJson (← IO.FS.readFile (← theCacheEntry ctx "canonical exact"))
+    "canonical exact entry"
+  let entry : List JsonStep := [.field "entries", .index 0]
+  let result := entry ++ [JsonStep.field "analysis", .field "result"]
+  let canonical := result ++ [JsonStep.field "canonical"]
+  let agreed : List (String × List JsonStep) := [
+    ("the cache schema", [.field "schema"]),
+    ("the workspace base", [.field "base"]),
+    ("entry identity", entry ++ [.field "identity"]),
+    ("the closure digest", entry ++ [.field "closureDigest"]),
+    ("the source digest", entry ++ [.field "sourceDigest"]),
+    ("the findings", result ++ [.field "findings"]),
+    ("the tier", result ++ [.field "tier"]),
+    ("the suppression facts", result ++ [.field "suppression"]),
+    ("the semantic caps", result ++ [.field "caps"]),
+    ("the canonical text", canonical ++ [.field "text"]),
+    ("the canonical source map", canonical ++ [.field "sourceMap"])]
+  for (what, path) in agreed do
+    ensure (jsonAt? artifactJson path == jsonAt? exactJson path)
+      s!"canonical artifact and exact entries disagree on {what}"
+  -- The two route-dependent numbers are blanked to a shared value, so everything else in each
+  -- object is still compared exactly and a newly diverging field fails here.
+  let blank (path : List JsonStep) (keys : List String) (json : Lean.Json) : Option Lean.Json :=
+    (jsonAt? json path).map fun value =>
+      keys.foldl (fun current key => current.setObjVal! key (Lean.toJson (0 : Nat))) value
+  let metrics := blank (canonical ++ [.field "metrics"]) ["frontendRuns"]
+  ensure (metrics artifactJson == metrics exactJson)
+    "canonical artifact and exact entries disagree on the formatter metrics"
+  let ledger := blank (canonical ++ [.field "validation"]) ["frontendRuns", "reparsedCommands"]
+  ensure (ledger artifactJson == ledger exactJson)
+    "canonical artifact and exact entries disagree on renders, comparisons, or idempotence passes"
+  let runs (json : Lean.Json) (route : String) : IO Nat := do
+    let some value := natAt? json (canonical ++ [.field "validation", .field "frontendRuns"])
+      | throw <| IO.userError s!"the {route} entry records no frontendRuns"
+    ensureEq s!"the {route} entry's metrics and validation disagree on frontendRuns" (some value)
+      (natAt? json (canonical ++ [.field "metrics", .field "frontendRuns"]))
+    return value
+  ensureEq "the artifact entry's frontendRuns" 2 (← runs artifactJson "artifact")
+  ensureEq "the exact entry's frontendRuns" 1 (← runs exactJson "exact")
   ensureEq "canonical artifact and exact reports are not byte-identical"
     artifact.stdout exact.stdout
 
