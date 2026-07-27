@@ -715,6 +715,13 @@ private def ExactRun.artifactEnvelope (run : ExactRun) (snapshot : SourceSnapsho
     unless output.exitCode == 0 do
       throw <| IO.userError s!"artifact formatter child failed for {snapshot.relativePath}: \
         {output.stderr.trimAscii}"
+    -- This child's stderr is captured, not inherited, so its own phase records reach a parent
+    -- profile only if we print them here. Without them `artifact_child` is a single number, and the
+    -- split inside it — module import against candidate frontend — cannot be measured.
+    -- `ExactRun.envelope` forwards for the same reason.
+    if ← Profile.enabled then
+      for line in output.stderr.splitOn "\n" do
+        if line.startsWith "phase." then IO.eprintln line
     let .ok json := Lean.Json.parse output.stdout
       | throw <| IO.userError s!"artifact formatter child returned invalid JSON for \
           {snapshot.relativePath}"
