@@ -92,28 +92,35 @@ private def testCaptureGating (ctx : Ctx) : IO Unit := do
     fun node => node.foldl (init := []) fun acc key _ => key :: acc).getD []
   ensureEq "semantic artifact: diagnostics/occurrences only" ["diagnostics"] semanticKeys
 
-/-- Neither tier reaches the exact frontend when the facet is current: `format --check` is served
-by the artifact facet, and `check` serves source-tier from it. Whether the two paths agree
-byte-for-byte is the compiler suite's claim. -/
+/-- `check` reaches no frontend at all when the facet is current: the source tier takes the
+source-only shortcut, and the syntax tier is served from the facet. A disabled analyzer proves it —
+either would exit 2 if it spawned one. Whether the facet and the frontend agree byte-for-byte is
+the compiler suite's claim.
+
+`format --check` is the other half, and it is stated as a refusal on purpose. It used to be served
+from the facet too; that renderer was deleted after it measured slower than elaborating and
+rejected files the frontend accepted. Rendering now has one route, so with no analyzer there is no
+layout — and this case fails if the artifact renderer ever comes back without that being a
+decision. -/
 private def testFacetServes (ctx : Ctx) : IO Unit := do
   let clean := "tests/check/Clean.lean"
   let env := #[("LEAN_FMT_TEST_ANALYZER", some "/usr/bin/false")]
+  for (label, select) in [("source", #[]), ("syntax", #["--select", "FMT011"])] do
+    let result ← runProc ctx.application
+      (#["check", "--root", ".", "--json", "--no-cache"] ++ select ++ #[clean])
+      (cwd? := some ctx.root) (env := env)
+    ensureEq s!"check did not serve {label}-tier without a frontend" 0 result.exitCode
+    ensure (!(result.stdout.contains "infrastructure-failure"))
+      s!"check reached the disabled analyzer on the {label} tier"
   let fmtResult ← runProc ctx.application
     #["format", "--check", "--root", ".", "--json", "--no-cache", clean]
     (cwd? := some ctx.root) (env := env)
-  -- Exit 2 is infrastructure failure; 0 and 1 are both results. The claim is that a result was
-  -- reached.
-  ensure (fmtResult.exitCode != 2) "format reached the disabled analyzer"
-  let chkResult ← runProc ctx.application
-    #["check", "--root", ".", "--json", "--no-cache", clean]
-    (cwd? := some ctx.root) (env := env)
-  ensureEq "check did not serve source-tier from the artifact" 0 chkResult.exitCode
-  ensure (!(fmtResult.stdout.contains "infrastructure-failure"))
-    "format reached the disabled analyzer"
+  ensureEq "format --check no longer needs a frontend to render" 2 fmtResult.exitCode
   let report ← parseJson fmtResult.stdout "facet format"
   ensureJsonAt report [.field "mode"] (Lean.toJson "format") "facet format"
   ensureJsonAt report [.field "written"] (Lean.toJson (0 : Nat)) "facet format"
-  ensureJsonAt report [.field "infrastructureFailures"] (.arr #[]) "facet format"
+  ensure (fmtResult.stdout.contains "infrastructure-failure")
+    "format --check reported no failure yet reached no analyzer"
 
 /-- The surfaced-diagnostics differential: the captured `(kind, range)` reproduces what Lean's
 own `--json` frontend emits on the same fixture, for all four surfaced kinds. -/

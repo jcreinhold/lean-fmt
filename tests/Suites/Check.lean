@@ -298,32 +298,33 @@ where
     (((jsonAt? result [.field "findings"]).bind (·.getArr?.toOption)).getD #[]).toList.map
       fun finding => (finding.getObjValAs? String "code").toOption.getD ""
 
-/-- Canonical artifact and exact production are cache-interchangeable: same identity, same answer.
-The compiler fixture carries file-local syntax, so this is not a source-only shortcut.
+/-- A syntax-tier answer read from the module artifact and the same answer elaborated from source
+are cache-interchangeable: one identity, one entry, byte for byte. How the answer was obtained must
+not be observable in the cache at all, or a warm lookup could serve an entry the current route
+would not have written. The compiler fixture carries file-local syntax and FMT011 is syntax tier,
+so neither run can take the source-only shortcut.
 
-The entries are no longer byte-identical, and should not be. Each records how it was produced: the
-exact route reparses its candidate under the original run's parser contexts and reports one frontend
-run, the artifact route has no per-command contexts to reparse under and still runs a second
-frontend. Everything a lookup or a report reads — identity, digests, findings, canonical text and
-source map, and the rest of the formatter metrics — must still agree exactly, and the two ledgers
-are asserted separately so neither route's cost can hide behind the other's. -/
+This case used to drive `format --check`, because rendering had two routes and their entries
+differed by a frontend run each recorded. The artifact renderer was deleted — it measured slower
+and rejected files the exact route accepted — so rendering has one route, and the surviving
+two-route surface is this one, where the assertion is stricter than it could be before. -/
 private def testCacheCanonical (ctx : Ctx) : IO Unit := do
   discard <| expectExit 0 "lake build +ArtifactLayout:leanFmtArtifact" "lake"
     #["build", "+ArtifactLayout:leanFmtArtifact"] (cwd? := some ctx.root)
+  let select := #["check", "--root", ".", "--json", "--select", "FMT011",
+    "tests/compiler/ArtifactLayout.lean"]
   removeDirAll? ctx.cacheRoot
-  let artifact ← checkRaw ctx 1 #["format", "--check", "--root", ".", "--json",
-    "tests/compiler/ArtifactLayout.lean"] "canonical artifact"
-  let artifactEntry ← theCacheEntry ctx "canonical artifact"
-  let artifactJson ← parseJson (← IO.FS.readFile artifactEntry) "canonical artifact entry"
+  let artifact ← checkRaw ctx 0 select "canonical artifact"
+  let artifactText ← IO.FS.readFile (← theCacheEntry ctx "canonical artifact")
   removeDirAll? ctx.cacheRoot
-  let exact ← checkRaw ctx 1 #["format", "--check", "--root", ".", "--json",
-    "tests/compiler/ArtifactLayout.lean"] "canonical exact"
+  let exact ← checkRaw ctx 0 select "canonical exact"
     (env := #[("LEAN_FMT_DISABLE_ARTIFACT", some "1")])
-  let exactJson ← parseJson (← IO.FS.readFile (← theCacheEntry ctx "canonical exact"))
-    "canonical exact entry"
+  let exactText ← IO.FS.readFile (← theCacheEntry ctx "canonical exact")
+  -- Named before the byte comparison so a diff reports the field, not two blobs.
+  let artifactJson ← parseJson artifactText "canonical artifact entry"
+  let exactJson ← parseJson exactText "canonical exact entry"
   let entry : List JsonStep := [.field "entries", .index 0]
   let result := entry ++ [JsonStep.field "analysis", .field "result"]
-  let canonical := result ++ [JsonStep.field "canonical"]
   let agreed : List (String × List JsonStep) := [
     ("the cache schema", [.field "schema"]),
     ("the workspace base", [.field "base"]),
@@ -333,33 +334,12 @@ private def testCacheCanonical (ctx : Ctx) : IO Unit := do
     ("the findings", result ++ [.field "findings"]),
     ("the tier", result ++ [.field "tier"]),
     ("the suppression facts", result ++ [.field "suppression"]),
-    ("the semantic caps", result ++ [.field "caps"]),
-    ("the canonical text", canonical ++ [.field "text"]),
-    ("the canonical source map", canonical ++ [.field "sourceMap"])]
+    ("the semantic caps", result ++ [.field "caps"])]
   for (what, path) in agreed do
     ensure (jsonAt? artifactJson path == jsonAt? exactJson path)
-      s!"canonical artifact and exact entries disagree on {what}"
-  -- The two route-dependent numbers are blanked to a shared value, so everything else in each
-  -- object is still compared exactly and a newly diverging field fails here.
-  let blank (path : List JsonStep) (keys : List String) (json : Lean.Json) : Option Lean.Json :=
-    (jsonAt? json path).map fun value =>
-      keys.foldl (fun current key => current.setObjVal! key (Lean.toJson (0 : Nat))) value
-  let metrics := blank (canonical ++ [.field "metrics"]) ["frontendRuns"]
-  ensure (metrics artifactJson == metrics exactJson)
-    "canonical artifact and exact entries disagree on the formatter metrics"
-  let ledger := blank (canonical ++ [.field "validation"]) ["frontendRuns", "reparsedCommands"]
-  ensure (ledger artifactJson == ledger exactJson)
-    "canonical artifact and exact entries disagree on renders, comparisons, or idempotence passes"
-  let runs (json : Lean.Json) (route : String) : IO Nat := do
-    let some value := natAt? json (canonical ++ [.field "validation", .field "frontendRuns"])
-      | throw <| IO.userError s!"the {route} entry records no frontendRuns"
-    ensureEq s!"the {route} entry's metrics and validation disagree on frontendRuns" (some value)
-      (natAt? json (canonical ++ [.field "metrics", .field "frontendRuns"]))
-    return value
-  ensureEq "the artifact entry's frontendRuns" 2 (← runs artifactJson "artifact")
-  ensureEq "the exact entry's frontendRuns" 1 (← runs exactJson "exact")
-  ensureEq "canonical artifact and exact reports are not byte-identical"
-    artifact.stdout exact.stdout
+      s!"artifact-served and exact entries disagree on {what}"
+  ensureEq "artifact-served and exact cache entries are not byte-identical" exactText artifactText
+  ensureEq "artifact-served and exact reports are not byte-identical" artifact.stdout exact.stdout
 
 /-- Selection is a projection over one cached result, not a component of its identity. Two runs
 that differ only in `--select` must collide onto the same entry — an entry collision, not a
@@ -533,17 +513,24 @@ private def testFixShortcut (ctx : Ctx) : IO Unit := do
   ensureJsonAt report [.field "infrastructureFailures"] (.arr #[]) "fix shortcut"
   ensureJsonAt report [.field "written"] (Lean.toJson (1 : Nat)) "fix shortcut"
 
-/-- A syntax `--select` does not choose execution strategy. Plain
-`format --check` and the syntax-rule selection both take exactly one artifact renderer path. -/
+/-- A syntax `--select` does not choose execution strategy. Plain `format --check` and the
+syntax-rule selection both take exactly one renderer path, and it is the same one.
+
+The assertion is the mirror image of what it was. There were two renderers, and this case pinned
+that both spellings reached the artifact-fed one and neither reached the exact one; the artifact
+renderer was deleted after it measured slower and wrong, so now neither spelling may reach anything
+but the exact one. The constraint being gated never moved: rule selection is a projection over
+canonical results and must not pick a strategy. -/
 private def testRenderPath (ctx : Ctx) : IO Unit := do
   let profileEnv := #[("LEAN_FMT_PROFILE_PHASES", some "1")]
-  for (label, extra) in [("plain", #[]), ("fmt013", #["--preview", "--select", "FMT011"])] do
+  for (label, extra) in [("plain", #[]), ("fmt011", #["--preview", "--select", "FMT011"])] do
     let result ← checkRaw ctx 1
       (#["format", "--check", "--root", ".", "--json", "--no-cache"] ++ extra ++
         #["tests/check/Findings.lean"]) s!"render path {label}" (env := profileEnv)
-    ensureContains result.stderr "cache.path_artifact_render=1" s!"render path {label}"
-    ensure (!(result.stderr.splitOn "\n").any (·.startsWith "cache.path_exact_render="))
-      s!"render path {label}: an exact render ran"
+    ensureContains result.stderr "cache.path_exact_render=1" s!"render path {label}"
+    -- A rendering run may not fetch the module artifact: nothing left can read it.
+    ensure (!(result.stderr.splitOn "\n").any (·.startsWith "cache.official_artifact_"))
+      s!"render path {label}: fetched an artifact it cannot use"
 
 /-- The metadata snapshot: every committed source the suite touched came back byte- and
 mtime-identical. -/

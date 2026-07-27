@@ -11,10 +11,10 @@ import Lake
 
 Port of `tests/compiler/run.sh`. The `leanFmtArtifact` facet's contract, end to end against the
 main workspace: the declared JSON artifact is verified against the module-owned payload in the
-exact `.olean`; canonical rendering from the reconstructible artifact is byte-identical to the
-exact-source path; corruption is a counted exact fallback; a rule's prose edit invalidates nothing
-while a plugin-binary edit invalidates through Lake's plugin dependency; and a failed elaboration
-publishes nothing.
+exact `.olean`; a syntax-tier selection answered from the artifact matches the frontend's answer
+without spawning one; corruption is a counted exact fallback; a rule's prose edit invalidates
+nothing while a plugin-binary edit invalidates through Lake's plugin dependency; and a failed
+elaboration publishes nothing.
 
 The four `lean-fmt-tests` subcommands this suite used to spawn (`verify-plugin-artifact`,
 `verify-facet-artifact`, `verify-official-facet`, `print-lake-hash`) are called in-process here —
@@ -111,62 +111,29 @@ private unsafe def testFacetBuildAndVerify (ctx : Ctx) : IO Unit := do
   verifyArtifacts ctx
   Unit.Tools.verifyOfficialFacet "." ctx.sourceFile
 
-/-- Canonical rendering consumes the reconstructible artifact under the matching loaded module
-environment. It must be byte-identical to the exact-source path, including file-local syntax, and
-the profile must prove that both independently reachable strategies were exercised. -/
-private unsafe def testArtifactExactRendering (ctx : Ctx) : IO Unit := do
+/-- A syntax-tier selection served from the artifact answers exactly what the frontend answers.
+The artifact carries the projection the rules read, so the two must agree finding for finding, and
+the artifact arm must reach that answer without spawning a child.
+
+There used to be a second case here comparing the two *rendering* routes, because the artifact also
+fed a canonical renderer. That renderer is gone — it rendered every command under one post-import
+environment rather than the live per-command one, which made it both slower and wrong — so
+rendering has one route and there is nothing left to compare. -/
+private unsafe def testArtifactSyntaxRules (ctx : Ctx) : IO Unit := do
   lakeBuild ctx #["+ArtifactLayout:leanFmtArtifact", "lean-fmt"] "artifact-layout build"
   let profiled := lakeEnv ++ #[("LEAN_FMT_PROFILE_PHASES", some "1")]
-  let artifactRun ← runProc ctx.application
-    #["diff", "--no-cache", "tests/compiler/ArtifactLayout.lean"] (cwd? := some ctx.root)
-    (env := profiled)
-  let exactRun ← runProc ctx.application
-    #["diff", "--no-cache", "tests/compiler/ArtifactLayout.lean"] (cwd? := some ctx.root)
+  let select := #["check", "--no-cache", "--select", "FMT011",
+    "tests/compiler/ArtifactLayout.lean"]
+  let artifactRun ← runProc ctx.application select (cwd? := some ctx.root) (env := profiled)
+  let exactRun ← runProc ctx.application select (cwd? := some ctx.root)
     (env := profiled ++ #[("LEAN_FMT_DISABLE_ARTIFACT", some "1")])
-  ensure (artifactRun.exitCode == 1 && exactRun.exitCode == 1)
-    s!"artifact/exact formatter comparison did not report a changed file: \
-      artifact={artifactRun.exitCode} exact={exactRun.exitCode}"
-  ensureEq "artifact and exact diffs differ" exactRun.stdout artifactRun.stdout
-  profileStat artifactRun.stderr "cache.path_artifact_render=1" "artifact render"
-  profileStat exactRun.stderr "cache.path_exact_render=1" "exact render"
-  let setup ← expectExit 0 "lake setup-file" "lake"
-    #["setup-file", "tests/compiler/ArtifactLayout.lean"] (cwd? := some ctx.root) (env := lakeEnv)
-  withScratchDir "compiler" fun work => do
-    let setupPath := work / "setup.json"
-    writeFile setupPath setup.stdout
-    let artifactEnvelope ← expectExit 0 "__analyze-artifact" "lake"
-      #["env", ctx.application, "__analyze-artifact", setupPath.toString,
-        ".lake/build/lib/lean/ArtifactLayout.olean",
-        ".lake/build/lean-fmt-artifacts/ArtifactLayout.json",
-        "tests/compiler/ArtifactLayout.lean", "tests/compiler/ArtifactLayout.lean", "100"]
-      (cwd? := some ctx.root) (env := lakeEnv)
-    let exactEnvelope ← expectExit 0 "__analyze-exact" "lake"
-      #["env", ctx.application, "__analyze-exact", setupPath.toString,
-        "tests/compiler/ArtifactLayout.lean", "tests/compiler/ArtifactLayout.lean", "4:100"]
-      (cwd? := some ctx.root) (env := lakeEnv)
-    let artifactJson ← parseJson artifactEnvelope.stdout "__analyze-artifact"
-    let exactJson ← parseJson exactEnvelope.stdout "__analyze-exact"
-    -- The two routes must agree on the answer. They no longer agree on the work: the exact route
-    -- reparses its candidate under the original run's parser contexts, the artifact route hands one
-    -- imported environment to every command and so has no per-command context to reparse under and
-    -- still runs a second frontend. Asserting one ledger for both would pin them together and make
-    -- either route's cost invisible, so each is stated on its own.
-    for field in ["text", "sourceMap"] do
-      ensure (jsonAt? artifactJson [.field "canonical", .field field] ==
-          jsonAt? exactJson [.field "canonical", .field field])
-        s!"artifact/exact canonical {field} differ"
-    let runs (json : Lean.Json) (route : String) : IO Nat := do
-      let some value := Analyze.natAt? json [.field "canonical", .field "validation", .field "frontendRuns"]
-        | throw <| IO.userError s!"{route} reported no frontendRuns"
-      ensureEq s!"{route} metrics/validation frontendRuns disagree" (some value)
-        (Analyze.natAt? json [.field "canonical", .field "metrics", .field "frontendRuns"])
-      return value
-    ensureEq "artifact route frontendRuns" 2 (← runs artifactJson "the artifact route")
-    ensureEq "exact route frontendRuns" 1 (← runs exactJson "the exact route")
-    for field in ["renders", "structuralComparisons", "idempotencePasses"] do
-      ensure (jsonAt? artifactJson [.field "canonical", .field "validation", .field field] ==
-          jsonAt? exactJson [.field "canonical", .field "validation", .field field])
-        s!"artifact/exact validation {field} differ"
+  ensureEq "artifact and exact syntax-rule exit codes differ" exactRun.exitCode artifactRun.exitCode
+  ensureEq "artifact and exact syntax-rule reports differ" exactRun.stdout artifactRun.stdout
+  profileStat artifactRun.stderr "cache.official_artifact_hit=1" "artifact selection"
+  ensure (!(artifactRun.stderr.splitOn "\n").any (·.startsWith "phase.exact_child_ms="))
+    s!"the artifact selection spawned a frontend child\n{artifactRun.stderr}"
+  ensure ((exactRun.stderr.splitOn "\n").any (·.startsWith "phase.exact_child_ms="))
+    s!"the forced-exact selection had no frontend work to avoid\n{exactRun.stderr}"
 
 /-- Corruption is a counted exact fallback, not a rebuild, partial result, or hard failure. -/
 private unsafe def testCorruptArtifactFallback (ctx : Ctx) : IO Unit := do
@@ -175,13 +142,14 @@ private unsafe def testCorruptArtifactFallback (ctx : Ctx) : IO Unit := do
   writeFile layoutArtifact "{\"partial\":"
   let profiled := lakeEnv ++ #[("LEAN_FMT_PROFILE_PHASES", some "1")]
   let fallback ← runProc ctx.application
-    #["diff", "--no-cache", "tests/compiler/ArtifactLayout.lean"] (cwd? := some ctx.root)
-    (env := profiled)
+    #["check", "--no-cache", "--select", "FMT011", "tests/compiler/ArtifactLayout.lean"]
+    (cwd? := some ctx.root) (env := profiled)
   writeFile layoutArtifact backup
-  ensure (fallback.exitCode == 1)
-    s!"corrupt syntax artifact did not fall through to a successful exact diff\n{fallback.stderr}"
-  profileStat fallback.stderr "cache.path_exact_render=1" "corrupt fallback"
+  ensure (fallback.exitCode == 0 || fallback.exitCode == 1)
+    s!"corrupt syntax artifact did not fall through to a successful exact check\n{fallback.stderr}"
   profileStat fallback.stderr "cache.official_artifact_miss=1" "corrupt fallback"
+  ensure ((fallback.stderr.splitOn "\n").any (·.startsWith "phase.exact_child_ms="))
+    s!"corrupt artifact did not fall through to the frontend\n{fallback.stderr}"
 
 /-- A module whose facet was never built must miss alone, not zero the batch. Before the
 sidecar-existence pre-filter in `officialArtifacts`, one never-built module in a mixed selection
@@ -195,12 +163,12 @@ private unsafe def testMixedSelection (ctx : Ctx) : IO Unit := do
   removeFile? (main.toString ++ ".trace")
   let profiled := lakeEnv ++ #[("LEAN_FMT_PROFILE_PHASES", some "1")]
   let mixed ← runProc ctx.application
-    #["diff", "--no-cache", "tests/compiler/ArtifactLayout.lean", "Main.lean"]
+    #["check", "--no-cache", "--select", "FMT011", "tests/compiler/ArtifactLayout.lean",
+      "Main.lean"]
     (cwd? := some ctx.root) (env := profiled)
-  ensure (mixed.exitCode == 1)
-    s!"mixed artifact/exact selection did not report a diff (status {mixed.exitCode})\n{mixed.stderr}"
-  for needle in ["cache.official_artifact_hit=1", "cache.official_artifact_miss=1",
-      "cache.path_artifact_render=1", "cache.path_exact_render=1"] do
+  ensure (mixed.exitCode == 0 || mixed.exitCode == 1)
+    s!"mixed artifact/exact selection failed (status {mixed.exitCode})\n{mixed.stderr}"
+  for needle in ["cache.official_artifact_hit=1", "cache.official_artifact_miss=1"] do
     profileStat mixed.stderr needle "mixed selection"
 
 /-- `lake -q query <target> --text`, trimmed. -/
@@ -355,7 +323,7 @@ private unsafe def testBrokenModuleNoPublish (ctx : Ctx) : IO Unit := do
 `runAll` below so the second case sees the first's captured trace. -/
 private unsafe def earlyCases (ctx : Ctx) : Array Case := #[
   { name := "facet-build-and-verify", run := testFacetBuildAndVerify ctx },
-  { name := "artifact-exact-rendering", run := testArtifactExactRendering ctx },
+  { name := "artifact-syntax-rules", run := testArtifactSyntaxRules ctx },
   { name := "corrupt-artifact-fallback", run := testCorruptArtifactFallback ctx },
   { name := "mixed-selection", run := testMixedSelection ctx },
   { name := "extractor-exact-olean", run := testExtractorExactOlean ctx },

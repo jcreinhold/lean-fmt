@@ -34,8 +34,8 @@ double-counts the same milliseconds; this list is the complement of the bold row
 private def topLevelPhases : List String :=
   ["discovery", "workspace_load", "selection_snapshot", "cache_epoch", "cache_lookup",
    "module_evidence", "official_artifacts", "import_findings", "exact_setup", "setup_prime",
-   "exact_child", "artifact_setup", "artifact_child", "envelope_decode", "layout", "rules",
-   "cache_write", "positions", "render_report"]
+   "exact_child", "envelope_decode", "layout", "rules", "cache_write", "positions",
+   "render_report"]
 
 /-- The last value of a `cache.*` counter, or none if the run never emitted it. -/
 private def counter (name : String) (capture : String) : Option Int :=
@@ -113,15 +113,21 @@ its intent cannot pass as one that chose correctly. -/
 private def gateWorkers (capture : String) (expected : Nat) : Bool :=
   counter "cache.workers" capture == some expected
 
-/-- §1e. Artifact formatting avoids the exact-source child; the forced exact run really exercises
-it. Both still validate canonical output. -/
+/-- §1e. A current module artifact answers a syntax-tier selection with no frontend at all — no
+exact child and no Lake setup for one; the same selection with the artifact disabled pays both, so
+the run really had frontend work to avoid.
+
+This gate used to read `artifact_child` and `cache.path_artifact_render`, counting a second
+renderer that read the artifact instead of elaborating. On 200 mathlib-importing modules that
+renderer ran 336.8 s and rejected 12 files against the exact route's 279.0 s and 1, so it was
+deleted and the gate moved onto the capability that survived — which is also the one worth having:
+the same 200 files answered a syntax `check` from their artifacts in 12.4 s. -/
 private def gateArtifactAvoidsExact (artifactCapture exactCapture : String) : Bool :=
-  phaseCount "artifact_child" artifactCapture == 1
+  counter "cache.official_artifact_hit" artifactCapture == some 1
     && phaseCount "exact_child" artifactCapture == 0
-    && counter "cache.path_artifact_render" artifactCapture == some 1
-    && phaseCount "artifact_child" exactCapture == 0
+    && phaseCount "exact_setup" artifactCapture == 0
+    && counter "cache.official_artifact_hit" exactCapture == some 0
     && phaseCount "exact_child" exactCapture == 1
-    && counter "cache.path_exact_render" exactCapture == some 1
 
 /-- §1h. Every validated file confirmed its candidate by reparsing it, and none escalated to a
 second frontend. The exact child forwards these counts, so one `cache.candidate_reparse=1` line
@@ -222,13 +228,19 @@ private def testGatesDiscriminate : IO Unit := do
   expect (!(gateCandidateReparsed reparsed 3))
     "rejects a run that validated fewer files than it was given"
   expect (!(gateCandidateReparsed healthy 0)) "rejects a capture that validated nothing"
-  -- §1e artifact formatting avoids exact-source analysis.
-  let artifactCapture := "phase.artifact_child_ms=900\ncache.path_artifact_render=1\n"
-  let exactCapture := "phase.exact_child_ms=1500\ncache.path_exact_render=1\n"
+  -- §1e a syntax selection served from the artifact does no frontend work.
+  let artifactCapture := "cache.official_artifact_hit=1\ncache.official_artifact_miss=0\n"
+  let exactCapture := "cache.official_artifact_hit=0\ncache.official_artifact_miss=1\n\
+    phase.exact_setup_ms=200\nphase.exact_child_ms=1500\n"
   expect (gateArtifactAvoidsExact artifactCapture exactCapture)
-    "accepts one artifact child versus one forced exact child"
+    "accepts an artifact-served selection against one forced exact child"
   expect (!(gateArtifactAvoidsExact (artifactCapture ++ "phase.exact_child_ms=1500\n")
     exactCapture)) "rejects an artifact route that also launches the exact-source child"
+  expect (!(gateArtifactAvoidsExact (artifactCapture ++ "phase.exact_setup_ms=200\n")
+    exactCapture)) "rejects an artifact route that still resolves a Lake setup for a child"
+  expect (!(gateArtifactAvoidsExact artifactCapture (exactCapture.replace
+    "cache.official_artifact_hit=0" "cache.official_artifact_hit=1")))
+    "rejects a control arm that still found its artifact"
   -- §2 gate G3, on the remainder. The healthy capture accounts for 715 ms.
   expect (gateRemainderWithin healthy 760 250)
     "accepts a 45 ms remainder (the measured ~51 ms startup constant)"
@@ -316,26 +328,40 @@ private def testWarmFullyServed (ctx : Ctx) : IO Unit := do
   ensure (gateReportsIdentical prime.stdout warm.stdout)
     "cold and warm reports differ; the cache is not serving what it stored"
 
-/-- §1d/§1e/§1h bounded child lifetime, artifact acceleration, and a reparsed candidate. -/
+/-- §1e artifact acceleration, on a syntax-tier `check` — the only shape that can take it. A
+rendering run cannot: layout needs the live per-command environment, so `diff` and `format`
+elaborate whatever the cache left unanswered and do not even fetch an artifact. Both arms select
+FMT011, so the two differ in one thing only, whether the artifact was available. -/
 private def testArtifactAcceleration (ctx : Ctx) : IO Unit := do
   let fixture := ctx.root / "tests" / "compiler" / "ArtifactLayout.lean"
   discard <| expectExit 0 "artifact build" "lake"
     #["build", "+ArtifactLayout:leanFmtArtifact"] (cwd? := some ctx.root)
     (env := #[("LEAN_NUM_THREADS", some "1")]) (timeoutMs := some 1800000)
-  let artifact ← runProc ctx.app #["diff", "--no-cache", fixture.toString] (cwd? := some ctx.root)
+  let select := #["check", "--no-cache", "--select", "FMT011", fixture.toString]
+  let artifact ← runProc ctx.app select (cwd? := some ctx.root)
     (env := #[("LEAN_FMT_PROFILE_PHASES", some "1"), ("LEAN_NUM_THREADS", some "1")])
     (timeoutMs := some 600000)
-  let exact ← runProc ctx.app #["diff", "--no-cache", fixture.toString] (cwd? := some ctx.root)
+  let exact ← runProc ctx.app select (cwd? := some ctx.root)
     (env := #[("LEAN_FMT_PROFILE_PHASES", some "1"), ("LEAN_NUM_THREADS", some "1"),
       ("LEAN_FMT_DISABLE_ARTIFACT", some "1")]) (timeoutMs := some 600000)
-  ensure (gateSerialChildren artifact.stderr 1 && gateSerialChildren exact.stderr 1)
-    "child admission was absent or exceeded one active child"
+  ensure (gateSerialChildren exact.stderr 1)
+    "the forced-exact arm's child admission was absent or exceeded one active child"
   ensure (gateArtifactAvoidsExact artifact.stderr exact.stderr)
     "artifact/exact strategy counts no longer distinguish their frontend work"
-  ensure (gateCandidateReparsed exact.stderr 1)
-    "the exact route stopped reparsing its candidate, or escalated to a second frontend"
   ensure (gateReportsIdentical artifact.stdout exact.stdout)
-    "artifact-built and exact-source reports differ"
+    "artifact-served and exact-source reports differ"
+
+/-- §1d/§1h bounded child lifetime and a reparsed candidate, on the rendering path — the one that
+still runs a frontend per unanswered file. -/
+private def testCandidateReparse (ctx : Ctx) : IO Unit := do
+  let fixture := ctx.root / "tests" / "compiler" / "ArtifactLayout.lean"
+  let render ← runProc ctx.app #["diff", "--no-cache", fixture.toString] (cwd? := some ctx.root)
+    (env := #[("LEAN_FMT_PROFILE_PHASES", some "1"), ("LEAN_NUM_THREADS", some "1")])
+    (timeoutMs := some 600000)
+  ensure (gateSerialChildren render.stderr 1)
+    "child admission was absent or exceeded one active child"
+  ensure (gateCandidateReparsed render.stderr 1)
+    "the exact route stopped reparsing its candidate, or escalated to a second frontend"
 
 /-- §1f parallel child admission stays within --workers. A sleeping fake analyzer holds both
 children alive long enough for the second admission to observe the first: concurrency is certain,
@@ -437,6 +463,7 @@ public def main (args : List String) : IO UInt32 := do
       { name := "validation-counts", run := Performance.testValidationCounts ctx },
       { name := "warm-fully-served", run := Performance.testWarmFullyServed ctx },
       { name := "artifact-acceleration", run := Performance.testArtifactAcceleration ctx },
+      { name := "candidate-reparse", run := Performance.testCandidateReparse ctx },
       { name := "parallel-admission", run := Performance.testParallelAdmission ctx },
       { name := "worker-resolution", run := Performance.testWorkerResolution ctx },
       { name := "g3-remainder", run := Performance.testG3Remainder ctx },
