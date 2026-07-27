@@ -1,6 +1,6 @@
 # Writing Lean in LeanFmt
 
-Rules for the library modules. The root `CLAUDE.md` owns the product constraints, and nothing here contradicts it.
+Rules for the library modules. The root `AGENTS.md` owns the product constraints, and nothing here contradicts it.
 
 ## Proofs
 

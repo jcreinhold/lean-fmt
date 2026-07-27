@@ -20,6 +20,7 @@ Do not restore the archived Rust workspace, worker protocol, `libleanshared` bou
 Read the nearest guide before working in a directory. A guide may add rules. It may not contradict this file.
 
 - `LeanFmt/AGENTS.md` for writing Lean.
+- `LeanFmt/Formatter/AGENTS.md` for the layout adapter, and what Lean's pretty-printer will not do for you.
 
 ## Build and checks
 
@@ -34,12 +35,9 @@ lake lint            # the formatter on itself, under lean-fmt.toml
 ```
 
 Suites are compiled Lean executables: `tests/Suites/<Name>.lean` builds as `suite-<name>`, and
-`tests/Test/Runner.lean`'s registry enumerates them with their lane. Enumerate the registry, not a list in prose — an
-unregistered suite file fails the boundary suite's entry-point pin. The current set: application-formatter,
-block-formatter, boundary, cache, catalog, check, ci, collection-formatter, command-formatter, comments, compiler,
-declaration-formatter, discovery, downstream, editor, format-suppression, formatter, formatter-adapter, imports,
-incremental, layout, lossless, lsp, lsp-acceptance, modes, module-formatter, native-layout, performance, reporting,
-scale, security-bench, semantic, stream, style, suppression, syntax, term-formatter, validator, watch.
+`tests/Test/Runner.lean`'s registry enumerates them with their lane. Read the registry, not a list in prose — an
+unregistered suite file fails the boundary suite's entry-point pin. `lake test -- --list` prints every suite with its
+lane and slow tag.
 
 Each suite's module docstring carries its notes: what it pins, which defect records the assertions come from, and what a
 failure means. Read those first when a suite fails.
@@ -53,8 +51,8 @@ Match the checks to the change:
 - `lean-fmt.toml` is this repository's own discovered configuration, and `lake lint` runs the formatter under it with no
   `--config`. Its `exclude` list keeps the fixture trees out; anything absent from that list is linted, so a new
   directory is covered until someone says otherwise.
-- The slow tag exists for minutes-long suites: stream, performance, downstream, ci, lsp-acceptance, editor,
-  security-bench. They run under `--all`, under `--suites`, and in the `workflow_dispatch` CI job.
+- The slow tag marks minutes-long suites. They run under `--all`, under `--suites`, and in the `workflow_dispatch` CI
+  job.
 - `performance` is the durable performance gate: **counts, ratios, and digests only**, never a wall time, because the
   same binary over the same warm corpus measured 3,977 ms and 19,968 ms depending only on machine load. Its
   gates-discriminate case feeds every gate input it must accept and input it must reject. Add a gate there when you
@@ -124,62 +122,6 @@ from code or tests is gone — when you cannot find why something is the way it 
   `#exit`) never appear in the command stream, so the region a projection models ends where the terminal *begins*, and
   the rest is verbatim tail. Both matter on ordinary files, not just edge cases: `choice` hit 1 of 5 sampled mathlib
   modules, and `#exit` every file that contains it.
-
-### Lean's pretty-printer is a printer, not a re-printer
-
-Lean ships both endpoints of the layout/fidelity axis and nothing in between. `Lean.Syntax.reprint`
-(`Lean/Syntax.lean:400`) emits `lead ++ val ++ trail` from each leaf's `SourceInfo`: exact source bytes, zero layout
-decisions. `Lean.PrettyPrinter` renders syntax the *elaborator* produced, for error messages, `#print`, and infoview
-hovers: every layout decision, no source fidelity — there is no original to be faithful to and nobody can diff the
-output against source.
-
-A formatter is the missing third row: full layout *and* exact fidelity. `LeanFmt/Formatter/NativeLayout.lean` is that
-row written out by hand, and most difficulty in it is a guarantee a printer has no reason to make. Each one already
-costs a mechanism there. Before adding a new mechanism, decide which of these you are paying for; if it is none of them,
-you have found a ninth and it goes in this list.
-
-- **It can silently drop a leaf.** The combinators backtrack, so a subtree the formatter cannot format is omitted rather
-  than reported. `dbg_trace s!"…"` with the interpolated string replaced by a marker formats to
-  `grp[nest2[T"dbg_trace"]]` — no marker, no `line`, no diagnostic. A missing marker in the native document is expected;
-  the adapter owns what surrounds a dropped island, including the separator, because the document holds no decision
-  about a leaf it never emitted.
-- **Failure is unstructured when it does escape.** The same mismatch inside `` `(…) `` surfaces as the bare string
-  `uncaught backtrack exception`: no node, no range, no expected shape.
-- **There is no leaf-to-source correspondence.** `withMaybeTag` tags with `getExprPos?`, populated for delaborated
-  syntax and not for syntax parsed from source, so a parsed command yields zero `Format.tag` nodes. Correspondence is
-  positional; a divergence is a refusal, not a lookup.
-- **Parser-significant columns are not in the document.** See the `align`/`sepByIndent` note under *Exactness and
-  coordinates* above and in the module docstring.
-- **A parser-significant column cannot be expressed even where it is known.** The note above says the document does not
-  say which columns matter; this one says knowing one does not help. `nest n` is relative to the current *indent* and
-  `align force` pads *to* that indent, so no constructor means "indent this subtree's continuations to the column where
-  it starts" — which is what `many1Indent` saves and `checkColGe` measures against. A break that has to land at such a
-  column cannot be *placed*, so `collectGuardBailouts`/`flattenNative` *remove* it instead, under a source precondition
-  that makes removal total. Refuse rather than emit a break you cannot position.
-- **Comments are not in the algebra**, there is **no verbatim leaf** (`Format.text` re-indents embedded newlines), and
-  there is **no protocol for source-sensitive syntax** — hence trivia stripping, the cancelling `nest`, and marker
-  substitution respectively.
-- **Output nobody can see is not output to a printer.** A `line` in front of a `text` carrying its own newline is a
-  space at the end of a line when its group flattens and a blank line when it does not. Lean's `doIf` spells one before
-  every indented `doSeq` body. It costs a printer nothing — a trailing space is invisible in an error message and a
-  re-print is never diffed against source — so nothing upstream removes it and no gate here would catch it: the
-  validator reparses, and a space before a newline changes no token. A formatter's output is read as text, so the
-  adapter drops the break, and only the one *in front of* the newline. The mirror rule moves columns: `sepByIndent`
-  spells its first item after an `align` and the rest after a `text "\n"`.
-- Ordinary upstream bugs, each repaired against the mechanism rather than the parser: `def ctor` puts the newline inside
-  the `"\n| "` atom *after* `optional docComment`, so a constructor docstring renders as `where/-- doc -/` and reparses
-  onto the wrong owner; `parserOfStack.formatter` reads one stack slot short of the `ident`, so `` `(cat| body) `` dies
-  as ``Unknown constant «|»``; `guardMsgsCmd` omits the `ppDedent` every other command-embedding parser has.
-
-Do not reimplement what Lean does do. `pushToken` inserts a discretionary space exactly when concatenation would re-lex
-as one token, using the real tokenizer; an adapter-side merge rule over-fires. Read `format.indent` through
-`Lean.Std.Format.getIndent`, never as a literal `2`. And `reprint` handles `choice` by reprinting every alternative and
-checking they agree. Four walks in `NativeLayout.lean` take `children[0]?` and would each *assume* it — `terminalsFrom`,
-`selectedLeafRanges`, `containsAtom`, `collectRecordUpdateFieldStarts` — so one gate at `NativeLayout.command` compares
-every alternative's ordered `(range, sourceSpelling)` sequence and refuses with the node and range named, making the
-assumption true for all four rather than repeating the comparison. Do the same for a fifth walk: verify once at the
-entry point, not per walk. The handwritten `Formatter.Command` header path still assumes, and is the remaining place it
-is unchecked.
 
 ### The module artifact and rule tiers
 
