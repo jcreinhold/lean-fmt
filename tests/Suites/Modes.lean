@@ -85,8 +85,11 @@ private def treeMetadata (root : System.FilePath) : IO String := do
   let rootPrefix := root.toString ++ "/"
   let mut lines : Array String := #[]
   for path in entries.toList.mergeSort (toString · < toString ·) do
-    let line ← metadataLine path
-    lines := lines.push ((line.drop rootPrefix.length).toString)
+    -- Files only: namespaced modules nest their sidecars in subdirectories, and a directory
+    -- has no digest to take.
+    if (← path.metadata).type == .file then
+      let line ← metadataLine path
+      lines := lines.push ((line.drop rootPrefix.length).toString)
   return "\n".intercalate lines.toList
 
 /-- Run `action` and restore `target` from `backup` even when it fails — the per-section

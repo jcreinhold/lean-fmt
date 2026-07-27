@@ -2584,7 +2584,7 @@ def compilerSetupReport : CompilerSetupReport := {
     "set plugins := #[`@«lean-fmt»/LeanFmtCompilerPlugin:shared] on the package, not on each lean_lib",
     "the guillemets are required: lean-fmt is not a legal Lean identifier",
     "for lake lint, set lintDriver := \"«lean-fmt»/«lean-fmt»\" and lintDriverArgs := #[\"check\"]",
-    "build +MODULE:leanFmtArtifact when an extracted module artifact is required",
+    "run `lean-fmt compiler build` to extract every workspace module's artifact in one lake invocation",
     "editing the plugin re-elaborates every module that loads it; that trace edge is what makes the artifact trustworthy"
   ]
 }
@@ -2653,6 +2653,34 @@ def compilerStatus (request : CompilerStatusRequest) : IO CompilerStatusReport :
     missing
     unbuilt
   }
+
+/-- Build every workspace module's `leanFmtArtifact` sidecar in one `lake build` invocation.
+
+Lake owns the build: topological order, parallelism, and cache reuse — a module whose olean is
+fresh pays only for extraction, and dependency packages (mathlib) are never targets because
+`Project.loadAll` enumerates the root package's modules. Hand-enumerating targets per module
+would re-traverse the same graph once per module instead of computing one fixpoint. Stdio is
+inherited so the user watches Lake's own progress; the exit code is Lake's. -/
+def compilerBuild (request : CompilerStatusRequest) : IO UInt32 := do
+  let root ← IO.FS.realPath request.root
+  let project ← Project.loadAll root
+  let facetName := `module.leanFmtArtifact
+  if (project.workspace.findModuleFacetConfig? facetName).isNone then
+    throw <| IO.userError
+      "the leanFmtArtifact facet is not registered in this workspace; install the plugin first        (lean-fmt compiler setup)"
+  let mut seen : Std.HashSet String := {}
+  let mut targets := #[]
+  for snapshot in project.targets do
+    if let some mod := snapshot.module? then
+      let name := mod.name.toString
+      unless seen.contains name do
+        seen := seen.insert name
+        targets := targets.push s!"+{name}:leanFmtArtifact"
+  if targets.isEmpty then
+    IO.eprintln "lean-fmt: no modules selected; nothing to build"
+    return 0
+  let child ← IO.Process.spawn { cmd := "lake", args := #["build"] ++ targets, cwd := root }
+  child.wait
 
 /-- Dispatch only the private subprocess/profiling protocol. Ordinary product commands return
 `none` and cannot observe setup paths, module artifacts, or process limits. -/

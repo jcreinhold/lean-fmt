@@ -209,7 +209,7 @@ private def helpUsageLines : Array String := #[
   "lean-fmt explain RULE [--json]",
   "lean-fmt docs [--root PATH] [--check]",
   "lean-fmt clean [--root PATH] [--json]",
-  "lean-fmt compiler {setup|status} [--root PATH] [--json]",
+  "lean-fmt compiler {setup|status|build} [--root PATH] [--json]",
   "lean-fmt config show PATH [--root PATH] [--config PATH] [--json]"
 ]
 
@@ -1546,6 +1546,18 @@ unsafe def runCli (arguments : List String) : IO UInt32 := do
     try
       renderCompilerStatus command.outputFormat (← compilerStatus command.request)
       return 0
+    catch error =>
+      IO.eprintln s!"lean-fmt: {error}"
+      return 2
+  | "compiler" :: "build" :: rest =>
+    let command ← match parseStatusArgs rest with
+      | .ok command => pure command
+      | .error message => IO.eprintln message; return 2
+    if command.outputFormat == .json then
+      IO.eprintln "compiler build prints Lake's own progress; --json does not apply"
+      return 2
+    try
+      compilerBuild command.request
     catch error =>
       IO.eprintln s!"lean-fmt: {error}"
       return 2

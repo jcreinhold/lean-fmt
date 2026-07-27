@@ -1,6 +1,6 @@
 module
 
-public import LeanFmt.Progress
+import all LeanFmt.Progress
 public import Test
 
 /-!

@@ -6,8 +6,8 @@ Authors: Jacob Reinhold
 
 module
 
-public import Init.System.IO
-public import Std.Sync.Mutex
+import Init.System.IO
+import Std.Sync.Mutex
 
 /-!
 # Batch progress display
@@ -29,7 +29,7 @@ namespace LeanFmt.Progress
 
 /-- One progress display's mutable state. The fields are private to the module: callers hold
 the `Progress` handle and never read them. -/
-public structure State where
+structure State where
   label : String
   total : Nat
   done : Nat := 0
@@ -39,7 +39,7 @@ public structure State where
   lastDraw : Nat := 0
 
 /-- A progress display. When `live?` is false every operation is a no-op; `state` is unused. -/
-public structure Progress where
+structure Progress where
   private mk ::
   live? : Bool
   state : IO.Ref State
@@ -65,7 +65,7 @@ private def tenths (num den : Nat) : String :=
 
 /-- The rendered line for a state at `now` nanoseconds. Pure, so the unit tier can pin the
 format without a terminal. -/
-public def renderLine (label : String) (done total startedNanos nowNanos : Nat) (item : String) :
+def renderLine (label : String) (done total startedNanos nowNanos : Nat) (item : String) :
     String :=
   let elapsed := nowNanos - startedNanos
   let pct := if total == 0 then 100 else done * 100 / total
@@ -78,7 +78,7 @@ public def renderLine (label : String) (done total startedNanos nowNanos : Nat) 
 
 /-- Start a display for `total` items under `label`. Live only when stderr is a TTY and
 `TERM` is not `dumb`; inert otherwise. -/
-public def start (label : String) (total : Nat) : IO Progress := do
+def start (label : String) (total : Nat) : IO Progress := do
   let tty ← (← IO.getStderr).isTty
   let term ← IO.getEnv "TERM"
   let live? := tty && term != some "dumb" && total > 0
@@ -87,7 +87,7 @@ public def start (label : String) (total : Nat) : IO Progress := do
 
 /-- Record one finished item, identified by `item` (a path). Redraws at most once per
 `throttleMs`, except on the final item. Safe to call from concurrent worker tasks. -/
-public def advance (progress : Progress) (item : String) : IO Unit := do
+def advance (progress : Progress) (item : String) : IO Unit := do
   unless progress.live? do return
   progress.lock.atomically do
     let now ← IO.monoNanosNow
@@ -98,7 +98,7 @@ public def advance (progress : Progress) (item : String) : IO Unit := do
       IO.eprint s!"\r{renderLine s.label s.done s.total s.started now item}\x1b[K"
 
 /-- Finish the display: erase the line. The final report that follows owns stderr from here. -/
-public def finish (progress : Progress) : IO Unit := do
+def finish (progress : Progress) : IO Unit := do
   unless progress.live? do return
   IO.eprint "\r\x1b[K"
 
