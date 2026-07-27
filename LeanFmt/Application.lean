@@ -12,6 +12,7 @@ import all LeanFmt.Config
 import all LeanFmt.Edit
 import all LeanFmt.Imports
 import all LeanFmt.Profile
+import all LeanFmt.Progress
 import all LeanFmt.Project
 import all LeanFmt.Semantic
 import all LeanFmt.Suppression
@@ -1794,14 +1795,15 @@ private partial def batchWorker (exactRun : ExactRun) (request : RunRequest)
     (work : Array ((((SourceSnapshot × Option SemanticAnalysis) × Option ModuleArtifact) ×
       (Array Finding × Nat)) × RulePlan))
     (next : IO.Ref Nat)
-    (outcomes : IO.Ref (Array (Option FileOutcome))) : IO Unit := do
+    (outcomes : IO.Ref (Array (Option FileOutcome))) (progress : Progress.Progress) : IO Unit := do
   let index ← next.modifyGet fun n => (n, n + 1)
   if h : index < work.size then
     let ((((snapshot, available?), artifact?), ir), plan) := work[index]
     let outcome ← processOneTarget exactRun request renderCanonical demanded demandedCaps
       snapshot available? artifact? ir plan
     outcomes.modify (·.set! index (some outcome))
-    batchWorker exactRun request renderCanonical demanded demandedCaps work next outcomes
+    LeanFmt.Progress.advance progress snapshot.path.toString
+    batchWorker exactRun request renderCanonical demanded demandedCaps work next outcomes progress
 
 /- Execute one immutable user request. This operation owns workspace discovery, exact module
 selection, source snapshots, trusted-artifact validation, fallback, deterministic aggregation, and
@@ -1968,6 +1970,9 @@ def execute (request : RunRequest) : IO RunOutcome := do
     let work := (((snapshots.zip available).zip artifacts).zip importReports).zip plans
     let outcomes ← IO.mkRef (Array.replicate work.size (none : Option FileOutcome))
     let next ← IO.mkRef 0
+    -- Progress counts the targets the decisions above left unanswered — exactly the work that
+    -- can take minutes on a cold run. An all-served run never reaches here and never shows one.
+    let progress ← LeanFmt.Progress.start request.mode.toString work.size
     if request.workers > 1 && work.size > 1 then
       -- `--workers N`: dedicated workers, one reaper (started by `withExactRun`), outcomes by
       -- index. Dedicated priority is load-bearing, not tuning: workers block on child pipes, and
@@ -1976,7 +1981,7 @@ def execute (request : RunRequest) : IO RunOutcome := do
       let workers := min request.workers work.size
       let tasks ← (List.range workers).mapM fun _ =>
         IO.asTask (batchWorker exactRun request renderCanonical demanded demandedCaps work next
-          outcomes) Task.Priority.dedicated
+          outcomes progress) Task.Priority.dedicated
       let mut firstError? : Option IO.Error := none
       for task in tasks do
         match ← IO.wait task with
@@ -1985,6 +1990,8 @@ def execute (request : RunRequest) : IO RunOutcome := do
       if let some error := firstError? then throw error
     else
       batchWorker exactRun request renderCanonical demanded demandedCaps work next outcomes
+        progress
+    LeanFmt.Progress.finish progress
     let mut files := #[]
     let mut failures := #[]
     let mut analyses := #[]

@@ -8,6 +8,7 @@ import Test.Unit.Edit -- lean-fmt: ignore[FMT004]
 import Test.Unit.Imports
 import Test.Unit.Layout -- lean-fmt: ignore[FMT004]
 import Test.Unit.Lsp
+import Test.Unit.Progress
 import Test.Unit.Rules
 import Test.Unit.Semantic
 import Test.Unit.Source
@@ -28,4 +29,4 @@ open LeanFmt.Test
 def allCases : Array Case :=
   Unit.Digest.cases ++ Unit.Rules.cases ++ Unit.Imports.cases ++ Unit.Lsp.cases ++
     Unit.Edit.cases ++ Unit.Config.cases ++ Unit.Cache.cases ++ Unit.Source.cases ++
-    Unit.Semantic.cases ++ Unit.Layout.cases
+    Unit.Semantic.cases ++ Unit.Layout.cases ++ Unit.Progress.cases
