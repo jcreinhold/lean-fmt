@@ -12,6 +12,7 @@ import all LeanFmt.Formatter
 import all LeanFmt.Formatter.Command
 import all LeanFmt.Formatter.NativeLayout
 import all LeanFmt.Formatter.Trivia
+import all LeanFmt.Profile
 import all LeanFmt.Rules
 import all LeanFmt.Suppression
 import all LeanFmt.Validator
@@ -22,6 +23,8 @@ import Lean.Server.InfoUtils
 import Std.Sync.Mutex
 
 namespace LeanFmt.Internal
+
+open LeanFmt.Internal.Profile (recordCount)
 
 /- The process response is deliberately semantic. It contains neither setup paths nor
 execution strategy, so the parent cannot accidentally key reporting on how it obtained the
@@ -83,16 +86,54 @@ private partial def collectLiveCommands (snapshot : Lean.Language.Lean.CommandPa
   | some next => collectLiveCommands next.get nextState commands terminal? checkCancelled
   | none => return (commands, terminal?)
 
-private def processedLiveCommands (snapshot : Lean.Language.Lean.InitialSnapshot)
-    (checkCancelled : IO Unit := pure ()) :
-    IO (Array LiveCommand × Option Lean.Syntax) :=
-  match snapshot.result? with
+/-- A frontend run that has finished, in the shape every projection below reads.
+
+Two operations produce one. `Lean.Language.Lean.process` parses the header and imports for itself, so
+its tree already holds the header's diagnostics and `headerMessages` stays empty.
+`Lean.Language.Lean.processCommands` is handed a parsed header and an imported state and starts at
+the first command, so whoever parsed that header passes its diagnostics here. Nothing downstream can
+tell which one ran. -/
+private structure ProcessedModule where
+  headerStx : Lean.Syntax
+  /-- Diagnostics the tree does not carry, which for a run that skipped header handling means the
+  header's own parse messages. -/
+  headerMessages : Lean.MessageLog
+  tree : Lean.Language.SnapshotTree
+  /-- The first command and the state the header left behind, or `none` when parsing or importing
+  failed and there is no elaboration to project. -/
+  start? : Option (Lean.Language.Lean.CommandParsedSnapshot × Lean.Elab.Command.State)
+
+private def ProcessedModule.messages (module : ProcessedModule) : Lean.MessageLog :=
+  module.tree.getAll.map (·.diagnostics.msgLog) |>.foldl (· ++ ·) module.headerMessages
+
+private partial def finalCmdState (snapshot : Lean.Language.Lean.CommandParsedSnapshot) :
+    Lean.Elab.Command.State :=
+  match snapshot.nextCmdSnap? with
+  | some next => finalCmdState next.get
+  | none => snapshot.elabSnap.resultSnap.get.cmdState
+
+/-- The state after the last command, or `none` if the run never reached one. `none` is how a caller
+learns the run failed before elaboration; the diagnostics say why. -/
+private def ProcessedModule.finalCmdState? (module : ProcessedModule) :
+    Option Lean.Elab.Command.State :=
+  module.start?.map fun (first, _) => finalCmdState first
+
+private def ProcessedModule.liveCommands (module : ProcessedModule)
+    (checkCancelled : IO Unit := pure ()) : IO (Array LiveCommand × Option Lean.Syntax) :=
+  match module.start? with
   | none => pure (#[], none)
-  | some parsed =>
-    match parsed.processedSnap.get.result? with
-    | none => pure (#[], none)
-    | some processed =>
-      collectLiveCommands processed.firstCmdSnap.get processed.cmdState (checkCancelled := checkCancelled)
+  | some (first, headerState) =>
+    collectLiveCommands first headerState (checkCancelled := checkCancelled)
+
+private def ProcessedModule.ofInitial (snapshot : Lean.Language.Lean.InitialSnapshot) :
+    ProcessedModule where
+  headerStx := snapshot.stx
+  headerMessages := {}
+  tree := Lean.Language.toSnapshotTree snapshot
+  start? := do
+    let parsed ← snapshot.result?
+    let processed ← parsed.processedSnap.get.result?
+    return (processed.firstCmdSnap.get, processed.cmdState)
 
 private def normalizedSlice (bytes : ByteArray) (range : SourceRange) : String :=
   String.fromUTF8! <| bytes.extract range.start range.stop
@@ -383,28 +424,74 @@ private unsafe def processSource (setup : Lean.ModuleSetup) (source : String)
   let snapshot ← Lean.Language.Lean.process setupImports old? context
   return { input, snapshot }
 
-/- Convert one completed frontend snapshot into the product's semantic envelope.
-Incremental processing changes only where the snapshot came from, never how formatter facts are
+/-- Elaborate the candidate draft, starting from this run's imports when the draft asks for the same
+ones.
+
+`processSource` would import the draft's modules from scratch, and on a module that imports mathlib
+that import costs more than the rest of the analysis put together. This run already holds the state
+the header left — the environment after importing, before any of the file's own commands — and that
+is where elaborating the draft begins. Lean's incremental path reuses it the same way when an edit
+leaves the header alone, but it decides by comparing header syntax including source positions, and a
+formatted draft moves them: it may drop a blank line above the first import. So compare what the
+header asks for instead of how it is written.
+
+Falls back to a full run when the draft would import something else, when its header does not parse,
+or when the caller must be able to reach the candidate's snapshot: `processCommands` keeps its
+cancellation token to itself, so a snapshot it produced cannot be cancelled afterwards. -/
+private unsafe def candidateFrontend (setup : Lean.ModuleSetup) (original : ProcessedModule)
+    (text : String) (sourcePath : System.FilePath)
+    (trackSnapshot? : Option (Lean.Language.Lean.InitialSnapshot → IO Unit)) :
+    IO (Lean.Parser.InputContext × ProcessedModule) := do
+  let full : IO (Lean.Parser.InputContext × ProcessedModule) := do
+    recordCount "candidate_reimport" 1
+    let run ← processSource setup text sourcePath (loadDynlibs := false)
+    if let some track := trackSnapshot? then track run.snapshot
+    return (run.input, ProcessedModule.ofInitial run.snapshot)
+  if trackSnapshot?.isSome then return ← full
+  let some (_, headerState) := original.start? | return ← full
+  let input := Lean.Parser.mkInputContext text sourcePath.toString
+  let (header, parserState, headerMessages) ← Lean.Parser.parseHeader input
+  if headerMessages.hasErrors then return ← full
+  -- `setupImports` reads `setup.imports?` first and only falls back to the header, so a setup that
+  -- carries imports makes both runs load the same list whatever either header says.
+  let originalHeader : Lean.Elab.HeaderSyntax := ⟨original.headerStx⟩
+  let candidateHeader : Lean.Elab.HeaderSyntax := header
+  unless setup.imports?.isSome
+      || Lean.Elab.HeaderSyntax.imports candidateHeader
+        == Lean.Elab.HeaderSyntax.imports originalHeader do
+    return ← full
+  unless Lean.Elab.HeaderSyntax.isModule candidateHeader
+      == Lean.Elab.HeaderSyntax.isModule originalHeader do
+    return ← full
+  recordCount "candidate_import_reuse" 1
+  let first := (← Lean.Language.Lean.processCommands input parserState headerState).get
+  return (input, {
+    headerStx := header.raw
+    headerMessages
+    tree := Lean.Language.toSnapshotTree first
+    start? := some (first, headerState) })
+
+/- Convert one completed frontend run into the product's semantic envelope.
+Incremental processing changes only where the run came from, never how formatter facts are
 derived. -/
 private unsafe def analyzeSnapshot (setup : Lean.ModuleSetup) (source : String)
     (sourcePath : System.FilePath) (input : Lean.Parser.InputContext)
-    (snapshot : Lean.Language.Lean.InitialSnapshot) (captureSemantic : Bool := false)
+    (module : ProcessedModule) (captureSemantic : Bool := false)
     (captureOccurrences : Bool := false) (captureComments : Bool := false)
     (captureFormatDraft : Bool := false) (validateFormatDraft : Bool := false)
     (formatWidth : Nat := 100)
-    (trackSnapshot : Lean.Language.Lean.InitialSnapshot → IO Unit := fun _ => pure ())
+    (trackSnapshot? : Option (Lean.Language.Lean.InitialSnapshot → IO Unit) := none)
     (checkCancelled : IO Unit := pure ()) :
     IO AnalysisEnvelope := do
-  trackSnapshot snapshot
   checkCancelled
   let options := Lean.Elab.async.setIfNotSet setup.options.toOptions true
-  let tree := Lean.Language.toSnapshotTree snapshot
-  let messages := tree.getAll.map (·.diagnostics.msgLog) |>.foldl (· ++ ·) {}
-  let some commandState := Lean.Language.Lean.waitForFinalCmdState? snapshot
+  let tree := module.tree
+  let messages := module.messages
+  let some commandState := module.finalCmdState?
     | return ← broken messages
   if messages.hasErrors then
     return ← broken messages
-  let (liveCommands, terminal?) ← processedLiveCommands snapshot checkCancelled
+  let (liveCommands, terminal?) ← module.liveCommands checkCancelled
   checkCancelled
   let commands := liveCommands.map (·.stx)
   -- Semantic rule facts are captured only under rule demand. The whole-file occurrence
@@ -431,7 +518,7 @@ private unsafe def analyzeSnapshot (setup : Lean.ModuleSetup) (source : String)
   let needsDraft := captureFormatDraft || validateFormatDraft
   let ownership? := if captureComments || needsDraft then
       let suppressed := (Suppression.collect projection normalizedSource).directives.map (·.scopeRange)
-      some <| Comments.build normalizedSource snapshot.stx commands terminal? suppressed
+      some <| Comments.build normalizedSource module.headerStx commands terminal? suppressed
     else none
   let commentSummary? := if captureComments then
       ownership?.map (Comments.summary normalizedSource)
@@ -440,7 +527,7 @@ private unsafe def analyzeSnapshot (setup : Lean.ModuleSetup) (source : String)
       let some ownership := ownership?
         | throw <| IO.userError "format draft has no comment ownership"
       match ← buildFormatDraft normalizedSource projection sourcePath input.fileMap ownership
-          snapshot.stx commandState.env options liveCommands formatWidth checkCancelled with
+          module.headerStx commandState.env options liveCommands formatWidth checkCancelled with
       | .ok draft => pure (some draft, none)
       | .error failure => pure (none, some failure)
     else pure (none, none)
@@ -453,11 +540,12 @@ private unsafe def analyzeSnapshot (setup : Lean.ModuleSetup) (source : String)
           | none => pure (none, some {
               gate := .formatter
               detail := "format draft was not produced" })
-      let candidateRun ← processSource setup first.text sourcePath (loadDynlibs := false)
+      let (candidateInput, candidateModule) ←
+        candidateFrontend setup module first.text sourcePath trackSnapshot?
       checkCancelled
-      let candidate ← analyzeSnapshot setup first.text sourcePath candidateRun.input
-        candidateRun.snapshot (captureFormatDraft := true) (formatWidth := formatWidth)
-        (trackSnapshot := trackSnapshot) (checkCancelled := checkCancelled)
+      let candidate ← analyzeSnapshot setup first.text sourcePath candidateInput
+        candidateModule (captureFormatDraft := true) (formatWidth := formatWidth)
+        (trackSnapshot? := trackSnapshot?) (checkCancelled := checkCancelled)
       if !candidate.diagnostics.isEmpty then
         pure (none, some {
           gate := .diagnostics
@@ -492,8 +580,9 @@ unsafe def analyzeExact (setup : Lean.ModuleSetup) (source : String)
     (captureFormatDraft : Bool := false) (validateFormatDraft : Bool := false)
     (formatWidth : Nat := 100) (loadDynlibs : Bool := true) : IO AnalysisEnvelope := do
   let run ← processSource setup source sourcePath (loadDynlibs := loadDynlibs)
-  analyzeSnapshot setup source sourcePath run.input run.snapshot captureSemantic captureOccurrences
-    captureComments captureFormatDraft validateFormatDraft formatWidth
+  analyzeSnapshot setup source sourcePath run.input (ProcessedModule.ofInitial run.snapshot)
+    captureSemantic captureOccurrences captureComments captureFormatDraft validateFormatDraft
+    formatWidth
 
 structure IncrementalCounters where
   updates : Nat := 0
@@ -546,8 +635,8 @@ private unsafe def cancelSnapshot (snapshot : Lean.Language.Lean.InitialSnapshot
   (Lean.Language.toSnapshotTree snapshot).children.forM (·.cancelRec)
 
 private unsafe def sharedCommandPrefix (old new : Lean.Language.Lean.InitialSnapshot) : IO Nat := do
-  let before := (← processedLiveCommands old).1
-  let after := (← processedLiveCommands new).1
+  let before := (← (ProcessedModule.ofInitial old).liveCommands).1
+  let after := (← (ProcessedModule.ofInitial new).liveCommands).1
   let rec loop (i : Nat) : Nat :=
     match before[i]?, after[i]? with
     | some oldCommand, some newCommand =>
@@ -600,9 +689,12 @@ private unsafe def IncrementalAnalyzer.run (analyzer : IncrementalAnalyzer)
       throw <| IO.userError "incremental analysis cancelled"
   trackSnapshot run.snapshot
   let envelope ← try
-      analyzeSnapshot setup source sourcePath run.input run.snapshot captureSemantic
-        captureOccurrences captureComments captureFormatDraft validateFormatDraft formatWidth
-        trackSnapshot checkCancelled
+      -- A tracked candidate is the reason this path keeps a full frontend run for it: the analyzer
+      -- must be able to cancel a superseded analysis, and only a snapshot `processSource` produced
+      -- can be cancelled.
+      analyzeSnapshot setup source sourcePath run.input (ProcessedModule.ofInitial run.snapshot)
+        captureSemantic captureOccurrences captureComments captureFormatDraft validateFormatDraft
+        formatWidth (some trackSnapshot) checkCancelled
     catch error =>
       if ← cancelRef.get then
         pure { artifact? := none, diagnostics := #["analysis cancelled"] }
