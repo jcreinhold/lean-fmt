@@ -1600,7 +1600,13 @@ private def processOneTarget (exactRun : ExactRun) (request : RunRequest)
               let artifactEnvelope? ← try
                   some <$> exactRun.artifactEnvelope snapshot artifact mod.oleanFile
                     snapshot.config.format.lineWidth
-                catch _ => pure none
+                catch error =>
+                  -- Falling through elaborates the source as well as the candidate, so it costs
+                  -- strictly more than the artifact path that just failed. Spend that only on
+                  -- reasons about this artifact. A run out of memory would refuse the heavier child
+                  -- too, for a second child's price, and a cancelled request must stay cancelled.
+                  if cancelled? error || envelopeExhausted? error then throw error
+                  pure none
               match artifactEnvelope? with
               | some envelope => canonicalAnalysis snapshot true envelope (artifactRender := true)
               | none =>
