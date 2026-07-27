@@ -79,10 +79,14 @@ require «lean-fmt» from git
 ```
 
 ```sh
+lake update «lean-fmt»   # add it to the manifest
 lake exe lean-fmt check --root .
 ```
 
-To make `lake lint` run it, two lines in your package:
+If your project keeps intentionally non-compiling files (linter fixtures, draft notes), lean-fmt reports them
+`broken`; exclude them in `.lean-fmt.toml` (`docs/configuration.md`).
+
+To make `lake lint` run it, two lines in your package (a package has one lint driver; if you already have one, keep it and run `lake exe lean-fmt check` as a separate step instead):
 
 ```lean
 package myproject where
