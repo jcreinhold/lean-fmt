@@ -145,7 +145,7 @@ structure SemanticCaps where
 
 /-- `demanded ⊆ provided`: every demanded capability is present in the entry. Total (never
 `satisfies`-style partial), so it composes with `Tier.satisfies` as a plain conjunction in
-`cacheHitServes`. -/
+`analysisServes`. -/
 def SemanticCaps.subset (demanded provided : SemanticCaps) : Bool :=
   !demanded.occurrences || provided.occurrences
 

@@ -724,7 +724,8 @@ def withExactRun (project : Project.Snapshot) (workers : Nat := 1)
   finally
     IO.FS.removeDirAll temporary
 
-/-- The demand half of the shared cache decision.
+/-- Does an analysis in hand answer what this run demands? Asked of a cache hit and of an analysis
+just projected from a module artifact — the same question, so it must have one answer.
 
 This *is* `Cache.Decision.Provided.meets`, the function `LeanFmt.Cache.Spec` proves `demand_met`
 about. It used to be a separate reimplementation here, and the model knew nothing of two of its
@@ -732,8 +733,8 @@ three clauses — so `serves_complete` was proved about a decision more permissi
 running. The clauses are documented on `Provided.meets` itself, next to the definition.
 
 The other half, `Entry.identityCurrent`, runs in `LeanFmt.Cache`, which is where digests can be
-observed. `Cache.Decision.serves` is their conjunction and is the whole decision. -/
-private def cacheHitServes (requiredTier : Tier) (demandedCaps : SemanticCaps) (renderCanonical : Bool)
+observed. `Cache.Decision.serves` is their conjunction and is the whole cache decision. -/
+private def analysisServes (requiredTier : Tier) (demandedCaps : SemanticCaps) (renderCanonical : Bool)
     (analysis : SemanticAnalysis) : Bool :=
   (providedOf analysis).meets
     { tier := requiredTier, caps := demandedCaps, renderCanonical := renderCanonical }
@@ -742,9 +743,9 @@ private def availableAnalysis (plan : RulePlan) (renderCanonical applies : Bool)
     (evidence : Project.ModuleEvidence)
     (snapshot : SourceSnapshot) (cached? : Option SemanticAnalysis)
     (officialArtifact? : Option ModuleArtifact) : IO (Option SemanticAnalysis) := do
+  let demandedCaps := plan.demandedCaps applies
   if let some analysis := cached? then
-    if cacheHitServes plan.requiredTier (plan.demandedCaps applies) renderCanonical
-        analysis then
+    if analysisServes plan.requiredTier demandedCaps renderCanonical analysis then
       return some analysis
   if plan.requiredTier == .source && !renderCanonical && evidence == .current
       && !Suppression.mayContainDirective snapshot.source then
@@ -776,7 +777,18 @@ private def availableAnalysis (plan : RulePlan) (renderCanonical applies : Bool)
     -- `--select` costs one artifact read, never a second frontend pass. A rendering run declines
     -- above (`renderCanonical`) and elaborates the source: the artifact carries a projection, not a
     -- layout, and rendering it under one post-import environment measured both slower and wrong.
-    return some (← canonicalAnalysis snapshot renderCanonical { artifact? := some artifact })
+    --
+    -- The projection is checked against the demand by the same predicate a cache hit answers to.
+    -- A build-produced artifact carries no compiler diagnostics, so it projects at `.syntax`; when
+    -- it went unchecked a `--select FMT012` on a module with a current facet reported **clean**
+    -- while the same selection with `LEAN_FMT_DISABLE_ARTIFACT=1` reported the deprecation.
+    -- `runRules` drops every semantic rule when the facts are `.syntax` (`Rules.lean`), so the
+    -- silence was total and nothing downstream could notice.
+    let analysis ← canonicalAnalysis snapshot renderCanonical { artifact? := some artifact }
+    if analysisServes plan.requiredTier demandedCaps renderCanonical analysis then
+      return some analysis
+    recordCount "artifact_tier_miss" 1
+    return none
   else
     return none
 
@@ -1200,7 +1212,7 @@ private def prepareFile (plan : RulePlan) (renderCanonical unsafeFixes : Bool)
   let (base, baseFindings) :=
     match (if renderCanonical then result.canonical? else none) with
     -- Layout patch: reflow only, no rule fix. `canonical?` is populated for any rendering run
-    -- (`cacheHitServes`/`availableAnalysis` guarantee it), so a rendering run never falls to the fix arm.
+    -- (`analysisServes`/`availableAnalysis` guarantee it), so a rendering run never falls to the fix arm.
     | some canonical => (canonical.text, (#[] : Array Finding))
     -- Fix patch (`fix`) / report patch (`check`): admitted fixes on the file's own bytes.
     | none => (normalized, selected)
@@ -1692,7 +1704,7 @@ def execute (request : RunRequest) : IO RunOutcome := do
   -- whether a stored result answers it, never the batch union.
   let indexHits := cached.foldl (init := 0) fun n c? => if c?.isSome then n + 1 else n
   let cached := (cached.zip plans).map fun (cached?, plan) =>
-    cached?.filter (cacheHitServes plan.requiredTier (plan.demandedCaps applies)
+    cached?.filter (analysisServes plan.requiredTier (plan.demandedCaps applies)
       renderCanonical)
   -- `index_hits` counts entries the index answered with; `served` counts those that survived
   -- the tier/caps demotion above. They differ exactly when a stored result cannot answer this

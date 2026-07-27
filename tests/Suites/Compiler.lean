@@ -12,9 +12,10 @@ import Lake
 Port of `tests/compiler/run.sh`. The `leanFmtArtifact` facet's contract, end to end against the
 main workspace: the declared JSON artifact is verified against the module-owned payload in the
 exact `.olean`; a syntax-tier selection answered from the artifact matches the frontend's answer
-without spawning one; corruption is a counted exact fallback; a rule's prose edit invalidates
-nothing while a plugin-binary edit invalidates through Lake's plugin dependency; and a failed
-elaboration publishes nothing.
+without spawning one, and a semantic selection declines it rather than reporting a false clean;
+corruption is a counted exact fallback; a rule's prose edit invalidates nothing while a
+plugin-binary edit invalidates through Lake's plugin dependency; and a failed elaboration publishes
+nothing.
 
 The four `lean-fmt-tests` subcommands this suite used to spawn (`verify-plugin-artifact`,
 `verify-facet-artifact`, `verify-official-facet`, `print-lake-hash`) are called in-process here —
@@ -134,6 +135,42 @@ private unsafe def testArtifactSyntaxRules (ctx : Ctx) : IO Unit := do
     s!"the artifact selection spawned a frontend child\n{artifactRun.stderr}"
   ensure ((exactRun.stderr.splitOn "\n").any (·.startsWith "phase.exact_child_ms="))
     s!"the forced-exact selection had no frontend work to avoid\n{exactRun.stderr}"
+
+/-- A semantic selection must not be answered from a build artifact. The plugin records syntax and
+never the compiler's diagnostics, so the projection reaches `.syntax` facts, and `runRules` drops
+every semantic rule when the facts are `.syntax` — silently, with nothing downstream able to notice.
+Unchecked, this reported **clean**: measured, `check --preview --select FMT012` on a module with a
+current facet found nothing while the same selection under `LEAN_FMT_DISABLE_ARTIFACT=1` found the
+deprecation. The projection now answers the same demand predicate a cache hit does, so a `.syntax`
+artifact misses a `.semantic` selection and the frontend runs.
+
+The probe declarations are appended and removed here rather than committed to the fixture: every
+other case reads `ArtifactLayout` for its layout, and a deprecation warning is not layout. -/
+private unsafe def testArtifactTierMiss (ctx : Ctx) : IO Unit := do
+  let fixture := ctx.root / "tests" / "compiler" / "ArtifactLayout.lean"
+  let backup ← IO.FS.readFile fixture
+  let select := #["check", "--no-cache", "--preview", "--select", "FMT012",
+    "tests/compiler/ArtifactLayout.lean"]
+  let profiled := lakeEnv ++ #[("LEAN_FMT_PROFILE_PHASES", some "1")]
+  try
+    writeFile fixture (backup ++ "\npublic def tierProbeNew : Nat := 1\n\
+      @[deprecated tierProbeNew (since := \"2024-01-01\")]\npublic def tierProbeOld : Nat := 0\n\
+      public def tierProbeUse : Nat := tierProbeOld\n")
+    lakeBuild ctx #["+ArtifactLayout:leanFmtArtifact"] "tier-probe facet build"
+    let served ← runProc ctx.application select (cwd? := some ctx.root) (env := profiled)
+    let forced ← runProc ctx.application select (cwd? := some ctx.root)
+      (env := profiled ++ #[("LEAN_FMT_DISABLE_ARTIFACT", some "1")])
+    ensureEq "the semantic selection reported nothing with the artifact present" 1 forced.exitCode
+    ensureEq "an artifact-served semantic selection disagreed with the frontend"
+      forced.stdout served.stdout
+    -- The artifact was found and then declined: a run that never looked would also agree here.
+    profileStat served.stderr "cache.official_artifact_hit=1" "tier miss"
+    profileStat served.stderr "cache.artifact_tier_miss=1" "tier miss"
+    ensure ((served.stderr.splitOn "\n").any (·.startsWith "phase.exact_child_ms="))
+      s!"the declined artifact did not fall through to the frontend\n{served.stderr}"
+  finally
+    writeFile fixture backup
+    lakeBuild ctx #["+ArtifactLayout:leanFmtArtifact"] "tier-probe facet restore"
 
 /-- Corruption is a counted exact fallback, not a rebuild, partial result, or hard failure. -/
 private unsafe def testCorruptArtifactFallback (ctx : Ctx) : IO Unit := do
@@ -324,6 +361,7 @@ private unsafe def testBrokenModuleNoPublish (ctx : Ctx) : IO Unit := do
 private unsafe def earlyCases (ctx : Ctx) : Array Case := #[
   { name := "facet-build-and-verify", run := testFacetBuildAndVerify ctx },
   { name := "artifact-syntax-rules", run := testArtifactSyntaxRules ctx },
+  { name := "artifact-tier-miss", run := testArtifactTierMiss ctx },
   { name := "corrupt-artifact-fallback", run := testCorruptArtifactFallback ctx },
   { name := "mixed-selection", run := testMixedSelection ctx },
   { name := "extractor-exact-olean", run := testExtractorExactOlean ctx },

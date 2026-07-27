@@ -837,7 +837,7 @@ def RulePlan.selectsOccurrenceRule (plan : RulePlan) : Bool :=
 the one capability that gates the whole-file info-tree fold.
 
 The `occurrences` demand keys off `applies` (true only for `fix`). A check does not pay the fold.
-`cacheHitServes` serves a `.semantic` entry only when `demandedCaps.subset entry.caps`, so a fix's
+`analysisServes` serves a `.semantic` entry only when `demandedCaps.subset entry.caps`, so a fix's
 `occurrences` demand misses a report-only check entry that never captured it. -/
 def RulePlan.demandedCaps (plan : RulePlan) (applies : Bool) : SemanticCaps :=
   if plan.demandedTier == .semantic then

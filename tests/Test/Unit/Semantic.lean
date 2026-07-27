@@ -208,7 +208,7 @@ private def testSemanticCaps : IO Unit := do
   -- A full entry serves every demand; the demand serves itself.
   ensure (SemanticCaps.subset occ all && SemanticCaps.subset occ occ) "occurrences demand not served by an entry that has it"
   -- The load-bearing miss: an occurrences demand against a report-only entry is not a subset, so
-  -- `cacheHitServes` recomputes rather than serving a false clean.
+  -- `analysisServes` recomputes rather than serving a false clean.
   ensure (!SemanticCaps.subset occ cheap && !SemanticCaps.subset occ {})
     "a fixable-FMT012 demand was (wrongly) served by an entry that captured no occurrences"
   -- The empty demand is served by an occurrence-bearing entry (superset), orthogonal to the tier.

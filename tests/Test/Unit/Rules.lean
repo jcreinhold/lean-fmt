@@ -406,7 +406,7 @@ private def testEngineTiers : IO Unit := do
   -- (FMT012–FMT015) shipped, so the registry now spans the whole lattice. The seams that
   -- once assumed it was uniformly source-tier are all tier-aware: `ofArtifact?` tags its cache entry
   -- with the tier the facts reached (`.semantic` for a demanded artifact, else `.syntax`) and the
-  -- source-only shortcut tags `.source`, and `cacheHitServes` serves an entry only when
+  -- source-only shortcut tags `.source`, and `analysisServes` serves an entry only when
   -- `result.tier.satisfies plan.requiredTier` — so a narrow shortcut entry cannot answer a syntax or
   -- semantic `--select`. This asserts the shape: all three tiers now ship.
   ensure (ruleRegistry.any (·.tier == .source) && ruleRegistry.any (·.tier == .syntax) &&

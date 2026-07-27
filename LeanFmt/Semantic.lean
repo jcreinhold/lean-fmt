@@ -50,7 +50,7 @@ def semanticResultSchema : String := "lean-fmt.semantic-result.v13"
 `suppression` defaults empty for the source-only shortcut; `ofArtifact?` passes the collected facts.
 `tier` records which facts produced `findings` — `.source` for the shortcut (source rules only),
 `.syntax` for the artifact/exact path (whole registry over the projection) — so a narrow shortcut entry
-cannot serve a run that selects a syntax rule (`cacheHitServes`). -/
+cannot serve a run that selects a syntax rule (`analysisServes`). -/
 def SemanticAnalysis.success (normalized : String) (findings : Array Finding)
     (tier : Tier := .source) (suppression : SuppressionFacts := {})
     (caps : SemanticCaps := {}) : SemanticAnalysis := {
@@ -125,7 +125,7 @@ def SemanticAnalysis.ofArtifact? (raw : String) (artifact? : Option ModuleArtifa
       -- facts and the result is tagged `.semantic`, complete for any run (monolithic capture,
       -- §6). An artifact without the projection runs the
       -- source/syntax registry against `.syntax` facts and is tagged `.syntax`, exactly as before —
-      -- a `.syntax` entry then misses a `.semantic` selection through `cacheHitServes` rather than
+      -- a `.syntax` entry then misses a `.semantic` selection through `analysisServes` rather than
       -- reporting a false clean. The caps a `.semantic` entry provides are the projection's own
       -- (`diagnostics` always, `occurrences` iff the info-tree fold ran); a syntax entry provides
       -- none. `occurrences` flow into the facts so the owned FMT012 rule can attach its rename fix —
