@@ -466,14 +466,17 @@ private def ResultCache.closureDigests (cache : ResultCache) (project : Project.
     let missing := wanted.filter fun name => !known.contains name.toString
     let mut known := known
     if !missing.isEmpty then
-      let resolved ← withPhase "closure_resolve" <| Project.importClosures? project.workspace missing
-      let byName := resolved.foldl (init := Std.HashMap.emptyWithCapacity resolved.size)
-        fun map (name, closure) => map.insert name.toString closure
+      -- The unresolved closure stays `none` here, and this caller misses. Folding it to `#[]`, as
+      -- FMT004 legitimately does with the same fact, would read as "nothing to check" — a
+      -- *permissive* answer, and a stale hit is the one direction currency must never degrade
+      -- toward. The producer returns the honest `Option` so each caller states its own direction.
+      let facts ← withPhase "closure_resolve" <|
+        Project.graph project.workspace #[] missing { closures := true }
       for name in missing do
         -- The closure Lake reports is the module's *imports*. Its own artifacts belong in
         -- the digest too: its own `.olean` is what carries the projection being served, so a
         -- rebuild of the module itself must move the key even when nothing it imports changed.
-        let closure := (byName[name.toString]?.getD none).map (·.push name)
+        let closure := (facts.imports[name]?.getD none).map (·.push name)
         -- Precise when the closure resolves and every member's trace reads; otherwise the
         -- conservative whole-workspace digest rather than a permanent miss. See `fallback` below.
         let digest? ← withPhase "closure_hash" <|

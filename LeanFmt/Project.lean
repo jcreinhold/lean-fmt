@@ -335,97 +335,131 @@ def isCurrent {α : Type} (workspace : Lake.Workspace)
     discard <| IO.setStdout stdout
     discard <| IO.setStderr stderr
 
-/- Run one shared Lake no-build graph and recover one status per module. Lake's public runner only
-returns aggregate success; the exact-toolchain `import all` boundary lets this private capability
-await the typed jobs without parsing monitor output or showing callers a lifecycle. -/
-private def batchModuleStatuses (workspace : Lake.Workspace)
-    (modules : Array Lake.Module) : IO (Array Bool) := do
-  let registeredJobs ← Lake.mkJobQueue
-  let context ← Lake.mkBuildContext' workspace { noBuild := true } registeredJobs
-  let computation : Lake.Job (Lake.Job (Array Bool)) ← Lake.Workspace.startBuild context do
-    let jobs ← modules.mapM fun mod => do
-      let job ← mod.olean.fetch
+/- `noBuildValue?`'s question, awaited so that one job's failure stays at its own position.
+
+`monitorBuild` cannot do that. It returns `.error "build failed"` whenever `MonitorResult.isOk` is
+false (`Lake/Build/Run.lean:333`), and `isOk` is `failures.isEmpty` (`:218-219`) over failures
+`reportJob` accumulates for *every* registered job (`:129`) — so one failure outranks every per-job
+`mapResult` and zeroes the batch. Awaiting the collection directly keeps the `mapResult` meaningful.
+Measured on the artifact facet over `ArtifactLayout` (built) plus `Main` (never built):
+`monitorBuild` gave hit=0/miss=2, this gives hit=1/miss=1.
+
+No buffer swap, and none needed: with no monitor there is no `reportJob` and no `log.replay`, so a
+job's log never reaches the caller's streams. `noBuildValue?` needs the swap only because it runs a
+monitor.
+
+`finalizeBuild` is not called here either — under `noBuild` it turns staleness into
+`IO.Process.exit` (`:367-368`), which no `catch` below it survives. Staleness is a `none`. -/
+private def noBuildValuePerJob? {α : Type} (workspace : Lake.Workspace)
+    (build : Lake.FetchM (Lake.Job α)) : IO (Option α) := do
+  try
+    let jobs ← Lake.mkJobQueue
+    let bctx ← Lake.mkBuildContext' workspace { noBuild := true, verbosity := .quiet } jobs
+    let computation ← Lake.Workspace.startBuild bctx build
+    let job ← match ← computation.wait with
+      | .ok job _ => pure job
+      | .error _ _ => return none
+    match ← job.wait with
+    | .ok value _ => return some value
+    | .error _ _ => return none
+  catch _ =>
+    return none
+
+/-- What a run wants from one Lake graph.
+
+Every field is a traversal cost, so absent means *do not fetch*, never "fetch and discard". -/
+structure Demand where
+  /-- Is each target's module up to date? -/
+  status : Bool := false
+  /-- What does each name in `extraImports` transitively import? -/
+  closures : Bool := false
+
+/-- What one graph could say about one target.
+
+A `none` is always "the graph could not produce this", never a substituted default. Which direction
+a `none` degrades toward is the *caller's* judgement, made where the consequence is visible:
+`moduleEvidence` degrades toward `needsFrontend` and `ResultCache.closureDigests` toward a miss,
+and both would be wrong if the other's default were built in here. -/
+structure TargetFacts where
+  private mk ::
+  /-- `some false` is an answer, not a failure: under `noBuild` a failed `olean` fetch *is* "not up
+  to date". `none` means the target is not a workspace module, or the traversal itself failed. -/
+  current? : Option Bool := none
+  deriving Inhabited
+
+structure GraphFacts where
+  private mk ::
+  /-- Aligned index-for-index with the `targets` argument, always. -/
+  targets : Array TargetFacts
+  /-- Keyed by the names passed as `extraImports`. A name absent from the map is not a workspace
+  library module; a name mapping to `none` is one whose closure the graph could not resolve. -/
+  imports : Std.HashMap Lean.Name (Option (Array Lean.Name))
+
+/-- One no-build Lake graph for a whole selection.
+
+**Why one.** This replaces operations that each built their own `Lake.BuildContext` and ran their
+own traversal — a per-module status probe and two import-closure fetches that differed in one line.
+A `BuildStore` is created per `startBuild`, not per context, so separate traversals share no
+memoized node: `mod.input`, `mod.importInfo` and `mod.transImports` were recomputed once per
+operation. One duplicated probe alone cost 3,676 ms and 3,663 ms over this repository's 34 modules —
+the same work twice, for 16% of a cold run.
+
+**Why no monitor.** Per-target isolation is the point: one module that cannot resolve must not zero
+the other 126. `monitorBuild` cannot give it, for the reason `noBuildValuePerJob?` records.
+
+**Closure keys resolve through `Workspace.findModule?`, never a target's own `module?`.**
+`findModule?` searches libraries. An executable root such as `Main` *is* a `Lake.Module` but has no
+resolvable closure, which is why `ResultCache.closureDigests` gives such targets the conservative
+whole-workspace digest. Resolving them from `module?` would silently re-key every such entry. -/
+def graph (workspace : Lake.Workspace) (targets : Array SourceTarget)
+    (extraImports : Array Lean.Name := #[]) (demand : Demand := {}) : IO GraphFacts := do
+  let blank : GraphFacts := {
+    targets := Array.replicate targets.size {}
+    imports := Std.HashMap.emptyWithCapacity 0
+  }
+  let statusModules : Array (Option Lake.Module) :=
+    if demand.status then targets.map (·.module?)
+    else Array.replicate targets.size none
+  let closureModules : Array (Lean.Name × Lake.Module) :=
+    if demand.closures then
+      extraImports.filterMap fun name => (workspace.findModule? name).map (name, ·)
+    else #[]
+  -- Nothing to ask is not the same as asking and failing: skip the traversal entirely rather than
+  -- pay a build context to answer an empty question.
+  if statusModules.all Option.isNone && closureModules.isEmpty then
+    return blank
+  let build : Lake.FetchM
+      (Lake.Job (Array (Option Bool) × Array (Option (Array Lean.Name)))) := do
+    let statusJobs ← statusModules.mapM fun mod? => do
+      match mod? with
+      | none => return Lake.Job.pure (α := Option Bool) none
+      | some mod =>
+        let job ← mod.olean.fetch
+        return job.mapResult fun
+          | .ok _ state => .ok (some true) state
+          | .error _ state => .ok (some false) state
+    let closureJobs ← closureModules.mapM fun (_, mod) => do
+      let job ← mod.transImports.fetch
       return job.mapResult fun
-        | .ok _ state => .ok true state
-        | .error _ state => .ok false state
-    return Lake.Job.collectArray jobs "lean-fmt module evidence"
-  let statusesJob ← match ← computation.wait with
-    | .ok job _ => pure job
-    | .error _ _ => throw <| IO.userError "could not construct module evidence"
-  match ← statusesJob.wait with
-  | .ok statuses _ => return statuses
-  | .error _ _ => throw <| IO.userError "could not collect module evidence"
-
-/- For each name in `names` that resolves to a workspace module, the set of module names it
-transitively imports, fetched from one shared no-build Lake graph — never one build context per file.
-This is the graph fact FMT004 (redundant import) consumes; a `RuleImpl` cannot fetch it
-(`Rules.lean:17-19`), so this produces it and the application threads it into the finding set.
-
-The `startBuild`/`wait` pattern matches `batchModuleStatuses`: it is *not* `runBuild`, so an out-of-date
-target cannot trigger the `noBuild` process-exit (`finalizeBuild` → `IO.Process.exit`, which only fires
-under `runBuild`). A fetch that errors under `noBuild` — the closure would need a build to resolve —
-maps to the empty closure, a graceful miss: FMT004 then never reports a redundancy *through* that
-import. That can only lose a report (report-only anyway), never fabricate one. A name absent from the
-workspace is simply omitted. -/
-def importClosures (workspace : Lake.Workspace) (names : Array Lean.Name) :
-    IO (Array (Lean.Name × Array Lean.Name)) := do
-  let resolved := names.filterMap fun name =>
-    (workspace.findModule? name).map fun mod => (name, mod)
-  if resolved.isEmpty then return #[]
-  let registeredJobs ← Lake.mkJobQueue
-  let context ← Lake.mkBuildContext' workspace { noBuild := true } registeredJobs
-  let computation : Lake.Job (Lake.Job (Array (Array Lean.Name))) ←
-    Lake.Workspace.startBuild context do
-      let jobs ← resolved.mapM fun (_, mod) => do
-        let job ← mod.transImports.fetch
-        return job.mapResult fun
-          | .ok mods state => .ok (mods.map (·.name)) state
-          | .error _ state => .ok #[] state
-      return Lake.Job.collectArray jobs "lean-fmt import closures"
-  let closuresJob ← match ← computation.wait with
-    | .ok job _ => pure job
-    | .error _ _ => throw <| IO.userError "could not construct import closures"
-  let closures ← match ← closuresJob.wait with
-    | .ok closures _ => pure closures
-    | .error _ _ => throw <| IO.userError "could not collect import closures"
-  return (resolved.zip closures).map fun ((name, _), closure) => (name, closure)
-
-/- The same graph fact as `importClosures`, but with the failure distinguished from the empty answer.
-
-`importClosures` maps a failed fetch to `#[]`, which is right for FMT004: an unresolvable closure
-there loses at most one report-only redundancy finding and can never fabricate one. It is **wrong for
-cache currency**, where the closure decides what must be compared. An empty closure means "nothing to
-check", so folding the error into `#[]` would turn an unknown answer into a *permissive* one — a
-stale hit, the one direction currency must never degrade toward.
-
-So this returns `none` for a module whose closure could not be resolved, and the caller misses. The
-two operations stay separate rather than one calling the other, because they differ in which failure
-direction is safe, and that is a per-caller judgement no flag should be able to flip.
-
-A name absent from the workspace is omitted from the result entirely; `closureDigest?` treats a
-missing entry as `none` for the same reason. -/
-def importClosures? (workspace : Lake.Workspace) (names : Array Lean.Name) :
-    IO (Array (Lean.Name × Option (Array Lean.Name))) := do
-  let resolved := names.filterMap fun name =>
-    (workspace.findModule? name).map fun mod => (name, mod)
-  if resolved.isEmpty then return #[]
-  let registeredJobs ← Lake.mkJobQueue
-  let context ← Lake.mkBuildContext' workspace { noBuild := true } registeredJobs
-  let computation : Lake.Job (Lake.Job (Array (Option (Array Lean.Name)))) ←
-    Lake.Workspace.startBuild context do
-      let jobs ← resolved.mapM fun (_, mod) => do
-        let job ← mod.transImports.fetch
-        return job.mapResult fun
-          | .ok mods state => .ok (some (mods.map (·.name))) state
-          | .error _ state => .ok none state
-      return Lake.Job.collectArray jobs "lean-fmt currency closures"
-  let closuresJob ← match ← computation.wait with
-    | .ok job _ => pure job
-    | .error _ _ => throw <| IO.userError "could not construct currency closures"
-  let closures ← match ← closuresJob.wait with
-    | .ok closures _ => pure closures
-    | .error _ _ => throw <| IO.userError "could not collect currency closures"
-  return (resolved.zip closures).map fun ((name, _), closure) => (name, closure)
+        | .ok mods state => .ok (some (mods.map (·.name))) state
+        | .error _ state => .ok none state
+    let statuses := Lake.Job.collectArray statusJobs "lean-fmt module evidence"
+    let closures := Lake.Job.collectArray closureJobs "lean-fmt import closures"
+    -- `zipWith` errors if either side errors, which is exactly why every per-target job above is
+    -- `mapResult`-ed to `.ok` first: neither collection can fail, so the pair cannot either.
+    return statuses.zipWith (·, ·) closures
+  match ← withPhase "lake_graph" <| noBuildValuePerJob? workspace build with
+  | none => return blank
+  | some (statuses, closures) =>
+    -- A short array would silently mis-pair facts with targets, which is worse than no batch.
+    if statuses.size != statusModules.size || closures.size != closureModules.size then
+      return blank
+    return {
+      targets := targets.zipIdx.map fun (_, index) => { current? := statuses[index]! }
+      imports := (closureModules.zip closures).foldl
+        (init := Std.HashMap.emptyWithCapacity closureModules.size)
+        fun map ((name, _), closure) => map.insert name closure
+    }
 
 /-- The trace file Lake writes for a workspace module, or `none` if the name is not a workspace
 module. Cache currency reads recorded trace facts; it does not resolve imports. -/
@@ -445,11 +479,9 @@ def moduleOutputPaths? (workspace : Lake.Workspace) (name : Lean.Name) : Option 
 def moduleEvidence (snapshot : Snapshot) : IO (Array ModuleEvidence) := do
   if (← IO.getEnv "LEAN_FMT_TEST_DISABLE_MODULE_EVIDENCE") == some "1" then
     return Array.replicate snapshot.targets.size .needsFrontend
-  let modules := snapshot.targets.filterMap (·.module?)
-  let statuses ← batchModuleStatuses snapshot.workspace modules
-  let mut moduleIndex := 0
+  let facts ← graph snapshot.workspace snapshot.targets (demand := { status := true })
   let mut evidence := #[]
-  for target in snapshot.targets do
+  for (target, index) in snapshot.targets.zipIdx do
     match target.module? with
     | none =>
       if target.path.fileName == some "lakefile.lean" then
@@ -465,9 +497,10 @@ def moduleEvidence (snapshot : Snapshot) : IO (Array ModuleEvidence) := do
       else
         evidence := evidence.push .needsFrontend
     | some _ =>
-      let current := statuses[moduleIndex]!
-      moduleIndex := moduleIndex + 1
-      evidence := evidence.push (if current then .current else .needsFrontend)
+      -- `needsFrontend` is the safe direction for a module the graph could not speak for: it costs
+      -- an elaboration, where `current` would serve a projection of stale compiled output.
+      evidence := evidence.push
+        (if facts.targets[index]!.current? == some true then .current else .needsFrontend)
   return evidence
 
 private def setupJob (target : SourceTarget) : Lake.FetchM (Lake.Job Lean.ModuleSetup) := do
@@ -524,36 +557,6 @@ def noBuildValue? {α : Type} (workspace : Lake.Workspace)
     discard <| IO.setStderr stderr
     recordDuration "nobuild_context" (← contextNanos.get)
     recordDuration "nobuild_fetch" (← fetchNanos.get)
-
-/- `noBuildValue?`'s question, awaited so that one job's failure stays at its own position.
-
-`monitorBuild` cannot do that. It returns `.error "build failed"` whenever `MonitorResult.isOk` is
-false (`Lake/Build/Run.lean:333`), and `isOk` is `failures.isEmpty` (`:218-219`) over failures
-`reportJob` accumulates for *every* registered job (`:129`) — so one failure outranks every per-job
-`mapResult` and zeroes the batch. Awaiting the collection directly, as `batchModuleStatuses` does,
-keeps the `mapResult` meaningful. Measured on the artifact facet over `ArtifactLayout` (built) plus
-`Main` (never built): `monitorBuild` gave hit=0/miss=2, this gives hit=1/miss=1.
-
-No buffer swap, and none needed: with no monitor there is no `reportJob` and no `log.replay`, so a
-job's log never reaches the caller's streams. `batchModuleStatuses` has relied on that in production
-all along. `noBuildValue?` needs the swap only because it runs a monitor.
-
-`finalizeBuild` is not called here either — under `noBuild` it turns staleness into
-`IO.Process.exit` (`:367-368`), which no `catch` below it survives. Staleness is a `none`. -/
-def noBuildValuePerJob? {α : Type} (workspace : Lake.Workspace)
-    (build : Lake.FetchM (Lake.Job α)) : IO (Option α) := do
-  try
-    let jobs ← Lake.mkJobQueue
-    let bctx ← Lake.mkBuildContext' workspace { noBuild := true, verbosity := .quiet } jobs
-    let computation ← Lake.Workspace.startBuild bctx build
-    let job ← match ← computation.wait with
-      | .ok job _ => pure job
-      | .error _ _ => return none
-    match ← job.wait with
-    | .ok value _ => return some value
-    | .error _ _ => return none
-  catch _ =>
-    return none
 
 /- Every target's setup job in one collection, so one graph traversal answers the whole batch.
 Each job's own failure becomes a `none` at that position rather than failing the collection: one

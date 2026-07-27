@@ -183,6 +183,29 @@ private def testLakeTraceCharacterization : IO Unit := do
   ensure (checked > 0)
     "no (importer, importee) pair was checked; the deps.imports shape may have changed"
 
+/-- An unresolved closure and an empty one are different answers, and currency must not confuse
+them.
+
+`Project.graph` returns the honest `Option`, and its two consumers degrade it in opposite
+directions: FMT004 takes `.getD #[]`, because losing a closure there loses at most one report-only
+redundancy; currency keeps the `none` and misses, because an empty closure reads as "nothing to
+check" — a *permissive* answer, and a stale hit is the one direction currency must never degrade
+toward. Two producers used to enforce that by existing separately; one producer plus this case is
+the stronger statement, because a future caller now has to write `.getD #[]` where a reviewer sees
+it.
+
+Nothing pinned this before. Folding `none` to `#[]` inside `closureDigest?` passes every other
+cache case in this file. -/
+private def testClosureDegradationDirection : IO Unit := do
+  let memo ← IO.mkRef ({} : Std.HashMap String MemberFact)
+  let workspace ← Project.loadWorkspace (← IO.currentDir)
+  let unresolved ← closureDigest? workspace memo none
+  ensure unresolved.isNone
+    "an unresolved import closure produced a digest; currency would hit on unknown grammar"
+  let empty ← closureDigest? workspace memo (some #[])
+  ensure empty.isSome
+    "an empty import closure produced no digest; a module importing nothing cannot be cached"
+
 private def testStore : IO Unit := do
   let artifact := fixtureArtifact
   ensure (structurallyValid artifact) "valid module artifact was rejected"
@@ -237,6 +260,7 @@ private def testStore : IO Unit := do
 public def cases : Array Case := #[
   { name := "testCacheIdentity", run := testCacheIdentity },
   { name := "testLakeTraceCharacterization", run := testLakeTraceCharacterization },
+  { name := "testClosureDegradationDirection", run := testClosureDegradationDirection },
   { name := "testStore", run := testStore }]
 
 end LeanFmt.Test.Unit.Cache

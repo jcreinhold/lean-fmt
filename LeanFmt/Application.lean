@@ -1132,8 +1132,8 @@ private def singleImportReport (plan : RulePlan) (workspace : Lake.Workspace)
   | none => return (#[], 0)
   | some header =>
     let closureOf ← if plan.selected.contains "FMT004" then
-        let pairs ← Project.importClosures workspace (headerImportNames header)
-        pure fun name => (pairs.find? (·.1 == name)).map (·.2)
+        let facts ← Project.graph workspace #[] (headerImportNames header) { closures := true }
+        pure fun name => facts.imports[name]?.map (·.getD #[])
       else pure fun _ => none
     return importFindingsOfHeader plan closureOf header normalized
 
@@ -1156,8 +1156,11 @@ private def computeImportReports (plans : Array RulePlan) (workspace : Lake.Work
         | some header => (headerImportNames header).foldl (init := acc) fun acc name =>
             if acc.contains name then acc else acc.push name
         | none => acc
-      let pairs ← Project.importClosures workspace names
-      pure fun name => (pairs.find? (·.1 == name)).map (·.2)
+      -- `.getD #[]` is FMT004's degradation, written where its consequence is visible: an
+      -- unresolvable closure loses at most one report-only redundancy and can never fabricate one.
+      -- Cache currency makes the opposite choice on the same fact; see `closureDigests`.
+      let facts ← Project.graph workspace #[] names { closures := true }
+      pure fun name => facts.imports[name]?.map (·.getD #[])
     else pure fun _ => none
   return (headers.zip plans).map fun ((normalized, header?), plan) =>
     match header? with
