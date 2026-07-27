@@ -301,7 +301,7 @@ private def usage (color : Bool) (width : Nat) : String :=
     let styled :=
       if line.startsWith "lean-fmt " then
         paintLiteral color "lean-fmt" ++ paintMeta color (line.drop "lean-fmt".length).toString
-      else paintMeta color line.trimLeft
+      else paintMeta color line.trimAsciiStart.toString
     (if i == 0 then paintHeader color "usage:" ++ " " else "       ") ++ styled
   String.intercalate "\n" usageBlock.toList ++ "\n\n" ++
   renderHelpSection color width "file options:" helpFileOptions ++ "\n\n" ++
