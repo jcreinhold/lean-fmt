@@ -499,11 +499,17 @@ reusing an elaboration only under `eqWithInfo`, positions included; what is reus
 context, not an elaboration result, which is why the weaker equality is the right one.
 
 Every deviation is an `.error` carrying a counter tag, never a verdict. The caller then runs the real
-candidate frontend, so a candidate this refuses is judged exactly as it was before. -/
+candidate frontend, so a candidate this refuses is judged exactly as it was before.
+
+The candidate's *own* header syntax comes back with the commands, not the original's. `structEq`
+ignores source info, which is the point here and a trap next door: the original's header carries
+positions into the original bytes, and comment ownership and the header render both read positions.
+Handing them the original's header over the candidate's text puts two coordinate systems in one
+draft. -/
 private def reparseCandidate (text : String) (sourcePath : System.FilePath)
     (headerStx : Lean.Syntax) (commands : Array LiveCommand) (terminal : LiveCommand)
     (checkCancelled : IO Unit := pure ()) :
-    IO (Except String (Array LiveCommand × LiveCommand)) := do
+    IO (Except String (Lean.Syntax × Array LiveCommand × LiveCommand)) := do
   let input := Lean.Parser.mkInputContext text sourcePath.toString
   let (header, parserState, headerMessages) ← Lean.Parser.parseHeader input
   if headerMessages.hasErrors then return .error "header_parse"
@@ -528,7 +534,7 @@ private def reparseCandidate (text : String) (sourcePath : System.FilePath)
   -- Also how a candidate with *more* commands than the original is caught: an ordinary command
   -- parsed where the terminal belongs is not `structEq` to it.
   unless stx.structEq terminal.stx do return .error "terminal"
-  return .ok (reparsed, { terminal with stx })
+  return .ok (header.raw, reparsed, { terminal with stx })
 
 /-- Elaborate the candidate draft, starting from this run's imports when the draft asks for the same
 ones.
@@ -656,13 +662,14 @@ private unsafe def analyzeSnapshot (setup : Lean.ModuleSetup) (source : String)
             checkCancelled
       checkCancelled
       match reparsed with
-      | .ok (candidateCommands, candidateTerminal) =>
+      | .ok (candidateHeader, candidateCommands, candidateTerminal) =>
         recordCount "candidate_reparse" 1
-        -- The candidate's own text decides its coordinates, so its own input context supplies the
-        -- file map. Its final environment is the original's: that is what the induction concluded.
+        -- The candidate's own text decides its coordinates, so its own header, commands, and file
+        -- map are what lay it out. Its final environment is the original's: that is what the
+        -- induction concluded.
         let candidateInput := Lean.Parser.mkInputContext candidateText sourcePath.toString
         let (candidateProjection, second?) ← projectAndRender setup.name.toString candidateText
-          sourcePath candidateInput.fileMap module.headerStx commandState.env options
+          sourcePath candidateInput.fileMap candidateHeader commandState.env options
           candidateCommands candidateTerminal formatWidth checkCancelled
         match second? with
         | .error failure => pure (none, some { gate := .formatter, detail := failure.detail })
