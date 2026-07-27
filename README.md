@@ -45,6 +45,8 @@ lean-fmt format --root .    # format files in place, atomically
 Other commands: `format` (print formatted source), `rules`, `lsp` (language server), `compiler setup`/`status` (plugin),
 `clean` (remove cache). `lean-fmt <command> --help` lists every flag.
 
+Batch runs show a tqdm-style progress line on stderr when it is a terminal; pipes and `--json` never see it.
+
 Results are cached in `.lean-fmt-cache/`; a warm run where nothing changed skips the Lean frontend entirely.
 `--no-cache` disables it. `--max-memory GIB` caps total memory (default 8); `--workers N` parallelizes cold runs over
 many files (results identical at any N, but the memory budget divides among workers).
