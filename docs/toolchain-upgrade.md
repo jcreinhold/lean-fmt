@@ -38,9 +38,8 @@ an internal this product happens to depend on, and the checklist exists because 
    - the style suite — the golden candidate at widths 20/40/80/100.
    - the lossless suite — projection tiling and the `choice` gate.
    - the module-formatter suite — the `#exit` verbatim tail.
-   - the compiler and downstream suites — the plugin, the facet, and artifact/exact route agreement.
-     Lake's `plugins` field is experimental and its target-key syntax has changed more than once; re-check it on every
-     bump.
+   - the compiler and downstream suites — the plugin, the facet, and artifact/exact route agreement. Lake's `plugins`
+     field is experimental and its target-key syntax has changed more than once; re-check it on every bump.
    - the lsp suite, then lsp-acceptance and editor — protocol, cancellation latency, and the editor stanza in
      `docs/editor-setup.md`.
    Run them with `lake test -- --suites native-layout style lossless module-formatter compiler downstream lsp

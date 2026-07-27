@@ -1,8 +1,8 @@
 # Canonical Lean style
 
 `lean-fmt` has one style. Configuration chooses the line width (100 by default), not a family of competing layouts. The
-formatter derives layout from parsed structure and the active Lean environment; it does not preserve source alignment
-or keep a database of preferred source spellings.
+formatter derives layout from parsed structure and the active Lean environment; it does not preserve source alignment or
+keep a database of preferred source spellings.
 
 The executable policy rows live in `tests/style/matrix.json`. Their IDs appear below so an implementation cannot
 silently omit or rename a decision.
@@ -56,8 +56,8 @@ notation declaration breaks only at parsed child boundaries, never by splitting 
 def map (f : α → β) (xs : List α) : List β := xs.map f
 ```
 
-When it does not fit, binders stay in order on owner-relative continuation lines, the result type is a composable
-group, and a broken value starts two spaces below `:=`:
+When it does not fit, binders stay in order on owner-relative continuation lines, the result type is a composable group,
+and a broken value starts two spaces below `:=`:
 
 ```lean
 def map
@@ -169,5 +169,5 @@ acts as unsupported-syntax fallback.
 `registry.custom` assigns layout to the live registered formatter under the environment and options that parsed the
 file. That is not a rule for imported syntax alone: one adapter drives every command, so project syntax and core syntax
 reach the same authority, and nothing keys layout on a kind name, a quoted atom, or a canonical-rewrite table. lean-fmt
-owns what surrounds those documents — the module stream, comments, and the alignment and offside constraints a
-candidate must satisfy before admission. A registry-owned unbreakable atom may exceed the width.
+owns what surrounds those documents — the module stream, comments, and the alignment and offside constraints a candidate
+must satisfy before admission. A registry-owned unbreakable atom may exceed the width.

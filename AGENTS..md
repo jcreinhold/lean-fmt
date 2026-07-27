@@ -33,16 +33,16 @@ lake test -- --suites modes watch   # exactly these suites, slow or not
 lake lint            # the formatter on itself, under lean-fmt.toml
 ```
 
-Suites are compiled Lean executables: `tests/Suites/<Name>.lean` builds as `suite-<name>`, and `tests/Test/Runner.lean`'s
-registry enumerates them with their lane. Enumerate the registry, not a list in prose — an unregistered suite file fails
-the boundary suite's entry-point pin. The current set: application-formatter, block-formatter, boundary, cache, catalog,
-check, ci, collection-formatter, command-formatter, comments, compiler, declaration-formatter, discovery, downstream,
-editor, format-suppression, formatter, formatter-adapter, imports, incremental, layout, lossless, lsp, lsp-acceptance,
-modes, module-formatter, native-layout, performance, reporting, scale, security-bench, semantic, stream, style,
-suppression, syntax, term-formatter, validator, watch.
+Suites are compiled Lean executables: `tests/Suites/<Name>.lean` builds as `suite-<name>`, and
+`tests/Test/Runner.lean`'s registry enumerates them with their lane. Enumerate the registry, not a list in prose — an
+unregistered suite file fails the boundary suite's entry-point pin. The current set: application-formatter,
+block-formatter, boundary, cache, catalog, check, ci, collection-formatter, command-formatter, comments, compiler,
+declaration-formatter, discovery, downstream, editor, format-suppression, formatter, formatter-adapter, imports,
+incremental, layout, lossless, lsp, lsp-acceptance, modes, module-formatter, native-layout, performance, reporting,
+scale, security-bench, semantic, stream, style, suppression, syntax, term-formatter, validator, watch.
 
-Each suite's module docstring carries its notes: what it pins, which defect records the
-assertions come from, and what a failure means. Read those first when a suite fails.
+Each suite's module docstring carries its notes: what it pins, which defect records the assertions come from, and what a
+failure means. Read those first when a suite fails.
 
 Match the checks to the change:
 
@@ -63,9 +63,9 @@ Match the checks to the change:
   before running it, or it tests the previous commit and passes while your change is broken.
 - `watch`'s staged-empty case runs `check --staged` against *this* repository, so it fails whenever a `.lean` file is
   staged. Re-run it with a clean index.
-- Two suites keep foreign adversaries on purpose: `validator` and `formatter` pipe through `tests/formatter/candidate.py`,
-  `style` through `tests/style/expected_candidate.py`, and `editor` drives `tests/lsp/editor.lua` — the real `vim.lsp`,
-  not a Lean model of it. Do not port those.
+- Two suites keep foreign adversaries on purpose: `validator` and `formatter` pipe through
+  `tests/formatter/candidate.py`, `style` through `tests/style/expected_candidate.py`, and `editor` drives
+  `tests/lsp/editor.lua` — the real `vim.lsp`, not a Lean model of it. Do not port those.
 
 Use the target project's exact Lean toolchain for frontend and plugin experiments. Keep experiments out of production
 modules until their interface is selected and verified.
@@ -83,8 +83,7 @@ When records disagree, this is the order of authority:
 - A measurement has a date, not authority — regenerate rather than argue.
 
 If two records disagree, write down the disagreement and how you settled it. Design rationale that is not recoverable
-from code or tests is gone — when you cannot find why something is the way it is, say so rather than
-inventing a reason.
+from code or tests is gone — when you cannot find why something is the way it is, say so rather than inventing a reason.
 
 ## Design constraints
 

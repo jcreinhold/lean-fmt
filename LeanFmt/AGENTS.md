@@ -7,8 +7,8 @@ Rules for the library modules. The root `CLAUDE.md` owns the product constraints
 `LeanFmt/Cache/Spec.lean` proves the currency decision sound and complete. `lake build` builds it, so a broken proof
 fails the build. The axiom audit does not run in the build.
 
-After you change `Cache/Spec.lean` or `Cache/Decision.lean`, run `#print axioms` over the theorems and review the output; a new assumption will not announce itself. Do not mark a claim verified on the old
-record.
+After you change `Cache/Spec.lean` or `Cache/Decision.lean`, run `#print axioms` over the theorems and review the
+output; a new assumption will not announce itself. Do not mark a claim verified on the old record.
 
 Do not commit `sorry`, `admit`, or a new `axiom`.
 

@@ -1,10 +1,17 @@
 # Running lean-fmt in CI
 
-`README.md` §"Using lean-fmt in another project" covers taking `lean-fmt` as a dependency. This document covers running it in CI: the recipes, what may be cached between runs, and what pinning and upgrading change.
+`README.md` §"Using lean-fmt in another project" covers taking `lean-fmt` as a dependency. This document covers running
+it in CI: the recipes, what may be cached between runs, and what pinning and upgrading change.
 
-The ci suite keeps these recipes honest. It builds a consuming project that takes lean-fmt as a git dependency, with real commit history, and runs all four recipes, the cache instruction, and a `git archive` install against it. If a recipe here stops working, that suite fails.
+The ci suite keeps these recipes honest. It builds a consuming project that takes lean-fmt as a git dependency, with
+real commit history, and runs all four recipes, the cache instruction, and a `git archive` install against it. If a
+recipe here stops working, that suite fails.
 
-What it does **not** cover: the workflow YAML around the commands. Every `lean-fmt` and `lake` invocation below is executed by the suite, but the step ordering, `hashFiles`, `$GITHUB_OUTPUT`, `permissions`, and the `actions/cache` key are checked against `lean-action`'s `action.yml` and GitHub's documented syntax rather than run on a runner — uploading to code scanning is remote state this repository's test suite will not touch. Treat the shell as tested and the YAML as reviewed.
+What it does **not** cover: the workflow YAML around the commands. Every `lean-fmt` and `lake` invocation below is
+executed by the suite, but the step ordering, `hashFiles`, `$GITHUB_OUTPUT`, `permissions`, and the `actions/cache` key
+are checked against `lean-action`'s `action.yml` and GitHub's documented syntax rather than run on a runner — uploading
+to code scanning is remote state this repository's test suite will not touch. Treat the shell as tested and the YAML as
+reviewed.
 
 ## Exit codes are the whole interface
 
@@ -269,9 +276,9 @@ package name, not resolution in general. `git diff lake-manifest.json` is the ch
 
 Expect three things to change:
 
-1. **New or changed findings.** A new or widened rule reports on source that passed before.
-   `lake exe lean-fmt rules` lists what is active; `lean-fmt explain RULE` says what one does. Pin selection explicitly
-   (`[lint] select`) if a job must not acquire new rules on upgrade.
+1. **New or changed findings.** A new or widened rule reports on source that passed before. `lake exe lean-fmt rules`
+   lists what is active; `lean-fmt explain RULE` says what one does. Pin selection explicitly (`[lint] select`) if a job
+   must not acquire new rules on upgrade.
 2. **A cold cache.** The binary changes, so every entry is orphaned. The first run after an upgrade pays full cost —
    expected, not a regression.
 3. **Nothing about your source.** `check` and `diff` never write. Only `format` and `fix` do, and only when you run

@@ -39,19 +39,19 @@ the default-run budget — kept it off the default path. Do not mark a rule `.pr
 means *unjudged*, not *costly*.
 
 **A `.preview` rule must set `previewPath?` to a nonempty string, and a non-preview rule must leave it `none`.**
-`testCatalogInvariants` enforces both directions; the build fails otherwise. Write the condition that would graduate
-the rule, concretely enough that someone could test it:
+`testCatalogInvariants` enforces both directions; the build fails otherwise. Write the condition that would graduate the
+rule, concretely enough that someone could test it:
 
 ```lean
     previewPath? := some "Graduates when it produces at least 10 audited true positives with zero \
       false positives on a corpus with no `set_option` linter of its own. …"
 ```
 
-Naming the corpus matters. Ten preview rules ran over 85 mathlib modules and eight never fired — mathlib
-runs its own linters for most of what they check. That measured which rules mathlib already enforces, not which rules
-are correct; a graduation condition that does not say where the evidence comes from invites the same mistake. The
-string is shown by `lean-fmt explain`, in `docs/rules/FMTxxx.md`, and in the JSON, because a path out of preview that
-lives only in a result note is a rule nobody will revisit.
+Naming the corpus matters. Ten preview rules ran over 85 mathlib modules and eight never fired — mathlib runs its own
+linters for most of what they check. That measured which rules mathlib already enforces, not which rules are correct; a
+graduation condition that does not say where the evidence comes from invites the same mistake. The string is shown by
+`lean-fmt explain`, in `docs/rules/FMTxxx.md`, and in the JSON, because a path out of preview that lives only in a
+result note is a rule nobody will revisit.
 
 `Rule.tier` derives from `impl`, so there is no tier field to keep in sync and no way to declare one tier and read
 another. That is deliberate: the field that used to do this (`RuleInfo.input`) was a claim nothing had to honor, and it
@@ -85,9 +85,9 @@ Pick the cheapest one that answers your question. `RulePlan.requiredTier` folds 
 it never picks a worker, a cache identity, or a schedule.
 
 `SemanticFacts` carries the `SyntaxFacts`, the captured `Diagnostic`s in normalized-source coordinates, and
-`occurrences`, the deprecation-occurrence facts. `occurrences` is empty unless the run demanded that
-capability, and an empty array means *no fix to offer* — a semantic rule must stay report-only on empty rather than
-treat it as "nothing found".
+`occurrences`, the deprecation-occurrence facts. `occurrences` is empty unless the run demanded that capability, and an
+empty array means *no fix to offer* — a semantic rule must stay report-only on empty rather than treat it as "nothing
+found".
 
 ## Coordinates
 
@@ -95,8 +95,8 @@ treat it as "nothing found".
 assigning any position, so this is the coordinate system every projection, finding, and digest in the product already
 shares. `SourceFacts.bytes` is the normalized source as UTF-8, derived once and shared across rules.
 
-Do not measure against the file's bytes. Reading and publishing a file are the only operations that touch raw bytes,
-and they go through `LosslessSource.normalize`/`denormalize`.
+Do not measure against the file's bytes. Reading and publishing a file are the only operations that touch raw bytes, and
+they go through `LosslessSource.normalize`/`denormalize`.
 
 A `fix?` is a `Fix`: one `applicability` and an array of `edits`, each a byte range and a replacement in those same
 coordinates. `preparePatch` rejects ranges that are out of bounds, split a UTF-8 scalar, or conflict with another fix —
@@ -109,8 +109,8 @@ A rule need not carry a fix. `fixable := false` and `impl := .source fun facts =
 `fix? := none` ships a **report-only** rule: it names a problem the formatter cannot correct by reformatting. `FMT001`
 (forbidden control byte) and `FMT002` (suspicious bidirectional control) are the shipped examples — both scan bytes in
 the `security` category. Report-only is the honest choice when the offending byte sits inside a string literal or a
-comment: deleting it changes program data or human-read text, which no byte-level safety argument can call safe (see
-the source-rule catalog in `LeanFmt/Rules.lean`). When there is no meaning-preserving edit, emit no fix rather than an
+comment: deleting it changes program data or human-read text, which no byte-level safety argument can call safe (see the
+source-rule catalog in `LeanFmt/Rules.lean`). When there is no meaning-preserving edit, emit no fix rather than an
 `.unsafe` one nobody should apply.
 
 These two rules also show why a `.source` scan needs no token context: a bare control byte or bidi mark in the command
@@ -128,14 +128,14 @@ Every fix declares how safe it is to apply, following ruff's `Applicability`:
 | `.displayOnly` | illustrates the finding; never meant to be applied | never |
 
 "Safe" is a claim under your rule's evidence, tied to its tier — never merely "it reparses". A `.syntax`-tier rewrite
-that moves tokens is not safe unless the projection proves meaning is preserved. When in doubt, choose `.unsafe`: a
-user opts into it, and a later rule revision can promote it once the evidence exists.
+that moves tokens is not safe unless the projection proves meaning is preserved. When in doubt, choose `.unsafe`: a user
+opts into it, and a later rule revision can promote it once the evidence exists.
 
 The old trailing-whitespace rule is the warning here, and it argued exactly the way a new rule will want to. It edited
 "trivia the lexer cannot see", which sounds safe and is not: a per-line trailing-whitespace scan reaches inside a
 multi-line string literal, where those bytes are program data. Line-boundary and final-newline normalization moved into
-canonical formatting and the rule was retired. Before calling a fix safe, name the bytes it can reach, not the bytes
-you meant it to reach.
+canonical formatting and the rule was retired. Before calling a fix safe, name the bytes it can reach, not the bytes you
+meant it to reach.
 
 Set applicability on the `Fix` you emit; do **not** read configuration to decide it. `extend-safe-fixes` and
 `extend-unsafe-fixes` reclassify per rule, resolved in `RulePlan.effectiveApplicability` as a projection over your
@@ -178,17 +178,16 @@ rule, you have crossed the boundary; the boundary suite will stop you.
   asserts category selectors (`--select security`) and `testSuppression` that the codes project through suppression like
   any other.
 - `testApplicability` covers admission, per-rule reclassification, the display-only limit, and where a conflict came
-  from. If your rule ships an `.unsafe` or `.displayOnly` fix, assert its applicability there and add a
-  `--unsafe-fixes` case to the modes suite.
-- All three tiers ship. The first `.syntax` rules (FMT006–FMT011) and the first `.semantic`
-  ones (FMT012–FMT015) are present. `check` reports a rule of any tier, and `fix` applies a syntax fix by re-projecting the
-  canonical text.
+  from. If your rule ships an `.unsafe` or `.displayOnly` fix, assert its applicability there and add a `--unsafe-fixes`
+  case to the modes suite.
+- All three tiers ship. The first `.syntax` rules (FMT006–FMT011) and the first `.semantic` ones (FMT012–FMT015) are
+  present. `check` reports a rule of any tier, and `fix` applies a syntax fix by re-projecting the canonical text.
   `SemanticResult.tier` and `cacheHitServes` gate the result cache, so a source-only shortcut entry never answers a
   `.syntax` or `.semantic` selection with a false negative. `testEngineTiers` asserts that the registry still holds all
   three.
-- `testEngineTiers` and `testMixedSelection` exercise the engine itself through `runRulesOf` and `requiredTierOf`,
-  which take a rule array so the tests can register probe rules without shipping fake ones. Test engine behavior through
-  that array; test your rule through `ruleRegistry`.
+- `testEngineTiers` and `testMixedSelection` exercise the engine itself through `runRulesOf` and `requiredTierOf`, which
+  take a rule array so the tests can register probe rules without shipping fake ones. Test engine behavior through that
+  array; test your rule through `ruleRegistry`.
 
 ## Where the reasoning lives
 

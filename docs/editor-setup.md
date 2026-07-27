@@ -1,8 +1,8 @@
 # Editor setup
 
 `lean-fmt lsp` speaks the Language Server Protocol over stdio. It offers formatting, range formatting,
-formatting-derived code actions, and diagnostics — and nothing else. It runs *alongside* Lean's own language server,
-not instead of it.
+formatting-derived code actions, and diagnostics — and nothing else. It runs *alongside* Lean's own language server, not
+instead of it.
 
 ```sh
 lake build
@@ -28,9 +28,9 @@ that asks to change either is told to restart, rather than served from a setup i
 
 **A formatted range is usually wider than the range you selected.** Formatting is command-granular: the request widens
 to the layout units it touches, and the edit that comes back replaces *that* range. Selecting three lines in the middle
-of a declaration reformats the declaration. Repeated range formatting is a fixed point in output coordinates, not in
-the coordinates you asked in — so a client that re-sends its original range after applying an edit may see the region
-move again.
+of a declaration reformats the declaration. Repeated range formatting is a fixed point in output coordinates, not in the
+coordinates you asked in — so a client that re-sends its original range after applying an edit may see the region move
+again.
 
 **A trailing comment belongs to the declaration above it.** A comment on the line after a declaration is part of that
 declaration's layout unit, not the next one's. This shows in an editor in a way it does not in a pipeline: a range

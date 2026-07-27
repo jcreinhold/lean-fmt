@@ -2,7 +2,11 @@
 
 A formatter and linter for Lean 4.
 
-The formatter rewrites Lean source into one canonical style (`docs/style.md`); the line width is the only setting. Before any output is reported or written, the result is re-parsed and checked token-for-token against the original — anything that fails is refused, never shipped. The linter adds rules on top (duplicate and redundant imports, unused variables, stray `set_option`s, bidirectional control characters), some with automatic fixes. `lean-fmt rules` lists them.
+The formatter rewrites Lean source into one canonical style (`docs/style.md`); the line width is the only setting.
+Before any output is reported or written, the result is re-parsed and checked token-for-token against the original —
+anything that fails is refused, never shipped. The linter adds rules on top (duplicate and redundant imports, unused
+variables, stray `set_option`s, bidirectional control characters), some with automatic fixes. `lean-fmt rules` lists
+them.
 
 ## Installation
 
@@ -12,7 +16,8 @@ The formatter rewrites Lean source into one canonical style (`docs/style.md`); t
 curl -sSfL https://raw.githubusercontent.com/jcreinhold/lean-fmt/main/install.sh | sh
 ```
 
-`PREFIX` and `VERSION` override the install prefix and the release. No Windows build; on Windows use the Lake dependency below.
+`PREFIX` and `VERSION` override the install prefix and the release. No Windows build; on Windows use the Lake dependency
+below.
 
 **From source** (`PREFIX=/usr/local` to override, `DESTDIR` to stage):
 
@@ -22,7 +27,8 @@ cd lean-fmt
 make install
 ```
 
-With elan on `PATH`, the first build installs the pinned toolchain. At runtime `lean-fmt` uses the *target* project's Lean toolchain. `make uninstall` removes what `make install` placed.
+With elan on `PATH`, the first build installs the pinned toolchain. At runtime `lean-fmt` uses the *target* project's
+Lean toolchain. `make uninstall` removes what `make install` placed.
 
 ## Quick start
 
@@ -33,11 +39,15 @@ lean-fmt diff --root .      # preview formatting changes
 lean-fmt format --root .    # format files in place, atomically
 ```
 
-`check`, `format`, and `diff` never write files; `fix` is the only writer. Exit `0` clean, `1` findings, `2` failure. `--json` prints one JSON object on stdout; statistics go to stderr.
+`check`, `format`, and `diff` never write files; `fix` is the only writer. Exit `0` clean, `1` findings, `2` failure.
+`--json` prints one JSON object on stdout; statistics go to stderr.
 
-Other commands: `format` (print formatted source), `rules`, `lsp` (language server), `compiler setup`/`status` (plugin), `clean` (remove cache). `lean-fmt <command> --help` lists every flag.
+Other commands: `format` (print formatted source), `rules`, `lsp` (language server), `compiler setup`/`status` (plugin),
+`clean` (remove cache). `lean-fmt <command> --help` lists every flag.
 
-Results are cached in `.lean-fmt-cache/`; a warm run where nothing changed skips the Lean frontend entirely. `--no-cache` disables it. `--max-memory GIB` caps total memory (default 8); `--workers N` parallelizes cold runs over many files (results identical at any N, but the memory budget divides among workers).
+Results are cached in `.lean-fmt-cache/`; a warm run where nothing changed skips the Lean frontend entirely.
+`--no-cache` disables it. `--max-memory GIB` caps total memory (default 8); `--workers N` parallelizes cold runs over
+many files (results identical at any N, but the memory budget divides among workers).
 
 ## Configuration
 
@@ -54,11 +64,14 @@ select = ["all"]
 ignore = ["FMT004"]
 ```
 
-The config file **closest** to each source file governs it; configs do not merge. Git ignore files are honored. Unknown keys and rule codes are errors. `lean-fmt config show PATH` prints the effective settings for a file and where each came from. Full reference: `docs/configuration.md`.
+The config file **closest** to each source file governs it; configs do not merge. Git ignore files are honored. Unknown
+keys and rule codes are errors. `lean-fmt config show PATH` prints the effective settings for a file and where each came
+from. Full reference: `docs/configuration.md`.
 
 ## Using lean-fmt in another project
 
-To run lean-fmt as part of a Lake build, add the dependency (built from source; the first run takes minutes, then Lake's cache makes it free):
+To run lean-fmt as part of a Lake build, add the dependency (built from source; the first run takes minutes, then Lake's
+cache makes it free):
 
 ```lean
 require «lean-fmt» from git
@@ -79,18 +92,21 @@ package myproject where
 
 (Guillemets required in both halves — `lean-fmt` is not a legal Lean identifier.)
 
-An optional compiler plugin speeds up the syntax-dependent rules; findings are identical without it. Setup, costs, and CI recipes: `docs/ci.md`.
+An optional compiler plugin speeds up the syntax-dependent rules; findings are identical without it. Setup, costs, and
+CI recipes: `docs/ci.md`.
 
 ## Editors
 
-`lean-fmt lsp` is a language server offering formatting, range formatting, code actions, and diagnostics, alongside Lean's own server. Setup for VS Code, Neovim, and Emacs: `docs/editor-setup.md`.
+`lean-fmt lsp` is a language server offering formatting, range formatting, code actions, and diagnostics, alongside
+Lean's own server. Setup for VS Code, Neovim, and Emacs: `docs/editor-setup.md`.
 
 ## More
 
 - `docs/style.md` — the canonical style, including `format-ignore-next` suppression.
 - `docs/adding-a-rule.md` — writing a lint rule.
 - `docs/toolchain-upgrade.md` — maintainer checklist for toolchain bumps.
-- `docs/configuration.md` — config discovery, selection gates, streaming and ranges, memory and workers, cache internals.
+- `docs/configuration.md` — config discovery, selection gates, streaming and ranges, memory and workers, cache
+  internals.
 
 ## Developing
 

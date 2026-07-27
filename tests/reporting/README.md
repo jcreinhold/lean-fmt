@@ -1,7 +1,6 @@
 # Reporting format tests
 
-`run.sh` exercises the machine-readable report formats. The frozen contract is the format
-section of `docs/ci.md`.
+`run.sh` exercises the machine-readable report formats. The frozen contract is the format section of `docs/ci.md`.
 
 ## Vendored schema
 
@@ -30,6 +29,6 @@ Both arrive through `uv run --with`, so the suite needs no system package.
 ## Fixtures
 
 `Unicode.lean` puts multi-byte characters before a finding, so a byte column and a codepoint column disagree (byte 31
-versus codepoint 27 on line 8). Cases needing a hostile path or CRLF bytes go through `--stdin-filename`, which was frozen as an identity
-that need not exist — a repository cannot track a file named
-`dir,with:punct/Buffer.lean`, and git will not preserve a CRLF fixture on disk.
+versus codepoint 27 on line 8). Cases needing a hostile path or CRLF bytes go through `--stdin-filename`, which was
+frozen as an identity that need not exist — a repository cannot track a file named `dir,with:punct/Buffer.lean`, and git
+will not preserve a CRLF fixture on disk.
