@@ -269,7 +269,14 @@ private def testChildBudget (ctx : Ctx) : IO Unit := do
 /-- `--workers` changes scheduling, never output: the parallel run assembles results by target
 index, so its report is byte-identical to the serial run's. Three fixtures with three different
 outcomes exercise the fold over every report shape; the env vars force every fixture through a
-real frontend child, so the comparison cannot pass vacuously. -/
+real frontend child, so the comparison cannot pass vacuously.
+
+The `--workers 4` arm and the failure count guard against a parent that refuses a file for the memory
+it holds. The clause that once did this counted each child's shared `.olean` mapping in full and then
+split it between workers, so the number of workers decided which files got analyzed at all. Four
+workers over three fixtures also asks for more workers than there are targets. These fixtures import
+little, so the count catches only a gross regression; the corpus that exposed the original defect —
+187 of 200 mathlib files refused at `--workers 8` — is not a fixture here. -/
 private def testWorkersDeterminism (ctx : Ctx) : IO Unit := do
   let files := #["tests/check/Clean.lean", "tests/check/Findings.lean", "tests/check/Layout.lean"]
   let serial ← checkRaw ctx 1
@@ -278,6 +285,13 @@ private def testWorkersDeterminism (ctx : Ctx) : IO Unit := do
     (#["check", "--root", ".", "--json", "--no-cache", "--workers", "2"] ++ files) "parallel"
     (env := fallbackEnv)
   ensureEq "--workers changed the report" serial.stdout parallel.stdout
+  let oversubscribed ← checkRaw ctx 1
+    (#["check", "--root", ".", "--json", "--no-cache", "--workers", "4"] ++ files) "oversubscribed"
+    (env := fallbackEnv)
+  ensureEq "--workers 4 changed the report" serial.stdout oversubscribed.stdout
+  let report ← parseJson oversubscribed.stdout "oversubscribed"
+  ensureJsonAt report [.field "infrastructureFailures"] (.arr #[])
+    "--workers 4 refused a file the serial run analyzed"
   -- A repeated run over the artifact path is byte-identical too.
   let repeated ← checkRaw ctx 1 #["check", "--root", ".", "--json", "--no-cache",
     "tests/check/Findings.lean"] "repeated"

@@ -59,15 +59,20 @@ canonical bytes, so it misses entries recorded at another width.
 
 ## Memory and parallelism
 
-`--max-memory GIB` sets a total memory budget for the run (default: 8). A frontend child gets what the parent can grant
-— the budget minus what the parent already holds — so an exhausted run refuses the affected files by name rather than
-swapping.
+`--max-memory GIB` sets the heap budget a frontend child is granted (default: 8). A child gets what the parent can grant
+— the budget minus what the parent already holds, divided among workers — and installs it as its own limit, so a run
+that genuinely needs more refuses the affected files by name rather than swapping.
+
+It bounds Lean's heap, not the process's resident size. A child that imports mathlib maps gigabytes of `.olean` on top
+of that budget; those pages are shared between children, clean, and reclaimable, and counting them would refuse work
+that never approached real memory pressure. Measured on a mathlib-scale corpus: a child's peak physical footprint was
+173 MiB against 2.05 GiB of RSS.
 
 `--workers N` (batch commands) runs N frontend children in parallel. Output is assembled in file order, so results are
-byte-identical at any N — but the budget divides among workers, so a file that fits under one worker may be refused
-under four. Use `--workers` for cold runs of many files that fit the divided share; keep 1 for import-heavy files or
-small budgets. Measured on this repository's 40-file cold run at `--max-memory 8`: two workers are byte-identical to one
-at 1.9× the speed; four divide the shares below the ~2 GiB the largest analyses need.
+byte-identical at any N — but the heap budget divides among workers, so a file that needs more heap than an Nth may be
+refused under `--workers N`. Measured on this repository's 40-file cold run at `--max-memory 8`: two workers are
+byte-identical to one at 1.9× the speed. On a mathlib project, a 17-file cold `format` went 21.5 s at one worker to 9.5
+s at four and 7.2 s at eight.
 
 ## Streaming and ranges
 

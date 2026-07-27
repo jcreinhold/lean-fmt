@@ -16,13 +16,13 @@ lake build
 | `--select` / `--ignore` | `[]` | rule selection, as on the command line |
 | `--preview` | off | unlock preview rules |
 | `--unsafe-fixes` | off | offer unsafe fixes as quickfixes |
-| `--max-memory GIB` | `8` | the aggregate envelope for the session and its children |
+| `--max-memory GIB` | `8` | the heap budget the session grants a frontend child |
 | `--debounce-ms MS` | `150` | quiet interval before a changed buffer is re-analyzed |
 
 Every option except `--root` and `--max-memory` can also be sent as `initializationOptions` (`configPath`, `select`,
 `ignore`, `preview`, `unsafeFixes`, `debounceMs`); a client that sends neither is configured exactly as the process was
-started. `--root` and `--max-memory` are fixed when the session opens: one Lake workspace and one envelope. A client
-that asks to change either is told to restart, rather than served from a setup it did not ask for.
+started. `--root` and `--max-memory` are fixed when the session opens: one Lake workspace and one budget. A client that
+asks to change either is told to restart, rather than served from a setup it did not ask for.
 
 ## Two things that look like bugs and are not
 

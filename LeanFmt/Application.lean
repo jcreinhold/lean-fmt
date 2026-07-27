@@ -88,10 +88,10 @@ structure RunRequest where
   it. -/
   formatCheck : Bool := false
   /-- How many frontend children may run concurrently (`--workers`). One is the default: the serial
-  path, one child at a time, each told the whole envelope minus the parent's RSS. Above one, that many
-  dedicated workers serve the batch loop's unanswered targets and the envelope is divided between
-  their children (`withExactRun`). Scheduling only: every result is assembled by target index, so the
-  report is byte-identical at any value. -/
+  path, one child at a time, told the whole envelope minus the parent's RSS. Above one, that many
+  dedicated workers serve the batch loop's unanswered targets and the per-child heap budget is
+  divided between them (`withExactRun`). Scheduling only: every result is assembled by target index,
+  so the report is byte-identical at any value. -/
   workers : Nat := 1
 
 /-- Whether this run publishes source. `fix` always does; `format` does unless `--check` demotes it to a
@@ -142,30 +142,17 @@ private structure ChildOutput where
   exitCode : UInt32
   stdout : String
   stderr : String
-  peakAggregateRssKiB : Nat
 
-/-- A child the reaper enforces the envelope against. Registered at spawn, removed when its worker
-reaps it; the reaper kills and records *why* in `reason`, which is how the worker learns its child
-died by the envelope rather than by the file. `peakKiB` is the largest parent-plus-group aggregate
-sampled for this child, mirroring what `monitorChild` tracks serially. -/
+/-- A child that is running right now. A worker registers one at spawn and removes it when it reaps
+it, so the registry's size is how many children are alive at that moment — the number
+`active_children` reports. Nothing samples these to enforce a limit; a child caps its own heap.
+
+`pgid` is the child's pid, which `setsid` also makes its process group's id. -/
 private structure LiveChild where
   child : IO.Process.Child { stdin := .inherit, stdout := .piped, stderr := .piped }
   stdoutTask : Task (Except IO.Error String)
   stderrTask : Task (Except IO.Error String)
   pgid : UInt32
-  /-- The group-RSS ceiling in KiB: the budget the child was told, sampled once more at registration. -/
-  shareKiB : Nat
-  reason : IO.Ref (Option String)
-  peakKiB : IO.Ref Nat
-
-/-- The reaper's shared state. `task` polls every 50 ms until `done` is set and the registry drains;
-`samplingError` carries a persistent sampling failure to the workers, because a reaper that cannot
-sample must degrade to per-file failures, not to an unenforced envelope or a whole-batch abort. -/
-private structure ReaperState where
-  registry : IO.Ref (Array LiveChild)
-  done : IO.Ref Bool
-  samplingError : IO.Ref (Option String)
-  task : Task (Except IO.Error Unit)
 
 /- A valid exact-analysis capability. Construction brackets its temporary storage, fixes the target
 project/toolchain and aggregate envelope once, and owns collision-free request names. No caller can
@@ -178,9 +165,13 @@ structure ExactRun where
   temporary : FilePath
   maxBytes : Nat
   /-- How many frontend children may run concurrently (`--workers`). One is the default and takes the
-  serial `runBounded` path untouched; above one, spawns register with `reaper?` instead. -/
+  serial `runChild` path untouched; above one, spawns register with `registry?` instead, and each
+  child's heap budget is one `workers`th of the envelope. -/
   workers : Nat
-  reaper? : Option ReaperState
+  /-- The children running now, or `none` at `--workers 1`, where one child runs at a time and the
+  frame that spawned it is the only thing that needs to find it. Read for counting and for cleanup,
+  never to decide whether to kill one. -/
+  registry? : Option (IO.Ref (Array LiveChild))
   nextIndex : IO.Ref Nat
   /-- Setups already resolved for this run: root-relative path to the **source they were resolved
   from** and the setup itself.
@@ -343,18 +334,6 @@ private def residentKiB : IO Nat := do
     | throw <| IO.userError "could not parse parent RSS"
   return value
 
-private def processGroupRssKiB (processGroup : UInt32) : IO Nat := do
-  let output ← IO.Process.output { cmd := "/bin/ps", args := #["-axo", "pgid=,rss="] }
-  unless output.exitCode == 0 do
-    throw <| IO.userError s!"could not sample child process group RSS: \
-      {output.stderr.trimAscii}"
-  return output.stdout.splitOn "\n" |>.foldl (init := 0) fun total line =>
-    let fields := line.trimAscii.copy.splitOn " " |>.filter (!·.isEmpty)
-    match fields with
-    | [group, rss] =>
-      if group.toNat? == some processGroup.toNat then total + rss.toNat?.getD 0 else total
-    | _ => total
-
 private def awaitRead (task : Task (Except IO.Error String)) : IO String := do
   match ← IO.wait task with
   | .ok contents => return contents
@@ -372,45 +351,45 @@ def cancellationMessage : String := "exact frontend child cancelled by request"
 def cancelled? (error : IO.Error) : Bool :=
   ((toString error).splitOn cancellationMessage).length > 1
 
-/- Cancellation is checked in the poll that already enforces the memory envelope.
+/-- The words every refusal for memory carries. A caller that catches one needs to tell "this run has
+no memory left to grant" apart from "this file could not be analyzed this way", because the first
+says nothing about the file and will happen again to any other path. A string marker for the same
+reason `cancellationMessage` is one; `envelopeExhausted?` reads it, and nothing should match the text
+by hand. -/
+def envelopeExhaustedMessage : String := "resource envelope exhausted"
 
-A long-running server must be able to
-abandon an in-flight request, and the only thing to abandon is this child. Checking here reuses the
-kill/drain sequence the envelope-exhaustion branch already uses and bounds cancellation latency at
-one poll — 50 ms — without polling faster. A batch run passes `none` and pays nothing. -/
-private partial def monitorChild (child : IO.Process.Child {
+/-- Whether an error says the run could grant the child no memory. -/
+def envelopeExhausted? (error : IO.Error) : Bool :=
+  ((toString error).splitOn envelopeExhaustedMessage).length > 1
+
+/- Poll instead of blocking on `wait`: a long-running server must be able to drop a request while it
+is running, and this child is the only thing to drop. One look every 50 ms bounds how long a
+cancelled request keeps working without spinning. A batch run passes `cancel? := none` and never
+looks. -/
+private partial def awaitChild (child : IO.Process.Child {
       stdin := .inherit, stdout := .piped, stderr := .piped })
     (stdoutTask stderrTask : Task (Except IO.Error String))
-    (maxBytes peakKiB : Nat) (cancel? : Option Std.CancellationToken) : IO ChildOutput := do
+    (cancel? : Option Std.CancellationToken) : IO ChildOutput := do
   match ← child.tryWait with
   | some exitCode =>
     return {
       exitCode
       stdout := ← awaitRead stdoutTask
       stderr := ← awaitRead stderrTask
-      peakAggregateRssKiB := peakKiB
     }
   | none =>
-    let abandon : IO Unit := do
-      try child.kill catch _ => pure ()
-      discard child.wait
-      discard <| awaitRead stdoutTask
-      discard <| awaitRead stderrTask
     if let some token := cancel? then
       if ← token.isCancelled then
-        abandon
+        try child.kill catch _ => pure ()
+        discard child.wait
+        discard <| awaitRead stdoutTask
+        discard <| awaitRead stderrTask
         throw <| IO.userError cancellationMessage
-    let aggregateKiB := (← residentKiB) + (← processGroupRssKiB child.pid)
-    let peakKiB := max peakKiB aggregateKiB
-    if aggregateKiB * 1024 > maxBytes then
-      abandon
-      throw <| IO.userError s!"resource envelope exhausted during exact frontend child \
-        ({aggregateKiB} KiB > {maxBytes / 1024} KiB)"
     IO.sleep 50
-    monitorChild child stdoutTask stderrTask maxBytes peakKiB cancel?
+    awaitChild child stdoutTask stderrTask cancel?
 
-private def runBounded (arguments : IO.Process.SpawnArgs)
-    (maxBytes : Nat) (cancel? : Option Std.CancellationToken := none) : IO ChildOutput := do
+private def runChild (arguments : IO.Process.SpawnArgs)
+    (cancel? : Option Std.CancellationToken := none) : IO ChildOutput := do
   let child ← IO.Process.spawn {
     cmd := arguments.cmd
     args := arguments.args
@@ -427,140 +406,32 @@ private def runBounded (arguments : IO.Process.SpawnArgs)
   recordCount "active_children" 1
   let stdoutTask ← IO.asTask child.stdout.readToEnd
   let stderrTask ← IO.asTask child.stderr.readToEnd
-  monitorChild child stdoutTask stderrTask maxBytes 0 cancel?
+  awaitChild child stdoutTask stderrTask cancel?
 
-/-- The budget a child may claim: the aggregate envelope minus what the parent already holds.
+/-- The heap a child may use: the envelope minus what the parent holds, split `workers` ways. The
+child installs this with `Lean.Internal.setMaxMemory`, so it caps the child's Lean heap — the memory
+that grows with the number of children. `Nat` subtraction saturates, so a parent already over the
+bound hands out zero rather than wrapping.
 
-The parent trips on parent RSS *plus* the child's process-group RSS against `maxBytes`
-(`monitorChild`), so a child told it may use the whole envelope is killed at `maxBytes - parentRSS`
-— the trip point tracked the bound rather than the file. Measured: twelve import-heavy
-mathlib modules exhausted at 6.00–6.16 GiB against `--max-memory 6` and again at 7.00–7.15 against
-`--max-memory 7`, the overshoot each time being the parent's own footprint plus one 50 ms poll's
-growth. Telling the child its honest headroom lets its own GC spend the envelope instead of the
-parent spending the child's life. The aggregate trip is unchanged: the envelope still bounds parent
-plus children together, and `Nat` subtraction saturates, so a parent already over the bound passes
-zero rather than wrapping.
-
-With `--workers N` the headroom is divided `workers`-ways: each child is told one share, so the
-shares and the parent together cannot exceed the envelope at spawn time. The reaper enforces the
-same share against the child's RSS, which counts more than its heap. -/
+This limit is the only one. The parent also used to read each child's RSS from `/bin/ps` and kill any
+child over its share, which made `--workers` unusable on a project that imports mathlib. RSS counts
+mapped `.olean`s, and those pages are shared between the children, clean, and reclaimable, so
+splitting them `workers` ways charged one mapping several times over. Measured: a child whose RSS
+read 2.05 GiB had a peak physical footprint of 173 MiB, and one reading 2.90 GiB had 602 MiB;
+`--workers 8` refused 187 of 200 files and `--workers 3` refused 118, none of them near real memory
+pressure. -/
 private def childMemoryBudget (maxBytes : Nat) (workers : Nat := 1) : IO Nat := do
   return (maxBytes - (← residentKiB) * 1024) / (max workers 1)
 
-/-- Sample the parent and every live child group in one `ps` pass and enforce the envelope.
-
-The reaper is the only kill authority when `--workers N` admits several children; workers never kill
-each other's children. Per poll it enforces two limits:
-
-1. **Share.** A group over its registered share is killed and its file fails with the recorded
-   reason. The share is the budget the child was told at spawn, so a child respecting its own
-   `setMaxMemory` is never killed here over heap — but RSS also counts mmap'd `.olean`s, which the
-   heap limit does not, so this clause is load-bearing, not a backstop.
-2. **Aggregate.** Parent plus all groups over `maxBytes` kills the largest group — the serial
-   rule's "the child pays" generalized to N children. Shares partition `maxBytes - parentRSS` at
-   spawn, so this trips only when the parent itself grew after spawn (it accumulates candidates);
-   it is the backstop for that drift, and its message is the serial one: aggregate against the
-   envelope.
-
-A `ps` failure is recorded in `samplingError` and retried next poll: workers surface it as per-file
-failures for the children live during the unsampled interval, rather than the batch dying or the
-envelope going silently unenforced. -/
-private def reaperSample (registry : IO.Ref (Array LiveChild)) (maxBytes : Nat) : IO Unit := do
-  let live ← registry.get
-  let parentPid ← IO.Process.getPID
-  let output ← IO.Process.output { cmd := "/bin/ps", args := #["-axo", "pid=,pgid=,rss="] }
-  unless output.exitCode == 0 do
-    throw <| IO.userError s!"could not sample process RSS: {output.stderr.trimAscii}"
-  let mut parentKiB := 0
-  let mut groups : Std.HashMap Nat Nat := {}
-  for line in output.stdout.splitOn "\n" do
-    match line.trimAscii.copy.splitOn " " |>.filter (!·.isEmpty) with
-    | [pid, group, rss] =>
-      match pid.toNat?, group.toNat?, rss.toNat? with
-      | some p, some g, some k =>
-        if p == parentPid.toNat then parentKiB := k
-        groups := groups.insert g (groups.getD g 0 + k)
-      | _, _, _ => pure ()
-    | _ => pure ()
-  let mut totalKiB := parentKiB
-  for entry in live do
-    let groupKiB := groups.getD entry.pgid.toNat 0
-    totalKiB := totalKiB + groupKiB
-    entry.peakKiB.modify fun peak => max peak (parentKiB + groupKiB)
-    if groupKiB > entry.shareKiB && (← entry.reason.get).isNone then
-      entry.reason.set (some s!"resource envelope exhausted during exact frontend child \
-        ({groupKiB} KiB > {entry.shareKiB} KiB)")
-      try entry.child.kill catch _ => pure ()
-  if totalKiB * 1024 > maxBytes then
-    let largest? := live.foldl (init := (none : Option LiveChild)) fun best? entry =>
-      match best? with
-      | none => some entry
-      | some best =>
-        some (if groups.getD entry.pgid.toNat 0 > groups.getD best.pgid.toNat 0 then entry
-          else best)
-    if let some largest := largest? then
-      if (← largest.reason.get).isNone then
-        largest.reason.set (some s!"resource envelope exhausted during exact frontend child \
-          ({totalKiB} KiB > {maxBytes / 1024} KiB)")
-        try largest.child.kill catch _ => pure ()
-
-private partial def reaperLoop (registry : IO.Ref (Array LiveChild)) (done : IO.Ref Bool)
-    (samplingError : IO.Ref (Option String)) (maxBytes : Nat) : IO Unit := do
-  let live ← registry.get
-  if live.isEmpty && (← done.get) then return
-  try
-    reaperSample registry maxBytes
-    samplingError.set none
-  catch error =>
-    samplingError.set (some (toString error))
-  IO.sleep 50
-  reaperLoop registry done samplingError maxBytes
-
-/-- Wait out one registered child: reap it on exit, fail with the reaper's recorded reason when the
-envelope killed it, abandon on cancellation. The mirror of `monitorChild`'s loop with the envelope
-arithmetic moved to the reaper; an exit code and a recorded reason together mean the reason caused
-the exit, so the reason is what the file is told. -/
-private partial def pollChild (samplingError : IO.Ref (Option String)) (entry : LiveChild)
-    (cancel? : Option Std.CancellationToken) : IO ChildOutput := do
-  match ← entry.child.tryWait with
-  | some exitCode =>
-    let output := {
-      exitCode
-      stdout := ← awaitRead entry.stdoutTask
-      stderr := ← awaitRead entry.stderrTask
-      peakAggregateRssKiB := ← entry.peakKiB.get : ChildOutput }
-    if let some reason ← entry.reason.get then
-      throw <| IO.userError reason
-    return output
-  | none =>
-    if let some reason ← entry.reason.get then
-      discard entry.child.wait
-      discard <| awaitRead entry.stdoutTask
-      discard <| awaitRead entry.stderrTask
-      throw <| IO.userError reason
-    if let some message ← samplingError.get then
-      throw <| IO.userError message
-    if let some token := cancel? then
-      if ← token.isCancelled then
-        try entry.child.kill catch _ => pure ()
-        discard entry.child.wait
-        discard <| awaitRead entry.stdoutTask
-        discard <| awaitRead entry.stderrTask
-        throw <| IO.userError cancellationMessage
-    IO.sleep 50
-    pollChild samplingError entry cancel?
-
-/-- Spawn a child under the run's concurrency regime. Without a reaper (`--workers 1`, the default)
-this is `runBounded` verbatim — the serial monitor, the serial admission count. With one, the child
-is registered before any poll can sample without it, pipes are drained on dedicated threads (the
-lesson of the two-child one-thread prototype: an undrained pipe deadlocks its holder), and the
-worker waits in `pollChild` while the reaper enforces shares and the aggregate. The `finally`
-cannot leave an orphan: a worker that is unwinding kills and drains the child it is abandoning, so
-the registry and the process table always agree. -/
-private def ExactRun.spawnBounded (run : ExactRun) (arguments : IO.Process.SpawnArgs)
+/-- Spawn one frontend child and wait for it. At `--workers 1`, the default, this is `runChild`:
+one child at a time, one admission counted. Above one, the child joins the registry before it can run
+unobserved, and dedicated threads drain its pipes — the lesson of the two-child one-thread prototype,
+where a pipe nobody read blocked the process holding it. The `finally` kills and drains a child its
+worker is walking away from, so the registry and the process table never disagree. -/
+private def ExactRun.spawnChild (run : ExactRun) (arguments : IO.Process.SpawnArgs)
     (cancel? : Option Std.CancellationToken := none) : IO ChildOutput := do
-  let some reaper := run.reaper?
-    | runBounded arguments run.maxBytes cancel?
+  let some registry := run.registry?
+    | runChild arguments cancel?
   let child ← IO.Process.spawn {
     cmd := arguments.cmd
     args := arguments.args
@@ -577,16 +448,13 @@ private def ExactRun.spawnBounded (run : ExactRun) (arguments : IO.Process.Spawn
     stdoutTask := ← IO.asTask child.stdout.readToEnd Task.Priority.dedicated
     stderrTask := ← IO.asTask child.stderr.readToEnd Task.Priority.dedicated
     pgid := child.pid
-    shareKiB := (← childMemoryBudget run.maxBytes run.workers) / 1024
-    reason := ← IO.mkRef none
-    peakKiB := ← IO.mkRef 0
   }
-  reaper.registry.modify (·.push entry)
-  recordCount "active_children" (← reaper.registry.get).size
+  registry.modify (·.push entry)
+  recordCount "active_children" (← registry.get).size
   try
-    pollChild reaper.samplingError entry cancel?
+    awaitChild entry.child entry.stdoutTask entry.stderrTask cancel?
   finally
-    reaper.registry.modify (·.filter (·.pgid != entry.pgid))
+    registry.modify (·.filter (·.pgid != entry.pgid))
     -- `pollChild` may already have reaped the child (its exit branch), and Lean's `tryWait` does
     -- not cache: a second successful-position `tryWait` raises ECHILD. A throw here therefore
     -- means "already reaped" — exactly the case where there is nothing to kill.
@@ -643,11 +511,11 @@ private def ExactRun.envelope (run : ExactRun)
     pure (setupResult, setupPath, sourcePath)
   try
     if (← residentKiB) * 1024 >= run.maxBytes then
-      throw <| IO.userError s!"resource envelope exhausted before exact frontend child \
+      throw <| IO.userError s!"{envelopeExhaustedMessage} before exact frontend child \
         (limit {run.maxBytes} bytes)"
     let overrideName := if validator then "LEAN_FMT_TEST_VALIDATOR" else "LEAN_FMT_TEST_ANALYZER"
     let analyzer := (← IO.getEnv overrideName).map FilePath.mk |>.getD run.application
-    let output ← withPhase "exact_child" <| run.spawnBounded {
+    let output ← withPhase "exact_child" <| run.spawnChild {
       cmd := analyzer.toString
       -- The trailing capture token encodes the demanded semantic capabilities: "0" none, "1" the
       -- two semantic diagnostics, "2" diagnostics plus the info-tree occurrence fold. A direct
@@ -703,9 +571,9 @@ private def ExactRun.artifactEnvelope (run : ExactRun) (snapshot : SourceSnapsho
     pure (setupResult, setupPath, sourcePath, artifactPath)
   try
     if (← residentKiB) * 1024 >= run.maxBytes then
-      throw <| IO.userError s!"resource envelope exhausted before artifact formatter child \
+      throw <| IO.userError s!"{envelopeExhaustedMessage} before artifact formatter child \
         (limit {run.maxBytes} bytes)"
-    let output ← withPhase "artifact_child" <| run.spawnBounded {
+    let output ← withPhase "artifact_child" <| run.spawnChild {
       cmd := run.application.toString
       args := #["__analyze-artifact", setupPath.toString, moduleFile.toString,
         artifactPath.toString, sourcePath.toString, snapshot.path.toString,
@@ -894,10 +762,9 @@ def ExactRun.analyzeSnapshot (run : ExactRun) (snapshot : SourceSnapshot)
 /- Bracket a complete exact-analysis run. The capability is constructed only after a real fallback
 or editor request needs it; cache-only and ordinary-evidence batch runs create no temporary state.
 
-`workers` above one starts the reaper: the registry, the dedicated polling task, and the drain
-protocol in `finally`. The reaper task's own result is discarded on purpose — a sampling failure
-reaches workers through `samplingError` as per-file failures, and a reaper that outlived its
-usefulness must not fail a batch whose files all succeeded. -/
+Above one, `workers` creates the child registry and splits each child's heap budget that many ways.
+Nothing polls the registry: a child caps its own heap with the budget it was given, and the parent
+only watches. -/
 def withExactRun (project : Project.Snapshot) (maxMemoryGiB : Nat) (workers : Nat := 1)
     (action : ExactRun → IO α) : IO α := do
   unless maxMemoryGiB > 0 do
@@ -909,21 +776,14 @@ def withExactRun (project : Project.Snapshot) (maxMemoryGiB : Nat) (workers : Na
   let nextIndex ← IO.mkRef 0
   let setups ← IO.mkRef {}
   let documentSetups ← IO.mkRef {}
-  let reaper? ← if workers > 1 then do
-    let registry ← IO.mkRef #[]
-    let done ← IO.mkRef false
-    let samplingError ← IO.mkRef none
-    let task ← IO.asTask (reaperLoop registry done samplingError maxBytes) Task.Priority.dedicated
-    pure (some ({ registry, done, samplingError, task } : ReaperState))
-  else
-    pure none
+  let registry? ← if workers > 1 then some <$> IO.mkRef #[] else pure none
   let run : ExactRun := {
     project
     application := ← IO.appPath
     temporary
     maxBytes
     workers
-    reaper?
+    registry?
     nextIndex
     setups
     documentSetups
@@ -931,9 +791,6 @@ def withExactRun (project : Project.Snapshot) (maxMemoryGiB : Nat) (workers : Na
   try
     action run
   finally
-    if let some reaper := reaper? then
-      reaper.done.set true
-      discard <| IO.wait reaper.task
     IO.FS.removeDirAll temporary
 
 /-- The demand half of the shared cache decision.
@@ -1981,10 +1838,10 @@ def execute (request : RunRequest) : IO RunOutcome := do
     -- can take minutes on a cold run. An all-served run never reaches here and never shows one.
     let progress ← LeanFmt.Progress.start request.mode.toString work.size
     if request.workers > 1 && work.size > 1 then
-      -- `--workers N`: dedicated workers, one reaper (started by `withExactRun`), outcomes by
-      -- index. Dedicated priority is load-bearing, not tuning: workers block on child pipes, and
-      -- pooled blocking tasks can starve a small pool (`LEAN_NUM_THREADS=1` is a supported
-      -- setting).
+      -- `--workers N`: dedicated workers, one shared child registry (`withExactRun` creates it),
+      -- outcomes by index. Dedicated priority is required, not tuning: workers block on child
+      -- pipes, and pooled blocking tasks can starve a small pool (`LEAN_NUM_THREADS=1` is a
+      -- supported setting).
       let workers := min request.workers work.size
       let tasks ← (List.range workers).mapM fun _ =>
         IO.asTask (batchWorker exactRun request renderCanonical demanded demandedCaps work next
@@ -2617,12 +2474,12 @@ private def inspectCompilerArtifact (workspace : Lake.Workspace) (application : 
     | return "unbuilt"
   unless ← Project.isCurrent workspace (do mod.olean.fetch) do
     return "unbuilt"
-  let output ← runBounded {
+  let output ← runChild {
     cmd := application.toString
     args := #["__inspect-artifact", mod.name.toString,
       mod.oleanFile.toString, snapshot.path.toString, toString (← childMemoryBudget maxBytes)]
     env := workspace.augmentedEnvVars.push ⟨"LEAN_NUM_THREADS", some "1"⟩
-  } maxBytes
+  }
   unless output.exitCode == 0 do
     throw <| IO.userError s!"compiler status child failed for {snapshot.relativePath}: \
       {output.stderr.trimAscii}"

@@ -48,8 +48,8 @@ Other commands: `format` (print formatted source), `rules`, `lsp` (language serv
 Batch runs show a tqdm-style progress line on stderr when it is a terminal; pipes and `--json` never see it.
 
 Results are cached in `.lean-fmt-cache/`; a warm run where nothing changed skips the Lean frontend entirely.
-`--no-cache` disables it. `--max-memory GIB` caps total memory (default 8); `--workers N` parallelizes cold runs over
-many files (results identical at any N, but the memory budget divides among workers).
+`--no-cache` disables it. `--max-memory GIB` caps the heap a frontend child may use (default 8); `--workers N`
+parallelizes cold runs over many files (results identical at any N, but the heap budget divides among workers).
 
 ## Configuration
 
@@ -85,10 +85,11 @@ lake update «lean-fmt»   # add it to the manifest
 lake exe lean-fmt check --root .
 ```
 
-If your project keeps intentionally non-compiling files (linter fixtures, draft notes), lean-fmt reports them
-`broken`; exclude them in `.lean-fmt.toml` (`docs/configuration.md`).
+If your project keeps intentionally non-compiling files (linter fixtures, draft notes), lean-fmt reports them `broken`;
+exclude them in `.lean-fmt.toml` (`docs/configuration.md`).
 
-To make `lake lint` run it, two lines in your package (a package has one lint driver; if you already have one, keep it and run `lake exe lean-fmt check` as a separate step instead):
+To make `lake lint` run it, two lines in your package (a package has one lint driver; if you already have one, keep it
+and run `lake exe lean-fmt check` as a separate step instead):
 
 ```lean
 package myproject where

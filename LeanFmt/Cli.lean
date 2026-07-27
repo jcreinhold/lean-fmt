@@ -233,7 +233,7 @@ private def helpFileOptions : Array HelpEntry := #[
   ⟨"--changed-since REV", "select only files this branch changed since REV"⟩,
   ⟨"--staged", "select only files staged for commit"⟩,
   ⟨"--no-cache", "neither read nor write result cache entries"⟩,
-  ⟨"--max-memory GIB", "aggregate operating envelope (default: 8)"⟩,
+  ⟨"--max-memory GIB", "heap budget granted to frontend children (default: 8)"⟩,
   ⟨"--workers N", "run up to N frontend children in parallel (default: 1); each child is budgeted an Nth of the envelope and the report is byte-identical at any N"⟩,
   ⟨"--unsafe-fixes", "apply/preview unsafe fixes too (default: safe only)"⟩,
   ⟨"--check", "format: report what would change, write nothing (CI preview)"⟩
