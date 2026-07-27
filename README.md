@@ -75,7 +75,7 @@ cache makes it free):
 
 ```lean
 require «lean-fmt» from git
-  "https://github.com/jcreinhold/lean-fmt" @ "v0.1.0"
+  "https://github.com/jcreinhold/lean-fmt" @ "v0.1.1"
 ```
 
 ```sh
