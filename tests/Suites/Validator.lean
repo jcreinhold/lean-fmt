@@ -48,7 +48,7 @@ private def validateCandidate (ctx : Ctx) (setup source candidatePath : System.F
     (label : String) : IO Lean.Json := do
   let result ← expectExit 0 label ctx.application
     #["__validate-candidate", setup.toString, source.toString, candidatePath.toString,
-      "source.lean", "8589934592", "100"]
+      "source.lean", "100"]
     (cwd? := some ctx.root)
   parseJson result.stdout label
 

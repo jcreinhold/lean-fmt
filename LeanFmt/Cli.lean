@@ -181,10 +181,6 @@ private def parseLspArgs (args : List String) : Except String LanguageServer.Ser
       loop rest { options with ignore := options.ignore.push selector }
     | "--preview" :: rest => loop rest { options with preview := true }
     | "--unsafe-fixes" :: rest => loop rest { options with unsafeFixes := true }
-    | "--max-memory" :: value :: rest =>
-      match value.toNat? with
-      | some amount => loop rest { options with maxMemoryGiB := amount }
-      | none => .error "--max-memory expects a whole number of GiB"
     | "--debounce-ms" :: value :: rest =>
       match value.toNat? with
       | some amount => loop rest { options with debounceMs := amount }
@@ -202,9 +198,8 @@ private def helpUsageLines : Array String := #[
   "lean-fmt {check|format|diff|fix} - --stdin-filename PATH [--range S:E]",
   "lean-fmt lsp [--root PATH] [--config PATH] [--select SELECTOR]",
   "             [--ignore SELECTOR] [--preview] [--unsafe-fixes]",
-  "             [--max-memory GIB] [--debounce-ms MS]",
-  "lean-fmt organize [--root PATH] [--config PATH] [--check] [--json]",
-  "             [--max-memory GIB] [FILE...]",
+  "             [--debounce-ms MS]",
+  "lean-fmt organize [--root PATH] [--config PATH] [--check] [--json] [FILE...]",
   "lean-fmt rules [--json]",
   "lean-fmt explain RULE [--json]",
   "lean-fmt docs [--root PATH] [--check]",
@@ -233,8 +228,7 @@ private def helpFileOptions : Array HelpEntry := #[
   ⟨"--changed-since REV", "select only files this branch changed since REV"⟩,
   ⟨"--staged", "select only files staged for commit"⟩,
   ⟨"--no-cache", "neither read nor write result cache entries"⟩,
-  ⟨"--max-memory GIB", "heap budget granted to frontend children (default: 8)"⟩,
-  ⟨"--workers N", "run up to N frontend children in parallel (default: 1); each child is budgeted an Nth of the envelope and the report is byte-identical at any N"⟩,
+  ⟨"--workers N", "run up to N frontend children in parallel (default: LEAN_NUM_THREADS, else the machine's core count — what Lake uses for its own build); the report is byte-identical at any N"⟩,
   ⟨"--unsafe-fixes", "apply/preview unsafe fixes too (default: safe only)"⟩,
   ⟨"--check", "format: report what would change, write nothing (CI preview)"⟩
 ]
@@ -404,16 +398,11 @@ private def parseFileArgs (mode : RunMode) (args : List String) : Except String 
         .error "--check is valid only for format"
     | "--unsafe-fixes" :: rest =>
       loop rest { command with run := { command.run with unsafeFixes := true } }
-    | "--max-memory" :: value :: rest =>
-      match value.toNat? with
-      | some amount =>
-        loop rest { command with run := { command.run with maxMemoryGiB := amount } }
-      | none => .error "--max-memory expects a whole number of GiB"
     | "--workers" :: value :: rest =>
       match value.toNat? with
       | some amount =>
         if amount == 0 then .error "--workers expects a nonzero worker count"
-        else loop rest { command with run := { command.run with workers := amount } }
+        else loop rest { command with run := { command.run with workers := some amount } }
       | none => .error "--workers expects a whole number of workers"
     | "--workers" :: [] => .error "--workers expects a whole number of workers"
     -- `-` is a *target*, not an option, so it is matched before the `startsWith "-"` catch-all
@@ -533,11 +522,6 @@ private def parseStatusArgs (args : List String) : Except String StatusCommand :
     | "--root" :: root :: rest =>
       loop rest { command with request := { command.request with root } }
     | "--json" :: rest => loop rest { command with outputFormat := .json }
-    | "--max-memory" :: value :: rest =>
-      match value.toNat? with
-      | some amount =>
-        loop rest { command with request := { command.request with maxMemoryGiB := amount } }
-      | none => .error "--max-memory expects a whole number of GiB"
     | option :: _ => .error s!"unknown compiler status option: {option}"
   loop args {}
 
@@ -552,11 +536,6 @@ private def parseOrganizeArgs (args : List String) : Except String OrganizeComma
       loop rest { command with request := { command.request with configPath? := some path } }
     | "--check" :: rest =>
       loop rest { command with request := { command.request with check := true } }
-    | "--max-memory" :: value :: rest =>
-      match value.toNat? with
-      | some amount =>
-        loop rest { command with request := { command.request with maxMemoryGiB := amount } }
-      | none => .error "--max-memory expects a whole number of GiB"
     | option :: rest =>
       if option.startsWith "-" then .error s!"unknown option: {option}"
       else loop rest { command with
@@ -1293,7 +1272,6 @@ private unsafe def runStreamCommand (mode : RunMode) (command : FileCommand)
     filename
     source := raw
     range?
-    maxMemoryGiB := command.run.maxMemoryGiB
     configPath? := command.run.configPath?
     selection := {
       select := command.run.select, extendSelect := command.run.extendSelect,

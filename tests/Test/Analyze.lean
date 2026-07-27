@@ -129,7 +129,7 @@ public def setupFile (root work : System.FilePath) (fixture : String) : IO Syste
 formatter suites call the binary directly, as the old scripts did. -/
 public def analyzeExact (root : System.FilePath) (application : String) (setup : System.FilePath)
     (source moduleName mode : String) (viaLakeEnv : Bool := false) : IO Lean.Json := do
-  let args := #["__analyze-exact", setup.toString, source, moduleName, "8589934592", mode]
+  let args := #["__analyze-exact", setup.toString, source, moduleName, mode]
   let label := s!"__analyze-exact {source} at {mode}"
   let result ←
     if viaLakeEnv then

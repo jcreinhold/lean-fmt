@@ -59,20 +59,19 @@ canonical bytes, so it misses entries recorded at another width.
 
 ## Memory and parallelism
 
-`--max-memory GIB` sets the heap budget a frontend child is granted (default: 8). A child gets what the parent can grant
-— the budget minus what the parent already holds, divided among workers — and installs it as its own limit, so a run
-that genuinely needs more refuses the affected files by name rather than swapping.
+`--workers N` (batch commands) runs N frontend children in parallel. It defaults to `LEAN_NUM_THREADS` if that is set,
+else the machine's core count — the rule Lake uses to size its own build. Output is assembled in file order, so the
+report is byte-identical at any N. Measured on this repository's 40-file cold run: two workers are byte-identical to one
+at 1.9× the speed. On a mathlib project, a 17-file cold `format` went 16.95 s at one worker to 6.74 s at four and 5.48 s
+at eight.
 
-It bounds Lean's heap, not the process's resident size. A child that imports mathlib maps gigabytes of `.olean` on top
-of that budget; those pages are shared between children, clean, and reclaimable, and counting them would refuse work
-that never approached real memory pressure. Measured on a mathlib-scale corpus: a child's peak physical footprint was
-173 MiB against 2.05 GiB of RSS.
+**lean-fmt imposes no memory limit.** Neither does Lake, which spawns one `lean` per module and passes no `-M`, no
+`ulimit`, and no `setrlimit`. A file that needs six gigabytes gets them; a machine that runs out swaps. `--workers N` is
+the control — if N children do not fit, ask for fewer.
 
-`--workers N` (batch commands) runs N frontend children in parallel. Output is assembled in file order, so results are
-byte-identical at any N — but the heap budget divides among workers, so a file that needs more heap than an Nth may be
-refused under `--workers N`. Measured on this repository's 40-file cold run at `--max-memory 8`: two workers are
-byte-identical to one at 1.9× the speed. On a mathlib project, a 17-file cold `format` went 21.5 s at one worker to 9.5
-s at four and 7.2 s at eight.
+There used to be a `--max-memory` cap divided between workers. It refused work on any project that imports mathlib — 187
+of 200 files at eight workers — because the number it divided counted each child's shared `.olean` mapping in full.
+Those pages are shared, clean, and reclaimable: a child reading 2.05 GiB of RSS had a physical footprint of 173 MiB.
 
 ## Streaming and ranges
 

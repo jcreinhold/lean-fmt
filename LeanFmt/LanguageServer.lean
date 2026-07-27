@@ -56,7 +56,6 @@ def maxQueuedMessages : Nat := 64
 
 structure ServerOptions where
   root : FilePath := "."
-  maxMemoryGiB : Nat := 8
   configPath? : Option FilePath := none
   select : Array String := #[]
   ignore : Array String := #[]
@@ -297,9 +296,9 @@ abbrev Rejection := String
 
 structure Session where
   private mk ::
-  /-- The options the process started with. `root` and `maxMemoryGiB` are read from here and
-  only from here: one Lake workspace and one aggregate envelope are fixed when the session opens,
-  and a client that asks to move either is told to restart (§3, §10). -/
+  /-- The options the process started with. `root` is read from here and only from here: one Lake
+  workspace is fixed when the session opens, and a client that asks to move it is told to restart
+  (§3, §10). -/
   options : ServerOptions
   /-- The options a client may still change: rule selection, preview, unsafe fixes, the
   quiet interval, and the configuration path. Written by `initialize` from `initializationOptions`,
@@ -526,12 +525,10 @@ private def handleInitialize (session : Session) (id : RequestID) (params : Json
     let nat (key : String) (fallback : Nat) :=
       (initialization.getObjValAs? Nat key).toOption.getD fallback
     let current ← session.settings.get
-    -- Named, not silently dropped: a client that asks to move the root or the envelope is
-    -- asking for a different session.
-    for fixed in [("rootUri", (str? "root").isSome), ("maxMemoryGiB",
-        (initialization.getObjVal? "maxMemoryGiB").toOption.isSome)] do
-      if fixed.2 then
-        session.sink.show 3 s!"lean-fmt fixes {fixed.1} at startup; restart the server to change it"
+    -- Named, not silently dropped: a client that asks to move the root is asking for a different
+    -- session.
+    if (str? "root").isSome then
+      session.sink.show 3 "lean-fmt fixes rootUri at startup; restart the server to change it"
     session.settings.set { current with
       configPath? := (str? "configPath").map FilePath.mk |>.orElse fun _ => current.configPath?
       select := strings "select" current.select
@@ -1190,9 +1187,6 @@ Holds one Lake workspace and one discovery for its lifetime; writes no file and 
 cache. `Project.loadWorkspaceOnly` rather than `Project.load` because the client, not a selection
 walk, says which documents exist — and a document may be a file that has never been saved. -/
 def serveLanguageServer (options : ServerOptions) : IO UInt32 := do
-  unless options.maxMemoryGiB > 0 do
-    throw <| IO.userError "--max-memory must provide a nonzero operating envelope"
-  Lean.Internal.setMaxMemory (options.maxMemoryGiB * 1024 * 1024 * 1024).toUSize
   let root ← IO.FS.realPath options.root
   let configPath? := options.configPath?.map fun path =>
     if path.isAbsolute then path else root / path
@@ -1203,7 +1197,7 @@ def serveLanguageServer (options : ServerOptions) : IO UInt32 := do
     sink.log 3 s!"lean-fmt: {notice}"
   -- The exact capability brackets the whole session, so its temporary storage is created
   -- and removed once rather than per request.
-  Application.withExactRun project options.maxMemoryGiB (action := fun run => do
+  Application.withExactRun project (action := fun run => do
     let queue : Std.CloseableChannel.Sync Work ←
       Std.CloseableChannel.Sync.new (capacity := some maxQueuedMessages)
     let settings ← IO.mkRef options

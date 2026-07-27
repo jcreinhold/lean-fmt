@@ -138,13 +138,11 @@ private unsafe def testArtifactExactRendering (ctx : Ctx) : IO Unit := do
       #["env", ctx.application, "__analyze-artifact", setupPath.toString,
         ".lake/build/lib/lean/ArtifactLayout.olean",
         ".lake/build/lean-fmt-artifacts/ArtifactLayout.json",
-        "tests/compiler/ArtifactLayout.lean", "tests/compiler/ArtifactLayout.lean",
-        "8589934592", "100"]
+        "tests/compiler/ArtifactLayout.lean", "tests/compiler/ArtifactLayout.lean", "100"]
       (cwd? := some ctx.root) (env := lakeEnv)
     let exactEnvelope ← expectExit 0 "__analyze-exact" "lake"
       #["env", ctx.application, "__analyze-exact", setupPath.toString,
-        "tests/compiler/ArtifactLayout.lean", "tests/compiler/ArtifactLayout.lean",
-        "8589934592", "4:100"]
+        "tests/compiler/ArtifactLayout.lean", "tests/compiler/ArtifactLayout.lean", "4:100"]
       (cwd? := some ctx.root) (env := lakeEnv)
     let artifactJson ← parseJson artifactEnvelope.stdout "__analyze-artifact"
     let exactJson ← parseJson exactEnvelope.stdout "__analyze-exact"

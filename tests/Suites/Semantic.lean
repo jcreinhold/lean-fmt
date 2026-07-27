@@ -26,13 +26,11 @@ structure Ctx where
   application : String
   work : System.FilePath
 
-private def maxb : String := "8589934592"
-
 /-- `__analyze-exact` at the given capture token, via `lake env` as the old script ran it. -/
 private def capture (ctx : Ctx) (setup : System.FilePath) (fixture : String) (token : String)
     (label : String) : IO Lean.Json := do
   let result ← expectExit 0 label "lake"
-    #["env", ctx.application, "__analyze-exact", setup.toString, fixture, fixture, maxb, token]
+    #["env", ctx.application, "__analyze-exact", setup.toString, fixture, fixture, token]
     (cwd? := some ctx.root)
   parseJson result.stdout label
 
@@ -378,7 +376,7 @@ private def testCost (ctx : Ctx) : IO Unit := do
     -- `/usr/bin/time -l` writes its stats to the child's stderr.
     let timed ← runProc "/usr/bin/time"
       #["-l", "lake", "env", ctx.application, "__analyze-exact", setup.toString, fixture, fixture,
-        maxb, token] (cwd? := some ctx.root)
+        token] (cwd? := some ctx.root)
     return timed.stderr
   let rssOf (stats : String) (label : String) : IO Nat := do
     for line in stats.splitOn "\n" do

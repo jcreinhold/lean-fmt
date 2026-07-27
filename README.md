@@ -48,8 +48,8 @@ Other commands: `format` (print formatted source), `rules`, `lsp` (language serv
 Batch runs show a tqdm-style progress line on stderr when it is a terminal; pipes and `--json` never see it.
 
 Results are cached in `.lean-fmt-cache/`; a warm run where nothing changed skips the Lean frontend entirely.
-`--no-cache` disables it. `--max-memory GIB` caps the heap a frontend child may use (default 8); `--workers N`
-parallelizes cold runs over many files (results identical at any N, but the heap budget divides among workers).
+`--no-cache` disables it. `--workers N` parallelizes cold runs over many files; the report is identical at any N. It
+defaults to `LEAN_NUM_THREADS`, else the machine's core count — what Lake uses for its own build.
 
 ## Configuration
 

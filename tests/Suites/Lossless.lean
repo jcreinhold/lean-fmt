@@ -34,11 +34,11 @@ structure Ctx where
   work : System.FilePath
   borrowedSetup : System.FilePath
 
-/-- `__analyze-exact SETUP SOURCE DISPLAY MAX_BYTES` — no mode argument, exactly as the old
-script's `project` ran it: the lossless claim is about the projection, not any formatter draft. -/
+/-- `__analyze-exact SETUP SOURCE DISPLAY` — no mode argument, exactly as the old script's
+`project` ran it: the lossless claim is about the projection, not any formatter draft. -/
 private def project (ctx : Ctx) (setup source display : String) (label : String) : IO Lean.Json := do
   let result ← expectExit 0 label ctx.application
-    #["__analyze-exact", setup, source, display, "8589934592"] (cwd? := some ctx.root)
+    #["__analyze-exact", setup, source, display] (cwd? := some ctx.root)
   parseJson result.stdout label
 
 /-- One corpus module: analyzes clean, carries an artifact, and the independent oracle verifies
@@ -392,8 +392,8 @@ end Lossless
 public def main (args : List String) : IO UInt32 := do
   let root ← repoRoot
   withScratchDir "lossless" fun work => do
-    -- `__analyze-exact SETUP SOURCE DISPLAY MAX_BYTES` takes the source path separately from the
-    -- setup, so a generated file can borrow a declared module's setup.
+    -- `__analyze-exact SETUP SOURCE DISPLAY` takes the source path separately from the setup, so a
+    -- generated file can borrow a declared module's setup.
     let borrowedSetup ← setupFile root work "tests/check/Clean.lean"
     let ctx : Lossless.Ctx :=
       { root, application := (root / ".lake" / "build" / "bin" / "lean-fmt").toString, work

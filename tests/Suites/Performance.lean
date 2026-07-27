@@ -106,6 +106,13 @@ private def gateParallelChildren (capture : String) (jobs expected : Nat) : Bool
   let admissions := activeChildren capture
   admissions.length == expected && admissions.any (· == jobs) && admissions.all (· ≤ jobs)
 
+/-- §1g. The run resolved the worker count it was asked for. `--workers` decides it when given;
+otherwise the run takes `LEAN_NUM_THREADS`, else the machine's core count — the rule Lake uses to
+size its own build. A capture with no `cache.workers` at all fails, so a run that stopped recording
+its intent cannot pass as one that chose correctly. -/
+private def gateWorkers (capture : String) (expected : Nat) : Bool :=
+  counter "cache.workers" capture == some expected
+
 /-- §1e. Artifact formatting avoids the exact-source child; the forced exact run really exercises
 it. Both still validate canonical output. -/
 private def gateArtifactAvoidsExact (artifactCapture exactCapture : String) : Bool :=
@@ -192,6 +199,11 @@ private def testGatesDiscriminate : IO Unit := do
     "rejects a third child under --workers 2"
   expect (!(gateParallelChildren serial 2 2)) "rejects no observed concurrency under --workers 2"
   expect (!(gateParallelChildren bounded 2 3)) "rejects a missing admission under --workers 2"
+  -- §1g the run resolved the worker count it was asked for.
+  expect (gateWorkers "cache.workers=6\n" 6) "accepts six resolved workers when six were asked for"
+  expect (!(gateWorkers "cache.workers=1\n" 6))
+    "rejects a run that fell back to one worker (the pre-uncapped default)"
+  expect (!(gateWorkers healthy 6)) "rejects a capture that recorded no worker count"
   -- §1e artifact formatting avoids exact-source analysis.
   let artifactCapture := "phase.artifact_child_ms=900\ncache.path_artifact_render=1\n"
   let exactCapture := "phase.exact_child_ms=1500\ncache.path_exact_render=1\n"
@@ -252,8 +264,8 @@ private def testValidationCounts (ctx : Ctx) : IO Unit := do
   let setupPath := ctx.work / "validator-setup.json"
   writeFile setupPath setup.stdout
   let result ← expectExit 0 "analyze-exact" ctx.app
-    #["__analyze-exact", setupPath.toString, fixture.toString, fixture.toString, "8589934592",
-      "4:80"] (cwd? := some ctx.root) (timeoutMs := some 600000)
+    #["__analyze-exact", setupPath.toString, fixture.toString, fixture.toString, "4:80"]
+    (cwd? := some ctx.root) (timeoutMs := some 600000)
   let json ← parseJson result.stdout "validator"
   ensureJsonAt json [.field "canonical", .field "validation"] (Lean.Json.mkObj [
     ("frontendRuns", Lean.toJson (2 : Nat)), ("renders", Lean.toJson (2 : Nat)),
@@ -317,6 +329,20 @@ private def testParallelAdmission (ctx : Ctx) : IO Unit := do
       ("LEAN_FMT_TEST_ANALYZER", some sleeper.toString),
       ("LEAN_FMT_PROFILE_PHASES", some "1")]) (timeoutMs := some 600000)
   ensure (gateParallelChildren result.stderr 2 2) "parallel child admission breached the bound"
+
+/-- §1g the worker count comes from the environment, not from a hard-coded one. A run with no
+`--workers` takes `LEAN_NUM_THREADS`; `--workers` overrides it. Both arms are cache hits over one
+clean file, so this measures the resolution and nothing else — the point is that the default is
+*not* 1, which is what made every cold run on a mathlib project serial. -/
+private def testWorkerResolution (ctx : Ctx) : IO Unit := do
+  let profile (args : Array String) (threads : String) : IO String := do
+    let result ← runProc ctx.app (#["check", "--no-cache"] ++ args ++
+      #[(ctx.root / "tests" / "check" / "Clean.lean").toString]) (cwd? := some ctx.root)
+      (env := #[("LEAN_FMT_PROFILE_PHASES", some "1"), ("LEAN_NUM_THREADS", some threads)])
+      (timeoutMs := some 600000)
+    return result.stderr
+  ensure (gateWorkers (← profile #[] "6") 6) "an unasked run ignored LEAN_NUM_THREADS"
+  ensure (gateWorkers (← profile #["--workers", "3"] "6") 3) "--workers did not override"
 
 /-- §2 gate G3. The wall clock covers the formatter process and nothing else — one parent times
 the child directly, because two interpreter timestamps around the run would put both startups in
@@ -387,6 +413,7 @@ public def main (args : List String) : IO UInt32 := do
       { name := "warm-fully-served", run := Performance.testWarmFullyServed ctx },
       { name := "artifact-acceleration", run := Performance.testArtifactAcceleration ctx },
       { name := "parallel-admission", run := Performance.testParallelAdmission ctx },
+      { name := "worker-resolution", run := Performance.testWorkerResolution ctx },
       { name := "g3-remainder", run := Performance.testG3Remainder ctx },
       { name := "phase-measures", run := Performance.testPhaseMeasures ctx }
     ] args

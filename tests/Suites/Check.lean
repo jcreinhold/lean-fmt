@@ -7,8 +7,8 @@ public import Test
 
 Port of `tests/check/run.sh`: the core `check`/`format` pipeline end to end — the two producers
 (artifact and exact frontend) agreeing, the check/format agreement invariant, broken and sabotaged
-runs, the child memory budget, `--workers` determinism, the result-cache strategy and invalidation
-matrix, and the fix/render-path efficiency probes.
+runs, `--workers` determinism, the result-cache strategy and invalidation matrix, and the
+fix/render-path efficiency probes.
 
 Lane: workspace — the suite clears and populates the root `.lean-fmt-cache`, edits
 `tests/check/Findings.lean` and `LeanFmt/Cli.lean` in place (restored via `cp -p` backups), and
@@ -189,7 +189,7 @@ where
   project (ctx : Ctx) (setup : System.FilePath) : IO Lean.Json := do
     let result ← expectExit 0 "exact envelope" "lake"
       #["env", ctx.application, "__analyze-exact", setup.toString,
-        "tests/compiler/LocalSyntax.lean", "tests/compiler/LocalSyntax.lean", "8589934592"]
+        "tests/compiler/LocalSyntax.lean", "tests/compiler/LocalSyntax.lean"]
       (cwd? := some ctx.root)
     parseJson result.stdout "exact envelope"
 
@@ -222,54 +222,11 @@ private def testAbort (ctx : Ctx) : IO Unit := do
     (·.getArr?.toOption)).getD #[]
   ensureEq "abort: expected two infrastructure failures" 2 failures.size
 
-/-- A one-byte envelope trips the resource limit, with the envelope's own wording. -/
-private def testMemoryEnvelope (ctx : Ctx) : IO Unit := do
-  let result ← checkRaw ctx 2 #["check", "--root", ".", "--json", "--no-cache",
-    "tests/check/Clean.lean"] "memory"
-    (env := fallbackEnv ++ #[("LEAN_FMT_TEST_MAX_BYTES", some "1")])
-  ensureContains result.stdout "resource envelope exhausted" "memory"
-
-/-- Write the argv recorder the budget cases point `LEAN_FMT_TEST_ANALYZER` at. The recorder
-exits 1 so the run fails after recording; what matters is the argv, not the report. -/
-private def writeRecorder (ctx : Ctx) : IO System.FilePath := do
-  let recorder := ctx.work / "recording-analyzer.sh"
-  writeFile recorder
-    "#!/usr/bin/env bash\nprintf '%s\\n' \"$@\" >\"$LEAN_FMT_ARGV_CAPTURE\"\nexit 1\n"
-  discard <| expectExit 0 "chmod recorder" "chmod" #["+x", recorder.toString]
-  return recorder
-
-/-- The child is told its honest headroom, not the whole envelope: the budget argument is
-strictly positive and strictly less than the envelope; with `--workers 2` it is at most half. The
-gate asserts the argument handed to the analyzer, a count that does not move when the machine
-gets slower. -/
-private def testChildBudget (ctx : Ctx) : IO Unit := do
-  let recorder ← writeRecorder ctx
-  let capture := ctx.work / "child-argv.txt"
-  let env := fallbackEnv ++ #[("LEAN_FMT_TEST_ANALYZER", some recorder.toString),
-    ("LEAN_FMT_ARGV_CAPTURE", some capture.toString)]
-  discard <| checkRaw ctx 2 #["check", "--root", ".", "--json", "--no-cache",
-    "--max-memory", "8", "tests/check/Clean.lean"] "budget" (env := env)
-  let argv := (← IO.FS.readFile capture).splitOn "\n" |>.filter (!·.isEmpty)
-  ensureEq "budget: subcommand" ["__analyze-exact"] (argv.take 1)
-  let some budget := (argv[4]?).bind String.toNat?
-    | throw <| IO.userError s!"budget: no budget argument in {argv}"
-  ensure (0 < budget && budget < 8 * 1024^3) s!"budget out of bounds: {budget}"
-  let captureJobs := ctx.work / "child-argv-jobs.txt"
-  let envJobs := fallbackEnv ++ #[("LEAN_FMT_TEST_ANALYZER", some recorder.toString),
-    ("LEAN_FMT_ARGV_CAPTURE", some captureJobs.toString)]
-  discard <| checkRaw ctx 2 #["check", "--root", ".", "--json", "--no-cache",
-    "--max-memory", "8", "--workers", "2", "tests/check/Clean.lean"] "budget jobs" (env := envJobs)
-  let argvJobs := (← IO.FS.readFile captureJobs).splitOn "\n" |>.filter (!·.isEmpty)
-  ensureEq "budget jobs: subcommand" ["__analyze-exact"] (argvJobs.take 1)
-  let some jobsBudget := (argvJobs[4]?).bind String.toNat?
-    | throw <| IO.userError s!"budget jobs: no budget argument in {argvJobs}"
-  ensure (0 < jobsBudget && jobsBudget <= 4 * 1024^3)
-    s!"budget with --workers 2 out of bounds: {jobsBudget}"
-
 /-- `--workers` changes scheduling, never output: the parallel run assembles results by target
 index, so its report is byte-identical to the serial run's. Three fixtures with three different
 outcomes exercise the fold over every report shape; the env vars force every fixture through a
-real frontend child, so the comparison cannot pass vacuously.
+real frontend child, so the comparison cannot pass vacuously. The serial arm names `--workers 1`
+rather than relying on the default, which is the machine's core count.
 
 The `--workers 4` arm and the failure count guard against a parent that refuses a file for the memory
 it holds. The clause that once did this counted each child's shared `.olean` mapping in full and then
@@ -280,7 +237,8 @@ little, so the count catches only a gross regression; the corpus that exposed th
 private def testWorkersDeterminism (ctx : Ctx) : IO Unit := do
   let files := #["tests/check/Clean.lean", "tests/check/Findings.lean", "tests/check/Layout.lean"]
   let serial ← checkRaw ctx 1
-    (#["check", "--root", ".", "--json", "--no-cache"] ++ files) "serial" (env := fallbackEnv)
+    (#["check", "--root", ".", "--json", "--no-cache", "--workers", "1"] ++ files) "serial"
+    (env := fallbackEnv)
   let parallel ← checkRaw ctx 1
     (#["check", "--root", ".", "--json", "--no-cache", "--workers", "2"] ++ files) "parallel"
     (env := fallbackEnv)
@@ -576,8 +534,6 @@ public def main (args : List String) : IO UInt32 := do
       { name := "custom-syntax", run := Check.testCustomSyntax ctx },
       { name := "broken", run := Check.testBroken ctx },
       { name := "abort", run := Check.testAbort ctx },
-      { name := "memory-envelope", run := Check.testMemoryEnvelope ctx },
-      { name := "child-budget", run := Check.testChildBudget ctx },
       { name := "workers-determinism", run := Check.testWorkersDeterminism ctx },
       { name := "cache-strategies", run := Check.testCacheStrategies ctx },
       { name := "cache-canonical", run := Check.testCacheCanonical ctx },

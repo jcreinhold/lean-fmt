@@ -138,7 +138,7 @@ private def analyze (root : System.FilePath) (application : String) (setup : Sys
   let path := work / s!"contract-{label}"
   writeFile path source
   let result ← runProc application
-    #["__analyze-exact", setup.toString, path.toString, label, "8589934592"] (cwd? := some root)
+    #["__analyze-exact", setup.toString, path.toString, label] (cwd? := some root)
   if result.exitCode != 0 then
     reject "frontend" (if result.stderr.trimAscii.isEmpty then
       s!"exact analysis exited {result.exitCode}" else result.stderr.trimAscii.toString)

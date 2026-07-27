@@ -61,7 +61,6 @@ structure RunRequest where
   mode : RunMode
   root : FilePath
   files : Array FilePath
-  maxMemoryGiB : Nat := 8
   cache : Bool := true
   configPath? : Option FilePath := none
   select : Array String := #[]
@@ -87,12 +86,11 @@ structure RunRequest where
   nothing and reports `would-format`/`clean`, the former default. `check`/`diff`/`fix` ignore
   it. -/
   formatCheck : Bool := false
-  /-- How many frontend children may run concurrently (`--workers`). One is the default: the serial
-  path, one child at a time, told the whole envelope minus the parent's RSS. Above one, that many
-  dedicated workers serve the batch loop's unanswered targets and the per-child heap budget is
-  divided between them (`withExactRun`). Scheduling only: every result is assembled by target index,
-  so the report is byte-identical at any value. -/
-  workers : Nat := 1
+  /-- How many frontend children may run concurrently (`--workers`), or `none` to pick the number
+  the way Lake picks it for its own build: `LEAN_NUM_THREADS` if that is set, else the machine's
+  hardware concurrency. `resolveWorkers` does the picking. Scheduling only: every result is
+  assembled by target index, so the report is byte-identical at any value. -/
+  workers : Option Nat := none
 
 /-- Whether this run publishes source. `fix` always does; `format` does unless `--check` demotes it to a
 preview. A writer needs the validator child, so it must fall through to
@@ -155,20 +153,18 @@ private structure LiveChild where
   pgid : UInt32
 
 /- A valid exact-analysis capability. Construction brackets its temporary storage, fixes the target
-project/toolchain and aggregate envelope once, and owns collision-free request names. No caller can
-observe setup paths or sequence cleanup. Batch envelopes use fresh child processes; the language
-server may instead request an exact setup for its document-owned in-process analyzer. -/
+project and toolchain once, and owns collision-free request names. No caller can observe setup paths
+or sequence cleanup. Batch envelopes use fresh child processes; the language server may instead
+request an exact setup for its document-owned in-process analyzer. -/
 structure ExactRun where
   private mk ::
   project : Project.Snapshot
   application : FilePath
   temporary : FilePath
-  maxBytes : Nat
-  /-- How many frontend children may run concurrently (`--workers`). One is the default and takes the
-  serial `runChild` path untouched; above one, spawns register with `registry?` instead, and each
-  child's heap budget is one `workers`th of the envelope. -/
+  /-- How many frontend children may run concurrently, already resolved to a number. One takes the
+  serial `runChild` path; above one, spawns register with `registry?` instead. -/
   workers : Nat
-  /-- The children running now, or `none` at `--workers 1`, where one child runs at a time and the
+  /-- The children running now, or `none` at one worker, where one child runs at a time and the
   frame that spawned it is the only thing that needs to find it. Read for counting and for cleanup,
   never to decide whether to kill one. -/
   registry? : Option (IO.Ref (Array LiveChild))
@@ -322,17 +318,17 @@ def ExactRun.setupSnapshot (run : ExactRun) (snapshot : SourceSnapshot) : IO Lea
   run.documentSetups.modify (·.insert snapshot.relativePath (identity, setup))
   return setup
 
-private def residentKiB : IO Nat := do
-  let pid ← IO.Process.getPID
-  let output ← IO.Process.output {
-    cmd := "/bin/ps"
-    args := #["-o", "rss=", "-p", toString pid]
-  }
-  unless output.exitCode == 0 do
-    throw <| IO.userError s!"could not sample parent RSS: {output.stderr.trimAscii}"
-  let some value := output.stdout.trimAscii.toNat?
-    | throw <| IO.userError "could not parse parent RSS"
-  return value
+/-- How many frontend children to run at once. `--workers N` decides it when given; otherwise this
+picks the number the way Lake picks it for its own build — `LEAN_NUM_THREADS` if that is set, else
+the hardware concurrency (`src/runtime/object.cpp`'s `get_lean_num_threads`). Lake bounds a build by
+cores and nothing else, and a frontend child of ours costs about what a `lean` of Lake's costs, so
+the same number is the right one. -/
+private def resolveWorkers (requested : Option Nat) : IO Nat := do
+  if let some workers := requested then
+    return max workers 1
+  if let some threads := (← IO.getEnv "LEAN_NUM_THREADS").bind (·.toNat?) then
+    return max threads 1
+  return max (System.Platform.Internal.getHardwareConcurrency ()).toNat 1
 
 private def awaitRead (task : Task (Except IO.Error String)) : IO String := do
   match ← IO.wait task with
@@ -350,17 +346,6 @@ def cancellationMessage : String := "exact frontend child cancelled by request"
 /-- Whether an error is this operation's cancellation, as opposed to a failure worth reporting. -/
 def cancelled? (error : IO.Error) : Bool :=
   ((toString error).splitOn cancellationMessage).length > 1
-
-/-- The words every refusal for memory carries. A caller that catches one needs to tell "this run has
-no memory left to grant" apart from "this file could not be analyzed this way", because the first
-says nothing about the file and will happen again to any other path. A string marker for the same
-reason `cancellationMessage` is one; `envelopeExhausted?` reads it, and nothing should match the text
-by hand. -/
-def envelopeExhaustedMessage : String := "resource envelope exhausted"
-
-/-- Whether an error says the run could grant the child no memory. -/
-def envelopeExhausted? (error : IO.Error) : Bool :=
-  ((toString error).splitOn envelopeExhaustedMessage).length > 1
 
 /- Poll instead of blocking on `wait`: a long-running server must be able to drop a request while it
 is running, and this child is the only thing to drop. One look every 50 ms bounds how long a
@@ -408,26 +393,18 @@ private def runChild (arguments : IO.Process.SpawnArgs)
   let stderrTask ← IO.asTask child.stderr.readToEnd
   awaitChild child stdoutTask stderrTask cancel?
 
-/-- The heap a child may use: the envelope minus what the parent holds, split `workers` ways. The
-child installs this with `Lean.Internal.setMaxMemory`, so it caps the child's Lean heap — the memory
-that grows with the number of children. `Nat` subtraction saturates, so a parent already over the
-bound hands out zero rather than wrapping.
+/-- Spawn one frontend child and wait for it. At one worker this is `runChild`: one child at a time,
+one admission counted. Above one, the child joins the registry before it can run unobserved, and
+dedicated threads drain its pipes — the lesson of the two-child one-thread prototype, where a pipe
+nobody read blocked the process holding it. The `finally` kills and drains a child its worker is
+walking away from, so the registry and the process table never disagree.
 
-This limit is the only one. The parent also used to read each child's RSS from `/bin/ps` and kill any
-child over its share, which made `--workers` unusable on a project that imports mathlib. RSS counts
-mapped `.olean`s, and those pages are shared between the children, clean, and reclaimable, so
-splitting them `workers` ways charged one mapping several times over. Measured: a child whose RSS
-read 2.05 GiB had a peak physical footprint of 173 MiB, and one reading 2.90 GiB had 602 MiB;
-`--workers 8` refused 187 of 200 files and `--workers 3` refused 118, none of them near real memory
-pressure. -/
-private def childMemoryBudget (maxBytes : Nat) (workers : Nat := 1) : IO Nat := do
-  return (maxBytes - (← residentKiB) * 1024) / (max workers 1)
-
-/-- Spawn one frontend child and wait for it. At `--workers 1`, the default, this is `runChild`:
-one child at a time, one admission counted. Above one, the child joins the registry before it can run
-unobserved, and dedicated threads drain its pipes — the lesson of the two-child one-thread prototype,
-where a pipe nobody read blocked the process holding it. The `finally` kills and drains a child its
-worker is walking away from, so the registry and the process table never disagree. -/
+Nothing here bounds what a child may allocate. Lake bounds nothing either: it spawns one `lean` per
+module and passes no `-M`, no `ulimit`, no `setrlimit`. lean-fmt used to divide a `--max-memory`
+envelope between its children, which refused work on any project importing mathlib — 187 of 200
+files at eight workers — because the number it divided counted each child's shared `.olean` mapping
+in full. A child reading 2.05 GiB of RSS had a physical footprint of 173 MiB. The control that
+remains is `--workers`. -/
 private def ExactRun.spawnChild (run : ExactRun) (arguments : IO.Process.SpawnArgs)
     (cancel? : Option Std.CancellationToken := none) : IO ChildOutput := do
   let some registry := run.registry?
@@ -510,19 +487,16 @@ private def ExactRun.envelope (run : ExactRun)
     IO.FS.writeFile sourcePath snapshot.source
     pure (setupResult, setupPath, sourcePath)
   try
-    if (← residentKiB) * 1024 >= run.maxBytes then
-      throw <| IO.userError s!"{envelopeExhaustedMessage} before exact frontend child \
-        (limit {run.maxBytes} bytes)"
     let overrideName := if validator then "LEAN_FMT_TEST_VALIDATOR" else "LEAN_FMT_TEST_ANALYZER"
     let analyzer := (← IO.getEnv overrideName).map FilePath.mk |>.getD run.application
     let output ← withPhase "exact_child" <| run.spawnChild {
       cmd := analyzer.toString
       -- The trailing capture token encodes the demanded semantic capabilities: "0" none, "1" the
       -- two semantic diagnostics, "2" diagnostics plus the info-tree occurrence fold. A direct
-      -- 4-argument invocation (every syntax-only harness) omits it and captures nothing.
+      -- three-argument invocation (every syntax-only harness) omits it and captures nothing.
       -- `occurrences` is only ever demanded together with the tier, so the token is a simple ladder.
       args := #["__analyze-exact", setupPath.toString, sourcePath.toString,
-        snapshot.path.toString, toString (← childMemoryBudget run.maxBytes run.workers),
+        snapshot.path.toString,
         match formatWidth? with
         | some width => s!"4:{width}"
         | none => if captureOccurrences then "2" else if captureSemantic then "1" else "0"]
@@ -570,14 +544,10 @@ private def ExactRun.artifactEnvelope (run : ExactRun) (snapshot : SourceSnapsho
     IO.FS.writeFile artifactPath (Lean.toJson artifact).compress
     pure (setupResult, setupPath, sourcePath, artifactPath)
   try
-    if (← residentKiB) * 1024 >= run.maxBytes then
-      throw <| IO.userError s!"{envelopeExhaustedMessage} before artifact formatter child \
-        (limit {run.maxBytes} bytes)"
     let output ← withPhase "artifact_child" <| run.spawnChild {
       cmd := run.application.toString
       args := #["__analyze-artifact", setupPath.toString, moduleFile.toString,
-        artifactPath.toString, sourcePath.toString, snapshot.path.toString,
-        toString (← childMemoryBudget run.maxBytes run.workers), toString width]
+        artifactPath.toString, sourcePath.toString, snapshot.path.toString, toString width]
       env := run.project.workspace.augmentedEnvVars.push ⟨"LEAN_NUM_THREADS", some "1"⟩
     } cancel?
     unless output.exitCode == 0 do
@@ -762,16 +732,10 @@ def ExactRun.analyzeSnapshot (run : ExactRun) (snapshot : SourceSnapshot)
 /- Bracket a complete exact-analysis run. The capability is constructed only after a real fallback
 or editor request needs it; cache-only and ordinary-evidence batch runs create no temporary state.
 
-Above one, `workers` creates the child registry and splits each child's heap budget that many ways.
-Nothing polls the registry: a child caps its own heap with the budget it was given, and the parent
-only watches. -/
-def withExactRun (project : Project.Snapshot) (maxMemoryGiB : Nat) (workers : Nat := 1)
+Above one, `workers` creates the child registry. Nothing polls it to enforce anything; the run
+counts its children and cleans up after them, and that is all. -/
+def withExactRun (project : Project.Snapshot) (workers : Nat := 1)
     (action : ExactRun → IO α) : IO α := do
-  unless maxMemoryGiB > 0 do
-    throw <| IO.userError "--max-memory must provide a nonzero operating envelope"
-  let configuredMaxBytes := maxMemoryGiB * 1024 * 1024 * 1024
-  let maxBytes := ((← IO.getEnv "LEAN_FMT_TEST_MAX_BYTES").bind (·.toNat?))
-    |>.getD configuredMaxBytes
   let temporary ← IO.FS.createTempDir
   let nextIndex ← IO.mkRef 0
   let setups ← IO.mkRef {}
@@ -781,7 +745,6 @@ def withExactRun (project : Project.Snapshot) (maxMemoryGiB : Nat) (workers : Na
     project
     application := ← IO.appPath
     temporary
-    maxBytes
     workers
     registry?
     nextIndex
@@ -1603,9 +1566,8 @@ private def processOneTarget (exactRun : ExactRun) (request : RunRequest)
                 catch error =>
                   -- Falling through elaborates the source as well as the candidate, so it costs
                   -- strictly more than the artifact path that just failed. Spend that only on
-                  -- reasons about this artifact. A run out of memory would refuse the heavier child
-                  -- too, for a second child's price, and a cancelled request must stay cancelled.
-                  if cancelled? error || envelopeExhausted? error then throw error
+                  -- reasons about this artifact; a cancelled request must stay cancelled.
+                  if cancelled? error then throw error
                   pure none
               match artifactEnvelope? with
               | some envelope => canonicalAnalysis snapshot true envelope (artifactRender := true)
@@ -1679,8 +1641,8 @@ private partial def batchWorker (exactRun : ExactRun) (request : RunRequest)
 selection, source snapshots, trusted-artifact validation, fallback, deterministic aggregation, and
 resource intent. No caller can sequence or retain those mechanisms independently. -/
 def execute (request : RunRequest) : IO RunOutcome := do
-  if request.maxMemoryGiB == 0 then
-    throw <| IO.userError "--max-memory must provide a nonzero operating envelope"
+  let workers ← resolveWorkers request.workers
+  recordCount "workers" workers
   let root ← IO.FS.realPath request.root
   let configPath? := request.configPath?.map fun path =>
     if path.isAbsolute then path else root / path
@@ -1832,7 +1794,7 @@ def execute (request : RunRequest) : IO RunOutcome := do
         withPhase "cache_write" <| cache.writeAll project snapshots available
       let positions ← profiledPositions snapshots files
       return { report := summarize request.mode.toString files, positions }
-  withExactRun project request.maxMemoryGiB request.workers fun exactRun => do
+  withExactRun project workers fun exactRun => do
     -- Exactly the files the decisions above left unanswered, which is exactly the set that
     -- will spawn a frontend child and so need a Lake setup.
     exactRun.primeSetups <| (snapshots.zip available).filterMap fun (snapshot, available?) =>
@@ -1843,13 +1805,11 @@ def execute (request : RunRequest) : IO RunOutcome := do
     -- Progress counts the targets the decisions above left unanswered — exactly the work that
     -- can take minutes on a cold run. An all-served run never reaches here and never shows one.
     let progress ← LeanFmt.Progress.start request.mode.toString work.size
-    if request.workers > 1 && work.size > 1 then
-      -- `--workers N`: dedicated workers, one shared child registry (`withExactRun` creates it),
-      -- outcomes by index. Dedicated priority is required, not tuning: workers block on child
-      -- pipes, and pooled blocking tasks can starve a small pool (`LEAN_NUM_THREADS=1` is a
-      -- supported setting).
-      let workers := min request.workers work.size
-      let tasks ← (List.range workers).mapM fun _ =>
+    if workers > 1 && work.size > 1 then
+      -- Several workers: one shared child registry (`withExactRun` creates it), outcomes by index.
+      -- Dedicated priority is required, not tuning: workers block on child pipes, and pooled
+      -- blocking tasks can starve a small pool (`LEAN_NUM_THREADS=1` is a supported setting).
+      let tasks ← (List.range (min workers work.size)).mapM fun _ =>
         IO.asTask (batchWorker exactRun request renderCanonical demanded demandedCaps work next
           outcomes progress) Task.Priority.dedicated
       let mut firstError? : Option IO.Error := none
@@ -1927,7 +1887,6 @@ structure StreamRequest where
   /-- A normalized-source byte range to format, or the whole buffer. Meaningful only for a
   rendering mode; only this operation accepts one. -/
   range? : Option SourceRange := none
-  maxMemoryGiB : Nat := 8
   configPath? : Option FilePath := none
   selection : CliSelection := {}
   unsafeFixes : Bool := false
@@ -2074,10 +2033,9 @@ Every clause the freeze fixes is enforced here:
 - **No persistent cache.** `ResultCache` is never opened. A cache entry is keyed on a digest bound
   to a file on disk, and unsaved bytes have no disk state to bind — the same rule an editor session
   follows.
-- **The isolated stream envelope.** One `withExactRun`, a fresh bounded child, and the
-  `--max-memory` aggregate limit. The language server uses the same capability's setup and
-  projection operations around its persistent document frontend, without introducing a second
-  formatter.
+- **The isolated stream envelope.** One `withExactRun` and a fresh child per request. The language
+  server uses the same capability's setup and projection operations around its persistent document
+  frontend, without introducing a second formatter.
 - **Identity is required.** `Project.unsavedTarget` applies every gate the file path applies,
   including the `.lake` floor, and resolves the effective configuration from the buffer's location,
   so the same bytes get the same answer whether they arrive by path or by pipe.
@@ -2086,8 +2044,6 @@ The exact frontend response retains the complete admitted layout for this surfac
 and unsaved streams consume the same text, source map, formatter metrics, and validation metrics;
 no caller reaches back into the transport envelope for a second partial representation. -/
 def stream (request : StreamRequest) : IO StreamReport := do
-  unless request.maxMemoryGiB > 0 do
-    throw <| IO.userError "--max-memory must provide a nonzero operating envelope"
   let root ← IO.FS.realPath request.root
   let configPath? := request.configPath?.map fun path =>
     if path.isAbsolute then path else root / path
@@ -2099,7 +2055,7 @@ def stream (request : StreamRequest) : IO StreamReport := do
     | .error message => throw <| IO.userError message
   for notice in target.config.notices ++ plan.notices do
     IO.eprintln s!"lean-fmt: {notice}"
-  withExactRun project request.maxMemoryGiB (action := fun run =>
+  withExactRun project (action := fun run =>
     run.streamSnapshot target plan request.mode (range? := request.range?)
       (unsafeFixes := request.unsafeFixes) (formatCheck := request.formatCheck))
 
@@ -2137,7 +2093,6 @@ def ExactRun.organizeSnapshot (run : ExactRun) (target : Project.SourceTarget)
 structure OrganizeRequest where
   root : FilePath
   files : Array FilePath
-  maxMemoryGiB : Nat := 8
   configPath? : Option FilePath := none
   /-- Report what would change without writing (like `check` for the organizer). -/
   check : Bool := false
@@ -2153,8 +2108,6 @@ Every rewrite that changes a file is validated by re-elaboration before it is wr
 trusted-artifact discipline `fix` uses (`fixFile`) — so an organized header that fails to elaborate
 is rejected, never published. A clean project never constructs the validator. -/
 def organize (request : OrganizeRequest) : IO RunReport := do
-  if request.maxMemoryGiB == 0 then
-    throw <| IO.userError "--max-memory must provide a nonzero operating envelope"
   let root ← IO.FS.realPath request.root
   let configPath? := request.configPath?.map fun path =>
     if path.isAbsolute then path else root / path
@@ -2176,7 +2129,7 @@ def organize (request : OrganizeRequest) : IO RunReport := do
     let files := (snapshots.zip candidates).map fun (snapshot, candidate?) =>
       baseReport snapshot (if candidate?.isSome then "would-organize" else "clean")
     return summarize "organize" files
-  withExactRun project request.maxMemoryGiB (action := fun exactRun => do
+  withExactRun project (action := fun exactRun => do
     -- Only a snapshot with a candidate rewrite is validated, so only those reach the frontend.
     exactRun.primeSetups <| (snapshots.zip candidates).filterMap fun (snapshot, candidate?) =>
       if candidate?.isSome then some snapshot else none
@@ -2208,11 +2161,9 @@ def organize (request : OrganizeRequest) : IO RunReport := do
     return summarize "organize" files failures)
 
 private unsafe def runArtifactAnalyzeChild (args : List String) : IO UInt32 := do
-  let [setupPath, moduleFile, artifactPath, snapshotPath, displayPath, maxBytes, width] := args
+  let [setupPath, moduleFile, artifactPath, snapshotPath, displayPath, width] := args
     | return 2
-  let some maxBytes := maxBytes.toNat? | return 2
   let some width := width.toNat? | return 2
-  Lean.Internal.setMaxMemory maxBytes.toUSize
   let .ok setupJson := Lean.Json.parse (← IO.FS.readFile setupPath) | return 2
   let .ok (setup : Lean.ModuleSetup) := Lean.fromJson? setupJson | return 2
   let .ok artifactJson := Lean.Json.parse (← IO.FS.readFile artifactPath) | return 2
@@ -2223,17 +2174,14 @@ private unsafe def runArtifactAnalyzeChild (args : List String) : IO UInt32 := d
   return 0
 
 private unsafe def runAnalyzeChild (args : List String) : IO UInt32 := do
-  -- The capture mode is a trailing optional argument: a direct 4-argument invocation omits it
+  -- The capture mode is a trailing optional argument: a direct three-argument invocation omits it
   -- and captures no optional frontend fact.
-  let (setupPath, snapshotPath, displayPath, maxBytes, captureMode) ← match args with
-    | [setupPath, snapshotPath, displayPath, maxBytes] =>
-      pure (setupPath, snapshotPath, displayPath, maxBytes, "0")
-    | [setupPath, snapshotPath, displayPath, maxBytes, captureMode] =>
-      pure (setupPath, snapshotPath, displayPath, maxBytes, captureMode)
+  let (setupPath, snapshotPath, displayPath, captureMode) ← match args with
+    | [setupPath, snapshotPath, displayPath] =>
+      pure (setupPath, snapshotPath, displayPath, "0")
+    | [setupPath, snapshotPath, displayPath, captureMode] =>
+      pure (setupPath, snapshotPath, displayPath, captureMode)
     | _ => return 2
-  let some maxBytes := maxBytes.toNat?
-    | return 2
-  Lean.Internal.setMaxMemory maxBytes.toUSize
   -- The parent's `exact_child` minus the child's `child_analyze` left about 170 ms per file
   -- unattributed, and this is the half of it the child can see. A `ModuleSetup` names an artifact
   -- path for every module in the closure, so on a deep closure the JSON is large and parsing it is
@@ -2301,13 +2249,10 @@ private unsafe def runExtractChild (args : List String) : IO UInt32 := do
   return 0
 
 private unsafe def runValidateCandidateChild (args : List String) : IO UInt32 := do
-  let [setupPath, sourcePath, candidatePath, displayPath, maxBytes, width] := args
-    | return 2
-  let some maxBytes := maxBytes.toNat?
+  let [setupPath, sourcePath, candidatePath, displayPath, width] := args
     | return 2
   let some width := width.toNat?
     | return 2
-  Lean.Internal.setMaxMemory maxBytes.toUSize
   let .ok setupJson := Lean.Json.parse (← IO.FS.readFile setupPath)
     | return 2
   let .ok (setup : Lean.ModuleSetup) := Lean.fromJson? setupJson
@@ -2319,11 +2264,8 @@ private unsafe def runValidateCandidateChild (args : List String) : IO UInt32 :=
   return 0
 
 private unsafe def runInspectArtifactChild (args : List String) : IO UInt32 := do
-  let [moduleName, moduleFile, sourcePath, maxBytes] := args
+  let [moduleName, moduleFile, sourcePath] := args
     | return 2
-  let some maxBytes := maxBytes.toNat?
-    | return 2
-  Lean.Internal.setMaxMemory maxBytes.toUSize
   let source ← IO.FS.readFile sourcePath
   match ← compilerArtifact? moduleName.toName moduleFile with
   | some artifact =>
@@ -2431,7 +2373,6 @@ def clean (requestedRoot : FilePath) : IO CleanReport := do
 
 structure CompilerStatusRequest where
   root : FilePath := "."
-  maxMemoryGiB : Nat := 8
 
 structure CompilerSetupReport where
   schema : String
@@ -2475,7 +2416,7 @@ structure CompilerStatusReport where
   deriving Lean.ToJson
 
 private def inspectCompilerArtifact (workspace : Lake.Workspace) (application : FilePath)
-    (maxBytes : Nat) (snapshot : SourceSnapshot) : IO String := do
+    (snapshot : SourceSnapshot) : IO String := do
   let some mod := snapshot.module?
     | return "unbuilt"
   unless ← Project.isCurrent workspace (do mod.olean.fetch) do
@@ -2483,7 +2424,7 @@ private def inspectCompilerArtifact (workspace : Lake.Workspace) (application : 
   let output ← runChild {
     cmd := application.toString
     args := #["__inspect-artifact", mod.name.toString,
-      mod.oleanFile.toString, snapshot.path.toString, toString (← childMemoryBudget maxBytes)]
+      mod.oleanFile.toString, snapshot.path.toString]
     env := workspace.augmentedEnvVars.push ⟨"LEAN_NUM_THREADS", some "1"⟩
   }
   unless output.exitCode == 0 do
@@ -2496,17 +2437,14 @@ private def inspectCompilerArtifact (workspace : Lake.Workspace) (application : 
   return status
 
 def compilerStatus (request : CompilerStatusRequest) : IO CompilerStatusReport := do
-  unless request.maxMemoryGiB > 0 do
-    throw <| IO.userError "--max-memory must provide a nonzero operating envelope"
   let root ← IO.FS.realPath request.root
   let project ← Project.loadAll root
   let application ← IO.appPath
-  let maxBytes := request.maxMemoryGiB * 1024 * 1024 * 1024
   let mut statuses := #[]
   for snapshot in project.targets do
     let some mod := snapshot.module?
       | continue
-    let status ← inspectCompilerArtifact project.workspace application maxBytes snapshot
+    let status ← inspectCompilerArtifact project.workspace application snapshot
     statuses := statuses.push {
       path := snapshot.relativePath
       module := mod.name.toString
