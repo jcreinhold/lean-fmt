@@ -193,103 +193,6 @@ structure ExactRun where
   fallback behind it, which a worker reaches for a target the batch could not answer. -/
   lake : Std.Mutex Unit
 
-private structure FacetDescriptor where
-  hash : String
-  ext : String
-  path : String
-  deriving Lean.FromJson
-
-private def decodeFacetDescriptor? (encoded : String) : Option Lake.Artifact := do
-  let json ← Lean.Json.parse encoded |>.toOption
-  let descriptor : FacetDescriptor ← Lean.fromJson? json |>.toOption
-  let hash ← Lake.Hash.ofString? descriptor.hash
-  guard <| !descriptor.path.isEmpty
-  return {
-    descr := Lake.artifactWithExt hash descriptor.ext
-    path := FilePath.mk descriptor.path
-    mtime := 0
-  }
-
-/- Fetch the target workspace's registered formatter facet jobs together under Lake's no-build
-policy. Returned descriptors never escape this operation: every content hash is recomputed and
-every payload matched to its immutable module/source snapshot. A missing, stale, corrupt, or
-failing facet is an ordered miss, never an extractor launch or a partial batch failure.
-
-**`Project.noBuildValue?`, and a `catch` cannot replace it.** Under `noBuild`, an out-of-date target
-makes `finalizeBuild` call `IO.Process.exit noBuildCode` — `Lake/Build/Run.lean:367-368`, with
-`noBuildCode` 3 (`:275`). That is a process exit, not an exception: nothing below catches it and the
-run dies silently mid-batch. `noBuildValue?` stops short of `finalizeBuild`, so staleness reaches
-this operation as a `none` — an ordered miss like any other — and it owns the output buffering the
-Lake monitor needs.
-
-This once asked `Project.isCurrent` and then re-ran the identical graph under `runBuild`, because
-the probe returns a `Bool` and threw the built value away. The same duplication
-on the module setup path cost 3.7 s per cold 34-module run; both are gone.
-
-It also once asked Lake directly and could not have been caught doing it: every registry rule was
-`input := .source`, so `RulePlan.requiresSyntax` was always `false` and no product path called this
-with a stale module until rendering modes came to need a projection. -/
-def officialArtifacts (workspace : Lake.Workspace)
-    (snapshots : Array SourceSnapshot) : IO (Array (Option ModuleArtifact)) := do
-  if (← IO.getEnv "LEAN_FMT_DISABLE_ARTIFACT") == some "1" then
-    return Array.replicate snapshots.size none
-  let facetName := `module.leanFmtArtifact
-  let some config := workspace.findModuleFacetConfig? facetName
-    | return Array.replicate snapshots.size none
-  -- A module whose sidecar does not exist is a certain miss: `readFacet?` reads that very file, so
-  -- no traversal could return anything else for it. Excluding it before the traversal saves the
-  -- job; the path is the facet's own convention — `artifactFile` in the lakefile that declares
-  -- `leanFmtArtifact` — and `tests/compiler/run.sh`'s mixed-selection gate notices if they drift.
-  -- The trace is probed alongside the sidecar because a stale or missing trace fails the no-build
-  -- job the same way.
-  --
-  -- This filter was once load-bearing for a second reason, and is not any more. A failing facet job
-  -- used to zero every *other* module's artifact, and the cause was the await, not the sidecar:
-  -- `monitorBuild` returns `.error` whenever `MonitorResult.isOk` is false
-  -- (`Lake/Build/Run.lean:333`), and `isOk` is `failures.isEmpty` (`:218-219`) over failures
-  -- `reportJob` accumulates for *every* registered job (`:129`), so one failure outranks every
-  -- per-job `mapResult`. Measured on `ArtifactLayout` (facet built) + `Main` (never built), with
-  -- the filter suspended so both reached the graph:
-  --
-  --   monitorBuild            official_artifact_hit=0  miss=2
-  --   startBuild + Job.wait   official_artifact_hit=1  miss=1
-  --
-  -- So the await is per-job now, and the filter is an optimization only.
-  let sidecarBuilt ← snapshots.mapM fun snapshot =>
-    match snapshot.module? with
-    | none => pure false
-    | some mod =>
-      let sidecar := Lean.modToFilePath (mod.pkg.buildDir / "lean-fmt-artifacts") mod.name "json"
-      return (← sidecar.pathExists) && (← (sidecar.addExtension "trace").pathExists)
-  let build : Lake.FetchM (Lake.Job (Array (Option String))) := do
-    let jobs ← (snapshots.zip sidecarBuilt).mapM fun (snapshot, built) => do
-      match snapshot.module? with
-      | none => return Lake.Job.pure none
-      | some mod =>
-        unless built do
-          return Lake.Job.pure none
-        let job ← config.run (β := Lake.FacetOut facetName) mod
-        return job.mapResult fun
-          | .ok value state => .ok (some (config.format .json value)) state
-          | .error _ state => .ok none state
-    return Lake.Job.collectArray jobs "lean-fmt official artifacts"
-  try
-    -- One traversal, not two: this asked `isCurrent` and then re-ran the identical graph under
-    -- `runBuild` for the value the probe had computed and discarded; `noBuildValue?` returns that
-    -- value, and `none` is the staleness the `unless` used to catch.
-    let some encoded ← Project.noBuildValuePerJob? workspace build
-      | return Array.replicate snapshots.size none
-    (snapshots.zip encoded).mapM fun (snapshot, encoded?) => do
-      let some mod := snapshot.module?
-        | return none
-      let some encoded := encoded?
-        | return none
-      let some facet := decodeFacetDescriptor? encoded
-        | return none
-      readFacet? facet mod.name snapshot.source
-  catch _ =>
-    return Array.replicate snapshots.size none
-
 private def writeSetup (directory : FilePath) (index : Nat)
     (setup : Lean.ModuleSetup) : IO FilePath := do
   let path := directory / s!"{index}.setup.json"
@@ -1740,26 +1643,25 @@ def execute (request : RunRequest) : IO RunOutcome := do
             request.unsafeFixes importReport.1 importReport.2 snapshot analysis)
       let positions ← profiledPositions snapshots files
       return { report := summarize request.mode.toString files, positions }
-  let evidenceStarted ← IO.monoNanosNow
-  let evidence ← Project.moduleEvidence project
-  let evidenceFinished ← IO.monoNanosNow
-  recordPhase "module_evidence" evidenceStarted evidenceFinished
-  let artifactStarted ← IO.monoNanosNow
   -- The plugin artifact carries reconstructible syntax but never semantic diagnostics, so a
   -- syntax-tier selection is answered from it without a frontend and a semantic one is not.
   -- A rendering run does not fetch it at all: layout needs the live per-command environment, not a
   -- projection, and the renderer that once read this was deleted. Fetching it anyway cost a
   -- no-build Lake traversal whose result nothing could read.
   let artifactServes := !renderCanonical && unionRequiredTier != Tier.source
-  let artifacts ← if artifactServes then
-    officialArtifacts project.workspace snapshots
-  else
-    pure (Array.replicate snapshots.size none)
+  -- Source evidence and the artifact facet are one traversal. They were two, and the second was
+  -- pure waste: both ask the same graph about the same modules at the same moment, and a
+  -- `BuildStore` is per-`startBuild`, so nothing the first resolved was reused by the second.
+  let evidenceStarted ← IO.monoNanosNow
+  let facts ← Project.graph project.workspace snapshots
+    (demand := { status := true, artifacts := artifactServes })
+  let evidence ← Project.moduleEvidence project facts
+  let artifacts := facts.targets.map (·.artifact?)
+  let evidenceFinished ← IO.monoNanosNow
+  recordPhase "module_evidence" evidenceStarted evidenceFinished
   if artifactServes then
     recordCount "official_artifact_hit" (artifacts.countP (·.isSome))
     recordCount "official_artifact_miss" (artifacts.countP (·.isNone))
-  let artifactFinished ← IO.monoNanosNow
-  recordPhase "official_artifacts" artifactStarted artifactFinished
   let available ← ((((snapshots.zip cached).zip evidence).zip artifacts).zip plans).mapM fun
     | ((((snapshot, cached?), sourceEvidence), artifact?), plan) =>
       availableAnalysis plan renderCanonical applies sourceEvidence snapshot cached? artifact?

@@ -6,6 +6,7 @@ Authors: Jacob Reinhold
 
 module
 
+import all LeanFmt.ArtifactStore
 import all LeanFmt.Config
 import all LeanFmt.Digest
 import all LeanFmt.Discovery
@@ -365,6 +366,23 @@ private def noBuildValuePerJob? {α : Type} (workspace : Lake.Workspace)
   catch _ =>
     return none
 
+private structure FacetDescriptor where
+  hash : String
+  ext : String
+  path : String
+  deriving Lean.FromJson
+
+private def decodeFacetDescriptor? (encoded : String) : Option Lake.Artifact := do
+  let json ← Lean.Json.parse encoded |>.toOption
+  let descriptor : FacetDescriptor ← Lean.fromJson? json |>.toOption
+  let hash ← Lake.Hash.ofString? descriptor.hash
+  guard <| !descriptor.path.isEmpty
+  return {
+    descr := Lake.artifactWithExt hash descriptor.ext
+    path := FilePath.mk descriptor.path
+    mtime := 0
+  }
+
 /-- What a run wants from one Lake graph.
 
 Every field is a traversal cost, so absent means *do not fetch*, never "fetch and discard". -/
@@ -373,6 +391,8 @@ structure Demand where
   status : Bool := false
   /-- What does each name in `extraImports` transitively import? -/
   closures : Bool := false
+  /-- Each target's `leanFmtArtifact` facet, revalidated against its source. -/
+  artifacts : Bool := false
 
 /-- What one graph could say about one target.
 
@@ -385,6 +405,11 @@ structure TargetFacts where
   /-- `some false` is an answer, not a failure: under `noBuild` a failed `olean` fetch *is* "not up
   to date". `none` means the target is not a workspace module, or the traversal itself failed. -/
   current? : Option Bool := none
+  /-- The module's formatter facet, already revalidated: its content hash recomputed and its payload
+  matched to this target's module name and exact source. A missing, stale, corrupt, or failing
+  facet is `none`. No `Lake.Artifact` descriptor escapes `graph`, because a descriptor is a public
+  type and not authority by type alone. -/
+  artifact? : Option ModuleArtifact := none
   deriving Inhabited
 
 structure GraphFacts where
@@ -424,12 +449,38 @@ def graph (workspace : Lake.Workspace) (targets : Array SourceTarget)
     if demand.closures then
       extraImports.filterMap fun name => (workspace.findModule? name).map (name, ·)
     else #[]
+  let facetName := `module.leanFmtArtifact
+  let facetConfig? ←
+    if !demand.artifacts then pure none
+    else if (← IO.getEnv "LEAN_FMT_DISABLE_ARTIFACT") == some "1" then pure none
+    else pure (workspace.findModuleFacetConfig? facetName)
+  -- A module whose sidecar does not exist is a certain miss: `readFacet?` reads that very file, so
+  -- no traversal could return anything else for it. Excluding it here saves the job. The path is
+  -- the facet's own convention — `artifactFile` in the lakefile that declares `leanFmtArtifact` —
+  -- and the compiler suite's mixed-selection case notices if the two drift. The trace is probed
+  -- alongside the sidecar because a stale or missing trace fails the no-build job the same way.
+  --
+  -- This filter was once load-bearing for a second reason and is not any more: a failing facet job
+  -- used to zero every *other* module's artifact, and the cause was the monitor, not the sidecar.
+  -- `noBuildValuePerJob?` carries that measurement. The filter is an optimization now.
+  let facetModules : Array (Option Lake.Module) ←
+    match facetConfig? with
+    | none => pure (Array.replicate targets.size none)
+    | some _ => targets.mapM fun target =>
+      match target.module? with
+      | none => pure none
+      | some mod => do
+        let sidecar := Lean.modToFilePath (mod.pkg.buildDir / "lean-fmt-artifacts") mod.name "json"
+        if (← sidecar.pathExists) && (← (sidecar.addExtension "trace").pathExists) then
+          return some mod
+        return none
   -- Nothing to ask is not the same as asking and failing: skip the traversal entirely rather than
   -- pay a build context to answer an empty question.
-  if statusModules.all Option.isNone && closureModules.isEmpty then
+  if statusModules.all Option.isNone && closureModules.isEmpty
+      && facetModules.all Option.isNone then
     return blank
-  let build : Lake.FetchM
-      (Lake.Job (Array (Option Bool) × Array (Option (Array Lean.Name)))) := do
+  let build : Lake.FetchM (Lake.Job
+      (Array (Option Bool) × Array (Option (Array Lean.Name)) × Array (Option String))) := do
     let statusJobs ← statusModules.mapM fun mod? => do
       match mod? with
       | none => return Lake.Job.pure (α := Option Bool) none
@@ -443,19 +494,39 @@ def graph (workspace : Lake.Workspace) (targets : Array SourceTarget)
       return job.mapResult fun
         | .ok mods state => .ok (some (mods.map (·.name))) state
         | .error _ state => .ok none state
+    let facetJobs ← facetModules.mapM fun mod? => do
+      match facetConfig?, mod? with
+      | some config, some mod =>
+        let job ← config.run (β := Lake.FacetOut facetName) mod
+        return job.mapResult fun
+          | .ok value state => .ok (some (config.format .json value)) state
+          | .error _ state => .ok none state
+      | _, _ => return Lake.Job.pure (α := Option String) none
     let statuses := Lake.Job.collectArray statusJobs "lean-fmt module evidence"
     let closures := Lake.Job.collectArray closureJobs "lean-fmt import closures"
+    let facets := Lake.Job.collectArray facetJobs "lean-fmt official artifacts"
     -- `zipWith` errors if either side errors, which is exactly why every per-target job above is
-    -- `mapResult`-ed to `.ok` first: neither collection can fail, so the pair cannot either.
-    return statuses.zipWith (·, ·) closures
+    -- `mapResult`-ed to `.ok` first: no collection can fail, so the tuple cannot either.
+    return (statuses.zipWith (·, ·) closures).zipWith (fun (s, c) f => (s, c, f)) facets
   match ← withPhase "lake_graph" <| noBuildValuePerJob? workspace build with
   | none => return blank
-  | some (statuses, closures) =>
+  | some (statuses, closures, facets) =>
     -- A short array would silently mis-pair facts with targets, which is worse than no batch.
-    if statuses.size != statusModules.size || closures.size != closureModules.size then
+    if statuses.size != statusModules.size || closures.size != closureModules.size
+        || facets.size != facetModules.size then
       return blank
+    let facts ← targets.zipIdx.mapM fun (target, index) => do
+      -- The descriptor is decoded and consumed here and nowhere else. `readFacet?` recomputes the
+      -- content hash and matches the module name and the exact source, so filesystem presence or a
+      -- raw path never stands in for build validity.
+      let artifact? ← do
+        let some mod := target.module? | pure none
+        let some encoded := facets[index]! | pure none
+        let some facet := decodeFacetDescriptor? encoded | pure none
+        readFacet? facet mod.name target.source
+      return { current? := statuses[index]!, artifact? }
     return {
-      targets := targets.zipIdx.map fun (_, index) => { current? := statuses[index]! }
+      targets := facts
       imports := (closureModules.zip closures).foldl
         (init := Std.HashMap.emptyWithCapacity closureModules.size)
         fun map ((name, _), closure) => map.insert name closure
@@ -476,10 +547,15 @@ def moduleOutputPaths? (workspace : Lake.Workspace) (name : Lean.Name) : Option 
   (workspace.findModule? name).map fun mod =>
     #[mod.oleanFile, mod.oleanServerFile, mod.oleanPrivateFile, mod.traceFile]
 
-def moduleEvidence (snapshot : Snapshot) : IO (Array ModuleEvidence) := do
+/-- One source-tier verdict per target, projected from facts the caller already fetched.
+
+This takes `GraphFacts` rather than running its own traversal so that a caller wanting both evidence
+and the artifact facet pays for one graph, not two. The `lakefile.lean` arm stays here because it is
+not a graph question at all — Lake has no module for a lakefile, so currency means "does this file
+still load as a workspace root". -/
+def moduleEvidence (snapshot : Snapshot) (facts : GraphFacts) : IO (Array ModuleEvidence) := do
   if (← IO.getEnv "LEAN_FMT_TEST_DISABLE_MODULE_EVIDENCE") == some "1" then
     return Array.replicate snapshot.targets.size .needsFrontend
-  let facts ← graph snapshot.workspace snapshot.targets (demand := { status := true })
   let mut evidence := #[]
   for (target, index) in snapshot.targets.zipIdx do
     match target.module? with

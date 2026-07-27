@@ -157,8 +157,10 @@ private def verifyOfficialFacet (root sourcePath : System.FilePath) : IO Unit :=
     | throw <| IO.userError "official-facet test did not select exactly one source"
   unless project.targets.size == 1 do
     throw <| IO.userError "official-facet test did not select exactly one source"
-  let artifacts ← Application.officialArtifacts project.workspace #[target]
-  let some (some artifact) := artifacts[0]?
+  let facts ← Project.graph project.workspace #[target] (demand := { artifacts := true })
+  let some targetFacts := facts.targets[0]?
+    | throw <| IO.userError "official-facet test lost its target's facts"
+  let some artifact := targetFacts.artifact?
     | throw <| IO.userError "registered official facet was unavailable or invalid"
   let some semantic := SemanticAnalysis.ofArtifact? target.source (some artifact)
     | throw <| IO.userError "registered official facet did not produce a semantic result"
