@@ -236,16 +236,25 @@ def officialArtifacts (workspace : Lake.Workspace)
   let facetName := `module.leanFmtArtifact
   let some config := workspace.findModuleFacetConfig? facetName
     | return Array.replicate snapshots.size none
-  -- A module whose sidecar does not exist is a certain miss: `readFacet?` reads that very file,
-  -- so no traversal could return anything else for it. And a never-built facet job does not degrade
-  -- per module — it fails the whole no-build traversal, zeroing every *other* module's artifact
-  -- (measured: `ArtifactLayout` + `Main` went `official_artifact_miss=2` until Main's
-  -- facet was built once, whereupon the same selection degraded per module). Such modules are
-  -- therefore excluded before the traversal, not mapped after it. The path is the facet's own
-  -- convention — `artifactFile` in the lakefile that declares `leanFmtArtifact`; the two are
-  -- versioned together, and `tests/compiler/run.sh`'s mixed-selection gate notices if they drift.
+  -- A module whose sidecar does not exist is a certain miss: `readFacet?` reads that very file, so
+  -- no traversal could return anything else for it. Excluding it before the traversal saves the
+  -- job; the path is the facet's own convention — `artifactFile` in the lakefile that declares
+  -- `leanFmtArtifact` — and `tests/compiler/run.sh`'s mixed-selection gate notices if they drift.
   -- The trace is probed alongside the sidecar because a stale or missing trace fails the no-build
   -- job the same way.
+  --
+  -- This filter was once load-bearing for a second reason, and is not any more. A failing facet job
+  -- used to zero every *other* module's artifact, and the cause was the await, not the sidecar:
+  -- `monitorBuild` returns `.error` whenever `MonitorResult.isOk` is false
+  -- (`Lake/Build/Run.lean:333`), and `isOk` is `failures.isEmpty` (`:218-219`) over failures
+  -- `reportJob` accumulates for *every* registered job (`:129`), so one failure outranks every
+  -- per-job `mapResult`. Measured on `ArtifactLayout` (facet built) + `Main` (never built), with
+  -- the filter suspended so both reached the graph:
+  --
+  --   monitorBuild            official_artifact_hit=0  miss=2
+  --   startBuild + Job.wait   official_artifact_hit=1  miss=1
+  --
+  -- So the await is per-job now, and the filter is an optimization only.
   let sidecarBuilt ← snapshots.mapM fun snapshot =>
     match snapshot.module? with
     | none => pure false
@@ -268,7 +277,7 @@ def officialArtifacts (workspace : Lake.Workspace)
     -- One traversal, not two: this asked `isCurrent` and then re-ran the identical graph under
     -- `runBuild` for the value the probe had computed and discarded; `noBuildValue?` returns that
     -- value, and `none` is the staleness the `unless` used to catch.
-    let some encoded ← Project.noBuildValue? workspace build
+    let some encoded ← Project.noBuildValuePerJob? workspace build
       | return Array.replicate snapshots.size none
     (snapshots.zip encoded).mapM fun (snapshot, encoded?) => do
       let some mod := snapshot.module?

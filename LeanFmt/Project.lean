@@ -525,6 +525,36 @@ def noBuildValue? {α : Type} (workspace : Lake.Workspace)
     recordDuration "nobuild_context" (← contextNanos.get)
     recordDuration "nobuild_fetch" (← fetchNanos.get)
 
+/- `noBuildValue?`'s question, awaited so that one job's failure stays at its own position.
+
+`monitorBuild` cannot do that. It returns `.error "build failed"` whenever `MonitorResult.isOk` is
+false (`Lake/Build/Run.lean:333`), and `isOk` is `failures.isEmpty` (`:218-219`) over failures
+`reportJob` accumulates for *every* registered job (`:129`) — so one failure outranks every per-job
+`mapResult` and zeroes the batch. Awaiting the collection directly, as `batchModuleStatuses` does,
+keeps the `mapResult` meaningful. Measured on the artifact facet over `ArtifactLayout` (built) plus
+`Main` (never built): `monitorBuild` gave hit=0/miss=2, this gives hit=1/miss=1.
+
+No buffer swap, and none needed: with no monitor there is no `reportJob` and no `log.replay`, so a
+job's log never reaches the caller's streams. `batchModuleStatuses` has relied on that in production
+all along. `noBuildValue?` needs the swap only because it runs a monitor.
+
+`finalizeBuild` is not called here either — under `noBuild` it turns staleness into
+`IO.Process.exit` (`:367-368`), which no `catch` below it survives. Staleness is a `none`. -/
+def noBuildValuePerJob? {α : Type} (workspace : Lake.Workspace)
+    (build : Lake.FetchM (Lake.Job α)) : IO (Option α) := do
+  try
+    let jobs ← Lake.mkJobQueue
+    let bctx ← Lake.mkBuildContext' workspace { noBuild := true, verbosity := .quiet } jobs
+    let computation ← Lake.Workspace.startBuild bctx build
+    let job ← match ← computation.wait with
+      | .ok job _ => pure job
+      | .error _ _ => return none
+    match ← job.wait with
+    | .ok value _ => return some value
+    | .error _ _ => return none
+  catch _ =>
+    return none
+
 /- Every target's setup job in one collection, so one graph traversal answers the whole batch.
 Each job's own failure becomes a `none` at that position rather than failing the collection: one
 module that cannot resolve must not zero the other 126. -/
