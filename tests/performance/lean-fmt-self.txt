@@ -31,10 +31,10 @@ LeanFmt/Suppression.lean
 LeanFmt/SyntaxArtifact.lean
 LeanFmt/Validator.lean
 LeanFmt/Watch.lean
-LeanFmtArtifactExtract.lean
+tools/LeanFmtArtifactExtract.lean
 LeanFmtCompilerPlugin.lean
 tests/Test/Unit.lean
 Main.lean
 lakefile.lean
-scripts/CheckModules.lean
+tools/CheckModules.lean
 tests/lsp/Acceptance.lean
