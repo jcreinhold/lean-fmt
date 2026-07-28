@@ -80,10 +80,8 @@ private def fixtureArtifact : ModuleArtifact := {
       .atom (.synthetic fixtureSourceText.utf8ByteSize fixtureSourceText.utf8ByteSize true) (some "")]
     commands := #[{
       entry := 0
-      options := 0
       range := ⟨0, fixtureSourceText.utf8ByteSize⟩ }]
     terminal := 5
-    options := #[{ entries := #[] }]
   }
 }
 

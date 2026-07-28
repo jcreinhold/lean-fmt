@@ -628,9 +628,8 @@ private unsafe def analyzeSnapshot (setup : Lean.ModuleSetup) (source : String)
   -- systems inside one artifact for any file that uses CRLF.
   let some terminal := terminal?
     | throw <| IO.userError "successful frontend produced no terminal command"
-  let commandOptions := liveCommands.map fun command => (command.stx, command.options)
   let artifact ← match ModuleArtifact.ofParsedModule setup.name.toString normalizedSource
-      commandOptions terminal.stx commandState.scopes.head!.opts semantic with
+      commands terminal.stx semantic with
     | .ok artifact => pure artifact
     | .error error => throw <| IO.userError s!"could not encode syntax artifact: {error}"
   let projection :=

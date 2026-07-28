@@ -188,7 +188,7 @@ def ModuleArtifact.caps (artifact : ModuleArtifact) : SemanticCaps :=
   | none => {}
 
 /-- Current policy-free module artifact shape. The version is checked before any artifact is trusted. -/
-def artifactSchema : String := "lean-fmt.module-artifact.v9"
+def artifactSchema : String := "lean-fmt.module-artifact.v10"
 
 /-- Build the artifact for one accepted module.
 
@@ -202,13 +202,12 @@ projection is likewise a function of the module and its environment; it defaults
 always-on plugin producer stays on the syntax-only path, and only `analyzeExact` passes `some` under
 demand. -/
 def ModuleArtifact.ofParsedModule (mainModule normalized : String)
-    (commands : Array (Lean.Syntax × Lean.Options)) (terminal : Lean.Syntax)
-    (terminalOptions : Lean.Options) (semantic : Option SemanticProjection := none) :
+    (commands : Array Lean.Syntax) (terminal : Lean.Syntax)
+    (semantic : Option SemanticProjection := none) :
     Except String ModuleArtifact := do
-  let records := commands.map fun (stx, options) =>
-    CommandArtifactRecord.ofSyntax mainModule normalized false stx options
+  let records := commands.map (CommandArtifactRecord.ofSyntax mainModule normalized false ·)
   let records := records.push <|
-    CommandArtifactRecord.ofSyntax mainModule normalized true terminal terminalOptions
+    CommandArtifactRecord.ofSyntax mainModule normalized true terminal
   let syntaxData ← ModuleSyntax.ofRecords records
   return {
     schema := artifactSchema
@@ -223,7 +222,6 @@ structure MaterializedArtifact where
   source : LosslessSource
   commands : Array Lean.Syntax
   terminal : Lean.Syntax
-  options : Array Lean.Options
 
 def ModuleArtifact.materialize (artifact : ModuleArtifact) (raw : String) :
     Except String MaterializedArtifact := do
@@ -242,7 +240,6 @@ def ModuleArtifact.materialize (artifact : ModuleArtifact) (raw : String) :
     source := sourceProjection
     commands := materialized.commands
     terminal := materialized.terminal
-    options := materialized.options
   }
 
 def commandArtifactLinter : Lean.Name := `leanFmt.commandSyntaxArtifact

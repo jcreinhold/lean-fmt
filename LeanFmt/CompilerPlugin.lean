@@ -52,23 +52,6 @@ down so nobody proposes it again from the outside.
 6. *The payoff is one run.* `format` writing a file makes its own `.olean` stale, so the next run
    cannot read build output anyway, and the result cache already covers repeats. -/
 
-private partial def findCommandOptions? (target : Syntax) (tree : InfoTree) : Option Options :=
-  go none tree
-where
-  go (context? : Option ContextInfo) : InfoTree → Option Options
-    | .context context tree => go (context.mergeIntoOuter? context?) tree
-    | .node info children =>
-      let found := match context?, info with
-        | some context, .ofCommandInfo command =>
-          if command.stx.eqWithInfo target then some context.options else none
-        | _, _ => none
-      found <|> children.findSome? (go (info.updateContext? context?))
-    | .hole _ => none
-
-private def commandOptions? (target : Syntax) : CommandElabM (Option Options) := do
-  let infoState ← getInfoState
-  return infoState.trees.toArray.findSome? (findCommandOptions? target)
-
 /- Each command owns one independently persistent record. Async command elaboration may complete in
 any order, so aggregating inside the compiler is unsound; the facet extractor validates, sorts, and
 compacts the records after the successful `.olean` exists. -/
@@ -77,11 +60,8 @@ private def produceCommandRecord (stx : Syntax) : CommandElabM Unit := do
   if environment.mainModule.isAnonymous then
     return
   let fileMap ← getFileMap
-  let options ← match ← commandOptions? stx with
-    | some options => pure options
-    | none => getOptions
   let record := CommandArtifactRecord.ofSyntax environment.mainModule.toString fileMap.source
-    (Parser.isTerminalCommand stx) stx options
+    (Parser.isTerminalCommand stx) stx
   logAt stx
     (.tagged commandArtifactLinter <| .tagged Lean.Linter.linterMessageTag <|
       m!"{Lean.toJson record |>.compress}")

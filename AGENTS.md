@@ -133,9 +133,11 @@ from code or tests is gone — when you cannot find why something is the way it 
   `LeanFmt/CompilerPlugin.lean`'s imports and `lean_lib LeanFmtCompilerPlugin`'s globs, and both absences matter: Lake
   links every module a library globs, imported or not. When the rules were reachable, editing one rule's message string
   invalidated every integrated module's Lake trace. See `docs/adding-a-rule.md`.
-- Size the module artifact per element, not per source byte: about 25 B × (tokens + nodes), stored in the `.olean` at
-  that size. On the frozen mathlib sample the artifact runs 10.26× the source, 660 KB for the largest module. The ratio
-  tracks token density, which varies 16×, so a small source need not mean a small artifact.
+- Size the module artifact per element, not per source byte: about 24 B × (tokens + nodes), stored in the `.olean` at
+  that size. Measured 2026-07-28 over 62 mathlib modules drawn across the size distribution: the artifact runs 10.35×
+  the source, 620 KB for the largest, and `23.95 × (tokens + nodes)` fits at R² = 0.998 against 0.952 for a fit against
+  source bytes. The ratio tracks element density, which varies 7.4× across that corpus, so a small source need not mean
+  a small artifact.
 - Fetch and consume `leanFmtArtifact` inside one private Lake-owning operation. `Lake.Artifact` is a public descriptor,
   not authority by type alone; recompute its content hash and match the module and the full source snapshot. Filesystem
   presence or a raw path is not build validity.

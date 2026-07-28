@@ -283,12 +283,6 @@ private def testMutations (ctx : Ctx) : IO Unit := do
     -- Roots: the command array must be a concatenation of whole trees with nothing between them.
     ("non-contiguous root", fun artifact => pure <| mapSyntax artifact fun projection =>
       mapCommands projection (·.modify 0 (·.setObjVal! "entry" (Lean.toJson (1 : Nat))))),
-    ("dangling options ref", fun artifact =>
-      let projection := syntaxOf artifact
-      let optionCount := ((projection.getObjVal? "options").toOption
-        |>.bind (·.getArr?.toOption)).getD #[] |>.size
-      pure <| mapSyntax artifact fun x =>
-        mapCommands x (·.modify 0 (·.setObjVal! "options" (Lean.toJson optionCount)))),
     ("command range past end", fun artifact => pure <| mapSyntax artifact fun projection =>
       mapCommands projection (·.modify 0 fun command =>
         match (command.getObjVal? "range").toOption with

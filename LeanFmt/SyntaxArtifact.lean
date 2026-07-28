@@ -36,22 +36,8 @@ structure SyntaxTree where
   entries : Array SyntaxEntry
   deriving Inhabited, BEq, Repr
 
-inductive EncodedDataValue where
-  | string (value : String)
-  | boolean (value : Bool)
-  | name (value : Lean.Name)
-  | natural (value : Nat)
-  | integer (value : Int)
-  | syntaxTree (value : SyntaxTree)
-  deriving Inhabited, BEq, Repr
-
-structure EncodedOptions where
-  entries : Array (Lean.Name × EncodedDataValue)
-  deriving Inhabited, BEq, Repr
-
 structure SyntaxRoot where
   entry : Nat
-  options : Nat
   range : SourceRange
   deriving Inhabited, BEq, Repr, Lean.ToJson, Lean.FromJson
 
@@ -60,14 +46,7 @@ structure ModuleSyntax where
   entries : Array SyntaxEntry
   commands : Array SyntaxRoot
   terminal : Nat
-  options : Array EncodedOptions
   deriving Inhabited, BEq, Repr
-
-private def jsonFields (json : Lean.Json) (size : Nat) : Except String (Array Lean.Json) := do
-  let fields ← json.getArr?
-  unless fields.size == size do
-    throw s!"expected {size} fields, got {fields.size}"
-  return fields
 
 private def jsonField (fields : Array Lean.Json) (index : Nat) : Except String Lean.Json :=
   match fields[index]? with
@@ -157,39 +136,6 @@ instance : Lean.FromJson SyntaxTree where
   fromJson? json := return {
     kinds := ← json.getObjValAs? (Array Lean.Name) "k"
     entries := ← json.getObjValAs? (Array SyntaxEntry) "e" }
-
-instance : Lean.ToJson EncodedDataValue where
-  toJson
-    | .string value => .arr #[.num 0, Lean.toJson value]
-    | .boolean value => .arr #[.num 1, Lean.toJson value]
-    | .name value => .arr #[.num 2, Lean.toJson value]
-    | .natural value => .arr #[.num 3, Lean.toJson value]
-    | .integer value => .arr #[.num 4, Lean.toJson value]
-    | .syntaxTree value => .arr #[.num 5, Lean.toJson value]
-
-instance : Lean.FromJson EncodedDataValue where
-  fromJson? json := do
-    let fields ← json.getArr?
-    match ← jsonNat (← jsonField fields 0) with
-    | 0 => return .string (← Lean.fromJson? (← jsonField fields 1))
-    | 1 => return .boolean (← Lean.fromJson? (← jsonField fields 1))
-    | 2 => return .name (← Lean.fromJson? (← jsonField fields 1))
-    | 3 => return .natural (← Lean.fromJson? (← jsonField fields 1))
-    | 4 => return .integer (← Lean.fromJson? (← jsonField fields 1))
-    | 5 => return .syntaxTree (← Lean.fromJson? (← jsonField fields 1))
-    | tag => throw s!"unknown option-value tag {tag}"
-
-instance : Lean.ToJson EncodedOptions where
-  toJson options := Lean.toJson <| options.entries.map fun (name, value) =>
-    #[Lean.toJson name, Lean.toJson value]
-
-instance : Lean.FromJson EncodedOptions where
-  fromJson? json := do
-    let rows ← json.getArr?
-    let entries ← rows.mapM fun row => do
-      let fields ← jsonFields row 2
-      return (← Lean.fromJson? fields[0]!, ← Lean.fromJson? fields[1]!)
-    return { entries }
 
 deriving instance Lean.ToJson for ModuleSyntax
 deriving instance Lean.FromJson for ModuleSyntax
@@ -292,40 +238,6 @@ private partial def decodeSyntax (source : String) (tree : SyntaxTree) (index : 
       | .decl name fields => .decl name fields
     return (.ident (info.decode source) raw value preresolved, index + 1)
 
-def SyntaxTree.decode (tree : SyntaxTree) (source : String) : Except String Lean.Syntax := do
-  let (stx, next) ← decodeSyntax source tree 0
-  unless next == tree.entries.size do
-    throw s!"syntax tree decoded {next} of {tree.entries.size} entries"
-  return stx
-
-private partial def encodeDataValue : Lean.DataValue → EncodedDataValue
-  | .ofString value => .string value
-  | .ofBool value => .boolean value
-  | .ofName value => .name value
-  | .ofNat value => .natural value
-  | .ofInt value => .integer value
-  | .ofSyntax value => .syntaxTree (SyntaxTree.ofSyntax value)
-
-def EncodedOptions.ofOptions (options : Lean.Options) : EncodedOptions := Id.run do
-  let mut entries := #[]
-  for (name, value) in options do
-    entries := entries.push (name, encodeDataValue value)
-  return { entries }
-
-private partial def decodeDataValue (source : String) : EncodedDataValue → Except String Lean.DataValue
-  | .string value => pure (.ofString value)
-  | .boolean value => pure (.ofBool value)
-  | .name value => pure (.ofName value)
-  | .natural value => pure (.ofNat value)
-  | .integer value => pure (.ofInt value)
-  | .syntaxTree value => return .ofSyntax (← value.decode source)
-
-def EncodedOptions.decode (encoded : EncodedOptions) (source : String) : Except String Lean.Options := do
-  let mut options : Lean.Options := {}
-  for (name, value) in encoded.entries do
-    options := options.insert name (← decodeDataValue source value)
-  return options
-
 def SyntaxEntry.remapKind (mapping : Array Nat) : SyntaxEntry → Option SyntaxEntry
   | .node info kind children => return .node info (← mapping[kind]?) children
   | entry => some entry
@@ -382,20 +294,18 @@ structure CommandArtifactRecord where
   normalizedDigest : Digest
   terminal : Bool
   tree : SyntaxTree
-  options : EncodedOptions
   deriving BEq, Repr, Lean.ToJson, Lean.FromJson
 
 def commandArtifactSchema : String := "lean-fmt.command-syntax.v1"
 
 def CommandArtifactRecord.ofSyntax (mainModule normalized : String) (terminal : Bool)
-    (stx : Lean.Syntax) (options : Lean.Options) : CommandArtifactRecord := {
+    (stx : Lean.Syntax) : CommandArtifactRecord := {
   schema := commandArtifactSchema
   mainModule
   normalizedBytes := normalized.utf8ByteSize
   normalizedDigest := Digest.ofString normalized
   terminal
-  tree := SyntaxTree.ofSyntax stx
-  options := EncodedOptions.ofOptions options }
+  tree := SyntaxTree.ofSyntax stx }
 
 def CommandArtifactRecord.structurallyValid (record : CommandArtifactRecord) : Bool :=
   record.schema == commandArtifactSchema &&
@@ -406,7 +316,6 @@ private structure ModuleBuild where
   kinds : Array Lean.Name := #[]
   kindIndex : Std.HashMap Lean.Name Nat := {}
   entries : Array SyntaxEntry := #[]
-  options : Array EncodedOptions := #[]
 
 private def ModuleBuild.internKind (build : ModuleBuild) (kind : Lean.Name) : Nat × ModuleBuild :=
   match build.kindIndex[kind]? with
@@ -428,11 +337,6 @@ private def ModuleBuild.appendTree (build : ModuleBuild) (tree : SyntaxTree) : O
   let entries ← tree.entries.mapM (·.remapKind mapping)
   return (root, { build with entries := build.entries ++ entries })
 
-private def ModuleBuild.internOptions (build : ModuleBuild) (options : EncodedOptions) : Nat × ModuleBuild :=
-  match build.options.findIdx? (· == options) with
-  | some index => (index, build)
-  | none => (build.options.size, { build with options := build.options.push options })
-
 private def recordOrder (left right : CommandArtifactRecord) : Bool :=
   left.tree.leadingStart?.getD 0 < right.tree.leadingStart?.getD 0
 
@@ -448,10 +352,8 @@ def ModuleSyntax.ofRecords (records : Array CommandArtifactRecord) : Except Stri
     let root := build.entries.size
     let some (_, next) := build.appendTree record.tree | throw "invalid command kind mapping"
     build := next
-    let (options, next) := build.internOptions record.options
-    build := next
     let some range := record.tree.range? | throw "command syntax has no range"
-    commands := commands.push { entry := root, options, range }
+    commands := commands.push { entry := root, range }
   let some terminalRecord := terminals[0]? | throw "terminal syntax record disappeared"
   let terminal := build.entries.size
   let some (_, finalBuild) := build.appendTree terminalRecord.tree
@@ -461,28 +363,24 @@ def ModuleSyntax.ofRecords (records : Array CommandArtifactRecord) : Except Stri
 structure MaterializedSyntax where
   commands : Array Lean.Syntax
   terminal : Lean.Syntax
-  options : Array Lean.Options
 
 def ModuleSyntax.materialize (moduleData : ModuleSyntax) (source : String) : Except String MaterializedSyntax := do
   let tree : SyntaxTree := { kinds := moduleData.kinds, entries := moduleData.entries }
   let mut commands := #[]
-  let mut options := #[]
   for root in moduleData.commands do
     let (command, _) ← decodeSyntax source tree root.entry
-    let some encoded := moduleData.options[root.options]? | throw "command option index is invalid"
     commands := commands.push command
-    options := options.push (← encoded.decode source)
   let (terminal, terminalNext) ← decodeSyntax source tree moduleData.terminal
   unless terminalNext == moduleData.entries.size do
     throw "terminal syntax does not end at the artifact boundary"
-  return { commands, terminal, options }
+  return { commands, terminal }
 
 def ModuleSyntax.structurallyValid (moduleData : ModuleSyntax) (bytes : Nat) : Bool := Id.run do
   let tree : SyntaxTree := { kinds := moduleData.kinds, entries := moduleData.entries }
   let mut cursor := 0
   let mut sourceStop := 0
   for root in moduleData.commands do
-    unless root.entry == cursor && root.options < moduleData.options.size &&
+    unless root.entry == cursor &&
         root.range.start <= root.range.stop && root.range.stop <= bytes &&
         sourceStop <= root.range.start do
       return false

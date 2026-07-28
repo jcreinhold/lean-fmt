@@ -24,14 +24,14 @@ Offsets are UTF-8 byte offsets into the *normalized* source (`raw.crlfToLf`), be
 `Parser.mkInputContext` normalizes before it assigns any position.
 
 The wire encoding — entry tags, source-info tags, the meaning of `terminal` — is pinned exactly to
-`lean-fmt.module-artifact.v9`. A later schema that reorders any of it would be mis-decoded rather
+`lean-fmt.module-artifact.v10`. A later schema that reorders any of it would be mis-decoded rather
 than rejected, so bumping `artifactSchema` has to be a deliberate edit that re-reads the encoding.
 -/
 
 namespace LeanFmt.Test.Projection
 
 /-- The one schema this file decodes. -/
-public def artifactSchema : String := "lean-fmt.module-artifact.v9"
+public def artifactSchema : String := "lean-fmt.module-artifact.v10"
 
 /-- A decoded source info: what the leaf owns of the normalized source. -/
 private inductive Info where
@@ -193,8 +193,6 @@ private def checkProjection (syntaxData artifact : Lean.Json) (raw : String) : I
     | fail "syntaxData has no entries"
   let some commands := (syntaxData.getObjVal? "commands").toOption |>.bind (·.getArr?.toOption)
     | fail "syntaxData has no commands"
-  let some options := (syntaxData.getObjVal? "options").toOption |>.bind (·.getArr?.toOption)
-    | fail "syntaxData has no options"
   let some terminal := (syntaxData.getObjVal? "terminal").toOption |>.bind jsonNat?
     | fail "syntaxData has no terminal"
   let walk : Walk := { entries, kinds }
@@ -209,10 +207,6 @@ private def checkProjection (syntaxData artifact : Lean.Json) (raw : String) : I
       | fail s!"command {position} has no entry"
     unless rootEntry == cursor do
       fail s!"command {position} claims entry {rootEntry} but the previous subtree ended at {cursor}"
-    let some rootOptions := (root.getObjVal? "options").toOption |>.bind jsonNat?
-      | fail s!"command {position} has no options"
-    unless rootOptions < options.size do
-      fail s!"command {position} names option set {rootOptions} of {options.size}"
     let some range := (root.getObjVal? "range").toOption
       | fail s!"command {position} has no range"
     let some start := (range.getObjVal? "start").toOption |>.bind jsonNat?
