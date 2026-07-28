@@ -6,15 +6,16 @@ Authors: Jacob Reinhold
 
 module
 
-/-! The one name outside `LeanFmt.Internal`, in a module that imports nothing.
+/-! The product's version, in a module that imports nothing.
 
-`lean_lib LeanFmt` globs this, so a project importing the root gets `version` and no execution
-surface at all. Everything the application does lives in private modules the entry points import
-directly. -/
+It sits alone so anything may read it — the language server reports it to the editor — without
+dragging a dependency along. -/
 
 namespace LeanFmt
 
-/-- Version of the native-Lean execution core. -/
-def version : String := "0.1.0"
+/-- The version this binary reports. It must equal `lakefile.lean`'s, and the boundary suite's
+`package-identity` case fails when it does not: the two drifted to 0.1.0 against 0.1.3, and the
+language server told every editor the wrong number until the gate existed. -/
+def version : String := "0.1.3"
 
 end LeanFmt

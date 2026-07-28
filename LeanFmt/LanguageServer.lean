@@ -8,6 +8,7 @@ module
 
 import all LeanFmt.Analysis
 import all LeanFmt.Application
+import all LeanFmt.Basic
 import all LeanFmt.LosslessSource
 
 import Lean.Data.Lsp
@@ -482,7 +483,7 @@ def serverCapabilities : Json :=
   ]
 
 def serverInfo : Json :=
-  Json.mkObj [("name", "lean-fmt"), ("version", "0.1.0")]
+  Json.mkObj [("name", "lean-fmt"), ("version", LeanFmt.version)]
 
 /-! ## Handlers -/
 

@@ -2,6 +2,8 @@ module
 
 public import Test
 
+import all LeanFmt.Basic
+
 /-!
 # The native source boundary suite
 
@@ -184,12 +186,21 @@ private def testLinkClosure (root : System.FilePath) : IO Unit := do
   if let some count ← nmCount root ".lake/build/bin/lean-fmt" "LeanFmt_Digest" then
     ensure (count > 0) "link-closure probe found no LeanFmt_Digest symbols; the probe itself is broken"
 
+/-- The package's identity, and the one version string a compiled source may hold. Lake owns the
+version; `LeanFmt.version` exists because the language server reports it to the editor, and nothing
+linked the two before this case — they drifted to 0.1.0 against 0.1.3. -/
 private def testPackageIdentity (root : System.FilePath) : IO Unit := do
   let lakefile ← readRepoFile root "lakefile.lean"
-  ensure ((lakefile.splitOn "\n").contains "package «lean-fmt» where")
+  let lines := lakefile.splitOn "\n"
+  ensure (lines.contains "package «lean-fmt» where")
     "the lakefile lost its package declaration"
-  ensure ((lakefile.splitOn "\n").contains "lean_exe «lean-fmt» where")
+  ensure (lines.contains "lean_exe «lean-fmt» where")
     "the lakefile lost its executable declaration"
+  let some packaged := lines.findSome? fun line =>
+      (line.trimLeft.dropPrefix? "version := v!\"").map fun rest =>
+        (rest.toString.takeWhile (· != '"')).toString
+    | throw <| IO.userError "the lakefile lost its version"
+  ensureEq "the reported version drifted from the package version" packaged LeanFmt.version
 
 private def cases (root : System.FilePath) : Array Case := #[
   { name := "module-headers", run := testModuleHeaders root },
