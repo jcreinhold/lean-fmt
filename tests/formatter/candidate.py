@@ -29,7 +29,14 @@ def full_map(source: str, formatted: str) -> list[dict[str, dict[str, int]]]:
 
 
 def transform(mode: str, source: str) -> str:
-    if mode in {"identity", "stale-artifact", "wrong-environment", "cancelled", "unsupported", "overlap-map"}:
+    if mode in {
+        "identity",
+        "stale-artifact",
+        "wrong-environment",
+        "cancelled",
+        "unsupported",
+        "overlap-map",
+    }:
         return source
     if mode == "drop-block-comment":
         return source.replace("/- block payload -/ ", "", 1)
@@ -70,7 +77,12 @@ def transform(mode: str, source: str) -> str:
             1,
         )
     if mode == "second-pass-drift":
-        return re.sub(r"def( +)value", lambda match: "def" + match.group(1) + " value", source, count=1)
+        return re.sub(
+            r"def( +)value",
+            lambda match: "def" + match.group(1) + " value",
+            source,
+            count=1,
+        )
     raise SystemExit(f"unknown injected candidate mode: {mode}")
 
 
@@ -80,14 +92,22 @@ def main() -> None:
     mode = sys.argv[1]
     source = sys.stdin.read().replace("\r\n", "\n")
     formatted = transform(mode, source)
-    source_digest = os.environ.get("LEAN_FMT_EXPECTED_SOURCE_DIGEST", hashlib.sha256(source.encode()).hexdigest())
+    source_digest = os.environ.get(
+        "LEAN_FMT_EXPECTED_SOURCE_DIGEST", hashlib.sha256(source.encode()).hexdigest()
+    )
     setup_digest = os.environ.get("LEAN_FMT_EXPECTED_SETUP_DIGEST", "")
     source_map = full_map(source, formatted)
     if mode == "overlap-map":
         size = byte_size(source)
         source_map = [
-            {"source": {"start": 0, "stop": size}, "output": {"start": 0, "stop": size}},
-            {"source": {"start": 0, "stop": size}, "output": {"start": 0, "stop": size}},
+            {
+                "source": {"start": 0, "stop": size},
+                "output": {"start": 0, "stop": size},
+            },
+            {
+                "source": {"start": 0, "stop": size},
+                "output": {"start": 0, "stop": size},
+            },
         ]
     response = {
         "formatted": formatted,
@@ -95,7 +115,11 @@ def main() -> None:
         "sourceDigest": "0" * 64 if mode == "stale-artifact" else source_digest,
         "setupDigest": "0" * 64 if mode == "wrong-environment" else setup_digest,
         "cancelled": mode == "cancelled",
-        "unsupported": ([{"kind": "Audit.Unsupported", "start": 0, "stop": 6}] if mode == "unsupported" else []),
+        "unsupported": (
+            [{"kind": "Audit.Unsupported", "start": 0, "stop": 6}]
+            if mode == "unsupported"
+            else []
+        ),
     }
     json.dump(response, sys.stdout, sort_keys=True, separators=(",", ":"))
     sys.stdout.write("\n")

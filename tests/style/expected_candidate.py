@@ -17,7 +17,9 @@ response = {
             "output": {"start": 0, "stop": len(formatted.encode())},
         }
     ],
-    "sourceDigest": os.environ.get("LEAN_FMT_EXPECTED_SOURCE_DIGEST", hashlib.sha256(source.encode()).hexdigest()),
+    "sourceDigest": os.environ.get(
+        "LEAN_FMT_EXPECTED_SOURCE_DIGEST", hashlib.sha256(source.encode()).hexdigest()
+    ),
     "setupDigest": os.environ.get("LEAN_FMT_EXPECTED_SETUP_DIGEST", ""),
     "cancelled": False,
     "unsupported": [],

@@ -27,21 +27,22 @@ an internal this product happens to depend on, and the checklist exists because 
    orphans every entry wholesale by design, and the first run after a bump pays full cost.
 5. **Lake's build internals.** `LeanFmt/Project.lean` runs Lake's own graph rather than shelling out to `lake`, and it
    reaches three non-`public` declarations through `import all Lake.Build.Run`: `mkJobQueue`, `mkBuildContext'`, and
-   `Workspace.startBuild`. Everything else is Lake's public surface — `Workspace.runBuild`, `Lake.ensureJob`, `Job.mapResult`/`zipWith`/`collectArray`, `Lake.setupServerModule`, the `olean`, `transImports`, and
-   `setup` facets, and `Lake.Artifact`/`artifactWithExt`/`Hash.ofString?` for the `leanFmtArtifact` sidecar. The `setup`
-   facet is the build path — `recFetchSetup` over `presetup` — and a file read from disk takes it; a buffer or a
-   rewritten candidate takes `setupServerModule`, because their imports are not the ones on disk. If a bump changes what
-   `presetup` folds into `leanOptions`, or moves imports out of `ModulePreSetup`, the two paths stop agreeing for
-   unchanged files and the modes suite sees it. `LeanFmt/Cache.lean` reads Lake's `.trace` files through Lake's own
-   readers — `BuildMetadata.fromJson?`, `ModuleOutputDescrs.fromJson?`, and `ArtifactDescr` — plus one more
-   non-`public` name, `BuildMetadata.schemaVersion`, reached through `import all Lake.Build.Common`. That last one is
-   the schema pin, and it is ours to make because Lake's parse does not: `BuildMetadata` does not carry the version it
-   parsed, so nothing below would notice a schema change on its own. A rename breaks the build, which is the good
-   case; a *behaviour* change does not. Two behaviours are load-bearing and silent if they move: `monitorBuild` failing
-   the whole batch on any one registered job's failure, which is why `Project.graph` awaits jobs itself and never calls
-   it, and `finalizeBuild` turning a stale `noBuild` target into `IO.Process.exit`, which is why it is never called on
-   the no-build pass. If a bump makes a whole selection report artifact or setup misses at once, suspect the first; if a
-   run exits silently mid-check, suspect the second.
+   `Workspace.startBuild`. Everything else is Lake's public surface — `Workspace.runBuild`, `Lake.ensureJob`,
+   `Job.mapResult`/`zipWith`/`collectArray`, `Lake.setupServerModule`, the `olean`, `transImports`, and `setup` facets,
+   and `Lake.Artifact`/`artifactWithExt`/`Hash.ofString?` for the `leanFmtArtifact` sidecar. The `setup` facet is the
+   build path — `recFetchSetup` over `presetup` — and a file read from disk takes it; a buffer or a rewritten candidate
+   takes `setupServerModule`, because their imports are not the ones on disk. If a bump changes what `presetup` folds
+   into `leanOptions`, or moves imports out of `ModulePreSetup`, the two paths stop agreeing for unchanged files and the
+   modes suite sees it. `LeanFmt/Cache.lean` reads Lake's `.trace` files through Lake's own readers —
+   `BuildMetadata.fromJson?`, `ModuleOutputDescrs.fromJson?`, and `ArtifactDescr` — plus one more non-`public` name,
+   `BuildMetadata.schemaVersion`, reached through `import all Lake.Build.Common`. That last one is the schema pin, and
+   it is ours to make because Lake's parse does not: `BuildMetadata` does not carry the version it parsed, so nothing
+   below would notice a schema change on its own. A rename breaks the build, which is the good case; a *behaviour*
+   change does not. Two behaviours are load-bearing and silent if they move: `monitorBuild` failing the whole batch on
+   any one registered job's failure, which is why `Project.graph` awaits jobs itself and never calls it, and
+   `finalizeBuild` turning a stale `noBuild` target into `IO.Process.exit`, which is why it is never called on the
+   no-build pass. If a bump makes a whole selection report artifact or setup misses at once, suspect the first; if a run
+   exits silently mid-check, suspect the second.
 
 ## Checklist
 
