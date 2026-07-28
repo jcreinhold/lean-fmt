@@ -186,9 +186,13 @@ private def testLinkClosure (root : System.FilePath) : IO Unit := do
   if let some count ← nmCount root ".lake/build/bin/lean-fmt" "LeanFmt_Digest" then
     ensure (count > 0) "link-closure probe found no LeanFmt_Digest symbols; the probe itself is broken"
 
-/-- The package's identity, and the one version string a compiled source may hold. Lake owns the
-version; `LeanFmt.version` exists because the language server reports it to the editor, and nothing
-linked the two before this case — they drifted to 0.1.0 against 0.1.3. -/
+/-- The package's identity, and every place this repository spells its own version. Lake owns the
+version; the other two follow it.
+
+`LeanFmt.version` exists because the language server reports it to the editor. The README's
+`require ... @ "vX.Y.Z"` is what a reader copies to take the dependency. Nothing linked the three
+before this case, and both followers drifted: the server said 0.1.0 and the README pinned v0.1.1
+while the package was 0.1.3. A release bumps the lakefile, and this case names the rest. -/
 private def testPackageIdentity (root : System.FilePath) : IO Unit := do
   let lakefile ← readRepoFile root "lakefile.lean"
   let lines := lakefile.splitOn "\n"
@@ -201,6 +205,13 @@ private def testPackageIdentity (root : System.FilePath) : IO Unit := do
         (rest.toString.takeWhile (· != '"')).toString
     | throw <| IO.userError "the lakefile lost its version"
   ensureEq "the reported version drifted from the package version" packaged LeanFmt.version
+  let readme ← readRepoFile root "README.md"
+  let some pinned := (readme.splitOn "\n").findSome? fun line =>
+      match line.splitOn "/lean-fmt\" @ \"" with
+      | [_, rest] => some (rest.takeWhile (· != '"')).toString
+      | _ => none
+    | throw <| IO.userError "the README lost its dependency pin"
+  ensureEq "the README's dependency pin drifted from the package version" pinned s!"v{packaged}"
 
 private def cases (root : System.FilePath) : Array Case := #[
   { name := "module-headers", run := testModuleHeaders root },
