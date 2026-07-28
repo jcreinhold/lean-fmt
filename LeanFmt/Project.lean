@@ -12,6 +12,8 @@ import all LeanFmt.Digest
 import all LeanFmt.Discovery
 import all LeanFmt.Profile
 
+import Std.Sync.Mutex
+
 import Lake.Build.Module
 import all Lake.Build.Run
 import Lake.Config.Env
@@ -59,6 +61,14 @@ structure SourceTarget where
   one per file. -/
   configKey : String
 
+/- What the run has already asked the graph about imports. `asked` is separate from `resolved`
+because three answers must stay apart: a name never asked about, a name Lake refuses (not a
+workspace library module — absent from `resolved`), and a name whose closure would not resolve
+(`some none`). FMT004 reads the second and third differently, so collapsing them moves reports. -/
+private structure ClosureMemo where
+  asked : Std.HashSet Lean.Name := {}
+  resolved : Std.HashMap Lean.Name (Option (Array Lean.Name)) := {}
+
 structure Snapshot where
   private mk ::
   root : FilePath
@@ -66,6 +76,7 @@ structure Snapshot where
   targets : Array SourceTarget
   workspaceLoadNanos : Nat
   selectionNanos : Nat
+  private closures : Std.Mutex ClosureMemo
 
 inductive ModuleEvidence where
   | current
@@ -272,6 +283,7 @@ def load (requestedRoot : FilePath) (discovery : Discovery.Discovery)
     targets := deduplicate (targets.qsort relativeLess)
     workspaceLoadNanos := workspaceFinished - workspaceStarted
     selectionNanos := selectionFinished - workspaceFinished
+    closures := ← Std.Mutex.new {}
   }
 
 /-- The Lake workspace alone, selecting nothing.
@@ -295,6 +307,7 @@ def loadWorkspaceOnly (requestedRoot : FilePath) : IO Snapshot := do
     targets := #[]
     workspaceLoadNanos := workspaceFinished - workspaceStarted
     selectionNanos := 0
+    closures := ← Std.Mutex.new {}
   }
 
 def loadAll (requestedRoot : FilePath) : IO Snapshot := do
@@ -312,6 +325,7 @@ def loadAll (requestedRoot : FilePath) : IO Snapshot := do
     targets := deduplicate (targets.qsort relativeLess)
     workspaceLoadNanos := workspaceFinished - workspaceStarted
     selectionNanos := selectionFinished - workspaceFinished
+    closures := ← Std.Mutex.new {}
   }
 
 /- Resolve one already-selected source by filesystem identity. Path normalization and root
@@ -334,6 +348,28 @@ what the rewrite made them, not what the file says. -/
 def SourceTarget.withSource (target : SourceTarget) (source : String) : SourceTarget :=
   { target with source, provenance := .rewritten }
 
+/- How many Lake graph traversals this run has started.
+
+Every traversal in the product passes through one of the two operations below, and this is what
+makes the count a gate rather than a description: a fourth traversal site cannot be added without
+being counted, because there is nowhere else to start one from. A count derived instead by summing
+`lake_graph`, `setup_probe`, and `setup_build` would read the same today and silently miss a site
+brought in under a fourth phase name.
+
+The mutex is not decoration. Batch runs traverse from the calling thread, but the fallback below
+runs under each `ExactRun`'s own Lake lock, and two language-server requests hold two of those. -/
+initialize graphTraversals : Std.Mutex Nat ← Std.Mutex.new 0
+
+/- Report one traversal, as the run's running total.
+
+A running total rather than a line per site, because `cache.*` records mean "the value now": a
+consumer reading the last line gets the run's count whichever site wrote it, and no site needs to
+know how many others there are. The lock is taken only when the channel is on, so a production run
+pays one `getenv` per traversal — against a traversal, which is measured in seconds. -/
+private def countTraversal : IO Unit := do
+  unless ← enabled do return
+  recordCount "lake_graphs" (← graphTraversals.atomically (modifyGet fun n => (n + 1, n + 1)))
+
 /- One no-build graph's value, awaited job by job so one failure stays at its own position.
 
 `monitorBuild` cannot do that. It returns `.error "build failed"` whenever `MonitorResult.isOk` is
@@ -352,6 +388,7 @@ and a hand-built one ran a monitor for the same reason. Neither is reachable now
 `IO.Process.exit` (`:367-368`), which no `catch` below it survives. Staleness is a `none`. -/
 private def noBuildValuePerJob? {α : Type} (workspace : Lake.Workspace)
     (build : Lake.FetchM (Lake.Job α)) : IO (Option α) := do
+  countTraversal
   try
     let jobs ← Lake.mkJobQueue
     let bctx ← Lake.mkBuildContext' workspace { noBuild := true, verbosity := .quiet } jobs
@@ -364,6 +401,13 @@ private def noBuildValuePerJob? {α : Type} (workspace : Lake.Workspace)
     | .error _ _ => return none
   catch _ =>
     return none
+
+/- The building traversal, and the run's other one. Quiet is not a caller's choice: a build Lake
+narrates would write a monitor's spinner over a report on the same stream. -/
+private def buildValue {α : Type} (workspace : Lake.Workspace)
+    (build : Lake.FetchM (Lake.Job α)) : IO α := do
+  countTraversal
+  workspace.runBuild (cfg := { verbosity := .quiet }) build
 
 /- One `-Dname=value` as `lean` reads it, or `none` if `LeanOptions` cannot carry the value.
 
@@ -639,8 +683,7 @@ def graph (workspace : Lake.Workspace) (targets : Array SourceTarget)
       if stale.all Option.isNone then pure probed
       else
         try
-          let built ← withPhase "setup_build" <| workspace.runBuild
-            (cfg := { verbosity := .quiet }) (setupCollection stale)
+          let built ← withPhase "setup_build" <| buildValue workspace (setupCollection stale)
           if built.size != probed.size then pure probed
           else pure ((probed.zip built).map fun (probed?, built?) => probed?.orElse fun _ => built?)
         catch _ => pure probed
@@ -660,6 +703,44 @@ def graph (workspace : Lake.Workspace) (targets : Array SourceTarget)
         (init := Std.HashMap.emptyWithCapacity closureModules.size)
         fun map ((name, _), closure) => map.insert name closure
     }
+
+/-- The transitive import closure of each named module, and of every selected target's module.
+
+Same shape as `GraphFacts.imports` and the same three answers, so a caller reads it the same way.
+
+**One fetch for the run, whichever consumer asks first.** Two consumers need closures and they name
+different modules: FMT004 wants the closure of every *import* a header lists, and cache currency
+wants the closure of every *selected module*. Fetched separately those were two traversals of one
+graph — 16 ms and 8 ms over this repository's 127 warm files, and neither could see that the other
+had just walked the same nodes. Resolving both sets on the first call pays the union's extra
+`transImports` jobs once, inside a traversal that was happening anyway.
+
+The selected targets are folded in here rather than by each caller, so neither has to know the
+other exists: FMT004 asks for its imports and gets a map that happens to hold more, and every
+lookup is by name.
+
+**The memo lasts as long as the snapshot, which is a run.** Nothing here builds, so no module's
+imports move under a `Project.load` snapshot. `Project.loadWorkspaceOnly`'s does outlive edits —
+the language server holds one for its whole lifetime — which is why the single-file editor path
+fetches its own closure and does not come through here. A `none` is remembered along with the
+rest: a closure that would not resolve will not resolve on a second ask, and re-asking would spend
+a traversal to learn it again. -/
+def Snapshot.importClosures (snapshot : Snapshot) (names : Array Lean.Name) :
+    IO (Std.HashMap Lean.Name (Option (Array Lean.Name))) :=
+  snapshot.closures.atomically do
+    let memo ← get
+    let wanted := names ++ snapshot.targets.filterMap (·.module?.map (·.name))
+    let missing := wanted.foldl (init := #[]) fun missing name =>
+      if memo.asked.contains name || missing.contains name then missing else missing.push name
+    if missing.isEmpty then return memo.resolved
+    let facts ← graph snapshot.workspace #[] missing { closures := true }
+    let asked := missing.foldl (init := memo.asked) fun asked name => asked.insert name
+    let resolved := missing.foldl (init := memo.resolved) fun resolved name =>
+      match facts.imports[name]? with
+      | some closure => resolved.insert name closure
+      | none => resolved
+    set ({ asked, resolved } : ClosureMemo)
+    return resolved
 
 /-- The trace file Lake writes for a workspace module, or `none` if the name is not a workspace
 module. Cache currency reads recorded trace facts; it does not resolve imports. -/
@@ -722,8 +803,7 @@ def exactSetup (snapshot : Snapshot) (target : SourceTarget) : IO Lean.ModuleSet
   match ← withPhase "setup_probe" <|
       noBuildValuePerJob? snapshot.workspace (setupJob target) with
   | some setup => return setup
-  | none => withPhase "setup_build" <|
-      snapshot.workspace.runBuild (cfg := { verbosity := .quiet }) (setupJob target)
+  | none => withPhase "setup_build" <| buildValue snapshot.workspace (setupJob target)
 
 private def moduleConfiguration (mod : Lake.Module) : String :=
   String.intercalate "\u0000" [

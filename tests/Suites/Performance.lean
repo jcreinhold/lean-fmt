@@ -13,6 +13,11 @@ every gate is a **count, a ratio, or a digest** — quantities that do not move 
 gets slower. What they catch is a change in the work performed, which is what a performance
 regression actually is.
 
+§1i is the Lake-traversal bound. Every walk of the graph passes through `Project.countTraversal`,
+which reports the run's running total, and each gated run states the number of walks it needs. That
+is the durable form of a whole plan's worth of work: the traversals were once per operation, and
+for the compiler audit per *module*.
+
 The gate predicates are pure functions over the profile channel, defined once in this module and
 used twice: the `gates-discriminate` case is the native form of `negative.sh`, feeding every
 predicate both input it must accept and input it must reject — a gate that cannot fail would
@@ -29,12 +34,15 @@ namespace Performance
 -- The gate predicates (`gates.sh`). Reporting belongs to the caller; these are pure.
 
 /-- The top-level phase names. Sub-phases nest inside a top-level bracket, so counting both
-double-counts the same milliseconds; this list is the complement of the bold rows in
-`LeanFmt/Profile.lean`'s phase table. -/
+double-counts the same milliseconds: `lake_graph` inside `module_evidence`, `closure_resolve` and
+`closure_hash` inside `cache_epoch`, `setup_probe` and `setup_build` inside `exact_setup` and
+`setup_prime`, and the `child_*` and `validation` phases inside `exact_child`. A name here that
+nothing emits is not harmless — it sums to zero and reads as accounted-for — so this list is
+checked against the emitters when one moves. -/
 private def topLevelPhases : List String :=
   ["discovery", "workspace_load", "selection_snapshot", "cache_epoch", "cache_lookup",
-   "module_evidence", "official_artifacts", "import_findings", "exact_setup", "setup_prime",
-   "exact_child", "envelope_decode", "layout", "rules", "cache_write", "positions",
+   "module_evidence", "import_findings", "exact_setup", "setup_prime",
+   "exact_child", "envelope_decode", "rules", "cache_write", "positions",
    "render_report"]
 
 /-- The last value of a `cache.*` counter, or none if the run never emitted it. -/
@@ -139,6 +147,22 @@ private def gateCandidateReparsed (capture : String) (expected : Nat) : Bool :=
     && (lines.filter (· == "cache.candidate_reparse=1")).length == expected
     && !(lines.any (·.startsWith "cache.candidate_miss_"))
 
+/-- §1i. The run walked the Lake graph no more than `bound` times.
+
+The quantity a whole plan's worth of work moved, and the one a later change can quietly give back.
+Traversals were once per-operation and, for the audit, per *module*: a `compiler status` over 62
+modules walked the same graph 62 times, and an ordinary warm `check` walked it twice for two sets
+of import closures neither half could see the other had fetched. A wall time would have hidden all
+of that behind a warm page cache; the count cannot.
+
+A capture with no `cache.lake_graphs` line fails. Every run gated here traverses at least once, so
+an absent counter means the counter stopped being written, not that the work stopped happening —
+and the plain `≤` would read an absent counter as the best possible score. -/
+private def gateTraversalsWithin (capture : String) (bound : Nat) : Bool :=
+  match counter "cache.lake_graphs" capture with
+  | some traversals => 0 < traversals && traversals ≤ bound
+  | none => false
+
 /-- §2. Gate G3, recalibrated onto the remainder: the unaccounted time is a ~51 ms startup
 constant, so a percentage threshold is workload-length-dependent and a remainder threshold is
 not. -/
@@ -241,6 +265,16 @@ private def testGatesDiscriminate : IO Unit := do
   expect (!(gateArtifactAvoidsExact artifactCapture (exactCapture.replace
     "cache.official_artifact_hit=0" "cache.official_artifact_hit=1")))
     "rejects a control arm that still found its artifact"
+  -- §1i the Lake graph was walked no more times than the bound.
+  expect (gateTraversalsWithin "cache.lake_graphs=1\n" 1) "accepts a run that traversed once"
+  expect (!(gateTraversalsWithin "cache.lake_graphs=2\n" 1))
+    "rejects the second closure traversal a warm run used to pay"
+  expect (!(gateTraversalsWithin "cache.lake_graphs=5\n" 1))
+    "rejects the five traversals a cold run cost before the merge"
+  expect (gateTraversalsWithin "cache.lake_graphs=1\ncache.lake_graphs=2\n" 2)
+    "reads the running total, not the first line"
+  expect (!(gateTraversalsWithin healthy 1))
+    "rejects a capture that recorded no traversal count at all"
   -- §2 gate G3, on the remainder. The healthy capture accounts for 715 ms.
   expect (gateRemainderWithin healthy 760 250)
     "accepts a 45 ms remainder (the measured ~51 ms startup constant)"
@@ -325,6 +359,9 @@ private def testWarmFullyServed (ctx : Ctx) : IO Unit := do
   ensure (gateNoFrontendWork warm.stderr)
     s!"warm run did frontend work: {phaseCount "exact_child" warm.stderr} children, \
       {phaseCount "exact_setup" warm.stderr} setup resolutions; expected 0 and 0"
+  ensure (gateTraversalsWithin warm.stderr 1)
+    s!"a fully served run walked the Lake graph \
+      {counter "cache.lake_graphs" warm.stderr} times; expected 1"
   ensure (gateReportsIdentical prime.stdout warm.stdout)
     "cold and warm reports differ; the cache is not serving what it stored"
 
@@ -395,6 +432,35 @@ private def testWorkerResolution (ctx : Ctx) : IO Unit := do
   ensure (gateWorkers (← profile #[] "6") 6) "an unasked run ignored LEAN_NUM_THREADS"
   ensure (gateWorkers (← profile #["--workers", "3"] "6") 3) "--workers did not override"
 
+/-- §1i traversal counts on the three shapes that are not a warm `check`.
+
+Each bound is what the run needs and no more, so each is also a claim about *why*:
+
+- **FMT004, no cache: 2.** One walk for the import closures the rule reads, one for the
+  compilation evidence the tier check reads. Neither can answer the other's question.
+- **FMT001, no cache: 1.** The same evidence walk, with no closure walk behind it — the gate that
+  FMT004's closures are fetched because FMT004 was selected, not on every run.
+- **`compiler status`: 1.** The audit reports on every module in the workspace from one walk. It
+  called `isCurrent` per module before, so this is the bound that would regress silently: a
+  per-module loop reads as *correct*, just slow, and on this repository it is 107 walks.
+
+`--preview` because `--select` needs it, and `--no-cache` because a cache hit would answer before
+the traversal and make the bound meaningless. -/
+private def testTraversalCounts (ctx : Ctx) : IO Unit := do
+  let profile (label : String) (args : Array String) (bound : Nat) : IO Unit := do
+    let result ← runProc ctx.app args (cwd? := some ctx.root)
+      (env := #[("LEAN_FMT_PROFILE_PHASES", some "1")]) (timeoutMs := some 1800000)
+    ensure (gateTraversalsWithin result.stderr bound)
+      s!"{label} walked the Lake graph {counter "cache.lake_graphs" result.stderr} times; \
+        expected at most {bound}"
+  let files := #[(ctx.root / "LeanFmt" / "Project.lean").toString,
+    (ctx.root / "LeanFmt" / "Cache.lean").toString]
+  profile "check --select FMT004" (#["check", "--no-cache", "--preview", "--select", "FMT004"]
+    ++ files) 2
+  profile "check --select FMT001" (#["check", "--no-cache", "--preview", "--select", "FMT001"]
+    ++ files) 1
+  profile "compiler status" #["compiler", "status", "--root", ctx.root.toString] 1
+
 /-- §2 gate G3. The wall clock covers the formatter process and nothing else — one parent times
 the child directly, because two interpreter timestamps around the run would put both startups in
 the denominator. The bound scales with a `rules --json` startup control measured on this machine:
@@ -462,6 +528,7 @@ public def main (args : List String) : IO UInt32 := do
       { name := "doc-steps", run := Performance.testDocSteps ctx },
       { name := "validation-counts", run := Performance.testValidationCounts ctx },
       { name := "warm-fully-served", run := Performance.testWarmFullyServed ctx },
+      { name := "traversal-counts", run := Performance.testTraversalCounts ctx },
       { name := "artifact-acceleration", run := Performance.testArtifactAcceleration ctx },
       { name := "candidate-reparse", run := Performance.testCandidateReparse ctx },
       { name := "parallel-admission", run := Performance.testParallelAdmission ctx },

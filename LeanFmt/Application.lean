@@ -1056,10 +1056,14 @@ private def singleImportReport (plan : RulePlan) (workspace : Lake.Workspace)
       else pure fun _ => none
     return importFindingsOfHeader plan closureOf header normalized
 
-/-- Compute every target's import report in one pass: parse all headers, fetch the union of their
-import closures in a single no-build graph build (FMT004 only), then project per file. Returns one
-`(findings, withheldRedundant)` per snapshot, aligned with `snapshots`. -/
-private def computeImportReports (plans : Array RulePlan) (workspace : Lake.Workspace)
+/-- Compute every target's import report in one pass: parse all headers, ask for the union of their
+import closures (FMT004 only), then project per file. Returns one `(findings, withheldRedundant)`
+per snapshot, aligned with `snapshots`.
+
+It takes the snapshot rather than the workspace so the closures come from
+`Project.Snapshot.importClosures`, which the cache's currency check also asks. Whichever runs first
+traverses; the second reads the memo. -/
+private def computeImportReports (plans : Array RulePlan) (project : Project.Snapshot)
     (snapshots : Array SourceSnapshot) : IO (Array (Array Finding × Nat)) := do
   -- Per-file plans, because the effective configuration is per file: two files in one run
   -- can disagree about whether an import rule is selected. The shared closure fetch still happens once
@@ -1078,8 +1082,8 @@ private def computeImportReports (plans : Array RulePlan) (workspace : Lake.Work
       -- `.getD #[]` is FMT004's degradation, written where its consequence is visible: an
       -- unresolvable closure loses at most one report-only redundancy and can never fabricate one.
       -- Cache currency makes the opposite choice on the same fact; see `closureDigests`.
-      let facts ← Project.graph workspace #[] names { closures := true }
-      pure fun name => facts.imports[name]?.map (·.getD #[])
+      let closures ← project.importClosures names
+      pure fun name => closures[name]?.map (·.getD #[])
     else pure fun _ => none
   return (headers.zip plans).map fun ((normalized, header?), plan) =>
     match header? with
@@ -1593,7 +1597,7 @@ def execute (request : RunRequest) : IO RunOutcome := do
   -- result is threaded into `previewFile`/`fixFile` so selection and suppression apply to import
   -- findings like any rule's.
   let importStarted ← IO.monoNanosNow
-  let importReports ← computeImportReports plans project.workspace snapshots
+  let importReports ← computeImportReports plans project snapshots
   recordDuration "import_findings" ((← IO.monoNanosNow) - importStarted)
   let application ← IO.appPath
   let epochStarted ← IO.monoNanosNow

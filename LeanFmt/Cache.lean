@@ -447,11 +447,14 @@ private def ResultCache.workspaceArtifactsDigest (cache : ResultCache)
   cache.workspaceArtifacts.set (some digest)
   return digest
 
-/-- Closure digests for a whole batch, from **one** shared no-build graph fetch.
+/-- Closure digests for a whole batch, from the run's one shared closure fetch.
 
 `none` at a position means that target's currency could not be established, so it misses on
 read and is not written — never that it hits. A workspace module gets the precise per-closure
-digest; a standalone file gets `workspaceArtifactsDigest`, which is coarse but sound. -/
+digest; a standalone file gets `workspaceArtifactsDigest`, which is coarse but sound.
+
+`importClosures` folds the selected modules in whoever asks first, so on a run with FMT004 selected
+these names are already resolved and this costs no traversal at all. -/
 private def ResultCache.closureDigests (cache : ResultCache) (project : Project.Snapshot)
     (targets : Array Project.SourceTarget) : IO (Array (Option Digest)) := do
   try
@@ -470,13 +473,12 @@ private def ResultCache.closureDigests (cache : ResultCache) (project : Project.
       -- FMT004 legitimately does with the same fact, would read as "nothing to check" — a
       -- *permissive* answer, and a stale hit is the one direction currency must never degrade
       -- toward. The producer returns the honest `Option` so each caller states its own direction.
-      let facts ← withPhase "closure_resolve" <|
-        Project.graph project.workspace #[] missing { closures := true }
+      let closures ← withPhase "closure_resolve" <| project.importClosures missing
       for name in missing do
         -- The closure Lake reports is the module's *imports*. Its own artifacts belong in
         -- the digest too: its own `.olean` is what carries the projection being served, so a
         -- rebuild of the module itself must move the key even when nothing it imports changed.
-        let closure := (facts.imports[name]?.getD none).map (·.push name)
+        let closure := (closures[name]?.getD none).map (·.push name)
         -- Precise when the closure resolves and every member's trace reads; otherwise the
         -- conservative whole-workspace digest rather than a permanent miss. See `fallback` below.
         let digest? ← withPhase "closure_hash" <|
