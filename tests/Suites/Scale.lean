@@ -7,7 +7,9 @@ public import Test
 
 Port of `tests/scale/run.sh`: complete selection over a small Lake project — every source kind
 (workspace module, nested Lake configuration, standalone script) is discovered, checked, and
-cached, and a single-source edit invalidates exactly that source's entry.
+cached, and a single-source edit invalidates exactly that source's entry. It also pins that a
+project's own Lake arguments reach the exact frontend, which needs a second fixture project because
+the argument belongs in its lakefile.
 
 Lane: parallel — the fixture project and its `.lean-fmt-cache` live under a temp dir.
 -/
@@ -20,6 +22,7 @@ structure Ctx where
   root : System.FilePath
   application : String
   project : System.FilePath
+  work : System.FilePath
 
 private def checkJson (ctx : Ctx) (expected : UInt32) (label : String)
     (env : Array (String × Option String) := #[]) : IO Lean.Json := do
@@ -71,6 +74,44 @@ private def testSingleSourceInvalidation (ctx : Ctx) : IO Unit := do
   let failed := failedFiles.map fun file => (file.getObjValAs? String "path").toOption.getD ""
   ensureEq "stale: more than the edited source invalidated" ["Demo.lean"] failed
 
+/-- A `-D` option in `moreLeanArgs` reaches the exact frontend, because `lake build` passes it.
+
+Lake spawns `lean <weakLeanArgs ++ leanArgs> … --setup setup.json`, and `--setup` carries only
+`options` — so a project silencing a linter through `moreLeanArgs` silenced it for the build and not
+for us, and lean-fmt reported a finding the build did not. `Project.setupJob` folds those arguments
+onto the setup's options now.
+
+Both directions, on one fixture: the same source and the same rule, with and without the argument. A
+case asserting only the silenced half would pass on a formatter that never ran the linter at all. -/
+private def testLeanArgsReachTheFrontend (ctx : Ctx) : IO Unit := do
+  let project := ctx.work / "leanargs"
+  IO.FS.createDirAll (project / "Demo")
+  copyFile (ctx.root / "lean-toolchain") (project / "lean-toolchain")
+  writeFile (project / "Demo" / "Unused.lean")
+    "module\n\n/-- An unused binder, which `linter.unusedVariables` reports. -/\n\
+     public def ignoresIt (n : Nat) : Nat := 0\n"
+  let lakefile (extra : String) : String :=
+    "import Lake\n\nopen Lake DSL\n\npackage \"leanargs-fixture\"\n\nlean_lib Demo where\n  \
+     globs := #[.submodules `Demo]\n" ++ extra
+  -- `check` exits 1 when it has a finding and 0 when it has none, so the expected exit *is* the
+  -- expected outcome; taking it as a parameter keeps that assertion in the case rather than
+  -- letting a wrong exit pass silently into the count below.
+  let findings (label : String) (expected : UInt32) : IO Nat := do
+    discard <| expectExit 0 s!"lake build Demo ({label})" "lake"
+      #["-d", project.toString, "build", "Demo"] (cwd? := some ctx.root)
+    let result ← expectExit expected s!"check ({label})" ctx.application
+      #["check", "--root", project.toString, "--preview", "--select", "FMT013", "--no-cache",
+        "--json"]
+    let report ← parseJson result.stdout s!"check ({label})"
+    return (((jsonAt? report [.field "findings"]).bind (·.getNat?.toOption)).getD 0)
+  writeFile (project / "lakefile.lean") (lakefile "")
+  ensureEq "the fixture's own linter finding is missing; the case cannot discriminate"
+    1 (← findings "no leanArgs" 1)
+  writeFile (project / "lakefile.lean")
+    (lakefile "  moreLeanArgs := #[\"-Dlinter.unusedVariables=false\"]\n")
+  ensureEq "a -D option in moreLeanArgs did not reach the exact frontend"
+    0 (← findings "with leanArgs" 0)
+
 end Scale
 
 public def main (args : List String) : IO UInt32 := do
@@ -89,12 +130,14 @@ public def main (args : List String) : IO UInt32 := do
     discard <| expectExit 0 "lake build Demo" "lake" #["-d", project.toString, "build", "Demo"]
       (cwd? := some root)
     let ctx : Scale.Ctx :=
-      { root, application := (root / ".lake" / "build" / "bin" / "lean-fmt").toString, project }
+      { root, application := (root / ".lake" / "build" / "bin" / "lean-fmt").toString, project
+        work }
     -- The warm run compares against the cold report, so cold hands its bytes along.
     let cold ← Scale.testCold ctx
     let cases : Array Case := #[
       { name := "cold-selects-all", run := discard <| Scale.testCold ctx },
       { name := "warm-all-hit", run := Scale.testWarm ctx cold },
-      { name := "single-source-invalidation", run := Scale.testSingleSourceInvalidation ctx }
+      { name := "single-source-invalidation", run := Scale.testSingleSourceInvalidation ctx },
+      { name := "lean-args-reach-the-frontend", run := Scale.testLeanArgsReachTheFrontend ctx }
     ]
     runCases "scale" cases args

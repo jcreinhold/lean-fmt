@@ -437,6 +437,13 @@ private unsafe def processSource (setup : Lean.ModuleSetup) (source : String)
       isModule := setup.isModule || header.isModule
       imports := setup.imports?.getD header.imports
       opts := options
+      -- `lean` defaults to the believer level, so this is stricter than the compiler Lake spawns:
+      -- the kernel re-checks what comes out of an `.olean` instead of trusting it. Measured on
+      -- 2026-07-27 against `Lean.defaultTrustLevel`, both arms in one binary, interleaved in both
+      -- orders: on this repository (124 frontend children) the difference vanished into machine
+      -- drift, six pairs spanning 14.5-19.7 s for identical work, and on a mathlib-scale closure
+      -- both arms sat at 1.8-2.8 s once the oleans were warm. Reports byte-identical throughout.
+      -- Costing nothing, the strict direction stays.
       trustLevel := 0
       importArts := setup.importArts
       -- This executable already imports and links Lake, and the formatter's own compiler
