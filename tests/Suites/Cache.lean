@@ -331,6 +331,42 @@ private def testEpochChange (ctx : Ctx) : IO Unit := do
     discard <| epochRun tag
   ensureEq "the survivors are the live index plus the retained three" 4 (← indexCount ctx)
 
+/-- An orphaned artifact in a dependency root must not disable the cache.
+
+The sibling of the absent-root defect this fixture's `dep` package already exists for, one step
+further along: the directory is *present* and holds an `.olean` with no `.trace` beside it. Every
+artifact under a dependency root used to have to validate or the whole workspace got no cache at
+all, silently, because a disabled cache is a supported outcome.
+
+Measured on `mathlib4`: 8,408 `.olean` files, 8,407 `.trace` files. The one orphan Lake left behind
+rather than pruned (`Counterexamples/SorgenfreyLine.olean`) cost every project depending on that
+checkout its entire result cache — 63 of 63 targets re-analyzed on every run.
+
+The orphan must also be *covered*, not merely tolerated: rewriting its bytes moves the epoch, so
+nothing serves afterwards. Coverage is what the refusal was protecting, and it is why this asserts
+both directions.
+
+`finally` because leaving the directory behind would break the next run's absent-root
+precondition. -/
+private def testOrphanedDependencyArtifact (ctx : Ctx) : IO Unit := do
+  restoreFixture ctx
+  ensureEq "warm before the orphan appears" ctx.total (← served ctx)
+  let depBuild := ctx.root / "tests" / "cache" / "dep" / ".lake"
+  let depLib := depBuild / "build" / "lib" / "lean"
+  let orphan := depLib / "Orphan.olean"
+  try
+    IO.FS.createDirAll depLib
+    writeFile orphan "not a real olean, and no trace beside it\n"
+    -- The root going from absent to present is itself an epoch move, so this run is cold for a
+    -- reason that has nothing to do with the orphan. Assert it rather than warm past it silently.
+    ensureEq "a dependency root appearing did not move the epoch" 0 (← served ctx)
+    ensureEq "an orphaned dependency artifact disabled the cache" ctx.total
+      (← probe ctx "orphaned dependency artifact")
+    writeFile orphan "different bytes, same absent trace\n"
+    ensureEq "a changed untraced artifact served stale entries" 0 (← served ctx)
+  finally
+    removeDirAll? depBuild
+
 /-- A toolchain mismatch is a hard error, not a silent re-key. -/
 private def testToolchainMismatch (ctx : Ctx) : IO Unit := do
   let toolchain := ctx.project / "lean-toolchain"
@@ -357,6 +393,7 @@ private def cases (ctx : Ctx) : Array Case := #[
   { name := "crlf-only-change", run := testCrlfOnlyChange ctx },
   { name := "choice-and-exit", run := testChoiceAndExit ctx },
   { name := "epoch-change", run := testEpochChange ctx },
+  { name := "orphaned-dependency-artifact", run := testOrphanedDependencyArtifact ctx },
   { name := "toolchain-mismatch", run := testToolchainMismatch ctx }
 ]
 

@@ -156,74 +156,100 @@ private def digestParts (parts : Array String) : Digest :=
 def cacheIdentityDigest (identity : CacheIdentity) : Digest :=
   digestParts #[resultCacheSchema, (Lean.toJson identity).compress]
 
-/- An `.olean`'s trace, if its recorded `.olean` parts all exist and hash to what it recorded.
+/- One artifact's contribution to the epoch: its trace when the trace can be trusted, its own
+contents when it cannot.
 
-Intactness, never currency: this proves the artifact on disk is the one its trace describes, not
-that the trace describes current source. `CacheIdentity.closure` is what covers currency. -/
-private def validateOleanTrace? (root olean : System.FilePath) : IO (Option String) := do
+**Every artifact contributes; none can veto.** Both of these returned `none` on anything they could
+not validate, and `environmentDigest` turned a single `none` into "this workspace gets no cache" —
+silently, since a disabled cache is a supported outcome. One orphaned file was enough. Measured on
+`mathlib4`: 8,408 `.olean` files, 8,407 `.trace` files, and the odd one out
+(`Counterexamples/SorgenfreyLine.olean`, left behind rather than pruned) cost every project
+depending on that checkout its whole result cache.
+
+The refusal existed to avoid an epoch that silently omits data. This form omits nothing: what cannot
+be validated is hashed instead, so changing an untraced artifact still moves the epoch. Availability
+is not traded for coverage — the two arms cover the same artifact, one cheaply and one expensively.
+
+**The expensive arm is unbounded in principle**, and is left visible rather than capped: a root full
+of untraced artifacts would read every one of them on every run. `cache.untraced_artifacts` counts
+them and the cost lands in `phase.cache_epoch_ms`. On the mathlib checkout above the count is 1. -/
+
+/- Intactness, never currency: a valid trace proves the artifact on disk is the one its trace
+describes, not that the trace describes current source. `CacheIdentity.closure` covers currency. -/
+private def oleanPart (root olean : System.FilePath) : IO (String × Bool) := do
   let tracePath := olean.withExtension "trace"
+  let contentPart : IO (String × Bool) := do
+    let relative := Lake.relPathFrom root olean |>.toString
+    let hash? ← try pure (some (← Lake.computeFileHash olean)) catch _ => pure none
+    return (s!"untraced\u0000{relative}\u0000{hash?.map (·.toString) |>.getD "unreadable"}", true)
   let some (contents, metadata) ← readTrace? tracePath
-    | return none
+    | contentPart
   let some outputs := moduleOutputs? metadata
-    | return none
-  try
-    -- A Lake artifact is named `<hash>.<ext>` where `ext` is the whole suffix — `olean`,
-    -- `olean.server`, `olean.private` — so the sibling on disk is the module's own path with
-    -- that extension put back.
-    let some base := olean.toString.dropSuffix? ".olean"
-      | return none
-    for descr in outputs.oleanParts do
-      let output := System.FilePath.mk s!"{base}.{descr.ext}"
-      unless ← output.pathExists do
-        return none
-      unless (← Lake.computeFileHash output) == descr.hash do
-        return none
-    let relative := Lake.relPathFrom root tracePath |>.toString
-    return some s!"{relative}\u0000{Digest.ofString contents}"
-  catch _ =>
-    return none
+    | contentPart
+  -- A Lake artifact is named `<hash>.<ext>` where `ext` is the whole suffix — `olean`,
+  -- `olean.server`, `olean.private` — so the sibling on disk is the module's own path with
+  -- that extension put back.
+  let some base := olean.toString.dropSuffix? ".olean"
+    | contentPart
+  let intact ← try
+      let mut intact := true
+      for descr in outputs.oleanParts do
+        let output := System.FilePath.mk s!"{base}.{descr.ext}"
+        unless (← output.pathExists) && (← Lake.computeFileHash output) == descr.hash do
+          intact := false
+      pure intact
+    catch _ => pure false
+  unless intact do
+    return ← contentPart
+  let relative := Lake.relPathFrom root tracePath |>.toString
+  return (s!"{relative}\u0000{Digest.ofString contents}", false)
 
-private def rootTraceParts? (root : System.FilePath) : IO (Option (Array String)) := do
+/-- The parts, and how many of them took the content arm. -/
+private def rootTraceParts (root : System.FilePath) : IO (Array String × Nat) := do
   unless ← root.isDir do
-    return none
+    return (#[], 0)
   let oleans := (← root.walkDir).filter (·.extension == some "olean")
     |>.qsort (·.toString < ·.toString)
   let mut parts := #[s!"root\u0000{← IO.FS.realPath root}"]
+  let mut untraced := 0
   for olean in oleans do
-    let some part ← validateOleanTrace? root olean
-      | return none
+    let (part, byContent) ← oleanPart root olean
     parts := parts.push part
-  return some parts
+    if byContent then untraced := untraced + 1
+  return (parts, untraced)
 
-/- A shared library's trace, if the library on disk hashes to what the trace recorded. A shared
-library's `outputs` is one artifact name rather than a module's several. -/
-private def validateSharedTrace? (root library : System.FilePath) : IO (Option String) := do
+/- A shared library's `outputs` is one artifact name rather than a module's several. -/
+private def sharedPart (root library : System.FilePath) : IO (String × Bool) := do
   let tracePath := library.addExtension "trace"
+  let contentPart : IO (String × Bool) := do
+    let relative := Lake.relPathFrom root library |>.toString
+    let hash? ← try pure (some (← Lake.computeFileHash library)) catch _ => pure none
+    return (s!"shared-untraced\u0000{relative}\u0000{hash?.map (·.toString) |>.getD "unreadable"}",
+      true)
   let some (contents, metadata) ← readTrace? tracePath
-    | return none
+    | contentPart
   let some outputs := metadata.outputs?
-    | return none
+    | contentPart
   let .ok descr := Lake.ArtifactDescr.fromJson? outputs
-    | return none
-  try
-    unless (← Lake.computeFileHash library) == descr.hash do
-      return none
-    let relative := Lake.relPathFrom root tracePath |>.toString
-    return some s!"shared\u0000{relative}\u0000{Digest.ofString contents}"
-  catch _ =>
-    return none
+    | contentPart
+  let intact ← try pure ((← Lake.computeFileHash library) == descr.hash) catch _ => pure false
+  unless intact do
+    return ← contentPart
+  let relative := Lake.relPathFrom root tracePath |>.toString
+  return (s!"shared\u0000{relative}\u0000{Digest.ofString contents}", false)
 
-private def sharedTraceParts? (root : System.FilePath) : IO (Option (Array String)) := do
+private def sharedTraceParts (root : System.FilePath) : IO (Array String × Nat) := do
   unless ← root.isDir do
-    return none
+    return (#[], 0)
   let libraries := (← root.walkDir).filter (·.extension == some Lake.sharedLibExt)
     |>.qsort (·.toString < ·.toString)
   let mut parts := #[s!"shared-root\u0000{← IO.FS.realPath root}"]
+  let mut untraced := 0
   for library in libraries do
-    let some part ← validateSharedTrace? root library
-      | return none
+    let (part, byContent) ← sharedPart root library
     parts := parts.push part
-  return some parts
+    if byContent then untraced := untraced + 1
+  return (parts, untraced)
 
 private def pathParts (label : String) (paths : List System.FilePath) : Array String :=
   paths.toArray.mapIdx fun index path => s!"{label}\u0000{index}\u0000{path}"
@@ -344,9 +370,9 @@ used to escape this function into `ResultCache.open?`'s catch-all and disable th
 one absent root, and not a single entry was ever written.
 
 Absence is recorded as its own part rather than skipped, so that the root later appearing with
-artifacts moves `environment`. This does not weaken `open?`'s refusal to manufacture a partial
-epoch: a directory that does not exist holds no artifacts to be partial about, and a root that
-exists but whose artifacts do not validate still returns `none` for the whole cache. -/
+artifacts moves `environment`. A root that *exists* but whose artifacts do not validate used to
+return `none` for the whole cache; `oleanPart` now hashes those artifacts instead, for the reason
+recorded there. Nothing in this layer can veto the cache any more. -/
 private def realPathIfDir? (path : System.FilePath) : IO (Option System.FilePath) := do
   try
     unless ← path.isDir do
@@ -355,8 +381,13 @@ private def realPathIfDir? (path : System.FilePath) : IO (Option System.FilePath
   catch _ =>
     return none
 
-private def environmentDigest? (workspace : Lake.Workspace) : IO (Option Digest) := do
-  let toolchain ← IO.FS.realPath workspace.lakeEnv.lean.sysroot
+/-- The epoch. Total: every input either validates or is hashed, and no input can refuse the
+cache for the workspace. The `sysroot` resolution is guarded for the same reason
+`realPathIfDir?` exists — an exception here would reach `open?`'s catch-all and read as "no
+cache", which is exactly the failure this function stopped having. -/
+private def environmentDigest (workspace : Lake.Workspace) : IO Digest := do
+  let toolchain ← try IO.FS.realPath workspace.lakeEnv.lean.sysroot
+    catch _ => pure workspace.lakeEnv.lean.sysroot
   let roots := workspace.augmentedLeanPath
   let mut parts := #[
     s!"lean-version\u0000{Lean.versionString}",
@@ -367,9 +398,10 @@ private def environmentDigest? (workspace : Lake.Workspace) : IO (Option Digest)
   parts := parts ++ pathParts "source-path" workspace.augmentedLeanSrcPath
   parts := parts ++ pathParts "shared-path" workspace.augmentedSharedLibPath
   parts := parts ++ pathParts "binary-path" workspace.augmentedPath
+  let mut untraced := 0
   -- The workspace's own build directory is skipped here and covered per entry by
   -- `CacheIdentity.closure` instead. It was the *second* whole-project invalidator:
-  -- `rootTraceParts?` folds every `.olean`'s trace contents into `environment`, `environment`
+  -- `rootTraceParts` folds every `.olean`'s trace contents into `environment`, `environment`
   -- names the index file, so rebuilding any one module renamed the index and orphaned every entry
   -- — the same defect as the project-source walk, one layer down, and removing only the source
   -- walk would not have fixed it.
@@ -385,24 +417,25 @@ private def environmentDigest? (workspace : Lake.Workspace) : IO (Option Digest)
         continue
     if insideToolchain toolchain root || root == ownLibDir then
       continue
-    let some rootParts ← rootTraceParts? root
-      | return none
+    let (rootParts, rootUntraced) ← rootTraceParts root
     parts := parts ++ rootParts
+    untraced := untraced + rootUntraced
   for rawRoot in workspace.augmentedSharedLibPath do
     let some root ← realPathIfDir? rawRoot
       | parts := parts.push s!"shared-path-absent\u0000{rawRoot}"
         continue
     if insideToolchain toolchain root then
       continue
-    let some rootParts ← sharedTraceParts? root
-      | return none
+    let (rootParts, rootUntraced) ← sharedTraceParts root
     parts := parts ++ rootParts
+    untraced := untraced + rootUntraced
   -- Project source *content* deliberately does not appear here. `environment` names the
   -- index file through `baseDigest`, so folding project sources in made one edit rename the index
   -- and orphan every entry. Project-source currency is per entry now, in
   -- `CacheIdentity.closure`. The ordered *paths* above stay: search-path precedence is an epoch
   -- property and changing it changes what every module resolves to.
-  return some (digestParts parts)
+  recordCount "untraced_artifacts" untraced
+  return digestParts parts
 
 /-- The per-target key. `closure` is supplied by the caller rather than computed here because
 it comes from one shared no-build Lake graph fetched once for the whole batch; computing it per
@@ -447,9 +480,8 @@ private def ResultCache.workspaceArtifactsDigest (cache : ResultCache)
   let digest ← withPhase "workspace_artifacts" do
     try
       let root ← IO.FS.realPath workspace.root.leanLibDir
-      match ← rootTraceParts? root with
-      | some parts => pure (some (digestParts parts))
-      | none => pure none
+      let (parts, _) ← rootTraceParts root
+      pure (some (digestParts parts))
     catch _ =>
       pure none
   cache.workspaceArtifacts.set (some digest)
@@ -637,14 +669,14 @@ private def formatterDigest (cacheRoot application : System.FilePath) : IO Diges
     pure ()
   return digest
 
-/- Construct a cache capability only after the evaluated workspace's ordered roots, current
-source contents, and all non-toolchain module artifacts have trustworthy, content-matching Lake
-traces. Absence is a normal disabled-cache outcome; callers cannot manufacture a partial epoch. -/
+/- Construct a cache capability over the evaluated workspace's ordered roots and every
+non-toolchain module artifact. An artifact whose Lake trace cannot be trusted is folded in by
+content rather than refused, so the epoch is total; absence is still a normal disabled-cache
+outcome, reached now only by an exception this function did not anticipate. -/
 def ResultCache.open? (workspace : Lake.Workspace) (application : System.FilePath) :
     IO (Option ResultCache) := do
   try
-    let some environment ← environmentDigest? workspace
-      | return none
+    let environment ← environmentDigest workspace
     -- `toolchain` below pins the toolchain revision separately; this pins the binary.
     let cacheRoot := workspace.root.dir / ".lean-fmt-cache"
     let formatter ← formatterDigest cacheRoot application
