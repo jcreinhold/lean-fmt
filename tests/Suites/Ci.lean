@@ -189,14 +189,20 @@ private def testCacheRestore (ctx : Ctx) : IO Unit := do
   discard <| expectExit 0 "touch" "touch" #[binary.toString]
   discard <| lakeAny ctx #["exe", "lean-fmt", "check", "--root", "."]
   ensureEq "touching the formatter binary orphaned the cache" before (← entries cacheDir)
-  -- The same bytes at a different path, which is what reinstalling looks like. Run directly
-  -- rather than through Lake, because the point is the path the binary is invoked from.
+  -- The same bytes at a different path, which is what reinstalling looks like. Both runs are
+  -- direct rather than through `lake exe`, and the baseline is re-taken under a direct run first:
+  -- `lake exe` injects its own environment into the child, and the epoch covers that environment,
+  -- so comparing a direct run against a Lake-launched one would move two variables and blame the
+  -- path for both.
+  discard <| runProc binary.toString #["check", "--root", "."] (cwd? := some ctx.consumer)
+    (timeoutMs := some 1800000)
+  let direct ← entries cacheDir
   let moved := ctx.work / "reinstalled-lean-fmt"
   copyFile binary moved
   discard <| expectExit 0 "chmod" "chmod" #["+x", moved.toString]
   discard <| runProc moved.toString #["check", "--root", "."] (cwd? := some ctx.consumer)
     (timeoutMs := some 1800000)
-  ensureEq "the same formatter at a different path orphaned the cache" before (← entries cacheDir)
+  ensureEq "the same formatter at a different path orphaned the cache" direct (← entries cacheDir)
 
 /-- Installation from clean sources. `git archive` carries exactly what is committed, which
 catches a source file that is gitignored but needed to build — a defect invisible from any
