@@ -518,7 +518,7 @@ private def ResultCache.closureDigests (cache : ResultCache) (project : Project.
         -- The closure Lake reports is the module's *imports*. Its own artifacts belong in
         -- the digest too: its own `.olean` is what carries the projection being served, so a
         -- rebuild of the module itself must move the key even when nothing it imports changed.
-        let closure := (closures[name]?.getD none).map (·.push name)
+        let closure := (closures[name]?.bind (·.build)).map (·.push name)
         -- Precise when the closure resolves and every member's trace reads; otherwise the
         -- conservative whole-workspace digest rather than a permanent miss. See `fallback` below.
         let digest? ← withPhase "closure_hash" <|

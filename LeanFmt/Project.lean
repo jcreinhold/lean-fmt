@@ -65,9 +65,29 @@ structure SourceTarget where
 because three answers must stay apart: a name never asked about, a name Lake refuses (not a
 workspace library module — absent from `resolved`), and a name whose closure would not resolve
 (`some none`). FMT004 reads the second and third differently, so collapsing them moves reports. -/
+/-- The two closures of one module, which answer different questions and must not be swapped.
+
+`build` is Lake's `transImports`: everything the module transitively imports, which is everything
+whose compiled output could have shaped how its own source elaborated. That is what **currency**
+needs, and narrowing it would be a stale hit.
+
+`visible` follows only `public import` edges: what a *dependent* sees through this module. That is
+what **redundancy** needs. Under the module system a plain `import` is not re-exported, so a module
+being in the build closure does not make its contents reachable — Lake draws the same distinction
+itself, as `reachable := importAll || imp.isExported` in `fetchTransImportArts`.
+
+Both come from one traversal because both walk the same `mod.input` nodes. -/
+structure ImportClosures where
+  private mk ::
+  /-- Everything the module transitively imports. `none` if the graph could not resolve it. -/
+  build : Option (Array Lean.Name) := none
+  /-- Everything a dependent sees through it. `none` if the graph could not resolve it. -/
+  visible : Option (Array Lean.Name) := none
+  deriving Inhabited
+
 private structure ClosureMemo where
   asked : Std.HashSet Lean.Name := {}
-  resolved : Std.HashMap Lean.Name (Option (Array Lean.Name)) := {}
+  resolved : Std.HashMap Lean.Name ImportClosures := {}
 
 structure Snapshot where
   private mk ::
@@ -512,13 +532,64 @@ private def decodeFacetDescriptor? (encoded : String) : Option Lake.Artifact := 
     mtime := 0
   }
 
+/-- Modules reachable from `root` over exported edges only, `root` excluded.
+
+`edges` maps a module to its exported direct imports. Excluding `root` matches `transImports`, whose
+closure of `X` likewise does not contain `X`, so both closures answer "what else does importing this
+bring in" and a caller cannot get a different answer by asking the wrong one.
+
+**`import all` is not modelled, deliberately.** Lake propagates an `importAll` flag through the walk,
+so `import all X` exposes more of `X` than `X` re-exports. Following exported edges alone therefore
+*under*-approximates the visible set when the covering import is `import all` — FMT004 then misses a
+true redundancy rather than inventing one, which is the direction a report-only rule must err in,
+and the same direction `redundancyEligible` already takes. -/
+private def visibleFrom (root : Lean.Name) (edges : Std.HashMap Lean.Name (Array Lean.Name)) :
+    Array Lean.Name := Id.run do
+  let mut seen : Std.HashSet Lean.Name := {}
+  let mut frontier := edges[root]?.getD #[]
+  let mut result := #[]
+  -- Bounded by the edge map, which is finite and built before the walk starts, so a cyclic header
+  -- graph terminates on `seen` rather than recursing.
+  for _ in [0:edges.size + 1] do
+    if frontier.isEmpty then break
+    let mut next := #[]
+    for name in frontier do
+      unless seen.contains name do
+        seen := seen.insert name
+        result := result.push name
+        next := next ++ edges[name]?.getD #[]
+    frontier := next
+  return result
+
+/-- The visible closure of one module as a job on the graph that is already running.
+
+The build closure bounds it — everything visible is imported — so the walk fetches `mod.input` for
+that set and nothing wider. Those fetches are the same memoized nodes `transImports` just used, so
+the second closure costs the map and the walk, not a second traversal. -/
+private def visibleClosureJob (mod : Lake.Module) :
+    Lake.FetchM (Lake.Job (Array Lean.Name)) := do
+  let transJob ← mod.transImports.fetch
+  transJob.bindM (sync := true) fun mods => do
+    let members := #[mod] ++ mods
+    let inputJobs ← members.mapM (·.input.fetch)
+    let inputs := Lake.Job.collectArray inputJobs "lean-fmt module inputs"
+    return inputs.mapResult fun
+      | .ok inputs state =>
+        let edges := (members.zip inputs).foldl
+          (init := Std.HashMap.emptyWithCapacity members.size)
+          fun edges (member, input) =>
+            edges.insert member.name <| input.imports.filterMap fun imp =>
+              if imp.isExported then imp.module?.map (·.name) else none
+        .ok (visibleFrom mod.name edges) state
+      | .error e state => .error e state
+
 /-- What a run wants from one Lake graph.
 
 Every field is a traversal cost, so absent means *do not fetch*, never "fetch and discard". -/
 structure Demand where
   /-- Is each target's module up to date? -/
   status : Bool := false
-  /-- What does each name in `extraImports` transitively import? -/
+  /-- What does each name in `extraImports` import — both closures, from one walk? -/
   closures : Bool := false
   /-- Each target's `leanFmtArtifact` facet, revalidated against its source. -/
   artifacts : Bool := false
@@ -553,8 +624,9 @@ structure GraphFacts where
   /-- Aligned index-for-index with the `targets` argument, always. -/
   targets : Array TargetFacts
   /-- Keyed by the names passed as `extraImports`. A name absent from the map is not a workspace
-  library module; a name mapping to `none` is one whose closure the graph could not resolve. -/
-  imports : Std.HashMap Lean.Name (Option (Array Lean.Name))
+  library module; a field of its `ImportClosures` is `none` when the graph could not resolve that
+  closure. -/
+  imports : Std.HashMap Lean.Name ImportClosures
 
 /-- One no-build Lake graph for a whole selection.
 
@@ -629,7 +701,7 @@ def graph (workspace : Lake.Workspace) (targets : Array SourceTarget)
           | .error _ state => .ok none state
     return Lake.Job.collectArray jobs "lean-fmt exact setups"
   let build : Lake.FetchM (Lake.Job
-      (Array (Option Bool) × Array (Option (Array Lean.Name)) × Array (Option String)
+      (Array (Option Bool) × Array ImportClosures × Array (Option String)
         × Array (Option Lean.ModuleSetup))) := do
     let statusJobs ← statusModules.mapM fun mod? => do
       match mod? with
@@ -640,10 +712,15 @@ def graph (workspace : Lake.Workspace) (targets : Array SourceTarget)
           | .ok _ state => .ok (some true) state
           | .error _ state => .ok (some false) state
     let closureJobs ← closureModules.mapM fun (_, mod) => do
-      let job ← mod.transImports.fetch
-      return job.mapResult fun
+      let build ← mod.transImports.fetch
+      let visible ← visibleClosureJob mod
+      let build := build.mapResult fun
         | .ok mods state => .ok (some (mods.map (·.name))) state
         | .error _ state => .ok none state
+      let visible := visible.mapResult fun
+        | .ok names state => .ok (some names) state
+        | .error _ state => .ok none state
+      return build.zipWith (fun build visible => ({ build, visible } : ImportClosures)) visible
     let facetJobs ← facetModules.mapM fun mod? => do
       match facetConfig?, mod? with
       | some config, some mod =>
@@ -726,7 +803,7 @@ fetches its own closure and does not come through here. A `none` is remembered a
 rest: a closure that would not resolve will not resolve on a second ask, and re-asking would spend
 a traversal to learn it again. -/
 def Snapshot.importClosures (snapshot : Snapshot) (names : Array Lean.Name) :
-    IO (Std.HashMap Lean.Name (Option (Array Lean.Name))) :=
+    IO (Std.HashMap Lean.Name ImportClosures) :=
   snapshot.closures.atomically do
     let memo ← get
     let wanted := names ++ snapshot.targets.filterMap (·.module?.map (·.name))

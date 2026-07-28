@@ -71,7 +71,7 @@ private def withRestored (ctx : Ctx) (path : System.FilePath) (action : IO Unit)
 
 /-- The committed fixtures this suite may never leave modified. -/
 private def sources : Array String := #[
-  "tests/imports/Duplicate.lean", "tests/imports/Ordering.lean", "tests/imports/Redundant.lean",
+  "tests/imports/Duplicate.lean", "tests/imports/Ordering.lean",
   "tests/imports/Suppressed.lean"
 ]
 
@@ -109,18 +109,51 @@ private def testOrdering (ctx : Ctx) : IO Unit := do
   for finding in ((jsonAt? file [.field "findings"]).bind (·.getArr?.toOption)).getD #[] do
     ensure ((jsonAt? finding [.field "fix"]).isNone) "ordering: FMT005 carries a fix -- it must not"
 
-/-- FMT004: `LeanFmt.Rules` is in `LeanFmt.Config`'s transitive closure, fetched from the live Lake
-graph, so the plain `import LeanFmt.Rules` is a redundancy candidate. Report-only; nothing
-withheld. -/
+/-- FMT004 fires on what a dependent can actually see, and on nothing else.
+
+Both arms import `Demo.Base` alongside a module that imports it too. `Demo.Exported` re-exports it
+with `public import`, so dropping the direct import would change nothing and the candidate is real.
+`Demo.Private` does not, so `Base` is invisible through it and dropping the direct import would
+break the build.
+
+**The silent arm is the one that matters.** The rule asked Lake for `transImports`, which is the
+*build* closure and takes every import regardless of `public` — so it reported the private arm too.
+That is not a corner case: `tests/Test/Unit/Cases.lean` carried two `ignore[FMT004]` directives for
+exactly this, with a comment admitting the rule was over-approximating, and this repository's own
+tree could not be linted clean without them.
+
+Its own project, because the shape needs a `public import` and no module under `LeanFmt/` uses one —
+which is also why the old fixture (two repository modules, one transitively importing the other)
+asserted a false positive and passed. -/
 private def testRedundant (ctx : Ctx) : IO Unit := do
-  let report ← checkJson ctx 1
-    #["check", "--root", ".", "--json", "--no-cache", "--select", "imports",
-      "tests/imports/Redundant.lean"] "redundant"
-  let file ← oneFile report "redundant"
-  ensureEq "redundant: findings changed" ["FMT004"] (codesOf file).toList
+  let project := ctx.work / "visibility"
+  IO.FS.createDirAll (project / "Demo")
+  copyFile (ctx.root / "lean-toolchain") (project / "lean-toolchain")
+  writeFile (project / "lakefile.lean")
+    "import Lake\n\nopen Lake DSL\n\npackage \"visibility\"\n\nlean_lib Demo where\n  \
+     globs := #[.submodules `Demo]\n"
+  writeFile (project / "Demo" / "Base.lean") "module\n\npublic def base : Nat := 1\n"
+  -- The two covering modules differ in one keyword, and that keyword is the whole test.
+  writeFile (project / "Demo" / "Exported.lean")
+    "module\n\npublic import Demo.Base\n\npublic def exported : Nat := base\n"
+  writeFile (project / "Demo" / "Private.lean")
+    "module\n\nimport Demo.Base\n\npublic def hidden : Nat := base\n"
+  writeFile (project / "Demo" / "ViaExported.lean")
+    "module\n\nimport Demo.Base\nimport Demo.Exported\n\npublic def viaExported : Nat := base\n"
+  writeFile (project / "Demo" / "ViaPrivate.lean")
+    "module\n\nimport Demo.Base\nimport Demo.Private\n\npublic def viaPrivate : Nat := base\n"
+  let select := #["check", "--root", project.toString, "--json", "--no-cache", "--select", "imports"]
+  let reported ← checkJson ctx 1 (select ++ #[(project / "Demo" / "ViaExported.lean").toString])
+    "redundant-exported"
+  let file ← oneFile reported "redundant-exported"
+  ensureEq "redundant: a re-exported import was not reported" ["FMT004"] (codesOf file).toList
   for finding in ((jsonAt? file [.field "findings"]).bind (·.getArr?.toOption)).getD #[] do
     ensure ((jsonAt? finding [.field "fix"]).isNone) "redundant: FMT004 carries a fix -- it must not"
-  ensureJsonAt report [.field "withheldRedundant"] (Lean.toJson (0 : Nat)) "redundant"
+  ensureJsonAt reported [.field "withheldRedundant"] (Lean.toJson (0 : Nat)) "redundant-exported"
+  let silent ← checkJson ctx 0 (select ++ #[(project / "Demo" / "ViaPrivate.lean").toString])
+    "redundant-private"
+  ensureEq "redundant: a privately-imported module was reported as reachable" ([] : List String)
+    (codesOf (← oneFile silent "redundant-private")).toList
 
 /-- Selection is honored: `--select FMT003` on the out-of-order fixture reports nothing (FMT005 is
 not selected), proving import codes flow through the same selection projection as any rule. -/
