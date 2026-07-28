@@ -334,33 +334,7 @@ what the rewrite made them, not what the file says. -/
 def SourceTarget.withSource (target : SourceTarget) (source : String) : SourceTarget :=
   { target with source, provenance := .rewritten }
 
-/- Can Lake validate `build` without building anything? Asked silently.
-
-Every caller wants both halves — the answer and the silence — so both live here.
-
-**Why `checkNoBuild` and not `runBuild`.** Under `noBuild`, an out-of-date target makes
-`finalizeBuild` call `IO.Process.exit noBuildCode` (`Lake/Build/Run.lean:368`). That is a process
-exit, not an exception, so no `catch` below it runs. `checkNoBuild` asks the same question and
-returns a `Bool` (`:405-414`).
-
-**Why the buffer swap.** `checkNoBuild` is the one Lake entry point a caller cannot quiet. It builds
-its own monitor from a hardcoded `{noBuild := true}`, leaving `verbosity` at `.normal`, so
-`BuildConfig.showProgress` is true and Lake redraws a spinner over our stderr whenever that is a
-terminal. `runBuild` takes a config and `startBuild` runs no monitor at all; this one takes nothing.
-Buffering is safe only because `checkNoBuild` returns rather than exits: around a call that exits,
-the same buffer would hold the unflushed report while the process died. -/
-def isCurrent {α : Type} (workspace : Lake.Workspace)
-    (build : Lake.FetchM (Lake.Job α)) : IO Bool := do
-  let buffer ← IO.mkRef { : IO.FS.Stream.Buffer }
-  let stdout ← IO.setStdout (.ofBuffer buffer)
-  let stderr ← IO.setStderr (.ofBuffer buffer)
-  try
-    workspace.checkNoBuild build
-  finally
-    discard <| IO.setStdout stdout
-    discard <| IO.setStderr stderr
-
-/- `noBuildValue?`'s question, awaited so that one job's failure stays at its own position.
+/- One no-build graph's value, awaited job by job so one failure stays at its own position.
 
 `monitorBuild` cannot do that. It returns `.error "build failed"` whenever `MonitorResult.isOk` is
 false (`Lake/Build/Run.lean:333`), and `isOk` is `failures.isEmpty` (`:218-219`) over failures
@@ -370,8 +344,9 @@ Measured on the artifact facet over `ArtifactLayout` (built) plus `Main` (never 
 `monitorBuild` gave hit=0/miss=2, this gives hit=1/miss=1.
 
 No buffer swap, and none needed: with no monitor there is no `reportJob` and no `log.replay`, so a
-job's log never reaches the caller's streams. `noBuildValue?` needs the swap only because it runs a
-monitor.
+job's log never reaches the caller's streams. The two entry points this replaced both needed one —
+`checkNoBuild` builds its own monitor from a hardcoded config and redraws a spinner over our stderr,
+and a hand-built one ran a monitor for the same reason. Neither is reachable now.
 
 `finalizeBuild` is not called here either — under `noBuild` it turns staleness into
 `IO.Process.exit` (`:367-368`), which no `catch` below it survives. Staleness is a `none`. -/
@@ -390,6 +365,62 @@ private def noBuildValuePerJob? {α : Type} (workspace : Lake.Workspace)
   catch _ =>
     return none
 
+/- One `-Dname=value` as `lean` reads it, or `none` if `LeanOptions` cannot carry the value.
+
+`LeanOptions` holds exactly `String`, `Bool`, and `Nat` (`Lean/Util/LeanOptions.lean:16-20`), which
+is the whole space a `ModuleSetup` can express, so this is a total decode of that space rather than
+a subset of Lean's. It is the inverse of `LeanOptionValue.asCliFlagValue`, the encoder Lake used on
+the way out.
+
+It differs from `lean`'s own `setConfigOption` in one place: `lean` looks the name up in the option
+declarations and takes the declared type, so a `String` option written `-Dfoo=true` stays the string
+`"true"` there and becomes a `Bool` here. Reading it back through `KVMap` would then miss and take
+the default. Matching that exactly needs `getOptionDecls`, which lives behind `import all Lean.Shell`
+and would pull the server and the LCNF backend into every module that imports this one. -/
+private def decodeLeanArgOption? (spelling : String) : Option Lean.LeanOption := do
+  let separator := spelling.find (· == '=')
+  guard <| !separator.IsAtEnd
+  let name := (spelling.sliceTo separator).toString
+  guard <| !name.isEmpty
+  let raw := (spelling.sliceFrom (separator.next!)).toString
+  let value : Lean.LeanOptionValue :=
+    if raw == "true" then .ofBool true
+    else if raw == "false" then .ofBool false
+    else if raw.length ≥ 2 && raw.startsWith "\"" && raw.endsWith "\"" then
+      .ofString (raw.drop 1 |>.dropEnd 1).toString
+    else match raw.toNat? with
+      | some number => .ofNat number
+      | none => .ofString raw
+  return { name := name.toName, value }
+
+/- The options a module's Lake arguments set, in Lake's own order.
+
+`lake build` spawns `lean <weakLeanArgs ++ leanArgs> … --setup setup.json`
+(`Lake/Build/Module.lean:972`), so the command line and the setup are two channels and the command
+line is applied second. `--setup` carries `options` and nothing else, so a project setting
+`moreLeanArgs := #["-DwarningAsError=true"]` got an option the build applies and the exact frontend
+did not — while `moduleConfiguration` folded both arrays into cache identity anyway, making the
+entry conservative for a difference nobody could name. Folding them here makes the identity honest.
+
+Only `-D` is folded, because only `-D` names something a `ModuleSetup` can carry. The rest of Lake's
+arguments (`-w`, `--load-dynlib`, a bare `-o`) are `lean` shell flags with no setup equivalent, and
+they stay in the cache identity, where a difference we cannot reproduce should count as a miss. -/
+private def leanArgOptions (mod : Lake.Module) : Lean.LeanOptions :=
+  let arguments := mod.weakLeanArgs ++ mod.leanArgs
+  let (options, _) := arguments.foldl (init := (({} : Lean.LeanOptions), false))
+    fun (options, pendingSeparate) argument =>
+      if pendingSeparate then
+        match decodeLeanArgOption? argument with
+        | some option => (options.append (Lean.LeanOptions.ofArray #[option]), false)
+        | none => (options, false)
+      else if argument == "-D" then (options, true)
+      else if argument.startsWith "-D" then
+        match decodeLeanArgOption? (argument.drop 2).toString with
+        | some option => (options.append (Lean.LeanOptions.ofArray #[option]), false)
+        | none => (options, false)
+      else (options, false)
+  options
+
 /- The setup `lake build` would use, when this target's bytes are the ones `lake build` would read.
 
 `mod.setup.fetch` is the build path: `recFetchSetup` over `mod.presetup`, which is a memoized facet
@@ -407,11 +438,18 @@ the ones being typed.
 into whatever is constructing the collection and takes every other target with it. -/
 private def setupJob (target : SourceTarget) : Lake.FetchM (Lake.Job Lean.ModuleSetup) :=
   Lake.ensureJob do
-    match target.module?, target.provenance with
-    | some mod, .disk => mod.setup.fetch
-    | _, _ =>
-      let header ← Lean.parseImports' target.source target.relativePath
-      Lake.setupServerModule target.relativePath target.path (some header)
+    let job ← match target.module?, target.provenance with
+      | some mod, .disk => mod.setup.fetch
+      | _, _ =>
+        let header ← Lean.parseImports' target.source target.relativePath
+        Lake.setupServerModule target.relativePath target.path (some header)
+    -- The command line Lake would also have passed, folded in second, as Lake applies it.
+    match target.module? with
+    | none => return job
+    | some mod =>
+      let extra := leanArgOptions mod
+      if extra.values.isEmpty then return job
+      return job.map fun setup => { setup with options := setup.options.append extra }
 
 private structure FacetDescriptor where
   hash : String

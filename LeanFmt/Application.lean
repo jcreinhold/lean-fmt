@@ -434,6 +434,11 @@ private def ExactRun.envelope (run : ExactRun)
         match formatWidth? with
         | some width => s!"4:{width}"
         | none => if captureOccurrences then "2" else if captureSemantic then "1" else "0"]
+      -- Lake caps nothing on its children, because it runs one `lean` per module and lets each use
+      -- the machine. This runs `workers` children at once and each has `Elab.async := true`
+      -- inside it, so an uncapped child would take the whole machine `workers` times over. The
+      -- parallelism is at this level, one process per file, and `resolveWorkers` picks its degree
+      -- the way Lake picks its own. A child that used more would be competing with its siblings.
       env := run.project.workspace.augmentedEnvVars.push ⟨"LEAN_NUM_THREADS", some "1"⟩
     } cancel?
     unless output.exitCode == 0 do
@@ -2294,11 +2299,15 @@ structure CompilerStatusReport where
   unbuilt : Nat
   deriving Lean.ToJson
 
+/- `current` is this module's currency as the one graph reported it. It used to be a `checkNoBuild`
+per module, so an audit of N modules ran N full traversals over the same graph; `compilerStatus`
+now asks once for the whole selection. The child is unchanged: currency says the `.olean` is
+up to date, and only reading it says whether the formatter's record is in there. -/
 private def inspectCompilerArtifact (workspace : Lake.Workspace) (application : FilePath)
-    (snapshot : SourceSnapshot) : IO String := do
+    (snapshot : SourceSnapshot) (current : Bool) : IO String := do
   let some mod := snapshot.module?
     | return "unbuilt"
-  unless ← Project.isCurrent workspace (do mod.olean.fetch) do
+  unless current do
     return "unbuilt"
   let output ← runChild {
     cmd := application.toString
@@ -2319,11 +2328,13 @@ def compilerStatus (request : CompilerStatusRequest) : IO CompilerStatusReport :
   let root ← IO.FS.realPath request.root
   let project ← Project.loadAll root
   let application ← IO.appPath
+  let facts ← Project.graph project.workspace project.targets (demand := { status := true })
   let mut statuses := #[]
-  for snapshot in project.targets do
+  for (snapshot, resolved) in project.targets.zip facts.targets do
     let some mod := snapshot.module?
       | continue
     let status ← inspectCompilerArtifact project.workspace application snapshot
+      (resolved.current? == some true)
     statuses := statuses.push {
       path := snapshot.relativePath
       module := mod.name.toString
