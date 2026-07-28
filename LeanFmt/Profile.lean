@@ -45,10 +45,20 @@ unsynchronized `IO.eprintln` calls may interleave bytes inside a line, and the g
 lock is taken only when the channel is on; production runs pay nothing. -/
 initialize emitLock : Std.BaseMutex ← Std.BaseMutex.new
 
-/-- Write one record line, whole. -/
+/-- Write one record line, whole. `LEAN_FMT_PROFILE_OUT` redirects the line to a file (appended)
+instead of stderr: the batch's exact-frontend children run with null stderr — their envelopes and
+diagnostics travel on per-target files — and the parent points this variable at the target's
+diagnostics file so the child's records still reach the channel. Read per emission, like
+`enabled`. -/
 private def emit (line : String) : IO Unit := do
   emitLock.lock
-  try IO.eprintln line finally emitLock.unlock
+  try
+    match ← IO.getEnv "LEAN_FMT_PROFILE_OUT" with
+    | some path =>
+      let handle ← IO.FS.Handle.mk path IO.FS.Mode.append
+      handle.putStr (line ++ "\n")
+    | none => IO.eprintln line
+  finally emitLock.unlock
 
 /-- Whether the channel is on.
 

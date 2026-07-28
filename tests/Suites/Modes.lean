@@ -901,7 +901,11 @@ public def main (args : List String) : IO UInt32 := do
     writeFile (work / "rcd-w20.toml") "[format]\nline-width = 20\n"
     writeFile (work / "rcd-w100-lint.toml") "[format]\nline-width = 100\n[lint]\nselect = [\"security\"]\n"
     writeFile (work / "reject-validator")
-      "#!/bin/sh\nprintf '%s\\n' '{\"artifact\":null,\"diagnostics\":[\"forced validation rejection\"]}'\n"
+      -- The fake validator speaks the batch transport: given the trailing output paths it
+      -- writes its envelope to the out file; without them it prints to stdout, as a direct
+      -- invocation always has.
+      "#!/bin/sh\njson='{\"artifact\":null,\"diagnostics\":[\"forced validation rejection\"]}'\n\
+       if [ -n \"$6\" ]; then printf '%s\\n' \"$json\" >\"$6\"; else printf '%s\\n' \"$json\"; fi\n"
     writeFile (work / "stale-hook") "#!/bin/sh\nprintf '\\n-- concurrent change\\n' >>\"$1\"\n"
     writeFile (work / "crash-hook") "#!/bin/sh\nexit 1\n"
     writeFile (work / "fin-stale-hook") "#!/bin/sh\nprintf '\\n-- concurrent change\\n' >>\"$1\"\n"

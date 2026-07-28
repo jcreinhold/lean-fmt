@@ -6,10 +6,11 @@ public import Test
 # The application-formatter suite
 
 Port of `tests/application-formatter/run.sh`. Validated frontend-native layout through preview,
-diff, cache, and all-or-nothing publication: `format --check` and `diff` admit the same candidates,
-a cached canonical answer is served without a frontend rerun, one stale member prevents every
-publication in the batch, the complete admitted batch publishes the previewed bytes, and an
-admission refusal maps to infrastructure exit 2.
+diff, cache, and per-file publication: `format --check` and `diff` admit the same candidates,
+a cached canonical answer is served without a frontend rerun, a stale member is rejected while
+its healthy sibling still publishes, the complete admitted batch publishes the previewed bytes,
+one elaboration-broken member does not stop another member's publication, and an admission
+refusal maps to infrastructure exit 2.
 -/
 
 open LeanFmt.Test
@@ -92,8 +93,9 @@ private def testPathMetrics (ctx : Ctx) : IO Unit := do
     (cwd? := some ctx.root) (env := #[("LEAN_FMT_PROFILE_PHASES", some "1")])
   ensureContains result.stderr "cache.path_source_shortcut=1" "source shortcut"
 
-/-- One stale member prevents every formatter publication in the batch: the hook appends to B
-after its analysis, so nothing may be written. -/
+/-- A stale member is rejected while its healthy sibling still publishes: the hook appends to B
+after its analysis, so B's own stale-source check refuses its write and A's goes through.
+Publication is per file; one member's failure no longer decides another member's fate. -/
 private def testStalePublication (ctx : Ctx) : IO Unit := do
   writeFile (aLean ctx) aSource
   writeFile (bLean ctx) bSource
@@ -105,22 +107,31 @@ private def testStalePublication (ctx : Ctx) : IO Unit := do
     #["format", "--root", ctx.root.toString, "--no-cache", "--json",
       (aLean ctx).toString, (bLean ctx).toString]
     (cwd? := some ctx.root) (env := #[("LEAN_FMT_TEST_BEFORE_WRITE", some hook.toString)])
-  ensure (stale.exitCode == 1) s!"stale batch did not exit 1: {stale.exitCode}\n{stale.stderr}"
-  ensureEq "A was written despite the stale batch" aSource (← IO.FS.readFile (aLean ctx))
+  ensure (stale.exitCode == 1) s!"stale member did not exit 1: {stale.exitCode}\n{stale.stderr}"
+  ensureEq "A was not published beside its stale sibling"
+    (← IO.FS.readFile (ctx.work / "A.expected")) (← IO.FS.readFile (aLean ctx))
   let bAfter ← IO.FS.readFile (bLean ctx)
   ensure (bAfter.startsWith bSource) "B's original bytes were modified"
   ensureContains bAfter "concurrent edit" "stale hook"
   let staleJson ← parseJson stale.stdout "stale"
-  ensureJsonAt staleJson [.field "written"] (Lean.toJson (0 : Nat)) "stale batch"
+  ensureJsonAt staleJson [.field "written"] (Lean.toJson (1 : Nat)) "stale member"
   let some files := (jsonAt? staleJson [.field "files"]).bind (·.getArr?.toOption)
     | throw <| IO.userError "stale report has no files"
-  for file in files do
-    ensure ((file.getObjValAs? String "status").toOption == some "rejected")
-      s!"stale batch member was not rejected: {file.compress}"
-  let mentions := files.any fun file =>
-    (((jsonAt? file [.field "diagnostics"]).bind (·.getArr?.toOption)).getD #[]).any fun diag =>
-      diag.compress.contains "source changed after analysis"
-  ensure mentions "no diagnostic names the stale source"
+  let some aFile := files.find? fun file =>
+      (((jsonAt? file [.field "path"]).bind (·.getStr?.toOption)).getD "").endsWith "A.lean"
+    | throw <| IO.userError "stale report lost A"
+  ensure ((aFile.getObjValAs? String "status").toOption == some "formatted")
+    s!"healthy member was not formatted: {aFile.compress}"
+  let some bFile := files.find? fun file =>
+      (((jsonAt? file [.field "path"]).bind (·.getStr?.toOption)).getD "").endsWith "B.lean"
+    | throw <| IO.userError "stale report lost B"
+  ensure ((bFile.getObjValAs? String "status").toOption == some "rejected")
+    s!"stale member was not rejected: {bFile.compress}"
+  let bDiagnostics := ((jsonAt? bFile [.field "diagnostics"]).bind (·.getArr?.toOption)).getD #[]
+  ensure (bDiagnostics.any fun diag => diag.compress.contains "source changed after analysis")
+    "no diagnostic names the stale source"
+  -- The batch-publication case runs next and needs A formattable again.
+  writeFile (aLean ctx) aSource
 
 /-- The complete admitted batch publishes the previewed bytes. -/
 private def testBatchPublication (ctx : Ctx) : IO Unit := do
@@ -139,6 +150,36 @@ private def testBatchPublication (ctx : Ctx) : IO Unit := do
     | throw <| IO.userError "write report has no files"
   for file in files do
     ensureJsonAt file [.field "written"] (Lean.toJson true) "batch publication"
+
+/-- One elaboration-broken member no longer poisons the run: A publishes its admitted layout
+while the broken member is the run's only failure. Publication used to be one all-or-nothing
+batch, so a single broken target rejected every admitted file beside it — on a real 1400-file
+project, one file with elaboration errors rejected 1269 formattable ones. -/
+private def testBrokenMemberPublication (ctx : Ctx) : IO Unit := do
+  writeFile (aLean ctx) aSource
+  let broken := ctx.work / "Broken.lean"
+  writeFile broken "module\n\ndef  broken :Nat:=\"not a nat\"\n"
+  let result ← expectExit 1 "broken member" ctx.application
+    #["format", "--root", ctx.root.toString, "--no-cache", "--json",
+      (aLean ctx).toString, broken.toString]
+    (cwd? := some ctx.root)
+  ensureEq "healthy member was not published beside the broken one"
+    (← IO.FS.readFile (ctx.work / "A.expected")) (← IO.FS.readFile (aLean ctx))
+  writeFile (aLean ctx) aSource
+  let report ← parseJson result.stdout "broken member"
+  ensureJsonAt report [.field "written"] (Lean.toJson (1 : Nat)) "broken member"
+  ensureJsonAt report [.field "broken"] (Lean.toJson (1 : Nat)) "broken member"
+  let some files := (jsonAt? report [.field "files"]).bind (·.getArr?.toOption)
+    | throw <| IO.userError "broken-member report has no files"
+  for file in files do
+    let diagnostics := ((jsonAt? file [.field "diagnostics"]).bind (·.getArr?.toOption)).getD #[]
+    ensure (!(diagnostics.any fun diag => diag.compress.contains "batch was not published"))
+      s!"batch coupling survived per-file publication: {file.compress}"
+  let some brokenFile := files.find? fun file =>
+      (((jsonAt? file [.field "path"]).bind (·.getStr?.toOption)).getD "").endsWith "Broken.lean"
+    | throw <| IO.userError "broken-member report lost Broken"
+  ensure ((brokenFile.getObjValAs? String "status").toOption == some "broken")
+    s!"broken member was not reported broken: {brokenFile.compress}"
 
 /-- Formatter admission refusal maps to infrastructure exit 2: the throwing custom command fails
 validation, nothing is written, and the file is reported as an infrastructure failure. -/
@@ -184,6 +225,8 @@ public def main (args : List String) : IO UInt32 := do
       { name := "path-metrics", run := ApplicationFormatter.testPathMetrics ctx },
       { name := "stale-publication", run := ApplicationFormatter.testStalePublication ctx },
       { name := "batch-publication", run := ApplicationFormatter.testBatchPublication ctx },
+      { name := "broken-member-publication",
+        run := ApplicationFormatter.testBrokenMemberPublication ctx },
       { name := "refusal", run := ApplicationFormatter.testRefusal ctx }
     ]
     runCases "application-formatter" cases args

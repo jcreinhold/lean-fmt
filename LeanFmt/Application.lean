@@ -147,9 +147,7 @@ it, so the registry's size is how many children are alive at that moment — the
 
 `pgid` is the child's pid, which `setsid` also makes its process group's id. -/
 private structure LiveChild where
-  child : IO.Process.Child { stdin := .inherit, stdout := .piped, stderr := .piped }
-  stdoutTask : Task (Except IO.Error String)
-  stderrTask : Task (Except IO.Error String)
+  child : IO.Process.Child { stdin := .inherit, stdout := .null, stderr := .null }
   pgid : UInt32
 
 /- A valid exact-analysis capability. Construction brackets its temporary storage, fixes the target
@@ -305,18 +303,65 @@ private def runChild (arguments : IO.Process.SpawnArgs)
     stderr := .piped
     setsid := true
   }
-  -- Batch target processing is deliberately serial after the two-child one-thread prototype
-  -- pipe-blocked. This count makes that resource/lifetime decision a durable, negative-tested gate.
+  -- The piped runner, for a child whose answer is small enough to hold in memory and that runs
+  -- one-at-a-time (the compiler-status probe). The batch frontend path is pipe-free: its
+  -- envelopes are projection-sized and its children run `workers` at a time, and two pipe
+  -- handles per child did not survive that scale — see `spawnChild`.
   recordCount "active_children" 1
   let stdoutTask ← IO.asTask child.stdout.readToEnd
   let stderrTask ← IO.asTask child.stderr.readToEnd
   awaitChild child stdoutTask stderrTask cancel?
 
-/-- Spawn one frontend child and wait for it. At one worker this is `runChild`: one child at a time,
-one admission counted. Above one, the child joins the registry before it can run unobserved, and
-dedicated threads drain its pipes — the lesson of the two-child one-thread prototype, where a pipe
-nobody read blocked the process holding it. The `finally` kills and drains a child its worker is
-walking away from, so the registry and the process table never disagree.
+/-- The pipe-free equivalent of `awaitChild`, for children whose results travel on per-target
+files. Same cancellation contract: one poll every 50 ms, and a cancelled child is killed and
+reaped before the cancellation error propagates. -/
+private partial def awaitChildExit (child : IO.Process.Child {
+      stdin := .inherit, stdout := .null, stderr := .null })
+    (cancel? : Option Std.CancellationToken) : IO UInt32 := do
+  match ← child.tryWait with
+  | some exitCode => return exitCode
+  | none =>
+    if let some token := cancel? then
+      if ← token.isCancelled then
+        try child.kill catch _ => pure ()
+        discard child.wait
+        throw <| IO.userError cancellationMessage
+    IO.sleep 50
+    awaitChildExit child cancel?
+
+/-- Spawn one pipe-free child and wait for its exit code: the one-worker branch of `spawnChild`,
+where one child runs at a time and the frame that spawned it is the only thing that needs to
+find it. -/
+private def spawnWait (arguments : IO.Process.SpawnArgs)
+    (cancel? : Option Std.CancellationToken := none) : IO UInt32 := do
+  let child ← IO.Process.spawn {
+    cmd := arguments.cmd
+    args := arguments.args
+    cwd := arguments.cwd
+    env := arguments.env
+    inheritEnv := arguments.inheritEnv
+    stdin := .inherit
+    stdout := .null
+    stderr := .null
+    setsid := true
+  }
+  recordCount "active_children" 1
+  awaitChildExit child cancel?
+
+/-- Spawn one pipe-free frontend child and wait for its exit code. At one worker this is
+`spawnWait`: one child at a time, one admission counted. Above one, the child joins the registry
+before it can run unobserved, and the `finally` kills and reaps a child its worker is walking
+away from, so the registry and the process table never disagree.
+
+Pipe-free because of what the pipes cost. The child is this same binary running
+`__analyze-exact`; its envelope and diagnostics now travel on per-target files it writes itself
+(the trailing output arguments `envelope` passes). The piped version held two handles per child
+and drained them on dedicated reader threads, and under `--workers N > 1` those handles were not
+released when the child was reaped: measured on a 1400-target run, the parent accumulated ~2
+descriptors per child and hit `EMFILE` (\"too many open files\") around target 1300, failing
+every remaining target's setup file. One worker was spared only because one child's handles were
+collected before the next spawned. Files have no such lifecycle: the child closes its own
+writes, and the parent unlinks each target's files when the target's envelope is decoded.
 
 Nothing here bounds what a child may allocate. Lake bounds nothing either: it spawns one `lean` per
 module and passes no `-M`, no `ulimit`, no `setrlimit`. lean-fmt used to divide a `--max-memory`
@@ -325,9 +370,9 @@ files at eight workers — because the number it divided counted each child's sh
 in full. A child reading 2.05 GiB of RSS had a physical footprint of 173 MiB. The control that
 remains is `--workers`. -/
 private def ExactRun.spawnChild (run : ExactRun) (arguments : IO.Process.SpawnArgs)
-    (cancel? : Option Std.CancellationToken := none) : IO ChildOutput := do
+    (cancel? : Option Std.CancellationToken := none) : IO UInt32 := do
   let some registry := run.registry?
-    | runChild arguments cancel?
+    | spawnWait arguments cancel?
   let child ← IO.Process.spawn {
     cmd := arguments.cmd
     args := arguments.args
@@ -335,20 +380,18 @@ private def ExactRun.spawnChild (run : ExactRun) (arguments : IO.Process.SpawnAr
     env := arguments.env
     inheritEnv := arguments.inheritEnv
     stdin := .inherit
-    stdout := .piped
-    stderr := .piped
+    stdout := .null
+    stderr := .null
     setsid := true
   }
   let entry : LiveChild := {
     child
-    stdoutTask := ← IO.asTask child.stdout.readToEnd Task.Priority.dedicated
-    stderrTask := ← IO.asTask child.stderr.readToEnd Task.Priority.dedicated
     pgid := child.pid
   }
   registry.modify (·.push entry)
   recordCount "active_children" (← registry.get).size
   try
-    awaitChild entry.child entry.stdoutTask entry.stderrTask cancel?
+    awaitChildExit entry.child cancel?
   finally
     registry.modify (·.filter (·.pgid != entry.pgid))
     -- `pollChild` may already have reaped the child (its exit branch), and Lean's `tryWait` does
@@ -360,8 +403,6 @@ private def ExactRun.spawnChild (run : ExactRun) (arguments : IO.Process.SpawnAr
     unless exited do
       try entry.child.kill catch _ => pure ()
       discard entry.child.wait
-      discard <| awaitRead entry.stdoutTask
-      discard <| awaitRead entry.stderrTask
 
 private def ExactRun.nextPathIndex (run : ExactRun) : IO Nat :=
   run.nextIndex.modifyGet fun index => (index, index + 1)
@@ -411,7 +452,7 @@ private def ExactRun.envelope (run : ExactRun)
   -- *this* process, `exact_child` is the frontend round trip in another one, and `envelope_decode`
   -- parses what came back. Only the middle one is elaboration; the outer two are this process's
   -- own cost and are the ones an optimization here could remove.
-  let (setupResult, setupPath, sourcePath) ← withPhase "exact_setup" do
+  let (setupResult, setupPath, sourcePath, outPath, errPath) ← withPhase "exact_setup" do
     let setupResult ← run.setupResult snapshot
     let setup := match setupResult with
       | .ok setup => setup
@@ -419,41 +460,51 @@ private def ExactRun.envelope (run : ExactRun)
     let setupPath ← writeSetup run.temporary index setup
     let sourcePath := run.temporary / s!"{index}.lean"
     IO.FS.writeFile sourcePath snapshot.source
-    pure (setupResult, setupPath, sourcePath)
+    pure (setupResult, setupPath, sourcePath,
+      run.temporary / s!"{index}.out", run.temporary / s!"{index}.err")
   try
     let overrideName := if validator then "LEAN_FMT_TEST_VALIDATOR" else "LEAN_FMT_TEST_ANALYZER"
     let analyzer := (← IO.getEnv overrideName).map FilePath.mk |>.getD run.application
-    let output ← withPhase "exact_child" <| run.spawnChild {
+    let exitCode ← withPhase "exact_child" <| run.spawnChild {
       cmd := analyzer.toString
       -- The trailing capture token encodes the demanded semantic capabilities: "0" none, "1" the
       -- two semantic diagnostics, "2" diagnostics plus the info-tree occurrence fold. A direct
       -- three-argument invocation (every syntax-only harness) omits it and captures nothing.
       -- `occurrences` is only ever demanded together with the tier, so the token is a simple ladder.
+      -- The two paths after it are the pipe-free transport: the child writes its envelope to the
+      -- first and any failure diagnostic to the second (see `spawnChild` for what the pipes cost).
       args := #["__analyze-exact", setupPath.toString, sourcePath.toString,
         snapshot.path.toString,
         match formatWidth? with
         | some width => s!"4:{width}"
-        | none => if captureOccurrences then "2" else if captureSemantic then "1" else "0"]
+        | none => if captureOccurrences then "2" else if captureSemantic then "1" else "0",
+        outPath.toString, errPath.toString]
       -- Lake caps nothing on its children, because it runs one `lean` per module and lets each use
       -- the machine. This runs `workers` children at once and each has `Elab.async := true`
       -- inside it, so an uncapped child would take the whole machine `workers` times over. The
       -- parallelism is at this level, one process per file, and `resolveWorkers` picks its degree
       -- the way Lake picks its own. A child that used more would be competing with its siblings.
       env := run.project.workspace.augmentedEnvVars.push ⟨"LEAN_NUM_THREADS", some "1"⟩
+        |>.push ⟨"LEAN_FMT_PROFILE_OUT", some errPath.toString⟩
     } cancel?
-    unless output.exitCode == 0 do
+    let errText ← if ← errPath.pathExists then IO.FS.readFile errPath else pure ""
+    unless exitCode == 0 do
       throw <| IO.userError s!"exact frontend child failed for {snapshot.relativePath}: \
-        {output.stderr.trimAscii}"
-    -- The child's own records ride back on its stderr, which is captured rather than inherited.
-    -- Forwarding them here makes the elaboration/encode split visible from a parent profile;
-    -- without it the child's internal cost is a single opaque `exact_child`. The counts come too:
-    -- whether the candidate was reparsed or escalated to a second frontend is decided in the child
-    -- and is invisible from outside it.
+        {errText.trimAscii}"
+    -- The child's own records ride back on the err file, which the child appends to when the
+    -- profile channel is on (`LEAN_FMT_PROFILE_OUT`). Forwarding them here makes the
+    -- elaboration/encode split visible from a parent profile; without it the child's internal
+    -- cost is a single opaque `exact_child`. The counts come too: whether the candidate was
+    -- reparsed or escalated to a second frontend is decided in the child and is invisible from
+    -- outside it.
     if ← Profile.enabled then
-      for line in output.stderr.splitOn "\n" do
+      for line in errText.splitOn "\n" do
         if line.startsWith "phase." || line.startsWith "cache." then IO.eprintln line
     let envelope ← withPhase "envelope_decode" do
-      let .ok json := Lean.Json.parse output.stdout
+      unless ← outPath.pathExists do
+        throw <| IO.userError s!"exact frontend child produced no envelope for \
+          {snapshot.relativePath}"
+      let .ok json := Lean.Json.parse (← IO.FS.readFile outPath)
         | throw <| IO.userError s!"exact frontend child returned invalid JSON for \
           {snapshot.relativePath}"
       match Lean.fromJson? json with
@@ -468,6 +519,8 @@ private def ExactRun.envelope (run : ExactRun)
   finally
     if ← setupPath.pathExists then IO.FS.removeFile setupPath
     if ← sourcePath.pathExists then IO.FS.removeFile sourcePath
+    if ← outPath.pathExists then IO.FS.removeFile outPath
+    if ← errPath.pathExists then IO.FS.removeFile errPath
 
 /- The frontend-native document emits groups, nesting, and line choices, and its linear renderer
 breaks them against the effective `[format] line-width`. Because a runtime width changes canonical
@@ -647,9 +700,17 @@ def withExactRun (project : Project.Snapshot) (workers : Nat := 1)
     documentSetups
     lake := ← Std.Mutex.new ()
   }
+  -- Test-only (`LEAN_FMT_TEST_FD_REPORT`): bracket the run with this process's open-descriptor
+  -- count, so a scale suite can assert a batch leaves no per-target descriptors behind. Counted
+  -- from `/dev/fd`, which macOS and Linux both provide; off this channel nothing is read.
+  let reportFds := (← IO.getEnv "LEAN_FMT_TEST_FD_REPORT") == some "1"
+  if reportFds then
+    IO.eprintln s!"test.fds_open_start={(← ("/dev/fd" : FilePath).readDir).size}"
   try
     action run
   finally
+    if reportFds then
+      IO.eprintln s!"test.fds_open_end={(← ("/dev/fd" : FilePath).readDir).size}"
     IO.FS.removeDirAll temporary
 
 /-- Does an analysis in hand answer what this run demands? Asked of a cache hit and of an analysis
@@ -874,70 +935,6 @@ private def publishAtomic (path : FilePath) (original output : String) : IO (Exc
       IO.FS.removeFile temporary
     throw error
 
-private structure Publication where
-  path : FilePath
-  original : String
-  output : String
-  deriving Inhabited
-
-private structure StagedPublication extends Publication where
-  temporary : FilePath
-  backup : FilePath
-  deriving Inhabited
-
-private def cleanupIfExists (path : FilePath) : IO Unit := do
-  if ← path.pathExists then IO.FS.removeFile path
-
-/-- Stage and stale-check a whole format batch before replacing any source. Backups make a failure in
-the rename phase recoverable, so one rejected/stale member cannot leave a partially formatted batch. -/
-private def publishBatchAtomic (items : Array Publication) : IO (Except String Unit) := do
-  let mut staged : Array StagedPublication := #[]
-  try
-    for item in items do
-      let mode ← accessMode item.path
-      let temporary ← publicationTemp item.path
-      let backup ← publicationTemp (FilePath.mk s!"{item.path}.backup")
-      IO.FS.writeFile temporary item.output
-      IO.Prim.setAccessRights temporary mode.toUInt32
-      staged := staged.push {
-        path := item.path, original := item.original, output := item.output, temporary, backup }
-    -- Hooks and every stale check run before the first source is renamed.
-    for item in staged do runBeforeWriteHook item.path
-    for item in staged do
-      unless (← IO.FS.readFile item.path) == item.original do
-        for stagedItem in staged do cleanupIfExists stagedItem.temporary
-        return .error s!"source changed after analysis; refusing stale write: {item.path}"
-    let mut backedUp := 0
-    try
-      for item in staged do
-        IO.FS.rename item.path item.backup
-        backedUp := backedUp + 1
-    catch error =>
-      for item in staged.take backedUp do
-        if ← item.backup.pathExists then IO.FS.rename item.backup item.path
-      for item in staged do cleanupIfExists item.temporary
-      throw error
-    let mut installed := 0
-    try
-      for item in staged do
-        IO.FS.rename item.temporary item.path
-        installed := installed + 1
-    catch error =>
-      for item in staged.take installed do cleanupIfExists item.path
-      for item in staged do
-        if ← item.backup.pathExists then IO.FS.rename item.backup item.path
-      for item in staged do cleanupIfExists item.temporary
-      throw error
-    for item in staged do cleanupIfExists item.backup
-    return .ok ()
-  catch error =>
-    for item in staged do
-      cleanupIfExists item.temporary
-      if ← item.backup.pathExists then
-        if !(← item.path.pathExists) then IO.FS.rename item.backup item.path
-        else cleanupIfExists item.backup
-    throw error
-
 private def baseReport (snapshot : SourceSnapshot) (status : String)
     (findings : Array Finding := #[]) (diagnostics : Array String := #[]) : FileReport :=
   { path := snapshot.relativePath, status, findings, diagnostics }
@@ -1110,7 +1107,7 @@ patches, keyed on `renderCanonical`:
 
 - **Layout patch** (`format`/`diff`, `renderCanonical`). `base := canonical.text`, the reflowed
   bytes, and the patch carries **no** rule fix. The render is the whole answer: `format` publishes
-  `output` in place (`prepareFormatFile`; `format --check` previews it), `diff` diffs
+  `output` in place (`formatFile`; `format --check` previews it), `diff` diffs
   `normalized` against it. A rule fix belongs to `fix`, never layout.
 - **Fix patch** (`fix`; `check` computes it for the report). `base := normalized`, the file's own
   bytes, and the patch carries the admitted fixes from `selected` at **original** coordinates.
@@ -1257,36 +1254,42 @@ fix), short-circuits `clean` when the file already is canonical, and publishes t
 through `publishAtomic` — the same guarded path (stale-source check + atomic lossless write) `fix`
 and `organize` use. `format` applies no rule fix; those belong to `fix`. Status `formatted` +
 `written` mirrors `fix`'s `fixed`; the write bytes are `prepared.output`, denormalized to the
-file's own line endings, so a CRLF file stays CRLF. -/
-private def prepareFormatFile (plan : RulePlan) (unsafeFixes : Bool)
+file's own line endings, so a CRLF file stays CRLF.
+
+Publication is per file, the moment this file's candidate is admitted. It used to be deferred
+into one all-or-nothing batch at run end, which coupled every target's fate to every other's: one
+broken file — and on a 1400-file run, one resource-exhausted child — rejected over a thousand
+admitted files, and every output was retained in memory for the whole run. Per-file publication
+keeps each file's transaction atomic (temp file, stale-source check, rename) and lets a target's
+output die with the target. -/
+private def formatFile (plan : RulePlan) (unsafeFixes : Bool)
     (reportImports : Array Finding) (withheldRedundant : Nat)
-    (snapshot : SourceSnapshot) (analysis : SemanticAnalysis) : FileReport × Option String :=
+    (snapshot : SourceSnapshot) (analysis : SemanticAnalysis) : IO FileReport := do
   match prepareFile plan (renderCanonical := true) unsafeFixes reportImports
       withheldRedundant snapshot analysis with
-  | .error report => (report, none)
+  | .error report => return report
   | .ok prepared =>
     let findings := prepared.findings
     let withheldUnsafe := prepared.withheldUnsafe
     let suppressed := prepared.suppressed
     let withheldRedundant := prepared.withheldRedundant
-    if !prepared.changed then
-      ({ (baseReport snapshot "clean" findings) with withheldUnsafe, suppressed, withheldRedundant },
-        none)
-    else
-      let output := prepared.output
-      -- Admission already read these exact normalized bytes back under this setup and found the
-      -- same commands, so nothing here re-reads them. What that reading proves is `Validator.admit`'s
-      -- business, and on the reparse path it is a parse, not an elaboration — see
-      -- `Analysis.reparseCandidate`. Publication is deferred until every file has an admitted
-      -- candidate.
-      ({ (baseReport snapshot "formatted" findings) with
-          formatted := some output
-          withheldUnsafe, suppressed, withheldRedundant }, some output)
-
-private structure PendingFormat where
-  reportIndex : Nat
-  snapshot : SourceSnapshot
-  output : String
+    unless prepared.changed do
+      return {
+        (baseReport snapshot "clean" findings) with withheldUnsafe, suppressed, withheldRedundant }
+    let output := prepared.output
+    -- Admission already read these exact normalized bytes back under this setup and found the
+    -- same commands, so nothing here re-reads them. What that reading proves is `Validator.admit`'s
+    -- business, and on the reparse path it is a parse, not an elaboration — see
+    -- `Analysis.reparseCandidate`.
+    match ← publishAtomic snapshot.path snapshot.source output with
+    | .error message =>
+      return { (baseReport snapshot "rejected" findings #[message]) with
+        withheldUnsafe, suppressed, withheldRedundant }
+    | .ok _ =>
+      return { (baseReport snapshot "formatted" findings) with
+        formatted := some output
+        written := true
+        withheldUnsafe, suppressed, withheldRedundant }
 
 def ExactRun.checkSnapshot (run : ExactRun) (plan : RulePlan)
     (snapshot : SourceSnapshot) : IO FileReport := do
@@ -1457,7 +1460,6 @@ private structure FileOutcome where
   report : FileReport
   analysis? : Option SemanticAnalysis
   failure? : Option String
-  pendingFormat? : Option (SourceSnapshot × String)
 
 /-- The per-target body of the batch loop: obtain the analysis the earlier decisions left
 unanswered, then run the mode's rule phase. Extracted so the serial path and the worker pool
@@ -1483,28 +1485,20 @@ private def processOneTarget (exactRun : ExactRun) (request : RunRequest)
         exactRun.analyzeSnapshot snapshot renderCanonical
           (captureSemantic := demanded == .semantic)
           (captureOccurrences := demandedCaps.occurrences)
-    let (report, formatOutput?) ← withPhase "rules" <| match request.mode with
-      | .fix => do
-        let report ← fixFile exactRun plan request.unsafeFixes ir.1 ir.2 snapshot analysis
-        pure (report, none)
-      | .check => do
-        let report ← previewFile .check plan request.unsafeFixes ir.1 ir.2 snapshot analysis
-        pure (report, none)
+    let report ← withPhase "rules" <| match request.mode with
+      | .fix => fixFile exactRun plan request.unsafeFixes ir.1 ir.2 snapshot analysis
+      | .check => previewFile .check plan request.unsafeFixes ir.1 ir.2 snapshot analysis
       -- `format` publishes in place by default; `--check` demotes it to the preview.
       | .format =>
-        if request.formatCheck then do
-          let report ← previewFile .format plan request.unsafeFixes ir.1 ir.2 snapshot analysis
-          pure (report, none)
+        if request.formatCheck then
+          previewFile .format plan request.unsafeFixes ir.1 ir.2 snapshot analysis
         else
-          pure <| prepareFormatFile plan request.unsafeFixes ir.1 ir.2 snapshot analysis
-      | .diff => do
-        let report ← previewFile .diff plan request.unsafeFixes ir.1 ir.2 snapshot analysis
-        pure (report, none)
+          formatFile plan request.unsafeFixes ir.1 ir.2 snapshot analysis
+      | .diff => previewFile .diff plan request.unsafeFixes ir.1 ir.2 snapshot analysis
     return {
       report
       analysis? := some analysis
       failure? := none
-      pendingFormat? := formatOutput?.map (snapshot, ·)
     }
   catch error =>
     let message := toString error
@@ -1516,7 +1510,6 @@ private def processOneTarget (exactRun : ExactRun) (request : RunRequest)
       }
       analysis? := none
       failure? := some s!"{snapshot.relativePath}: {message}"
-      pendingFormat? := none
     }
 
 /-- Pull targets from the shared index until none remain. One worker is the serial loop; several
@@ -1708,8 +1701,9 @@ def execute (request : RunRequest) : IO RunOutcome := do
     let progress ← LeanFmt.Progress.start request.mode.toString work.size
     if workers > 1 && work.size > 1 then
       -- Several workers: one shared child registry (`withExactRun` creates it), outcomes by index.
-      -- Dedicated priority is required, not tuning: workers block on child pipes, and pooled
-      -- blocking tasks can starve a small pool (`LEAN_NUM_THREADS=1` is a supported setting).
+      -- Dedicated priority is required, not tuning: workers block on child waits and file IO,
+      -- and pooled blocking tasks can starve a small pool (`LEAN_NUM_THREADS=1` is a supported
+      -- setting).
       let tasks ← (List.range (min workers work.size)).mapM fun _ =>
         IO.asTask (batchWorker exactRun request renderCanonical demanded demandedCaps work next
           outcomes progress) Task.Priority.dedicated
@@ -1726,7 +1720,6 @@ def execute (request : RunRequest) : IO RunOutcome := do
     let mut files := #[]
     let mut failures := #[]
     let mut analyses := #[]
-    let mut pendingFormats : Array PendingFormat := #[]
     for outcome? in ← outcomes.get do
       let some outcome := outcome?
         | throw <| IO.userError "a batch worker finished without reporting its target"
@@ -1734,34 +1727,6 @@ def execute (request : RunRequest) : IO RunOutcome := do
       analyses := analyses.push outcome.analysis?
       if let some failure := outcome.failure? then
         failures := failures.push failure
-      if let some (snapshot, output) := outcome.pendingFormat? then
-        pendingFormats := pendingFormats.push {
-          reportIndex := files.size - 1
-          snapshot
-          output }
-    if request.writesFormat && !pendingFormats.isEmpty then
-      let batchReady := failures.isEmpty && files.all fun report =>
-        report.status != "broken" && report.status != "rejected" &&
-          report.status != "infrastructure-failure"
-      if batchReady then
-        let publications := pendingFormats.map fun pending => {
-          path := pending.snapshot.path
-          original := pending.snapshot.source
-          output := pending.output : Publication }
-        match ← publishBatchAtomic publications with
-        | .ok _ =>
-          for pending in pendingFormats do
-            files := files.set! pending.reportIndex { files[pending.reportIndex]! with written := true }
-        | .error message =>
-          for pending in pendingFormats do
-            files := files.set! pending.reportIndex {
-              files[pending.reportIndex]! with status := "rejected", diagnostics := #[message] }
-      else
-        for pending in pendingFormats do
-          files := files.set! pending.reportIndex {
-            files[pending.reportIndex]! with
-              status := "rejected"
-              diagnostics := #["format batch was not published because another target failed"] }
     if let some cache := cache? then
       withPhase "cache_write" <| cache.writeAll project snapshots analyses
     let positions ← profiledPositions snapshots files
@@ -2061,15 +2026,11 @@ def organize (request : OrganizeRequest) : IO RunReport := do
           }
     return summarize "organize" files failures)
 
-private unsafe def runAnalyzeChild (args : List String) : IO UInt32 := do
-  -- The capture mode is a trailing optional argument: a direct three-argument invocation omits it
-  -- and captures no optional frontend fact.
-  let (setupPath, snapshotPath, displayPath, captureMode) ← match args with
-    | [setupPath, snapshotPath, displayPath] =>
-      pure (setupPath, snapshotPath, displayPath, "0")
-    | [setupPath, snapshotPath, displayPath, captureMode] =>
-      pure (setupPath, snapshotPath, displayPath, captureMode)
-    | _ => return 2
+/-- The whole analysis side of `__analyze-exact`: read the setup and source, run the exact
+frontend at the capture mode, and return the encoded envelope. Transport — stdout for a direct
+invocation, per-target files for the batch parent — is `runAnalyzeChild`'s, not this one's. -/
+private unsafe def analyzeChildEnvelope (setupPath snapshotPath displayPath : String)
+    (captureMode : String) : IO String := do
   -- The parent's `exact_child` minus the child's `child_analyze` left about 170 ms per file
   -- unattributed, and this is the half of it the child can see. A `ModuleSetup` names an artifact
   -- path for every module in the closure, so on a deep closure the JSON is large and parsing it is
@@ -2091,8 +2052,9 @@ private unsafe def runAnalyzeChild (args : List String) : IO UInt32 := do
   -- is the frontend itself, `child_encode` is turning its result into the JSON the parent reads
   -- back. A projection runs about 10x the size of its source, so the second is not
   -- obviously small, and the parent's `exact_child` covers both without distinguishing them. These
-  -- records go to stderr, which the parent captures and forwards; stdout is the envelope and takes
-  -- no passengers.
+  -- records go to the profile channel (stderr, or the file `LEAN_FMT_PROFILE_OUT` names — the
+  -- batch parent points it at the target's err file and forwards the lines); the envelope travels
+  -- alone.
   let validatedWidth? := match captureMode.splitOn ":" with
     | ["4"] => some 100
     | ["4", width] => width.toNat?
@@ -2110,20 +2072,48 @@ private unsafe def runAnalyzeChild (args : List String) : IO UInt32 := do
       (captureFormatDraft := draftWidth?.isSome)
       (validateFormatDraft := validatedWidth?.isSome)
       (formatWidth := formatWidth)
-  let encoded ← withPhase "child_encode" do
+  withPhase "child_encode" do
     -- `IO.lazyPure` for the reason `profiledPositions` documents: a plain `let` of a pure value
     -- can be floated out of the action's closure, and then the bracket times nothing. The
     -- `utf8ByteSize` check below is not sufficient on its own — it forces the value, but not
     -- necessarily *here*.
     let encoded ← IO.lazyPure fun _ => (Lean.toJson envelope).compress
     -- `utf8ByteSize` is O(1) and forces the encoding inside the phase rather than at the
-    -- `IO.println` below, where it would be attributed to nothing. An empty encoding is also not a
+    -- write below, where it would be attributed to nothing. An empty encoding is also not a
     -- thing a real envelope produces, so the check is worth its line independent of the timing.
     if encoded.utf8ByteSize == 0 then
       throw <| IO.userError "exact frontend produced an empty analysis encoding"
     pure encoded
-  IO.println encoded
-  return 0
+
+private unsafe def runAnalyzeChild (args : List String) : IO UInt32 := do
+  -- The capture mode is a trailing optional argument: a direct three-argument invocation omits it
+  -- and captures no optional frontend fact, and its envelope goes to stdout. The batch parent
+  -- adds the two transport paths — the envelope's destination and the diagnostics file — which
+  -- is the pipe-free transport `spawnChild` documents: this process holds the parent's inherited
+  -- descriptors plus its own `.olean` mmaps, and a protocol that adds two pipe handles per child
+  -- to the *parent* is what exhausted them on a 1400-target run. A failure lands in the
+  -- diagnostics file so the parent's report can name it; an uncaught exception with null stderr
+  -- would be a status with no message.
+  let (setupPath, snapshotPath, displayPath, captureMode, transport?) ← match args with
+    | [setupPath, snapshotPath, displayPath] =>
+      pure (setupPath, snapshotPath, displayPath, "0", none)
+    | [setupPath, snapshotPath, displayPath, captureMode] =>
+      pure (setupPath, snapshotPath, displayPath, captureMode, none)
+    | [setupPath, snapshotPath, displayPath, captureMode, outPath, errPath] =>
+      pure (setupPath, snapshotPath, displayPath, captureMode, some (outPath, errPath))
+    | _ => return 2
+  try
+    let encoded ← analyzeChildEnvelope setupPath snapshotPath displayPath captureMode
+    match transport? with
+    | some (outPath, _) => IO.FS.writeFile outPath encoded
+    | none => IO.println encoded
+    return 0
+  catch error =>
+    match transport? with
+    | some (_, errPath) =>
+      IO.FS.writeFile errPath s!"{error}\n"
+      return 1
+    | none => throw error
 
 private unsafe def runExtractChild (args : List String) : IO UInt32 := do
   let [moduleName, moduleFile, output] := args

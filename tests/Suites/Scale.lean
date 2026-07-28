@@ -114,6 +114,34 @@ private def testLeanArgsReachTheFrontend (ctx : Ctx) : IO Unit := do
 
 end Scale
 
+/-- A batch leaves no per-target descriptors behind. The frontend transport used to hold two pipe
+handles per child, and under `--workers N > 1` they survived each reap — ~2 descriptors per
+target, which is what exhausted a 1400-target run near target 1300 (`EMFILE` on the next
+target's setup file). The transport is per-target files now, deleted when the target's envelope
+is decoded, so a 120-target run ends with the descriptor count it started with, give or take the
+run's own bookkeeping. The counts are the run's own (`LEAN_FMT_TEST_FD_REPORT`); parsing the
+schema another process printed would couple this gate to `lsof`. -/
+private def testDescriptorClosure (ctx : Scale.Ctx) : IO Unit := do
+  let project := ctx.work / "fdgate"
+  IO.FS.createDirAll (project / "scripts")
+  copyFile (ctx.root / "lean-toolchain") (project / "lean-toolchain")
+  writeFile (project / "lakefile.lean") "import Lake\n\nopen Lake DSL\n\npackage \"fdgate-fixture\"\n"
+  for i in [0:120] do
+    writeFile (project / "scripts" / s!"F{i}.lean") s!"module\n\ndef  value{i} :Nat:={i}\n"
+  let result ← expectExit 1 "descriptor closure" ctx.application
+    #["format", "--check", "--root", project.toString, "--no-cache", "--workers", "4"]
+    (env := #[("LEAN_FMT_TEST_FD_REPORT", some "1")]) (timeoutMs := some 600000)
+  let fdsOf (marker : String) : IO Nat := do
+    let some line := (result.stderr.splitOn "\n").find? (·.startsWith marker)
+      | throw <| IO.userError s!"descriptor closure: no {marker} record\n{result.stderr}"
+    let some count := (line.drop marker.length).toNat?
+      | throw <| IO.userError s!"descriptor closure: unparsable {marker} line: {line}"
+    return count
+  let started ← fdsOf "test.fds_open_start="
+  let finished ← fdsOf "test.fds_open_end="
+  ensure (finished ≤ started + 8)
+    s!"descriptor closure: {started} descriptors open at start, {finished} at end"
+
 public def main (args : List String) : IO UInt32 := do
   let root ← repoRoot
   withTempDir fun work => do
@@ -138,6 +166,7 @@ public def main (args : List String) : IO UInt32 := do
       { name := "cold-selects-all", run := discard <| Scale.testCold ctx },
       { name := "warm-all-hit", run := Scale.testWarm ctx cold },
       { name := "single-source-invalidation", run := Scale.testSingleSourceInvalidation ctx },
-      { name := "lean-args-reach-the-frontend", run := Scale.testLeanArgsReachTheFrontend ctx }
+      { name := "lean-args-reach-the-frontend", run := Scale.testLeanArgsReachTheFrontend ctx },
+      { name := "descriptor-closure", run := testDescriptorClosure ctx }
     ]
     runCases "scale" cases args
