@@ -11,6 +11,10 @@ import all LeanFmt.Profile
 import all LeanFmt.Project
 import all LeanFmt.Semantic
 
+-- `import all` for `Lake.BuildMetadata.schemaVersion`, which is not `public`. It is the one thing
+-- this file must pin and the one thing Lake's parse does not check; see `readTrace?`.
+import all Lake.Build.Common
+import Lake.Build.ModuleArtifacts
 import Lake.Build.Trace
 import Lake.Config.Workspace
 
@@ -18,23 +22,36 @@ namespace LeanFmt.Internal
 
 open LeanFmt.Internal.Profile
 
-private structure TraceOutputs where
-  o : Array String
-  /-- `ir.sig` and `ir` content hashes. Optional because a legacy (non-module-system) module
-  has neither, and `computeExportInfo`'s legacy branch mixes only the `.olean`. -/
-  rs : Option String := none
-  r : Option String := none
-  deriving Lean.FromJson
+/- One of Lake's trace files, parsed by Lake, if it is one this code understands.
 
-private structure OleanTrace where
-  schemaVersion : String
-  outputs : TraceOutputs
-  deriving Lean.FromJson
+**The schema check is ours because Lake's parse does not make one.**
+`BuildMetadata.fromJsonObject?` consults `schemaVersion` only to tell a legacy decimal `depHash`
+from a hex one, `fromJson?` consults it only to word an error, and the parsed structure does not
+carry the version at all. So a trace written under a future schema whose fields still parse would
+be accepted, and every digest below would be computed from a shape this code no longer understands
+— a stale hit, which is the one direction currency must never degrade toward.
 
-private structure FileTrace where
-  schemaVersion : String
-  outputs : String
-  deriving Lean.FromJson
+The contents come back with it because both callers digest the file's own bytes, not the parse. -/
+private def readTrace? (tracePath : System.FilePath) :
+    IO (Option (String × Lake.BuildMetadata)) := do
+  try
+    let contents ← IO.FS.readFile tracePath
+    let .ok json := Lean.Json.parse contents
+      | return none
+    unless (json.getObjValAs? String "schemaVersion").toOption ==
+        some Lake.BuildMetadata.schemaVersion do
+      return none
+    let .ok metadata := Lake.BuildMetadata.fromJson? json
+      | return none
+    return some (contents, metadata)
+  catch _ =>
+    return none
+
+/- A module trace's recorded outputs, named. Lake's own reader, so the `<16-hex>.<ext>` tokens and
+which array position means `.olean.server` are its business rather than this file's. -/
+private def moduleOutputs? (metadata : Lake.BuildMetadata) : Option Lake.ModuleOutputDescrs := do
+  let outputs ← metadata.outputs?
+  (Lake.ModuleOutputDescrs.fromJson? outputs).toOption
 
 structure CacheIdentity where
   source : Digest
@@ -139,28 +156,27 @@ private def digestParts (parts : Array String) : Digest :=
 def cacheIdentityDigest (identity : CacheIdentity) : Digest :=
   digestParts #[resultCacheSchema, (Lean.toJson identity).compress]
 
-private def outputPath? (olean : System.FilePath) (token : String) : Option System.FilePath := do
-  guard <| token.length > 16
-  let base ← olean.toString.dropSuffix? ".olean"
-  return System.FilePath.mk (base.toString ++ (token.drop 16).toString)
+/- An `.olean`'s trace, if its recorded `.olean` parts all exist and hash to what it recorded.
 
+Intactness, never currency: this proves the artifact on disk is the one its trace describes, not
+that the trace describes current source. `CacheIdentity.closure` is what covers currency. -/
 private def validateOleanTrace? (root olean : System.FilePath) : IO (Option String) := do
+  let tracePath := olean.withExtension "trace"
+  let some (contents, metadata) ← readTrace? tracePath
+    | return none
+  let some outputs := moduleOutputs? metadata
+    | return none
   try
-    let tracePath := olean.withExtension "trace"
-    let contents ← IO.FS.readFile tracePath
-    let .ok json := Lean.Json.parse contents
+    -- A Lake artifact is named `<hash>.<ext>` where `ext` is the whole suffix — `olean`,
+    -- `olean.server`, `olean.private` — so the sibling on disk is the module's own path with
+    -- that extension put back.
+    let some base := olean.toString.dropSuffix? ".olean"
       | return none
-    let .ok (trace : OleanTrace) := Lean.fromJson? json
-      | return none
-    unless trace.schemaVersion == "2025-09-10" && !trace.outputs.o.isEmpty do
-      return none
-    for token in trace.outputs.o do
-      let some output := outputPath? olean token
-        | return none
+    for descr in outputs.oleanParts do
+      let output := System.FilePath.mk s!"{base}.{descr.ext}"
       unless ← output.pathExists do
         return none
-      let actual ← Lake.computeFileHash output
-      unless toString actual == (token.take 16).toString do
+      unless (← Lake.computeFileHash output) == descr.hash do
         return none
     let relative := Lake.relPathFrom root tracePath |>.toString
     return some s!"{relative}\u0000{Digest.ofString contents}"
@@ -179,18 +195,18 @@ private def rootTraceParts? (root : System.FilePath) : IO (Option (Array String)
     parts := parts.push part
   return some parts
 
+/- A shared library's trace, if the library on disk hashes to what the trace recorded. A shared
+library's `outputs` is one artifact name rather than a module's several. -/
 private def validateSharedTrace? (root library : System.FilePath) : IO (Option String) := do
+  let tracePath := library.addExtension "trace"
+  let some (contents, metadata) ← readTrace? tracePath
+    | return none
+  let some outputs := metadata.outputs?
+    | return none
+  let .ok descr := Lake.ArtifactDescr.fromJson? outputs
+    | return none
   try
-    let tracePath := library.addExtension "trace"
-    let contents ← IO.FS.readFile tracePath
-    let .ok json := Lean.Json.parse contents
-      | return none
-    let .ok (trace : FileTrace) := Lean.fromJson? json
-      | return none
-    unless trace.schemaVersion == "2025-09-10" && trace.outputs.length > 16 do
-      return none
-    let expected := (trace.outputs.take 16).toString
-    unless toString (← Lake.computeFileHash library) == expected do
+    unless (← Lake.computeFileHash library) == descr.hash do
       return none
     let relative := Lake.relPathFrom root tracePath |>.toString
     return some s!"shared\u0000{relative}\u0000{Digest.ofString contents}"
@@ -246,30 +262,22 @@ the stale grammar case the check exists to catch. -/
 
 /-- Recompute Lake's `importAllArts` for one module from its own recorded trace outputs.
 
-Order matters and matches `computeExportInfo`: the `o` array (olean, olean.server, olean.private),
-then `rs`, then `r`. A legacy non-module-system module has `o = [olean]` and no `rs`/`r`, which
-folds correctly under the same loop. -/
+Order matters and matches `computeExportInfo`: `oleanParts` (olean, olean.server, olean.private),
+then `irSig?`, then `ir?`. A legacy non-module-system module has one `oleanPart` and neither of the
+others, which folds correctly under the same loop. Reading the parts by name rather than by
+position in the `o` array is Lake's `ModuleOutputDescrs` doing it, not a convention repeated here. -/
 private def moduleArtifactHash? (tracePath : System.FilePath) : IO (Option Lake.Hash) := do
-  try
-    let contents ← IO.FS.readFile tracePath
-    let .ok json := Lean.Json.parse contents
-      | return none
-    let .ok (trace : OleanTrace) := Lean.fromJson? json
-      | return none
-    unless trace.schemaVersion == "2025-09-10" && !trace.outputs.o.isEmpty do
-      return none
-    let mut tokens := trace.outputs.o
-    for extra in [trace.outputs.rs, trace.outputs.r] do
-      if let some token := extra then
-        tokens := tokens.push token
-    let mut hash := Lake.Hash.nil
-    for token in tokens do
-      let some component := Lake.Hash.ofString? (token.take 16).toString
-        | return none
-      hash := hash.mix component
-    return some hash
-  catch _ =>
-    return none
+  let some (_, metadata) ← readTrace? tracePath
+    | return none
+  let some outputs := moduleOutputs? metadata
+    | return none
+  let mut hash := Lake.Hash.nil
+  for descr in outputs.oleanParts do
+    hash := hash.mix descr.hash
+  for extra in [outputs.irSig?, outputs.ir?] do
+    if let some descr := extra then
+      hash := hash.mix descr.hash
+  return some hash
 
 /-- What Lake's recorded outputs say about one closure member.
 
