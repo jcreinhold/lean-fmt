@@ -7,10 +7,10 @@ public import Test
 
 Port of `tests/modes/run.sh` — the largest single suite: every product mode (`check`, `format`,
 `diff`, `fix`, `rules`, `compiler setup/status`, `clean`, `config show`) over the committed
-`tests/check` fixtures and a family of scratch fixtures under `tests/modes/`. The scratch files
+`tests/fixtures/check` fixtures and a family of scratch fixtures under `tests/modes/`. The scratch files
 carry trailing whitespace or no final newline, so they are generated at runtime, never committed
 (`git diff --check` rejects a checked-in file with trailing spaces, and editors strip them on
-save), and removed when the suite ends. `tests/check/Findings.lean` and `tests/check/Layout.lean`
+save), and removed when the suite ends. `tests/fixtures/check/Findings.lean` and `tests/fixtures/check/Layout.lean`
 are tracked files the suite edits in place, so restoring them is not cleanup — it is the
 difference between a failing test and a dirty working tree the next run silently measures
 instead. Both are restored through `cp -p` backups, from a `finally`, exactly like the old
@@ -123,15 +123,15 @@ private def tmpOrphans (dir : System.FilePath) (stem : String) : IO (Array Strin
   return ((← dir.readDir).map (·.fileName)).filter (·.startsWith stem)
 
 -- -----------------------------------------------------------------------------------------------
--- The committed `tests/check` fixtures
+-- The committed `tests/fixtures/check` fixtures
 
 /-- Every non-writing preview consumes the same result and leaves source bytes, mtimes, and
 permissions untouched. -/
 private def testPreviews (ctx : Ctx) : IO Unit := do
   let before ← metadataLine ctx.findings
-  let check ← runJson ctx 1 "check" (checkArgs "tests/check/Findings.lean")
-  let formatted ← runJson ctx 1 "format --check" (formatCheckArgs "tests/check/Findings.lean")
-  let diff ← run ctx 1 "diff" (diffArgs "tests/check/Findings.lean")
+  let check ← runJson ctx 1 "check" (checkArgs "tests/fixtures/check/Findings.lean")
+  let formatted ← runJson ctx 1 "format --check" (formatCheckArgs "tests/fixtures/check/Findings.lean")
+  let diff ← run ctx 1 "diff" (diffArgs "tests/fixtures/check/Findings.lean")
   ensureEq "a preview touched the source" before (← metadataLine ctx.findings)
   -- `check` reports the finding and its safe fix; it changes nothing on disk.
   ensureJsonAt check [.field "mode"] (Lean.toJson "check") "previews"
@@ -156,7 +156,7 @@ private def testPreviews (ctx : Ctx) : IO Unit := do
 bytes. The body breaks after `:=` at every width: `declValSimple` is a hard newline unless the
 body is one of the three `ppAllowUngrouped` parsers, and a literal is none of them. -/
 private def testLayoutFormat (ctx : Ctx) : IO Unit := do
-  let report ← runJson ctx 1 "layout format" (formatCheckArgs "tests/check/Layout.lean")
+  let report ← runJson ctx 1 "layout format" (formatCheckArgs "tests/fixtures/check/Layout.lean")
   ensureJsonAt report [.field "mode"] (Lean.toJson "format") "layout"
   ensureJsonAt report [.field "findings"] (Lean.toJson (0 : Nat)) "layout"
   ensureJsonAt report [.field "changed"] (Lean.toJson (1 : Nat)) "layout"
@@ -170,7 +170,7 @@ private def testLayoutFormat (ctx : Ctx) : IO Unit := do
     "fixture lost its non-canonical spacing; the check above proves nothing"
   -- Formatting is a canonical transformation, not a selectable rule: the same file `format`
   -- calls would-format is `check`-clean.
-  let check ← runJson ctx 0 "layout check" (checkArgs "tests/check/Layout.lean")
+  let check ← runJson ctx 0 "layout check" (checkArgs "tests/fixtures/check/Layout.lean")
   ensureJsonAt check [.field "mode"] (Lean.toJson "check") "layout check"
   ensureJsonAt check [.field "findings"] (Lean.toJson (0 : Nat)) "layout check"
   ensureJsonAt check [.field "changed"] (Lean.toJson (0 : Nat)) "layout check"
@@ -182,8 +182,8 @@ while showing the namespace edit. -/
 private def testLayoutNoNewline (ctx : Ctx) : IO Unit := do
   withRestored ctx.backupLayout ctx.layout do
     writeFile ctx.layout "module\n\nnamespace     Alpha\n\ndef layoutValue : Nat := 1\n\nend     Alpha"
-    let diff ← run ctx 1 "no-newline diff" (diffArgs "tests/check/Layout.lean")
-    ensure (diff.stdout.startsWith "--- a/tests/check/Layout.lean\n+++ b/tests/check/Layout.lean\n@@")
+    let diff ← run ctx 1 "no-newline diff" (diffArgs "tests/fixtures/check/Layout.lean")
+    ensure (diff.stdout.startsWith "--- a/tests/fixtures/check/Layout.lean\n+++ b/tests/fixtures/check/Layout.lean\n@@")
       "the no-newline diff header"
     ensure (diff.stdout.contains "\\ No newline at end of file") "the terminator marker"
     ensure (diff.stdout.contains "-namespace     Alpha"
@@ -197,14 +197,14 @@ private def testLayoutNoNewline (ctx : Ctx) : IO Unit := do
 /-- Artifact, exact fallback, and semantic-cache hit project to identical formatted output. -/
 private def testCachePaths (ctx : Ctx) : IO Unit := do
   let artifact ← run ctx 1 "format artifact"
-    #["format", "--check", "--root", ".", "--json", "tests/check/Layout.lean"]
+    #["format", "--check", "--root", ".", "--json", "tests/fixtures/check/Layout.lean"]
   let hit ← run ctx 1 "format hit"
-    #["format", "--check", "--root", ".", "--json", "tests/check/Layout.lean"]
+    #["format", "--check", "--root", ".", "--json", "tests/fixtures/check/Layout.lean"]
     (env := #[("LEAN_FMT_DISABLE_ARTIFACT", some "1"),
       ("LEAN_FMT_TEST_ANALYZER", some "/usr/bin/false")])
   ensureEq "the cache hit disagreed with the artifact path" artifact.stdout hit.stdout
   let fallback ← run ctx 1 "format fallback"
-    (formatCheckArgs "tests/check/Layout.lean")
+    (formatCheckArgs "tests/fixtures/check/Layout.lean")
     (env := #[("LEAN_FMT_DISABLE_ARTIFACT", some "1")])
   ensureEq "the exact fallback disagreed with the artifact path" artifact.stdout fallback.stdout
   removeDirAll? ctx.cacheRoot
@@ -215,10 +215,10 @@ file's own bytes. -/
 private def testCheckPopulatedMiss (ctx : Ctx) : IO Unit := do
   removeDirAll? ctx.cacheRoot
   let seed ← runJson ctx 0 "seed check"
-    #["check", "--root", ".", "--json", "tests/check/Layout.lean"]
+    #["check", "--root", ".", "--json", "tests/fixtures/check/Layout.lean"]
   ensureJsonAt seed [.field "files", .index 0, .field "status"] (Lean.toJson "clean") "seed"
   let after ← runJson ctx 1 "format after check"
-    #["format", "--check", "--root", ".", "--json", "tests/check/Layout.lean"]
+    #["format", "--check", "--root", ".", "--json", "tests/fixtures/check/Layout.lean"]
   ensureJsonAt after [.field "changed"] (Lean.toJson (1 : Nat))
     "a check-populated hit suppressed layout"
   ensureJsonAt after [.field "files", .index 0, .field "status"] (Lean.toJson "would-format")
@@ -232,7 +232,7 @@ private def testCheckPopulatedMiss (ctx : Ctx) : IO Unit := do
 private def testProjectedHit (ctx : Ctx) : IO Unit := do
   let report ← runJson ctx 0 "projected hit"
     (#["check", "--root", ".", "--json", "--config", (ctx.work / "per-file.toml").toString,
-      "tests/check/Findings.lean"])
+      "tests/fixtures/check/Findings.lean"])
     (env := #[("LEAN_FMT_DISABLE_ARTIFACT", some "1"),
       ("LEAN_FMT_TEST_ANALYZER", some "/usr/bin/false")])
   ensureJsonAt report [.field "findings"] (Lean.toJson (0 : Nat)) "projected"
@@ -242,7 +242,7 @@ private def testProjectedHit (ctx : Ctx) : IO Unit := do
 
 /-- Applicability travels on the finding's fix: the one FMT003 is safe and carries its edit. -/
 private def testApplicability (ctx : Ctx) : IO Unit := do
-  let report ← runJson ctx 1 "applicability" (checkArgs "tests/check/Findings.lean")
+  let report ← runJson ctx 1 "applicability" (checkArgs "tests/fixtures/check/Findings.lean")
   ensureJsonAt report [.field "files", .index 0, .field "findings", .index 0, .field "fix",
     .field "applicability"] (Lean.toJson "safe") "applicability"
   let edits := (jsonAt? report [.field "files", .index 0, .field "findings", .index 0,
@@ -258,14 +258,14 @@ private def testUnsafeDemotion (ctx : Ctx) : IO Unit := do
   let demote := (ctx.work / "demote.toml").toString
   let check ← runJson ctx 1 "demote check"
     (#["check", "--root", ".", "--json", "--no-cache", "--config", demote,
-      "tests/check/Findings.lean"])
+      "tests/fixtures/check/Findings.lean"])
   ensureJsonAt check [.field "files", .index 0, .field "findings", .index 0, .field "fix",
     .field "applicability"] (Lean.toJson "unsafe") "demote"
   ensureJsonAt check [.field "withheldUnsafe"] (Lean.toJson (1 : Nat)) "demote"
   let before ← metadataLine ctx.findings
   let withheld ← runJson ctx 0 "demote withhold"
     (#["fix", "--root", ".", "--json", "--no-cache", "--config", demote,
-      "tests/check/Findings.lean"])
+      "tests/fixtures/check/Findings.lean"])
   ensureEq "a withheld fix touched the source" before (← metadataLine ctx.findings)
   ensureJsonAt withheld [.field "written"] (Lean.toJson (0 : Nat)) "withhold"
   ensureJsonAt withheld [.field "withheldUnsafe"] (Lean.toJson (1 : Nat)) "withhold"
@@ -274,7 +274,7 @@ private def testUnsafeDemotion (ctx : Ctx) : IO Unit := do
   withRestored ctx.backupFindings ctx.findings do
     let applied ← runJson ctx 0 "demote apply"
       (#["fix", "--root", ".", "--json", "--no-cache", "--unsafe-fixes", "--config", demote,
-        "tests/check/Findings.lean"])
+        "tests/fixtures/check/Findings.lean"])
     ensureJsonAt applied [.field "written"] (Lean.toJson (1 : Nat)) "apply"
     ensureJsonAt applied [.field "withheldUnsafe"] (Lean.toJson (0 : Nat)) "apply"
     ensureJsonAt applied [.field "files", .index 0, .field "status"] (Lean.toJson "fixed") "apply"
@@ -283,7 +283,7 @@ private def testUnsafeDemotion (ctx : Ctx) : IO Unit := do
 private def testConfigContradiction (ctx : Ctx) : IO Unit := do
   let result ← run ctx 2 "both lists"
     (#["check", "--root", ".", "--json", "--no-cache", "--config",
-      (ctx.work / "both-lists.toml").toString, "tests/check/Findings.lean"])
+      (ctx.work / "both-lists.toml").toString, "tests/fixtures/check/Findings.lean"])
   ensure (result.stderr.contains "both extend-safe-fixes and extend-unsafe-fixes")
     "the contradiction is not named"
 
@@ -292,29 +292,29 @@ private def testIncludeConfig (ctx : Ctx) : IO Unit := do
   let report ← runJson ctx 0 "include"
     #["check", "--root", ".", "--json", "--no-cache", "--config",
       (ctx.work / "include.toml").toString]
-  ensureEq "include selection" ["tests/check/Clean.lean"] (paths report)
+  ensureEq "include selection" ["tests/fixtures/check/Clean.lean"] (paths report)
 
 /-- Config `ignore` drops the finding; a CLI `--select` overrides the config selector. -/
 private def testIgnoreAndCliSelect (ctx : Ctx) : IO Unit := do
   let ignore := (ctx.work / "ignore.toml").toString
   discard <| run ctx 0 "config ignore"
     #["check", "--root", ".", "--json", "--no-cache", "--config", ignore,
-      "tests/check/Findings.lean"]
+      "tests/fixtures/check/Findings.lean"]
   discard <| run ctx 1 "cli select"
     #["check", "--root", ".", "--json", "--no-cache", "--config", ignore,
-      "--select", "FMT003", "tests/check/Findings.lean"]
+      "--select", "FMT003", "tests/fixtures/check/Findings.lean"]
 
 private def testUnknownKey (ctx : Ctx) : IO Unit := do
   let result ← run ctx 2 "unknown key"
     (#["check", "--root", ".", "--json", "--no-cache", "--config",
-      (ctx.work / "unknown.toml").toString, "tests/check/Clean.lean"])
+      (ctx.work / "unknown.toml").toString, "tests/fixtures/check/Clean.lean"])
   ensure (result.stderr.contains "unknown configuration key") "the unknown key is not named"
 
 /-- Statistics are stderr-only: stdout stays machine-readable. -/
 private def testStatistics (ctx : Ctx) : IO Unit := do
   let result ← run ctx 1 "statistics"
     #["check", "--root", ".", "--json", "--no-cache", "--statistics",
-      "tests/check/Findings.lean"]
+      "tests/fixtures/check/Findings.lean"]
   discard <| parseJson result.stdout "statistics stdout"
   ensure ((result.stderr.splitOn "\n").any (·.startsWith "lean-fmt statistics:"))
     "no statistics block on stderr"
@@ -322,7 +322,7 @@ private def testStatistics (ctx : Ctx) : IO Unit := do
 /-- A semantic validation rejection rejects the whole file without a formatter write. -/
 private def testValidatorRejection (ctx : Ctx) : IO Unit := do
   let before ← metadataLine ctx.findings
-  let report ← runJson ctx 1 "rejected" (fixArgs "tests/check/Findings.lean")
+  let report ← runJson ctx 1 "rejected" (fixArgs "tests/fixtures/check/Findings.lean")
     (env := #[("LEAN_FMT_TEST_VALIDATOR", some (ctx.work / "reject-validator").toString)])
   ensureEq "a rejected fix touched the source" before (← metadataLine ctx.findings)
   ensureJsonAt report [.field "rejected"] (Lean.toJson (1 : Nat)) "rejected"
@@ -335,7 +335,7 @@ private def testValidatorRejection (ctx : Ctx) : IO Unit := do
 /-- A stale-source race rejects the whole file: `publishAtomic` catches the concurrent change. -/
 private def testStaleSourceRace (ctx : Ctx) : IO Unit := do
   withRestored ctx.backupFindings ctx.findings do
-    let result ← run ctx 1 "stale" (fixArgs "tests/check/Findings.lean")
+    let result ← run ctx 1 "stale" (fixArgs "tests/fixtures/check/Findings.lean")
       (env := #[("LEAN_FMT_TEST_BEFORE_WRITE", some (ctx.work / "stale-hook").toString)])
     ensure (result.stdout.contains "source changed after analysis")
       "the stale race is not reported"
@@ -344,19 +344,19 @@ private def testStaleSourceRace (ctx : Ctx) : IO Unit := do
 bytes/mtime/mode, the run is an infrastructure failure, and no temp file is orphaned. -/
 private def testWriteCrash (ctx : Ctx) : IO Unit := do
   let before ← metadataLine ctx.findings
-  discard <| run ctx 2 "crash" (fixArgs "tests/check/Findings.lean")
+  discard <| run ctx 2 "crash" (fixArgs "tests/fixtures/check/Findings.lean")
     (env := #[("LEAN_FMT_TEST_BEFORE_WRITE", some (ctx.work / "crash-hook").toString)])
   ensureEq "a crashed write touched the source" before (← metadataLine ctx.findings)
   ensureEq "a crash before rename orphaned a temp file at the target" 0
-    (← tmpOrphans (ctx.root / "tests" / "check") "Findings.lean.lean-fmt-tmp-").size
+    (← tmpOrphans (ctx.root / "tests" / "fixtures" / "check") "Findings.lean.lean-fmt-tmp-").size
 
 /-- Successful fix preserves permissions, and a second fix is an unchanged no-op. -/
 private def testFixPermissions (ctx : Ctx) : IO Unit := do
   withRestored ctx.backupFindings ctx.findings do
     let modeBefore ← fileMode ctx.findings
-    let fixed ← runJson ctx 0 "fix" (fixArgs "tests/check/Findings.lean")
+    let fixed ← runJson ctx 0 "fix" (fixArgs "tests/fixtures/check/Findings.lean")
     ensureEq "fix changed the file's permissions" modeBefore (← fileMode ctx.findings)
-    let unchanged ← runJson ctx 0 "fix again" (fixArgs "tests/check/Findings.lean")
+    let unchanged ← runJson ctx 0 "fix again" (fixArgs "tests/fixtures/check/Findings.lean")
     ensureJsonAt fixed [.field "written"] (Lean.toJson (1 : Nat)) "fix"
     ensureJsonAt fixed [.field "files", .index 0, .field "status"] (Lean.toJson "fixed") "fix"
     ensureJsonAt unchanged [.field "written"] (Lean.toJson (0 : Nat)) "fix again"
@@ -868,8 +868,8 @@ public def main (args : List String) : IO UInt32 := do
       root
       app := (root / ".lake" / "build" / "bin" / "lean-fmt").toString
       work
-      findings := root / "tests" / "check" / "Findings.lean"
-      layout := root / "tests" / "check" / "Layout.lean"
+      findings := root / "tests" / "fixtures" / "check" / "Findings.lean"
+      layout := root / "tests" / "fixtures" / "check" / "Layout.lean"
       modesDir := root / "tests" / "modes"
       cacheRoot := root / ".lean-fmt-cache"
       artifacts := root / ".lake" / "build" / "lean-fmt-artifacts"
@@ -883,11 +883,11 @@ public def main (args : List String) : IO UInt32 := do
     discard <| expectExit 0 "backup" "cp" #["-p", ctx.layout.toString, ctx.backupLayout.toString]
     -- The shared configurations and hooks, written once; individual cases pick among them.
     writeFile (work / "per-file.toml")
-      "select = [\"default\"]\n[per-file-ignores]\n\"tests/check/Findings.lean\" = [\"FMT003\"]\n"
+      "select = [\"default\"]\n[per-file-ignores]\n\"tests/fixtures/check/Findings.lean\" = [\"FMT003\"]\n"
     writeFile (work / "demote.toml") "select = [\"default\"]\nextend-unsafe-fixes = [\"FMT003\"]\n"
     writeFile (work / "both-lists.toml")
       "extend-safe-fixes = [\"FMT003\"]\nextend-unsafe-fixes = [\"FMT003\"]\n"
-    writeFile (work / "include.toml") "include = [\"tests/check/Clean.lean\"]\nselect = [\"default\"]\n"
+    writeFile (work / "include.toml") "include = [\"tests/fixtures/check/Clean.lean\"]\nselect = [\"default\"]\n"
     writeFile (work / "ignore.toml") "select = [\"default\"]\nignore = [\"FMT003\"]\n"
     writeFile (work / "unknown.toml") "unknown = true\n"
     writeFile (work / "fin-noarg.toml")

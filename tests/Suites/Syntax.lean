@@ -5,7 +5,7 @@ public import Test
 /-!
 # The syntax suite
 
-Port of `tests/syntax/run.sh`. The first `syntax`-tier rules (FMT006-FMT011) run against the
+Port of `tests/fixtures/syntax/run.sh`. The first `syntax`-tier rules (FMT006-FMT011) run against the
 compiler projection, not the raw bytes. These fixtures are deliberately *not* built modules: there
 is no `.olean`, no module evidence, and no artifact for them, so the exact frontend is the only
 path that can project them — `LEAN_FMT_DISABLE_ARTIFACT=1` and
@@ -41,7 +41,7 @@ private def expectCodes (ctx : Ctx) (label fixture : String) (expected : List St
     (selectors : Array String) : IO Unit := do
   let result ← expectExit (if expected.isEmpty then 0 else 1) label ctx.application
     (#["check", "--root", ".", "--json", "--no-cache", "--preview"] ++ selectors ++
-      #[s!"tests/syntax/{fixture}"])
+      #[s!"tests/fixtures/syntax/{fixture}"])
     (cwd? := some ctx.root) (env := sfmtEnv)
   let report ← parseJson result.stdout label
   let some files := (jsonAt? report [.field "files"]).bind (·.getArr?.toOption)
@@ -74,7 +74,7 @@ private def testFixSpans (ctx : Ctx) : IO Unit := do
   let fixOf (label fixture selector : String) : IO Lean.Json := do
     let result ← expectExit 1 label ctx.application
       #["check", "--root", ".", "--json", "--no-cache", "--preview", "--select", selector,
-        s!"tests/syntax/{fixture}"]
+        s!"tests/fixtures/syntax/{fixture}"]
       (cwd? := some ctx.root) (env := sfmtEnv)
     let report ← parseJson result.stdout label
     let some finding := (jsonAt? report [.field "files", .index 0, .field "findings", .index 0])
@@ -123,7 +123,7 @@ syntax rule needs a projection, and a file that does not parse has none. -/
 private def testMalformed (ctx : Ctx) : IO Unit := do
   let result ← expectExit 1 "malformed" ctx.application
     (#["check", "--root", ".", "--json", "--no-cache", "--preview"] ++ allSix ++
-      #["tests/syntax/Malformed.lean"])
+      #["tests/fixtures/syntax/Malformed.lean"])
     (cwd? := some ctx.root) (env := sfmtEnv)
   let report ← parseJson result.stdout "malformed"
   ensureJsonAt report [.field "broken"] (Lean.toJson (1 : Nat)) "malformed"
@@ -139,7 +139,7 @@ and carry no reflow. Assert `fix` writes the corrected bytes and that a re-`chec
 for that rule — the fix is idempotent. -/
 private def fixApplies (ctx : Ctx) (label fixture selector gone present : String) : IO Unit := do
   let probe := ctx.work / s!"fix-{label}.lean"
-  copyFile (ctx.root / "tests" / "syntax" / fixture) probe
+  copyFile (ctx.root / "tests" / "fixtures" / "syntax" / fixture) probe
   let fixRun ← expectExit 0 s!"{label}-fix" ctx.application
     #["fix", "--root", ".", "--json", "--no-cache", "--preview", "--select", selector,
       probe.toString]
@@ -173,7 +173,7 @@ reports the finding and may canonicalize command spacing, but leaves `((1))` byt
 private def testFormatNeverFixes (ctx : Ctx) : IO Unit := do
   let result ← expectExit 1 "fmt013-format" ctx.application
     #["format", "--check", "--root", ".", "--json", "--no-cache", "--preview", "--select",
-      "FMT011", "tests/syntax/NestedParen.lean"]
+      "FMT011", "tests/fixtures/syntax/NestedParen.lean"]
     (cwd? := some ctx.root) (env := sfmtEnv)
   let report ← parseJson result.stdout "fmt013-format"
   let some file := jsonAt? report [.field "files", .index 0]
@@ -196,7 +196,7 @@ private def testAdversarial (ctx : Ctx) : IO Unit := do
 atomic transaction, so neither shifts the other's bytes; and a second `fix` is a no-op. -/
 private def testMultiRuleComposition (ctx : Ctx) : IO Unit := do
   let probe := ctx.work / "fix-mover.lean"
-  copyFile (ctx.root / "tests" / "syntax" / "AttrThenParen.lean") probe
+  copyFile (ctx.root / "tests" / "fixtures" / "syntax" / "AttrThenParen.lean") probe
   let selectors := #["--select", "FMT008", "--select", "FMT011"]
   let fixRun ← expectExit 0 "mover-fix" ctx.application
     (#["fix", "--root", ".", "--json", "--no-cache", "--preview"] ++ selectors ++ #[probe.toString])
@@ -223,8 +223,8 @@ results. -/
 private def testPassOrderIndependence (ctx : Ctx) : IO Unit := do
   let probeA := ctx.work / "fix-ordera.lean"
   let probeB := ctx.work / "fix-orderb.lean"
-  copyFile (ctx.root / "tests" / "syntax" / "AttrThenParen.lean") probeA
-  copyFile (ctx.root / "tests" / "syntax" / "AttrThenParen.lean") probeB
+  copyFile (ctx.root / "tests" / "fixtures" / "syntax" / "AttrThenParen.lean") probeA
+  copyFile (ctx.root / "tests" / "fixtures" / "syntax" / "AttrThenParen.lean") probeB
   discard <| expectExit 0 "order-a" ctx.application
     #["fix", "--root", ".", "--json", "--no-cache", "--preview", "--select", "FMT008",
       "--select", "FMT011", probeA.toString]

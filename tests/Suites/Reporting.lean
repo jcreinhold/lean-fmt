@@ -5,7 +5,7 @@ public import Test
 /-!
 # The reporting suite
 
-Port of `tests/reporting/run.sh`: the machine-readable report formats.
+Port of `tests/fixtures/reporting/run.sh`: the machine-readable report formats.
 
 Every case drives the real executable, because what is under test is the bytes a CI system
 receives: the grammar, the escaping, the exit code, and where the report lands. The structured
@@ -29,7 +29,7 @@ structure Ctx where
   work : System.FilePath
 
 /-- The committed duplicate-import fixture. -/
-private def findings : String := "tests/check/Findings.lean"
+private def findings : String := "tests/fixtures/check/Findings.lean"
 
 /-- Run the binary without asserting the exit code. -/
 private def fmt (ctx : Ctx) (args : Array String) (input? : Option String := none)
@@ -79,7 +79,7 @@ private def testJsonCompat (ctx : Ctx) : IO Unit := do
   let viaFormat ← fmt ctx
     #["check", "--root", ".", "--no-cache", "--output-format", "json", findings]
   ensureEq "--json and --output-format json produce identical bytes" viaJson.stdout viaFormat.stdout
-  let golden ← IO.FS.readFile (ctx.root / "tests" / "reporting" / "golden" / "json-check.json")
+  let golden ← IO.FS.readFile (ctx.root / "tests" / "fixtures" / "reporting" / "golden" / "json-check.json")
   ensureEq "--output-format json still reproduces the pre-change golden" golden viaJson.stdout
 
 -- §9.1 — the worst regression this stack could ship is a CI job that starts passing because it
@@ -97,7 +97,7 @@ private def testConcise (ctx : Ctx) : IO Unit := do
   let lines := concise.stdout.splitOn "\n" |>.filter (!·.isEmpty)
   ensureEq "one line per finding, no summary line" 1 lines.length
   ensureEq "the grammar is PATH:LINE:COL: CODE MESSAGE"
-    "tests/check/Findings.lean:4:1: FMT003 duplicate import of LeanFmt.Basic" (concise.stdout.trimAsciiEnd).toString
+    "tests/fixtures/check/Findings.lean:4:1: FMT003 duplicate import of LeanFmt.Basic" (concise.stdout.trimAsciiEnd).toString
   -- `text` prints ` [safe]`; `concise` must not — an applicability tag is machine data and breaks
   -- an editor error-parser reading the line for a file:line:col jump.
   ensure (!(concise.stdout.contains "[safe]")) "concise leaked the applicability tag"
@@ -106,17 +106,17 @@ private def testConcise (ctx : Ctx) : IO Unit := do
 -- `def ünïcödéValue : Nat := ((1))`: a byte column would report 31 and a codepoint column 27.
 private def testCodepointColumns (ctx : Ctx) : IO Unit := do
   let result ← fmt ctx
-    #["check", "tests/reporting/Unicode.lean", "--select", "all", "--preview",
+    #["check", "tests/fixtures/reporting/Unicode.lean", "--select", "all", "--preview",
       "--output-format", "concise"]
-  ensureContains result.stdout "tests/reporting/Unicode.lean:8:27: FMT011"
+  ensureContains result.stdout "tests/fixtures/reporting/Unicode.lean:8:27: FMT011"
     "a codepoint column is reported, not a byte column"
 
 -- §5 — github workflow commands, escaping, and the multi-line restriction.
 private def testGithub (ctx : Ctx) : IO Unit := do
   let github ← fmt ctx #["check", findings, "--output-format", "github"]
   ensureEq "one workflow command per finding"
-    "::warning title=lean-fmt (FMT003),file=tests/check/Findings.lean,line=4,col=1,endLine=4,\
-     endColumn=21::tests/check/Findings.lean:4:1: FMT003 duplicate import of LeanFmt.Basic"
+    "::warning title=lean-fmt (FMT003),file=tests/fixtures/check/Findings.lean,line=4,col=1,endLine=4,\
+     endColumn=21::tests/fixtures/check/Findings.lean:4:1: FMT003 duplicate import of LeanFmt.Basic"
     (github.stdout.trimAsciiEnd).toString
   -- §5.3 — property values escape `:` and `,` beyond what the message escapes, because either
   -- would otherwise terminate the property list.
@@ -133,7 +133,7 @@ private def testGithub (ctx : Ctx) : IO Unit := do
   -- finding must therefore drop them.
   let multiline := "module\n\nimport LeanFmt.Basic\n\ndef spanning : Nat := ((\n  1\n  ))\n"
   let multi ← fmt ctx
-    #["check", "-", "--stdin-filename", "tests/reporting/Multiline.lean", "--select", "FMT011",
+    #["check", "-", "--stdin-filename", "tests/fixtures/reporting/Multiline.lean", "--select", "FMT011",
       "--preview", "--output-format", "github"] (input? := some multiline)
   ensure (!(multi.stderr.contains "col="))
     s!"a multi-line annotation kept col=, which GitHub rejects: {multi.stderr}"
@@ -191,7 +191,7 @@ private def testSarif (ctx : Ctx) : IO Unit := do
   writeFile reportPath report.stdout
   discard <| expectExit 0 "the SARIF log validates against the 2.1.0 JSON schema" "uv"
     #["run", "--with", "check-jsonschema", "--quiet", "check-jsonschema",
-      "--schemafile", "tests/reporting/sarif-schema-2.1.0.json", reportPath.toString]
+      "--schemafile", "tests/fixtures/reporting/sarif-schema-2.1.0.json", reportPath.toString]
     (cwd? := some ctx.root)
   sarifConform (← parseJson report.stdout "sarif") "sarif"
   -- The descriptor text is projected from the live rule catalog, never re-authored in the
@@ -209,7 +209,7 @@ private def testSarif (ctx : Ctx) : IO Unit := do
     ("LEAN_FMT_TEST_DISABLE_MODULE_EVIDENCE", some "1"),
     ("LEAN_FMT_TEST_ANALYZER", some "/usr/bin/false")]
   let failed ← fmt ctx
-    #["check", "--root", ".", "--no-cache", "--output-format", "sarif", "tests/check/Clean.lean"]
+    #["check", "--root", ".", "--no-cache", "--output-format", "sarif", "tests/fixtures/check/Clean.lean"]
     (env := sabotaged)
   let failedLog ← parseJson failed.stdout "failed sarif"
   let some invocation := jsonAt? failedLog [.field "runs", .index 0, .field "invocations", .index 0]
@@ -240,14 +240,14 @@ private def testJunit (ctx : Ctx) : IO Unit := do
        xml = JUnitXml.fromfile(sys.argv[1])\n\
        cases = [(suite.name, case.name, [r.type for r in case.result]) \
        for suite in xml for case in suite]\n\
-       assert cases == [(\"tests/check/Findings.lean\", \
-       \"FMT003 tests/check/Findings.lean:4:1\", [\"FMT003\"])], cases\n\
+       assert cases == [(\"tests/fixtures/check/Findings.lean\", \
+       \"FMT003 tests/fixtures/check/Findings.lean:4:1\", [\"FMT003\"])], cases\n\
        assert (xml.tests, xml.failures, xml.errors) == (1, 1, 0)\n\
        print(\"ok\")", reportPath.toString]
   ensureEq "an independent JUnit parser reads it back" "ok" parsed
   -- A clean file emits a *passing* case, not an empty suite: a suite with zero cases reads to
   -- most CI dashboards as "no tests ran" rather than "nothing wrong".
-  let clean ← fmt ctx #["check", "tests/check/Clean.lean", "--output-format", "junit"]
+  let clean ← fmt ctx #["check", "tests/fixtures/check/Clean.lean", "--output-format", "junit"]
   let cleanPath := ctx.work / "clean.xml"
   writeFile cleanPath clean.stdout
   let cleanParsed ← expectTool "a clean file emits a passing case"
@@ -285,7 +285,7 @@ private def testOutputFiles (ctx : Ctx) : IO Unit := do
   ensureEq "--output-file leaves stdout empty" "" written.stdout
   discard <| expectExit 0 "  ... and the file holds the complete report" "uv"
     #["run", "--with", "check-jsonschema", "--quiet", "check-jsonschema",
-      "--schemafile", "tests/reporting/sarif-schema-2.1.0.json", outSarif.toString]
+      "--schemafile", "tests/fixtures/reporting/sarif-schema-2.1.0.json", outSarif.toString]
     (cwd? := some ctx.root)
   ensureEq "  ... and the exit code is unchanged" 1
     (← fmtCode ctx
@@ -323,16 +323,16 @@ private def testBrokenPipe (ctx : Ctx) : IO Unit := do
 private def testStdin (ctx : Ctx) : IO String := do
   let dup := "module\n\nimport LeanFmt.Basic\nimport LeanFmt.Basic\n"
   let result ← fmt ctx
-    #["check", "-", "--stdin-filename", "tests/reporting/Buffer.lean",
+    #["check", "-", "--stdin-filename", "tests/fixtures/reporting/Buffer.lean",
       "--output-format", "concise"] (input? := some dup)
   ensureEq "a stdin report does not reach stdout" "" result.stdout
   ensureEq "a stdin report reaches stderr with resolved positions"
-    "tests/reporting/Buffer.lean:4:1: FMT003 duplicate import of LeanFmt.Basic"
+    "tests/fixtures/reporting/Buffer.lean:4:1: FMT003 duplicate import of LeanFmt.Basic"
     (result.stderr.trimAsciiEnd).toString
   -- CRLF: every offset indexes the CRLF-normalized source, so a line/column resolved from it must
   -- match the LF twin exactly. Delivered through stdin because git would not keep a CRLF fixture.
   let crlf ← fmt ctx
-    #["check", "-", "--stdin-filename", "tests/reporting/Buffer.lean",
+    #["check", "-", "--stdin-filename", "tests/fixtures/reporting/Buffer.lean",
       "--output-format", "concise"]
     (input? := some "module\r\n\r\nimport LeanFmt.Basic\r\nimport LeanFmt.Basic\r\n")
   ensureEq "a CRLF buffer resolves to the same line and column as its LF twin"
@@ -392,11 +392,11 @@ private def testUris (ctx : Ctx) : IO Unit := do
 -- 34, where a byte column would be 37 and a UTF-16 column 35.
 private def testAstral (ctx : Ctx) : IO Unit := do
   let astral ← fmt ctx
-    #["check", "-", "--stdin-filename", "tests/reporting/Astral.lean", "--select", "FMT011",
+    #["check", "-", "--stdin-filename", "tests/fixtures/reporting/Astral.lean", "--select", "FMT011",
       "--preview", "--output-format", "concise"]
     (input? := some "module\n\nimport LeanFmt.Basic\n\n/- 𝔘 -/ def astralValue : Nat := ((1))\n")
   ensureEq "an astral-plane character advances the column by one, not two or four"
-    "tests/reporting/Astral.lean:5:34: FMT011 redundant nested parentheses"
+    "tests/fixtures/reporting/Astral.lean:5:34: FMT011 redundant nested parentheses"
     (astral.stderr.trimAsciiEnd).toString
 
 -- §5.2 — the other half of the escaping contract: a consumer applying the documented inverse

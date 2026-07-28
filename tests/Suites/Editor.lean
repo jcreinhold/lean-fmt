@@ -8,7 +8,7 @@ public import Test
 Port of `tests/lsp/editor.sh`: the editor check. `suite-lsp` and `suite-lsp-acceptance` drive the
 protocol; this drives a real editor's client against it, the one thing neither of them can do. The
 client checks live in `tests/lsp/editor.lua` and stay there — like
-`tests/formatter/candidate.py`, the value of the check is that the adversary is the *real*
+`tests/fixtures/formatter/candidate.py`, the value of the check is that the adversary is the *real*
 `vim.lsp`, not a Lean model of it.
 
 It needs Neovim 0.11 or newer on PATH, so it skips rather than fails when Neovim is absent or too

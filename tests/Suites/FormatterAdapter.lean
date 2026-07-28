@@ -5,7 +5,7 @@ public import Test
 /-!
 # The formatter-adapter suite
 
-Port of `tests/formatter-adapter/run.sh`: actual imported syntax through the production exact
+Port of `tests/fixtures/formatter-adapter/run.sh`: actual imported syntax through the production exact
 formatter. Descriptor-derived roots are structural syntax islands; explicitly registered roots
 enter the live registry. Both are admitted only after structural validation and idempotence.
 

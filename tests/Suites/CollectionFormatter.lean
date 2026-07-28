@@ -5,7 +5,7 @@ public import Test
 /-!
 # The collection-formatter suite
 
-Port of `tests/collection-formatter/run.sh`. Tuples, lists, arrays, and trailing separators use
+Port of `tests/fixtures/collection-formatter/run.sh`. Tuples, lists, arrays, and trailing separators use
 native flat/broken documents; comma-bearing, update, and layout-separated records preserve their
 parser contracts; actual operator association controls left-, right-, and arrow-chain reflow; and
 project-defined entries remain opaque while their collection ancestor reflows. The old Python
@@ -21,7 +21,7 @@ namespace CollectionFormatter
 private def widthText (root setup : System.FilePath) (application : String) (width : Nat) :
     IO String := do
   let report ← analyzeExact root application setup
-    "tests/collection-formatter/Collections.lean" "Collections.lean" s!"4:{width}"
+    "tests/fixtures/collection-formatter/Collections.lean" "Collections.lean" s!"4:{width}"
   let (canonical, text) ← canonical report s!"width {width}"
   ensure (natAt? canonical [.field "metrics", .field "nativeDocuments"] ==
       natAt? canonical [.field "metrics", .field "commands"])
@@ -113,7 +113,7 @@ public def main (args : List String) : IO UInt32 := do
   let application := (root / ".lake" / "build" / "bin" / "lean-fmt").toString
   withScratchDir "collection-formatter" fun work => do
     let setup ← LeanFmt.Test.Analyze.setupFile root work
-      "tests/collection-formatter/Collections.lean"
+      "tests/fixtures/collection-formatter/Collections.lean"
     let cases : Array Case := #[
       { name := "width-20", run := CollectionFormatter.testWidth root setup application 20 },
       { name := "width-40", run := CollectionFormatter.testWidth root setup application 40 },

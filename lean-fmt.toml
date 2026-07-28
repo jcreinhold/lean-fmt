@@ -16,16 +16,16 @@
 # name fixture paths on purpose.
 exclude = [
   "docs/**",
-  "tests/cache/**",
-  "tests/check/**",
-  "tests/compiler/**",
-  "tests/downstream/**",
-  "tests/format-suppression/**",
-  "tests/imports/**",
-  "tests/reporting/**",
-  "tests/semantic/**",
-  "tests/suppression/**",
-  "tests/syntax/**",
+  "tests/fixtures/cache/**",
+  "tests/fixtures/check/**",
+  "tests/fixtures/compiler/**",
+  "tests/fixtures/downstream/**",
+  "tests/fixtures/format-suppression/**",
+  "tests/fixtures/imports/**",
+  "tests/fixtures/reporting/**",
+  "tests/fixtures/semantic/**",
+  "tests/fixtures/suppression/**",
+  "tests/fixtures/syntax/**",
 ]
 
 # Settings that change the bytes a run writes. Every key here is part of the cache identity.

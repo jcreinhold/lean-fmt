@@ -5,7 +5,7 @@ public import Test
 /-!
 # The block-formatter suite
 
-Port of `tests/block-formatter/run.sh`. The fixture's tactic, do, control, match, and where roots
+Port of `tests/fixtures/block-formatter/run.sh`. The fixture's tactic, do, control, match, and where roots
 are analyzed through the exact frontend at four widths; every width must validate, render
 idempotently through one aligned native document per command, and keep every block construct and
 comment the fixture carries. The narrow width additionally proves the reflow is real: the registry
@@ -34,7 +34,7 @@ fixture's shape implies. -/
 private def canonicalText (root : System.FilePath) (setup : System.FilePath) (application : String)
     (width : Nat) : IO String := do
   let report ← LeanFmt.Test.Analyze.analyzeExact root application setup
-    "tests/block-formatter/Blocks.lean" "Blocks.lean" s!"4:{width}"
+    "tests/fixtures/block-formatter/Blocks.lean" "Blocks.lean" s!"4:{width}"
   let (canonical, text) ← LeanFmt.Test.Analyze.canonical report s!"width {width}"
   ensure (LeanFmt.Test.Analyze.natAt? canonical [.field "metrics", .field "nativeDocuments"] ==
       LeanFmt.Test.Analyze.natAt? canonical [.field "metrics", .field "commands"])
@@ -87,7 +87,7 @@ public def main (args : List String) : IO UInt32 := do
   let root ← repoRoot
   let application := (root / ".lake" / "build" / "bin" / "lean-fmt").toString
   withTempDir fun work => do
-    let setup ← LeanFmt.Test.Analyze.setupFile root work "tests/block-formatter/Blocks.lean"
+    let setup ← LeanFmt.Test.Analyze.setupFile root work "tests/fixtures/block-formatter/Blocks.lean"
     let cases : Array Case := #[
       { name := "width-20", run := BlockFormatter.widthCase root setup application 20 },
       { name := "width-40", run := BlockFormatter.widthCase root setup application 40 },

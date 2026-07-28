@@ -8,8 +8,8 @@ import Lean.Data.Lsp.Ipc
 /-!
 # Protocol acceptance, driven by a client we did not write
 
-`tests/lsp/run.sh` drives the server from Python: it frames its own messages and parses its own
-replies. That is a real independent implementation, but it is *our* independent implementation, and
+`tests/Suites/Lsp.lean` drives the server with hand-rolled frames: it writes its own messages and
+parses its own replies. That is a real independent implementation, but it is *our* independent implementation, and
 the frame reader it exercises is the one it also models. This harness is the other kind of
 independence: it drives the server with `Lean.Data.Lsp.Ipc`, the client the Lean team wrote to test
 Lean's own language server. Nothing here shares a line with `LeanFmt.LanguageServer` — the framing
@@ -20,7 +20,7 @@ here rather than being compared against our own spelling of it.
 It covers lifecycle, concurrent cancellation at the running child, Unicode positions, dynamic
 reconfiguration, malformed-message recovery, code actions, and the 100-request memory stability.
 
-Run it through `tests/lsp/acceptance.sh`, which builds the binary and passes its path.
+The runner builds and runs it as `suite-lsp-acceptance`.
 -/
 
 open Lean Lean.Lsp Lean.Lsp.Ipc Lean.JsonRpc
@@ -87,7 +87,7 @@ private def lifecycle (h : Harness) : IO Unit := do
   h.checkEq "exit without shutdown leaves one" code 1
 
   let (_, code) ← withServer h.application h.root do
-    request 1 "textDocument/formatting" (documentParam s!"file://{h.root}/tests/check/Clean.lean")
+    request 1 "textDocument/formatting" (documentParam s!"file://{h.root}/tests/fixtures/check/Clean.lean")
     match ← awaitResponse 1 with
     | .error code message =>
       h.checkEq "a request before initialize is refused" (toJson code).compress "-32002"
@@ -123,7 +123,7 @@ private def malformed (h : Harness) : IO Unit := do
     match ← awaitResponse 2 with
     | .result _ => h.check "a message with no method is survived" true
     | .error _ message => h.check "a message with no method is survived" false message
-    request 3 "textDocument/definition" (documentParam s!"file://{h.root}/tests/check/Clean.lean")
+    request 3 "textDocument/definition" (documentParam s!"file://{h.root}/tests/fixtures/check/Clean.lean")
     match ← awaitResponse 3 with
     | .error code _ =>
       h.checkEq "an unknown method is method-not-found" (toJson code).compress "-32601"
@@ -148,7 +148,7 @@ private def unicodeSource : String :=
   "module\n\nnamespace     Alpha\n\ndef layoutValue : Nat := 1\n\nend Alpha\n-- 𝔽𝔽 tail"
 
 private def unicode (h : Harness) : IO Unit := do
-  let uri := s!"file://{h.root}/tests/check/Layout.lean"
+  let uri := s!"file://{h.root}/tests/fixtures/check/Layout.lean"
   let (_, code) ← withServer h.application h.root do
     discard <| initializeSession h.root
     openDocument uri unicodeSource
@@ -212,7 +212,7 @@ private def reconfiguration (h : Harness) : IO Unit := do
   let directory : System.FilePath := (← IO.Process.run { cmd := "mktemp", args := #["-d"] }).trimAscii.toString
   let configuration := directory / "lean-fmt.toml"
   IO.FS.writeFile configuration "include = [\"**/*.lean\"]\n"
-  let uri := s!"file://{h.root}/tests/check/Findings.lean"
+  let uri := s!"file://{h.root}/tests/fixtures/check/Findings.lean"
   let (_, code) ← withServer h.application h.root (extraArgs := #["--debounce-ms", "1"]) do
     discard <| initializeSession h.root
       (Json.mkObj [("configPath", Json.str configuration.toString)])
@@ -244,7 +244,7 @@ Read from the client's side: an action must carry an edit a client can apply wit
 further, and must name the version it was computed against. -/
 
 private def codeActions (h : Harness) : IO Unit := do
-  let uri := s!"file://{h.root}/tests/check/Findings.lean"
+  let uri := s!"file://{h.root}/tests/fixtures/check/Findings.lean"
   let (_, code) ← withServer h.application h.root do
     discard <| initializeSession h.root
     openDocument uri findingsSource
@@ -275,7 +275,7 @@ private def codeActions (h : Harness) : IO Unit := do
 
 /-! ## 6. Concurrent cancellation
 
-The claim under test is not "a cancelled request is answered" — `tests/lsp/run.sh` already shows that
+The claim under test is not "a cancelled request is answered" — `tests/Suites/Lsp.lean` already shows that
 for a *queued* request. It is that a `$/cancelRequest` naming the request already running reaches the
 work in flight and shortens it. That can only be shown by timing: the same request, cancelled
 mid-flight, must come back sooner than it takes to finish. -/
@@ -371,7 +371,7 @@ private def subtreeRssKiB (rootPid : Nat) : IO Nat := do
     if family.contains pid then total + rss else total
 
 private def memoryStability (h : Harness) : IO Unit := do
-  let uri := s!"file://{h.root}/tests/check/Findings.lean"
+  let uri := s!"file://{h.root}/tests/fixtures/check/Findings.lean"
   let ourPid := (← IO.Process.getPID).toNat
   let child ← IO.Process.spawn { ipcStdioConfig with
     cmd := h.application

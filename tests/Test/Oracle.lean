@@ -15,7 +15,7 @@ import all LeanFmt.Imports
 /-!
 # The admission oracle for formatter candidates
 
-Port of `tests/formatter/oracle.py`: an independent admission protocol for a frontend-native Lean
+Port of `tests/fixtures/formatter/oracle.py`: an independent admission protocol for a frontend-native Lean
 formatter candidate. The candidate runs twice (idempotence), every response must carry the input's
 identity and a source map tiling both regions, and the before/after exact-frontend artifacts must
 agree on terminal bytes, comment payloads and ownership, token spellings, and tree shape. Gates are

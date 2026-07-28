@@ -5,12 +5,12 @@ public import Test
 /-!
 # The cache suite: entry-granularity cache invalidation
 
-Port of `tests/cache/run.sh`. The claim under test is the one `LeanFmt/Cache/Spec.lean` proved
+Port of `tests/fixtures/cache/run.sh`. The claim under test is the one `LeanFmt/Cache/Spec.lean` proved
 over a pure decision function: an entry is served only when its
 source **and its grammar** are current, and an edit invalidates the entries that depend on it and
 no others.
 
-This runs against `tests/cache/project`, a self-contained Lean package, and not against the
+This runs against `tests/fixtures/cache/project`, a self-contained Lean package, and not against the
 lean-fmt repository itself. Editing any `LeanFmt/*.lean` rebuilds the `lean-fmt` binary, which
 moves `formatter`, which feeds `baseDigest`, which *names the index file* — so a self-hosted
 measurement invalidates everything for a reason that has nothing to do with the property being
@@ -351,7 +351,7 @@ precondition. -/
 private def testOrphanedDependencyArtifact (ctx : Ctx) : IO Unit := do
   restoreFixture ctx
   ensureEq "warm before the orphan appears" ctx.total (← served ctx)
-  let depBuild := ctx.root / "tests" / "cache" / "dep" / ".lake"
+  let depBuild := ctx.root / "tests" / "fixtures" / "cache" / "dep" / ".lake"
   let depLib := depBuild / "build" / "lib" / "lean"
   let orphan := depLib / "Orphan.olean"
   try
@@ -401,17 +401,17 @@ end CacheSuite
 
 public def main (args : List String) : IO UInt32 := do
   let root ← repoRoot
-  let project := root / "tests" / "cache" / "project"
+  let project := root / "tests" / "fixtures" / "cache" / "project"
   let fmt := (root / ".lake" / "build" / "bin" / "lean-fmt").toString
   ensure (← (root / ".lake" / "build" / "bin" / "lean-fmt").pathExists)
     "lean-fmt binary not built; run 'lake build' first"
-  -- Precondition for the absent-search-path-root regression: `tests/cache/dep` is
+  -- Precondition for the absent-search-path-root regression: `tests/fixtures/cache/dep` is
   -- required by the fixture and imported by nothing, so Lake never builds its library and this
   -- directory never exists -- while still being on the workspace's `LEAN_PATH`. That is mathlib's
   -- `Cli` shape, and it disabled the cache for entire projects. Guard the precondition, or a
   -- future build that happens to create the directory turns all of that into decoration silently.
-  ensure (!(← (root / "tests" / "cache" / "dep" / ".lake" / "build" / "lib" / "lean").pathExists))
-    "tests/cache/dep has been built; the absent-search-path-root coverage is no longer real"
+  ensure (!(← (root / "tests" / "fixtures" / "cache" / "dep" / ".lake" / "build" / "lib" / "lean").pathExists))
+    "tests/fixtures/cache/dep has been built; the absent-search-path-root coverage is no longer real"
   withTempDir fun pristine => do
     copyTree (project / "Fixture") (pristine / "Fixture")
     -- The fixture needs its own `lean-toolchain` -- `lean-fmt` reads one from the project root --

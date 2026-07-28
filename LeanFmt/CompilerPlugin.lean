@@ -34,7 +34,7 @@ down so nobody proposes it again from the outside.
    containing one, silently. A command-to-command chain would have invisible gaps, and this
    repository has live `#guard_msgs` fixtures.
 3. *It taxes every consumer's build.* This dylib's content hash is a direct trace input of every
-   integrated module — `tests/downstream/project`'s `Consumer/Basic.trace` carries
+   integrated module — `tests/fixtures/downstream/project`'s `Consumer/Basic.trace` carries
    `["module plugins", [["…liblean_x2dfmt_LeanFmtCompilerPlugin.dylib", "…"]]]`. Over this
    repository's last 200 commits, 10 (5.0%) touched the current plugin glob set and 69 (34.5%) would
    touch a render-extended one: a 6.9× increase in how often an ordinary lean-fmt commit forces a

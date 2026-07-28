@@ -86,7 +86,7 @@ private def testSemanticArtifact : IO Unit := do
 each keys on one stable `kind` tag and re-emits it as a report-only finding under its own code,
 preserving the compiler's message, severity, and range. This exercises the whole engine seam over
 `.semantic` facts without the exact frontend — the production `runRulesOf` reads `SemanticFacts`
-built directly, so the mapping is pinned as pure data. `tests/semantic/run.sh` proves the *capture*
+built directly, so the mapping is pinned as pure data. `tests/fixtures/semantic/run.sh` proves the *capture*
 half against Lean's own emission; this proves the *rule* half.
 
 Every assertion is about the shipped `ruleRegistry`, not a probe, because these are real shipped rules

@@ -320,7 +320,7 @@ private def securityBench : IO UInt32 := do
 
 /-! ## Frontend-native formatter contract harness
 
-`tests/formatter/oracle.py` owns the independent comparison. This one test-only command exposes the
+`tests/fixtures/formatter/oracle.py` owns the independent comparison. This one test-only command exposes the
 already-shipped lossless header parser so the oracle compares Lean's parsed ordered imports rather
 than approximating the header with a regular expression. It returns facts only; the Python harness
 decides whether two signatures agree. -/

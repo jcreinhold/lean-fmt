@@ -9,7 +9,7 @@ import Lake
 /-!
 # The compiler facet suite
 
-Port of `tests/compiler/run.sh`. The `leanFmtArtifact` facet's contract, end to end against the
+Port of `tests/fixtures/compiler/run.sh`. The `leanFmtArtifact` facet's contract, end to end against the
 main workspace: the declared JSON artifact is verified against the module-owned payload in the
 exact `.olean`; a syntax-tier selection answered from the artifact matches the frontend's answer
 without spawning one, and a semantic selection declines it rather than reporting a false clean;
@@ -124,7 +124,7 @@ private unsafe def testArtifactSyntaxRules (ctx : Ctx) : IO Unit := do
   lakeBuild ctx #["+ArtifactLayout:leanFmtArtifact", "lean-fmt"] "artifact-layout build"
   let profiled := lakeEnv ++ #[("LEAN_FMT_PROFILE_PHASES", some "1")]
   let select := #["check", "--no-cache", "--select", "FMT011",
-    "tests/compiler/ArtifactLayout.lean"]
+    "tests/fixtures/compiler/ArtifactLayout.lean"]
   let artifactRun ← runProc ctx.application select (cwd? := some ctx.root) (env := profiled)
   let exactRun ← runProc ctx.application select (cwd? := some ctx.root)
     (env := profiled ++ #[("LEAN_FMT_DISABLE_ARTIFACT", some "1")])
@@ -147,10 +147,10 @@ artifact misses a `.semantic` selection and the frontend runs.
 The probe declarations are appended and removed here rather than committed to the fixture: every
 other case reads `ArtifactLayout` for its layout, and a deprecation warning is not layout. -/
 private unsafe def testArtifactTierMiss (ctx : Ctx) : IO Unit := do
-  let fixture := ctx.root / "tests" / "compiler" / "ArtifactLayout.lean"
+  let fixture := ctx.root / "tests" / "fixtures" / "compiler" / "ArtifactLayout.lean"
   let backup ← IO.FS.readFile fixture
   let select := #["check", "--no-cache", "--preview", "--select", "FMT012",
-    "tests/compiler/ArtifactLayout.lean"]
+    "tests/fixtures/compiler/ArtifactLayout.lean"]
   let profiled := lakeEnv ++ #[("LEAN_FMT_PROFILE_PHASES", some "1")]
   try
     writeFile fixture (backup ++ "\npublic def tierProbeNew : Nat := 1\n\
@@ -179,7 +179,7 @@ private unsafe def testCorruptArtifactFallback (ctx : Ctx) : IO Unit := do
   writeFile layoutArtifact "{\"partial\":"
   let profiled := lakeEnv ++ #[("LEAN_FMT_PROFILE_PHASES", some "1")]
   let fallback ← runProc ctx.application
-    #["check", "--no-cache", "--select", "FMT011", "tests/compiler/ArtifactLayout.lean"]
+    #["check", "--no-cache", "--select", "FMT011", "tests/fixtures/compiler/ArtifactLayout.lean"]
     (cwd? := some ctx.root) (env := profiled)
   writeFile layoutArtifact backup
   ensure (fallback.exitCode == 0 || fallback.exitCode == 1)
@@ -200,7 +200,7 @@ private unsafe def testMixedSelection (ctx : Ctx) : IO Unit := do
   removeFile? (main.toString ++ ".trace")
   let profiled := lakeEnv ++ #[("LEAN_FMT_PROFILE_PHASES", some "1")]
   let mixed ← runProc ctx.application
-    #["check", "--no-cache", "--select", "FMT011", "tests/compiler/ArtifactLayout.lean",
+    #["check", "--no-cache", "--select", "FMT011", "tests/fixtures/compiler/ArtifactLayout.lean",
       "Main.lean"]
     (cwd? := some ctx.root) (env := profiled)
   ensure (mixed.exitCode == 0 || mixed.exitCode == 1)
@@ -389,7 +389,7 @@ end CompilerSuite
 
 public unsafe def main (args : List String) : IO UInt32 := do
   let root ← repoRoot
-  let sourceFile := root / "tests" / "compiler" / "LocalSyntax.lean"
+  let sourceFile := root / "tests" / "fixtures" / "compiler" / "LocalSyntax.lean"
   let pluginSource := root / "LeanFmt" / "CompilerPlugin.lean"
   let rulesSource := root / "LeanFmt" / "Rules.lean"
   let sourceBackup ← IO.FS.readFile sourceFile

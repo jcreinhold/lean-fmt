@@ -13,7 +13,7 @@ premise the selection adapter is built on; if a future git changes one of them, 
 adapter is silently wrong and this suite makes it fail loudly instead. The second half is all
 rejections and error paths, checked before any project load, so it stays fast.
 
-Lane: exclusive — one case edits the tracked `tests/check/Clean.lean` in place (restored from a
+Lane: exclusive — one case edits the tracked `tests/fixtures/check/Clean.lean` in place (restored from a
 `cp -p` byte copy, never `git checkout --`: checkout restores HEAD, not what the working tree
 held, and a suite may read the repository but not decide what the working tree contains).
 -/
@@ -176,7 +176,7 @@ private def testStagedEmpty (ctx : Ctx) : IO Unit := do
 
 /-- §9.6 a non-empty selection discloses that it covers a subset. -/
 private def testChangedDisclosure (ctx : Ctx) : IO Unit := do
-  let clean := ctx.root / "tests" / "check" / "Clean.lean"
+  let clean := ctx.root / "tests" / "fixtures" / "check" / "Clean.lean"
   let backup := ctx.work / "Clean.lean.orig"
   discard <| expectExit 0 "backup" "cp" #["-p", clean.toString, backup.toString]
   try

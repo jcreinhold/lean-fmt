@@ -9,7 +9,7 @@ import all LeanFmt.Analysis
 /-!
 # The incremental-analyzer suite
 
-Port of `tests/incremental/run.sh`, absorbing the `incremental-analyzer` subcommand it used to call
+Port of `tests/fixtures/incremental/run.sh`, absorbing the `incremental-analyzer` subcommand it used to call
 in the unit executable. The contract is the persistent frontend session's: an edit table varying
 one concern at a time, full JSON envelopes compared against a fresh one-shot frontend, retained-
 snapshot and memory bounds, cancellation, and a lifecycle counter accounting at the end. The old
@@ -154,10 +154,10 @@ private unsafe def testSessionContract : IO Unit := do
   let root ← repoRoot
   withTempDir fun work => do
     let setup ← expectExit 0 "lake setup-file" "lake"
-      #["setup-file", "tests/incremental/Fixture.lean"] (cwd? := some root)
+      #["setup-file", "tests/fixtures/incremental/Fixture.lean"] (cwd? := some root)
     writeFile (work / "setup.json") setup.stdout
     let code ← incrementalAnalyzerSpec (work / "setup.json").toString
-      (root / "tests" / "incremental" / "Fixture.lean").toString
+      (root / "tests" / "fixtures" / "incremental" / "Fixture.lean").toString
     ensure (code == 0) "the incremental session contract rejected its fixture"
 
 private unsafe def cases : Array Case := #[

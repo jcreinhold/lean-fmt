@@ -388,7 +388,7 @@ public def main (args : List String) : IO UInt32 := do
   withScratchDir "lossless" fun work => do
     -- `__analyze-exact SETUP SOURCE DISPLAY` takes the source path separately from the setup, so a
     -- generated file can borrow a declared module's setup.
-    let borrowedSetup ← setupFile root work "tests/check/Clean.lean"
+    let borrowedSetup ← setupFile root work "tests/fixtures/check/Clean.lean"
     let ctx : Lossless.Ctx :=
       { root, application := (root / ".lake" / "build" / "bin" / "lean-fmt").toString, work
         borrowedSetup }

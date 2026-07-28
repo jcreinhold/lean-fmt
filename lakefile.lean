@@ -14,7 +14,7 @@ consuming project a working example to copy. `leanprover/lean-action` probes `la
 runs `lake lint` when it succeeds, so this is also the CI integration.
 
 Both driver names need guillemets: `lean-fmt` is not a legal Lean identifier and Lake resolves a
-driver by `String.toName`, so the bare spelling does not find the executable. `tests/downstream/run.sh`
+driver by `String.toName`, so the bare spelling does not find the executable. `tests/Suites/Downstream.lean`
 §5 pins the consuming form, which needs them in the package half too. -/
 package «lean-fmt» where
   version := v!"0.1.5"
@@ -484,12 +484,12 @@ module_facet leanFmtArtifact (mod : Module) : Artifact := do
 /- A small integration library exercises plugin and facet ownership without making the formatter's
 own implementation depend on itself as a compiler plugin. -/
 lean_lib CompilerFixtures where
-  srcDir := "tests/compiler"
+  srcDir := "tests/fixtures/compiler"
   roots := #[`LocalSyntax, `ArtifactLayout]
   plugins := #[`@/LeanFmtCompilerPlugin:shared]
 
 lean_lib BrokenCompilerFixtures where
-  srcDir := "tests/compiler"
+  srcDir := "tests/fixtures/compiler"
   roots := #[`Broken]
   plugins := #[`@/LeanFmtCompilerPlugin:shared]
 
@@ -498,29 +498,29 @@ spaces where the frontend-native formatter renders one.
 It is the one fixture that separates "has no findings" from "needs no formatting", which is the
 distinction exists to name. -/
 lean_lib CheckFixtures where
-  srcDir := "tests/check"
+  srcDir := "tests/fixtures/check"
   roots := #[`Clean, `Findings, `Layout]
   plugins := #[`@/LeanFmtCompilerPlugin:shared]
 
 lean_lib BrokenCheckFixtures where
-  srcDir := "tests/check"
+  srcDir := "tests/fixtures/check"
   roots := #[`MalformedHeader, `UnresolvedImport]
 
 /- Imported open syntax for the actual-node formatter adapter contract. This is a fixture library,
 not part of the application or compiler-plugin link closure. -/
 lean_lib FormatterAdapterFixtures where
-  srcDir := "tests/formatter-adapter"
+  srcDir := "tests/fixtures/formatter-adapter"
   roots := #[`AdapterSyntax]
 
 /- The native grammar adapter's four invariant families, one module each: positional terminal
 alignment, comment ownership at every boundary, typed exact islands, and offside carriers. Declared
 modules, not generated buffers: each must reach the adapter through the same exact Lake setup a
-project file does, and `tests/native-layout/run.sh` formats them and then formats the result again
+project file does, and `tests/Suites/NativeLayout.lean` formats them and then formats the result again
 -- an idempotence claim needs a module the frontend can elaborate twice.
 
 They are deliberately *not* canonically laid out; that is the input the suite reflows. `lean-fmt.toml`
 still lints them, and that is intended: they are valid, finding-free Lean, and layout is not a rule. -/
 lean_lib NativeLayoutFixtures where
-  srcDir := "tests/native-layout"
+  srcDir := "tests/fixtures/native-layout"
   roots := #[`Alignment, `Boundaries, `Islands, `Offside]
   plugins := #[`@/LeanFmtCompilerPlugin:shared]

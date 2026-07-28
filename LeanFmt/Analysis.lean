@@ -63,7 +63,7 @@ private def candidateFailure (gate : ValidationGate) (detail : String) :
 /- Silent messages are carriers, not diagnostics. The compiler plugin writes command
 records into the persistent lint log as a silent `.information` message, so an integrated project's
 own frontend run sees it in the log alongside real errors. Reporting it would print the whole
-serialized projection as a broken-source diagnostic. Found by `tests/downstream/run.sh`: it needs a
+serialized projection as a broken-source diagnostic. Found by the downstream suite: it needs a
 plugin-enabled project *and* a file that elaborates far enough for a command linter to run, which
 is why no in-repo broken fixture caught it — `MalformedHeader` and `UnresolvedImport` both fail
 before the linter fires. -/

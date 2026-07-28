@@ -5,7 +5,7 @@ public import Test
 /-!
 # The downstream suite
 
-Port of `tests/downstream/run.sh`: downstream integration. Every other suite exercises the
+Port of `tests/fixtures/downstream/run.sh`: downstream integration. Every other suite exercises the
 formatter from inside its own workspace, where the plugin is reached as
 `@/LeanFmtCompilerPlugin:shared` and the facet is declared in the lakefile that owns the modules.
 A consuming project has neither; until this suite existed the downstream recipe was a string
@@ -95,7 +95,7 @@ end Downstream
 
 public def main (args : List String) : IO UInt32 := do
   let root ← repoRoot
-  let project := root / "tests" / "downstream" / "project"
+  let project := root / "tests" / "fixtures" / "downstream" / "project"
   -- The fixture tracks no toolchain of its own: a stale pin would test the wrong compiler.
   copyFile (root / "lean-toolchain") (project / "lean-toolchain")
   let ctx : Downstream.Ctx := { root, project }

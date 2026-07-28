@@ -5,7 +5,7 @@ public import Test
 /-!
 # The suppression suite
 
-Port of `tests/suppression/run.sh`: end-to-end acceptance for the source-suppression layer, driving the real CLI over committed fixtures parsed by the real frontend — nested
+Port of `tests/fixtures/suppression/run.sh`: end-to-end acceptance for the source-suppression layer, driving the real CLI over committed fixtures parsed by the real frontend — nested
 syntax, doc comments, custom commands, formatting movement, unknown rules, per-file config, and
 unused fixes. Where the unit tier's `testSuppression` checks `apply`/`collect` against a hand-built
 projection, this is the acceptance matrix.
@@ -55,7 +55,7 @@ private def findingsOf (file : Lean.Json) : Array Lean.Json :=
 /-- Doc comments and module docstrings are tokens, not comments: directive text in them is inert.
 The FMT003 duplicate-import finding must still report; suppressed stays 0. -/
 private def testDocCommentInert (root : System.FilePath) (application : String) : IO Unit := do
-  let report ← checkJson root application 1 #["tests/suppression/DocComment.lean"] "doc-comment"
+  let report ← checkJson root application 1 #["tests/fixtures/suppression/DocComment.lean"] "doc-comment"
   let file ← oneFile report "doc-comment"
   let codes := codesOf file
   ensure (codes.contains "FMT003") s!"a docstring silenced a real finding: {codes}"
@@ -67,7 +67,7 @@ private def testDocCommentInert (root : System.FilePath) (application : String) 
 redundant nested paren (FMT011, a syntax rule opted into with `--select`), since no default finding
 lands on a `def` inside a namespace. -/
 private def testNested (root : System.FilePath) (application : String) : IO Unit := do
-  let report ← checkJson root application 0 #["tests/suppression/Nested.lean"] "nested"
+  let report ← checkJson root application 0 #["tests/fixtures/suppression/Nested.lean"] "nested"
     (extra := #["--preview", "--select", "FMT011"])
   let file ← oneFile report "nested"
   ensure (findingsOf file |>.isEmpty) "a nested ignore-next did not suppress"
@@ -76,7 +76,7 @@ private def testNested (root : System.FilePath) (application : String) : IO Unit
 /-- Custom command: file-local syntax + macro. ignore-file suppresses, and the custom command
 round-trips. -/
 private def testCustomCommand (root : System.FilePath) (application : String) : IO Unit := do
-  let report ← checkJson root application 0 #["tests/suppression/Custom.lean"] "custom-command"
+  let report ← checkJson root application 0 #["tests/fixtures/suppression/Custom.lean"] "custom-command"
   let file ← oneFile report "custom-command"
   ensure (findingsOf file |>.isEmpty) "ignore-file left a finding on a custom command"
   let suppressed := (natAt? file [.field "suppressed"]).getD 0
@@ -90,7 +90,7 @@ namespace with no finding, so it is an honest FMT900 throughout. -/
 private def testMovement (root : System.FilePath) (application : String)
     (work : System.FilePath) : IO Unit := do
   let scratch := work / "Movement.lean"
-  copyFile (root / "tests" / "suppression" / "Movement.lean") scratch
+  copyFile (root / "tests" / "fixtures" / "suppression" / "Movement.lean") scratch
   let original ← IO.FS.readFile scratch
   ensure ((original.splitOn "lean-fmt: ignore-next").length == 2) "movement fixture drifted"
   -- `format` reflows the item, and the directive survives the movement exactly once.
@@ -118,7 +118,7 @@ private def testMovement (root : System.FilePath) (application : String)
 /-- Unused fixes. A blanket ignore over a clean file is FMT900 with a *safe* removal fix whose
 edit deletes exactly the directive line and its newline — the editor code-action, never batch fix. -/
 private def testUnusedFix (root : System.FilePath) (application : String) : IO Unit := do
-  let report ← checkJson root application 1 #["tests/suppression/Unused.lean"] "unused-fix"
+  let report ← checkJson root application 1 #["tests/fixtures/suppression/Unused.lean"] "unused-fix"
   let file ← oneFile report "unused-fix"
   let findings := findingsOf file
   let some find := findings[0]?
@@ -133,7 +133,7 @@ private def testUnusedFix (root : System.FilePath) (application : String) : IO U
     | throw <| IO.userError "unused-fix: fix has no edits"
   let some edit := edits[0]? | throw <| IO.userError "unused-fix: no edit"
   ensure (edits.size == 1) "unused-fix: more than one edit"
-  let source ← IO.FS.readFile (root / "tests" / "suppression" / "Unused.lean")
+  let source ← IO.FS.readFile (root / "tests" / "fixtures" / "suppression" / "Unused.lean")
   let start := (natAt? edit [.field "range", .field "start"]).getD 0
   let stop := (natAt? edit [.field "range", .field "stop"]).getD 0
   let replacement := ((jsonAt? edit [.field "replacement"]).bind (·.getStr?.toOption)).getD ""
@@ -143,7 +143,7 @@ private def testUnusedFix (root : System.FilePath) (application : String) : IO U
 
 /-- Malformed directive: an unknown verb is FMT901 [display-only], reported never dropped. -/
 private def testMalformedDirective (root : System.FilePath) (application : String) : IO Unit := do
-  let report ← checkJson root application 1 #["tests/suppression/Malformed.lean"] "malformed"
+  let report ← checkJson root application 1 #["tests/fixtures/suppression/Malformed.lean"] "malformed"
   let file ← oneFile report "malformed"
   let fmts := findingsOf file |>.filter fun finding =>
     (finding.getObjValAs? String "code").toOption == some "FMT901"
@@ -160,8 +160,8 @@ private def testMalformedDirective (root : System.FilePath) (application : Strin
 directive naming FMT003 suppresses nothing and is itself unused: the RUF100 analog composes with
 config. -/
 private def testPerFileConfig (root : System.FilePath) (application : String) : IO Unit := do
-  let report ← checkJson root application 1 #["tests/suppression/PerFile.lean"] "per-file"
-    (extra := #["--config", "tests/suppression/per-file-ignores.toml"])
+  let report ← checkJson root application 1 #["tests/fixtures/suppression/PerFile.lean"] "per-file"
+    (extra := #["--config", "tests/fixtures/suppression/per-file-ignores.toml"])
   let file ← oneFile report "per-file"
   ensureEq "a config-redundant directive is not the lone FMT900" ["FMT900"] (codesOf file).toList
   ensureJsonAt file [.field "suppressed"] (Lean.toJson (0 : Nat)) "per-file"

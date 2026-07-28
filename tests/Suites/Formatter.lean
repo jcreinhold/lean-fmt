@@ -6,8 +6,8 @@ public import Test.Oracle
 /-!
 # The formatter suite
 
-Port of `tests/formatter/run.sh`: the frontend-native formatter contract. Thirteen injected
-negative gates, each a candidate-shaped lie `tests/formatter/candidate.py` tells on purpose, and
+Port of `tests/fixtures/formatter/run.sh`: the frontend-native formatter contract. Thirteen injected
+negative gates, each a candidate-shaped lie `tests/fixtures/formatter/candidate.py` tells on purpose, and
 the identity baseline with its pinned digest. The oracle is `Test.Oracle` (the port of
 `oracle.py`); the candidate stays Python — the admission protocol must keep facing an adversary
 this repo does not control.
@@ -27,13 +27,13 @@ structure Ctx where
   work : System.FilePath
 
 private def candidateCmd (ctx : Ctx) (mode : String) : Array String :=
-  #["python3", (ctx.root / "tests" / "formatter" / "candidate.py").toString, mode]
+  #["python3", (ctx.root / "tests" / "fixtures" / "formatter" / "candidate.py").toString, mode]
 
 /-- One injected negative gate: the oracle must reject the candidate, naming exactly this gate. -/
 private def testGate (ctx : Ctx) (fixture mode gate : String) : IO Unit := do
   let label := s!"{mode} rejected by {gate}"
   let outcome ← LeanFmt.Test.Oracle.run ctx.root ctx.application ctx.setup ctx.work
-    (ctx.root / "tests" / "formatter" / "fixtures" / fixture) (candidateCmd ctx mode)
+    (ctx.root / "tests" / "fixtures" / "formatter" / "fixtures" / fixture) (candidateCmd ctx mode)
   match outcome with
   | .ok summary =>
     throw <| IO.userError s!"{label}: the oracle accepted the candidate: {summary.compress}"
@@ -45,7 +45,7 @@ digest is the pinned one — the digest input recipe (sorted keys, compact separ
 the formatted bytes) is frozen across the Python and Lean oracles. -/
 private def testIdentity (ctx : Ctx) : IO Unit := do
   let outcome ← LeanFmt.Test.Oracle.run ctx.root ctx.application ctx.setup ctx.work
-    (ctx.root / "tests" / "formatter" / "fixtures" / "Contract.lean") (candidateCmd ctx "identity")
+    (ctx.root / "tests" / "fixtures" / "formatter" / "fixtures" / "Contract.lean") (candidateCmd ctx "identity")
   match outcome with
   | .error failure =>
     throw <| IO.userError s!"identity rejected by {failure.gate}: {failure.detail}"
@@ -66,14 +66,14 @@ end Formatter
 public def main (args : List String) : IO UInt32 := do
   let root ← repoRoot
   withScratchDir "formatter" fun work => do
-    let setup ← LeanFmt.Test.Analyze.setupFile root work "tests/check/Clean.lean"
+    let setup ← LeanFmt.Test.Analyze.setupFile root work "tests/fixtures/check/Clean.lean"
     let ctx : Formatter.Ctx :=
       { root, application := (root / ".lake" / "build" / "bin" / "lean-fmt").toString, setup, work }
     -- A supplied candidate (the old script's `"$@"` branch): any non-flag argument means the
     -- whole argv is one candidate command to admit against the Contract fixture.
     if args.any (!·.startsWith "--") then
       let outcome ← LeanFmt.Test.Oracle.run root ctx.application setup work
-        (root / "tests" / "formatter" / "fixtures" / "Contract.lean") args.toArray
+        (root / "tests" / "fixtures" / "formatter" / "fixtures" / "Contract.lean") args.toArray
       match outcome with
       | .ok summary => IO.println summary.compress
       | .error failure =>

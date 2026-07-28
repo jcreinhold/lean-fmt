@@ -57,7 +57,7 @@ appears. Findings exit 1 and fail the job; infrastructure failures exit 2 and al
 
 `--output-format sarif` emits a 2.1.0 log aimed at GitHub code scanning: `columnKind: unicodeCodePoints`,
 `originalUriBaseIds` carrying `%SRCROOT%`, percent-encoded relative `uri`s, and a `helpUri` per rule. It validates
-against the schema vendored at `tests/reporting/sarif-schema-2.1.0.json`, so an example can be checked offline.
+against the schema vendored at `tests/fixtures/reporting/sarif-schema-2.1.0.json`, so an example can be checked offline.
 
 ```yaml
 permissions:

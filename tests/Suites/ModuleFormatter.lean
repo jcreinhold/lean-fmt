@@ -7,7 +7,7 @@ public import Test
 
 Port of `tests/module-formatter/run.sh`. One-run whole-module drafts: region tiling, terminal/tail,
 normalized line endings, exact setup, and deterministic counters. Structural admission belongs to
-`tests/formatter`.
+`tests/fixtures/formatter`.
 -/
 
 open LeanFmt.Test
@@ -156,9 +156,9 @@ private def testLineEndings (root : System.FilePath) (application : String)
 imported custom notation, doc comments, nested comments, and Unicode. -/
 private def testPluginSetup (root : System.FilePath) (application : String)
     (work : System.FilePath) : IO Unit := do
-  let setup ← setupFile root work "tests/compiler/LocalSyntax.lean"
+  let setup ← setupFile root work "tests/fixtures/compiler/LocalSyntax.lean"
   let report ← analyzeExact root application setup
-    "tests/compiler/LocalSyntax.lean" "tests/compiler/LocalSyntax.lean" "draft" (viaLakeEnv := true)
+    "tests/fixtures/compiler/LocalSyntax.lean" "tests/fixtures/compiler/LocalSyntax.lean" "draft" (viaLakeEnv := true)
   let draft ← draftOf report "plugin"
   metricEq draft "commands" 8 "plugin"
   let commands := 8
@@ -200,7 +200,7 @@ public def main (args : List String) : IO UInt32 := do
     #["build", "lean-fmt", "FormatterAdapterFixtures", "CompilerFixtures"] (cwd? := some root)
     (env := #[("LEAN_NUM_THREADS", some "1")])
   withScratchDir "module-formatter" fun work => do
-    let borrowedSetup ← setupFile root work "tests/check/Clean.lean"
+    let borrowedSetup ← setupFile root work "tests/fixtures/check/Clean.lean"
     let cases : Array Case := #[
       { name := "terminal-draft", run := ModuleFormatter.testTerminalDraft root application work },
       { name := "only-exit",

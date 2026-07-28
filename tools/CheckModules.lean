@@ -65,7 +65,7 @@ private structure Layout where
   Dropping their edges matches what the build compiles — a module that does not parse compiles
   nothing and reaches nothing through itself — but it leaves the closure incomplete, so the run
   states it instead of degrading in silence. This package holds such a file deliberately:
-  `tests/check/MalformedHeader.lean` is a fixture for exactly that condition. -/
+  `tests/fixtures/check/MalformedHeader.lean` is a fixture for exactly that condition. -/
   unparsedHeaders : Array Name
 
 /-- Modules the build actually compiles: the seeds, closed under imports. -/

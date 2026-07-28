@@ -5,7 +5,7 @@ public import Test
 /-!
 # The semantic suite
 
-Port of `tests/semantic/run.sh`: acceptance for semantic rule facts. Formatting is deliberately
+Port of `tests/fixtures/semantic/run.sh`: acceptance for semantic rule facts. Formatting is deliberately
 absent from this capability: the exact formatter uses live syntax and registry state, while this
 suite gates compiler diagnostics and owned deprecation occurrences.
 
@@ -67,7 +67,7 @@ private def ensureNull (json : Lean.Json) (path : List JsonStep) (label : String
 
 /-- Production capture, both gating directions, plus byte-stability of a second capturing run. -/
 private def testCaptureGating (ctx : Ctx) : IO Unit := do
-  let fixture := "tests/semantic/Notation.lean"
+  let fixture := "tests/fixtures/semantic/Notation.lean"
   let setup ← setupFile ctx.root ctx.work fixture
   let on ← artifactOf (← capture ctx setup fixture "1" "capture on") "capture on"
   let off ← artifactOf (← capture ctx setup fixture "0" "capture off") "capture off"
@@ -103,7 +103,7 @@ rejected files the frontend accepted. Rendering now has one route, so with no an
 layout — and this case fails if the artifact renderer ever comes back without that being a
 decision. -/
 private def testFacetServes (ctx : Ctx) : IO Unit := do
-  let clean := "tests/check/Clean.lean"
+  let clean := "tests/fixtures/check/Clean.lean"
   let env := #[("LEAN_FMT_TEST_ANALYZER", some "/usr/bin/false")]
   for (label, select) in [("source", #[]), ("syntax", #["--select", "FMT011"])] do
     let result ← runProc ctx.application
@@ -125,7 +125,7 @@ private def testFacetServes (ctx : Ctx) : IO Unit := do
 /-- The surfaced-diagnostics differential: the captured `(kind, range)` reproduces what Lean's
 own `--json` frontend emits on the same fixture, for all four surfaced kinds. -/
 private def testDiagnosticsDifferential (ctx : Ctx) : IO Unit := do
-  let fixture := "tests/semantic/Diagnostics.lean"
+  let fixture := "tests/fixtures/semantic/Diagnostics.lean"
   let setup ← setupFile ctx.root ctx.work fixture
   let on ← artifactOf (← capture ctx setup fixture "1" "diag on") "diag on"
   let off ← artifactOf (← capture ctx setup fixture "0" "diag off") "diag off"
@@ -168,7 +168,7 @@ private def testDiagnosticsDifferential (ctx : Ctx) : IO Unit := do
 only under token "2", and the captured use resolves at the exact byte Lean's own deprecation
 diagnostic points to. -/
 private def testOccurrencesDifferential (ctx : Ctx) : IO Unit := do
-  let fixture := "tests/semantic/Diagnostics.lean"
+  let fixture := "tests/fixtures/semantic/Diagnostics.lean"
   let setup ← setupFile ctx.root ctx.work fixture
   let semanticOnly ← artifactOf (← capture ctx setup fixture "1" "occ token 1") "occ token 1"
   let occurrences ← artifactOf (← capture ctx setup fixture "2" "occ token 2") "occ token 2"
@@ -213,7 +213,7 @@ exactly the resolved constant's own full display name. A regression here is a so
 wrong `fixable=true` would let `fix --unsafe-fixes` corrupt a dot-notation or `open`-shadowed
 use. -/
 private def testFixablePredicate (ctx : Ctx) : IO Unit := do
-  let fixture := "tests/semantic/Occurrences.lean"
+  let fixture := "tests/fixtures/semantic/Occurrences.lean"
   let setup ← setupFile ctx.root ctx.work fixture
   let artifact ← artifactOf (← capture ctx setup fixture "2" "fixable capture") "fixable capture"
   let source ← IO.FS.readFile (ctx.root / fixture)
@@ -377,7 +377,7 @@ private def testCost (ctx : Ctx) : IO Unit := do
   if probe.exitCode != 0 then
     IO.println "   cost: /usr/bin/time -l unavailable -- RSS/wall additivity check skipped"
     return
-  let fixture := "tests/semantic/Diagnostics.lean"
+  let fixture := "tests/fixtures/semantic/Diagnostics.lean"
   let setup ← setupFile ctx.root ctx.work fixture
   let measure (token : String) : IO String := do
     -- `/usr/bin/time -l` writes its stats to the child's stderr.

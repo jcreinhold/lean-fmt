@@ -5,13 +5,13 @@ and emits one JSON response with canonical text, a complete non-overlapping sour
 cancellation state, and unsupported syntax ranges. Run the built-in identity and injected-negative suite with:
 
 ```sh
-tests/formatter/run.sh
+tests/fixtures/formatter/run.sh
 ```
 
 To admit a prototype through the same gates, append its command and arguments:
 
 ```sh
-tests/formatter/run.sh path/to/candidate --its-options
+tests/fixtures/formatter/run.sh path/to/candidate --its-options
 ```
 
 The oracle reparses original and candidate bytes through `__analyze-exact`, compares ordered imports, exact

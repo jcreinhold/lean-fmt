@@ -5,7 +5,7 @@ public import Test
 /-!
 # The declaration-formatter suite
 
-Port of `tests/declaration-formatter/run.sh`. Declaration families use structural groups at widths
+Port of `tests/fixtures/declaration-formatter/run.sh`. Declaration families use structural groups at widths
 20/40/80/100; members, constructors, deriving, mutual, where, comments, and custom terms preserve
 order. The old Python regexes — including the `\b`-guarded keywords — are `FlexPattern`s here.
 -/
@@ -51,7 +51,7 @@ constructor, and mutual orderings, and no trailing whitespace. -/
 private def testWidth (root setup : System.FilePath) (application : String) (width : Nat) :
     IO Unit := do
   let report ← analyzeExact root application setup
-    "tests/declaration-formatter/Families.lean" "Families.lean" s!"4:{width}"
+    "tests/fixtures/declaration-formatter/Families.lean" "Families.lean" s!"4:{width}"
   let (canonical, text) ← canonical report s!"width {width}"
   ensure (natAt? canonical [.field "metrics", .field "nativeDocuments"] ==
       natAt? canonical [.field "metrics", .field "commands"])
@@ -86,7 +86,7 @@ regexes pinned them. -/
 private def testNarrowLayout (root setup : System.FilePath) (application : String) : IO Unit := do
   let narrow ← do
     let report ← analyzeExact root application setup
-      "tests/declaration-formatter/Families.lean" "Families.lean" "4:20"
+      "tests/fixtures/declaration-formatter/Families.lean" "Families.lean" "4:20"
     (·.2) <$> canonical report "width 20"
   ensureFlex "width 20" narrow
     [.lit "opaque", .someWs, .lit "opaqueValue", .someWs, .lit "(first", .someWs, .lit "second",
@@ -99,7 +99,7 @@ private def testNarrowLayout (root setup : System.FilePath) (application : Strin
 private def testWideLayout (root setup : System.FilePath) (application : String) : IO Unit := do
   let wide ← do
     let report ← analyzeExact root application setup
-      "tests/declaration-formatter/Families.lean" "Families.lean" "4:100"
+      "tests/fixtures/declaration-formatter/Families.lean" "Families.lean" "4:100"
     (·.2) <$> canonical report "width 100"
   ensureFlex "width 100" wide
     [.lit "structure", .someWs, .lit "ExtendedPacket", .someWs, .lit "(α", .anyWs, .lit ":",
@@ -107,14 +107,14 @@ private def testWideLayout (root setup : System.FilePath) (application : String)
      .someWs, .lit "α", .someWs, .lit "where"]
   let narrow ← do
     let report ← analyzeExact root application setup
-      "tests/declaration-formatter/Families.lean" "Families.lean" "4:20"
+      "tests/fixtures/declaration-formatter/Families.lean" "Families.lean" "4:20"
     (·.2) <$> canonical report "width 20"
   ensure (narrow ≠ wide) "declaration groups ignored width"
 
 /-- The comments fixture: each payload exactly once. -/
 private def testComments (root setup : System.FilePath) (application : String) : IO Unit := do
   let report ← analyzeExact root application setup
-    "tests/declaration-formatter/Comments.lean" "Comments.lean" "4:60"
+    "tests/fixtures/declaration-formatter/Comments.lean" "Comments.lean" "4:60"
   let (_, text) ← canonical report "comments"
   for payload in ["/-- The declaration payload is exact. -/", "-- trailing body payload",
       "/-- The field payload is exact. -/"] do
@@ -126,7 +126,7 @@ public def main (args : List String) : IO UInt32 := do
   let root ← repoRoot
   let application := (root / ".lake" / "build" / "bin" / "lean-fmt").toString
   withScratchDir "declaration-formatter" fun work => do
-    let setup ← setupFile root work "tests/declaration-formatter/Families.lean"
+    let setup ← setupFile root work "tests/fixtures/declaration-formatter/Families.lean"
     let cases : Array Case := #[
       { name := "width-20", run := DeclarationFormatter.testWidth root setup application 20 },
       { name := "width-40", run := DeclarationFormatter.testWidth root setup application 40 },

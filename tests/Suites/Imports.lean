@@ -5,7 +5,7 @@ public import Test
 /-!
 # The imports suite
 
-Port of `tests/imports/run.sh`. The import-rule pipeline end-to-end: the three
+Port of `tests/fixtures/imports/run.sh`. The import-rule pipeline end-to-end: the three
 `imports`-category diagnostics and the opt-in organizer, on committed module fixtures. The unit
 tier pins the pure header rules and the organizer function; this pins the whole CLI path — read,
 normalize, parse the surface header, merge fresh import findings (FMT004 via the live Lake graph),
@@ -71,8 +71,8 @@ private def withRestored (ctx : Ctx) (path : System.FilePath) (action : IO Unit)
 
 /-- The committed fixtures this suite may never leave modified. -/
 private def sources : Array String := #[
-  "tests/imports/Duplicate.lean", "tests/imports/Ordering.lean",
-  "tests/imports/Suppressed.lean"
+  "tests/fixtures/imports/Duplicate.lean", "tests/fixtures/imports/Ordering.lean",
+  "tests/fixtures/imports/Suppressed.lean"
 ]
 
 /-- sha256 + mtime for the metadata snapshot. -/
@@ -89,7 +89,7 @@ private def snapshot (root : System.FilePath) : IO (Array (String × String × I
 private def testDuplicate (ctx : Ctx) : IO Unit := do
   let report ← checkJson ctx 1
     #["check", "--root", ".", "--json", "--no-cache", "--select", "imports",
-      "tests/imports/Duplicate.lean"] "duplicate"
+      "tests/fixtures/imports/Duplicate.lean"] "duplicate"
   let file ← oneFile report "duplicate"
   ensure (((file.getObjValAs? String "status").toOption) == some "findings")
     "duplicate: status changed"
@@ -103,7 +103,7 @@ private def testDuplicate (ctx : Ctx) : IO Unit := do
 private def testOrdering (ctx : Ctx) : IO Unit := do
   let report ← checkJson ctx 1
     #["check", "--root", ".", "--json", "--no-cache", "--select", "imports",
-      "tests/imports/Ordering.lean"] "ordering"
+      "tests/fixtures/imports/Ordering.lean"] "ordering"
   let file ← oneFile report "ordering"
   ensureEq "ordering: findings changed" ["FMT005"] (codesOf file).toList
   for finding in ((jsonAt? file [.field "findings"]).bind (·.getArr?.toOption)).getD #[] do
@@ -160,7 +160,7 @@ not selected), proving import codes flow through the same selection projection a
 private def testSelection (ctx : Ctx) : IO Unit := do
   let report ← checkJson ctx 0
     #["check", "--root", ".", "--json", "--no-cache", "--select", "FMT003",
-      "tests/imports/Ordering.lean"] "selection"
+      "tests/fixtures/imports/Ordering.lean"] "selection"
   let file ← oneFile report "selection"
   ensureEq "selection: findings changed" ([] : List String) (codesOf file).toList
 
@@ -168,7 +168,7 @@ private def testSelection (ctx : Ctx) : IO Unit := do
 file. -/
 private def testOrganizeDryRun (ctx : Ctx) : IO Unit := do
   let report ← checkJson ctx 1
-    #["organize", "--check", "--root", ".", "--json", "tests/imports/Ordering.lean"]
+    #["organize", "--check", "--root", ".", "--json", "tests/fixtures/imports/Ordering.lean"]
     "organize-check" (fallback := false)
   ensureJsonAt report [.field "mode"] (Lean.toJson "organize") "organize-check"
   let file ← oneFile report "organize-check"
@@ -179,10 +179,10 @@ private def testOrganizeDryRun (ctx : Ctx) : IO Unit := do
 /-- The organizer, write: sort the group by module name, validated by re-elaboration, then
 restore. -/
 private def testOrganizeWrite (ctx : Ctx) : IO Unit := do
-  let path := ctx.root / "tests" / "imports" / "Ordering.lean"
+  let path := ctx.root / "tests" / "fixtures" / "imports" / "Ordering.lean"
   withRestored ctx path do
     let report ← checkJson ctx 0
-      #["organize", "--root", ".", "--json", "tests/imports/Ordering.lean"] "organize-write"
+      #["organize", "--root", ".", "--json", "tests/fixtures/imports/Ordering.lean"] "organize-write"
       (fallback := false)
     let file ← oneFile report "organize-write"
     ensure (((file.getObjValAs? String "status").toOption) == some "organized")
@@ -196,11 +196,11 @@ private def testOrganizeWrite (ctx : Ctx) : IO Unit := do
 duplicate, so the fix is recomputed at canonical coordinates), validated and written; then
 restore. -/
 private def testFixDedup (ctx : Ctx) : IO Unit := do
-  let path := ctx.root / "tests" / "imports" / "Duplicate.lean"
+  let path := ctx.root / "tests" / "fixtures" / "imports" / "Duplicate.lean"
   withRestored ctx path do
     let report ← checkJson ctx 0
       #["fix", "--root", ".", "--json", "--no-cache", "--select", "imports",
-        "tests/imports/Duplicate.lean"] "fix-dedup" (fallback := false)
+        "tests/fixtures/imports/Duplicate.lean"] "fix-dedup" (fallback := false)
     let file ← oneFile report "fix-dedup"
     ensure (((file.getObjValAs? String "status").toOption) == some "fixed")
       "fix-dedup: status changed"
@@ -213,7 +213,7 @@ suppresses the import finding through the same post-cache projection every rule 
 private def testSuppressionComposes (ctx : Ctx) : IO Unit := do
   let report ← checkJson ctx 0
     #["check", "--root", ".", "--json", "--no-cache", "--select", "imports",
-      "tests/imports/Suppressed.lean"] "suppressed"
+      "tests/fixtures/imports/Suppressed.lean"] "suppressed"
   let file ← oneFile report "suppressed"
   ensure (((file.getObjValAs? String "status").toOption) == some "clean")
     "suppressed: status changed"
@@ -223,10 +223,10 @@ private def testSuppressionComposes (ctx : Ctx) : IO Unit := do
 /-- Order is elaboration-significant, so the default `fix` must NEVER reorder a header — FMT005
 carries no fix, and only the explicit `organize` command rewrites. -/
 private def testFixNeverReorders (ctx : Ctx) : IO Unit := do
-  let path := ctx.root / "tests" / "imports" / "Ordering.lean"
+  let path := ctx.root / "tests" / "fixtures" / "imports" / "Ordering.lean"
   withRestored ctx path do
     discard <| checkJson ctx 0
-      #["fix", "--root", ".", "--json", "--no-cache", "tests/imports/Ordering.lean"]
+      #["fix", "--root", ".", "--json", "--no-cache", "tests/fixtures/imports/Ordering.lean"]
       "fix-noreorder"
     let imports := (← IO.FS.readFile path).splitOn "\n" |>.filter (·.startsWith "import ")
     ensureEq "fix reordered the header -- it must never"

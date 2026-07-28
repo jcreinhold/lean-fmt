@@ -51,7 +51,7 @@ server clamps every inbound position itself.
 
 `𝔘` (U+1D518) is 4 UTF-8 bytes, 2 UTF-16 code units, and 1 codepoint, so one character separates all
 three encodings. It is the same fixture used for the reporting columns
-(`tests/reporting/run.sh`, "codepoint columns are neither bytes nor UTF-16"). -/
+(`tests/fixtures/reporting/run.sh`, "codepoint columns are neither bytes nor UTF-16"). -/
 private def testLspPositions : IO Unit := do
   let source := "theorem t : 𝔘 = 𝔘 := rfl\nsecond line\n"
   let fileMap := Lean.FileMap.ofString source

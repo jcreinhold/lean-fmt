@@ -5,7 +5,7 @@ public import Test
 /-!
 # The term-formatter suite
 
-Port of `tests/term-formatter/run.sh`. Applications and structural control terms reflow at widths
+Port of `tests/fixtures/term-formatter/run.sh`. Applications and structural control terms reflow at widths
 20/40/80/100; let continuations, nested conditionals, match discriminants, and arm order survive;
 project notation stays registry-driven only at its actual syntax node.
 -/
@@ -41,7 +41,7 @@ spellings. -/
 private def widthText (root setup : System.FilePath) (application : String) (width : Nat) :
     IO String := do
   let report ← analyzeExact root application setup
-    "tests/term-formatter/Terms.lean" "Terms.lean" s!"4:{width}"
+    "tests/fixtures/term-formatter/Terms.lean" "Terms.lean" s!"4:{width}"
   let (canonical, text) ← canonical report s!"width {width}"
   ensure (jsonAt? canonical [.field "validation"] == some expectedValidation)
     s!"width {width}: validation counters changed"
@@ -111,7 +111,7 @@ public def main (args : List String) : IO UInt32 := do
   let root ← repoRoot
   let application := (root / ".lake" / "build" / "bin" / "lean-fmt").toString
   withScratchDir "term-formatter" fun work => do
-    let setup ← setupFile root work "tests/term-formatter/Terms.lean"
+    let setup ← setupFile root work "tests/fixtures/term-formatter/Terms.lean"
     let cases : Array Case := #[
       { name := "width-20", run := TermFormatter.testWidth20 root setup application },
       { name := "width-40", run := TermFormatter.testWidth40 root setup application },

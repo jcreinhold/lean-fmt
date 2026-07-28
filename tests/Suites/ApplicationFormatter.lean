@@ -85,11 +85,11 @@ private def testCacheService (ctx : Ctx) : IO Unit := do
     s!"cached preview did not report changes: exit {cached.exitCode}\n{cached.stderr}"
   ensureContains cached.stderr "cache.path_cache_hit=1" "cache service"
 
-/-- Path metrics distinguish the source shortcut: `tests/check/Clean.lean` is checked from module
+/-- Path metrics distinguish the source shortcut: `tests/fixtures/check/Clean.lean` is checked from module
 evidence without a frontend render. -/
 private def testPathMetrics (ctx : Ctx) : IO Unit := do
   let result ← runProc ctx.application
-    #["check", "--root", ctx.root.toString, "--no-cache", "tests/check/Clean.lean"]
+    #["check", "--root", ctx.root.toString, "--no-cache", "tests/fixtures/check/Clean.lean"]
     (cwd? := some ctx.root) (env := #[("LEAN_FMT_PROFILE_PHASES", some "1")])
   ensureContains result.stderr "cache.path_source_shortcut=1" "source shortcut"
 
@@ -207,7 +207,7 @@ end ApplicationFormatter
 public def main (args : List String) : IO UInt32 := do
   let root ← repoRoot
   -- `Clean` is built here because the `path_source_shortcut` case reads module evidence for
-  -- `tests/check/Clean.lean`, and this suite used to build neither the module nor its facet: it
+  -- `tests/fixtures/check/Clean.lean`, and this suite used to build neither the module nor its facet: it
   -- passed only because some other suite had left `Clean.olean` in `.lake` -- an order dependency
   -- that turned red the first time anyone edited that fixture, since a stale `.olean` is not
   -- evidence. The `.olean` alone restores the shortcut; the `leanFmtArtifact` facet is not

@@ -82,11 +82,11 @@ private def testFormatStreams (ctx : Ctx) (dirty : System.FilePath) : IO Unit :=
     (input? := some (← IO.FS.readFile dirty)) (cwd? := some ctx.root)
   ensure (formatted.stdout.contains "namespace Alpha") "format did not canonicalize the buffer"
   -- Naming a real file must not write it, and no run may leave a cache entry behind.
-  let witness := ctx.root / "tests" / "check" / "Layout.lean"
+  let witness := ctx.root / "tests" / "fixtures" / "check" / "Layout.lean"
   removeDirAll? (ctx.root / ".lean-fmt-cache")
   let before ← sha256 witness
   discard <| expectExit 0 "format - naming a real file" ctx.app
-    #["format", "-", "--stdin-filename", "tests/check/Layout.lean"]
+    #["format", "-", "--stdin-filename", "tests/fixtures/check/Layout.lean"]
     (input? := some (← IO.FS.readFile dirty)) (cwd? := some ctx.root)
   ensureEq "naming an existing file wrote it" before (← sha256 witness)
   ensure (!(← (ctx.root / ".lean-fmt-cache").pathExists))

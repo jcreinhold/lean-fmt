@@ -10,7 +10,7 @@ import all LeanFmt.Validator
 
 Port of `tests/validator/run.sh`. Production admission: a candidate is canonical only after a fresh
 parse, structural comparison, logical-comment comparison, complete source maps, and a byte-identical
-second rendering. The mutated candidates come from `tests/formatter/candidate.py`, the deliberately
+second rendering. The mutated candidates come from `tests/fixtures/formatter/candidate.py`, the deliberately
 foreign adversary — it stays Python and the suite pipes through it, so the validator is still
 exercised by output nobody in this repo controls.
 
@@ -40,7 +40,7 @@ structure Ctx where
 private def candidate (ctx : Ctx) (mode source : String) : IO String := do
   let label := s!"candidate.py {mode}"
   let result ← expectExit 0 label "python3"
-    #[(ctx.root / "tests" / "formatter" / "candidate.py").toString, mode]
+    #[(ctx.root / "tests" / "fixtures" / "formatter" / "candidate.py").toString, mode]
     (input? := some source) (cwd? := some ctx.root)
   let json ← parseJson result.stdout label
   let some formatted := (json.getObjValAs? String "formatted").toOption
@@ -60,7 +60,7 @@ private def validateCandidate (ctx : Ctx) (setup source candidatePath : System.F
 private def testGate (ctx : Ctx) (fixture mode expected : String) : IO Unit := do
   let label := s!"{mode} rejected by {expected}"
   let source := ctx.work / s!"{mode}-source.lean"
-  copyFile (ctx.root / "tests" / "formatter" / "fixtures" / fixture) source
+  copyFile (ctx.root / "tests" / "fixtures" / "formatter" / "fixtures" / fixture) source
   let setup ← setupFile ctx.root ctx.work source.toString
   let mutated ← candidate ctx mode (← IO.FS.readFile source)
   let candidatePath := ctx.work / s!"{mode}-candidate.lean"
@@ -151,7 +151,7 @@ comparison runs. -/
 private def testMalformed (ctx : Ctx) : IO Unit := do
   let label := "malformed candidate"
   let source := ctx.work / "malformed-source.lean"
-  copyFile (ctx.root / "tests" / "formatter" / "fixtures" / "Contract.lean") source
+  copyFile (ctx.root / "tests" / "fixtures" / "formatter" / "fixtures" / "Contract.lean") source
   let setup ← setupFile ctx.root ctx.work source.toString
   let candidatePath := ctx.work / "malformed-candidate.lean"
   writeFile candidatePath "module\n\ndef broken :=\n"

@@ -5,7 +5,7 @@ public import Test
 /-!
 # The command-formatter suite
 
-Port of `tests/command-formatter/run.sh`. Parsed headers, command boundaries, comments, and custom
+Port of `tests/fixtures/command-formatter/run.sh`. Parsed headers, command boundaries, comments, and custom
 commands use native layout; widths 32/60/100 are admitted and byte-idempotent with a descriptor
 command; and lean-fmt's own commented command module aligns every command through native layout.
 -/
@@ -30,7 +30,7 @@ header and footer, the custom commands, and no trailing whitespace. -/
 private def testWidth (root setup : System.FilePath) (application : String) (width : Nat) :
     IO Unit := do
   let report ← analyzeExact root application setup
-    "tests/command-formatter/CoreInput.lean" "CoreInput.lean" s!"4:{width}"
+    "tests/fixtures/command-formatter/CoreInput.lean" "CoreInput.lean" s!"4:{width}"
   let (canonical, text) ← canonical report s!"width {width}"
   ensure (jsonAt? canonical [.field "validation"] == some expectedValidation)
     s!"width {width}: validation counters changed"
@@ -60,11 +60,11 @@ private def testWidthDistinctness (root setup : System.FilePath) (application : 
     IO Unit := do
   let narrow ← do
     let report ← analyzeExact root application setup
-      "tests/command-formatter/CoreInput.lean" "CoreInput.lean" "4:32"
+      "tests/fixtures/command-formatter/CoreInput.lean" "CoreInput.lean" "4:32"
     (·.2) <$> canonical report "width 32"
   let wide ← do
     let report ← analyzeExact root application setup
-      "tests/command-formatter/CoreInput.lean" "CoreInput.lean" "4:100"
+      "tests/fixtures/command-formatter/CoreInput.lean" "CoreInput.lean" "4:100"
     (·.2) <$> canonical report "width 100"
   ensure (narrow ≠ wide) "width did not affect a breakable nested command"
 
@@ -72,7 +72,7 @@ private def testWidthDistinctness (root setup : System.FilePath) (application : 
 variable line. -/
 private def testComments (root setup : System.FilePath) (application : String) : IO Unit := do
   let report ← analyzeExact root application setup
-    "tests/command-formatter/Comments.lean" "Comments.lean" "4:60"
+    "tests/fixtures/command-formatter/Comments.lean" "Comments.lean" "4:60"
   let (_, text) ← canonical report "comments"
   for payload in ["-- trailing setup comment",
       "/-- A declaration doc comment remains before its owner. -/"] do
@@ -102,7 +102,7 @@ public def main (args : List String) : IO UInt32 := do
   let root ← repoRoot
   let application := (root / ".lake" / "build" / "bin" / "lean-fmt").toString
   withScratchDir "command-formatter" fun work => do
-    let setup ← setupFile root work "tests/command-formatter/CoreInput.lean"
+    let setup ← setupFile root work "tests/fixtures/command-formatter/CoreInput.lean"
     let cases : Array Case := #[
       { name := "width-32", run := CommandFormatter.testWidth root setup application 32 },
       { name := "width-60", run := CommandFormatter.testWidth root setup application 60 },

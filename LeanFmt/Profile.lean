@@ -12,7 +12,7 @@ import Std.Sync.Mutex
 # The profile channel
 
 `LEAN_FMT_PROFILE_PHASES=1` turns on a stderr diagnostic channel carrying `phase.<name>_ms=<n>` and
-`cache.<name>=<n>` records. `tests/performance/gates.sh` is the schema in force: which names exist,
+`cache.<name>=<n>` records. `tests/Suites/Performance.lean` is the schema in force: which names exist,
 what each brackets, and the completeness gate they answer to.
 
 This is a diagnostic channel, not a reporting surface: off by default, writes to stderr, never

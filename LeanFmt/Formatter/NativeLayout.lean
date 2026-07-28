@@ -294,7 +294,7 @@ It is exact on the four shapes that pin it. `Lean.Parser.Command.declId.antiquot
 
 Not `env.contains base`, which asks about the file's imports rather than about the grammar and gets the
 same four shapes right only when they are imported. Every builtin parser is registered natively and
-formats in an import-less module; `tests/native-layout/Islands.lean` is one, and `env.contains` refuses
+formats in an import-less module; `tests/fixtures/native-layout/Islands.lean` is one, and `env.contains` refuses
 its `` `(def $name : Nat := 1) `` while every rule that matters says it is fine.
 
 Protection is *in place*: the marker replaces the antiquotation and nothing else, because escalating to

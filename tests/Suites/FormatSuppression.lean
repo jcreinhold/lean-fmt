@@ -5,7 +5,7 @@ public import Test
 /-!
 # The format-suppression suite
 
-Port of `tests/format-suppression/run.sh`. `format-ignore-next` copies one complete unit and
+Port of `tests/fixtures/format-suppression/run.sh`. `format-ignore-next` copies one complete unit and
 canonical formatting resumes; suppression is idempotent at widths 20/100 and identical after CRLF
 normalization; header-spanning and unmatched formatter directives are non-silent FMT901 findings;
 and a final file-owned Unicode comment survives exactly once.
@@ -16,7 +16,7 @@ open LeanFmt.Test.Analyze
 
 namespace FormatSuppression
 
-private def fixture : String := "tests/format-suppression/Suppressed.lean"
+private def fixture : String := "tests/fixtures/format-suppression/Suppressed.lean"
 
 /-- Suppression at one width: the directive once, the preserved unit byte-for-byte, and formatting
 resumed after it. -/
@@ -50,7 +50,7 @@ file, with the two distinct messages. -/
 private def testMalformedDirectives (root : System.FilePath) (application : String) : IO Unit := do
   let result ← runProc application
     #["check", "--output-format", "json", "--root", ".",
-      "tests/format-suppression/Unmatched.lean", "tests/format-suppression/Header.lean"]
+      "tests/fixtures/format-suppression/Unmatched.lean", "tests/fixtures/format-suppression/Header.lean"]
     (cwd? := some root)
   let report ← parseJson result.stdout "malformed directives"
   let some files := (jsonAt? report [.field "files"]).bind (·.getArr?.toOption)
@@ -68,7 +68,7 @@ private def testMalformedDirectives (root : System.FilePath) (application : Stri
 /-- A final file-owned Unicode comment survives exactly once. -/
 private def testEofComment (root setup : System.FilePath) (application : String) : IO Unit := do
   let report ← analyzeExact root application setup
-    "tests/format-suppression/EofComment.lean" "EofComment.lean" "4:100"
+    "tests/fixtures/format-suppression/EofComment.lean" "EofComment.lean" "4:100"
   let (_, text) ← canonical report "eof-comment"
   ensure (text.endsWith "-- 𝔽𝔽 tail\n") "the final Unicode comment did not survive"
 
@@ -79,7 +79,7 @@ public def main (args : List String) : IO UInt32 := do
   let application := (root / ".lake" / "build" / "bin" / "lean-fmt").toString
   withScratchDir "format-suppression" fun work => do
     let setup ← setupFile root work FormatSuppression.fixture
-    let eofSetup ← setupFile root work "tests/format-suppression/EofComment.lean"
+    let eofSetup ← setupFile root work "tests/fixtures/format-suppression/EofComment.lean"
     let cases : Array Case := #[
       { name := "width-20", run := FormatSuppression.testWidth root setup application 20 },
       { name := "width-100", run := FormatSuppression.testWidth root setup application 100 },

@@ -66,13 +66,13 @@ private def testCorpus (root : System.FilePath) (application : String)
 
 /-- Comment positions, on the real parser. Every corpus module reports `trailing=0` — this
 repository puts its comments on their own lines — so the other positions need a fixture, and the
-fixture borrows `tests/check/Clean.lean`'s setup exactly as the old script did. The counts are
+fixture borrows `tests/fixtures/check/Clean.lean`'s setup exactly as the old script did. The counts are
 exact because each is a separate claim about the rule: three same-line comments trail (including
 the newline-spanning block Lean's own `chooseNiceTrailStop` would tear in half), one own-line
 comment leads, one past-the-last-token comment is file-dangling. -/
 private def testPositions (root : System.FilePath) (application : String)
     (work : System.FilePath) : IO Unit := do
-  let setup ← LeanFmt.Test.Analyze.setupFile root work "tests/check/Clean.lean"
+  let setup ← LeanFmt.Test.Analyze.setupFile root work "tests/fixtures/check/Clean.lean"
   let positions := work / "positions.lean"
   writeFile positions
     "module\n\ndef a : Nat := 0  -- trailing, same line as the token\n\n\

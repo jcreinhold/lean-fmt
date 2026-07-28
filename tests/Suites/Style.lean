@@ -5,7 +5,7 @@ public import Test
 /-!
 # The style suite
 
-Port of `tests/style/run.sh`. A specification gate: the intended rows of `docs/style.md` are
+Port of `tests/fixtures/style/run.sh`. A specification gate: the intended rows of `docs/style.md` are
 structurally validated, the frozen intended candidate passes the independent oracle with full structure
 preserved, a currently safe style fixed point passes production admission at four widths, and a
 multiline literal survives structural declaration layout byte-for-byte.
@@ -20,7 +20,7 @@ namespace Style
 mentions every row plus the suppression and width vocabulary. -/
 private def testMatrixCoverage (root : System.FilePath) : IO Unit := do
   let doc ← IO.FS.readFile (root / "docs" / "style.md")
-  let rowsJson ← parseJson (← IO.FS.readFile (root / "tests" / "style" / "matrix.json"))
+  let rowsJson ← parseJson (← IO.FS.readFile (root / "tests" / "fixtures" / "style" / "matrix.json"))
     "style matrix"
   let some rows := rowsJson.getArr?.toOption
     | throw <| IO.userError "style matrix is not an array"
@@ -52,10 +52,10 @@ private def testMatrixCoverage (root : System.FilePath) : IO Unit := do
 preserved full structure (no comments in the fixture, so none may appear). -/
 private def testIntendedCandidate (root : System.FilePath) (application : String)
     (work : System.FilePath) : IO Unit := do
-  let setup ← setupFile root work "tests/style/fixtures/PolicyInput.lean"
+  let setup ← setupFile root work "tests/fixtures/style/fixtures/PolicyInput.lean"
   let outcome ← Oracle.run root application setup work
-    (root / "tests" / "style" / "fixtures" / "PolicyInput.lean")
-    #["python3", "tests/style/expected_candidate.py", "tests/style/fixtures/Policy.lean"]
+    (root / "tests" / "fixtures" / "style" / "fixtures" / "PolicyInput.lean")
+    #["python3", "tests/fixtures/style/expected_candidate.py", "tests/fixtures/style/fixtures/Policy.lean"]
   match outcome with
   | .error failure =>
     throw <| IO.userError s!"intended candidate rejected at gate {failure.gate}: {failure.detail}"
@@ -71,9 +71,9 @@ private def testIntendedCandidate (root : System.FilePath) (application : String
 render, no validation failure, exactly two renders. -/
 private def testNativeSafeWidth (root : System.FilePath) (application : String)
     (work : System.FilePath) (width : Nat) : IO Unit := do
-  let setup ← setupFile root work "tests/style/fixtures/NativeSafe.lean"
+  let setup ← setupFile root work "tests/fixtures/style/fixtures/NativeSafe.lean"
   let report ← analyzeExact root application setup
-    "tests/style/fixtures/NativeSafe.lean" "NativeSafe.lean" s!"4:{width}"
+    "tests/fixtures/style/fixtures/NativeSafe.lean" "NativeSafe.lean" s!"4:{width}"
   let (canonical, _) ← canonical report s!"native-safe width {width}"
   ensureJsonAt canonical [.field "validation", .field "renders"] (Lean.toJson (2 : Nat))
     s!"native-safe width {width}"
@@ -81,9 +81,9 @@ private def testNativeSafeWidth (root : System.FilePath) (application : String)
 /-- Structural declaration layout preserves a multiline literal byte-for-byte. -/
 private def testUnsafeLiteral (root : System.FilePath) (application : String)
     (work : System.FilePath) : IO Unit := do
-  let setup ← setupFile root work "tests/style/fixtures/UnsafeLiteral.lean"
+  let setup ← setupFile root work "tests/fixtures/style/fixtures/UnsafeLiteral.lean"
   let report ← analyzeExact root application setup
-    "tests/style/fixtures/UnsafeLiteral.lean" "UnsafeLiteral.lean" "4:100"
+    "tests/fixtures/style/fixtures/UnsafeLiteral.lean" "UnsafeLiteral.lean" "4:100"
   let (_, text) ← canonical report "unsafe-literal"
   ensureContains text "\"alpha   \n  beta\"" "unsafe-literal"
 

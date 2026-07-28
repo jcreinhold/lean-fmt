@@ -614,7 +614,7 @@ private def stopPosition (positions : PositionIndex) (path : String) (finding : 
   (positions.position? path finding.range.stop).getD (startPosition positions path finding)
 
 /-- Collapse a message to one line. No live rule message contains a newline; this is
-defensive, and `tests/reporting` pins it with a synthetic finding rather than trusting the
+defensive, and `tests/fixtures/reporting` pins it with a synthetic finding rather than trusting the
 invariant to hold. -/
 private def flattenMessage (message : String) : String :=
   (message.replace "\r\n" " ").replace "\n" " " |>.replace "\r" " "

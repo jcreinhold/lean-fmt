@@ -5,7 +5,7 @@ public import Test
 /-!
 # The comments suite: actual-syntax comment ownership
 
-Port of `tests/comments/run.sh`. No projection-token attachment path is exercised here: the exact
+Port of `tests/fixtures/comments/run.sh`. No projection-token attachment path is exercised here: the exact
 frontend's live-syntax summary owns every payload exactly once — over a synthetic fixture covering
 custom/macro/delimiter/terminal/suppression shapes, over the imported-syntax `LocalSyntax` fixture,
 over CRLF normalization, and through structural comment layout at three widths.
@@ -64,12 +64,12 @@ private def testCrlfIdentical (root : System.FilePath) (application : String)
   ensure (left == right) "LF and CRLF summaries differ after normalization"
 
 /-- Imported custom syntax, docstrings, nested comments, Unicode, and choice: the pinned summary
-of `tests/compiler/LocalSyntax.lean`. -/
+of `tests/fixtures/compiler/LocalSyntax.lean`. -/
 private def testLocalSyntax (root : System.FilePath) (application : String)
     (work : System.FilePath) : IO Unit := do
-  let setup ← setupFile root work "tests/compiler/LocalSyntax.lean"
+  let setup ← setupFile root work "tests/fixtures/compiler/LocalSyntax.lean"
   let summary ← summarize root application setup
-    "tests/compiler/LocalSyntax.lean" "tests/compiler/LocalSyntax.lean"
+    "tests/fixtures/compiler/LocalSyntax.lean" "tests/fixtures/compiler/LocalSyntax.lean"
   ensureSummary summary "local-syntax" 6 5 1 0 0
     "e0e388ff4e428c9b7892288a3b908ae25640f0797eb1d18a1d17fc5cd99481e7"
 
@@ -78,9 +78,9 @@ retain one logical owner through both of admission's readings of the module, and
 width- and line-ending-stable. -/
 private def testLayoutWidths (root : System.FilePath) (application : String)
     (work : System.FilePath) : IO Unit := do
-  let setup ← setupFile root work "tests/comments/Layout.lean"
+  let setup ← setupFile root work "tests/fixtures/comments/Layout.lean"
   let summaryReport ← analyzeExact root application setup
-    "tests/comments/Layout.lean" "tests/comments/Layout.lean" "3" (viaLakeEnv := true)
+    "tests/fixtures/comments/Layout.lean" "tests/fixtures/comments/Layout.lean" "3" (viaLakeEnv := true)
   let summary ← commentSummary summaryReport "layout"
   ensureSummary summary "layout" 13 8 5 0 0
     "274997ea206091bf77ee03b20c21942d8b31e495a8a687e0d93fd93e141a9a7d"
@@ -93,7 +93,7 @@ private def testLayoutWidths (root : System.FilePath) (application : String)
   let mut texts : Array String := #[]
   for width in [24, 60, 100] do
     let report ← analyzeExact root application setup
-      "tests/comments/Layout.lean" "tests/comments/Layout.lean" s!"4:{width}"
+      "tests/fixtures/comments/Layout.lean" "tests/fixtures/comments/Layout.lean" s!"4:{width}"
     let (canonical, text) ← canonical report s!"layout width {width}"
     ensureJsonAt canonical [.field "metrics", .field "commentOwners"] (Lean.toJson (13 : Nat))
       s!"layout width {width}"
@@ -108,7 +108,7 @@ private def testLayoutWidths (root : System.FilePath) (application : String)
   -- CRLF at 60 must reproduce the LF render byte-for-byte.
   let crlfPath := work / "LayoutCRLF.lean"
   IO.FS.writeBinFile crlfPath
-    ((← IO.FS.readFile (root / "tests" / "comments" / "Layout.lean")).replace "\n" "\r\n").toUTF8
+    ((← IO.FS.readFile (root / "tests" / "fixtures" / "comments" / "Layout.lean")).replace "\n" "\r\n").toUTF8
   let crlfSetup ← setupFile root work crlfPath.toString
   let crlfReport ← analyzeExact root application crlfSetup crlfPath.toString "LayoutCRLF.lean"
     "4:60"
@@ -124,7 +124,7 @@ public def main (args : List String) : IO UInt32 := do
   let root ← repoRoot
   let application := (root / ".lake" / "build" / "bin" / "lean-fmt").toString
   withScratchDir "comments" fun work => do
-    let borrowedSetup ← setupFile root work "tests/check/Clean.lean"
+    let borrowedSetup ← setupFile root work "tests/fixtures/check/Clean.lean"
     let cases : Array Case := #[
       { name := "ownership-fixture",
         run := CommentsSuite.testOwnershipFixture root application work borrowedSetup },

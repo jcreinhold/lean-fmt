@@ -5,7 +5,7 @@ public import Test
 /-!
 # The native-layout suite
 
-Port of `tests/native-layout/run.sh`: the native grammar adapter's invariant families, one
+Port of `tests/fixtures/native-layout/run.sh`: the native grammar adapter's invariant families, one
 declared fixture module each:
 
 - `Alignment.lean` — positional terminal alignment: repeated spellings, multibyte columns, and
@@ -93,7 +93,7 @@ private def formatCheck (ctx : Ctx) (fixture : String) (config? : Option System.
     | none => #[]
   let result ← expectExit 1 label ctx.application
     (#["format", "--check", "--root", ".", "--json", "--no-cache"] ++ configArgs ++
-      #[s!"tests/native-layout/{fixture}.lean"]) (cwd? := some ctx.root)
+      #[s!"tests/fixtures/native-layout/{fixture}.lean"]) (cwd? := some ctx.root)
   let report ← parseJson result.stdout label
   let file := (jsonAt? report [.field "files", .index 0]).getD .null
   let status := (file.getObjValAs? String "status").toOption.getD ""
@@ -120,7 +120,7 @@ private def testIdempotence (ctx : Ctx) : IO Unit := do
   for fixture in fixtures do
     let once ← ctx.once fixture
     let twice ← expectExit 0 s!"second pass {fixture}" ctx.application
-      #["format", "-", "--stdin-filename", s!"tests/native-layout/{fixture}.lean", "--root", "."]
+      #["format", "-", "--stdin-filename", s!"tests/fixtures/native-layout/{fixture}.lean", "--root", "."]
       (input? := some once) (cwd? := some ctx.root)
     ensureEq s!"{fixture} is not idempotent" once twice.stdout
 
@@ -389,9 +389,9 @@ private def testOffside (ctx : Ctx) : IO Unit := do
 kind names no constant. The escape the message offers has to work, or the message is advice
 nobody can take. -/
 private def testRootedKind (ctx : Ctx) : IO Unit := do
-  let fixture := ctx.root / "tests" / "native-layout" / "RootedKind.lean"
+  let fixture := ctx.root / "tests" / "fixtures" / "native-layout" / "RootedKind.lean"
   let refused ← runProc ctx.application
-    #["format", "-", "--stdin-filename", "tests/native-layout/RootedKind.lean", "--root", "."]
+    #["format", "-", "--stdin-filename", "tests/fixtures/native-layout/RootedKind.lean", "--root", "."]
     (input? := some (← IO.FS.readFile fixture)) (cwd? := some ctx.root)
   ensureContains refused.stderr
     "Lean._root_.Lean.Parser.Command.registerLabelAttr names no constant"
@@ -401,7 +401,7 @@ private def testRootedKind (ctx : Ctx) : IO Unit := do
   let ignored := (← IO.FS.readFile fixture).replace "register_label_attr"
     "-- lean-fmt: format-ignore-next\nregister_label_attr"
   let formatted ← expectExit 0 "RootedKind with the directive" ctx.application
-    #["format", "-", "--stdin-filename", "tests/native-layout/RootedKind.lean", "--root", "."]
+    #["format", "-", "--stdin-filename", "tests/fixtures/native-layout/RootedKind.lean", "--root", "."]
     (input? := some ignored) (cwd? := some ctx.root)
   ensureEq "  ... and the directive it names leaves the command verbatim" 1
     (countExact formatted.stdout "register_label_attr leanFmtRootedKindFixture")
@@ -420,7 +420,7 @@ public def main (args : List String) : IO UInt32 := do
     for fixture in NativeLayout.fixtures do
       let result ← expectExit 1 s!"render {fixture}" application
         #["format", "--check", "--root", ".", "--json", "--no-cache",
-          s!"tests/native-layout/{fixture}.lean"] (cwd? := some root)
+          s!"tests/fixtures/native-layout/{fixture}.lean"] (cwd? := some root)
       let report ← LeanFmt.Test.parseJson result.stdout fixture
       let some formatted := (LeanFmt.Test.jsonAt? report
           [.field "files", .index 0, .field "formatted"]).bind (·.getStr?.toOption)

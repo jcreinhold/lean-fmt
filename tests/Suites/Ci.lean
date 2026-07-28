@@ -95,7 +95,7 @@ private def testSarif (ctx : Ctx) : IO Unit := do
   if uv.exitCode == 0 then
     discard <| expectExit 0 "SARIF from a consuming project failed schema validation" "uv"
       #["run", "--with", "check-jsonschema", "--quiet", "check-jsonschema",
-        "--schemafile", (ctx.root / "tests" / "reporting" / "sarif-schema-2.1.0.json").toString,
+        "--schemafile", (ctx.root / "tests" / "fixtures" / "reporting" / "sarif-schema-2.1.0.json").toString,
         (ctx.consumer / "findings.sarif").toString]
       (timeoutMs := some 600000)
   else

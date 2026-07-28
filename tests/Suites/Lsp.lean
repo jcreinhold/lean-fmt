@@ -133,12 +133,12 @@ private def strField (json : Json) (name : String) : String :=
 -- -----------------------------------------------------------------------------------------------
 -- Fixture addresses
 
-private def findingsUri (ctx : Ctx) : String := s!"file://{ctx.rootStr}/tests/check/Findings.lean"
-private def layoutUri (ctx : Ctx) : String := s!"file://{ctx.rootStr}/tests/check/Layout.lean"
-private def cleanUri (ctx : Ctx) : String := s!"file://{ctx.rootStr}/tests/check/Clean.lean"
+private def findingsUri (ctx : Ctx) : String := s!"file://{ctx.rootStr}/tests/fixtures/check/Findings.lean"
+private def layoutUri (ctx : Ctx) : String := s!"file://{ctx.rootStr}/tests/fixtures/check/Layout.lean"
+private def cleanUri (ctx : Ctx) : String := s!"file://{ctx.rootStr}/tests/fixtures/check/Clean.lean"
 
 private def readFixture (ctx : Ctx) (name : String) : IO String :=
-  IO.FS.readFile (ctx.root / "tests" / "check" / name)
+  IO.FS.readFile (ctx.root / "tests" / "fixtures" / "check" / name)
 
 -- -----------------------------------------------------------------------------------------------
 -- One-shot sessions
@@ -391,7 +391,7 @@ private def testDiagnostics (ctx : Ctx) : IO Unit := do
   ensureEq "the diagnostics session ends cleanly" 0 code
 
 private def testFormatting (ctx : Ctx) : IO Unit := do
-  -- `tests/check/Clean.lean` has to actually be canonical for this to say anything. It held
+  -- `tests/fixtures/check/Clean.lean` has to actually be canonical for this to say anything. It held
   -- `def cleanValue : Nat := 1` on one line, which stopped being canonical at `3635d39` when the
   -- native adapter landed. The fixture was updated to the bytes Lean's own formatter produces;
   -- see `tests/modes/run.sh` for the full trace.
@@ -439,7 +439,7 @@ private def testFormatting (ctx : Ctx) : IO Unit := do
   let requestedStart := ((lines.take 2).map (·.length + 1)).sum
   let requestedStop := requestedStart + 5
   let stdin ← expectExit 0 "stdin range formatting" ctx.app
-    #["format", "-", "--stdin-filename", "tests/check/Layout.lean",
+    #["format", "-", "--stdin-filename", "tests/fixtures/check/Layout.lean",
       "--range", s!"{requestedStart}:{requestedStop}"]
     (input? := some layoutSource) (cwd? := some ctx.root)
     (env := #[("LEAN_NUM_THREADS", some "1")])

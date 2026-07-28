@@ -5,13 +5,13 @@ public import Test
 /-!
 # The check suite
 
-Port of `tests/check/run.sh`: the core `check`/`format` pipeline end to end — the two producers
+Port of `tests/fixtures/check/run.sh`: the core `check`/`format` pipeline end to end — the two producers
 (artifact and exact frontend) agreeing, the check/format agreement invariant, broken and sabotaged
 runs, `--workers` determinism, the result-cache strategy and invalidation matrix, and the
 fix/render-path efficiency probes.
 
 Lane: workspace — the suite clears and populates the root `.lean-fmt-cache`, edits
-`tests/check/Findings.lean` and `LeanFmt/Cli.lean` in place (restored via `cp -p` backups), and
+`tests/fixtures/check/Findings.lean` and `LeanFmt/Cli.lean` in place (restored via `cp -p` backups), and
 mutates the committed `Findings.trace` (restored byte-for-byte). Nothing else may touch this
 workspace while it runs.
 -/
@@ -74,8 +74,8 @@ private def findingsOf (report : Lean.Json) (label : String) : IO (List (String 
 
 /-- The committed sources this suite may never leave modified. -/
 private def sources : Array String := #[
-  "tests/compiler/LocalSyntax.lean", "tests/check/Clean.lean", "tests/check/Findings.lean",
-  "tests/check/MalformedHeader.lean", "tests/check/UnresolvedImport.lean", "tests/check/Security.lean"
+  "tests/fixtures/compiler/LocalSyntax.lean", "tests/fixtures/check/Clean.lean", "tests/fixtures/check/Findings.lean",
+  "tests/fixtures/check/MalformedHeader.lean", "tests/fixtures/check/UnresolvedImport.lean", "tests/fixtures/check/Security.lean"
 ]
 
 private def snapshot (root : System.FilePath) : IO (Array (String × String × Int × UInt32)) := do
@@ -90,20 +90,20 @@ private def snapshot (root : System.FilePath) : IO (Array (String × String × I
 private def testFlagSurface (ctx : Ctx) : IO Unit := do
   let help ← checkRaw ctx 0 #["check", "--help"] "check --help"
   ensure (!(help.stdout.contains "--check-elab")) "--check-elab leaked into help"
-  discard <| checkRaw ctx 2 #["fix", "--check-elab", "tests/check/Clean.lean"] "removed --check-elab"
+  discard <| checkRaw ctx 2 #["fix", "--check-elab", "tests/fixtures/check/Clean.lean"] "removed --check-elab"
 
 /-- The two producers agree on Findings, and both reproduce the recorded golden byte for
 byte. The golden was recorded *before* any renderer shipped, so it is evidence and not a
 restatement of current behavior. -/
 private def testProducerParity (ctx : Ctx) : IO Unit := do
   discard <| checkJson ctx 0 #["check", "--root", ".", "--json", "--no-cache",
-    "tests/check/Clean.lean"] "clean"
+    "tests/fixtures/check/Clean.lean"] "clean"
   let artifact ← checkRaw ctx 1 #["check", "--root", ".", "--json", "--no-cache",
-    "tests/check/Findings.lean"] "artifact findings"
+    "tests/fixtures/check/Findings.lean"] "artifact findings"
   let fallback ← checkRaw ctx 1 #["check", "--root", ".", "--json", "--no-cache",
-    "tests/check/Findings.lean"] "fallback findings" (env := fallbackEnv)
+    "tests/fixtures/check/Findings.lean"] "fallback findings" (env := fallbackEnv)
   ensureEq "artifact and fallback findings diverged" artifact.stdout fallback.stdout
-  let golden ← IO.FS.readFile (ctx.root / "tests" / "reporting" / "golden" / "json-check.json")
+  let golden ← IO.FS.readFile (ctx.root / "tests" / "fixtures" / "reporting" / "golden" / "json-check.json")
   ensureEq "the JSON report changed shape against the golden" golden artifact.stdout
 
 /-- `check` and `format` must never disagree about one unchanged file. `check` takes the
@@ -111,9 +111,9 @@ source-only shortcut; `format` takes the artifact path for the projection it mus
 findings are comparable — mode, status, and rendered text are meant to differ. -/
 private def testCheckFormatAgreement (ctx : Ctx) : IO Unit := do
   let checked ← checkJson ctx 1 #["check", "--root", ".", "--json", "--no-cache",
-    "tests/check/Findings.lean"] "agreement check"
+    "tests/fixtures/check/Findings.lean"] "agreement check"
   let formatted ← checkJson ctx 1 #["format", "--check", "--root", ".", "--json", "--no-cache",
-    "tests/check/Findings.lean"] "agreement format"
+    "tests/fixtures/check/Findings.lean"] "agreement format"
   let checkedFindings ← findingsOf checked "agreement check"
   ensure (!checkedFindings.isEmpty) "the agreement fixture produced no findings; vacuous"
   let formattedFindings ← findingsOf formatted "agreement format"
@@ -131,11 +131,11 @@ comparison covers everything the two producers write.
 File-local `syntax` reaches the kind table, which only an elaborated environment can parse. -/
 private def testCustomSyntax (ctx : Ctx) : IO Unit := do
   let artifact ← checkRaw ctx 0 #["check", "--root", ".", "--json", "--no-cache",
-    "tests/compiler/LocalSyntax.lean"] "artifact custom"
+    "tests/fixtures/compiler/LocalSyntax.lean"] "artifact custom"
   let fallback ← checkRaw ctx 0 #["check", "--root", ".", "--json", "--no-cache",
-    "tests/compiler/LocalSyntax.lean"] "fallback custom" (env := fallbackEnv)
+    "tests/fixtures/compiler/LocalSyntax.lean"] "fallback custom" (env := fallbackEnv)
   ensureEq "artifact and fallback custom-syntax reports diverged" artifact.stdout fallback.stdout
-  let setup ← setupFile ctx.root ctx.work "tests/compiler/LocalSyntax.lean"
+  let setup ← setupFile ctx.root ctx.work "tests/fixtures/compiler/LocalSyntax.lean"
   let envelope ← project ctx setup
   let integratedText ← IO.FS.readFile
     (ctx.root / ".lake" / "build" / "lean-fmt-artifacts" / "LocalSyntax.json")
@@ -161,7 +161,7 @@ where
   project (ctx : Ctx) (setup : System.FilePath) : IO Lean.Json := do
     let result ← expectExit 0 "exact envelope" "lake"
       #["env", ctx.application, "__analyze-exact", setup.toString,
-        "tests/compiler/LocalSyntax.lean", "tests/compiler/LocalSyntax.lean"]
+        "tests/fixtures/compiler/LocalSyntax.lean", "tests/fixtures/compiler/LocalSyntax.lean"]
       (cwd? := some ctx.root)
     parseJson result.stdout "exact envelope"
 
@@ -169,12 +169,12 @@ where
 infrastructure failure is invented. -/
 private def testBroken (ctx : Ctx) : IO Unit := do
   let report ← checkJson ctx 1 #["check", "--root", ".", "--json", "--no-cache",
-    "tests/check/UnresolvedImport.lean", "tests/check/MalformedHeader.lean"] "broken"
+    "tests/fixtures/check/UnresolvedImport.lean", "tests/fixtures/check/MalformedHeader.lean"] "broken"
     (env := fallbackEnv)
   let files := ((jsonAt? report [.field "files"]).bind (·.getArr?.toOption)).getD #[]
   let paths := files.toList.map fun file => (file.getObjValAs? String "path").toOption.getD ""
   ensureEq "broken: files not sorted"
-    ["tests/check/MalformedHeader.lean", "tests/check/UnresolvedImport.lean"] paths
+    ["tests/fixtures/check/MalformedHeader.lean", "tests/fixtures/check/UnresolvedImport.lean"] paths
   let diagnostics := "\n".intercalate <| files.toList.flatMap fun file =>
     (((jsonAt? file [.field "diagnostics"]).bind (·.getArr?.toOption)).getD #[]).toList.map
       (·.compress)
@@ -186,10 +186,10 @@ private def testBroken (ctx : Ctx) : IO Unit := do
 /-- A sabotaged analyzer turns every file into an infrastructure failure and aborts with 2. -/
 private def testAbort (ctx : Ctx) : IO Unit := do
   let report ← checkJson ctx 2 #["check", "--root", ".", "--json", "--no-cache",
-    "tests/check/Findings.lean", "tests/check/Clean.lean"] "abort" (env := sabotageEnv)
+    "tests/fixtures/check/Findings.lean", "tests/fixtures/check/Clean.lean"] "abort" (env := sabotageEnv)
   let files := ((jsonAt? report [.field "files"]).bind (·.getArr?.toOption)).getD #[]
   let paths := files.toList.map fun file => (file.getObjValAs? String "path").toOption.getD ""
-  ensureEq "abort: files" ["tests/check/Clean.lean", "tests/check/Findings.lean"] paths
+  ensureEq "abort: files" ["tests/fixtures/check/Clean.lean", "tests/fixtures/check/Findings.lean"] paths
   let failures := ((jsonAt? report [.field "infrastructureFailures"]).bind
     (·.getArr?.toOption)).getD #[]
   ensureEq "abort: expected two infrastructure failures" 2 failures.size
@@ -207,7 +207,7 @@ workers over three fixtures also asks for more workers than there are targets. T
 little, so the count catches only a gross regression; the corpus that exposed the original defect —
 187 of 200 mathlib files refused at `--workers 8` — is not a fixture here. -/
 private def testWorkersDeterminism (ctx : Ctx) : IO Unit := do
-  let files := #["tests/check/Clean.lean", "tests/check/Findings.lean", "tests/check/Layout.lean"]
+  let files := #["tests/fixtures/check/Clean.lean", "tests/fixtures/check/Findings.lean", "tests/fixtures/check/Layout.lean"]
   let serial ← checkRaw ctx 1
     (#["check", "--root", ".", "--json", "--no-cache", "--workers", "1"] ++ files) "serial"
     (env := fallbackEnv)
@@ -224,8 +224,8 @@ private def testWorkersDeterminism (ctx : Ctx) : IO Unit := do
     "--workers 4 refused a file the serial run analyzed"
   -- A repeated run over the artifact path is byte-identical too.
   let repeated ← checkRaw ctx 1 #["check", "--root", ".", "--json", "--no-cache",
-    "tests/check/Findings.lean"] "repeated"
-  let golden ← IO.FS.readFile (ctx.root / "tests" / "reporting" / "golden" / "json-check.json")
+    "tests/fixtures/check/Findings.lean"] "repeated"
+  let golden ← IO.FS.readFile (ctx.root / "tests" / "fixtures" / "reporting" / "golden" / "json-check.json")
   ensureEq "repeated artifact run changed shape" golden repeated.stdout
 
 /-- The two cache strategies. The exact frontend runs the whole registry and writes a syntax-tier
@@ -235,15 +235,15 @@ analyzer child. -/
 private def testCacheStrategies (ctx : Ctx) : IO Unit := do
   removeDirAll? ctx.cacheRoot
   let artifact ← checkRaw ctx 1 #["check", "--root", ".", "--json",
-    "tests/check/Findings.lean"] "cache artifact"
+    "tests/fixtures/check/Findings.lean"] "cache artifact"
   let moduleEntry ← theCacheEntry ctx "cache artifact"
   let moduleEntryText ← IO.FS.readFile moduleEntry
   let hit ← checkRaw ctx 1 #["check", "--root", ".", "--json",
-    "tests/check/Findings.lean"] "cache hit" (env := sabotageEnv)
+    "tests/fixtures/check/Findings.lean"] "cache hit" (env := sabotageEnv)
   ensureEq "a real cache hit changed the report" artifact.stdout hit.stdout
   removeDirAll? ctx.cacheRoot
   let fallback ← checkRaw ctx 1 #["check", "--root", ".", "--json",
-    "tests/check/Findings.lean"] "cache fallback" (env := fallbackEnv)
+    "tests/fixtures/check/Findings.lean"] "cache fallback" (env := fallbackEnv)
   let fallbackEntry ← theCacheEntry ctx "cache fallback"
   -- The shortcut wrote the source-tier subset; the exact frontend wrote the syntax-tier superset.
   -- The superset adds the preview syntax finding (FMT006) that the default report projects back
@@ -284,7 +284,7 @@ private def testCacheCanonical (ctx : Ctx) : IO Unit := do
   discard <| expectExit 0 "lake build +ArtifactLayout:leanFmtArtifact" "lake"
     #["build", "+ArtifactLayout:leanFmtArtifact"] (cwd? := some ctx.root)
   let select := #["check", "--root", ".", "--json", "--select", "FMT011",
-    "tests/compiler/ArtifactLayout.lean"]
+    "tests/fixtures/compiler/ArtifactLayout.lean"]
   removeDirAll? ctx.cacheRoot
   let artifact ← checkRaw ctx 0 select "canonical artifact"
   let artifactText ← IO.FS.readFile (← theCacheEntry ctx "canonical artifact")
@@ -321,9 +321,9 @@ or the cache, so a disabled analyzer alone would prove nothing. -/
 private def testSelectCollision (ctx : Ctx) : IO Unit := do
   removeDirAll? ctx.cacheRoot
   let every ← checkJson ctx 1 #["check", "--root", ".", "--json",
-    "tests/check/Findings.lean"] "select all"
+    "tests/fixtures/check/Findings.lean"] "select all"
   let selected ← checkJson ctx 0 #["check", "--root", ".", "--json", "--select", "FMT002",
-    "tests/check/Findings.lean"] "select FMT002"
+    "tests/fixtures/check/Findings.lean"] "select FMT002"
     (env := #[("LEAN_FMT_DISABLE_ARTIFACT", some "1"),
       ("LEAN_FMT_TEST_DISABLE_MODULE_EVIDENCE", some "1"),
       ("LEAN_FMT_TEST_ANALYZER", some "/usr/bin/false")])
@@ -341,25 +341,25 @@ private def testCacheCorruption (ctx : Ctx) : IO Unit := do
   let fallbackEntry ← theCacheEntry ctx "corruption base"
   writeFile fallbackEntry "{\"partial\":"
   discard <| checkRaw ctx 2 #["check", "--root", ".", "--json",
-    "tests/check/Findings.lean"] "cache corrupt" (env := sabotageEnv)
+    "tests/fixtures/check/Findings.lean"] "cache corrupt" (env := sabotageEnv)
   let repaired ← checkRaw ctx 1 #["check", "--root", ".", "--json",
-    "tests/check/Findings.lean"] "cache repaired" (env := fallbackEnv)
+    "tests/fixtures/check/Findings.lean"] "cache repaired" (env := fallbackEnv)
   writeFile (ctx.cacheRoot / "results" / (fallbackEntry.fileName.getD "entry" ++ ".tmp-interrupted"))
     "{\"partial\":"
   -- The stray temporary sits next to the entry, not at it: the run below must still hit.
   let stray ← checkRaw ctx 1 #["check", "--root", ".", "--json",
-    "tests/check/Findings.lean"] "cache partial" (env := sabotageEnv)
+    "tests/fixtures/check/Findings.lean"] "cache partial" (env := sabotageEnv)
   ensureEq "a stray temporary shadowed a valid entry" repaired.stdout stray.stdout
 
 /-- Exact source bytes and the trusted build-trace epoch independently invalidate a result. -/
 private def testCacheInvalidation (ctx : Ctx) : IO System.FilePath := do
-  let findingsPath := ctx.root / "tests" / "check" / "Findings.lean"
+  let findingsPath := ctx.root / "tests" / "fixtures" / "check" / "Findings.lean"
   let backup := ctx.work / "Findings.lean.backup"
   cpPreserve findingsPath backup
   IO.FS.withFile findingsPath .append fun handle =>
     handle.putStr "\n-- cache-source-invalidation\n"
   discard <| checkRaw ctx 2 #["check", "--root", ".", "--json",
-    "tests/check/Findings.lean"] "cache source miss" (env := sabotageEnv)
+    "tests/fixtures/check/Findings.lean"] "cache source miss" (env := sabotageEnv)
   cpPreserve backup findingsPath
   let trace := ctx.root / ".lake" / "build" / "lib" / "lean" / "Findings.trace"
   let traceBackup := ctx.work / "Findings.trace.backup"
@@ -369,9 +369,9 @@ private def testCacheInvalidation (ctx : Ctx) : IO System.FilePath := do
   -- identical, so it must still hit.
   IO.FS.withFile trace .append fun handle => handle.putStr "\n"
   let reference ← checkRaw ctx 1 #["check", "--root", ".", "--json",
-    "tests/check/Findings.lean"] "cache reference" (env := fallbackEnv)
+    "tests/fixtures/check/Findings.lean"] "cache reference" (env := fallbackEnv)
   let whitespace ← checkRaw ctx 1 #["check", "--root", ".", "--json",
-    "tests/check/Findings.lean"] "cache trace whitespace" (env := sabotageEnv)
+    "tests/fixtures/check/Findings.lean"] "cache trace whitespace" (env := sabotageEnv)
   ensureEq "trace whitespace forced a miss" reference.stdout whitespace.stdout
   cpPreserve traceBackup trace
   -- A recorded output name that no longer matches must force a miss. This tests the key that is
@@ -388,14 +388,14 @@ private def testCacheInvalidation (ctx : Ctx) : IO System.FilePath := do
   ensure (mutated != firstOutput) "trace mutation was vacuous"
   writeFile trace mutatedTrace.compress
   discard <| checkRaw ctx 2 #["check", "--root", ".", "--json",
-    "tests/check/Findings.lean"] "cache trace miss" (env := sabotageEnv)
+    "tests/fixtures/check/Findings.lean"] "cache trace miss" (env := sabotageEnv)
   cpPreserve traceBackup trace
   IO.FS.rename trace (ctx.work / "Findings.trace.missing")
   discard <| checkRaw ctx 2 #["check", "--root", ".", "--json",
-    "tests/check/Findings.lean"] "cache untrusted epoch" (env := sabotageEnv)
+    "tests/fixtures/check/Findings.lean"] "cache untrusted epoch" (env := sabotageEnv)
   IO.FS.rename (ctx.work / "Findings.trace.missing") trace
   let restored ← checkRaw ctx 1 #["check", "--root", ".", "--json",
-    "tests/check/Findings.lean"] "cache restored identity" (env := sabotageEnv)
+    "tests/fixtures/check/Findings.lean"] "cache restored identity" (env := sabotageEnv)
   ensureEq "restored identity did not hit" reference.stdout restored.stdout
   return reference.stdout
 
@@ -410,26 +410,26 @@ private def testDependencySourceEdit (ctx : Ctx) (reference : System.FilePath) :
   IO.FS.withFile projectSource .append fun handle =>
     handle.putStr "\n-- cache-project-source-invalidation\n"
   let hit ← checkRaw ctx 1 #["check", "--root", ".", "--json",
-    "tests/check/Findings.lean"] "dependency source hit" (env := sabotageEnv)
+    "tests/fixtures/check/Findings.lean"] "dependency source hit" (env := sabotageEnv)
   ensureEq "an unrelated source edit invalidated the entry" reference hit.stdout
   -- The served entry is the one a cacheless run under this same build state produces.
   let uncached ← checkRaw ctx 1 #["check", "--root", ".", "--json", "--no-cache",
-    "tests/check/Findings.lean"] "dependency source uncached"
+    "tests/fixtures/check/Findings.lean"] "dependency source uncached"
     (env := #[("LEAN_FMT_DISABLE_ARTIFACT", some "1"),
       ("LEAN_FMT_TEST_DISABLE_MODULE_EVIDENCE", some "1")])
   ensureEq "the cache disagrees with the same run without a cache" reference uncached.stdout
   cpPreserve backup projectSource
   let restored ← checkRaw ctx 1 #["check", "--root", ".", "--json",
-    "tests/check/Findings.lean"] "dependency source restored" (env := sabotageEnv)
+    "tests/fixtures/check/Findings.lean"] "dependency source restored" (env := sabotageEnv)
   ensureEq "the restored source did not hit" reference restored.stdout
 
 /-- A disabled cache performs neither reads nor writes. -/
 private def testCacheDisabled (ctx : Ctx) : IO Unit := do
   discard <| checkRaw ctx 2 #["check", "--root", ".", "--json", "--no-cache",
-    "tests/check/Findings.lean"] "cache disabled read" (env := sabotageEnv)
+    "tests/fixtures/check/Findings.lean"] "cache disabled read" (env := sabotageEnv)
   removeDirAll? ctx.cacheRoot
   discard <| checkRaw ctx 0 #["check", "--root", ".", "--json", "--no-cache",
-    "tests/check/Clean.lean"] "cache disabled write"
+    "tests/fixtures/check/Clean.lean"] "cache disabled write"
   ensure (!(← ctx.cacheRoot.pathExists)) "--no-cache still wrote the cache"
 
 /-- A mismatched toolchain refuses with the build's own wording. -/
@@ -444,19 +444,19 @@ private def testToolchainMismatch (ctx : Ctx) : IO Unit := do
 space-joined list arriving as one argument, quoted verbatim. -/
 private def testMissingFiles (ctx : Ctx) : IO Unit := do
   let missing ← checkRaw ctx 2 #["check", "--root", ".", "--json",
-    "tests/check/DoesNotExist.lean"] "missing"
-  ensureContains missing.stderr "selected file does not exist: tests/check/DoesNotExist.lean"
+    "tests/fixtures/check/DoesNotExist.lean"] "missing"
+  ensureContains missing.stderr "selected file does not exist: tests/fixtures/check/DoesNotExist.lean"
     "missing"
   let listMissing ← checkRaw ctx 2 #["check", "--root", ".", "--json",
-    "tests/check/Clean.lean tests/check/Findings.lean"] "missing list"
+    "tests/fixtures/check/Clean.lean tests/fixtures/check/Findings.lean"] "missing list"
   ensureContains listMissing.stderr
-    "selected file does not exist: tests/check/Clean.lean tests/check/Findings.lean" "missing list"
+    "selected file does not exist: tests/fixtures/check/Clean.lean tests/fixtures/check/Findings.lean" "missing list"
 
 /-- The source-security family end to end, on committed bytes: a bidi mark inside a line comment
 and a NUL inside a string literal, surfaced byte-exact in normalized coordinates. -/
 private def testSecurity (ctx : Ctx) : IO Unit := do
   let report ← checkJson ctx 1 #["check", "--root", ".", "--json", "--no-cache",
-    "tests/check/Security.lean"] "security"
+    "tests/fixtures/check/Security.lean"] "security"
   let files := ((jsonAt? report [.field "files"]).bind (·.getArr?.toOption)).getD #[]
   ensureEq "security: one file" 1 files.size
   ensureJsonAt files[0]! [.field "status"] (Lean.toJson "findings") "security"
@@ -474,11 +474,11 @@ private def testSecurity (ctx : Ctx) : IO Unit := do
 /-- `fix` on a source-only selection takes the source shortcut — with both the
 analyzer and the artifact disabled the fix still succeeds, proof it consulted neither. -/
 private def testFixShortcut (ctx : Ctx) : IO Unit := do
-  let findingsPath := ctx.root / "tests" / "check" / "Findings.lean"
+  let findingsPath := ctx.root / "tests" / "fixtures" / "check" / "Findings.lean"
   let backup := ctx.work / "Findings.effbak"
   cpPreserve findingsPath backup
   let report ← checkJson ctx 0 #["fix", "--root", ".", "--json", "--no-cache",
-    "--select", "FMT003", "tests/check/Findings.lean"] "fix shortcut"
+    "--select", "FMT003", "tests/fixtures/check/Findings.lean"] "fix shortcut"
     (env := #[("LEAN_FMT_DISABLE_ARTIFACT", some "1"),
       ("LEAN_FMT_TEST_ANALYZER", some "/usr/bin/false")])
   cpPreserve backup findingsPath
@@ -498,7 +498,7 @@ private def testRenderPath (ctx : Ctx) : IO Unit := do
   for (label, extra) in [("plain", #[]), ("fmt011", #["--preview", "--select", "FMT011"])] do
     let result ← checkRaw ctx 1
       (#["format", "--check", "--root", ".", "--json", "--no-cache"] ++ extra ++
-        #["tests/check/Findings.lean"]) s!"render path {label}" (env := profileEnv)
+        #["tests/fixtures/check/Findings.lean"]) s!"render path {label}" (env := profileEnv)
     ensureContains result.stderr "cache.path_exact_render=1" s!"render path {label}"
     -- A rendering run may not fetch the module artifact: nothing left can read it.
     ensure (!(result.stderr.splitOn "\n").any (·.startsWith "cache.official_artifact_"))

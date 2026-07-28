@@ -5,7 +5,7 @@ public import Test
 /-!
 # The performance suite
 
-Port of `tests/performance/run.sh`: durable per-commit performance gates.
+Port of `tests/fixtures/performance/run.sh`: durable per-commit performance gates.
 
 It does not assert a wall time. The same unchanged binary was measured
 over the same warm corpus at 3,977 ms and at 19,968 ms depending on nothing but what else the machine was doing, so
@@ -325,7 +325,7 @@ reparsing the candidate command by command under the contexts the first run pars
 frontend count is 1 and `reparsedCommands` is the fixture's one command. A regression to a second
 frontend shows here as 2/0 and doubles the cost of every validated file. -/
 private def testValidationCounts (ctx : Ctx) : IO Unit := do
-  let fixture := ctx.root / "tests" / "performance" / "validator-gate" / "Accepted.lean"
+  let fixture := ctx.root / "tests" / "fixtures" / "performance" / "validator-gate" / "Accepted.lean"
   let setup ← expectExit 0 "lake setup-file" "lake" #["setup-file", fixture.toString]
     (cwd? := some ctx.root)
   let setupPath := ctx.work / "validator-setup.json"
@@ -370,7 +370,7 @@ rendering run cannot: layout needs the live per-command environment, so `diff` a
 elaborate whatever the cache left unanswered and do not even fetch an artifact. Both arms select
 FMT011, so the two differ in one thing only, whether the artifact was available. -/
 private def testArtifactAcceleration (ctx : Ctx) : IO Unit := do
-  let fixture := ctx.root / "tests" / "compiler" / "ArtifactLayout.lean"
+  let fixture := ctx.root / "tests" / "fixtures" / "compiler" / "ArtifactLayout.lean"
   discard <| expectExit 0 "artifact build" "lake"
     #["build", "+ArtifactLayout:leanFmtArtifact"] (cwd? := some ctx.root)
     (env := #[("LEAN_NUM_THREADS", some "1")]) (timeoutMs := some 1800000)
@@ -391,7 +391,7 @@ private def testArtifactAcceleration (ctx : Ctx) : IO Unit := do
 /-- §1d/§1h bounded child lifetime and a reparsed candidate, on the rendering path — the one that
 still runs a frontend per unanswered file. -/
 private def testCandidateReparse (ctx : Ctx) : IO Unit := do
-  let fixture := ctx.root / "tests" / "compiler" / "ArtifactLayout.lean"
+  let fixture := ctx.root / "tests" / "fixtures" / "compiler" / "ArtifactLayout.lean"
   let render ← runProc ctx.app #["diff", "--no-cache", fixture.toString] (cwd? := some ctx.root)
     (env := #[("LEAN_FMT_PROFILE_PHASES", some "1"), ("LEAN_NUM_THREADS", some "1")])
     (timeoutMs := some 600000)
@@ -409,8 +409,8 @@ private def testParallelAdmission (ctx : Ctx) : IO Unit := do
   discard <| expectExit 0 "chmod" "chmod" #["+x", sleeper.toString]
   let result ← runProc ctx.app
     #["check", "--no-cache", "--workers", "2",
-      (ctx.root / "tests" / "check" / "Clean.lean").toString,
-      (ctx.root / "tests" / "check" / "Layout.lean").toString]
+      (ctx.root / "tests" / "fixtures" / "check" / "Clean.lean").toString,
+      (ctx.root / "tests" / "fixtures" / "check" / "Layout.lean").toString]
     (cwd? := some ctx.root)
     (env := #[("LEAN_FMT_DISABLE_ARTIFACT", some "1"),
       ("LEAN_FMT_TEST_DISABLE_MODULE_EVIDENCE", some "1"),
@@ -425,7 +425,7 @@ clean file, so this measures the resolution and nothing else — the point is th
 private def testWorkerResolution (ctx : Ctx) : IO Unit := do
   let profile (args : Array String) (threads : String) : IO String := do
     let result ← runProc ctx.app (#["check", "--no-cache"] ++ args ++
-      #[(ctx.root / "tests" / "check" / "Clean.lean").toString]) (cwd? := some ctx.root)
+      #[(ctx.root / "tests" / "fixtures" / "check" / "Clean.lean").toString]) (cwd? := some ctx.root)
       (env := #[("LEAN_FMT_PROFILE_PHASES", some "1"), ("LEAN_NUM_THREADS", some threads)])
       (timeoutMs := some 600000)
     return result.stderr
@@ -502,7 +502,7 @@ private def testG3Remainder (ctx : Ctx) : IO Unit := do
 *must* be non-zero if it is measuring at all: a 2 MB body with one finding at the very end costs
 tens of milliseconds to index and single-digit microseconds to not-measure. -/
 private def testPhaseMeasures (ctx : Ctx) : IO Unit := do
-  let fixtureDir := ctx.root / "tests" / "reporting" / "performance-gate"
+  let fixtureDir := ctx.root / "tests" / "fixtures" / "reporting" / "performance-gate"
   IO.FS.createDirAll fixtureDir
   try
     -- A control byte (FMT001) inside a comment: it fires anywhere, needs no frontend, and leaves
@@ -533,7 +533,7 @@ end Performance
 public def main (args : List String) : IO UInt32 := do
   let root ← repoRoot
   withTempDir fun work => do
-    let manifest ← IO.FS.readFile (root / "tests" / "performance" / "lean-fmt-self.txt")
+    let manifest ← IO.FS.readFile (root / "tests" / "fixtures" / "performance" / "lean-fmt-self.txt")
     let files := ((manifest.splitOn "\n").filter (· != "")).map
       fun relative => root.toString ++ "/" ++ relative
     let ctx : Performance.Ctx := {
