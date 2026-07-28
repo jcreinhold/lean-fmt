@@ -184,7 +184,7 @@ private def appendDocument (document? : Option Doc) (next : Doc) : Option Doc :=
 private def buildFormatDraft (normalized : String) (source : LosslessSource)
     (sourcePath : System.FilePath) (fileMap : Lean.FileMap) (ownership : CommentOwnership)
     (header : Lean.Syntax) (headerEnv : Lean.Environment) (headerOptions : Lean.Options)
-    (commands : Array LiveCommand) (width : Nat)
+    (commands : Array LiveCommand) (format : FormatConfig)
     (checkCancelled : IO Unit := pure ()) : IO (Except FormatterFailure FormatDraft) := do
   let bytes := normalized.toUTF8
   let headerRange : SourceRange := ⟨0, source.headerStop⟩
@@ -245,7 +245,7 @@ private def buildFormatDraft (normalized : String) (source : LosslessSource)
           (leading ++ Doc.verbatim (normalizedSlice bytes suppressed) ++ boundaryTail ++ separator)
       continue
     let result ← Lean.Core.CoreM.toIO'
-      (Formatter.NativeLayout.command normalized ownership command.stx placement.indent)
+      (Formatter.NativeLayout.command normalized ownership command.stx format placement.indent)
       { fileName := sourcePath.toString, fileMap, options := command.options }
       { env := command.env }
     let formatted ← match result with
@@ -296,7 +296,7 @@ private def buildFormatDraft (normalized : String) (source : LosslessSource)
       Doc.mark tailRange (Doc.verbatim (normalizedSlice bytes tailRange))
   let document := document?.getD Doc.empty
   checkCancelled
-  let rendered := renderDetailed width document
+  let rendered := renderDetailed format.lineWidth document format.pinnedComments
   return .ok {
     text := rendered.text
     sourceMap := rendered.sourceMap
@@ -484,14 +484,14 @@ frontend and reading the same two facts back out of its envelope. -/
 private def projectAndRender (mainModule : String) (normalized : String)
     (sourcePath : System.FilePath) (fileMap : Lean.FileMap) (headerStx : Lean.Syntax)
     (headerEnv : Lean.Environment) (headerOptions : Lean.Options)
-    (commands : Array LiveCommand) (terminal : LiveCommand) (width : Nat)
+    (commands : Array LiveCommand) (terminal : LiveCommand) (format : FormatConfig)
     (checkCancelled : IO Unit := pure ()) :
     IO (LosslessSource × Except FormatterFailure FormatDraft) := do
   let stxs := commands.map (·.stx)
   let projection := LosslessSource.ofSource mainModule normalized stxs (some terminal.stx)
   let ownership := commentOwnership normalized projection headerStx stxs (some terminal.stx)
   let draft ← buildFormatDraft normalized projection sourcePath fileMap ownership headerStx
-    headerEnv headerOptions commands width checkCancelled
+    headerEnv headerOptions commands format checkCancelled
   return (projection, draft)
 
 /-- Parse the candidate command by command under the contexts Lean used for the original, and accept
@@ -610,7 +610,7 @@ private unsafe def analyzeSnapshot (setup : Lean.ModuleSetup) (source : String)
     (module : ProcessedModule) (captureSemantic : Bool := false)
     (captureOccurrences : Bool := false) (captureComments : Bool := false)
     (captureFormatDraft : Bool := false) (validateFormatDraft : Bool := false)
-    (formatWidth : Nat := 100)
+    (format : FormatConfig := {})
     (trackSnapshot? : Option (Lean.Language.Lean.InitialSnapshot → IO Unit) := none)
     (checkCancelled : IO Unit := pure ()) :
     IO AnalysisEnvelope := do
@@ -658,7 +658,7 @@ private unsafe def analyzeSnapshot (setup : Lean.ModuleSetup) (source : String)
       let some ownership := ownership?
         | throw <| IO.userError "format draft has no comment ownership"
       match ← buildFormatDraft normalizedSource projection sourcePath input.fileMap ownership
-          module.headerStx commandState.env options liveCommands formatWidth checkCancelled with
+          module.headerStx commandState.env options liveCommands format checkCancelled with
       | .ok draft => pure (some draft, none)
       | .error failure => pure (none, some failure)
     else pure (none, none)
@@ -688,7 +688,7 @@ private unsafe def analyzeSnapshot (setup : Lean.ModuleSetup) (source : String)
         let candidateInput := Lean.Parser.mkInputContext candidateText sourcePath.toString
         let (candidateProjection, second?) ← projectAndRender setup.name.toString candidateText
           sourcePath candidateInput.fileMap candidateHeader commandState.env options
-          candidateCommands candidateTerminal formatWidth checkCancelled
+          candidateCommands candidateTerminal format checkCancelled
         match second? with
         | .error failure => pure (none, some { gate := .formatter, detail := failure.detail })
         | .ok second =>
@@ -707,7 +707,7 @@ private unsafe def analyzeSnapshot (setup : Lean.ModuleSetup) (source : String)
           candidateFrontend setup module first.text sourcePath trackSnapshot?
         checkCancelled
         let candidate ← analyzeSnapshot setup first.text sourcePath candidateInput
-          candidateModule (captureFormatDraft := true) (formatWidth := formatWidth)
+          candidateModule (captureFormatDraft := true) (format := format)
           (trackSnapshot? := trackSnapshot?) (checkCancelled := checkCancelled)
         if !candidate.diagnostics.isEmpty then
           pure (none, some {
@@ -742,11 +742,11 @@ unsafe def analyzeExact (setup : Lean.ModuleSetup) (source : String)
     (sourcePath : System.FilePath) (captureSemantic : Bool := false)
     (captureOccurrences : Bool := false) (captureComments : Bool := false)
     (captureFormatDraft : Bool := false) (validateFormatDraft : Bool := false)
-    (formatWidth : Nat := 100) (loadDynlibs : Bool := true) : IO AnalysisEnvelope := do
+    (format : FormatConfig := {}) (loadDynlibs : Bool := true) : IO AnalysisEnvelope := do
   let run ← processSource setup source sourcePath (loadDynlibs := loadDynlibs)
   analyzeSnapshot setup source sourcePath run.input (ProcessedModule.ofInitial run.snapshot)
     captureSemantic captureOccurrences captureComments captureFormatDraft validateFormatDraft
-    formatWidth
+    format
 
 structure IncrementalCounters where
   updates : Nat := 0
@@ -819,7 +819,7 @@ private def IncrementalAnalyzer.releaseFlight (analyzer : IncrementalAnalyzer) :
 private unsafe def IncrementalAnalyzer.run (analyzer : IncrementalAnalyzer)
     (setup : Lean.ModuleSetup) (source : String) (sourcePath : System.FilePath)
     (captureSemantic : Bool) (captureOccurrences : Bool) (captureComments : Bool)
-    (captureFormatDraft : Bool) (validateFormatDraft : Bool) (formatWidth : Nat) :
+    (captureFormatDraft : Bool) (validateFormatDraft : Bool) (format : FormatConfig) :
     IO IncrementalResult := do
   let cancelRef ← IO.mkRef false
   let state ← analyzer.state.atomically fun ref => do
@@ -860,7 +860,7 @@ private unsafe def IncrementalAnalyzer.run (analyzer : IncrementalAnalyzer)
       -- `checkCancelled` between commands instead.
       analyzeSnapshot setup source sourcePath run.input (ProcessedModule.ofInitial run.snapshot)
         captureSemantic captureOccurrences captureComments captureFormatDraft validateFormatDraft
-        formatWidth (some trackSnapshot) checkCancelled
+        format (some trackSnapshot) checkCancelled
     catch error =>
       if ← cancelRef.get then
         pure { artifact? := none, diagnostics := #["analysis cancelled"] }
@@ -902,7 +902,7 @@ private unsafe def IncrementalAnalyzer.analyzeUnsafe (analyzer : IncrementalAnal
     (captureSemantic : Bool := false) (captureOccurrences : Bool := false)
     (captureComments : Bool := false) : IO IncrementalResult :=
   analyzer.run setup source sourcePath captureSemantic captureOccurrences captureComments
-    false false 100
+    false false {}
 
 @[implemented_by IncrementalAnalyzer.analyzeUnsafe]
 opaque IncrementalAnalyzer.analyze (analyzer : IncrementalAnalyzer)
@@ -914,14 +914,14 @@ opaque IncrementalAnalyzer.analyze (analyzer : IncrementalAnalyzer)
 exact formatting. The validated canonical layout, if any, is in `result.envelope.canonical?`. -/
 private unsafe def IncrementalAnalyzer.formatUnsafe (analyzer : IncrementalAnalyzer)
     (setup : Lean.ModuleSetup) (source : String) (sourcePath : System.FilePath)
-    (width : Nat := 100) (captureSemantic : Bool := false)
+    (format : FormatConfig := {}) (captureSemantic : Bool := false)
     (captureOccurrences : Bool := false) : IO IncrementalResult :=
-  analyzer.run setup source sourcePath captureSemantic captureOccurrences false false true width
+  analyzer.run setup source sourcePath captureSemantic captureOccurrences false false true format
 
 @[implemented_by IncrementalAnalyzer.formatUnsafe]
 opaque IncrementalAnalyzer.format (analyzer : IncrementalAnalyzer)
     (setup : Lean.ModuleSetup) (source : String) (sourcePath : System.FilePath)
-    (width : Nat := 100) (captureSemantic : Bool := false)
+    (format : FormatConfig := {}) (captureSemantic : Bool := false)
     (captureOccurrences : Bool := false) : IO IncrementalResult
 
 /-- Cancel the current update, if any. Lean recursively cancels only snapshot subtrees it
@@ -960,13 +960,13 @@ opaque IncrementalAnalyzer.close (analyzer : IncrementalAnalyzer) : IO Unit
 production comparator and second formatting pass. Product formatting never accepts candidate bytes
 from a caller; this operation exists so mutation fixtures can exercise the real gates. -/
 unsafe def validateCandidateExact (setup : Lean.ModuleSetup) (source candidate : String)
-    (sourcePath : System.FilePath) (width : Nat) : IO CandidateValidationEnvelope := do
+    (sourcePath : System.FilePath) (format : FormatConfig := {}) : IO CandidateValidationEnvelope := do
   let original ← analyzeExact setup source sourcePath (captureFormatDraft := true)
-    (formatWidth := width)
+    (format := format)
   if !original.diagnostics.isEmpty then
     return candidateFailure .diagnostics (String.intercalate "\n" original.diagnostics.toList)
   let reparsed ← analyzeExact setup candidate sourcePath (captureFormatDraft := true)
-    (formatWidth := width) (loadDynlibs := false)
+    (format := format) (loadDynlibs := false)
   if !reparsed.diagnostics.isEmpty then
     return candidateFailure .diagnostics (String.intercalate "\n" reparsed.diagnostics.toList)
   match original.artifact?, original.formatDraft?, reparsed.artifact?, reparsed.formatDraft?,

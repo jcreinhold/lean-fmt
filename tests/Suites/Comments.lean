@@ -2,6 +2,8 @@ module
 
 public import Test
 
+import all LeanFmt.Config
+
 /-!
 # The comments suite: actual-syntax comment ownership
 
@@ -118,6 +120,38 @@ private def testLayoutWidths (root : System.FilePath) (application : String)
     "layout CRLF"
   ensure (texts[0]! ≠ texts[1]!) "configured width did not reflow the commented fixture"
 
+/-- Import rows and their trailing comments (`tests/fixtures/comments/Imports.lean`). Layout is
+comment-transparent: at 100 the 140-character import row stays whole because its code fits, and at
+50 an ordinary comment follows its row's split while the default-pinned `shake: keep` row stays
+flat with code that overflows on its own — and `pinned-comments = []` releases it. -/
+private def testImportComments (root : System.FilePath) (application : String)
+    (work : System.FilePath) : IO Unit := do
+  let setup ← setupFile root work "tests/fixtures/comments/Imports.lean"
+  let wide ← analyzeExact root application setup
+    "tests/fixtures/comments/Imports.lean" "tests/fixtures/comments/Imports.lean" "4:100"
+  let (_, wideText) ← canonical wide "import comments width 100"
+  ensureContains wideText
+    "public import Lean.Data.Json -- this trailing comment makes the line longer than one hundred characters and must not split the import row\n"
+    "a long trailing comment split the import it trails"
+  let narrow ← analyzeExact root application setup
+    "tests/fixtures/comments/Imports.lean" "tests/fixtures/comments/Imports.lean" "4:50"
+  let (_, narrowText) ← canonical narrow "import comments width 50"
+  ensureContains narrowText
+    "public import Lean.PrettyPrinter.Delaborator.FieldNotation -- shake: keep (required by artifact evidence for this module)\n"
+    "the default-pinned row did not hold flat with its code over width"
+  ensureContains narrowText
+    "public\nimport\nLean.PrettyPrinter.Delaborator.FieldNotation -- an ordinary comment\n"
+    "an over-width import with an ordinary comment did not split"
+  ensure ((narrowText.splitOn "public\nimport\nLean.PrettyPrinter.Delaborator.FieldNotation").length == 3)
+    "expected exactly the two unpinned rows to split"
+  let unpinned : LeanFmt.Internal.FormatConfig := { lineWidth := 50, pinnedComments := #[] }
+  let released ← analyzeExact root application setup
+    "tests/fixtures/comments/Imports.lean" "tests/fixtures/comments/Imports.lean"
+    s!"4j{(Lean.toJson unpinned).compress}"
+  let (_, releasedText) ← canonical released "import comments unpinned"
+  ensure ((releasedText.splitOn "public\nimport\nLean.PrettyPrinter.Delaborator.FieldNotation").length == 4)
+    "pinned-comments = [] did not release the `shake: keep` row"
+
 end CommentsSuite
 
 public def main (args : List String) : IO UInt32 := do
@@ -131,6 +165,7 @@ public def main (args : List String) : IO UInt32 := do
       { name := "crlf-identical",
         run := CommentsSuite.testCrlfIdentical root application work borrowedSetup },
       { name := "local-syntax", run := CommentsSuite.testLocalSyntax root application work },
-      { name := "layout-widths", run := CommentsSuite.testLayoutWidths root application work }
+      { name := "layout-widths", run := CommentsSuite.testLayoutWidths root application work },
+      { name := "import-comments", run := CommentsSuite.testImportComments root application work }
     ]
     runCases "comments" cases args

@@ -280,6 +280,64 @@ extend-select = [\"FMT009\"]\n"
       write ".lean-fmt.toml" s!"[format]\nline-width = {width}\n"
       let bounded ← try discard <| Discovery.run root none; pure false catch _ => pure true
       ensure bounded s!"line-width = {width} was accepted outside 1..1000"
+    -- `pinned-comments` and `declaration-body`: defaults hold without a config; setting them
+    -- parses; `[]` is a real value (it disables pinning, where absence would keep the default);
+    -- a child inherits an unset key and replaces a set one; both misplaced at the top level and
+    -- both malformed are errors.
+    write ".lean-fmt.toml" "[format]\nline-width = 100\n"
+    let defaults ← Discovery.run root none
+    ensure (defaults.fallback.format.pinnedComments == #["shake: keep"])
+      "pinned-comments lost its default"
+    ensure (defaults.fallback.format.declarationBody == .nextLine)
+      "declaration-body lost its default"
+    write ".lean-fmt.toml"
+      "[format]\npinned-comments = [\"fmt: off\", \"shake: keep\"]\ndeclaration-body = \"same-line\"\n"
+    let configured ← Discovery.run root none
+    ensure (configured.fallback.format.pinnedComments == #["fmt: off", "shake: keep"])
+      "pinned-comments did not parse"
+    ensure (configured.fallback.format.declarationBody == .sameLine)
+      "declaration-body did not parse"
+    write ".lean-fmt.toml" "[format]\npinned-comments = []\n"
+    let disabled ← Discovery.run root none
+    ensure (disabled.fallback.format.pinnedComments.isEmpty)
+      "pinned-comments = [] kept the default instead of disabling"
+    write "pins.toml" "[format]\npinned-comments = [\"shake: keep\"]\ndeclaration-body = \"same-line\"\n"
+    write "sub/.lean-fmt.toml" "extend = \"../pins.toml\"\n[format]\npinned-comments = [\"fmt: off\"]\n"
+    write "sub/deeper/.lean-fmt.toml" "extend = \"../.lean-fmt.toml\"\n"
+    write "sub/deeper/C.lean" "module\n"
+    let pinnedChain ← Discovery.run root none
+    ensure ((pinnedChain.configFor "sub/B.lean").format.pinnedComments == #["fmt: off"])
+      "a child's pinned-comments did not replace the parent's"
+    ensure ((pinnedChain.configFor "sub/deeper/C.lean").format.pinnedComments == #["fmt: off"])
+      "an unset child's pinned-comments did not inherit"
+    ensure ((pinnedChain.configFor "sub/deeper/C.lean").format.declarationBody == .sameLine)
+      "an unset child's declaration-body did not inherit"
+    IO.FS.removeFile (root / "sub" / "deeper" / ".lean-fmt.toml")
+    write "sub/.lean-fmt.toml" "[format]\nline-width = 42\n"
+    write ".lean-fmt.toml" "pinned-comments = [\"shake: keep\"]\n"
+    let misplacedPins ← try discard <| Discovery.run root none; pure false catch _ => pure true
+    ensure misplacedPins "pinned-comments at the top level was accepted"
+    write ".lean-fmt.toml" "declaration-body = \"same-line\"\n"
+    let misplacedBody ← try discard <| Discovery.run root none; pure false catch _ => pure true
+    ensure misplacedBody "declaration-body at the top level was accepted"
+    write ".lean-fmt.toml" "[format]\npinned-comments = [\"\"]\n"
+    let emptyPhrase ← try discard <| Discovery.run root none; pure false catch _ => pure true
+    ensure emptyPhrase "an empty pinned-comments phrase was accepted"
+    write ".lean-fmt.toml" "[format]\ndeclaration-body = \"flat\"\n"
+    let badBody ← try discard <| Discovery.run root none; pure false catch _ => pure true
+    ensure badBody "an unknown declaration-body value was accepted"
+    IO.FS.removeFile (root / "sub" / ".lean-fmt.toml")
+    -- Both new keys are [format] keys: each moves the configuration identity.
+    write ".lean-fmt.toml" "[format]\nline-width = 100\n"
+    let identityBase ← Discovery.run root none
+    write ".lean-fmt.toml" "[format]\nline-width = 100\npinned-comments = []\n"
+    let identityPins ← Discovery.run root none
+    ensure (identityBase.fallback.format.identityString != identityPins.fallback.format.identityString)
+      "pinned-comments did not change the configuration identity"
+    write ".lean-fmt.toml" "[format]\nline-width = 100\ndeclaration-body = \"same-line\"\n"
+    let identityBody ← Discovery.run root none
+    ensure (identityBase.fallback.format.identityString != identityBody.fallback.format.identityString)
+      "declaration-body did not change the configuration identity"
     -- A `.gitignore` prunes, and a nearer file's negation wins over a farther file's exclusion.
     write ".lean-fmt.toml" "[format]\nline-width = 100\n"
     write ".gitignore" "build/\n*.tmp.lean\n"
@@ -317,6 +375,12 @@ extend-select = [\"FMT009\"]\n"
       "config introspection lost a setting's file and line"
     ensure (described.any fun (key, _, origin) => key == "include" && origin == "default")
       "an unset setting was not reported as a default"
+    ensure (described.any fun (key, value, origin) =>
+        key == "format.pinned-comments" && value == "[\"shake: keep\"]" && origin == "default")
+      "config introspection lost the pinned-comments default"
+    ensure (described.any fun (key, value, origin) =>
+        key == "format.declaration-body" && value == "next-line" && origin == "default")
+      "config introspection lost the declaration-body default"
   finally
     IO.FS.removeDirAll directory
 

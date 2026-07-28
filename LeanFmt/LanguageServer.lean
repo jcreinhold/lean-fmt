@@ -278,15 +278,15 @@ private structure DocumentEnvelope where
   version : Int
   semantic : Bool
   occurrences : Bool
-  width? : Option Nat
+  format? : Option FormatConfig
   envelope : AnalysisEnvelope
 
 private def DocumentEnvelope.meets (cached : DocumentEnvelope) (version : Int)
-    (semantic occurrences : Bool) (width? : Option Nat) : Bool :=
+    (semantic occurrences : Bool) (format? : Option FormatConfig) : Bool :=
   cached.version == version && (!semantic || cached.semantic) &&
     (!occurrences || cached.occurrences) &&
-    match width? with
-    | some width => cached.width? == some width
+    match format? with
+    | some format => cached.format? == some format
     | none => true
 
 /-- Why a document cannot be served. The text is the user-facing message; it names the URI
@@ -736,13 +736,13 @@ private def incrementalEnvelope (session : Session) (document : Document)
   let setup ← session.run.setupSnapshot target
   let semantic := plan.requiredTier == .semantic
   let occurrences := (plan.demandedCaps (mode == .fix)).occurrences
-  let width? := if mode.rendersCanonical then some target.config.format.lineWidth else none
+  let format? := if mode.rendersCanonical then some target.config.format else none
   if let some cached := (← session.envelopes.get).get? document.uri then
-    if cached.meets document.version semantic occurrences width? then
+    if cached.meets document.version semantic occurrences format? then
       return cached.envelope
   let run (analyzer : IncrementalAnalyzer) := withAnalyzerCancellation session analyzer cancel? do
     let result ← if mode.rendersCanonical then
-        analyzer.format setup document.source document.path target.config.format.lineWidth
+        analyzer.format setup document.source document.path target.config.format
           (captureSemantic := semantic) (captureOccurrences := occurrences)
       else
         analyzer.analyze setup document.source document.path
@@ -759,7 +759,7 @@ private def incrementalEnvelope (session : Session) (document : Document)
   if let some current := (← session.documents.get).get? document.uri then
     if current.version == document.version then
       session.envelopes.modify (·.insert document.uri {
-        version := document.version, semantic, occurrences, width?, envelope })
+        version := document.version, semantic, occurrences, format?, envelope })
   return envelope
 
 private def incrementalReport (session : Session) (document : Document)

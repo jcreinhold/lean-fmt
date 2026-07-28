@@ -2,6 +2,8 @@ module
 
 public import Test
 
+import all LeanFmt.Config
+
 /-!
 # The declaration-formatter suite
 
@@ -120,6 +122,30 @@ private def testComments (root setup : System.FilePath) (application : String) :
       "/-- The field payload is exact. -/"] do
     ensure ((text.splitOn payload).length == 2) s!"comments: {payload} does not occur exactly once"
 
+/-- `declaration-body`: the canonical `next-line` default breaks even a short body in both
+directions; `same-line` joins when the joined line fits `line-width` — source-flat and
+already-broken alike — and breaks exactly as the default when it does not. The bodies live in a
+scratch file so the two configurations render the same source through the full config plumbing. -/
+private def testDeclarationBody (root work setup : System.FilePath) (application : String) :
+    IO Unit := do
+  let fixture := work / "Bodies.lean"
+  writeFile fixture
+    "module\n\ndef foo := 1\n\ndef bar :=\n  2\n\ndef baz := Nat.succ (Nat.succ (Nat.succ (Nat.succ (Nat.succ (Nat.succ (Nat.succ Nat.zero)))))) + 1111\n"
+  let canonicalFormat : LeanFmt.Internal.FormatConfig := {}
+  let report ← analyzeExact root application setup fixture.toString "Bodies.lean"
+    s!"4j{(Lean.toJson canonicalFormat).compress}"
+  let (_, text) ← canonical report "declaration-body default"
+  ensureContains text "def foo :=\n  1" "the default did not keep the canonical body break"
+  ensureContains text "def bar :=\n  2" "the default joined an already-broken body"
+  let sameLine : LeanFmt.Internal.FormatConfig := { declarationBody := .sameLine }
+  let joined ← analyzeExact root application setup fixture.toString "Bodies.lean"
+    s!"4j{(Lean.toJson sameLine).compress}"
+  let (_, joinedText) ← canonical joined "declaration-body same-line"
+  ensureContains joinedText "def foo := 1\n" "same-line did not keep a source-flat body flat"
+  ensureContains joinedText "def bar := 2\n" "same-line did not join an already-broken body"
+  ensureContains joinedText "def baz :=\n  Nat.succ"
+    "same-line joined a body whose joined line overflows"
+
 end DeclarationFormatter
 
 public def main (args : List String) : IO UInt32 := do
@@ -135,6 +161,8 @@ public def main (args : List String) : IO UInt32 := do
       { name := "narrow-layout",
         run := DeclarationFormatter.testNarrowLayout root setup application },
       { name := "wide-layout", run := DeclarationFormatter.testWideLayout root setup application },
-      { name := "comments", run := DeclarationFormatter.testComments root setup application }
+      { name := "comments", run := DeclarationFormatter.testComments root setup application },
+      { name := "declaration-body",
+        run := DeclarationFormatter.testDeclarationBody root work setup application }
     ]
     runCases "declaration-formatter" cases args

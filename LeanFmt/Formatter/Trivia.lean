@@ -33,7 +33,10 @@ def formatIgnoreNext? (ownership : CommentOwnership) (stx : Lean.Syntax) : Optio
 
 private def commentDocument (ownership : CommentOwnership) (comment : Comment) : Doc :=
   let payload := Comments.payload ownership comment
-  if payload.contains '\n' then Doc.verbatim payload else Doc.text payload
+  -- Single-line payloads are layout-transparent (`Doc.comment`): their width never drives a group
+  -- decision. A multi-line payload forces a boundary by itself, so there is no fit question it
+  -- could distort, and `verbatim` answers it.
+  if payload.contains '\n' then Doc.verbatim payload else Doc.comment payload
 
 /- Join a run of comments that lead something, preserving a blank line the source put between two of
 them.

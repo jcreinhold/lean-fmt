@@ -90,9 +90,9 @@ private unsafe def incrementalAnalyzerSpec (setupPath sourcePath : String) : IO 
   ensure (sameEnvelope repaired.envelope repairedFresh && repaired.reusedCommands > 0)
     "repair did not resume from the last-good snapshot"
 
-  let formatted ← analyzer.format setup lastGood path 72
+  let formatted ← analyzer.format setup lastGood path { lineWidth := 72 }
   let formattedFresh ← analyzeExact setup lastGood path (validateFormatDraft := true)
-    (formatWidth := 72) (loadDynlibs := false)
+    (format := { lineWidth := 72 }) (loadDynlibs := false)
   ensure (sameEnvelope formatted.envelope formattedFresh)
     "incremental format differs from fresh validated formatting"
   -- An editor keystroke pays one frontend, not two: the candidate is reparsed under the contexts

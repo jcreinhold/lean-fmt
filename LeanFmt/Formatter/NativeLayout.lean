@@ -7,6 +7,7 @@ Authors: Jacob Reinhold
 module
 
 import Lean.Parser.StrInterpolation
+import all LeanFmt.Config
 import all LeanFmt.Formatter
 import all LeanFmt.Formatter.Trivia
 
@@ -704,9 +705,38 @@ is `:= by rfl` at a width narrow enough that Lean would have broken it; that sta
 columns over a soft target the source spellings can already exceed.
 
 `:= Id.run do` is deliberately not matched. Its body's head is an application, so `ppAllowUngrouped`
-never applied and the hard line is correct. -/
-private partial def collectUngroupedBodyStarts (stx : Lean.Syntax)
-    (starts : Array Nat := #[]) : Array Nat :=
+never applied and the hard line is correct.
+
+`declaration-body = "same-line" asks for the other answer at the same boundary, for every body:
+keep the body on the `:=` line when the joined spelling fits `line-width`, joining an
+already-broken body that fits. `joinedBodyFits` is that fit question, answered on the source
+spelling because a flat body's rendered bytes are the source's bytes. -/
+private def flattenWhitespace (value : String) : String :=
+  let step (acc : Bool × String) (character : Char) : Bool × String :=
+    let (blank?, out) := acc
+    if character == ' ' || character == '\t' || character == '\n' || character == '\r' then
+      (true, out)
+    else if blank? then
+      (false, if out.isEmpty then out.push character else (out.push ' ').push character)
+    else (false, out.push character)
+  (value.foldl step (true, "")).2
+
+/-- Would the line the `:=` sits on, joined through the body's end, fit `line-width`? The measure
+is the source from that line's first column with every whitespace run collapsed to one space —
+the same bytes the renderer spells for a flat body. Over-measurement (a nested `let`'s line
+carries its whole command prefix) only ever declines a join, never accepts one that overflows. -/
+private def joinedBodyFits (source : String) (width : Nat) (declVal body : Lean.Syntax) : Bool :=
+  match sourceRange? declVal, sourceRange? body with
+  | some valRange, some bodyRange =>
+    let before := slice source ⟨0, valRange.start⟩
+    let lineStart := match before.revFind (· == '\n') with
+      | some position => position.byteIdx + 1
+      | none => 0
+    (flattenWhitespace (slice source ⟨lineStart, bodyRange.stop⟩)).length <= width
+  | _, _ => false
+
+private partial def collectUngroupedBodyStarts (declarationBody : DeclarationBody) (source : String)
+    (width : Nat) (stx : Lean.Syntax) (starts : Array Nat := #[]) : Array Nat :=
   match stx with
   | .node _ kind children =>
     let starts :=
@@ -715,7 +745,12 @@ private partial def collectUngroupedBodyStarts (stx : Lean.Syntax)
         -- nothing, so the body term is this node's second child with no wrapper in between.
         match children[1]? with
         | some body =>
-          if body.isOfKind ``Lean.Parser.Term.byTactic then
+          let join :=
+            if body.isOfKind ``Lean.Parser.Term.byTactic then true
+            else match declarationBody with
+              | .nextLine => false
+              | .sameLine => joinedBodyFits source width stx body
+          if join then
             match (selectedLeafRanges body)[0]? with
             | some range => starts.push range.start
             | none => starts
@@ -724,7 +759,7 @@ private partial def collectUngroupedBodyStarts (stx : Lean.Syntax)
       else starts
     let children := if kind == Lean.choiceKind then children[0]?.toArray else children
     children.foldl (init := starts) fun starts child =>
-      collectUngroupedBodyStarts child starts
+      collectUngroupedBodyStarts declarationBody source width child starts
   | _ => starts
 
 /- Where a command nested inside another command begins.
@@ -2012,7 +2047,7 @@ private partial def nativeSize : Std.Format → Nat
 only the structurally measured boundary and offside corrections collected below. `baseIndent` is the
 column the resulting registered leaf is rendered at; an exact island's dedent must cancel it. -/
 def command (source : String) (ownership : CommentOwnership) (stx : Lean.Syntax)
-    (baseIndent : Nat := 0) : Lean.CoreM (Except FormatterFailure Document) := do
+    (format : FormatConfig) (baseIndent : Nat := 0) : Lean.CoreM (Except FormatterFailure Document) := do
   let trace ← Formatter.trace ownership .command stx
   -- The same `format.indent` Lean's own `ppIndent`/`ppDedent` read, so a constraint that cancels one
   -- level of native indentation cancels exactly the amount native layout introduced.
@@ -2064,7 +2099,8 @@ alternatives: alternative 0 is {expected}, alternative {alternative} is {actual}
           (slice source ⟨previous.range.stop, range.start⟩).contains '\n'
         some (range.start, if broken then BoundaryLayout.hard else BoundaryLayout.flat)
   let boundaryStarts : Array (Nat × BoundaryLayout) :=
-    (collectUngroupedBodyStarts stripped (collectReturnTermStarts stripped)).map
+    (collectUngroupedBodyStarts format.declarationBody source format.lineWidth stripped
+        (collectReturnTermStarts stripped)).map
         (·, BoundaryLayout.flat) ++
       (collectIndentedSequenceStarts stripped).map (·, BoundaryLayout.hard) ++
       nestedCommandStarts.map (·, BoundaryLayout.dedented) ++

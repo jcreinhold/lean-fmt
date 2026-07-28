@@ -26,6 +26,13 @@ native tree nor renders it before width selection. A registered leaf is a fit bo
 custom groups, so core rules compose it as a leaf rather than inside a custom group whose decision
 would require inspecting Lean's private layout tree.
 
+Comments are layout-transparent: a `comment` leaf renders its bytes exactly like `text`, but carries
+a zero fit measure, so no group decision is ever driven by a comment's width — a trailing comment
+overflows the margin rather than splitting the code it trails. The one counterweight is pinning:
+a group that would otherwise break because its code alone overflows still flattens when the line it
+sits on carries a pinned comment (`pinned-comments`), because splitting there would detach a
+tooling directive from the construct it annotates.
+
 Columns count codepoints, matching `Std.Format`; source and output ranges count UTF-8 bytes. -/
 
 namespace LeanFmt.Internal
@@ -33,13 +40,19 @@ namespace LeanFmt.Internal
 private structure LineMeasure where
   width : Nat
   boundary : Bool
+  /-- The first comment text between here and the next forced break, if any. Renderers match it
+  against the pinned phrases when a group decision is made; one entry suffices because a line
+  comment is always the last comment on its line, and stacked block comments are the rare case the
+  first entry already represents. -/
+  comment? : Option String := none
 
 namespace LineMeasure
 
-def empty : LineMeasure := ⟨0, false⟩
+def empty : LineMeasure := ⟨0, false, none⟩
 
 def append (left right : LineMeasure) : LineMeasure :=
-  if left.boundary then left else ⟨left.width + right.width, right.boundary⟩
+  if left.boundary then left
+  else ⟨left.width + right.width, right.boundary, left.comment? <|> right.comment?⟩
 
 end LineMeasure
 
@@ -47,6 +60,7 @@ mutual
   private inductive DocKind where
     | empty
     | text (value : String)
+    | comment (value : String)
     | line (flat : String)
     | hard
     | blank
@@ -99,7 +113,7 @@ private def lastLine (value : String) : String :=
   | none => value
 
 private def literalMeasure (value : String) : LineMeasure :=
-  if spansLines value then ⟨width (firstLine value), true⟩ else ⟨width value, false⟩
+  if spansLines value then ⟨width (firstLine value), true, none⟩ else ⟨width value, false, none⟩
 
 /-- The empty document. -/
 def empty : Doc := .mk .empty .empty .empty 1 true
@@ -109,16 +123,22 @@ def text (value : String) : Doc :=
   let measure := literalMeasure value
   .mk (.text value) measure measure 1 (!spansLines value)
 
+/-- A single-line comment payload. Renders exactly like `text`, but carries a zero fit measure and
+discloses its text, so no group decision is driven by a comment's width while a pinned comment can
+still hold its line flat. -/
+def comment (value : String) : Doc :=
+  .mk (.comment value) ⟨0, false, some value⟩ ⟨0, false, some value⟩ 1 (!spansLines value)
+
 /-- A break opportunity with its exact flat spelling. A newline in the flat spelling is rejected. -/
 def line (flat : String) : Doc :=
-  .mk (.line flat) (literalMeasure flat) ⟨0, true⟩ 1 (!spansLines flat)
+  .mk (.line flat) (literalMeasure flat) ⟨0, true, none⟩ 1 (!spansLines flat)
 
 /-- An unconditional newline at the current indentation. -/
-def hard : Doc := .mk .hard ⟨0, true⟩ ⟨0, true⟩ 1 true
+def hard : Doc := .mk .hard ⟨0, true, none⟩ ⟨0, true, none⟩ 1 true
 
 /-- One empty line followed by the current indentation. Unlike two adjacent `hard` nodes, this does
 not materialize indentation whitespace on the empty line. -/
-def blank : Doc := .mk .blank ⟨0, true⟩ ⟨0, true⟩ 1 true
+def blank : Doc := .mk .blank ⟨0, true, none⟩ ⟨0, true, none⟩ 1 true
 
 /-- Literal text that may span lines. Interior lines are never re-indented. -/
 def verbatim (value : String) : Doc :=
@@ -149,7 +169,7 @@ def mark (source : SourceRange) (body : Doc) : Doc :=
 /-- Embed one formatter-registry result without converting its native tree. The leaf is interpreted
 at render time and forms a fit boundary for surrounding custom groups. -/
 def registered (format : Std.Format) : Doc :=
-  .mk (.registered format) ⟨0, true⟩ ⟨0, true⟩ 1 true
+  .mk (.registered format) ⟨0, true, none⟩ ⟨0, true, none⟩ 1 true
 
 end Doc
 
@@ -242,7 +262,8 @@ private instance : Std.Format.MonadPrettyFormat (StateM RenderState) where
   startTag _ := modify fun state => { state with nativeEvents := state.nativeEvents + 1 }
   endTags count := modify fun state => { state with nativeEvents := state.nativeEvents + count }
 
-private partial def renderWork (width : Nat) : Work → StateM RenderState Unit
+private partial def renderWork (width : Nat) (pinnedPhrases : Array String) :
+    Work → StateM RenderState Unit
   | .empty => pure ()
   | .more command _ rest => do
     modify fun state => { state with workSteps := state.workSteps + 1 }
@@ -252,28 +273,31 @@ private partial def renderWork (width : Nat) : Work → StateM RenderState Unit
       set { state with marks := state.marks.push {
         source
         output := ⟨outputStart, state.outputBytes⟩ } }
-      renderWork width rest
+      renderWork width pinnedPhrases rest
     | .document indent mode document =>
       match document.kind with
-      | .empty => renderWork width rest
+      | .empty => renderWork width pinnedPhrases rest
       | .text value =>
         modify (appendLiteral · value)
-        renderWork width rest
+        renderWork width pinnedPhrases rest
+      | .comment value =>
+        modify (appendLiteral · value)
+        renderWork width pinnedPhrases rest
       | .verbatim value =>
         modify (appendLiteral · value)
-        renderWork width rest
+        renderWork width pinnedPhrases rest
       | .cat left right =>
-        renderWork width <| rest.push (.document indent mode right)
+        renderWork width pinnedPhrases <| rest.push (.document indent mode right)
           |>.push (.document indent mode left)
       | .nest extra body =>
-        renderWork width <| rest.push (.document (indent + extra) mode body)
+        renderWork width pinnedPhrases <| rest.push (.document (indent + extra) mode body)
       | .mark source body =>
         let outputStart := (← get).outputBytes
-        renderWork width <| rest.push (.closeMark source outputStart)
+        renderWork width pinnedPhrases <| rest.push (.closeMark source outputStart)
           |>.push (.document indent mode body)
       | .hard =>
         modify (appendNewline · indent)
-        renderWork width rest
+        renderWork width pinnedPhrases rest
       | .blank =>
         modify fun state =>
           let value := "\n\n".pushn ' ' indent
@@ -281,33 +305,42 @@ private partial def renderWork (width : Nat) : Work → StateM RenderState Unit
             output := state.output ++ value
             column := indent
             outputBytes := state.outputBytes + value.utf8ByteSize }
-        renderWork width rest
+        renderWork width pinnedPhrases rest
       | .line flat =>
         match mode with
         | .flat => modify (appendLiteral · flat)
         | .broken => modify (appendNewline · indent)
-        renderWork width rest
+        renderWork width pinnedPhrases rest
       | .group body =>
         match mode with
-        | .flat => renderWork width <| rest.push (.document indent .flat body)
+        | .flat => renderWork width pinnedPhrases <| rest.push (.document indent .flat body)
         | .broken =>
           let candidate := rest.push (.document indent .flat body)
           let column := (← get).column
           let available := width - column
+          -- A pinned comment on the row holds the group flat even when the code alone overflows:
+          -- splitting would detach the directive from the construct it annotates. It cannot
+          -- override a forced break inside the body — flat mode cannot make a hard newline
+          -- disappear.
+          let pinned := candidate.measure.comment?.any fun comment =>
+            pinnedPhrases.any fun phrase => comment.contains phrase
           let selected :=
-            if column <= width && !body.flatMeasure.boundary && candidate.measure.width <= available then
+            if !body.flatMeasure.boundary &&
+                (column <= width && candidate.measure.width <= available || pinned) then
               Mode.flat
             else
               Mode.broken
-          renderWork width <| rest.push (.document indent selected body)
+          renderWork width pinnedPhrases <| rest.push (.document indent selected body)
       | .registered format =>
         Std.Format.prettyM format width indent
-        renderWork width rest
+        renderWork width pinnedPhrases rest
 
-/-- Render a document at `width`, returning text, byte source maps, and deterministic work counts. -/
-def renderDetailed (width : Nat) (document : Doc) : Rendered :=
+/-- Render a document at `width`, returning text, byte source maps, and deterministic work counts.
+`pinnedPhrases` are the `pinned-comments` configuration: a comment containing one holds its line
+flat. -/
+def renderDetailed (width : Nat) (document : Doc) (pinnedPhrases : Array String := #[]) : Rendered :=
   let initial := Work.empty.push (.document 0 .broken document)
-  let state := (renderWork width initial).run {} |>.2
+  let state := (renderWork width pinnedPhrases initial).run {} |>.2
   {
     text := state.output
     sourceMap := state.marks
@@ -317,12 +350,13 @@ def renderDetailed (width : Nat) (document : Doc) : Rendered :=
       nativeEvents := state.nativeEvents } }
 
 /-- Render text and byte source maps. -/
-def render (width : Nat) (document : Doc) : String × Array Mark :=
-  let rendered := renderDetailed width document
+def render (width : Nat) (document : Doc) (pinnedPhrases : Array String := #[]) :
+    String × Array Mark :=
+  let rendered := renderDetailed width document pinnedPhrases
   (rendered.text, rendered.sourceMap)
 
 /-- Render only text. -/
-def renderText (width : Nat) (document : Doc) : String :=
-  (renderDetailed width document).text
+def renderText (width : Nat) (document : Doc) (pinnedPhrases : Array String := #[]) : String :=
+  (renderDetailed width document pinnedPhrases).text
 
 end LeanFmt.Internal

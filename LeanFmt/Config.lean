@@ -37,6 +37,21 @@ private structure PerFileIgnore where
   pattern : PathPattern
   selectors : Array String
 
+/-- Where a declaration's body goes relative to `:=` (`declaration-body`). -/
+inductive DeclarationBody where
+  /-- The canonical style (`next-line`, default): the body begins on its own line —
+  `def foo :=` then `  1`. -/
+  | nextLine
+  /-- Keep the body on the `:=` line when the joined line fits `line-width`, joining
+  already-broken bodies that fit; break as `next-line` when it does not. -/
+  | sameLine
+  deriving BEq, Lean.ToJson, Lean.FromJson
+
+instance : ToString DeclarationBody where
+  toString
+    | .nextLine => "next-line"
+    | .sameLine => "same-line"
+
 /-- The `[format]` section: settings that change the **canonical bytes** a run produces.
 
 The section split marks the cache-identity boundary, not a cosmetic grouping:
@@ -54,13 +69,22 @@ structure FormatConfig where
   still invalidates — a rebuild rewrites the file — but a *runtime* override changes output without
   touching the binary. Hence `identityString`. -/
   lineWidth : Nat := 100
-  deriving BEq
+  /-- Inline comments containing any of these phrases are pinned (`pinned-comments`), default
+  `["shake: keep"]` : the formatter never moves them and never splits their line, even when the
+  code alone overflows — a pinned directive must not dangle off a construct it annotates. -/
+  pinnedComments : Array String := #["shake: keep"]
+  /-- Declaration body layout (`declaration-body`), default `next-line`. -/
+  declarationBody : DeclarationBody := .nextLine
+  deriving BEq, Lean.ToJson, Lean.FromJson
 
 /-- The `[format]` settings as one string, for the `configuration` component of the cache
 identity. Kept beside the fields so a new `[format]` key cannot be added without a visible decision
-about identity: forgetting to extend it is the bug to prevent. -/
+about identity: forgetting to extend it is the bug to prevent. The phrase encoding is
+length-prefixed so a phrase containing the separator cannot alias a different list. -/
 def FormatConfig.identityString (format : FormatConfig) : String :=
-  s!"line-width={format.lineWidth}"
+  let phrases := format.pinnedComments.foldl (init := "") fun acc phrase =>
+    acc ++ s!"\n{phrase.length}:{phrase}"
+  s!"line-width={format.lineWidth}{phrases}\ndeclaration-body={format.declarationBody}"
 
 structure FormatterConfig where
   private mk ::
@@ -252,6 +276,8 @@ private structure PartialConfig where
   respectGitignore? : Option Bool := none
   preview? : Option Bool := none
   lineWidth? : Option Nat := none
+  pinnedComments? : Option (Array String) := none
+  declarationBody? : Option DeclarationBody := none
   selectedSelectors? : Option (Array String) := none
   ignoredSelectors? : Option (Array String) := none
   fixableSelectors? : Option (Array String) := none
@@ -288,6 +314,8 @@ private def PartialConfig.compose (parent child : PartialConfig) : PartialConfig
   respectGitignore? := orParent child.respectGitignore? parent.respectGitignore?
   preview? := orParent child.preview? parent.preview?
   lineWidth? := orParent child.lineWidth? parent.lineWidth?
+  pinnedComments? := orParent child.pinnedComments? parent.pinnedComments?
+  declarationBody? := orParent child.declarationBody? parent.declarationBody?
   selectedSelectors? := orParent child.selectedSelectors? parent.selectedSelectors?
   ignoredSelectors? := orParent child.ignoredSelectors? parent.ignoredSelectors?
   fixableSelectors? := orParent child.fixableSelectors? parent.fixableSelectors?
@@ -324,7 +352,10 @@ private def PartialConfig.resolve (config : PartialConfig) : Except String Forma
     excludePatterns := config.excludePatterns?.getD #[]
     forceExclude := config.forceExclude?.getD false
     respectGitignore := config.respectGitignore?.getD true
-    format := { lineWidth := config.lineWidth?.getD 100 }
+    format := {
+      lineWidth := config.lineWidth?.getD 100
+      pinnedComments := config.pinnedComments?.getD #["shake: keep"]
+      declarationBody := config.declarationBody?.getD .nextLine }
     notices := config.notices
     origins := config.origins
     selectedSelectors := selectedSelectors
@@ -462,10 +493,10 @@ private def parseFile (anchor file : String) (fileMap : Lean.FileMap) (table : L
         let .boolean _ flag := value
           | throw "configuration key 'preview' expects a boolean"
         config := { config with preview? := some flag, origins }
-      -- `line-width` is new, so it has no legacy spelling to protect: a top-level use is
-      -- an error rather than a notice, so the key never acquires an ambiguous section.
-      | "line-width" =>
-        throw "configuration key 'line-width' belongs in the [format] section"
+      -- These `[format]` keys are new, so they have no legacy spelling to protect: a top-level
+      -- use is an error rather than a notice, so the keys never acquire an ambiguous section.
+      | "line-width" | "pinned-comments" | "declaration-body" =>
+        throw s!"configuration key '{key}' belongs in the [format] section"
       | unknown => throw s!"unknown configuration key: {unknown}"
   for (key, value) in formatSection do
     let origins := config.origins.push (s!"format.{key}", file, valueLine fileMap value)
@@ -476,6 +507,20 @@ private def parseFile (anchor file : String) (fileMap : Lean.FileMap) (table : L
       unless 1 ≤ width && width ≤ 1000 do
         throw s!"configuration key 'line-width' expects an integer between 1 and 1000, got {width}"
       config := { config with lineWidth? := some width.toNat, origins }
+    | "pinned-comments" =>
+      let phrases ← valueStrings "pinned-comments" value
+      if phrases.any String.isEmpty then
+        throw "configuration key 'pinned-comments' expects non-empty strings"
+      config := { config with pinnedComments? := some phrases, origins }
+    | "declaration-body" =>
+      let .string _ body := value
+        | throw "configuration key 'declaration-body' expects a string"
+      let declarationBody ← match body with
+        | "next-line" => pure DeclarationBody.nextLine
+        | "same-line" => pure DeclarationBody.sameLine
+        | other => throw s!"configuration key 'declaration-body' expects \"next-line\" or \
+          \"same-line\", got \"{other}\""
+      config := { config with declarationBody? := some declarationBody, origins }
     | unknown => throw s!"unknown configuration key: format.{unknown}"
   for (key, value) in lintSection do
     unless lintKeys.contains key do
@@ -624,6 +669,10 @@ def FormatterConfig.describe (config : FormatterConfig) : Array (String × Strin
     ("respect-gitignore", toString config.respectGitignore, winner "respect-gitignore"),
     ("preview", toString config.preview, winner "preview"),
     ("format.line-width", toString config.format.lineWidth, winner "format.line-width"),
+    ("format.pinned-comments", renderStrings config.format.pinnedComments,
+      winner "format.pinned-comments"),
+    ("format.declaration-body", toString config.format.declarationBody,
+      winner "format.declaration-body"),
     ("lint.select", renderStrings config.selectedSelectors, winner "select"),
     ("lint.extend-select", renderStrings config.extendSelectSelectors, all "extend-select"),
     ("lint.ignore", renderStrings config.ignoredSelectors, winner "ignore"),

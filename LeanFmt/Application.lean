@@ -444,7 +444,7 @@ private def ExactRun.primeSetups (run : ExactRun) (targets : Array SourceSnapsho
 private def ExactRun.envelope (run : ExactRun)
     (snapshot : SourceSnapshot) (captureSemantic : Bool) (validator := false)
     (captureOccurrences : Bool := false)
-    (formatWidth? : Option Nat := none)
+    (format? : Option FormatConfig := none)
     (cancel? : Option Std.CancellationToken := none) : IO AnalysisEnvelope := do
   let index ← run.nextPathIndex
   -- Three phases: this operation once reported as one unnamed 43-second gap,
@@ -475,8 +475,8 @@ private def ExactRun.envelope (run : ExactRun)
       -- first and any failure diagnostic to the second (see `spawnChild` for what the pipes cost).
       args := #["__analyze-exact", setupPath.toString, sourcePath.toString,
         snapshot.path.toString,
-        match formatWidth? with
-        | some width => s!"4:{width}"
+        match format? with
+        | some format => s!"4j{(Lean.toJson format).compress}"
         | none => if captureOccurrences then "2" else if captureSemantic then "1" else "0",
         outPath.toString, errPath.toString]
       -- Lake caps nothing on its children, because it runs one `lean` per module and lets each use
@@ -674,7 +674,7 @@ def ExactRun.analyzeSnapshot (run : ExactRun) (snapshot : SourceSnapshot)
     (cancel? : Option Std.CancellationToken := none) : IO SemanticAnalysis := do
   canonicalAnalysis snapshot renderCanonical
     (← run.envelope snapshot captureSemantic validator captureOccurrences
-      (formatWidth? := if renderCanonical then some snapshot.config.format.lineWidth else none)
+      (format? := if renderCanonical then some snapshot.config.format else none)
       (cancel? := cancel?))
 
 /- Bracket a complete exact-analysis run. The capability is constructed only after a real fallback
@@ -1886,7 +1886,7 @@ def ExactRun.streamSnapshot (run : ExactRun) (target : Project.SourceTarget) (pl
   let demanded := plan.requiredTier
   let envelope ← run.envelope target (captureSemantic := demanded == .semantic)
     (captureOccurrences := demandedCaps.occurrences)
-    (formatWidth? := if renderCanonical then some target.config.format.lineWidth else none)
+    (format? := if renderCanonical then some target.config.format else none)
     (cancel? := cancel?)
   run.streamEnvelope target plan mode envelope range? unsafeFixes formatCheck
 
@@ -2045,8 +2045,10 @@ private unsafe def analyzeChildEnvelope (setupPath snapshotPath displayPath : St
     pure (setup, source)
   -- "0" none, "1" semantic diagnostics, "2" diagnostics plus the info-tree occurrence
   -- fold, "3" test/audit-only comment ownership, "draft[:WIDTH]" the deliberately unvalidated test
-  -- hook, and "4[:WIDTH]" the structurally/idempotently admitted layout. Product callers do not
-  -- request the last two yet.
+  -- hook, "4[:WIDTH]" the structurally/idempotently admitted layout at a bare margin, and
+  -- "4j<json>" the same with the full `FormatConfig` (which a bare margin predates: the config
+  -- gained pinned comments and a body policy after the width ladder). Product callers do not
+  -- request the draft form.
   --
   -- Two phases, on this side of the process boundary where the parent cannot see: `child_analyze`
   -- is the frontend itself, `child_encode` is turning its result into the JSON the parent reads
@@ -2055,23 +2057,33 @@ private unsafe def analyzeChildEnvelope (setupPath snapshotPath displayPath : St
   -- records go to the profile channel (stderr, or the file `LEAN_FMT_PROFILE_OUT` names — the
   -- batch parent points it at the target's err file and forwards the lines); the envelope travels
   -- alone.
-  let validatedWidth? := match captureMode.splitOn ":" with
-    | ["4"] => some 100
-    | ["4", width] => width.toNat?
-    | _ => none
+  let validatedFormat? ← match captureMode.splitOn ":" with
+    | ["4"] => pure (some ({} : FormatConfig))
+    | ["4", width] => pure (width.toNat?.map fun width => { lineWidth := width })
+    | _ =>
+      if captureMode.startsWith "4j" then do
+        let .ok json := Lean.Json.parse (captureMode.drop 2).copy
+          | throw <| IO.userError "invalid FormatConfig JSON in capture mode"
+        let .ok (format : FormatConfig) := Lean.fromJson? json
+          | throw <| IO.userError "invalid FormatConfig payload in capture mode"
+        pure (some format)
+      else pure none
   let draftWidth? := match captureMode.splitOn ":" with
     | ["draft"] => some 100
     | ["draft", width] => width.toNat?
     | _ => none
-  let formatWidth := (validatedWidth? <|> draftWidth?).getD 100
+  let format := match validatedFormat?, draftWidth? with
+    | some validated, _ => validated
+    | none, some width => { lineWidth := width }
+    | none, none => {}
   let envelope ← withPhase "child_analyze" <|
     analyzeExact setup source displayPath
       (captureSemantic := captureMode == "1" || captureMode == "2")
       (captureOccurrences := captureMode == "2")
       (captureComments := captureMode == "3")
       (captureFormatDraft := draftWidth?.isSome)
-      (validateFormatDraft := validatedWidth?.isSome)
-      (formatWidth := formatWidth)
+      (validateFormatDraft := validatedFormat?.isSome)
+      (format := format)
   withPhase "child_encode" do
     -- `IO.lazyPure` for the reason `profiledPositions` documents: a plain `let` of a pure value
     -- can be floated out of the action's closure, and then the bracket times nothing. The
@@ -2137,7 +2149,7 @@ private unsafe def runValidateCandidateChild (args : List String) : IO UInt32 :=
     | return 2
   let source ← IO.FS.readFile sourcePath
   let candidate ← IO.FS.readFile candidatePath
-  let result ← validateCandidateExact setup source candidate displayPath width
+  let result ← validateCandidateExact setup source candidate displayPath { lineWidth := width }
   IO.println (Lean.toJson result).compress
   return 0
 

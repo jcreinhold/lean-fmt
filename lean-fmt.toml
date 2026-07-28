@@ -18,6 +18,8 @@ exclude = [
   "docs/**",
   "tests/fixtures/cache/**",
   "tests/fixtures/check/**",
+  # Deliberately lint-dirty: duplicate imports and over-width comment lines are the fixture.
+  "tests/fixtures/comments/Imports.lean",
   "tests/fixtures/compiler/**",
   "tests/fixtures/downstream/**",
   "tests/fixtures/format-suppression/**",
