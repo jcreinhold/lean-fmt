@@ -42,6 +42,13 @@ open LeanFmt.Test.Unit.Fixtures
 
 namespace LeanFmt.Test.Unit.Cache
 
+/-! ## Cache
+
+The identity half of the result cache, exercised without a workspace: which field changes flip a
+digest, what an artifact store accepts and rejects, and — in `testLakeTraceCharacterization` — what
+Lake's own trace files actually contain. That last one reads this repository's build output, so it
+fails when the tree's Lake traces are stale rather than when the code is wrong. -/
+
 private def testCacheIdentity : IO Unit := do
   let base : CacheIdentity := {
     source := Digest.ofString "source"

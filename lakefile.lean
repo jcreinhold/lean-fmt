@@ -1,5 +1,11 @@
 import Lake
 
+/-! The build, in one file: the package, its libraries and executables, the compiler plugin, and the
+`leanFmtArtifact` module facet.
+
+This is the one source in the tree exempt from the `module` keyword — Lake elaborates a lakefile
+under its own configuration language, not as a project module. -/
+
 open Lake DSL System
 
 /- The drivers are Lake's protocol for "run this project's tests" and "run this project's

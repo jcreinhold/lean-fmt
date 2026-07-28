@@ -39,6 +39,12 @@ open LeanFmt LeanFmt.Internal
 
 namespace LeanFmt.Test.Unit.Imports
 
+/-! ## Imports
+
+The import rules over headers written out in full: what counts as a duplicate, what counts as
+redundant, and what ordering the rule asks for. Header shape is the whole input, so the cases spell
+the headers rather than borrow a file. -/
+
 /-- Parse a surface header, refusing the `none` (parser-message) case the caller never intends. -/
 private def parseHeader! (source : String) : IO Imports.HeaderModel := do
   match ← Imports.parseHeaderModel source with

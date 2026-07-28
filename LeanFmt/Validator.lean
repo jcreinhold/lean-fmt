@@ -6,7 +6,9 @@ Authors: Jacob Reinhold
 
 module
 
-/- Pure admission checks for a whole-module formatting draft.
+import all LeanFmt.Formatter
+
+/-! Pure admission checks for a whole-module formatting draft.
 
 The comparator consumes two lossless projections: the source's, and the candidate's from an
 independent reading of the rendered bytes. Locations and whitespace lengths may change; node
@@ -17,8 +19,6 @@ How the caller obtained the second projection — a second frontend, or a repars
 run's parser contexts — arrives as `ValidationEvidence` and is recorded, never inferred. Keeping
 this module pure makes the comparison independently testable and keeps it from acquiring frontend
 authority. -/
-
-import all LeanFmt.Formatter
 
 namespace LeanFmt.Internal
 

@@ -22,6 +22,18 @@ import Lean.Linter.Deprecated
 import Lean.Server.InfoUtils
 import Std.Sync.Mutex
 
+/-! The exact frontend: run Lean over a module and keep what only Lean can produce.
+
+`unsafe` is confined to this module, because the frontend requires it. A projection leaves here as
+plain data, so nothing downstream holds a frontend object or inherits the obligation.
+
+The parser reads options, namespace, and open declarations from the scope left by the *previous*
+command, so `LiveCommand` carries that pre-state rather than the state after elaboration. A context
+missing them parses a different language from the one Lean parsed.
+
+`IncrementalAnalyzer` is the language server's route: the same analysis over unsaved bytes, in a
+bounded child, sharing no disk-state evidence and writing no cache entry. -/
+
 namespace LeanFmt.Internal
 
 open LeanFmt.Internal.Profile (recordCount)

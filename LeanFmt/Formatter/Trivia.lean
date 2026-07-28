@@ -6,14 +6,14 @@ Authors: Jacob Reinhold
 
 module
 
-/- Formatter-only trivia policy.
+import all LeanFmt.Comments
+import all LeanFmt.Doc
+
+/-! Formatter-only trivia policy.
 
 Rule suppression remains in `LeanFmt.Suppression`. The one formatter directive is recognized only as an
 exact line-comment payload leading a complete ordinary command; mid-expression, trailing, doc, and
 block comments cannot select a formatting unit. -/
-
-import all LeanFmt.Comments
-import all LeanFmt.Doc
 
 namespace LeanFmt.Internal.Formatter.Trivia
 

@@ -39,6 +39,12 @@ open LeanFmt LeanFmt.Internal
 
 namespace LeanFmt.Test.Unit.Edit
 
+/-! ## Edit
+
+Patch assembly: which edit sets produce a patch, which are refused, and what the refusal names. The
+adversarial case drives fix-all over overlapping and adjacent fixes, where the all-or-nothing rule is
+the only thing keeping a partial write off disk. -/
+
 private def findingWithEdit (range : SourceRange) (replacement : String)
     (applicability : Applicability := .safe) (code : String := "TEST") : Finding := {
   code

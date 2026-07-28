@@ -39,6 +39,12 @@ open LeanFmt LeanFmt.Internal
 
 namespace LeanFmt.Test.Unit.Digest
 
+/-! ## Digest
+
+SHA-256 against published vectors, and the parser that refuses anything that is not 64 lowercase hex
+digits. Every identity in the product is one of these, so a wrong digest here is a wrong answer
+everywhere. -/
+
 private def testDigests : IO Unit := do
   ensure (toString (Digest.ofString "") ==
     "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")

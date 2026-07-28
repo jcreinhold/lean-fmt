@@ -6,7 +6,10 @@ Authors: Jacob Reinhold
 
 module
 
-/- Deterministic comment ownership over actual source-covering syntax.
+import Lean.Syntax
+import all LeanFmt.LosslessSource
+
+/-! Deterministic comment ownership over actual source-covering syntax.
 
 The parser stores comments in leaf `SourceInfo`, not as tree children. This module selects the first
 spelling of every `choice`, scans each selected trivia region once, recognizes doc-comment tokens
@@ -16,9 +19,6 @@ enters this module.
 
 The assignment table is private. Formatter rules ask for comments leading, trailing, or dangling from
 the actual `Syntax` value they render. -/
-
-import Lean.Syntax
-import all LeanFmt.LosslessSource
 
 namespace LeanFmt.Internal
 

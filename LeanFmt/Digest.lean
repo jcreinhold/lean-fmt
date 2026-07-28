@@ -8,6 +8,15 @@ module
 
 import Lean.Data.Json
 
+/-! SHA-256, and the type every identity in this product is spelled in.
+
+`Digest`'s constructor is private, so a value of this type is 64 lowercase hex digits or it does not
+exist. That is why `parse?` returns an `Option` and why nothing downstream checks a length.
+
+The compression function is written out rather than shelled out to `shasum`: the cache digests every
+selected file and every dependency artifact on each run, and a process per digest is not a cost that
+belongs in that path. -/
+
 namespace LeanFmt
 
 /-- A lowercase SHA-256 digest. The private constructor keeps malformed or truncated digests out of

@@ -6,7 +6,9 @@ Authors: Jacob Reinhold
 
 module
 
-/- A width-independent formatting document and its bounded renderer.
+import all LeanFmt.LosslessSource
+
+/-! A width-independent formatting document and its bounded renderer.
 
 The document has one flat/broken choice: `group`. A break carries its flat spelling, so separators
 such as `"; "` can disappear when a construct opens. No generic alternative, alignment, or
@@ -25,8 +27,6 @@ custom groups, so core rules compose it as a leaf rather than inside a custom gr
 would require inspecting Lean's private layout tree.
 
 Columns count codepoints, matching `Std.Format`; source and output ranges count UTF-8 bytes. -/
-
-import all LeanFmt.LosslessSource
 
 namespace LeanFmt.Internal
 

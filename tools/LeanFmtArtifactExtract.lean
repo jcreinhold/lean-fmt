@@ -2,6 +2,12 @@ module
 
 import all LeanFmt.Analysis
 
+/-! The Lake module facet's extractor: read one module's artifact out of its built `.olean` and write
+the sidecar.
+
+It runs as its own process per module because process exit is its reclamation boundary — see the
+comment in `extract`. Lake invokes it; nothing else should. -/
+
 open LeanFmt.Internal
 
 private unsafe def extract (moduleName : Lean.Name) (moduleFile output : System.FilePath) : IO Unit := do

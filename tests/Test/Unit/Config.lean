@@ -39,6 +39,12 @@ open LeanFmt LeanFmt.Internal
 
 namespace LeanFmt.Test.Unit.Config
 
+/-! ## Config
+
+Parsing, inheritance, and selection: what a `lean-fmt.toml` means, what a nested one inherits, and
+what rule plan a config plus a command line produce. Discovery is here too, because which files a run
+selects is decided by the same config it reads. -/
+
 private def testConfig : IO Unit := do
   let directory ← IO.FS.createTempDir
   let configPath := directory / "lean-fmt.toml"

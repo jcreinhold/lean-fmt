@@ -18,6 +18,18 @@ import Lake.Build.ModuleArtifacts
 import Lake.Build.Trace
 import Lake.Config.Workspace
 
+/-! The aggregate result cache: one epoch for the workspace, one entry per module.
+
+Identity is the whole point. An entry is served only when the environment that produced it is the
+environment now asking — toolchain, Lake configuration, every dependency artifact, the formatter's
+own binary — and the proof is a digest over all of it, recomputed each run. `Cache/Spec.lean` proves
+the decision sound and complete; the code here supplies the inputs that proof quantifies over.
+
+Errors run one way. A cache that cannot establish identity must miss and must not serve, so every
+degradation here narrows what is served rather than widening it. An artifact this code cannot
+validate is hashed by content instead of vetoing the run: coverage is kept, availability is not
+traded for it. -/
+
 namespace LeanFmt.Internal
 
 open LeanFmt.Internal.Profile

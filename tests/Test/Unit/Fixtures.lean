@@ -39,6 +39,12 @@ open LeanFmt LeanFmt.Internal
 
 namespace LeanFmt.Test.Unit.Fixtures
 
+/-! ## Fixtures
+
+One source text and the projection and module artifact that describe it exactly, shared by the unit
+modules that need a valid artifact to mutate. They are written out by hand rather than produced by a
+run, so a case can assert against a projection the product did not choose. -/
+
 /- The projection of `def x := 1\n`, written by hand so the tiling invariant is legible: every
 token's span and trivia runs abut, covering `[headerStop, terminalStop)` exactly once.
 

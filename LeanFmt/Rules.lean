@@ -758,10 +758,10 @@ documentation prose, which no formatter can write; the finding is a caret where 
 just after the header."
       previewPath? := "\
 Graduates when it produces at least 10 audited true positives with zero false positives on a corpus of \
-Lean projects that do not already enforce module docstrings in CI, AND lean-fmt's own tree either \
-complies or the rule is scoped to exclude executable and script modules. The second condition is not \
-padding: on lean-fmt's own 34 modules this rule fires 17 times, so the project shipping it does not \
-follow it."
+Lean projects that do not already enforce module docstrings in CI. The tree-compliance half is met as \
+of 2026-07-28: every module of the product and every test module carries a module docstring, and the 21 \
+files this rule still reports are formatter fixtures, whose layout is the thing under test — prose in \
+one would change what it tests."
       examples := #[{ bad := "def answer : Nat := 42\n" }]
     }
     impl := .syntax moduleDocRequired

@@ -6,7 +6,11 @@ Authors: Jacob Reinhold
 
 module
 
-/- The native grammar-layout adapter.
+import Lean.Parser.StrInterpolation
+import all LeanFmt.Formatter
+import all LeanFmt.Formatter.Trivia
+
+/-! The native grammar-layout adapter.
 
 Lean's registered formatter remains the grammar authority. This module transforms its public
 `Std.Format` algebra directly: native non-comment leaves are aligned with the selected source-covering
@@ -38,10 +42,6 @@ includes the constraint nests an ancestor has not applied yet, which the walk ca
 The adapter has no core/extension gate and no command/term/tactic visitor. A failure is a typed refusal
 with the root category, kind, range, resolution trace, native leaf index, and nearby source terminals.
 -/
-
-import Lean.Parser.StrInterpolation
-import all LeanFmt.Formatter
-import all LeanFmt.Formatter.Trivia
 
 namespace LeanFmt.Internal
 

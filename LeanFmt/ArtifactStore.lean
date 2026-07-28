@@ -11,6 +11,15 @@ import all LeanFmt.ArtifactModel
 import Lake.Build.Common
 import Lean.Linter.PersistentLintLog
 
+/-! Where a module artifact comes from, and how it is proved to be about the bytes in hand.
+
+Three routes reach one type. `fromEnvironment?` reads the records the compiler plugin wrote into an
+imported module's `.olean`; `readFacet?` reads the Lake facet's sidecar; `writeArtifactAtomic`
+publishes one. None is trusted by provenance: `validFor` re-derives the module name, the byte count,
+and the digest from the caller's own file, and materializes the projection against it.
+
+A path, a filesystem timestamp, or a `Lake.Artifact` descriptor is not evidence. The content is. -/
+
 namespace LeanFmt.Internal
 
 /-- Structural validity, checkable without the source.

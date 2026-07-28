@@ -11,6 +11,18 @@ import all LeanFmt.Rules
 import all LeanFmt.Suppression
 import all LeanFmt.Validator
 
+/-! One module's answer, in the shape the cache stores it.
+
+`SemanticAnalysis` is what a run computes; `SemanticResult` is what it writes down. The canonical
+layout is what separates them: a `check` can take the source-only shortcut and cache an entry with
+no canonical text, which a later `format` must treat as a miss rather than an answer — hence
+`canonical?` is an `Option` and not a `String`.
+
+`ofArtifact?` is the single decider. It materializes the artifact, runs the whole rule registry over
+the facts, and collects suppression directives from that same projection. Findings are computed here
+and only here; the artifact carries none. Two deciders disagreed once, measurably, so there is
+one. -/
+
 namespace LeanFmt.Internal
 
 structure SemanticResult where

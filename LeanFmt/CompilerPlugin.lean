@@ -10,11 +10,7 @@ import all LeanFmt.ArtifactModel
 
 import Lean.Linter.PersistentLintLog
 
-open Lean Elab Command
-
-namespace LeanFmt.Internal.CompilerPlugin
-
-/- **This plugin projects; it does not lint.** It does not import `LeanFmt.Rules` and must not: it is
+/-! **This plugin projects; it does not lint.** It does not import `LeanFmt.Rules` and must not: it is
 linked into every compilation of every module of any project integrating the formatter, so its whole
 import closure enters the target project's build graph. While the rules were in here, editing one
 rule's message text invalidated every module's Lake trace and changed the compiled bytes of any
@@ -51,6 +47,10 @@ down so nobody proposes it again from the outside.
    and `LeanFmt.Rules` re-enters this link closure through `Suppression`, undoing count 3's fix.
 6. *The payoff is one run.* `format` writing a file makes its own `.olean` stale, so the next run
    cannot read build output anyway, and the result cache already covers repeats. -/
+
+open Lean Elab Command
+
+namespace LeanFmt.Internal.CompilerPlugin
 
 /- Each command owns one independently persistent record. Async command elaboration may complete in
 any order, so aggregating inside the compiler is unsound; the facet extractor validates, sorts, and

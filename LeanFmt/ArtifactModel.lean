@@ -10,6 +10,15 @@ import all LeanFmt.SyntaxArtifact
 
 import Lean
 
+/-! What a rule reports, and what a module artifact is.
+
+`Finding`, `Fix`, and `Applicability` are what leaves the engine; `ModuleArtifact` is what the engine
+reads. They share a module because they meet at one boundary, and because the property that matters
+is about both at once: the artifact holds facts and no findings.
+
+It carries no rule configuration, no findings, and no canonical bytes, and is a function of the
+module and its source alone — so turning a rule on cannot rebuild or re-elaborate anything. -/
+
 namespace LeanFmt.Internal
 
 /-- A conservative replacement. Applying edits is deliberately not part of the compiler plugin. -/

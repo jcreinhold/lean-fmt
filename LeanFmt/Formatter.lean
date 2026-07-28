@@ -6,7 +6,11 @@ Authors: Jacob Reinhold
 
 module
 
-/- The actual-syntax adapter for Lean's registered formatter.
+import Lean.PrettyPrinter
+import all LeanFmt.Comments
+import all LeanFmt.Doc
+
+/-! The actual-syntax adapter for Lean's registered formatter.
 
 This module deliberately pins a small portion of Lean's pretty-printer API. `formatCategory` runs
 `categoryFormatter`, which asks `formatterAttribute` for an explicit formatter before deriving one
@@ -21,10 +25,6 @@ Prompt 06 ownership does logical accounting, not a second copy. Boundary trivia 
 preceding command even when its logical owner is in the next command, so ordered whole-module
 composition — not an isolated leaf's count — is the exact-once boundary. The focused adapter fixture
 is the upgrade tripwire for these private implementation assumptions. -/
-
-import Lean.PrettyPrinter
-import all LeanFmt.Comments
-import all LeanFmt.Doc
 
 namespace LeanFmt.Internal
 

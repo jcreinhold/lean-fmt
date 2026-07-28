@@ -10,6 +10,16 @@ import all LeanFmt.Rules
 
 import Lake.Toml.Load
 
+/-! Discovered configuration: the TOML files, how they combine, and the rule plan that comes out.
+
+Configuration is discovered per directory and inherited, so a pattern means what its *declaring*
+file's directory says it means. That is why every path pattern carries its own anchor instead of
+being re-read against whatever file is being checked.
+
+`rulePlan` joins the config with the command line, and it is a projection over canonical results: it
+selects rules and re-applies applicability afterwards. It does not enter execution strategy and it
+does not enter cache identity, so turning a rule on cannot rebuild anything. -/
+
 namespace LeanFmt.Internal
 
 private structure PathPattern where

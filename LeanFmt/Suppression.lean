@@ -6,7 +6,10 @@ Authors: Jacob Reinhold
 
 module
 
-/- # Source-level suppression directives
+import all LeanFmt.LosslessSource
+import all LeanFmt.Rules
+
+/-! # Source-level suppression directives
 
 The model in one line: a directive is read **only** from a `Comment` (a `lineComment`/`blockComment`
 trivia), never by substring search, so strings, syntax quotations, and doc comments are excluded by
@@ -18,9 +21,6 @@ enters the result-cache identity.
 Placement in the pipeline: `runRules` (engine) → `RulePlan.findings` (config layer) → `Suppression`
 (this module, source layer) → report. The report gains the surviving findings, a suppressed count,
 and the `FMT900`/`FMT901` self-diagnostics. -/
-
-import all LeanFmt.LosslessSource
-import all LeanFmt.Rules
 
 namespace LeanFmt.Internal
 

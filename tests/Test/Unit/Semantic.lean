@@ -42,6 +42,12 @@ open LeanFmt.Test.Unit.Fixtures
 
 namespace LeanFmt.Test.Unit.Semantic
 
+/-! ## Semantic
+
+The semantic tier: what a `SemanticResult` accepts, which rules run against which facts, and what
+capabilities an artifact provides. `testSemanticCaps` pins the direction that matters — a result
+missing a demanded capability is a miss, never a clean report. -/
+
 /-- An artifact carrying one surfaced compiler diagnostic. -/
 private def fixtureSemanticArtifact : ModuleArtifact :=
   { fixtureArtifact with semantic := some {

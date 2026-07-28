@@ -22,6 +22,19 @@ import all Lake.DSL
 import all Lake.Load.Lean.Elab
 import all Lake.Load.Workspace
 
+/-! Lake, held once.
+
+This module owns the workspace load, complete non-`.lake` source selection, the exact module setup,
+and one shared typed no-build graph. Everything a run needs from Lake — currency evidence, import
+closures, module setups, the formatter's artifact facet — is fetched on that one graph and handed
+back as plain values.
+
+A traversal is the expensive thing, so the number of them is a gate rather than an implementation
+detail: `tests/Suites/Performance.lean` counts them. Do not replace this with a Lake run per file.
+
+`Provenance` is what keeps it honest. Lake's build setup describes bytes that are the file on disk;
+an editor's unsaved buffer is not those bytes, so only `disk` may take that route. -/
+
 open System
 
 namespace LeanFmt.Internal.Project

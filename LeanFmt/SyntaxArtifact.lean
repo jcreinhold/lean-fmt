@@ -10,6 +10,20 @@ import all LeanFmt.LosslessSource
 
 import Lean
 
+/-! The wire form of a parsed module: one flat pre-order array, an interned kind table, one root per
+command.
+
+`Lean.Syntax` is a tree of boxed nodes. Here the same tree is `SyntaxEntry` values in pre-order,
+each node carrying only how many children follow, so a subtree is a contiguous slice. That is what
+lets `ofRecords` concatenate independently produced command trees by appending, and lets
+`structurallyValid` check the whole array in one linear walk.
+
+Commands arrive as separate `CommandArtifactRecord` values because the compiler plugin emits one per
+command and async elaboration finishes them in any order. Ordering, interning, and compaction happen
+here, once, after the module has succeeded.
+
+Every offset indexes the normalized source, never the bytes on disk. -/
+
 namespace LeanFmt.Internal
 
 inductive EncodedSourceInfo where

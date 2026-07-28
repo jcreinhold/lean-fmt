@@ -8,6 +8,17 @@ module
 
 import all LeanFmt.ArtifactModel
 
+/-! Fixes into one patch, or no patch.
+
+`preparePatch` validates every edit against the source, sorts them, refuses any overlapping pair, and
+applies the rest so earlier offsets stay valid. It is all-or-nothing by design: a conflict rejects
+the whole file rather than dropping one side, and `PatchError.conflict` names the two rule codes and
+the two finding ranges — never an internal edit index, which names nothing a user can act on.
+
+Admission is not decided here. The caller strips a fix the run withheld before the assembler sees it,
+so applicability stays policy and this module stays arithmetic. `Patch` keeps the digest of the
+source it was built from, so publication can refuse bytes that moved underneath it. -/
+
 namespace LeanFmt.Internal
 
 /-- Why a complete patch could not be constructed. The constructor rejects the whole edit set on the

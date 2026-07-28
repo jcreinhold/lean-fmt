@@ -6,7 +6,11 @@ Authors: Jacob Reinhold
 
 module
 
-/- Module-stream composition: the header document, the header contract, and the vertical boundary
+import Lean.Parser.Module
+import all LeanFmt.Formatter
+import all LeanFmt.Formatter.Trivia
+
+/-! Module-stream composition: the header document, the header contract, and the vertical boundary
 between two ordinary commands.
 
 Every ordinary command's layout belongs to `LeanFmt.Formatter.NativeLayout`, which drives Lean's own
@@ -22,10 +26,6 @@ anything that is not a header node and falls back to the registry.
 
 `place` decides blank lines between commands, not indentation: top-level commands stay at column zero
 even inside a namespace, so indentation is a command's own business. -/
-
-import Lean.Parser.Module
-import all LeanFmt.Formatter
-import all LeanFmt.Formatter.Trivia
 
 namespace LeanFmt.Internal
 

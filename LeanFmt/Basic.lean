@@ -6,6 +6,12 @@ Authors: Jacob Reinhold
 
 module
 
+/-! The one name outside `LeanFmt.Internal`, in a module that imports nothing.
+
+`lean_lib LeanFmt` globs this, so a project importing the root gets `version` and no execution
+surface at all. Everything the application does lives in private modules the entry points import
+directly. -/
+
 namespace LeanFmt
 
 /-- Version of the native-Lean execution core. -/

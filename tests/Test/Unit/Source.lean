@@ -44,6 +44,12 @@ open LeanFmt.Test.Unit.Layout
 
 namespace LeanFmt.Test.Unit.Source
 
+/-! ## Source
+
+The lossless projection and what reads coordinates off it: validation, range selection, and
+suppression directives. Every rejection below is an ordinary miss rather than an error, which is the
+property the cases exist to pin. -/
+
 /- Every rejection below is an ordinary miss, not an error: a consumer that cannot authenticate a
 projection must fall back to the exact frontend rather than trust it or fail the run. -/
 private def testLosslessSource : IO Unit := do
