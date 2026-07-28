@@ -172,9 +172,9 @@ structure ExactRun where
   /-- Setups already resolved for this run: root-relative path to the **source they were resolved
   from** and the setup itself.
 
-  `Project.exactSetups?` fills this in one graph traversal for the files a run has decided will reach
-  the frontend; `ExactRun.setupResult` reads it and falls back to the per-target `exactSetup` on a miss.
-  Empty is always correct — it just means every target pays its own traversal.
+  `Project.graph` fills this in one traversal for the files a run has decided will reach the
+  frontend; `ExactRun.setupResult` reads it and falls back to the per-target `Project.exactSetup` on
+  a miss. Empty is always correct — it just means every target pays its own traversal.
 
   **The source is stored and compared, not just the path.** A setup carries the header's imports
   (`setupJob` parses them out of the target's own bytes), and this run's writing modes hand the
@@ -188,7 +188,7 @@ structure ExactRun where
   documentSetups : IO.Ref (Std.HashMap String (String × Lean.ModuleSetup))
   /-- Held across every Lake call this run makes after its workers start. Lake is not safe to run
   twice at once inside one process: two build contexts building the same module race on its output
-  file, and `Project.noBuildValue?` swaps the process-wide stdout and stderr for the duration.
+  file, and the fallback's `runBuild` monitor writes to the process's own stderr besides.
   `primeSetups` resolves the batch on one thread before any worker exists; this covers the per-target
   fallback behind it, which a worker reaches for a target the batch could not answer. -/
   lake : Std.Mutex Unit
@@ -374,18 +374,29 @@ traversal replaces 34, but on a large project where the cache and the source tie
 everything, priming the whole selection would resolve setups nothing asks for. On the frozen
 `mathlib-sample`, 1 of 62 targets reaches the frontend.
 
-It is also where every Lake build this run needs happens: `exactSetups?` builds what its probe
-cannot answer, here, on one thread, before a worker exists. Lake cannot run twice at once in one
-process, and the per-target fallback behind this used to put one build on each worker thread.
+Folding this into `Project.graph`'s whole-selection call would save the second traversal, and it was
+measured rather than argued (2026-07-27, cache-cold `check --select FMT011 --no-cache`, both arms in
+one binary, interleaved, summing `phase.lake_graph_ms`). On this repository, 127 targets of which
+124 reach the frontend, the fold won: 62 ms against 89 ms at the median. On the frozen
+`mathlib-sample`, 63 targets of which 62 are artifact-served, it lost by 222 ms at the median over
+eight pairs, favoured in 6 of 8 — because the whole-selection graph resolves 62 mathlib-scale
+setups that nothing reads, where this call resolves none at all (`targets.size < 2` returns).
+Reports were byte-identical across every pair on both corpora. The saving is one no-build traversal
+and the cost scales with the selection, so the split stays.
+
+It is also where every Lake build this run needs happens: `Project.graph` builds what its no-build
+pass cannot answer, here, on one thread, before a worker exists. Lake cannot run twice at once in
+one process, and the per-target fallback behind this used to put one build on each worker thread.
 
 Best effort by construction. Anything this fails to resolve is simply absent from the map, and
 `ExactRun.setupResult` falls back to the per-target path, holding `run.lake`. -/
 private def ExactRun.primeSetups (run : ExactRun) (targets : Array SourceSnapshot) : IO Unit := do
   if targets.size < 2 then return
-  let resolved ← withPhase "setup_prime" <| Project.exactSetups? run.project targets
+  let facts ← withPhase "setup_prime" <|
+    Project.graph run.project.workspace targets (demand := { setups := true })
   run.setups.modify fun map =>
-    (targets.zip resolved).foldl (init := map) fun map (target, setup?) =>
-      match setup? with
+    (targets.zip facts.targets).foldl (init := map) fun map (target, resolved) =>
+      match resolved.setup? with
       | some setup => map.insert target.relativePath (target.source, setup)
       | none => map
 

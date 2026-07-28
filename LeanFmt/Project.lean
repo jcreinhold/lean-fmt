@@ -366,6 +366,10 @@ private def noBuildValuePerJob? {α : Type} (workspace : Lake.Workspace)
   catch _ =>
     return none
 
+private def setupJob (target : SourceTarget) : Lake.FetchM (Lake.Job Lean.ModuleSetup) := do
+  let header ← Lean.parseImports' target.source target.relativePath
+  Lake.setupServerModule target.relativePath target.path (some header)
+
 private structure FacetDescriptor where
   hash : String
   ext : String
@@ -393,6 +397,9 @@ structure Demand where
   closures : Bool := false
   /-- Each target's `leanFmtArtifact` facet, revalidated against its source. -/
   artifacts : Bool := false
+  /-- Each target's exact Lake module setup. Unlike every other field this one may *build*: what the
+  no-build pass cannot answer is built once, here, before any worker exists. -/
+  setups : Bool := false
 
 /-- What one graph could say about one target.
 
@@ -410,6 +417,10 @@ structure TargetFacts where
   facet is `none`. No `Lake.Artifact` descriptor escapes `graph`, because a descriptor is a public
   type and not authority by type alone. -/
   artifact? : Option ModuleArtifact := none
+  /-- The exact Lake setup for this target, from artifacts or from the one build below. `none` is
+  not an answer: the caller falls back to the per-target path, which reports the failure against
+  that file's own name. -/
+  setup? : Option Lean.ModuleSetup := none
   deriving Inhabited
 
 structure GraphFacts where
@@ -474,13 +485,30 @@ def graph (workspace : Lake.Workspace) (targets : Array SourceTarget)
         if (← sidecar.pathExists) && (← (sidecar.addExtension "trace").pathExists) then
           return some mod
         return none
+  let setupTargets : Array (Option SourceTarget) :=
+    if demand.setups then targets.map some else Array.replicate targets.size none
   -- Nothing to ask is not the same as asking and failing: skip the traversal entirely rather than
   -- pay a build context to answer an empty question.
   if statusModules.all Option.isNone && closureModules.isEmpty
-      && facetModules.all Option.isNone then
+      && facetModules.all Option.isNone && setupTargets.all Option.isNone then
     return blank
+  let setupCollection (chosen : Array (Option SourceTarget)) :
+      Lake.FetchM (Lake.Job (Array (Option Lean.ModuleSetup))) := do
+    let jobs ← chosen.mapM fun target? => do
+      match target? with
+      | none => return Lake.Job.pure (α := Option Lean.ModuleSetup) none
+      | some target =>
+        -- `setupJob` parses the header outside any job and `parseImports'` *throws*, so an
+        -- unparseable header would abort the collection's construction and zero every other
+        -- target. `ensureJob` turns that throw into this job's own failure.
+        let job ← Lake.ensureJob (setupJob target)
+        return job.mapResult fun
+          | .ok setup state => .ok (some setup) state
+          | .error _ state => .ok none state
+    return Lake.Job.collectArray jobs "lean-fmt exact setups"
   let build : Lake.FetchM (Lake.Job
-      (Array (Option Bool) × Array (Option (Array Lean.Name)) × Array (Option String))) := do
+      (Array (Option Bool) × Array (Option (Array Lean.Name)) × Array (Option String)
+        × Array (Option Lean.ModuleSetup))) := do
     let statusJobs ← statusModules.mapM fun mod? => do
       match mod? with
       | none => return Lake.Job.pure (α := Option Bool) none
@@ -505,16 +533,39 @@ def graph (workspace : Lake.Workspace) (targets : Array SourceTarget)
     let statuses := Lake.Job.collectArray statusJobs "lean-fmt module evidence"
     let closures := Lake.Job.collectArray closureJobs "lean-fmt import closures"
     let facets := Lake.Job.collectArray facetJobs "lean-fmt official artifacts"
+    let setups ← setupCollection setupTargets
     -- `zipWith` errors if either side errors, which is exactly why every per-target job above is
     -- `mapResult`-ed to `.ok` first: no collection can fail, so the tuple cannot either.
-    return (statuses.zipWith (·, ·) closures).zipWith (fun (s, c) f => (s, c, f)) facets
+    return ((statuses.zipWith (·, ·) closures).zipWith (fun (s, c) f => (s, c, f)) facets).zipWith
+      (fun (s, c, f) u => (s, c, f, u)) setups
   match ← withPhase "lake_graph" <| noBuildValuePerJob? workspace build with
   | none => return blank
-  | some (statuses, closures, facets) =>
+  | some (statuses, closures, facets, probed) =>
     -- A short array would silently mis-pair facts with targets, which is worse than no batch.
     if statuses.size != statusModules.size || closures.size != closureModules.size
-        || facets.size != facetModules.size then
+        || facets.size != facetModules.size || probed.size != setupTargets.size then
       return blank
+    -- The one place this operation may build, and it builds setups only. A stale `.olean` *is* the
+    -- answer for status, an unresolvable closure is a miss, and a missing facet is
+    -- `lean-fmt compiler build`'s business — so none of those is retried. A setup that did not
+    -- resolve is not an answer at all, and without it the target cannot be analyzed.
+    --
+    -- One build, on the calling thread, before any worker exists. Lake is not safe to run twice at
+    -- once in one process: two contexts building the same module race on its output file. Measured
+    -- — a 127-file `check` at twelve workers over an unbuilt tree reported five `broken` files and
+    -- one infrastructure failure, all of them Lake builds clobbering each other, where the same run
+    -- at one worker was clean. `tests/Suites/Ci.lean` is the gate.
+    let stale := (setupTargets.zip probed).map fun (target?, setup?) =>
+      if setup?.isNone then target? else none
+    let setups ←
+      if stale.all Option.isNone then pure probed
+      else
+        try
+          let built ← withPhase "setup_build" <| workspace.runBuild
+            (cfg := { verbosity := .quiet }) (setupCollection stale)
+          if built.size != probed.size then pure probed
+          else pure ((probed.zip built).map fun (probed?, built?) => probed?.orElse fun _ => built?)
+        catch _ => pure probed
     let facts ← targets.zipIdx.mapM fun (target, index) => do
       -- The descriptor is decoded and consumed here and nowhere else. `readFacet?` recomputes the
       -- content hash and matches the module name and the exact source, so filesystem presence or a
@@ -524,7 +575,7 @@ def graph (workspace : Lake.Workspace) (targets : Array SourceTarget)
         let some encoded := facets[index]! | pure none
         let some facet := decodeFacetDescriptor? encoded | pure none
         readFacet? facet mod.name target.source
-      return { current? := statuses[index]!, artifact? }
+      return { current? := statuses[index]!, artifact?, setup? := setups[index]! }
     return {
       targets := facts
       imports := (closureModules.zip closures).foldl
@@ -579,119 +630,19 @@ def moduleEvidence (snapshot : Snapshot) (facts : GraphFacts) : IO (Array Module
         (if facts.targets[index]!.current? == some true then .current else .needsFrontend)
   return evidence
 
-private def setupJob (target : SourceTarget) : Lake.FetchM (Lake.Job Lean.ModuleSetup) := do
-  let header ← Lean.parseImports' target.source target.relativePath
-  Lake.setupServerModule target.relativePath target.path (some header)
+/-- The exact Lake setup for one target, for a caller that has exactly one.
 
-/- Ask `isCurrent`'s question and keep the answer's *value*.
+`graph` with `demand.setups` answers a whole selection in one traversal and is what a batch run
+uses. This is the fallback for a target that traversal left unanswered, and the language server's
+path, where there is one file by construction. The two steps are the same — probe, then build what
+the probe could not answer — minus the batching, and the failure comes back as a thrown error
+against this file's own name rather than as a `none` at a position.
 
-`checkNoBuild` computes the build and returns whether it succeeded, discarding what it produced
-(`Lake/Build/Run.lean:405-414`); `BuildResult.isOk` is definitionally `out.isOk` (`:320-321`), so
-its `Bool` is exactly "`out` was `.ok`". Every caller that then wants the value runs the identical
-graph a second time to get it.
-
-That second traversal was measured: over 34 modules, the probe cost 3,676 ms and the build that
-repeated it 3,663 ms — the same work, twice, for 16% of a cold run. This returns `out` itself, so the
-up-to-date case traverses once.
-
-Written out rather than delegated to `checkNoBuild` because there is nothing to delegate to: Lake
-exposes the decision or the value, never both. The pieces below are Lake's own, reached through the
-exact-toolchain `import all` boundary, exactly as `batchModuleStatuses` reaches them. The buffer
-swap is `isCurrent`'s, for `isCurrent`'s reason: this builds its own monitor from a hardcoded
-`noBuild` config and would otherwise redraw a spinner over our stderr. -/
-def noBuildValue? {α : Type} (workspace : Lake.Workspace)
-    (build : Lake.FetchM (Lake.Job α)) : IO (Option α) := do
-  let buffer ← IO.mkRef { : IO.FS.Stream.Buffer }
-  let stdout ← IO.setStdout (.ofBuffer buffer)
-  let stderr ← IO.setStderr (.ofBuffer buffer)
-  -- The two halves are timed rather than bracketed, and reported after the streams are restored:
-  -- `withPhase` writes to stderr, which is this operation's own buffer for its whole duration — a
-  -- phase emitted in here goes into the buffer and is discarded with it. Nothing inside this
-  -- function can report on itself.
-  let contextNanos ← IO.mkRef 0
-  let fetchNanos ← IO.mkRef 0
-  try
-    let cfg : Lake.BuildConfig := { noBuild := true, verbosity := .quiet }
-    -- Split because the two halves have different lifetimes. Context construction depends on the
-    -- workspace only, so a long-lived session could in principle build it once; the fetch reads the
-    -- artifacts on disk *now*, which is the whole point of the probe and cannot be reused across a
-    -- rebuild. Which half the 105 ms per LSP request lives in decides whether that is worth doing.
-    let contextStarted ← IO.monoNanosNow
-    let jobs ← Lake.mkJobQueue
-    let mctx ← Lake.mkMonitorContext cfg jobs
-    let bctx ← Lake.mkBuildContext' workspace cfg jobs
-    let fetchStarted ← IO.monoNanosNow
-    contextNanos.set (fetchStarted - contextStarted)
-    let job ← Lake.Workspace.startBuild bctx build
-    let result ← Lake.monitorBuild mctx job
-    fetchNanos.set ((← IO.monoNanosNow) - fetchStarted)
-    -- `finalizeBuild` is deliberately not called: it is the one that turns a stale `noBuild` into
-    -- `IO.Process.exit` (`:367-368`). Staleness is a `none` here, and the caller builds.
-    return result.out.toOption
-  finally
-    discard <| IO.setStdout stdout
-    discard <| IO.setStderr stderr
-    recordDuration "nobuild_context" (← contextNanos.get)
-    recordDuration "nobuild_fetch" (← fetchNanos.get)
-
-/- Every target's setup job in one collection, so one graph traversal answers the whole batch.
-Each job's own failure becomes a `none` at that position rather than failing the collection: one
-module that cannot resolve must not zero the other 126. -/
-private def batchedSetupJob (targets : Array SourceTarget) :
-    Lake.FetchM (Lake.Job (Array (Option Lean.ModuleSetup))) := do
-  let jobs ← targets.mapM fun target => do
-    let job ← setupJob target
-    return job.mapResult fun
-      | .ok setup state => .ok (some setup) state
-      | .error _ state => .ok none state
-  return Lake.Job.collectArray jobs "lean-fmt exact setups"
-
-/-- Exact Lake setups for a whole batch: **one** no-build traversal, then **one** build of whatever
-that traversal could not answer.
-
-`exactSetup` constructs a Lake build context, starts a build, and monitors it once *per target*, over
-the same graph every time. Measured on this repository: 34 targets, 3,528 ms in `setup_probe`, one
-full traversal each, for 8% of a cold `format --check`.
-
-Batching the build matters for more than that traversal. A Lake build is not safe to run twice at
-once inside one process — two contexts building the same module race on its output file, and
-`noBuildValue?` swaps the process-wide stdout and stderr besides. Left to the per-target fallback,
-those builds happen on the batch's worker threads, one per unbuilt target, all at once: a 127-file
-`check` at twelve workers over an unbuilt tree reported five `broken` files and one infrastructure
-failure, all of them Lake builds clobbering each other, where the same run at one worker was clean.
-Here they are one build on the calling thread, before any worker starts.
-
-`none` at a position means that target's setup did not resolve, from artifacts or from a build. It
-is not an answer: the caller falls back to `exactSetup`, which reports the failure against that
-file's own name. A batch that fails outright degrades to all-`none` rather than to an error, so this
-can never decide a setup differently from the per-target path. -/
-def exactSetups? (snapshot : Snapshot) (targets : Array SourceTarget) :
-    IO (Array (Option Lean.ModuleSetup)) := do
-  if targets.isEmpty then return #[]
-  let allMissing := Array.replicate targets.size none
-  let probed ←
-    try
-      match ← withPhase "setup_probe" <|
-          noBuildValue? snapshot.workspace (batchedSetupJob targets) with
-      -- A short array would silently mis-pair setups with targets, which is worse than not batching.
-      | some setups => pure (if setups.size == targets.size then setups else allMissing)
-      | none => pure allMissing
-    catch _ => pure allMissing
-  let stale := targets.zipIdx.filter fun (_, index) => probed[index]!.isNone
-  if stale.isEmpty then return probed
-  try
-    let built ← withPhase "setup_build" <| snapshot.workspace.runBuild
-      (cfg := { verbosity := .quiet }) (batchedSetupJob (stale.map (·.1)))
-    if built.size != stale.size then return probed
-    return stale.zipIdx.foldl (init := probed) fun setups ((_, original), position) =>
-      match built[position]! with
-      | some setup => setups.set! original (some setup)
-      | none => setups
-  catch _ =>
-    return probed
-
+Calling this in a loop is what `graph` replaces, and the loop was measured: 34 targets, one full
+traversal each, 3,528 ms in `setup_probe`, 8% of a cold `format --check`. -/
 def exactSetup (snapshot : Snapshot) (target : SourceTarget) : IO Lean.ModuleSetup := do
-  match ← withPhase "setup_probe" <| noBuildValue? snapshot.workspace (setupJob target) with
+  match ← withPhase "setup_probe" <|
+      noBuildValuePerJob? snapshot.workspace (setupJob target) with
   | some setup => return setup
   | none => withPhase "setup_build" <|
       snapshot.workspace.runBuild (cfg := { verbosity := .quiet }) (setupJob target)
