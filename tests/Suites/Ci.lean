@@ -143,18 +143,30 @@ private def testGenericRunner (ctx : Ctx) : IO Unit := do
   ensureEq "a truncated pipeline laundered the findings" "1"
     (piped.stdout.trimAscii.toString)
 
-/-- What docs/ci.md tells CI to cache. Cache identity takes the formatter binary's (path, size,
-mtime) rather than its content, so an mtime-preserving restore hits and a rebuilt binary orphans
-the whole index. A total miss looks exactly like a warm cache that is merely slow, so these two
-checks are the gate on that document's central claim. -/
+/-- What docs/ci.md tells CI to cache, and the three restores it has to survive.
+
+Cache identity takes the formatter binary's **content**, so a restore hits whether or not the
+binary's modification time and path survived the trip. All three cases here assert a hit, and that
+is the point: they used to assert that the last two *missed*, because identity was (path, size,
+mtime) and any CI job that rebuilt or reinstalled lean-fmt threw its whole cache away.
+
+A total miss looks exactly like a warm cache that is merely slow — nothing in the report says which
+happened — so the entry set is compared file by file rather than timed.
+
+The negative direction, that a formatter with different bytes must miss, is not staged here: it
+would need a second working lean-fmt built from different sources, and a corrupted copy would not
+run. It belongs to `cacheIdentityDigest`, which folds the formatter digest in with the rest. -/
 private def testCacheRestore (ctx : Ctx) : IO Unit := do
   discard <| gitQ #["checkout", "-q", "main"] ctx.consumer "git checkout main"
   removeDirAll? (ctx.consumer / ".lean-fmt-cache")
   discard <| lakeAny ctx #["exe", "lean-fmt", "check", "--root", "."]
+  -- The formatter-identity memo is excluded: it is written whenever the cache opens at all, so
+  -- counting it would let "a cold run wrote no cache entry" pass on a run that stored nothing.
   let entries (dir : System.FilePath) : IO (List String) := do
     if !(← dir.pathExists) then return []
     let found ← dir.walkDir
-    return ((found.toList.map toString).filter (·.endsWith ".json")).mergeSort (· < ·)
+    return ((found.toList.map toString).filter fun path =>
+      path.endsWith ".json" && !path.endsWith "formatter-identity.json").mergeSort (· < ·)
   let cacheDir := ctx.consumer / ".lean-fmt-cache"
   let before ← entries cacheDir
   ensure (before != []) "a cold run wrote no cache entry"
@@ -168,14 +180,23 @@ private def testCacheRestore (ctx : Ctx) : IO Unit := do
     (cwd? := some ctx.consumer)
   discard <| lakeAny ctx #["exe", "lean-fmt", "check", "--root", "."]
   ensureEq "an mtime-preserving restore did not hit the cache" before (← entries cacheDir)
-  -- The converse: touching the binary must miss, because rebuilding lean-fmt every run orphans
-  -- the index.
+  -- A new modification time must *not* orphan the cache. It used to: identity was the binary's
+  -- path, size, and mtime, so any CI job that rebuilt or reinstalled lean-fmt threw away every
+  -- stored entry for a binary that behaves identically. Identity is the content hash now, so the
+  -- bytes decide and a touch decides nothing.
   let binary := ctx.consumer / ".lake" / "packages" / "lean-fmt" / ".lake" / "build" / "bin"
     / "lean-fmt"
   discard <| expectExit 0 "touch" "touch" #[binary.toString]
   discard <| lakeAny ctx #["exe", "lean-fmt", "check", "--root", "."]
-  ensure ((← entries cacheDir) != before)
-    "touching the formatter binary did not change cache identity; docs/ci.md overstates the risk"
+  ensureEq "touching the formatter binary orphaned the cache" before (← entries cacheDir)
+  -- The same bytes at a different path, which is what reinstalling looks like. Run directly
+  -- rather than through Lake, because the point is the path the binary is invoked from.
+  let moved := ctx.work / "reinstalled-lean-fmt"
+  copyFile binary moved
+  discard <| expectExit 0 "chmod" "chmod" #["+x", moved.toString]
+  discard <| runProc moved.toString #["check", "--root", "."] (cwd? := some ctx.consumer)
+    (timeoutMs := some 1800000)
+  ensureEq "the same formatter at a different path orphaned the cache" before (← entries cacheDir)
 
 /-- Installation from clean sources. `git archive` carries exactly what is committed, which
 catches a source file that is gitignored but needed to build — a defect invisible from any

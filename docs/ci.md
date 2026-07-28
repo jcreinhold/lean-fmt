@@ -199,17 +199,17 @@ lake exe lean-fmt compiler status --root . # read-only audit of artifact coverag
 ## Caching between runs
 
 lean-fmt keeps successful semantic results in `.lean-fmt-cache/` at the project root. Caching it across CI runs is
-worthwhile, under one condition that is easy to get wrong.
+worthwhile and needs no special handling.
 
-**Cache `.lean-fmt-cache` and `.lake` together, under the same key.** The cache's identity includes the formatter
-binary's **path, size, and modification time** — not a hash of its bytes (`ResultCache.open?`, `LeanFmt/Cache.lean`).
-This is deliberate: the executable statically links Lean's runtime, so hashing it dominated every cached invocation, and
-a rebuild always rewrites the file. The consequence for CI is direct — rebuilding `lean-fmt` from source on every run
-gives it a new mtime and orphans every entry, even when the rebuilt bytes are identical. Measured: touching the binary
-and re-running wrote a second, complete index beside the first.
+**The cache's identity takes the formatter binary's content**, not its path or modification time (`ResultCache.open?`,
+`LeanFmt/Cache.lean`). So rebuilding lean-fmt from source, or reinstalling it somewhere else, keeps every entry as long
+as the bytes are the same. Hashing the binary costs about 40 ms and is paid once per build: the result is memoized in
+`.lean-fmt-cache/formatter-identity.json`, keyed on the binary's path, size, and modification time, so later runs only
+read that file.
 
-So a restored `.lean-fmt-cache` only helps if the binary that produced it is restored too, with its mtime intact.
-`actions/cache` unpacks with `tar` and preserves mtimes, so caching both paths under one key works:
+Earlier releases keyed identity on (path, size, mtime) directly, and a job that rebuilt lean-fmt every run started cold
+every run. If you followed the advice that fixed it — caching `.lake` and `.lean-fmt-cache` under one key so the mtime
+survived — it still works and is still a good idea, because a restored `.lake` is worth having on its own:
 
 ```yaml
 - uses: actions/cache@v4

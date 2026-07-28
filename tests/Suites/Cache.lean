@@ -297,23 +297,38 @@ private def testChoiceAndExit (ctx : Ctx) : IO Unit := do
   let servedCount ← probe ctx "choice and #exit modules across an unrelated edit"
   ensureEq "an unrelated edit leaves the choice and #exit modules cached" (ctx.total - 2) servedCount
 
-/-- §8. Epoch changes still invalidate everything, and indexes stay bounded. The index name is a
-digest of the epoch, not of project sources. A formatter rebuild is an epoch change: `formatter`
-is the binary's path, size, and mtime. Touch to *now*, not to a fixed stamp — a fixed stamp is
-idempotent, so a rerun could leave the epoch unmoved and report a rerun as a cache defect. Runs
-last because it deliberately leaves the epoch moved. -/
+/-- The cache epoch, both directions.
+
+**A touched binary is not a new formatter.** Identity is the binary's content, so a new
+modification time changes nothing and every entry still serves. It used to be (path, size, mtime),
+and the consequence was that any CI job rebuilding lean-fmt started cold every run for a binary
+that behaved identically -- `docs/ci.md` carried a whole section of workarounds for it.
+
+**A moved search path is a new epoch**, because precedence decides what a module's imports
+resolve to. Nothing serves, and the new index does not accumulate beside the old ones without
+bound: originally nothing collected indexes at all, and three epoch changes left four files and
+kept climbing.
+
+The search path is what drives the epoch here because a formatter with different *bytes* cannot be
+staged -- `ctx.fmt` is the repository's own binary, and a modified copy of an ad-hoc signed
+executable does not run. -/
 private def testEpochChange (ctx : Ctx) : IO Unit := do
   restoreFixture ctx
   ensureEq "warm before the epoch moves" ctx.total (← served ctx)
   discard <| expectExit 0 "touch the formatter binary" "touch" #["-m", ctx.fmt]
-  let servedCount ← probe ctx "formatter rebuild"
-  ensureEq "a formatter rebuild invalidates every entry" 0 servedCount
-  -- Repeated epoch changes must not grow the directory without bound. Originally nothing
-  -- collected indexes at all: three simulated rebuilds left four files, and it kept climbing.
-  for stamp in ["203001010001", "203001010002", "203001010003", "203001010004", "203001010005",
-      "203001010006"] do
-    discard <| expectExit 0 "stamp the formatter binary" "touch" #["-m", "-t", stamp, ctx.fmt]
-    discard <| served ctx
+  ensureEq "a touched formatter orphaned the cache" ctx.total (← probe ctx "formatter touch")
+  -- The extra entry need not exist: an absent search-path root is recorded as the fact that it is
+  -- absent, which moves the digest the same way a present one does.
+  let epochRun (tag : String) : IO Nat := do
+    let existing := (← IO.getEnv "LEAN_PATH").getD ""
+    let extra := ctx.pristine / s!"epoch-{tag}"
+    let result ← runProc ctx.fmt #["check"] (cwd? := some ctx.project)
+      (env := #[("LEAN_FMT_PROFILE_PHASES", some "1"),
+        ("LEAN_PATH", some s!"{extra}{System.SearchPath.separator}{existing}")])
+    statFrom result.stderr "served"
+  ensureEq "a moved search path served stale entries" 0 (← epochRun "1")
+  for tag in ["2", "3", "4", "5", "6", "7"] do
+    discard <| epochRun tag
   ensureEq "the survivors are the live index plus the retained three" 4 (← indexCount ctx)
 
 /-- A toolchain mismatch is a hard error, not a silent re-key. -/

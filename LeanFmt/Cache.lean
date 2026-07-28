@@ -588,6 +588,55 @@ private def writeIndexAtomic (path : System.FilePath) (index : CacheIndex) : IO 
       IO.FS.removeFile temporary
     throw error
 
+/- What the memo below stores: the identity of the binary it hashed, and the hash. -/
+private structure FormatterMemo where
+  /-- The binary's path, size, and modification time — what used to *be* the identity. -/
+  stamp : String
+  /-- Its content hash, which is the identity now. -/
+  digest : Digest
+  deriving Lean.ToJson, Lean.FromJson
+
+/-- The formatter binary's content identity.
+
+**Content, not (path, size, mtime).** Those three were the identity, and they cost a consuming
+project its whole cache on every CI run that rebuilds or reinstalls lean-fmt: a new mtime, often a
+new path, and every stored entry orphaned — including every stored `CanonicalLayout` — for a binary
+that behaves identically. That is the entire cold-run cost, arriving on every CI run for a reason
+unrelated to correctness. `docs/ci.md` used to instruct consumers to work around it by caching
+`.lake` and `.lean-fmt-cache` under one key so the mtime survived.
+
+**The old objection was about cost per invocation, and the memo answers exactly that.** The
+executable statically links Lean's runtime and runs to about 185 MB, so hashing it is not something
+to do on every run. But (path, size, mtime) is a fine answer to "has this file changed since I last
+hashed it", which is the only question the memo asks. A rebuild pays one hash; every run after it
+reads a small file.
+
+`Lake.computeFileHash`, not `Digest.ofString`: the latter is a pure-Lean SHA-256, and 185 MB
+through it is not a cost the memo could redeem.
+
+**A memo that cannot be read or written costs the hash and nothing else.** It is an optimization,
+and an identity is never inferred from its absence. -/
+private def formatterDigest (cacheRoot application : System.FilePath) : IO Digest := do
+  let stat ← application.metadata
+  let stamp :=
+    s!"{application}\u0000{stat.byteSize}\u0000{stat.modified.sec}\u0000{stat.modified.nsec}"
+  let memoPath := cacheRoot / "formatter-identity.json"
+  let memo? ← try
+      let contents ← IO.FS.readFile memoPath
+      pure ((Lean.Json.parse contents).toOption.bind (Lean.fromJson? (α := FormatterMemo) · |>.toOption))
+    catch _ => pure none
+  if let some memo := memo? then
+    if memo.stamp == stamp then
+      return memo.digest
+  let digest ← withPhase "formatter_hash" <| do
+    return Digest.ofString s!"content\u0000{← Lake.computeFileHash application}"
+  try
+    IO.FS.createDirAll cacheRoot
+    IO.FS.writeFile memoPath (Lean.toJson ({ stamp, digest } : FormatterMemo)).compress
+  catch _ =>
+    pure ()
+  return digest
+
 /- Construct a cache capability only after the evaluated workspace's ordered roots, current
 source contents, and all non-toolchain module artifacts have trustworthy, content-matching Lake
 traces. Absence is a normal disabled-cache outcome; callers cannot manufacture a partial epoch. -/
@@ -596,21 +645,16 @@ def ResultCache.open? (workspace : Lake.Workspace) (application : System.FilePat
   try
     let some environment ← environmentDigest? workspace
       | return none
-    -- Formatter identity is the binary's path, size, and modification time, not a content
-    -- hash of its bytes: the executable statically links Lean's own shared runtime, so it is
-    -- large, and the pure-Lean SHA-256 over it dominated every cached invocation. A rebuild always
-    -- rewrites the file, so (size, mtime) changes whenever the formatter could behave differently;
-    -- `toolchain` below pins the toolchain revision separately.
-    let stat ← application.metadata
-    let formatter := Digest.ofString
-      s!"{application}\u0000{stat.byteSize}\u0000{stat.modified.sec}\u0000{stat.modified.nsec}"
+    -- `toolchain` below pins the toolchain revision separately; this pins the binary.
+    let cacheRoot := workspace.root.dir / ".lean-fmt-cache"
+    let formatter ← formatterDigest cacheRoot application
     let directoryReady ← IO.mkRef false
     let loadedEntries ← IO.mkRef none
     let workspaceArtifacts ← IO.mkRef none
     let closureDigestsByModule ← IO.mkRef {}
     let artifactHashByModule ← IO.mkRef {}
     return some {
-      root := workspace.root.dir / ".lean-fmt-cache"
+      root := cacheRoot
       toolchain := s!"{Lean.versionString}\u0000{workspace.lakeEnv.lean.githash}"
       environment
       formatter
