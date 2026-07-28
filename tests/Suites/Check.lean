@@ -119,36 +119,16 @@ private def testCheckFormatAgreement (ctx : Ctx) : IO Unit := do
   let formattedFindings ← findingsOf formatted "agreement format"
   ensureEq "check and format disagree" checkedFindings formattedFindings
 
-/-- A JSON object with one key removed. -/
-private def objectWithout (json : Lean.Json) (key : String) : IO Lean.Json := do
-  match json.getObj? with
-  | .ok node =>
-    let pairs := node.foldl (init := []) fun acc k v =>
-      if k == key then acc else (k, v) :: acc
-    return Lean.Json.mkObj pairs
-  | .error _ => throw <| IO.userError "objectWithout: not an object"
+/-- The custom-syntax parity: artifact and fallback agree on LocalSyntax, and the exact envelope's
+projection agrees with the build frontend's integrated artifact **exactly** — the whole `syntaxData`
+object, compared as written.
 
-/-- The options table minus the private `internal.cmdlineSnapshots` entries: the build frontend
-records it, and the exact on-demand frontend intentionally does not invent it. -/
-private def publicOptions (json : Lean.Json) : IO Lean.Json := do
-  let some states := (json.getArr?.toOption)
-    | throw <| IO.userError "publicOptions: not an array"
-  let filtered ← states.mapM fun state => do
-    match state.getArr?.toOption with
-    | some pairs =>
-      let kept := pairs.filter fun pair =>
-        match pair.getArr?.toOption with
-        | some fields =>
-          ((fields[0]?).bind (·.getStr?.toOption)) != some "internal.cmdlineSnapshots"
-        | none => true
-      return Lean.Json.arr kept
-    | none => return state
-  return .arr filtered
+It used to be compared with the options table held out, because the two producers genuinely
+disagreed there: the build frontend records `internal.cmdlineSnapshots` and the on-demand frontend
+does not invent it. The artifact carries no options any more, so the exclusion is gone and the
+comparison covers everything the two producers write.
 
-/-- The custom-syntax parity: artifact and fallback agree on LocalSyntax, and the exact
-envelope's projection agrees with the build frontend's integrated artifact, modulo the private
-option. File-local `syntax` reaches the kind table, which only an elaborated environment can
-parse. -/
+File-local `syntax` reaches the kind table, which only an elaborated environment can parse. -/
 private def testCustomSyntax (ctx : Ctx) : IO Unit := do
   let artifact ← checkRaw ctx 0 #["check", "--root", ".", "--json", "--no-cache",
     "tests/compiler/LocalSyntax.lean"] "artifact custom"
@@ -166,16 +146,8 @@ private def testCustomSyntax (ctx : Ctx) : IO Unit := do
     | throw <| IO.userError "exact envelope has no syntaxData"
   let some integratedSyntax := jsonAt? integrated [.field "syntaxData"]
     | throw <| IO.userError "integrated artifact has no syntaxData"
-  let fallbackBody ← objectWithout fallbackSyntax "options"
-  let integratedBody ← objectWithout integratedSyntax "options"
   ensureEq "the two frontends' syntax projections diverged"
-    fallbackBody.compress integratedBody.compress
-  let some fallbackOptions := jsonAt? fallbackSyntax [.field "options"]
-    | throw <| IO.userError "exact envelope has no options"
-  let some integratedOptions := jsonAt? integratedSyntax [.field "options"]
-    | throw <| IO.userError "integrated artifact has no options"
-  ensureEq "the two frontends' public options diverged"
-    (← publicOptions fallbackOptions).compress (← publicOptions integratedOptions).compress
+    fallbackSyntax.compress integratedSyntax.compress
   let kindEntries := (jsonAt? fallbackSyntax [.field "kinds"]).bind (·.getArr?.toOption)
   let kinds := (kindEntries.getD #[]).filterMap (·.getStr?.toOption)
   ensure (kinds.contains "commandEmit_local_command")
