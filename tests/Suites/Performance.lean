@@ -442,24 +442,44 @@ Each bound is what the run needs and no more, so each is also a claim about *why
   FMT004's closures are fetched because FMT004 was selected, not on every run.
 - **`compiler status`: 1.** The audit reports on every module in the workspace from one walk. It
   called `isCurrent` per module before, so this is the bound that would regress silently: a
-  per-module loop reads as *correct*, just slow, and on this repository it is 107 walks.
+  per-module loop reads as *correct*, just slow, and on this repository it was 107 walks.
+
+**On its own fixture, built first, and that is not incidental.** Pointed at this repository these
+bounds held or not depending on whether the modules happened to be current: a stale `.olean` sends
+its file to the exact frontend, which resolves a setup, which is a third walk — legitimate work,
+and not what these bounds are about. A gate that reads differently depending on what the last
+command built is not a gate.
 
 `--preview` because `--select` needs it, and `--no-cache` because a cache hit would answer before
 the traversal and make the bound meaningless. -/
 private def testTraversalCounts (ctx : Ctx) : IO Unit := do
+  let project := ctx.work / "traversals"
+  IO.FS.createDirAll (project / "Demo")
+  copyFile (ctx.root / "lean-toolchain") (project / "lean-toolchain")
+  writeFile (project / "lakefile.lean")
+    "import Lake\n\nopen Lake DSL\n\npackage \"traversal-fixture\"\n\nlean_lib Demo where\n  \
+     globs := #[.submodules `Demo]\n"
+  writeFile (project / "Demo" / "Base.lean") "module\n\npublic def base : Nat := 1\n"
+  -- `Leaf` imports `Base`, so FMT004 has a closure to resolve rather than an empty question.
+  writeFile (project / "Demo" / "Leaf.lean")
+    "module\n\npublic import Demo.Base\n\npublic def leaf : Nat := base\n"
+  discard <| expectExit 0 "lake build Demo" "lake" #["-d", project.toString, "build", "Demo"]
+    (cwd? := some ctx.root) (timeoutMs := some 600000)
+  let files := #[(project / "Demo" / "Base.lean").toString,
+    (project / "Demo" / "Leaf.lean").toString]
   let profile (label : String) (args : Array String) (bound : Nat) : IO Unit := do
     let result ← runProc ctx.app args (cwd? := some ctx.root)
       (env := #[("LEAN_FMT_PROFILE_PHASES", some "1")]) (timeoutMs := some 1800000)
     ensure (gateTraversalsWithin result.stderr bound)
       s!"{label} walked the Lake graph {counter "cache.lake_graphs" result.stderr} times; \
         expected at most {bound}"
-  let files := #[(ctx.root / "LeanFmt" / "Project.lean").toString,
-    (ctx.root / "LeanFmt" / "Cache.lean").toString]
-  profile "check --select FMT004" (#["check", "--no-cache", "--preview", "--select", "FMT004"]
-    ++ files) 2
-  profile "check --select FMT001" (#["check", "--no-cache", "--preview", "--select", "FMT001"]
-    ++ files) 1
-  profile "compiler status" #["compiler", "status", "--root", ctx.root.toString] 1
+  profile "check --select FMT004"
+    (#["check", "--no-cache", "--preview", "--select", "FMT004", "--root", project.toString]
+      ++ files) 2
+  profile "check --select FMT001"
+    (#["check", "--no-cache", "--preview", "--select", "FMT001", "--root", project.toString]
+      ++ files) 1
+  profile "compiler status" #["compiler", "status", "--root", project.toString] 1
 
 /-- §2 gate G3. The wall clock covers the formatter process and nothing else — one parent times
 the child directly, because two interpreter timestamps around the run would put both startups in
