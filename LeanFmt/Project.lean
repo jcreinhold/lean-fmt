@@ -26,12 +26,29 @@ namespace LeanFmt.Internal.Project
 
 open LeanFmt.Internal.Profile
 
+/- Where a target's bytes came from, which decides whether Lake's *build* setup describes them.
+
+`Module.recFetchSetup` takes a module's imports from the file on disk; `setupServerModule` takes
+them from a header handed to it. That difference is the whole of this type. Only bytes that are the
+file on disk can use the first, so only `disk` may. -/
+private inductive Provenance where
+  /-- Read from the file, unmodified. -/
+  | disk
+  /-- An editor buffer or stdin. Never `disk` even when the bytes happen to match the file: an
+  editor promises nothing about what is saved. -/
+  | buffer
+  /-- A candidate this run produced. `fix` may reorder or drop an import (FMT004, FMT005) and
+  `organize` exists to, so the imports on disk are the ones being changed. -/
+  | rewritten
+  deriving BEq
+
 structure SourceTarget where
   private mk ::
   module? : Option Lake.Module
   path : FilePath
   relativePath : String
   source : String
+  private provenance : Provenance
   /-- The **effective** configuration for this file: the closest recognized config at or above its
   directory, with its `extend` chain already composed. Carried
   per target rather than per run because two files in one run may legitimately disagree about
@@ -141,6 +158,7 @@ private def snapshotTarget (workspace : Lake.Workspace) (discovery : Discovery.D
     path
     relativePath
     source := ← IO.FS.readFile path
+    provenance := .disk
     config := discovery.configFor relativePath
     configKey := discovery.configKeyFor relativePath
   }
@@ -174,8 +192,10 @@ publishes, so this guard is not the only one; it is here because a gate some ent
 nothing.
 
 `module?` resolves from the *real* path when the file happens to exist, so a saved-but-modified
-buffer keeps the module identity its on-disk twin has and gets the same exact Lake setup. A path with
-nothing behind it resolves to `none` and takes the standalone route `diagnosticSetup` already serves.
+buffer keeps the module identity its on-disk twin has. It does not inherit that twin's *setup*: the
+provenance is `buffer`, so `setupJob` resolves the imports in the buffer rather than the ones on
+disk, which is the whole point of an editor holding unsaved bytes. A path with nothing behind it
+resolves to `none` and takes the standalone route `diagnosticSetup` already serves.
 
 `spelling?` exists because "the string the caller wrote" and "the path to resolve" stopped being one
 string once a caller spoke URIs. A language-server client names a document
@@ -201,6 +221,7 @@ def unsavedTarget (workspace : Lake.Workspace) (discovery : Discovery.Discovery)
     path
     relativePath
     source
+    provenance := .buffer
     config := discovery.configFor relativePath
     configKey := discovery.configKeyFor relativePath
   }
@@ -307,8 +328,11 @@ def Snapshot.findTarget? (snapshot : Snapshot) (requested : FilePath) : IO (Opti
   catch _ =>
     return none
 
+/-- The same file with different bytes: a candidate this run produced, to be validated under the
+same module identity. The result is never `disk` again, whatever it started as — its imports are
+what the rewrite made them, not what the file says. -/
 def SourceTarget.withSource (target : SourceTarget) (source : String) : SourceTarget :=
-  { target with source }
+  { target with source, provenance := .rewritten }
 
 /- Can Lake validate `build` without building anything? Asked silently.
 
@@ -366,9 +390,28 @@ private def noBuildValuePerJob? {α : Type} (workspace : Lake.Workspace)
   catch _ =>
     return none
 
-private def setupJob (target : SourceTarget) : Lake.FetchM (Lake.Job Lean.ModuleSetup) := do
-  let header ← Lean.parseImports' target.source target.relativePath
-  Lake.setupServerModule target.relativePath target.path (some header)
+/- The setup `lake build` would use, when this target's bytes are the ones `lake build` would read.
+
+`mod.setup.fetch` is the build path: `recFetchSetup` over `mod.presetup`, which is a memoized facet
+sitting beside `mod.olean` in the same graph. `setupServerModule` is the editor path, which Lake
+documents as not constructing a proper trace state, computes its transitive imports through the
+un-memoized `computeTransImportsAux`/`computePrecompileImportsAux`, and drops
+`leanOptOverrides` — `recFetchPreSetup` folds those into `leanOptions` and `setupEditedModule` does
+not, so a project setting one per package got options `lake build` applies and we ignored.
+
+The editor path stays for the two provenances that need it and for files Lake has no module for.
+The predicate is not "does it exist on disk": a saved-but-modified buffer exists and its imports are
+the ones being typed.
+
+`ensureJob` wraps both arms because `Lean.parseImports'` *throws*. Outside a job that throw escapes
+into whatever is constructing the collection and takes every other target with it. -/
+private def setupJob (target : SourceTarget) : Lake.FetchM (Lake.Job Lean.ModuleSetup) :=
+  Lake.ensureJob do
+    match target.module?, target.provenance with
+    | some mod, .disk => mod.setup.fetch
+    | _, _ =>
+      let header ← Lean.parseImports' target.source target.relativePath
+      Lake.setupServerModule target.relativePath target.path (some header)
 
 private structure FacetDescriptor where
   hash : String
@@ -498,10 +541,7 @@ def graph (workspace : Lake.Workspace) (targets : Array SourceTarget)
       match target? with
       | none => return Lake.Job.pure (α := Option Lean.ModuleSetup) none
       | some target =>
-        -- `setupJob` parses the header outside any job and `parseImports'` *throws*, so an
-        -- unparseable header would abort the collection's construction and zero every other
-        -- target. `ensureJob` turns that throw into this job's own failure.
-        let job ← Lake.ensureJob (setupJob target)
+        let job ← setupJob target
         return job.mapResult fun
           | .ok setup state => .ok (some setup) state
           | .error _ state => .ok none state

@@ -28,8 +28,12 @@ an internal this product happens to depend on, and the checklist exists because 
 5. **Lake's build internals.** `LeanFmt/Project.lean` runs Lake's own graph rather than shelling out to `lake`, and it
    reaches three non-`public` declarations through `import all Lake.Build.Run`: `mkJobQueue`, `mkBuildContext'`, and
    `Workspace.startBuild`. Everything else is Lake's public surface — `Workspace.runBuild`, `Workspace.checkNoBuild`,
-   `Lake.ensureJob`, `Job.mapResult`/`zipWith`/`collectArray`, `Lake.setupServerModule`, the `olean` and `transImports`
-   facets, and `Lake.Artifact`/`artifactWithExt`/`Hash.ofString?` for the `leanFmtArtifact` sidecar. `LeanFmt/Cache.lean`
+   `Lake.ensureJob`, `Job.mapResult`/`zipWith`/`collectArray`, `Lake.setupServerModule`, the `olean`, `transImports`, and
+   `setup` facets, and `Lake.Artifact`/`artifactWithExt`/`Hash.ofString?` for the `leanFmtArtifact` sidecar. The `setup`
+   facet is the build path — `recFetchSetup` over `presetup` — and a file read from disk takes it; a buffer or a
+   rewritten candidate takes `setupServerModule`, because their imports are not the ones on disk. If a bump changes what
+   `presetup` folds into `leanOptions`, or moves imports out of `ModulePreSetup`, the two paths stop agreeing for
+   unchanged files and the modes suite sees it. `LeanFmt/Cache.lean`
    additionally parses Lake's `.trace` JSON and pins its schema string. A rename breaks the build, which is the good
    case; a *behaviour* change does not. Two behaviours are load-bearing and silent if they move: `monitorBuild` failing
    the whole batch on any one registered job's failure, which is why `Project.graph` awaits jobs itself and never calls
