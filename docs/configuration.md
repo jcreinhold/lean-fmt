@@ -36,25 +36,23 @@ error. The `[format]` keys have no flat spelling. In an `extend` chain, scalars 
 
 **Comments are layout-transparent.** Break decisions are computed on the code alone: a trailing comment never changes
 the layout of the code it trails. If the code fits `line-width`, the line stays whole and the comment overflows the
-margin — the alternative would split `public import X` into pieces while the comment overflows anyway. If the code
-alone overflows, the construct breaks and the comment follows its owner. This is not configurable; it is the fix for
-splitting imports whose only overflow was a long trailing comment.
+margin — the alternative would split `public import X` into pieces while the comment overflows anyway. If the code alone
+overflows, the construct breaks and the comment follows its owner. This is not configurable; it is the fix for splitting
+imports whose only overflow was a long trailing comment.
 
 `pinned-comments` lists phrases; an inline (`--`) comment containing any of them is **pinned**: the formatter never
 moves it and never splits its line, even when the code alone overflows — a pinned tooling directive like
-`-- shake: keep` must not dangle off an import it annotates. Setting the key replaces the default
-`["shake: keep"]`; `pinned-comments = []` disables pinning. Matching is by substring, so `-- shake: keep (reason)`
-matches `"shake: keep"`.
+`-- shake: keep` must not dangle off an import it annotates. Setting the key replaces the default `["shake: keep"]`;
+`pinned-comments = []` disables pinning. Matching is by substring, so `-- shake: keep (reason)` matches `"shake: keep"`.
 
-`declaration-body` chooses where a declaration's body goes relative to `:=`. The default `"next-line"` is the
-canonical style Lean's own formatter produces: the body begins on its own line (`def foo :=` then `1`).
-`"same-line"` keeps the body on the `:=` line when the joined line fits `line-width`, joining already-broken bodies
-that fit, and breaks exactly like the default when it does not.
+`declaration-body` chooses where a declaration's body goes relative to `:=`. The default `"next-line"` is the canonical
+style Lean's own formatter produces: the body begins on its own line (`def foo :=` then `1`). `"same-line"` keeps the
+body on the `:=` line when the joined line fits `line-width`, joining already-broken bodies that fit, and breaks exactly
+like the default when it does not.
 
 What `[format]` does not offer: indent width, quote style, comment rewrapping, or any other knob that would require
 overriding the grammar authority wholesale. lean-fmt's layout comes from Lean's registered formatter; this section
-configures the margin, comment placement policy, and boundary corrections — nothing more is honestly deliverable
-today.
+configures the margin, comment placement policy, and boundary corrections — nothing more is honestly deliverable today.
 
 ## Selection
 

@@ -62,8 +62,8 @@ Match the checks to the change:
 - `watch`'s staged-empty case runs `check --staged` against *this* repository, so it fails whenever a `.lean` file is
   staged. Re-run it with a clean index.
 - Two suites keep foreign adversaries on purpose: `validator` and `formatter` pipe through
-  `tests/fixtures/formatter/candidate.py`, `style` through `tests/fixtures/style/expected_candidate.py`, and `editor` drives
-  `tests/lsp/editor.lua` — the real `vim.lsp`, not a Lean model of it. Do not port those.
+  `tests/fixtures/formatter/candidate.py`, `style` through `tests/fixtures/style/expected_candidate.py`, and `editor`
+  drives `tests/lsp/editor.lua` — the real `vim.lsp`, not a Lean model of it. Do not port those.
 
 Use the target project's exact Lean toolchain for frontend and plugin experiments. Keep experiments out of production
 modules until their interface is selected and verified.

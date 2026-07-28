@@ -4,8 +4,8 @@
 formatter derives layout from parsed structure and the active Lean environment; it does not preserve source alignment or
 keep a database of preferred source spellings.
 
-The executable policy rows live in `tests/fixtures/style/matrix.json`. Their IDs appear below so an implementation cannot
-silently omit or rename a decision.
+The executable policy rows live in `tests/fixtures/style/matrix.json`. Their IDs appear below so an implementation
+cannot silently omit or rename a decision.
 
 ## Global rules
 
