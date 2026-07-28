@@ -25,6 +25,17 @@ an internal this product happens to depend on, and the checklist exists because 
 4. **The artifact schema and cache identity.** Both are pre-release; no backward compatibility is promised with
    artifacts or cache entries written under an earlier toolchain. Cache identity includes the toolchain, so a bump
    orphans every entry wholesale by design, and the first run after a bump pays full cost.
+5. **Lake's build internals.** `LeanFmt/Project.lean` runs Lake's own graph rather than shelling out to `lake`, and it
+   reaches three non-`public` declarations through `import all Lake.Build.Run`: `mkJobQueue`, `mkBuildContext'`, and
+   `Workspace.startBuild`. Everything else is Lake's public surface — `Workspace.runBuild`, `Workspace.checkNoBuild`,
+   `Lake.ensureJob`, `Job.mapResult`/`zipWith`/`collectArray`, `Lake.setupServerModule`, the `olean` and `transImports`
+   facets, and `Lake.Artifact`/`artifactWithExt`/`Hash.ofString?` for the `leanFmtArtifact` sidecar. `LeanFmt/Cache.lean`
+   additionally parses Lake's `.trace` JSON and pins its schema string. A rename breaks the build, which is the good
+   case; a *behaviour* change does not. Two behaviours are load-bearing and silent if they move: `monitorBuild` failing
+   the whole batch on any one registered job's failure, which is why `Project.graph` awaits jobs itself and never calls
+   it, and `finalizeBuild` turning a stale `noBuild` target into `IO.Process.exit`, which is why it is never called on
+   the no-build pass. If a bump makes a whole selection report artifact or setup misses at once, suspect the first; if a
+   run exits silently mid-check, suspect the second.
 
 ## Checklist
 
