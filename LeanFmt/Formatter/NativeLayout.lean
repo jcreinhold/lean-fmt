@@ -729,8 +729,8 @@ private def joinedBodyFits (source : String) (width : Nat) (declVal body : Lean.
   match sourceRange? declVal, sourceRange? body with
   | some valRange, some bodyRange =>
     let before := slice source ⟨0, valRange.start⟩
-    let lineStart := match before.revFind (· == '\n') with
-      | some position => position.byteIdx + 1
+    let lineStart := match before.revFind? (· == '\n') with
+      | some position => position.offset.byteIdx + 1
       | none => 0
     (flattenWhitespace (slice source ⟨lineStart, bodyRange.stop⟩)).length <= width
   | _, _ => false
