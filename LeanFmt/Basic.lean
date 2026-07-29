@@ -16,6 +16,6 @@ namespace LeanFmt
 /-- The version this binary reports. It must equal `lakefile.lean`'s, and the boundary suite's
 `package-identity` case fails when it does not: the two drifted to 0.1.0 against 0.1.3, and the
 language server told every editor the wrong number until the gate existed. -/
-def version : String := "0.1.6"
+def version : String := "0.1.7"
 
 end LeanFmt
