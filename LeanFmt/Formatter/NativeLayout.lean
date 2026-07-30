@@ -681,6 +681,38 @@ private partial def collectIndentedSequenceStarts (stx : Lean.Syntax)
       collectIndentedSequenceStarts child carrier? starts
   | _ => starts
 
+/- A focusing `·` keeps its first tactic on its own line.
+
+`syntax (name := cdot) cdotTk tacticSeqIndentGt : tactic` (`Init/NotationExtra.lean:322`) has no
+formatter annotation of its own, so the derived one spells `·`, a soft `line`, and the sequence's
+fill. A sequence that cannot stay flat -- any `calc`, any `exact` whose term breaks -- fires that
+line and the `·` is left alone on its row. Mathlib's cdot linter flags exactly that shape: a
+`cdotTk` whose trailing whitespace holds a newline, with the instruction to merge the dot with the
+next line. `collectIndentedSequenceStarts` cannot help: it forces breaks at sequence starts, and
+this boundary needs the opposite.
+
+Joining only the *first* terminal is always safe. A tactic sequence opens with a keyword or
+identifier atom, so the joined line gains a handful of columns over the `·` itself and cannot
+overflow; everything after it keeps its own breaks and nests (`· exact` still lets a long term
+break below). The continuation items are untouched: they were already emitted one nest level past
+the `·`, which is where mathlib puts them, and `tacticSeqIndentGt` reparses them against the dot's
+column. The term-level `·` (`Term.cdot`, `(· + ·)`) is a different kind and is not matched. -/
+private partial def collectCdotStarts (stx : Lean.Syntax) (starts : Array Nat := #[]) : Array Nat :=
+  match stx with
+  | .node _ kind children =>
+    let starts :=
+      if kind == ``Lean.cdot then
+        match children[1]? with
+        | some sequence =>
+          match (selectedLeafRanges sequence)[0]? with
+          | some range => if starts.contains range.start then starts else starts.push range.start
+          | none => starts
+        | none => starts
+      else starts
+    let children := if kind == Lean.choiceKind then children[0]?.toArray else children
+    children.foldl (init := starts) fun starts child => collectCdotStarts child starts
+  | _ => starts
+
 /- `:= by` keeps the `by` on the `:=` line.
 
 `Term.byTactic` (`Term.lean:108`) is `ppAllowUngrouped >> "by " >> Tactic.tacticSeqIndentGt`, and that
@@ -1055,6 +1087,36 @@ private partial def collectDocCommentRanges (stx : Lean.Syntax)
     let children := if kind == Lean.choiceKind then children[0]?.toArray else children
     children.foldl (init := ranges) fun ranges child => collectDocCommentRanges child ranges
   | _ => ranges
+
+/- Doc comments owned by an attribute instance, paired with the closing `]` of their attribute list.
+
+An attribute argument can be a doc comment (`to_additive (docComment)?` is the mathlib shape). The
+payload is fixed -- the comment contract forbids reflowing it -- and its first line was authored to
+fit at the column the source wrote it at. Native layout's broken attribute form nests the entry
+(and dedents the `]` less far), so a payload line written to reach column 100 at the attribute's own
+column comes back over the limit, and no layout decision of the formatter's can shrink it. The only
+width-safe placement is the shallowest legal one: the attribute list's own column, entry and `]`
+alike. That is also the form the sources already write by hand.
+
+The bracket is collected here, with the doc, because the two must agree: a doc that stays hugged
+against its attribute keeps the `]` hugged too, and only a doc the source wrote on its own line
+pulls both down to the owner's column. Pairing them in one walk is what makes the two boundaries
+two spellings of one decision rather than two rules that could disagree. -/
+private partial def collectAttrDocComments (stx : Lean.Syntax)
+    (entries : Array (SourceRange × SourceRange) := #[]) : Array (SourceRange × SourceRange) :=
+  match stx with
+  | .node _ kind children =>
+    let entries :=
+      if kind == ``Lean.Parser.Term.attributes then
+        match children.back?.bind sourceRange? with
+        | some bracket =>
+          (collectDocCommentRanges stx).foldl (init := entries) fun entries doc =>
+            entries.push (doc, bracket)
+        | none => entries
+      else entries
+    let children := if kind == Lean.choiceKind then children[0]?.toArray else children
+    children.foldl (init := entries) fun entries child => collectAttrDocComments child entries
+  | _ => entries
 
 /- `indent` is `Std.Format.getIndent`, the `format.indent` option Lean's own `ppIndent`/`ppDedent`
 read. A constraint here cancels one level of the indentation native layout introduced, so it is that
@@ -2082,6 +2144,13 @@ alternatives: alternative 0 is {expected}, alternative {alternative} is {actual}
   let ctorDocStarts := collectCtorDocStarts stripped
   let nestedCommandRanges := collectNestedCommandRanges commandKinds rootStart stripped
   let nestedCommandStarts := nestedCommandRanges.map (·.start)
+  let attrDocComments := collectAttrDocComments stripped
+  let attrDocStarts := attrDocComments.map (·.1.start)
+  -- The one source-read question, shared by the doc rule and the attribute-bracket rule that
+  -- must answer it the same way: did the source break the line before this token?
+  let brokenBefore (start : Nat) : Bool :=
+    (terminals.filter (·.range.stop <= start)).back?.any fun previous =>
+      (slice source ⟨previous.range.stop, start⟩).contains '\n'
   -- The one boundary whose spelling is read off the source. Everything else here is decided by shape,
   -- because a shape is what native layout got wrong; this one asks the source because the question it
   -- answers -- which side of a break a comment is on -- is the source's to answer, and the comment
@@ -2095,17 +2164,29 @@ alternatives: alternative 0 is {expected}, alternative {alternative} is {actual}
       if range.start == rootStart || ctorDocStarts.contains range.stop ||
           nestedCommandStarts.contains range.start then none
       else
-        let broken := (terminals.filter (·.range.stop <= range.start)).back?.any fun previous =>
-          (slice source ⟨previous.range.stop, range.start⟩).contains '\n'
-        some (range.start, if broken then BoundaryLayout.hard else BoundaryLayout.flat)
+        let broken := brokenBefore range.start
+        -- An attribute-owned doc comment broken in the source cannot take the `.hard` spelling
+        -- every other doc takes: the nested column pushes its fixed payload past the width it was
+        -- authored to fit, so it dedents to the attribute list's own column instead.
+        some (range.start, if !broken then BoundaryLayout.flat
+          else if attrDocStarts.contains range.start then BoundaryLayout.dedented
+          else BoundaryLayout.hard)
+  -- The bracket half of the attribute-doc decision: a doc the source broke pulls the closing `]`
+  -- down to the same column, so the pair renders as one shape; a hugged doc collects nothing here
+  -- and the bracket stays on the attribute's row.
+  let attrDocBoundaries : Array (Nat × BoundaryLayout) :=
+    attrDocComments.filterMap fun (doc, bracket) =>
+      if brokenBefore doc.start then some (bracket.start, BoundaryLayout.dedented) else none
   let boundaryStarts : Array (Nat × BoundaryLayout) :=
     (collectUngroupedBodyStarts format.declarationBody source format.lineWidth stripped
         (collectReturnTermStarts stripped)).map
         (·, BoundaryLayout.flat) ++
       (collectIndentedSequenceStarts stripped).map (·, BoundaryLayout.hard) ++
+      (collectCdotStarts stripped).map (·, BoundaryLayout.flat) ++
       nestedCommandStarts.map (·, BoundaryLayout.dedented) ++
       ctorDocStarts.map (·, BoundaryLayout.elided) ++
       docBoundaries ++
+      attrDocBoundaries ++
       joined.map (·.start, BoundaryLayout.flat) ++
       unbreakableRunBoundaries source terminals unbreakableRuns ++
       (collectStructInstEllipses stripped).filterMap fun start =>

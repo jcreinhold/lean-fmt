@@ -512,8 +512,9 @@ lean_lib FormatterAdapterFixtures where
   srcDir := "tests/fixtures/formatter-adapter"
   roots := #[`AdapterSyntax]
 
-/- The native grammar adapter's four invariant families, one module each: positional terminal
-alignment, comment ownership at every boundary, typed exact islands, and offside carriers. Declared
+/- The native grammar adapter's invariant families, one module each: positional terminal
+alignment, comment ownership at every boundary, typed exact islands, offside carriers, and the
+grammar shapes mathlib's style linters flag. Declared
 modules, not generated buffers: each must reach the adapter through the same exact Lake setup a
 project file does, and `tests/Suites/NativeLayout.lean` formats them and then formats the result again
 -- an idempotence claim needs a module the frontend can elaborate twice.
@@ -522,5 +523,5 @@ They are deliberately *not* canonically laid out; that is the input the suite re
 still lints them, and that is intended: they are valid, finding-free Lean, and layout is not a rule. -/
 lean_lib NativeLayoutFixtures where
   srcDir := "tests/fixtures/native-layout"
-  roots := #[`Alignment, `Boundaries, `Islands, `Offside]
+  roots := #[`Alignment, `Boundaries, `Islands, `MathlibStyle, `Offside]
   plugins := #[`@/LeanFmtCompilerPlugin:shared]

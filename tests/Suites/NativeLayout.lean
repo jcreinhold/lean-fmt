@@ -12,6 +12,8 @@ declared fixture module each:
   literal bases whose source spelling the formatter is free to change
 - `Boundaries.lean` — comment ownership at every boundary the adapter distinguishes
 - `Islands.lean` — typed exact islands: multiline payloads, interpolation, quotation
+- `MathlibStyle.lean` — the grammar shapes mathlib's style linters flag: broken import rows,
+  isolated focusing dots, attribute-owned doc comments nested past their payload's column
 - `Offside.lean` — parser-significant columns native layout alone does not preserve
 
 Everything runs through `format --check`, never `format`: these fixtures are committed, and a
@@ -32,7 +34,7 @@ structure Ctx where
   /-- The width-100 renders, per fixture. -/
   once : String → IO String
 
-private def fixtures : Array String := #["Alignment", "Boundaries", "Islands", "Offside"]
+private def fixtures : Array String := #["Alignment", "Boundaries", "Islands", "MathlibStyle", "Offside"]
 
 /-- Lines containing the needle (grep -cF). -/
 private def count (text needle : String) : Nat :=
@@ -385,6 +387,48 @@ private def testOffside (ctx : Ctx) : IO Unit := do
   ensureEq "  ... and nothing shares the line the rec keyword ends" 1
     (countExact offside "  let rec")
 
+/-- §6b: mathlib's style linters, as grammar shapes. An import row never breaks across lines; a
+focusing `·` keeps its first tactic on its own row; an attribute-owned doc comment keeps the
+column its fixed payload was authored to fit. -/
+private def testMathlibStyle (ctx : Ctx) : IO Unit := do
+  let style ← ctx.once "MathlibStyle"
+  -- An import cannot be shortened, so a row too long for the width overflows whole rather than
+  -- stacking `public`/`import`/the module name. Asserted again at width 20 below, where the row
+  -- cannot fit at all.
+  ensureEq "an import row stays one line" 1
+    (countExact style "public import Lean.Parser.Module")
+  -- The cdot linter's shape: no line is a bare `·`.
+  ensureEq "no focusing dot is isolated" 0
+    ((style.splitOn "\n").filter (fun line => line.trimAscii.copy == "·") |>.length)
+  ensureEq "a calc hugs its focusing dot" 1 (countExact style "  · calc")
+  ensureEq "a nested focusing dot hugs twice" 1 (countExact style "  · · calc")
+  ensureEq "a comment between dot and tactic keeps the tactic's row" "    calc"
+    (← lineAfter style "-- a comment before the tactic")
+  ensureEq "a multi-tactic sequence hugs only its first tactic" "    exact h"
+    (← lineAfterExact style "  · skip")
+  -- The negative half: a case arm's break is its own layout, not the dot's rule.
+  ensureEq "a case arm still opens its tactic block on the next line" "    calc"
+    (← lineAfterExact style "  case left =>")
+  -- The term-level `·` (`Term.cdot`) is a different kind and is untouched.
+  ensureEq "the term-level cdot is untouched" 1 (countExact style "  (· + ·)")
+  -- A doc-bearing attribute broken in the source dedents to the `@[` column: the payload was
+  -- authored to fit there and cannot shrink, so entry and closing bracket both take it.
+  ensureEq "an attribute's doc comment keeps the attribute list's column" 1
+    (countExact style
+      "/-- The **integralization** of a commutative additive monoid: the image of the universal")
+  ensureEq "  ... and the closing bracket follows it to that column" "]"
+    (← lineAfter style "universal integral additive monoid under the source. -/")
+  ensureEq "a hugged doc comment keeps the attribute's row" 1
+    (count style "@[doc_carrier /-- A short hugged doc comment keeps the attribute's own row. -/")
+  -- Width 20: the import row still cannot break, and the dot still hugs.
+  let narrowConfig := ctx.work / "width-20.toml"
+  writeFile narrowConfig "[format]\nline-width = 20\n"
+  let narrow ← formatCheck ctx "MathlibStyle" (some narrowConfig) "mathlib-style at 20"
+  ensureEq "at width 20 the import row is still one line" 1
+    (countExact narrow "public import Lean.Parser.Module")
+  ensureEq "at width 20 no focusing dot is isolated" 0
+    ((narrow.splitOn "\n").filter (fun line => line.trimAscii.copy == "·") |>.length)
+
 /-- §6a: `RootedKind.lean` is the one fixture here that must not format — its command's node
 kind names no constant. The escape the message offers has to work, or the message is advice
 nobody can take. -/
@@ -439,6 +483,7 @@ public def main (args : List String) : IO UInt32 := do
       { name := "boundaries-comments", run := NativeLayout.testBoundaries ctx },
       { name := "islands", run := NativeLayout.testIslands ctx },
       { name := "offside", run := NativeLayout.testOffside ctx },
+      { name := "mathlib-style", run := NativeLayout.testMathlibStyle ctx },
       { name := "rooted-kind", run := NativeLayout.testRootedKind ctx }
     ]
     runCases "native-layout" cases args

@@ -120,7 +120,10 @@ private def hasTrailingLine (ownership : CommentOwnership) (stx : Lean.Syntax) :
 
 /-- One `import` row. The caller owns the row's own leading and trailing comments, so the tokens
 inside carry only the comments physically between them; a line comment there forces a break, since
-everything after it on that line would otherwise be commented out. -/
+everything after it on that line would otherwise be commented out. The tokens themselves are joined
+with unbreakable spaces: an import row cannot be shortened, so a break would only stack
+`public`/`import`/the module name vertically while the row still overflowed — mathlib's longLine
+linter exempts whole import lines (`isImport`) precisely because they must stay whole. -/
 private def importDocument (ownership : CommentOwnership) (stx : Lean.Syntax) : Doc := Id.run do
   let tokens := headerTokens stx
   let some first := tokens[0]? | return Doc.empty
@@ -133,7 +136,7 @@ private def importDocument (ownership : CommentOwnership) (stx : Lean.Syntax) : 
     let boundary := if hasTrailingLine ownership previous.stx ||
         !(Comments.leading ownership token.stx).isEmpty then
       Doc.hard
-    else Doc.line " "
+    else Doc.text " "
     let tokenDocument := if index + 1 == tokens.size then
         Trivia.decorateLeading ownership token.stx (tokenText token)
       else Trivia.decorateBeforeBoundary ownership token.stx (tokenText token)

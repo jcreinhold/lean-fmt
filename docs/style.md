@@ -28,7 +28,9 @@ cannot silently omit or rename a decision.
 
 `header.imports` keeps `module` and ordered imports at the left margin, one import statement per line. Import modifiers
 stay in source order. A comment-separated import group stays a group; formatting never deduplicates, reorders, or
-organizes imports. One blank line follows the header before the first ordinary command.
+organizes imports. A row that exceeds the line width overflows whole: an import cannot be shortened, so the tokens of
+one row (`public`, `import`, the module name) never stack vertically — mathlib's longLine linter exempts whole import
+lines for exactly this reason. One blank line follows the header before the first ordinary command.
 
 `commands.namespace` writes `namespace Name`, `section Name`, their bodies, and matching `end Name` at the command
 column. Namespace and section nesting changes names and scope, not command indentation; this follows ordinary Lean and
@@ -43,6 +45,12 @@ always occupies its own line above the declaration, even a short one: `@[simp] t
 one line and `theorem foo` on the next. That is the grammar's layout, not a width decision — a declaration-level
 attribute list carries a hard line after it upstream, and the inline variant of that construct exists and is used for
 structure fields, `let rec`, and binders, so the split is deliberate, not a defect.
+
+An attribute argument can itself be a doc comment (`@[to_additive /-- … -/]` is the mathlib shape). Its payload is
+fixed — the comment rule forbids reflowing it — so the entry's column is the only width the formatter controls. A doc
+comment the source hugged against its attribute stays hugged; one the source wrote on its own line dedents, together
+with the closing `]`, to the attribute list's own column, the one placement whose width the payload was authored to
+fit.
 
 `commands.syntax` keeps syntax, notation, macro, `open`, `export`, `universe`, `variable`, and `set_option` shells on
 one line while they fit. Their nested term/parser/tactic children break under their own category's layout. A long
@@ -134,7 +142,10 @@ by
   · exact x
 ```
 
-Bullets and case/focus bodies own their bodies' indentation. Project-defined tactics break under the same live registry
+Bullets and case/focus bodies own their bodies' indentation. A focusing `·` always keeps its first tactic on its own
+row — `· calc`, `· exact`, however long the block under it — because mathlib's cdot linter flags an isolated `·`;
+everything past the first token breaks under the ordinary rules. The term-level `·` (`(· + ·)`) is a different
+construct and is untouched. Project-defined tactics break under the same live registry
 as core ones; they do not make the enclosing declaration verbatim.
 
 `blocks.do-where` writes `do` followed by two-space-indented items unless one simple item fits flat. `where` uses the
