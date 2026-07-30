@@ -13,9 +13,15 @@ public import Lean.PrettyPrinter.Delaborator.FieldNotation
 /-!
 # Import rows with trailing comments
 
-The layout-transparency fixture: a trailing comment's width must never split the import it
-trails, an ordinary comment follows its row when the *code* alone overflows, and a pinned
-comment (`shake: keep`) holds its row flat even then.
+Import rows never split: an import cannot be shortened, so a row over the width overflows whole —
+mathlib's longLine linter exempts whole import lines for exactly that reason. A trailing comment
+of any length, ordinary or pinned (`shake: keep`), rides its row untouched at any width, and
+`pinned-comments` cannot move what cannot break.
+
+This fixture once pinned the opposite layout: before the mathlib-style compliance change made
+import rows unbreakable, an over-width row split one token per line, the pinned row held flat,
+and an ordinary comment followed the split. The never-break contract now lives in the
+native-layout suite's mathlib-style case; the comment half lives here.
 -/
 
 def importsFixture : Nat := 1

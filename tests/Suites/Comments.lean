@@ -120,37 +120,43 @@ private def testLayoutWidths (root : System.FilePath) (application : String)
     "layout CRLF"
   ensure (texts[0]! ≠ texts[1]!) "configured width did not reflow the commented fixture"
 
-/-- Import rows and their trailing comments (`tests/fixtures/comments/Imports.lean`). Layout is
-comment-transparent: at 100 the 140-character import row stays whole because its code fits, and at
-50 an ordinary comment follows its row's split while the default-pinned `shake: keep` row stays
-flat with code that overflows on its own — and `pinned-comments = []` releases it. -/
+/-- Import rows and their trailing comments (`tests/fixtures/comments/Imports.lean`). Import rows
+never split — an import cannot be shortened, so a row over the width overflows whole, and mathlib's
+longLine linter exempts whole import lines for exactly that reason (the native-layout suite's
+mathlib-style case owns the never-break contract at widths 100 and 20). The comment half lives
+here: at widths 100 and 50, and under `pinned-comments = []`, the fixture renders identically —
+a trailing comment of any length, ordinary or pinned, rides its row untouched.
+
+This case formerly pinned the opposite layout — over-width rows split one token per line, the
+pinned `shake: keep` row held flat, and `pinned-comments = []` released it — until the
+mathlib-style compliance change made import rows unbreakable and left these assertions stale.
+That split was also the last breakable custom group: every non-header command renders as one
+registered leaf whose breaks `Std.Format.prettyM` owns, so the `pinned-comments` hold/release
+mechanism in `Doc.renderWork` has no group left to act on today. The width- and config-equality
+pins below are the canaries: they fail if import rows ever become breakable again, which would
+be a decision to make explicitly, not a regression to slip in. -/
 private def testImportComments (root : System.FilePath) (application : String)
     (work : System.FilePath) : IO Unit := do
   let setup ← setupFile root work "tests/fixtures/comments/Imports.lean"
   let wide ← analyzeExact root application setup
     "tests/fixtures/comments/Imports.lean" "tests/fixtures/comments/Imports.lean" "4:100"
   let (_, wideText) ← canonical wide "import comments width 100"
-  ensureContains wideText
-    "public import Lean.Data.Json -- this trailing comment makes the line longer than one hundred characters and must not split the import row\n"
-    "a long trailing comment split the import it trails"
+  for row in [
+    "public import Lean.Data.Json -- this trailing comment makes the line longer than one hundred characters and must not split the import row",
+    "public import Lean.PrettyPrinter.Delaborator.FieldNotation -- shake: keep (required by artifact evidence for this module)",
+    "public import Lean.PrettyPrinter.Delaborator.FieldNotation -- an ordinary comment"
+  ] do
+    ensureContains wideText (row ++ "\n") s!"a trailing comment left its import row: {row}"
   let narrow ← analyzeExact root application setup
     "tests/fixtures/comments/Imports.lean" "tests/fixtures/comments/Imports.lean" "4:50"
   let (_, narrowText) ← canonical narrow "import comments width 50"
-  ensureContains narrowText
-    "public import Lean.PrettyPrinter.Delaborator.FieldNotation -- shake: keep (required by artifact evidence for this module)\n"
-    "the default-pinned row did not hold flat with its code over width"
-  ensureContains narrowText
-    "public\nimport\nLean.PrettyPrinter.Delaborator.FieldNotation -- an ordinary comment\n"
-    "an over-width import with an ordinary comment did not split"
-  ensure ((narrowText.splitOn "public\nimport\nLean.PrettyPrinter.Delaborator.FieldNotation").length == 3)
-    "expected exactly the two unpinned rows to split"
+  ensure (narrowText == wideText) "width 50 reflowed an import row"
   let unpinned : LeanFmt.Internal.FormatConfig := { lineWidth := 50, pinnedComments := #[] }
   let released ← analyzeExact root application setup
     "tests/fixtures/comments/Imports.lean" "tests/fixtures/comments/Imports.lean"
     s!"4j{(Lean.toJson unpinned).compress}"
   let (_, releasedText) ← canonical released "import comments unpinned"
-  ensure ((releasedText.splitOn "public\nimport\nLean.PrettyPrinter.Delaborator.FieldNotation").length == 4)
-    "pinned-comments = [] did not release the `shake: keep` row"
+  ensure (releasedText == wideText) "pinned-comments = [] changed an import row"
 
 end CommentsSuite
 
