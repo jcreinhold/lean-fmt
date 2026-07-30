@@ -486,17 +486,17 @@ sends the user debugging syntax when the answer is `lake build`. -/
 private def testUnbuiltClassification : IO Unit := do
   let unbuilt := #["/proj/Foo.lean:1:0: error: failed to open file \
     '/proj/.lake/build/lib/lean/Mathlib/Data/Nat/Basic.olean': No such file or directory"]
-  ensure (Application.unbuiltDependency? unbuilt ==
+  ensure (unbuiltDependency? unbuilt ==
       some "/proj/.lake/build/lib/lean/Mathlib/Data/Nat/Basic")
-    s!"an unbuilt dependency diagnostic was not classified: {Application.unbuiltDependency? unbuilt}"
+    s!"an unbuilt dependency diagnostic was not classified: {unbuiltDependency? unbuilt}"
   -- The negative halves: a parse failure and an import the manifest does not know are `broken`,
   -- not `unbuilt`.
   let parseError := #["/proj/Foo.lean:5:2: error: expected token"]
-  ensure (Application.unbuiltDependency? parseError |>.isNone)
+  ensure (unbuiltDependency? parseError |>.isNone)
     "a parse error was classified as an unbuilt dependency"
   let unknown := #["/proj/Foo.lean:1:0: error: unknown module prefix 'NoSuchModule'\n\n\
     No directory 'NoSuchModule' or file 'NoSuchModule.olean' in the search path entries:"]
-  ensure (Application.unbuiltDependency? unknown |>.isNone)
+  ensure (unbuiltDependency? unknown |>.isNone)
     "an unknown-module import was classified as an unbuilt dependency"
 
 /-- The cases this module contributes to the unit runner, in run order. -/

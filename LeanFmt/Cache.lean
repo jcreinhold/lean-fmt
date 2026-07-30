@@ -795,6 +795,50 @@ private def ResultCache.ensureWriteDirectory (cache : ResultCache) : IO Unit := 
     IO.FS.createDirAll (resultDirectory cache)
     cache.directoryReady.set true
 
+/-- May this analysis be stored at all?
+
+A broken analysis is a fact about the bytes — they did not elaborate — and is stored (it is
+organize's rejection verdict). An *unbuilt* analysis carries no information about the bytes: the
+dependency olean was missing, so the frontend never reached them. Storing one would poison every
+later probe with a non-verdict, so it is the one outcome class `writeAll` refuses. -/
+private def storableAnalysis (analysis : SemanticAnalysis) : Bool :=
+  (unbuiltDependency? analysis.diagnostics).isNone
+
+/-- Merge two analyses recorded under **one identity key** — same source bytes, same closure,
+same configuration — so that storing keeps every capability either run computed.
+
+The write-side invariant of the persistent cache: per key, what an entry `providedOf` is
+monotone over time. Before this, `writeAll`'s bare insert let a run overwrite an entry with a
+strictly poorer analysis of the same bytes (a validation capturing no canonical text displacing
+one that did), and the next run that needed the displaced capability paid a frontend run for
+nothing. `Cache.Spec` quantifies over the read decision and is untouched; this is the half that
+makes writes preserve what reads rely on.
+
+- A success is strictly more informative than a broken record: under one identity the pair can
+  only arise through resource flakiness (a heartbeat-bound elaboration succeeding on retry), and
+  the success is the sound direction to keep.
+- Both success: keep the analysis that serves everything the other serves (`Tier.satisfies` and
+  `SemanticCaps.subset`, the same order `Provided.meets` applies), grafting `canonical?` from
+  the other when absent. Canonical text is a deterministic function of the source bytes and the
+  format configuration — both pinned by the shared key — so the graft is exactly what a fresh
+  render would produce.
+- No capture mode today produces an incomparable (tier, caps) pair; if one ever does, keep the
+  fresher analysis. The displaced capability misses and recomputes — the merge may never claim
+  a capability no single analysis carries, and a miss is the safe direction. -/
+private def mergeAnalysis (old new : SemanticAnalysis) : SemanticAnalysis :=
+  match old.result?, new.result? with
+  | none, some _ => new
+  | some _, none => old
+  | none, none => new
+  | some oldResult, some newResult =>
+    let canonical? := newResult.canonical?.or oldResult.canonical?
+    if newResult.tier.satisfies oldResult.tier && oldResult.caps.subset newResult.caps then
+      { new with result? := some { newResult with canonical? } }
+    else if oldResult.tier.satisfies newResult.tier && newResult.caps.subset oldResult.caps then
+      { old with result? := some { oldResult with canonical? } }
+    else
+      { new with result? := some { newResult with canonical? } }
+
 /- Merge and atomically publish an ordered batch once. Cache failure never changes successful
 analysis; the next run simply observes the previous index or an empty cache. -/
 def ResultCache.writeAll (cache : ResultCache) (project : Project.Snapshot)
@@ -806,7 +850,7 @@ def ResultCache.writeAll (cache : ResultCache) (project : Project.Snapshot)
     for ((target, analysis?), closure?) in (targets.zip analyses).zip closures do
       let some analysis := analysis?
         | continue
-      unless validAnalysis target analysis do
+      unless validAnalysis target analysis && storableAnalysis analysis do
         continue
       -- A target whose currency could not be established is not written. Writing it under
       -- a placeholder closure would make it indistinguishable from a genuinely current entry on
@@ -815,6 +859,11 @@ def ResultCache.writeAll (cache : ResultCache) (project : Project.Snapshot)
         | continue
       let expected ← identity cache project target closure
       let digest := cacheIdentityDigest expected
+      -- Merge, never replace: an entry already at this key recorded capabilities of these same
+      -- bytes this run did not recompute (monotone writes — see `mergeAnalysis`).
+      let analysis := match entries.get? (toString digest) with
+        | some old => mergeAnalysis old.analysis analysis
+        | none => analysis
       let entry : CacheEntry := {
         schema := resultCacheSchema
         identity := digest

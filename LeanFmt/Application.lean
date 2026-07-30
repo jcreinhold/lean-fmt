@@ -1103,20 +1103,6 @@ def admittedFix? (plan : RulePlan) (unsafeFixes : Bool) (finding : Finding) : Op
   guard <| plan.fixableSelected.contains finding.code && fix.applicability.admitted unsafeFixes
   return fix
 
-/-- The diagnostic an unbuilt dependency leaves at the import header: Lake resolved the module
-from the manifest, but its olean was never built in `.lake/build`. The file is fine and the tree
-is not built, which is a different defect class from a parse failure -- and on a fresh clone it
-is the *common* one, so it gets its own status and the run names the missing module. Returns the
-module name as the diagnostic spells it (`Mathlib.Data.Nat.Basic`, say). -/
-private def unbuiltDependency? (diagnostics : Array String) : Option String :=
-  diagnostics.findSome? fun line =>
-    match line.splitOn "failed to open file '" with
-    | [_, rest] =>
-      match rest.splitOn ".olean': No such file or directory" with
-      | [module, _] => some module
-      | _ => none
-    | _ => none
-
 /-- Project one analysis into the edits a preview or write would apply — one of two independent
 patches, keyed on `renderCanonical`:
 

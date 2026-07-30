@@ -54,6 +54,24 @@ structure SemanticAnalysis where
   diagnostics : Array String := #[]
   deriving BEq, Lean.ToJson, Lean.FromJson
 
+/-- The diagnostic an unbuilt dependency leaves at the import header: Lake resolved the module
+from the manifest, but its olean was never built in `.lake/build`. The file is fine and the tree
+is not built, which is a different defect class from a parse failure -- and on a fresh clone it
+is the *common* one, so it gets its own status and the run names the missing module. Returns the
+module name as the diagnostic spells it (`Mathlib.Data.Nat.Basic`, say).
+
+The cache reads this too: an unbuilt outcome says nothing about the bytes themselves, so unlike
+a broken analysis (a fact: these bytes do not elaborate) it is never stored. Keeping the
+predicate next to `SemanticAnalysis` lets the run layer and the cache layer share one answer. -/
+def unbuiltDependency? (diagnostics : Array String) : Option String :=
+  diagnostics.findSome? fun line =>
+    match line.splitOn "failed to open file '" with
+    | [_, rest] =>
+      match rest.splitOn ".olean': No such file or directory" with
+      | [module, _] => some module
+      | _ => none
+    | _ => none
+
 /-- The current cache shape stores the complete admitted `CanonicalLayout` with its source map and
 formatter/validation metrics. The version is part of cache identity; older result shapes miss. -/
 def semanticResultSchema : String := "lean-fmt.semantic-result.v13"

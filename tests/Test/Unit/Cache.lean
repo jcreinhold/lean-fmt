@@ -263,11 +263,55 @@ private def testStore : IO Unit := do
   finally
     IO.FS.removeDirAll directory
 
+/-- The merge that makes cache writes monotone: which capability combinations survive a rewrite
+under one identity key, and the broken/unbuilt boundary of what may be stored at all. -/
+private def testMergeAnalysis : IO Unit := do
+  let canonical : CanonicalLayout := default
+  let withCanonical (analysis : SemanticAnalysis) : SemanticAnalysis :=
+    { analysis with result? := analysis.result?.map fun result =>
+      { result with canonical? := some canonical } }
+  let rich := withCanonical (SemanticAnalysis.success "src" #[] .semantic {} ⟨true⟩)
+  let poor := SemanticAnalysis.success "src" #[] .«syntax»
+  let broken : SemanticAnalysis := { result? := none, diagnostics := #["elaboration failed"] }
+  let provided (analysis : SemanticAnalysis) : Cache.Decision.Provided := providedOf analysis
+  -- A poorer rewrite of the same bytes keeps the richer entry's capabilities, in both orders.
+  for merged in [mergeAnalysis rich poor, mergeAnalysis poor rich] do
+    ensure (provided merged == .success .semantic ⟨true⟩ true)
+      "poorer rewrite displaced a capability the richer entry carried"
+  -- Canonical text grafts onto a fresh analysis that did not render it.
+  let rendered := withCanonical poor
+  let merged := mergeAnalysis rendered poor
+  ensure ((merged.result?.map (·.canonical?.isSome)) == some true)
+    "canonical text did not graft onto the fresher analysis"
+  ensure (provided merged == .success .«syntax» {} true) "graft changed the entry's tier or caps"
+  -- Broken records never displace a success; a success always displaces a broken record.
+  ensure (provided (mergeAnalysis poor broken) == provided poor)
+    "a broken record displaced a success"
+  ensure (provided (mergeAnalysis broken poor) == provided poor)
+    "a success did not displace a broken record"
+  ensure ((mergeAnalysis broken broken).result?.isNone)
+    "two broken records did not stay broken"
+  -- The incomparable-pair escape hatch keeps the fresher analysis (degrades to a miss, never a
+  -- stale claim): semantic-without-occurrences vs syntax-with-occurrences.
+  let highTier := SemanticAnalysis.success "src" #[] .semantic
+  let highCaps := SemanticAnalysis.success "src" #[] .«syntax» {} ⟨true⟩
+  ensure (provided (mergeAnalysis highTier highCaps) == .success .«syntax» ⟨true⟩ false)
+    "incomparable merge did not keep the fresher analysis"
+  -- Unbuilt outcomes are never stored; broken and successful ones are.
+  let unbuilt : SemanticAnalysis := {
+    result? := none
+    diagnostics := #["Mathlib/Foo.lean:1:0: error: failed to open file 'Mathlib.Foo.olean': No such file or directory"]
+  }
+  ensure (!storableAnalysis unbuilt) "an unbuilt outcome was storable"
+  ensure (storableAnalysis broken) "a broken outcome was not storable"
+  ensure (storableAnalysis poor) "a successful outcome was not storable"
+
 /-- The cases this module contributes to the unit runner, in run order. -/
 public def cases : Array Case := #[
   { name := "testCacheIdentity", run := testCacheIdentity },
   { name := "testLakeTraceCharacterization", run := testLakeTraceCharacterization },
   { name := "testClosureDegradationDirection", run := testClosureDegradationDirection },
-  { name := "testStore", run := testStore }]
+  { name := "testStore", run := testStore },
+  { name := "testMergeAnalysis", run := testMergeAnalysis }]
 
 end LeanFmt.Test.Unit.Cache
