@@ -300,6 +300,16 @@ private def testIslands (ctx : Ctx) : IO Unit := do
   -- protection is what lets a macro body carrying them format.
   ensureEq "an antiquotation splice survives as its own bytes" 1 (count islands "($[have := $h];*)")
   ensureEq "a suffix splice survives as its own bytes" 1 (count islands "$xs,*")
+  -- A binder whose whole type applies a doubly-declared infix backtracks the upstream formatter
+  -- uncaught (`format: uncaught backtrack exception`); the command degrades to its source bytes
+  -- verbatim, odd spacing and all, and the command after it still formats.
+  ensureEq "a backtracked command keeps its source bytes verbatim"
+    "        T) : True := trivial"
+    (← lineAfterExact islands
+      "theorem backtrackBinder (M : Type) (T : BacktrackTheo) (hM : M   ⊨⊨")
+  ensureEq "the command after a backtracked one still formats"
+    "  Nat.add_zero n"
+    (← lineAfterExact islands "theorem formatsAroundBacktrack (n : Nat) : n + 0 = n :=")
 
 /-- §6: offside carriers compose — `sepByIndent` covers record fields and tactic/conv sequences;
 `do`, `match`, and equation alternatives have no algebra carrier at all. -/

@@ -105,5 +105,29 @@ macro "seq_intro" "[" h:term,* "]" : tactic => `(tactic| ($[have := $h];*))
 def suffixSplice (xs : Array Lean.Term) : Lean.MacroM Lean.Syntax :=
   `(#[$xs,*])
 
+structure BacktrackSent where
+
+structure BacktrackTheo where
+  mk ::
+
+def BacktrackSent.Realize : Type → BacktrackSent → Prop := fun _ _ => True
+
+class BacktrackTheo.Model (M : Type) (T : BacktrackTheo) : Prop where
+
+infixl:51 " ⊨⊨ " => BacktrackSent.Realize
+infixl:51 " ⊨⊨ " => BacktrackTheo.Model
+
+/- A binder whose whole type is an application of a doubly-declared infix: the notation's two
+declarations leave the application under a `choice`, and formatting the `class` side backtracks
+uncaught -- upstream's `format: uncaught backtrack exception` (`Formatter.lean:655`), mathlib's
+`⊨` (`Mathlib/ModelTheory/Semantics.lean:634,736`) in miniature. No alternative the adapter can
+spell reparses to the elaborated tree, so the command degrades to its source bytes verbatim and
+the rest of the file formats. The deliberately odd spacing below is the pin: it survives only
+because the command is verbatim. -/
+theorem backtrackBinder (M : Type) (T : BacktrackTheo) (hM : M   ⊨⊨
+        T) : True := trivial
+
+theorem formatsAroundBacktrack (n : Nat) : n + 0 = n := Nat.add_zero n
+
 end NativeLayoutIslands
 

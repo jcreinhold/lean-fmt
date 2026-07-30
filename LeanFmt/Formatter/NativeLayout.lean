@@ -2486,12 +2486,35 @@ cannot tell from the placeholder that protects {marker.range.start}:{marker.rang
         detail }
   catch exception =>
     let detail ← exception.toMessageData.toString
-    return .error {
-      category := .command
-      kind := stx.getKind
-      range := rootRange stx
-      trace
-      detail }
+    -- A formatter `throwBacktrack` that no alternative catches is rethrown upstream as
+    -- `format: uncaught backtrack exception` (`Lean/PrettyPrinter/Formatter.lean:655`) -- the
+    -- grammar has no formatter for the shape as written (a doubly-declared infix whose whole
+    -- type is a binder's type is the sighted case). That is an upstream formatter gap, not a
+    -- defect this adapter can repair, so the command degrades to its source bytes verbatim:
+    -- they reparse and re-elaborate to exactly what the file already held, the structure and
+    -- diagnostics gates still hold, and the rest of the file formats. The metrics record the
+    -- degradation so a run can count it. Any other exception keeps refusing.
+    if (detail.splitOn "uncaught backtrack exception").length > 1 then
+      match sourceRange? stx with
+      | some range =>
+        return .ok {
+          document := Doc.verbatim (slice source range)
+          trace
+          metrics := { exactIslands := 1, exactIslandBytes := range.stop - range.start } }
+      | none =>
+        return .error {
+          category := .command
+          kind := stx.getKind
+          range := rootRange stx
+          trace
+          detail := s!"{detail} (no source range for the verbatim fallback)" }
+    else
+      return .error {
+        category := .command
+        kind := stx.getKind
+        range := rootRange stx
+        trace
+        detail }
 
 end Formatter.NativeLayout
 
