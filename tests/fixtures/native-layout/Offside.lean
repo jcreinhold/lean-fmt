@@ -230,5 +230,15 @@ def letChainAligned (x : Nat) : Nat × Nat × Nat :=
    letI : OfNat Nat x := ⟨x⟩
    (default, 5, x))
 
+
+/- A two-statement bail-out falsifies the one-line precondition the single-statement joins rely on:
+`doSeqIndent`'s own formatter emits the inter-item break as a leaf flattening cannot remove, one
+line of source notwithstanding. The join is not collected, and the guard keeps the upstream break
+after the bar. -/
+def twoItemBailout (value : Option Nat) : Nat := Id.run do
+  let some current := value | dbg_trace "missing"; return 0
+  return current + 1
+
 end NativeLayoutOffside
+
 

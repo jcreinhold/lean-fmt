@@ -384,9 +384,15 @@ private def testOffside (ctx : Ctx) : IO Unit := do
   -- The join is collected only where the source already spelled the bail-out on one line.
   ensureEq "a bail-out the source spelled on several lines keeps its break" "      let fallback := 3"
     (← lineAfterExact offside "    let some measured := value |")
-  ensureEq "  ... and is the only bar in these fixtures left bare" 1
+  ensureEq "  ... and the only bars left bare are the two negative halves" 2
     ((offside.splitOn "\n").filter (fun line =>
       line.startsWith "    let some " && line.endsWith " |") |>.length)
+  -- A two-statement bail-out falsifies the one-line precondition (`doSeqIndent`'s formatter emits
+  -- the inter-item break as a leaf flattening cannot remove): the join is not collected, and the
+  -- guard keeps the upstream break after the bar, both statements at one column under it.
+  ensureEq "a two-statement bail-out is not joined onto the bar's line"
+    "      dbg_trace \"missing\";\n      return 0"
+    (← linesAfterExact offside "    let some current := value |" 2)
   -- A nested command starts at column zero, whatever the embedding node's `nest` chose.
   ensureEq "a command nested in another command starts at column zero" 1
     (countExact offside "#eval 1 + 2")

@@ -911,9 +911,9 @@ bail-out are one construct: the bar reads as a guard only with the bail-out besi
 `doLetElse` (`Lean/Parser/Do.lean:79-81`) spells two `doSeqIndent`s —
 `(checkColGe >> " | " >> doSeqIndent) >> optional (checkColGe >> doSeqIndent)` — the guard body and
 the rest of the enclosing block, which is why `collectOffsideConstraints` finds two sequences past the
-bar and takes the *last* for its constraint. The bail-out is the first. `pipes.back?` for the reason
-that collector uses it: a pattern may spell alternatives with earlier bars, and only the last one is
-the guard.
+bar and takes the *last* for its constraint. The bail-out is the first. The guard's own bar is a
+direct child of the node: a pattern's alternative bars are inside the declaration child, and a `|`
+deeper in the value is a match arm's.
 
 Joining alone is width-unsound and was reverted once (`7e838a1`). `.text " "` cannot break, so the
 renderer re-measures and breaks at the next soft line, which is now *inside* the bail-out at an
@@ -934,6 +934,26 @@ already sit on one line, median 60 columns and widest 99, every body a short bai
 (`return false`, `none`, `continue`, `.error "unknown directive scope"`); 10 more spell the bail-out
 on the next line and are not collected. The idiom bounds it: a guarded `let` exists to leave, and
 leaving is short. -/
+/- The first `doSeqIndent` at or after `offset`, in traversal order -- the sequence a guard's own
+bar introduces, when the guard has one. -/
+private partial def firstDoSeqIndentAfter (offset : Nat) (stx : Lean.Syntax) :
+    Option Lean.Syntax :=
+  if stx.isOfKind ``Lean.Parser.Term.doSeqIndent then
+    match sourceRange? stx with
+    | some range => if offset <= range.start then some stx else none
+    | none => none
+  else
+    stx.getArgs.foldl (init := none) fun found child =>
+      match found with
+      | some _ => found
+      | none => firstDoSeqIndentAfter offset child
+
+/- The statements a `doSeqIndent` holds -- the wrappers, not the separators. -/
+private def doSeqItemCount (stx : Lean.Syntax) : Nat :=
+  match stx.getArgs[0]? with
+  | some wrapper => wrapper.getArgs.countP (·.isOfKind ``Lean.Parser.Term.doSeqItem)
+  | none => 0
+
 private partial def collectGuardBailouts (source : String) (stx : Lean.Syntax)
     (ranges : Array SourceRange := #[]) : Array SourceRange :=
   match stx with
@@ -943,11 +963,27 @@ private partial def collectGuardBailouts (source : String) (stx : Lean.Syntax)
           kind == ``Lean.Parser.Term.doLetExpr ||
           kind == ``Lean.Parser.Term.doLetMetaExpr ||
           kind == ``Lean.Parser.Term.doLetArrow then
-        match (guardedPipeRanges stx).back? with
+        -- The bail-out's bar is a *direct child* of the guard (`doLetElse`'s seventh child). A `|`
+        -- deeper in the value is a match arm's bar -- `let args ← match … with | .error msg => …`
+        -- -- and the one-line sequence after it is a match body, not a bail-out; joining it onto
+        -- the arm's bar is not this rule.
+        match children.find? (· matches .atom _ "|") with
         | some pipe =>
-          match ((guardedSequenceRanges stx).filter (pipe.stop <= ·.start))[0]? with
-          | some range =>
-            if (slice source range).contains '\n' then ranges else ranges.push range
+          match sourceRange? pipe with
+          | some pipeRange =>
+            match firstDoSeqIndentAfter pipeRange.stop stx with
+            | some sequence =>
+              match sourceRange? sequence with
+              | some range =>
+                -- A two-statement bail-out (`| IO.eprintln "…"; return 2`) falsifies the
+                -- one-line precondition above: `doSeqIndent`'s own formatter emits the
+                -- inter-item break as a leaf flattening cannot remove, one line of source
+                -- notwithstanding. Those keep the upstream break after the bar.
+                if doSeqItemCount sequence != 1 || (slice source range).contains '\n' then
+                  ranges
+                else ranges.push range
+              | none => ranges
+            | none => ranges
           | none => ranges
         | none => ranges
       else ranges
