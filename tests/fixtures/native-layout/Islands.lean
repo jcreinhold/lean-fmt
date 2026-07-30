@@ -92,4 +92,18 @@ def spliceGroup : Lean.Syntax → Lean.MacroM Lean.Syntax
 def declarationQuotation (name : Lean.Ident) : Lean.MacroM Lean.Syntax :=
   `(def $name : Nat := 1)
 
+
+/- The splice family, whose kinds name no formatter at all: `$[p]suffix` parses as
+`sepBy.antiquot_scope` and `$x,*` as `sepBy.antiquot_suffix_splice` (`Lean/Parser/Basic.lean:1856-1878`),
+and nothing in the toolchain dispatches on either — `withAntiquot.formatter` accepts `p.antiquot`
+exactly, and the parser compiler generates no splice case. Every dispatch falls through to
+`formatterForKind` and dies as `Unknown constant sepBy.antiquot_scope`, which is how a macro body
+spelling `$[...];*` used to refuse its whole file. Unlike `declId.antiquot`, no declared parser's own
+formatter accepts these, so the predicate protects the kinds with no base test. -/
+macro "seq_intro" "[" h:term,* "]" : tactic => `(tactic| ($[have := $h];*))
+
+def suffixSplice (xs : Array Lean.Term) : Lean.MacroM Lean.Syntax :=
+  `(#[$xs,*])
+
 end NativeLayoutIslands
+

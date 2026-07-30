@@ -211,4 +211,24 @@ lands below the saved column. `Mathlib/NumberTheory/LSeries/HurwitzZetaEven.lean
 theorem showCarriedTactics (value : Nat) : value + 0 = value ∧ value + 0 = value :=
   show value + 0 = value ∧ value + 0 = value by constructor; rfl; rfl
 
+
+/- A tactic-level `have` spells its `:= body` through `Term.letIdDecl`, not `Command.declValSimple`,
+so the `:= by` join has to name it too, or the over-measured soft `line` breaks `have h : T :=`
+from `by` however short the line. -/
+theorem letIdBodyJoins (n : Nat) : n = n := by
+  have step : n + 0 = n ∧ n + 0 = n ∧ n + 0 = n ∧ n + 0 = n ∧ n + 0 = n ∧ n + 0 = n := by
+    refine ⟨?_, ?_, ?_, ?_, ?_, ?_⟩
+    all_goals exact Nat.add_zero n
+  exact step.1
+
+/- A `letI`-family body parses only at or left of the keyword's column (`withPosition` saves it and
+`argument` is `checkColGt`), so the alignment the source spells is a parse constraint, not a style:
+one column right and the body is read as the value's next argument. The `columned` boundaries hold
+the keyword's row and the body's row at their source columns. -/
+def letChainAligned (x : Nat) : Nat × Nat × Nat :=
+  (letI : Inhabited Nat := ⟨x⟩
+   letI : OfNat Nat x := ⟨x⟩
+   (default, 5, x))
+
 end NativeLayoutOffside
+

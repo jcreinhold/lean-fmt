@@ -125,6 +125,10 @@ private inductive BoundaryLayout where
   | hard
   | elided
   | dedented
+  | /-- A break whose continuation lands at this exact column. The column is read off the source:
+    the layout that made a column-sensitive parse commit is the source's, and only spelling its
+    column again keeps the candidate's reparse committing the same way. -/
+    columned (col : Nat)
   deriving BEq, Inhabited
 
 private structure TokenSpan where
@@ -308,6 +312,17 @@ private def antiquotationKind (categories : Lean.Parser.ParserCategories) (kind 
       | .str base "pseudo" => base
       | base => base
     categories.contains base || base.isAtomic
+  -- The splice family is protected unconditionally. `mkAntiquotSplice` builds `$[p]suffix` nodes as
+  -- `kind ++ \`antiquot_scope` and `withAntiquotSuffixSplice` builds `$x,*` nodes as
+  -- `kind ++ \`antiquot_suffix_splice` (`Lean/Parser/Basic.lean:1856-1878`), and no formatter in the
+  -- toolchain dispatches on either: `Lean/PrettyPrinter/Formatter.lean` wraps antiquotations only
+  -- through `withAntiquot.formatter`, which accepts `p.antiquot` exactly, and the parser compiler
+  -- generates no splice case. Every dispatch that reaches one falls through to `formatterForKind` and
+  -- dies as `Unknown constant sepBy.antiquot_scope` — measured on a `` `(tactic| ($[have := $h];*); …) ``
+  -- macro body. Unlike the `antiquot` case there is no declared-parser slot to leave alone, so there is
+  -- no base test: the kind alone decides.
+  | .str _ "antiquot_scope" => true
+  | .str _ "antiquot_suffix_splice" => true
   | _ => false
 
 private def sourceDataKind (kind : Lean.Name) : Bool :=
@@ -441,6 +456,19 @@ private partial def protectSourceDataFrom (categories : Lean.Parser.ParserCatego
     else if dynamicQuotationKind kind then
       -- Protected here, not escalated: the quotation is a complete term, so a marker leaf standing in
       -- for it keeps the grammar around it intact and the island as small as the defect.
+      exactPlaceholder source stx info
+    else if kind == Lean.choiceKind &&
+        (children.any (·.isOfKind `«term{_}») &&
+          children.any (·.isOfKind ``Lean.Parser.Term.structInst)) then
+      -- A `{a.1.2}` brace ties between the anonymous constructor and the structure instance, and
+      -- the formatter spells only the LAST alternative of a `choice` (`Formatter.lean:217,292`,
+      -- whose own TODO admits the elaborator's answer is the one it needs). With `structInst`
+      -- last, the spelling is the structure instance's: `{ a.1 .2 }`, a space inside the numeric
+      -- projection -- which does not parse at all ("unsupported structure instance field
+      -- abbreviation, expecting identifier", `AbstractEmbedding.lean`'s diagnostics refusal).
+      -- The elaboration that accepted the file picked the other side, so there is no spelling
+      -- this formatter can produce from the node: the island spells the source's bytes, whose
+      -- reparse ties the same way the original's did.
       exactPlaceholder source stx info
     else
       let (rewrittenChildren, islands, pending) := children.foldl (init := (#[], #[], false))
@@ -667,8 +695,22 @@ private partial def collectIndentedSequenceStarts (stx : Lean.Syntax)
         match holder.getArgs.find? (·.isOfKind Lean.nullKind) with
         -- One item has no separator to break at the wrong column, so it needs no boundary; two do.
         | some list =>
-          if list.getArgs.size >= 3 && !hasNewlineSeparator list &&
-              (ungrouped || delimiterIntervenes owner list) then
+          -- The ungrouped (`by`) case fires whatever the source spelled. A newline-separated
+          -- sequence needs the boundary just as much: what stands before its first item is
+          -- `sepByIndent`'s `align(true)`, and an `align(true)` is not a line to the enclosing
+          -- fill groups' fit measurement -- its `spaceUptoLine` case (`Init/Data/Format/Basic.lean`)
+          -- charges `column - indent` phantom columns and keeps measuring. Once the `:= by` join
+          -- removes the soft `line` that used to stop that measurement, every signature group
+          -- measures straight through `by` into the phantom and shatters, however short the
+          -- signature: `theorem multiline (n m : ℕ) (h : n = m) : n = m ∧ n = m := by` broke at
+          -- the `:` under a three-line proof. Replacing the align with the `hard` boundary's real
+          -- `text "\n"` spells the same bytes the align would have (its render case is
+          -- `pushNewline indent` whenever the column is already past the indent, which `by `
+          -- guarantees) and stops the measurement where the row actually ends. The delimited case
+          -- keeps the exemption: its first item follows the opening delimiter on the same row, so
+          -- a written-separator list there is already positioned.
+          if list.getArgs.size >= 3 &&
+              (ungrouped || (!hasNewlineSeparator list && delimiterIntervenes owner list)) then
             match (selectedLeafRanges list)[0]? with
             | some range => if starts.contains range.start then starts else starts.push range.start
             | none => starts
@@ -788,6 +830,21 @@ private partial def collectUngroupedBodyStarts (declarationBody : DeclarationBod
             | none => starts
           else starts
         | none => starts
+      else if kind == ``Lean.Parser.Term.letIdDecl then
+        -- The tactic-level `have`/`let`/`suffices` family spells its `:= body` through
+        -- `Term.letIdDecl` (`tacticHave__` reduces to it), not `Command.declValSimple`, so the
+        -- rule above never reaches it and the same over-measured soft `line` breaks
+        -- `have h : T :=` / `by` however short the line. `letIdDecl` is
+        -- `[letId, binders, type, :=, body]`, so the body is the last child; the join question
+        -- is the same one.
+        match children.back? with
+        | some body =>
+          if body.isOfKind ``Lean.Parser.Term.byTactic then
+            match (selectedLeafRanges body)[0]? with
+            | some range => starts.push range.start
+            | none => starts
+          else starts
+        | none => starts
       else starts
     let children := if kind == Lean.choiceKind then children[0]?.toArray else children
     children.foldl (init := starts) fun starts child =>
@@ -898,6 +955,188 @@ private partial def collectGuardBailouts (source : String) (stx : Lean.Syntax)
     children.foldl (init := ranges) fun ranges child =>
       collectGuardBailouts source child ranges
   | _ => ranges
+
+/- An application argument spelled `{ … }` keeps the head's row.
+
+`«term{_}»` is what an anonymous-constructor brace spells, and it is never the only way to read
+`{a, b}`: `Lean.Parser.Term.structInst` reads it too. Which one the parser commits to depends on
+where the brace starts. Hugged to the application head, mathlib's environment commits `«term{_}»`;
+on its own line the two tie and the parser emits an uncommitted `choice` (probes, 2026-07-30: same
+bytes, both environments, both layouts). A candidate that breaks between the head and such an
+argument re-parses to a different syntax tree than the source spelled -- the structure gate
+refused `EllipticCurve/Projective/Smooth.lean` for it, node count 3755 -> 3757, the one
+divergence `«term{_}» -> choice` -- and even where the reparse agrees, the break belongs inside
+the braces: that is the shape mathlib writes.
+
+The correction is the `.flat` boundary in front of the `{`, the same spelling
+`collectUnbreakableRuns` gives its runs: the head and the brace keep one row and the overflow
+breaks after a comma, inside, where both parses still agree. The source precondition is the hug,
+carried by the `brokenBefore` filter at the assembly site: a source that already started the
+brace's row parsed to the `choice`, and joining it would change that tree the same way. Only the
+`«term{_}»` shape is collected -- `{ a := 1 }` and `{ x | p x }` commit from either row
+(probes, same day), so they need no rule. -/
+private partial def collectBraceAppArgStarts (stx : Lean.Syntax)
+    (starts : Array Nat := #[]) : Array Nat :=
+  match stx with
+  | .node _ kind children =>
+    let starts :=
+      if kind == ``Lean.Parser.Term.app then
+        match children[1]? with
+        | some args =>
+          args.getArgs.foldl (init := starts) fun starts arg =>
+            if arg.isOfKind `«term{_}» then
+              match (selectedLeafRanges arg)[0]? with
+              | some range => if starts.contains range.start then starts else starts.push range.start
+              | none => starts
+            else starts
+        | none => starts
+      else starts
+    let children := if kind == Lean.choiceKind then children[0]?.toArray else children
+    children.foldl (init := starts) fun starts child =>
+      collectBraceAppArgStarts child starts
+  | _ => starts
+
+/- A committed anonymous-constructor brace keeps a newline inside.
+
+`collectBraceAppArgStarts` above covers the boundary in front of the brace. This is the interior
+half, and it exists because the parser's commitment between `«term{_}»` and `structInst` is
+column-sensitive: the two tie on `{a, b, c}` whenever every field sits where `structInst`'s
+`sepByIndent` can read it as a field -- flat, or on a continuation at or right of the first
+field's column -- and `«term{_}»` wins exactly when a continuation starts *left* of that column
+(probes, 2026-07-30, mathlib env: `inside-dedent` commits, `inside-align` and flat tie). A source
+whose brace spells such a dedented break therefore holds a *committed* `«term{_}»` node, and a
+candidate that joins the fields -- which is what the native document does the moment the
+surrounding groups break and the brace's own group fits on its fresh row -- re-parses to an
+uncommitted `choice` and the structure gate refuses. `Smooth.lean`'s `have hgen` was exactly
+this: the type genuinely does not fit at width 100, the enclosing groups broke (Lean's own
+formatter shatters the same way, probe-verified), the brace flattened, and the node kind moved.
+
+The correction is one `columned` boundary at the first source-broken separator: an interior
+newline spelled at the column the source spelled it at. The source's column is what made
+`structInst`'s `checkColGe` fail there -- the continuation starts left of the first field, or the
+source would hold a `choice` instead -- and spelling it again puts the candidate's continuation
+left of the candidate's first field wherever the surrounding groups moved the brace (they move it
+right, never left of its source row's own column). A plain `hard` newline is not enough: it lands
+at the enclosing `nest`, and a shattered signature's `nest` can sit *right* of the first field's
+column -- measured on `Smooth.lean`'s `have hgen`, where the `nest` spelled 12 against a first
+field at 10 and the tie survived. Columns are counted in bytes, the parser's own arithmetic
+(`String.Pos`); a non-ASCII field name could split that from the renderer's count, and the
+structure gate is what refuses the rare miss rather than publishing a changed tree. A brace under
+a `choice` node is the reverse case (the source already tied); it is not collected: joining or
+breaking its interior both preserve the `choice`, so no rule is needed there, and a `hard`
+newline could commit it the other way. -/
+private partial def collectBraceInteriorBreaks (source : String) (stx : Lean.Syntax)
+    (inChoice : Bool := false) (starts : Array (Nat × Nat) := #[]) : Array (Nat × Nat) :=
+  match stx with
+  | .node _ kind children =>
+    let starts :=
+      if kind == `«term{_}» && !inChoice then
+        match children[1]? with
+        | some list =>
+          let args := list.getArgs
+          -- Even slots are fields, odd slots separators; find the first separator the source
+          -- spelled as a line break and hold the boundary in front of the field that follows it.
+          let broken? := (List.range args.size).findSome? fun index =>
+            -- The gap that can hold the line break runs from one field's end over the separator
+            -- to the next field's start, so even slots step by two.
+            if index % 2 == 1 || index + 2 >= args.size then none
+            else
+              match (selectedLeafRanges args[index]!).back?,
+                  (selectedLeafRanges args[index + 2]!)[0]? with
+              | some itemEnd, some nextStart =>
+                if (slice source ⟨itemEnd.stop, nextStart.start⟩).contains '\n' then
+                  -- The continuation's source column: bytes back to its line's start, the same
+                  -- arithmetic the parser's `checkColGe` compares.
+                  let before := slice source ⟨0, nextStart.start⟩
+                  let lineStart := match before.revFind? (· == '\n') with
+                    | some position => position.offset.byteIdx + 1
+                    | none => 0
+                  some (nextStart.start, nextStart.start - lineStart)
+                else none
+              | _, _ => none
+          match broken? with
+          | some (start, col) =>
+            if starts.any (·.1 == start) then starts else starts.push (start, col)
+          | none => starts
+        | none => starts
+      else starts
+    let children := if kind == Lean.choiceKind then children[0]?.toArray else children
+    children.foldl (init := starts) fun starts child =>
+      collectBraceInteriorBreaks source child (kind == Lean.choiceKind) starts
+  | _ => starts
+
+/- The column of one source offset, in the parser's own byte arithmetic (`String.Pos`). -/
+private def sourceColumn (source : String) (offset : Nat) : Nat :=
+  let before := slice source ⟨0, offset⟩
+  let lineStart := match before.revFind? (· == '\n') with
+    | some position => position.offset.byteIdx + 1
+    | none => 0
+  offset - lineStart
+
+/- A `letI`-family body keeps the keyword's column.
+
+`«letI»` and its siblings -- `«let»`, `«have»`, `«let_fun»`, `«let_delayed»`, `«let_tmp»`,
+`«haveI»`, `«suffices»` (`Lean/Parser/Term.lean:227,552-582`) -- are all
+`withPosition (kw >> decl) >> optSemicolon termParser`: the keyword's column is saved, and every
+application argument inside the value must clear it (`argument` is
+`checkColGt >> …`, `Term.lean:890-893`). The body that follows on its own row is therefore
+parseable only at or *left* of the keyword's column: one column right and it is read as the
+value's next argument, which is how `GlobalMinimalModel.lean`'s `(letI : IsDiscreteValuationRing
+… := …` re-parse died with "expected ';' or line break". The native document spells the body's
+row at the enclosing `nest` with no regard for the keyword's column, and a signature shatter
+moves the keyword's own row left while the body stays -- the relationship inverts and the
+candidate stops parsing.
+
+The source always spells the relationship that parses, so the correction spells its columns: one
+`columned` boundary at the keyword's row -- at the parenthesized `(` when there is one, else at
+the keyword itself -- holding the row at its source column, and one at the body's first terminal
+holding it at its source column. Both are collected only when the source shows the same shape
+(the row broken, the body broken onto its own row): a keyword spelled mid-line needs nothing,
+because any `nest` the body's row can take is already left of it. -/
+private partial def collectLetFamilyAlignments (source : String) (stx : Lean.Syntax)
+    (paren? : Option Lean.Syntax := none) (starts : Array (Nat × Nat) := #[]) : Array (Nat × Nat) :=
+  match stx with
+  | .node _ kind children =>
+    let starts :=
+      if kind == ``Lean.Parser.Term.letI || kind == ``Lean.Parser.Term.let ||
+          kind == ``Lean.Parser.Term.haveI || kind == ``Lean.Parser.Term.have ||
+          kind == ``Lean.Parser.Term.let_fun || kind == ``Lean.Parser.Term.let_delayed ||
+          kind == ``Lean.Parser.Term.let_tmp || kind == ``Lean.Parser.Term.suffices then
+        match children[0]?, children.back? with
+        | some kw, some body =>
+          match sourceRange? kw, sourceRange? body with
+          | some kwRange, some bodyRange =>
+            -- The body's own row in the source, or there is no constraint to preserve.
+            if !(slice source ⟨kwRange.stop, bodyRange.start⟩).contains '\n' then starts
+            else
+              let bodyCol := sourceColumn source bodyRange.start
+              -- Whether a token opens its source row (only whitespace before it on the row).
+              let opensRow (start : Nat) : Bool :=
+                let lineStart := (slice source ⟨0, start⟩).revFind? (· == '\n')
+                  |>.map (·.offset.byteIdx + 1) |>.getD 0
+                (slice source ⟨lineStart, start⟩).trimAscii.copy.isEmpty
+              -- The keyword's row: pin the `(` when the node is the paren's payload, else the
+              -- keyword, in both cases only when the source opened a row there. A keyword
+              -- spelled mid-row needs no pin: any `nest` the body's row can take is left of it.
+              let rowPin : Array (Nat × Nat) :=
+                match paren?.bind sourceRange? with
+                | some parenRange =>
+                  if opensRow parenRange.start then
+                    #[(parenRange.start, sourceColumn source parenRange.start)]
+                  else #[]
+                | none =>
+                  if opensRow kwRange.start then
+                    #[(kwRange.start, sourceColumn source kwRange.start)]
+                  else #[]
+              starts ++ rowPin ++ #[(bodyRange.start, bodyCol)]
+          | _, _ => starts
+        | _, _ => starts
+      else starts
+    let children := if kind == Lean.choiceKind then children[0]?.toArray else children
+    children.foldl (init := starts) fun starts child =>
+      collectLetFamilyAlignments source child
+        (if kind == ``Lean.Parser.Term.paren then some stx else none) starts
+  | _ => starts
 
 /- The other runs that must not break, for the same reason and with the same source precondition.
 
@@ -1610,6 +1849,7 @@ private def boundaryFormat (state : TransformState) : BoundaryLayout → Std.For
   | .hard => .text "\n"
   | .elided => .nil
   | .dedented => .nest (-(dedentColumns state)) (.text "\n")
+  | .columned col => .nest ((col : Int) - state.ambientNest) (.text "\n")
 
 private def constrainBoundary (format : Std.Format) :
     StateT TransformState (Except String) Std.Format := do
@@ -2172,11 +2412,16 @@ alternatives: alternative 0 is {expected}, alternative {alternative} is {actual}
           else if attrDocStarts.contains range.start then BoundaryLayout.dedented
           else BoundaryLayout.hard)
   -- The bracket half of the attribute-doc decision: a doc the source broke pulls the closing `]`
-  -- down to the same column, so the pair renders as one shape; a hugged doc collects nothing here
-  -- and the bracket stays on the attribute's row.
+  -- down to the same column, so the pair renders as one shape; a hugged doc keeps the `]` hugged with
+  -- an `.elided` spelling -- `-/]`, no space -- because `Term.docComment` ends with `>> ppLine`
+  -- (`Lean/Parser/Term.lean:91-92`) and an uncorrected document always breaks between the payload and
+  -- the bracket, however short the hugged line. The design comment above once assumed the hugged case
+  -- needed no correction; measured on `MathlibStyle.lean`'s `hugged` fixture at line-width 1000, the
+  -- bracket always fell to its own line at the nested indent.
   let attrDocBoundaries : Array (Nat × BoundaryLayout) :=
     attrDocComments.filterMap fun (doc, bracket) =>
-      if brokenBefore doc.start then some (bracket.start, BoundaryLayout.dedented) else none
+      some (bracket.start,
+        if brokenBefore doc.start then BoundaryLayout.dedented else BoundaryLayout.elided)
   let boundaryStarts : Array (Nat × BoundaryLayout) :=
     (collectUngroupedBodyStarts format.declarationBody source format.lineWidth stripped
         (collectReturnTermStarts stripped)).map
@@ -2188,6 +2433,12 @@ alternatives: alternative 0 is {expected}, alternative {alternative} is {actual}
       docBoundaries ++
       attrDocBoundaries ++
       joined.map (·.start, BoundaryLayout.flat) ++
+      ((collectBraceAppArgStarts stripped).filterMap fun start =>
+        if brokenBefore start then none else some (start, BoundaryLayout.flat)) ++
+      (collectBraceInteriorBreaks source stripped).map
+        (fun p => (p.1, BoundaryLayout.columned p.2)) ++
+      (collectLetFamilyAlignments source stripped).map
+        (fun p => (p.1, BoundaryLayout.columned p.2)) ++
       unbreakableRunBoundaries source terminals unbreakableRuns ++
       (collectStructInstEllipses stripped).filterMap fun start =>
         let broken := (terminals.filter (·.range.stop <= start)).back?.any fun previous =>

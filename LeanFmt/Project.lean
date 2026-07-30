@@ -436,11 +436,20 @@ private def noBuildValuePerJob? {α : Type} (workspace : Lake.Workspace)
     return none
 
 /- The building traversal, and the run's other one. Quiet is not a caller's choice: a build Lake
-narrates would write a monitor's spinner over a report on the same stream. -/
+narrates would write a monitor's spinner over a report on the same stream.
+
+Quiet alone does not silence the monitor: `Verbosity.quiet` only clears `showProgress`
+(`Lake/Build/Context.lean:48-50`), while `LogConfig.outLv` keeps its `.info` default
+(`Lake/Util/Log.lean:608`), so any job whose `withLoggedIO` captured info-level output — including a
+`` `Task.get` called from a `(sync := true)` task `` backtrace from Lake's own
+`Module.computeExportInfo` awaiting jobs inside a `sync := true` continuation (lean4#13598's class;
+the #13601 fix covered `recFetchSetup` only) — is reported with an `ℹ [x/y] Replayed` caption over our
+report's stream. `outLv := .warning` withholds info captures; failures still surface, because the
+monitor replays a failed job's whole log at `.trace` regardless (`Lake/Build/Run.lean:149`). -/
 private def buildValue {α : Type} (workspace : Lake.Workspace)
     (build : Lake.FetchM (Lake.Job α)) : IO α := do
   countTraversal
-  workspace.runBuild (cfg := { verbosity := .quiet }) build
+  workspace.runBuild (cfg := { verbosity := .quiet, outLv := .warning }) build
 
 /- One `-Dname=value` as `lean` reads it, or `none` if `LeanOptions` cannot carry the value.
 

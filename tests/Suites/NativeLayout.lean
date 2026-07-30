@@ -296,6 +296,10 @@ private def testIslands (ctx : Ctx) : IO Unit := do
   -- A quotation whose body the grammar calls a command; an unapplied boundary is a refusal.
   ensureEq "a command quotation keeps its body inside the island" 1
     (count islands "`(command| #eval $value)")
+  -- `sepBy.antiquot_scope` and `sepBy.antiquot_suffix_splice` name no formatter at all;
+  -- protection is what lets a macro body carrying them format.
+  ensureEq "an antiquotation splice survives as its own bytes" 1 (count islands "($[have := $h];*)")
+  ensureEq "a suffix splice survives as its own bytes" 1 (count islands "$xs,*")
 
 /-- §6: offside carriers compose — `sepByIndent` covers record fields and tactic/conv sequences;
 `do`, `match`, and equation alternatives have no algebra carrier at all. -/
@@ -311,12 +315,25 @@ private def testOffside (ctx : Ctx) : IO Unit := do
   ensureEq "tactic steps stay siblings" "  exact step"
     (← lineAfter offside "have step : n + 0 = n")
   -- `Term.byTactic` declares `ppAllowUngrouped` to keep `by` on the `:=` line; a flat boundary at
-  -- the `by` terminal is what holds it, since the adapter does not own `fill`'s measurement.
-  ensureEq "by stays on the := line" 5
+  -- the `by` terminal is what holds it, since the adapter does not own `fill`'s measurement. The
+  -- count covers the five carrier theorems, `letIdBodyJoins`, and its tactic-level `have step`.
+  ensureEq "by stays on the := line" 7
     ((offside.splitOn "\n").filter (·.endsWith " := by") |>.length)
   ensureEq "and its first tactic still starts the next line"
     "  have step : n + 0 = n := Nat.add_zero n"
-    (← lineAfterExact offside "    n + 0 = n := by")
+    (← lineAfterExact offside "theorem tacticSiblings (n : Nat) : n + 0 = n := by")
+  -- The cascade pin: a signature that fits joined stays joined when the proof breaks. A
+  -- newline-separated sequence's first item is preceded by `sepByIndent`'s `align(true)`, whose
+  -- measurement charges phantom columns instead of stopping (`Init/Data/Format/Basic.lean`'s
+  -- `spaceUptoLine`), and once the `:= by` join removes the soft `line` that stopped the fill
+  -- groups' fit measurement there, every signature group measured through to the phantom and
+  -- broke -- this theorem's 48-column signature used to shatter at the `:`. The `hard` boundary
+  -- the ungrouped collector now spells for a written-separator sequence too makes the align's
+  -- newline a real `text "\n"` and stops the measurement where the row ends.
+  ensureEq "a fitting signature survives a multi-line proof" 1
+    (countExact offside "theorem tacticSiblings (n : Nat) : n + 0 = n := by")
+  ensureEq "  ... and the longer conjunction one too" 1
+    (countExact offside "theorem carriedTactics (a : Nat) : a = a ∧ a = a := by")
   -- A `;`-separated tactic sequence is a `sepByIndent` list, and `by ` lands its first tactic
   -- at one column past the indent the separators break to.
   ensureEq "a semicolon-separated tactic sequence opens on its own line"
@@ -386,6 +403,19 @@ private def testOffside (ctx : Ctx) : IO Unit := do
     (countExact offside "    /-- Applies the mapping to a position. -/")
   ensureEq "  ... and nothing shares the line the rec keyword ends" 1
     (countExact offside "  let rec")
+  -- A tactic-level `have` spells `:= body` through `Term.letIdDecl`, not `Command.declValSimple`:
+  -- the join has to name it too, or the over-measured soft `line` breaks the declaration from its
+  -- `by` however short the line (`GlobalMinimalModel.lean`'s cascade).
+  ensureEq "a tactic-level have keeps its `:= by` joined" 1
+    (countExact offside
+      "  have step : n + 0 = n ∧ n + 0 = n ∧ n + 0 = n ∧ n + 0 = n ∧ n + 0 = n ∧ n + 0 = n := by")
+  -- The `letI`-family alignment is a parse constraint (`argument` is `checkColGt` against the
+  -- keyword's saved column), not a style: one column right and the body is read as the value's
+  -- next argument. The `columned` boundaries hold the keyword's row and the body's row at their
+  -- source columns -- here the keywords at three spaces and the body aligned under them.
+  ensureEq "a letI chain keeps its keyword rows at their source columns"
+    "  (letI : Inhabited Nat := ⟨x⟩\n   letI : OfNat Nat x := ⟨x⟩\n   (default, 5, x))"
+    (← linesAfter offside "def letChainAligned" 3)
 
 /-- §6b: mathlib's style linters, as grammar shapes. An import row never breaks across lines; a
 focusing `·` keeps its first tactic on its own row; an attribute-owned doc comment keeps the
@@ -418,8 +448,17 @@ private def testMathlibStyle (ctx : Ctx) : IO Unit := do
       "/-- The **integralization** of a commutative additive monoid: the image of the universal")
   ensureEq "  ... and the closing bracket follows it to that column" "]"
     (← lineAfter style "universal integral additive monoid under the source. -/")
-  ensureEq "a hugged doc comment keeps the attribute's row" 1
-    (count style "@[doc_carrier /-- A short hugged doc comment keeps the attribute's own row. -/")
+  -- The hugged pair is pinned bracket-included: the previous needle ended at `-/`, which made the
+  -- detached `]` invisible -- the defect shipped green. `countExact` sees the whole line.
+  ensureEq "a hugged doc comment keeps the attribute's row, bracket included" 1
+    (countExact style "@[doc_carrier /-- A short hugged doc comment keeps the attribute's own row. -/]")
+  -- The hugged pair is one decision at any width: the detachment reproduced at line-width 1000, so
+  -- width must play no role in the pin either.
+  let wideConfig := ctx.work / "width-1000.toml"
+  writeFile wideConfig "[format]\nline-width = 1000\n"
+  let wide ← formatCheck ctx "MathlibStyle" (some wideConfig) "mathlib-style at 1000"
+  ensureEq "at width 1000 the hugged bracket still does not fall" 1
+    (countExact wide "@[doc_carrier /-- A short hugged doc comment keeps the attribute's own row. -/]")
   -- Width 20: the import row still cannot break, and the dot still hugs.
   let narrowConfig := ctx.work / "width-20.toml"
   writeFile narrowConfig "[format]\nline-width = 20\n"
