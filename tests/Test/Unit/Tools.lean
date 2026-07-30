@@ -433,7 +433,8 @@ private def reportBench : IO UInt32 := do
       files := files.push file
       positions := mergePositions positions file.path source file.findings
     let report : RunReport := {
-      mode := "check", files, findings := n, changed := 0, written := 0, broken := 0, rejected := 0,
+      mode := "check", files, findings := n, changed := 0, written := 0, broken := 0, unbuilt := 0,
+      rejected := 0,
       withheldUnsafe := 0, suppressed := 0, withheldRedundant := 0, infrastructureFailures := #[] }
     -- Force the fixture and the index before any clock starts.
     if report.files.size + positions.entries.size == 999999999 then

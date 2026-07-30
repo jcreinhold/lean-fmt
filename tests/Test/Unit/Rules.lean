@@ -480,6 +480,25 @@ private def testMixedSelection : IO Unit := do
   ensure (semanticPlan.demandedTier == .semantic)
     "selecting a semantic rule did not demand the semantic fact without rendering"
 
+/- The `failed to open file '<X>.olean'` diagnostic is a dependency that was never built, not a
+file that could not parse -- on a fresh clone it is the common `broken`, and conflating the two
+sends the user debugging syntax when the answer is `lake build`. -/
+private def testUnbuiltClassification : IO Unit := do
+  let unbuilt := #["/proj/Foo.lean:1:0: error: failed to open file \
+    '/proj/.lake/build/lib/lean/Mathlib/Data/Nat/Basic.olean': No such file or directory"]
+  ensure (Application.unbuiltDependency? unbuilt ==
+      some "/proj/.lake/build/lib/lean/Mathlib/Data/Nat/Basic")
+    s!"an unbuilt dependency diagnostic was not classified: {Application.unbuiltDependency? unbuilt}"
+  -- The negative halves: a parse failure and an import the manifest does not know are `broken`,
+  -- not `unbuilt`.
+  let parseError := #["/proj/Foo.lean:5:2: error: expected token"]
+  ensure (Application.unbuiltDependency? parseError |>.isNone)
+    "a parse error was classified as an unbuilt dependency"
+  let unknown := #["/proj/Foo.lean:1:0: error: unknown module prefix 'NoSuchModule'\n\n\
+    No directory 'NoSuchModule' or file 'NoSuchModule.olean' in the search path entries:"]
+  ensure (Application.unbuiltDependency? unknown |>.isNone)
+    "an unknown-module import was classified as an unbuilt dependency"
+
 /-- The cases this module contributes to the unit runner, in run order. -/
 public def cases : Array Case := #[
   { name := "testRules", run := testRules },
@@ -488,6 +507,7 @@ public def cases : Array Case := #[
   { name := "testEngineTiers", run := testEngineTiers },
   { name := "testMixedSelection", run := testMixedSelection },
   { name := "testCatalogInvariants", run := testCatalogInvariants },
+  { name := "testUnbuiltClassification", run := testUnbuiltClassification },
   { name := "testApplicability", run := testApplicability }]
 
 end LeanFmt.Test.Unit.Rules

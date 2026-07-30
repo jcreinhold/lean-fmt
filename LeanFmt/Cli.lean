@@ -485,7 +485,7 @@ private def textReport (report : RunReport) : String := Id.run do
         out := out ++ s!"{file.path}: {file.status}: {diagnostic}\n"
   return out ++ s!"mode={report.mode} files={report.files.size} findings={report.findings} \
     changed={report.changed} written={report.written} broken={report.broken} \
-    rejected={report.rejected} withheld_unsafe={report.withheldUnsafe} \
+    unbuilt={report.unbuilt} rejected={report.rejected} withheld_unsafe={report.withheldUnsafe} \
     suppressed={report.suppressed} infrastructure_failures={report.infrastructureFailures.size}\n"
 
 /-! ### Shared projections
@@ -528,6 +528,7 @@ private def statusMessage? (status : String) : Option String :=
   | "would-format" => some "file would be reformatted"
   | "would-organize" => some "imports would be reorganized"
   | "broken" => some "file could not be parsed"
+  | "unbuilt" => some "a dependency's olean is missing; run `lake build`"
   | "rejected" => some "result was rejected by validation"
   | "infrastructure-failure" => some "analysis did not complete"
   | _ => none
@@ -538,7 +539,7 @@ The distinction SARIF draws between a result and a notification (§3.20.21), JUn
 between `<failure>` and `<error>`, and `reportExitCode` already draws between exit 1 and exit 2.
 One predicate so the three cannot drift. -/
 private def statusIsInfrastructure (status : String) : Bool :=
-  status == "broken" || status == "rejected" || status == "infrastructure-failure"
+  status == "broken" || status == "unbuilt" || status == "rejected" || status == "infrastructure-failure"
 
 /-! ### `concise`
 
@@ -771,6 +772,7 @@ private def sarifReport (positions : PositionIndex) (root : String) (report : Ru
           ("changed", Lean.toJson report.changed),
           ("written", Lean.toJson report.written),
           ("broken", Lean.toJson report.broken),
+          ("unbuilt", Lean.toJson report.unbuilt),
           ("rejected", Lean.toJson report.rejected),
           ("withheldUnsafe", Lean.toJson report.withheldUnsafe),
           ("suppressed", Lean.toJson report.suppressed),
@@ -929,11 +931,17 @@ private def rootUri (root : FilePath) : IO String := do
   let absolute ← try IO.FS.realPath root catch _ => pure root
   return s!"file://{uriPathEncode absolute.toString}/"
 
-private def renderStatistics (report : RunReport) : IO Unit :=
+private def renderStatistics (report : RunReport) : IO Unit := do
   IO.eprintln s!"lean-fmt statistics: mode={report.mode} files={report.files.size} \
     findings={report.findings} changed={report.changed} written={report.written} \
-    broken={report.broken} rejected={report.rejected} withheld_unsafe={report.withheldUnsafe} \
+    broken={report.broken} unbuilt={report.unbuilt} rejected={report.rejected} \
+    withheld_unsafe={report.withheldUnsafe} \
     suppressed={report.suppressed} infrastructure_failures={report.infrastructureFailures.size}"
+  if report.unbuilt > 0 then
+    let missing := report.files.filterMap fun file =>
+      if file.status == "unbuilt" then unbuiltDependency? file.diagnostics else none
+    IO.eprintln s!"lean-fmt: {report.unbuilt} file(s) skipped: dependencies not built \
+      ({String.intercalate ", " missing.toList}); run `lake build` first"
 
 /-- `writer` is whether this run publishes source (`fix`, or `format` without `--check`). A
 writer that successfully published a change exits 0, like `ruff format`/`ruff check --fix`; a
@@ -941,7 +949,7 @@ non-writing preview (`check`, `diff`, `format --check`) exits 1 when anything wo
 code). Both exit 2 on infrastructure failure and 1 on a broken/rejected file. -/
 private def reportExitCode (writer : Bool) (report : RunReport) : UInt32 :=
   if !report.infrastructureFailures.isEmpty then 2
-  else if report.broken > 0 || report.rejected > 0 then 1
+  else if report.broken > 0 || report.unbuilt > 0 || report.rejected > 0 then 1
   else if !writer && report.changed > 0 then 1 else 0
 
 private def renderRules (format : ReportFormat) : IO Unit :=
@@ -1092,6 +1100,7 @@ private def streamAsRunReport (mode : RunMode) (report : StreamReport) : RunRepo
     changed := if report.changed then 1 else 0
     written := 0
     broken := if report.status == "broken" then 1 else 0
+    unbuilt := if report.status == "unbuilt" then 1 else 0
     rejected := if report.status == "rejected" then 1 else 0
     withheldUnsafe := 0, suppressed := 0, withheldRedundant := 0
     infrastructureFailures := #[] }
@@ -1139,7 +1148,7 @@ its result is the writer, so `format -` and `fix -` exit 0 having streamed, as t
 forms exit 0 having published. `check`, `diff`, and `format --check` stay previews and keep the CI
 code. -/
 private def streamExitCode (writer : Bool) (report : StreamReport) : UInt32 :=
-  if report.status == "broken" || report.status == "rejected" then 1
+  if report.status == "broken" || report.status == "unbuilt" || report.status == "rejected" then 1
   else if !writer && report.changed then 1 else 0
 
 private unsafe def runStreamCommand (mode : RunMode) (command : FileCommand)

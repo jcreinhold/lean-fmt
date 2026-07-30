@@ -129,6 +129,7 @@ structure RunReport where
   changed : Nat
   written : Nat
   broken : Nat
+  unbuilt : Nat
   rejected : Nat
   withheldUnsafe : Nat
   suppressed : Nat
@@ -1102,6 +1103,20 @@ def admittedFix? (plan : RulePlan) (unsafeFixes : Bool) (finding : Finding) : Op
   guard <| plan.fixableSelected.contains finding.code && fix.applicability.admitted unsafeFixes
   return fix
 
+/-- The diagnostic an unbuilt dependency leaves at the import header: Lake resolved the module
+from the manifest, but its olean was never built in `.lake/build`. The file is fine and the tree
+is not built, which is a different defect class from a parse failure -- and on a fresh clone it
+is the *common* one, so it gets its own status and the run names the missing module. Returns the
+module name as the diagnostic spells it (`Mathlib.Data.Nat.Basic`, say). -/
+private def unbuiltDependency? (diagnostics : Array String) : Option String :=
+  diagnostics.findSome? fun line =>
+    match line.splitOn "failed to open file '" with
+    | [_, rest] =>
+      match rest.splitOn ".olean': No such file or directory" with
+      | [module, _] => some module
+      | _ => none
+    | _ => none
+
 /-- Project one analysis into the edits a preview or write would apply — one of two independent
 patches, keyed on `renderCanonical`:
 
@@ -1128,7 +1143,9 @@ private def prepareFile (plan : RulePlan) (renderCanonical unsafeFixes : Bool)
     (reportImports : Array Finding) (withheldRedundant : Nat)
     (snapshot : SourceSnapshot) (analysis : SemanticAnalysis) : Except FileReport PreparedFile := do
   let some result := analysis.result?
-    | throw (baseReport snapshot "broken" #[] analysis.diagnostics)
+    | throw (baseReport snapshot
+        (if (unbuiltDependency? analysis.diagnostics).isSome then "unbuilt" else "broken")
+        #[] analysis.diagnostics)
   let (normalized, lineEndings) := LosslessSource.normalize snapshot.source
   -- Import findings (`reportImports`, normalized coordinates) join the engine's findings *before*
   -- selection, so `--select imports`, per-file ignores, and suppression treat them like any rule.
@@ -1311,12 +1328,14 @@ private def summarize (modeString : String) (files : Array FileReport)
   let written := files.foldl (fun total file => if file.written then total + 1 else total) 0
   let broken := files.foldl (fun total file =>
     if file.status == "broken" then total + 1 else total) 0
+  let unbuilt := files.foldl (fun total file =>
+    if file.status == "unbuilt" then total + 1 else total) 0
   let rejected := files.foldl (fun total file =>
     if file.status == "rejected" then total + 1 else total) 0
   let withheldUnsafe := files.foldl (fun total file => total + file.withheldUnsafe) 0
   let suppressed := files.foldl (fun total file => total + file.suppressed) 0
   let withheldRedundant := files.foldl (fun total file => total + file.withheldRedundant) 0
-  { mode := modeString, files, findings, changed, written, broken, rejected, withheldUnsafe,
+  { mode := modeString, files, findings, changed, written, broken, unbuilt, rejected, withheldUnsafe,
     suppressed, withheldRedundant, infrastructureFailures := failures }
 
 /-! ## Report positions
