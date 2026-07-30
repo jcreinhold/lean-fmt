@@ -192,6 +192,31 @@ private def testOrganizeWrite (ctx : Ctx) : IO Unit := do
     ensureEq "organize-write: sorted group changed"
       ["import LeanFmt.Basic", "import LeanFmt.Digest"] imports
 
+/-- The organizer's `--workers N` changes scheduling, not the answer: one worker and four report
+the same per-file statuses and write the same bytes. Two fixtures so the parallel branch
+actually runs. -/
+private def testOrganizeWorkers (ctx : Ctx) : IO Unit := do
+  let ordering := ctx.root / "tests" / "fixtures" / "imports" / "Ordering.lean"
+  let duplicate := ctx.root / "tests" / "fixtures" / "imports" / "Duplicate.lean"
+  let targets := #["tests/fixtures/imports/Ordering.lean", "tests/fixtures/imports/Duplicate.lean"]
+  let runOnce (workers : String) : IO (List (String × String) × Array String) := do
+    let out ← IO.mkRef (([] : List (String × String)), (#[] : Array String))
+    withRestored ctx ordering <| withRestored ctx duplicate do
+      let report ← checkJson ctx 0
+        (#["organize", "--root", ".", "--json", "--workers", workers] ++ targets)
+        s!"organize-workers-{workers}" (fallback := false)
+      let files := ((jsonAt? report [.field "files"]).bind (·.getArr?.toOption)).getD #[]
+      let statuses := (files.toList.map fun file =>
+        (((file.getObjValAs? String "path").toOption).getD "",
+          ((file.getObjValAs? String "status").toOption).getD "")).mergeSort (·.1 < ·.1)
+      let bytes ← #[ordering, duplicate].mapM IO.FS.readFile
+      out.set (statuses, bytes)
+    out.get
+  let (serialStatuses, serialBytes) ← runOnce "1"
+  let (parallelStatuses, parallelBytes) ← runOnce "4"
+  ensureEq "organize-workers: statuses differ at 1 and 4 workers" serialStatuses parallelStatuses
+  ensureEq "organize-workers: written bytes differ at 1 and 4 workers" serialBytes parallelBytes
+
 /-- `fix` applies the FMT003 safe dedup through the canonical patch (the printer keeps the
 duplicate, so the fix is recomputed at canonical coordinates), validated and written; then
 restore. -/
@@ -289,6 +314,7 @@ public def main (args : List String) : IO UInt32 := do
       { name := "selection-honored", run := Imports.testSelection ctx },
       { name := "organize-dry-run", run := Imports.testOrganizeDryRun ctx },
       { name := "organize-write", run := Imports.testOrganizeWrite ctx },
+      { name := "organize-workers", run := Imports.testOrganizeWorkers ctx },
       { name := "fix-dedup", run := Imports.testFixDedup ctx },
       { name := "suppression-composes", run := Imports.testSuppressionComposes ctx },
       { name := "fix-never-reorders", run := Imports.testFixNeverReorders ctx },

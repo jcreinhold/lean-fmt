@@ -424,6 +424,11 @@ private def parseOrganizeArgs (args : List String) : Except String OrganizeComma
       loop rest { command with request := { command.request with configPath? := some path } }
     | "--check" :: rest =>
       loop rest { command with request := { command.request with check := true } }
+    | "--workers" :: value :: rest =>
+      match value.toNat? with
+      | some workers =>
+        loop rest { command with request := { command.request with workers := some workers } }
+      | none => .error "--workers expects a whole number"
     | option :: rest =>
       if option.startsWith "-" then .error s!"unknown option: {option}"
       else loop rest { command with

@@ -286,10 +286,11 @@ private def commandHelps : Array CommandHelp := #[
       changed file through the frontend, and publish it atomically — unchanged files skip the \
       frontend. Exit 0 clean, 1 would-change under `--check` or rejected rewrites, 2 \
       infrastructure failure."
-    usage := #["lean-fmt organize [--root PATH] [--config PATH] [--check] [--json] [FILE...]"]
+    usage := #["lean-fmt organize [--root PATH] [--config PATH] [--check] [--json] [--workers N] [FILE...]"]
     sections := #[
       ("target options:", #[optRoot, optConfig]),
-      ("organize options:", #[optCheckOrganize, optJson])
+      ("organize options:", #[optCheckOrganize, optJson]),
+      ("execution options:", #[optWorkers])
     ] },
   { command := "rules"
     summary := "list the rule registry"

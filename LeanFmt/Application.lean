@@ -1962,6 +1962,47 @@ structure OrganizeRequest where
   configPath? : Option FilePath := none
   /-- Report what would change without writing (like `check` for the organizer). -/
   check : Bool := false
+  /-- How many frontend children may validate candidates concurrently (`--workers`), or `none`
+  to pick the number the way Lake picks it for its own build (`resolveWorkers`). Outcomes are
+  assembled by target index, so the report is identical at any value. -/
+  workers : Option Nat := none
+
+/-- Validate and publish one organize candidate. One worker is the serial loop; several are
+`--workers N`. Workers write only their own outcomes slot, and `publishAtomic` targets a
+distinct path per slot, so the shared state they touch (`next`, `outcomes`, the setup refs
+inside `exactRun`) is either atomic or immutable after `primeSetups`. -/
+private partial def organizeWorker (exactRun : ExactRun)
+    (work : Array (SourceSnapshot × Option String)) (next : IO.Ref Nat)
+    (outcomes : IO.Ref (Array (Option (FileReport × Option String)))) : IO Unit := do
+  let index ← next.modifyGet fun n => (n, n + 1)
+  if h : index < work.size then
+    let (snapshot, candidate?) := work[index]
+    match candidate? with
+    | none =>
+      outcomes.modify (·.set! index (some (baseReport snapshot "clean", none)))
+    | some output =>
+      try
+        let candidate := snapshot.withSource output
+        let validation ← exactRun.analyzeSnapshot candidate (renderCanonical := false) (validator := true)
+        match validation.result? with
+        | none =>
+          outcomes.modify (·.set! index
+            (some (baseReport snapshot "rejected" #[] validation.diagnostics, none)))
+        | some _ =>
+          match ← publishAtomic snapshot.path snapshot.source output with
+          | .error message =>
+            outcomes.modify (·.set! index (some (baseReport snapshot "rejected" #[] #[message], none)))
+          | .ok _ =>
+            outcomes.modify (·.set! index (some ({ (baseReport snapshot "organized") with
+              formatted := some output, written := true }, none)))
+      catch error =>
+        let message := toString error
+        outcomes.modify (·.set! index (some (
+          { path := snapshot.relativePath
+            status := "infrastructure-failure"
+            diagnostics := #[message] },
+          some s!"{snapshot.relativePath}: {message}")))
+    organizeWorker exactRun work next outcomes
 
 /-- The opt-in "organize imports" capability, exposing no graph
 internals — text in, text out. It rewrites each target's surface header to canonical form:
@@ -1995,35 +2036,36 @@ def organize (request : OrganizeRequest) : IO RunReport := do
     let files := (snapshots.zip candidates).map fun (snapshot, candidate?) =>
       baseReport snapshot (if candidate?.isSome then "would-organize" else "clean")
     return summarize "organize" files
-  withExactRun project (action := fun exactRun => do
+  let workers ← resolveWorkers request.workers
+  recordCount "workers" workers
+  withExactRun project workers (action := fun exactRun => do
     -- Only a snapshot with a candidate rewrite is validated, so only those reach the frontend.
     exactRun.primeSetups <| (snapshots.zip candidates).filterMap fun (snapshot, candidate?) =>
       if candidate?.isSome then some snapshot else none
+    let work := snapshots.zip candidates
+    let outcomes ← IO.mkRef (Array.replicate work.size (none : Option (FileReport × Option String)))
+    let next ← IO.mkRef 0
+    if workers > 1 && work.size > 1 then
+      -- The batch pattern (`execute`): dedicated priority is required because workers block on
+      -- child waits, and pooled blocking tasks can starve a small pool.
+      let tasks ← (List.range (min workers work.size)).mapM fun _ =>
+        IO.asTask (organizeWorker exactRun work next outcomes) Task.Priority.dedicated
+      let mut firstError? : Option IO.Error := none
+      for task in tasks do
+        match ← IO.wait task with
+        | .ok _ => pure ()
+        | .error error => if firstError?.isNone then firstError? := some error
+      if let some error := firstError? then throw error
+    else
+      organizeWorker exactRun work next outcomes
     let mut files := #[]
     let mut failures := #[]
-    for (snapshot, candidate?) in snapshots.zip candidates do
-      match candidate? with
-      | none => files := files.push (baseReport snapshot "clean")
-      | some output =>
-        try
-          let candidate := snapshot.withSource output
-          let validation ← exactRun.analyzeSnapshot candidate (renderCanonical := false) (validator := true)
-          match validation.result? with
-          | none => files := files.push (baseReport snapshot "rejected" #[] validation.diagnostics)
-          | some _ =>
-            match ← publishAtomic snapshot.path snapshot.source output with
-            | .error message => files := files.push (baseReport snapshot "rejected" #[] #[message])
-            | .ok _ =>
-              files := files.push { (baseReport snapshot "organized") with
-                formatted := some output, written := true }
-        catch error =>
-          let message := toString error
-          failures := failures.push s!"{snapshot.relativePath}: {message}"
-          files := files.push {
-            path := snapshot.relativePath
-            status := "infrastructure-failure"
-            diagnostics := #[message]
-          }
+    for outcome? in ← outcomes.get do
+      let some (report, failure?) := outcome?
+        | throw <| IO.userError "an organize worker finished without reporting its target"
+      files := files.push report
+      if let some failure := failure? then
+        failures := failures.push failure
     return summarize "organize" files failures)
 
 /-- The whole analysis side of `__analyze-exact`: read the setup and source, run the exact
