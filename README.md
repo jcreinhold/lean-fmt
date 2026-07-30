@@ -39,11 +39,12 @@ lean-fmt diff --root .      # preview formatting changes
 lean-fmt format --root .    # format files in place, atomically
 ```
 
-`check`, `format`, and `diff` never write files; `fix` is the only writer. Exit `0` clean, `1` findings, `2` failure.
+`check` and `diff` never write; `format` publishes the canonical layout in place (`--check` previews without
+writing), and `fix` applies rule fixes without reflowing layout. Exit `0` clean, `1` findings, `2` failure.
 `--json` prints one JSON object on stdout; statistics go to stderr.
 
-Other commands: `format` (print formatted source), `rules`, `lsp` (language server), `compiler setup`/`status` (plugin),
-`clean` (remove cache). `lean-fmt <command> --help` lists every flag.
+Other commands: `organize` (canonical import headers), `rules`, `lsp` (language server), `compiler
+setup`/`status`/`build` (plugin), `clean` (remove cache). `lean-fmt <command> --help` lists that command's options.
 
 Batch runs show a tqdm-style progress line on stderr when it is a terminal; pipes and `--json` never see it.
 

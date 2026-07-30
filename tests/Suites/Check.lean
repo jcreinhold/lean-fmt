@@ -92,6 +92,55 @@ private def testFlagSurface (ctx : Ctx) : IO Unit := do
   ensure (!(help.stdout.contains "--check-elab")) "--check-elab leaked into help"
   discard <| checkRaw ctx 2 #["fix", "--check-elab", "tests/fixtures/check/Clean.lean"] "removed --check-elab"
 
+/-- Per-command help: every dispatched command has one (exit 0, usage block, self-named), the root
+overview names them all, and no help lists a flag its command's parser rejects (`--range` is
+format-only, `fix` cannot watch) or omits the flags that define it. The probes at the foot pin the
+constraints the help now documents: they must stay exit-2 errors. -/
+private def testPerCommandHelp (ctx : Ctx) : IO Unit := do
+  let commands : Array String := #["check", "format", "diff", "fix", "lsp", "organize", "rules",
+    "explain", "docs", "clean", "compiler", "config"]
+  let overview ← checkRaw ctx 0 #["--help"] "root --help"
+  let overviewLines := overview.stdout.splitOn "\n"
+  for command in commands do
+    ensure (overviewLines.any (·.startsWith s!"  {command}")) s!"root help names `{command}`"
+    let help ← checkRaw ctx 0 #[command, "--help"] s!"{command} --help"
+    ensure (help.stdout.contains "usage:") s!"{command} help carries a usage block"
+    ensure (help.stdout.contains s!"lean-fmt {command}") s!"{command} help names itself"
+  let helps ← commands.mapM fun command => do
+    pure (command, (← checkRaw ctx 0 #[command, "--help"] s!"{command} --help").stdout)
+  let absent : Array (String × String) := #[
+    ("check", "  --range"), ("check", "  --check"),
+    ("diff", "  --range"), ("diff", "  --check"),
+    ("fix", "  --range"), ("fix", "  --watch"), ("fix", "  --poll-interval"), ("fix", "  --check"),
+    ("rules", "  --root"), ("explain", "  --root"),
+    ("lsp", "  --changed"), ("lsp", "  --fixable")
+  ]
+  for (command, flag) in absent do
+    let some (_, text) := helps.find? (·.1 == command) | continue
+    ensure (!(text.contains flag)) s!"{command} help omits parser-rejected {flag.trimAscii.copy}"
+  let present : Array (String × String) := #[
+    ("format", "  --check"), ("format", "  --range"), ("format", "  --stdin-filename"),
+    ("check", "  --fixable"), ("check", "  --select"),
+    ("diff", "--output-format"), ("fix", "  --fixable"), ("fix", "  --unsafe-fixes"),
+    ("lsp", "--debounce-ms"), ("organize", "  --check"), ("organize", "  --json"),
+    ("docs", "  --check"), ("clean", "  --json"),
+    ("compiler", "setup"), ("compiler", "status"), ("compiler", "build"),
+    ("config", "show PATH")
+  ]
+  for (command, flag) in present do
+    let some (_, text) := helps.find? (·.1 == command) | continue
+    ensure (text.contains flag) s!"{command} help lists {flag.trimAscii.copy}"
+  discard <| checkRaw ctx 2 #["bogus", "--help"] "unknown command --help"
+  -- Parser truth: the constraints the help documents must stay errors.
+  discard <| checkRaw ctx 2 #["diff", "--output-format", "sarif",
+    "tests/fixtures/check/Clean.lean"] "diff rejects finding-shaped formats"
+  discard <| checkRaw ctx 2 #["fix", "--watch", "tests/fixtures/check/Clean.lean"]
+    "fix rejects --watch"
+  discard <| checkRaw ctx 2 #["check", "--range", "0:1", "tests/fixtures/check/Clean.lean"]
+    "check rejects --range"
+  discard <| checkRaw ctx 2 #["fix", "--poll-interval", "500", "tests/fixtures/check/Clean.lean"]
+    "--poll-interval requires --watch"
+
 /-- The two producers agree on Findings, and both reproduce the recorded golden byte for
 byte. The golden was recorded *before* any renderer shipped, so it is evidence and not a
 restatement of current behavior. -/
@@ -530,6 +579,7 @@ public def main (args : List String) : IO UInt32 := do
       Check.testDependencySourceEdit ctx reference
     let cases : Array Case := #[
       { name := "flag-surface", run := Check.testFlagSurface ctx },
+      { name := "per-command-help", run := Check.testPerCommandHelp ctx },
       { name := "producer-parity", run := Check.testProducerParity ctx },
       { name := "check-format-agreement", run := Check.testCheckFormatAgreement ctx },
       { name := "custom-syntax", run := Check.testCustomSyntax ctx },

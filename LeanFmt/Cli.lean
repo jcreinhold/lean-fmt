@@ -6,6 +6,7 @@ Authors: Jacob Reinhold
 
 module
 
+import all LeanFmt.CliHelp
 import all LeanFmt.GitSelection
 import all LeanFmt.LanguageServer
 import all LeanFmt.Watch
@@ -188,129 +189,16 @@ private def parseLspArgs (args : List String) : Except String LanguageServer.Ser
     | option :: _ => .error s!"unknown lsp option: {option}"
   loop args {}
 
-/- One `--help` entry: the left column (flags with metavars) and its description. -/
-private structure HelpEntry where
-  flags : String
-  desc : String
-
-private def helpUsageLines : Array String := #[
-  "lean-fmt {check|format|diff|fix} [OPTIONS] [FILE...]",
-  "lean-fmt {check|format|diff|fix} - --stdin-filename PATH [--range S:E]",
-  "lean-fmt lsp [--root PATH] [--config PATH] [--select SELECTOR]",
-  "             [--ignore SELECTOR] [--preview] [--unsafe-fixes]",
-  "             [--debounce-ms MS]",
-  "lean-fmt organize [--root PATH] [--config PATH] [--check] [--json] [FILE...]",
-  "lean-fmt rules [--json]",
-  "lean-fmt explain RULE [--json]",
-  "lean-fmt docs [--root PATH] [--check]",
-  "lean-fmt clean [--root PATH] [--json]",
-  "lean-fmt compiler {setup|status|build} [--root PATH] [--json]",
-  "lean-fmt config show PATH [--root PATH] [--config PATH] [--json]"
-]
-
-private def helpFileOptions : Array HelpEntry := #[
-  ⟨"--root PATH", "Lake project root (default: .)"⟩,
-  ⟨"--config PATH", "explicit lean-fmt.toml"⟩,
-  ⟨"--select SELECTOR", "set the active rules: a code/category/all (repeatable)"⟩,
-  ⟨"--extend-select SEL", "add to the active rules without replacing (repeatable)"⟩,
-  ⟨"--ignore SELECTOR", "deactivate a rule/category/all (repeatable)"⟩,
-  ⟨"--fixable SELECTOR", "restrict which rules' fixes `fix` applies (repeatable)"⟩,
-  ⟨"--unfixable SELECTOR", "withhold a rule's fix from `fix` (repeatable)"⟩,
-  ⟨"--extend-fixable SEL", "add to the fixable set without replacing (repeatable)"⟩,
-  ⟨"--preview", "unlock preview (experimental) rules"⟩,
-  ⟨"--json", "deterministic JSON output (alias for --output-format json)"⟩,
-  ⟨"--output-format FMT", "text|concise|json|github|sarif|junit (default: text); concise/github/sarif/junit are unavailable for `diff`"⟩,
-  ⟨"--output-file PATH", "write the report to PATH atomically instead of stdout"⟩,
-  ⟨"--statistics", "write aggregate statistics to stderr"⟩,
-  ⟨"--watch", "re-run on every change until interrupted (previews only); json/sarif/junit require --output-file under --watch"⟩,
-  ⟨"--poll-interval MS", "how often --watch looks for changes (default: 200)"⟩,
-  ⟨"--changed", "select only files differing from HEAD, plus untracked"⟩,
-  ⟨"--changed-since REV", "select only files this branch changed since REV"⟩,
-  ⟨"--staged", "select only files staged for commit"⟩,
-  ⟨"--no-cache", "neither read nor write result cache entries"⟩,
-  ⟨"--workers N", "run up to N frontend children in parallel (default: LEAN_NUM_THREADS, else the machine's core count — what Lake uses for its own build); the report is byte-identical at any N"⟩,
-  ⟨"--unsafe-fixes", "apply/preview unsafe fixes too (default: safe only)"⟩,
-  ⟨"--check", "format: report what would change, write nothing (CI preview)"⟩
-]
-
-private def helpStdinOptions : Array HelpEntry := #[
-  ⟨"--stdin-filename P", "required with `-`: the buffer's identity for config/module resolution"⟩,
-  ⟨"--range START:STOP", "format only this half-open normalized byte range (format only)"⟩,
-  ⟨"--range-lines R", "format only L:C-L:C (1-based line, 1-based codepoint column)"⟩
-]
-
-/-- Wrap `text` at `width` columns on word boundaries; words longer than `width` go on their own
-line unbroken. -/
-private def wrapHelp (width : Nat) (text : String) : List String :=
-  let rec go (words : List String) (line : String) (lines : List String) : List String :=
-    match words with
-    | [] => (line :: lines).reverse
-    | word :: rest =>
-      if line.isEmpty then go rest word lines
-      else if line.length + 1 + word.length <= width then go rest (line ++ " " ++ word) lines
-      else go rest word (line :: lines)
-  go (text.splitOn " ") "" []
-
-/-- Cargo's help palette, as captured from `cargo help`: bold bright green section headers. -/
-private def paintHeader (color : Bool) (s : String) : String :=
-  if color then s!"\x1b[92m\x1b[1m{s}\x1b[39m\x1b[22m" else s
-
-/-- Cargo's help palette: bold bright cyan literals (flags, command names, the binary). -/
-private def paintLiteral (color : Bool) (s : String) : String :=
-  if color then s!"\x1b[1m\x1b[96m{s}\x1b[0m" else s
-
-/-- Cargo's help palette: cyan metavars and usage tails. -/
-private def paintMeta (color : Bool) (s : String) : String :=
-  if color then s!"\x1b[36m{s}\x1b[0m" else s
-
-/-- One entry row: flags green, metavars plain, description wrapped into the remaining width
-with continuation lines aligned under its start, cargo-style. `pad` is the visible column at
-which descriptions start. -/
-private def renderHelpEntry (color : Bool) (width pad : Nat) (entry : HelpEntry) : String :=
-  let parts := entry.flags.splitOn " "
-  let flag := parts.headD ""
-  let metavars := match parts with
-    | [_] => ""
-    | _ :: metas => " " ++ String.intercalate " " metas
-    | [] => ""
-  let left := "  " ++ paintLiteral color flag ++ paintMeta color metavars
-  let leftLen := 2 + entry.flags.length
-  let descWidth := max 30 (width - pad)
-  let lines := wrapHelp descWidth entry.desc
-  let rows := lines.mapIdx fun i line =>
-    if i == 0 then left ++ ("".pushn ' ' (pad - leftLen)) ++ line
-    else ("".pushn ' ' pad) ++ line
-  String.intercalate "\n" rows
-
-private def renderHelpSection (color : Bool) (width : Nat) (title : String) (entries : Array HelpEntry) :
-    String :=
-  let natural := entries.foldl (fun m e => max m (2 + e.flags.length + 2)) 0
-  let pad := min natural 30
-  let body := entries.map (renderHelpEntry color width pad)
-  paintHeader color title ++ "\n" ++ String.intercalate "\n" body.toList
-
-/-- The full `--help` text. `color` enables ANSI styling; `width` wraps descriptions. -/
-private def usage (color : Bool) (width : Nat) : String :=
-  let usageBlock := helpUsageLines.mapIdx fun i line =>
-    let styled :=
-      if line.startsWith "lean-fmt " then
-        paintLiteral color "lean-fmt" ++ paintMeta color (line.drop "lean-fmt".length).toString
-      else paintMeta color line.trimAsciiStart.toString
-    (if i == 0 then paintHeader color "usage:" ++ " " else "       ") ++ styled
-  String.intercalate "\n" usageBlock.toList ++ "\n\n" ++
-  renderHelpSection color width "file options:" helpFileOptions ++ "\n\n" ++
-  renderHelpSection color width "stdin options (target `-`; never writes a file or a cache entry):"
-    helpStdinOptions
-
-/-- Print `--help` to `stream`, with color when it is a TTY (unless NO_COLOR or TERM=dumb) and
-description wrapping at the COLUMNS width (default 100). -/
-private def printUsage (stream : IO.FS.Stream) : IO Unit := do
+/-- Print help to `stream`, with color when it is a TTY (unless NO_COLOR or TERM=dumb) and
+description wrapping at the COLUMNS width (default 100). The text itself — the root overview and
+every per-command rendering — lives in `CliHelp`; this file owns only the terminal. -/
+private def printHelp (stream : IO.FS.Stream) (render : Bool → Nat → String) : IO Unit := do
   let tty ← stream.isTty
   let noColor ← IO.getEnv "NO_COLOR"
   let term ← IO.getEnv "TERM"
   let color := tty && noColor.isNone && term != some "dumb"
   let width := ((← IO.getEnv "COLUMNS").bind String.toNat?).getD 100
-  stream.putStrLn (usage color width)
+  stream.putStrLn (render color width)
 
 /-- Reconcile the two spellings of one choice, and refuse a mode the chosen format cannot describe.
 
@@ -1437,13 +1325,15 @@ unsafe def runCli (arguments : List String) : IO UInt32 := do
   if let some result ← Application.runInternal? args then
     return result
   match args with
-  | "--help" :: _ => printUsage (← IO.getStdout); return 0
+  | "--help" :: _ => printHelp (← IO.getStdout) CliHelp.overviewHelp; return 0
   | command :: "--help" :: _ =>
-    if #["check", "format", "diff", "fix", "organize", "lsp", "rules", "explain", "docs", "clean", "compiler", "config"].contains command then
-      printUsage (← IO.getStdout)
+    match CliHelp.commandHelp? command with
+    | some render =>
+      printHelp (← IO.getStdout) render
       return 0
-    printUsage (← IO.getStderr)
-    return 2
+    | none =>
+      printHelp (← IO.getStderr) CliHelp.overviewHelp
+      return 2
   | "check" :: rest => runFileCommand .check rest
   | "format" :: rest => runFileCommand .format rest
   | "diff" :: rest => runFileCommand .diff rest
@@ -1540,7 +1430,7 @@ unsafe def runCli (arguments : List String) : IO UInt32 := do
       IO.eprintln s!"lean-fmt: {error}"
       return 2
   | _ =>
-    printUsage (← IO.getStderr)
+    printHelp (← IO.getStderr) CliHelp.overviewHelp
     return 2
 
 end LeanFmt.Internal.Cli
