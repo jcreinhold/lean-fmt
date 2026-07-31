@@ -377,6 +377,49 @@ private def testToolchainMismatch (ctx : Ctx) : IO Unit := do
   writeFile toolchain backup
   ensureEq "a toolchain mismatch exits 2" 2 result.exitCode
 
+/-- §8. The minimum-storage rule on write: a full-project write prunes entries no run can ask
+for again. A deleted module's entry dies on the next full-project write; a rejection verdict
+lives exactly while the header on disk still organizes to the stored candidate. -/
+private def testLiveSetPrune (ctx : Ctx) : IO Unit := do
+  restoreFixture ctx
+  -- Baseline: the first write into an empty index has nothing to prune. (A fully-served check
+  -- never reaches `writeAll` — there is nothing new to store — so pruning always happens at the
+  -- first non-served full-project write.)
+  removeDirAll? (ctx.project / ".lean-fmt-cache")
+  ensureEq "a fresh cache's first write prunes nothing" 0
+    (← statFrom (← profiledCheck ctx).stderr "entries_pruned")
+  -- Dead entries drop at the first write that can know: `Leaf`'s entry is orphaned by the
+  -- deletion and `Wide`'s is superseded by the edit; the edit is what forces the write. The
+  -- rebuild also moves the whole-workspace artifact digest, so the lakefile's old entry is the
+  -- third — it is keyed by that digest and misses on *any* rebuild by design.
+  IO.FS.removeFile (leaf ctx)
+  let wideContents ← IO.FS.readFile (wide ctx)
+  writeFile (wide ctx) (wideContents ++ "\n-- prune-test touch\n")
+  rebuild ctx "leaf deleted, wide touched"
+  ensureEq "the orphaned and superseded entries are pruned" 3
+    (← statFrom (← profiledCheck ctx).stderr "entries_pruned")
+  -- A rejection verdict is a live entry: sabotage `User`'s header (disordered, unknown module),
+  -- organize stores the verdict, and the next full-project write prunes only the pre-sabotage
+  -- `User` entry — the verdict's candidate is still this header's candidate.
+  restoreFixture ctx
+  removeDirAll? (ctx.project / ".lean-fmt-cache")
+  discard <| profiledCheck ctx
+  let userPath := ctx.project / "Fixture" / "User.lean"
+  let user ← IO.FS.readFile userPath
+  writeFile userPath (user.replace "import Fixture.Wide"
+    "import Fixture.Wide\nimport Fixture.NoSuchModule")
+  let rejected ← runProc ctx.fmt #["organize", "--json", "Fixture/User.lean"]
+    (cwd? := some ctx.project)
+  ensure (rejected.exitCode == 1)
+    s!"the sabotaged header was not rejected:\n{rejected.stdout}\n{rejected.stderr}"
+  ensureEq "the old entry dies but the verdict lives" 1
+    (← statFrom (← profiledCheck ctx).stderr "entries_pruned")
+  let second ← runProc ctx.fmt #["organize", "--json", "Fixture/User.lean"]
+    (cwd? := some ctx.project) (env := #[("LEAN_FMT_PROFILE_PHASES", some "1")])
+  ensure (second.exitCode == 1) s!"the served verdict changed the outcome:\n{second.stdout}"
+  ensureEq "the verdict survived the full-project prune" 1
+    (← statFrom second.stderr "verdict_hits")
+
 private def cases (ctx : Ctx) : Array Case := #[
   { name := "cold-and-warm", run := testColdAndWarm ctx },
   { name := "schema-replacement", run := testSchemaReplacement ctx },
@@ -391,6 +434,7 @@ private def cases (ctx : Ctx) : Array Case := #[
   { name := "import-edge-added", run := testImportEdgeAdded ctx },
   { name := "module-renamed", run := testModuleRenamed ctx },
   { name := "crlf-only-change", run := testCrlfOnlyChange ctx },
+  { name := "live-set-prune", run := testLiveSetPrune ctx },
   { name := "choice-and-exit", run := testChoiceAndExit ctx },
   { name := "epoch-change", run := testEpochChange ctx },
   { name := "orphaned-dependency-artifact", run := testOrphanedDependencyArtifact ctx },

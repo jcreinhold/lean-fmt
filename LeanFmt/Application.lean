@@ -1691,6 +1691,7 @@ def execute (request : RunRequest) : IO RunOutcome := do
           previewFile previewMode plan request.unsafeFixes ir.1 ir.2 snapshot analysis
       if let some cache := cache? then
         withPhase "cache_write" <| cache.writeAll project snapshots available
+          (prune := request.files.isEmpty)
       let positions ← profiledPositions snapshots files
       return { report := summarize request.mode.toString files, positions }
   withExactRun project workers fun exactRun => do
@@ -1734,6 +1735,7 @@ def execute (request : RunRequest) : IO RunOutcome := do
         failures := failures.push failure
     if let some cache := cache? then
       withPhase "cache_write" <| cache.writeAll project snapshots analyses
+        (prune := request.files.isEmpty)
     let positions ← profiledPositions snapshots files
     return { report := summarize request.mode.toString files failures, positions }
 
@@ -2081,14 +2083,9 @@ def organize (request : OrganizeRequest) : IO RunReport := do
   let project ← Project.load root discovery request.files
   let snapshots := project.targets
   -- The canonical header rewrite is pure (no graph): compute every candidate first, and only
-  -- pay for the validator if some file actually changes.
-  let candidates ← snapshots.mapM fun snapshot => do
-    let (normalized, lineEndings) := LosslessSource.normalize snapshot.source
-    match ← Imports.parseHeaderModel normalized with
-    | none => pure none
-    | some header =>
-      let output := LosslessSource.denormalize (Imports.organize header normalized) lineEndings
-      pure (if output == snapshot.source then none else some output)
+  -- pay for the validator if some file actually changes. `Imports.organizeCandidate?` is the one
+  -- definition — the cache's live set computes the same candidates when it prunes.
+  let candidates ← snapshots.mapM fun snapshot => Imports.organizeCandidate? snapshot.source
   let anyChange := candidates.any Option.isSome
   if request.check || !anyChange then
     let files := (snapshots.zip candidates).map fun (snapshot, candidate?) =>
@@ -2161,7 +2158,7 @@ def organize (request : OrganizeRequest) : IO RunReport := do
     -- next probe serves. Unbuilt outcomes are excluded upstream (`OrganizeOutcome.validation?`).
     if let some cache := cache? then
       withPhase "cache_write" <| cache.writeAll project
-        (validations.map (·.1)) (validations.map (some ·.2))
+        (validations.map (·.1)) (validations.map (some ·.2)) (prune := request.files.isEmpty)
     return summarize "organize" files failures)
 
 /-- The whole analysis side of `__analyze-exact`: read the setup and source, run the exact

@@ -306,12 +306,25 @@ private def testMergeAnalysis : IO Unit := do
   ensure (storableAnalysis broken) "a broken outcome was not storable"
   ensure (storableAnalysis poor) "a successful outcome was not storable"
 
+/-- The live set and the organizer compute candidates with one definition: a rejection verdict's
+key stays live exactly while the on-disk header still organizes to the stored candidate. -/
+private def testOrganizeCandidateAgreement : IO Unit := do
+  let disordered := "module\n\nimport B\nimport A\n\ndef x := 1\n"
+  let canonical := "module\n\nimport A\nimport B\n\ndef x := 1\n"
+  ensure ((← Imports.organizeCandidate? disordered) == some canonical)
+    "organizeCandidate? disagreed with the organizer on a disordered header"
+  ensure ((← Imports.organizeCandidate? canonical) == none)
+    "organizeCandidate? rewrote a canonical header"
+  ensure ((← Imports.organizeCandidate? "def x := 1\n").isNone)
+    "organizeCandidate? rewrote a headerless source"
+
 /-- The cases this module contributes to the unit runner, in run order. -/
 public def cases : Array Case := #[
   { name := "testCacheIdentity", run := testCacheIdentity },
   { name := "testLakeTraceCharacterization", run := testLakeTraceCharacterization },
   { name := "testClosureDegradationDirection", run := testClosureDegradationDirection },
   { name := "testStore", run := testStore },
-  { name := "testMergeAnalysis", run := testMergeAnalysis }]
+  { name := "testMergeAnalysis", run := testMergeAnalysis },
+  { name := "testOrganizeCandidateAgreement", run := testOrganizeCandidateAgreement }]
 
 end LeanFmt.Test.Unit.Cache

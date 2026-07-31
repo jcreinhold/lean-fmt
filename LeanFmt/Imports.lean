@@ -30,6 +30,7 @@ Everything here indexes the normalized source (`raw.crlfToLf`), the one coordina
 finding, projection, and digest in the product shares (`AGENTS.md`). -/
 
 import all LeanFmt.ArtifactModel
+import all LeanFmt.LosslessSource
 
 import Lean.Parser.Module
 
@@ -296,8 +297,7 @@ LSP "organize imports" capability calls; it exposes no graph internals, only tex
 Redundancy (FMT004) is **not** removed here — it is report-only, so the organizer surfaces candidates
 through `redundantFindings` but never deletes them. -/
 def organize (header : HeaderModel) (normalized : String) : String := Id.run do
-  if header.imports.isEmpty then return normalized
-  -- Partition imports into groups separated by a blank line or comment.
+  if header.imports.isEmpty then return normalized-- Partition imports into groups separated by a blank line or comment.
   let mut groups : Array (Array Nat) := #[]
   let mut current : Array Nat := #[]
   for i in [0:header.imports.size] do
@@ -335,5 +335,19 @@ def organize (header : HeaderModel) (normalized : String) : String := Id.run do
   -- Reassemble: everything before the first import, the rebuilt region, everything after the last.
   return slice normalized 0 firstStart ++ newImportRegion ++
     slice normalized lastStop normalized.utf8ByteSize
+
+/-- The canonical-header candidate `organize` would write for `source`, or `none` when the
+header needs no change (or has no parseable header model).
+
+One definition for the organizer's candidate loop and the result cache's live set: a stored
+rejection verdict has a consumer exactly while the header on disk still computes to this
+candidate, so the two callers must never drift. -/
+def organizeCandidate? (source : String) : IO (Option String) := do
+  let (normalized, lineEndings) := LosslessSource.normalize source
+  match ← parseHeaderModel normalized with
+  | none => return none
+  | some header =>
+    let output := LosslessSource.denormalize (organize header normalized) lineEndings
+    return (if output == source then none else some output)
 
 end LeanFmt.Internal.Imports

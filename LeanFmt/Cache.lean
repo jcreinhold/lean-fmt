@@ -7,6 +7,7 @@ Authors: Jacob Reinhold
 module
 
 import all LeanFmt.Cache.Decision
+import all LeanFmt.Imports
 import all LeanFmt.Profile
 import all LeanFmt.Project
 import all LeanFmt.Semantic
@@ -863,11 +864,34 @@ private def mergeAnalysis (old new : SemanticAnalysis) : SemanticAnalysis :=
     else
       { new with result? := some { newResult with canonical? } }
 
+/-- The identity keys a full-project run can still serve: every current target's own key, and
+the key of each target's organize candidate — a stored rejection verdict has a consumer exactly
+while the header on disk still computes to that candidate (`Imports.organizeCandidate?`, the one
+definition both sides use).
+
+`none` when any closure digest is unresolved: pruning without knowing a target's live key would
+delete its entry out of ignorance, and the minimum-storage rule deletes only what no run can ask
+for again. -/
+private def ResultCache.liveDigests? (cache : ResultCache) (project : Project.Snapshot) :
+    IO (Option (Std.HashSet String)) := do
+  let targets := project.targets
+  let closures ← cache.closureDigests project targets
+  let mut live : Std.HashSet String := {}
+  for (target, closure?) in targets.zip closures do
+    let some closure := closure?
+      | return none
+    let expected ← identity cache project target closure
+    live := live.insert (toString (cacheIdentityDigest expected))
+    if let some output ← Imports.organizeCandidate? target.source then
+      let candidateExpected ← identity cache project (target.withSource output) closure
+      live := live.insert (toString (cacheIdentityDigest candidateExpected))
+  return some live
+
 /- Merge and atomically publish an ordered batch once. Cache failure never changes successful
 analysis; the next run simply observes the previous index or an empty cache. -/
 def ResultCache.writeAll (cache : ResultCache) (project : Project.Snapshot)
     (targets : Array Project.SourceTarget)
-    (analyses : Array (Option SemanticAnalysis)) : IO Unit := do
+    (analyses : Array (Option SemanticAnalysis)) (prune : Bool := false) : IO Unit := do
   try
     let mut entries ← cache.loadEntries
     let closures ← withPhase "write_closures" <| cache.closureDigests project targets
@@ -897,6 +921,16 @@ def ResultCache.writeAll (cache : ResultCache) (project : Project.Snapshot)
         analysis
       }
       entries := entries.insert (toString digest) entry
+    -- The minimum-storage rule: an entry lives exactly while some run can ask for it — a current
+    -- target's own bytes, or a current organize candidate's. Only a full-project write prunes:
+    -- a file-targeted run cannot tell "deleted" from "not in my selection".
+    if prune then
+      match ← cache.liveDigests? project with
+      | some live =>
+        let before := entries.size
+        entries := entries.filter fun key _ => live.contains key
+        recordCount "entries_pruned" (before - entries.size)
+      | none => pure ()
     cache.ensureWriteDirectory
     let ordered := entries.toList.toArray.map (·.2)
       |>.qsort (toString ·.identity < toString ·.identity)
@@ -906,6 +940,7 @@ def ResultCache.writeAll (cache : ResultCache) (project : Project.Snapshot)
       entries := ordered
     }
     writeIndexAtomic (indexPath cache) index
+    recordCount "cache_bytes" (← (indexPath cache).metadata).byteSize.toNat
     collectStaleIndexes cache
     cache.loadedEntries.set (some entries)
   catch _ =>
