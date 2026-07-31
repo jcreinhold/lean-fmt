@@ -126,8 +126,12 @@ public def runCases (label : String) (cases : Array Case) (args : List String) :
     catch error =>
       IO.println s!"FAIL {test.name}\n  {error}"
       failures := failures.push test.name
+    -- The runtime block-buffers a piped stdout, and CI reads through one: flush per case or a
+    -- killed run shows nothing of the minutes before the kill.
+    (← IO.getStdout).flush
   if failures.isEmpty then
     IO.println s!"{label}: {selected.size} test(s) passed"
+    (← IO.getStdout).flush
     return 0
   else
     IO.eprintln

@@ -50,6 +50,15 @@ jobs:
         with:
           ref: ${{ env.TAG }}
       - uses: leanprover/lean-action@v1
+        with:
+          # Build and lint only: auto-config would also run `lake test` inside the action, and
+          # the explicit step below would then run the whole suite phase a second time.
+          test: "false"
+
+      # The full gate runs here, once, on every platform leg — a release stays thorough even
+      # where CI shards for speed.
+      - name: test
+        run: lake test
 
       # Verify what is about to ship: the binary starts, and a real check exercises the exact
       # frontend child, not just argument parsing.

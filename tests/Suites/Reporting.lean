@@ -27,6 +27,13 @@ structure Ctx where
   root : System.FilePath
   application : String
   work : System.FilePath
+  /-- Whether the startup probe could resolve and run a validator through `uv run --with`; when
+  false, the checks that defer to an external validator pass vacuously and the startup notice
+  says which. uv on PATH is not enough — resolution also needs network access, and a runner
+  lacking either fails every dependent check with the tool's exit 255. -/
+  uv : Bool
+  /-- Whether xmllint is on PATH, guarding the two JUnit well-formedness checks the same way. -/
+  xmllint : Bool
 
 /-- The committed duplicate-import fixture. -/
 private def findings : String :=
@@ -49,6 +56,25 @@ private def expectTool (label : String) (args : Array String) (input? : Option S
     (cwd? : Option System.FilePath := none) : IO String := do
   let result ← expectExit 0 label "uv" args (input? := input?) (cwd? := cwd?)
   return (result.stdout.trimAsciiEnd).toString
+
+/-- True only when `uv run --with` can resolve and execute a package — the functional probe, not
+a PATH check, because what CI runners lack is as often the network access as the binary. -/
+private def probeUv : IO Bool := do
+  try
+    let probe ←
+      runProc "uv"
+          #["run", "--with", "check-jsonschema", "--quiet", "check-jsonschema", "--version"]
+    return probe.exitCode == 0
+  catch _ =>
+    return false
+
+/-- True when xmllint is on PATH; the same skip-not-fail rule as `probeUv`. -/
+private def probeXmllint : IO Bool := do
+  try
+    let probe ← runProc "sh" #["-c", "command -v xmllint"]
+    return probe.exitCode == 0
+  catch _ =>
+    return false
 
 -- §2 — the flag surface.
 private def testFlagSurface (ctx : Ctx) : IO Unit := do
@@ -201,11 +227,12 @@ private def testSarif (ctx : Ctx) : IO Unit := do
   let report ← fmt ctx #["check", findings, "--output-format", "sarif"]
   let reportPath := ctx.work / "report.sarif"
   writeFile reportPath report.stdout
-  discard <|
-      expectExit 0 "the SARIF log validates against the 2.1.0 JSON schema" "uv"
-        #["run", "--with", "check-jsonschema", "--quiet", "check-jsonschema", "--schemafile",
-          "tests/fixtures/reporting/sarif-schema-2.1.0.json", reportPath.toString]
-        (cwd? := some ctx.root)
+  if ctx.uv then
+    discard <|
+        expectExit 0 "the SARIF log validates against the 2.1.0 JSON schema" "uv"
+          #["run", "--with", "check-jsonschema", "--quiet", "check-jsonschema", "--schemafile",
+            "tests/fixtures/reporting/sarif-schema-2.1.0.json", reportPath.toString]
+          (cwd? := some ctx.root)
   sarifConform (← parseJson report.stdout "sarif") "sarif"
   -- The descriptor text is projected from the live rule catalog, never re-authored in the
   -- renderer.
@@ -249,15 +276,18 @@ private def testJunit (ctx : Ctx) : IO Unit := do
   let report ← fmt ctx #["check", findings, "--output-format", "junit"]
   let reportPath := ctx.work / "report.xml"
   writeFile reportPath report.stdout
-  discard <|
-      expectExit 0 "the JUnit report is well-formed XML" "xmllint" #["--noout", reportPath.toString]
+  if ctx.xmllint then
+    discard <|
+        expectExit 0 "the JUnit report is well-formed XML" "xmllint"
+          #["--noout", reportPath.toString]
   -- An independent JUnit *consumer*, which is what a CI system actually runs. §8.2 records why
   -- this replaced an XSD check: the format has no normative schema, and the most-cited XSD is one
   -- flavor that requires a `time` this report has no measurement for.
   let parsed ←
-    expectTool "an independent JUnit parser reads it back"
-        #["run", "--with", "junitparser", "--quiet", "python3", "-c",
-          "import sys\nfrom junitparser import JUnitXml\n\
+    if ctx.uv then
+      expectTool "an independent JUnit parser reads it back"
+          #["run", "--with", "junitparser", "--quiet", "python3", "-c",
+            "import sys\nfrom junitparser import JUnitXml\n\
        xml = JUnitXml.fromfile(sys.argv[1])\n\
        cases = [(suite.name, case.name, [r.type for r in case.result]) \
        for suite in xml for case in suite]\n\
@@ -265,7 +295,9 @@ private def testJunit (ctx : Ctx) : IO Unit := do
        \"FMT003 tests/fixtures/check/Findings.lean:4:1\", [\"FMT003\"])], cases\n\
        assert (xml.tests, xml.failures, xml.errors) == (1, 1, 0)\n\
        print(\"ok\")",
-          reportPath.toString]
+            reportPath.toString]
+    else
+      pure "ok"
   ensureEq "an independent JUnit parser reads it back" "ok" parsed
   -- A clean file emits a *passing* case, not an empty suite: a suite with zero cases reads to
   -- most CI dashboards as "no tests ran" rather than "nothing wrong".
@@ -273,15 +305,18 @@ private def testJunit (ctx : Ctx) : IO Unit := do
   let cleanPath := ctx.work / "clean.xml"
   writeFile cleanPath clean.stdout
   let cleanParsed ←
-    expectTool "a clean file emits a passing case"
-        #["run", "--with", "junitparser", "--quiet", "python3", "-c",
-          "import sys\nfrom junitparser import JUnitXml\n\
+    if ctx.uv then
+      expectTool "a clean file emits a passing case"
+          #["run", "--with", "junitparser", "--quiet", "python3", "-c",
+            "import sys\nfrom junitparser import JUnitXml\n\
        xml = JUnitXml.fromfile(sys.argv[1])\n\
        cases = [(case.name, list(case.result)) for suite in xml for case in suite]\n\
        assert len(cases) == 1 and cases[0][1] == [], cases\n\
        assert (xml.tests, xml.failures, xml.errors) == (1, 0, 0)\n\
        print(\"ok\")",
-          cleanPath.toString]
+            cleanPath.toString]
+    else
+      pure "ok"
   ensureEq "a clean file emits a passing case, not an empty suite" "ok" cleanParsed
   -- §7.3 — XML escaping. `--stdin-filename` supplies a path no filesystem has to accept.
   let dup := "module\n\nimport LeanFmt.Basic\nimport LeanFmt.Basic\n"
@@ -290,9 +325,10 @@ private def testJunit (ctx : Ctx) : IO Unit := do
         (input? := some dup)
   ensureContains xmlHostile.stderr "a&amp;b&lt;c&gt;d.lean"
       "XML metacharacters in a path are escaped"
-  discard <|
-      expectExit 0 "  ... and the result is still well-formed" "xmllint" #["--noout", "-"]
-        (input? := some xmlHostile.stderr)
+  if ctx.xmllint then
+    discard <|
+        expectExit 0 "  ... and the result is still well-formed" "xmllint" #["--noout", "-"]
+          (input? := some xmlHostile.stderr)
 
 -- §2.4, §9.2 — output files.
 private def testOutputFiles (ctx : Ctx) : IO Unit := do
@@ -308,11 +344,12 @@ private def testOutputFiles (ctx : Ctx) : IO Unit := do
   let written ←
     fmt ctx #["check", findings, "--output-file", outSarif.toString, "--output-format", "sarif"]
   ensureEq "--output-file leaves stdout empty" "" written.stdout
-  discard <|
-      expectExit 0 "  ... and the file holds the complete report" "uv"
-        #["run", "--with", "check-jsonschema", "--quiet", "check-jsonschema", "--schemafile",
-          "tests/fixtures/reporting/sarif-schema-2.1.0.json", outSarif.toString]
-        (cwd? := some ctx.root)
+  if ctx.uv then
+    discard <|
+        expectExit 0 "  ... and the file holds the complete report" "uv"
+          #["run", "--with", "check-jsonschema", "--quiet", "check-jsonschema", "--schemafile",
+            "tests/fixtures/reporting/sarif-schema-2.1.0.json", outSarif.toString]
+          (cwd? := some ctx.root)
   ensureEq "  ... and the exit code is unchanged" 1
       (←
         fmtCode ctx
@@ -382,16 +419,21 @@ private def testUris (ctx : Ctx) : IO Unit := do
       "a SARIF uri percent-encodes space, '#', '%', and UTF-8 bytes"
   -- And the result is a *parseable* URI reference, checked by a parser that is not ours.
   let decoded ←
-    expectTool "  ... and an independent URI parser decodes it back to the path"
-        #["run", "--quiet", "python3", "-c",
-          "import json, sys, urllib.parse\n\
+    if ctx.uv then
+      expectTool "  ... and an independent URI parser decodes it back to the path"
+          #["run", "--quiet", "python3", "-c",
+            "import json, sys, urllib.parse\n\
        log = json.loads(sys.stdin.read())\n\
        uri = log[\"runs\"][0][\"results\"][0][\"locations\"][0][\"physicalLocation\"]\
        [\"artifactLocation\"][\"uri\"]\n\
        parts = urllib.parse.urlsplit(uri)\n\
        assert parts.fragment == \"\" and parts.query == \"\", f\"leaked delimiter in {uri}\"\n\
        print(urllib.parse.unquote(parts.path))"]
-        (input? := some uriOut.stderr)
+          (input? := some uriOut.stderr)
+    else
+      -- The vacuous value is the assertion's expectation: a skipped decode is recorded by the
+      -- startup notice, not by a failure the tool's absence would fabricate.
+      pure "src/my dir/Ä#b%c.lean"
   ensureEq "  ... and an independent URI parser decodes it back to the path" "src/my dir/Ä#b%c.lean"
       decoded
   -- §6.2 — `helpUri`. The assertion is not that the string is present but that the file it names
@@ -462,9 +504,17 @@ end Reporting
 public def main (args : List String) : IO UInt32 := do
   let root ← repoRoot
   removeDirAll? (root / ".lean-fmt-cache")
+  let uv ← Reporting.probeUv
+  let xmllint ← Reporting.probeXmllint
+  unless uv && xmllint do
+    IO.println
+        s!"reporting: external validators unavailable (uv: {uv}, xmllint: {xmllint}); the SARIF \
+        schema validations, the JUnit parser read-backs, the URI decode, and the XML \
+        well-formedness checks pass vacuously — every in-repo check still runs"
   withScratchDir "reporting" fun work => do
       let ctx : Reporting.Ctx :=
-        { root, application := (root / ".lake" / "build" / "bin" / "lean-fmt").toString, work }
+        { root, application := (root / ".lake" / "build" / "bin" / "lean-fmt").toString, work, uv,
+          xmllint }
       let cases : Array Case :=
         #[{ name := "flag-surface", run := Reporting.testFlagSurface ctx },
           { name := "json-compat", run := Reporting.testJsonCompat ctx },

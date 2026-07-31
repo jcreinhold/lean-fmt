@@ -1,9 +1,12 @@
 # Continuous integration for lean-fmt.
 #
-# test: every push to main and every pull request. leanprover/lean-action builds the package and
-# runs `lake lint` (the lakefile declares the formatter as its own lint driver, which is what
-# lean-action probes for); `lake test` then runs the unit tier plus every non-slow suite. Suites
-# that need a tool the runner lacks (Neovim, uv) skip rather than fail.
+# test: every push to main and every pull request, sharded four ways — one job for the unit tier
+# and three for the suite registry, partitioned by the runner's own `--shard INDEX/COUNT`, so a
+# suite added to the registry joins a shard without a workflow edit. lean-action builds and lints
+# (`lake lint` runs the formatter as its own lint driver, which is what lean-action probes for)
+# but does not run `lake test` itself: its auto-config would, and the explicit sharded steps
+# would then repeat it — until the `test: "false"` input, CI ran the whole suite phase twice per
+# job. Suites that need a tool the runner lacks (Neovim, uv) skip rather than fail.
 #
 # slow: the complete set — the minutes-long stream, performance, downstream, ci, lsp-acceptance,
 # editor, and security-bench suites included — on manual dispatch only, because it costs minutes
@@ -28,10 +31,21 @@ concurrency:
 jobs:
   test:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [unit, "1/3", "2/3", "3/3"]
     steps:
       - uses: actions/checkout@v5
       - uses: leanprover/lean-action@v1
-      - run: lake test
+        with:
+          test: "false"
+      - name: unit tier
+        if: matrix.shard == 'unit'
+        run: lake test -- --unit-only
+      - name: suite shard ${{ matrix.shard }}
+        if: matrix.shard != 'unit'
+        run: lake test -- --skip-unit --shard ${{ matrix.shard }}
 
   slow:
     if: github.event_name == 'workflow_dispatch'
@@ -39,4 +53,6 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: leanprover/lean-action@v1
+        with:
+          test: "false"
       - run: lake test -- --all

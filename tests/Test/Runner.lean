@@ -102,9 +102,15 @@ structure Options where
   skipUnit : Bool := false
   /-- Run only the unit tier. -/
   unitOnly : Bool := false
+  /-- Partition the selected suites modulo the count and run partition INDEX (one-based — the
+  same convention as the case harness's `--shard`), so a CI matrix of `1/3 … 3/3` covers the
+  registry exactly once and a suite added to the registry joins a shard without a workflow
+  edit. -/
+  shard : Option (Nat × Nat) := none
 
 private def usage : String :=
-  "usage: test-suites [--all] [--suites NAME...] [--list] [--jobs N] [--skip-unit] [--unit-only]"
+  "usage: test-suites [--all] [--suites NAME...] [--list] [--jobs N] [--skip-unit] [--unit-only] \
+    [--shard INDEX/COUNT]"
 
 private def parseArgs (args : List String) : Except String Options := do
   let arguments := args.toArray
@@ -131,6 +137,24 @@ private def parseArgs (args : List String) : Except String Options := do
           throw s!"--jobs expects a number, got: {count}"
       | none =>
         throw "--jobs expects a number"
+    | "--shard" =>
+      index := index + 1
+      match arguments[index]? with
+      | some spec =>
+        match spec.splitOn "/" with
+        | [indexText, countText] =>
+          match indexText.toNat?, countText.toNat? with
+          | some shardIndex, some count =>
+            if 1 ≤ shardIndex && shardIndex ≤ count then
+              options := { options with shard := some (shardIndex, count) }
+            else
+              throw s!"--shard expects 1 ≤ INDEX ≤ COUNT, got: {spec}"
+          | _, _ =>
+            throw s!"--shard expects INDEX/COUNT, got: {spec}"
+        | _ =>
+          throw s!"--shard expects INDEX/COUNT, got: {spec}"
+      | none =>
+        throw "--shard expects INDEX/COUNT"
     | "--suites" =>
       index := index + 1
       let mut names : Array String := #[]
@@ -149,20 +173,30 @@ private def parseArgs (args : List String) : Except String Options := do
 /-- The suites `options` selects, in registry order. An unknown name is an error, not a silent skip
 — a typo must not produce a green run of the wrong set. -/
 private def select (options : Options) : Except String (Array Suite) := do
-  match options.suites with
-  | some names =>
-    let mut selected : Array Suite := #[]
-    for name in names do
-      match registered.find? (·.name == name) with
-      | some suite =>
-        selected := selected.push suite
-      | none =>
-        throw
-            s!"unknown suite: {name} (registry: \
-          {", ".intercalate (registered.map (·.name)).toList})"
-    return selected
+  let selected ←
+    match options.suites with
+    | some names =>
+      let mut chosen : Array Suite := #[]
+      for name in names do
+        match registered.find? (·.name == name) with
+        | some suite =>
+          chosen := chosen.push suite
+        | none =>
+          throw
+              s!"unknown suite: {name} (registry: \
+            {", ".intercalate (registered.map (·.name)).toList})"
+      pure chosen
+    | none =>
+      pure <| registered.filter fun suite => options.all || !suite.slow
+  match options.shard with
   | none =>
-    return registered.filter fun suite => options.all || !suite.slow
+    return selected
+  | some (index, count) =>
+    let mut sharded : Array Suite := #[]
+    for position in [:selected.size]do
+      if position % count == index - 1 then
+        sharded := sharded.push selected[position]!
+    return sharded
 
 /-- The recorded outcome of one suite run. -/
 private structure Outcome where
@@ -184,10 +218,13 @@ private def pad (text : String) (width : Nat) : String :=
   text ++ String.ofList (List.replicate (width - text.length) ' ')
 
 /-- Print the per-suite line the way `run-all.sh` did: name, verdict, seconds. -/
-private def report (outcome : Outcome) : IO Unit :=
+private def report (outcome : Outcome) : IO Unit := do
   IO.println
-    s!"{pad outcome.suite.name 28} {if outcome.passed then "PASS" else "FAIL"}  \
+      s!"{pad outcome.suite.name 28} {if outcome.passed then "PASS" else "FAIL"}  \
     {pad (toString outcome.elapsedSec) 4}s"
+  -- A pipe block-buffers stdout, and CI reads through one: flush per suite or a killed run
+  -- shows nothing of what finished before the kill.
+  (← IO.getStdout).flush
 
 /-- The lines of a failure's captured output worth reading without opening the log: assertion
 failures and compiler errors from any build the suite ran, each with its following (indented)
