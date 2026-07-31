@@ -46,11 +46,10 @@ one line and `theorem foo` on the next. That is the grammar's layout, not a widt
 attribute list carries a hard line after it upstream, and the inline variant of that construct exists and is used for
 structure fields, `let rec`, and binders, so the split is deliberate, not a defect.
 
-An attribute argument can itself be a doc comment (`@[to_additive /-- … -/]` is the mathlib shape). Its payload is
-fixed — the comment rule forbids reflowing it — so the entry's column is the only width the formatter controls. A doc
-comment the source hugged against its attribute stays hugged; one the source wrote on its own line dedents, together
-with the closing `]`, to the attribute list's own column, the one placement whose width the payload was authored to
-fit.
+An attribute argument can itself be a doc comment (`@[to_additive /-- … -/]` is the mathlib shape). Its payload is fixed
+— the comment rule forbids reflowing it — so the entry's column is the only width the formatter controls. A doc comment
+the source hugged against its attribute stays hugged; one the source wrote on its own line dedents, together with the
+closing `]`, to the attribute list's own column, the one placement whose width the payload was authored to fit.
 
 `commands.syntax` keeps syntax, notation, macro, `open`, `export`, `universe`, `variable`, and `set_option` shells on
 one line while they fit. Their nested term/parser/tactic children break under their own category's layout. A long
@@ -142,11 +141,11 @@ by
   · exact x
 ```
 
-Bullets and case/focus bodies own their bodies' indentation. A focusing `·` always keeps its first tactic on its own
-row — `· calc`, `· exact`, however long the block under it — because mathlib's cdot linter flags an isolated `·`;
-everything past the first token breaks under the ordinary rules. The term-level `·` (`(· + ·)`) is a different
-construct and is untouched. Project-defined tactics break under the same live registry
-as core ones; they do not make the enclosing declaration verbatim.
+Bullets and case/focus bodies own their bodies' indentation. A focusing `·` always keeps its first tactic on its own row
+— `· calc`, `· exact`, however long the block under it — because mathlib's cdot linter flags an isolated `·`; everything
+past the first token breaks under the ordinary rules. The term-level `·` (`(· + ·)`) is a different construct and is
+untouched. Project-defined tactics break under the same live registry as core ones; they do not make the enclosing
+declaration verbatim.
 
 `blocks.do-where` writes `do` followed by two-space-indented items unless one simple item fits flat. `where` uses the
 declaration rule above. Match arms containing `by`, tactic alternatives, and nested `Id.run do` each establish a new
