@@ -50,7 +50,11 @@ jobs:
         timeout-minutes: 10
       - name: suite part ${{ matrix.part }}
         if: matrix.part != 'unit'
-        run: lake test -- --skip-unit --part ${{ matrix.part }}
+        # --jobs 2, not the default 4: four concurrent suites each spawning frontend children
+        # exhausts the 16 GB runner — the shutdown-signal kills and silent wedges all landed in
+        # that window, and an unresponsive agent holds the concurrency group hostage. Halving
+        # the suite count halves the envelope; the wall-time cost is a few minutes per part.
+        run: lake test -- --skip-unit --part ${{ matrix.part }} --jobs 2
         timeout-minutes: 20
 
   slow:
