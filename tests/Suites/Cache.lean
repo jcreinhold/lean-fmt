@@ -268,8 +268,15 @@ private def testModuleRenamed (ctx : Ctx) : IO Unit := do
   ensureEq "renaming a module invalidates the new name and the lakefile only" (ctx.total - 2)
       servedCount
   let indexes ← indexFiles ctx
+  -- Mtimes name the case that created each file: a second index means the epoch moved, and
+  -- when it moved is the difference between a rename defect and an environment that flaps.
+  let mut descriptions : Array String := #[]
+  for index in indexes do
+    let info ← index.metadata
+    descriptions := descriptions.push s!"{index} (size {info.byteSize}, mtime {info.modified.sec})"
   ensure (indexes.size == 1)
-      s!"a rename does not create a second index: {indexes.toList.map (·.toString)}"
+      s!"a rename does not create a second index:\n  {"
+\n  ".intercalate descriptions.toList}"
 
 /-- §7.5. A change visible only to normalization: LF to CRLF, identical normalized text. It still
 misses: every compiler-produced offset indexes `raw.crlfToLf`, so the *analysis* is unchanged, but

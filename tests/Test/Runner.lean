@@ -272,6 +272,9 @@ private partial def worker (root : System.FilePath) (suites : Array Suite) (next
         return index
   if index < suites.size then
     let suite := suites[index]!
+    -- stderr is unbuffered even through a pipe: the last heartbeat before a wedge names the
+    -- suite that hung, which the completion line — printed only after — never can.
+    IO.eprintln s!"starting {suite.name}"
     let outcome ←
       if suite.lane == .workspace then
         workspaceLock.atomically fun _ => runSuite root suite
@@ -346,6 +349,7 @@ public def main (args : List String) : IO UInt32 := do
     let ordinaryOutcomes ← runLanes root ordinary options.jobs
     let exclusiveOutcomes ←
       exclusive.mapM fun suite => do
+          IO.eprintln s!"starting {suite.name}"
           let outcome ← runSuite root suite
           report outcome
           return outcome

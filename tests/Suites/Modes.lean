@@ -104,7 +104,8 @@ private def ensureTreeUnchanged (label : String) (before after : String) : IO Un
   for i in [:max beforeLines.size afterLines.size]do
     let beforeLine := beforeLines[i]?.getD "<absent>"
     let afterLine := afterLines[i]?.getD "<absent>"
-    ensure (beforeLine == afterLine) s!"{label}:\nbefore: {beforeLine}\nafter:  {afterLine}"
+    -- The follower lines indent so the runner's failure digest keeps them.
+    ensure (beforeLine == afterLine) s!"{label}:\n  before: {beforeLine}\n  after:  {afterLine}"
 
 /-- Run `action` and restore `target` from `backup` even when it fails — the per-section
 `cp -p` restores of the old script, made exception-safe. -/
@@ -564,7 +565,7 @@ private def testClean (ctx : Ctx) : IO Unit := do
   ensureJsonAt second [.field "removed"] (Lean.toJson false) "clean 2"
   discard <| (removeFile? sentinel : IO Unit)
   let after ← metadataLine ctx.findings
-  ensure (before == after) s!"clean touched the source:\nbefore: {before}\nafter:  {after}"
+  ensure (before == after) s!"clean touched the source:\n  before: {before}\n  after:  {after}"
 
 -- -----------------------------------------------------------------------------------------------
 -- Layout and fix are decoupled
