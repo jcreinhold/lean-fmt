@@ -54,9 +54,23 @@ jobs:
         timeout-minutes: 10
       - name: incremental suite
         if: matrix.part == 'incremental'
-        run: lake test -- --skip-unit --suites incremental
+        # TELEM and the arena cap: the suite peaks at 2.6 GB resident on macOS yet died 30 s
+        # in on a runner of its own — the Linux growth pattern (glibc per-thread arenas are
+        # the usual multiplier) needs measuring, and MALLOC_ARENA_MAX bounds the multiplier
+        # if that is what it is.
+        run: |
+          (while true; do
+            echo "TELEM $(date +%H:%M:%S) memAvailMB=$(free -m | awk '/Mem:/ {print $7}') diskAvailMB=$(df -m / | awk 'NR==2 {print $4}')"
+            sleep 10
+          done) &
+          TELEM_PID=$!
+          lake test -- --skip-unit --suites incremental
+          CODE=$?
+          kill $TELEM_PID 2>/dev/null || true
+          exit $CODE
         env:
           LEAN_NUM_THREADS: "2"
+          MALLOC_ARENA_MAX: "2"
         timeout-minutes: 15
       - name: suite part ${{ matrix.part }}
         if: matrix.part != 'unit' && matrix.part != 'incremental'
