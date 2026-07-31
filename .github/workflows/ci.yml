@@ -45,9 +45,13 @@ jobs:
       - name: unit tier
         if: matrix.part == 'unit'
         run: lake test -- --unit-only
+        # A suite part normally finishes well under ten minutes; a hung runner otherwise holds
+        # the concurrency group hostage for the six-hour default, and did exactly that once.
+        timeout-minutes: 10
       - name: suite part ${{ matrix.part }}
         if: matrix.part != 'unit'
         run: lake test -- --skip-unit --part ${{ matrix.part }}
+        timeout-minutes: 20
 
   slow:
     if: github.event_name == 'workflow_dispatch'
