@@ -80,14 +80,16 @@ private def registered : Array Suite :=
     { name := "formatter-adapter", lane := .«parallel» },
     { name := "application-formatter", lane := .workspace },
     { name := "boundary", lane := .«parallel» },
-    -- Exclusive for memory, not for shared state: the persistent-frontend contract holds
-    -- several full `import Lean` environments at once (retained snapshots plus a fresh
-    -- one-shot per edit-table row), which is gigabytes a neighbor cannot survive — CI
-    -- telemetry showed the runner dying in the incremental window twice.
-    { name := "incremental", lane := .exclusive }, { name := "imports", lane := .workspace },
-    { name := "layout", lane := .«parallel» }, { name := "lossless", lane := .«parallel» },
-    { name := "lsp", lane := .workspace }, { name := "modes", lane := .exclusive },
-    { name := "reporting", lane := .workspace }, { name := "scale", lane := .«parallel» },
+    -- Exclusive, and out of the default set for memory rather than wall time: the
+    -- persistent-frontend contract holds several full `import Lean` environments at once and
+    -- its hundred-edit phase is allowed an 8 GiB resident stop by design — the 14.4 GB peak
+    -- measured locally. It runs alone at the end of `--all`, and in its own CI job, where a
+    -- 16 GB runner is entirely its own; in a shared part it starved the agent twice.
+    { name := "incremental", lane := .exclusive, slow := true },
+    { name := "imports", lane := .workspace }, { name := "layout", lane := .«parallel» },
+    { name := "lossless", lane := .«parallel» }, { name := "lsp", lane := .workspace },
+    { name := "modes", lane := .exclusive }, { name := "reporting", lane := .workspace },
+    { name := "scale", lane := .«parallel» },
     { name := "security-bench", lane := .«parallel», slow := true },
     { name := "semantic", lane := .«parallel» },
     { name := "lsp-acceptance", lane := .exclusive, slow := true }]

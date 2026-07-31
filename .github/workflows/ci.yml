@@ -36,7 +36,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        part: [unit, "1/3", "2/3", "3/3"]
+        # `incremental` is a job of its own, not a part: its persistent-frontend contract is
+        # allowed an 8 GiB resident stop by design, so the 16 GB runner must be entirely its
+        # own. The registry marks it slow, so the parts skip it and only this job and the
+        # manual slow run include it.
+        part: [unit, "1/3", "2/3", "3/3", incremental]
     steps:
       - uses: actions/checkout@v5
       - uses: leanprover/lean-action@v1
@@ -48,8 +52,14 @@ jobs:
         # A suite part normally finishes well under ten minutes; a hung runner otherwise holds
         # the concurrency group hostage for the six-hour default, and did exactly that once.
         timeout-minutes: 10
+      - name: incremental suite
+        if: matrix.part == 'incremental'
+        run: lake test -- --skip-unit --suites incremental
+        env:
+          LEAN_NUM_THREADS: "2"
+        timeout-minutes: 15
       - name: suite part ${{ matrix.part }}
-        if: matrix.part != 'unit'
+        if: matrix.part != 'unit' && matrix.part != 'incremental'
         # --jobs 2, not the default 4: four concurrent suites each spawning frontend children
         # exhausts the 16 GB runner — the shutdown-signal kills and silent wedges all landed in
         # that window, and an unresponsive agent holds the concurrency group hostage. Halving
