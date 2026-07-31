@@ -136,8 +136,92 @@ private def testImports : IO Unit := do
   ensure (prelude.hasPrelude && prelude.imports.map (·.module) == #[`Foo.A])
     "the prelude header model does not match the written imports"
 
+/-- The canonical layout (`import-layout = "canonical"`), pinned against the kan-proofs script's
+own test suite — bucket order, contiguous sub-blocks, trailing comments, idempotence — plus the
+refusal cases the script never faces because it never moves a line across a comment. -/
+private def testCanonicalLayout : IO Unit := do
+  let canon (source : String) (groups : Array String := Imports.defaultImportGroups) : IO String := do
+    let header ← parseHeader! source
+    return Imports.organize header source .canonical groups
+
+  -- Sorts alphabetically within a bucket.
+  let sortMe := "import Mathlib.B\nimport Mathlib.A\n\nsection\nend section\n"
+  ensure ((← canon sortMe) == "import Mathlib.A\nimport Mathlib.B\n\nsection\nend section\n")
+    "canonical layout did not sort within a bucket"
+
+  -- Sub-blocks order Lean, Mathlib, then other — contiguous, no blank lines between them
+  -- (the script's own suite pins contiguous sub-blocks).
+  let subblocks := "import KanProofs.Foo\nimport Mathlib.X\nimport Lean\n\ndef x := 0\n"
+  ensure ((← canon subblocks) == "import Lean\nimport Mathlib.X\nimport KanProofs.Foo\n\ndef x := 0\n")
+    "canonical layout did not order Lean/Mathlib/other sub-blocks contiguously"
+
+  -- Buckets separate with one blank line: `public import`, `import all`, `import`; the `module`
+  -- marker and the body are preserved with one blank line on each side of the region.
+  let buckets :=
+    "module\nimport KanProofs.Z\npublic import KanProofs.A\nimport all KanProofs.M\n\
+      import Mathlib.B\npublic import Mathlib.A\n\nnoncomputable section\n"
+  ensure ((← canon buckets) ==
+      "module\n\npublic import Mathlib.A\npublic import KanProofs.A\n\nimport all KanProofs.M\n\n\
+        import Mathlib.B\nimport KanProofs.Z\n\nnoncomputable section\n")
+    "canonical layout did not separate the modifier buckets"
+
+  -- A `meta` variant sits directly after its non-`meta` counterpart, in its own bucket.
+  let metaCase :=
+    "module\nmeta import Foo.M\nimport Foo.A\npublic meta import Foo.PM\npublic import Foo.P\n"
+  ensure ((← canon metaCase) ==
+      "module\n\npublic import Foo.P\n\npublic meta import Foo.PM\n\nimport Foo.A\n\n\
+        meta import Foo.M\n")
+    "canonical layout did not place meta variants after their counterparts"
+
+  -- A trailing `--` comment rides with its import through the sort.
+  let commented := "import Mathlib.B -- shake: keep\nimport Mathlib.A\n\ndef x := 0\n"
+  ensure ((← canon commented) == "import Mathlib.A\nimport Mathlib.B -- shake: keep\n\ndef x := 0\n")
+    "canonical layout dropped or misplaced a trailing comment"
+
+  -- Dedup transfers a dropped duplicate's trailing comment to the survivor.
+  let dupComment := "import Foo.A\nimport Foo.A -- shake: keep\n\ndef x := 0\n"
+  ensure ((← canon dupComment) == "import Foo.A -- shake: keep\n\ndef x := 0\n")
+    "canonical layout dropped a duplicate's trailing comment"
+
+  -- A standalone comment line ends the region: the import below it is body and stays put,
+  -- and the rewrite is idempotent.
+  let region := "import Foo.B\n-- section\nimport Foo.A\ndef x := 0\n"
+  let rewritten ← canon region
+  ensure (rewritten == "import Foo.B\n\n-- section\nimport Foo.A\ndef x := 0\n")
+    "canonical layout moved an import below a standalone comment"
+  ensure ((← canon rewritten) == rewritten) "canonical layout was not idempotent"
+
+  -- A block comment trailing an import refuses the whole file (reordering around a possibly
+  -- multi-line comment can drop text), and the refusal leaves the bytes unchanged.
+  let blockComment := "import Foo.A /- note -/\nimport Foo.B\n\ndef x := 0\n"
+  ensure ((Imports.canonicalize (← parseHeader! blockComment) blockComment).isNone)
+    "canonical layout did not refuse a trailing block comment"
+  ensure ((← canon blockComment) == blockComment) "a refused canonical rewrite changed the file"
+
+  -- A custom `import-groups` list replaces the Lean/Mathlib defaults.
+  let custom := "import Foo.B\nimport Std.A\nimport Lean.X\n\ndef x := 0\n"
+  ensure ((← canon custom #["Std"]) == "import Std.A\nimport Foo.B\nimport Lean.X\n\ndef x := 0\n")
+    "canonical layout ignored a custom import-groups list"
+
+  -- A missing trailing newline stays missing.
+  let noNewline := "import Mathlib.B\nimport Mathlib.A\n\ndef y := 0"
+  ensure ((← canon noNewline) == "import Mathlib.A\nimport Mathlib.B\n\ndef y := 0")
+    "canonical layout changed the file's trailing-newline status"
+
+  -- `organizeCandidate?` agrees: none on an already-canonical header, some on a drifted one,
+  -- and the grouped default never rewrites buckets.
+  let canonicalText :=
+    "module\n\npublic import Mathlib.A\n\nimport Mathlib.B\n\ndef y := 0\n"
+  ensure ((← Imports.organizeCandidate? canonicalText .canonical).isNone)
+    "organizeCandidate? rewrote an already-canonical header"
+  ensure ((← Imports.organizeCandidate? canonicalText).isNone)
+    "organizeCandidate? rewrote a grouped-clean header"
+  ensure ((← Imports.organizeCandidate? buckets .canonical) == some (← canon buckets))
+    "organizeCandidate? disagreed with the organizer under the canonical layout"
+
 /-- The cases this module contributes to the unit runner, in run order. -/
 public def cases : Array Case := #[
-  { name := "testImports", run := testImports }]
+  { name := "testImports", run := testImports },
+  { name := "testCanonicalLayout", run := testCanonicalLayout }]
 
 end LeanFmt.Test.Unit.Imports

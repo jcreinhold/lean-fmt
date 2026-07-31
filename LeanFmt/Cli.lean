@@ -1450,3 +1450,5 @@ unsafe def runCli (arguments : List String) : IO UInt32 := do
     return 2
 
 end LeanFmt.Internal.Cli
+
+-- cache-project-source-invalidation

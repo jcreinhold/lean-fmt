@@ -21,6 +21,8 @@ preview = false                      # enable preview-stage rules
 line-width = 100                     # 1..1000
 pinned-comments = ["shake: keep"]    # inline comments that never move and never split their line
 declaration-body = "next-line"       # or "same-line"
+import-layout = "grouped"            # or "canonical" (the organizer's header rewrite)
+import-groups = ["Lean", "Mathlib"]  # canonical layout: sub-block prefixes inside a bucket
 
 [lint]                               # rule selection
 select = ["all"]
@@ -49,6 +51,17 @@ moves it and never splits its line, even when the code alone overflows — a pin
 style Lean's own formatter produces: the body begins on its own line (`def foo :=` then `1`). `"same-line"` keeps the
 body on the `:=` line when the joined line fits `line-width`, joining already-broken bodies that fit, and breaks exactly
 like the default when it does not.
+
+`import-layout` chooses what `lean-fmt organize` (and the editor's organize-imports code action) rewrites the header
+to. The default `"grouped"` sorts within each blank-line/comment-delimited group and never crosses one. `"canonical"`
+re-buckets the whole import region by modifier — `public import`, `public meta import`, `import all`, `import`,
+`meta import` (each `meta` variant directly after its non-`meta` counterpart) — separated by single blank lines, with
+`import-groups` ordering each bucket internally: modules matching the first prefix, then the second, then everything
+else, contiguous and alphabetical inside each sub-block. Trailing `--` comments (e.g. `-- shake: keep`) ride with
+their import; duplicates are removed. A standalone comment line ends the region (imports below it are untouched), and
+a block comment or non-comment trailing text refuses the file outright. Like every `organize` rewrite, the result is
+validated by re-elaboration before it is written. `"canonical"` moves lines across blank-line boundaries by design —
+that is why it is opt-in.
 
 What `[format]` does not offer: indent width, quote style, comment rewrapping, or any other knob that would require
 overriding the grammar authority wholesale. lean-fmt's layout comes from Lean's registered formatter; this section

@@ -217,6 +217,33 @@ private def testOrganizeWorkers (ctx : Ctx) : IO Unit := do
   ensureEq "organize-workers: statuses differ at 1 and 4 workers" serialStatuses parallelStatuses
   ensureEq "organize-workers: written bytes differ at 1 and 4 workers" serialBytes parallelBytes
 
+/-- The canonical layout end-to-end: a drifted header under a `--config` with
+`import-layout = "canonical"` is re-bucketed — `public import` (Lean sub-block first, then
+other), `import all`, `import`, one blank line between buckets — validated by re-elaboration,
+written, and restored. A nested config in this excluded fixture tree would never be discovered,
+which is why the case drives the setting through `--config`. -/
+private def testOrganizeCanonical (ctx : Ctx) : IO Unit := do
+  let path := ctx.root / "tests" / "fixtures" / "imports" / "Canonical.lean"
+  let config := "tests/fixtures/imports/canonical.toml"
+  let target := "tests/fixtures/imports/Canonical.lean"
+  let dry ← checkJson ctx 1
+    #["organize", "--check", "--root", ".", "--json", "--config", config, target]
+    "organize-canonical-check" (fallback := false)
+  let dryFile ← oneFile dry "organize-canonical-check"
+  ensure (((dryFile.getObjValAs? String "status").toOption) == some "would-organize")
+    "organize-canonical-check: status changed"
+  withRestored ctx path do
+    let report ← checkJson ctx 0
+      #["organize", "--root", ".", "--json", "--config", config, target] "organize-canonical"
+      (fallback := false)
+    let file ← oneFile report "organize-canonical"
+    ensure (((file.getObjValAs? String "status").toOption) == some "organized")
+      "organize-canonical: status changed"
+    let expected :=
+      "module\n\npublic import Lean.Message\npublic import LeanFmt.ArtifactModel\n\n\
+        import all LeanFmt.Digest\n\nimport LeanFmt.Basic\n\ndef importCanonicalNoop : Nat := 0\n"
+    ensureEq "organize-canonical: written bytes differ" expected (← IO.FS.readFile path)
+
 /-- The verdict cache: a stored rejection serves the re-run — no frontend child, the same
 diagnostics — and a published organize leaves the file's live entry, which `check` then serves
 without a child. Children are counted on the profile channel: a count gate, never wall time. -/
@@ -364,6 +391,7 @@ public def main (args : List String) : IO UInt32 := do
       { name := "organize-dry-run", run := Imports.testOrganizeDryRun ctx },
       { name := "organize-write", run := Imports.testOrganizeWrite ctx },
       { name := "organize-workers", run := Imports.testOrganizeWorkers ctx },
+      { name := "organize-canonical", run := Imports.testOrganizeCanonical ctx },
       { name := "organize-verdict-cache", run := Imports.testVerdictCache ctx },
       { name := "fix-dedup", run := Imports.testFixDedup ctx },
       { name := "suppression-composes", run := Imports.testSuppressionComposes ctx },

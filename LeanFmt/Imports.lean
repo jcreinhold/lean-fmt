@@ -38,6 +38,32 @@ namespace LeanFmt.Internal.Imports
 
 open LeanFmt.Internal (Finding Fix Edit Applicability Severity SourceRange)
 
+/-- The organizer's header layout (`import-layout`).
+
+`grouped` (the default) is the conservative rewrite: duplicates removed and each
+blank-line/comment-delimited group sorted, no line ever crossing a group boundary. `canonical`
+is the kan-proofs header style: imports re-bucketed by modifier (`public import`,
+`public meta import`, `import all`, `import`, `meta import` — each `meta` variant directly
+after its non-`meta` counterpart), each bucket internally ordered by prefix sub-block
+(`import-groups`, then everything else) and alphabetically within a sub-block. Blank lines
+separate buckets only; sub-blocks are contiguous — that is the kan-proofs script's pinned
+behavior (its own test suite keeps a contiguous Lean/Mathlib/local run unchanged). `canonical`
+moves lines across blank-line boundaries by design, which is why it is opt-in. The type lives here, not in `Config`, because the bucket order *is* the layout:
+the module that implements both layouts owns the decision. -/
+inductive ImportLayout where
+  | grouped | canonical
+  deriving BEq, Lean.ToJson, Lean.FromJson
+
+instance : ToString ImportLayout where
+  toString
+    | .grouped => "grouped"
+    | .canonical => "canonical"
+
+/-- The default sub-block prefixes for the canonical layout (`import-groups`): the Lean and
+Mathlib ecosystems each get a leading sub-block inside every bucket, everything else trails.
+The constant is shared by `Config`'s field default and its `resolve`, so the two cannot drift. -/
+def defaultImportGroups : Array String := #["Lean", "Mathlib"]
+
 /-- Bytes `[start, stop)` of `s` as a string, indexing the normalized UTF-8 (`Printer.sliceNormalized`
 uses the same codec). Every offset here is a parser position, so it lies on a codepoint boundary. -/
 private def slice (s : String) (start stop : Nat) : String :=
@@ -287,17 +313,157 @@ def redundantFindings (header : HeaderModel) (closureOf : Lean.Name → Option (
         withheld := withheld + 1
   return (findings, withheld)
 
+/-! ## The canonical layout (`import-layout = "canonical"`)
+
+The kan-proofs header style: one rewrite of the whole import region into modifier buckets,
+prefix sub-blocks, and alphabetical order. Unlike `grouped`, lines move across blank-line
+boundaries, so the safety rule is inverted: anything the reorder cannot account for (a block
+comment, non-comment trailing text) refuses the file outright, and a standalone comment line
+*ends* the region — imports below it are body text and stay untouched. -/
+
+/-- One import in the canonical region, paired with the trailing `--` comment its line carried
+(e.g. `-- shake: keep`), which rides with the import when the sort moves it. -/
+private structure CanonicalImport where
+  stmt : ImportStmt
+  comment? : Option String := none
+  deriving Inhabited
+
+/-- The modifier bucket of an import: `public` before non-`public`, `all` before plain, `meta`
+immediately after its non-`meta` counterpart. -/
+private def bucketRank (stmt : ImportStmt) : Nat :=
+  (if stmt.isPublic then 0 else 4) + (if stmt.importAll then 0 else 2) + (if stmt.isMeta then 1 else 0)
+
+/-- The sub-block of `module` within a bucket: the index of the first `groups` prefix it matches
+(`P` matches `P` itself and every `P.…`), or `groups.size` — the trailing "everything else"
+sub-block — when none does. -/
+private def subblockIndex (groups : Array String) (module : Lean.Name) : Nat := Id.run do
+  let s := module.toString
+  for h : i in [0:groups.size] do
+    let grp := groups[i]
+    if s == grp || s.startsWith (grp ++ ".") then return i
+  return groups.size
+
+/-- The position of the `\n` ending `pos`'s line (or end of file), excluding the newline. -/
+private def lineEnd (normalized : String) (pos : Nat) : Nat := Id.run do
+  let bytes := normalized.toUTF8
+  let mut i := pos
+  while i < bytes.size && bytes.get! i != 0x0a do
+    i := i + 1
+  return i
+
+/-- The statement's source bytes with every whitespace run collapsed to one space: canonical
+single-spacing (and one physical line) without re-spelling the module name, so escaped
+identifiers (`import «weird»`) survive verbatim. -/
+private def collapseSpaces (s : String) : String := Id.run do
+  let mut words : List String := []
+  let mut cur := ""
+  for c in s do
+    if c.isWhitespace then
+      if !cur.isEmpty then words := cur :: words; cur := ""
+    else
+      cur := cur.push c
+  if !cur.isEmpty then words := cur :: words
+  return String.intercalate " " words.reverse
+
+/-- The leading run of imports the canonical rewrite governs, each with its trailing `--`
+comment, plus the end-of-line position of the run's last import (the region's stop).
+
+A standalone comment line between imports ends the run — everything below is preserved as
+body, and the result is still idempotent. `none` refuses the whole file: a line whose trailing
+text is not a `--` comment (a block comment that may span lines, or a second statement) cannot
+be reordered without risking dropped text. -/
+private def canonicalRegion? (header : HeaderModel) (normalized : String) :
+    Option (Array CanonicalImport × Nat) := Id.run do
+  let mut entries : Array CanonicalImport := #[]
+  let mut prevLineEnd : Nat := 0
+  for h : i in [0:header.imports.size] do
+    let stmt := header.imports[i]
+    if i > 0 then
+      let gap := slice normalized prevLineEnd stmt.lineRange.start
+      if gap.any (!·.isWhitespace) then
+        return some (entries, prevLineEnd)
+    let eol := lineEnd normalized stmt.range.stop
+    let trailing := (slice normalized stmt.range.stop eol).trimAscii.toString
+    -- `return none`, not `none`: `Id α` unfolds to `α`, so a bare `none` would bind
+    -- `comment? := none` and silently drop the comment instead of refusing.
+    let comment? : Option String ←
+      if trailing.isEmpty then pure none
+      else if trailing.startsWith "--" then pure (some trailing)
+      else return none
+    entries := entries.push { stmt, comment? }
+    prevLineEnd := eol
+  return some (entries, prevLineEnd)
+
+/-- Drop whole leading blank lines from `s` (the text after the import region); the first line
+with any non-whitespace content is kept intact, indentation included. -/
+private def dropLeadingBlankLines (s : String) : String :=
+  let rec loop : List String → List String
+    | l :: rest => if l.all Char.isWhitespace then loop rest else l :: rest
+    | [] => []
+  String.intercalate "\n" (loop (s.splitOn "\n"))
+
+/-- The canonical header text: the import region rebuilt as modifier buckets of prefix
+sub-blocks, duplicates removed, trailing comments retained, everything outside the region —
+copyright block, `module`/`prelude` markers, body — preserved verbatim apart from normalizing
+to exactly one blank line on each side of the region.
+
+`none` is a refusal (`canonicalRegion?`): the caller leaves the file unchanged. A duplicate
+whose line carried a trailing comment transfers that comment to the surviving occurrence —
+dedup must not silently delete a `shake: keep`. -/
+def canonicalize (header : HeaderModel) (normalized : String)
+    (groups : Array String := defaultImportGroups) : Option String := Id.run do
+  if header.imports.isEmpty then return none
+  let some (entries, regionStop) := canonicalRegion? header normalized | return none
+  -- Dedup (first occurrence survives, inheriting a dropped duplicate's comment if it had none).
+  let mut kept : Array CanonicalImport := #[]
+  for entry in entries do
+    match kept.findIdx? fun k => sameImport k.stmt entry.stmt with
+    | none => kept := kept.push entry
+    | some j =>
+      if kept[j]!.comment?.isNone then
+        if let some comment := entry.comment? then
+          kept := kept.set! j { kept[j]! with comment? := some comment }
+  -- Sort by bucket, then sub-block, then module path; the key is total on survivors because
+  -- same-bucket duplicates are already gone.
+  let sorted := kept.qsort fun a b =>
+    let ra := bucketRank a.stmt
+    let rb := bucketRank b.stmt
+    if ra != rb then ra < rb
+    else
+      let sa := subblockIndex groups a.stmt.module
+      let sb := subblockIndex groups b.stmt.module
+      if sa != sb then sa < sb
+      else a.stmt.module.toString < b.stmt.module.toString
+  -- Emit: one blank line where the modifier bucket changes. Sub-blocks within a bucket stay
+  -- contiguous (script parity); the sub-block index only orders, it does not separate.
+  let mut lines : Array String := #[]
+  let mut prevRank? : Option Nat := none
+  for entry in sorted do
+    let rank := bucketRank entry.stmt
+    if prevRank?.isSome && prevRank? != some rank then lines := lines.push ""
+    let text := collapseSpaces (slice normalized entry.stmt.range.start entry.stmt.range.stop)
+    lines := lines.push <| match entry.comment? with
+      | some comment => text ++ " " ++ comment
+      | none => text
+    prevRank? := some rank
+  -- Reassemble: verbatim text before the region, the rebuilt region, the body with its leading
+  -- blank lines normalized to one.
+  let before := (slice normalized 0 header.imports[0]!.lineRange.start).trimAsciiEnd.toString
+  let lead := if before.isEmpty then "" else before ++ "\n\n"
+  let body := dropLeadingBlankLines (slice normalized regionStop normalized.utf8ByteSize)
+  let suffix :=
+    if body.trimAscii.isEmpty then (if normalized.endsWith "\n" then "\n" else "")
+    else "\n\n" ++ body
+  return lead ++ String.intercalate "\n" lines.toList ++ suffix
+
 /-! ## The organizer -/
 
-/-- The canonical header text: the original header with duplicates removed and each blank-line/
+/-- The `grouped` layout: the original header with duplicates removed and each blank-line/
 comment-delimited group's imports sorted by module name, everything else — the `module` marker,
-`prelude`, modifiers, comments, and group boundaries — preserved. This is the one operation the CLI and
-LSP "organize imports" capability calls; it exposes no graph internals, only text in, text out.
-
-Redundancy (FMT004) is **not** removed here — it is report-only, so the organizer surfaces candidates
-through `redundantFindings` but never deletes them. -/
-def organize (header : HeaderModel) (normalized : String) : String := Id.run do
-  if header.imports.isEmpty then return normalized-- Partition imports into groups separated by a blank line or comment.
+`prelude`, modifiers, comments, and group boundaries — preserved. -/
+private def organizeGrouped (header : HeaderModel) (normalized : String) : String := Id.run do
+  if header.imports.isEmpty then return normalized
+  -- Partition imports into groups separated by a blank line or comment.
   let mut groups : Array (Array Nat) := #[]
   let mut current : Array Nat := #[]
   for i in [0:header.imports.size] do
@@ -336,18 +502,37 @@ def organize (header : HeaderModel) (normalized : String) : String := Id.run do
   return slice normalized 0 firstStart ++ newImportRegion ++
     slice normalized lastStop normalized.utf8ByteSize
 
+/-- The canonical header text under `layout`. This is the one operation the CLI and
+LSP "organize imports" capability calls; it exposes no graph internals, only text in, text out.
+
+`grouped` (the default) is `organizeGrouped`: sort within each blank-line/comment group, never
+across one. `canonical` is `canonicalize`: the whole region re-bucketed by modifier and prefix
+sub-block. A `canonical` refusal (a block comment or non-comment trailing text in the region)
+leaves the file unchanged rather than falling back — a half-applied style is worse than none.
+
+Redundancy (FMT004) is **not** removed here — it is report-only, so the organizer surfaces candidates
+through `redundantFindings` but never deletes them. -/
+def organize (header : HeaderModel) (normalized : String) (layout : ImportLayout := .grouped)
+    (groups : Array String := defaultImportGroups) : String :=
+  match layout with
+  | .grouped => organizeGrouped header normalized
+  | .canonical => (canonicalize header normalized groups).getD normalized
+
 /-- The canonical-header candidate `organize` would write for `source`, or `none` when the
 header needs no change (or has no parseable header model).
 
 One definition for the organizer's candidate loop and the result cache's live set: a stored
 rejection verdict has a consumer exactly while the header on disk still computes to this
-candidate, so the two callers must never drift. -/
-def organizeCandidate? (source : String) : IO (Option String) := do
+candidate, so the two callers must never drift. `layout` and `groups` come from the target's
+discovered configuration; they are part of the candidate bytes, so a configuration change
+invalidates stored verdicts without touching cache identity. -/
+def organizeCandidate? (source : String) (layout : ImportLayout := .grouped)
+    (groups : Array String := defaultImportGroups) : IO (Option String) := do
   let (normalized, lineEndings) := LosslessSource.normalize source
   match ← parseHeaderModel normalized with
   | none => return none
   | some header =>
-    let output := LosslessSource.denormalize (organize header normalized) lineEndings
+    let output := LosslessSource.denormalize (organize header normalized layout groups) lineEndings
     return (if output == source then none else some output)
 
 end LeanFmt.Internal.Imports

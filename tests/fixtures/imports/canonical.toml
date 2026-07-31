@@ -1,0 +1,5 @@
+# The canonical import layout, pinned end-to-end by the `imports` suite's `organize-canonical`
+# case: passed explicitly via `--config` (an override applies to every file; a nested config in
+# this excluded fixture tree would never be discovered by the walk).
+[format]
+import-layout = "canonical"
