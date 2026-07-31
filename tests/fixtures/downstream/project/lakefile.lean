@@ -13,7 +13,7 @@ package consumer where
   lintDriver := "«lean-fmt»/«lean-fmt»"
   lintDriverArgs := #["check"]
 
-require «lean-fmt» from ".." / ".." / ".."
+require «lean-fmt» from ".." / ".." / ".." / ".."
 
 @[default_target]
 lean_lib Consumer where

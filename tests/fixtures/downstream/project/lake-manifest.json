@@ -6,7 +6,7 @@
    "name": "«lean-fmt»",
    "manifestFile": "lake-manifest.json",
    "inherited": false,
-   "dir": "../../..",
+   "dir": "../../../../",
    "configFile": "lakefile.lean"}],
  "name": "consumer",
  "lakeDir": ".lake",
