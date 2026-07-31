@@ -34,13 +34,13 @@ import all LeanFmt.Rules
 import all LeanFmt.Suppression
 import all Test.Unit.Fixtures
 
+import Lean.Data.Lsp
+
 -- Imported for its build, not its declarations: `testInterfaceHash` loads `LocalSyntax.olean`
 -- at runtime, and only a real import guarantees Lake builds the plugin-built fixture before any
 -- executable that runs this module — `extraDepTargets` accepted the same declaration and never
 -- built it (CI on v0.2.0: fresh checkout, unit tier, "unknown module prefix 'LocalSyntax'").
 import LocalSyntax
-
-import Lean.Data.Lsp
 
 open LeanFmt LeanFmt.Internal
 open LeanFmt.Test.Unit.Fixtures
