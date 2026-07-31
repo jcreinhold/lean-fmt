@@ -238,10 +238,14 @@ private def digestLines (output : String) : Array String :=
       let line := lines[i]!
       if line.startsWith "FAIL" || line.contains "error:" then
         picked := picked.push line
-        if i + 1 < lines.length && lines[i + 1]!.startsWith " " then
-          picked := picked.push lines[i + 1]!
-    if picked.size > 10 then
-      picked.extract 0 10 |>.push "  …"
+        -- Followers carry the assertion's evidence (`expected:`/`actual:` pairs indent under
+        -- the label), capped so one verbose failure cannot crowd out the others.
+        let mut j := i + 1
+        while j < lines.length && j ≤ i + 3 && lines[j]!.startsWith " " do
+          picked := picked.push lines[j]!
+          j := j + 1
+    if picked.size > 16 then
+      picked.extract 0 16 |>.push "  …"
     else
       picked
 

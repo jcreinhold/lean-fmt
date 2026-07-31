@@ -95,6 +95,17 @@ private def treeMetadata (root : System.FilePath) : IO String := do
       lines := lines.push ((line.drop rootPrefix.length).toString)
   return "\n".intercalate lines.toList
 
+/-- Two sorted metadata snapshots must agree line for line; the failure names the first file on
+which they differ and both of its lines, so a CI log shows which of content, mtime, or mode
+moved instead of two whole trees. -/
+private def ensureTreeUnchanged (label : String) (before after : String) : IO Unit := do
+  let beforeLines := (before.splitOn "\n").toArray
+  let afterLines := (after.splitOn "\n").toArray
+  for i in [:max beforeLines.size afterLines.size]do
+    let beforeLine := beforeLines[i]?.getD "<absent>"
+    let afterLine := afterLines[i]?.getD "<absent>"
+    ensure (beforeLine == afterLine) s!"{label}:\nbefore: {beforeLine}\nafter:  {afterLine}"
+
 /-- Run `action` and restore `target` from `backup` even when it fails — the per-section
 `cp -p` restores of the old script, made exception-safe. -/
 private def withRestored (backup target : System.FilePath) (action : IO Unit) : IO Unit := do
@@ -500,7 +511,8 @@ private def testCompilerStatus (ctx : Ctx) : IO Unit := do
   let first ← run ctx 0 "status 1" #["compiler", "status", "--root", ".", "--json"]
   let second ← run ctx 0 "status 2" #["compiler", "status", "--root", ".", "--json"]
   ensureEq "compiler status is not deterministic" first.stdout second.stdout
-  ensureEq "compiler status touched the artifact tree" before (← treeMetadata ctx.artifacts)
+  ensureTreeUnchanged "compiler status touched the artifact tree" before
+      (← treeMetadata ctx.artifacts)
   let report ← parseJson first.stdout "status"
   let modulePaths :=
     (((field report "modules").getArr?.toOption.getD #[]).toList.map fun m =>
@@ -551,7 +563,8 @@ private def testClean (ctx : Ctx) : IO Unit := do
   ensureJsonAt first [.field "removed"] (Lean.toJson true) "clean 1"
   ensureJsonAt second [.field "removed"] (Lean.toJson false) "clean 2"
   discard <| (removeFile? sentinel : IO Unit)
-  ensureEq "clean touched the source" before (← metadataLine ctx.findings)
+  let after ← metadataLine ctx.findings
+  ensure (before == after) s!"clean touched the source:\nbefore: {before}\nafter:  {after}"
 
 -- -----------------------------------------------------------------------------------------------
 -- Layout and fix are decoupled

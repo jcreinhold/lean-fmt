@@ -267,7 +267,9 @@ private def testModuleRenamed (ctx : Ctx) : IO Unit := do
   let servedCount ← probe ctx "module renamed"
   ensureEq "renaming a module invalidates the new name and the lakefile only" (ctx.total - 2)
       servedCount
-  ensureEq "a rename does not create a second index" 1 (← indexCount ctx)
+  let indexes ← indexFiles ctx
+  ensure (indexes.size == 1)
+      s!"a rename does not create a second index: {indexes.toList.map (·.toString)}"
 
 /-- §7.5. A change visible only to normalization: LF to CRLF, identical normalized text. It still
 misses: every compiler-produced offset indexes `raw.crlfToLf`, so the *analysis* is unchanged, but
