@@ -54,7 +54,18 @@ jobs:
         # exhausts the 16 GB runner — the shutdown-signal kills and silent wedges all landed in
         # that window, and an unresponsive agent holds the concurrency group hostage. Halving
         # the suite count halves the envelope; the wall-time cost is a few minutes per part.
-        run: lake test -- --skip-unit --part ${{ matrix.part }} --jobs 2
+        # The TELEM lines are the envelope made visible: memory and disk headroom every 15 s,
+        # interleaved with the suite heartbeats, so the sample before a kill names the resource.
+        run: |
+          (while true; do
+            echo "TELEM $(date +%H:%M:%S) memAvailMB=$(free -m | awk '/Mem:/ {print $7}') diskAvailMB=$(df -m / | awk 'NR==2 {print $4}')"
+            sleep 15
+          done) &
+          TELEM_PID=$!
+          lake test -- --skip-unit --part "${{ matrix.part }}" --jobs 2
+          CODE=$?
+          kill $TELEM_PID 2>/dev/null || true
+          exit $CODE
         timeout-minutes: 20
 
   slow:
