@@ -99,7 +99,8 @@ driver rather than stopping at `Cli.lean`. `check`/`diff` never write. -/
 def RunRequest.writesFormat (request : RunRequest) : Bool :=
   request.mode == .format && !request.formatCheck
 
-private abbrev SourceSnapshot := Project.SourceTarget
+private abbrev SourceSnapshot :=
+  Project.SourceTarget
 
 structure FileReport where
   path : String
@@ -155,8 +156,7 @@ private structure LiveChild where
 project and toolchain once, and owns collision-free request names. No caller can observe setup paths
 or sequence cleanup. Batch envelopes use fresh child processes; the language server may instead
 request an exact setup for its document-owned in-process analyzer. -/
-structure ExactRun where
-  private mk ::
+structure ExactRun where private mk ::
   project : Project.Snapshot
   application : FilePath
   temporary : FilePath
@@ -192,20 +192,19 @@ structure ExactRun where
   fallback behind it, which a worker reaches for a target the batch could not answer. -/
   lake : Std.Mutex Unit
 
-private def writeSetup (directory : FilePath) (index : Nat)
-    (setup : Lean.ModuleSetup) : IO FilePath := do
+private def writeSetup (directory : FilePath) (index : Nat) (setup : Lean.ModuleSetup) :
+    IO FilePath := do
   let path := directory / s!"{index}.setup.json"
   IO.FS.writeFile path (Lean.toJson setup).compress
   return path
 
 private def diagnosticSetup (snapshot : SourceSnapshot) : Lean.ModuleSetup :=
   match snapshot.module? with
-  | some mod => {
-      name := mod.name
+  | some mod =>
+    { name := mod.name
       package? := mod.pkg.id?
       isModule := true
-      options := mod.leanOptions
-    }
+      options := mod.leanOptions }
   | none => { name := `_unknown }
 
 /- The setup for one target: the batch's answer if it has one for these exact bytes, otherwise a
@@ -226,12 +225,12 @@ setup. The parsed header identity changes exactly when the import-bearing part o
 def ExactRun.setupSnapshot (run : ExactRun) (snapshot : SourceSnapshot) : IO Lean.ModuleSetup := do
   let input := Lean.Parser.mkInputContext snapshot.source snapshot.path.toString
   let (header, _, messages) ← Lean.Parser.parseHeader input
-  let identity := if messages.hasErrors then
-      toString <| Digest.ofString snapshot.source
-    else
-      toString <| Digest.ofString (header.raw.unsetTrailing.reprint.getD "")
+  let identity :=
+    if messages.hasErrors then toString <| Digest.ofString snapshot.source
+    else toString <| Digest.ofString (header.raw.unsetTrailing.reprint.getD "")
   if let some (cachedIdentity, setup) := (← run.documentSetups.get)[snapshot.relativePath]? then
-    if cachedIdentity == identity then return setup
+    if cachedIdentity == identity then
+      return setup
   let setup ← run.lake.atomically (Project.exactSetup run.project snapshot)
   run.documentSetups.modify (·.insert snapshot.relativePath (identity, setup))
   return setup
@@ -258,8 +257,10 @@ private def resolveWorkers (requested : Option Nat) : IO Nat := do
 
 private def awaitRead (task : Task (Except IO.Error String)) : IO String := do
   match ← IO.wait task with
-  | .ok contents => return contents
-  | .error error => throw error
+  | .ok contents =>
+    return contents
+  | .error error =>
+    throw error
 
 /-- The message a cancelled exact child raises, and the only way a caller can tell cancellation apart
 from a real failure.
@@ -267,7 +268,8 @@ from a real failure.
 A string marker rather than an error constructor because `IO.Error` is Lean's and this is the one
 distinction lean-fmt needs from it. `cancelled?` below is the reader; nothing should match the text by
 hand. -/
-def cancellationMessage : String := "exact frontend child cancelled by request"
+def cancellationMessage : String :=
+  "exact frontend child cancelled by request"
 
 /-- Whether an error is this operation's cancellation, as opposed to a failure worth reporting. -/
 def cancelled? (error : IO.Error) : Bool :=
@@ -277,21 +279,23 @@ def cancelled? (error : IO.Error) : Bool :=
 is running, and this child is the only thing to drop. One look every 50 ms bounds how long a
 cancelled request keeps working without spinning. A batch run passes `cancel? := none` and never
 looks. -/
-private partial def awaitChild (child : IO.Process.Child {
-      stdin := .inherit, stdout := .piped, stderr := .piped })
+private partial def awaitChild
+    (child : IO.Process.Child { stdin := .inherit, stdout := .piped, stderr := .piped })
     (stdoutTask stderrTask : Task (Except IO.Error String))
     (cancel? : Option Std.CancellationToken) : IO ChildOutput := do
   match ← child.tryWait with
   | some exitCode =>
     return {
-      exitCode
-      stdout := ← awaitRead stdoutTask
-      stderr := ← awaitRead stderrTask
-    }
+        exitCode
+        stdout := ← awaitRead stdoutTask
+        stderr := ← awaitRead stderrTask }
   | none =>
     if let some token := cancel? then
       if ← token.isCancelled then
-        try child.kill catch _ => pure ()
+        try
+          child.kill
+        catch _ =>
+          pure ()
         discard child.wait
         discard <| awaitRead stdoutTask
         discard <| awaitRead stderrTask
@@ -301,17 +305,17 @@ private partial def awaitChild (child : IO.Process.Child {
 
 private def runChild (arguments : IO.Process.SpawnArgs)
     (cancel? : Option Std.CancellationToken := none) : IO ChildOutput := do
-  let child ← IO.Process.spawn {
-    cmd := arguments.cmd
-    args := arguments.args
-    cwd := arguments.cwd
-    env := arguments.env
-    inheritEnv := arguments.inheritEnv
-    stdin := .inherit
-    stdout := .piped
-    stderr := .piped
-    setsid := true
-  }
+  let child ←
+    IO.Process.spawn
+        { cmd := arguments.cmd
+          args := arguments.args
+          cwd := arguments.cwd
+          env := arguments.env
+          inheritEnv := arguments.inheritEnv
+          stdin := .inherit
+          stdout := .piped
+          stderr := .piped
+          setsid := true }
   -- The piped runner, for a child whose answer is small enough to hold in memory and that runs
   -- one-at-a-time (the compiler-status probe). The batch frontend path is pipe-free: its
   -- envelopes are projection-sized and its children run `workers` at a time, and two pipe
@@ -324,15 +328,19 @@ private def runChild (arguments : IO.Process.SpawnArgs)
 /-- The pipe-free equivalent of `awaitChild`, for children whose results travel on per-target
 files. Same cancellation contract: one poll every 50 ms, and a cancelled child is killed and
 reaped before the cancellation error propagates. -/
-private partial def awaitChildExit (child : IO.Process.Child {
-      stdin := .inherit, stdout := .null, stderr := .null })
+private partial def awaitChildExit
+    (child : IO.Process.Child { stdin := .inherit, stdout := .null, stderr := .null })
     (cancel? : Option Std.CancellationToken) : IO UInt32 := do
   match ← child.tryWait with
-  | some exitCode => return exitCode
+  | some exitCode =>
+    return exitCode
   | none =>
     if let some token := cancel? then
       if ← token.isCancelled then
-        try child.kill catch _ => pure ()
+        try
+          child.kill
+        catch _ =>
+          pure ()
         discard child.wait
         throw <| IO.userError cancellationMessage
     IO.sleep 50
@@ -343,17 +351,17 @@ where one child runs at a time and the frame that spawned it is the only thing t
 find it. -/
 private def spawnWait (arguments : IO.Process.SpawnArgs)
     (cancel? : Option Std.CancellationToken := none) : IO UInt32 := do
-  let child ← IO.Process.spawn {
-    cmd := arguments.cmd
-    args := arguments.args
-    cwd := arguments.cwd
-    env := arguments.env
-    inheritEnv := arguments.inheritEnv
-    stdin := .inherit
-    stdout := .null
-    stderr := .null
-    setsid := true
-  }
+  let child ←
+    IO.Process.spawn
+        { cmd := arguments.cmd
+          args := arguments.args
+          cwd := arguments.cwd
+          env := arguments.env
+          inheritEnv := arguments.inheritEnv
+          stdin := .inherit
+          stdout := .null
+          stderr := .null
+          setsid := true }
   recordCount "active_children" 1
   awaitChildExit child cancel?
 
@@ -380,23 +388,21 @@ in full. A child reading 2.05 GiB of RSS had a physical footprint of 173 MiB. Th
 remains is `--workers`. -/
 private def ExactRun.spawnChild (run : ExactRun) (arguments : IO.Process.SpawnArgs)
     (cancel? : Option Std.CancellationToken := none) : IO UInt32 := do
-  let some registry := run.registry?
-    | spawnWait arguments cancel?
-  let child ← IO.Process.spawn {
-    cmd := arguments.cmd
-    args := arguments.args
-    cwd := arguments.cwd
-    env := arguments.env
-    inheritEnv := arguments.inheritEnv
-    stdin := .inherit
-    stdout := .null
-    stderr := .null
-    setsid := true
-  }
-  let entry : LiveChild := {
-    child
-    pgid := child.pid
-  }
+  let some registry := run.registry? | spawnWait arguments cancel?
+  let child ←
+    IO.Process.spawn
+        { cmd := arguments.cmd
+          args := arguments.args
+          cwd := arguments.cwd
+          env := arguments.env
+          inheritEnv := arguments.inheritEnv
+          stdin := .inherit
+          stdout := .null
+          stderr := .null
+          setsid := true }
+  let entry : LiveChild :=
+    { child
+      pgid := child.pid }
   registry.modify (·.push entry)
   recordCount "active_children" (← registry.get).size
   try
@@ -406,11 +412,16 @@ private def ExactRun.spawnChild (run : ExactRun) (arguments : IO.Process.SpawnAr
     -- `pollChild` may already have reaped the child (its exit branch), and Lean's `tryWait` does
     -- not cache: a second successful-position `tryWait` raises ECHILD. A throw here therefore
     -- means "already reaped" — exactly the case where there is nothing to kill.
-    let exited ← try
-      pure (← entry.child.tryWait).isSome
-    catch _ => pure true
+    let exited ←
+      try
+        pure (← entry.child.tryWait).isSome
+      catch _ =>
+        pure true
     unless exited do
-      try entry.child.kill catch _ => pure ()
+      try
+        entry.child.kill
+      catch _ =>
+        pure ()
       discard entry.child.wait
 
 private def ExactRun.nextPathIndex (run : ExactRun) : IO Nat :=
@@ -441,64 +452,79 @@ one process, and the per-target fallback behind this used to put one build on ea
 Best effort by construction. Anything this fails to resolve is simply absent from the map, and
 `ExactRun.setupResult` falls back to the per-target path, holding `run.lake`. -/
 private def ExactRun.primeSetups (run : ExactRun) (targets : Array SourceSnapshot) : IO Unit := do
-  if targets.size < 2 then return
-  let facts ← withPhase "setup_prime" <|
-    Project.graph run.project.workspace targets (demand := { setups := true })
+  if targets.size < 2 then
+    return
+  let facts ←
+    withPhase "setup_prime" <|
+        Project.graph run.project.workspace targets (demand := { setups := true })
   run.setups.modify fun map =>
-    (targets.zip facts.targets).foldl (init := map) fun map (target, resolved) =>
-      match resolved.setup? with
-      | some setup => map.insert target.relativePath (target.source, setup)
-      | none => map
+      (targets.zip facts.targets).foldl (init := map) fun map (target, resolved) =>
+        match resolved.setup? with
+        | some setup => map.insert target.relativePath (target.source, setup)
+        | none => map
 
-private def ExactRun.envelope (run : ExactRun)
-    (snapshot : SourceSnapshot) (captureSemantic : Bool) (validator := false)
-    (captureOccurrences : Bool := false)
-    (format? : Option FormatConfig := none)
-    (cancel? : Option Std.CancellationToken := none) : IO AnalysisEnvelope := do
+private def ExactRun.envelope (run : ExactRun) (snapshot : SourceSnapshot) (captureSemantic : Bool)
+    (validator := false) (captureOccurrences : Bool := false)
+    (format? : Option FormatConfig := none) (cancel? : Option Std.CancellationToken := none) :
+    IO AnalysisEnvelope := do
   let index ← run.nextPathIndex
   -- Three phases: this operation once reported as one unnamed 43-second gap,
   -- and the three do entirely different work: `exact_setup` resolves the module's Lake setup in
   -- *this* process, `exact_child` is the frontend round trip in another one, and `envelope_decode`
   -- parses what came back. Only the middle one is elaboration; the outer two are this process's
   -- own cost and are the ones an optimization here could remove.
-  let (setupResult, setupPath, sourcePath, outPath, errPath) ← withPhase "exact_setup" do
-    let setupResult ← run.setupResult snapshot
-    let setup := match setupResult with
-      | .ok setup => setup
-      | .error _ => diagnosticSetup snapshot
-    let setupPath ← writeSetup run.temporary index setup
-    let sourcePath := run.temporary / s!"{index}.lean"
-    IO.FS.writeFile sourcePath snapshot.source
-    pure (setupResult, setupPath, sourcePath,
-      run.temporary / s!"{index}.out", run.temporary / s!"{index}.err")
+  let (setupResult, setupPath, sourcePath, outPath, errPath) ←
+    withPhase "exact_setup" do
+        let setupResult ← run.setupResult snapshot
+        let setup :=
+          match setupResult with
+          | .ok setup => setup
+          | .error _ => diagnosticSetup snapshot
+        let setupPath ← writeSetup run.temporary index setup
+        let sourcePath := run.temporary / s!"{index}.lean"
+        IO.FS.writeFile sourcePath snapshot.source
+        pure
+            (setupResult, setupPath, sourcePath, run.temporary / s!"{index}.out",
+              run.temporary / s!"{index}.err")
   try
     let overrideName := if validator then "LEAN_FMT_TEST_VALIDATOR" else "LEAN_FMT_TEST_ANALYZER"
     let analyzer := (← IO.getEnv overrideName).map FilePath.mk |>.getD run.application
-    let exitCode ← withPhase "exact_child" <| run.spawnChild {
-      cmd := analyzer.toString
-      -- The trailing capture token encodes the demanded semantic capabilities: "0" none, "1" the
-      -- two semantic diagnostics, "2" diagnostics plus the info-tree occurrence fold. A direct
-      -- three-argument invocation (every syntax-only harness) omits it and captures nothing.
-      -- `occurrences` is only ever demanded together with the tier, so the token is a simple ladder.
-      -- The two paths after it are the pipe-free transport: the child writes its envelope to the
-      -- first and any failure diagnostic to the second (see `spawnChild` for what the pipes cost).
-      args := #["__analyze-exact", setupPath.toString, sourcePath.toString,
-        snapshot.path.toString,
-        match format? with
-        | some format => s!"4j{(Lean.toJson format).compress}"
-        | none => if captureOccurrences then "2" else if captureSemantic then "1" else "0",
-        outPath.toString, errPath.toString]
-      -- Lake caps nothing on its children, because it runs one `lean` per module and lets each use
-      -- the machine. This runs `workers` children at once and each has `Elab.async := true`
-      -- inside it, so an uncapped child would take the whole machine `workers` times over. The
-      -- parallelism is at this level, one process per file, and `resolveWorkers` picks its degree
-      -- the way Lake picks its own. A child that used more would be competing with its siblings.
-      env := run.project.workspace.augmentedEnvVars.push ⟨"LEAN_NUM_THREADS", some "1"⟩
-        |>.push ⟨"LEAN_FMT_PROFILE_OUT", some errPath.toString⟩
-    } cancel?
-    let errText ← if ← errPath.pathExists then IO.FS.readFile errPath else pure ""
+    let exitCode ←
+      withPhase "exact_child" <|
+          run.spawnChild
+            { cmd := analyzer.toString
+              -- The trailing capture token encodes the demanded semantic capabilities: "0" none, "1" the
+              -- two semantic diagnostics, "2" diagnostics plus the info-tree occurrence fold. A direct
+              -- three-argument invocation (every syntax-only harness) omits it and captures nothing.
+              -- `occurrences` is only ever demanded together with the tier, so the token is a simple ladder.
+              -- The two paths after it are the pipe-free transport: the child writes its envelope to the
+              -- first and any failure diagnostic to the second (see `spawnChild` for what the pipes cost).
+              args :=
+                #["__analyze-exact", setupPath.toString, sourcePath.toString,
+                  snapshot.path.toString,
+                  match format? with
+                  | some format => s!"4j{(Lean.toJson format).compress}"
+                  | none =>
+                    if captureOccurrences then "2" else if captureSemantic then "1" else "0",
+                  outPath.toString, errPath.toString]
+              -- Lake caps nothing on its children, because it runs one `lean` per module and lets each use
+              -- the machine. This runs `workers` children at once and each has `Elab.async := true`
+              -- inside it, so an uncapped child would take the whole machine `workers` times over. The
+              -- parallelism is at this level, one process per file, and `resolveWorkers` picks its degree
+              -- the way Lake picks its own. A child that used more would be competing with its siblings.
+              env :=
+                run.project.workspace.augmentedEnvVars.push ⟨"LEAN_NUM_THREADS", some "1"⟩ |>.push
+                  ⟨"LEAN_FMT_PROFILE_OUT", some errPath.toString⟩ }
+            cancel?
+    let errText ←
+      if ← errPath.pathExists then
+        IO.FS.readFile errPath
+      else
+        pure ""
     unless exitCode == 0 do
-      throw <| IO.userError s!"exact frontend child failed for {snapshot.relativePath}: \
+      throw <|
+          IO.userError
+            s!"exact frontend child failed for {snapshot.relativePath}: \
         {errText.trimAscii}"
     -- The child's own records ride back on the err file, which the child appends to when the
     -- profile channel is on (`LEAN_FMT_PROFILE_OUT`). Forwarding them here makes the
@@ -507,29 +533,45 @@ private def ExactRun.envelope (run : ExactRun)
     -- reparsed or escalated to a second frontend is decided in the child and is invisible from
     -- outside it.
     if ← Profile.enabled then
-      for line in errText.splitOn "\n" do
-        if line.startsWith "phase." || line.startsWith "cache." then IO.eprintln line
-    let envelope ← withPhase "envelope_decode" do
-      unless ← outPath.pathExists do
-        throw <| IO.userError s!"exact frontend child produced no envelope for \
+      for line in errText.splitOn "\n"do
+        if line.startsWith "phase." || line.startsWith "cache." then
+          IO.eprintln line
+    let envelope ←
+      withPhase "envelope_decode" do
+          unless ← outPath.pathExists do
+            throw <|
+                IO.userError
+                  s!"exact frontend child produced no envelope for \
           {snapshot.relativePath}"
-      let .ok json := Lean.Json.parse (← IO.FS.readFile outPath)
-        | throw <| IO.userError s!"exact frontend child returned invalid JSON for \
+          let .ok json := Lean.Json.parse (← IO.FS.readFile outPath) |
+            throw <|
+                IO.userError
+                  s!"exact frontend child returned invalid JSON for \
           {snapshot.relativePath}"
-      match Lean.fromJson? json with
-      | .ok envelope => pure (envelope : AnalysisEnvelope)
-      | .error error => throw <| IO.userError s!"exact frontend child returned an invalid result \
+          match Lean.fromJson? json with
+          | .ok envelope =>
+            pure (envelope : AnalysisEnvelope)
+          | .error error =>
+            throw <|
+                IO.userError
+                  s!"exact frontend child returned an invalid result \
           for {snapshot.relativePath}: {error}"
     if let .error setupError := setupResult then
       if envelope.artifact?.isSome then
-        throw <| IO.userError s!"could not establish the exact Lake setup for \
+        throw <|
+            IO.userError
+              s!"could not establish the exact Lake setup for \
           {snapshot.relativePath}: {setupError}"
     return envelope
   finally
-    if ← setupPath.pathExists then IO.FS.removeFile setupPath
-    if ← sourcePath.pathExists then IO.FS.removeFile sourcePath
-    if ← outPath.pathExists then IO.FS.removeFile outPath
-    if ← errPath.pathExists then IO.FS.removeFile errPath
+    if ← setupPath.pathExists then
+      IO.FS.removeFile setupPath
+    if ← sourcePath.pathExists then
+      IO.FS.removeFile sourcePath
+    if ← outPath.pathExists then
+      IO.FS.removeFile outPath
+    if ← errPath.pathExists then
+      IO.FS.removeFile errPath
 
 /- The frontend-native document emits groups, nesting, and line choices, and its linear renderer
 breaks them against the effective `[format] line-width`. Because a runtime width changes canonical
@@ -555,7 +597,7 @@ broken `line`, or a newline-bearing `verbatim` — `Doc.lean:174-188`) stops tha
 after it can re-decide its layout. Measured:
 a unit that is *not* so terminated is rebroken by a one-character tail. -/
 private def unitEndsAtLineBoundary (rendered : ByteArray) (mark : Mark) : Bool :=
-  byteBefore? rendered mark.output.stop == some 10  -- '\n'
+  byteBefore? rendered mark.output.stop == some 10 -- '\n'
 
 /-- The inclusive index run of layout units a request expands to, or `none` when there are no units.
 
@@ -570,24 +612,27 @@ The three steps:
    re-running the formatter would move them again, and the reported actual range would have been
    wrong. It terminates because extension stops at the final unit even when the source deliberately
    has no final newline. -/
-private def selectUnits (rendered : ByteArray) (marks : Array Mark)
-    (requested : SourceRange) : Option (Nat × Nat) := Id.run do
-  if marks.isEmpty then return none
-  let final := marks.size - 1
-  -- Step 1/2: the first unit whose extent reaches past the request start.
-  let mut first := final
-  for index in [0:marks.size] do
-    if marks[index]!.source.stop > requested.start then
-      first := index
-      break
-  let mut last := first
-  if requested.stop > requested.start then
-    for index in [0:marks.size] do
-      if marks[index]!.source.start < requested.stop then last := max last index
-  -- Step 3.
-  while last < final && !unitEndsAtLineBoundary rendered marks[last]! do
-    last := last + 1
-  return some (first, last)
+private def selectUnits (rendered : ByteArray) (marks : Array Mark) (requested : SourceRange) :
+    Option (Nat × Nat) :=
+  Id.run do
+    if marks.isEmpty then
+      return none
+    let final := marks.size - 1
+    -- Step 1/2: the first unit whose extent reaches past the request start.
+    let mut first := final
+    for index in [0:marks.size]do
+      if marks[index]!.source.stop > requested.start then
+        first := index
+        break
+    let mut last := first
+    if requested.stop > requested.start then
+      for index in [0:marks.size]do
+        if marks[index]!.source.start < requested.stop then
+          last := max last index
+    -- Step 3.
+    while last < final && !unitEndsAtLineBoundary rendered marks[last]! do
+      last := last + 1
+    return some (first, last)
 
 /-- One range request's answer: the spliced text and the range it actually formatted. -/
 structure RangeResult where
@@ -613,42 +658,47 @@ of the next unit is part of the preceding boundary: include it without including
 first token, so formatting a scope opener can establish the following unit's vertical separation
 and owner-relative indentation through a narrow edit. The LSP range test covers both
 cases. -/
-def sliceRange (normalized rendered : String) (marks : Array Mark)
-    (requested : SourceRange) : Option RangeResult := Id.run do
-  let renderedBytes := rendered.toUTF8
-  let some (first, last) := selectUnits renderedBytes marks requested
-    | return none
-  let actual : SourceRange := ⟨marks[first]!.source.start, marks[last]!.source.stop⟩
-  let outputStop := Id.run do
-    let mut stop := marks[last]!.output.stop
-    if let some next := marks[last + 1]? then
-      if next.output.start == stop then
-        while stop < next.output.stop &&
-            (renderedBytes[stop]! == 0x20 || renderedBytes[stop]! == 0x09 ||
-              renderedBytes[stop]! == 0x0a || renderedBytes[stop]! == 0x0d) do
-          stop := stop + 1
-    return stop
-  let output : SourceRange := ⟨marks[first]!.output.start, outputStop⟩
-  let normalizedBytes := normalized.toUTF8
-  let slice (bytes : ByteArray) (range : SourceRange) : String :=
-    (String.fromUTF8? (bytes.extract range.start range.stop)).getD ""
-  let before := slice normalizedBytes ⟨0, actual.start⟩
-  let body := slice renderedBytes output
-  let after := slice normalizedBytes ⟨actual.stop, normalizedBytes.size⟩
-  -- Output offsets are re-based onto the spliced text: the body starts where `before` ends.
-  let shift := before.utf8ByteSize
-  let selectedMarks := marks.extract first (last + 1)
-  let selected := selectedMarks.mapIdx fun index mark =>
-    let stop := if index + 1 == selectedMarks.size then output.stop else mark.output.stop
-    { mark with output := ⟨mark.output.start - output.start + shift,
-        stop - output.start + shift⟩ }
-  return some { text := before ++ body ++ after, requested, actual, marks := selected }
+def sliceRange (normalized rendered : String) (marks : Array Mark) (requested : SourceRange) :
+    Option RangeResult :=
+  Id.run do
+    let renderedBytes := rendered.toUTF8
+    let some (first, last) := selectUnits renderedBytes marks requested | return none
+    let actual : SourceRange := ⟨marks[first]!.source.start, marks[last]!.source.stop⟩
+    let outputStop :=
+      Id.run do
+        let mut stop := marks[last]!.output.stop
+        if let some next := marks[last + 1]? then
+          if next.output.start == stop then
+            while
+              stop < next.output.stop &&
+                (renderedBytes[stop]! == 0x20 || renderedBytes[stop]! == 0x09 ||
+                    renderedBytes[stop]! == 0x0a ||
+                  renderedBytes[stop]! == 0x0d) do
+              stop := stop + 1
+        return stop
+    let output : SourceRange := ⟨marks[first]!.output.start, outputStop⟩
+    let normalizedBytes := normalized.toUTF8
+    let slice (bytes : ByteArray) (range : SourceRange) : String :=
+      (String.fromUTF8? (bytes.extract range.start range.stop)).getD ""
+    let before := slice normalizedBytes ⟨0, actual.start⟩
+    let body := slice renderedBytes output
+    let after := slice normalizedBytes ⟨actual.stop, normalizedBytes.size⟩
+    -- Output offsets are re-based onto the spliced text: the body starts where `before` ends.
+    let shift := before.utf8ByteSize
+    let selectedMarks := marks.extract first (last + 1)
+    let selected :=
+      selectedMarks.mapIdx fun index mark =>
+        let stop := if index + 1 == selectedMarks.size then output.stop else mark.output.stop
+        { mark with
+          output := ⟨mark.output.start - output.start + shift, stop - output.start + shift⟩ }
+    return some { text := before ++ body ++ after, requested, actual, marks := selected }
 
 private def canonicalAnalysis (snapshot : SourceSnapshot) (renderCanonical : Bool)
     (analysis : AnalysisEnvelope) : IO SemanticAnalysis := do
   match SemanticAnalysis.ofArtifact? snapshot.source analysis.artifact? analysis.diagnostics with
   | some semantic =>
-    if semantic.result?.isNone then return semantic
+    if semantic.result?.isNone then
+      return semantic
     if renderCanonical then
       match analysis.canonical?, analysis.validationFailure? with
       | some layout, none =>
@@ -656,15 +706,18 @@ private def canonicalAnalysis (snapshot : SourceSnapshot) (renderCanonical : Boo
         return semantic.withCanonical layout
       | none, some failure =>
         recordCount "path_validation_failure" 1
-        throw <| IO.userError
-          s!"frontend-native formatting rejected {snapshot.relativePath} at {reprStr failure.gate}: {failure.detail}"
+        throw <|
+            IO.userError
+              s!"frontend-native formatting rejected {snapshot.relativePath} at {reprStr failure.gate}: {failure.detail}"
       | _, _ =>
         recordCount "path_validation_failure" 1
-        throw <| IO.userError
-          s!"frontend-native formatting produced no admitted layout for {snapshot.relativePath}; \
+        throw <|
+            IO.userError
+              s!"frontend-native formatting produced no admitted layout for {snapshot.relativePath}; \
             draft={analysis.formatDraft?.isSome} formatter-failure={analysis.formatFailure?.isSome}"
     return semantic
-  | none => throw <| IO.userError s!"invalid exact analysis for {snapshot.relativePath}"
+  | none =>
+    throw <| IO.userError s!"invalid exact analysis for {snapshot.relativePath}"
 
 /-- Analyze one snapshot: build the exact envelope the plan demanded and project it, rendering canonical
 layout when `renderCanonical`.
@@ -677,38 +730,40 @@ split, no fix is computed or applied at canonical coordinates, so there is nothi
 `captureOccurrences` still gates the info-tree fold that supplies FMT012's occurrence at original
 coordinates (the walk already runs here for diagnostics); `captureSemantic` and `validator` are
 unchanged. -/
-def ExactRun.analyzeSnapshot (run : ExactRun) (snapshot : SourceSnapshot)
-    (renderCanonical : Bool) (validator := false)
-    (captureSemantic : Bool := false) (captureOccurrences : Bool := false)
+def ExactRun.analyzeSnapshot (run : ExactRun) (snapshot : SourceSnapshot) (renderCanonical : Bool)
+    (validator := false) (captureSemantic : Bool := false) (captureOccurrences : Bool := false)
     (cancel? : Option Std.CancellationToken := none) : IO SemanticAnalysis := do
   canonicalAnalysis snapshot renderCanonical
-    (← run.envelope snapshot captureSemantic validator captureOccurrences
-      (format? := if renderCanonical then some snapshot.config.format else none)
-      (cancel? := cancel?))
+      (←
+        run.envelope snapshot captureSemantic validator captureOccurrences (format? :=
+            if renderCanonical then some snapshot.config.format else none) (cancel? := cancel?))
 
 /- Bracket a complete exact-analysis run. The capability is constructed only after a real fallback
 or editor request needs it; cache-only and ordinary-evidence batch runs create no temporary state.
 
 Above one, `workers` creates the child registry. Nothing polls it to enforce anything; the run
 counts its children and cleans up after them, and that is all. -/
-def withExactRun (project : Project.Snapshot) (workers : Nat := 1)
-    (action : ExactRun → IO α) : IO α := do
+def withExactRun (project : Project.Snapshot) (workers : Nat := 1) (action : ExactRun → IO α) :
+    IO α := do
   let temporary ← IO.FS.createTempDir
   let nextIndex ← IO.mkRef 0
-  let setups ← IO.mkRef {}
-  let documentSetups ← IO.mkRef {}
-  let registry? ← if workers > 1 then some <$> IO.mkRef #[] else pure none
-  let run : ExactRun := {
-    project
-    application := ← IO.appPath
-    temporary
-    workers
-    registry?
-    nextIndex
-    setups
-    documentSetups
-    lake := ← Std.Mutex.new ()
-  }
+  let setups ← IO.mkRef { }
+  let documentSetups ← IO.mkRef { }
+  let registry? ←
+    if workers > 1 then
+      some <$> IO.mkRef #[]
+    else
+      pure none
+  let run : ExactRun :=
+    { project
+      application := ← IO.appPath
+      temporary
+      workers
+      registry?
+      nextIndex
+      setups
+      documentSetups
+      lake := ← Std.Mutex.new () }
   -- Test-only (`LEAN_FMT_TEST_FD_REPORT`): bracket the run with this process's open-descriptor
   -- count, so a scale suite can assert a batch leaves no per-target descriptors behind. Counted
   -- from `/dev/fd`, which macOS and Linux both provide; off this channel nothing is read.
@@ -732,21 +787,22 @@ running. The clauses are documented on `Provided.meets` itself, next to the defi
 
 The other half, `Entry.identityCurrent`, runs in `LeanFmt.Cache`, which is where digests can be
 observed. `Cache.Decision.serves` is their conjunction and is the whole cache decision. -/
-private def analysisServes (requiredTier : Tier) (demandedCaps : SemanticCaps) (renderCanonical : Bool)
-    (analysis : SemanticAnalysis) : Bool :=
+private def analysisServes (requiredTier : Tier) (demandedCaps : SemanticCaps)
+    (renderCanonical : Bool) (analysis : SemanticAnalysis) : Bool :=
   (providedOf analysis).meets
     { tier := requiredTier, caps := demandedCaps, renderCanonical := renderCanonical }
 
 private def availableAnalysis (plan : RulePlan) (renderCanonical applies : Bool)
-    (evidence : Project.ModuleEvidence)
-    (snapshot : SourceSnapshot) (cached? : Option SemanticAnalysis)
-    (officialArtifact? : Option ModuleArtifact) : IO (Option SemanticAnalysis) := do
+    (evidence : Project.ModuleEvidence) (snapshot : SourceSnapshot)
+    (cached? : Option SemanticAnalysis) (officialArtifact? : Option ModuleArtifact) :
+    IO (Option SemanticAnalysis) := do
   let demandedCaps := plan.demandedCaps applies
   if let some analysis := cached? then
     if analysisServes plan.requiredTier demandedCaps renderCanonical analysis then
       return some analysis
-  if plan.requiredTier == .source && !renderCanonical && evidence == .current
-      && !Suppression.mayContainDirective snapshot.source then
+  if
+      plan.requiredTier == .source && !renderCanonical && evidence == .current &&
+        !Suppression.mayContainDirective snapshot.source then
     -- Source rules index the normalized string, so this shortcut and the artifact path produce
     -- findings in one coordinate system and remain interchangeable in the result cache. They are
     -- also now the same call: `runRules` folds over the one registry either way, so this path can
@@ -795,8 +851,7 @@ private structure DiffSource where
   finalNewline : Bool
 
 private def diffSource (source : String) : DiffSource :=
-  if source.isEmpty then
-    { lines := [], finalNewline := false }
+  if source.isEmpty then { lines := [], finalNewline := false }
   else
     let finalNewline := source.endsWith "\n"
     let pieces := source.splitOn "\n"
@@ -810,14 +865,16 @@ both project to `["a"]`. A diff over bare strings would pair them as unchanged a
 for the one edit the retired final-newline rule existed to make. Carrying the flag into the compared
 element makes those two lines unequal, so the edit appears. It also places the `\ No newline` marker
 correctly: the marker belongs to whichever side holds the flag. -/
-private abbrev DiffLine := String × Bool
+private abbrev DiffLine :=
+  String × Bool
 
 private def diffLines (source : DiffSource) : Array DiffLine :=
   let lines := source.lines.toArray
   lines.mapIdx fun index line => (line, !source.finalNewline && index + 1 == lines.size)
 
 /-- Lines of unchanged context around each change, as `diff -U3` and every review tool default to. -/
-private def diffContext : Nat := 3
+private def diffContext : Nat :=
+  3
 
 /-- Render an edit script as unified diff.
 
@@ -832,58 +889,68 @@ applying it reproduces the file — and useless, because a one-line change repri
 ever ran on the retired trailing-whitespace / final-newline fixes, so it was tolerable; now `diff`
 points at canonical layout and is the surface on which formatting is reviewed, where a
 whole-file rewrite defeats the mode's only purpose. -/
-private def unifiedDiff (path before after : String) : String := Id.run do
-  let old := diffLines (diffSource before)
-  let new := diffLines (diffSource after)
-  let script := Lean.Diff.diff old new
-  -- How many lines of each side precede entry `i`. Line numbers in a hunk header are counted,
-  -- not searched for: an entry absent from one side still has a position *in* that side, the count
-  -- of what came before it.
-  let mut oldBefore : Array Nat := Array.emptyWithCapacity script.size
-  let mut newBefore : Array Nat := Array.emptyWithCapacity script.size
-  let mut oldSeen := 0
-  let mut newSeen := 0
-  for (action, _) in script do
-    oldBefore := oldBefore.push oldSeen
-    newBefore := newBefore.push newSeen
-    match action with
-    | .skip => oldSeen := oldSeen + 1; newSeen := newSeen + 1
-    | .delete => oldSeen := oldSeen + 1
-    | .insert => newSeen := newSeen + 1
-  -- Windows of `diffContext` around every change, merged where they touch. Two changes closer than
-  -- `2 * diffContext` share a hunk rather than repeating the context between them.
-  let mut ranges : Array (Nat × Nat) := #[]
-  for index in [0:script.size] do
-    if script[index]!.1 != .skip then
-      let start := index - min index diffContext
-      let stop := min (script.size - 1) (index + diffContext)
-      match ranges.back? with
-      | some (previousStart, previousStop) =>
-        if start ≤ previousStop + 1 then
-          ranges := ranges.pop.push (previousStart, max previousStop stop)
-        else
+private def unifiedDiff (path before after : String) : String :=
+  Id.run do
+    let old := diffLines (diffSource before)
+    let new := diffLines (diffSource after)
+    let script := Lean.Diff.diff old new
+    -- How many lines of each side precede entry `i`. Line numbers in a hunk header are counted,
+    -- not searched for: an entry absent from one side still has a position *in* that side, the count
+    -- of what came before it.
+    let mut oldBefore : Array Nat := Array.emptyWithCapacity script.size
+    let mut newBefore : Array Nat := Array.emptyWithCapacity script.size
+    let mut oldSeen := 0
+    let mut newSeen := 0
+    for (action, _) in script do
+      oldBefore := oldBefore.push oldSeen
+      newBefore := newBefore.push newSeen
+      match action with
+      | .skip =>
+        oldSeen := oldSeen + 1;
+        newSeen := newSeen + 1
+      | .delete =>
+        oldSeen := oldSeen + 1
+      | .insert =>
+        newSeen := newSeen + 1
+    -- Windows of `diffContext` around every change, merged where they touch. Two changes closer than
+    -- `2 * diffContext` share a hunk rather than repeating the context between them.
+    let mut ranges : Array (Nat × Nat) := #[]
+    for index in [0:script.size]do
+      if script[index]!.1 != .skip then
+        let start := index - min index diffContext
+        let stop := min (script.size - 1) (index + diffContext)
+        match ranges.back? with
+        | some (previousStart, previousStop) =>
+          if start ≤ previousStop + 1 then
+            ranges := ranges.pop.push (previousStart, max previousStop stop)
+          else
+            ranges := ranges.push (start, stop)
+        | none =>
           ranges := ranges.push (start, stop)
-      | none => ranges := ranges.push (start, stop)
-  let mut out := s!"--- a/{path}\n+++ b/{path}\n"
-  for (start, stop) in ranges do
-    let mut oldCount := 0
-    let mut newCount := 0
-    for index in [start:stop + 1] do
-      match script[index]!.1 with
-      | .skip => oldCount := oldCount + 1; newCount := newCount + 1
-      | .delete => oldCount := oldCount + 1
-      | .insert => newCount := newCount + 1
-    -- A hunk covering none of a side starts *at* the line it sits before, not one past it: a pure
-    -- insertion into an empty file is `-0,0`, which is what every diff consumer expects to read.
-    let oldStart := if oldCount == 0 then oldBefore[start]! else oldBefore[start]! + 1
-    let newStart := if newCount == 0 then newBefore[start]! else newBefore[start]! + 1
-    out := out ++ s!"@@ -{oldStart},{oldCount} +{newStart},{newCount} @@\n"
-    for index in [start:stop + 1] do
-      let (action, line, endsWithoutNewline) := script[index]!
-      out := out ++ action.linePrefix ++ line ++ "\n"
-      if endsWithoutNewline then
-        out := out ++ "\\ No newline at end of file\n"
-  return out
+    let mut out := s!"--- a/{path}\n+++ b/{path}\n"
+    for (start, stop) in ranges do
+      let mut oldCount := 0
+      let mut newCount := 0
+      for index in [start:stop + 1]do
+        match script[index]!.1 with
+        | .skip =>
+          oldCount := oldCount + 1;
+          newCount := newCount + 1
+        | .delete =>
+          oldCount := oldCount + 1
+        | .insert =>
+          newCount := newCount + 1
+      -- A hunk covering none of a side starts *at* the line it sits before, not one past it: a pure
+      -- insertion into an empty file is `-0,0`, which is what every diff consumer expects to read.
+      let oldStart := if oldCount == 0 then oldBefore[start]! else oldBefore[start]! + 1
+      let newStart := if newCount == 0 then newBefore[start]! else newBefore[start]! + 1
+      out := out ++ s!"@@ -{oldStart},{oldCount} +{newStart},{newCount} @@\n"
+      for index in [start:stop + 1]do
+        let (action, line, endsWithoutNewline) := script[index]!
+        out := out ++ action.linePrefix ++ line ++ "\n"
+        if endsWithoutNewline then
+          out := out ++ "\\ No newline at end of file\n"
+    return out
 
 private def octalDigit? : Char → Option Nat
   | '0' => some 0
@@ -899,21 +966,20 @@ private def octalDigit? : Char → Option Nat
 private def parseOctal? (value : String) : Option Nat := do
   guard !value.isEmpty
   value.toList.foldlM (init := 0) fun total character => do
-    let digit ← octalDigit? character
-    return total * 8 + digit
+      let digit ← octalDigit? character
+      return total * 8 + digit
 
 private def accessMode (path : FilePath) : IO Nat := do
-  let candidates : Array (String × Array String) := #[
-    ("/usr/bin/stat", #["-f", "%Lp", path.toString]),
-    ("stat", #["-c", "%a", path.toString])
-  ]
+  let candidates : Array (String × Array String) :=
+    #[("/usr/bin/stat", #["-f", "%Lp", path.toString]), ("stat", #["-c", "%a", path.toString])]
   for (command, arguments) in candidates do
     try
       let output ← IO.Process.output { cmd := command, args := arguments }
       if output.exitCode == 0 then
         if let some mode := parseOctal? output.stdout.trimAscii.copy then
           return mode
-    catch _ => pure ()
+    catch _ =>
+      pure ()
   throw <| IO.userError s!"could not read source permissions: {path}"
 
 private def publicationTemp (path : FilePath) : IO FilePath := do
@@ -922,12 +988,13 @@ private def publicationTemp (path : FilePath) : IO FilePath := do
   return FilePath.mk s!"{path}.lean-fmt-tmp-{pid}-{nonce}"
 
 private def runBeforeWriteHook (path : FilePath) : IO Unit := do
-  if let some command ← IO.getEnv "LEAN_FMT_TEST_BEFORE_WRITE" then
+  if let some command← IO.getEnv "LEAN_FMT_TEST_BEFORE_WRITE" then
     let output ← IO.Process.output { cmd := command, args := #[path.toString] }
     unless output.exitCode == 0 do
       throw <| IO.userError "test before-write hook failed"
 
-private def publishAtomic (path : FilePath) (original output : String) : IO (Except String Unit) := do
+private def publishAtomic (path : FilePath) (original output : String) : IO (Except String Unit) :=
+  do
   let mode ← accessMode path
   let temporary ← publicationTemp path
   try
@@ -988,8 +1055,9 @@ private def PreparedFile.changed (prepared : PreparedFile) : Bool :=
 produced a finding (a rule, or the suppression projection's `FMT900`/`FMT901`). -/
 private def reportOrder (left right : Finding) : Bool :=
   if left.range.start != right.range.start then left.range.start < right.range.start
-  else if left.range.stop != right.range.stop then left.range.stop < right.range.stop
-  else left.code < right.code
+  else
+    if left.range.stop != right.range.stop then left.range.stop < right.range.stop
+    else left.code < right.code
 
 /-- Project the source-suppression layer over the config-selected findings.
 
@@ -1028,20 +1096,21 @@ private def anyImportSelected (plan : RulePlan) : Bool :=
 withheld-redundant count. Each rule is gated on selection so an unselected FMT004 never consults the
 graph closure. Pure — the caller did the IO (header parse, closure fetch). -/
 private def importFindingsOfHeader (plan : RulePlan) (format : FormatConfig)
-    (closureOf : Lean.Name → Option (Array Lean.Name))
-    (header : Imports.HeaderModel) (normalized : String) : Array Finding × Nat := Id.run do
-  let mut findings : Array Finding := #[]
-  let mut withheld := 0
-  if plan.selected.contains "FMT003" then
-    findings := findings ++ Imports.duplicateFindings header normalized
-  if plan.selected.contains "FMT005" then
-    findings := findings ++
-      Imports.orderFindings header normalized format.importLayout format.importGroups
-  if plan.selected.contains "FMT004" then
-    let (redundant, w) := Imports.redundantFindings header closureOf
-    findings := findings ++ redundant
-    withheld := w
-  return (findings, withheld)
+    (closureOf : Lean.Name → Option (Array Lean.Name)) (header : Imports.HeaderModel)
+    (normalized : String) : Array Finding × Nat :=
+  Id.run do
+    let mut findings : Array Finding := #[]
+    let mut withheld := 0
+    if plan.selected.contains "FMT003" then
+      findings := findings ++ Imports.duplicateFindings header normalized
+    if plan.selected.contains "FMT005" then
+      findings :=
+        findings ++ Imports.orderFindings header normalized format.importLayout format.importGroups
+    if plan.selected.contains "FMT004" then
+      let (redundant, w) := Imports.redundantFindings header closureOf
+      findings := findings ++ redundant
+      withheld := w
+    return (findings, withheld)
 
 /-- The distinct written import module names of `header`, the keys FMT004's closure fetch needs. -/
 private def headerImportNames (header : Imports.HeaderModel) : Array Lean.Name :=
@@ -1051,16 +1120,20 @@ private def headerImportNames (header : Imports.HeaderModel) : Array Lean.Name :
 /-- Build a closure lookup for `names` (empty unless FMT004 is selected), then compute one file's
 import report. Used by the single-file editor path; the batch `execute` path shares one closure fetch
 across all files instead (`computeImportReports`). -/
-private def singleImportReport (plan : RulePlan) (workspace : Lake.Workspace)
-    (normalized : String) (format : FormatConfig) : IO (Array Finding × Nat) := do
-  unless anyImportSelected plan do return (#[], 0)
+private def singleImportReport (plan : RulePlan) (workspace : Lake.Workspace) (normalized : String)
+    (format : FormatConfig) : IO (Array Finding × Nat) := do
+  unless anyImportSelected plan do
+    return (#[], 0)
   match ← Imports.parseHeaderModel normalized with
-  | none => return (#[], 0)
+  | none =>
+    return (#[], 0)
   | some header =>
-    let closureOf ← if plan.selected.contains "FMT004" then
+    let closureOf ←
+      if plan.selected.contains "FMT004" then
         let facts ← Project.graph workspace #[] (headerImportNames header) { closures := true }
         pure fun name => facts.imports[name]?.map (·.visible.getD #[])
-      else pure fun _ => none
+      else
+        pure fun _ => none
     return importFindingsOfHeader plan format closureOf header normalized
 
 /-- Compute every target's import report in one pass: parse all headers, ask for the union of their
@@ -1077,25 +1150,31 @@ private def computeImportReports (plans : Array RulePlan) (project : Project.Sna
   -- for the whole batch — it is keyed on whether *any* file wants FMT004, never on each file's answer.
   unless plans.any anyImportSelected do
     return Array.replicate snapshots.size (#[], 0)
-  let headers ← snapshots.mapM fun snapshot => do
-    let (normalized, _) := LosslessSource.normalize snapshot.source
-    return (normalized, ← Imports.parseHeaderModel normalized)
-  let closureOf ← if plans.any (·.selected.contains "FMT004") then
-      let names := headers.foldl (init := #[]) fun acc (_, header?) =>
-        match header? with
-        | some header => (headerImportNames header).foldl (init := acc) fun acc name =>
-            if acc.contains name then acc else acc.push name
-        | none => acc
+  let headers ←
+    snapshots.mapM fun snapshot => do
+        let (normalized, _) := LosslessSource.normalize snapshot.source
+        return (normalized, ← Imports.parseHeaderModel normalized)
+  let closureOf ←
+    if plans.any (·.selected.contains "FMT004") then
+      let names :=
+        headers.foldl (init := #[]) fun acc (_, header?) =>
+          match header? with
+          | some header =>
+            (headerImportNames header).foldl (init := acc) fun acc name =>
+              if acc.contains name then acc else acc.push name
+          | none => acc
       -- `.getD #[]` is FMT004's degradation, written where its consequence is visible: an
       -- unresolvable closure loses at most one report-only redundancy and can never fabricate one.
       -- Cache currency makes the opposite choice on the same fact; see `closureDigests`.
       let closures ← project.importClosures names
       pure fun name => closures[name]?.map (·.visible.getD #[])
-    else pure fun _ => none
+    else
+      pure fun _ => none
   return (headers.zip (plans.zip snapshots)).map fun ((normalized, header?), plan, snapshot) =>
-    match header? with
-    | none => (#[], 0)
-    | some header => importFindingsOfHeader plan snapshot.config.format closureOf header normalized
+      match header? with
+      | none => (#[], 0)
+      | some header =>
+        importFindingsOfHeader plan snapshot.config.format closureOf header normalized
 
 /-- The fix this product would actually apply for a finding, or `none`.
 
@@ -1135,12 +1214,13 @@ the patch: a non-admitted fix is stripped to `none` before `preparePatch`, which
 assembles edits that will actually be published. Admission is `Applicability.admitted unsafeFixes`,
 the one rule `fix` and its `check` preview share, so a preview shows what a write would do. -/
 private def prepareFile (plan : RulePlan) (renderCanonical unsafeFixes : Bool)
-    (reportImports : Array Finding) (withheldRedundant : Nat)
-    (snapshot : SourceSnapshot) (analysis : SemanticAnalysis) : Except FileReport PreparedFile := do
-  let some result := analysis.result?
-    | throw (baseReport snapshot
-        (if (unbuiltDependency? analysis.diagnostics).isSome then "unbuilt" else "broken")
-        #[] analysis.diagnostics)
+    (reportImports : Array Finding) (withheldRedundant : Nat) (snapshot : SourceSnapshot)
+    (analysis : SemanticAnalysis) : Except FileReport PreparedFile := do
+  let some result := analysis.result? |
+    throw
+        (baseReport snapshot
+          (if (unbuiltDependency? analysis.diagnostics).isSome then "unbuilt" else "broken") #[]
+          analysis.diagnostics)
   let (normalized, lineEndings) := LosslessSource.normalize snapshot.source
   -- Import findings (`reportImports`, normalized coordinates) join the engine's findings *before*
   -- selection, so `--select imports`, per-file ignores, and suppression treat them like any rule.
@@ -1164,20 +1244,25 @@ private def prepareFile (plan : RulePlan) (renderCanonical unsafeFixes : Bool)
   -- *and* its applicability is admitted. A selected-but-unfixable rule is still reported
   -- (its finding is in `findings`); only the patch drops the fix — the same shape as a withheld
   -- unsafe fix.
-  let admitted := baseFindings.map fun finding =>
-    if (admittedFix? plan unsafeFixes finding).isSome then finding
-    else { finding with fix? := none }
-  let patch ← match preparePatch base admitted with
-    | .ok patch => pure patch
+  let admitted :=
+    baseFindings.map fun finding =>
+      if (admittedFix? plan unsafeFixes finding).isSome then finding
+      else { finding with fix? := none }
+  let patch ←
+    match preparePatch base admitted with
+    | .ok patch =>
+      pure patch
     | .error error =>
       throw (baseReport snapshot "rejected" findings #[toString error])
   -- Counted over reported findings (original coordinates), which are the same rules as
   -- `baseFindings` in the same number, so the coordinate system does not matter to a count.
-  let withheldUnsafe := findings.foldl (init := 0) fun total finding =>
-    match finding.fix? with
-    | some fix => if !fix.applicability.admitted unsafeFixes && fix.applicability == .unsafe then
-        total + 1 else total
-    | none => total
+  let withheldUnsafe :=
+    findings.foldl (init := 0) fun total finding =>
+      match finding.fix? with
+      | some fix =>
+        if !fix.applicability.admitted unsafeFixes && fix.applicability == .unsafe then total + 1
+        else total
+      | none => total
   return { findings, normalized, lineEndings, patch, withheldUnsafe, suppressed, withheldRedundant }
 
 private inductive PreviewMode where
@@ -1197,11 +1282,13 @@ private def PreviewMode.rendersCanonical : PreviewMode → Bool
   | .format | .diff => true
 
 private def previewFile (mode : PreviewMode) (plan : RulePlan) (unsafeFixes : Bool)
-    (reportImports : Array Finding) (withheldRedundant : Nat)
-    (snapshot : SourceSnapshot) (analysis : SemanticAnalysis) : IO FileReport := do
-  match prepareFile plan mode.rendersCanonical unsafeFixes reportImports
-      withheldRedundant snapshot analysis with
-  | .error report => return report
+    (reportImports : Array Finding) (withheldRedundant : Nat) (snapshot : SourceSnapshot)
+    (analysis : SemanticAnalysis) : IO FileReport := do
+  match
+    prepareFile plan mode.rendersCanonical unsafeFixes reportImports withheldRedundant snapshot
+      analysis with
+  | .error report =>
+    return report
   | .ok prepared =>
     let findings := prepared.findings
     let withheldUnsafe := prepared.withheldUnsafe
@@ -1209,54 +1296,65 @@ private def previewFile (mode : PreviewMode) (plan : RulePlan) (unsafeFixes : Bo
     let withheldRedundant := prepared.withheldRedundant
     match mode with
     | .check =>
-      return { (baseReport snapshot (if findings.isEmpty then "clean" else "findings") findings) with
-        withheldUnsafe, suppressed, withheldRedundant }
+      return {
+          (baseReport snapshot (if findings.isEmpty then "clean" else "findings") findings) with
+          withheldUnsafe, suppressed, withheldRedundant }
     | .format =>
       if prepared.changed then
         return { (baseReport snapshot "would-format" findings) with
-          formatted := some prepared.output, withheldUnsafe, suppressed, withheldRedundant }
-      return { (baseReport snapshot "clean" findings) with withheldUnsafe, suppressed, withheldRedundant }
+            formatted := some prepared.output, withheldUnsafe, suppressed, withheldRedundant }
+      return { (baseReport snapshot "clean" findings) with
+          withheldUnsafe, suppressed, withheldRedundant }
     | .diff =>
       if prepared.changed then
         -- Both sides of the diff are normalized: a CRLF file must not read as every line changed.
         return { (baseReport snapshot "would-diff" findings) with
-          diff := some (unifiedDiff snapshot.relativePath prepared.normalized
-            prepared.patch.formatted), withheldUnsafe, suppressed, withheldRedundant }
-      return { (baseReport snapshot "clean" findings) with withheldUnsafe, suppressed, withheldRedundant }
+            diff :=
+              some (unifiedDiff snapshot.relativePath prepared.normalized prepared.patch.formatted),
+            withheldUnsafe, suppressed, withheldRedundant }
+      return { (baseReport snapshot "clean" findings) with
+          withheldUnsafe, suppressed, withheldRedundant }
 
 private def fixFile (run : ExactRun) (plan : RulePlan) (unsafeFixes : Bool)
-    (reportImports : Array Finding) (withheldRedundant : Nat)
-    (snapshot : SourceSnapshot) (analysis : SemanticAnalysis) : IO FileReport := do
+    (reportImports : Array Finding) (withheldRedundant : Nat) (snapshot : SourceSnapshot)
+    (analysis : SemanticAnalysis) : IO FileReport := do
   -- `fix` does not render: the patch bases on the file's own `normalized`
   -- bytes and applies the admitted fixes from `selected` — FMT003 among them — at original
   -- coordinates. No reflow, no canonical recomputation.
-  match prepareFile plan (renderCanonical := false) unsafeFixes reportImports
-      withheldRedundant snapshot analysis with
-  | .error report => return report
+  match
+    prepareFile plan (renderCanonical := false) unsafeFixes reportImports withheldRedundant snapshot
+      analysis with
+  | .error report =>
+    return report
   | .ok prepared =>
     let findings := prepared.findings
     let withheldUnsafe := prepared.withheldUnsafe
     let suppressed := prepared.suppressed
     let withheldRedundant := prepared.withheldRedundant
     unless prepared.changed do
-      return { (baseReport snapshot "clean" findings) with withheldUnsafe, suppressed, withheldRedundant }
+      return { (baseReport snapshot "clean" findings) with
+          withheldUnsafe, suppressed, withheldRedundant }
     let output := prepared.output
     -- The validator re-elaborates the bytes a write would publish, line endings included. It
     -- renders no canonical text: the question is whether these bytes elaborate, and rendering a
     -- layout for a candidate nothing will print is wasted work.
     let candidate := snapshot.withSource output
-    let validation ← withPhase "validation" <|
-      run.analyzeSnapshot candidate (renderCanonical := false) (validator := true)
+    let validation ←
+      withPhase "validation" <|
+          run.analyzeSnapshot candidate (renderCanonical := false) (validator := true)
     if let some report := validationReport snapshot findings validation then
       return report
     match ← publishAtomic snapshot.path snapshot.source output with
-    | .error message => return { (baseReport snapshot "rejected" findings #[message]) with
-        withheldUnsafe, suppressed, withheldRedundant }
+    | .error message =>
+      return { (baseReport snapshot "rejected" findings #[message]) with
+          withheldUnsafe, suppressed, withheldRedundant }
     | .ok _ =>
-      return { (baseReport snapshot "fixed" findings) with
-        formatted := some output
-        written := true
-        withheldUnsafe, suppressed, withheldRedundant }
+      return {
+          (baseReport snapshot "fixed"
+            findings) with
+          formatted := some output
+          written := true
+          withheldUnsafe, suppressed, withheldRedundant }
 
 /-- Publish the canonical layout in place — `format`'s default disposition.
 
@@ -1274,20 +1372,22 @@ broken file — and on a 1400-file run, one resource-exhausted child — rejecte
 admitted files, and every output was retained in memory for the whole run. Per-file publication
 keeps each file's transaction atomic (temp file, stale-source check, rename) and lets a target's
 output die with the target. -/
-private def formatFile (plan : RulePlan) (unsafeFixes : Bool)
-    (reportImports : Array Finding) (withheldRedundant : Nat)
-    (snapshot : SourceSnapshot) (analysis : SemanticAnalysis) : IO FileReport := do
-  match prepareFile plan (renderCanonical := true) unsafeFixes reportImports
-      withheldRedundant snapshot analysis with
-  | .error report => return report
+private def formatFile (plan : RulePlan) (unsafeFixes : Bool) (reportImports : Array Finding)
+    (withheldRedundant : Nat) (snapshot : SourceSnapshot) (analysis : SemanticAnalysis) :
+    IO FileReport := do
+  match
+    prepareFile plan (renderCanonical := true) unsafeFixes reportImports withheldRedundant snapshot
+      analysis with
+  | .error report =>
+    return report
   | .ok prepared =>
     let findings := prepared.findings
     let withheldUnsafe := prepared.withheldUnsafe
     let suppressed := prepared.suppressed
     let withheldRedundant := prepared.withheldRedundant
     unless prepared.changed do
-      return {
-        (baseReport snapshot "clean" findings) with withheldUnsafe, suppressed, withheldRedundant }
+      return { (baseReport snapshot "clean" findings) with
+          withheldUnsafe, suppressed, withheldRedundant }
     let output := prepared.output
     -- Admission already read these exact normalized bytes back under this setup and found the
     -- same commands, so nothing here re-reads them. What that reading proves is `Validator.admit`'s
@@ -1296,15 +1396,17 @@ private def formatFile (plan : RulePlan) (unsafeFixes : Bool)
     match ← publishAtomic snapshot.path snapshot.source output with
     | .error message =>
       return { (baseReport snapshot "rejected" findings #[message]) with
-        withheldUnsafe, suppressed, withheldRedundant }
+          withheldUnsafe, suppressed, withheldRedundant }
     | .ok _ =>
-      return { (baseReport snapshot "formatted" findings) with
-        formatted := some output
-        written := true
-        withheldUnsafe, suppressed, withheldRedundant }
+      return {
+          (baseReport snapshot "formatted"
+            findings) with
+          formatted := some output
+          written := true
+          withheldUnsafe, suppressed, withheldRedundant }
 
-def ExactRun.checkSnapshot (run : ExactRun) (plan : RulePlan)
-    (snapshot : SourceSnapshot) : IO FileReport := do
+def ExactRun.checkSnapshot (run : ExactRun) (plan : RulePlan) (snapshot : SourceSnapshot) :
+    IO FileReport := do
   let analysis ← run.analyzeSnapshot snapshot (renderCanonical := false)
   -- The editor `check` path never applies fixes, so opt-in is irrelevant to its output; it
   -- reports every finding's applicability and withholds nothing itself. It computes its own
@@ -1317,22 +1419,31 @@ def ExactRun.checkSnapshot (run : ExactRun) (plan : RulePlan)
 private def summarize (modeString : String) (files : Array FileReport)
     (failures : Array String := #[]) : RunReport :=
   let findings := files.foldl (fun total file => total + file.findings.size) 0
-  let changed := files.foldl (fun total file =>
-    if file.status == "findings" || file.status == "would-format" ||
-        file.status == "would-diff" || file.status == "fixed" || file.status == "formatted" ||
-        file.status == "would-organize" || file.status == "organized" then total + 1 else total) 0
+  let changed :=
+    files.foldl
+      (fun total file =>
+        if
+            file.status == "findings" || file.status == "would-format" ||
+                      file.status == "would-diff" ||
+                    file.status == "fixed" ||
+                  file.status == "formatted" ||
+                file.status == "would-organize" ||
+              file.status == "organized" then
+          total + 1
+        else total)
+      0
   let written := files.foldl (fun total file => if file.written then total + 1 else total) 0
-  let broken := files.foldl (fun total file =>
-    if file.status == "broken" then total + 1 else total) 0
-  let unbuilt := files.foldl (fun total file =>
-    if file.status == "unbuilt" then total + 1 else total) 0
-  let rejected := files.foldl (fun total file =>
-    if file.status == "rejected" then total + 1 else total) 0
+  let broken :=
+    files.foldl (fun total file => if file.status == "broken" then total + 1 else total) 0
+  let unbuilt :=
+    files.foldl (fun total file => if file.status == "unbuilt" then total + 1 else total) 0
+  let rejected :=
+    files.foldl (fun total file => if file.status == "rejected" then total + 1 else total) 0
   let withheldUnsafe := files.foldl (fun total file => total + file.withheldUnsafe) 0
   let suppressed := files.foldl (fun total file => total + file.suppressed) 0
   let withheldRedundant := files.foldl (fun total file => total + file.withheldRedundant) 0
-  { mode := modeString, files, findings, changed, written, broken, unbuilt, rejected, withheldUnsafe,
-    suppressed, withheldRedundant, infrastructureFailures := failures }
+  { mode := modeString, files, findings, changed, written, broken, unbuilt, rejected,
+    withheldUnsafe, suppressed, withheldRedundant, infrastructureFailures := failures }
 
 /-! ## Report positions
 
@@ -1366,15 +1477,16 @@ structure Position where
 
 Deliberately not a line table. A consumer can only ask about an offset the report already named, which
 keeps this bounded; an offset the report never named has no answer. -/
-structure PositionIndex where
-  private mk ::
+structure PositionIndex where private mk ::
   private entries : Std.HashMap String (Std.HashMap Nat Position)
 
 /-- The index for a report with no positions to resolve — `organize`, and any caller rendering a
 format that needs none. -/
-def PositionIndex.empty : PositionIndex := ⟨{}⟩
+def PositionIndex.empty : PositionIndex :=
+  ⟨{ }⟩
 
-def PositionIndex.position? (index : PositionIndex) (path : String) (offset : Nat) : Option Position := do
+def PositionIndex.position? (index : PositionIndex) (path : String) (offset : Nat) :
+    Option Position := do
   let file ← index.entries[path]?
   file[offset]?
 
@@ -1388,7 +1500,7 @@ private def positionsOf (normalized : String) (offsets : Array Nat) : Std.HashMa
   Id.run do
     let sorted := offsets.qsort (· < ·)
     let bytes := normalized.toUTF8
-    let mut resolved : Std.HashMap Nat Position := {}
+    let mut resolved : Std.HashMap Nat Position := { }
     let mut index := 0
     let mut offset := 0
     let mut line := 1
@@ -1416,15 +1528,17 @@ private def positionsOf (normalized : String) (offsets : Array Nat) : Std.HashMa
 `snapshots` hold the bytes as they were *before* any publication, which is the coordinate system every
 finding indexes. Files with no findings are skipped entirely. -/
 private def resolvePositions (snapshots : Array SourceSnapshot) (files : Array FileReport) :
-    PositionIndex := Id.run do
-  let mut entries : Std.HashMap String (Std.HashMap Nat Position) := {}
-  for file in files do
-    if file.findings.isEmpty then continue
-    let some snapshot := snapshots.find? (·.relativePath == file.path) | continue
-    let offsets := file.findings.flatMap fun finding => #[finding.range.start, finding.range.stop]
-    let (normalized, _) := LosslessSource.normalize snapshot.source
-    entries := entries.insert file.path (positionsOf normalized offsets)
-  return ⟨entries⟩
+    PositionIndex :=
+  Id.run do
+    let mut entries : Std.HashMap String (Std.HashMap Nat Position) := { }
+    for file in files do
+      if file.findings.isEmpty then
+        continue
+      let some snapshot := snapshots.find? (·.relativePath == file.path) | continue
+      let offsets := file.findings.flatMap fun finding => #[finding.range.start, finding.range.stop]
+      let (normalized, _) := LosslessSource.normalize snapshot.source
+      entries := entries.insert file.path (positionsOf normalized offsets)
+    return ⟨entries⟩
 
 /-- The index for one buffer whose bytes the caller already holds.
 
@@ -1480,10 +1594,9 @@ private structure FileOutcome where
 unanswered, then run the mode's rule phase. Extracted so the serial path and the worker pool
 execute the same text; every throw becomes the target's `infrastructure-failure`, exactly what the
 serial loop's `catch` reported. -/
-private def processOneTarget (exactRun : ExactRun) (request : RunRequest)
-    (renderCanonical : Bool) (demanded : Tier) (demandedCaps : SemanticCaps)
-    (snapshot : SourceSnapshot) (available? : Option SemanticAnalysis)
-    (ir : Array Finding × Nat) (plan : RulePlan) :
+private def processOneTarget (exactRun : ExactRun) (request : RunRequest) (renderCanonical : Bool)
+    (demanded : Tier) (demandedCaps : SemanticCaps) (snapshot : SourceSnapshot)
+    (available? : Option SemanticAnalysis) (ir : Array Finding × Nat) (plan : RulePlan) :
     IO FileOutcome := do
   try
     -- Anything left unanswered elaborates its source. There used to be a branch here that loaded the
@@ -1494,53 +1607,52 @@ private def processOneTarget (exactRun : ExactRun) (request : RunRequest)
     -- post-import environment instead of the live per-command one. What the artifact is good at is
     -- above this line: `availableAnalysis` answers a non-rendering `check` from it without any
     -- frontend at all, 12.4 s for the same 200 files.
-    let analysis ← match available? with
-      | some analysis => pure analysis
+    let analysis ←
+      match available? with
+      | some analysis =>
+        pure analysis
       | none =>
-        exactRun.analyzeSnapshot snapshot renderCanonical
-          (captureSemantic := demanded == .semantic)
-          (captureOccurrences := demandedCaps.occurrences)
-    let report ← withPhase "rules" <| match request.mode with
-      | .fix => fixFile exactRun plan request.unsafeFixes ir.1 ir.2 snapshot analysis
-      | .check => previewFile .check plan request.unsafeFixes ir.1 ir.2 snapshot analysis
-      -- `format` publishes in place by default; `--check` demotes it to the preview.
-      | .format =>
-        if request.formatCheck then
-          previewFile .format plan request.unsafeFixes ir.1 ir.2 snapshot analysis
-        else
-          formatFile plan request.unsafeFixes ir.1 ir.2 snapshot analysis
-      | .diff => previewFile .diff plan request.unsafeFixes ir.1 ir.2 snapshot analysis
+        exactRun.analyzeSnapshot snapshot renderCanonical (captureSemantic := demanded == .semantic)
+            (captureOccurrences := demandedCaps.occurrences)
+    let report ←
+      withPhase "rules" <|
+          match request.mode with
+          | .fix => fixFile exactRun plan request.unsafeFixes ir.1 ir.2 snapshot analysis
+          | .check => previewFile .check plan request.unsafeFixes ir.1 ir.2 snapshot analysis
+          -- `format` publishes in place by default; `--check` demotes it to the preview.
+          | .format =>
+            if request.formatCheck then
+              previewFile .format plan request.unsafeFixes ir.1 ir.2 snapshot analysis
+            else formatFile plan request.unsafeFixes ir.1 ir.2 snapshot analysis
+          | .diff => previewFile .diff plan request.unsafeFixes ir.1 ir.2 snapshot analysis
     return {
-      report
-      analysis? := some analysis
-      failure? := none
-    }
+        report
+        analysis? := some analysis
+        failure? := none }
   catch error =>
     let message := toString error
     return {
-      report := {
-        path := snapshot.relativePath
-        status := "infrastructure-failure"
-        diagnostics := #[message]
-      }
-      analysis? := none
-      failure? := some s!"{snapshot.relativePath}: {message}"
-    }
+        report :=
+          { path := snapshot.relativePath
+            status := "infrastructure-failure"
+            diagnostics := #[message] }
+        analysis? := none
+        failure? := some s!"{snapshot.relativePath}: {message}" }
 
 /-- Pull targets from the shared index until none remain. One worker is the serial loop; several
 are `--workers N`. Workers write only their own outcomes slot; the shared refs they read (`setups`,
 the temp-file counter) are either immutable after `primeSetups` or atomic. -/
 private partial def batchWorker (exactRun : ExactRun) (request : RunRequest)
     (renderCanonical : Bool) (demanded : Tier) (demandedCaps : SemanticCaps)
-    (work : Array (((SourceSnapshot × Option SemanticAnalysis) ×
-      (Array Finding × Nat)) × RulePlan))
-    (next : IO.Ref Nat)
-    (outcomes : IO.Ref (Array (Option FileOutcome))) (progress : Progress.Progress) : IO Unit := do
+    (work : Array (((SourceSnapshot × Option SemanticAnalysis) × (Array Finding × Nat)) × RulePlan))
+    (next : IO.Ref Nat) (outcomes : IO.Ref (Array (Option FileOutcome)))
+    (progress : Progress.Progress) : IO Unit := do
   let index ← next.modifyGet fun n => (n, n + 1)
   if h : index < work.size then
     let (((snapshot, available?), ir), plan) := work[index]
-    let outcome ← processOneTarget exactRun request renderCanonical demanded demandedCaps
-      snapshot available? ir plan
+    let outcome ←
+      processOneTarget exactRun request renderCanonical demanded demandedCaps snapshot available? ir
+          plan
     outcomes.modify (·.set! index (some outcome))
     LeanFmt.Progress.advance progress snapshot.path.toString
     batchWorker exactRun request renderCanonical demanded demandedCaps work next outcomes progress
@@ -1552,12 +1664,12 @@ def execute (request : RunRequest) : IO RunOutcome := do
   let workers ← resolveWorkers request.workers
   recordCount "workers" workers
   let root ← IO.FS.realPath request.root
-  let configPath? := request.configPath?.map fun path =>
-    if path.isAbsolute then path else root / path
-  let cli : CliSelection := {
-    select := request.select, extendSelect := request.extendSelect, ignore := request.ignore,
-    fixable := request.fixable, unfixable := request.unfixable,
-    extendFixable := request.extendFixable, preview := request.preview }
+  let configPath? :=
+    request.configPath?.map fun path => if path.isAbsolute then path else root / path
+  let cli : CliSelection :=
+    { select := request.select, extendSelect := request.extendSelect, ignore := request.ignore,
+      fixable := request.fixable, unfixable := request.unfixable,
+      extendFixable := request.extendFixable, preview := request.preview }
   -- Discovery is timed separately from the workspace load and the selection snapshot because it
   -- is the one phase this feature added to every run's critical path: a single tree walk. Folding
   -- it into an existing phase would hide the cost.
@@ -1567,9 +1679,12 @@ def execute (request : RunRequest) : IO RunOutcome := do
   -- The fallback plan is resolved first and unconditionally, so an invalid CLI selector is still
   -- a hard error on a run that selects no files at all — the behavior before configuration became
   -- per-file. It is also the strategy plan's seed.
-  let basePlan ← match discovery.fallback.rulePlan cli with
-    | .ok plan => pure plan
-    | .error message => throw <| IO.userError message
+  let basePlan ←
+    match discovery.fallback.rulePlan cli with
+    | .ok plan =>
+      pure plan
+    | .error message =>
+      throw <| IO.userError message
   let mut announced : Array String := #[]
   for notice in discovery.fallback.notices ++ basePlan.notices do
     unless announced.contains notice do
@@ -1584,15 +1699,19 @@ def execute (request : RunRequest) : IO RunOutcome := do
   -- project with one config still resolves exactly one. Selection stays a projection — this
   -- changes which findings are shown per file, never what a run obtains or what a cache entry is
   -- keyed on.
-  let mut planByKey : Std.HashMap String RulePlan := {}
+  let mut planByKey : Std.HashMap String RulePlan := { }
   let mut plans : Array RulePlan := #[]
   for target in snapshots do
     match planByKey[target.configKey]? with
-    | some plan => plans := plans.push plan
+    | some plan =>
+      plans := plans.push plan
     | none =>
-      let plan ← match target.config.rulePlan cli with
-        | .ok plan => pure plan
-        | .error message => throw <| IO.userError message
+      let plan ←
+        match target.config.rulePlan cli with
+        | .ok plan =>
+          pure plan
+        | .error message =>
+          throw <| IO.userError message
       planByKey := planByKey.insert target.configKey plan
       plans := plans.push plan
       for notice in target.config.notices ++ plan.notices do
@@ -1609,16 +1728,20 @@ def execute (request : RunRequest) : IO RunOutcome := do
   recordDuration "import_findings" ((← IO.monoNanosNow) - importStarted)
   let application ← IO.appPath
   let epochStarted ← IO.monoNanosNow
-  let cache? ← if request.cache then
-    ResultCache.open? project.workspace application (projectClosureMode project)
-  else
-    pure none
+  let cache? ←
+    if request.cache then
+      ResultCache.open? project.workspace application (projectClosureMode project)
+    else
+      pure none
   let epochFinished ← IO.monoNanosNow
   recordPhase "cache_epoch" epochStarted epochFinished
   let lookupStarted ← IO.monoNanosNow
-  let cached ← match cache? with
-    | none => pure (Array.replicate snapshots.size none)
-    | some cache => cache.readAll project snapshots
+  let cached ←
+    match cache? with
+    | none =>
+      pure (Array.replicate snapshots.size none)
+    | some cache =>
+      cache.readAll project snapshots
   let lookupFinished ← IO.monoNanosNow
   recordPhase "cache_lookup" lookupStarted lookupFinished
   -- An entry that cannot serve this run is demoted to a miss here, once, so that every path below
@@ -1638,17 +1761,19 @@ def execute (request : RunRequest) : IO RunOutcome := do
   -- under-obtaining is a wrong answer. The union is seeded at `.source`, not at the fallback
   -- plan's tier, so a root config that selects syntax rules cannot make a project whose files all
   -- override it pay for syntax.
-  let unionRequiredTier := plans.foldl (init := Tier.source) fun tier plan => tier.max plan.requiredTier
+  let unionRequiredTier :=
+    plans.foldl (init := Tier.source) fun tier plan => tier.max plan.requiredTier
   let demanded := unionRequiredTier
-  let demandedCaps : SemanticCaps := plans.foldl (init := {}) fun caps plan =>
-    let wanted := plan.demandedCaps applies
-    { occurrences := caps.occurrences || wanted.occurrences }
+  let demandedCaps : SemanticCaps :=
+    plans.foldl (init := { }) fun caps plan =>
+      let wanted := plan.demandedCaps applies
+      { occurrences := caps.occurrences || wanted.occurrences }
   -- Serving a cache entry stays a *per-file* question: it is that file's own required tier that decides
   -- whether a stored result answers it, never the batch union.
   let indexHits := cached.foldl (init := 0) fun n c? => if c?.isSome then n + 1 else n
-  let cached := (cached.zip plans).map fun (cached?, plan) =>
-    cached?.filter (analysisServes plan.requiredTier (plan.demandedCaps applies)
-      renderCanonical)
+  let cached :=
+    (cached.zip plans).map fun (cached?, plan) =>
+      cached?.filter (analysisServes plan.requiredTier (plan.demandedCaps applies) renderCanonical)
   -- `index_hits` counts entries the index answered with; `served` counts those that survived
   -- the tier/caps demotion above. They differ exactly when a stored result cannot answer this
   -- run's mode, so reporting both separates "the entry was invalidated" from "the entry was
@@ -1665,10 +1790,14 @@ def execute (request : RunRequest) : IO RunOutcome := do
     if let some previewMode := request.mode.preview? then
       let mut files := #[]
       for (((snapshot, cached?), importReport), plan) in
-          ((snapshots.zip cached).zip importReports).zip plans do
+        ((snapshots.zip cached).zip importReports).zip plans do
         if let some analysis := cached? then
-          files := files.push (← withPhase "rules" <| previewFile previewMode plan
-            request.unsafeFixes importReport.1 importReport.2 snapshot analysis)
+          files :=
+            files.push
+              (←
+                withPhase "rules" <|
+                    previewFile previewMode plan request.unsafeFixes importReport.1 importReport.2
+                      snapshot analysis)
       let positions ← profiledPositions snapshots files
       return { report := summarize request.mode.toString files, positions }
   -- The plugin artifact carries reconstructible syntax but never semantic diagnostics, so a
@@ -1681,8 +1810,9 @@ def execute (request : RunRequest) : IO RunOutcome := do
   -- pure waste: both ask the same graph about the same modules at the same moment, and a
   -- `BuildStore` is per-`startBuild`, so nothing the first resolved was reused by the second.
   let evidenceStarted ← IO.monoNanosNow
-  let facts ← Project.graph project.workspace snapshots
-    (demand := { status := true, artifacts := artifactServes })
+  let facts ←
+    Project.graph project.workspace snapshots (demand :=
+        { status := true, artifacts := artifactServes })
   let evidence ← Project.moduleEvidence project facts
   let artifacts := facts.targets.map (·.artifact?)
   let evidenceFinished ← IO.monoNanosNow
@@ -1690,64 +1820,74 @@ def execute (request : RunRequest) : IO RunOutcome := do
   if artifactServes then
     recordCount "official_artifact_hit" (artifacts.countP (·.isSome))
     recordCount "official_artifact_miss" (artifacts.countP (·.isNone))
-  let available ← ((((snapshots.zip cached).zip evidence).zip artifacts).zip plans).mapM fun
-    | ((((snapshot, cached?), sourceEvidence), artifact?), plan) =>
-      availableAnalysis plan renderCanonical applies sourceEvidence snapshot cached? artifact?
+  let available ←
+    ((((snapshots.zip cached).zip evidence).zip artifacts).zip plans).mapM fun
+        | ((((snapshot, cached?), sourceEvidence), artifact?), plan) =>
+          availableAnalysis plan renderCanonical applies sourceEvidence snapshot cached? artifact?
   if !request.writesFormat && available.all Option.isSome then
     if let some previewMode := request.mode.preview? then
       let analyses := available.filterMap id
-      let files ← (((snapshots.zip analyses).zip importReports).zip plans).mapM
-        fun (((snapshot, analysis), ir), plan) =>
-          previewFile previewMode plan request.unsafeFixes ir.1 ir.2 snapshot analysis
+      let files ←
+        (((snapshots.zip analyses).zip importReports).zip plans).mapM
+            fun (((snapshot, analysis), ir), plan) =>
+            previewFile previewMode plan request.unsafeFixes ir.1 ir.2 snapshot analysis
       if let some cache := cache? then
-        withPhase "cache_write" <| cache.writeAll project snapshots available
-          (prune := request.files.isEmpty)
+        withPhase "cache_write" <|
+            cache.writeAll project snapshots available (prune := request.files.isEmpty)
       let positions ← profiledPositions snapshots files
       return { report := summarize request.mode.toString files, positions }
   withExactRun project workers fun exactRun => do
-    -- Exactly the files the decisions above left unanswered, which is exactly the set that
-    -- will spawn a frontend child and so need a Lake setup.
-    exactRun.primeSetups <| (snapshots.zip available).filterMap fun (snapshot, available?) =>
-      if available?.isNone then some snapshot else none
-    let work := ((snapshots.zip available).zip importReports).zip plans
-    let outcomes ← IO.mkRef (Array.replicate work.size (none : Option FileOutcome))
-    let next ← IO.mkRef 0
-    -- Progress counts the targets the decisions above left unanswered — exactly the work that
-    -- can take minutes on a cold run. An all-served run never reaches here and never shows one.
-    let progress ← LeanFmt.Progress.start request.mode.toString work.size
-    if workers > 1 && work.size > 1 then
-      -- Several workers: one shared child registry (`withExactRun` creates it), outcomes by index.
-      -- Dedicated priority is required, not tuning: workers block on child waits and file IO,
-      -- and pooled blocking tasks can starve a small pool (`LEAN_NUM_THREADS=1` is a supported
-      -- setting).
-      let tasks ← (List.range (min workers work.size)).mapM fun _ =>
-        IO.asTask (batchWorker exactRun request renderCanonical demanded demandedCaps work next
-          outcomes progress) Task.Priority.dedicated
-      let mut firstError? : Option IO.Error := none
-      for task in tasks do
-        match ← IO.wait task with
-        | .ok _ => pure ()
-        | .error error => if firstError?.isNone then firstError? := some error
-      if let some error := firstError? then throw error
-    else
-      batchWorker exactRun request renderCanonical demanded demandedCaps work next outcomes
-        progress
-    LeanFmt.Progress.finish progress
-    let mut files := #[]
-    let mut failures := #[]
-    let mut analyses := #[]
-    for outcome? in ← outcomes.get do
-      let some outcome := outcome?
-        | throw <| IO.userError "a batch worker finished without reporting its target"
-      files := files.push outcome.report
-      analyses := analyses.push outcome.analysis?
-      if let some failure := outcome.failure? then
-        failures := failures.push failure
-    if let some cache := cache? then
-      withPhase "cache_write" <| cache.writeAll project snapshots analyses
-        (prune := request.files.isEmpty)
-    let positions ← profiledPositions snapshots files
-    return { report := summarize request.mode.toString files failures, positions }
+      -- Exactly the files the decisions above left unanswered, which is exactly the set that
+      -- will spawn a frontend child and so need a Lake setup.
+      exactRun.primeSetups <|
+          (snapshots.zip available).filterMap fun (snapshot, available?) =>
+            if available?.isNone then some snapshot else none
+      let work := ((snapshots.zip available).zip importReports).zip plans
+      let outcomes ← IO.mkRef (Array.replicate work.size (none : Option FileOutcome))
+      let next ← IO.mkRef 0
+      -- Progress counts the targets the decisions above left unanswered — exactly the work that
+      -- can take minutes on a cold run. An all-served run never reaches here and never shows one.
+      let progress ← LeanFmt.Progress.start request.mode.toString work.size
+      if workers > 1 && work.size > 1 then
+        -- Several workers: one shared child registry (`withExactRun` creates it), outcomes by index.
+        -- Dedicated priority is required, not tuning: workers block on child waits and file IO,
+        -- and pooled blocking tasks can starve a small pool (`LEAN_NUM_THREADS=1` is a supported
+        -- setting).
+        let tasks ←
+          (List.range (min workers work.size)).mapM fun _ =>
+              IO.asTask
+                (batchWorker exactRun request renderCanonical demanded demandedCaps work next
+                  outcomes progress)
+                Task.Priority.dedicated
+        let mut firstError? : Option IO.Error := none
+        for task in tasks do
+          match ← IO.wait task with
+          | .ok _ =>
+            pure ()
+          | .error error =>
+            if firstError?.isNone then
+              firstError? := some error
+        if let some error := firstError? then
+          throw error
+      else
+        batchWorker exactRun request renderCanonical demanded demandedCaps work next outcomes
+            progress
+      LeanFmt.Progress.finish progress
+      let mut files := #[]
+      let mut failures := #[]
+      let mut analyses := #[]
+      for outcome? in ← outcomes.get do
+        let some outcome :=
+          outcome? | throw <| IO.userError "a batch worker finished without reporting its target"
+        files := files.push outcome.report
+        analyses := analyses.push outcome.analysis?
+        if let some failure := outcome.failure? then
+          failures := failures.push failure
+      if let some cache := cache? then
+        withPhase "cache_write" <|
+            cache.writeAll project snapshots analyses (prune := request.files.isEmpty)
+      let positions ← profiledPositions snapshots files
+      return { report := summarize request.mode.toString files failures, positions }
 
 /-! ## The stdin/stdout stream surface
 
@@ -1771,7 +1911,7 @@ structure StreamRequest where
   rendering mode; only this operation accepts one. -/
   range? : Option SourceRange := none
   configPath? : Option FilePath := none
-  selection : CliSelection := {}
+  selection : CliSelection := { }
   unsafeFixes : Bool := false
   formatCheck : Bool := false
 
@@ -1803,26 +1943,28 @@ private def markJson (mark : Mark) : Lean.Json :=
   Lean.Json.mkObj [("source", rangeJson mark.source), ("output", rangeJson mark.output)]
 
 def StreamReport.toJson (report : StreamReport) : Lean.Json :=
-  Lean.Json.mkObj <| [
-    ("schema", Lean.Json.str "lean-fmt.stream.v1"),
-    ("path", Lean.Json.str report.path),
-    ("status", Lean.Json.str report.status),
-    ("changed", Lean.Json.bool report.changed),
-    ("findings", Lean.toJson report.findings),
-    ("diagnostics", Lean.toJson report.diagnostics)
-  ] ++ (match report.output with
-    -- The bytes go in the JSON too. Text mode puts them on stdout bare; a `--json` caller asked
-    -- for one structured document and must not have to run the command twice to get the result out
-    -- of it. Named `formatted` to match the file-target report's `FileReport.formatted`.
-    | some output => [("formatted", Lean.Json.str output)] | none => [])
-    ++ (match report.diff with
-    | some diff => [("diff", Lean.Json.str diff)] | none => [])
-    ++ (match report.requested? with
-    | some range => [("requestedRange", rangeJson range)] | none => [])
-    ++ (match report.actual? with
-    | some range => [("actualRange", rangeJson range)] | none => [])
-    ++ (if report.sourceMap.isEmpty then []
-        else [("sourceMap", Lean.Json.arr (report.sourceMap.map markJson))])
+  Lean.Json.mkObj <|
+    [("schema", Lean.Json.str "lean-fmt.stream.v1"), ("path", Lean.Json.str report.path),
+                ("status", Lean.Json.str report.status), ("changed", Lean.Json.bool report.changed),
+                ("findings", Lean.toJson report.findings),
+                ("diagnostics", Lean.toJson report.diagnostics)] ++
+              (match report.output with
+              -- The bytes go in the JSON too. Text mode puts them on stdout bare; a `--json` caller asked
+              -- for one structured document and must not have to run the command twice to get the result out
+              -- of it. Named `formatted` to match the file-target report's `FileReport.formatted`.
+              | some output => [("formatted", Lean.Json.str output)]
+              | none => []) ++
+            (match report.diff with
+            | some diff => [("diff", Lean.Json.str diff)]
+            | none => []) ++
+          (match report.requested? with
+          | some range => [("requestedRange", rangeJson range)]
+          | none => []) ++
+        (match report.actual? with
+        | some range => [("actualRange", rangeJson range)]
+        | none => []) ++
+      (if report.sourceMap.isEmpty then []
+      else [("sourceMap", Lean.Json.arr (report.sourceMap.map markJson))])
 
 /-- The exact half of `stream`, against a run the caller already holds.
 
@@ -1848,51 +1990,55 @@ def ExactRun.streamEnvelope (run : ExactRun) (target : Project.SourceTarget) (pl
   let (normalized, _) := LosslessSource.normalize target.source
   let (reportImports, withheldRedundant) ←
     singleImportReport plan project.workspace normalized target.config.format
-  match prepareFile plan renderCanonical unsafeFixes reportImports
-      withheldRedundant target analysis with
+  match
+    prepareFile plan renderCanonical unsafeFixes reportImports withheldRedundant target
+      analysis with
   | .error report =>
     return {
-      path := report.path
-      status := report.status
-      findings := report.findings
-      diagnostics := report.diagnostics
-    }
+        path := report.path
+        status := report.status
+        findings := report.findings
+        diagnostics := report.diagnostics }
   | .ok prepared =>
     let findings := prepared.findings
     let base : StreamReport := { path := target.relativePath, status := "clean", findings }
     match mode with
     | .check =>
       return { base with
-        status := if findings.isEmpty then "clean" else "findings"
-        changed := !findings.isEmpty }
+          status := if findings.isEmpty then "clean" else "findings"
+          changed := !findings.isEmpty }
     | .diff =>
-      unless prepared.changed do return base
+      unless prepared.changed do
+        return base
       return { base with
-        status := "would-diff"
-        changed := true
-        diff := some (unifiedDiff target.relativePath prepared.normalized prepared.patch.formatted) }
+          status := "would-diff"
+          changed := true
+          diff :=
+            some (unifiedDiff target.relativePath prepared.normalized prepared.patch.formatted) }
     | .fix =>
-      unless prepared.changed do return { base with output := some prepared.output }
+      unless prepared.changed do
+        return { base with output := some prepared.output }
       return { base with
-        status := "fixed"
-        changed := true
-        output := some prepared.output }
+          status := "fixed"
+          changed := true
+          output := some prepared.output }
     | .format =>
-      let sliced? := range?.bind fun range =>
-        sliceRange prepared.normalized prepared.patch.formatted marks range
-      let (text, requested?, actual?, sourceMap) := match sliced? with
+      let sliced? :=
+        range?.bind fun range => sliceRange prepared.normalized prepared.patch.formatted marks range
+      let (text, requested?, actual?, sourceMap) :=
+        match sliced? with
         | some result => (result.text, some result.requested, some result.actual, result.marks)
         | none => (prepared.patch.formatted, none, none, marks)
       let output := LosslessSource.denormalize text prepared.lineEndings
       let changed := text != prepared.normalized
       if formatCheck then
         return { base with
-          status := if changed then "would-format" else "clean"
-          changed, requested?, actual?, sourceMap }
+            status := if changed then "would-format" else "clean"
+            changed, requested?, actual?, sourceMap }
       return { base with
-        status := if changed then "formatted" else "clean"
-        output := some output
-        changed, requested?, actual?, sourceMap }
+          status := if changed then "formatted" else "clean"
+          output := some output
+          changed, requested?, actual?, sourceMap }
 
 def ExactRun.streamSnapshot (run : ExactRun) (target : Project.SourceTarget) (plan : RulePlan)
     (mode : RunMode) (range? : Option SourceRange := none) (unsafeFixes : Bool := false)
@@ -1902,10 +2048,10 @@ def ExactRun.streamSnapshot (run : ExactRun) (target : Project.SourceTarget) (pl
   let applies := mode == .fix
   let demandedCaps := plan.demandedCaps applies
   let demanded := plan.requiredTier
-  let envelope ← run.envelope target (captureSemantic := demanded == .semantic)
-    (captureOccurrences := demandedCaps.occurrences)
-    (format? := if renderCanonical then some target.config.format else none)
-    (cancel? := cancel?)
+  let envelope ←
+    run.envelope target (captureSemantic := demanded == .semantic) (captureOccurrences :=
+        demandedCaps.occurrences) (format? :=
+        if renderCanonical then some target.config.format else none) (cancel? := cancel?)
   run.streamEnvelope target plan mode envelope range? unsafeFixes formatCheck
 
 /-- Format, check, diff, or fix one unsaved buffer and stream the answer.
@@ -1929,19 +2075,23 @@ and unsaved streams consume the same text, source map, formatter metrics, and va
 no caller reaches back into the transport envelope for a second partial representation. -/
 def stream (request : StreamRequest) : IO StreamReport := do
   let root ← IO.FS.realPath request.root
-  let configPath? := request.configPath?.map fun path =>
-    if path.isAbsolute then path else root / path
+  let configPath? :=
+    request.configPath?.map fun path => if path.isAbsolute then path else root / path
   let discovery ← Discovery.run root configPath?
   let project ← Project.loadWorkspaceOnly root
-  let target ← Project.unsavedTarget project.workspace discovery root request.filename request.source
-  let plan ← match target.config.rulePlan request.selection with
-    | .ok plan => pure plan
-    | .error message => throw <| IO.userError message
+  let target ←
+    Project.unsavedTarget project.workspace discovery root request.filename request.source
+  let plan ←
+    match target.config.rulePlan request.selection with
+    | .ok plan =>
+      pure plan
+    | .error message =>
+      throw <| IO.userError message
   for notice in target.config.notices ++ plan.notices do
     IO.eprintln s!"lean-fmt: {notice}"
   withExactRun project (action := fun run =>
-    run.streamSnapshot target plan request.mode (range? := request.range?)
-      (unsafeFixes := request.unsafeFixes) (formatCheck := request.formatCheck))
+      run.streamSnapshot target plan request.mode (range? := request.range?) (unsafeFixes :=
+        request.unsafeFixes) (formatCheck := request.formatCheck))
 
 /-- Organize one unsaved buffer's imports, validated and returned rather than written.
 
@@ -1961,19 +2111,26 @@ reaches their file.
 def ExactRun.organizeSnapshot (run : ExactRun) (target : Project.SourceTarget)
     (cancel? : Option Std.CancellationToken := none) : IO (Except String (Option String)) := do
   let (normalized, lineEndings) := LosslessSource.normalize target.source
-  let some header ← Imports.parseHeaderModel normalized
-    | return .ok none
-  let output := LosslessSource.denormalize (Imports.organize header normalized
-    target.config.format.importLayout target.config.format.importGroups) lineEndings
-  if output == target.source then return .ok none
-  let validation ← run.analyzeSnapshot (target.withSource output) (renderCanonical := false)
-    (validator := true) (cancel? := cancel?)
+  let some header ← Imports.parseHeaderModel normalized |
+    return .ok none
+  let output :=
+    LosslessSource.denormalize
+      (Imports.organize header normalized target.config.format.importLayout
+        target.config.format.importGroups)
+      lineEndings
+  if output == target.source then
+    return .ok none
+  let validation ←
+    run.analyzeSnapshot (target.withSource output) (renderCanonical := false) (validator := true)
+        (cancel? := cancel?)
   match validation.result? with
   | none =>
-    let detail := if validation.diagnostics.isEmpty then "the organized header did not elaborate"
+    let detail :=
+      if validation.diagnostics.isEmpty then "the organized header did not elaborate"
       else String.intercalate "; " validation.diagnostics.toList
     return .error s!"organize imports was refused: {detail}"
-  | some _ => return .ok (some output)
+  | some _ =>
+    return .ok (some output)
 
 structure OrganizeRequest where
   root : FilePath
@@ -2018,8 +2175,9 @@ private def organizeHarvestFindings : IO Bool :=
 distinct path per slot, so the shared state they touch (`next`, `outcomes`, the setup refs
 inside `exactRun`) is either atomic or immutable after `primeSetups`. -/
 private partial def organizeWorker (exactRun : ExactRun)
-    (work : Array (SourceSnapshot × Option String ×
-      Option (Cache.Decision.ElabVerdict × SemanticAnalysis)))
+    (work :
+      Array
+        (SourceSnapshot × Option String × Option (Cache.Decision.ElabVerdict × SemanticAnalysis)))
     (next : IO.Ref Nat) (outcomes : IO.Ref (Array (Option OrganizeOutcome))) : IO Unit := do
   let index ← next.modifyGet fun n => (n, n + 1)
   if h : index < work.size then
@@ -2033,47 +2191,60 @@ private partial def organizeWorker (exactRun : ExactRun)
         | some (.rejected, verdict) =>
           -- The stored verdict *is* the validation this run would have run — same bytes, same
           -- closure — and its diagnostics are the report. No child is spawned.
-          outcomes.modify (·.set! index (some {
-            report := baseReport snapshot "rejected" #[] verdict.diagnostics }))
+          outcomes.modify
+              (·.set! index
+                (some { report := baseReport snapshot "rejected" #[] verdict.diagnostics }))
         | some (.elaborates, _) =>
           match ← publishAtomic snapshot.path snapshot.source output with
           | .error message =>
-            outcomes.modify (·.set! index (some {
-              report := baseReport snapshot "rejected" #[] #[message] }))
+            outcomes.modify
+                (·.set! index (some { report := baseReport snapshot "rejected" #[] #[message] }))
           | .ok _ =>
-            outcomes.modify (·.set! index (some {
-              report := { (baseReport snapshot "organized") with
-                formatted := some output, written := true } }))
+            outcomes.modify
+                (·.set! index
+                  (some
+                    {
+                      report :=
+                        { (baseReport snapshot "organized") with
+                          formatted := some output, written := true } }))
         | none =>
           let candidate := snapshot.withSource output
-          let validation ← exactRun.analyzeSnapshot candidate (renderCanonical := false)
-            (validator := true) (captureSemantic := ← organizeHarvestFindings)
+          let validation ←
+            exactRun.analyzeSnapshot candidate (renderCanonical := false) (validator := true)
+                (captureSemantic := ← organizeHarvestFindings)
           match validation.result? with
           | none =>
             -- An unbuilt dependency is not a verdict about the bytes — report it and store
             -- nothing, so the next run validates again rather than serving a stored rejection.
             let unbuilt := (unbuiltDependency? validation.diagnostics).isSome
-            outcomes.modify (·.set! index (some {
-              report := baseReport snapshot (if unbuilt then "unbuilt" else "rejected") #[]
-                validation.diagnostics
-              validation? := if unbuilt then none else some validation }))
+            outcomes.modify
+                (·.set! index
+                  (some
+                    { report :=
+                        baseReport snapshot (if unbuilt then "unbuilt" else "rejected") #[]
+                          validation.diagnostics
+                      validation? := if unbuilt then none else some validation }))
           | some _ =>
             match ← publishAtomic snapshot.path snapshot.source output with
             | .error message =>
-              outcomes.modify (·.set! index (some {
-                report := baseReport snapshot "rejected" #[] #[message] }))
+              outcomes.modify
+                  (·.set! index (some { report := baseReport snapshot "rejected" #[] #[message] }))
             | .ok _ =>
-              outcomes.modify (·.set! index (some {
-                report := { (baseReport snapshot "organized") with
-                  formatted := some output, written := true }
-                validation? := some validation }))
+              outcomes.modify
+                  (·.set! index
+                    (some
+                      { report :=
+                          { (baseReport snapshot "organized") with
+                            formatted := some output, written := true }
+                        validation? := some validation }))
       catch error =>
         let message := toString error
-        let report : FileReport := {
-          path := snapshot.relativePath, status := "infrastructure-failure",
-          diagnostics := #[message] }
-        outcomes.modify (·.set! index (some {
-          report, failure? := some s!"{snapshot.relativePath}: {message}" }))
+        let report : FileReport :=
+          { path := snapshot.relativePath, status := "infrastructure-failure",
+            diagnostics := #[message] }
+        outcomes.modify
+            (·.set! index
+              (some { report, failure? := some s!"{snapshot.relativePath}: {message}" }))
     organizeWorker exactRun work next outcomes
 
 /-- The opt-in "organize imports" capability, exposing no graph
@@ -2088,91 +2259,109 @@ trusted-artifact discipline `fix` uses (`fixFile`) — so an organized header th
 is rejected, never published. A clean project never constructs the validator. -/
 def organize (request : OrganizeRequest) : IO RunReport := do
   let root ← IO.FS.realPath request.root
-  let configPath? := request.configPath?.map fun path =>
-    if path.isAbsolute then path else root / path
+  let configPath? :=
+    request.configPath?.map fun path => if path.isAbsolute then path else root / path
   let discovery ← Discovery.run root configPath?
-  for notice in discovery.fallback.notices do IO.eprintln s!"lean-fmt: {notice}"
+  for notice in discovery.fallback.notices do
+    IO.eprintln s!"lean-fmt: {notice}"
   let project ← Project.load root discovery request.files
   let snapshots := project.targets
   -- The canonical header rewrite is pure (no graph): compute every candidate first, and only
   -- pay for the validator if some file actually changes. `Imports.organizeCandidate?` is the one
   -- definition — the cache's live set computes the same candidates when it prunes.
-  let candidates ← snapshots.mapM fun snapshot => Imports.organizeCandidate? snapshot.source
-    snapshot.config.format.importLayout snapshot.config.format.importGroups
+  let candidates ←
+    snapshots.mapM fun snapshot =>
+        Imports.organizeCandidate? snapshot.source snapshot.config.format.importLayout
+          snapshot.config.format.importGroups
   let anyChange := candidates.any Option.isSome
   if request.check || !anyChange then
-    let files := (snapshots.zip candidates).map fun (snapshot, candidate?) =>
-      baseReport snapshot (if candidate?.isSome then "would-organize" else "clean")
+    let files :=
+      (snapshots.zip candidates).map fun (snapshot, candidate?) =>
+        baseReport snapshot (if candidate?.isSome then "would-organize" else "clean")
     return summarize "organize" files
   let workers ← resolveWorkers request.workers
   recordCount "workers" workers
   let epochStarted ← IO.monoNanosNow
-  let cache? ← if request.cache then
-    ResultCache.open? project.workspace (← IO.appPath) (projectClosureMode project)
-  else
-    pure none
+  let cache? ←
+    if request.cache then
+      ResultCache.open? project.workspace (← IO.appPath) (projectClosureMode project)
+    else
+      pure none
   recordPhase "cache_epoch" epochStarted (← IO.monoNanosNow)
   -- The verdict probe, before any dispatch: a stored verdict *is* the validation this run would
   -- perform (same candidate bytes, same closure), so a hit makes the worker pool idle for that
   -- file. `none` everywhere means validate — a candidate never seen, or one whose last outcome
   -- was unbuilt, which is never stored.
-  let probes ← match cache? with
-    | none => pure (Array.replicate snapshots.size
-      (none : Option (Cache.Decision.ElabVerdict × SemanticAnalysis)))
-    | some cache => do
-      let probing := ((snapshots.zip candidates).zipIdx).filterMap
-        fun ((snapshot, candidate?), index) =>
-          candidate?.map fun output => (index, snapshot.withSource output)
-      let found ← withPhase "cache_lookup" <| cache.probeVerdicts project (probing.map (·.2))
-      let mut perIndex := Array.replicate snapshots.size
-        (none : Option (Cache.Decision.ElabVerdict × SemanticAnalysis))
-      for ((index, _), verdict?) in probing.zip found do
-        perIndex := perIndex.set! index verdict?
-      recordCount "verdict_hits" (found.countP Option.isSome)
-      pure perIndex
+  let probes ←
+    match cache? with
+    | none =>
+      pure
+          (Array.replicate snapshots.size
+            (none : Option (Cache.Decision.ElabVerdict × SemanticAnalysis)))
+    | some cache =>
+      do
+        let probing :=
+          ((snapshots.zip candidates).zipIdx).filterMap fun ((snapshot, candidate?), index) =>
+            candidate?.map fun output => (index, snapshot.withSource output)
+        let found ← withPhase "cache_lookup" <| cache.probeVerdicts project (probing.map (·.2))
+        let mut perIndex :=
+          Array.replicate snapshots.size
+            (none : Option (Cache.Decision.ElabVerdict × SemanticAnalysis))
+        for ((index, _), verdict?) in probing.zip found do
+          perIndex := perIndex.set! index verdict?
+        recordCount "verdict_hits" (found.countP Option.isSome)
+        pure perIndex
   withExactRun project workers (action := fun exactRun => do
-    -- Only a snapshot with a candidate rewrite and no stored verdict is validated, so only
-    -- those reach the frontend.
-    exactRun.primeSetups <| ((snapshots.zip candidates).zip probes).filterMap
-      fun ((snapshot, candidate?), probe?) =>
-        if candidate?.isSome && probe?.isNone then some snapshot else none
-    let work := ((snapshots.zip candidates).zip probes).map
-      fun ((snapshot, candidate?), probe?) => (snapshot, candidate?, probe?)
-    let outcomes ← IO.mkRef (Array.replicate work.size (none : Option OrganizeOutcome))
-    let next ← IO.mkRef 0
-    if workers > 1 && work.size > 1 then
-      -- The batch pattern (`execute`): dedicated priority is required because workers block on
-      -- child waits, and pooled blocking tasks can starve a small pool.
-      let tasks ← (List.range (min workers work.size)).mapM fun _ =>
-        IO.asTask (organizeWorker exactRun work next outcomes) Task.Priority.dedicated
-      let mut firstError? : Option IO.Error := none
-      for task in tasks do
-        match ← IO.wait task with
-        | .ok _ => pure ()
-        | .error error => if firstError?.isNone then firstError? := some error
-      if let some error := firstError? then throw error
-    else
-      organizeWorker exactRun work next outcomes
-    let mut files := #[]
-    let mut failures := #[]
-    let mut validations : Array (SourceSnapshot × SemanticAnalysis) := #[]
-    for ((snapshot, candidate?, _), outcome?) in work.zip (← outcomes.get) do
-      let some outcome := outcome?
-        | throw <| IO.userError "an organize worker finished without reporting its target"
-      files := files.push outcome.report
-      if let some failure := outcome.failure? then
-        failures := failures.push failure
-      match candidate?, outcome.validation? with
-      | some output, some validation =>
-        validations := validations.push (snapshot.withSource output, validation)
-      | _, _ => pure ()
-    -- Every validation becomes a stored verdict: a published file's entry is its live analysis
-    -- for the next `check`/`format`, a rejected candidate's broken entry is the rejection the
-    -- next probe serves. Unbuilt outcomes are excluded upstream (`OrganizeOutcome.validation?`).
-    if let some cache := cache? then
-      withPhase "cache_write" <| cache.writeAll project
-        (validations.map (·.1)) (validations.map (some ·.2)) (prune := request.files.isEmpty)
-    return summarize "organize" files failures)
+      -- Only a snapshot with a candidate rewrite and no stored verdict is validated, so only
+      -- those reach the frontend.
+      exactRun.primeSetups <|
+          ((snapshots.zip candidates).zip probes).filterMap fun ((snapshot, candidate?), probe?) =>
+            if candidate?.isSome && probe?.isNone then some snapshot else none
+      let work :=
+        ((snapshots.zip candidates).zip probes).map fun ((snapshot, candidate?), probe?) =>
+          (snapshot, candidate?, probe?)
+      let outcomes ← IO.mkRef (Array.replicate work.size (none : Option OrganizeOutcome))
+      let next ← IO.mkRef 0
+      if workers > 1 && work.size > 1 then
+        -- The batch pattern (`execute`): dedicated priority is required because workers block on
+        -- child waits, and pooled blocking tasks can starve a small pool.
+        let tasks ←
+          (List.range (min workers work.size)).mapM fun _ =>
+              IO.asTask (organizeWorker exactRun work next outcomes) Task.Priority.dedicated
+        let mut firstError? : Option IO.Error := none
+        for task in tasks do
+          match ← IO.wait task with
+          | .ok _ =>
+            pure ()
+          | .error error =>
+            if firstError?.isNone then
+              firstError? := some error
+        if let some error := firstError? then
+          throw error
+      else
+        organizeWorker exactRun work next outcomes
+      let mut files := #[]
+      let mut failures := #[]
+      let mut validations : Array (SourceSnapshot × SemanticAnalysis) := #[]
+      for ((snapshot, candidate?, _), outcome?) in work.zip (← outcomes.get)do
+        let some outcome :=
+          outcome? | throw <| IO.userError "an organize worker finished without reporting its target"
+        files := files.push outcome.report
+        if let some failure := outcome.failure? then
+          failures := failures.push failure
+        match candidate?, outcome.validation? with
+        | some output, some validation =>
+          validations := validations.push (snapshot.withSource output, validation)
+        | _, _ =>
+          pure ()
+      -- Every validation becomes a stored verdict: a published file's entry is its live analysis
+      -- for the next `check`/`format`, a rejected candidate's broken entry is the rejection the
+      -- next probe serves. Unbuilt outcomes are excluded upstream (`OrganizeOutcome.validation?`).
+      if let some cache := cache? then
+        withPhase "cache_write" <|
+            cache.writeAll project (validations.map (·.1)) (validations.map (some ·.2)) (prune :=
+              request.files.isEmpty)
+      return summarize "organize" files failures)
 
 /-- The whole analysis side of `__analyze-exact`: read the setup and source, run the exact
 frontend at the capture mode, and return the encoded envelope. Transport — stdout for a direct
@@ -2184,13 +2373,15 @@ private unsafe def analyzeChildEnvelope (setupPath snapshotPath displayPath : St
   -- path for every module in the closure, so on a deep closure the JSON is large and parsing it is
   -- not free; the remainder outside this bracket is process spawn and binary load, which the child
   -- cannot measure from inside itself.
-  let (setup, source) ← withPhase "child_setup" do
-    let .ok setupJson := Lean.Json.parse (← IO.FS.readFile setupPath)
-      | throw <| IO.userError "invalid ModuleSetup JSON"
-    let .ok (setup : Lean.ModuleSetup) := Lean.fromJson? setupJson
-      | throw <| IO.userError "invalid ModuleSetup payload"
-    let source ← IO.FS.readFile snapshotPath
-    pure (setup, source)
+  let (setup, source) ←
+    withPhase "child_setup" do
+        let .ok setupJson :=
+          Lean.Json.parse
+            (← IO.FS.readFile setupPath) | throw <| IO.userError "invalid ModuleSetup JSON"
+        let .ok (setup : Lean.ModuleSetup) :=
+          Lean.fromJson? setupJson | throw <| IO.userError "invalid ModuleSetup payload"
+        let source ← IO.FS.readFile snapshotPath
+        pure (setup, source)
   -- "0" none, "1" semantic diagnostics, "2" diagnostics plus the info-tree occurrence
   -- fold, "3" test/audit-only comment ownership, "draft[:WIDTH]" the deliberately unvalidated test
   -- hook, "4[:WIDTH]" the structurally/idempotently admitted layout at a bare margin, and
@@ -2205,45 +2396,53 @@ private unsafe def analyzeChildEnvelope (setupPath snapshotPath displayPath : St
   -- records go to the profile channel (stderr, or the file `LEAN_FMT_PROFILE_OUT` names — the
   -- batch parent points it at the target's err file and forwards the lines); the envelope travels
   -- alone.
-  let validatedFormat? ← match captureMode.splitOn ":" with
-    | ["4"] => pure (some ({} : FormatConfig))
-    | ["4", width] => pure (width.toNat?.map fun width => { lineWidth := width })
+  let validatedFormat? ←
+    match captureMode.splitOn ":" with
+    | ["4"] =>
+      pure (some ({ } : FormatConfig))
+    | ["4", width] =>
+      pure (width.toNat?.map fun width => { lineWidth := width })
     | _ =>
-      if captureMode.startsWith "4j" then do
-        let .ok json := Lean.Json.parse (captureMode.drop 2).copy
-          | throw <| IO.userError "invalid FormatConfig JSON in capture mode"
-        let .ok (format : FormatConfig) := Lean.fromJson? json
-          | throw <| IO.userError "invalid FormatConfig payload in capture mode"
-        pure (some format)
-      else pure none
-  let draftWidth? := match captureMode.splitOn ":" with
+      if captureMode.startsWith "4j" then
+        do
+          let .ok json :=
+            Lean.Json.parse
+              (captureMode.drop
+                  2).copy | throw <| IO.userError "invalid FormatConfig JSON in capture mode"
+          let .ok (format : FormatConfig) :=
+            Lean.fromJson?
+              json | throw <| IO.userError "invalid FormatConfig payload in capture mode"
+          pure (some format)
+      else
+        pure none
+  let draftWidth? :=
+    match captureMode.splitOn ":" with
     | ["draft"] => some 100
     | ["draft", width] => width.toNat?
     | _ => none
-  let format := match validatedFormat?, draftWidth? with
+  let format :=
+    match validatedFormat?, draftWidth? with
     | some validated, _ => validated
     | none, some width => { lineWidth := width }
-    | none, none => {}
-  let envelope ← withPhase "child_analyze" <|
-    analyzeExact setup source displayPath
-      (captureSemantic := captureMode == "1" || captureMode == "2")
-      (captureOccurrences := captureMode == "2")
-      (captureComments := captureMode == "3")
-      (captureFormatDraft := draftWidth?.isSome)
-      (validateFormatDraft := validatedFormat?.isSome)
-      (format := format)
+    | none, none => { }
+  let envelope ←
+    withPhase "child_analyze" <|
+        analyzeExact setup source displayPath (captureSemantic :=
+          captureMode == "1" || captureMode == "2") (captureOccurrences := captureMode == "2")
+          (captureComments := captureMode == "3") (captureFormatDraft := draftWidth?.isSome)
+          (validateFormatDraft := validatedFormat?.isSome) (format := format)
   withPhase "child_encode" do
-    -- `IO.lazyPure` for the reason `profiledPositions` documents: a plain `let` of a pure value
-    -- can be floated out of the action's closure, and then the bracket times nothing. The
-    -- `utf8ByteSize` check below is not sufficient on its own — it forces the value, but not
-    -- necessarily *here*.
-    let encoded ← IO.lazyPure fun _ => (Lean.toJson envelope).compress
-    -- `utf8ByteSize` is O(1) and forces the encoding inside the phase rather than at the
-    -- write below, where it would be attributed to nothing. An empty encoding is also not a
-    -- thing a real envelope produces, so the check is worth its line independent of the timing.
-    if encoded.utf8ByteSize == 0 then
-      throw <| IO.userError "exact frontend produced an empty analysis encoding"
-    pure encoded
+      -- `IO.lazyPure` for the reason `profiledPositions` documents: a plain `let` of a pure value
+      -- can be floated out of the action's closure, and then the bracket times nothing. The
+      -- `utf8ByteSize` check below is not sufficient on its own — it forces the value, but not
+      -- necessarily *here*.
+      let encoded ← IO.lazyPure fun _ => (Lean.toJson envelope).compress
+      -- `utf8ByteSize` is O(1) and forces the encoding inside the phase rather than at the
+      -- write below, where it would be attributed to nothing. An empty encoding is also not a
+      -- thing a real envelope produces, so the check is worth its line independent of the timing.
+      if encoded.utf8ByteSize == 0 then
+        throw <| IO.userError "exact frontend produced an empty analysis encoding"
+      pure encoded
 
 private unsafe def runAnalyzeChild (args : List String) : IO UInt32 := do
   -- The capture mode is a trailing optional argument: a direct three-argument invocation omits it
@@ -2254,32 +2453,37 @@ private unsafe def runAnalyzeChild (args : List String) : IO UInt32 := do
   -- to the *parent* is what exhausted them on a 1400-target run. A failure lands in the
   -- diagnostics file so the parent's report can name it; an uncaught exception with null stderr
   -- would be a status with no message.
-  let (setupPath, snapshotPath, displayPath, captureMode, transport?) ← match args with
+  let (setupPath, snapshotPath, displayPath, captureMode, transport?) ←
+    match args with
     | [setupPath, snapshotPath, displayPath] =>
       pure (setupPath, snapshotPath, displayPath, "0", none)
     | [setupPath, snapshotPath, displayPath, captureMode] =>
       pure (setupPath, snapshotPath, displayPath, captureMode, none)
     | [setupPath, snapshotPath, displayPath, captureMode, outPath, errPath] =>
       pure (setupPath, snapshotPath, displayPath, captureMode, some (outPath, errPath))
-    | _ => return 2
+    | _ =>
+      return 2
   try
     let encoded ← analyzeChildEnvelope setupPath snapshotPath displayPath captureMode
     match transport? with
-    | some (outPath, _) => IO.FS.writeFile outPath encoded
-    | none => IO.println encoded
+    | some (outPath, _) =>
+      IO.FS.writeFile outPath encoded
+    | none =>
+      IO.println encoded
     return 0
   catch error =>
     match transport? with
     | some (_, errPath) =>
       IO.FS.writeFile errPath s!"{error}\n"
       return 1
-    | none => throw error
+    | none =>
+      throw error
 
 private unsafe def runExtractChild (args : List String) : IO UInt32 := do
-  let [moduleName, moduleFile, output] := args
-    | return 2
+  let [moduleName, moduleFile, output] := args | return 2
   match ← compilerArtifact? moduleName.toName moduleFile with
-  | some artifact => writeArtifactAtomic output artifact
+  | some artifact =>
+    writeArtifactAtomic output artifact
   | none =>
     if let some parent := (output : FilePath).parent then
       IO.FS.createDirAll parent
@@ -2287,14 +2491,10 @@ private unsafe def runExtractChild (args : List String) : IO UInt32 := do
   return 0
 
 private unsafe def runValidateCandidateChild (args : List String) : IO UInt32 := do
-  let [setupPath, sourcePath, candidatePath, displayPath, width] := args
-    | return 2
-  let some width := width.toNat?
-    | return 2
-  let .ok setupJson := Lean.Json.parse (← IO.FS.readFile setupPath)
-    | return 2
-  let .ok (setup : Lean.ModuleSetup) := Lean.fromJson? setupJson
-    | return 2
+  let [setupPath, sourcePath, candidatePath, displayPath, width] := args | return 2
+  let some width := width.toNat? | return 2
+  let .ok setupJson := Lean.Json.parse (← IO.FS.readFile setupPath) | return 2
+  let .ok (setup : Lean.ModuleSetup) := Lean.fromJson? setupJson | return 2
   let source ← IO.FS.readFile sourcePath
   let candidate ← IO.FS.readFile candidatePath
   let result ← validateCandidateExact setup source candidate displayPath { lineWidth := width }
@@ -2302,8 +2502,7 @@ private unsafe def runValidateCandidateChild (args : List String) : IO UInt32 :=
   return 0
 
 private unsafe def runInspectArtifactChild (args : List String) : IO UInt32 := do
-  let [moduleName, moduleFile, sourcePath] := args
-    | return 2
+  let [moduleName, moduleFile, sourcePath] := args | return 2
   let source ← IO.FS.readFile sourcePath
   match ← compilerArtifact? moduleName.toName moduleFile with
   | some artifact =>
@@ -2311,12 +2510,12 @@ private unsafe def runInspectArtifactChild (args : List String) : IO UInt32 := d
       IO.println "ready"
     else
       IO.println "missing"
-  | none => IO.println "missing"
+  | none =>
+    IO.println "missing"
   return 0
 
 private unsafe def measureCacheEpoch (args : List String) : IO UInt32 := do
-  let [root] := args
-    | return 2
+  let [root] := args | return 2
   let root ← IO.FS.realPath root
   let workspaceStarted ← IO.monoNanosNow
   let workspace ← Project.loadWorkspace root
@@ -2356,11 +2555,10 @@ structure ConfigReport where
   selected : Bool
   deriving Lean.ToJson
 
-def describeConfig (requestedRoot : FilePath) (configPath? : Option FilePath)
-    (argument : String) : IO ConfigReport := do
+def describeConfig (requestedRoot : FilePath) (configPath? : Option FilePath) (argument : String) :
+    IO ConfigReport := do
   let root ← IO.FS.realPath requestedRoot
-  let configPath? := configPath?.map fun path =>
-    if path.isAbsolute then path else root / path
+  let configPath? := configPath?.map fun path => if path.isAbsolute then path else root / path
   -- Pre-check by the caller's own argument, as the selection surface does
   -- (`CLAUDE.md`: path errors name the caller's own argument).
   unless ← System.FilePath.pathExists (System.FilePath.mk argument) do
@@ -2374,28 +2572,28 @@ def describeConfig (requestedRoot : FilePath) (configPath? : Option FilePath)
   let discovery ← Discovery.run root configPath?
   recordDuration "discovery" ((← IO.monoNanosNow) - discoveryStarted)
   let (key, config) := discovery.governing relative
-  let outsideRoot := absolute != root && !absolute.toString.startsWith
-    (root.toString ++ System.FilePath.pathSeparator.toString)
-  let insideLake := relative == ".lake" || relative.startsWith ".lake/" ||
-    relative.startsWith ".lake\\"
+  let outsideRoot :=
+    absolute != root &&
+      !absolute.toString.startsWith (root.toString ++ System.FilePath.pathSeparator.toString)
+  let insideLake :=
+    relative == ".lake" || relative.startsWith ".lake/" || relative.startsWith ".lake\\"
   let notLean := absolute.extension != some "lean"
   let gate :=
     if outsideRoot || insideLake || notLean then Discovery.Gate.floor
     else discovery.explain relative
   return {
-    path := absolute.toString
-    relativePath := relative
-    configFile :=
-      if key.isEmpty && config.origins.isEmpty then "(none — built-in defaults)"
-      else if key.isEmpty then "(project root)" else key
-    contributingFiles := config.contributingFiles
-    ignoreSources := if config.respectGitignore then discovery.ignoreSources else #[]
-    settings := config.describe.map fun (key, value, origin) => { key, value, origin }
-    notices := config.notices
-    gate := gate.number
-    gateDescription := gate.describe
-    selected := gate == .selected
-  }
+      path := absolute.toString
+      relativePath := relative
+      configFile :=
+        if key.isEmpty && config.origins.isEmpty then "(none — built-in defaults)"
+        else if key.isEmpty then "(project root)" else key
+      contributingFiles := config.contributingFiles
+      ignoreSources := if config.respectGitignore then discovery.ignoreSources else #[]
+      settings := config.describe.map fun (key, value, origin) => { key, value, origin }
+      notices := config.notices
+      gate := gate.number
+      gateDescription := gate.describe
+      selected := gate == .selected }
 
 structure CleanReport where
   root : String
@@ -2406,7 +2604,8 @@ def clean (requestedRoot : FilePath) : IO CleanReport := do
   let root ← IO.FS.realPath requestedRoot
   let cache := root / ".lean-fmt-cache"
   let removed ← cache.pathExists
-  if removed then IO.FS.removeDirAll cache
+  if removed then
+    IO.FS.removeDirAll cache
   return { root := root.toString, removed }
 
 structure CompilerStatusRequest where
@@ -2421,22 +2620,20 @@ structure CompilerSetupReport where
   guidance : Array String
   deriving Lean.ToJson
 
-def compilerSetupReport : CompilerSetupReport := {
-  schema := "lean-fmt.compiler-setup.v1"
-  package := "lean-fmt"
-  plugin := "LeanFmtCompilerPlugin:shared"
-  facet := "leanFmtArtifact"
-  toolchain := s!"Lean {Lean.versionString} ({Lean.githash})"
-  guidance := #[
-    "the plugin is optional: without it a syntax-tier rule runs the exact frontend and reports the same finding",
-    "add lean-fmt as a Lake dependency using the source and revision you trust",
-    "set plugins := #[`@«lean-fmt»/LeanFmtCompilerPlugin:shared] on the package, not on each lean_lib",
-    "the guillemets are required: lean-fmt is not a legal Lean identifier",
-    "for lake lint, set lintDriver := \"«lean-fmt»/«lean-fmt»\" and lintDriverArgs := #[\"check\"]",
-    "run `lean-fmt compiler build` to extract every workspace module's artifact in one lake invocation",
-    "editing the plugin re-elaborates every module that loads it; that trace edge is what makes the artifact trustworthy"
-  ]
-}
+def compilerSetupReport : CompilerSetupReport :=
+  { schema := "lean-fmt.compiler-setup.v1"
+    package := "lean-fmt"
+    plugin := "LeanFmtCompilerPlugin:shared"
+    facet := "leanFmtArtifact"
+    toolchain := s!"Lean {Lean.versionString} ({Lean.githash})"
+    guidance :=
+      #["the plugin is optional: without it a syntax-tier rule runs the exact frontend and reports the same finding",
+        "add lean-fmt as a Lake dependency using the source and revision you trust",
+        "set plugins := #[`@«lean-fmt»/LeanFmtCompilerPlugin:shared] on the package, not on each lean_lib",
+        "the guillemets are required: lean-fmt is not a legal Lean identifier",
+        "for lake lint, set lintDriver := \"«lean-fmt»/«lean-fmt»\" and lintDriverArgs := #[\"check\"]",
+        "run `lean-fmt compiler build` to extract every workspace module's artifact in one lake invocation",
+        "editing the plugin re-elaborates every module that loads it; that trace edge is what makes the artifact trustworthy"] }
 
 structure CompilerModuleStatus where
   path : String
@@ -2459,22 +2656,26 @@ now asks once for the whole selection. The child is unchanged: currency says the
 up to date, and only reading it says whether the formatter's record is in there. -/
 private def inspectCompilerArtifact (workspace : Lake.Workspace) (application : FilePath)
     (snapshot : SourceSnapshot) (current : Bool) : IO String := do
-  let some mod := snapshot.module?
-    | return "unbuilt"
+  let some mod := snapshot.module? | return "unbuilt"
   unless current do
     return "unbuilt"
-  let output ← runChild {
-    cmd := application.toString
-    args := #["__inspect-artifact", mod.name.toString,
-      mod.oleanFile.toString, snapshot.path.toString]
-    env := workspace.augmentedEnvVars.push ⟨"LEAN_NUM_THREADS", some "1"⟩
-  }
+  let output ←
+    runChild
+        { cmd := application.toString
+          args :=
+            #["__inspect-artifact", mod.name.toString, mod.oleanFile.toString,
+              snapshot.path.toString]
+          env := workspace.augmentedEnvVars.push ⟨"LEAN_NUM_THREADS", some "1"⟩ }
   unless output.exitCode == 0 do
-    throw <| IO.userError s!"compiler status child failed for {snapshot.relativePath}: \
+    throw <|
+        IO.userError
+          s!"compiler status child failed for {snapshot.relativePath}: \
       {output.stderr.trimAscii}"
   let status := output.stdout.trimAscii.copy
   unless status == "ready" || status == "missing" do
-    throw <| IO.userError s!"compiler status child returned invalid output for \
+    throw <|
+        IO.userError
+          s!"compiler status child returned invalid output for \
       {snapshot.relativePath}"
   return status
 
@@ -2485,26 +2686,28 @@ def compilerStatus (request : CompilerStatusRequest) : IO CompilerStatusReport :
   let facts ← Project.graph project.workspace project.targets (demand := { status := true })
   let mut statuses := #[]
   for (snapshot, resolved) in project.targets.zip facts.targets do
-    let some mod := snapshot.module?
-      | continue
-    let status ← inspectCompilerArtifact project.workspace application snapshot
-      (resolved.current? == some true)
-    statuses := statuses.push {
-      path := snapshot.relativePath
-      module := mod.name.toString
-      status
-    }
-  let ready := statuses.foldl (fun total item => if item.status == "ready" then total + 1 else total) 0
-  let missing := statuses.foldl (fun total item => if item.status == "missing" then total + 1 else total) 0
-  let unbuilt := statuses.foldl (fun total item => if item.status == "unbuilt" then total + 1 else total) 0
+    let some mod := snapshot.module? | continue
+    let status ←
+      inspectCompilerArtifact project.workspace application snapshot
+          (resolved.current? == some true)
+    statuses :=
+      statuses.push
+        { path := snapshot.relativePath
+          module := mod.name.toString
+          status }
+  let ready :=
+    statuses.foldl (fun total item => if item.status == "ready" then total + 1 else total) 0
+  let missing :=
+    statuses.foldl (fun total item => if item.status == "missing" then total + 1 else total) 0
+  let unbuilt :=
+    statuses.foldl (fun total item => if item.status == "unbuilt" then total + 1 else total) 0
   return {
-    root := root.toString
-    toolchain := s!"Lean {Lean.versionString} ({Lean.githash})"
-    modules := statuses
-    ready
-    missing
-    unbuilt
-  }
+      root := root.toString
+      toolchain := s!"Lean {Lean.versionString} ({Lean.githash})"
+      modules := statuses
+      ready
+      missing
+      unbuilt }
 
 /-- Build every workspace module's `leanFmtArtifact` sidecar in one `lake build` invocation.
 
@@ -2517,10 +2720,11 @@ def compilerBuild (request : CompilerStatusRequest) : IO UInt32 := do
   let root ← IO.FS.realPath request.root
   let project ← Project.loadAll root
   let facetName := `module.leanFmtArtifact
-  let some config := project.workspace.findModuleFacetConfig? facetName
-    | throw <| IO.userError
-        "the leanFmtArtifact facet is not registered in this workspace; install the plugin first        (lean-fmt compiler setup)"
-  let mut seen : Std.HashSet Lean.Name := {}
+  let some config := project.workspace.findModuleFacetConfig? facetName |
+    throw <|
+        IO.userError
+          "the leanFmtArtifact facet is not registered in this workspace; install the plugin first        (lean-fmt compiler setup)"
+  let mut seen : Std.HashSet Lean.Name := { }
   let mut modules := #[]
   for snapshot in project.targets do
     if let some mod := snapshot.module? then
@@ -2534,9 +2738,10 @@ def compilerBuild (request : CompilerStatusRequest) : IO UInt32 := do
   -- Shelling out left a window where the two disagreed about the toolchain, and `officialArtifacts`
   -- already reaches the same facet the same way.
   try
-    discard <| project.workspace.runBuild do
-      let jobs ← modules.mapM (config.run (β := Lake.FacetOut facetName) ·)
-      return Lake.Job.collectArray jobs "lean-fmt artifact facets"
+    discard <|
+        project.workspace.runBuild do
+          let jobs ← modules.mapM (config.run (β := Lake.FacetOut facetName) ·)
+          return Lake.Job.collectArray jobs "lean-fmt artifact facets"
     return 0
   catch error =>
     IO.eprintln s!"lean-fmt: {error}"

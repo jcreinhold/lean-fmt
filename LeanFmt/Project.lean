@@ -56,8 +56,7 @@ private inductive Provenance where
   | rewritten
   deriving BEq
 
-structure SourceTarget where
-  private mk ::
+structure SourceTarget where private mk ::
   module? : Option Lake.Module
   path : FilePath
   relativePath : String
@@ -89,8 +88,7 @@ being in the build closure does not make its contents reachable — Lake draws t
 itself, as `reachable := importAll || imp.isExported` in `fetchTransImportArts`.
 
 Both come from one traversal because both walk the same `mod.input` nodes. -/
-structure ImportClosures where
-  private mk ::
+structure ImportClosures where private mk ::
   /-- Everything the module transitively imports. `none` if the graph could not resolve it. -/
   build : Option (Array Lean.Name) := none
   /-- Everything a dependent sees through it. `none` if the graph could not resolve it. -/
@@ -98,11 +96,10 @@ structure ImportClosures where
   deriving Inhabited
 
 private structure ClosureMemo where
-  asked : Std.HashSet Lean.Name := {}
-  resolved : Std.HashMap Lean.Name ImportClosures := {}
+  asked : Std.HashSet Lean.Name := { }
+  resolved : Std.HashMap Lean.Name ImportClosures := { }
 
-structure Snapshot where
-  private mk ::
+structure Snapshot where private mk ::
   root : FilePath
   workspace : Lake.Workspace
   targets : Array SourceTarget
@@ -120,24 +117,30 @@ private def expectedVersion (pin : String) : String :=
   if version.startsWith "v" then (version.drop 1).toString else version
 
 private def targetLeanInstall (root : FilePath) : IO Lake.LeanInstall := do
-  let sysroot ← match ← IO.getEnv "LEAN_SYSROOT" with
-    | some path => pure (FilePath.mk path)
+  let sysroot ←
+    match ← IO.getEnv "LEAN_SYSROOT" with
+    | some path =>
+      pure (FilePath.mk path)
     | none =>
       let lean := (← IO.getEnv "LEAN").getD "lean"
       if lean.trimAscii.isEmpty then
         throw <| IO.userError "target Lean discovery was disabled by an empty LEAN value"
-      let output ← IO.Process.output {
-        cmd := lean
-        args := #["--print-prefix"]
-        cwd := root
-      }
+      let output ←
+        IO.Process.output
+            { cmd := lean
+              args := #["--print-prefix"]
+              cwd := root }
       unless output.exitCode == 0 do
-        throw <| IO.userError s!"could not resolve the target Lean installation: \
+        throw <|
+            IO.userError
+              s!"could not resolve the target Lean installation: \
           {output.stderr.trimAscii}"
       pure (FilePath.mk output.stdout.trimAscii.copy)
   let install ← Lake.LeanInstall.get sysroot
   unless install.githash == Lean.githash do
-    throw <| IO.userError s!"target Lean revision {install.githash} does not match this \
+    throw <|
+        IO.userError
+          s!"target Lean revision {install.githash} does not match this \
       lean-fmt build ({Lean.githash}); install lean-fmt for the target toolchain"
   return install
 
@@ -146,7 +149,9 @@ def loadWorkspace (root : FilePath) : IO Lake.Workspace := do
   let pin ← IO.FS.readFile pinPath
   let pin := pin.trimAscii.copy
   unless expectedVersion pin == Lean.versionString do
-    throw <| IO.userError s!"target toolchain {pin} does not match this lean-fmt build \
+    throw <|
+        IO.userError
+          s!"target toolchain {pin} does not match this lean-fmt build \
       (Lean {Lean.versionString}); install lean-fmt for the target toolchain"
   let lean ← targetLeanInstall root
   let lake := Lake.LakeInstall.ofLean lean
@@ -154,9 +159,12 @@ def loadWorkspace (root : FilePath) : IO Lake.Workspace := do
     throw <| IO.userError s!"target toolchain has no Lake executable at {lake.lake}"
   let elan? ← Lake.findElanInstall?
   let lakeEnvResult ← (Lake.Env.compute lake lean elan?).toIO'
-  let lakeEnv ← match lakeEnvResult with
-    | .ok environment => pure environment
-    | .error message => throw <| IO.userError message
+  let lakeEnv ←
+    match lakeEnvResult with
+    | .ok environment =>
+      pure environment
+    | .error message =>
+      throw <| IO.userError message
   let loaded ← Lake.loadWorkspace { lakeEnv, wsDir := root } |>.toBaseIO
   loaded.getDM <| throw <| IO.userError s!"could not load Lake workspace at {root}"
 
@@ -164,14 +172,14 @@ private def relativeLess (left right : SourceTarget) : Bool :=
   left.relativePath < right.relativePath
 
 private def deduplicate (targets : Array SourceTarget) : Array SourceTarget :=
-  let (_, unique) := targets.foldl (init := (none, #[])) fun (previous, unique) target =>
-    if previous == some target.relativePath then (previous, unique)
-    else (some target.relativePath, unique.push target)
+  let (_, unique) :=
+    targets.foldl (init := (none, #[])) fun (previous, unique) target =>
+      if previous == some target.relativePath then (previous, unique)
+      else (some target.relativePath, unique.push target)
   unique
 
 private def insideRoot (root path : FilePath) : Bool :=
-  path == root || path.toString.startsWith
-    (root.toString ++ FilePath.pathSeparator.toString)
+  path == root || path.toString.startsWith (root.toString ++ FilePath.pathSeparator.toString)
 
 /-- Whether a root-relative path lies inside Lake's build directory.
 
@@ -180,8 +188,7 @@ configuration key, no `--config`, no explicit path, no `force-exclude` setting. 
 build outputs and vendored dependency sources; writing there corrupts a build the user did not ask us
 to touch. -/
 private def insideLakeDirectory (relativePath : String) : Bool :=
-  relativePath == ".lake" || relativePath.startsWith ".lake/" ||
-    relativePath.startsWith ".lake\\"
+  relativePath == ".lake" || relativePath.startsWith ".lake/" || relativePath.startsWith ".lake\\"
 
 private def snapshotTarget (workspace : Lake.Workspace) (discovery : Discovery.Discovery)
     (root path : FilePath) : IO SourceTarget := do
@@ -197,14 +204,13 @@ private def snapshotTarget (workspace : Lake.Workspace) (discovery : Discovery.D
     throw <| IO.userError s!"selected file is inside the Lake build directory: {path}"
   let relativePath := (Lake.relPathFrom root path).toString
   return {
-    module? := workspace.findModuleBySrc? path
-    path
-    relativePath
-    source := ← IO.FS.readFile path
-    provenance := .disk
-    config := discovery.configFor relativePath
-    configKey := discovery.configKeyFor relativePath
-  }
+      module? := workspace.findModuleBySrc? path
+      path
+      relativePath
+      source := ← IO.FS.readFile path
+      provenance := .disk
+      config := discovery.configFor relativePath
+      configKey := discovery.configKeyFor relativePath }
 
 /-- Resolve `.` and `..` without touching the filesystem.
 
@@ -214,10 +220,10 @@ private def snapshotTarget (workspace : Lake.Workspace) (discovery : Discovery.D
 it, keeping `insideRoot` below meaningful on a path like `<root>/../etc`. -/
 private def resolveLexically (path : FilePath) : FilePath :=
   let leadingSlash := path.toString.startsWith FilePath.pathSeparator.toString
-  let resolved := path.components.foldl (init := ([] : List String)) fun acc component =>
-    if component == "" || component == "." then acc
-    else if component == ".." then acc.dropLast
-    else acc ++ [component]
+  let resolved :=
+    path.components.foldl (init := ([] : List String)) fun acc component =>
+      if component == "" || component == "." then acc
+      else if component == ".." then acc.dropLast else acc ++ [component]
   let joined := String.intercalate FilePath.pathSeparator.toString resolved
   FilePath.mk (if leadingSlash then FilePath.pathSeparator.toString ++ joined else joined)
 
@@ -245,9 +251,9 @@ string once a caller spoke URIs. A language-server client names a document
 `file:///…`, and an error naming the decoded path would name something the client never sent. The
 gates are unchanged and there is still one implementation of them; only the noun in the message
 moves. Every path-taking caller passes `none` and reads as before. -/
-def unsavedTarget (workspace : Lake.Workspace) (discovery : Discovery.Discovery)
-    (root : FilePath) (argument : String) (source : String)
-    (spelling? : Option String := none) : IO SourceTarget := do
+def unsavedTarget (workspace : Lake.Workspace) (discovery : Discovery.Discovery) (root : FilePath)
+    (argument : String) (source : String) (spelling? : Option String := none) : IO SourceTarget :=
+  do
   let written := FilePath.mk argument
   let spelling := spelling?.getD argument
   let candidate := resolveLexically (if written.isAbsolute then written else root / written)
@@ -258,16 +264,19 @@ def unsavedTarget (workspace : Lake.Workspace) (discovery : Discovery.Discovery)
   let relativePath := (Lake.relPathFrom root candidate).toString
   if insideLakeDirectory relativePath then
     throw <| IO.userError s!"selected file is inside the Lake build directory: {spelling}"
-  let path ← if ← candidate.pathExists then IO.FS.realPath candidate else pure candidate
+  let path ←
+    if ← candidate.pathExists then
+      IO.FS.realPath candidate
+    else
+      pure candidate
   return {
-    module? := workspace.findModuleBySrc? path
-    path
-    relativePath
-    source
-    provenance := .buffer
-    config := discovery.configFor relativePath
-    configKey := discovery.configKeyFor relativePath
-  }
+      module? := workspace.findModuleBySrc? path
+      path
+      relativePath
+      source
+      provenance := .buffer
+      config := discovery.configFor relativePath
+      configKey := discovery.configKeyFor relativePath }
 
 /- Load executable Lake configuration, select every requested source exactly once, and snapshot all
 bytes before analysis. Module/standalone classification is hidden in `SourceTarget`.
@@ -280,43 +289,49 @@ An explicitly named file skips gates 2-4 unless its effective configuration sets
 never consults `include` even then — `include` answers "when I say nothing, format these", and naming
 a path is saying something. Gate 1 is not skippable and lives in `snapshotTarget`, so it covers
 both path forms. -/
-def load (requestedRoot : FilePath) (discovery : Discovery.Discovery)
-    (requested : Array FilePath) : IO Snapshot := do
+def load (requestedRoot : FilePath) (discovery : Discovery.Discovery) (requested : Array FilePath) :
+    IO Snapshot := do
   let root ← IO.FS.realPath requestedRoot
   let workspaceStarted ← IO.monoNanosNow
   let workspace ← loadWorkspace root
   let workspaceFinished ← IO.monoNanosNow
-  let paths ← if requested.isEmpty then
-    discovery.selectedSources.mapM fun relative => IO.FS.realPath (root / FilePath.mk relative)
-  else
-    requested.mapM fun path => do
-      -- Resolve against the root, but report a missing file in the caller's own terms. `realPath`
-      -- on a path that does not exist throws `noFileOrDirectory` naming its partially-resolved
-      -- buffer, which absolutizes the leading component and mangles the rest — unreadable when a
-      -- whole argument list arrives as one path (an unquoted shell variable under a non-splitting
-      -- shell). Name what the caller wrote, consistent with the outside-root / not-a-source siblings
-      -- and `Config` above.
-      let candidate := if path.isAbsolute then path else root / path
-      unless ← candidate.pathExists do
-        throw <| IO.userError s!"selected file does not exist: {path}"
-      IO.FS.realPath candidate
+  let paths ←
+    if requested.isEmpty then
+      discovery.selectedSources.mapM fun relative => IO.FS.realPath (root / FilePath.mk relative)
+    else
+      requested.mapM fun path => do
+          -- Resolve against the root, but report a missing file in the caller's own terms. `realPath`
+          -- on a path that does not exist throws `noFileOrDirectory` naming its partially-resolved
+          -- buffer, which absolutizes the leading component and mangles the rest — unreadable when a
+          -- whole argument list arrives as one path (an unquoted shell variable under a non-splitting
+          -- shell). Name what the caller wrote, consistent with the outside-root / not-a-source siblings
+          -- and `Config` above.
+          let candidate := if path.isAbsolute then path else root / path
+          unless ← candidate.pathExists do
+            throw <| IO.userError s!"selected file does not exist: {path}"
+          IO.FS.realPath candidate
   let targets ← paths.mapM (snapshotTarget workspace discovery root)
   -- `force-exclude` runs after snapshotting because it reads the file's *own* effective
   -- configuration, which is a per-file fact. A path discovery dropped is absent from `sources`, so
   -- reusing that set gives the gate-2 answer without a second matcher.
-  let targets ← if requested.isEmpty then pure targets else targets.filterM fun target => do
-    unless target.config.forceExclude do return true
-    if !discovery.sources.contains target.relativePath then return false
-    return discovery.gateFor target.relativePath != .configExclude
+  let targets ←
+    if requested.isEmpty then
+      pure targets
+    else
+      targets.filterM fun target => do
+          unless target.config.forceExclude do
+            return true
+          if !discovery.sources.contains target.relativePath then
+            return false
+          return discovery.gateFor target.relativePath != .configExclude
   let selectionFinished ← IO.monoNanosNow
   return {
-    root
-    workspace
-    targets := deduplicate (targets.qsort relativeLess)
-    workspaceLoadNanos := workspaceFinished - workspaceStarted
-    selectionNanos := selectionFinished - workspaceFinished
-    closures := ← Std.Mutex.new {}
-  }
+      root
+      workspace
+      targets := deduplicate (targets.qsort relativeLess)
+      workspaceLoadNanos := workspaceFinished - workspaceStarted
+      selectionNanos := selectionFinished - workspaceFinished
+      closures := ← Std.Mutex.new { } }
 
 /-- The Lake workspace alone, selecting nothing.
 
@@ -334,13 +349,12 @@ def loadWorkspaceOnly (requestedRoot : FilePath) : IO Snapshot := do
   let workspace ← loadWorkspace root
   let workspaceFinished ← IO.monoNanosNow
   return {
-    root
-    workspace
-    targets := #[]
-    workspaceLoadNanos := workspaceFinished - workspaceStarted
-    selectionNanos := 0
-    closures := ← Std.Mutex.new {}
-  }
+      root
+      workspace
+      targets := #[]
+      workspaceLoadNanos := workspaceFinished - workspaceStarted
+      selectionNanos := 0
+      closures := ← Std.Mutex.new { } }
 
 def loadAll (requestedRoot : FilePath) : IO Snapshot := do
   let root ← IO.FS.realPath requestedRoot
@@ -348,22 +362,23 @@ def loadAll (requestedRoot : FilePath) : IO Snapshot := do
   let workspaceStarted ← IO.monoNanosNow
   let workspace ← loadWorkspace root
   let workspaceFinished ← IO.monoNanosNow
-  let targets ← discovery.sources.mapM fun relative => do
-    snapshotTarget workspace discovery root (root / FilePath.mk relative)
+  let targets ←
+    discovery.sources.mapM fun relative => do
+        snapshotTarget workspace discovery root (root / FilePath.mk relative)
   let selectionFinished ← IO.monoNanosNow
   return {
-    root
-    workspace
-    targets := deduplicate (targets.qsort relativeLess)
-    workspaceLoadNanos := workspaceFinished - workspaceStarted
-    selectionNanos := selectionFinished - workspaceFinished
-    closures := ← Std.Mutex.new {}
-  }
+      root
+      workspace
+      targets := deduplicate (targets.qsort relativeLess)
+      workspaceLoadNanos := workspaceFinished - workspaceStarted
+      selectionNanos := selectionFinished - workspaceFinished
+      closures := ← Std.Mutex.new { } }
 
 /- Resolve one already-selected source by filesystem identity. Path normalization and root
 containment stay below the service boundary; callers receive the canonical immutable target or a
 single ordinary miss. -/
-def Snapshot.findTarget? (snapshot : Snapshot) (requested : FilePath) : IO (Option SourceTarget) := do
+def Snapshot.findTarget? (snapshot : Snapshot) (requested : FilePath) : IO (Option SourceTarget) :=
+  do
   if requested.isAbsolute then
     return none
   try
@@ -378,7 +393,8 @@ def Snapshot.findTarget? (snapshot : Snapshot) (requested : FilePath) : IO (Opti
 same module identity. The result is never `disk` again, whatever it started as — its imports are
 what the rewrite made them, not what the file says. -/
 def SourceTarget.withSource (target : SourceTarget) (source : String) : SourceTarget :=
-  { target with source, provenance := .rewritten }
+  { target with
+    source, provenance := .rewritten }
 
 /- How many Lake graph traversals this run has started.
 
@@ -390,7 +406,8 @@ brought in under a fourth phase name.
 
 The mutex is not decoration. Batch runs traverse from the calling thread, but the fallback below
 runs under each `ExactRun`'s own Lake lock, and two language-server requests hold two of those. -/
-initialize graphTraversals : Std.Mutex Nat ← Std.Mutex.new 0
+initialize graphTraversals : Std.Mutex Nat ←
+  Std.Mutex.new 0
 
 /- Report one traversal, as the run's running total.
 
@@ -399,7 +416,8 @@ consumer reading the last line gets the run's count whichever site wrote it, and
 know how many others there are. The lock is taken only when the channel is on, so a production run
 pays one `getenv` per traversal — against a traversal, which is measured in seconds. -/
 private def countTraversal : IO Unit := do
-  unless ← enabled do return
+  unless ← enabled do
+    return
   recordCount "lake_graphs" (← graphTraversals.atomically (modifyGet fun n => (n + 1, n + 1)))
 
 /- One no-build graph's value, awaited job by job so one failure stays at its own position.
@@ -425,12 +443,17 @@ private def noBuildValuePerJob? {α : Type} (workspace : Lake.Workspace)
     let jobs ← Lake.mkJobQueue
     let bctx ← Lake.mkBuildContext' workspace { noBuild := true, verbosity := .quiet } jobs
     let computation ← Lake.Workspace.startBuild bctx build
-    let job ← match ← computation.wait with
-      | .ok job _ => pure job
-      | .error _ _ => return none
+    let job ←
+      match ← computation.wait with
+      | .ok job _ =>
+        pure job
+      | .error _ _ =>
+        return none
     match ← job.wait with
-    | .ok value _ => return some value
-    | .error _ _ => return none
+    | .ok value _ =>
+      return some value
+    | .error _ _ =>
+      return none
   catch _ =>
     return none
 
@@ -445,8 +468,8 @@ Quiet alone does not silence the monitor: `Verbosity.quiet` only clears `showPro
 the #13601 fix covered `recFetchSetup` only) — is reported with an `ℹ [x/y] Replayed` caption over our
 report's stream. `outLv := .warning` withholds info captures; failures still surface, because the
 monitor replays a failed job's whole log at `.trace` regardless (`Lake/Build/Run.lean:149`). -/
-private def buildValue {α : Type} (workspace : Lake.Workspace)
-    (build : Lake.FetchM (Lake.Job α)) : IO α := do
+private def buildValue {α : Type} (workspace : Lake.Workspace) (build : Lake.FetchM (Lake.Job α)) :
+    IO α := do
   countTraversal
   workspace.runBuild (cfg := { verbosity := .quiet, outLv := .warning }) build
 
@@ -470,12 +493,15 @@ private def decodeLeanArgOption? (spelling : String) : Option Lean.LeanOption :=
   let raw := (spelling.sliceFrom (separator.next!)).toString
   let value : Lean.LeanOptionValue :=
     if raw == "true" then .ofBool true
-    else if raw == "false" then .ofBool false
-    else if raw.length ≥ 2 && raw.startsWith "\"" && raw.endsWith "\"" then
-      .ofString (raw.drop 1 |>.dropEnd 1).toString
-    else match raw.toNat? with
-      | some number => .ofNat number
-      | none => .ofString raw
+    else
+      if raw == "false" then .ofBool false
+      else
+        if raw.length ≥ 2 && raw.startsWith "\"" && raw.endsWith "\"" then
+          .ofString (raw.drop 1 |>.dropEnd 1).toString
+        else
+          match raw.toNat? with
+          | some number => .ofNat number
+          | none => .ofString raw
   return { name := name.toName, value }
 
 /- The options a module's Lake arguments set, in Lake's own order.
@@ -492,18 +518,21 @@ arguments (`-w`, `--load-dynlib`, a bare `-o`) are `lean` shell flags with no se
 they stay in the cache identity, where a difference we cannot reproduce should count as a miss. -/
 private def leanArgOptions (mod : Lake.Module) : Lean.LeanOptions :=
   let arguments := mod.weakLeanArgs ++ mod.leanArgs
-  let (options, _) := arguments.foldl (init := (({} : Lean.LeanOptions), false))
-    fun (options, pendingSeparate) argument =>
+  let (options, _) :=
+    arguments.foldl (init := (({ } : Lean.LeanOptions), false))
+      fun (options, pendingSeparate) argument =>
       if pendingSeparate then
         match decodeLeanArgOption? argument with
         | some option => (options.append (Lean.LeanOptions.ofArray #[option]), false)
         | none => (options, false)
-      else if argument == "-D" then (options, true)
-      else if argument.startsWith "-D" then
-        match decodeLeanArgOption? (argument.drop 2).toString with
-        | some option => (options.append (Lean.LeanOptions.ofArray #[option]), false)
-        | none => (options, false)
-      else (options, false)
+      else
+        if argument == "-D" then (options, true)
+        else
+          if argument.startsWith "-D" then
+            match decodeLeanArgOption? (argument.drop 2).toString with
+            | some option => (options.append (Lean.LeanOptions.ofArray #[option]), false)
+            | none => (options, false)
+          else (options, false)
   options
 
 /- The setup `lake build` would use, when this target's bytes are the ones `lake build` would read.
@@ -523,17 +552,21 @@ the ones being typed.
 into whatever is constructing the collection and takes every other target with it. -/
 private def setupJob (target : SourceTarget) : Lake.FetchM (Lake.Job Lean.ModuleSetup) :=
   Lake.ensureJob do
-    let job ← match target.module?, target.provenance with
-      | some mod, .disk => mod.setup.fetch
+    let job ←
+      match target.module?, target.provenance with
+      | some mod, .disk =>
+        mod.setup.fetch
       | _, _ =>
         let header ← Lean.parseImports' target.source target.relativePath
         Lake.setupServerModule target.relativePath target.path (some header)
     -- The command line Lake would also have passed, folded in second, as Lake applies it.
     match target.module? with
-    | none => return job
+    | none =>
+      return job
     | some mod =>
       let extra := leanArgOptions mod
-      if extra.values.isEmpty then return job
+      if extra.values.isEmpty then
+        return job
       return job.map fun setup => { setup with options := setup.options.append extra }
 
 private structure FacetDescriptor where
@@ -548,10 +581,9 @@ private def decodeFacetDescriptor? (encoded : String) : Option Lake.Artifact := 
   let hash ← Lake.Hash.ofString? descriptor.hash
   guard <| !descriptor.path.isEmpty
   return {
-    descr := Lake.artifactWithExt hash descriptor.ext
-    path := FilePath.mk descriptor.path
-    mtime := 0
-  }
+      descr := Lake.artifactWithExt hash descriptor.ext
+      path := FilePath.mk descriptor.path
+      mtime := 0 }
 
 /-- Modules reachable from `root` over exported edges only, `root` excluded.
 
@@ -565,44 +597,46 @@ so `import all X` exposes more of `X` than `X` re-exports. Following exported ed
 true redundancy rather than inventing one, which is the direction a report-only rule must err in,
 and the same direction `redundancyEligible` already takes. -/
 private def visibleFrom (root : Lean.Name) (edges : Std.HashMap Lean.Name (Array Lean.Name)) :
-    Array Lean.Name := Id.run do
-  let mut seen : Std.HashSet Lean.Name := {}
-  let mut frontier := edges[root]?.getD #[]
-  let mut result := #[]
-  -- Bounded by the edge map, which is finite and built before the walk starts, so a cyclic header
-  -- graph terminates on `seen` rather than recursing.
-  for _ in [0:edges.size + 1] do
-    if frontier.isEmpty then break
-    let mut next := #[]
-    for name in frontier do
-      unless seen.contains name do
-        seen := seen.insert name
-        result := result.push name
-        next := next ++ edges[name]?.getD #[]
-    frontier := next
-  return result
+    Array Lean.Name :=
+  Id.run do
+    let mut seen : Std.HashSet Lean.Name := { }
+    let mut frontier := edges[root]?.getD #[]
+    let mut result := #[]
+    -- Bounded by the edge map, which is finite and built before the walk starts, so a cyclic header
+    -- graph terminates on `seen` rather than recursing.
+    for _ in [0:edges.size + 1]do
+      if frontier.isEmpty then
+        break
+      let mut next := #[]
+      for name in frontier do
+        unless seen.contains name do
+          seen := seen.insert name
+          result := result.push name
+          next := next ++ edges[name]?.getD #[]
+      frontier := next
+    return result
 
 /-- The visible closure of one module as a job on the graph that is already running.
 
 The build closure bounds it — everything visible is imported — so the walk fetches `mod.input` for
 that set and nothing wider. Those fetches are the same memoized nodes `transImports` just used, so
 the second closure costs the map and the walk, not a second traversal. -/
-private def visibleClosureJob (mod : Lake.Module) :
-    Lake.FetchM (Lake.Job (Array Lean.Name)) := do
+private def visibleClosureJob (mod : Lake.Module) : Lake.FetchM (Lake.Job (Array Lean.Name)) := do
   let transJob ← mod.transImports.fetch
   transJob.bindM (sync := true) fun mods => do
-    let members := #[mod] ++ mods
-    let inputJobs ← members.mapM (·.input.fetch)
-    let inputs := Lake.Job.collectArray inputJobs "lean-fmt module inputs"
-    return inputs.mapResult fun
-      | .ok inputs state =>
-        let edges := (members.zip inputs).foldl
-          (init := Std.HashMap.emptyWithCapacity members.size)
-          fun edges (member, input) =>
-            edges.insert member.name <| input.imports.filterMap fun imp =>
-              if imp.isExported then imp.module?.map (·.name) else none
-        .ok (visibleFrom mod.name edges) state
-      | .error e state => .error e state
+      let members := #[mod] ++ mods
+      let inputJobs ← members.mapM (·.input.fetch)
+      let inputs := Lake.Job.collectArray inputJobs "lean-fmt module inputs"
+      return inputs.mapResult fun
+          | .ok inputs state =>
+            let edges :=
+              (members.zip inputs).foldl (init := Std.HashMap.emptyWithCapacity members.size)
+                fun edges (member, input) =>
+                edges.insert member.name <|
+                  input.imports.filterMap fun imp =>
+                    if imp.isExported then imp.module?.map (·.name) else none
+            .ok (visibleFrom mod.name edges) state
+          | .error e state => .error e state
 
 /-- What a run wants from one Lake graph.
 
@@ -624,8 +658,7 @@ A `none` is always "the graph could not produce this", never a substituted defau
 a `none` degrades toward is the *caller's* judgement, made where the consequence is visible:
 `moduleEvidence` degrades toward `needsFrontend` and `ResultCache.closureDigests` toward a miss,
 and both would be wrong if the other's default were built in here. -/
-structure TargetFacts where
-  private mk ::
+structure TargetFacts where private mk ::
   /-- `some false` is an answer, not a failure: under `noBuild` a failed `olean` fetch *is* "not up
   to date". `none` means the target is not a workspace module, or the traversal itself failed. -/
   current? : Option Bool := none
@@ -640,8 +673,7 @@ structure TargetFacts where
   setup? : Option Lean.ModuleSetup := none
   deriving Inhabited
 
-structure GraphFacts where
-  private mk ::
+structure GraphFacts where private mk ::
   /-- Aligned index-for-index with the `targets` argument, always. -/
   targets : Array TargetFacts
   /-- Keyed by the names passed as `extraImports`. A name absent from the map is not a workspace
@@ -666,23 +698,24 @@ the other 126. `monitorBuild` cannot give it, for the reason `noBuildValuePerJob
 resolvable closure, which is why `ResultCache.closureDigests` gives such targets the conservative
 whole-workspace digest. Resolving them from `module?` would silently re-key every such entry. -/
 def graph (workspace : Lake.Workspace) (targets : Array SourceTarget)
-    (extraImports : Array Lean.Name := #[]) (demand : Demand := {}) : IO GraphFacts := do
-  let blank : GraphFacts := {
-    targets := Array.replicate targets.size {}
-    imports := Std.HashMap.emptyWithCapacity 0
-  }
+    (extraImports : Array Lean.Name := #[]) (demand : Demand := { }) : IO GraphFacts := do
+  let blank : GraphFacts :=
+    { targets := Array.replicate targets.size { }
+      imports := Std.HashMap.emptyWithCapacity 0 }
   let statusModules : Array (Option Lake.Module) :=
-    if demand.status then targets.map (·.module?)
-    else Array.replicate targets.size none
+    if demand.status then targets.map (·.module?) else Array.replicate targets.size none
   let closureModules : Array (Lean.Name × Lake.Module) :=
     if demand.closures then
       extraImports.filterMap fun name => (workspace.findModule? name).map (name, ·)
     else #[]
   let facetName := `module.leanFmtArtifact
   let facetConfig? ←
-    if !demand.artifacts then pure none
-    else if (← IO.getEnv "LEAN_FMT_DISABLE_ARTIFACT") == some "1" then pure none
-    else pure (workspace.findModuleFacetConfig? facetName)
+    if !demand.artifacts then
+      pure none
+    else if (← IO.getEnv "LEAN_FMT_DISABLE_ARTIFACT") == some "1" then
+      pure none
+    else
+      pure (workspace.findModuleFacetConfig? facetName)
   -- A module whose sidecar does not exist is a certain miss: `readFacet?` reads that very file, so
   -- no traversal could return anything else for it. Excluding it here saves the job. The path is
   -- the facet's own convention — `artifactFile` in the lakefile that declares `leanFmtArtifact` —
@@ -694,62 +727,78 @@ def graph (workspace : Lake.Workspace) (targets : Array SourceTarget)
   -- `noBuildValuePerJob?` carries that measurement. The filter is an optimization now.
   let facetModules : Array (Option Lake.Module) ←
     match facetConfig? with
-    | none => pure (Array.replicate targets.size none)
-    | some _ => targets.mapM fun target =>
-      match target.module? with
-      | none => pure none
-      | some mod => do
-        let sidecar := Lean.modToFilePath (mod.pkg.buildDir / "lean-fmt-artifacts") mod.name "json"
-        if (← sidecar.pathExists) && (← (sidecar.addExtension "trace").pathExists) then
-          return some mod
-        return none
+    | none =>
+      pure (Array.replicate targets.size none)
+    | some _ =>
+      targets.mapM fun target =>
+          match target.module? with
+          | none => pure none
+          | some mod => do
+            let sidecar :=
+              Lean.modToFilePath (mod.pkg.buildDir / "lean-fmt-artifacts") mod.name "json"
+            if (← sidecar.pathExists) && (← (sidecar.addExtension "trace").pathExists) then
+              return some mod
+            return none
   let setupTargets : Array (Option SourceTarget) :=
     if demand.setups then targets.map some else Array.replicate targets.size none
   -- Nothing to ask is not the same as asking and failing: skip the traversal entirely rather than
   -- pay a build context to answer an empty question.
-  if statusModules.all Option.isNone && closureModules.isEmpty
-      && facetModules.all Option.isNone && setupTargets.all Option.isNone then
+  if
+      statusModules.all Option.isNone && closureModules.isEmpty && facetModules.all Option.isNone &&
+        setupTargets.all Option.isNone then
     return blank
   let setupCollection (chosen : Array (Option SourceTarget)) :
-      Lake.FetchM (Lake.Job (Array (Option Lean.ModuleSetup))) := do
-    let jobs ← chosen.mapM fun target? => do
-      match target? with
-      | none => return Lake.Job.pure (α := Option Lean.ModuleSetup) none
-      | some target =>
-        let job ← setupJob target
-        return job.mapResult fun
-          | .ok setup state => .ok (some setup) state
-          | .error _ state => .ok none state
+    Lake.FetchM (Lake.Job (Array (Option Lean.ModuleSetup))) := do
+    let jobs ←
+      chosen.mapM fun target? => do
+          match target? with
+          | none =>
+            return Lake.Job.pure (α := Option Lean.ModuleSetup) none
+          | some target =>
+            let job ← setupJob target
+            return job.mapResult fun
+                | .ok setup state => .ok (some setup) state
+                | .error _ state => .ok none state
     return Lake.Job.collectArray jobs "lean-fmt exact setups"
-  let build : Lake.FetchM (Lake.Job
-      (Array (Option Bool) × Array ImportClosures × Array (Option String)
-        × Array (Option Lean.ModuleSetup))) := do
-    let statusJobs ← statusModules.mapM fun mod? => do
-      match mod? with
-      | none => return Lake.Job.pure (α := Option Bool) none
-      | some mod =>
-        let job ← mod.olean.fetch
-        return job.mapResult fun
-          | .ok _ state => .ok (some true) state
-          | .error _ state => .ok (some false) state
-    let closureJobs ← closureModules.mapM fun (_, mod) => do
-      let build ← mod.transImports.fetch
-      let visible ← visibleClosureJob mod
-      let build := build.mapResult fun
-        | .ok mods state => .ok (some (mods.map (·.name))) state
-        | .error _ state => .ok none state
-      let visible := visible.mapResult fun
-        | .ok names state => .ok (some names) state
-        | .error _ state => .ok none state
-      return build.zipWith (fun build visible => ({ build, visible } : ImportClosures)) visible
-    let facetJobs ← facetModules.mapM fun mod? => do
-      match facetConfig?, mod? with
-      | some config, some mod =>
-        let job ← config.run (β := Lake.FacetOut facetName) mod
-        return job.mapResult fun
-          | .ok value state => .ok (some (config.format .json value)) state
-          | .error _ state => .ok none state
-      | _, _ => return Lake.Job.pure (α := Option String) none
+  let build :
+    Lake.FetchM
+      (Lake.Job
+        (Array (Option Bool) ×
+          Array ImportClosures × Array (Option String) × Array (Option Lean.ModuleSetup))) :=
+    do
+    let statusJobs ←
+      statusModules.mapM fun mod? => do
+          match mod? with
+          | none =>
+            return Lake.Job.pure (α := Option Bool) none
+          | some mod =>
+            let job ← mod.olean.fetch
+            return job.mapResult fun
+                | .ok _ state => .ok (some true) state
+                | .error _ state => .ok (some false) state
+    let closureJobs ←
+      closureModules.mapM fun (_, mod) => do
+          let build ← mod.transImports.fetch
+          let visible ← visibleClosureJob mod
+          let build :=
+            build.mapResult fun
+              | .ok mods state => .ok (some (mods.map (·.name))) state
+              | .error _ state => .ok none state
+          let visible :=
+            visible.mapResult fun
+              | .ok names state => .ok (some names) state
+              | .error _ state => .ok none state
+          return build.zipWith (fun build visible => ({ build, visible } : ImportClosures)) visible
+    let facetJobs ←
+      facetModules.mapM fun mod? => do
+          match facetConfig?, mod? with
+          | some config, some mod =>
+            let job ← config.run (β := Lake.FacetOut facetName) mod
+            return job.mapResult fun
+                | .ok value state => .ok (some (config.format .json value)) state
+                | .error _ state => .ok none state
+          | _, _ =>
+            return Lake.Job.pure (α := Option String) none
     let statuses := Lake.Job.collectArray statusJobs "lean-fmt module evidence"
     let closures := Lake.Job.collectArray closureJobs "lean-fmt import closures"
     let facets := Lake.Job.collectArray facetJobs "lean-fmt official artifacts"
@@ -757,13 +806,16 @@ def graph (workspace : Lake.Workspace) (targets : Array SourceTarget)
     -- `zipWith` errors if either side errors, which is exactly why every per-target job above is
     -- `mapResult`-ed to `.ok` first: no collection can fail, so the tuple cannot either.
     return ((statuses.zipWith (·, ·) closures).zipWith (fun (s, c) f => (s, c, f)) facets).zipWith
-      (fun (s, c, f) u => (s, c, f, u)) setups
+        (fun (s, c, f) u => (s, c, f, u)) setups
   match ← withPhase "lake_graph" <| noBuildValuePerJob? workspace build with
-  | none => return blank
+  | none =>
+    return blank
   | some (statuses, closures, facets, probed) =>
     -- A short array would silently mis-pair facts with targets, which is worse than no batch.
-    if statuses.size != statusModules.size || closures.size != closureModules.size
-        || facets.size != facetModules.size || probed.size != setupTargets.size then
+    if
+        statuses.size != statusModules.size || closures.size != closureModules.size ||
+            facets.size != facetModules.size ||
+          probed.size != setupTargets.size then
       return blank
     -- The one place this operation may build, and it builds setups only. A stale `.olean` *is* the
     -- answer for status, an unresolvable closure is a miss, and a missing facet is
@@ -775,32 +827,38 @@ def graph (workspace : Lake.Workspace) (targets : Array SourceTarget)
     -- — a 127-file `check` at twelve workers over an unbuilt tree reported five `broken` files and
     -- one infrastructure failure, all of them Lake builds clobbering each other, where the same run
     -- at one worker was clean. `tests/Suites/Ci.lean` is the gate.
-    let stale := (setupTargets.zip probed).map fun (target?, setup?) =>
-      if setup?.isNone then target? else none
+    let stale :=
+      (setupTargets.zip probed).map fun (target?, setup?) => if setup?.isNone then target? else none
     let setups ←
-      if stale.all Option.isNone then pure probed
+      if stale.all Option.isNone then
+        pure probed
       else
         try
           let built ← withPhase "setup_build" <| buildValue workspace (setupCollection stale)
-          if built.size != probed.size then pure probed
-          else pure ((probed.zip built).map fun (probed?, built?) => probed?.orElse fun _ => built?)
-        catch _ => pure probed
-    let facts ← targets.zipIdx.mapM fun (target, index) => do
-      -- The descriptor is decoded and consumed here and nowhere else. `readFacet?` recomputes the
-      -- content hash and matches the module name and the exact source, so filesystem presence or a
-      -- raw path never stands in for build validity.
-      let artifact? ← do
-        let some mod := target.module? | pure none
-        let some encoded := facets[index]! | pure none
-        let some facet := decodeFacetDescriptor? encoded | pure none
-        readFacet? facet mod.name target.source
-      return { current? := statuses[index]!, artifact?, setup? := setups[index]! }
+          if built.size != probed.size then
+            pure probed
+          else
+            pure ((probed.zip built).map fun (probed?, built?) => probed?.orElse fun _ => built?)
+        catch _ =>
+          pure probed
+    let facts ←
+      targets.zipIdx.mapM fun (target, index) => do
+          -- The descriptor is decoded and consumed here and nowhere else. `readFacet?` recomputes the
+          -- content hash and matches the module name and the exact source, so filesystem presence or a
+          -- raw path never stands in for build validity.
+          let artifact? ←
+            do
+              let some mod := target.module? | pure none
+              let some encoded := facets[index]! | pure none
+              let some facet := decodeFacetDescriptor? encoded | pure none
+              readFacet? facet mod.name target.source
+          return { current? := statuses[index]!, artifact?, setup? := setups[index]! }
     return {
-      targets := facts
-      imports := (closureModules.zip closures).foldl
-        (init := Std.HashMap.emptyWithCapacity closureModules.size)
-        fun map ((name, _), closure) => map.insert name closure
-    }
+        targets := facts
+        imports :=
+          (closureModules.zip closures).foldl (init :=
+            Std.HashMap.emptyWithCapacity closureModules.size) fun map ((name, _), closure) =>
+            map.insert name closure }
 
 /-- The transitive import closure of each named module, and of every selected target's module.
 
@@ -828,15 +886,18 @@ def Snapshot.importClosures (snapshot : Snapshot) (names : Array Lean.Name) :
   snapshot.closures.atomically do
     let memo ← get
     let wanted := names ++ snapshot.targets.filterMap (·.module?.map (·.name))
-    let missing := wanted.foldl (init := #[]) fun missing name =>
-      if memo.asked.contains name || missing.contains name then missing else missing.push name
-    if missing.isEmpty then return memo.resolved
+    let missing :=
+      wanted.foldl (init := #[]) fun missing name =>
+        if memo.asked.contains name || missing.contains name then missing else missing.push name
+    if missing.isEmpty then
+      return memo.resolved
     let facts ← graph snapshot.workspace #[] missing { closures := true }
     let asked := missing.foldl (init := memo.asked) fun asked name => asked.insert name
-    let resolved := missing.foldl (init := memo.resolved) fun resolved name =>
-      match facts.imports[name]? with
-      | some closure => resolved.insert name closure
-      | none => resolved
+    let resolved :=
+      missing.foldl (init := memo.resolved) fun resolved name =>
+        match facts.imports[name]? with
+        | some closure => resolved.insert name closure
+        | none => resolved
     set ({ asked, resolved } : ClosureMemo)
     return resolved
 
@@ -873,18 +934,19 @@ def moduleEvidence (snapshot : Snapshot) (facts : GraphFacts) : IO (Array Module
           evidence := evidence.push .current
         else
           let parent := target.path.parent.getD snapshot.root
-          let loaded ← Lake.loadWorkspaceRoot {
-            lakeEnv := snapshot.workspace.lakeEnv
-            wsDir := parent
-          } |>.toBaseIO
+          let loaded ←
+            Lake.loadWorkspaceRoot
+                  { lakeEnv := snapshot.workspace.lakeEnv
+                    wsDir := parent } |>.toBaseIO
           evidence := evidence.push (if loaded.isSome then .current else .needsFrontend)
       else
         evidence := evidence.push .needsFrontend
     | some _ =>
       -- `needsFrontend` is the safe direction for a module the graph could not speak for: it costs
       -- an elaboration, where `current` would serve a projection of stale compiled output.
-      evidence := evidence.push
-        (if facts.targets[index]!.current? == some true then .current else .needsFrontend)
+      evidence :=
+        evidence.push
+          (if facts.targets[index]!.current? == some true then .current else .needsFrontend)
   return evidence
 
 /-- The exact Lake setup for one target, for a caller that has exactly one.
@@ -898,23 +960,20 @@ against this file's own name rather than as a `none` at a position.
 Calling this in a loop is what `graph` replaces, and the loop was measured: 34 targets, one full
 traversal each, 3,528 ms in `setup_probe`, 8% of a cold `format --check`. -/
 def exactSetup (snapshot : Snapshot) (target : SourceTarget) : IO Lean.ModuleSetup := do
-  match ← withPhase "setup_probe" <|
-      noBuildValuePerJob? snapshot.workspace (setupJob target) with
-  | some setup => return setup
-  | none => withPhase "setup_build" <| buildValue snapshot.workspace (setupJob target)
+  match ← withPhase "setup_probe" <| noBuildValuePerJob? snapshot.workspace (setupJob target) with
+  | some setup =>
+    return setup
+  | none =>
+    withPhase "setup_build" <| buildValue snapshot.workspace (setupJob target)
 
 private def moduleConfiguration (mod : Lake.Module) : String :=
-  String.intercalate "\u0000" [
-    mod.name.toString,
-    toString mod.pkg.id?,
-    (Lean.toJson mod.leanOptions).compress,
-    String.intercalate "\u0000" mod.leanArgs.toList,
-    String.intercalate "\u0000" mod.weakLeanArgs.toList,
-    String.intercalate "\u0000" (mod.dynlibs.map toString).toList,
-    String.intercalate "\u0000" (mod.plugins.map toString).toList,
-    toString mod.allowImportAll,
-    toString mod.platformIndependent
-  ]
+  String.intercalate "\u0000"
+    [mod.name.toString, toString mod.pkg.id?, (Lean.toJson mod.leanOptions).compress,
+      String.intercalate "\u0000" mod.leanArgs.toList,
+      String.intercalate "\u0000" mod.weakLeanArgs.toList,
+      String.intercalate "\u0000" (mod.dynlibs.map toString).toList,
+      String.intercalate "\u0000" (mod.plugins.map toString).toList, toString mod.allowImportAll,
+      toString mod.platformIndependent]
 
 /- Identify the evaluated root-package policy used by Lake for sources outside a declared library.
 Header bytes and import order remain in the source identity; ordered search roots and artifact
@@ -922,15 +981,14 @@ contents remain in the environment epoch. This value covers the remaining setup 
 running `setupServerModule` on an all-hit cache path. -/
 def externalConfigurationIdentity (workspace : Lake.Workspace) : Digest :=
   let root := workspace.root
-  Digest.ofString <| String.intercalate "\u0000" [
-    toString root.id?,
-    (Lean.toJson workspace.serverOptions).compress,
-    toString root.precompileModules,
-    String.intercalate "\u0000" (root.dynlibs.map toString).toList,
-    String.intercalate "\u0000" (root.plugins.map toString).toList,
-    String.intercalate "\u0000" (root.externLibs.map (·.name.toString)).toList,
-    String.intercalate "\u0000" (root.extraDepTargets.map toString).toList
-  ]
+  Digest.ofString <|
+    String.intercalate "\u0000"
+      [toString root.id?, (Lean.toJson workspace.serverOptions).compress,
+        toString root.precompileModules,
+        String.intercalate "\u0000" (root.dynlibs.map toString).toList,
+        String.intercalate "\u0000" (root.plugins.map toString).toList,
+        String.intercalate "\u0000" (root.externLibs.map (·.name.toString)).toList,
+        String.intercalate "\u0000" (root.extraDepTargets.map toString).toList]
 
 /- Identify the evaluated setup **and the formatter settings that change canonical bytes**.
 
@@ -947,9 +1005,10 @@ def configurationIdentity (_snapshot : Snapshot) (target : SourceTarget) : IO Di
   | some mod => return Digest.ofString (moduleConfiguration mod ++ "\u0000" ++ format)
   | none => do
     if target.path.fileName == some "lakefile.lean" then
-      return Digest.ofString <| String.intercalate "\u0000"
-        ["lakefile", target.relativePath, Lean.versionString, Lean.githash, format]
-    return Digest.ofString <| String.intercalate "\u0000"
-      ["external-source", target.relativePath, format]
+      return Digest.ofString <|
+          String.intercalate "\u0000"
+            ["lakefile", target.relativePath, Lean.versionString, Lean.githash, format]
+    return Digest.ofString <|
+        String.intercalate "\u0000" ["external-source", target.relativePath, format]
 
 end LeanFmt.Internal.Project

@@ -47,8 +47,10 @@ private def digestBytes (bytes : String) : IO String := do
   let result ← runProc "shasum" #["-a", "256"] (input? := some bytes)
   ensure (result.exitCode == 0) s!"shasum failed: {result.stderr}"
   match result.stdout.splitOn " " with
-  | hex :: _ => return hex
-  | [] => throw <| IO.userError "shasum produced no digest"
+  | hex :: _ =>
+    return hex
+  | [] =>
+    throw <| IO.userError "shasum produced no digest"
 
 /-- Byte-range slice: the protocol's offsets are byte offsets into the normalized source. -/
 private def sliceOf (source : String) (start stop : Nat) : String :=
@@ -59,19 +61,19 @@ private def jsonString? (json : Lean.Json) (field : String) : Option String :=
 
 /-- One candidate invocation: stdin is the source, the environment pins the identity the candidate
 must echo, and the response must be one JSON object with a string `formatted`. -/
-private def invokeCandidate (candidateCmd : Array String) (source : String)
-    (setupDigest : String) (passIndex : Nat) : IO Lean.Json := do
-  let some cmd := candidateCmd[0]?
-    | throw <| IO.userError "oracle: empty candidate command"
+private def invokeCandidate (candidateCmd : Array String) (source : String) (setupDigest : String)
+    (passIndex : Nat) : IO Lean.Json := do
+  let some cmd := candidateCmd[0]? | throw <| IO.userError "oracle: empty candidate command"
   let sourceDigest ← digestBytes source
-  let result ← runProc cmd (candidateCmd.toSubarray 1).toArray (input? := some source)
-    (env := #[("LEAN_FMT_EXPECTED_SOURCE_DIGEST", some sourceDigest),
-      ("LEAN_FMT_EXPECTED_SETUP_DIGEST", some setupDigest),
-      ("LEAN_FMT_FORMAT_PASS", some (toString passIndex))])
+  let result ←
+    runProc cmd (candidateCmd.toSubarray 1).toArray (input? := some source) (env :=
+        #[("LEAN_FMT_EXPECTED_SOURCE_DIGEST", some sourceDigest),
+          ("LEAN_FMT_EXPECTED_SETUP_DIGEST", some setupDigest),
+          ("LEAN_FMT_FORMAT_PASS", some (toString passIndex))])
   if result.exitCode != 0 then
     reject "candidate" result.stderr.trimAscii.toString
-  let .ok response := Lean.Json.parse result.stdout
-    | reject "candidate" "candidate did not emit one JSON response"
+  let .ok response :=
+    Lean.Json.parse result.stdout | reject "candidate" "candidate did not emit one JSON response"
   unless (jsonString? response "formatted").isSome do
     reject "candidate" "response has no string `formatted` field"
   return response
@@ -87,17 +89,19 @@ private def validateIdentity (response : Lean.Json) (source : String) (setupDige
     reject "environment" "candidate identity does not match the exact module setup"
   unless jsonAt? response [.field "cancelled"] == some (Lean.toJson false) do
     reject "cancellation" "a cancelled candidate reached admission"
-  let some unsupported := (jsonAt? response [.field "unsupported"]).bind (·.getArr?.toOption)
-    | reject "candidate" "`unsupported` is not an array"
+  let some unsupported :=
+    (jsonAt? response [.field "unsupported"]).bind
+      (·.getArr?.toOption) | reject "candidate" "`unsupported` is not an array"
   if let some first := unsupported[0]? then
     reject "unsupported" first.compress
 
 /-- One exact start/stop range, as the source map spells it. -/
 private def rangePair (value : Lean.Json) (label : String) : IO (Nat × Nat) := do
-  let some start := Analyze.natAt? value [.field "start"]
-    | reject "source-map" s!"invalid {label}: {value.compress}"
-  let some stop := Analyze.natAt? value [.field "stop"]
-    | reject "source-map" s!"invalid {label}: {value.compress}"
+  let some start :=
+    Analyze.natAt? value
+      [.field "start"] | reject "source-map" s!"invalid {label}: {value.compress}"
+  let some stop :=
+    Analyze.natAt? value [.field "stop"] | reject "source-map" s!"invalid {label}: {value.compress}"
   let keys := (Lean.Json.getObj? value).toOption.map (·.foldl (fun acc k _ => acc ++ [k]) [])
   unless keys == some ["start", "stop"] do
     reject "source-map" s!"{label} is not an exact start/stop range"
@@ -106,18 +110,29 @@ private def rangePair (value : Lean.Json) (label : String) : IO (Nat × Nat) := 
 /-- The source map must tile the complete source and output: contiguous, gapless, cursor-matched. -/
 private def validateSourceMap (response : Lean.Json) (source output : String) :
     IO (Array (Nat × Nat × Nat × Nat)) := do
-  let some raw := (jsonAt? response [.field "sourceMap"]).bind (·.getArr?.toOption)
-    | reject "source-map" "source map is absent or empty"
+  let some raw :=
+    (jsonAt? response [.field "sourceMap"]).bind
+      (·.getArr?.toOption) | reject "source-map" "source map is absent or empty"
   if raw.isEmpty then
     reject "source-map" "source map is absent or empty"
   let mut units := #[]
   for item in raw do
-    let (ss, se) ← rangePair (← do
-        let some v := jsonAt? item [.field "source"] | reject "source-map" "unit has no source"
-        pure v) "unit source"
-    let (os, oe) ← rangePair (← do
-        let some v := jsonAt? item [.field "output"] | reject "source-map" "unit has no output"
-        pure v) "unit output"
+    let (ss, se) ←
+      rangePair
+          (←
+            do
+              let some v :=
+                jsonAt? item [.field "source"] | reject "source-map" "unit has no source"
+              pure v)
+          "unit source"
+    let (os, oe) ←
+      rangePair
+          (←
+            do
+              let some v :=
+                jsonAt? item [.field "output"] | reject "source-map" "unit has no output"
+              pure v)
+          "unit output"
     units := units.push (ss, se, os, oe)
   let mut sourceCursor := 0
   let mut outputCursor := 0
@@ -136,53 +151,55 @@ private def analyze (root : System.FilePath) (application : String) (setup : Sys
     (work : System.FilePath) (source : String) (label : String) : IO Lean.Json := do
   let path := work / s!"contract-{label}"
   writeFile path source
-  let result ← runProc application
-    #["__analyze-exact", setup.toString, path.toString, label] (cwd? := some root)
+  let result ←
+    runProc application #["__analyze-exact", setup.toString, path.toString, label] (cwd? :=
+        some root)
   if result.exitCode != 0 then
-    reject "frontend" (if result.stderr.trimAscii.isEmpty then
-      s!"exact analysis exited {result.exitCode}" else result.stderr.trimAscii.toString)
-  let .ok envelope := Lean.Json.parse result.stdout
-    | reject "frontend" "exact analysis did not emit one JSON envelope"
+    reject "frontend"
+        (if result.stderr.trimAscii.isEmpty then s!"exact analysis exited {result.exitCode}"
+        else result.stderr.trimAscii.toString)
+  let .ok envelope :=
+    Lean.Json.parse
+      result.stdout | reject "frontend" "exact analysis did not emit one JSON envelope"
   let diagnostics := (jsonAt? envelope [.field "diagnostics"]).bind (·.getArr?.toOption)
-  let some artifact := jsonAt? envelope [.field "artifact"]
-    | reject "frontend" "exact analysis produced no artifact"
+  let some artifact :=
+    jsonAt? envelope [.field "artifact"] | reject "frontend" "exact analysis produced no artifact"
   if artifact.isNull || (diagnostics.map (·.size)).getD 0 > 0 then
-    reject "frontend" ((diagnostics.map fun ds => ", ".intercalate (ds.toList.map (·.compress))).getD "diagnostics")
-  let .ok (parsed : ModuleArtifact) := Lean.fromJson? artifact
-    | reject "frontend" "artifact did not decode"
-  let .ok materialized := parsed.materialize source
-    | reject "frontend" "artifact reconstruction failed"
+    reject "frontend"
+        ((diagnostics.map fun ds => ", ".intercalate (ds.toList.map (·.compress))).getD
+          "diagnostics")
+  let .ok (parsed : ModuleArtifact) :=
+    Lean.fromJson? artifact | reject "frontend" "artifact did not decode"
+  let .ok materialized :=
+    parsed.materialize source | reject "frontend" "artifact reconstruction failed"
   return artifact.setObjVal! "source" (Lean.toJson materialized.source)
 
 /-- The ordered parsed import signature, computed by the real parser — what the Python oracle got
 from `formatter-header`. -/
 private def headerSignature (source : String) : IO Lean.Json := do
   let normalized := (LosslessSource.normalize source).1
-  let some header ← Imports.parseHeaderModel normalized
-    | reject "imports" "header parser refused the candidate"
-  let imports := header.imports.map fun stmt => Lean.Json.mkObj [
-    ("module", .str stmt.module.toString),
-    ("all", stmt.importAll),
-    ("meta", stmt.isMeta),
-    ("public", stmt.isPublic),
-    ("exported", stmt.isExported)
-  ]
-  return Lean.Json.mkObj [
-    ("module", header.hasModule),
-    ("prelude", header.hasPrelude),
-    ("imports", .arr imports)
-  ]
+  let some header ← Imports.parseHeaderModel normalized |
+    reject "imports" "header parser refused the candidate"
+  let imports :=
+    header.imports.map fun stmt =>
+      Lean.Json.mkObj
+        [("module", .str stmt.module.toString), ("all", stmt.importAll), ("meta", stmt.isMeta),
+          ("public", stmt.isPublic), ("exported", stmt.isExported)]
+  return Lean.Json.mkObj
+      [("module", header.hasModule), ("prelude", header.hasPrelude), ("imports", .arr imports)]
 
 /-- The normalized tree signature: `(kind, parent)` for every node, in order. -/
 private def treeSignature (source : Lean.Json) : IO (Array Lean.Json) := do
-  let some kinds := (jsonAt? source [.field "kinds"]).bind (·.getArr?.toOption)
-    | throw <| IO.userError "oracle: projection has no kinds table"
-  let some nodes := (jsonAt? source [.field "nodes"]).bind (·.getArr?.toOption)
-    | throw <| IO.userError "oracle: projection has no node table"
+  let some kinds :=
+    (jsonAt? source [.field "kinds"]).bind
+      (·.getArr?.toOption) | throw <| IO.userError "oracle: projection has no kinds table"
+  let some nodes :=
+    (jsonAt? source [.field "nodes"]).bind
+      (·.getArr?.toOption) | throw <| IO.userError "oracle: projection has no node table"
   let mut signature := #[]
   for node in nodes do
-    let some pair := node.getArr?.toOption
-    | throw <| IO.userError "oracle: projection node is not an array"
+    let some pair :=
+      node.getArr?.toOption | throw <| IO.userError "oracle: projection node is not an array"
     let kindName := ((pair[0]?).bind (Analyze.natAt? · [])).bind fun index => kinds[index]?
     signature := signature.push (Lean.Json.arr #[kindName.getD Lean.Json.null, pair[1]?.getD .null])
   return signature
@@ -192,29 +209,32 @@ the raw bytes at the recorded boundaries — the same walk `checkProjection` doe
 comparison rather than validation. -/
 private def splitProjection (projection : Lean.Json) (raw : String) :
     IO (Array (Nat × String) × Array (Nat × String) × Array Lean.Json) := do
-  let some tokens := (jsonAt? projection [.field "tokens"]).bind (·.getArr?.toOption)
-    | throw <| IO.userError "oracle: projection has no token table"
+  let some tokens :=
+    (jsonAt? projection [.field "tokens"]).bind
+      (·.getArr?.toOption) | throw <| IO.userError "oracle: projection has no token table"
   let mut spellingTokens : Array (Nat × String) := #[]
   let mut comments : Array (Nat × String) := #[]
   let mut ownership : Array Lean.Json := #[]
   let mut cursor := 0
-  for tokenIdx in [:tokens.size] do
+  for tokenIdx in [:tokens.size]do
     let some fields := tokens[tokenIdx]!.getArr?.toOption | continue
     let node := (fields[0]?).bind (Analyze.natAt? · []) |>.getD 0
     let start := (fields[1]?).bind (Analyze.natAt? · []) |>.getD 0
     let stop := (fields[2]?).bind (Analyze.natAt? · []) |>.getD 0
-    for sideIdx in [4, 5] do
+    for sideIdx in [4, 5]do
       let some runs := (fields[sideIdx]?).bind (·.getArr?.toOption) | continue
-      for runIdx in [:runs.size] do
+      for runIdx in [:runs.size]do
         let some pair := runs[runIdx]!.getArr?.toOption | continue
         let kind := (pair[0]?).bind (Analyze.natAt? · []) |>.getD 0
         let stop := (pair[1]?).bind (Analyze.natAt? · []) |>.getD cursor
         let payload := sliceOf raw cursor stop
         if kind != 0 then
           comments := comments.push (kind, payload)
-          ownership := ownership.push (Lean.Json.arr #[
-            Lean.toJson tokenIdx, Lean.toJson sideIdx, Lean.toJson runIdx, Lean.toJson kind,
-            .str payload])
+          ownership :=
+            ownership.push
+              (Lean.Json.arr
+                #[Lean.toJson tokenIdx, Lean.toJson sideIdx, Lean.toJson runIdx, Lean.toJson kind,
+                  .str payload])
         cursor := stop
       if sideIdx == 4 then
         spellingTokens := spellingTokens.push (node, sliceOf raw start stop)
@@ -223,11 +243,14 @@ private def splitProjection (projection : Lean.Json) (raw : String) :
 
 /-- The before/after artifact agreement: terminal bytes, comment payloads and ownership, token
 spellings, and the normalized tree may not change under formatting. -/
-private def compareArtifacts (before after : Lean.Json) (beforeRaw afterRaw : String) : IO Unit := do
-  let some beforeSource := jsonAt? before [.field "source"]
-    | throw <| IO.userError "oracle: before artifact lost its projection"
-  let some afterSource := jsonAt? after [.field "source"]
-    | throw <| IO.userError "oracle: after artifact lost its projection"
+private def compareArtifacts (before after : Lean.Json) (beforeRaw afterRaw : String) : IO Unit :=
+  do
+  let some beforeSource :=
+    jsonAt? before
+      [.field "source"] | throw <| IO.userError "oracle: before artifact lost its projection"
+  let some afterSource :=
+    jsonAt? after
+      [.field "source"] | throw <| IO.userError "oracle: after artifact lost its projection"
   let beforeStop := (Analyze.natAt? beforeSource [.field "terminalStop"]).getD 0
   let afterStop := (Analyze.natAt? afterSource [.field "terminalStop"]).getD 0
   let beforeTail := sliceOf beforeRaw beforeStop beforeRaw.utf8ByteSize
@@ -237,9 +260,9 @@ private def compareArtifacts (before after : Lean.Json) (beforeRaw afterRaw : St
   let (beforeTokens, beforeComments, beforeOwners) ← splitProjection beforeSource beforeRaw
   let (afterTokens, afterComments, afterOwners) ← splitProjection afterSource afterRaw
   let docPayloads (tokens : Array (Nat × String)) (comments : Array (Nat × String)) :
-      Array (Nat × String) :=
-    comments ++ tokens.filterMap fun (_, token) =>
-      if token.startsWith "/--" then some (3, token) else none
+    Array (Nat × String) :=
+    comments ++
+      tokens.filterMap fun (_, token) => if token.startsWith "/--" then some (3, token) else none
   unless docPayloads beforeTokens beforeComments == docPayloads afterTokens afterComments do
     reject "comments-payload" "comment kind, order, count, or payload changed"
   unless beforeOwners == afterOwners do
@@ -284,28 +307,27 @@ public def run (root : System.FilePath) (application : String) (setup : System.F
       if sliceOf original ss se != sliceOf formatted os oe then
         reflowed := reflowed + 1
     let some beforeSource := jsonAt? before [.field "source"] | throw <| IO.userError "oracle"
-    let nodes := ((jsonAt? beforeSource [.field "nodes"]).bind (·.getArr?.toOption)).map (·.size)
-      |>.getD 0
+    let nodes :=
+      ((jsonAt? beforeSource [.field "nodes"]).bind (·.getArr?.toOption)).map (·.size) |>.getD 0
     let (projectionTokens, projectionComments, _) ← splitProjection beforeSource original
     let docCount := projectionTokens.filter (·.2.startsWith "/--") |>.size
     -- Sorted keys, compact separators: the digest input is stable across runs.
-    let summary := Lean.Json.mkObj [
-      ("changed", Lean.toJson (if original == formatted then 0 else 1)),
-      ("comments", Lean.toJson (projectionComments.size + docCount)),
-      ("nodes", Lean.toJson nodes),
-      ("outputBytes", Lean.toJson formatted.utf8ByteSize),
-      ("reflowedUnits", Lean.toJson reflowed),
-      ("sourceBytes", Lean.toJson original.utf8ByteSize),
-      ("status", Lean.Json.str "ok"),
-      ("tokens", Lean.toJson projectionTokens.size),
-      ("unsupported", Lean.toJson (0 : Nat))
-    ]
+    let summary :=
+      Lean.Json.mkObj
+        [("changed", Lean.toJson (if original == formatted then 0 else 1)),
+          ("comments", Lean.toJson (projectionComments.size + docCount)),
+          ("nodes", Lean.toJson nodes), ("outputBytes", Lean.toJson formatted.utf8ByteSize),
+          ("reflowedUnits", Lean.toJson reflowed),
+          ("sourceBytes", Lean.toJson original.utf8ByteSize), ("status", Lean.Json.str "ok"),
+          ("tokens", Lean.toJson projectionTokens.size), ("unsupported", Lean.toJson (0 : Nat))]
     let stable := summary.compress ++ "\x00" ++ formatted
     let digest ← digestBytes stable
     return .ok (summary.setObjVal! "digest" digest)
   catch error =>
     match (error.toString.splitOn "\x00") with
-    | ["oracle-gate", gate, detail] => return .error ⟨gate, detail⟩
-    | _ => throw error
+    | ["oracle-gate", gate, detail] =>
+      return .error ⟨gate, detail⟩
+    | _ =>
+      throw error
 
 end LeanFmt.Test.Oracle

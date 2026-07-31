@@ -46,7 +46,8 @@ private def FlexTok.describe : FlexTok → String
   | .wordBoundary => "\\b"
 
 /-- The small regular language above, as a pattern. -/
-public abbrev FlexPattern := List FlexTok
+public abbrev FlexPattern :=
+  List FlexTok
 
 private def isIdChar (c : Char) : Bool :=
   c.isAlphanum || c == '_' || c == '\''
@@ -68,8 +69,7 @@ private partial def matchAt (prev? : Option Char) (chars : List Char) : FlexPatt
     let literal := s.toList
     if chars.take literal.length == literal then
       matchAt literal.getLast? (chars.drop literal.length) rest
-    else
-      false
+    else false
   | .anyWs :: rest =>
     let (chars', n, _) := splitWs chars 0 false
     -- Only `\b` reads `prev?`, and only to know whether it was an identifier constituent;
@@ -90,10 +90,8 @@ private partial def matchAt (prev? : Option Char) (chars : List Char) : FlexPatt
 character indices, not bytes — they are only ever compared against each other. -/
 public partial def flexFind? (text : String) (pattern : FlexPattern) : Option Nat :=
   go none text.toList 0
-where
-  go (prev? : Option Char) (chars : List Char) (pos : Nat) : Option Nat :=
-    if matchAt prev? chars pattern then
-      some pos
+where go (prev? : Option Char) (chars : List Char) (pos : Nat) : Option Nat :=
+    if matchAt prev? chars pattern then some pos
     else
       match chars with
       | [] => none
@@ -108,9 +106,9 @@ public def ensureFlex (label : String) (text : String) (pattern : FlexPattern) :
 /-- Assert `text` ends with no trailing whitespace on any line — every width's render in the old
 blocks asserted this. -/
 public def ensureNoTrailingWhitespace (label : String) (text : String) : IO Unit := do
-  for line in text.splitOn "\n" do
+  for line in text.splitOn "\n"do
     ensure (!(line.endsWith " ") && !(line.endsWith "\t"))
-      s!"{label}: trailing whitespace on line {repr line}"
+        s!"{label}: trailing whitespace on line {repr line}"
 
 /-- A Nat at the end of a JSON path, when it exists and is one. -/
 public def natAt? (json : Lean.Json) (path : List JsonStep) : Option Nat :=
@@ -118,8 +116,8 @@ public def natAt? (json : Lean.Json) (path : List JsonStep) : Option Nat :=
 
 /-- `lake setup-file` for the repo-relative `fixture`, written into `work`; returns the path. -/
 public def setupFile (root work : System.FilePath) (fixture : String) : IO System.FilePath := do
-  let setup ← expectExit 0 s!"lake setup-file {fixture}" "lake" #["setup-file", fixture]
-    (cwd? := some root)
+  let setup ←
+    expectExit 0 s!"lake setup-file {fixture}" "lake" #["setup-file", fixture] (cwd? := some root)
   let path := work / s!"setup-{fixture.replace "/" "-"}.json"
   writeFile path setup.stdout
   return path
@@ -145,34 +143,38 @@ exactly one pass. Returns the canonical object and its text; metrics stay fixtur
 each suite asserts its own against the returned object. -/
 public def canonical (report : Lean.Json) (label : String) : IO (Lean.Json × String) := do
   ensure (jsonAt? report [.field "validationFailure"] |>.all (· == Lean.Json.null))
-    s!"{label}: validation failed"
-  let some canonical := jsonAt? report [.field "canonical"]
-    | throw <| IO.userError s!"{label}: no canonical render"
+      s!"{label}: validation failed"
+  let some canonical :=
+    jsonAt? report [.field "canonical"] | throw <| IO.userError s!"{label}: no canonical render"
   ensureJsonAt canonical [.field "validation", .field "idempotencePasses"] (Lean.toJson (1 : Nat))
-    label
-  let some text := (canonical.getObjValAs? String "text").toOption
-    | throw <| IO.userError s!"{label}: canonical text missing"
+      label
+  let some text :=
+    (canonical.getObjValAs? String
+        "text").toOption | throw <| IO.userError s!"{label}: canonical text missing"
   return (canonical, text)
 
 /-- The envelope's ownership summary, validated: what the retired `comment-summary` subcommand
 checked, without decoding the envelope type — `valid`, and the counts partition. Returns the raw
 summary JSON; callers read counts and the payload digest off it. -/
 public def commentSummary (report : Lean.Json) (label : String) : IO Lean.Json := do
-  let some summary := jsonAt? report [.field "commentSummary"]
-    | throw <| IO.userError s!"{label}: exact frontend captured no comment ownership summary"
+  let some summary :=
+    jsonAt? report
+      [.field
+          "commentSummary"] | throw <| IO.userError s!"{label}: exact frontend captured no comment ownership summary"
   ensureJsonAt summary [.field "valid"] (Lean.toJson true) label
   let comments := (natAt? summary [.field "comments"]).getD 0
-  let parts := (["leading", "trailing", "dangling"].map fun key =>
-    (natAt? summary [.field key]).getD 0).foldl (· + ·) 0
+  let parts :=
+    (["leading", "trailing", "dangling"].map fun key => (natAt? summary [.field key]).getD 0).foldl
+      (· + ·) 0
   ensure (comments == parts) s!"{label}: ownership counts do not partition"
   return summary
 
 /-- The format draft of a successful report: formatFailure absent-or-null, draft present. -/
 public def formatDraft (report : Lean.Json) (label : String) : IO Lean.Json := do
   ensure (jsonAt? report [.field "formatFailure"] |>.all (· == Lean.Json.null))
-    s!"{label}: format failed"
-  let some draft := jsonAt? report [.field "formatDraft"]
-    | throw <| IO.userError s!"{label}: no format draft"
+      s!"{label}: format failed"
+  let some draft :=
+    jsonAt? report [.field "formatDraft"] | throw <| IO.userError s!"{label}: no format draft"
   return draft
 
 /-- The resolved repo root, the built binary's path, and a scratch work dir — the three things
@@ -181,6 +183,6 @@ public def withRun (suite : String)
     (k : (root work : System.FilePath) → (application : String) → IO UInt32) : IO UInt32 := do
   let root ← repoRoot
   withScratchDir suite fun work =>
-    k root work (root / ".lake" / "build" / "bin" / "lean-fmt").toString
+      k root work (root / ".lake" / "build" / "bin" / "lean-fmt").toString
 
 end LeanFmt.Test.Analyze

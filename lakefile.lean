@@ -22,8 +22,7 @@ package «lean-fmt» where
   lintDriver := "«lean-fmt»"
   lintDriverArgs := #["check"]
 
-@[default_target]
-lean_exe «lean-fmt» where
+@[default_target] lean_exe «lean-fmt» where
   root := `Main
   supportInterpreter := true
   weakLinkArgs := #["-lLake"]
@@ -36,46 +35,26 @@ of any module with a finding. The import graph
 alone never prevented that; this list is the other half of the same boundary. -/
 lean_lib LeanFmtCompilerPlugin where
   roots := #[`LeanFmtCompilerPlugin]
-  globs := #[
-    Glob.one `LeanFmtCompilerPlugin,
-    Glob.one `LeanFmt.CompilerPlugin,
-    Glob.one `LeanFmt,
-    Glob.one `LeanFmt.Basic,
-    Glob.one `LeanFmt.Digest,
-    Glob.one `LeanFmt.SyntaxArtifact,
-    Glob.one `LeanFmt.ArtifactModel,
-    Glob.one `LeanFmt.LosslessSource
-  ]
+  globs :=
+  #[Glob.one `LeanFmtCompilerPlugin, Glob.one `LeanFmt.CompilerPlugin, Glob.one `LeanFmt,
+    Glob.one `LeanFmt.Basic, Glob.one `LeanFmt.Digest, Glob.one `LeanFmt.SyntaxArtifact,
+    Glob.one `LeanFmt.ArtifactModel, Glob.one `LeanFmt.LosslessSource]
 
 lean_lib LeanFmtApplication where
   roots := #[`LeanFmt.Application]
-  globs := #[
-    Glob.one `LeanFmt.ArtifactStore,
-    Glob.one `LeanFmt.Analysis,
-    Glob.one `LeanFmt.Comments,
+  globs :=
+  #[Glob.one `LeanFmt.ArtifactStore, Glob.one `LeanFmt.Analysis, Glob.one `LeanFmt.Comments,
     Glob.one `LeanFmt.Cache,
     -- The currency decision `LeanFmt.Cache` and `LeanFmt.Application` both call, and
     -- `LeanFmt.Cache.Spec` proves about. It is here, not in `LeanFmtCacheSpec`, because it is
     -- production code: the proof library stays out of the binary, the decision does not.
-    Glob.one `LeanFmt.Cache.Decision,
-    Glob.one `LeanFmt.Config,
-    Glob.one `LeanFmt.Discovery,
-    Glob.one `LeanFmt.Doc,
-    Glob.one `LeanFmt.Edit,
-    Glob.one `LeanFmt.Formatter,
-    Glob.one `LeanFmt.Formatter.Command,
-    Glob.one `LeanFmt.Formatter.NativeLayout,
-    Glob.one `LeanFmt.Formatter.Trivia,
-    Glob.one `LeanFmt.GitSelection,
-    Glob.one `LeanFmt.Project,
-    Glob.one `LeanFmt.Semantic,
-    Glob.one `LeanFmt.SyntaxArtifact,
-    Glob.one `LeanFmt.Validator,
-    Glob.one `LeanFmt.LanguageServer,
-    Glob.one `LeanFmt.Watch,
-    Glob.one `LeanFmt.Application,
-    Glob.one `LeanFmt.Cli
-  ]
+    Glob.one `LeanFmt.Cache.Decision, Glob.one `LeanFmt.Config, Glob.one `LeanFmt.Discovery,
+    Glob.one `LeanFmt.Doc, Glob.one `LeanFmt.Edit, Glob.one `LeanFmt.Formatter,
+    Glob.one `LeanFmt.Formatter.Command, Glob.one `LeanFmt.Formatter.NativeLayout,
+    Glob.one `LeanFmt.Formatter.Trivia, Glob.one `LeanFmt.GitSelection, Glob.one `LeanFmt.Project,
+    Glob.one `LeanFmt.Semantic, Glob.one `LeanFmt.SyntaxArtifact, Glob.one `LeanFmt.Validator,
+    Glob.one `LeanFmt.LanguageServer, Glob.one `LeanFmt.Watch, Glob.one `LeanFmt.Application,
+    Glob.one `LeanFmt.Cli]
 
 /- The plugin shared library bundles the small semantic core at the process boundary. This
 later declaration stays the canonical owner for ordinary application imports, so changing
@@ -86,16 +65,10 @@ library above: the plugin runs inside every compilation of every downstream modu
 is the semantic core and nothing else. Layout is an application-only frontend capability. -/
 lean_lib LeanFmtCore where
   roots := #[`LeanFmt]
-  globs := #[
-    Glob.one `LeanFmt,
-    Glob.one `LeanFmt.Basic,
-    Glob.one `LeanFmt.Digest,
-    Glob.one `LeanFmt.SyntaxArtifact,
-    Glob.one `LeanFmt.ArtifactModel,
-    Glob.one `LeanFmt.LosslessSource,
-    Glob.one `LeanFmt.Rules,
-    Glob.one `LeanFmt.Imports
-  ]
+  globs :=
+  #[Glob.one `LeanFmt, Glob.one `LeanFmt.Basic, Glob.one `LeanFmt.Digest,
+    Glob.one `LeanFmt.SyntaxArtifact, Glob.one `LeanFmt.ArtifactModel,
+    Glob.one `LeanFmt.LosslessSource, Glob.one `LeanFmt.Rules, Glob.one `LeanFmt.Imports]
 
 /- The proof library has its own target, globbed explicitly and alone, for the
 same reason `LeanFmt.Rules` was removed from the plugin target: Lake links every module a library
@@ -111,8 +84,8 @@ this.
 The `#print axioms` audit is **not** in the module; re-running it is a manual step before marking a claim verified. That is a real loss of
 enforcement over keeping it inline: an assumption introduced later will not announce itself in the
 build that introduced it. -/
-@[default_target]
-lean_lib LeanFmtCacheSpec where
+@[default_target] lean_lib
+  LeanFmtCacheSpec where
   roots := #[`LeanFmt.Cache.Spec]
   globs := #[Glob.one `LeanFmt.Cache.Spec]
 
@@ -123,15 +96,9 @@ Nothing in the product imports it. -/
 lean_lib TestSupport where
   srcDir := "tests"
   roots := #[`Test]
-  globs := #[
-    Glob.one `Test,
-    Glob.one `Test.Harness,
-    Glob.one `Test.Proc,
-    Glob.one `Test.Golden,
-    Glob.one `Test.Json,
-    Glob.one `Test.Fixture,
-    Glob.one `Test.LspClient
-  ]
+  globs :=
+  #[Glob.one `Test, Glob.one `Test.Harness, Glob.one `Test.Proc, Glob.one `Test.Golden,
+    Glob.one `Test.Json, Glob.one `Test.Fixture, Glob.one `Test.LspClient]
 
 /- The suite orchestrator and the package's testDriver: `lake test` runs the unit tier in-process
 and then every non-slow registered suite as an executable. See `tests/Test/Runner.lean`.
@@ -454,13 +421,12 @@ private def artifactFile (mod : Module) : FilePath :=
   Lean.modToFilePath (mod.pkg.buildDir / "lean-fmt-artifacts") mod.name "json"
 
 private def artifactQueryJson (artifact : Artifact) : Lean.Json :=
-  Lean.Json.mkObj [
-    ("hash", .str artifact.hash.toString),
-    ("ext", .str artifact.ext),
-    ("path", .str artifact.path.toString)
-  ]
+  Lean.Json.mkObj
+    [("hash", .str artifact.hash.toString), ("ext", .str artifact.ext),
+      ("path", .str artifact.path.toString)]
 
-local instance : QueryJson Artifact := ⟨artifactQueryJson⟩
+local instance : QueryJson Artifact :=
+  ⟨artifactQueryJson⟩
 
 /- The compiler records the formatter payload in Lean's persistent lint log, which is serialized
 inside the successful `.olean`. This facet owns both extraction from that exact module artifact and
@@ -470,17 +436,13 @@ module_facet leanFmtArtifact (mod : Module) : Artifact := do
   let extractorJob ← artifactExtractor.fetch
   let dependency := oleanJob.zipWith (fun olean extractor => (olean, extractor)) extractorJob
   dependency.mapM fun (olean, extractor) => do
-    withCurrPackage mod.pkg do
-      buildArtifactUnlessUpToDate (artifactFile mod) (text := true) (ext := "json")
-          (restore := true) (platformIndependent := true) do
-        proc {
-          cmd := extractor.toString
-          args := #[mod.name.toString, olean.toString, (artifactFile mod).toString]
-          env := #[
-            ⟨"LEAN_PATH", (← getLeanPath).toString⟩,
-            ⟨"LEAN_NUM_THREADS", "1"⟩
-          ]
-        }
+      withCurrPackage mod.pkg do
+          buildArtifactUnlessUpToDate (artifactFile mod) (text := true) (ext := "json") (restore :=
+              true) (platformIndependent := true) do
+              proc {
+                    cmd := extractor.toString
+                    args := #[mod.name.toString, olean.toString, (artifactFile mod).toString]
+                    env := #[⟨"LEAN_PATH", (← getLeanPath).toString⟩, ⟨"LEAN_NUM_THREADS", "1"⟩] }
 
 /- A small integration library exercises plugin and facet ownership without making the formatter's
 own implementation depend on itself as a compiler plugin. -/

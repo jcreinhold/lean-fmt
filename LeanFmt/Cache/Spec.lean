@@ -110,17 +110,16 @@ variable [DecidableEq SDigest] [DecidableEq GDigest] [DecidableEq Schema]
 
 This mentions `serves` nowhere. That is the point: it is the standard the decision is judged against,
 not a restatement of it. -/
-def Valid (analyze : Grammar → Source → Analysis)
-    (e : Entry Mod Analysis SDigest GDigest Schema)
+def Valid (analyze : Grammar → Source → Analysis) (e : Entry Mod Analysis SDigest GDigest Schema)
     (w : World Mod Grammar Source Schema) (demand : Demand) : Prop :=
   e.analysis = analyze (w.grammar e.mod) (w.source e.mod) ∧ e.provided.meets demand = true
 
 /-- What it means for an entry to be a faithful record of *some* past world: its digests are the
 digests of the grammar and source it was built under, and its analysis is what analysis of those
 produces. Any entry the cache itself wrote satisfies this. -/
-def BuiltFrom (analyze : Grammar → Source → Analysis)
-    (sd : Source → SDigest) (gd : Grammar → GDigest)
-    (e : Entry Mod Analysis SDigest GDigest Schema) (g : Grammar) (s : Source) : Prop :=
+def BuiltFrom (analyze : Grammar → Source → Analysis) (sd : Source → SDigest)
+    (gd : Grammar → GDigest) (e : Entry Mod Analysis SDigest GDigest Schema) (g : Grammar)
+    (s : Source) : Prop :=
   e.sourceDigest = sd s ∧ e.closureDigest = gd g ∧ e.analysis = analyze g s
 
 /-! ## A2 — observation faithfulness
@@ -129,11 +128,11 @@ def BuiltFrom (analyze : Grammar → Source → Analysis)
 the cache reads a trace and the moment it serves the entry; nothing in the model, and nothing in the
 implementation, closes that window. It is a hypothesis rather than an `axiom` so that it appears in
 the type of everything that depends on it. -/
-def Faithful (sd : Source → SDigest) (gd : Grammar → GDigest)
-    (o : Obs Mod SDigest GDigest Schema) (w : World Mod Grammar Source Schema) : Prop :=
+
+def Faithful (sd : Source → SDigest) (gd : Grammar → GDigest) (o : Obs Mod SDigest GDigest Schema)
+    (w : World Mod Grammar Source Schema) : Prop :=
   o.schema = w.schema ∧
-  (∀ m, o.sourceDigest m = sd (w.source m)) ∧
-  (∀ m, o.closureDigest m = gd (w.grammar m))
+    (∀ m, o.sourceDigest m = sd (w.source m)) ∧ (∀ m, o.closureDigest m = gd (w.grammar m))
 
 /-! ## The observation's granularity: artifacts (default) vs interface (opt-in)
 
@@ -166,14 +165,15 @@ variable {analyze : Grammar → Source → Analysis} {sd : Source → SDigest} {
   {w : World Mod Grammar Source Schema} {demand : Demand} {g : Grammar} {s : Source}
 
 private theorem identity_conjuncts (h : Entry.identityCurrent e o = true) :
-    e.schema = o.schema ∧ e.sourceDigest = o.sourceDigest e.mod ∧
-      e.closureDigest = o.closureDigest e.mod := by
+    e.schema = o.schema ∧
+      e.sourceDigest = o.sourceDigest e.mod ∧ e.closureDigest = o.closureDigest e.mod := by
   simp only [Entry.identityCurrent, Bool.and_eq_true, decide_eq_true_eq] at h
   exact ⟨h.1.1, h.1.2, h.2⟩
 
 private theorem serves_conjuncts (h : serves e o demand = true) :
-    e.schema = o.schema ∧ e.sourceDigest = o.sourceDigest e.mod ∧
-      e.closureDigest = o.closureDigest e.mod ∧ e.provided.meets demand = true := by
+    e.schema = o.schema ∧
+      e.sourceDigest = o.sourceDigest e.mod ∧
+        e.closureDigest = o.closureDigest e.mod ∧ e.provided.meets demand = true := by
   simp only [serves, Bool.and_eq_true] at h
   let ⟨a, b, c⟩ := identity_conjuncts h.1
   exact ⟨a, b, c, h.2⟩
@@ -244,8 +244,7 @@ by `analyze`'s type). `hbuilt` is not an assumption about the world — every en
 satisfies it. -/
 theorem serves_sound (hsd : Function.Injective sd) (hgd : Function.Injective gd)
     (hobs : Faithful sd gd o w) (hbuilt : BuiltFrom analyze sd gd e g s)
-    (h : serves e o demand = true) :
-    Valid analyze e w demand := by
+    (h : serves e o demand = true) : Valid analyze e w demand := by
   refine ⟨?_, demand_met h⟩
   have hid : Entry.identityCurrent e o = true := by
     simp only [serves, Bool.and_eq_true] at h
@@ -262,11 +261,9 @@ Note the difference from soundness: this needs **no injectivity**. Soundness nee
 distinct values; completeness needs only that they are *functions*. So A1 and A3 matter for "never
 serve a stale result" and not at all for "do not needlessly miss" — rightly: a digest collision causes
 a wrong answer, never a spurious recomputation. -/
-theorem serves_complete (hobs : Faithful sd gd o w)
-    (hschema : e.schema = w.schema)
+theorem serves_complete (hobs : Faithful sd gd o w) (hschema : e.schema = w.schema)
     (hbuilt : BuiltFrom analyze sd gd e (w.grammar e.mod) (w.source e.mod))
-    (hmeets : e.provided.meets demand = true) :
-    serves e o demand = true := by
+    (hmeets : e.provided.meets demand = true) : serves e o demand = true := by
   simp only [serves, Entry.identityCurrent, Bool.and_eq_true, decide_eq_true_eq]
   refine ⟨⟨⟨hschema.trans hobs.1.symm, ?_⟩, ?_⟩, hmeets⟩
   · rw [hbuilt.1, hobs.2.1 e.mod]
@@ -288,7 +285,8 @@ theorem stale_grammar_refused (hgd : Function.Injective gd) (hobs : Faithful sd 
     serves e o demand = false := by
   cases h : serves e o demand with
   | false => rfl
-  | true =>
+  |
+    true =>
     have hid : Entry.identityCurrent e o = true := by
       simp only [serves, Bool.and_eq_true] at h
       exact h.1
@@ -300,7 +298,8 @@ theorem stale_source_refused (hsd : Function.Injective sd) (hobs : Faithful sd g
     serves e o demand = false := by
   cases h : serves e o demand with
   | false => rfl
-  | true =>
+  |
+    true =>
     have hid : Entry.identityCurrent e o = true := by
       simp only [serves, Bool.and_eq_true] at h
       exact h.1
@@ -329,8 +328,9 @@ theorem verdict_sound (hsd : Function.Injective sd) (hgd : Function.Injective gd
     split at h
     next hc => exact hc
     next => contradiction
-  refine ⟨by rw [hbuilt.2.2, source_current hsd hobs hbuilt hid,
-    grammar_current hgd hobs hbuilt hid], ?_⟩
+  refine
+    ⟨by rw [hbuilt.2.2, source_current hsd hobs hbuilt hid, grammar_current hgd hobs hbuilt hid],
+      ?_⟩
   simp only [elaborationVerdict?] at h
   split at h
   next =>
@@ -352,9 +352,11 @@ No injectivity, for the same reason as `serves_complete`: a digest collision cau
 answer, never a spurious revalidation. -/
 theorem verdict_complete (hobs : Faithful sd gd o w) (hschema : e.schema = w.schema)
     (hbuilt : BuiltFrom analyze sd gd e (w.grammar e.mod) (w.source e.mod)) :
-    elaborationVerdict? e o = some (match e.provided with
-      | .broken => .rejected
-      | .success .. => .elaborates) := by
+    elaborationVerdict? e o =
+      some
+        (match e.provided with
+        | .broken => .rejected
+        | .success .. => .elaborates) := by
   have hid : Entry.identityCurrent e o = true := by
     simp only [Entry.identityCurrent, Bool.and_eq_true, decide_eq_true_eq]
     refine ⟨⟨hschema.trans hobs.1.symm, ?_⟩, ?_⟩
@@ -370,11 +372,10 @@ theorem verdict_complete (hobs : Faithful sd gd o w) (hschema : e.schema = w.sch
 has to follow. This is the same fact with nothing to follow: an entry exists that is served. -/
 
 /-- The decision is not identically `false`. -/
-theorem serves_hits_somewhere
-    (o : Obs Mod SDigest GDigest Schema) (m : Mod) (a : Analysis) :
-    serves ⟨m, o.schema, o.sourceDigest m, o.closureDigest m,
-            .success .semantic ⟨true⟩ true, a⟩ o
-      ⟨.source, {}, false⟩ = true := by
+theorem serves_hits_somewhere (o : Obs Mod SDigest GDigest Schema) (m : Mod) (a : Analysis) :
+    serves ⟨m, o.schema, o.sourceDigest m, o.closureDigest m, .success .semantic ⟨true⟩ true, a⟩ o
+        ⟨.source, { }, false⟩ =
+      true := by
   simp [serves, Entry.identityCurrent, Provided.meets, Tier.satisfies, SemanticCaps.subset]
 
 end
@@ -390,14 +391,20 @@ the hazard. `Grammar := Bool` stands for "before and after the `notation` edit";
 `id`, which is injective, so A1/A3 hold outright. The same fixture then shows the stale entry being
 refused, so the two theorems are not agreeing by accident. -/
 
-private abbrev W : World Unit Bool Bool Unit := ⟨(), fun _ => true, fun _ => true⟩
-private abbrev O : Obs Unit Bool Bool Unit := ⟨(), fun _ => true, fun _ => true⟩
+private abbrev W : World Unit Bool Bool Unit :=
+  ⟨(), fun _ => true, fun _ => true⟩
+
+private abbrev O : Obs Unit Bool Bool Unit :=
+  ⟨(), fun _ => true, fun _ => true⟩
+
 private abbrev A : Bool → Bool → Bool × Bool := fun g s => (g, s)
 
 /-- An entry built under the *current* grammar (`true`). -/
-private abbrev Provides : Provided := .success .semantic ⟨true⟩ true
+private abbrev Provides : Provided :=
+  .success .semantic ⟨true⟩ true
 
-private abbrev Asks : Demand := ⟨.source, {}, false⟩
+private abbrev Asks : Demand :=
+  ⟨.source, { }, false⟩
 
 private abbrev Fresh : Entry Unit (Bool × Bool) Bool Bool Unit :=
   ⟨(), (), true, true, Provides, (true, true)⟩
@@ -407,15 +414,17 @@ which is exactly why serving it would be wrong. -/
 private abbrev Stale : Entry Unit (Bool × Bool) Bool Bool Unit :=
   ⟨(), (), true, false, Provides, (false, true)⟩
 
-private theorem witness_faithful : Faithful id id O W := ⟨rfl, fun _ => rfl, fun _ => rfl⟩
+private theorem witness_faithful : Faithful id id O W :=
+  ⟨rfl, fun _ => rfl, fun _ => rfl⟩
 
-private theorem witness_fresh_built : BuiltFrom A id id Fresh true true := ⟨rfl, rfl, rfl⟩
+private theorem witness_fresh_built : BuiltFrom A id id Fresh true true :=
+  ⟨rfl, rfl, rfl⟩
 
-private theorem witness_stale_built : BuiltFrom A id id Stale false true := ⟨rfl, rfl, rfl⟩
+private theorem witness_stale_built : BuiltFrom A id id Stale false true :=
+  ⟨rfl, rfl, rfl⟩
 
 /-- Every hypothesis of `serves_sound` holds here, and the conclusion is non-trivial. -/
-theorem witness_sound_is_inhabited :
-    Valid A Fresh W Asks := by
+theorem witness_sound_is_inhabited : Valid A Fresh W Asks := by
   refine serves_sound (fun _ _ h => h) (fun _ _ h => h) witness_faithful witness_fresh_built ?_
   decide
 

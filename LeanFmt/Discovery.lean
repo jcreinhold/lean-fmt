@@ -44,7 +44,8 @@ private structure IgnorePattern where
 /-- Match one character class — `[abc]`, `[a-z]`, `[!abc]`/`[^abc]` — returning matched-ness and the
 pattern remainder after `]`; an unterminated class is a literal `[`, as git treats it. -/
 private def matchClass (pattern : List Char) (actual : Char) : Option (Bool × List Char) :=
-  let (negated, pattern) := match pattern with
+  let (negated, pattern) :=
+    match pattern with
     | '!' :: rest => (true, rest)
     | '^' :: rest => (true, rest)
     | rest => (false, rest)
@@ -74,10 +75,8 @@ private partial def segmentMatches : List Char → List Char → Bool
     | some (true, rest) => segmentMatches rest text
     | some (false, _) => false
     | none => actual == '[' && segmentMatches pattern text
-  | '\\' :: expected :: pattern, actual :: text =>
-    expected == actual && segmentMatches pattern text
-  | expected :: pattern, actual :: text =>
-    expected == actual && segmentMatches pattern text
+  | '\\' :: expected :: pattern, actual :: text => expected == actual && segmentMatches pattern text
+  | expected :: pattern, actual :: text => expected == actual && segmentMatches pattern text
   | _ :: _, [] => false
 
 /-- Match a component list against a pattern component list, where `**` crosses `/`. -/
@@ -100,9 +99,7 @@ ancestors. -/
 private partial def prefixMatches (pattern path : List String) : Bool :=
   match path with
   | [] => false
-  | _ =>
-    pathMatches pattern path ||
-      prefixMatches pattern (path.dropLast)
+  | _ => pathMatches pattern path || prefixMatches pattern (path.dropLast)
 
 private def compileIgnoreLine (base line : String) : Option IgnorePattern :=
   let trimmed := line.trimAscii.toString
@@ -138,8 +135,7 @@ private def IgnorePattern.matches (pattern : IgnorePattern) (path : String) (isD
       (isDirectory && pathMatches pattern.segments components) ||
         prefixMatches pattern.segments components.dropLast
     else
-      pathMatches pattern.segments components ||
-        prefixMatches pattern.segments components.dropLast
+      pathMatches pattern.segments components || prefixMatches pattern.segments components.dropLast
 
 /-- One ignore file's patterns, in file order. Layers are held in **increasing precedence**: a later
 layer overrides an earlier one and, within a layer, a later pattern overrides an earlier one — git's
@@ -169,17 +165,20 @@ global ignore file reachable only through a conditional include. -/
 private def expandHome (path : String) : IO String := do
   if path.startsWith "~/" then
     match ← IO.getEnv "HOME" with
-    | some home => return home ++ (path.drop 1).toString
-    | none => return path
+    | some home =>
+      return home ++ (path.drop 1).toString
+    | none =>
+      return path
   return path
 
 /-- Extract `core.excludesfile` from a git-style INI file. Section and key names are case-insensitive,
 which is why both are lowered before comparison. -/
 private def excludesFileIn? (path : FilePath) : IO (Option String) := do
-  unless ← path.pathExists do return none
+  unless ← path.pathExists do
+    return none
   let text ← IO.FS.readFile path
   let mut currentSection := ""
-  for line in text.splitOn "\n" do
+  for line in text.splitOn "\n"do
     let line := line.trimAscii.toString
     if line.startsWith "[" then
       let name := ((line.drop 1).toString.takeWhile (· != ']')).trimAscii.toString.toLower
@@ -192,26 +191,34 @@ private def excludesFileIn? (path : FilePath) : IO (Option String) := do
         let value := (String.intercalate "=" (first :: rest)).trimAscii.toString
         if currentSection == "core" && key == "excludesfile" then
           return some (← expandHome value)
-      | _ => pure ()
+      | _ =>
+        pure ()
   return none
 
 private def globalIgnoreFile? : IO (Option FilePath) := do
   let mut candidates : Array FilePath := #[]
-  if let some path ← IO.getEnv "GIT_CONFIG_GLOBAL" then candidates := candidates.push path
-  let configHome ← match ← IO.getEnv "XDG_CONFIG_HOME" with
-    | some path => pure (some (FilePath.mk path))
-    | none => pure ((← IO.getEnv "HOME").map fun home => FilePath.mk home / ".config")
-  if let some home := configHome then candidates := candidates.push (home / "git" / "config")
-  if let some home ← IO.getEnv "HOME" then
+  if let some path← IO.getEnv "GIT_CONFIG_GLOBAL" then
+    candidates := candidates.push path
+  let configHome ←
+    match ← IO.getEnv "XDG_CONFIG_HOME" with
+    | some path =>
+      pure (some (FilePath.mk path))
+    | none =>
+      pure ((← IO.getEnv "HOME").map fun home => FilePath.mk home / ".config")
+  if let some home := configHome then
+    candidates := candidates.push (home / "git" / "config")
+  if let some home← IO.getEnv "HOME" then
     candidates := candidates.push (FilePath.mk home / ".gitconfig")
   for candidate in candidates do
-    if let some configured ← excludesFileIn? candidate then
+    if let some configured← excludesFileIn? candidate then
       let path := FilePath.mk configured
-      if ← path.pathExists then return some path
+      if ← path.pathExists then
+        return some path
   -- git's documented default when `core.excludesFile` is unset.
   if let some home := configHome then
     let path := home / "git" / "ignore"
-    if ← path.pathExists then return some path
+    if ← path.pathExists then
+      return some path
   return none
 
 /-- The repository root governing `root`: the nearest ancestor holding `.git`, ascending to the
@@ -219,25 +226,34 @@ filesystem root. May sit **above** the project root, because a Lean project is c
 subdirectory of a larger repository. `.git` may be a directory or a
 file (a worktree or submodule gitlink); both forms are accepted. -/
 private partial def repositoryRoot? (directory : FilePath) : IO (Option FilePath) := do
-  if ← (directory / ".git").pathExists then return some directory
+  if ← (directory / ".git").pathExists then
+    return some directory
   match directory.parent with
-  | some parent => if parent == directory then return none else repositoryRoot? parent
-  | none => return none
+  | some parent =>
+    if parent == directory then
+      return none
+    else
+      repositoryRoot? parent
+  | none =>
+    return none
 
 /-- `.git/info/exclude` for a repository root, following a `.git` **file** (`gitdir: <path>`) to the
 real git directory when necessary. -/
 private def repositoryExclude? (repository : FilePath) : IO (Option FilePath) := do
   let dotGit := repository / ".git"
   let gitDirectory ←
-    if ← dotGit.isDir then pure dotGit
-    else do
-      let text ← IO.FS.readFile dotGit
-      let trimmed := text.trimAscii
-      if trimmed.startsWith "gitdir:" then
-        let target := ((trimmed.drop "gitdir:".length).toString).trimAscii.toString
-        let target := FilePath.mk target
-        pure (if target.isAbsolute then target else repository / target)
-      else pure dotGit
+    if ← dotGit.isDir then
+      pure dotGit
+    else
+      do
+        let text ← IO.FS.readFile dotGit
+        let trimmed := text.trimAscii
+        if trimmed.startsWith "gitdir:" then
+          let target := ((trimmed.drop "gitdir:".length).toString).trimAscii.toString
+          let target := FilePath.mk target
+          pure (if target.isAbsolute then target else repository / target)
+        else
+          pure dotGit
   let path := gitDirectory / "info" / "exclude"
   return if ← path.pathExists then some path else none
 
@@ -248,8 +264,7 @@ sources, and the configuration governing each directory that declared one.
 
 `configs` is keyed by the **root-relative directory** the config governs, so resolving a file is a
 prefix search over an in-memory array — never a filesystem ascent per file. -/
-structure Discovery where
-  private mk ::
+structure Discovery where private mk ::
   root : FilePath
   /-- Root-relative paths of candidate `.lean` sources, in walk order. -/
   sources : Array String
@@ -264,16 +279,16 @@ structure Discovery where
 /-- The configuration governing one root-relative path: the **closest** config at or above its
 directory. Hierarchy does not merge — the nearest config applies whole, and inheritance is explicit
 through `extend`. -/
-def Discovery.governing (discovery : Discovery) (path : String) :
-    String × FormatterConfig := Id.run do
-  let mut best := ("", discovery.fallback)
-  let mut bestDepth := 0
-  for (directory, config) in discovery.configs do
-    let governs := directory.isEmpty || path.startsWith (directory ++ "/")
-    if governs && (directory.length ≥ bestDepth) then
-      best := (directory, config)
-      bestDepth := directory.length
-  return best
+def Discovery.governing (discovery : Discovery) (path : String) : String × FormatterConfig :=
+  Id.run do
+    let mut best := ("", discovery.fallback)
+    let mut bestDepth := 0
+    for (directory, config) in discovery.configs do
+      let governs := directory.isEmpty || path.startsWith (directory ++ "/")
+      if governs && (directory.length ≥ bestDepth) then
+        best := (directory, config)
+        bestDepth := directory.length
+    return best
 
 def Discovery.configFor (discovery : Discovery) (path : String) : FormatterConfig :=
   (discovery.governing path).2
@@ -283,7 +298,8 @@ so a caller can resolve one `RulePlan` per distinct configuration rather than on
 def Discovery.configKeyFor (discovery : Discovery) (path : String) : String :=
   (discovery.governing path).1
 
-private def isLeanSource (path : FilePath) : Bool := path.extension == some "lean"
+private def isLeanSource (path : FilePath) : Bool :=
+  path.extension == some "lean"
 
 /-- Walk the project once, collecting sources, configurations, and ignore state together.
 
@@ -298,22 +314,23 @@ private partial def walkDirectory (root : FilePath) (explicit? : Option Formatte
   let mut accumulated := accumulated
   -- A config in this directory governs this subtree, unless `--config` overrode discovery entirely.
   if explicit?.isNone then
-    if let some configPath ← recognizedConfigIn? directory then
+    if let some configPath← recognizedConfigIn? directory then
       current ← FormatterConfig.loadFrom root configPath relative
       accumulated := { accumulated with configs := accumulated.configs.push (relative, current) }
   if current.respectGitignore then
-      for name in [".gitignore", ".ignore"] do
+    for name in [".gitignore", ".ignore"]do
       let path := directory / name
       if ← path.pathExists then
         let layer ← readIgnoreFile path relative
         layers := layers.push layer
-        accumulated := { accumulated with
-          ignoreSources := accumulated.ignoreSources.push layer.origin }
+        accumulated :=
+          { accumulated with ignoreSources := accumulated.ignoreSources.push layer.origin }
   let entries ← directory.readDir
   let entries := entries.qsort fun left right => left.fileName < right.fileName
   let mut subdirectories : Array (FilePath × String) := #[]
   for entry in entries do
-    let childRelative := if relative.isEmpty then entry.fileName else relative ++ "/" ++ entry.fileName
+    let childRelative :=
+      if relative.isEmpty then entry.fileName else relative ++ "/" ++ entry.fileName
     -- `isDir` follows symlinks; this does not. The link itself, not its target, decides whether an
     -- entry is a directory, so the walk never descends through one. That is git's own work-tree rule,
     -- and it keeps the walk finite: `dir/loop -> ..` would otherwise recurse until the operating
@@ -323,21 +340,27 @@ private partial def walkDirectory (root : FilePath) (explicit? : Option Formatte
     let linkType := (← entry.path.symlinkMetadata).type
     if linkType == .dir then
       -- Gate 1: `.lake` is never descended into and never selected, by any path form.
-      if entry.fileName == ".lake" || entry.fileName == ".git" then continue
-      if current.respectGitignore && ignored layers childRelative true then continue
-      if current.excludePatterns.any (·.matches childRelative) then continue
+      if entry.fileName == ".lake" || entry.fileName == ".git" then
+        continue
+      if current.respectGitignore && ignored layers childRelative true then
+        continue
+      if current.excludePatterns.any (·.matches childRelative) then
+        continue
       subdirectories := subdirectories.push (entry.path, childRelative)
     else if linkType == .symlink && (← entry.path.isDir) then
       continue
     else if isLeanSource entry.path then
-      if current.respectGitignore && ignored layers childRelative false then continue
+      if current.respectGitignore && ignored layers childRelative false then
+        continue
       -- A symlinked source whose target leaves the project is gate 1 as much as a `.lake` path is:
       -- discovery must not hand the writer a file outside the tree it was pointed at. An *explicitly*
       -- named out-of-root path still errors in `Project.snapshotTarget` — the user named that one.
       if linkType == .symlink then
         let resolved ← IO.FS.realPath entry.path
-        unless resolved == root || resolved.toString.startsWith
-            (root.toString ++ System.FilePath.pathSeparator.toString) do
+        unless
+          resolved == root ||
+            resolved.toString.startsWith
+              (root.toString ++ System.FilePath.pathSeparator.toString) do
           continue
       accumulated := { accumulated with sources := accumulated.sources.push childRelative }
   for (path, childRelative) in subdirectories do
@@ -350,35 +373,37 @@ private partial def walkDirectory (root : FilePath) (explicit? : Option Formatte
 config, and a nested config that exists is inert. -/
 def run (root : FilePath) (explicit? : Option FilePath) : IO Discovery := do
   let root ← IO.FS.realPath root
-  let fallback ← match explicit? with
+  let fallback ←
+    match explicit? with
     | some path =>
       unless ← path.pathExists do
         throw <| IO.userError s!"formatter configuration does not exist: {path}"
       FormatterConfig.loadFrom root path ""
     | none =>
       match ← recognizedConfigIn? root with
-      | none => pure (← FormatterConfig.load root none)
-      | some path => FormatterConfig.loadFrom root path ""
+      | none =>
+        pure (← FormatterConfig.load root none)
+      | some path =>
+        FormatterConfig.loadFrom root path ""
   let mut layers : Array IgnoreLayer := #[]
   let mut ignoreSources : Array String := #[]
   if fallback.respectGitignore then
     -- Lowest precedence first: global ignore, then the repository's own excludes.
-    if let some path ← globalIgnoreFile? then
+    if let some path← globalIgnoreFile? then
       let layer ← readIgnoreFile path ""
       layers := layers.push layer
       ignoreSources := ignoreSources.push layer.origin
-    if let some repository ← repositoryRoot? root then
-      if let some path ← repositoryExclude? repository then
+    if let some repository← repositoryRoot? root then
+      if let some path← repositoryExclude? repository then
         let layer ← readIgnoreFile path ""
         layers := layers.push layer
         ignoreSources := ignoreSources.push layer.origin
-  let seed : Discovery := {
-    root
-    sources := #[]
-    configs := #[]
-    fallback
-    ignoreSources
-  }
+  let seed : Discovery :=
+    { root
+      sources := #[]
+      configs := #[]
+      fallback
+      ignoreSources }
   -- The root's own config is the fallback and is already loaded; record it so `config show` can name
   -- it, without letting the walk load it a second time.
   let seed := if explicit?.isNone then seed else seed
@@ -421,9 +446,10 @@ consult gate 4 at all. -/
 def Discovery.gateFor (discovery : Discovery) (path : String) : Gate :=
   let config := discovery.configFor path
   if config.excludePatterns.any (·.matches path) then .configExclude
-  else if !config.includePatterns.isEmpty && !config.includePatterns.any (·.matches path) then
-    .configInclude
-  else .selected
+  else
+    if !config.includePatterns.isEmpty && !config.includePatterns.any (·.matches path) then
+      .configInclude
+    else .selected
 
 /-- Selection for an **arbitrary** path, discovered or not — the question `config show` asks.
 
@@ -439,11 +465,10 @@ removed would send them to the wrong file to fix it. -/
 def Discovery.explain (discovery : Discovery) (path : String) : Gate :=
   let config := discovery.configFor path
   let segments := path.splitOn "/"
-  let ancestors := (List.range segments.length).map fun count =>
-    String.intercalate "/" (segments.take (count + 1))
+  let ancestors :=
+    (List.range segments.length).map fun count => String.intercalate "/" (segments.take (count + 1))
   if config.excludePatterns.any (fun pattern => ancestors.any pattern.matches) then .configExclude
-  else if !discovery.sources.contains path then .ignoreSource
-  else discovery.gateFor path
+  else if !discovery.sources.contains path then .ignoreSource else discovery.gateFor path
 
 /-- The discovered sources that survive configured selection, root-relative and in walk order. -/
 def Discovery.selectedSources (discovery : Discovery) : Array String :=

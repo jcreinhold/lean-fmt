@@ -51,7 +51,8 @@ behavior (its own test suite keeps a contiguous Lean/Mathlib/local run unchanged
 moves lines across blank-line boundaries by design, which is why it is opt-in. The type lives here, not in `Config`, because the bucket order *is* the layout:
 the module that implements both layouts owns the decision. -/
 inductive ImportLayout where
-  | grouped | canonical
+  | grouped
+  | canonical
   deriving BEq, Lean.ToJson, Lean.FromJson
 
 instance : ToString ImportLayout where
@@ -62,7 +63,8 @@ instance : ToString ImportLayout where
 /-- The default sub-block prefixes for the canonical layout (`import-groups`): the Lean and
 Mathlib ecosystems each get a leading sub-block inside every bucket, everything else trails.
 The constant is shared by `Config`'s field default and its `resolve`, so the two cannot drift. -/
-def defaultImportGroups : Array String := #["Lean", "Mathlib"]
+def defaultImportGroups : Array String :=
+  #["Lean", "Mathlib"]
 
 /-- Bytes `[start, stop)` of `s` as a string, indexing the normalized UTF-8 (`Printer.sliceNormalized`
 uses the same codec). Every offset here is a parser position, so it lies on a codepoint boundary. -/
@@ -138,16 +140,18 @@ private partial def identName? (stx : Lean.Syntax) : Option Lean.Name :=
 /-- The `[line start, next line start)` of a byte span in `normalized`. Line start is the byte after
 the previous `\n` (or 0); next line start is the byte after the span's own line's `\n` (or end of
 file). Used for the dedup fix and the organizer. -/
-private def lineExtent (normalized : String) (start stop : Nat) : SourceRange := Id.run do
-  let bytes := normalized.toUTF8
-  let mut lineStart := start
-  while lineStart > 0 && bytes.get! (lineStart - 1) != 0x0a do
-    lineStart := lineStart - 1
-  let mut lineStop := stop
-  while lineStop < bytes.size && bytes.get! lineStop != 0x0a do
-    lineStop := lineStop + 1
-  if lineStop < bytes.size then lineStop := lineStop + 1  -- include the newline
-  return { start := lineStart, stop := lineStop }
+private def lineExtent (normalized : String) (start stop : Nat) : SourceRange :=
+  Id.run do
+    let bytes := normalized.toUTF8
+    let mut lineStart := start
+    while lineStart > 0 && bytes.get! (lineStart - 1) != 0x0a do
+      lineStart := lineStart - 1
+    let mut lineStop := stop
+    while lineStop < bytes.size && bytes.get! lineStop != 0x0a do
+      lineStop := lineStop + 1
+    if lineStop < bytes.size then
+      lineStop := lineStop + 1 -- include the newline
+    return { start := lineStart, stop := lineStop }
 
 /-- Every `«import»` node in the header, in source order. -/
 private partial def importNodes (stx : Lean.Syntax) (acc : Array Lean.Syntax) : Array Lean.Syntax :=
@@ -165,11 +169,14 @@ any message. Any message is a refusal: on an accepted module the header log is e
 parse would fabricate positions a rule must not read. `headerStop` is the parser's own post-header
 position (`state.pos`), so the caller need not build a `LosslessSource` to supply it. -/
 def parseHeaderModel (normalized : String) : IO (Option HeaderModel) := do
-  let (stx, state, messages) ← Lean.Parser.parseHeader (Lean.Parser.mkInputContext normalized "<header>")
-  if !messages.toList.isEmpty then return none
+  let (stx, state, messages) ←
+    Lean.Parser.parseHeader (Lean.Parser.mkInputContext normalized "<header>")
+  if !messages.toList.isEmpty then
+    return none
   let headerStop := state.pos.byteIdx
   let raw := stx.raw
-  if raw.getKind != ``Lean.Parser.Module.header then return none
+  if raw.getKind != ``Lean.Parser.Module.header then
+    return none
   let hasModule := hasNodeOfKind raw ``Lean.Parser.Module.moduleTk
   let hasPrelude := hasNodeOfKind raw ``Lean.Parser.Module.«prelude»
   let nodes := importNodes raw #[]
@@ -180,13 +187,13 @@ def parseHeaderModel (normalized : String) : IO (Option HeaderModel) := do
     let importAll := hasKind node ``Lean.Parser.Module.«all»
     let isMeta := hasKind node ``Lean.Parser.Module.«meta»
     let isPublic := hasKind node ``Lean.Parser.Module.«public»
-    imports := imports.push {
-      «module» := name
-      importAll, isMeta, isPublic
-      isExported := isPublic || !hasModule
-      range := { start, stop }
-      lineRange := lineExtent normalized start stop
-    }
+    imports :=
+      imports.push
+        { «module» := name
+          importAll, isMeta, isPublic
+          isExported := isPublic || !hasModule
+          range := { start, stop }
+          lineRange := lineExtent normalized start stop }
   return some { hasModule, hasPrelude, imports, headerStop }
 
 /-! ## FMT003 — duplicate import -/
@@ -210,43 +217,48 @@ The fix deletes the *later* line (`.safe`) — the surviving first occurrence ke
 header the environment replays, and a repeated identical import is an elaboration no-op (measured).
 The fix is emitted only when the duplicate's line holds nothing but
 the import; otherwise the finding is report-only so no comment is dropped. -/
-def duplicateFindings (header : HeaderModel) (normalized : String) : Array Finding := Id.run do
-  let mut findings : Array Finding := #[]
-  for h : i in [0:header.imports.size] do
-    let stmt := header.imports[i]
-    let isDup := (List.range i).any fun j =>
-      match header.imports[j]? with
-      | some earlier => sameImport earlier stmt
-      | none => false
-    if isDup then
-      let fix? : Option Fix :=
-        if lineIsSolelyImport normalized stmt then
-          some { applicability := .safe, edits := #[{ range := stmt.lineRange, replacement := "" }] }
-        else none
-      findings := findings.push {
-        code := "FMT003"
-        severity := .warning
-        message := s!"duplicate import of {stmt.module}"
-        range := stmt.range
-        fix?
-      }
-  return findings
+def duplicateFindings (header : HeaderModel) (normalized : String) : Array Finding :=
+  Id.run do
+    let mut findings : Array Finding := #[]
+    for h : i in [0:header.imports.size]do
+      let stmt := header.imports[i]
+      let isDup :=
+        (List.range i).any fun j =>
+          match header.imports[j]? with
+          | some earlier => sameImport earlier stmt
+          | none => false
+      if isDup then
+        let fix? : Option Fix :=
+          if lineIsSolelyImport normalized stmt then
+            some
+              { applicability := .safe, edits := #[{ range := stmt.lineRange, replacement := "" }] }
+          else none
+        findings :=
+          findings.push
+            { code := "FMT003"
+              severity := .warning
+              message := s!"duplicate import of {stmt.module}"
+              range := stmt.range
+              fix? }
+    return findings
 
 /-- The modifier bucket of an import: `public` before non-`public`, `all` before plain, `meta`
 immediately after its non-`meta` counterpart. -/
 private def bucketRank (stmt : ImportStmt) : Nat :=
-  (if stmt.isPublic then 0 else 4) + (if stmt.importAll then 0 else 2) + (if stmt.isMeta then 1 else 0)
+  (if stmt.isPublic then 0 else 4) + (if stmt.importAll then 0 else 2) +
+    (if stmt.isMeta then 1 else 0)
 
 /-- The sub-block of `module` within a bucket: the index of the first `groups` prefix it matches
 (`P` matches `P` itself and every `P.…`), or `groups.size` — the trailing "everything else"
 sub-block — when none does. -/
-private def subblockIndex (groups : Array String) (module : Lean.Name) : Nat := Id.run do
-  let s := module.toString
-  for h : i in [0:groups.size] do
-    let grp := groups[i]
-    if s == grp || s.startsWith (grp ++ ".") then return i
-  return groups.size
-
+private def subblockIndex (groups : Array String) (module : Lean.Name) : Nat :=
+  Id.run do
+    let s := module.toString
+    for h : i in [0:groups.size]do
+      let grp := groups[i]
+      if s == grp || s.startsWith (grp ++ ".") then
+        return i
+    return groups.size
 
 /-! ## FMT005 — non-canonical import order within a group -/
 
@@ -265,34 +277,35 @@ blank lines (they are bucket boundaries, not order resets), stopping only at com
 the organizer's canonical region too. Reported at the first out-of-order import; report-only,
 because reordering imports is observable to elaboration — the canonical rewrite is delivered
 only through the opt-in organizer, never an unattended `fix`. -/
-def orderFindings (header : HeaderModel) (normalized : String)
-    (layout : ImportLayout := .grouped) (groups : Array String := defaultImportGroups) :
-    Array Finding := Id.run do
-  let before := fun (a b : ImportStmt) =>
-    let (ab, as_, am) := (bucketRank a, subblockIndex groups a.module, a.module.toString)
-    let (bb, bs, bm) := (bucketRank b, subblockIndex groups b.module, b.module.toString)
-    ab < bb || (ab == bb && (as_ < bs || (as_ == bs && am < bm)))
-  let mut findings : Array Finding := #[]
-  for i in [1:header.imports.size] do
-    let prev := header.imports[i - 1]!
-    let cur := header.imports[i]!
-    let outOfOrder := match layout with
-      | .grouped =>
-        !groupBreakBetween normalized prev cur && cur.module.toString < prev.module.toString
-      | .canonical =>
-        -- A comment in the gap ends the canonical region (and this check); a blank-only gap is a
-        -- bucket boundary the order crosses.
-        let gap := slice normalized prev.range.stop cur.range.start
-        gap.all Char.isWhitespace && before cur prev
-    if outOfOrder then
-      findings := findings.push {
-        code := "FMT005"
-        severity := .warning
-        message := s!"import {cur.module} is out of order (after {prev.module})"
-        range := cur.range
-        fix? := none
-      }
-  return findings
+def orderFindings (header : HeaderModel) (normalized : String) (layout : ImportLayout := .grouped)
+    (groups : Array String := defaultImportGroups) : Array Finding :=
+  Id.run do
+    let before := fun (a b : ImportStmt) =>
+      let (ab, as_, am) := (bucketRank a, subblockIndex groups a.module, a.module.toString)
+      let (bb, bs, bm) := (bucketRank b, subblockIndex groups b.module, b.module.toString)
+      ab < bb || (ab == bb && (as_ < bs || (as_ == bs && am < bm)))
+    let mut findings : Array Finding := #[]
+    for i in [1:header.imports.size]do
+      let prev := header.imports[i - 1]!
+      let cur := header.imports[i]!
+      let outOfOrder :=
+        match layout with
+        | .grouped =>
+          !groupBreakBetween normalized prev cur && cur.module.toString < prev.module.toString
+        | .canonical =>
+          -- A comment in the gap ends the canonical region (and this check); a blank-only gap is a
+          -- bucket boundary the order crosses.
+          let gap := slice normalized prev.range.stop cur.range.start
+          gap.all Char.isWhitespace && before cur prev
+      if outOfOrder then
+        findings :=
+          findings.push
+            { code := "FMT005"
+              severity := .warning
+              message := s!"import {cur.module} is out of order (after {prev.module})"
+              range := cur.range
+              fix? := none }
+    return findings
 
 /-! ## FMT004 — redundant import (graph-validated, report-only, withholding)
 
@@ -313,38 +326,44 @@ import is a redundancy candidate. `closureOf name` returns the modules `name` tr
 sufficient, for safe removal. Duplicates are excluded (they are FMT003's). Returns the findings and the
 withheld count (candidates skipped by `redundancyEligible`). -/
 def redundantFindings (header : HeaderModel) (closureOf : Lean.Name → Option (Array Lean.Name)) :
-    Array Finding × Nat := Id.run do
-  let mut findings : Array Finding := #[]
-  let mut withheld := 0
-  for h : i in [0:header.imports.size] do
-    let stmt := header.imports[i]
-    -- Skip a literal duplicate: FMT003 owns it, not redundancy.
-    let isDup := (List.range i).any fun j =>
-      match header.imports[j]? with
-      | some earlier => sameImport earlier stmt
-      | none => false
-    if isDup then continue
-    -- Is this module transitively pulled in by some *other* written import?
-    let coveredBy := header.imports.findIdx? fun other =>
-      other.module != stmt.module &&
-        (match closureOf other.module with
-         | some closure => closure.contains stmt.module
-         | none => false)
-    match coveredBy with
-    | none => pure ()
-    | some j =>
-      if redundancyEligible header stmt then
-        findings := findings.push {
-          code := "FMT004"
-          severity := .warning
-          message := s!"import {stmt.module} is redundant: transitively available via \
+    Array Finding × Nat :=
+  Id.run do
+    let mut findings : Array Finding := #[]
+    let mut withheld := 0
+    for h : i in [0:header.imports.size]do
+      let stmt := header.imports[i]
+      -- Skip a literal duplicate: FMT003 owns it, not redundancy.
+      let isDup :=
+        (List.range i).any fun j =>
+          match header.imports[j]? with
+          | some earlier => sameImport earlier stmt
+          | none => false
+      if isDup then
+        continue
+      -- Is this module transitively pulled in by some *other* written import?
+      let coveredBy :=
+        header.imports.findIdx? fun other =>
+          other.module != stmt.module &&
+            (match closureOf other.module with
+            | some closure => closure.contains stmt.module
+            | none => false)
+      match coveredBy with
+      | none =>
+        pure ()
+      | some j =>
+        if redundancyEligible header stmt then
+          findings :=
+            findings.push
+              { code := "FMT004"
+                severity := .warning
+                message :=
+                  s!"import {stmt.module} is redundant: transitively available via \
             {header.imports[j]!.module}; verify before removing"
-          range := stmt.range
-          fix? := none
-        }
-      else
-        withheld := withheld + 1
-  return (findings, withheld)
+                range := stmt.range
+                fix? := none }
+        else
+          withheld := withheld + 1
+    return (findings, withheld)
 
 /-! ## The canonical layout (`import-layout = "canonical"`)
 
@@ -362,26 +381,31 @@ private structure CanonicalImport where
   deriving Inhabited
 
 /-- The position of the `\n` ending `pos`'s line (or end of file), excluding the newline. -/
-private def lineEnd (normalized : String) (pos : Nat) : Nat := Id.run do
-  let bytes := normalized.toUTF8
-  let mut i := pos
-  while i < bytes.size && bytes.get! i != 0x0a do
-    i := i + 1
-  return i
+private def lineEnd (normalized : String) (pos : Nat) : Nat :=
+  Id.run do
+    let bytes := normalized.toUTF8
+    let mut i := pos
+    while i < bytes.size && bytes.get! i != 0x0a do
+      i := i + 1
+    return i
 
 /-- The statement's source bytes with every whitespace run collapsed to one space: canonical
 single-spacing (and one physical line) without re-spelling the module name, so escaped
 identifiers (`import «weird»`) survive verbatim. -/
-private def collapseSpaces (s : String) : String := Id.run do
-  let mut words : List String := []
-  let mut cur := ""
-  for c in s do
-    if c.isWhitespace then
-      if !cur.isEmpty then words := cur :: words; cur := ""
-    else
-      cur := cur.push c
-  if !cur.isEmpty then words := cur :: words
-  return String.intercalate " " words.reverse
+private def collapseSpaces (s : String) : String :=
+  Id.run do
+    let mut words : List String := []
+    let mut cur := ""
+    for c in s do
+      if c.isWhitespace then
+        if !cur.isEmpty then
+          words := cur :: words;
+          cur := ""
+      else
+        cur := cur.push c
+    if !cur.isEmpty then
+      words := cur :: words
+    return String.intercalate " " words.reverse
 
 /-- The leading run of imports the canonical rewrite governs, each with its trailing `--`
 comment, plus the end-of-line position of the run's last import (the region's stop).
@@ -391,26 +415,30 @@ body, and the result is still idempotent. `none` refuses the whole file: a line 
 text is not a `--` comment (a block comment that may span lines, or a second statement) cannot
 be reordered without risking dropped text. -/
 private def canonicalRegion? (header : HeaderModel) (normalized : String) :
-    Option (Array CanonicalImport × Nat) := Id.run do
-  let mut entries : Array CanonicalImport := #[]
-  let mut prevLineEnd : Nat := 0
-  for h : i in [0:header.imports.size] do
-    let stmt := header.imports[i]
-    if i > 0 then
-      let gap := slice normalized prevLineEnd stmt.lineRange.start
-      if gap.any (!·.isWhitespace) then
-        return some (entries, prevLineEnd)
-    let eol := lineEnd normalized stmt.range.stop
-    let trailing := (slice normalized stmt.range.stop eol).trimAscii.toString
-    -- `return none`, not `none`: `Id α` unfolds to `α`, so a bare `none` would bind
-    -- `comment? := none` and silently drop the comment instead of refusing.
-    let comment? : Option String ←
-      if trailing.isEmpty then pure none
-      else if trailing.startsWith "--" then pure (some trailing)
-      else return none
-    entries := entries.push { stmt, comment? }
-    prevLineEnd := eol
-  return some (entries, prevLineEnd)
+    Option (Array CanonicalImport × Nat) :=
+  Id.run do
+    let mut entries : Array CanonicalImport := #[]
+    let mut prevLineEnd : Nat := 0
+    for h : i in [0:header.imports.size]do
+      let stmt := header.imports[i]
+      if i > 0 then
+        let gap := slice normalized prevLineEnd stmt.lineRange.start
+        if gap.any (!·.isWhitespace) then
+          return some (entries, prevLineEnd)
+      let eol := lineEnd normalized stmt.range.stop
+      let trailing := (slice normalized stmt.range.stop eol).trimAscii.toString
+      -- `return none`, not `none`: `Id α` unfolds to `α`, so a bare `none` would bind
+      -- `comment? := none` and silently drop the comment instead of refusing.
+      let comment? : Option String ←
+        if trailing.isEmpty then
+          pure none
+        else if trailing.startsWith "--" then
+          pure (some trailing)
+        else
+          return none
+      entries := entries.push { stmt, comment? }
+      prevLineEnd := eol
+    return some (entries, prevLineEnd)
 
 /-- Drop whole leading blank lines from `s` (the text after the import region); the first line
 with any non-whitespace content is kept intact, indentation included. -/
@@ -429,96 +457,107 @@ to exactly one blank line on each side of the region.
 whose line carried a trailing comment transfers that comment to the surviving occurrence —
 dedup must not silently delete a `shake: keep`. -/
 def canonicalize (header : HeaderModel) (normalized : String)
-    (groups : Array String := defaultImportGroups) : Option String := Id.run do
-  if header.imports.isEmpty then return none
-  let some (entries, regionStop) := canonicalRegion? header normalized | return none
-  -- Dedup (first occurrence survives, inheriting a dropped duplicate's comment if it had none).
-  let mut kept : Array CanonicalImport := #[]
-  for entry in entries do
-    match kept.findIdx? fun k => sameImport k.stmt entry.stmt with
-    | none => kept := kept.push entry
-    | some j =>
-      if kept[j]!.comment?.isNone then
-        if let some comment := entry.comment? then
-          kept := kept.set! j { kept[j]! with comment? := some comment }
-  -- Sort by bucket, then sub-block, then module path; the key is total on survivors because
-  -- same-bucket duplicates are already gone.
-  let sorted := kept.qsort fun a b =>
-    let ra := bucketRank a.stmt
-    let rb := bucketRank b.stmt
-    if ra != rb then ra < rb
-    else
-      let sa := subblockIndex groups a.stmt.module
-      let sb := subblockIndex groups b.stmt.module
-      if sa != sb then sa < sb
-      else a.stmt.module.toString < b.stmt.module.toString
-  -- Emit: one blank line where the modifier bucket changes. Sub-blocks within a bucket stay
-  -- contiguous (script parity); the sub-block index only orders, it does not separate.
-  let mut lines : Array String := #[]
-  let mut prevRank? : Option Nat := none
-  for entry in sorted do
-    let rank := bucketRank entry.stmt
-    if prevRank?.isSome && prevRank? != some rank then lines := lines.push ""
-    let text := collapseSpaces (slice normalized entry.stmt.range.start entry.stmt.range.stop)
-    lines := lines.push <| match entry.comment? with
-      | some comment => text ++ " " ++ comment
-      | none => text
-    prevRank? := some rank
-  -- Reassemble: verbatim text before the region, the rebuilt region, the body with its leading
-  -- blank lines normalized to one.
-  let before := (slice normalized 0 header.imports[0]!.lineRange.start).trimAsciiEnd.toString
-  let lead := if before.isEmpty then "" else before ++ "\n\n"
-  let body := dropLeadingBlankLines (slice normalized regionStop normalized.utf8ByteSize)
-  let suffix :=
-    if body.trimAscii.isEmpty then (if normalized.endsWith "\n" then "\n" else "")
-    else "\n\n" ++ body
-  return lead ++ String.intercalate "\n" lines.toList ++ suffix
+    (groups : Array String := defaultImportGroups) : Option String :=
+  Id.run do
+    if header.imports.isEmpty then
+      return none
+    let some (entries, regionStop) := canonicalRegion? header normalized | return none
+    -- Dedup (first occurrence survives, inheriting a dropped duplicate's comment if it had none).
+    let mut kept : Array CanonicalImport := #[]
+    for entry in entries do
+      match kept.findIdx? fun k => sameImport k.stmt entry.stmt with
+      | none =>
+        kept := kept.push entry
+      | some j =>
+        if kept[j]!.comment?.isNone then
+          if let some comment := entry.comment? then
+            kept := kept.set! j { kept[j]! with comment? := some comment }
+    -- Sort by bucket, then sub-block, then module path; the key is total on survivors because
+    -- same-bucket duplicates are already gone.
+    let sorted :=
+      kept.qsort fun a b =>
+        let ra := bucketRank a.stmt
+        let rb := bucketRank b.stmt
+        if ra != rb then ra < rb
+        else
+          let sa := subblockIndex groups a.stmt.module
+          let sb := subblockIndex groups b.stmt.module
+          if sa != sb then sa < sb else a.stmt.module.toString < b.stmt.module.toString
+    -- Emit: one blank line where the modifier bucket changes. Sub-blocks within a bucket stay
+    -- contiguous (script parity); the sub-block index only orders, it does not separate.
+    let mut lines : Array String := #[]
+    let mut prevRank? : Option Nat := none
+    for entry in sorted do
+      let rank := bucketRank entry.stmt
+      if prevRank?.isSome && prevRank? != some rank then
+        lines := lines.push ""
+      let text := collapseSpaces (slice normalized entry.stmt.range.start entry.stmt.range.stop)
+      lines :=
+        lines.push <|
+          match entry.comment? with
+          | some comment => text ++ " " ++ comment
+          | none => text
+      prevRank? := some rank
+    -- Reassemble: verbatim text before the region, the rebuilt region, the body with its leading
+    -- blank lines normalized to one.
+    let before := (slice normalized 0 header.imports[0]!.lineRange.start).trimAsciiEnd.toString
+    let lead := if before.isEmpty then "" else before ++ "\n\n"
+    let body := dropLeadingBlankLines (slice normalized regionStop normalized.utf8ByteSize)
+    let suffix :=
+      if body.trimAscii.isEmpty then (if normalized.endsWith "\n" then "\n" else "")
+      else "\n\n" ++ body
+    return lead ++ String.intercalate "\n" lines.toList ++ suffix
 
 /-! ## The organizer -/
 
 /-- The `grouped` layout: the original header with duplicates removed and each blank-line/
 comment-delimited group's imports sorted by module name, everything else — the `module` marker,
 `prelude`, modifiers, comments, and group boundaries — preserved. -/
-private def organizeGrouped (header : HeaderModel) (normalized : String) : String := Id.run do
-  if header.imports.isEmpty then return normalized
-  -- Partition imports into groups separated by a blank line or comment.
-  let mut groups : Array (Array Nat) := #[]
-  let mut current : Array Nat := #[]
-  for i in [0:header.imports.size] do
-    if i > 0 && groupBreakBetween normalized header.imports[i - 1]! header.imports[i]! then
-      groups := groups.push current
-      current := #[]
-    current := current.push i
-  groups := groups.push current
-  -- Within each group: drop later duplicates, then sort surviving lines by module name.
-  let mut newImportRegion : String := ""
-  let firstStart := header.imports[0]!.range.start
-  let lastStop := header.imports[header.imports.size - 1]!.range.stop
-  -- Rebuild the region [firstStart, lastStop) group by group, preserving the gaps between groups.
-  let mut cursor := firstStart
-  for g in [0:groups.size] do
-    let group := groups[g]!
-    -- Keep, in written order, the first occurrence of each distinct statement.
-    let mut kept : Array Nat := #[]
-    for idx in group do
-      let stmt := header.imports[idx]!
-      let already := kept.any fun k => sameImport header.imports[k]! stmt
-      unless already do kept := kept.push idx
-    -- Sort kept lines by module name (stable on ties, which duplicates already removed).
-    let sorted := kept.qsort fun a b =>
-      header.imports[a]!.module.toString < header.imports[b]!.module.toString
-    -- Emit each import's own line text (its statement bytes), newline-separated.
-    let lines := sorted.map fun idx =>
-      slice normalized header.imports[idx]!.range.start header.imports[idx]!.range.stop
-    -- The gap before this group (from cursor to the group's first import start) is preserved verbatim.
-    let groupStart := header.imports[group[0]!]!.range.start
-    newImportRegion := newImportRegion ++
-      slice normalized cursor groupStart ++
-      String.intercalate "\n" lines.toList
-    cursor := header.imports[group[group.size - 1]!]!.range.stop
-  -- Reassemble: everything before the first import, the rebuilt region, everything after the last.
-  return slice normalized 0 firstStart ++ newImportRegion ++
-    slice normalized lastStop normalized.utf8ByteSize
+private def organizeGrouped (header : HeaderModel) (normalized : String) : String :=
+  Id.run do
+    if header.imports.isEmpty then
+      return normalized
+    -- Partition imports into groups separated by a blank line or comment.
+    let mut groups : Array (Array Nat) := #[]
+    let mut current : Array Nat := #[]
+    for i in [0:header.imports.size]do
+      if i > 0 && groupBreakBetween normalized header.imports[i - 1]! header.imports[i]! then
+        groups := groups.push current
+        current := #[]
+      current := current.push i
+    groups := groups.push current
+    -- Within each group: drop later duplicates, then sort surviving lines by module name.
+    let mut newImportRegion : String := ""
+    let firstStart := header.imports[0]!.range.start
+    let lastStop := header.imports[header.imports.size - 1]!.range.stop
+    -- Rebuild the region [firstStart, lastStop) group by group, preserving the gaps between groups.
+    let mut cursor := firstStart
+    for g in [0:groups.size]do
+      let group := groups[g]!
+      -- Keep, in written order, the first occurrence of each distinct statement.
+      let mut kept : Array Nat := #[]
+      for idx in group do
+        let stmt := header.imports[idx]!
+        let already := kept.any fun k => sameImport header.imports[k]! stmt
+        unless already do
+          kept := kept.push idx
+      -- Sort kept lines by module name (stable on ties, which duplicates already removed).
+      let sorted :=
+        kept.qsort fun a b =>
+          header.imports[a]!.module.toString < header.imports[b]!.module.toString
+      -- Emit each import's own line text (its statement bytes), newline-separated.
+      let lines :=
+        sorted.map fun idx =>
+          slice normalized header.imports[idx]!.range.start header.imports[idx]!.range.stop
+      -- The gap before this group (from cursor to the group's first import start) is preserved verbatim.
+      let groupStart := header.imports[group[0]!]!.range.start
+      newImportRegion :=
+        newImportRegion ++ slice normalized cursor groupStart ++
+          String.intercalate "\n" lines.toList
+      cursor := header.imports[group[group.size - 1]!]!.range.stop
+    -- Reassemble: everything before the first import, the rebuilt region, everything after the last.
+    return slice normalized 0 firstStart ++ newImportRegion ++
+        slice normalized lastStop normalized.utf8ByteSize
 
 /-- The canonical header text under `layout`. This is the one operation the CLI and
 LSP "organize imports" capability calls; it exposes no graph internals, only text in, text out.
@@ -548,7 +587,8 @@ def organizeCandidate? (source : String) (layout : ImportLayout := .grouped)
     (groups : Array String := defaultImportGroups) : IO (Option String) := do
   let (normalized, lineEndings) := LosslessSource.normalize source
   match ← parseHeaderModel normalized with
-  | none => return none
+  | none =>
+    return none
   | some header =>
     let output := LosslessSource.denormalize (organize header normalized layout groups) lineEndings
     return (if output == source then none else some output)

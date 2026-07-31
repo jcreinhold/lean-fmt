@@ -16,7 +16,8 @@ open LeanFmt.Test.Analyze
 
 namespace FormatSuppression
 
-private def fixture : String := "tests/fixtures/format-suppression/Suppressed.lean"
+private def fixture : String :=
+  "tests/fixtures/format-suppression/Suppressed.lean"
 
 /-- Suppression at one width: the directive once, the preserved unit byte-for-byte, and formatting
 resumed after it. -/
@@ -25,7 +26,7 @@ private def testWidth (root setup : System.FilePath) (application : String) (wid
   let report ← analyzeExact root application setup fixture "Suppressed.lean" s!"4:{width}"
   let (_, text) ← canonical report s!"width {width}"
   ensure ((text.splitOn "-- lean-fmt: format-ignore-next").length == 2)
-    s!"width {width}: directive does not occur exactly once"
+      s!"width {width}: directive does not occur exactly once"
   ensureContains text "def preserved(alpha:Nat):Nat:=alpha+1" s!"width {width}"
   ensureContains text "def resumed" s!"width {width}"
   ensureContains text "beta + 1" s!"width {width}"
@@ -48,27 +49,32 @@ private def testCrlfAndWidths (root setup : System.FilePath) (application : Stri
 /-- Header-spanning and unmatched formatter directives are non-silent FMT901 findings, one per
 file, with the two distinct messages. -/
 private def testMalformedDirectives (root : System.FilePath) (application : String) : IO Unit := do
-  let result ← runProc application
-    #["check", "--output-format", "json", "--root", ".",
-      "tests/fixtures/format-suppression/Unmatched.lean", "tests/fixtures/format-suppression/Header.lean"]
-    (cwd? := some root)
+  let result ←
+    runProc application
+        #["check", "--output-format", "json", "--root", ".",
+          "tests/fixtures/format-suppression/Unmatched.lean",
+          "tests/fixtures/format-suppression/Header.lean"]
+        (cwd? := some root)
   let report ← parseJson result.stdout "malformed directives"
-  let some files := (jsonAt? report [.field "files"]).bind (·.getArr?.toOption)
-    | throw <| IO.userError "malformed-directives report has no files"
-  let findings := files.foldl (init := #[]) fun acc file =>
-    acc ++ ((jsonAt? file [.field "findings"]).bind (·.getArr?.toOption)).getD #[]
-  let codes := findings.map fun finding =>
-    (finding.getObjValAs? String "code").toOption.getD ""
+  let some files :=
+    (jsonAt? report [.field "files"]).bind
+      (·.getArr?.toOption) | throw <| IO.userError "malformed-directives report has no files"
+  let findings :=
+    files.foldl (init := #[]) fun acc file =>
+      acc ++ ((jsonAt? file [.field "findings"]).bind (·.getArr?.toOption)).getD #[]
+  let codes := findings.map fun finding => (finding.getObjValAs? String "code").toOption.getD ""
   ensureEq "malformed directives are not exactly two FMT901s" ["FMT901", "FMT901"] codes.toList
-  let messages := "\n".intercalate (findings.map fun finding =>
-    (finding.getObjValAs? String "message").toOption.getD "").toList
+  let messages :=
+    "\n".intercalate
+      (findings.map fun finding => (finding.getObjValAs? String "message").toOption.getD "").toList
   ensureContains messages "cannot target the module/import header" "malformed directives"
   ensureContains messages "has no following ordinary unit" "malformed directives"
 
 /-- A final file-owned Unicode comment survives exactly once. -/
 private def testEofComment (root setup : System.FilePath) (application : String) : IO Unit := do
-  let report ← analyzeExact root application setup
-    "tests/fixtures/format-suppression/EofComment.lean" "EofComment.lean" "4:100"
+  let report ←
+    analyzeExact root application setup "tests/fixtures/format-suppression/EofComment.lean"
+        "EofComment.lean" "4:100"
   let (_, text) ← canonical report "eof-comment"
   ensure (text.endsWith "-- 𝔽𝔽 tail\n") "the final Unicode comment did not survive"
 
@@ -78,15 +84,15 @@ public def main (args : List String) : IO UInt32 := do
   let root ← repoRoot
   let application := (root / ".lake" / "build" / "bin" / "lean-fmt").toString
   withScratchDir "format-suppression" fun work => do
-    let setup ← setupFile root work FormatSuppression.fixture
-    let eofSetup ← setupFile root work "tests/fixtures/format-suppression/EofComment.lean"
-    let cases : Array Case := #[
-      { name := "width-20", run := FormatSuppression.testWidth root setup application 20 },
-      { name := "width-100", run := FormatSuppression.testWidth root setup application 100 },
-      { name := "crlf-and-widths",
-        run := FormatSuppression.testCrlfAndWidths root setup application work },
-      { name := "malformed-directives",
-        run := FormatSuppression.testMalformedDirectives root application },
-      { name := "eof-comment", run := FormatSuppression.testEofComment root eofSetup application }
-    ]
-    runCases "format-suppression" cases args
+      let setup ← setupFile root work FormatSuppression.fixture
+      let eofSetup ← setupFile root work "tests/fixtures/format-suppression/EofComment.lean"
+      let cases : Array Case :=
+        #[{ name := "width-20", run := FormatSuppression.testWidth root setup application 20 },
+          { name := "width-100", run := FormatSuppression.testWidth root setup application 100 },
+          { name := "crlf-and-widths",
+            run := FormatSuppression.testCrlfAndWidths root setup application work },
+          { name := "malformed-directives",
+            run := FormatSuppression.testMalformedDirectives root application },
+          { name := "eof-comment",
+            run := FormatSuppression.testEofComment root eofSetup application }]
+      runCases "format-suppression" cases args

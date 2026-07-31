@@ -51,7 +51,8 @@ def Applicability.toWire : Applicability → String
   | .unsafe => "unsafe"
   | .displayOnly => "display-only"
 
-instance : ToString Applicability := ⟨Applicability.toWire⟩
+instance : ToString Applicability :=
+  ⟨Applicability.toWire⟩
 
 /-- The one admission rule the product uses: safe always, unsafe only with `--unsafe-fixes`,
 display-only never — so `format`, `diff`, and `fix` agree on what a run would apply. -/
@@ -60,14 +61,20 @@ def Applicability.admitted (unsafeFixes : Bool) : Applicability → Bool
   | .unsafe => unsafeFixes
   | .displayOnly => false
 
-instance : Lean.ToJson Applicability := ⟨fun a => .str a.toWire⟩
+instance : Lean.ToJson Applicability :=
+  ⟨fun a => .str a.toWire⟩
 
-instance : Lean.FromJson Applicability := ⟨fun json => do
-  match ← json.getStr? with
-  | "safe" => .ok .safe
-  | "unsafe" => .ok .unsafe
-  | "display-only" => .ok .displayOnly
-  | other => .error s!"unknown applicability: {other}"⟩
+instance : Lean.FromJson Applicability :=
+  ⟨fun json => do
+    match ← json.getStr? with
+    | "safe" =>
+      .ok .safe
+    | "unsafe" =>
+      .ok .unsafe
+    | "display-only" =>
+      .ok .displayOnly
+    | other =>
+      .error s!"unknown applicability: {other}"⟩
 
 /-- A proposed transformation attached to a finding: one applicability governing the whole edit set.
 
@@ -166,9 +173,8 @@ structure SemanticProjection where
   deriving Inhabited, BEq, Repr, Lean.ToJson, Lean.FromJson
 
 /-- Capabilities derived from the projection's shape, never stored a second time. -/
-def SemanticProjection.caps (projection : SemanticProjection) : SemanticCaps := {
-  occurrences := projection.occurrences?.isSome
-}
+def SemanticProjection.caps (projection : SemanticProjection) : SemanticCaps :=
+  { occurrences := projection.occurrences?.isSome }
 
 /- The artifact is stored inside the successful module's `.olean`, so exact toolchain, options,
 plugins, ordered imports, and dependency identity belong to the module artifact itself, not to a
@@ -204,10 +210,11 @@ captured, all-`false` otherwise (a syntax-only artifact provides no semantic sub
 def ModuleArtifact.caps (artifact : ModuleArtifact) : SemanticCaps :=
   match artifact.semantic with
   | some projection => projection.caps
-  | none => {}
+  | none => { }
 
 /-- Current policy-free module artifact shape. The version is checked before any artifact is trusted. -/
-def artifactSchema : String := "lean-fmt.module-artifact.v11"
+def artifactSchema : String :=
+  "lean-fmt.module-artifact.v11"
 
 /-- Build the artifact for one accepted module.
 
@@ -220,22 +227,19 @@ alone, so turning a rule on cannot rebuild or re-elaborate anything. The optiona
 projection is likewise a function of the module and its environment; it defaults to `none` so the
 always-on plugin producer stays on the syntax-only path, and only `analyzeExact` passes `some` under
 demand. -/
-def ModuleArtifact.ofParsedModule (mainModule normalized : String)
-    (commands : Array Lean.Syntax) (terminal : Lean.Syntax)
-    (semantic : Option SemanticProjection := none) :
+def ModuleArtifact.ofParsedModule (mainModule normalized : String) (commands : Array Lean.Syntax)
+    (terminal : Lean.Syntax) (semantic : Option SemanticProjection := none) :
     Except String ModuleArtifact := do
   let records := commands.map (CommandArtifactRecord.ofSyntax mainModule normalized false ·)
-  let records := records.push <|
-    CommandArtifactRecord.ofSyntax mainModule normalized true terminal
+  let records := records.push <| CommandArtifactRecord.ofSyntax mainModule normalized true terminal
   let syntaxData ← ModuleSyntax.ofRecords records
   return {
-    schema := artifactSchema
-    mainModule
-    normalizedBytes := normalized.utf8ByteSize
-    normalizedDigest := Digest.ofString normalized
-    syntaxData
-    semantic
-  }
+      schema := artifactSchema
+      mainModule
+      normalizedBytes := normalized.utf8ByteSize
+      normalizedDigest := Digest.ofString normalized
+      syntaxData
+      semantic }
 
 structure MaterializedArtifact where
   source : LosslessSource
@@ -245,22 +249,23 @@ structure MaterializedArtifact where
 def ModuleArtifact.materialize (artifact : ModuleArtifact) (raw : String) :
     Except String MaterializedArtifact := do
   let (normalized, _) := LosslessSource.normalize raw
-  unless artifact.schema == artifactSchema &&
-      artifact.normalizedBytes == normalized.utf8ByteSize &&
-      artifact.normalizedDigest == Digest.ofString normalized &&
+  unless
+    artifact.schema == artifactSchema && artifact.normalizedBytes == normalized.utf8ByteSize &&
+        artifact.normalizedDigest == Digest.ofString normalized &&
       artifact.syntaxData.structurallyValid artifact.normalizedBytes do
     throw "module artifact identity or structure is invalid"
   let materialized ← artifact.syntaxData.materialize normalized
-  let sourceProjection := LosslessSource.ofSource artifact.mainModule normalized materialized.commands
-    (some materialized.terminal)
+  let sourceProjection :=
+    LosslessSource.ofSource artifact.mainModule normalized materialized.commands
+      (some materialized.terminal)
   unless sourceProjection.structurallyValid && sourceProjection.validFor raw do
     throw "reconstructed syntax does not form a complete lossless source projection"
   return {
-    source := sourceProjection
-    commands := materialized.commands
-    terminal := materialized.terminal
-  }
+      source := sourceProjection
+      commands := materialized.commands
+      terminal := materialized.terminal }
 
-def commandArtifactLinter : Lean.Name := `leanFmt.commandSyntaxArtifact
+def commandArtifactLinter : Lean.Name :=
+  `leanFmt.commandSyntaxArtifact
 
 end LeanFmt.Internal

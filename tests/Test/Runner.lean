@@ -50,52 +50,43 @@ structure Suite where
   slow : Bool := false
   deriving Inhabited
 
-def Suite.exeName (suite : Suite) : String := s!"suite-{suite.name}"
+def Suite.exeName (suite : Suite) : String :=
+  s!"suite-{suite.name}"
 
 /-- The suite registry. Adding a suite is a `lean_exe «suite-<name>»` in the lakefile plus one
 line here; a name in either place but not the other fails loudly (the build step for the first,
 this list for the second). -/
-private def registered : Array Suite := #[
-  { name := "block-formatter", lane := .«parallel» },
-  { name := "cache", lane := .workspace },
-  { name := "catalog", lane := .workspace },
-  { name := "check", lane := .workspace },
-  { name := "ci", lane := .exclusive, slow := true },
-  { name := "collection-formatter", lane := .«parallel» },
-  { name := "comments", lane := .«parallel» },
-  { name := "command-formatter", lane := .«parallel» },
-  { name := "declaration-formatter", lane := .«parallel» },
-  { name := "discovery", lane := .«parallel» },
-  { name := "downstream", lane := .exclusive, slow := true },
-  { name := "editor", lane := .exclusive, slow := true },
-  { name := "term-formatter", lane := .«parallel» },
-  { name := "module-formatter", lane := .«parallel» },
-  { name := "native-layout", lane := .workspace },
-  { name := "performance", lane := .workspace, slow := true },
-  { name := "stream", lane := .workspace, slow := true },
-  { name := "style", lane := .«parallel» },
-  { name := "suppression", lane := .workspace },
-  { name := "syntax", lane := .workspace },
-  { name := "validator", lane := .«parallel» },
-  { name := "watch", lane := .exclusive },
-  { name := "compiler", lane := .exclusive },
-  { name := "format-suppression", lane := .«parallel» },
-  { name := "formatter", lane := .«parallel» },
-  { name := "formatter-adapter", lane := .«parallel» },
-  { name := "application-formatter", lane := .workspace },
-  { name := "boundary", lane := .«parallel» },
-  { name := "incremental", lane := .«parallel» },
-  { name := "imports", lane := .workspace },
-  { name := "layout", lane := .«parallel» },
-  { name := "lossless", lane := .«parallel» },
-  { name := "lsp", lane := .workspace },
-  { name := "modes", lane := .exclusive },
-  { name := "reporting", lane := .workspace },
-  { name := "scale", lane := .«parallel» },
-  { name := "security-bench", lane := .«parallel», slow := true },
-  { name := "semantic", lane := .«parallel» },
-  { name := "lsp-acceptance", lane := .exclusive, slow := true }
-]
+private def registered : Array Suite :=
+  #[{ name := "block-formatter", lane := .«parallel» }, { name := "cache", lane := .workspace },
+    { name := "catalog", lane := .workspace }, { name := "check", lane := .workspace },
+    { name := "ci", lane := .exclusive, slow := true },
+    { name := "collection-formatter", lane := .«parallel» },
+    { name := "comments", lane := .«parallel» },
+    { name := "command-formatter", lane := .«parallel» },
+    { name := "declaration-formatter", lane := .«parallel» },
+    { name := "discovery", lane := .«parallel» },
+    { name := "downstream", lane := .exclusive, slow := true },
+    { name := "editor", lane := .exclusive, slow := true },
+    { name := "term-formatter", lane := .«parallel» },
+    { name := "module-formatter", lane := .«parallel» },
+    { name := "native-layout", lane := .workspace },
+    { name := "performance", lane := .workspace, slow := true },
+    { name := "stream", lane := .workspace, slow := true },
+    { name := "style", lane := .«parallel» }, { name := "suppression", lane := .workspace },
+    { name := "syntax", lane := .workspace }, { name := "validator", lane := .«parallel» },
+    { name := "watch", lane := .exclusive }, { name := "compiler", lane := .exclusive },
+    { name := "format-suppression", lane := .«parallel» },
+    { name := "formatter", lane := .«parallel» },
+    { name := "formatter-adapter", lane := .«parallel» },
+    { name := "application-formatter", lane := .workspace },
+    { name := "boundary", lane := .«parallel» }, { name := "incremental", lane := .«parallel» },
+    { name := "imports", lane := .workspace }, { name := "layout", lane := .«parallel» },
+    { name := "lossless", lane := .«parallel» }, { name := "lsp", lane := .workspace },
+    { name := "modes", lane := .exclusive }, { name := "reporting", lane := .workspace },
+    { name := "scale", lane := .«parallel» },
+    { name := "security-bench", lane := .«parallel», slow := true },
+    { name := "semantic", lane := .«parallel» },
+    { name := "lsp-acceptance", lane := .exclusive, slow := true }]
 
 /-- What a run was asked to do. -/
 structure Options where
@@ -117,22 +108,29 @@ private def usage : String :=
 
 private def parseArgs (args : List String) : Except String Options := do
   let arguments := args.toArray
-  let mut options : Options := {}
+  let mut options : Options := { }
   let mut index := 0
   while index < arguments.size do
     match arguments[index]! with
-    | "--all" => options := { options with all := true }
-    | "--list" => options := { options with list := true }
-    | "--skip-unit" => options := { options with skipUnit := true }
-    | "--unit-only" => options := { options with unitOnly := true }
+    | "--all" =>
+      options := { options with all := true }
+    | "--list" =>
+      options := { options with list := true }
+    | "--skip-unit" =>
+      options := { options with skipUnit := true }
+    | "--unit-only" =>
+      options := { options with unitOnly := true }
     | "--jobs" =>
       index := index + 1
       match arguments[index]? with
       | some count =>
         match count.toNat? with
-        | some jobs => options := { options with jobs := max jobs 1 }
-        | none => throw s!"--jobs expects a number, got: {count}"
-      | none => throw "--jobs expects a number"
+        | some jobs =>
+          options := { options with jobs := max jobs 1 }
+        | none =>
+          throw s!"--jobs expects a number, got: {count}"
+      | none =>
+        throw "--jobs expects a number"
     | "--suites" =>
       index := index + 1
       let mut names : Array String := #[]
@@ -143,7 +141,8 @@ private def parseArgs (args : List String) : Except String Options := do
         throw "--suites expects at least one name"
       index := index - 1
       options := { options with suites := some (options.suites.getD #[] ++ names) }
-    | argument => throw s!"unknown argument: {argument}"
+    | argument =>
+      throw s!"unknown argument: {argument}"
     index := index + 1
   return options
 
@@ -155,8 +154,11 @@ private def select (options : Options) : Except String (Array Suite) := do
     let mut selected : Array Suite := #[]
     for name in names do
       match registered.find? (·.name == name) with
-      | some suite => selected := selected.push suite
-      | none => throw s!"unknown suite: {name} (registry: \
+      | some suite =>
+        selected := selected.push suite
+      | none =>
+        throw
+            s!"unknown suite: {name} (registry: \
           {", ".intercalate (registered.map (·.name)).toList})"
     return selected
   | none =>
@@ -172,8 +174,8 @@ private structure Outcome where
 /-- Run one suite's executable, capturing everything it says. -/
 private def runSuite (root : System.FilePath) (suite : Suite) : IO Outcome := do
   let started ← IO.monoNanosNow
-  let result ← runProc (root / ".lake" / "build" / "bin" / suite.exeName).toString
-    (cwd? := some root)
+  let result ←
+    runProc (root / ".lake" / "build" / "bin" / suite.exeName).toString (cwd? := some root)
   let elapsedSec := ((← IO.monoNanosNow) - started) / 1000000000
   return { suite, passed := result.exitCode == 0, elapsedSec,
            output := result.stdout ++ result.stderr }
@@ -183,41 +185,45 @@ private def pad (text : String) (width : Nat) : String :=
 
 /-- Print the per-suite line the way `run-all.sh` did: name, verdict, seconds. -/
 private def report (outcome : Outcome) : IO Unit :=
-  IO.println s!"{pad outcome.suite.name 28} {if outcome.passed then "PASS" else "FAIL"}  \
+  IO.println
+    s!"{pad outcome.suite.name 28} {if outcome.passed then "PASS" else "FAIL"}  \
     {pad (toString outcome.elapsedSec) 4}s"
 
 /-- The lines of a failure's captured output worth reading without opening the log: assertion
 failures and compiler errors from any build the suite ran, each with its following (indented)
 message line. The full output stays in the log; this is the difference between "six suites
 failed" and "six suites failed for one reason, visible here". -/
-private def digestLines (output : String) : Array String := Id.run do
-  let lines := output.splitOn "\n"
-  let mut picked : Array String := #[]
-  for i in [:lines.length] do
-    let line := lines[i]!
-    if line.startsWith "FAIL" || line.contains "error:" then
-      picked := picked.push line
-      if i + 1 < lines.length && lines[i + 1]!.startsWith " " then
-        picked := picked.push lines[i + 1]!
-  if picked.size > 10 then picked.extract 0 10 |>.push "  …"
-  else picked
+private def digestLines (output : String) : Array String :=
+  Id.run do
+    let lines := output.splitOn "\n"
+    let mut picked : Array String := #[]
+    for i in [:lines.length]do
+      let line := lines[i]!
+      if line.startsWith "FAIL" || line.contains "error:" then
+        picked := picked.push line
+        if i + 1 < lines.length && lines[i + 1]!.startsWith " " then
+          picked := picked.push lines[i + 1]!
+    if picked.size > 10 then
+      picked.extract 0 10 |>.push "  …"
+    else
+      picked
 
 /-- Build every selected executable in one invocation, so the run itself contains no builds. -/
 private def buildSuites (root : System.FilePath) (suites : Array Suite) : IO Unit := do
   -- The product binary is built alongside: every suite drives it, so a source edit that
   -- only rebuilds the suite would test a stale product.
-  let result ← runProc "lake" (#["-q", "build", "lean-fmt"] ++ suites.map (·.exeName))
-    (cwd? := some root)
+  let result ←
+    runProc "lake" (#["-q", "build", "lean-fmt"] ++ suites.map (·.exeName)) (cwd? := some root)
   ensure (result.exitCode == 0) s!"suite executables failed to build:\n{result.stderr}"
 
 /-- One worker of the lane pool: pull the next index, run it, record it, repeat. -/
-private partial def worker (root : System.FilePath) (suites : Array Suite)
-    (next : Std.Mutex Nat) (workspaceLock : Std.Mutex Unit)
-    (collected : Std.Mutex (Array Outcome)) : IO Unit := do
-  let index ← next.atomically fun state => do
-    let index ← state.get
-    state.set (index + 1)
-    return index
+private partial def worker (root : System.FilePath) (suites : Array Suite) (next : Std.Mutex Nat)
+    (workspaceLock : Std.Mutex Unit) (collected : Std.Mutex (Array Outcome)) : IO Unit := do
+  let index ←
+    next.atomically fun state => do
+        let index ← state.get
+        state.set (index + 1)
+        return index
   if index < suites.size then
     let suite := suites[index]!
     let outcome ←
@@ -237,8 +243,9 @@ private def runLanes (root : System.FilePath) (suites : Array Suite) (jobs : Nat
   let workspaceLock ← Std.Mutex.new ()
   let collected ← Std.Mutex.new (#[] : Array Outcome)
   let workers := min jobs (max suites.size 1)
-  let tasks ← (List.range workers).mapM fun _ =>
-    IO.asTask (worker root suites next workspaceLock collected) Task.Priority.dedicated
+  let tasks ←
+    (List.range workers).mapM fun _ =>
+        IO.asTask (worker root suites next workspaceLock collected) Task.Priority.dedicated
   for task in tasks do
     IO.ofExcept (← IO.wait task)
   collected.atomically fun state => state.get
@@ -248,26 +255,33 @@ end LeanFmt.Test.Runner
 open LeanFmt.Test.Runner
 
 public def main (args : List String) : IO UInt32 := do
-  let options ← match parseArgs args with
-    | .ok options => pure options
-    | .error error => do
-      IO.eprintln s!"{error}\n{usage}"
-      return 2
+  let options ←
+    match parseArgs args with
+    | .ok options =>
+      pure options
+    | .error error =>
+      do
+        IO.eprintln s!"{error}\n{usage}"
+        return 2
   if options.list then
     for suite in registered do
-      let tags := #[
-        if suite.lane == .«parallel» then some "parallel" else none,
-        if suite.lane == .workspace then some "workspace" else none,
-        if suite.lane == .exclusive then some "exclusive" else none,
-        if suite.slow then some "slow" else none].filterMap id
+      let tags :=
+        #[if suite.lane == .«parallel» then some "parallel" else none,
+              if suite.lane == .workspace then some "workspace" else none,
+              if suite.lane == .exclusive then some "exclusive" else none,
+              if suite.slow then some "slow" else none].filterMap
+          id
       IO.println s!"{pad suite.name 28} {", ".intercalate tags.toList}"
     return 0
   let root ← repoRoot
-  let selected ← match select options with
-    | .ok selected => pure selected
-    | .error error => do
-      IO.eprintln s!"{error}\n{usage}"
-      return 2
+  let selected ←
+    match select options with
+    | .ok selected =>
+      pure selected
+    | .error error =>
+      do
+        IO.eprintln s!"{error}\n{usage}"
+        return 2
   unless options.skipUnit do
     let code ← runCases "unit" allCases []
     unless code == 0 do
@@ -284,15 +298,16 @@ public def main (args : List String) : IO UInt32 := do
   try
     let (ordinary, exclusive) := selected.partition (·.lane != .exclusive)
     let ordinaryOutcomes ← runLanes root ordinary options.jobs
-    let exclusiveOutcomes ← exclusive.mapM fun suite => do
-      let outcome ← runSuite root suite
-      report outcome
-      return outcome
+    let exclusiveOutcomes ←
+      exclusive.mapM fun suite => do
+          let outcome ← runSuite root suite
+          report outcome
+          return outcome
     let outcomes := ordinaryOutcomes ++ exclusiveOutcomes
     let failures := outcomes.filter (!·.passed)
     IO.println "\n--- slowest suites ---"
     let sorted := outcomes.qsort (·.elapsedSec > ·.elapsedSec)
-    for outcome in sorted.toList.take 8 do
+    for outcome in sorted.toList.take 8do
       IO.println s!"{pad (toString outcome.elapsedSec) 7}s  {outcome.suite.name}"
     if failures.isEmpty then
       IO.println s!"all {outcomes.size} suite(s) passed"
@@ -308,7 +323,8 @@ public def main (args : List String) : IO UInt32 := do
           for line in digest do
             IO.eprintln line
       IO.eprintln s!"logs kept at {scratch}"
-      IO.eprintln s!"{failures.size} suite(s) failed: \
+      IO.eprintln
+          s!"{failures.size} suite(s) failed: \
         {", ".intercalate (failures.map (·.suite.name)).toList}"
       return 1
   finally

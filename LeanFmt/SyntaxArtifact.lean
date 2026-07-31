@@ -41,8 +41,9 @@ inductive SyntaxEntry where
   | missing
   | node (info : EncodedSourceInfo) (kind : Nat) (children : Nat)
   | atom (info : EncodedSourceInfo) (value? : Option String)
-  | ident (info : EncodedSourceInfo) (raw? : Option String) (value : Lean.Name)
-      (preresolved : Array EncodedPreresolved)
+  |
+  ident (info : EncodedSourceInfo) (raw? : Option String) (value : Lean.Name)
+    (preresolved : Array EncodedPreresolved)
   deriving Inhabited, BEq, Repr
 
 structure SyntaxTree where
@@ -67,15 +68,16 @@ private def jsonField (fields : Array Lean.Json) (index : Nat) : Except String L
   | some field => .ok field
   | none => .error s!"missing field {index}"
 
-private def jsonNat (json : Lean.Json) : Except String Nat := Lean.fromJson? json
+private def jsonNat (json : Lean.Json) : Except String Nat :=
+  Lean.fromJson? json
 
 instance : Lean.ToJson EncodedSourceInfo where
   toJson
     | .none => .num 0
-    | .original leadingStart position endPosition trailingStop => .arr #[
-        .num 1, .num leadingStart, .num position, .num endPosition, .num trailingStop]
-    | .synthetic position endPosition canonical => .arr #[
-        .num 2, .num position, .num endPosition, .bool canonical]
+    | .original leadingStart position endPosition trailingStop =>
+      .arr #[.num 1, .num leadingStart, .num position, .num endPosition, .num trailingStop]
+    | .synthetic position endPosition canonical =>
+      .arr #[.num 2, .num position, .num endPosition, .bool canonical]
 
 instance : Lean.FromJson EncodedSourceInfo where
   fromJson? json := do
@@ -94,7 +96,8 @@ instance : Lean.FromJson EncodedSourceInfo where
       let endPosition ← jsonNat (← jsonField fields 2)
       let canonical ← Lean.fromJson? (← jsonField fields 3)
       return .synthetic position endPosition canonical
-    | tag => throw s!"unknown source-info tag {tag}"
+    | tag =>
+      throw s!"unknown source-info tag {tag}"
 
 instance : Lean.ToJson EncodedPreresolved where
   toJson
@@ -105,27 +108,29 @@ instance : Lean.FromJson EncodedPreresolved where
   fromJson? json := do
     let fields ← json.getArr?
     match ← jsonNat (← jsonField fields 0) with
-    | 0 => return .namespace (← Lean.fromJson? (← jsonField fields 1))
+    | 0 =>
+      return .namespace (← Lean.fromJson? (← jsonField fields 1))
     | 1 =>
       let name ← Lean.fromJson? (← jsonField fields 1)
       let declFields ← Lean.fromJson? (← jsonField fields 2)
       return .decl name declFields
-    | tag => throw s!"unknown preresolved tag {tag}"
+    | tag =>
+      throw s!"unknown preresolved tag {tag}"
 
 instance : Lean.ToJson SyntaxEntry where
   toJson
     | .missing => .arr #[.num 0]
-    | .node info kind children => .arr #[
-        .num 1, Lean.toJson info, .num kind, .num children]
+    | .node info kind children => .arr #[.num 1, Lean.toJson info, .num kind, .num children]
     | .atom info value? => .arr #[.num 2, Lean.toJson info, Lean.toJson value?]
-    | .ident info raw? value preresolved => .arr #[
-        .num 3, Lean.toJson info, Lean.toJson raw?, Lean.toJson value, Lean.toJson preresolved]
+    | .ident info raw? value preresolved =>
+      .arr #[.num 3, Lean.toJson info, Lean.toJson raw?, Lean.toJson value, Lean.toJson preresolved]
 
 instance : Lean.FromJson SyntaxEntry where
   fromJson? json := do
     let fields ← json.getArr?
     match ← jsonNat (← jsonField fields 0) with
-    | 0 => return .missing
+    | 0 =>
+      return .missing
     | 1 =>
       let info ← Lean.fromJson? (← jsonField fields 1)
       let kind ← jsonNat (← jsonField fields 2)
@@ -141,17 +146,20 @@ instance : Lean.FromJson SyntaxEntry where
       let value ← Lean.fromJson? (← jsonField fields 3)
       let preresolved ← Lean.fromJson? (← jsonField fields 4)
       return .ident info raw? value preresolved
-    | tag => throw s!"unknown syntax-entry tag {tag}"
+    | tag =>
+      throw s!"unknown syntax-entry tag {tag}"
 
 instance : Lean.ToJson SyntaxTree where
   toJson tree := Lean.Json.mkObj [("k", Lean.toJson tree.kinds), ("e", Lean.toJson tree.entries)]
 
 instance : Lean.FromJson SyntaxTree where
-  fromJson? json := return {
-    kinds := ← json.getObjValAs? (Array Lean.Name) "k"
-    entries := ← json.getObjValAs? (Array SyntaxEntry) "e" }
+  fromJson? json :=
+    return {
+        kinds := ← json.getObjValAs? (Array Lean.Name) "k"
+        entries := ← json.getObjValAs? (Array SyntaxEntry) "e" }
 
 deriving instance Lean.ToJson for ModuleSyntax
+
 deriving instance Lean.FromJson for ModuleSyntax
 
 private def encodeInfo : Lean.SourceInfo → EncodedSourceInfo
@@ -163,7 +171,7 @@ private def encodeInfo : Lean.SourceInfo → EncodedSourceInfo
 
 private structure SyntaxBuild where
   kinds : Array Lean.Name := #[]
-  kindIndex : Std.HashMap Lean.Name Nat := {}
+  kindIndex : Std.HashMap Lean.Name Nat := { }
   entries : Array SyntaxEntry := #[]
 
 private def SyntaxBuild.intern (build : SyntaxBuild) (kind : Lean.Name) : Nat × SyntaxBuild :=
@@ -171,32 +179,42 @@ private def SyntaxBuild.intern (build : SyntaxBuild) (kind : Lean.Name) : Nat ×
   | some index => (index, build)
   | none =>
     let index := build.kinds.size
-    (index, { build with
-      kinds := build.kinds.push kind
-      kindIndex := build.kindIndex.insert kind index })
+    (index,
+      { build with
+        kinds := build.kinds.push kind
+        kindIndex := build.kindIndex.insert kind index })
 
 private partial def encodeSyntax (stx : Lean.Syntax) (build : SyntaxBuild) : SyntaxBuild :=
   match stx with
   | .missing => { build with entries := build.entries.push .missing }
   | .node info kind children =>
     let (kind, build) := build.intern kind
-    let build := { build with entries := build.entries.push (.node (encodeInfo info) kind children.size) }
+    let build :=
+      { build with entries := build.entries.push (.node (encodeInfo info) kind children.size) }
     children.foldl (init := build) fun build child => encodeSyntax child build
   | .atom info value =>
-    let value? := match info with | .original .. => none | _ => some value
+    let value? :=
+      match info with
+      | .original .. => none
+      | _ => some value
     { build with entries := build.entries.push (.atom (encodeInfo info) value?) }
   | .ident info raw value preresolved =>
-    let raw? := match info with | .original .. => none | _ => some raw.toString
-    let preresolved := preresolved.toArray.map fun
-      | .namespace name => EncodedPreresolved.namespace name
-      | .decl name fields => .decl name fields
+    let raw? :=
+      match info with
+      | .original .. => none
+      | _ => some raw.toString
+    let preresolved :=
+      preresolved.toArray.map fun
+        | .namespace name => EncodedPreresolved.namespace name
+        | .decl name fields => .decl name fields
     { build with entries := build.entries.push (.ident (encodeInfo info) raw? value preresolved) }
 
 def SyntaxTree.ofSyntax (stx : Lean.Syntax) : SyntaxTree :=
-  let build := encodeSyntax stx {}
+  let build := encodeSyntax stx { }
   { kinds := build.kinds, entries := build.entries }
 
-private def rawPosition (offset : Nat) : String.Pos.Raw := ⟨offset⟩
+private def rawPosition (offset : Nat) : String.Pos.Raw :=
+  ⟨offset⟩
 
 private def rawSubstring (source : String) (start stop : Nat) : Substring.Raw :=
   Substring.Raw.mk source (rawPosition start) (rawPosition stop)
@@ -224,32 +242,38 @@ private partial def decodeSyntax (source : String) (tree : SyntaxTree) (index : 
     Except String (Lean.Syntax × Nat) := do
   let some entry := tree.entries[index]? | throw s!"missing syntax entry {index}"
   match entry with
-  | .missing => return (.missing, index + 1)
+  | .missing =>
+    return (.missing, index + 1)
   | .node info kindIndex childCount =>
     let some kind := tree.kinds[kindIndex]? | throw s!"missing syntax kind {kindIndex}"
     let mut children := #[]
     let mut cursor := index + 1
-    for _ in [0:childCount] do
+    for _ in [0:childCount]do
       let (child, next) ← decodeSyntax source tree cursor
       children := children.push child
       cursor := next
     return (.node (info.decode source) kind children, cursor)
   | .atom info value? =>
-    let value ← match value? with
-      | some value => pure value
+    let value ←
+      match value? with
+      | some value =>
+        pure value
       | none =>
         let some range := info.range? | throw "source-backed atom has no range"
         sourceSlice source range
     return (.atom (info.decode source) value, index + 1)
   | .ident info raw? value preresolved =>
-    let raw ← match raw? with
-      | some raw => pure raw.toRawSubstring
+    let raw ←
+      match raw? with
+      | some raw =>
+        pure raw.toRawSubstring
       | none =>
         let some range := info.range? | throw "source-backed identifier has no range"
         pure (rawSubstring source range.start range.stop)
-    let preresolved := preresolved.toList.map fun
-      | .namespace name => Lean.Syntax.Preresolved.namespace name
-      | .decl name fields => .decl name fields
+    let preresolved :=
+      preresolved.toList.map fun
+        | .namespace name => Lean.Syntax.Preresolved.namespace name
+        | .decl name fields => .decl name fields
     return (.ident (info.decode source) raw value preresolved, index + 1)
 
 def SyntaxEntry.remapKind (mapping : Array Nat) : SyntaxEntry → Option SyntaxEntry
@@ -266,11 +290,12 @@ private partial def validateTreeAt (kinds bytes : Nat) (entries : Array SyntaxEn
     Option Nat := do
   let entry ← entries[index]?
   match entry with
-  | .missing => some (index + 1)
+  | .missing =>
+    some (index + 1)
   | .node info kind children =>
     guard <| kind < kinds && infoValid bytes info
     let mut cursor := index + 1
-    for _ in [0:children] do
+    for _ in [0:children]do
       cursor ← validateTreeAt kinds bytes entries cursor
     return cursor
   | .atom info _ | .ident info .. =>
@@ -282,17 +307,21 @@ def SyntaxTree.structurallyValid (tree : SyntaxTree) (bytes : Nat) : Bool :=
   | some next => next == tree.entries.size
   | none => false
 
-def SyntaxTree.range? (tree : SyntaxTree) : Option SourceRange := Id.run do
-  let mut range? : Option SourceRange := none
-  for entry in tree.entries do
-    let info := match entry with
-      | .node info .. | .atom info .. | .ident info .. => info
-      | .missing => .none
-    if let some range := info.range? then
-      range? := some <| match range? with
-        | none => range
-        | some current => ⟨min current.start range.start, max current.stop range.stop⟩
-  return range?
+def SyntaxTree.range? (tree : SyntaxTree) : Option SourceRange :=
+  Id.run do
+    let mut range? : Option SourceRange := none
+    for entry in tree.entries do
+      let info :=
+        match entry with
+        | .node info .. | .atom info .. | .ident info .. => info
+        | .missing => .none
+      if let some range := info.range? then
+        range? :=
+          some <|
+            match range? with
+            | none => range
+            | some current => ⟨min current.start range.start, max current.stop range.stop⟩
+    return range?
 
 def SyntaxTree.leadingStart? (tree : SyntaxTree) : Option Nat :=
   tree.entries.findSome? fun entry =>
@@ -310,25 +339,26 @@ structure CommandArtifactRecord where
   tree : SyntaxTree
   deriving BEq, Repr, Lean.ToJson, Lean.FromJson
 
-def commandArtifactSchema : String := "lean-fmt.command-syntax.v1"
+def commandArtifactSchema : String :=
+  "lean-fmt.command-syntax.v1"
 
 def CommandArtifactRecord.ofSyntax (mainModule normalized : String) (terminal : Bool)
-    (stx : Lean.Syntax) : CommandArtifactRecord := {
-  schema := commandArtifactSchema
-  mainModule
-  normalizedBytes := normalized.utf8ByteSize
-  normalizedDigest := Digest.ofString normalized
-  terminal
-  tree := SyntaxTree.ofSyntax stx }
+    (stx : Lean.Syntax) : CommandArtifactRecord :=
+  { schema := commandArtifactSchema
+    mainModule
+    normalizedBytes := normalized.utf8ByteSize
+    normalizedDigest := Digest.ofString normalized
+    terminal
+    tree := SyntaxTree.ofSyntax stx }
 
 def CommandArtifactRecord.structurallyValid (record : CommandArtifactRecord) : Bool :=
-  record.schema == commandArtifactSchema &&
-    record.tree.structurallyValid record.normalizedBytes &&
-    record.tree.leadingStart?.isSome && record.tree.range?.isSome
+  record.schema == commandArtifactSchema && record.tree.structurallyValid record.normalizedBytes &&
+      record.tree.leadingStart?.isSome &&
+    record.tree.range?.isSome
 
 private structure ModuleBuild where
   kinds : Array Lean.Name := #[]
-  kindIndex : Std.HashMap Lean.Name Nat := {}
+  kindIndex : Std.HashMap Lean.Name Nat := { }
   entries : Array SyntaxEntry := #[]
 
 private def ModuleBuild.internKind (build : ModuleBuild) (kind : Lean.Name) : Nat × ModuleBuild :=
@@ -336,11 +366,13 @@ private def ModuleBuild.internKind (build : ModuleBuild) (kind : Lean.Name) : Na
   | some index => (index, build)
   | none =>
     let index := build.kinds.size
-    (index, { build with
-      kinds := build.kinds.push kind
-      kindIndex := build.kindIndex.insert kind index })
+    (index,
+      { build with
+        kinds := build.kinds.push kind
+        kindIndex := build.kindIndex.insert kind index })
 
-private def ModuleBuild.appendTree (build : ModuleBuild) (tree : SyntaxTree) : Option (Nat × ModuleBuild) := do
+private def ModuleBuild.appendTree (build : ModuleBuild) (tree : SyntaxTree) :
+    Option (Nat × ModuleBuild) := do
   let mut build := build
   let mut mapping := #[]
   for kind in tree.kinds do
@@ -354,13 +386,14 @@ private def ModuleBuild.appendTree (build : ModuleBuild) (tree : SyntaxTree) : O
 private def recordOrder (left right : CommandArtifactRecord) : Bool :=
   left.tree.leadingStart?.getD 0 < right.tree.leadingStart?.getD 0
 
-def ModuleSyntax.ofRecords (records : Array CommandArtifactRecord) : Except String ModuleSyntax := do
+def ModuleSyntax.ofRecords (records : Array CommandArtifactRecord) : Except String ModuleSyntax :=
+  do
   let records := records.qsort recordOrder
   let terminals := records.filter (·.terminal)
   unless terminals.size == 1 do
     throw s!"expected one terminal syntax record, got {terminals.size}"
   let ordinary := records.filter (!·.terminal)
-  let mut build : ModuleBuild := {}
+  let mut build : ModuleBuild := { }
   let mut commands := #[]
   for record in ordinary do
     let root := build.entries.size
@@ -372,13 +405,15 @@ def ModuleSyntax.ofRecords (records : Array CommandArtifactRecord) : Except Stri
   let terminal := build.entries.size
   let some (_, finalBuild) := build.appendTree terminalRecord.tree
     | throw "invalid terminal kind mapping"
-  return { finalBuild with commands, terminal }
+  return { finalBuild with
+      commands, terminal }
 
 structure MaterializedSyntax where
   commands : Array Lean.Syntax
   terminal : Lean.Syntax
 
-def ModuleSyntax.materialize (moduleData : ModuleSyntax) (source : String) : Except String MaterializedSyntax := do
+def ModuleSyntax.materialize (moduleData : ModuleSyntax) (source : String) :
+    Except String MaterializedSyntax := do
   let tree : SyntaxTree := { kinds := moduleData.kinds, entries := moduleData.entries }
   let mut commands := #[]
   for root in moduleData.commands do
@@ -389,23 +424,24 @@ def ModuleSyntax.materialize (moduleData : ModuleSyntax) (source : String) : Exc
     throw "terminal syntax does not end at the artifact boundary"
   return { commands, terminal }
 
-def ModuleSyntax.structurallyValid (moduleData : ModuleSyntax) (bytes : Nat) : Bool := Id.run do
-  let tree : SyntaxTree := { kinds := moduleData.kinds, entries := moduleData.entries }
-  let mut cursor := 0
-  let mut sourceStop := 0
-  for root in moduleData.commands do
-    unless root.entry == cursor &&
-        root.range.start <= root.range.stop && root.range.stop <= bytes &&
-        sourceStop <= root.range.start do
+def ModuleSyntax.structurallyValid (moduleData : ModuleSyntax) (bytes : Nat) : Bool :=
+  Id.run do
+    let tree : SyntaxTree := { kinds := moduleData.kinds, entries := moduleData.entries }
+    let mut cursor := 0
+    let mut sourceStop := 0
+    for root in moduleData.commands do
+      unless
+        root.entry == cursor && root.range.start <= root.range.stop && root.range.stop <= bytes &&
+          sourceStop <= root.range.start do
+        return false
+      let some next := validateTreeAt moduleData.kinds.size bytes moduleData.entries cursor
+        | return false
+      cursor := next
+      sourceStop := root.range.stop
+    unless moduleData.terminal == cursor do
       return false
-    let some next := validateTreeAt moduleData.kinds.size bytes moduleData.entries cursor
+    let some terminalNext := validateTreeAt moduleData.kinds.size bytes moduleData.entries cursor
       | return false
-    cursor := next
-    sourceStop := root.range.stop
-  unless moduleData.terminal == cursor do
-    return false
-  let some terminalNext := validateTreeAt moduleData.kinds.size bytes moduleData.entries cursor
-    | return false
-  return terminalNext == tree.entries.size
+    return terminalNext == tree.entries.size
 
 end LeanFmt.Internal

@@ -104,9 +104,11 @@ private structure LiveCommand where
   stx : Lean.Syntax
   parse : ParseContext
 
-private def LiveCommand.env (command : LiveCommand) : Lean.Environment := command.parse.env
+private def LiveCommand.env (command : LiveCommand) : Lean.Environment :=
+  command.parse.env
 
-private def LiveCommand.options (command : LiveCommand) : Lean.Options := command.parse.options
+private def LiveCommand.options (command : LiveCommand) : Lean.Options :=
+  command.parse.options
 
 private partial def collectLiveCommands (snapshot : Lean.Language.Lean.CommandParsedSnapshot)
     (state : Lean.Elab.Command.State) (commands : Array LiveCommand := #[])
@@ -121,8 +123,10 @@ private partial def collectLiveCommands (snapshot : Lean.Language.Lean.CommandPa
   let terminal? := if isTerminal then terminal? <|> some live else terminal?
   let nextState := snapshot.elabSnap.resultSnap.get.cmdState
   match snapshot.nextCmdSnap? with
-  | some next => collectLiveCommands next.get nextState commands terminal? checkCancelled
-  | none => return (commands, terminal?)
+  | some next =>
+    collectLiveCommands next.get nextState commands terminal? checkCancelled
+  | none =>
+    return (commands, terminal?)
 
 /-- A frontend run that has finished, in the shape every projection below reads.
 
@@ -166,7 +170,7 @@ private def ProcessedModule.liveCommands (module : ProcessedModule)
 private def ProcessedModule.ofInitial (snapshot : Lean.Language.Lean.InitialSnapshot) :
     ProcessedModule where
   headerStx := snapshot.stx
-  headerMessages := {}
+  headerMessages := { }
   tree := Lean.Language.toSnapshotTree snapshot
   start? := do
     let parsed ← snapshot.result?
@@ -177,15 +181,16 @@ private def normalizedSlice (bytes : ByteArray) (range : SourceRange) : String :
   String.fromUTF8! <| bytes.extract range.start range.stop
 
 private def appendDocument (document? : Option Doc) (next : Doc) : Option Doc :=
-  some <| match document? with
-  | some document => document ++ next
-  | none => next
+  some <|
+    match document? with
+    | some document => document ++ next
+    | none => next
 
 private def buildFormatDraft (normalized : String) (source : LosslessSource)
     (sourcePath : System.FilePath) (fileMap : Lean.FileMap) (ownership : CommentOwnership)
     (header : Lean.Syntax) (headerEnv : Lean.Environment) (headerOptions : Lean.Options)
-    (commands : Array LiveCommand) (format : FormatConfig)
-    (checkCancelled : IO Unit := pure ()) : IO (Except FormatterFailure FormatDraft) := do
+    (commands : Array LiveCommand) (format : FormatConfig) (checkCancelled : IO Unit := pure ()) :
+    IO (Except FormatterFailure FormatDraft) := do
   let bytes := normalized.toUTF8
   let headerRange : SourceRange := ⟨0, source.headerStop⟩
   let mut document? : Option Doc := none
@@ -203,54 +208,67 @@ private def buildFormatDraft (normalized : String) (source : LosslessSource)
   let fileDangling := Formatter.Trivia.fileDangling ownership
   checkCancelled
   if headerRange.start < headerRange.stop then
-    let result ← Lean.Core.CoreM.toIO' (Formatter.Command.header ownership header)
-      { fileName := sourcePath.toString, fileMap, options := headerOptions }
-      { env := headerEnv }
-    let formatted ← match result with
-      | .ok formatted => pure formatted
-      | .error failure => return .error failure
+    let result ←
+      Lean.Core.CoreM.toIO' (Formatter.Command.header ownership header)
+          { fileName := sourcePath.toString, fileMap, options := headerOptions }
+          { env := headerEnv }
+    let formatted ←
+      match result with
+      | .ok formatted =>
+        pure formatted
+      | .error failure =>
+        return .error failure
     registryNodes := registryNodes + formatted.document.size
     match formatted.trace.resolution with
-    | .explicit _ => explicitDocuments := explicitDocuments + 1
-    | .descriptor => descriptorDocuments := descriptorDocuments + 1
+    | .explicit _ =>
+      explicitDocuments := explicitDocuments + 1
+    | .descriptor =>
+      descriptorDocuments := descriptorDocuments + 1
     let headerSeparator :=
       if commands.isEmpty && source.terminalStop == source.normalizedBytes then Doc.hard
       else Doc.hard ++ Doc.hard
-    document? := appendDocument document? <|
-      Doc.mark headerRange (formatted.document ++ headerSeparator)
+    document? :=
+      appendDocument document? <| Doc.mark headerRange (formatted.document ++ headerSeparator)
   let mut sequence := Formatter.Command.sequence
-  for h : index in [0:commands.size] do
+  for h : index in [0:commands.size]do
     checkCancelled
     let command := commands[index]
     let (nextSequence, placement) := Formatter.Command.place sequence command.stx
     sequence := nextSequence
     let start := (LosslessSource.leadingStart? command.stx).getD source.headerStop
-    let stop := match commands[index + 1]? with
+    let stop :=
+      match commands[index + 1]? with
       | some next => (LosslessSource.leadingStart? next.stx).getD source.terminalStop
       | none => source.terminalStop
     let hasTail := source.terminalStop < source.normalizedBytes
     let preserveFinalNewline := index + 1 == commands.size && !hasTail && normalized.endsWith "\n"
     let leading := if placement.blankBefore then Doc.hard else Doc.empty
-    let separator := if index + 1 < commands.size || hasTail || preserveFinalNewline then
-        Doc.hard
-      else Doc.empty
-    let boundaryTail := if index + 1 == commands.size then
+    let separator :=
+      if index + 1 < commands.size || hasTail || preserveFinalNewline then Doc.hard else Doc.empty
+    let boundaryTail :=
+      if index + 1 == commands.size then
         match fileDangling with
         | some comments => Doc.hard ++ comments
         | none => Doc.empty
       else Doc.empty
     if let some suppressed := Formatter.Trivia.formatIgnoreNext? ownership command.stx then
-      document? := appendDocument document? <|
-        Doc.mark ⟨start, stop⟩
-          (leading ++ Doc.verbatim (normalizedSlice bytes suppressed) ++ boundaryTail ++ separator)
+      document? :=
+        appendDocument document? <|
+          Doc.mark ⟨start, stop⟩
+            (leading ++ Doc.verbatim (normalizedSlice bytes suppressed) ++ boundaryTail ++
+              separator)
       continue
-    let result ← Lean.Core.CoreM.toIO'
-      (Formatter.NativeLayout.command normalized ownership command.stx format placement.indent)
-      { fileName := sourcePath.toString, fileMap, options := command.options }
-      { env := command.env }
-    let formatted ← match result with
-      | .ok formatted => pure formatted
-      | .error failure => return .error failure
+    let result ←
+      Lean.Core.CoreM.toIO'
+          (Formatter.NativeLayout.command normalized ownership command.stx format placement.indent)
+          { fileName := sourcePath.toString, fileMap, options := command.options }
+          { env := command.env }
+    let formatted ←
+      match result with
+      | .ok formatted =>
+        pure formatted
+      | .error failure =>
+        return .error failure
     nativeDocuments := nativeDocuments + 1
     alignedTokens := alignedTokens + formatted.metrics.tokenLeaves
     nativeCommentLeaves := nativeCommentLeaves + formatted.metrics.commentLeaves
@@ -261,8 +279,10 @@ private def buildFormatDraft (normalized : String) (source : LosslessSource)
     commentConstraints := commentConstraints + formatted.metrics.commentConstraints
     registryNodes := registryNodes + formatted.metrics.nativeNodes
     match formatted.trace.resolution with
-    | .explicit _ => explicitDocuments := explicitDocuments + 1
-    | .descriptor => descriptorDocuments := descriptorDocuments + 1
+    | .explicit _ =>
+      explicitDocuments := explicitDocuments + 1
+    | .descriptor =>
+      descriptorDocuments := descriptorDocuments + 1
     let indentation := Doc.text ("".pushn ' ' placement.indent)
     -- Command-boundary trivia belongs to whole-module composition. Registered command
     -- syntax is boundary-stripped before delegation, so the ownership layer remains its sole
@@ -283,47 +303,51 @@ private def buildFormatDraft (normalized : String) (source : LosslessSource)
         -- ended flush against `module`.
         comments ++ Formatter.Trivia.leadingBoundary ownership command.stx
       | none => Doc.empty
-    let trailingTrivia := match Formatter.Trivia.trailing ownership command.stx stop with
+    let trailingTrivia :=
+      match Formatter.Trivia.trailing ownership command.stx stop with
       | some comments => comments
       | none => Doc.empty
-    let commandDocument := Doc.nest placement.indent
-      (indentation ++ leadingTrivia ++ formatted.document ++ trailingTrivia)
-    document? := appendDocument document? <|
-      Doc.mark ⟨start, stop⟩ (leading ++ commandDocument ++ boundaryTail ++ separator)
+    let commandDocument :=
+      Doc.nest placement.indent
+        (indentation ++ leadingTrivia ++ formatted.document ++ trailingTrivia)
+    document? :=
+      appendDocument document? <|
+        Doc.mark ⟨start, stop⟩ (leading ++ commandDocument ++ boundaryTail ++ separator)
   let tailRange : SourceRange := ⟨source.terminalStop, source.normalizedBytes⟩
   if tailRange.start < tailRange.stop then
-    document? := appendDocument document? <|
-      Doc.mark tailRange (Doc.verbatim (normalizedSlice bytes tailRange))
+    document? :=
+      appendDocument document? <|
+        Doc.mark tailRange (Doc.verbatim (normalizedSlice bytes tailRange))
   let document := document?.getD Doc.empty
   checkCancelled
   let rendered := renderDetailed format.lineWidth document format.pinnedComments
-  return .ok {
-    text := rendered.text
-    sourceMap := rendered.sourceMap
-    headerContract := Formatter.Command.headerContract header
-    commentContract := Comments.contract normalized ownership
-    metrics := {
-      frontendRuns := 1
-      commands := commands.size
-      nativeDocuments
-      alignedTokens
-      nativeCommentLeaves
-      normalizedTokens
-      exactIslands
-      exactIslandBytes
-      offsideConstraints
-      commentConstraints
-      registryNodes
-      explicitDocuments
-      descriptorDocuments
-      commentOwners := Comments.all ownership |>.size
-      documentNodes := rendered.metrics.documentNodes
-      renderSteps := rendered.metrics.workSteps
-      nativeEvents := rendered.metrics.nativeEvents }
-    sourceDigest := source.normalizedDigest.hex
-    sourceBytes := source.normalizedBytes
-    headerStop := source.headerStop
-    terminalStop := source.terminalStop }
+  return .ok
+      { text := rendered.text
+        sourceMap := rendered.sourceMap
+        headerContract := Formatter.Command.headerContract header
+        commentContract := Comments.contract normalized ownership
+        metrics :=
+          { frontendRuns := 1
+            commands := commands.size
+            nativeDocuments
+            alignedTokens
+            nativeCommentLeaves
+            normalizedTokens
+            exactIslands
+            exactIslandBytes
+            offsideConstraints
+            commentConstraints
+            registryNodes
+            explicitDocuments
+            descriptorDocuments
+            commentOwners := Comments.all ownership |>.size
+            documentNodes := rendered.metrics.documentNodes
+            renderSteps := rendered.metrics.workSteps
+            nativeEvents := rendered.metrics.nativeEvents }
+        sourceDigest := source.normalizedDigest.hex
+        sourceBytes := source.normalizedBytes
+        headerStop := source.headerStop
+        terminalStop := source.terminalStop }
 
 private def isApplicationRuntimePlugin (plugin : Lean.Plugin) : Bool :=
   plugin.path.fileName.any fun name =>
@@ -350,24 +374,27 @@ private def captureDiagnostics (fileMap : Lean.FileMap) (sourceBytes : Nat)
   for msg in messages.toArray do
     if surfacedDiagnosticKinds.contains msg.kind.toString then
       let start := (fileMap.ofPosition msg.pos).byteIdx
-      let stop := match msg.endPos with
+      let stop :=
+        match msg.endPos with
         | some endPos => (fileMap.ofPosition endPos).byteIdx
         | none => start
       if start ≤ sourceBytes then
-        let range : SourceRange := { start := min start sourceBytes, stop := min (max start stop) sourceBytes }
+        let range : SourceRange :=
+          { start := min start sourceBytes, stop := min (max start stop) sourceBytes }
         let serial ← msg.serialize
-        diagnostics := diagnostics.push {
-          kind := msg.kind.toString
-          range
-          severity := ofMessageSeverity msg.severity
-          message := serial.data
-        }
+        diagnostics :=
+          diagnostics.push
+            { kind := msg.kind.toString
+              range
+              severity := ofMessageSeverity msg.severity
+              message := serial.data }
   return diagnostics
 
 /- The user-facing display of a resolved constant: the module-private mangling
 (`_private.M.0.foo`) stripped to what the source writes (`foo`, or a qualified `Foo.bar`). Pure on
 `Name` — no `Environment` — so it is a fact the rule reads as a plain string, never a `Name`. -/
-private def occurrenceDisplay (n : Lean.Name) : String := (Lean.privateToUserName n).toString
+private def occurrenceDisplay (n : Lean.Name) : String :=
+  (Lean.privateToUserName n).toString
 
 /- Re-derive the owned deprecation-occurrence facts from the whole-file info trees. This
 is the fold
@@ -390,42 +417,44 @@ everything else is report-only and the output re-elaboration validator backstops
 private def occurrenceOfInfo (ci : Lean.Elab.ContextInfo) (info : Lean.Elab.Info)
     (normalized : String) (sourceBytes : Nat) : Option DeprecatedOccurrence := do
   let .ofTermInfo ti := info | none
-  if ti.isBinder then none else
-  let declName ← ti.expr.constName?
-  let entry ← Lean.Linter.deprecatedAttr.getParam? ci.env declName
-  let r ← info.range?
-  let start := min r.start.byteIdx sourceBytes
-  let stop := min (max r.start.byteIdx r.stop.byteIdx) sourceBytes
-  let spelled := String.fromUTF8! (normalized.toUTF8.extract start stop)
-  let displayName := occurrenceDisplay declName
-  let newName? := entry.newName?.map occurrenceDisplay
-  -- The occurrence is fixable only when its source spelling is *exactly* the resolved
-  -- constant's own full display name: then replacing that whole
-  -- span with the replacement's full display re-resolves unambiguously to the new constant,
-  -- independent of `open`/dot context. A spelling that differs from the full name — an
-  -- `open`-shadowed short name (`oldNs` resolving to `N.oldNs`), a dot-notation projection head
-  -- (`x.foo` resolving to `T.foo`), an applied receiver with the constant implicit — is *not* a
-  -- rename we can prove, so it stays report-only and the compiler's own FMT012 diagnostic still
-  -- reports it. Backstopped by the re-elaboration validator: even an accepted spelling that
-  -- fails to resolve is caught before publish, never on disk.
-  let fixable := newName?.isSome && spelled == displayName
-  return {
-    range := { start, stop }
-    declName := displayName
-    newName?
-    since? := entry.since?
-    text? := entry.text?
-    fixable
-  }
+  if ti.isBinder then
+    none
+  else
+    let declName ← ti.expr.constName?
+    let entry ← Lean.Linter.deprecatedAttr.getParam? ci.env declName
+    let r ← info.range?
+    let start := min r.start.byteIdx sourceBytes
+    let stop := min (max r.start.byteIdx r.stop.byteIdx) sourceBytes
+    let spelled := String.fromUTF8! (normalized.toUTF8.extract start stop)
+    let displayName := occurrenceDisplay declName
+    let newName? := entry.newName?.map occurrenceDisplay
+    -- The occurrence is fixable only when its source spelling is *exactly* the resolved
+    -- constant's own full display name: then replacing that whole
+    -- span with the replacement's full display re-resolves unambiguously to the new constant,
+    -- independent of `open`/dot context. A spelling that differs from the full name — an
+    -- `open`-shadowed short name (`oldNs` resolving to `N.oldNs`), a dot-notation projection head
+    -- (`x.foo` resolving to `T.foo`), an applied receiver with the constant implicit — is *not* a
+    -- rename we can prove, so it stays report-only and the compiler's own FMT012 diagnostic still
+    -- reports it. Backstopped by the re-elaboration validator: even an accepted spelling that
+    -- fails to resolve is caught before publish, never on disk.
+    let fixable := newName?.isSome && spelled == displayName
+    return {
+        range := { start, stop }
+        declName := displayName
+        newName?
+        since? := entry.since?
+        text? := entry.text?
+        fixable }
 
-private def captureDeprecatedOccurrences (tree : Lean.Language.SnapshotTree)
-    (normalized : String) (sourceBytes : Nat) : Array DeprecatedOccurrence :=
+private def captureDeprecatedOccurrences (tree : Lean.Language.SnapshotTree) (normalized : String)
+    (sourceBytes : Nat) : Array DeprecatedOccurrence :=
   let trees := tree.getAll.filterMap (·.infoTree?)
-  let raw : Array DeprecatedOccurrence := trees.foldl (init := #[]) fun acc t =>
-    t.foldInfo (init := acc) fun ci info acc =>
-      match occurrenceOfInfo ci info normalized sourceBytes with
-      | some occ => acc.push occ
-      | none => acc
+  let raw : Array DeprecatedOccurrence :=
+    trees.foldl (init := #[]) fun acc t =>
+      t.foldInfo (init := acc) fun ci info acc =>
+        match occurrenceOfInfo ci info normalized sourceBytes with
+        | some occ => acc.push occ
+        | none => acc
   raw.foldl (init := #[]) fun acc occ =>
     if acc.any (·.range == occ.range) then acc else acc.push occ
 
@@ -443,28 +472,27 @@ private unsafe def processSource (setup : Lean.ModuleSetup) (source : String)
   let setupImports (header : Lean.Elab.HeaderSyntax) := do
     if loadDynlibs then
       liftM <| setup.dynlibs.forM Lean.loadDynlib
-    return .ok {
-      mainModuleName := setup.name
-      package? := setup.package?
-      isModule := setup.isModule || header.isModule
-      imports := setup.imports?.getD header.imports
-      opts := options
-      -- `lean` defaults to the believer level, so this is stricter than the compiler Lake spawns:
-      -- the kernel re-checks what comes out of an `.olean` instead of trusting it. Measured on
-      -- 2026-07-27 against `Lean.defaultTrustLevel`, both arms in one binary, interleaved in both
-      -- orders: on this repository (124 frontend children) the difference vanished into machine
-      -- drift, six pairs spanning 14.5-19.7 s for identical work, and on a mathlib-scale closure
-      -- both arms sat at 1.8-2.8 s once the oleans were warm. Reports byte-identical throughout.
-      -- Costing nothing, the strict direction stays.
-      trustLevel := 0
-      importArts := setup.importArts
-      -- This executable already imports and links Lake, and the formatter's own compiler
-      -- plugin only records artifacts during builds. Reinitializing either in a persistent
-      -- analyzer duplicates runtime state (and the compiler plugin is not loadable from a direct
-      -- editor launch on macOS). Other target plugins remain: they may own syntax or elaborators
-      -- the document needs.
-      plugins := setup.plugins.filter (!isApplicationRuntimePlugin ·)
-    }
+    return .ok
+        { mainModuleName := setup.name
+          package? := setup.package?
+          isModule := setup.isModule || header.isModule
+          imports := setup.imports?.getD header.imports
+          opts := options
+          -- `lean` defaults to the believer level, so this is stricter than the compiler Lake spawns:
+          -- the kernel re-checks what comes out of an `.olean` instead of trusting it. Measured on
+          -- 2026-07-27 against `Lean.defaultTrustLevel`, both arms in one binary, interleaved in both
+          -- orders: on this repository (124 frontend children) the difference vanished into machine
+          -- drift, six pairs spanning 14.5-19.7 s for identical work, and on a mathlib-scale closure
+          -- both arms sat at 1.8-2.8 s once the oleans were warm. Reports byte-identical throughout.
+          -- Costing nothing, the strict direction stays.
+          trustLevel := 0
+          importArts := setup.importArts
+          -- This executable already imports and links Lake, and the formatter's own compiler
+          -- plugin only records artifacts during builds. Reinitializing either in a persistent
+          -- analyzer duplicates runtime state (and the compiler plugin is not loadable from a direct
+          -- editor launch on macOS). Other target plugins remain: they may own syntax or elaborators
+          -- the document needs.
+          plugins := setup.plugins.filter (!isApplicationRuntimePlugin ·) }
   let context : Lean.Language.ProcessingContext := { input with }
   let snapshot ← Lean.Language.Lean.process setupImports old? context
   return { input, snapshot }
@@ -483,15 +511,15 @@ two things, a candidate is admitted on. The candidate path calls this instead of
 frontend and reading the same two facts back out of its envelope. -/
 private def projectAndRender (mainModule : String) (normalized : String)
     (sourcePath : System.FilePath) (fileMap : Lean.FileMap) (headerStx : Lean.Syntax)
-    (headerEnv : Lean.Environment) (headerOptions : Lean.Options)
-    (commands : Array LiveCommand) (terminal : LiveCommand) (format : FormatConfig)
-    (checkCancelled : IO Unit := pure ()) :
+    (headerEnv : Lean.Environment) (headerOptions : Lean.Options) (commands : Array LiveCommand)
+    (terminal : LiveCommand) (format : FormatConfig) (checkCancelled : IO Unit := pure ()) :
     IO (LosslessSource × Except FormatterFailure FormatDraft) := do
   let stxs := commands.map (·.stx)
   let projection := LosslessSource.ofSource mainModule normalized stxs (some terminal.stx)
   let ownership := commentOwnership normalized projection headerStx stxs (some terminal.stx)
-  let draft ← buildFormatDraft normalized projection sourcePath fileMap ownership headerStx
-    headerEnv headerOptions commands format checkCancelled
+  let draft ←
+    buildFormatDraft normalized projection sourcePath fileMap ownership headerStx headerEnv
+        headerOptions commands format checkCancelled
   return (projection, draft)
 
 /-- Parse the candidate command by command under the contexts Lean used for the original, and accept
@@ -531,15 +559,18 @@ private def reparseCandidate (text : String) (sourcePath : System.FilePath)
     IO (Except String (Lean.Syntax × Array LiveCommand × LiveCommand)) := do
   let input := Lean.Parser.mkInputContext text sourcePath.toString
   let (header, parserState, headerMessages) ← Lean.Parser.parseHeader input
-  if headerMessages.hasErrors then return .error "header_parse"
-  unless header.raw.structEq headerStx do return .error "header"
+  if headerMessages.hasErrors then
+    return .error "header_parse"
+  unless header.raw.structEq headerStx do
+    return .error "header"
   let mut state := parserState
   let mut reparsed := #[]
   for command in commands do
     checkCancelled
     let (stx, next, messages) :=
       Lean.Parser.parseCommand input command.parse.toModuleContext state .empty
-    if messages.hasErrors || next.recovering then return .error "parse"
+    if messages.hasErrors || next.recovering then
+      return .error "parse"
     unless stx.structEq command.stx do
       -- A terminal here means the candidate ran out of commands early, which is a different defect
       -- from a command that changed shape, and worth its own counter.
@@ -549,10 +580,12 @@ private def reparseCandidate (text : String) (sourcePath : System.FilePath)
   checkCancelled
   let (stx, _, messages) :=
     Lean.Parser.parseCommand input terminal.parse.toModuleContext state .empty
-  if messages.hasErrors then return .error "terminal_parse"
+  if messages.hasErrors then
+    return .error "terminal_parse"
   -- Also how a candidate with *more* commands than the original is caught: an ordinary command
   -- parsed where the terminal belongs is not `structEq` to it.
-  unless stx.structEq terminal.stx do return .error "terminal"
+  unless stx.structEq terminal.stx do
+    return .error "terminal"
   return .ok (header.raw, reparsed, { terminal with stx })
 
 /-- Elaborate the candidate draft, starting from this run's imports when the draft asks for the same
@@ -576,50 +609,52 @@ private unsafe def candidateFrontend (setup : Lean.ModuleSetup) (original : Proc
   let full : IO (Lean.Parser.InputContext × ProcessedModule) := do
     recordCount "candidate_reimport" 1
     let run ← processSource setup text sourcePath (loadDynlibs := false)
-    if let some track := trackSnapshot? then track run.snapshot
+    if let some track := trackSnapshot? then
+      track run.snapshot
     return (run.input, ProcessedModule.ofInitial run.snapshot)
-  if trackSnapshot?.isSome then return ← full
+  if trackSnapshot?.isSome then
+    return ← full
   let some (_, headerState) := original.start? | return ← full
   let input := Lean.Parser.mkInputContext text sourcePath.toString
   let (header, parserState, headerMessages) ← Lean.Parser.parseHeader input
-  if headerMessages.hasErrors then return ← full
+  if headerMessages.hasErrors then
+    return ← full
   -- `setupImports` reads `setup.imports?` first and only falls back to the header, so a setup that
   -- carries imports makes both runs load the same list whatever either header says.
   let originalHeader : Lean.Elab.HeaderSyntax := ⟨original.headerStx⟩
   let candidateHeader : Lean.Elab.HeaderSyntax := header
-  unless setup.imports?.isSome
-      || Lean.Elab.HeaderSyntax.imports candidateHeader
-        == Lean.Elab.HeaderSyntax.imports originalHeader do
+  unless
+    setup.imports?.isSome ||
+      Lean.Elab.HeaderSyntax.imports candidateHeader ==
+        Lean.Elab.HeaderSyntax.imports originalHeader do
     return ← full
-  unless Lean.Elab.HeaderSyntax.isModule candidateHeader
-      == Lean.Elab.HeaderSyntax.isModule originalHeader do
+  unless
+    Lean.Elab.HeaderSyntax.isModule candidateHeader ==
+      Lean.Elab.HeaderSyntax.isModule originalHeader do
     return ← full
   recordCount "candidate_import_reuse" 1
   let first := (← Lean.Language.Lean.processCommands input parserState headerState).get
-  return (input, {
-    headerStx := header.raw
-    headerMessages
-    tree := Lean.Language.toSnapshotTree first
-    start? := some (first, headerState) })
+  return (input,
+      { headerStx := header.raw
+        headerMessages
+        tree := Lean.Language.toSnapshotTree first
+        start? := some (first, headerState) })
 
 /- Convert one completed frontend run into the product's semantic envelope.
 Incremental processing changes only where the run came from, never how formatter facts are
 derived. -/
 private unsafe def analyzeSnapshot (setup : Lean.ModuleSetup) (source : String)
-    (sourcePath : System.FilePath) (input : Lean.Parser.InputContext)
-    (module : ProcessedModule) (captureSemantic : Bool := false)
-    (captureOccurrences : Bool := false) (captureComments : Bool := false)
-    (captureFormatDraft : Bool := false) (validateFormatDraft : Bool := false)
-    (format : FormatConfig := {})
+    (sourcePath : System.FilePath) (input : Lean.Parser.InputContext) (module : ProcessedModule)
+    (captureSemantic : Bool := false) (captureOccurrences : Bool := false)
+    (captureComments : Bool := false) (captureFormatDraft : Bool := false)
+    (validateFormatDraft : Bool := false) (format : FormatConfig := { })
     (trackSnapshot? : Option (Lean.Language.Lean.InitialSnapshot → IO Unit) := none)
-    (checkCancelled : IO Unit := pure ()) :
-    IO AnalysisEnvelope := do
+    (checkCancelled : IO Unit := pure ()) : IO AnalysisEnvelope := do
   checkCancelled
   let options := Lean.Elab.async.setIfNotSet setup.options.toOptions true
   let tree := module.tree
   let messages := module.messages
-  let some commandState := module.finalCmdState?
-    | return ← broken messages
+  let some commandState := module.finalCmdState? | return ← broken messages
   if messages.hasErrors then
     return ← broken messages
   let (liveCommands, terminal?) ← module.liveCommands checkCancelled
@@ -628,125 +663,169 @@ private unsafe def analyzeSnapshot (setup : Lean.ModuleSetup) (source : String)
   -- Semantic rule facts are captured only under rule demand. The whole-file occurrence
   -- fold remains separately gated, so report-only semantic checks do not pay for fix ownership.
   let normalizedSource := (LosslessSource.normalize source).1
-  let semantic ← if captureSemantic then do
-      let diagnostics ← captureDiagnostics input.fileMap normalizedSource.utf8ByteSize messages
-      let occurrences? := if captureOccurrences then
-          some (captureDeprecatedOccurrences tree normalizedSource normalizedSource.utf8ByteSize)
-        else none
-      pure (some { diagnostics, occurrences? })
-    else pure none
+  let semantic ←
+    if captureSemantic then
+      do
+        let diagnostics ← captureDiagnostics input.fileMap normalizedSource.utf8ByteSize messages
+        let occurrences? :=
+          if captureOccurrences then
+            some (captureDeprecatedOccurrences tree normalizedSource normalizedSource.utf8ByteSize)
+          else none
+        pure (some { diagnostics, occurrences? })
+    else
+      pure none
   -- `mkInputContext` normalized `source` before parsing it, so every offset above indexes
   -- the normalized string. Measuring the artifact against `source` itself would mix two coordinate
   -- systems inside one artifact for any file that uses CRLF.
-  let some terminal := terminal?
-    | throw <| IO.userError "successful frontend produced no terminal command"
-  let artifact ← match ModuleArtifact.ofParsedModule setup.name.toString normalizedSource
-      commands terminal.stx semantic with
-    | .ok artifact => pure artifact
-    | .error error => throw <| IO.userError s!"could not encode syntax artifact: {error}"
+  let some terminal :=
+    terminal? | throw <| IO.userError "successful frontend produced no terminal command"
+  let artifact ←
+    match
+      ModuleArtifact.ofParsedModule setup.name.toString normalizedSource commands terminal.stx
+        semantic with
+    | .ok artifact =>
+      pure artifact
+    | .error error =>
+      throw <| IO.userError s!"could not encode syntax artifact: {error}"
   let projection :=
     LosslessSource.ofSource setup.name.toString normalizedSource commands (some terminal.stx)
   let needsDraft := captureFormatDraft || validateFormatDraft
-  let ownership? := if captureComments || needsDraft then
-      some <| commentOwnership normalizedSource projection module.headerStx commands
-        (some terminal.stx)
+  let ownership? :=
+    if captureComments || needsDraft then
+      some <|
+        commentOwnership normalizedSource projection module.headerStx commands (some terminal.stx)
     else none
-  let commentSummary? := if captureComments then
-      ownership?.map (Comments.summary normalizedSource)
-    else none
-  let (firstDraft?, formatFailure?) ← if needsDraft then do
-      let some ownership := ownership?
-        | throw <| IO.userError "format draft has no comment ownership"
-      match ← buildFormatDraft normalizedSource projection sourcePath input.fileMap ownership
-          module.headerStx commandState.env options liveCommands format checkCancelled with
-      | .ok draft => pure (some draft, none)
-      | .error failure => pure (none, some failure)
-    else pure (none, none)
-  let (canonical?, validationFailure?) ← if validateFormatDraft then do
-      let some first := firstDraft?
-        | match formatFailure? with
-          | some failure => pure (none, some {
-              gate := .formatter
-              detail := failure.detail })
-          | none => pure (none, some {
-              gate := .formatter
-              detail := "format draft was not produced" })
-      let candidateText := (LosslessSource.normalize first.text).1
-      let reparsed ←
-        if (← IO.getEnv "LEAN_FMT_DISABLE_CANDIDATE_REPARSE") == some "1" then
-          pure (.error "disabled")
-        else
-          reparseCandidate candidateText sourcePath module.headerStx liveCommands terminal
-            checkCancelled
-      checkCancelled
-      match reparsed with
-      | .ok (candidateHeader, candidateCommands, candidateTerminal) =>
-        recordCount "candidate_reparse" 1
-        -- The candidate's own text decides its coordinates, so its own header, commands, and file
-        -- map are what lay it out. Its final environment is the original's: that is what the
-        -- induction concluded.
-        let candidateInput := Lean.Parser.mkInputContext candidateText sourcePath.toString
-        let (candidateProjection, second?) ← projectAndRender setup.name.toString candidateText
-          sourcePath candidateInput.fileMap candidateHeader commandState.env options
-          candidateCommands candidateTerminal format checkCancelled
-        match second? with
-        | .error failure => pure (none, some { gate := .formatter, detail := failure.detail })
-        | .ok second =>
-          if !candidateProjection.validFor candidateText then
-            pure (none, some {
-              gate := .structure
-              detail := "reparsed candidate did not project losslessly over its own bytes" })
+  let commentSummary? :=
+    if captureComments then ownership?.map (Comments.summary normalizedSource) else none
+  let (firstDraft?, formatFailure?) ←
+    if needsDraft then
+      do
+        let some ownership :=
+          ownership? | throw <| IO.userError "format draft has no comment ownership"
+        match
+          ←
+            buildFormatDraft normalizedSource projection sourcePath input.fileMap ownership
+                module.headerStx commandState.env options liveCommands format checkCancelled with
+        | .ok draft =>
+          pure (some draft, none)
+        | .error failure =>
+          pure (none, some failure)
+    else
+      pure (none, none)
+  let (canonical?, validationFailure?) ←
+    if validateFormatDraft then
+      do
+        let some first := firstDraft? |
+          match formatFailure? with
+          | some failure =>
+            pure
+                (none,
+                  some
+                    { gate := .formatter
+                      detail := failure.detail })
+          | none =>
+            pure
+                (none,
+                  some
+                    { gate := .formatter
+                      detail := "format draft was not produced" })
+        let candidateText := (LosslessSource.normalize first.text).1
+        let reparsed ←
+          if (← IO.getEnv "LEAN_FMT_DISABLE_CANDIDATE_REPARSE") == some "1" then
+            pure (.error "disabled")
           else
-            match Validator.admit normalizedSource projection first candidateProjection second
-                { frontendRuns := 1, reparsedCommands := candidateCommands.size } with
-            | .ok layout => pure (some layout, none)
-            | .error failure => pure (none, some failure)
-      | .error tag =>
-        recordCount s!"candidate_miss_{tag}" 1
-        let (candidateInput, candidateModule) ←
-          candidateFrontend setup module first.text sourcePath trackSnapshot?
+            reparseCandidate candidateText sourcePath module.headerStx liveCommands terminal
+                checkCancelled
         checkCancelled
-        let candidate ← analyzeSnapshot setup first.text sourcePath candidateInput
-          candidateModule (captureFormatDraft := true) (format := format)
-          (trackSnapshot? := trackSnapshot?) (checkCancelled := checkCancelled)
-        if !candidate.diagnostics.isEmpty then
-          pure (none, some {
-            gate := .diagnostics
-            detail := String.intercalate "\n" candidate.diagnostics.toList })
-        else match candidate.artifact?, candidate.formatDraft?, candidate.formatFailure? with
-          | some candidateArtifact, some second, none =>
-            match candidateArtifact.materialize first.text with
-            | .error error => pure (none, some { gate := .structure, detail := error })
-            | .ok candidateMaterialized =>
-              match Validator.admit normalizedSource projection first candidateMaterialized.source
-                  second { frontendRuns := 2 } with
-              | .ok layout => pure (some layout, none)
-              | .error failure => pure (none, some failure)
-          | _, _, some failure => pure (none, some { gate := .formatter, detail := failure.detail })
-          | _, _, _ => pure (none, some {
-              gate := .structure
-              detail := "candidate frontend returned no artifact or second draft" })
-    else pure (none, none)
+        match reparsed with
+        | .ok (candidateHeader, candidateCommands, candidateTerminal) =>
+          recordCount "candidate_reparse" 1
+          -- The candidate's own text decides its coordinates, so its own header, commands, and file
+          -- map are what lay it out. Its final environment is the original's: that is what the
+          -- induction concluded.
+          let candidateInput := Lean.Parser.mkInputContext candidateText sourcePath.toString
+          let (candidateProjection, second?) ←
+            projectAndRender setup.name.toString candidateText sourcePath candidateInput.fileMap
+                candidateHeader commandState.env options candidateCommands candidateTerminal format
+                checkCancelled
+          match second? with
+          | .error failure =>
+            pure (none, some { gate := .formatter, detail := failure.detail })
+          | .ok second =>
+            if !candidateProjection.validFor candidateText then
+              pure
+                  (none,
+                    some
+                      { gate := .structure
+                        detail :=
+                          "reparsed candidate did not project losslessly over its own bytes" })
+            else
+              match
+                Validator.admit normalizedSource projection first candidateProjection second
+                  { frontendRuns := 1, reparsedCommands := candidateCommands.size } with
+              | .ok layout =>
+                pure (some layout, none)
+              | .error failure =>
+                pure (none, some failure)
+        | .error tag =>
+          recordCount s!"candidate_miss_{tag}" 1
+          let (candidateInput, candidateModule) ←
+            candidateFrontend setup module first.text sourcePath trackSnapshot?
+          checkCancelled
+          let candidate ←
+            analyzeSnapshot setup first.text sourcePath candidateInput candidateModule
+                (captureFormatDraft := true) (format := format) (trackSnapshot? := trackSnapshot?)
+                (checkCancelled := checkCancelled)
+          if !candidate.diagnostics.isEmpty then
+            pure
+                (none,
+                  some
+                    { gate := .diagnostics
+                      detail := String.intercalate "\n" candidate.diagnostics.toList })
+          else
+            match candidate.artifact?, candidate.formatDraft?, candidate.formatFailure? with
+            | some candidateArtifact, some second, none =>
+              match candidateArtifact.materialize first.text with
+              | .error error =>
+                pure (none, some { gate := .structure, detail := error })
+              | .ok candidateMaterialized =>
+                match
+                  Validator.admit normalizedSource projection first candidateMaterialized.source
+                    second { frontendRuns := 2 } with
+                | .ok layout =>
+                  pure (some layout, none)
+                | .error failure =>
+                  pure (none, some failure)
+            | _, _, some failure =>
+              pure (none, some { gate := .formatter, detail := failure.detail })
+            | _, _, _ =>
+              pure
+                  (none,
+                    some
+                      { gate := .structure
+                        detail := "candidate frontend returned no artifact or second draft" })
+    else
+      pure (none, none)
   let formatDraft? := if captureFormatDraft then firstDraft? else none
   return {
-    artifact? := some artifact
-    commentSummary? := commentSummary?
-    formatDraft? := formatDraft?
-    formatFailure? := formatFailure?
-    canonical? := canonical?
-    validationFailure? := validationFailure? }
+      artifact? := some artifact
+      commentSummary? := commentSummary?
+      formatDraft? := formatDraft?
+      formatFailure? := formatFailure?
+      canonical? := canonical?
+      validationFailure? := validationFailure? }
 
 /- Execute Lean's frontend under the exact target setup without retaining parser or
 environment state. Batch exact analysis remains deliberately one-shot. -/
-unsafe def analyzeExact (setup : Lean.ModuleSetup) (source : String)
-    (sourcePath : System.FilePath) (captureSemantic : Bool := false)
-    (captureOccurrences : Bool := false) (captureComments : Bool := false)
-    (captureFormatDraft : Bool := false) (validateFormatDraft : Bool := false)
-    (format : FormatConfig := {}) (loadDynlibs : Bool := true) : IO AnalysisEnvelope := do
+unsafe def analyzeExact (setup : Lean.ModuleSetup) (source : String) (sourcePath : System.FilePath)
+    (captureSemantic : Bool := false) (captureOccurrences : Bool := false)
+    (captureComments : Bool := false) (captureFormatDraft : Bool := false)
+    (validateFormatDraft : Bool := false) (format : FormatConfig := { })
+    (loadDynlibs : Bool := true) : IO AnalysisEnvelope := do
   let run ← processSource setup source sourcePath (loadDynlibs := loadDynlibs)
   analyzeSnapshot setup source sourcePath run.input (ProcessedModule.ofInitial run.snapshot)
-    captureSemantic captureOccurrences captureComments captureFormatDraft validateFormatDraft
-    format
+      captureSemantic captureOccurrences captureComments captureFormatDraft validateFormatDraft
+      format
 
 structure IncrementalCounters where
   updates : Nat := 0
@@ -779,15 +858,14 @@ private structure IncrementalFlight where
 private structure IncrementalState where
   good? : Option IncrementalGood := none
   flight? : Option IncrementalFlight := none
-  counters : IncrementalCounters := {}
+  counters : IncrementalCounters := { }
   closed : Bool := false
 
 /-- A single-document frontend session. Its constructor and state are private so callers
 can only use the bounded lifecycle operations below; in particular, no caller can retain snapshot
 history or invoke parse/elaboration stages out of order. -/
-structure IncrementalAnalyzer where
-  private mk ::
-    private state : Std.Mutex IncrementalState
+structure IncrementalAnalyzer where private mk ::
+  private state : Std.Mutex IncrementalState
 
 private def setupIdentity (setup : Lean.ModuleSetup) : String :=
   toString <| Digest.ofString (Lean.toJson setup).compress
@@ -809,7 +887,7 @@ private unsafe def sharedCommandPrefix (old new : Lean.Language.Lean.InitialSnap
   return loop 0
 
 def IncrementalAnalyzer.open : IO IncrementalAnalyzer := do
-  return .mk (← Std.Mutex.new {})
+  return .mk (← Std.Mutex.new { })
 
 private def IncrementalAnalyzer.releaseFlight (analyzer : IncrementalAnalyzer) : IO Unit :=
   analyzer.state.atomically fun ref => do
@@ -822,45 +900,49 @@ private unsafe def IncrementalAnalyzer.run (analyzer : IncrementalAnalyzer)
     (captureFormatDraft : Bool) (validateFormatDraft : Bool) (format : FormatConfig) :
     IO IncrementalResult := do
   let cancelRef ← IO.mkRef false
-  let state ← analyzer.state.atomically fun ref => do
-    let state ← ref.get
-    if state.closed then
-      throw <| IO.userError "incremental analyzer is closed"
-    if state.flight?.isSome then
-      throw <| IO.userError "incremental analyzer already has an update in flight"
-    ref.set { state with flight? := some { cancelled := cancelRef } }
-    return state
+  let state ←
+    analyzer.state.atomically fun ref => do
+        let state ← ref.get
+        if state.closed then
+          throw <| IO.userError "incremental analyzer is closed"
+        if state.flight?.isSome then
+          throw <| IO.userError "incremental analyzer already has an update in flight"
+        ref.set { state with flight? := some { cancelled := cancelRef } }
+        return state
   let identity := setupIdentity setup
   let path := sourcePath.toString
-  let lineageMatches := state.good?.any fun good =>
-    good.setupIdentity == identity && good.sourcePath == path
+  let lineageMatches :=
+    state.good?.any fun good => good.setupIdentity == identity && good.sourcePath == path
   unless lineageMatches do
     state.good?.forM fun good => cancelSnapshot good.snapshot
   let old? := if lineageMatches then state.good?.map (·.snapshot) else none
-  let run ← try
+  let run ←
+    try
       processSource setup source sourcePath old? (loadDynlibs := !lineageMatches)
     catch error =>
       analyzer.releaseFlight
       throw error
   let trackSnapshot (snapshot : Lean.Language.Lean.InitialSnapshot) := do
     analyzer.state.atomically fun ref => do
-      let current ← ref.get
-      ref.set { current with
-        flight? := current.flight?.map ({ · with snapshot? := some snapshot }) }
-    if ← cancelRef.get then cancelSnapshot snapshot
+        let current ← ref.get
+        ref.set
+            { current with flight? := current.flight?.map ({ · with snapshot? := some snapshot }) }
+    if ← cancelRef.get then
+      cancelSnapshot snapshot
   let checkCancelled : IO Unit := do
     if ← cancelRef.get then
       throw <| IO.userError "incremental analysis cancelled"
   trackSnapshot run.snapshot
-  let envelope ← try
+  let envelope ←
+    try
       -- When the candidate does get elaborated — a reparse miss — `candidateFrontend` gives it a
       -- full `processSource` run rather than reusing this one's imports, because only a snapshot
       -- `processSource` produced can be cancelled and the analyzer must be able to drop a
       -- superseded analysis. The reparse itself has no snapshot to cancel and stops at
       -- `checkCancelled` between commands instead.
       analyzeSnapshot setup source sourcePath run.input (ProcessedModule.ofInitial run.snapshot)
-        captureSemantic captureOccurrences captureComments captureFormatDraft validateFormatDraft
-        format (some trackSnapshot) checkCancelled
+          captureSemantic captureOccurrences captureComments captureFormatDraft validateFormatDraft
+          format (some trackSnapshot) checkCancelled
     catch error =>
       if ← cancelRef.get then
         pure { artifact? := none, diagnostics := #["analysis cancelled"] }
@@ -871,64 +953,74 @@ private unsafe def IncrementalAnalyzer.run (analyzer : IncrementalAnalyzer)
   let oldHeader? := if lineageMatches then state.good?.map (·.headerIdentity) else none
   let newHeader := headerIdentity run.snapshot
   let invalidated := !lineageMatches || oldHeader?.any (· != newHeader)
-  let reused ← if invalidated then pure 0 else
-    match old? with
-    | some old => sharedCommandPrefix old run.snapshot
-    | none => pure 0
-  let (good?, counters) ← analyzer.state.atomically fun ref => do
-    let current ← ref.get
-    let succeeded := !current.closed && !wasCancelled && envelope.artifact?.isSome
-    let counters := { current.counters with
-      updates := current.counters.updates + 1
-      successful := current.counters.successful + if succeeded then 1 else 0
-      failed := current.counters.failed + if !succeeded && !wasCancelled then 1 else 0
-      cancelled := current.counters.cancelled + if wasCancelled then 1 else 0
-      invalidated := current.counters.invalidated + if invalidated then 1 else 0
-      reusedCommands := current.counters.reusedCommands + reused }
-    let good? := if current.closed then none
-      else if succeeded then some {
-          setupIdentity := identity, sourcePath := path, headerIdentity := newHeader
-          snapshot := run.snapshot }
-        else state.good?
-    ref.set { current with good?, flight? := none, counters }
-    return (good?, counters)
+  let reused ←
+    if invalidated then
+      pure 0
+    else
+      match old? with
+      | some old =>
+        sharedCommandPrefix old run.snapshot
+      | none =>
+        pure 0
+  let (good?, counters) ←
+    analyzer.state.atomically fun ref => do
+        let current ← ref.get
+        let succeeded := !current.closed && !wasCancelled && envelope.artifact?.isSome
+        let counters :=
+          { current.counters with
+            updates := current.counters.updates + 1
+            successful := current.counters.successful + if succeeded then 1 else 0
+            failed := current.counters.failed + if !succeeded && !wasCancelled then 1 else 0
+            cancelled := current.counters.cancelled + if wasCancelled then 1 else 0
+            invalidated := current.counters.invalidated + if invalidated then 1 else 0
+            reusedCommands := current.counters.reusedCommands + reused }
+        let good? :=
+          if current.closed then none
+          else
+            if succeeded then
+              some
+                { setupIdentity := identity, sourcePath := path, headerIdentity := newHeader
+                  snapshot := run.snapshot }
+            else state.good?
+        ref.set
+            { current with
+              good?, flight? := none, counters }
+        return (good?, counters)
   return {
-    envelope, reusedCommands := reused, invalidated, cancelled := wasCancelled
-    retainedSnapshots := if good?.isSome then 1 else 0, counters }
+      envelope, reusedCommands := reused, invalidated, cancelled := wasCancelled
+      retainedSnapshots := if good?.isSome then 1 else 0, counters }
 
 /-- Analyze the current document version, retaining it only when the frontend succeeds. -/
 private unsafe def IncrementalAnalyzer.analyzeUnsafe (analyzer : IncrementalAnalyzer)
     (setup : Lean.ModuleSetup) (source : String) (sourcePath : System.FilePath)
     (captureSemantic : Bool := false) (captureOccurrences : Bool := false)
     (captureComments : Bool := false) : IO IncrementalResult :=
-  analyzer.run setup source sourcePath captureSemantic captureOccurrences captureComments
-    false false {}
+  analyzer.run setup source sourcePath captureSemantic captureOccurrences captureComments false
+    false { }
 
 @[implemented_by IncrementalAnalyzer.analyzeUnsafe]
-opaque IncrementalAnalyzer.analyze (analyzer : IncrementalAnalyzer)
-    (setup : Lean.ModuleSetup) (source : String) (sourcePath : System.FilePath)
-    (captureSemantic : Bool := false) (captureOccurrences : Bool := false)
-    (captureComments : Bool := false) : IO IncrementalResult
+opaque IncrementalAnalyzer.analyze (analyzer : IncrementalAnalyzer) (setup : Lean.ModuleSetup)
+    (source : String) (sourcePath : System.FilePath) (captureSemantic : Bool := false)
+    (captureOccurrences : Bool := false) (captureComments : Bool := false) : IO IncrementalResult
 
 /-- Format the current document version through the same two-pass admission path as one-shot
 exact formatting. The validated canonical layout, if any, is in `result.envelope.canonical?`. -/
 private unsafe def IncrementalAnalyzer.formatUnsafe (analyzer : IncrementalAnalyzer)
     (setup : Lean.ModuleSetup) (source : String) (sourcePath : System.FilePath)
-    (format : FormatConfig := {}) (captureSemantic : Bool := false)
+    (format : FormatConfig := { }) (captureSemantic : Bool := false)
     (captureOccurrences : Bool := false) : IO IncrementalResult :=
   analyzer.run setup source sourcePath captureSemantic captureOccurrences false false true format
 
 @[implemented_by IncrementalAnalyzer.formatUnsafe]
-opaque IncrementalAnalyzer.format (analyzer : IncrementalAnalyzer)
-    (setup : Lean.ModuleSetup) (source : String) (sourcePath : System.FilePath)
-    (format : FormatConfig := {}) (captureSemantic : Bool := false)
-    (captureOccurrences : Bool := false) : IO IncrementalResult
+opaque IncrementalAnalyzer.format (analyzer : IncrementalAnalyzer) (setup : Lean.ModuleSetup)
+    (source : String) (sourcePath : System.FilePath) (format : FormatConfig := { })
+    (captureSemantic : Bool := false) (captureOccurrences : Bool := false) : IO IncrementalResult
 
 /-- Cancel the current update, if any. Lean recursively cancels only snapshot subtrees it
 has ruled out for reuse; the session marks the generation so it can never become the last-good
 snapshot. -/
 private unsafe def IncrementalAnalyzer.cancelUnsafe (analyzer : IncrementalAnalyzer) : IO Unit := do
-  if let some flight ← analyzer.state.atomically fun ref => return (← ref.get).flight? then
+  if let some flight← analyzer.state.atomically fun ref => return (← ref.get).flight? then
     flight.cancelled.set true
     flight.snapshot?.forM cancelSnapshot
 
@@ -944,13 +1036,16 @@ private def IncrementalAnalyzer.isRunning (analyzer : IncrementalAnalyzer) : IO 
 /-- Release the retained snapshot and reject all later operations. Closing twice is
 harmless. -/
 private unsafe def IncrementalAnalyzer.closeUnsafe (analyzer : IncrementalAnalyzer) : IO Unit := do
-  let state ← analyzer.state.atomically fun ref => do
-    let state ← ref.get
-    ref.set { state with good? := none, flight? := none, closed := true }
-    return state
+  let state ←
+    analyzer.state.atomically fun ref => do
+        let state ← ref.get
+        ref.set
+            { state with
+              good? := none, flight? := none, closed := true }
+        return state
   state.flight?.forM fun flight => do
-    flight.cancelled.set true
-    flight.snapshot?.forM cancelSnapshot
+      flight.cancelled.set true
+      flight.snapshot?.forM cancelSnapshot
   state.good?.forM fun good => cancelSnapshot good.snapshot
 
 @[implemented_by IncrementalAnalyzer.closeUnsafe]
@@ -960,48 +1055,55 @@ opaque IncrementalAnalyzer.close (analyzer : IncrementalAnalyzer) : IO Unit
 production comparator and second formatting pass. Product formatting never accepts candidate bytes
 from a caller; this operation exists so mutation fixtures can exercise the real gates. -/
 unsafe def validateCandidateExact (setup : Lean.ModuleSetup) (source candidate : String)
-    (sourcePath : System.FilePath) (format : FormatConfig := {}) : IO CandidateValidationEnvelope := do
-  let original ← analyzeExact setup source sourcePath (captureFormatDraft := true)
-    (format := format)
+    (sourcePath : System.FilePath) (format : FormatConfig := { }) :
+    IO CandidateValidationEnvelope := do
+  let original ←
+    analyzeExact setup source sourcePath (captureFormatDraft := true) (format := format)
   if !original.diagnostics.isEmpty then
     return candidateFailure .diagnostics (String.intercalate "\n" original.diagnostics.toList)
-  let reparsed ← analyzeExact setup candidate sourcePath (captureFormatDraft := true)
-    (format := format) (loadDynlibs := false)
+  let reparsed ←
+    analyzeExact setup candidate sourcePath (captureFormatDraft := true) (format := format)
+        (loadDynlibs := false)
   if !reparsed.diagnostics.isEmpty then
     return candidateFailure .diagnostics (String.intercalate "\n" reparsed.diagnostics.toList)
   match original.artifact?, original.formatDraft?, reparsed.artifact?, reparsed.formatDraft?,
-      reparsed.formatFailure? with
+    reparsed.formatFailure? with
   | some beforeArtifact, some beforeDraft, some afterArtifact, some second, none =>
     let normalizedSource := (LosslessSource.normalize source).1
     let normalizedCandidate := (LosslessSource.normalize candidate).1
-    let first : FormatDraft := {
-      beforeDraft with
-      text := normalizedCandidate
-      sourceMap := #[{
-        source := ⟨0, normalizedSource.utf8ByteSize⟩
-        output := ⟨0, normalizedCandidate.utf8ByteSize⟩ }] }
+    let first : FormatDraft :=
+      { beforeDraft with
+        text := normalizedCandidate
+        sourceMap :=
+          #[{ source := ⟨0, normalizedSource.utf8ByteSize⟩
+              output := ⟨0, normalizedCandidate.utf8ByteSize⟩ }] }
     match beforeArtifact.materialize source, afterArtifact.materialize candidate with
     | .ok beforeMaterialized, .ok afterMaterialized =>
-      match Validator.admit normalizedSource beforeMaterialized.source first
-          afterMaterialized.source second { frontendRuns := 2 } with
-      | .ok canonical => return { canonical? := some canonical }
-      | .error failure => return { failure? := some failure }
-    | .error error, _ | _, .error error => return candidateFailure .structure error
+      match
+        Validator.admit normalizedSource beforeMaterialized.source first afterMaterialized.source
+          second { frontendRuns := 2 } with
+      | .ok canonical =>
+        return { canonical? := some canonical }
+      | .error failure =>
+        return { failure? := some failure }
+    | .error error, _ | _, .error error =>
+      return candidateFailure .structure error
   | _, _, _, _, some failure =>
     return candidateFailure .formatter failure.detail
   | _, _, _, _, _ =>
     return candidateFailure .structure
-      "candidate validation did not produce both frontend projections"
+        "candidate validation did not produce both frontend projections"
 
-unsafe def compilerArtifact? (moduleName : Lean.Name)
-    (moduleFile : System.FilePath) : IO (Option ModuleArtifact) := do
+unsafe def compilerArtifact? (moduleName : Lean.Name) (moduleFile : System.FilePath) :
+    IO (Option ModuleArtifact) := do
   Lean.initSearchPath (← Lean.findSysroot)
   let (moduleData, _region) ← Lean.readModuleData moduleFile
   let level := if moduleData.isModule then Lean.OLeanLevel.exported else .private
   let artifacts : Lean.NameMap Lean.ImportArtifacts :=
-    ({} : Lean.NameMap Lean.ImportArtifacts).insert moduleName (.ofArrays #[#[moduleFile]])
-  let environment ← Lean.importModules #[{ module := moduleName }] {}
-    (trustLevel := 1024) (loadExts := false) (level := level) (arts := artifacts)
+    ({ } : Lean.NameMap Lean.ImportArtifacts).insert moduleName (.ofArrays #[#[moduleFile]])
+  let environment ←
+    Lean.importModules #[{ module := moduleName }] { } (trustLevel := 1024) (loadExts := false)
+        (level := level) (arts := artifacts)
   return fromEnvironment? environment moduleName
 
 end LeanFmt.Internal

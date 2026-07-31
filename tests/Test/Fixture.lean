@@ -61,7 +61,7 @@ public def copyFile (source destination : System.FilePath) : IO Unit := do
 matched against each entry's file name). -/
 public partial def copyTree (source destination : System.FilePath)
     (skip : Array String := #[".lake", ".git", ".lean-fmt-cache"]) : IO Unit := do
-  for entry in (← source.readDir) do
+  for entry in (← source.readDir)do
     unless skip.contains entry.fileName do
       if (← entry.path.isDir) then
         copyTree entry.path (destination / entry.fileName) skip
@@ -84,8 +84,10 @@ public def sha256 (path : System.FilePath) : IO String := do
   let result ← runProc "shasum" #["-a", "256", path.toString]
   ensure (result.exitCode == 0) s!"shasum failed on {path}: {result.stderr}"
   match result.stdout.splitOn " " with
-  | hex :: _ => return hex
-  | [] => throw <| IO.userError s!"shasum produced no digest for {path}"
+  | hex :: _ =>
+    return hex
+  | [] =>
+    throw <| IO.userError s!"shasum produced no digest for {path}"
 
 /-- Write a file, creating its parents. -/
 public def writeFile (path : System.FilePath) (contents : String) : IO Unit := do

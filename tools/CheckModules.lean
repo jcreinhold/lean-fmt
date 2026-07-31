@@ -74,11 +74,9 @@ private partial def Layout.compiled (layout : Layout) : Std.HashSet Name :=
     match pending with
     | [] => seen
     | next :: rest =>
-      if seen.contains next then
-        walk rest seen
-      else
-        walk ((layout.importsOf.getD next #[]).toList ++ rest) (seen.insert next)
-  walk layout.seeds.toList {}
+      if seen.contains next then walk rest seen
+      else walk ((layout.importsOf.getD next #[]).toList ++ rest) (seen.insert next)
+  walk layout.seeds.toList { }
 
 /-- A structural invariant over the module layout, and the check that decides whether it holds. -/
 private structure Rule where
@@ -99,15 +97,17 @@ private def neverCompiled : Rule where
     (layout.sources.filter (!compiled.contains ·)).map fun subject =>
       { subject, detail := "in no lean_lib glob, and imported by nothing that is compiled" }
 
-private def rules : Array Rule := #[neverCompiled]
+private def rules : Array Rule :=
+  #[neverCompiled]
 
 /-- The package-internal imports a header declares, or `none` when it does not parse. -/
 private def headerImports (known : Std.HashSet Name) (source relativePath : String) :
     IO (Option (Array Name)) := do
   try
     let header ← parseImports' source relativePath
-    return some <| header.imports.filterMap fun imported =>
-      if known.contains imported.module then some imported.module else none
+    return some <|
+        header.imports.filterMap fun imported =>
+          if known.contains imported.module then some imported.module else none
   catch _ =>
     return none
 
@@ -128,26 +128,26 @@ private def resolve (root : FilePath) : IO Resolution := do
   let snapshot ← Project.loadAll root
   let package := snapshot.workspace.root
   let modules := snapshot.targets.filterMap (·.module?.map (·.name))
-  let known : Std.HashSet Name := modules.foldl (·.insert ·) {}
-  let globbed := modules.filter fun name =>
-    package.leanLibs.any fun lib => lib.config.globs.any (·.matches name)
-  let mut importsOf : Std.HashMap Name (Array Name) := {}
+  let known : Std.HashSet Name := modules.foldl (·.insert ·) { }
+  let globbed :=
+    modules.filter fun name => package.leanLibs.any fun lib => lib.config.globs.any (·.matches name)
+  let mut importsOf : Std.HashMap Name (Array Name) := { }
   let mut unparsedHeaders : Array Name := #[]
   for target in snapshot.targets do
     if let some mod := target.module? then
       match ← headerImports known target.source target.relativePath with
-      | some imports => importsOf := importsOf.insert mod.name imports
-      | none => unparsedHeaders := unparsedHeaders.push mod.name
+      | some imports =>
+        importsOf := importsOf.insert mod.name imports
+      | none =>
+        unparsedHeaders := unparsedHeaders.push mod.name
   return {
-    layout := {
-      sources := modules
-      seeds := globbed ++ package.leanExes.map (·.config.root)
-      importsOf
-      unparsedHeaders
-    }
-    workspaceNanos := snapshot.workspaceLoadNanos
-    selectionNanos := snapshot.selectionNanos
-  }
+      layout :=
+        { sources := modules
+          seeds := globbed ++ package.leanExes.map (·.config.root)
+          importsOf
+          unparsedHeaders }
+      workspaceNanos := snapshot.workspaceLoadNanos
+      selectionNanos := snapshot.selectionNanos }
 
 private def plural (count : Nat) (noun : String) : String :=
   s!"{count} {noun}" ++ if count == 1 then "" else "s"
@@ -179,7 +179,8 @@ private def run : IO UInt32 := do
       IO.println s!"\nheaders that would not parse, contributing no imports to the closure:"
       for name in layout.unparsedHeaders do
         IO.println s!"        {name}"
-    IO.println s!"\n{plural layout.sources.size "module"}, {plural rules.size "rule"}; \
+    IO.println
+        s!"\n{plural layout.sources.size "module"}, {plural rules.size "rule"}; \
       resolved in {milliseconds (resolved - started)} \
       ({milliseconds resolution.workspaceNanos} Lake workspace, \
       {milliseconds resolution.selectionNanos} source selection), \
@@ -191,4 +192,5 @@ private def run : IO UInt32 := do
 
 end LeanFmt.CheckModules
 
-public def main : IO UInt32 := LeanFmt.CheckModules.run
+public def main : IO UInt32 :=
+  LeanFmt.CheckModules.run

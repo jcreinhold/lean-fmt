@@ -128,8 +128,7 @@ private def natAt (array : Array Lean.Json) (index : Nat) : Except String Nat :=
   let some json := array[index]? | throw s!"missing field {index}"
   Lean.fromJson? json
 
-instance : Lean.ToJson Trivia where
-  toJson trivia := Lean.toJson (trivia.kind.toIndex, trivia.stop)
+instance : Lean.ToJson Trivia where toJson trivia := Lean.toJson (trivia.kind.toIndex, trivia.stop)
 
 instance : Lean.FromJson Trivia where
   fromJson? json := do
@@ -138,36 +137,36 @@ instance : Lean.FromJson Trivia where
     return { kind, stop := ← natAt array 1 }
 
 instance : Lean.ToJson Token where
-  toJson token := .arr #[
-    Lean.toJson token.node, Lean.toJson token.start, Lean.toJson token.stop,
-    Lean.toJson token.info.toIndex, Lean.toJson token.leading, Lean.toJson token.trailing]
+  toJson token :=
+    .arr
+      #[Lean.toJson token.node, Lean.toJson token.start, Lean.toJson token.stop,
+        Lean.toJson token.info.toIndex, Lean.toJson token.leading, Lean.toJson token.trailing]
 
 instance : Lean.FromJson Token where
   fromJson? json := do
     let array ← fields json 6
     let some info := LeafInfo.ofIndex? (← natAt array 3) | throw "unknown leaf info"
     return {
-      node := ← natAt array 0
-      start := ← natAt array 1
-      stop := ← natAt array 2
-      info
-      leading := ← Lean.fromJson? array[4]!
-      trailing := ← Lean.fromJson? array[5]!
-    }
+        node := ← natAt array 0
+        start := ← natAt array 1
+        stop := ← natAt array 2
+        info
+        leading := ← Lean.fromJson? array[4]!
+        trailing := ← Lean.fromJson? array[5]! }
 
 instance : Lean.ToJson Node where
-  toJson node := .arr #[
-    Lean.toJson node.kind, Lean.toJson node.parent,
-    Lean.toJson node.range.start, Lean.toJson node.range.stop]
+  toJson node :=
+    .arr
+      #[Lean.toJson node.kind, Lean.toJson node.parent, Lean.toJson node.range.start,
+        Lean.toJson node.range.stop]
 
 instance : Lean.FromJson Node where
   fromJson? json := do
     let array ← fields json 4
     return {
-      kind := ← natAt array 0
-      parent := ← Lean.fromJson? array[1]!
-      range := { start := ← natAt array 2, stop := ← natAt array 3 }
-    }
+        kind := ← natAt array 0
+        parent := ← Lean.fromJson? array[1]!
+        range := { start := ← natAt array 2, stop := ← natAt array 3 } }
 
 /-- The exact, compact representation of one accepted module.
 
@@ -195,7 +194,8 @@ structure LosslessSource where
   tokens : Array Token
   deriving BEq, Repr, Lean.ToJson, Lean.FromJson
 
-def losslessSourceSchema : String := "lean-fmt.lossless-source.v1"
+def losslessSourceSchema : String :=
+  "lean-fmt.lossless-source.v1"
 
 namespace LosslessSource
 
@@ -223,47 +223,47 @@ it, mirroring the grammar of `Lean.Parser.whitespace` (`Lean/Parser/Basic.lean:5
 that grammar rejects cannot appear here, because the file would not have parsed. -/
 private partial def scanTrivia (source : String) (start stop : String.Pos.Raw)
     (acc : Array Trivia := #[]) : Array Trivia :=
-  if start.byteIdx >= stop.byteIdx then
-    acc
+  if start.byteIdx >= stop.byteIdx then acc
   else
     let current := start.get source
     if current == '-' then
       -- `--` runs to, but does not include, the newline; `whitespace` takes the newline itself.
       let stop' := lineCommentStop (start.next source) stop
       scanTrivia source stop' stop (acc.push { kind := .lineComment, stop := stop'.byteIdx })
-    else if current == '/' then
-      let stop' := blockCommentStop ((start.next source).next source) stop 1
-      scanTrivia source stop' stop (acc.push { kind := .blockComment, stop := stop'.byteIdx })
     else
-      let stop' := whitespaceStop start stop
-      scanTrivia source stop' stop (acc.push { kind := .whitespace, stop := stop'.byteIdx })
+      if current == '/' then
+        let stop' := blockCommentStop ((start.next source).next source) stop 1
+        scanTrivia source stop' stop (acc.push { kind := .blockComment, stop := stop'.byteIdx })
+      else
+        let stop' := whitespaceStop start stop
+        scanTrivia source stop' stop (acc.push { kind := .whitespace, stop := stop'.byteIdx })
 where
-  whitespaceStop (pos stop : String.Pos.Raw) : String.Pos.Raw :=
+   whitespaceStop (pos stop : String.Pos.Raw) : String.Pos.Raw :=
     if pos.byteIdx >= stop.byteIdx then pos
-    else if (pos.get source).isWhitespace then whitespaceStop (pos.next source) stop
-    else pos
-  lineCommentStop (pos stop : String.Pos.Raw) : String.Pos.Raw :=
+    else if (pos.get source).isWhitespace then whitespaceStop (pos.next source) stop else pos
+   lineCommentStop (pos stop : String.Pos.Raw) : String.Pos.Raw :=
     if pos.byteIdx >= stop.byteIdx then pos
-    else if pos.get source == '\n' then pos
-    else lineCommentStop (pos.next source) stop
-  blockCommentStop (pos stop : String.Pos.Raw) (nesting : Nat) : String.Pos.Raw :=
+    else if pos.get source == '\n' then pos else lineCommentStop (pos.next source) stop
+   blockCommentStop (pos stop : String.Pos.Raw) (nesting : Nat) : String.Pos.Raw :=
     if pos.byteIdx >= stop.byteIdx || nesting == 0 then pos
     else
       let current := pos.get source
       let next := pos.next source
       if next.byteIdx >= stop.byteIdx then next
-      else if current == '-' && next.get source == '/' then
-        let after := next.next source
-        if nesting == 1 then after else blockCommentStop after stop (nesting - 1)
-      else if current == '/' && next.get source == '-' then
-        blockCommentStop (next.next source) stop (nesting + 1)
-      else blockCommentStop next stop nesting
+      else
+        if current == '-' && next.get source == '/' then
+          let after := next.next source
+          if nesting == 1 then after else blockCommentStop after stop (nesting - 1)
+        else
+          if current == '/' && next.get source == '-' then
+            blockCommentStop (next.next source) stop (nesting + 1)
+          else blockCommentStop next stop nesting
 
 /-! ## Production -/
 
 private structure Build where
   kinds : Array String := #[]
-  kindIndex : Std.HashMap String Nat := {}
+  kindIndex : Std.HashMap String Nat := { }
   nodes : Array Node := #[]
   tokens : Array Token := #[]
 
@@ -272,9 +272,10 @@ private def Build.intern (build : Build) (kind : String) : Nat × Build :=
   | some index => (index, build)
   | none =>
     let index := build.kinds.size
-    (index, { build with
-      kinds := build.kinds.push kind
-      kindIndex := build.kindIndex.insert kind index })
+    (index,
+      { build with
+        kinds := build.kinds.push kind
+        kindIndex := build.kindIndex.insert kind index })
 
 private def leafSpan (info : Lean.SourceInfo) : Option (String.Pos.Raw × String.Pos.Raw) :=
   match info with
@@ -303,9 +304,10 @@ private partial def collect (source : String) (parent : Option Nat) (stx : Lean.
     -- score ties, whose first component is the stop position. Equal start, equal stop, one
     -- tokenizer: the alternatives differ in tree shape alone and spell the same text.
     let args := if kind == Lean.choiceKind then args.extract 0 1 else args
-    let (span, build) := args.foldl (init := (none, build)) fun (span, build) arg =>
-      let (argSpan, build) := collect source (some index) arg build
-      (mergeSpan span argSpan, build)
+    let (span, build) :=
+      args.foldl (init := (none, build)) fun (span, build) arg =>
+        let (argSpan, build) := collect source (some index) arg build
+        (mergeSpan span argSpan, build)
     let range := span.getD { start := 0, stop := 0 }
     let build := { build with nodes := build.nodes.modify index ({ · with range }) }
     (span, build)
@@ -313,24 +315,23 @@ private partial def collect (source : String) (parent : Option Nat) (stx : Lean.
     let node := parent.getD 0
     match info with
     | .original leading pos trailing endPos =>
-      let token : Token := {
-        node
-        leading := scanTrivia source leading.startPos pos
-        start := pos.byteIdx
-        stop := endPos.byteIdx
-        trailing := scanTrivia source endPos trailing.stopPos
-        info := .original
-      }
+      let token : Token :=
+        { node
+          leading := scanTrivia source leading.startPos pos
+          start := pos.byteIdx
+          stop := endPos.byteIdx
+          trailing := scanTrivia source endPos trailing.stopPos
+          info := .original }
       (some { start := pos.byteIdx, stop := endPos.byteIdx },
         { build with tokens := build.tokens.push token })
     | _ =>
-      let (start, stop) := match leafSpan info with
+      let (start, stop) :=
+        match leafSpan info with
         | some (pos, endPos) => (pos.byteIdx, endPos.byteIdx)
         | none => (0, 0)
       let token : Token := { node, start, stop, info := .synthetic }
       (some { start, stop }, { build with tokens := build.tokens.push token })
-where
-  mergeSpan : Option SourceRange → Option SourceRange → Option SourceRange
+where mergeSpan : Option SourceRange → Option SourceRange → Option SourceRange
     | none, span => span
     | span, none => span
     | some a, some b => some { start := min a.start b.start, stop := max a.stop b.stop }
@@ -358,8 +359,8 @@ header is recorded as the prefix before the first leaf's leading trivia, which i
 producers can actually see. -/
 def ofSource (mainModule : String) (normalized : String) (commands : Array Lean.Syntax)
     (terminal? : Option Lean.Syntax := none) : LosslessSource :=
-  let build := commands.foldl (init := ({} : Build)) fun build stx =>
-    (collect normalized none stx build).2
+  let build :=
+    commands.foldl (init := ({ } : Build)) fun build stx => (collect normalized none stx build).2
   -- With no ordinary command, this candidate reaches EOF; a leading `#exit` clamps it below.
   let headerCandidate := (commands.findSome? leadingStart?).getD normalized.utf8ByteSize
   -- Where the terminal command *begins*, which is where the modeled token stream ends: neither
@@ -369,15 +370,15 @@ def ofSource (mainModule : String) (normalized : String) (commands : Array Lean.
   let terminalStop :=
     match terminal?.bind leadingStart? with
     | some start => start
-    | none => match build.tokens.back? with
+    | none =>
+      match build.tokens.back? with
       | some token => token.trailingStop
       | none => normalized.utf8ByteSize
   -- A terminal-only `#exit` file has no ordinary command from which to derive the header boundary.
   -- Its header ends where the terminal begins, not at EOF; otherwise the header and verbatim tail
   -- overlap and violate the structural invariant below.
   let headerStop := min headerCandidate terminalStop
-  {
-    schema := losslessSourceSchema
+  { schema := losslessSourceSchema
     mainModule
     normalizedBytes := normalized.utf8ByteSize
     normalizedDigest := Digest.ofString normalized
@@ -385,8 +386,7 @@ def ofSource (mainModule : String) (normalized : String) (commands : Array Lean.
     terminalStop
     kinds := build.kinds
     nodes := build.nodes
-    tokens := build.tokens
-  }
+    tokens := build.tokens }
 
 /-! ## Validation
 
@@ -394,49 +394,51 @@ Consumption never trusts a producer. These checks run on every artifact read, co
 plus one digest, and need neither a frontend nor the compiler. Every failure is an ordinary miss. -/
 
 /-- Do the trivia runs tile `[start, stop)` in strictly source order? -/
-private def triviaTiles (runs : Array Trivia) (start stop : Nat) : Bool := Id.run do
-  let mut cursor := start
-  for run in runs do
-    if run.stop <= cursor || run.stop > stop then
-      return false
-    cursor := run.stop
-  return cursor == stop
+private def triviaTiles (runs : Array Trivia) (start stop : Nat) : Bool :=
+  Id.run do
+    let mut cursor := start
+    for run in runs do
+      if run.stop <= cursor || run.stop > stop then
+        return false
+      cursor := run.stop
+    return cursor == stop
 
 /-- Structural validity, independent of any source.
 
 The tiling clause carries the weight: token spans and their trivia must cover `[headerStop,
 terminalStop)` once each, contiguously, with no gap and no overlap. That invariant is what makes
 this projection lossless rather than merely plausible. -/
-def structurallyValid (source : LosslessSource) : Bool := Id.run do
-  unless source.schema == losslessSourceSchema do
-    return false
-  unless source.headerStop <= source.terminalStop &&
-      source.terminalStop <= source.normalizedBytes do
-    return false
-  for node in source.nodes do
-    unless node.kind < source.kinds.size do
+def structurallyValid (source : LosslessSource) : Bool :=
+  Id.run do
+    unless source.schema == losslessSourceSchema do
       return false
-    unless node.parent.all (· < source.nodes.size) do
+    unless
+      source.headerStop <= source.terminalStop && source.terminalStop <= source.normalizedBytes do
       return false
-    unless node.range.start <= node.range.stop && node.range.stop <= source.normalizedBytes do
-      return false
-  let mut cursor := source.headerStop
-  for token in source.tokens do
-    -- A projection is only lossless if the parser recorded real positions for every leaf.
-    unless token.info == .original do
-      return false
-    unless token.node < source.nodes.size do
-      return false
-    unless triviaTiles token.leading cursor token.start do
-      return false
-    unless token.start <= token.stop do
-      return false
-    unless triviaTiles token.trailing token.stop token.trailingStop do
-      return false
-    cursor := token.trailingStop
-  -- With no commands the header runs to the terminal, so an empty stream is valid exactly when the
-  -- header already covers the parsed region.
-  return cursor == source.terminalStop
+    for node in source.nodes do
+      unless node.kind < source.kinds.size do
+        return false
+      unless node.parent.all (· < source.nodes.size) do
+        return false
+      unless node.range.start <= node.range.stop && node.range.stop <= source.normalizedBytes do
+        return false
+    let mut cursor := source.headerStop
+    for token in source.tokens do
+      -- A projection is only lossless if the parser recorded real positions for every leaf.
+      unless token.info == .original do
+        return false
+      unless token.node < source.nodes.size do
+        return false
+      unless triviaTiles token.leading cursor token.start do
+        return false
+      unless token.start <= token.stop do
+        return false
+      unless triviaTiles token.trailing token.stop token.trailingStop do
+        return false
+      cursor := token.trailingStop
+    -- With no commands the header runs to the terminal, so an empty stream is valid exactly when the
+    -- header already covers the parsed region.
+    return cursor == source.terminalStop
 
 /-- Validity against a concrete on-disk source.
 
@@ -445,8 +447,7 @@ operation. A caller that digested `raw` directly and compared it to a compiler-p
 would compare two different strings, which is why every CRLF file misses today. -/
 def validFor (source : LosslessSource) (raw : String) : Bool :=
   let normalized := (normalize raw).1
-  structurallyValid source &&
-    source.normalizedBytes == normalized.utf8ByteSize &&
+  structurallyValid source && source.normalizedBytes == normalized.utf8ByteSize &&
     source.normalizedDigest == Digest.ofString normalized
 
 /-! ## Query surface for syntax-tier rules
@@ -471,31 +472,34 @@ def kindOf (source : LosslessSource) (i : Nat) : String :=
 /-- Child-node adjacency: entry `i` lists the indices of nodes whose `parent` is `i`, in node order
 (which is source order — `collect` pushes a node before its children). Leaf tokens are **not** here;
 they are `tokensByNode`. Built in one pass so a whole-tree scan stays linear. -/
-def childAdjacency (source : LosslessSource) : Array (Array Nat) := Id.run do
-  let mut adjacency := Array.replicate source.nodes.size #[]
-  for i in [0:source.nodes.size] do
-    if let some parent := source.nodes[i]!.parent then
-      if parent < adjacency.size then
-        adjacency := adjacency.modify parent (·.push i)
-  return adjacency
+def childAdjacency (source : LosslessSource) : Array (Array Nat) :=
+  Id.run do
+    let mut adjacency := Array.replicate source.nodes.size #[]
+    for i in [0:source.nodes.size]do
+      if let some parent := source.nodes[i]!.parent then
+        if parent < adjacency.size then
+          adjacency := adjacency.modify parent (·.push i)
+    return adjacency
 
 /-- Tokens grouped by their owning node index (`Token.node`), in token (source) order. -/
-def tokensByNode (source : LosslessSource) : Array (Array Token) := Id.run do
-  let mut adjacency := Array.replicate source.nodes.size #[]
-  for token in source.tokens do
-    if token.node < adjacency.size then
-      adjacency := adjacency.modify token.node (·.push token)
-  return adjacency
+def tokensByNode (source : LosslessSource) : Array (Array Token) :=
+  Id.run do
+    let mut adjacency := Array.replicate source.nodes.size #[]
+    for token in source.tokens do
+      if token.node < adjacency.size then
+        adjacency := adjacency.modify token.node (·.push token)
+    return adjacency
 
 /-- Indices of the top-level command nodes (`parent = none`), in source order. These are the command
 stream the projection models: `headerStop` and `terminalStop` keep the header and the terminal out,
 so a rule folding over this sees the non-terminal commands and nothing else. -/
-def topLevelNodes (source : LosslessSource) : Array Nat := Id.run do
-  let mut out := #[]
-  for i in [0:source.nodes.size] do
-    if (source.nodes[i]!.parent).isNone then
-      out := out.push i
-  return out
+def topLevelNodes (source : LosslessSource) : Array Nat :=
+  Id.run do
+    let mut out := #[]
+    for i in [0:source.nodes.size]do
+      if (source.nodes[i]!.parent).isNone then
+        out := out.push i
+    return out
 
 /-- A node kind that opens a syntax quotation or antiquotation: `Term.quot` (`` `(…) ``),
 `Term.dynamicQuot` (`` `(cat| …) ``), `Command.quot`, `Tactic.quotSeq`, and the antiquotation kinds.
@@ -512,18 +516,22 @@ kind (`isQuotationKind`). Syntax rules use this to stay silent on quoted data (c
 paren in `` `(($x)) `` or a `@[simp, simp]` inside `` `(command| …) `` is a macro's output, not a
 finding. The walk climbs the parent chain and is bounded by the node count (a tree has no cycle), so a
 defect nested arbitrarily deep inside a quotation is still excluded. -/
-def inQuotation (source : LosslessSource) (i : Nat) : Bool := Id.run do
-  let mut cursor := some i
-  for _ in [0:source.nodes.size + 1] do
-    match cursor with
-    | none => return false
-    | some j =>
-      match source.nodes[j]? with
-      | none => return false
-      | some node =>
-        if isQuotationKind (source.kinds[node.kind]?.getD "") then return true
-        cursor := node.parent
-  return false
+def inQuotation (source : LosslessSource) (i : Nat) : Bool :=
+  Id.run do
+    let mut cursor := some i
+    for _ in [0:source.nodes.size + 1]do
+      match cursor with
+      | none =>
+        return false
+      | some j =>
+        match source.nodes[j]? with
+        | none =>
+          return false
+        | some node =>
+          if isQuotationKind (source.kinds[node.kind]?.getD "") then
+            return true
+          cursor := node.parent
+    return false
 
 end LosslessSource
 

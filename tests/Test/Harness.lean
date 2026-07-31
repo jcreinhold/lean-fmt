@@ -37,11 +37,13 @@ public def ensureEq [BEq α] [Repr α] (label : String) (expected actual : α) :
 Missing or malformed is a failure, not a zero — the old script's empty-variable arithmetic error. -/
 public def statFrom (stderr key : String) : IO Nat := do
   let statPrefix := s!"cache.{key}="
-  for line in stderr.splitOn "\n" do
+  for line in stderr.splitOn "\n"do
     if line.startsWith statPrefix then
       match (line.drop statPrefix.length).toNat? with
-      | some n => return n
-      | none => throw <| IO.userError s!"unparseable stat line: {line}"
+      | some n =>
+        return n
+      | none =>
+        throw <| IO.userError s!"unparseable stat line: {line}"
   throw <| IO.userError s!"missing {statPrefix} in the check's stderr:\n{stderr}"
 
 /-- Which tests a run should execute, parsed from the runner's command line. -/
@@ -56,7 +58,7 @@ public structure Selection where
   shard : Option (Nat × Nat) := none
 
 public def Selection.parse : List String → Except String Selection
-  | [] => .ok {}
+  | [] => .ok { }
   | "--list" :: rest => do
     let selection ← Selection.parse rest
     .ok { selection with list := true }
@@ -73,35 +75,42 @@ public def Selection.parse : List String → Except String Selection
           .error s!"--shard expects 1 ≤ INDEX ≤ COUNT, got: {spec}"
         else
           .ok { selection with shard := some (index, count) }
-      | _, _ => .error s!"--shard expects INDEX/COUNT, got: {spec}"
-    | _ => .error s!"--shard expects INDEX/COUNT, got: {spec}"
+      | _, _ =>
+        .error s!"--shard expects INDEX/COUNT, got: {spec}"
+    | _ =>
+      .error s!"--shard expects INDEX/COUNT, got: {spec}"
   | argument :: _ => .error s!"unknown argument: {argument}"
 
 /-- The tests `selection` picks out of `cases`, in declaration order. -/
 public def Selection.apply (selection : Selection) (cases : Array Case) : Array Case :=
-  let filtered := match selection.filter with
+  let filtered :=
+    match selection.filter with
     | some pattern => cases.filter (·.name.contains pattern)
     | none => cases
   match selection.shard with
-  | some (index, count) => Id.run do
-    let mut sharded : Array Case := #[]
-    for position in [0:filtered.size] do
-      if position % count == index - 1 then
-        if let some test := filtered[position]? then
-          sharded := sharded.push test
-    return sharded
+  | some (index, count) =>
+    Id.run do
+      let mut sharded : Array Case := #[]
+      for position in [0:filtered.size]do
+        if position % count == index - 1 then
+          if let some test := filtered[position]? then
+            sharded := sharded.push test
+      return sharded
   | none => filtered
 
 /-- Run `cases` under the command line in `args`, printing one line per test and a summary. The
 exit code is 1 when any test failed, 2 when the arguments themselves were rejected — the same
 convention the product binary uses, so callers can tell a red suite from a misspelled filter. -/
 public def runCases (label : String) (cases : Array Case) (args : List String) : IO UInt32 := do
-  let selection ← match Selection.parse args with
-    | .ok selection => pure selection
-    | .error error => do
-      IO.eprintln error
-      IO.eprintln s!"usage: {label} [--list] [--filter SUBSTRING] [--shard INDEX/COUNT]"
-      return 2
+  let selection ←
+    match Selection.parse args with
+    | .ok selection =>
+      pure selection
+    | .error error =>
+      do
+        IO.eprintln error
+        IO.eprintln s!"usage: {label} [--list] [--filter SUBSTRING] [--shard INDEX/COUNT]"
+        return 2
   let selected := selection.apply cases
   if selection.list then
     for test in selected do
@@ -121,7 +130,8 @@ public def runCases (label : String) (cases : Array Case) (args : List String) :
     IO.println s!"{label}: {selected.size} test(s) passed"
     return 0
   else
-    IO.eprintln s!"{label}: {failures.size} of {selected.size} test(s) failed: \
+    IO.eprintln
+        s!"{label}: {failures.size} of {selected.size} test(s) failed: \
       {", ".intercalate failures.toList}"
     return 1
 

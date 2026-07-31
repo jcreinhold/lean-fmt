@@ -46,25 +46,26 @@ digits. Every identity in the product is one of these, so a wrong digest here is
 everywhere. -/
 
 private def testDigests : IO Unit := do
-  ensure (toString (Digest.ofString "") ==
-    "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")
-    "SHA-256 empty-string vector failed"
-  ensure (toString (Digest.ofString "abc") ==
-    "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad")
-    "SHA-256 abc vector failed"
-  ensure (toString (Digest.ofString
-      "abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq") ==
-    "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1")
-    "SHA-256 multi-block vector failed"
+  ensure
+      (toString (Digest.ofString "") ==
+        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")
+      "SHA-256 empty-string vector failed"
+  ensure
+      (toString (Digest.ofString "abc") ==
+        "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad")
+      "SHA-256 abc vector failed"
+  ensure
+      (toString (Digest.ofString "abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq") ==
+        "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1")
+      "SHA-256 multi-block vector failed"
   ensure (Digest.parse? (toString (Digest.ofString "abc"))).isSome
-    "valid SHA-256 digest was rejected"
-  ensure (Digest.parse?
-    "BA7816BF8F01CFEA414140DE5DAE2223B00361A396177A9CB410FF61F20015AD").isNone
-    "uppercase digest was accepted"
+      "valid SHA-256 digest was rejected"
+  ensure (Digest.parse? "BA7816BF8F01CFEA414140DE5DAE2223B00361A396177A9CB410FF61F20015AD").isNone
+      "uppercase digest was accepted"
   ensure (Digest.parse? "abc").isNone "truncated digest was accepted"
 
 /-- The cases this module contributes to the unit runner, in run order. -/
-public def cases : Array Case := #[
-  { name := "testDigests", run := testDigests }]
+public def cases : Array Case :=
+  #[{ name := "testDigests", run := testDigests }]
 
 end LeanFmt.Test.Unit.Digest

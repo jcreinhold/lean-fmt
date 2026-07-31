@@ -39,25 +39,25 @@ structure State where
   lastDraw : Nat := 0
 
 /-- A progress display. When `live?` is false every operation is a no-op; `state` is unused. -/
-structure Progress where
-  private mk ::
+structure Progress where private mk ::
   live? : Bool
   state : IO.Ref State
   lock : Std.Mutex Unit
 
 /-- Milliseconds between redraws. Faster than this the terminal cannot keep up and the writes
 cost more than the information they carry. -/
-private def throttleMs : Nat := 80
+private def throttleMs : Nat :=
+  80
 
 /-- Bar width in cells. -/
-private def barWidth : Nat := 20
+private def barWidth : Nat :=
+  20
 
 /-- `mm:ss` for a nanosecond duration. -/
 private def clockOf (nanos : Nat) : String :=
   let secs := nanos / 1_000_000_000
   s!"{secs / 60}:{pad2 (secs % 60)}"
-where
-  pad2 (n : Nat) : String := if n < 10 then s!"0{n}" else toString n
+where pad2 (n : Nat) : String := if n < 10 then s!"0{n}" else toString n
 
 /-- Tenths of a unit, truncated: `tenths 82 10 = "8.2"`. -/
 private def tenths (num den : Nat) : String :=
@@ -65,8 +65,7 @@ private def tenths (num den : Nat) : String :=
 
 /-- The rendered line for a state at `now` nanoseconds. Pure, so the unit tier can pin the
 format without a terminal. -/
-def renderLine (label : String) (done total startedNanos nowNanos : Nat) (item : String) :
-    String :=
+def renderLine (label : String) (done total startedNanos nowNanos : Nat) (item : String) : String :=
   let elapsed := nowNanos - startedNanos
   let pct := if total == 0 then 100 else done * 100 / total
   let filled := if total == 0 then barWidth else done * barWidth / total
@@ -88,18 +87,20 @@ def start (label : String) (total : Nat) : IO Progress := do
 /-- Record one finished item, identified by `item` (a path). Redraws at most once per
 `throttleMs`, except on the final item. Safe to call from concurrent worker tasks. -/
 def advance (progress : Progress) (item : String) : IO Unit := do
-  unless progress.live? do return
+  unless progress.live? do
+    return
   progress.lock.atomically do
-    let now ← IO.monoNanosNow
-    progress.state.modify fun s => { s with done := s.done + 1 }
-    let s ← progress.state.get
-    if s.done == s.total || now - s.lastDraw >= throttleMs * 1_000_000 then
-      progress.state.modify fun s => { s with lastDraw := now }
-      IO.eprint s!"\r{renderLine s.label s.done s.total s.started now item}\x1b[K"
+      let now ← IO.monoNanosNow
+      progress.state.modify fun s => { s with done := s.done + 1 }
+      let s ← progress.state.get
+      if s.done == s.total || now - s.lastDraw >= throttleMs * 1_000_000 then
+        progress.state.modify fun s => { s with lastDraw := now }
+        IO.eprint s!"\r{renderLine s.label s.done s.total s.started now item}\x1b[K"
 
 /-- Finish the display: erase the line. The final report that follows owns stderr from here. -/
 def finish (progress : Progress) : IO Unit := do
-  unless progress.live? do return
+  unless progress.live? do
+    return
   IO.eprint "\r\x1b[K"
 
 end LeanFmt.Progress

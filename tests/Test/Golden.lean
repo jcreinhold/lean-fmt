@@ -38,7 +38,9 @@ public def ensureGolden (path : System.FilePath) (actual : String) : IO Unit := 
     let mut offset := 0
     while offset < shared && expected.get! offset == actualBytes.get! offset do
       offset := offset + 1
-    throw <| IO.userError s!"golden mismatch: {path}\n  first difference at byte {offset} \
+    throw <|
+        IO.userError
+          s!"golden mismatch: {path}\n  first difference at byte {offset} \
       (golden is {expected.size} bytes, actual is {actualBytes.size})"
 
 end LeanFmt.Test

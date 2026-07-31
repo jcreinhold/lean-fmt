@@ -16,15 +16,13 @@ open LeanFmt.Test
 
 /-- The strings every width's render must keep: one representative per block family the fixture
 exercises, plus its three pinned comments (each exactly once) and its `let` ordering. -/
-private def requiredStrings : Array String := #[
-  "exact proof", "constructor", "first", "| exact proof", "constructor <;>",
-  "custom_assumption", "match value with", "let some value :=", "let some value ←",
-  "input |", "long guarded let", "long guarded bind", "total ←", "have positive",
-  "for value", "values do", "continue", "break", "while", "total <", "let rec count",
-  "else if", "value.isNone then", "unless flag do", "repeat", "until flag", "let value ←",
-  "{\n", "1;", "try", "catch _ =>", "catch\n", "finally", "dbg_trace", "assert!",
-  "debug_assert!", "Id.run", "where"
-]
+private def requiredStrings : Array String :=
+  #["exact proof", "constructor", "first", "| exact proof", "constructor <;>", "custom_assumption",
+    "match value with", "let some value :=", "let some value ←", "input |", "long guarded let",
+    "long guarded bind", "total ←", "have positive", "for value", "values do", "continue", "break",
+    "while", "total <", "let rec count", "else if", "value.isNone then", "unless flag do", "repeat",
+    "until flag", "let value ←", "{\n", "1;", "try", "catch _ =>", "catch\n", "finally",
+    "dbg_trace", "assert!", "debug_assert!", "Id.run", "where"]
 
 namespace BlockFormatter
 
@@ -33,15 +31,19 @@ metric invariants: one native document per command, and the alignment and offsid
 fixture's shape implies. -/
 private def canonicalText (root : System.FilePath) (setup : System.FilePath) (application : String)
     (width : Nat) : IO String := do
-  let report ← LeanFmt.Test.Analyze.analyzeExact root application setup
-    "tests/fixtures/block-formatter/Blocks.lean" "Blocks.lean" s!"4:{width}"
+  let report ←
+    LeanFmt.Test.Analyze.analyzeExact root application setup
+        "tests/fixtures/block-formatter/Blocks.lean" "Blocks.lean" s!"4:{width}"
   let (canonical, text) ← LeanFmt.Test.Analyze.canonical report s!"width {width}"
-  ensure (LeanFmt.Test.Analyze.natAt? canonical [.field "metrics", .field "nativeDocuments"] ==
-      LeanFmt.Test.Analyze.natAt? canonical [.field "metrics", .field "commands"])
-    s!"width {width}: nativeDocuments ≠ commands"
-  let alignedTokens := (LeanFmt.Test.Analyze.natAt? canonical [.field "metrics", .field "alignedTokens"]).getD 0
+  ensure
+      (LeanFmt.Test.Analyze.natAt? canonical [.field "metrics", .field "nativeDocuments"] ==
+        LeanFmt.Test.Analyze.natAt? canonical [.field "metrics", .field "commands"])
+      s!"width {width}: nativeDocuments ≠ commands"
+  let alignedTokens :=
+    (LeanFmt.Test.Analyze.natAt? canonical [.field "metrics", .field "alignedTokens"]).getD 0
   ensure (alignedTokens > 500) s!"width {width}: alignedTokens dropped to {alignedTokens}"
-  let offside := (LeanFmt.Test.Analyze.natAt? canonical [.field "metrics", .field "offsideConstraints"]).getD 0
+  let offside :=
+    (LeanFmt.Test.Analyze.natAt? canonical [.field "metrics", .field "offsideConstraints"]).getD 0
   ensure (offside >= 4) s!"width {width}: offsideConstraints dropped to {offside}"
   return text
 
@@ -58,14 +60,16 @@ private def widthCase (root setup : System.FilePath) (application : String) (wid
   let text ← canonicalText root setup application width
   for required in requiredStrings do
     ensureContains text required s!"width {width}"
-  for comment in ["/- between focused goals -/", "/- match-arm comment -/", "/- long guarded let -/",
-      "/- long guarded bind -/"] do
+  for comment in
+    ["/- between focused goals -/", "/- match-arm comment -/", "/- long guarded let -/",
+      "/- long guarded bind -/"]do
     ensure ((text.splitOn comment).length == 2)
-      s!"width {width}: {comment} does not occur exactly once"
+        s!"width {width}: {comment} does not occur exactly once"
   match (["let first", "let second", "pure second"].map (positionOf? text)).toArray with
   | #[some first, some second, some pure] =>
     ensure (first < second && second < pure) s!"width {width}: let/pure ordering moved"
-  | _ => throw <| IO.userError s!"width {width}: let/pure markers missing"
+  | _ =>
+    throw <| IO.userError s!"width {width}: let/pure markers missing"
 
 private def testNarrowReflow (root setup : System.FilePath) (application : String) : IO Unit := do
   let narrow ← canonicalText root setup application 20
@@ -77,7 +81,8 @@ private def testNarrowReflow (root setup : System.FilePath) (application : Strin
   match (["| 0 =>", "| _ =>"].map (positionOf? narrow)).toArray with
   | #[some literal, some fallback] =>
     ensure (literal < fallback) "width 20: fallback arm moved before the literal arm"
-  | _ => throw <| IO.userError "width 20: match arms missing"
+  | _ =>
+    throw <| IO.userError "width 20: match arms missing"
   let wide ← canonicalText root setup application 80
   ensure (narrow ≠ wide) "block registry ignored configured width"
 
@@ -87,12 +92,13 @@ public def main (args : List String) : IO UInt32 := do
   let root ← repoRoot
   let application := (root / ".lake" / "build" / "bin" / "lean-fmt").toString
   withTempDir fun work => do
-    let setup ← LeanFmt.Test.Analyze.setupFile root work "tests/fixtures/block-formatter/Blocks.lean"
-    let cases : Array Case := #[
-      { name := "width-20", run := BlockFormatter.widthCase root setup application 20 },
-      { name := "width-40", run := BlockFormatter.widthCase root setup application 40 },
-      { name := "width-80", run := BlockFormatter.widthCase root setup application 80 },
-      { name := "width-100", run := BlockFormatter.widthCase root setup application 100 },
-      { name := "narrow-reflow", run := BlockFormatter.testNarrowReflow root setup application }
-    ]
-    runCases "block-formatter" cases args
+      let setup ←
+        LeanFmt.Test.Analyze.setupFile root work "tests/fixtures/block-formatter/Blocks.lean"
+      let cases : Array Case :=
+        #[{ name := "width-20", run := BlockFormatter.widthCase root setup application 20 },
+          { name := "width-40", run := BlockFormatter.widthCase root setup application 40 },
+          { name := "width-80", run := BlockFormatter.widthCase root setup application 80 },
+          { name := "width-100", run := BlockFormatter.widthCase root setup application 100 },
+          { name := "narrow-reflow",
+            run := BlockFormatter.testNarrowReflow root setup application }]
+      runCases "block-formatter" cases args

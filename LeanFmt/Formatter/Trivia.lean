@@ -17,16 +17,18 @@ block comments cannot select a formatting unit. -/
 
 namespace LeanFmt.Internal.Formatter.Trivia
 
-def formatIgnoreNextText : String := "-- lean-fmt: format-ignore-next"
+def formatIgnoreNextText : String :=
+  "-- lean-fmt: format-ignore-next"
 
 /-- Exact slice selected by a formatter directive leading this complete command. Outer blank padding
 is not part of the unit; the module composer supplies that canonical boundary. -/
 def formatIgnoreNext? (ownership : CommentOwnership) (stx : Lean.Syntax) : Option SourceRange := do
   let start := stx.getRange?.map (·.start.byteIdx) |>.getD 0
   let comments := Comments.subtree ownership stx
-  let directive ← comments.find? fun comment =>
-    comment.kind == .line && comment.range.stop <= start &&
-      (Comments.payload ownership comment).trimAscii == formatIgnoreNextText
+  let directive ←
+    comments.find? fun comment =>
+        comment.kind == .line && comment.range.stop <= start &&
+          (Comments.payload ownership comment).trimAscii == formatIgnoreNextText
   let syntaxStop := stx.getRange?.map (·.stop.byteIdx) |>.getD start
   let stop := comments.foldl (init := syntaxStop) fun stop comment => max stop comment.range.stop
   return ⟨directive.range.start, stop⟩
@@ -47,14 +49,15 @@ gap between a copyright block and the `module` it precedes is owned by neither a
 Every file in a Lean project has one. -/
 private def joinLeading (ownership : CommentOwnership) (comments : Array Comment) : Option Doc :=
   (comments.foldl (init := (none, none)) fun (document?, cursor) comment =>
-    let next := match document?, cursor with
-      | some document, some cursor =>
-        let boundary := if Comments.hasBlankLineBetween ownership cursor comment.range.start then
-            Doc.blank
-          else Doc.hard
-        document ++ boundary ++ commentDocument ownership comment
-      | _, _ => commentDocument ownership comment
-    (some next, some comment.range.stop)).1
+      let next :=
+        match document?, cursor with
+        | some document, some cursor =>
+          let boundary :=
+            if Comments.hasBlankLineBetween ownership cursor comment.range.start then Doc.blank
+            else Doc.hard
+          document ++ boundary ++ commentDocument ownership comment
+        | _, _ => commentDocument ownership comment
+      (some next, some comment.range.stop)).1
 
 /- The boundary between a leading run and the thing it leads. The callers below emit that boundary
 themselves, so they have to ask for it rather than be handed it. -/
@@ -93,15 +96,17 @@ private def exactLeadingBoundary (ownership : CommentOwnership) (stx : Lean.Synt
 private def exactTrailing (ownership : CommentOwnership) (stx : Lean.Syntax)
     (terminateLine : Bool := true) : Option Doc :=
   Comments.trailing ownership stx |>.foldl (init := none) fun document? comment =>
-    let next := Doc.text " " ++ commentDocument ownership comment ++
-      (if terminateLine && comment.kind == .line then Doc.hard else Doc.empty)
+    let next :=
+      Doc.text " " ++ commentDocument ownership comment ++
+        (if terminateLine && comment.kind == .line then Doc.hard else Doc.empty)
     some <| document?.map (· ++ next) |>.getD next
 
 /-- Add comments logically owned by exactly this structural node. Descendant documents add their own
 comments recursively; opaque registry leaves are never decorated because their native formatter is
 already the sole emitter for that subtree. -/
 def decorate (ownership : CommentOwnership) (stx : Lean.Syntax) (document : Doc) : Doc :=
-  let document := match exactLeading ownership stx with
+  let document :=
+    match exactLeading ownership stx with
     | some comments => comments ++ exactLeadingBoundary ownership stx ++ document
     | none => document
   match exactTrailing ownership stx with
@@ -135,9 +140,10 @@ def decorateTrailingBeforeBoundary (ownership : CommentOwnership) (stx : Lean.Sy
 boundary. A trailing line comment must end the current row, but emitting that boundary twice would
 invent a blank line. Kept separate from `decorate` on purpose: inline term composition still needs the
 comment itself to force the break. -/
-def decorateBeforeBoundary (ownership : CommentOwnership) (stx : Lean.Syntax)
-    (document : Doc) : Doc :=
-  let document := match exactLeading ownership stx with
+def decorateBeforeBoundary (ownership : CommentOwnership) (stx : Lean.Syntax) (document : Doc) :
+    Doc :=
+  let document :=
+    match exactLeading ownership stx with
     | some comments => comments ++ exactLeadingBoundary ownership stx ++ document
     | none => document
   match exactTrailing ownership stx (terminateLine := false) with
@@ -149,8 +155,9 @@ recursive formatter callbacks, so this is their exact-once comment path. -/
 def decorateSubtree (ownership : CommentOwnership) (stx : Lean.Syntax) (document : Doc) : Doc :=
   let leading := Comments.subtreeAt ownership stx .leading
   let trailing := Comments.subtreeAt ownership stx .trailing
-  let document := leading.foldr (init := document) fun comment result =>
-    commentDocument ownership comment ++ Doc.hard ++ result
+  let document :=
+    leading.foldr (init := document) fun comment result =>
+      commentDocument ownership comment ++ Doc.hard ++ result
   trailing.foldl (init := document) fun result comment =>
     result ++ Doc.text " " ++ commentDocument ownership comment ++
       (if comment.kind == .line then Doc.hard else Doc.empty)
@@ -158,9 +165,9 @@ def decorateSubtree (ownership : CommentOwnership) (stx : Lean.Syntax) (document
 def decorateSubtreeTrailingAfter (ownership : CommentOwnership) (owner included : Lean.Syntax)
     (document : Doc) : Doc :=
   let includedStop? := included.getRange?.map (·.stop.byteIdx)
-  Comments.subtreeAt ownership owner .trailing |>.filter (fun comment =>
-    includedStop?.any (· <= comment.range.start)) |>.foldl
-      (init := document) fun result comment =>
+  Comments.subtreeAt ownership owner .trailing |>.filter
+      (fun comment => includedStop?.any (· <= comment.range.start)) |>.foldl
+    (init := document) fun result comment =>
     result ++ Doc.text " " ++ commentDocument ownership comment ++
       (if comment.kind == .line then Doc.hard else Doc.empty)
 
@@ -178,21 +185,24 @@ def leadingBoundary (ownership : CommentOwnership) (stx : Lean.Syntax) : Doc :=
 Comments assigned as leading trivia of the next command are emitted there, never duplicated here. -/
 def trailing (ownership : CommentOwnership) (stx : Lean.Syntax) (boundaryStop : Nat) : Option Doc :=
   let stop := stx.getRange?.map (·.stop.byteIdx) |>.getD 0
-  let comments := Comments.subtreeAt ownership stx .trailing |>.filter fun comment =>
-    comment.range.start >= stop && comment.range.start < boundaryStop
-  let (document?, _) := comments.foldl (init := (none, stop)) fun (document?, cursor) comment =>
-    let boundary := if Comments.hasNewlineBetween ownership cursor comment.range.start then
-        Doc.hard
-      else Doc.text " "
-    let next := boundary ++ commentDocument ownership comment
-    (some <| document?.map (· ++ next) |>.getD next, comment.range.stop)
+  let comments :=
+    Comments.subtreeAt ownership stx .trailing |>.filter fun comment =>
+      comment.range.start >= stop && comment.range.start < boundaryStop
+  let (document?, _) :=
+    comments.foldl (init := (none, stop)) fun (document?, cursor) comment =>
+      let boundary :=
+        if Comments.hasNewlineBetween ownership cursor comment.range.start then Doc.hard
+        else Doc.text " "
+      let next := boundary ++ commentDocument ownership comment
+      (some <| document?.map (· ++ next) |>.getD next, comment.range.stop)
   document?
 
 /-- Comments after the final selected syntax leaf: they belong to the module boundary, not to an
 invented trailing child of the last command. -/
 def fileDangling (ownership : CommentOwnership) : Option Doc :=
   Comments.fileDangling ownership |>.foldl (init := none) fun document? comment =>
-    some <| match document? with
+    some <|
+      match document? with
       | some document => document ++ Doc.hard ++ commentDocument ownership comment
       | none => commentDocument ownership comment
 

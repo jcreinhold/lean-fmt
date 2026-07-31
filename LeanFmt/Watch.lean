@@ -46,6 +46,7 @@ re-reads and re-digests every source it reports on, and the result cache is keye
 stale tuple can delay a generation but cannot produce a report that disagrees with the bytes on disk.
 Any later detected change re-runs the complete project and picks the missed edit up. Nothing here
 guarantees that every edit is observed, and no caller may claim it does. -/
+
 private structure Stamp where
   path : String
   /-- Absent when the file does not exist. Absence is itself observable, so that *creating* a config
@@ -58,25 +59,24 @@ private structure Stamp where
 
 /-- One observation of the tree. Compared as a whole: a file appearing or disappearing changes the
 set, which is why creation and deletion need no separate mechanism (§2). -/
-structure Snapshot where
-  private mk ::
+structure Snapshot where private mk ::
   private stamps : Array Stamp
   deriving BEq
 
 /-- How many paths this observation covers. Reported so a caller can show what it is watching without
 being handed the stamps themselves. -/
-def Snapshot.size (snapshot : Snapshot) : Nat := snapshot.stamps.size
+def Snapshot.size (snapshot : Snapshot) : Nat :=
+  snapshot.stamps.size
 
 private def stampOf (root : FilePath) (relative : String) : IO Stamp := do
   try
     let metadata ← (root / FilePath.mk relative).metadata
     return {
-      path := relative
-      present := true
-      byteSize := metadata.byteSize
-      seconds := metadata.modified.sec
-      nanoseconds := metadata.modified.nsec
-    }
+        path := relative
+        present := true
+        byteSize := metadata.byteSize
+        seconds := metadata.modified.sec
+        nanoseconds := metadata.modified.nsec }
   catch _ =>
     return { path := relative, present := false, byteSize := 0, seconds := 0, nanoseconds := 0 }
 
@@ -87,7 +87,8 @@ file changes which rules run; editing a lakefile changes the project. Both must 
 even though neither is a source. -/
 
 /-- Recognized configuration filenames, in precedence order. -/
-private def configNames : Array String := #[".lean-fmt.toml", "lean-fmt.toml"]
+private def configNames : Array String :=
+  #[".lean-fmt.toml", "lean-fmt.toml"]
 
 /-- Root-relative control files whose change invalidates a retained workspace (§6). -/
 private def lakeControlNames : Array String :=
@@ -99,14 +100,15 @@ A configuration governs files beneath it, so a config *created* in any ancestor 
 changes that source's effective configuration. Observing the recognized names in exactly these
 directories makes such a creation detectable while keeping the observed set finite — a config in a
 directory with no sources beneath it governs nothing, and is correctly ignored. -/
-private def ancestors (path : String) : Array String := Id.run do
-  let components := (path.splitOn "/").dropLast
-  let mut directories : Array String := #[""]
-  let mut current := ""
-  for component in components do
-    current := if current.isEmpty then component else current ++ "/" ++ component
-    directories := directories.push current
-  return directories
+private def ancestors (path : String) : Array String :=
+  Id.run do
+    let components := (path.splitOn "/").dropLast
+    let mut directories : Array String := #[""]
+    let mut current := ""
+    for component in components do
+      current := if current.isEmpty then component else current ++ "/" ++ component
+      directories := directories.push current
+    return directories
 
 /-- The complete set of root-relative paths one observation covers.
 
@@ -114,8 +116,8 @@ Recomputed from a fresh `Discovery.run` on every poll rather than cached: the se
 a function of the tree, so a new file, a new config, or a changed `exclude` has to be able to change
 what we watch. The walk costs a small fraction of a generation (§1), which is what makes recomputing
 it affordable. -/
-private def observedPaths (root : FilePath) (configPath? : Option FilePath) :
-    IO (Array String) := do
+private def observedPaths (root : FilePath) (configPath? : Option FilePath) : IO (Array String) :=
+  do
   let discovery ← Discovery.run root configPath?
   let sources := discovery.selectedSources
   let mut paths := sources
@@ -175,7 +177,7 @@ partial def run (options : Options) (generation : Nat → IO Unit) : IO Unit := 
   generation 1
   loop initial 2
 where
-  loop (lastRun : Snapshot) (counter : Nat) : IO Unit := do
+   loop (lastRun : Snapshot) (counter : Nat) : IO Unit := do
     IO.sleep options.pollMillis.toUInt32
     let observed ← observe options.root options.configPath?
     if observed == lastRun then
@@ -185,7 +187,7 @@ where
       let settled ← settle observed
       generation counter
       loop settled (counter + 1)
-  settle (candidate : Snapshot) : IO Snapshot := do
+   settle (candidate : Snapshot) : IO Snapshot := do
     IO.sleep options.pollMillis.toUInt32
     let observed ← observe options.root options.configPath?
     if observed == candidate then

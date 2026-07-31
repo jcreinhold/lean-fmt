@@ -35,7 +35,8 @@ pass verifies. -/
 namespace LeanFmt.Test.Projection
 
 /-- The one schema this file decodes. -/
-public def artifactSchema : String := "lean-fmt.module-artifact.v11"
+public def artifactSchema : String :=
+  "lean-fmt.module-artifact.v11"
 
 /-- A decoded source info: what the leaf owns of the normalized source. -/
 private inductive Info where
@@ -61,36 +62,49 @@ private def entryTag (entry : Lean.Json) (label : String) : IO Nat := do
   match items[0]? with
   | some tag =>
     match tag with
-    | .num n => return n.mantissa.toNat
-    | _ => fail s!"{label} has no tag"
-  | none => fail s!"{label} has no tag"
+    | .num n =>
+      return n.mantissa.toNat
+    | _ =>
+      fail s!"{label} has no tag"
+  | none =>
+    fail s!"{label} has no tag"
 
 /-- Decode one `info` field: `0` for none, `[1, leadingStart, position, endPosition, trailingStop]`
 for original, `[2, ...]` for synthetic. -/
 private def decodeInfo (raw : Lean.Json) : IO Info := do
   match raw with
   | .num n =>
-    if n.mantissa.toNat == 0 then return .none
+    if n.mantissa.toNat == 0 then
+      return .none
     fail s!"unknown source-info tag {n.mantissa.toNat}"
   | .arr items =>
     match items[0]? with
-    | none => fail s!"malformed source info {raw.compress}"
+    | none =>
+      fail s!"malformed source info {raw.compress}"
     | some tag =>
       match jsonNat? tag with
       | some 1 =>
-        let some positions := items[1:5].toArray.mapM jsonNat?
-          | fail s!"original info has {items.size} fields, expected 5"
+        let some positions :=
+          items[1:5].toArray.mapM
+            jsonNat? | fail s!"original info has {items.size} fields, expected 5"
         match positions.toList with
         | [leadingStart, position, endPosition, trailingStop] =>
-          unless leadingStart <= position && position <= endPosition && endPosition <= trailingStop do
-            fail s!"original info out of order: {leadingStart} <= {position} <= {endPosition} \
+          unless
+            leadingStart <= position && position <= endPosition && endPosition <= trailingStop do
+            fail
+                s!"original info out of order: {leadingStart} <= {position} <= {endPosition} \
               <= {trailingStop}"
           return .original leadingStart trailingStop
-        | _ => fail "unreachable: five fields did not match five"
-      | some 2 => return .synthetic
-      | some other => fail s!"unknown source-info tag {other}"
-      | none => fail s!"malformed source-info tag {raw.compress}"
-  | _ => fail s!"malformed source info {raw.compress}"
+        | _ =>
+          fail "unreachable: five fields did not match five"
+      | some 2 =>
+        return .synthetic
+      | some other =>
+        fail s!"unknown source-info tag {other}"
+      | none =>
+        fail s!"malformed source-info tag {raw.compress}"
+  | _ =>
+    fail s!"malformed source info {raw.compress}"
 
 /-- Pre-order walk over the flat `entries` array, collecting the byte span each leaf owns. -/
 private structure Walk where
@@ -99,49 +113,53 @@ private structure Walk where
 
 /-- Return `(nextIndex, spans)` for the subtree rooted at `index`. -/
 private partial def Walk.subtree (walk : Walk) (index : Nat) : IO (Nat × Array (Nat × Nat)) := do
-  let some entry := walk.entries[index]?
-    | fail s!"entry index {index} of {walk.entries.size}"
+  let some entry := walk.entries[index]? | fail s!"entry index {index} of {walk.entries.size}"
   let tag ← entryTag entry s!"entry {index}"
   match tag with
-  | 0 => return (index + 1, #[]) -- missing
+  | 0 =>
+    return (index + 1, #[]) -- missing
   | 2 | 3 => -- atom | ident
     let items ← entryArray entry s!"entry {index}"
     let some info := items[1]? | fail s!"entry {index} has no source info"
     match ← decodeInfo info with
-    | .original leadingStart trailingStop => return (index + 1, #[(leadingStart, trailingStop)])
-    | .none => fail s!"entry {index} is a none leaf, so its position is fabricated rather \
+    | .original leadingStart trailingStop =>
+      return (index + 1, #[(leadingStart, trailingStop)])
+    | .none =>
+      fail
+          s!"entry {index} is a none leaf, so its position is fabricated rather \
         than a projection of the source"
-    | .synthetic => fail s!"entry {index} is a synthetic leaf, so its position is fabricated \
+    | .synthetic =>
+      fail
+          s!"entry {index} is a synthetic leaf, so its position is fabricated \
         rather than a projection of the source"
   | 1 => -- node
     let items ← entryArray entry s!"entry {index}"
     unless items.size == 4 do
       fail s!"entry {index} is a node with {items.size} fields, expected 4"
-    let some kind := items[2]? |>.bind jsonNat?
-      | fail s!"entry {index} has no kind"
-    let some kindName := walk.kinds[kind]?
-      | fail s!"entry {index} names kind {kind} of {walk.kinds.size}"
-    let some childCount := items[3]? |>.bind jsonNat?
-      | fail s!"entry {index} has no child count"
+    let some kind := items[2]? |>.bind jsonNat? | fail s!"entry {index} has no kind"
+    let some kindName :=
+      walk.kinds[kind]? | fail s!"entry {index} names kind {kind} of {walk.kinds.size}"
+    let some childCount := items[3]? |>.bind jsonNat? | fail s!"entry {index} has no child count"
     let mut cursor := index + 1
     let mut children : Array (Array (Nat × Nat)) := #[]
-    for _ in [0:childCount] do
+    for _ in [0:childCount]do
       let (next, spans) ← walk.subtree cursor
       cursor := next
       children := children.push spans
     if kindName == "choice" then
       -- Every alternative parses the same bytes, so only the first may contribute. This is what
       -- `terminalsFrom` assumes and `Syntax.reprint` verifies; here it is verified.
-      let some first := children[0]?
-        | fail s!"entry {index} is a choice node with no alternatives"
-      for position in [1:children.size] do
+      let some first := children[0]? | fail s!"entry {index} is a choice node with no alternatives"
+      for position in [1:children.size]do
         let other := children[position]!
         unless other == first do
-          fail s!"entry {index}: choice alternative {position} spells {other.toList} where \
+          fail
+              s!"entry {index}: choice alternative {position} spells {other.toList} where \
             alternative 0 spells {first.toList}"
       return (cursor, first)
     return (cursor, children.foldl (· ++ ·) #[])
-  | other => fail s!"unknown entry tag {other} at {index}"
+  | other =>
+    fail s!"unknown entry tag {other} at {index}"
 
 /-- The measurements a successful check derives; the suite pins individual fields. -/
 public structure Measurements where
@@ -164,8 +182,10 @@ private def required (artifact : Lean.Json) (key : String) : IO Lean.Json :=
 private def requiredNat (artifact : Lean.Json) (key : String) : IO Nat := do
   let value ← required artifact key
   match jsonNat? value with
-  | some n => return n
-  | none => fail s!"artifact `{key}` is not a natural number"
+  | some n =>
+    return n
+  | none =>
+    fail s!"artifact `{key}` is not a natural number"
 
 /-- sha256 of a string's exact bytes, via `shasum` on stdin. -/
 private def digestString (bytes : String) : IO String := do
@@ -173,8 +193,10 @@ private def digestString (bytes : String) : IO String := do
   unless result.exitCode == 0 do
     fail s!"shasum failed: {result.stderr}"
   match result.stdout.splitOn " " with
-  | hex :: _ => return hex
-  | [] => fail "shasum produced no digest"
+  | hex :: _ =>
+    return hex
+  | [] =>
+    fail "shasum produced no digest"
 
 /-- Verify the projection against the file's raw bytes. Raises `IO.userError` on any violated
 claim; returns measurements otherwise. `artifact` is the artifact object alone (not an envelope),
@@ -189,34 +211,38 @@ private def checkProjection (syntaxData artifact : Lean.Json) (raw : String) : I
   let actualDigest ← digestString normalized
   unless claimedDigest == Lean.toJson actualDigest do
     fail "normalizedDigest does not match the normalized source"
-  let some kindsJson := (syntaxData.getObjVal? "kinds").toOption |>.bind (·.getArr?.toOption)
-    | fail "syntaxData has no kinds"
-  let some kinds := kindsJson.mapM (·.getStr?.toOption)
-    | fail "syntaxData kinds are not strings"
-  let some entries := (syntaxData.getObjVal? "entries").toOption |>.bind (·.getArr?.toOption)
-    | fail "syntaxData has no entries"
-  let some commands := (syntaxData.getObjVal? "commands").toOption |>.bind (·.getArr?.toOption)
-    | fail "syntaxData has no commands"
-  let some terminal := (syntaxData.getObjVal? "terminal").toOption |>.bind jsonNat?
-    | fail "syntaxData has no terminal"
+  let some kindsJson :=
+    (syntaxData.getObjVal? "kinds").toOption |>.bind
+      (·.getArr?.toOption) | fail "syntaxData has no kinds"
+  let some kinds := kindsJson.mapM (·.getStr?.toOption) | fail "syntaxData kinds are not strings"
+  let some entries :=
+    (syntaxData.getObjVal? "entries").toOption |>.bind
+      (·.getArr?.toOption) | fail "syntaxData has no entries"
+  let some commands :=
+    (syntaxData.getObjVal? "commands").toOption |>.bind
+      (·.getArr?.toOption) | fail "syntaxData has no commands"
+  let some terminal :=
+    (syntaxData.getObjVal? "terminal").toOption |>.bind jsonNat? | fail "syntaxData has no terminal"
   let walk : Walk := { entries, kinds }
   let mut spans : Array (Nat × Nat) := #[]
   let mut cursor := 0
   let mut previousStop := 0
   -- Ordinary commands, in source order. A command root begins where the previous root's subtree
   -- ended, so the array is a concatenation of whole trees with nothing between them.
-  for position in [0:commands.size] do
+  for position in [0:commands.size]do
     let root := commands[position]!
-    let some rootEntry := (root.getObjVal? "entry").toOption |>.bind jsonNat?
-      | fail s!"command {position} has no entry"
+    let some rootEntry :=
+      (root.getObjVal? "entry").toOption |>.bind jsonNat? | fail s!"command {position} has no entry"
     unless rootEntry == cursor do
-      fail s!"command {position} claims entry {rootEntry} but the previous subtree ended at {cursor}"
-    let some range := (root.getObjVal? "range").toOption
-      | fail s!"command {position} has no range"
-    let some start := (range.getObjVal? "start").toOption |>.bind jsonNat?
-      | fail s!"command {position} has no range start"
-    let some stop := (range.getObjVal? "stop").toOption |>.bind jsonNat?
-      | fail s!"command {position} has no range stop"
+      fail
+          s!"command {position} claims entry {rootEntry} but the previous subtree ended at {cursor}"
+    let some range := (root.getObjVal? "range").toOption | fail s!"command {position} has no range"
+    let some start :=
+      (range.getObjVal? "start").toOption |>.bind
+        jsonNat? | fail s!"command {position} has no range start"
+    let some stop :=
+      (range.getObjVal? "stop").toOption |>.bind
+        jsonNat? | fail s!"command {position} has no range stop"
     unless start <= stop && stop <= normalized.utf8ByteSize do
       fail s!"command {position} has range {start}..{stop} of {normalized.utf8ByteSize}"
     unless start >= previousStop do
@@ -243,13 +269,14 @@ private def checkProjection (syntaxData artifact : Lean.Json) (raw : String) : I
     fail s!"the first leaf starts at {headerStop}, past {normalized.utf8ByteSize} bytes"
   let mut rebuilt := String.Pos.Raw.extract normalized 0 ⟨headerStop⟩
   let mut tileCursor := headerStop
-  for index in [0:spans.size] do
+  for index in [0:spans.size]do
     let (leadingStart, trailingStop) := spans[index]!
     unless leadingStart == tileCursor do
       let shape := if leadingStart > tileCursor then "a hole" else "an overlap"
-      let size := if leadingStart > tileCursor then leadingStart - tileCursor
-        else tileCursor - leadingStart
-      fail s!"leaf {index} owns {leadingStart}..{trailingStop} but the previous leaf stopped at \
+      let size :=
+        if leadingStart > tileCursor then leadingStart - tileCursor else tileCursor - leadingStart
+      fail
+          s!"leaf {index} owns {leadingStart}..{trailingStop} but the previous leaf stopped at \
         {tileCursor}: {shape} of {size} byte(s), so the projection is not a linear cover"
     unless trailingStop <= normalized.utf8ByteSize do
       fail s!"leaf {index} stops at {trailingStop}, past {normalized.utf8ByteSize} bytes"
@@ -260,15 +287,15 @@ private def checkProjection (syntaxData artifact : Lean.Json) (raw : String) : I
   unless rebuilt == normalized do
     fail "reconstruction is not byte-identical to the source"
   return {
-    rawBytes := raw.utf8ByteSize
-    normalizedBytes := normalized.utf8ByteSize
-    leaves := spans.size
-    entries := entries.size
-    kinds := kinds.size
-    commands := commands.size
-    headerStop
-    terminalStart
-    tailBytes := normalized.utf8ByteSize - tailStart }
+      rawBytes := raw.utf8ByteSize
+      normalizedBytes := normalized.utf8ByteSize
+      leaves := spans.size
+      entries := entries.size
+      kinds := kinds.size
+      commands := commands.size
+      headerStop
+      terminalStart
+      tailBytes := normalized.utf8ByteSize - tailStart }
 
 /-- Verify one artifact against the source file on disk: schema pin, no findings (an artifact
 carries facts, never findings), syntaxData present, then the projection check. Raises
@@ -279,18 +306,19 @@ public def checkArtifact (artifact : Lean.Json) (source : System.FilePath) : IO 
     fail s!"schema {schema} is not the {artifactSchema} encoding this decodes"
   if (artifact.getObjVal? "findings").isOk then
     fail "artifact carries findings; it must carry only facts"
-  let some syntaxData := (artifact.getObjVal? "syntaxData").toOption
-    | fail "artifact carries no syntaxData"
+  let some syntaxData :=
+    (artifact.getObjVal? "syntaxData").toOption | fail "artifact carries no syntaxData"
   checkProjection syntaxData artifact (String.fromUTF8! (← IO.FS.readBinFile source))
 
 /-- The envelope form: the artifact must be present, with diagnostics explaining any absence
 surfaced in the error. -/
 public def checkEnvelope (envelope : Lean.Json) (source : System.FilePath) : IO Measurements := do
   match (envelope.getObjVal? "artifact").toOption with
-  | some artifact => checkArtifact artifact source
+  | some artifact =>
+    checkArtifact artifact source
   | none =>
-    let diagnostics := (envelope.getObjVal? "diagnostics").toOption
-      |>.map Lean.Json.compress |>.getD "?"
+    let diagnostics :=
+      (envelope.getObjVal? "diagnostics").toOption |>.map Lean.Json.compress |>.getD "?"
     fail s!"envelope has no artifact: {diagnostics}"
 
 end LeanFmt.Test.Projection

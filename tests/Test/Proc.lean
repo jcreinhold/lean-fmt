@@ -25,9 +25,8 @@ public structure ProcResult where
 /-- Run `cmd` to completion, capturing both streams. `env` entries modify (or, with `none`, remove)
 inherited variables. With `timeoutMs`, the child is killed when it outlives the budget and the
 error says so — a timeout is a test failure with a clear cause, not a silent 137. -/
-public def runProc (cmd : String) (args : Array String := #[])
-    (input? : Option String := none) (cwd? : Option System.FilePath := none)
-    (env : Array (String × Option String) := #[])
+public def runProc (cmd : String) (args : Array String := #[]) (input? : Option String := none)
+    (cwd? : Option System.FilePath := none) (env : Array (String × Option String) := #[])
     (timeoutMs : Option Nat := none) : IO ProcResult := do
   match timeoutMs with
   | none =>
@@ -36,12 +35,12 @@ public def runProc (cmd : String) (args : Array String := #[])
   | some budget =>
     -- `stdin` is always piped so the child's type does not depend on `input?`; with no input the
     -- handle is dropped unwritten, the same EOF `.null` would give.
-    let child ← IO.Process.spawn {
-      cmd, args, cwd := cwd?, env
-      stdin := .piped
-      stdout := .piped
-      stderr := .piped
-    }
+    let child ←
+      IO.Process.spawn
+          { cmd, args, cwd := cwd?, env
+            stdin := .piped
+            stdout := .piped
+            stderr := .piped }
     let (stdin, child) ← child.takeStdin
     if let some input := input? then
       -- Written before the read tasks start, as `IO.Process.output` does it: the harness feeds
@@ -54,10 +53,12 @@ public def runProc (cmd : String) (args : Array String := #[])
       | 0 => do
         child.kill
         discard <| child.wait
-        throw <| IO.userError s!"process did not finish within {budget}ms and was killed: \
+        throw <|
+            IO.userError
+              s!"process did not finish within {budget}ms and was killed: \
           {cmd} {" ".intercalate args.toList}"
       | remaining + 1 => do
-        if let some code ← child.tryWait then
+        if let some code← child.tryWait then
           return code
         IO.sleep 20
         pollAux remaining
@@ -73,7 +74,8 @@ public def expectExit (expected : UInt32) (label : String) (cmd : String)
     (cwd? : Option System.FilePath := none) (env : Array (String × Option String) := #[])
     (timeoutMs : Option Nat := none) : IO ProcResult := do
   let result ← runProc cmd args input? cwd? env timeoutMs
-  ensure (result.exitCode == expected) s!"{label}: expected exit {expected}, \
+  ensure (result.exitCode == expected)
+      s!"{label}: expected exit {expected}, \
     got {result.exitCode}\nstdout:\n{result.stdout}\nstderr:\n{result.stderr}"
   return result
 

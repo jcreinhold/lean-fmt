@@ -30,7 +30,7 @@ private def testRenderLine : IO Unit := do
   ensure (done.contains "100%|████████████████████| 3/3") "complete run is not full"
 
 /-- The cases this module contributes to the unit runner, in run order. -/
-public def cases : Array Case := #[
-  { name := "testRenderLine", run := testRenderLine }]
+public def cases : Array Case :=
+  #[{ name := "testRenderLine", run := testRenderLine }]
 
 end LeanFmt.Test.Unit.Progress

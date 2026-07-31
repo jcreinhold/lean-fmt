@@ -42,10 +42,10 @@ private def testMetrics (ctx : Ctx) : IO Unit := do
   let source := ctx.work / "AdapterInput.lean"
   writeFile source adapterInput
   let setup ← setupFile ctx.root ctx.work source.toString
-  let envelope ← analyzeExact ctx.root ctx.application setup source.toString
-    "AdapterInput.lean" "4:100"
-  let narrowEnvelope ← analyzeExact ctx.root ctx.application setup source.toString
-    "AdapterInput.lean" "4:32"
+  let envelope ←
+    analyzeExact ctx.root ctx.application setup source.toString "AdapterInput.lean" "4:100"
+  let narrowEnvelope ←
+    analyzeExact ctx.root ctx.application setup source.toString "AdapterInput.lean" "4:32"
   let (canonical, output) ← Analyze.canonical envelope "adapter"
   let (_, narrowOutput) ← Analyze.canonical narrowEnvelope "adapter narrow"
   ensure (narrowOutput != output) "narrow and wide outputs agree; width sensitivity lost"
@@ -61,12 +61,12 @@ private def testMetrics (ctx : Ctx) : IO Unit := do
   ensureEq "adapter: commentOwners" 3 (metric "commentOwners")
   ensure (metric "nativeEvents" > 0) "adapter: nativeEvents"
   ensureJsonAt canonical [.field "validation", .field "structuralComparisons"]
-    (Lean.toJson (1 : Nat)) "adapter"
-  ensureJsonAt canonical [.field "validation", .field "idempotencePasses"]
-    (Lean.toJson (1 : Nat)) "adapter"
+      (Lean.toJson (1 : Nat)) "adapter"
+  ensureJsonAt canonical [.field "validation", .field "idempotencePasses"] (Lean.toJson (1 : Nat))
+      "adapter"
   ensureContains output "explicit_command selectedName" "adapter: explicit root lost"
   ensure (!(output.contains "explicit_command       selectedName"))
-    "adapter: alignment whitespace survived"
+      "adapter: alignment whitespace survived"
   ensureContains output "twice(" "adapter: descriptor root lost"
   ensureContains output "adapter_exact" "adapter: tactic root lost"
   ensureContains output "Nat → Nat" "adapter: unicode option not honored"
@@ -74,10 +74,11 @@ private def testMetrics (ctx : Ctx) : IO Unit := do
   ensureContains output "`(" "adapter: quotation lost"
   ensureContains output "local notation \"adapterUnit\"" "adapter: local notation lost"
   ensureContains output "item_term(selectedName)" "adapter: parser category lost"
-  for payload in ["adapter block payload", "adapter trailing payload", "adapter tactic payload"] do
+  for payload in ["adapter block payload", "adapter trailing payload", "adapter tactic payload"]do
     ensureEq s!"adapter: {payload} count" 1 ((output.splitOn payload).length - 1)
-  let some marks := (jsonAt? canonical [.field "sourceMap"]).bind (·.getArr?.toOption)
-    | throw <| IO.userError "adapter: no sourceMap"
+  let some marks :=
+    (jsonAt? canonical [.field "sourceMap"]).bind
+      (·.getArr?.toOption) | throw <| IO.userError "adapter: no sourceMap"
   let mut sourceCursor := 0
   let mut outputCursor := 0
   for mark in marks do
@@ -86,7 +87,7 @@ private def testMetrics (ctx : Ctx) : IO Unit := do
     sourceCursor := natAt? mark [.field "source", .field "stop"] |>.getD 0
     outputCursor := natAt? mark [.field "output", .field "stop"] |>.getD 0
   ensureEq "adapter: source map does not reach the artifact's normalized bytes"
-    (natAt? envelope [.field "artifact", .field "normalizedBytes"] |>.getD 0) sourceCursor
+      (natAt? envelope [.field "artifact", .field "normalizedBytes"] |>.getD 0) sourceCursor
   ensureEq "adapter: source map does not tile the output" output.utf8ByteSize outputCursor
 
 /-- A formatter exception surfaces a typed hard failure with kind, category, range, and trace. -/
@@ -94,15 +95,14 @@ private def testThrowing (ctx : Ctx) : IO Unit := do
   let source := ctx.work / "Throwing.lean"
   writeFile source "module\n\nimport AdapterSyntax\n\nopen AdapterSyntax\n\nthrowing_command\n"
   let setup ← setupFile ctx.root ctx.work source.toString
-  let envelope ← analyzeExact ctx.root ctx.application setup source.toString
-    "Throwing.lean" "4:100"
+  let envelope ← analyzeExact ctx.root ctx.application setup source.toString "Throwing.lean" "4:100"
   ensure ((jsonAt? envelope [.field "canonical"]).isNone) "throwing: canonical escaped"
   let failure := (jsonAt? envelope [.field "formatFailure"]).getD .null
   let kind := ((jsonAt? failure [.field "trace", .field "kind"]).bind (·.getStr?.toOption)).getD ""
   ensureContains kind "throwingCommand" "throwing: kind"
   -- The old Python's `in` over `trace.resolution` was dict-key membership, not a substring.
   ensure ((jsonAt? failure [.field "trace", .field "resolution", .field "explicit"]).isSome)
-    "throwing: resolution lost the explicit category"
+      "throwing: resolution lost the explicit category"
   let detail := ((failure.getObjValAs? String "detail").toOption).getD ""
   ensureContains detail "adapter fixture formatter failure" "throwing: detail"
   let start := natAt? failure [.field "range", .field "start"] |>.getD 0
@@ -119,15 +119,15 @@ private def testInvalid (ctx : Ctx) : IO Unit := do
   ensureContains output "invalid_command" "invalid: payload lost"
   ensure (!(output.contains "\ndef\n")) "invalid: normalization leaked"
   ensureJsonAt envelope [.field "canonical", .field "metrics", .field "normalizedTokens"]
-    (Lean.toJson (1 : Nat)) "invalid"
+      (Lean.toJson (1 : Nat)) "invalid"
 
 /-- A formatter-only token insertion is a typed alignment refusal. -/
 private def testExtraToken (ctx : Ctx) : IO Unit := do
   let source := ctx.work / "ExtraToken.lean"
   writeFile source "module\n\nimport AdapterSyntax\n\nopen AdapterSyntax\n\nextra_token_command\n"
   let setup ← setupFile ctx.root ctx.work source.toString
-  let envelope ← analyzeExact ctx.root ctx.application setup source.toString
-    "ExtraToken.lean" "4:100"
+  let envelope ←
+    analyzeExact ctx.root ctx.application setup source.toString "ExtraToken.lean" "4:100"
   ensure ((jsonAt? envelope [.field "canonical"]).isNone) "extra token: canonical escaped"
   let failure := (jsonAt? envelope [.field "formatFailure"]).getD .null
   let detail := ((failure.getObjValAs? String "detail").toOption).getD ""
@@ -139,15 +139,15 @@ end FormatterAdapter
 
 public def main (args : List String) : IO UInt32 := do
   let root ← repoRoot
-  discard <| expectExit 0 "lake build FormatterAdapterFixtures" "lake"
-    #["build", "FormatterAdapterFixtures"] (cwd? := some root)
+  discard <|
+      expectExit 0 "lake build FormatterAdapterFixtures" "lake"
+        #["build", "FormatterAdapterFixtures"] (cwd? := some root)
   withScratchDir "formatter-adapter" fun work => do
-    let ctx : FormatterAdapter.Ctx :=
-      { root, application := (root / ".lake" / "build" / "bin" / "lean-fmt").toString, work }
-    let cases : Array Case := #[
-      { name := "adapter-metrics", run := FormatterAdapter.testMetrics ctx },
-      { name := "throwing", run := FormatterAdapter.testThrowing ctx },
-      { name := "invalid", run := FormatterAdapter.testInvalid ctx },
-      { name := "extra-token", run := FormatterAdapter.testExtraToken ctx }
-    ]
-    runCases "formatter-adapter" cases args
+      let ctx : FormatterAdapter.Ctx :=
+        { root, application := (root / ".lake" / "build" / "bin" / "lean-fmt").toString, work }
+      let cases : Array Case :=
+        #[{ name := "adapter-metrics", run := FormatterAdapter.testMetrics ctx },
+          { name := "throwing", run := FormatterAdapter.testThrowing ctx },
+          { name := "invalid", run := FormatterAdapter.testInvalid ctx },
+          { name := "extra-token", run := FormatterAdapter.testExtraToken ctx }]
+      runCases "formatter-adapter" cases args

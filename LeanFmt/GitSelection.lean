@@ -92,7 +92,8 @@ private structure GitOutput where
 
 /-- `exitCode = 255` is what `IO.Process.output` returns when the binary does not exist
 (`evidence` §4) — it does not throw, so this is the only place absence can be detected. -/
-private def missingBinaryCode : UInt32 := 255
+private def missingBinaryCode : UInt32 :=
+  255
 
 private def runGit (cwd : FilePath) (args : Array String) : IO GitOutput := do
   let output ← IO.Process.output { cmd := "git", args, cwd := some cwd }
@@ -128,8 +129,7 @@ private def repositoryToplevel (root : FilePath) : IO (Except String FilePath) :
   return .ok (FilePath.mk toplevel)
 
 /-- Resolve a caller-supplied revision, naming what they typed when it does not exist (§9.7). -/
-private def resolveRevision (root : FilePath) (revision : String) :
-    IO (Except String String) := do
+private def resolveRevision (root : FilePath) (revision : String) : IO (Except String String) := do
   let output ← runGit root #["rev-parse", "--verify", "--quiet", revision ++ "^{commit}"]
   if output.exitCode == missingBinaryCode then
     return .error absent
@@ -165,22 +165,24 @@ desynchronizes on the first rename and mis-assigns every path after it (§9.2). 
 private def hasTwoPaths (status : String) : Bool :=
   status.startsWith "R" || status.startsWith "C"
 
-private def parseNameStatus (stream : String) : Array Record := Id.run do
-  let fields := nulFields stream
-  let mut records : Array Record := #[]
-  let mut index := 0
-  while index < fields.size do
-    let status := fields[index]!
-    if hasTwoPaths status then
-      if index + 2 < fields.size then
-        records := records.push
-          { status, path := fields[index + 2]!, previous? := some fields[index + 1]! }
-      index := index + 3
-    else
-      if index + 1 < fields.size then
-        records := records.push { status, path := fields[index + 1]! }
-      index := index + 2
-  return records
+private def parseNameStatus (stream : String) : Array Record :=
+  Id.run do
+    let fields := nulFields stream
+    let mut records : Array Record := #[]
+    let mut index := 0
+    while index < fields.size do
+      let status := fields[index]!
+      if hasTwoPaths status then
+        if index + 2 < fields.size then
+          records :=
+            records.push
+              { status, path := fields[index + 2]!, previous? := some fields[index + 1]! }
+        index := index + 3
+      else
+        if index + 1 < fields.size then
+          records := records.push { status, path := fields[index + 1]! }
+        index := index + 2
+    return records
 
 /-! ## Selection -/
 
@@ -189,8 +191,7 @@ private def diffArguments : Comparison → Array String
   -- Three-dot, from the evidence: on a diverged fixture, two-dot reported paths the branch never
   -- touched — including a deletion it never performed — where three-dot reported only the files it
   -- changed (`evidence` §8). "What did my branch change" is the merge-base question.
-  | .base revision =>
-    #["diff", "--name-status", "-z", "--find-renames", revision ++ "...HEAD"]
+  | .base revision => #["diff", "--name-status", "-z", "--find-renames", revision ++ "...HEAD"]
   | .staged => #["diff", "--cached", "--name-status", "-z", "--find-renames", "HEAD"]
 
 /-- `--find-renames` is passed explicitly rather than relying on the `diff.renames` default, which a
@@ -250,26 +251,29 @@ The result is a path list and its provenance. Everything about what a path *mean
 Lean source, whether configuration excludes it, what order it runs in — is left to the ordinary
 selection this feeds. -/
 def select (root : FilePath) (comparison : Comparison) : IO (Except String Selection) := do
-  let toplevel ← match ← repositoryToplevel root with
-    | .error message => return .error message
-    | .ok toplevel => pure toplevel
-
-  let resolvedBase? ← match comparison with
+  let toplevel ←
+    match ← repositoryToplevel root with
+    | .error message =>
+      return .error message
+    | .ok toplevel =>
+      pure toplevel
+  let resolvedBase? ←
+    match comparison with
     | .base revision =>
       match ← resolveRevision root revision with
-      | .error message => return .error message
-      | .ok resolved => pure (some resolved)
-    | _ => pure none
-
+      | .error message =>
+        return .error message
+      | .ok resolved =>
+        pure (some resolved)
+    | _ =>
+      pure none
   let diff ← runGit root (diffArguments comparison)
   if diff.exitCode == missingBinaryCode then
     return .error absent
   if diff.exitCode != 0 then
     return .error s!"git could not compare {comparison.describe}: {firstLine diff.stderr}"
-
   let mut candidates : Array String := #[]
   let mut dropped : Array Dropped := #[]
-
   for record in parseNameStatus diff.stdout do
     -- A rename's old path is gone whether or not the new one is selected, and disclosing it is what
     -- keeps a partial run honest.
@@ -283,7 +287,6 @@ def select (root : FilePath) (comparison : Comparison) : IO (Except String Selec
       dropped := dropped.push (.unmerged record.path)
     else
       candidates := candidates.push record.path
-
   if includesUntracked comparison then
     let untracked ← runGit root untrackedArguments
     if untracked.exitCode == missingBinaryCode then
@@ -292,7 +295,6 @@ def select (root : FilePath) (comparison : Comparison) : IO (Except String Selec
       return .error s!"git could not list untracked files: {firstLine untracked.stderr}"
     for path in nulFields untracked.stdout do
       candidates := candidates.push path
-
   let mut paths : Array FilePath := #[]
   let mut seen : Array String := #[]
   for relative in candidates do
@@ -310,7 +312,6 @@ def select (root : FilePath) (comparison : Comparison) : IO (Except String Selec
       unless seen.contains text do
         seen := seen.push text
         paths := paths.push resolved
-
   return .ok { paths, comparison, resolvedBase?, dropped }
 
 end LeanFmt.Internal.GitSelection

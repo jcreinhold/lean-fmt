@@ -20,10 +20,10 @@ namespace Style
 mentions every row plus the suppression and width vocabulary. -/
 private def testMatrixCoverage (root : System.FilePath) : IO Unit := do
   let doc ← IO.FS.readFile (root / "docs" / "style.md")
-  let rowsJson ← parseJson (← IO.FS.readFile (root / "tests" / "fixtures" / "style" / "matrix.json"))
-    "style matrix"
-  let some rows := rowsJson.getArr?.toOption
-    | throw <| IO.userError "style matrix is not an array"
+  let rowsJson ←
+    parseJson (← IO.FS.readFile (root / "tests" / "fixtures" / "style" / "matrix.json"))
+        "style matrix"
+  let some rows := rowsJson.getArr?.toOption | throw <| IO.userError "style matrix is not an array"
   ensure (rows.size == 19) s!"style matrix has {rows.size} rows, expected 19"
   let mut ids : Array String := #[]
   let mut families : Array String := #[]
@@ -33,19 +33,20 @@ private def testMatrixCoverage (root : System.FilePath) : IO Unit := do
     ids := ids.push id
     families := families.push ((row.getObjValAs? String "family").toOption.getD "")
     owners := owners.push ((row.getObjValAs? String "owner").toOption.getD "")
-    for key in ["flat", "broken", "comment"] do
+    for key in ["flat", "broken", "comment"]do
       let value := (row.getObjValAs? String key).toOption.getD ""
       ensure (!value.trimAscii.isEmpty) s!"style row {id} has an empty {key}"
     ensureContains doc s!"`{id}`" s!"style row {id} missing from docs/style.md"
   ensure (ids.toList.eraseDups.length == ids.toList.length) "style row ids are not unique"
-  let required := ["header", "command", "declaration", "term", "collection", "block", "trivia",
-    "registry"]
-  ensure (required.all fun family => families.contains family &&
-      (families.toList.eraseDups.length == required.length))
-    s!"style matrix families changed: {families.toList.eraseDups}"
-  for owner in ["11", "11b", "12", "12b", "13", "14"] do
+  let required :=
+    ["header", "command", "declaration", "term", "collection", "block", "trivia", "registry"]
+  ensure
+      (required.all fun family =>
+        families.contains family && (families.toList.eraseDups.length == required.length))
+      s!"style matrix families changed: {families.toList.eraseDups}"
+  for owner in ["11", "11b", "12", "12b", "13", "14"]do
     ensure (owners.contains owner) s!"style matrix lost owner {owner}"
-  for needle in ["format-ignore-next", "two spaces", "line width"] do
+  for needle in ["format-ignore-next", "two spaces", "line width"]do
     ensureContains doc needle "docs/style.md"
 
 /-- The frozen intended candidate: admitted by the oracle, changed exactly one file's bytes, and
@@ -53,9 +54,11 @@ preserved full structure (no comments in the fixture, so none may appear). -/
 private def testIntendedCandidate (root : System.FilePath) (application : String)
     (work : System.FilePath) : IO Unit := do
   let setup ← setupFile root work "tests/fixtures/style/fixtures/PolicyInput.lean"
-  let outcome ← Oracle.run root application setup work
-    (root / "tests" / "fixtures" / "style" / "fixtures" / "PolicyInput.lean")
-    #["python3", "tests/fixtures/style/expected_candidate.py", "tests/fixtures/style/fixtures/Policy.lean"]
+  let outcome ←
+    Oracle.run root application setup work
+        (root / "tests" / "fixtures" / "style" / "fixtures" / "PolicyInput.lean")
+        #["python3", "tests/fixtures/style/expected_candidate.py",
+          "tests/fixtures/style/fixtures/Policy.lean"]
   match outcome with
   | .error failure =>
     throw <| IO.userError s!"intended candidate rejected at gate {failure.gate}: {failure.detail}"
@@ -72,18 +75,20 @@ render, no validation failure, exactly two renders. -/
 private def testNativeSafeWidth (root : System.FilePath) (application : String)
     (work : System.FilePath) (width : Nat) : IO Unit := do
   let setup ← setupFile root work "tests/fixtures/style/fixtures/NativeSafe.lean"
-  let report ← analyzeExact root application setup
-    "tests/fixtures/style/fixtures/NativeSafe.lean" "NativeSafe.lean" s!"4:{width}"
+  let report ←
+    analyzeExact root application setup "tests/fixtures/style/fixtures/NativeSafe.lean"
+        "NativeSafe.lean" s!"4:{width}"
   let (canonical, _) ← canonical report s!"native-safe width {width}"
   ensureJsonAt canonical [.field "validation", .field "renders"] (Lean.toJson (2 : Nat))
-    s!"native-safe width {width}"
+      s!"native-safe width {width}"
 
 /-- Structural declaration layout preserves a multiline literal byte-for-byte. -/
 private def testUnsafeLiteral (root : System.FilePath) (application : String)
     (work : System.FilePath) : IO Unit := do
   let setup ← setupFile root work "tests/fixtures/style/fixtures/UnsafeLiteral.lean"
-  let report ← analyzeExact root application setup
-    "tests/fixtures/style/fixtures/UnsafeLiteral.lean" "UnsafeLiteral.lean" "4:100"
+  let report ←
+    analyzeExact root application setup "tests/fixtures/style/fixtures/UnsafeLiteral.lean"
+        "UnsafeLiteral.lean" "4:100"
   let (_, text) ← canonical report "unsafe-literal"
   ensureContains text "\"alpha   \n  beta\"" "unsafe-literal"
 
@@ -93,13 +98,13 @@ public def main (args : List String) : IO UInt32 := do
   let root ← repoRoot
   let application := (root / ".lake" / "build" / "bin" / "lean-fmt").toString
   withScratchDir "style" fun work => do
-    let cases : Array Case := #[
-      { name := "matrix-coverage", run := Style.testMatrixCoverage root },
-      { name := "intended-candidate", run := Style.testIntendedCandidate root application work },
-      { name := "native-safe-20", run := Style.testNativeSafeWidth root application work 20 },
-      { name := "native-safe-40", run := Style.testNativeSafeWidth root application work 40 },
-      { name := "native-safe-80", run := Style.testNativeSafeWidth root application work 80 },
-      { name := "native-safe-100", run := Style.testNativeSafeWidth root application work 100 },
-      { name := "unsafe-literal", run := Style.testUnsafeLiteral root application work }
-    ]
-    runCases "style" cases args
+      let cases : Array Case :=
+        #[{ name := "matrix-coverage", run := Style.testMatrixCoverage root },
+          { name := "intended-candidate",
+            run := Style.testIntendedCandidate root application work },
+          { name := "native-safe-20", run := Style.testNativeSafeWidth root application work 20 },
+          { name := "native-safe-40", run := Style.testNativeSafeWidth root application work 40 },
+          { name := "native-safe-80", run := Style.testNativeSafeWidth root application work 80 },
+          { name := "native-safe-100", run := Style.testNativeSafeWidth root application work 100 },
+          { name := "unsafe-literal", run := Style.testUnsafeLiteral root application work }]
+      runCases "style" cases args

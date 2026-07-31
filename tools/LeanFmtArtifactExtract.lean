@@ -10,9 +10,11 @@ comment in `extract`. Lake invokes it; nothing else should. -/
 
 open LeanFmt.Internal
 
-private unsafe def extract (moduleName : Lean.Name) (moduleFile output : System.FilePath) : IO Unit := do
+private unsafe def extract (moduleName : Lean.Name) (moduleFile output : System.FilePath) :
+    IO Unit := do
   match ← compilerArtifact? moduleName moduleFile with
-  | some artifact => writeArtifactAtomic output artifact
+  | some artifact =>
+    writeArtifactAtomic output artifact
   | none =>
     if let some parent := output.parent then
       IO.FS.createDirAll parent

@@ -60,13 +60,15 @@ private def produceCommandRecord (stx : Syntax) : CommandElabM Unit := do
   if environment.mainModule.isAnonymous then
     return
   let fileMap ← getFileMap
-  let record := CommandArtifactRecord.ofSyntax environment.mainModule.toString fileMap.source
-    (Parser.isTerminalCommand stx) stx
+  let record :=
+    CommandArtifactRecord.ofSyntax environment.mainModule.toString fileMap.source
+      (Parser.isTerminalCommand stx) stx
   logAt stx
-    (.tagged commandArtifactLinter <| .tagged Lean.Linter.linterMessageTag <|
-      m!"{Lean.toJson record |>.compress}")
-    (severity := .information) (isSilent := true)
+      (.tagged commandArtifactLinter <|
+        .tagged Lean.Linter.linterMessageTag <| m!"{Lean.toJson record |>.compress}")
+      (severity := .information) (isSilent := true)
 
-initialize addLinter { name := `leanFmtCommandSyntaxArtifact, run := produceCommandRecord }
+initialize
+  addLinter { name := `leanFmtCommandSyntaxArtifact, run := produceCommandRecord }
 
 end LeanFmt.Internal.CompilerPlugin

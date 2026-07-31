@@ -40,7 +40,8 @@ private def ReportFormat.toWire : ReportFormat → String
   | .sarif => "sarif"
   | .junit => "junit"
 
-instance : ToString ReportFormat := ⟨ReportFormat.toWire⟩
+instance : ToString ReportFormat :=
+  ⟨ReportFormat.toWire⟩
 
 private def ReportFormat.ofWire? : String → Option ReportFormat
   | "text" => some .text
@@ -74,7 +75,8 @@ private inductive RangeSpec where
   | bytes (start stop : Nat)
   | lineColumn (startLine startColumn stopLine stopColumn : Nat)
 
-private def parseNat? (value : String) : Option Nat := value.toNat?
+private def parseNat? (value : String) : Option Nat :=
+  value.toNat?
 
 /-- `START:STOP`, half-open normalized byte offsets. -/
 private def parseByteRange? (value : String) : Option RangeSpec := do
@@ -86,41 +88,44 @@ private def parseLineRange? (value : String) : Option RangeSpec := do
   let [start, stop] := value.splitOn "-" | none
   let [startLine, startColumn] := start.splitOn ":" | none
   let [stopLine, stopColumn] := stop.splitOn ":" | none
-  return .lineColumn (← parseNat? startLine) (← parseNat? startColumn)
-    (← parseNat? stopLine) (← parseNat? stopColumn)
+  return .lineColumn (← parseNat? startLine) (← parseNat? startColumn) (← parseNat? stopLine)
+      (← parseNat? stopColumn)
 
 /-- Byte offset of a 1-based (line, codepoint column) position in `normalized`, clamped to the end.
 
 Clamping rather than failing is deliberate: an editor's end-of-selection often sits one past
 the last character of a line, and a formatter that rejected that would be unusable. A position past
 the file end resolves to the file end, which selects the final unit. -/
-private def offsetOfLineColumn (normalized : String) (line column : Nat) : Nat := Id.run do
-  let bytes := normalized.toUTF8
-  let mut offset := 0
-  let mut currentLine := 1
-  -- Walk to the start of `line`.
-  while currentLine < line && offset < bytes.size do
-    if bytes[offset]! == 10 then currentLine := currentLine + 1
-    offset := offset + 1
-  -- Then `column - 1` codepoints into it, stopping at the newline that ends the line.
-  let mut remaining := column - min column 1
-  while remaining > 0 && offset < bytes.size && bytes[offset]! != 10 do
-    -- Advance one UTF-8 codepoint: skip the lead byte, then every continuation byte
-    -- (0b10xxxxxx).
-    offset := offset + 1
-    while offset < bytes.size && bytes[offset]! &&& 0xC0 == 0x80 do
+private def offsetOfLineColumn (normalized : String) (line column : Nat) : Nat :=
+  Id.run do
+    let bytes := normalized.toUTF8
+    let mut offset := 0
+    let mut currentLine := 1
+    -- Walk to the start of `line`.
+    while currentLine < line && offset < bytes.size do
+      if bytes[offset]! == 10 then
+        currentLine := currentLine + 1
       offset := offset + 1
-    remaining := remaining - 1
-  return offset
+    -- Then `column - 1` codepoints into it, stopping at the newline that ends the line.
+    let mut remaining := column - min column 1
+    while remaining > 0 && offset < bytes.size && bytes[offset]! != 10 do
+      -- Advance one UTF-8 codepoint: skip the lead byte, then every continuation byte
+      -- (0b10xxxxxx).
+      offset := offset + 1
+      while offset < bytes.size && bytes[offset]! &&& 0xC0 == 0x80 do
+        offset := offset + 1
+      remaining := remaining - 1
+    return offset
 
 /-- Resolve a spec against the received bytes, or say why it cannot be. -/
 private def resolveRange (normalized : String) : RangeSpec → Except String SourceRange
   | .bytes start stop =>
     let size := normalized.utf8ByteSize
     if stop < start then .error s!"--range start {start} is past its stop {stop}"
-    else if stop > size then
-      .error s!"--range stop {stop} is past the end of the received source ({size} bytes)"
-    else .ok ⟨start, stop⟩
+    else
+      if stop > size then
+        .error s!"--range stop {stop} is past the end of the received source ({size} bytes)"
+      else .ok ⟨start, stop⟩
   | .lineColumn startLine startColumn stopLine stopColumn =>
     if startLine == 0 || stopLine == 0 || startColumn == 0 || stopColumn == 0 then
       .error "--range-lines uses 1-based lines and columns"
@@ -128,7 +133,8 @@ private def resolveRange (normalized : String) : RangeSpec → Except String Sou
       let start := offsetOfLineColumn normalized startLine startColumn
       let stop := offsetOfLineColumn normalized stopLine stopColumn
       if stop < start then
-        .error s!"--range-lines start {startLine}:{startColumn} is past its stop \
+        .error
+          s!"--range-lines start {startLine}:{startColumn} is past its stop \
           {stopLine}:{stopColumn}"
       else .ok ⟨start, stop⟩
 
@@ -163,7 +169,7 @@ private structure RootCommand where
   outputFormat : ReportFormat := .text
 
 private structure StatusCommand where
-  request : CompilerStatusRequest := {}
+  request : CompilerStatusRequest := { }
   outputFormat : ReportFormat := .text
 
 private structure OrganizeCommand where
@@ -187,7 +193,7 @@ private def parseLspArgs (args : List String) : Except String LanguageServer.Ser
       | some amount => loop rest { options with debounceMs := amount }
       | none => .error "--debounce-ms expects a whole number of milliseconds"
     | option :: _ => .error s!"unknown lsp option: {option}"
-  loop args {}
+  loop args { }
 
 /-- Print help to `stream`, with color when it is a TTY (unless NO_COLOR or TERM=dumb) and
 description wrapping at the COLUMNS width (default 100). The text itself — the root overview and
@@ -207,56 +213,59 @@ different formats does not have a preference for us to guess, and a caller who a
 SARIF wants findings `diff` does not produce. -/
 private def resolveOutputFormat (mode : RunMode) (command : FileCommand) :
     Except String FileCommand :=
-  let chosen := match command.formatFlag?, command.jsonFlag with
+  let chosen :=
+    match command.formatFlag?, command.jsonFlag with
     | some format, _ => format
     | none, true => .json
     | none, false => .text
   if command.jsonFlag && command.formatFlag?.isSome && chosen != .json then
     .error s!"--json and --output-format {chosen} disagree; pass only one"
-  else if mode == .diff && chosen.findingShaped then
-    .error s!"--output-format {chosen} is not available for diff; \
-      diff reports a patch, not findings"
   else
-    .ok { command with outputFormat := chosen }
+    if mode == .diff && chosen.findingShaped then
+      .error
+        s!"--output-format {chosen} is not available for diff; \
+      diff reports a patch, not findings"
+    else .ok { command with outputFormat := chosen }
 
 private def parseFileArgs (mode : RunMode) (args : List String) : Except String FileCommand :=
   let rec loop (remaining : List String) (command : FileCommand) :=
     match remaining with
     | [] => resolveOutputFormat mode command
-    | "--root" :: root :: rest =>
-      loop rest { command with run := { command.run with root } }
+    | "--root" :: root :: rest => loop rest { command with run := { command.run with root } }
     | "--json" :: rest => loop rest { command with jsonFlag := true }
     | "--output-format" :: value :: rest =>
       match ReportFormat.ofWire? value with
       | some format => loop rest { command with formatFlag? := some format }
       | none =>
-        .error s!"unknown --output-format: {value} \
+        .error
+          s!"unknown --output-format: {value} \
           (expected text, concise, json, github, sarif, or junit)"
-    | "--output-file" :: path :: rest =>
-      loop rest { command with outputFile? := some path }
+    | "--output-file" :: path :: rest => loop rest { command with outputFile? := some path }
     | "--no-cache" :: rest => loop rest { command with run := { command.run with cache := false } }
     | "--config" :: path :: rest =>
       loop rest { command with run := { command.run with configPath? := some path } }
     | "--select" :: selector :: rest =>
-      loop rest { command with run := {
-        command.run with select := command.run.select.push selector } }
+      loop rest
+        { command with run := { command.run with select := command.run.select.push selector } }
     | "--extend-select" :: selector :: rest =>
-      loop rest { command with run := {
-        command.run with extendSelect := command.run.extendSelect.push selector } }
+      loop rest
+        { command with
+          run := { command.run with extendSelect := command.run.extendSelect.push selector } }
     | "--ignore" :: selector :: rest =>
-      loop rest { command with run := {
-        command.run with ignore := command.run.ignore.push selector } }
+      loop rest
+        { command with run := { command.run with ignore := command.run.ignore.push selector } }
     | "--fixable" :: selector :: rest =>
-      loop rest { command with run := {
-        command.run with fixable := command.run.fixable.push selector } }
+      loop rest
+        { command with run := { command.run with fixable := command.run.fixable.push selector } }
     | "--unfixable" :: selector :: rest =>
-      loop rest { command with run := {
-        command.run with unfixable := command.run.unfixable.push selector } }
+      loop rest
+        { command with
+          run := { command.run with unfixable := command.run.unfixable.push selector } }
     | "--extend-fixable" :: selector :: rest =>
-      loop rest { command with run := {
-        command.run with extendFixable := command.run.extendFixable.push selector } }
-    | "--preview" :: rest =>
-      loop rest { command with run := { command.run with preview := true } }
+      loop rest
+        { command with
+          run := { command.run with extendFixable := command.run.extendFixable.push selector } }
+    | "--preview" :: rest => loop rest { command with run := { command.run with preview := true } }
     | "--statistics" :: rest => loop rest { command with statistics := true }
     | "--watch" :: rest => loop rest { command with watch := true }
     | "--poll-interval" :: value :: rest =>
@@ -270,20 +279,23 @@ private def parseFileArgs (mode : RunMode) (args : List String) : Except String 
     -- be ambiguous between "compare against main" and "compare the worktree, and format `main`" —
     -- and guessing there makes a caller format the wrong set without knowing.
     | "--changed" :: rest =>
-      loop rest { command with changed? := some .worktree, changedFlag := "--changed" }
+      loop rest
+        { command with
+          changed? := some .worktree, changedFlag := "--changed" }
     | "--changed-since" :: revision :: rest =>
-      loop rest { command with
-        changed? := some (.base revision), changedFlag := "--changed-since" }
+      loop rest
+        { command with
+          changed? := some (.base revision), changedFlag := "--changed-since" }
     | "--staged" :: rest =>
-      loop rest { command with changed? := some .staged, changedFlag := "--staged" }
+      loop rest
+        { command with
+          changed? := some .staged, changedFlag := "--staged" }
     | "--changed-since" :: [] => .error "--changed-since expects a revision"
-    | "--poll-interval" :: [] =>
-      .error "--poll-interval expects a whole number of milliseconds"
+    | "--poll-interval" :: [] => .error "--poll-interval expects a whole number of milliseconds"
     | "--check" :: rest =>
       if mode == .format then
         loop rest { command with run := { command.run with formatCheck := true } }
-      else
-        .error "--check is valid only for format"
+      else .error "--check is valid only for format"
     | "--unsafe-fixes" :: rest =>
       loop rest { command with run := { command.run with unsafeFixes := true } }
     | "--workers" :: value :: rest =>
@@ -296,22 +308,29 @@ private def parseFileArgs (mode : RunMode) (args : List String) : Except String 
     -- `-` is a *target*, not an option, so it is matched before the `startsWith "-"` catch-all
     -- below.
     | "-" :: rest => loop rest { command with stdin := true }
-    | "--stdin-filename" :: path :: rest =>
-      loop rest { command with stdinFilename? := some path }
+    | "--stdin-filename" :: path :: rest => loop rest { command with stdinFilename? := some path }
     | "--range" :: value :: rest =>
       match parseByteRange? value with
-      | some spec => loop rest { command with range? := some spec, rangeFlag := "--range" }
+      | some spec =>
+        loop rest
+          { command with
+            range? := some spec, rangeFlag := "--range" }
       | none => .error s!"--range expects START:STOP byte offsets, got: {value}"
     | "--range-lines" :: value :: rest =>
       match parseLineRange? value with
-      | some spec => loop rest { command with range? := some spec, rangeFlag := "--range-lines" }
+      | some spec =>
+        loop rest
+          { command with
+            range? := some spec, rangeFlag := "--range-lines" }
       | none => .error s!"--range-lines expects LINE:COL-LINE:COL, got: {value}"
     | "--stdin-filename" :: [] => .error "--stdin-filename expects a path"
     | "--range" :: [] => .error "--range expects START:STOP byte offsets"
     | "--range-lines" :: [] => .error "--range-lines expects LINE:COL-LINE:COL"
     | option :: rest =>
       if option.startsWith "-" then .error s!"unknown option: {option}"
-      else loop rest { command with run := { command.run with files := command.run.files.push option } }
+      else
+        loop rest
+          { command with run := { command.run with files := command.run.files.push option } }
   loop args { run := { mode, root := ".", files := #[] } }
 
 /-- The stdin form's own consistency, checked once after parsing rather than at each use.
@@ -333,12 +352,14 @@ private def validateStdin (mode : RunMode) (command : FileCommand) : Except Stri
       .error "- must be the only target"
     else if command.range?.isSome && !(mode == .format) then
       .error s!"{command.rangeFlag} is valid only with format, not {mode.toString}"
-    else .ok ()
+    else
+      .ok ()
   else if command.stdinFilename?.isSome then
     .error "--stdin-filename is valid only with the - stdin target"
   else if command.range?.isSome then
     .error s!"{command.rangeFlag} is valid only with the - stdin target"
-  else .ok ()
+  else
+    .ok ()
 
 /-- Whether this format is a self-contained document rather than a line stream.
 
@@ -359,34 +380,42 @@ private def validateWatch (mode : RunMode) (command : FileCommand) : Except Stri
     -- tuples the poll observes, which triggers the next generation, which publishes again. The
     -- loop sustains itself — not a race, a certainty.
     if mode == .fix then
-      .error "--watch is not available for fix; watch runs previews, and a writing mode retriggers itself"
+      .error
+          "--watch is not available for fix; watch runs previews, and a writing mode retriggers itself"
     else if command.run.writesFormat then
-      .error "--watch is not available for format; pass --check to preview, \
+      .error
+          "--watch is not available for format; pass --check to preview, \
         or a writing mode retriggers itself"
     else if command.stdin then
       .error "--watch is not available for the - stdin target; watch observes files on disk"
     -- One complete document per generation, replacing the previous, needs a destination
     -- that can be replaced.
     else if command.outputFormat.documentShaped && command.outputFile?.isNone then
-      .error s!"--output-format {command.outputFormat} requires --output-file with --watch; \
+      .error
+          s!"--output-format {command.outputFormat} requires --output-file with --watch; \
         a stream of {command.outputFormat} documents is not a {command.outputFormat} document"
-    else .ok ()
+    else
+      .ok ()
   else if command.pollMillis != 200 then
     .error "--poll-interval is valid only with --watch"
-  else .ok ()
+  else
+    .ok ()
 
 private def validateChanged (command : FileCommand) : Except String Unit := do
   match command.changed? with
-  | none => .ok ()
+  | none =>
+    .ok ()
   | some _ =>
     if command.stdin then
-      .error s!"{command.changedFlag} is not available for the - stdin target; \
+      .error
+          s!"{command.changedFlag} is not available for the - stdin target; \
         version control selects files on disk"
     else if !command.run.files.isEmpty then
       -- Naming files and asking git to name them are two answers to one question, and
       -- silently letting one win makes a caller format a set they did not intend.
       .error s!"{command.changedFlag} selects the files; do not also name them"
-    else .ok ()
+    else
+      .ok ()
 
 private def parseRootArgs (args : List String) : Except String RootCommand :=
   let rec loop (remaining : List String) (command : RootCommand) :=
@@ -395,7 +424,7 @@ private def parseRootArgs (args : List String) : Except String RootCommand :=
     | "--root" :: root :: rest => loop rest { command with root }
     | "--json" :: rest => loop rest { command with outputFormat := .json }
     | option :: _ => .error s!"unknown option: {option}"
-  loop args {}
+  loop args { }
 
 private def parseOutputArgs (args : List String) : Except String ReportFormat :=
   match args with
@@ -411,7 +440,7 @@ private def parseStatusArgs (args : List String) : Except String StatusCommand :
       loop rest { command with request := { command.request with root } }
     | "--json" :: rest => loop rest { command with outputFormat := .json }
     | option :: _ => .error s!"unknown compiler status option: {option}"
-  loop args {}
+  loop args { }
 
 private def parseOrganizeArgs (args : List String) : Except String OrganizeCommand :=
   let rec loop (remaining : List String) (command : OrganizeCommand) :=
@@ -433,9 +462,11 @@ private def parseOrganizeArgs (args : List String) : Except String OrganizeComma
       | none => .error "--workers expects a whole number"
     | option :: rest =>
       if option.startsWith "-" then .error s!"unknown option: {option}"
-      else loop rest { command with
-        request := { command.request with files := command.request.files.push option } }
-  loop args {}
+      else
+        loop rest
+          { command with
+            request := { command.request with files := command.request.files.push option } }
+  loop args { }
 
 /-! ## Report renderers
 
@@ -444,48 +475,60 @@ the `PositionIndex` execution resolved beside the report). None of them reads a 
 analysis, or touches rule selection, which makes them golden-testable.
 `emitReport` is the single IO boundary. -/
 
-private def textReport (report : RunReport) : String := Id.run do
-  let mut out := ""
-  match report.mode with
-  | "organize" =>
-    for file in report.files do
-      unless file.status == "clean" do out := out ++ s!"{file.path}: {file.status}\n"
-      for diagnostic in file.diagnostics do out := out ++ s!"  {diagnostic}\n"
-  | "format" =>
-    -- `format` publishes in place by default: a short per-file summary, never
-    -- the file body. `formatted` means written; `would-format` is the `--check` preview of a file
-    -- that would change. A clean file is silent. `--json` still carries the full canonical text
-    -- (`file.formatted`).
-    for file in report.files do
-      unless file.status == "clean" do out := out ++ s!"{file.path}: {file.status}\n"
-      for diagnostic in file.diagnostics do
-        out := out ++ s!"  {diagnostic}\n"
-  | "diff" =>
-    for file in report.files do
-      if let some diff := file.diff then out := out ++ diff
-      for diagnostic in file.diagnostics do
-        out := out ++ s!"{file.path}: {file.status}: {diagnostic}\n"
-  | "fix" =>
-    for file in report.files do
-      unless file.status == "clean" do out := out ++ s!"{file.path}: {file.status}\n"
-      for diagnostic in file.diagnostics do out := out ++ s!"  {diagnostic}\n"
-      if file.withheldUnsafe > 0 then
-        out := out ++
-          s!"  {file.withheldUnsafe} unsafe fix(es) withheld; rerun with --unsafe-fixes to apply\n"
-  | _ =>
-    for file in report.files do
-      for finding in file.findings do
-        -- A fix's applicability is shown next to the finding so a reader knows whether `fix`
-        -- would apply it by default (safe), only under `--unsafe-fixes` (unsafe), or never
-        -- (display-only).
-        let fixTag := match finding.fix? with
-          | some fix => s!" [{fix.applicability}]"
-          | none => ""
-        out := out ++ s!"{file.path}:{finding.range.start}-{finding.range.stop}: \
+private def textReport (report : RunReport) : String :=
+  Id.run do
+    let mut out := ""
+    match report.mode with
+    | "organize" =>
+      for file in report.files do
+        unless file.status == "clean" do
+          out := out ++ s!"{file.path}: {file.status}\n"
+        for diagnostic in file.diagnostics do
+          out := out ++ s!"  {diagnostic}\n"
+    | "format" =>
+      -- `format` publishes in place by default: a short per-file summary, never
+      -- the file body. `formatted` means written; `would-format` is the `--check` preview of a file
+      -- that would change. A clean file is silent. `--json` still carries the full canonical text
+      -- (`file.formatted`).
+      for file in report.files do
+        unless file.status == "clean" do
+          out := out ++ s!"{file.path}: {file.status}\n"
+        for diagnostic in file.diagnostics do
+          out := out ++ s!"  {diagnostic}\n"
+    | "diff" =>
+      for file in report.files do
+        if let some diff := file.diff then
+          out := out ++ diff
+        for diagnostic in file.diagnostics do
+          out := out ++ s!"{file.path}: {file.status}: {diagnostic}\n"
+    | "fix" =>
+      for file in report.files do
+        unless file.status == "clean" do
+          out := out ++ s!"{file.path}: {file.status}\n"
+        for diagnostic in file.diagnostics do
+          out := out ++ s!"  {diagnostic}\n"
+        if file.withheldUnsafe > 0 then
+          out :=
+            out ++
+              s!"  {file.withheldUnsafe} unsafe fix(es) withheld; rerun with --unsafe-fixes to apply\n"
+    | _ =>
+      for file in report.files do
+        for finding in file.findings do
+          -- A fix's applicability is shown next to the finding so a reader knows whether `fix`
+          -- would apply it by default (safe), only under `--unsafe-fixes` (unsafe), or never
+          -- (display-only).
+          let fixTag :=
+            match finding.fix? with
+            | some fix => s!" [{fix.applicability}]"
+            | none => ""
+          out :=
+            out ++
+              s!"{file.path}:{finding.range.start}-{finding.range.stop}: \
           {finding.code} {finding.message}{fixTag}\n"
-      for diagnostic in file.diagnostics do
-        out := out ++ s!"{file.path}: {file.status}: {diagnostic}\n"
-  return out ++ s!"mode={report.mode} files={report.files.size} findings={report.findings} \
+        for diagnostic in file.diagnostics do
+          out := out ++ s!"{file.path}: {file.status}: {diagnostic}\n"
+    return out ++
+        s!"mode={report.mode} files={report.files.size} findings={report.findings} \
     changed={report.changed} written={report.written} broken={report.broken} \
     unbuilt={report.unbuilt} rejected={report.rejected} withheld_unsafe={report.withheldUnsafe} \
     suppressed={report.suppressed} infrastructure_failures={report.infrastructureFailures.size}\n"
@@ -519,7 +562,8 @@ private def flattenMessage (message : String) : String :=
 `format --check` reporting "this file would be reformatted" has no `FMT###` code — there is
 no rule involved — so it needs an identity of its own. `format` is deliberately outside the `FMT`
 namespace so it can never collide with a live, reserved, or retired rule code. -/
-private def statusRuleId : String := "format"
+private def statusRuleId : String :=
+  "format"
 
 /-- Statuses a finding-shaped format reports as a file-level problem, with the message it prints.
 
@@ -541,7 +585,8 @@ The distinction SARIF draws between a result and a notification (§3.20.21), JUn
 between `<failure>` and `<error>`, and `reportExitCode` already draws between exit 1 and exit 2.
 One predicate so the three cannot drift. -/
 private def statusIsInfrastructure (status : String) : Bool :=
-  status == "broken" || status == "unbuilt" || status == "rejected" || status == "infrastructure-failure"
+  status == "broken" || status == "unbuilt" || status == "rejected" ||
+    status == "infrastructure-failure"
 
 /-! ### `concise`
 
@@ -549,20 +594,23 @@ private def statusIsInfrastructure (status : String) : Bool :=
 no applicability tag. The format exists to be piped into `grep` and editor error-parsers, and a
 trailing line that does not match the grammar breaks them. -/
 
-private def conciseReport (positions : PositionIndex) (report : RunReport) : String := Id.run do
-  let mut out := ""
-  for file in report.files do
-    for finding in file.findings do
-      let start := startPosition positions file.path finding
-      out := out ++ s!"{file.path}:{start.line}:{start.column}: {finding.code} \
+private def conciseReport (positions : PositionIndex) (report : RunReport) : String :=
+  Id.run do
+    let mut out := ""
+    for file in report.files do
+      for finding in file.findings do
+        let start := startPosition positions file.path finding
+        out :=
+          out ++
+            s!"{file.path}:{start.line}:{start.column}: {finding.code} \
         {flattenMessage finding.message}\n"
-    if let some message := statusMessage? file.status then
-      out := out ++ s!"{file.path}:1:1: {statusRuleId} {message}\n"
-    for diagnostic in file.diagnostics do
-      out := out ++ s!"{file.path}:1:1: {statusRuleId} {flattenMessage diagnostic}\n"
-  for failure in report.infrastructureFailures do
-    out := out ++ s!"lean-fmt: {flattenMessage failure}\n"
-  return out
+      if let some message := statusMessage? file.status then
+        out := out ++ s!"{file.path}:1:1: {statusRuleId} {message}\n"
+      for diagnostic in file.diagnostics do
+        out := out ++ s!"{file.path}:1:1: {statusRuleId} {flattenMessage diagnostic}\n"
+    for failure in report.infrastructureFailures do
+      out := out ++ s!"lean-fmt: {flattenMessage failure}\n"
+    return out
 
 /-! ### `github`
 
@@ -594,31 +642,37 @@ private def githubCommand (severity : String) (path : String) (code : String)
   let location :=
     if start.line == stop.line then
       s!",line={start.line},col={start.column},endLine={stop.line},endColumn={stop.column}"
-    else
-      s!",line={start.line},endLine={stop.line}"
+    else s!",line={start.line},endLine={stop.line}"
   -- The message repeats the location because an annotation GitHub cannot attach to a file
   -- still appears in the log, and without the prefix it would name no file at all.
   s!"::{severity} title=lean-fmt ({githubEscapeProperty code}),\
     file={githubEscapeProperty path}{location}::\
     {githubEscapeData s!"{path}:{start.line}:{start.column}: {code} {message}"}"
 
-private def githubReport (positions : PositionIndex) (report : RunReport) : String := Id.run do
-  let mut out := ""
-  for file in report.files do
-    for finding in file.findings do
-      let start := startPosition positions file.path finding
-      let stop := stopPosition positions file.path finding
-      out := out ++ githubCommand (githubSeverity finding.severity) file.path finding.code
-        start stop (flattenMessage finding.message) ++ "\n"
-    if let some message := statusMessage? file.status then
-      let severity := if statusIsInfrastructure file.status then "error" else "warning"
-      out := out ++ githubCommand severity file.path statusRuleId ⟨1, 1⟩ ⟨1, 1⟩ message ++ "\n"
-    for diagnostic in file.diagnostics do
-      out := out ++ githubCommand "error" file.path statusRuleId ⟨1, 1⟩ ⟨1, 1⟩
-        (flattenMessage diagnostic) ++ "\n"
-  for failure in report.infrastructureFailures do
-    out := out ++ s!"::error title=lean-fmt::{githubEscapeData failure}\n"
-  return out
+private def githubReport (positions : PositionIndex) (report : RunReport) : String :=
+  Id.run do
+    let mut out := ""
+    for file in report.files do
+      for finding in file.findings do
+        let start := startPosition positions file.path finding
+        let stop := stopPosition positions file.path finding
+        out :=
+          out ++
+              githubCommand (githubSeverity finding.severity) file.path finding.code start stop
+                (flattenMessage finding.message) ++
+            "\n"
+      if let some message := statusMessage? file.status then
+        let severity := if statusIsInfrastructure file.status then "error" else "warning"
+        out := out ++ githubCommand severity file.path statusRuleId ⟨1, 1⟩ ⟨1, 1⟩ message ++ "\n"
+      for diagnostic in file.diagnostics do
+        out :=
+          out ++
+              githubCommand "error" file.path statusRuleId ⟨1, 1⟩ ⟨1, 1⟩
+                (flattenMessage diagnostic) ++
+            "\n"
+    for failure in report.infrastructureFailures do
+      out := out ++ s!"::error title=lean-fmt::{githubEscapeData failure}\n"
+    return out
 
 /-! ### `sarif`
 
@@ -638,21 +692,19 @@ private def sarifLevel : Severity → String
 here. `docs/adding-a-rule.md` makes one metadata source the invariant, and a second
 description table in this renderer is the drift that closed. -/
 private def sarifRuleDescriptor (info : RuleInfo) : Lean.Json :=
-  Lean.Json.mkObj <| [
-    ("id", .str info.code),
-    ("name", .str info.code),
-    ("shortDescription", Lean.Json.mkObj [("text", .str info.summary)]),
-    ("fullDescription", Lean.Json.mkObj [("text", .str info.explanation)]),
-    -- The generated rule page. `docs/rules/` covers every
-    -- live code, import family included, so this cannot link at a page that does not exist. The
-    -- host is the repository's own remote, the same one `informationUri` names.
-    ("helpUri", .str
-      s!"https://github.com/jcreinhold/lean-fmt/blob/main/docs/rules/{info.code}.md"),
-    ("properties", Lean.Json.mkObj [
-      ("tags", Lean.Json.arr #[.str info.category]),
-      ("lifecycle", Lean.toJson info.lifecycle),
-      ("fixable", .bool info.fixable)])
-  ]
+  Lean.Json.mkObj <|
+    [("id", .str info.code), ("name", .str info.code),
+      ("shortDescription", Lean.Json.mkObj [("text", .str info.summary)]),
+      ("fullDescription", Lean.Json.mkObj [("text", .str info.explanation)]),
+      -- The generated rule page. `docs/rules/` covers every
+      -- live code, import family included, so this cannot link at a page that does not exist. The
+      -- host is the repository's own remote, the same one `informationUri` names.
+      ("helpUri",
+        .str s!"https://github.com/jcreinhold/lean-fmt/blob/main/docs/rules/{info.code}.md"),
+      ("properties",
+        Lean.Json.mkObj
+          [("tags", Lean.Json.arr #[.str info.category]), ("lifecycle", Lean.toJson info.lifecycle),
+            ("fixable", .bool info.fixable)])]
 
 /-- Percent-encode a filesystem path into the path component of a URI reference.
 
@@ -665,65 +717,68 @@ The characters this handles are common ones. A space is forbidden in a URI outri
 the reference short at a fragment; `?` would start a query; `%` would make any following pair look
 like an escape the consumer must decode. `lean-fmt` accepts whatever path the caller selects, so
 none of these are hypothetical — they are ordinary macOS and Windows filenames. -/
-private def uriPathEncode (path : String) : String := Id.run do
-  let hexDigit (n : Nat) : Char :=
-    if n < 10 then Char.ofNat ('0'.toNat + n) else Char.ofNat ('A'.toNat + (n - 10))
-  let mut out := ""
-  for byte in path.toUTF8 do
-    let value := byte.toNat
-    let c := Char.ofNat value
-    if value < 0x80 && (c.isAlphanum || "-._~!$&'()*+,;=:@/".contains c) then
-      out := out.push c
-    else
-      out := ((out.push '%').push (hexDigit (value >>> 4))).push (hexDigit (value &&& 0xF))
-  return out
+private def uriPathEncode (path : String) : String :=
+  Id.run do
+    let hexDigit (n : Nat) : Char :=
+      if n < 10 then Char.ofNat ('0'.toNat + n) else Char.ofNat ('A'.toNat + (n - 10))
+    let mut out := ""
+    for byte in path.toUTF8 do
+      let value := byte.toNat
+      let c := Char.ofNat value
+      if value < 0x80 && (c.isAlphanum || "-._~!$&'()*+,;=:@/".contains c) then
+        out := out.push c
+      else
+        out := ((out.push '%').push (hexDigit (value >>> 4))).push (hexDigit (value &&& 0xF))
+    return out
 
 private def sarifRegion (start stop : Position) (range : SourceRange) : Lean.Json :=
-  Lean.Json.mkObj [
-    ("startLine", Lean.toJson start.line),
-    ("startColumn", Lean.toJson start.column),
-    ("endLine", Lean.toJson stop.line),
-    ("endColumn", Lean.toJson stop.column),
-    ("properties", Lean.Json.mkObj [
-      ("leanFmtNormalizedByteRange", Lean.Json.mkObj [
-        ("start", Lean.toJson range.start), ("stop", Lean.toJson range.stop)])])
-  ]
+  Lean.Json.mkObj
+    [("startLine", Lean.toJson start.line), ("startColumn", Lean.toJson start.column),
+      ("endLine", Lean.toJson stop.line), ("endColumn", Lean.toJson stop.column),
+      ("properties",
+        Lean.Json.mkObj
+          [("leanFmtNormalizedByteRange",
+              Lean.Json.mkObj
+                [("start", Lean.toJson range.start), ("stop", Lean.toJson range.stop)])])]
 
 private def sarifLocation (path : String) (region? : Option Lean.Json) : Lean.Json :=
-  let physical := Lean.Json.mkObj <| [
-    ("artifactLocation", Lean.Json.mkObj [
-      ("uri", .str (uriPathEncode path)), ("uriBaseId", .str "%SRCROOT%")])
-  ] ++ (match region? with | some region => [("region", region)] | none => [])
+  let physical :=
+    Lean.Json.mkObj <|
+      [("artifactLocation",
+            Lean.Json.mkObj
+              [("uri", .str (uriPathEncode path)), ("uriBaseId", .str "%SRCROOT%")])] ++
+        (match region? with
+        | some region => [("region", region)]
+        | none => [])
   Lean.Json.mkObj [("physicalLocation", physical)]
 
 private def sarifResult (positions : PositionIndex) (path : String) (finding : Finding) :
     Lean.Json :=
   let start := startPosition positions path finding
   let stop := stopPosition positions path finding
-  Lean.Json.mkObj <| [
-    ("ruleId", .str finding.code),
-    ("level", .str (sarifLevel finding.severity)),
-    ("message", Lean.Json.mkObj [("text", .str finding.message)]),
-    ("locations", Lean.Json.arr #[sarifLocation path (some (sarifRegion start stop finding.range))])
-  ] ++ (match finding.fix? with
-    | some fix =>
-      -- Applicability, not `result.fixes`. A SARIF fix names regions in character or
-      -- line/column terms while our edits are normalized byte ranges, and §3.30.4 forbids stating
-      -- both. `--output-format json` carries the exact edits.
-      [("properties", Lean.Json.mkObj [("fixApplicability", .str fix.applicability.toWire)])]
-    | none => [])
+  Lean.Json.mkObj <|
+    [("ruleId", .str finding.code), ("level", .str (sarifLevel finding.severity)),
+        ("message", Lean.Json.mkObj [("text", .str finding.message)]),
+        ("locations",
+          Lean.Json.arr #[sarifLocation path (some (sarifRegion start stop finding.range))])] ++
+      (match finding.fix? with
+      | some fix =>
+        -- Applicability, not `result.fixes`. A SARIF fix names regions in character or
+        -- line/column terms while our edits are normalized byte ranges, and §3.30.4 forbids stating
+        -- both. `--output-format json` carries the exact edits.
+        [("properties", Lean.Json.mkObj [("fixApplicability", .str fix.applicability.toWire)])]
+      | none => [])
 
 /-- A notification, not a result. §3.20.21: an `error` notification "SHALL mean that the run
 failed", and "A SARIF consumer SHALL NOT assume that a failed run contains a complete set of
 analysis results." A `result` cannot say the analysis did not complete, which is what exit code 2
 means. -/
 private def sarifNotification (path? : Option String) (message : String) : Lean.Json :=
-  Lean.Json.mkObj <| [
-    ("level", .str "error"),
-    ("message", Lean.Json.mkObj [("text", .str message)])
-  ] ++ (match path? with
-    | some path => [("locations", Lean.Json.arr #[sarifLocation path none])]
-    | none => [])
+  Lean.Json.mkObj <|
+    [("level", .str "error"), ("message", Lean.Json.mkObj [("text", .str message)])] ++
+      (match path? with
+      | some path => [("locations", Lean.Json.arr #[sarifLocation path none])]
+      | none => [])
 
 private def sarifReport (positions : PositionIndex) (root : String) (report : RunReport) : String :=
   Id.run do
@@ -732,54 +787,64 @@ private def sarifReport (positions : PositionIndex) (root : String) (report : Ru
     let mut codes : Array String := #[]
     for file in report.files do
       for finding in file.findings do
-        unless codes.contains finding.code do codes := codes.push finding.code
+        unless codes.contains finding.code do
+          codes := codes.push finding.code
         results := results.push (sarifResult positions file.path finding)
       if let some message := statusMessage? file.status then
         if statusIsInfrastructure file.status then
           notifications := notifications.push (sarifNotification (some file.path) message)
         else
-          results := results.push (Lean.Json.mkObj [
-            ("ruleId", .str statusRuleId),
-            ("level", .str "warning"),
-            ("message", Lean.Json.mkObj [("text", .str message)]),
-            ("locations", Lean.Json.arr #[sarifLocation file.path none])])
+          results :=
+            results.push
+              (Lean.Json.mkObj
+                [("ruleId", .str statusRuleId), ("level", .str "warning"),
+                  ("message", Lean.Json.mkObj [("text", .str message)]),
+                  ("locations", Lean.Json.arr #[sarifLocation file.path none])])
       for diagnostic in file.diagnostics do
         notifications := notifications.push (sarifNotification (some file.path) diagnostic)
     for failure in report.infrastructureFailures do
       notifications := notifications.push (sarifNotification none failure)
     -- Descriptors for the codes this run reported. A descriptor for a rule that could not
     -- have fired describes a run that did not happen.
-    let descriptors := codes.filterMap fun code =>
-      (ruleInfoByCode? code).map sarifRuleDescriptor
-    let log := Lean.Json.mkObj [
-      ("version", .str "2.1.0"),
-      ("$schema", .str
-        "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json"),
-      ("runs", Lean.Json.arr #[Lean.Json.mkObj [
-        ("tool", Lean.Json.mkObj [("driver", Lean.Json.mkObj [
-          ("name", .str "lean-fmt"),
-          ("informationUri", .str "https://github.com/jcreinhold/lean-fmt"),
-          ("rules", Lean.Json.arr descriptors)])]),
-        -- §3.14.27 makes this a SHALL whenever results are non-empty, and the JSON schema
-        -- does not encode it. `unicodeCodePoints` names the encoding `--range-lines` already uses.
-        ("columnKind", .str "unicodeCodePoints"),
-        ("originalUriBaseIds", Lean.Json.mkObj [
-          ("%SRCROOT%", Lean.Json.mkObj [("uri", .str root)])]),
-        ("invocations", Lean.Json.arr #[Lean.Json.mkObj [
-          ("executionSuccessful", .bool notifications.isEmpty),
-          ("toolExecutionNotifications", Lean.Json.arr notifications)]]),
-        ("results", Lean.Json.arr results),
-        ("properties", Lean.Json.mkObj [
-          ("findings", Lean.toJson report.findings),
-          ("changed", Lean.toJson report.changed),
-          ("written", Lean.toJson report.written),
-          ("broken", Lean.toJson report.broken),
-          ("unbuilt", Lean.toJson report.unbuilt),
-          ("rejected", Lean.toJson report.rejected),
-          ("withheldUnsafe", Lean.toJson report.withheldUnsafe),
-          ("suppressed", Lean.toJson report.suppressed),
-          ("withheldRedundant", Lean.toJson report.withheldRedundant)])]])
-    ]
+    let descriptors := codes.filterMap fun code => (ruleInfoByCode? code).map sarifRuleDescriptor
+    let log :=
+      Lean.Json.mkObj
+        [("version", .str "2.1.0"),
+          ("$schema",
+            .str
+              "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json"),
+          ("runs",
+            Lean.Json.arr
+              #[Lean.Json.mkObj
+                  [("tool",
+                      Lean.Json.mkObj
+                        [("driver",
+                            Lean.Json.mkObj
+                              [("name", .str "lean-fmt"),
+                                ("informationUri", .str "https://github.com/jcreinhold/lean-fmt"),
+                                ("rules", Lean.Json.arr descriptors)])]),
+                    -- §3.14.27 makes this a SHALL whenever results are non-empty, and the JSON schema
+                    -- does not encode it. `unicodeCodePoints` names the encoding `--range-lines` already uses.
+                    ("columnKind", .str "unicodeCodePoints"),
+                    ("originalUriBaseIds",
+                      Lean.Json.mkObj [("%SRCROOT%", Lean.Json.mkObj [("uri", .str root)])]),
+                    ("invocations",
+                      Lean.Json.arr
+                        #[Lean.Json.mkObj
+                            [("executionSuccessful", .bool notifications.isEmpty),
+                              ("toolExecutionNotifications", Lean.Json.arr notifications)]]),
+                    ("results", Lean.Json.arr results),
+                    ("properties",
+                      Lean.Json.mkObj
+                        [("findings", Lean.toJson report.findings),
+                          ("changed", Lean.toJson report.changed),
+                          ("written", Lean.toJson report.written),
+                          ("broken", Lean.toJson report.broken),
+                          ("unbuilt", Lean.toJson report.unbuilt),
+                          ("rejected", Lean.toJson report.rejected),
+                          ("withheldUnsafe", Lean.toJson report.withheldUnsafe),
+                          ("suppressed", Lean.toJson report.suppressed),
+                          ("withheldRedundant", Lean.toJson report.withheldRedundant)])]])]
     return log.pretty ++ "\n"
 
 /-! ### `junit`
@@ -794,10 +859,13 @@ XML 1.0 cannot represent most C0 controls at all, not even escaped, so anything 
 other than tab/LF/CR becomes U+FFFD. A rule message cannot contain one today — but a **path** can,
 and one stray control byte in a filename would otherwise stop a parser reading the whole report. -/
 private def xmlEscape (value : String) : String :=
-  let replaced := value.replace "&" "&amp;" |>.replace "<" "&lt;" |>.replace ">" "&gt;"
-    |>.replace "\"" "&quot;" |>.replace "'" "&apos;"
-  String.ofList <| replaced.toList.map fun c =>
-    if c.val < 0x20 && c != '\t' && c != '\n' && c != '\r' then '�' else c
+  let replaced :=
+    value.replace "&" "&amp;" |>.replace "<" "&lt;" |>.replace ">" "&gt;" |>.replace "\""
+        "&quot;" |>.replace
+      "'" "&apos;"
+  String.ofList <|
+    replaced.toList.map fun c =>
+      if c.val < 0x20 && c != '\t' && c != '\n' && c != '\r' then '�' else c
 
 private structure JUnitCase where
   name : String
@@ -811,62 +879,73 @@ private structure JUnitCase where
 
 private def junitCaseXml (classname : String) (case : JUnitCase) : String :=
   let tag := if case.isError then "error" else "failure"
-  s!"    <testcase name=\"{xmlEscape case.name}\" classname=\"{xmlEscape classname}\">\n"
-    ++ s!"      <{tag} message=\"{xmlEscape case.message}\" type=\"{xmlEscape case.type}\">"
-    ++ s!"{xmlEscape case.detail}</{tag}>\n"
-    ++ "    </testcase>\n"
+  s!"    <testcase name=\"{xmlEscape case.name}\" classname=\"{xmlEscape classname}\">\n" ++
+        s!"      <{tag} message=\"{xmlEscape case.message}\" type=\"{xmlEscape case.type}\">" ++
+      s!"{xmlEscape case.detail}</{tag}>\n" ++
+    "    </testcase>\n"
 
-private def junitReport (positions : PositionIndex) (report : RunReport) : String := Id.run do
-  let mut suites := ""
-  let mut totalTests := 0
-  let mut totalFailures := 0
-  let mut totalErrors := 0
-  for file in report.files do
-    let mut cases : Array JUnitCase := #[]
-    for finding in file.findings do
-      let start := startPosition positions file.path finding
-      let where_ := s!"{file.path}:{start.line}:{start.column}"
-      cases := cases.push {
-        name := s!"{finding.code} {where_}"
-        message := flattenMessage finding.message
-        type := finding.code
-        detail := s!"{where_}: {finding.code} {flattenMessage finding.message}"
-        isError := false }
-    if let some message := statusMessage? file.status then
-      cases := cases.push {
-        name := s!"{statusRuleId} {file.path}", message, type := statusRuleId
-        detail := s!"{file.path}: {message}"
-        isError := statusIsInfrastructure file.status }
-    for diagnostic in file.diagnostics do
-      cases := cases.push {
-        name := s!"{statusRuleId} {file.path}", message := flattenMessage diagnostic
-        type := statusRuleId, detail := flattenMessage diagnostic, isError := true }
-    let failures := cases.foldl (fun total case => if case.isError then total else total + 1) 0
-    let errors := cases.size - failures
-    -- A clean file emits a *passing* case, not an empty suite: a suite with zero cases reads
-    -- to most CI dashboards as "no tests ran", not "nothing wrong".
-    let body :=
-      if cases.isEmpty then
-        s!"    <testcase name=\"{xmlEscape file.path}\" classname=\"{xmlEscape file.path}\" />\n"
-      else
-        cases.foldl (fun acc case => acc ++ junitCaseXml file.path case) ""
-    let tests := max cases.size 1
-    totalTests := totalTests + tests
-    totalFailures := totalFailures + failures
-    totalErrors := totalErrors + errors
-    suites := suites ++ s!"  <testsuite name=\"{xmlEscape file.path}\" tests=\"{tests}\" \
+private def junitReport (positions : PositionIndex) (report : RunReport) : String :=
+  Id.run do
+    let mut suites := ""
+    let mut totalTests := 0
+    let mut totalFailures := 0
+    let mut totalErrors := 0
+    for file in report.files do
+      let mut cases : Array JUnitCase := #[]
+      for finding in file.findings do
+        let start := startPosition positions file.path finding
+        let where_ := s!"{file.path}:{start.line}:{start.column}"
+        cases :=
+          cases.push
+            { name := s!"{finding.code} {where_}"
+              message := flattenMessage finding.message
+              type := finding.code
+              detail := s!"{where_}: {finding.code} {flattenMessage finding.message}"
+              isError := false }
+      if let some message := statusMessage? file.status then
+        cases :=
+          cases.push
+            { name := s!"{statusRuleId} {file.path}", message, type := statusRuleId
+              detail := s!"{file.path}: {message}"
+              isError := statusIsInfrastructure file.status }
+      for diagnostic in file.diagnostics do
+        cases :=
+          cases.push
+            { name := s!"{statusRuleId} {file.path}", message := flattenMessage diagnostic
+              type := statusRuleId, detail := flattenMessage diagnostic, isError := true }
+      let failures := cases.foldl (fun total case => if case.isError then total else total + 1) 0
+      let errors := cases.size - failures
+      -- A clean file emits a *passing* case, not an empty suite: a suite with zero cases reads
+      -- to most CI dashboards as "no tests ran", not "nothing wrong".
+      let body :=
+        if cases.isEmpty then
+          s!"    <testcase name=\"{xmlEscape file.path}\" classname=\"{xmlEscape file.path}\" />\n"
+        else cases.foldl (fun acc case => acc ++ junitCaseXml file.path case) ""
+      let tests := max cases.size 1
+      totalTests := totalTests + tests
+      totalFailures := totalFailures + failures
+      totalErrors := totalErrors + errors
+      suites :=
+        suites ++
+          s!"  <testsuite name=\"{xmlEscape file.path}\" tests=\"{tests}\" \
       failures=\"{failures}\" errors=\"{errors}\">\n{body}  </testsuite>\n"
-  unless report.infrastructureFailures.isEmpty do
-    let body := report.infrastructureFailures.foldl (fun acc failure =>
-      acc ++ junitCaseXml "lean-fmt" {
-        name := s!"{statusRuleId} lean-fmt", message := flattenMessage failure
-        type := statusRuleId, detail := flattenMessage failure, isError := true }) ""
-    let count := report.infrastructureFailures.size
-    totalTests := totalTests + count
-    totalErrors := totalErrors + count
-    suites := suites ++ s!"  <testsuite name=\"lean-fmt\" tests=\"{count}\" failures=\"0\" \
+    unless report.infrastructureFailures.isEmpty do
+      let body :=
+        report.infrastructureFailures.foldl
+          (fun acc failure =>
+            acc ++
+              junitCaseXml "lean-fmt"
+                { name := s!"{statusRuleId} lean-fmt", message := flattenMessage failure
+                  type := statusRuleId, detail := flattenMessage failure, isError := true })
+          ""
+      let count := report.infrastructureFailures.size
+      totalTests := totalTests + count
+      totalErrors := totalErrors + count
+      suites :=
+        suites ++
+          s!"  <testsuite name=\"lean-fmt\" tests=\"{count}\" failures=\"0\" \
       errors=\"{count}\">\n{body}  </testsuite>\n"
-  return s!"<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
+    return s!"<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
     <testsuites name=\"lean-fmt\" tests=\"{totalTests}\" failures=\"{totalFailures}\" \
       errors=\"{totalErrors}\">\n{suites}</testsuites>\n"
 
@@ -892,7 +971,8 @@ private def writeReportFile (path : String) (contents : String) : IO Unit := do
     IO.FS.writeFile temporary contents
     IO.FS.rename temporary target
   catch error =>
-    if ← temporary.pathExists then IO.FS.removeFile temporary
+    if ← temporary.pathExists then
+      IO.FS.removeFile temporary
     throw error
 
 /-- Emit a report to stdout or to `--output-file`.
@@ -905,7 +985,12 @@ otherwise it loses data silently. -/
 private def emitReport (outputFile? : Option String) (contents : String) : IO Unit :=
   match outputFile? with
   | some path => writeReportFile path contents
-  | none => try IO.print contents; (← IO.getStdout).flush catch _ => pure ()
+  | none =>
+    try
+      IO.print contents;
+      (← IO.getStdout).flush
+    catch _ =>
+      pure ()
 
 private def renderReport (format : ReportFormat) (report : RunReport) : IO Unit :=
   emitReport none (formatReport format PositionIndex.empty "" report)
@@ -920,9 +1005,11 @@ private def validateOutputFile (path : String) : IO (Except String Unit) := do
     return .error s!"--output-file is a directory: {path}"
   match target.parent with
   | some parent =>
-    if parent.toString.isEmpty || (← parent.pathExists) then return .ok ()
+    if parent.toString.isEmpty || (← parent.pathExists) then
+      return .ok ()
     return .error s!"--output-file directory does not exist: {path}"
-  | none => return .ok ()
+  | none =>
+    return .ok ()
 
 /-- The absolute `file://` URI SARIF's `%SRCROOT%` resolves relative paths against, with the trailing
 slash the base of a relative reference needs.
@@ -930,19 +1017,26 @@ slash the base of a relative reference needs.
 The same rule encodes the root as a result's path: a checkout under `~/My Projects/` is not
 a corner case, and a space here would break every URI in the run rather than one. -/
 private def rootUri (root : FilePath) : IO String := do
-  let absolute ← try IO.FS.realPath root catch _ => pure root
+  let absolute ←
+    try
+      IO.FS.realPath root
+    catch _ =>
+      pure root
   return s!"file://{uriPathEncode absolute.toString}/"
 
 private def renderStatistics (report : RunReport) : IO Unit := do
-  IO.eprintln s!"lean-fmt statistics: mode={report.mode} files={report.files.size} \
+  IO.eprintln
+      s!"lean-fmt statistics: mode={report.mode} files={report.files.size} \
     findings={report.findings} changed={report.changed} written={report.written} \
     broken={report.broken} unbuilt={report.unbuilt} rejected={report.rejected} \
     withheld_unsafe={report.withheldUnsafe} \
     suppressed={report.suppressed} infrastructure_failures={report.infrastructureFailures.size}"
   if report.unbuilt > 0 then
-    let missing := report.files.filterMap fun file =>
-      if file.status == "unbuilt" then unbuiltDependency? file.diagnostics else none
-    IO.eprintln s!"lean-fmt: {report.unbuilt} file(s) skipped: dependencies not built \
+    let missing :=
+      report.files.filterMap fun file =>
+        if file.status == "unbuilt" then unbuiltDependency? file.diagnostics else none
+    IO.eprintln
+        s!"lean-fmt: {report.unbuilt} file(s) skipped: dependencies not built \
       ({String.intercalate ", " missing.toList}); run `lake build` first"
 
 /-- `writer` is whether this run publishes source (`fix`, or `format` without `--check`). A
@@ -951,8 +1045,9 @@ non-writing preview (`check`, `diff`, `format --check`) exits 1 when anything wo
 code). Both exit 2 on infrastructure failure and 1 on a broken/rejected file. -/
 private def reportExitCode (writer : Bool) (report : RunReport) : UInt32 :=
   if !report.infrastructureFailures.isEmpty then 2
-  else if report.broken > 0 || report.unbuilt > 0 || report.rejected > 0 then 1
-  else if !writer && report.changed > 0 then 1 else 0
+  else
+    if report.broken > 0 || report.unbuilt > 0 || report.rejected > 0 then 1
+    else if !writer && report.changed > 0 then 1 else 0
 
 private def renderRules (format : ReportFormat) : IO Unit :=
   match format with
@@ -961,7 +1056,8 @@ private def renderRules (format : ReportFormat) : IO Unit :=
     for info in allRuleInfos do
       let fix := if info.fixable then "fixable" else "report-only"
       let enabled := if info.defaultEnabled then "default" else "optional"
-      IO.println s!"{info.code}\t{info.category}\t{info.lifecycle.toWire}\t{fix}\t{enabled}\t{info.summary}"
+      IO.println
+          s!"{info.code}\t{info.category}\t{info.lifecycle.toWire}\t{fix}\t{enabled}\t{info.summary}"
 
 /-- `explain RULE` — one rule's full description, all of it from the registry. A live rule
 prints its `explainText`/`ruleInfoJson`; a retired code prints its disposition; a meta
@@ -972,24 +1068,34 @@ private def renderExplain (format : ReportFormat) (code : String) : IO UInt32 :=
   match ruleInfoByCode? code with
   | some info =>
     match format with
-    | .json => IO.println (ruleInfoJson info (tierWireOf info.code)).compress
-    | _ => IO.print (explainText info)
+    | .json =>
+      IO.println (ruleInfoJson info (tierWireOf info.code)).compress
+    | _ =>
+      IO.print (explainText info)
     return 0
   | none =>
     match reservedDisposition? code with
     | some disposition =>
       match format with
-      | .json => IO.println (Lean.Json.mkObj
-          [("code", .str code), ("lifecycle", .str "retired"), ("disposition", .str disposition)]).compress
-      | _ => IO.println s!"{code}  [retired]\n  {disposition}"
+      | .json =>
+        IO.println
+            (Lean.Json.mkObj
+                [("code", .str code), ("lifecycle", .str "retired"),
+                  ("disposition", .str disposition)]).compress
+      | _ =>
+        IO.println s!"{code}  [retired]\n  {disposition}"
       return 0
     | none =>
       match metaDescription? code with
       | some description =>
         match format with
-        | .json => IO.println (Lean.Json.mkObj
-            [("code", .str code), ("lifecycle", .str "meta"), ("description", .str description)]).compress
-        | _ => IO.println s!"{code}  [meta]\n  {description}"
+        | .json =>
+          IO.println
+              (Lean.Json.mkObj
+                  [("code", .str code), ("lifecycle", .str "meta"),
+                    ("description", .str description)]).compress
+        | _ =>
+          IO.println s!"{code}  [meta]\n  {description}"
         return 0
       | none =>
         IO.eprintln s!"unknown rule: {code}"
@@ -1003,8 +1109,13 @@ private def runDocs (root : FilePath) (check : Bool) : IO UInt32 := do
     let mut drift := #[]
     for (name, content) in catalogDocs do
       let path := dir / name
-      let actual? ← if ← path.pathExists then some <$> IO.FS.readFile path else pure none
-      unless actual? == some content do drift := drift.push name
+      let actual? ←
+        if ← path.pathExists then
+          some <$> IO.FS.readFile path
+        else
+          pure none
+      unless actual? == some content do
+        drift := drift.push name
     if drift.isEmpty then
       IO.println s!"docs up to date ({catalogDocs.size} files)"
       return 0
@@ -1029,17 +1140,20 @@ private def renderClean (format : ReportFormat) (report : CleanReport) : IO Unit
 private def renderCompilerSetup (format : ReportFormat) : IO Unit := do
   let report := compilerSetupReport
   match format with
-  | .json => IO.println (Lean.toJson report).compress
-  | _ => do
-    IO.println s!"schema: {report.schema}"
-    IO.println s!"package: {report.package}"
-    IO.println s!"plugin target: {report.plugin}"
-    IO.println s!"module facet: {report.facet}"
-    IO.println s!"toolchain: {report.toolchain}"
-    for step in report.guidance, index in [1:report.guidance.size + 1] do
-      IO.println s!"{index}. {step}"
+  | .json =>
+    IO.println (Lean.toJson report).compress
+  | _ =>
+    do
+      IO.println s!"schema: {report.schema}"
+      IO.println s!"package: {report.package}"
+      IO.println s!"plugin target: {report.plugin}"
+      IO.println s!"module facet: {report.facet}"
+      IO.println s!"toolchain: {report.toolchain}"
+      for step in report.guidance, index in [1:report.guidance.size + 1]do
+        IO.println s!"{index}. {step}"
 
-private def renderCompilerStatus (format : ReportFormat) (report : CompilerStatusReport) : IO Unit :=
+private def renderCompilerStatus (format : ReportFormat) (report : CompilerStatusReport) :
+    IO Unit :=
   match format with
   | .json => IO.println (Lean.toJson report).compress
   | _ => do
@@ -1050,8 +1164,8 @@ private def renderCompilerStatus (format : ReportFormat) (report : CompilerStatu
 private def parseConfigShowArgs (args : List String) :
     Except String (FilePath × Option FilePath × String × ReportFormat) :=
   let rec loop (remaining : List String) (root : FilePath) (config? : Option FilePath)
-      (target? : Option String) (format : ReportFormat) :
-      Except String (FilePath × Option FilePath × String × ReportFormat) :=
+    (target? : Option String) (format : ReportFormat) :
+    Except String (FilePath × Option FilePath × String × ReportFormat) :=
     match remaining with
     | [] =>
       match target? with
@@ -1064,8 +1178,9 @@ private def parseConfigShowArgs (args : List String) :
     | "--config" :: [] => .error "--config expects a path"
     | option :: rest =>
       if option.startsWith "-" then .error s!"unknown config option: {option}"
-      else if target?.isSome then .error "config show takes exactly one path"
-      else loop rest root config? (some option) format
+      else
+        if target?.isSome then .error "config show takes exactly one path"
+        else loop rest root config? (some option) format
   loop args "." none none .text
 
 /- Text rendering is deliberately one `key = value  (origin)` line per setting with no
@@ -1096,8 +1211,9 @@ private def renderConfigShow (format : ReportFormat) (report : ConfigReport) : I
 serve the stdin surface without a second implementation of any of them. -/
 private def streamAsRunReport (mode : RunMode) (report : StreamReport) : RunReport :=
   { mode := mode.toString
-    files := #[{ path := report.path, status := report.status,
-                 findings := report.findings, diagnostics := report.diagnostics }]
+    files :=
+      #[{ path := report.path, status := report.status, findings := report.findings,
+          diagnostics := report.diagnostics }]
     findings := report.findings.size
     changed := if report.changed then 1 else 0
     written := 0
@@ -1120,12 +1236,16 @@ promise with no way to check it. -/
 private def renderStream (mode : RunMode) (format : ReportFormat) (outputFile? : Option String)
     (positions : PositionIndex) (root : String) (report : StreamReport) : IO Unit := do
   match format with
-  | .json => IO.println report.toJson.compress
+  | .json =>
+    IO.println report.toJson.compress
   | .text =>
-    if let some diff := report.diff then IO.print diff
-    if let some output := report.output then IO.print output
+    if let some diff := report.diff then
+      IO.print diff
+    if let some output := report.output then
+      IO.print output
     for finding in report.findings do
-      IO.eprintln s!"{report.path}:{finding.range.start}-{finding.range.stop}: \
+      IO.eprintln
+          s!"{report.path}:{finding.range.start}-{finding.range.stop}: \
         {finding.code} {finding.message}"
     for diagnostic in report.diagnostics do
       IO.eprintln s!"{report.path}: {report.status}: {diagnostic}"
@@ -1136,12 +1256,16 @@ private def renderStream (mode : RunMode) (format : ReportFormat) (outputFile? :
     -- report goes to stderr — beside where text mode already puts findings — unless the caller
     -- named a file for it. Putting it on stdout would corrupt the bytes a `format -` consumer is
     -- piping.
-    if let some diff := report.diff then IO.print diff
-    if let some output := report.output then IO.print output
+    if let some diff := report.diff then
+      IO.print diff
+    if let some output := report.output then
+      IO.print output
     let rendered := formatReport format positions root (streamAsRunReport mode report)
     match outputFile? with
-    | some path => writeReportFile path rendered
-    | none => IO.eprint rendered
+    | some path =>
+      writeReportFile path rendered
+    | none =>
+      IO.eprint rendered
 
 /-- Exit code for a stream answer.
 
@@ -1153,43 +1277,49 @@ private def streamExitCode (writer : Bool) (report : StreamReport) : UInt32 :=
   if report.status == "broken" || report.status == "unbuilt" || report.status == "rejected" then 1
   else if !writer && report.changed then 1 else 0
 
-private unsafe def runStreamCommand (mode : RunMode) (command : FileCommand)
-    (filename : String) : IO UInt32 := do
+private unsafe def runStreamCommand (mode : RunMode) (command : FileCommand) (filename : String) :
+    IO UInt32 := do
   -- Read bytes and decode here rather than through `IO.FS.Stream.readToEnd`, which throws
   -- its own wording ("Tried to read from stream containing non UTF-8 data"). The caller-facing
   -- message is fixed, so it must not be the runtime's chance phrasing.
   let bytes ← (← IO.getStdin).readBinToEnd
-  let some raw := String.fromUTF8? bytes
-    | IO.eprintln "lean-fmt: stdin is not valid UTF-8"; return 2
+  let some raw := String.fromUTF8? bytes |
+    IO.eprintln "lean-fmt: stdin is not valid UTF-8";
+    return 2
   -- Ranges index the normalized source, the one coordinate system every offset in this
   -- product uses.
   let (normalized, _) := LosslessSource.normalize raw
-  let range? ← match command.range? with
-    | none => pure none
+  let range? ←
+    match command.range? with
+    | none =>
+      pure none
     | some spec =>
       match resolveRange normalized spec with
-      | .ok range => pure (some range)
-      | .error message => IO.eprintln message; return 2
-  let report ← stream {
-    mode
-    root := command.run.root
-    filename
-    source := raw
-    range?
-    configPath? := command.run.configPath?
-    selection := {
-      select := command.run.select, extendSelect := command.run.extendSelect,
-      ignore := command.run.ignore, fixable := command.run.fixable,
-      unfixable := command.run.unfixable, extendFixable := command.run.extendFixable,
-      preview := command.run.preview }
-    unsafeFixes := command.run.unsafeFixes
-    formatCheck := command.run.formatCheck
-  }
+      | .ok range =>
+        pure (some range)
+      | .error message =>
+        IO.eprintln message;
+        return 2
+  let report ←
+    stream
+        { mode
+          root := command.run.root
+          filename
+          source := raw
+          range?
+          configPath? := command.run.configPath?
+          selection :=
+            { select := command.run.select, extendSelect := command.run.extendSelect,
+              ignore := command.run.ignore, fixable := command.run.fixable,
+              unfixable := command.run.unfixable, extendFixable := command.run.extendFixable,
+              preview := command.run.preview }
+          unsafeFixes := command.run.unsafeFixes
+          formatCheck := command.run.formatCheck }
   -- The buffer never became a project snapshot, so the CLI that decoded it is the only
   -- holder of the bytes a line/column resolution needs.
   let positions := PositionIndex.ofSource report.path normalized report.findings
-  renderStream mode command.outputFormat command.outputFile? positions
-    (← rootUri command.run.root) report
+  renderStream mode command.outputFormat command.outputFile? positions (← rootUri command.run.root)
+      report
   return streamExitCode (mode == .fix || command.run.writesFormat) report
 
 /-- Run one request and emit one report. Shared by the single-shot and watch paths so that a
@@ -1200,11 +1330,14 @@ private unsafe def runOneGeneration (command : FileCommand) : IO UInt32 := do
   -- linear in report size and *not* a scale risk, so this exists to keep the accounted fraction
   -- honest rather than because it is suspected — a phase schema that omits a step because someone
   -- expects it to be cheap cannot notice the day it stops being cheap.
-  let rendered ← withPhase "render_report" <|
-    pure (formatReport command.outputFormat outcome.positions (← rootUri command.run.root)
-      outcome.report)
+  let rendered ←
+    withPhase "render_report" <|
+        pure
+          (formatReport command.outputFormat outcome.positions (← rootUri command.run.root)
+            outcome.report)
   emitReport command.outputFile? rendered
-  if command.statistics then renderStatistics outcome.report
+  if command.statistics then
+    renderStatistics outcome.report
   return reportExitCode (command.run.mode == .fix || command.run.writesFormat) outcome.report
 
 /-- Resolve a `--changed` selection into the request's file list.
@@ -1217,7 +1350,8 @@ clean" are two facts a CI log must be able to tell apart. -/
 private def resolveChanged (command : FileCommand) (comparison : GitSelection.Comparison) :
     IO (Except String (Option FileCommand)) := do
   match ← GitSelection.select command.run.root comparison with
-  | .error message => return .error message
+  | .error message =>
+    return .error message
   | .ok selection =>
     -- Provenance goes to stderr rather than into `RunReport`. `RunReport` is a
     -- frozen JSON compatibility surface, compared byte-for-byte against the golden
@@ -1232,7 +1366,8 @@ private def resolveChanged (command : FileCommand) (comparison : GitSelection.Co
     if selection.paths.isEmpty then
       IO.eprintln s!"lean-fmt: no changed Lean sources under {command.run.root}"
       return .ok none
-    IO.eprintln s!"lean-fmt: {selection.paths.size} changed path(s) selected; \
+    IO.eprintln
+        s!"lean-fmt: {selection.paths.size} changed path(s) selected; \
       this run covers that subset, not the whole project"
     return .ok (some { command with run := { command.run with files := selection.paths } })
 
@@ -1242,21 +1377,31 @@ Rebuilt from the raw argument list rather than re-rendered from the parsed `File
 a child runs *exactly* what the user asked for. Re-rendering would mean keeping a second, silently
 diverging spelling of every flag, and once those diverge the watched run and the plain run analyze
 different things. -/
-private def generationArgs (mode : RunMode) (args : List String) : Array String := Id.run do
-  let mut out : Array String := #[mode.toString]
-  let mut remaining := args
-  while true do
-    match remaining with
-    | [] => break
-    | "--watch" :: rest => remaining := rest
-    | "--poll-interval" :: _ :: rest => remaining := rest
-    | argument :: rest => out := out.push argument; remaining := rest
-  return out
+private def generationArgs (mode : RunMode) (args : List String) : Array String :=
+  Id.run do
+    let mut out : Array String := #[mode.toString]
+    let mut remaining := args
+    while true do
+      match remaining with
+      | [] =>
+        break
+      | "--watch" :: rest =>
+        remaining := rest
+      | "--poll-interval" :: _ :: rest =>
+        remaining := rest
+      | argument :: rest =>
+        out := out.push argument;
+        remaining := rest
+    return out
 
 private unsafe def runFileCommand (mode : RunMode) (args : List String) : IO UInt32 := do
-  let command ← match parseFileArgs mode args with
-    | .ok command => pure command
-    | .error message => IO.eprintln message; return 2
+  let command ←
+    match parseFileArgs mode args with
+    | .ok command =>
+      pure command
+    | .error message =>
+      IO.eprintln message;
+      return 2
   if let .error message := validateStdin mode command then
     IO.eprintln message
     return 2
@@ -1303,45 +1448,58 @@ private unsafe def runFileCommand (mode : RunMode) (args : List String) : IO UIn
       -- this process's stdout and stderr, so framing is unchanged, and a generation that dies
       -- cannot take the session with it.
       let self ← IO.appPath
-      Watch.run { root := command.run.root, configPath? := command.run.configPath?,
-                  pollMillis := command.pollMillis } fun counter => do
-        -- The banner goes to stderr so a line-oriented consumer's stdout stays
-        -- uncontaminated, and a document-format consumer is reading `--output-file` anyway.
-        IO.eprintln s!"lean-fmt: generation {counter}"
-        try
-          let child ← IO.Process.spawn {
-            cmd := self.toString
-            args := generationArgs mode args
-          }
-          let code ← child.wait
-          if code != 0 && code != 1 then
-            IO.eprintln s!"lean-fmt: generation {counter} exited {code}"
-        catch error =>
-          -- One generation's failure must not end the session: the user's next edit is often
-          -- the fix. Report it and keep watching.
-          IO.eprintln s!"lean-fmt: generation {counter} failed: {error}"
+      Watch.run
+          { root := command.run.root, configPath? := command.run.configPath?,
+            pollMillis := command.pollMillis }
+          fun counter => do
+          -- The banner goes to stderr so a line-oriented consumer's stdout stays
+          -- uncontaminated, and a document-format consumer is reading `--output-file` anyway.
+          IO.eprintln s!"lean-fmt: generation {counter}"
+          try
+            let child ←
+              IO.Process.spawn
+                  { cmd := self.toString
+                    args := generationArgs mode args }
+            let code ← child.wait
+            if code != 0 && code != 1 then
+              IO.eprintln s!"lean-fmt: generation {counter} exited {code}"
+          catch error =>
+            -- One generation's failure must not end the session: the user's next edit is often
+            -- the fix. Report it and keep watching.
+            IO.eprintln s!"lean-fmt: generation {counter} failed: {error}"
       -- `Watch.run` does not return; a signal ends the session. Exit 0 because asking a
       -- long-running service to stop is not a failure, and because every write is atomic
       -- temp-then-rename, an abrupt exit cannot leave a torn report.
       return 0
-    let command ← match command.changed? with
-      | none => pure command
+    let command ←
+      match command.changed? with
+      | none =>
+        pure command
       | some comparison =>
         match ← resolveChanged command comparison with
-        | .error message => IO.eprintln s!"lean-fmt: {message}"; return 2
-        | .ok none => return 0
-        | .ok (some resolved) => pure resolved
+        | .error message =>
+          IO.eprintln s!"lean-fmt: {message}";
+          return 2
+        | .ok none =>
+          return 0
+        | .ok (some resolved) =>
+          pure resolved
     runOneGeneration command
   catch error =>
     IO.eprintln s!"lean-fmt: {error}"
     return 2
 
 unsafe def runCli (arguments : List String) : IO UInt32 := do
-  let args := match arguments with | "--" :: rest => rest | _ => arguments
-  if let some result ← Application.runInternal? args then
+  let args :=
+    match arguments with
+    | "--" :: rest => rest
+    | _ => arguments
+  if let some result← Application.runInternal? args then
     return result
   match args with
-  | "--help" :: _ => printHelp (← IO.getStdout) CliHelp.overviewHelp; return 0
+  | "--help" :: _ =>
+    printHelp (← IO.getStdout) CliHelp.overviewHelp;
+    return 0
   | command :: "--help" :: _ =>
     match CliHelp.commandHelp? command with
     | some render =>
@@ -1350,57 +1508,91 @@ unsafe def runCli (arguments : List String) : IO UInt32 := do
     | none =>
       printHelp (← IO.getStderr) CliHelp.overviewHelp
       return 2
-  | "check" :: rest => runFileCommand .check rest
-  | "format" :: rest => runFileCommand .format rest
-  | "diff" :: rest => runFileCommand .diff rest
-  | "fix" :: rest => runFileCommand .fix rest
+  | "check" :: rest =>
+    runFileCommand .check rest
+  | "format" :: rest =>
+    runFileCommand .format rest
+  | "diff" :: rest =>
+    runFileCommand .diff rest
+  | "fix" :: rest =>
+    runFileCommand .fix rest
   | "organize" :: rest =>
-    let command ← match parseOrganizeArgs rest with
-      | .ok command => pure command
-      | .error message => IO.eprintln message; return 2
+    let command ←
+      match parseOrganizeArgs rest with
+      | .ok command =>
+        pure command
+      | .error message =>
+        IO.eprintln message;
+        return 2
     try
       let report ← organize command.request
       renderReport command.outputFormat report
-      if !report.infrastructureFailures.isEmpty then return 2
-      else if report.rejected > 0 || report.unbuilt > 0 then return 1
-      else if command.request.check && report.changed > 0 then return 1
-      else return 0
+      if !report.infrastructureFailures.isEmpty then
+        return 2
+      else if report.rejected > 0 || report.unbuilt > 0 then
+        return 1
+      else if command.request.check && report.changed > 0 then
+        return 1
+      else
+        return 0
     catch error =>
       IO.eprintln s!"lean-fmt: {error}"
       return 2
   | "lsp" :: rest =>
-    let options ← match parseLspArgs rest with
-      | .ok options => pure options
-      | .error message => IO.eprintln message; return 2
+    let options ←
+      match parseLspArgs rest with
+      | .ok options =>
+        pure options
+      | .error message =>
+        IO.eprintln message;
+        return 2
     try
       LanguageServer.serveLanguageServer options
     catch error =>
       IO.eprintln s!"lean-fmt: {error}"
       return 2
   | "rules" :: rest =>
-    let format ← match parseOutputArgs rest with
-      | .ok format => pure format
-      | .error message => IO.eprintln message; return 2
+    let format ←
+      match parseOutputArgs rest with
+      | .ok format =>
+        pure format
+      | .error message =>
+        IO.eprintln message;
+        return 2
     renderRules format
     return 0
   | "explain" :: rest =>
     -- `explain RULE [--json]`: exactly one rule token, optional `--json`.
     match rest.filter (·.startsWith "-" |>.not), rest.contains "--json" with
-    | [code], json => renderExplain (if json then .json else .text) code
-    | [], _ => IO.eprintln "usage: lean-fmt explain RULE [--json]"; return 2
-    | _, _ => IO.eprintln "explain takes exactly one rule code"; return 2
+    | [code], json =>
+      renderExplain (if json then .json else .text) code
+    | [], _ =>
+      IO.eprintln "usage: lean-fmt explain RULE [--json]";
+      return 2
+    | _, _ =>
+      IO.eprintln "explain takes exactly one rule code";
+      return 2
   | "docs" :: rest =>
     let rec loop (remaining : List String) (root : FilePath) (check : Bool) : IO UInt32 := do
       match remaining with
-      | [] => runDocs root check
-      | "--check" :: more => loop more root true
-      | "--root" :: dir :: more => loop more dir check
-      | option :: _ => IO.eprintln s!"unknown docs option: {option}"; return 2
+      | [] =>
+        runDocs root check
+      | "--check" :: more =>
+        loop more root true
+      | "--root" :: dir :: more =>
+        loop more dir check
+      | option :: _ =>
+        IO.eprintln s!"unknown docs option: {option}";
+        return 2
     loop rest "." false
   | "clean" :: rest =>
-    let command ← match parseRootArgs rest with
-      | .ok command => pure command
-      | .error message => IO.eprintln message; return 2
+    let command ←
+      match parseRootArgs rest with
+      | .ok command =>
+        pure command
+      | .error message =>
+        IO.eprintln message;
+        return 2
     try
       renderClean command.outputFormat (← clean command.root)
       return 0
@@ -1408,9 +1600,13 @@ unsafe def runCli (arguments : List String) : IO UInt32 := do
       IO.eprintln s!"lean-fmt: {error}"
       return 2
   | "config" :: "show" :: rest =>
-    let (root, config?, target, format) ← match parseConfigShowArgs rest with
-      | .ok parsed => pure parsed
-      | .error message => IO.eprintln message; return 2
+    let (root, config?, target, format) ←
+      match parseConfigShowArgs rest with
+      | .ok parsed =>
+        pure parsed
+      | .error message =>
+        IO.eprintln message;
+        return 2
     try
       renderConfigShow format (← describeConfig root config? target)
       return 0
@@ -1418,15 +1614,23 @@ unsafe def runCli (arguments : List String) : IO UInt32 := do
       IO.eprintln s!"lean-fmt: {error}"
       return 2
   | "compiler" :: "setup" :: rest =>
-    let format ← match parseOutputArgs rest with
-      | .ok format => pure format
-      | .error message => IO.eprintln message; return 2
+    let format ←
+      match parseOutputArgs rest with
+      | .ok format =>
+        pure format
+      | .error message =>
+        IO.eprintln message;
+        return 2
     renderCompilerSetup format
     return 0
   | "compiler" :: "status" :: rest =>
-    let command ← match parseStatusArgs rest with
-      | .ok command => pure command
-      | .error message => IO.eprintln message; return 2
+    let command ←
+      match parseStatusArgs rest with
+      | .ok command =>
+        pure command
+      | .error message =>
+        IO.eprintln message;
+        return 2
     try
       renderCompilerStatus command.outputFormat (← compilerStatus command.request)
       return 0
@@ -1434,9 +1638,13 @@ unsafe def runCli (arguments : List String) : IO UInt32 := do
       IO.eprintln s!"lean-fmt: {error}"
       return 2
   | "compiler" :: "build" :: rest =>
-    let command ← match parseStatusArgs rest with
-      | .ok command => pure command
-      | .error message => IO.eprintln message; return 2
+    let command ←
+      match parseStatusArgs rest with
+      | .ok command =>
+        pure command
+      | .error message =>
+        IO.eprintln message;
+        return 2
     if command.outputFormat == .json then
       IO.eprintln "compiler build prints Lake's own progress; --json does not apply"
       return 2
@@ -1450,5 +1658,4 @@ unsafe def runCli (arguments : List String) : IO UInt32 := do
     return 2
 
 end LeanFmt.Internal.Cli
-
 -- cache-project-source-invalidation

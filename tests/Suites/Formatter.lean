@@ -32,8 +32,10 @@ private def candidateCmd (ctx : Ctx) (mode : String) : Array String :=
 /-- One injected negative gate: the oracle must reject the candidate, naming exactly this gate. -/
 private def testGate (ctx : Ctx) (fixture mode gate : String) : IO Unit := do
   let label := s!"{mode} rejected by {gate}"
-  let outcome ← LeanFmt.Test.Oracle.run ctx.root ctx.application ctx.setup ctx.work
-    (ctx.root / "tests" / "fixtures" / "formatter" / "fixtures" / fixture) (candidateCmd ctx mode)
+  let outcome ←
+    LeanFmt.Test.Oracle.run ctx.root ctx.application ctx.setup ctx.work
+        (ctx.root / "tests" / "fixtures" / "formatter" / "fixtures" / fixture)
+        (candidateCmd ctx mode)
   match outcome with
   | .ok summary =>
     throw <| IO.userError s!"{label}: the oracle accepted the candidate: {summary.compress}"
@@ -44,8 +46,10 @@ private def testGate (ctx : Ctx) (fixture mode gate : String) : IO Unit := do
 digest is the pinned one — the digest input recipe (sorted keys, compact separators, NUL, then
 the formatted bytes) is frozen across the Python and Lean oracles. -/
 private def testIdentity (ctx : Ctx) : IO Unit := do
-  let outcome ← LeanFmt.Test.Oracle.run ctx.root ctx.application ctx.setup ctx.work
-    (ctx.root / "tests" / "fixtures" / "formatter" / "fixtures" / "Contract.lean") (candidateCmd ctx "identity")
+  let outcome ←
+    LeanFmt.Test.Oracle.run ctx.root ctx.application ctx.setup ctx.work
+        (ctx.root / "tests" / "fixtures" / "formatter" / "fixtures" / "Contract.lean")
+        (candidateCmd ctx "identity")
   match outcome with
   | .error failure =>
     throw <| IO.userError s!"identity rejected by {failure.gate}: {failure.detail}"
@@ -59,43 +63,47 @@ private def testIdentity (ctx : Ctx) : IO Unit := do
     ensure (nodes > 0 && tokens > 0) "identity: empty projection"
     ensureJsonAt summary [.field "comments"] (Lean.toJson (3 : Nat)) "identity"
     ensureJsonAt summary [.field "digest"]
-      (Lean.toJson "de426c98ee255b1e5d3b4c030a1d0aa7bcf060a694e456ecc91db6a9556cbc09") "identity"
+        (Lean.toJson "de426c98ee255b1e5d3b4c030a1d0aa7bcf060a694e456ecc91db6a9556cbc09") "identity"
 
 end Formatter
 
 public def main (args : List String) : IO UInt32 := do
   let root ← repoRoot
   withScratchDir "formatter" fun work => do
-    let setup ← LeanFmt.Test.Analyze.setupFile root work "tests/fixtures/check/Clean.lean"
-    let ctx : Formatter.Ctx :=
-      { root, application := (root / ".lake" / "build" / "bin" / "lean-fmt").toString, setup, work }
-    -- A supplied candidate (the old script's `"$@"` branch): any non-flag argument means the
-    -- whole argv is one candidate command to admit against the Contract fixture.
-    if args.any (!·.startsWith "--") then
-      let outcome ← LeanFmt.Test.Oracle.run root ctx.application setup work
-        (root / "tests" / "fixtures" / "formatter" / "fixtures" / "Contract.lean") args.toArray
-      match outcome with
-      | .ok summary => IO.println summary.compress
-      | .error failure =>
-        IO.eprintln s!"rejected by {failure.gate}: {failure.detail}"
-        return 1
-      return 0
-    let gates : Array (String × String × String) := #[
-      ("Contract.lean", "drop-block-comment", "comments-payload"),
-      ("Contract.lean", "move-trailing-comment", "comments-ownership"),
-      ("Contract.lean", "duplicate-doc-comment", "comments-payload"),
-      ("TermParentage.lean", "term-reassociate", "structure"),
-      ("TacticParentage.lean", "tactic-reassociate", "structure"),
-      ("Contract.lean", "change-imports", "imports"),
-      ("Contract.lean", "move-terminal", "terminal"),
-      ("Contract.lean", "stale-artifact", "stale-artifact"),
-      ("Contract.lean", "wrong-environment", "environment"),
-      ("Contract.lean", "second-pass-drift", "idempotence"),
-      ("Contract.lean", "unsupported", "unsupported"),
-      ("Contract.lean", "cancelled", "cancellation"),
-      ("Contract.lean", "overlap-map", "source-map")
-    ]
-    let cases : Array Case := gates.map fun (fixture, mode, gate) =>
-      ({ name := mode, run := Formatter.testGate ctx fixture mode gate } : Case)
-    let cases := cases ++ #[{ name := "identity", run := Formatter.testIdentity ctx }]
-    runCases "formatter" cases args
+      let setup ← LeanFmt.Test.Analyze.setupFile root work "tests/fixtures/check/Clean.lean"
+      let ctx : Formatter.Ctx :=
+        { root, application := (root / ".lake" / "build" / "bin" / "lean-fmt").toString, setup,
+          work }
+      -- A supplied candidate (the old script's `"$@"` branch): any non-flag argument means the
+      -- whole argv is one candidate command to admit against the Contract fixture.
+      if args.any (!·.startsWith "--") then
+        let outcome ←
+          LeanFmt.Test.Oracle.run root ctx.application setup work
+              (root / "tests" / "fixtures" / "formatter" / "fixtures" / "Contract.lean")
+              args.toArray
+        match outcome with
+        | .ok summary =>
+          IO.println summary.compress
+        | .error failure =>
+          IO.eprintln s!"rejected by {failure.gate}: {failure.detail}"
+          return 1
+        return 0
+      let gates : Array (String × String × String) :=
+        #[("Contract.lean", "drop-block-comment", "comments-payload"),
+          ("Contract.lean", "move-trailing-comment", "comments-ownership"),
+          ("Contract.lean", "duplicate-doc-comment", "comments-payload"),
+          ("TermParentage.lean", "term-reassociate", "structure"),
+          ("TacticParentage.lean", "tactic-reassociate", "structure"),
+          ("Contract.lean", "change-imports", "imports"),
+          ("Contract.lean", "move-terminal", "terminal"),
+          ("Contract.lean", "stale-artifact", "stale-artifact"),
+          ("Contract.lean", "wrong-environment", "environment"),
+          ("Contract.lean", "second-pass-drift", "idempotence"),
+          ("Contract.lean", "unsupported", "unsupported"),
+          ("Contract.lean", "cancelled", "cancellation"),
+          ("Contract.lean", "overlap-map", "source-map")]
+      let cases : Array Case :=
+        gates.map fun (fixture, mode, gate) =>
+          ({ name := mode, run := Formatter.testGate ctx fixture mode gate } : Case)
+      let cases := cases ++ #[{ name := "identity", run := Formatter.testIdentity ctx }]
+      runCases "formatter" cases args

@@ -39,21 +39,24 @@ structure Ctx where
 /-- `candidate.py <mode>` on stdin, returning the `formatted` field of its JSON reply. -/
 private def candidate (ctx : Ctx) (mode source : String) : IO String := do
   let label := s!"candidate.py {mode}"
-  let result ← expectExit 0 label "python3"
-    #[(ctx.root / "tests" / "fixtures" / "formatter" / "candidate.py").toString, mode]
-    (input? := some source) (cwd? := some ctx.root)
+  let result ←
+    expectExit 0 label "python3"
+        #[(ctx.root / "tests" / "fixtures" / "formatter" / "candidate.py").toString, mode]
+        (input? := some source) (cwd? := some ctx.root)
   let json ← parseJson result.stdout label
-  let some formatted := (json.getObjValAs? String "formatted").toOption
-    | throw <| IO.userError s!"{label}: no `formatted` field"
+  let some formatted :=
+    (json.getObjValAs? String
+        "formatted").toOption | throw <| IO.userError s!"{label}: no `formatted` field"
   return formatted
 
 /-- `__validate-candidate` against the setup file for `source`, returning the parsed result. -/
 private def validateCandidate (ctx : Ctx) (setup source candidatePath : System.FilePath)
     (label : String) : IO Lean.Json := do
-  let result ← expectExit 0 label ctx.application
-    #["__validate-candidate", setup.toString, source.toString, candidatePath.toString,
-      "source.lean", "100"]
-    (cwd? := some ctx.root)
+  let result ←
+    expectExit 0 label ctx.application
+        #["__validate-candidate", setup.toString, source.toString, candidatePath.toString,
+          "source.lean", "100"]
+        (cwd? := some ctx.root)
   parseJson result.stdout label
 
 /-- One rejected mutation: canonical absent, `failure.gate` exactly the expected one. -/
@@ -79,29 +82,31 @@ private def testAdmission (ctx : Ctx) : IO Unit := do
   let label := "admission"
   let source := ctx.work / "Accepted.lean"
   writeFile source
-    "module\n\nimport AdapterSyntax\n\nopen AdapterSyntax\n\n-- custom lead\n\
+      "module\n\nimport AdapterSyntax\n\nopen AdapterSyntax\n\n-- custom lead\n\
      explicit_command selectedName -- custom trail\n"
   let setup ← setupFile ctx.root ctx.work source.toString
   let envelope ← analyzeExact ctx.root ctx.application setup source.toString "Accepted.lean" "4:80"
   ensure (((jsonAt? envelope [.field "diagnostics"]).bind (·.getArr?.toOption)).getD #[]).isEmpty
-    s!"{label}: unexpected diagnostics"
+      s!"{label}: unexpected diagnostics"
   ensure ((jsonAt? envelope [.field "validationFailure"]).isNone)
-    s!"{label}: validationFailure present"
+      s!"{label}: validationFailure present"
   ensure ((jsonAt? envelope [.field "formatDraft"]).isNone)
-    s!"{label}: unvalidated draft escaped validated operation"
-  let some canonicalJson := jsonAt? envelope [.field "canonical"]
-    | throw <| IO.userError s!"{label}: no canonical"
+      s!"{label}: unvalidated draft escaped validated operation"
+  let some canonicalJson :=
+    jsonAt? envelope [.field "canonical"] | throw <| IO.userError s!"{label}: no canonical"
   ensureJsonAt canonicalJson [.field "metrics", .field "frontendRuns"] (Lean.toJson (1 : Nat)) label
-  let expectedValidation := Lean.Json.mkObj [
-    ("frontendRuns", Lean.toJson (1 : Nat)), ("renders", Lean.toJson (2 : Nat)),
-    ("structuralComparisons", Lean.toJson (1 : Nat)),
-    ("idempotencePasses", Lean.toJson (1 : Nat)),
-    ("reparsedCommands", Lean.toJson (2 : Nat))]
+  let expectedValidation :=
+    Lean.Json.mkObj
+      [("frontendRuns", Lean.toJson (1 : Nat)), ("renders", Lean.toJson (2 : Nat)),
+        ("structuralComparisons", Lean.toJson (1 : Nat)),
+        ("idempotencePasses", Lean.toJson (1 : Nat)), ("reparsedCommands", Lean.toJson (2 : Nat))]
   ensureJsonAt canonicalJson [.field "validation"] expectedValidation label
-  let some text := (canonicalJson.getObjValAs? String "text").toOption
-    | throw <| IO.userError s!"{label}: canonical has no text"
-  let some marks := (jsonAt? canonicalJson [.field "sourceMap"]).bind (·.getArr?.toOption)
-    | throw <| IO.userError s!"{label}: canonical has no sourceMap"
+  let some text :=
+    (canonicalJson.getObjValAs? String
+        "text").toOption | throw <| IO.userError s!"{label}: canonical has no text"
+  let some marks :=
+    (jsonAt? canonicalJson [.field "sourceMap"]).bind
+      (·.getArr?.toOption) | throw <| IO.userError s!"{label}: canonical has no sourceMap"
   let mut sourcePos := 0
   let mut outputPos := 0
   for mark in marks do
@@ -123,26 +128,32 @@ private def testReparseAgrees (ctx : Ctx) : IO Unit := do
   let label := "reparse agrees"
   let source := ctx.work / "Agreed.lean"
   writeFile source
-    "module\n\nimport AdapterSyntax\n\nopen AdapterSyntax\n\n-- custom lead\n\
+      "module\n\nimport AdapterSyntax\n\nopen AdapterSyntax\n\n-- custom lead\n\
      explicit_command selectedName -- custom trail\n"
   let setup ← setupFile ctx.root ctx.work source.toString
   let admit (env : Array (String × Option String)) (what : String) : IO (Lean.Json × Nat) := do
-    let envelope ← analyzeExact ctx.root ctx.application setup source.toString "Agreed.lean" "4:80"
-      (env := env)
-    let some canonical := jsonAt? envelope [.field "canonical"]
-      | throw <| IO.userError s!"{label}: {what} produced no canonical"
-    let some runs := natAt? canonical [.field "validation", .field "frontendRuns"]
-      | throw <| IO.userError s!"{label}: {what} reported no frontendRuns"
+    let envelope ←
+      analyzeExact ctx.root ctx.application setup source.toString "Agreed.lean" "4:80" (env := env)
+    let some canonical :=
+      jsonAt? envelope
+        [.field "canonical"] | throw <| IO.userError s!"{label}: {what} produced no canonical"
+    let some runs :=
+      natAt? canonical
+        [.field "validation",
+          .field
+            "frontendRuns"] | throw <| IO.userError s!"{label}: {what} reported no frontendRuns"
     return (canonical, runs)
   let (reparsed, reparsedRuns) ← admit #[] "the reparsed run"
   let (elaborated, elaboratedRuns) ←
     admit #[("LEAN_FMT_DISABLE_CANDIDATE_REPARSE", some "1")] "the elaborated run"
   ensureEq s!"{label}: reparsed frontendRuns" 1 reparsedRuns
   ensureEq s!"{label}: elaborated frontendRuns" 2 elaboratedRuns
-  let some elaboratedText := jsonAt? elaborated [.field "text"]
-    | throw <| IO.userError s!"{label}: the elaborated run has no text"
-  let some elaboratedMap := jsonAt? elaborated [.field "sourceMap"]
-    | throw <| IO.userError s!"{label}: the elaborated run has no sourceMap"
+  let some elaboratedText :=
+    jsonAt? elaborated
+      [.field "text"] | throw <| IO.userError s!"{label}: the elaborated run has no text"
+  let some elaboratedMap :=
+    jsonAt? elaborated
+      [.field "sourceMap"] | throw <| IO.userError s!"{label}: the elaborated run has no sourceMap"
   ensureJsonAt reparsed [.field "text"] elaboratedText label
   ensureJsonAt reparsed [.field "sourceMap"] elaboratedMap label
 
@@ -168,73 +179,73 @@ private def testThrowing (ctx : Ctx) : IO Unit := do
   let envelope ← analyzeExact ctx.root ctx.application setup source.toString "Throwing.lean" "4"
   ensure ((jsonAt? envelope [.field "canonical"]).isNone) s!"{label}: canonical escaped"
   ensureJsonAt envelope [.field "formatFailure", .field "detail"]
-    (Lean.toJson "adapter fixture formatter failure") label
+      (Lean.toJson "adapter fixture formatter failure") label
 
 /-- Absorbed from the unit exe's `validator-map-negative`: one complete map is admitted, and the
 six defect maps (missing tail, overlapping, out-of-order, inverted source, inverted output, short
 output) are each rejected by the sourceMap gate. -/
 private def testMapNegative : IO Unit := do
-  let base : FormatDraft := {
-    text := "abc"
-    headerContract := #[]
-    commentContract := #[]
-    metrics := default
-    sourceDigest := ""
-    sourceBytes := 3
-    headerStop := 0
-    terminalStop := 3
-    sourceMap := #[{ source := ⟨0, 3⟩, output := ⟨0, 3⟩ }] }
+  let base : FormatDraft :=
+    { text := "abc"
+      headerContract := #[]
+      commentContract := #[]
+      metrics := default
+      sourceDigest := ""
+      sourceBytes := 3
+      headerStop := 0
+      terminalStop := 3
+      sourceMap := #[{ source := ⟨0, 3⟩, output := ⟨0, 3⟩ }] }
   ensure (Validator.validateMap base).isOk "a complete source map was rejected"
-  let defects : Array (String × FormatDraft) := #[
-    ("missing source tail", { base with
-      sourceMap := #[{ source := ⟨0, 2⟩, output := ⟨0, 3⟩ }] }),
-    ("overlapping source units", { base with sourceMap := #[
-      { source := ⟨0, 2⟩, output := ⟨0, 2⟩ },
-      { source := ⟨1, 3⟩, output := ⟨2, 3⟩ }] }),
-    ("out-of-order source units", { base with sourceMap := #[
-      { source := ⟨1, 2⟩, output := ⟨0, 1⟩ },
-      { source := ⟨0, 1⟩, output := ⟨1, 2⟩ },
-      { source := ⟨2, 3⟩, output := ⟨2, 3⟩ }] }),
-    ("inverted source unit", { base with
-      sourceMap := #[{ source := ⟨2, 1⟩, output := ⟨0, 3⟩ }] }),
-    ("inverted output unit", { base with
-      sourceMap := #[{ source := ⟨0, 3⟩, output := ⟨2, 1⟩ }] }),
-    ("short output tail", { base with
-      sourceMap := #[{ source := ⟨0, 3⟩, output := ⟨0, 2⟩ }] })]
+  let defects : Array (String × FormatDraft) :=
+    #[("missing source tail", { base with sourceMap := #[{ source := ⟨0, 2⟩, output := ⟨0, 3⟩ }] }),
+      ("overlapping source units",
+        { base with
+          sourceMap :=
+            #[{ source := ⟨0, 2⟩, output := ⟨0, 2⟩ }, { source := ⟨1, 3⟩, output := ⟨2, 3⟩ }] }),
+      ("out-of-order source units",
+        { base with
+          sourceMap :=
+            #[{ source := ⟨1, 2⟩, output := ⟨0, 1⟩ }, { source := ⟨0, 1⟩, output := ⟨1, 2⟩ },
+              { source := ⟨2, 3⟩, output := ⟨2, 3⟩ }] }),
+      ("inverted source unit",
+        { base with sourceMap := #[{ source := ⟨2, 1⟩, output := ⟨0, 3⟩ }] }),
+      ("inverted output unit",
+        { base with sourceMap := #[{ source := ⟨0, 3⟩, output := ⟨2, 1⟩ }] }),
+      ("short output tail", { base with sourceMap := #[{ source := ⟨0, 3⟩, output := ⟨0, 2⟩ }] })]
   ensureEq "validator-map-negative case count" 6 defects.size
   for (label, defect) in defects do
     match Validator.validateMap defect with
     | .error failure =>
       ensure (failure.gate == .sourceMap) s!"{label}: wrong source-map rejection gate"
-    | .ok _ => throw <| IO.userError s!"an invalid source map was admitted: {label}"
+    | .ok _ =>
+      throw <| IO.userError s!"an invalid source map was admitted: {label}"
 
 end ValidatorSuite
 
 public def main (args : List String) : IO UInt32 := do
   let root ← repoRoot
   -- The admission and throwing fixtures import the adapter syntax library.
-  discard <| expectExit 0 "lake build FormatterAdapterFixtures" "lake"
-    #["build", "FormatterAdapterFixtures"] (cwd? := some root)
+  discard <|
+      expectExit 0 "lake build FormatterAdapterFixtures" "lake"
+        #["build", "FormatterAdapterFixtures"] (cwd? := some root)
   withScratchDir "validator" fun work => do
-    let ctx : ValidatorSuite.Ctx :=
-      { root, application := (root / ".lake" / "build" / "bin" / "lean-fmt").toString, work }
-    let mutations : Array (String × String × String) := #[
-      ("Contract.lean", "drop-block-comment", "comments"),
-      ("Contract.lean", "move-trailing-comment", "comments"),
-      ("Contract.lean", "duplicate-doc-comment", "structure"),
-      ("TermParentage.lean", "term-reassociate", "structure"),
-      ("TacticParentage.lean", "tactic-reassociate", "structure"),
-      ("Contract.lean", "change-imports", "header"),
-      ("Contract.lean", "move-terminal", "terminal"),
-      ("Contract.lean", "second-pass-drift", "idempotence")
-    ]
-    let cases : Array Case :=
-      #[{ name := "admission", run := ValidatorSuite.testAdmission ctx },
-        { name := "reparse-agrees", run := ValidatorSuite.testReparseAgrees ctx }]
-        ++ (mutations.map fun (fixture, mode, gate) =>
-          ({ name := mode, run := ValidatorSuite.testGate ctx fixture mode gate } : Case))
-        ++ #[
-          { name := "malformed-diagnostics", run := ValidatorSuite.testMalformed ctx },
-          { name := "throwing-refusal", run := ValidatorSuite.testThrowing ctx },
-          { name := "map-negative", run := ValidatorSuite.testMapNegative }]
-    runCases "validator" cases args
+      let ctx : ValidatorSuite.Ctx :=
+        { root, application := (root / ".lake" / "build" / "bin" / "lean-fmt").toString, work }
+      let mutations : Array (String × String × String) :=
+        #[("Contract.lean", "drop-block-comment", "comments"),
+          ("Contract.lean", "move-trailing-comment", "comments"),
+          ("Contract.lean", "duplicate-doc-comment", "structure"),
+          ("TermParentage.lean", "term-reassociate", "structure"),
+          ("TacticParentage.lean", "tactic-reassociate", "structure"),
+          ("Contract.lean", "change-imports", "header"),
+          ("Contract.lean", "move-terminal", "terminal"),
+          ("Contract.lean", "second-pass-drift", "idempotence")]
+      let cases : Array Case :=
+        #[{ name := "admission", run := ValidatorSuite.testAdmission ctx },
+              { name := "reparse-agrees", run := ValidatorSuite.testReparseAgrees ctx }] ++
+            (mutations.map fun (fixture, mode, gate) =>
+              ({ name := mode, run := ValidatorSuite.testGate ctx fixture mode gate } : Case)) ++
+          #[{ name := "malformed-diagnostics", run := ValidatorSuite.testMalformed ctx },
+            { name := "throwing-refusal", run := ValidatorSuite.testThrowing ctx },
+            { name := "map-negative", run := ValidatorSuite.testMapNegative }]
+      runCases "validator" cases args

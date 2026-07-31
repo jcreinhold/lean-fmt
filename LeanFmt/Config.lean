@@ -61,8 +61,7 @@ every field here is folded into
 never be served under another. `[lint]` settings are the complement — they project over an
 unchanged canonical result and must stay out of identity, as `CLAUDE.md` requires of rule
 selection. -/
-structure FormatConfig where
-  private mk ::
+structure FormatConfig where private mk ::
   /-- The render margin (`line-width`), default 100.
 
   Promoting this from the compile-time `Application.canonicalWidth` required a new cache-identity
@@ -90,10 +89,10 @@ identity. Kept beside the fields so a new `[format]` key cannot be added without
 about identity: forgetting to extend it is the bug to prevent. The phrase encoding is
 length-prefixed so a phrase containing the separator cannot alias a different list. -/
 def FormatConfig.identityString (format : FormatConfig) : String :=
-  let phrases := format.pinnedComments.foldl (init := "") fun acc phrase =>
-    acc ++ s!"\n{phrase.length}:{phrase}"
-  let groups := format.importGroups.foldl (init := "") fun acc grp =>
-    acc ++ s!"\n{grp.length}:{grp}"
+  let phrases :=
+    format.pinnedComments.foldl (init := "") fun acc phrase => acc ++ s!"\n{phrase.length}:{phrase}"
+  let groups :=
+    format.importGroups.foldl (init := "") fun acc grp => acc ++ s!"\n{grp.length}:{grp}"
   s!"line-width={format.lineWidth}{phrases}\ndeclaration-body={format.declarationBody}\n\
     import-layout={format.importLayout}{groups}"
 
@@ -111,11 +110,11 @@ declarations are extension state, outside the hash. Both price a stale hit at no
 why the mode is opt-in and the kill switch stays. A member whose currency neither path can
 establish is an ordinary miss, never a hit. -/
 inductive ClosureMode where
-  | artifacts | «interface»
+  | artifacts
+  | «interface»
   deriving BEq, Inhabited, Repr
 
-structure FormatterConfig where
-  private mk ::
+structure FormatterConfig where private mk ::
   includePatterns : Array PathPattern
   excludePatterns : Array PathPattern
   /-- `force-exclude`: apply the ignore sources and `exclude` to **explicitly named**
@@ -166,8 +165,7 @@ structure FormatterConfig where
   reachable. -/
   preview : Bool
 
-structure RulePlan where
-  private mk ::
+structure RulePlan where private mk ::
   selected : Array String
   /-- Codes whose fixes `fix` may apply — the fix-selection axis resolved over the
   selected set (`fixable`/`unfixable`/`extend-fixable`). A selected code
@@ -211,7 +209,8 @@ private def compilePattern (anchor : String) (source : String) : Except String P
     throw s!"invalid path pattern '{source}': expected a nonempty relative pattern"
   let segments := normalized.splitOn "/"
   unless segments.all validPatternSegment do
-    throw s!"invalid path pattern '{source}': '**' must be a complete component and '.'/'..' are forbidden"
+    throw
+        s!"invalid path pattern '{source}': '**' must be a complete component and '.'/'..' are forbidden"
   return { source := normalized, segments, anchor }
 
 private partial def segmentMatches : List Char → List Char → Bool
@@ -224,8 +223,7 @@ private partial def segmentMatches : List Char → List Char → Bool
       | _ :: rest => segmentMatches ('*' :: pattern) rest
   | '?' :: pattern, _ :: text => segmentMatches pattern text
   | '?' :: _, [] => false
-  | expected :: pattern, actual :: text =>
-    expected == actual && segmentMatches pattern text
+  | expected :: pattern, actual :: text => expected == actual && segmentMatches pattern text
   | _ :: _, [] => false
 
 private partial def pathMatches : List String → List String → Bool
@@ -255,9 +253,10 @@ private def PathPattern.matches (pattern : PathPattern) (path : String) : Bool :
   | some rest => pathMatches pattern.segments (rest.splitOn "/")
 
 private def valueStrings (key : String) : Lake.Toml.Value → Except String (Array String)
-  | .array _ values => values.mapM fun
-    | .string _ value => .ok value
-    | _ => .error s!"configuration key '{key}' expects an array of strings"
+  | .array _ values =>
+    values.mapM fun
+      | .string _ value => .ok value
+      | _ => .error s!"configuration key '{key}' expects an array of strings"
   | _ => .error s!"configuration key '{key}' expects an array of strings"
 
 private def keyString : Lean.Name → String
@@ -279,19 +278,20 @@ rejected so a legacy config that still names a retired code keeps loading; it re
 rule and raises a notice at plan time (`rulePlan`). -/
 private def selectorsValid (selectors : Array String) : Except String Unit := do
   for selector in selectors do
-    unless selector == "all" || selector == "default" || isCategory selector ||
-        allRuleInfos.any (·.code == selector) || isReservedCode selector do
+    unless
+      selector == "all" || selector == "default" || isCategory selector ||
+          allRuleInfos.any (·.code == selector) ||
+        isReservedCode selector do
       throw s!"unknown rule selector: {selector}"
 
 private def parsePerFileIgnores (anchor : String) (value : Lake.Toml.Value) :
     Except String (Array PerFileIgnore) := do
-  let .table _ table := value
-    | throw "configuration key 'per-file-ignores' expects a table"
+  let .table _ table := value | throw "configuration key 'per-file-ignores' expects a table"
   table.items.mapM fun (key, value) => do
-    let pattern ← compilePattern anchor (keyString key)
-    let selectors ← valueStrings s!"per-file-ignores.{key}" value
-    selectorsValid selectors
-    return { pattern, selectors }
+      let pattern ← compilePattern anchor (keyString key)
+      let selectors ← valueStrings s!"per-file-ignores.{key}" value
+      selectorsValid selectors
+      return { pattern, selectors }
 
 /-- One configuration file's contents, before defaults and before composition with an `extend` parent.
 
@@ -341,7 +341,8 @@ parent.
 Duplicates and order survive concatenation on purpose. `resolveAxis` folds selector specificity
 with `Nat.max`, so a repeated token is idempotent and neither duplicates nor order show up in the
 resolved plan — but `origins` needs every contributing file to answer `config show`. -/
-private def PartialConfig.compose (parent child : PartialConfig) : PartialConfig where
+private def PartialConfig.compose (parent child : PartialConfig) : PartialConfig
+    where
   extend? := none
   includePatterns? := orParent child.includePatterns? parent.includePatterns?
   excludePatterns? := orParent child.excludePatterns? parent.excludePatterns?
@@ -363,9 +364,10 @@ private def PartialConfig.compose (parent child : PartialConfig) : PartialConfig
   extendUnsafeFixes := parent.extendUnsafeFixes ++ child.extendUnsafeFixes
   perFileIgnores :=
     (parent.perFileIgnores.filter fun entry =>
-      !child.perFileIgnores.any fun other =>
-        other.pattern.source == entry.pattern.source && other.pattern.anchor == entry.pattern.anchor)
-      ++ child.perFileIgnores
+        !child.perFileIgnores.any fun other =>
+            other.pattern.source == entry.pattern.source &&
+              other.pattern.anchor == entry.pattern.anchor) ++
+      child.perFileIgnores
   notices := parent.notices ++ child.notices
   origins := parent.origins ++ child.origins
 
@@ -385,51 +387,49 @@ private def PartialConfig.resolve (config : PartialConfig) : Except String Forma
   selectorsValid unfixableSelectors
   selectorsValid config.extendFixableSelectors
   return {
-    includePatterns := config.includePatterns?.getD #[]
-    excludePatterns := config.excludePatterns?.getD #[]
-    forceExclude := config.forceExclude?.getD false
-    respectGitignore := config.respectGitignore?.getD true
-    format := {
-      lineWidth := config.lineWidth?.getD 100
-      pinnedComments := config.pinnedComments?.getD #["shake: keep"]
-      declarationBody := config.declarationBody?.getD .nextLine
-      importLayout := config.importLayout?.getD .grouped
-      importGroups := config.importGroups?.getD Imports.defaultImportGroups }
-    closureMode := config.closureMode?.getD .artifacts
-    notices := config.notices
-    origins := config.origins
-    selectedSelectors := selectedSelectors
-    extendSelectSelectors := config.extendSelectSelectors
-    ignoredSelectors := ignoredSelectors
-    perFileIgnores := config.perFileIgnores
-    extendSafeFixes := config.extendSafeFixes
-    extendUnsafeFixes := config.extendUnsafeFixes
-    fixableSelectors := fixableSelectors
-    unfixableSelectors := unfixableSelectors
-    extendFixableSelectors := config.extendFixableSelectors
-    preview := config.preview?.getD false
-  }
+      includePatterns := config.includePatterns?.getD #[]
+      excludePatterns := config.excludePatterns?.getD #[]
+      forceExclude := config.forceExclude?.getD false
+      respectGitignore := config.respectGitignore?.getD true
+      format :=
+        { lineWidth := config.lineWidth?.getD 100
+          pinnedComments := config.pinnedComments?.getD #["shake: keep"]
+          declarationBody := config.declarationBody?.getD .nextLine
+          importLayout := config.importLayout?.getD .grouped
+          importGroups := config.importGroups?.getD Imports.defaultImportGroups }
+      closureMode := config.closureMode?.getD .artifacts
+      notices := config.notices
+      origins := config.origins
+      selectedSelectors := selectedSelectors
+      extendSelectSelectors := config.extendSelectSelectors
+      ignoredSelectors := ignoredSelectors
+      perFileIgnores := config.perFileIgnores
+      extendSafeFixes := config.extendSafeFixes
+      extendUnsafeFixes := config.extendUnsafeFixes
+      fixableSelectors := fixableSelectors
+      unfixableSelectors := unfixableSelectors
+      extendFixableSelectors := config.extendFixableSelectors
+      preview := config.preview?.getD false }
 
-private def defaultConfig : FormatterConfig := {
-  includePatterns := #[]
-  excludePatterns := #[]
-  forceExclude := false
-  respectGitignore := true
-  format := {}
-  closureMode := .artifacts
-  notices := #[]
-  origins := #[]
-  selectedSelectors := #["default"]
-  extendSelectSelectors := #[]
-  ignoredSelectors := #[]
-  perFileIgnores := #[]
-  extendSafeFixes := #[]
-  extendUnsafeFixes := #[]
-  fixableSelectors := #[]
-  unfixableSelectors := #[]
-  extendFixableSelectors := #[]
-  preview := false
-}
+private def defaultConfig : FormatterConfig :=
+  { includePatterns := #[]
+    excludePatterns := #[]
+    forceExclude := false
+    respectGitignore := true
+    format := { }
+    closureMode := .artifacts
+    notices := #[]
+    origins := #[]
+    selectedSelectors := #["default"]
+    extendSelectSelectors := #[]
+    ignoredSelectors := #[]
+    perFileIgnores := #[]
+    extendSafeFixes := #[]
+    extendUnsafeFixes := #[]
+    fixableSelectors := #[]
+    unfixableSelectors := #[]
+    extendFixableSelectors := #[]
+    preview := false }
 
 /-- The `[lint]` keys, which are also still accepted at the top level for migration. -/
 private def lintKeys : Array String :=
@@ -447,31 +447,41 @@ private def valueLine (fileMap : Lean.FileMap) (value : Lake.Toml.Value) : Nat :
 /-- Assign one `[lint]` key into a partial configuration. Shared by the `[lint]` section
 and by the deprecated top-level spelling, so the two cannot drift in meaning — only in provenance
 and notices. -/
-private def assignLintKey (anchor file : String) (fileMap : Lean.FileMap)
-    (config : PartialConfig) (key : String) (value : Lake.Toml.Value) :
-    Except String PartialConfig := do
+private def assignLintKey (anchor file : String) (fileMap : Lean.FileMap) (config : PartialConfig)
+    (key : String) (value : Lake.Toml.Value) : Except String PartialConfig := do
   let origins := config.origins.push (key, file, valueLine fileMap value)
   match key with
-  | "select" => return { config with selectedSelectors? := ← valueStrings key value, origins }
-  | "ignore" => return { config with ignoredSelectors? := ← valueStrings key value, origins }
-  | "fixable" => return { config with fixableSelectors? := ← valueStrings key value, origins }
-  | "unfixable" => return { config with unfixableSelectors? := ← valueStrings key value, origins }
+  | "select" =>
+    return { config with
+        selectedSelectors? := ← valueStrings key value, origins }
+  | "ignore" =>
+    return { config with
+        ignoredSelectors? := ← valueStrings key value, origins }
+  | "fixable" =>
+    return { config with
+        fixableSelectors? := ← valueStrings key value, origins }
+  | "unfixable" =>
+    return { config with
+        unfixableSelectors? := ← valueStrings key value, origins }
   | "extend-select" =>
     return { config with
-      extendSelectSelectors := config.extendSelectSelectors ++ (← valueStrings key value), origins }
+        extendSelectSelectors := config.extendSelectSelectors ++ (← valueStrings key value),
+        origins }
   | "extend-fixable" =>
     return { config with
-      extendFixableSelectors := config.extendFixableSelectors ++ (← valueStrings key value), origins }
+        extendFixableSelectors := config.extendFixableSelectors ++ (← valueStrings key value),
+        origins }
   | "extend-safe-fixes" =>
     return { config with
-      extendSafeFixes := config.extendSafeFixes ++ (← valueStrings key value), origins }
+        extendSafeFixes := config.extendSafeFixes ++ (← valueStrings key value), origins }
   | "extend-unsafe-fixes" =>
     return { config with
-      extendUnsafeFixes := config.extendUnsafeFixes ++ (← valueStrings key value), origins }
+        extendUnsafeFixes := config.extendUnsafeFixes ++ (← valueStrings key value), origins }
   | "per-file-ignores" =>
     return { config with
-      perFileIgnores := config.perFileIgnores ++ (← parsePerFileIgnores anchor value), origins }
-  | _ => throw s!"unknown configuration key: {key}"
+        perFileIgnores := config.perFileIgnores ++ (← parsePerFileIgnores anchor value), origins }
+  | _ =>
+    throw s!"unknown configuration key: {key}"
 
 /-- Parse one configuration file into its pre-composition form.
 
@@ -488,24 +498,22 @@ private def parseFile (anchor file : String) (fileMap : Lean.FileMap) (table : L
   for (key, value) in table.items do
     match keyString key with
     | "format" =>
-      let .table _ entries := value
-        | throw "configuration section '[format]' expects a table"
+      let .table _ entries := value | throw "configuration section '[format]' expects a table"
       formatSection := entries.items.map fun (key, value) => (keyString key, value)
     | "lint" =>
-      let .table _ entries := value
-        | throw "configuration section '[lint]' expects a table"
+      let .table _ entries := value | throw "configuration section '[lint]' expects a table"
       lintSection := entries.items.map fun (key, value) => (keyString key, value)
     | "cache" =>
-      let .table _ entries := value
-        | throw "configuration section '[cache]' expects a table"
+      let .table _ entries := value | throw "configuration section '[cache]' expects a table"
       cacheSection := entries.items.map fun (key, value) => (keyString key, value)
-    | other => topLevel := topLevel.push (other, value)
+    | other =>
+      topLevel := topLevel.push (other, value)
   -- A key set in both places is a contradiction the user can resolve in one edit, so it
   -- does not resolve itself (as with `extend-safe-fixes` ∩ `extend-unsafe-fixes` below).
   for (key, _) in topLevel do
     if lintSection.any (·.1 == key) then
       throw s!"configuration key '{key}' is set both at the top level and in [lint]"
-  let mut config : PartialConfig := {}
+  let mut config : PartialConfig := { }
   -- Deprecated flat spelling first, so an `extend-*` key set in both a flat parent and a
   -- sectioned child still concatenates in document order.
   for (key, value) in topLevel do
@@ -518,87 +526,121 @@ private def parseFile (anchor file : String) (fileMap : Lean.FileMap) (table : L
       let origins := config.origins.push (key, file, valueLine fileMap value)
       match key with
       | "extend" =>
-        let .string _ target := value
-          | throw "configuration key 'extend' expects a string"
-        config := { config with extend? := some target, origins }
+        let .string _ target := value | throw "configuration key 'extend' expects a string"
+        config :=
+          { config with
+            extend? := some target, origins }
       | "include" =>
         let sources ← valueStrings "include" value
-        config := { config with includePatterns? := ← sources.mapM (compilePattern anchor), origins }
+        config :=
+          { config with
+            includePatterns? := ← sources.mapM (compilePattern anchor), origins }
       | "exclude" =>
         let sources ← valueStrings "exclude" value
-        config := { config with excludePatterns? := ← sources.mapM (compilePattern anchor), origins }
+        config :=
+          { config with
+            excludePatterns? := ← sources.mapM (compilePattern anchor), origins }
       | "force-exclude" =>
-        let .boolean _ flag := value
-          | throw "configuration key 'force-exclude' expects a boolean"
-        config := { config with forceExclude? := some flag, origins }
+        let .boolean _ flag := value | throw "configuration key 'force-exclude' expects a boolean"
+        config :=
+          { config with
+            forceExclude? := some flag, origins }
       | "respect-gitignore" =>
-        let .boolean _ flag := value
-          | throw "configuration key 'respect-gitignore' expects a boolean"
-        config := { config with respectGitignore? := some flag, origins }
+        let .boolean _ flag :=
+          value | throw "configuration key 'respect-gitignore' expects a boolean"
+        config :=
+          { config with
+            respectGitignore? := some flag, origins }
       | "preview" =>
-        let .boolean _ flag := value
-          | throw "configuration key 'preview' expects a boolean"
-        config := { config with preview? := some flag, origins }
+        let .boolean _ flag := value | throw "configuration key 'preview' expects a boolean"
+        config :=
+          { config with
+            preview? := some flag, origins }
       -- These `[format]` keys are new, so they have no legacy spelling to protect: a top-level
       -- use is an error rather than a notice, so the keys never acquire an ambiguous section.
-      | "line-width" | "pinned-comments" | "declaration-body" | "import-layout" |
-        "import-groups" =>
+      | "line-width" | "pinned-comments" | "declaration-body" | "import-layout" | "import-groups" =>
         throw s!"configuration key '{key}' belongs in the [format] section"
       -- Same treatment as the `[format]` keys above: one spelling, one section, no ambiguity.
       | "closure" =>
         throw s!"configuration key '{key}' belongs in the [cache] section"
-      | unknown => throw s!"unknown configuration key: {unknown}"
+      | unknown =>
+        throw s!"unknown configuration key: {unknown}"
   for (key, value) in formatSection do
     let origins := config.origins.push (s!"format.{key}", file, valueLine fileMap value)
     match key with
     | "line-width" =>
-      let .integer _ width := value
-        | throw "configuration key 'line-width' expects an integer"
+      let .integer _ width := value | throw "configuration key 'line-width' expects an integer"
       unless 1 ≤ width && width ≤ 1000 do
         throw s!"configuration key 'line-width' expects an integer between 1 and 1000, got {width}"
-      config := { config with lineWidth? := some width.toNat, origins }
+      config :=
+        { config with
+          lineWidth? := some width.toNat, origins }
     | "pinned-comments" =>
       let phrases ← valueStrings "pinned-comments" value
       if phrases.any String.isEmpty then
         throw "configuration key 'pinned-comments' expects non-empty strings"
-      config := { config with pinnedComments? := some phrases, origins }
+      config :=
+        { config with
+          pinnedComments? := some phrases, origins }
     | "declaration-body" =>
-      let .string _ body := value
-        | throw "configuration key 'declaration-body' expects a string"
-      let declarationBody ← match body with
-        | "next-line" => pure DeclarationBody.nextLine
-        | "same-line" => pure DeclarationBody.sameLine
-        | other => throw s!"configuration key 'declaration-body' expects \"next-line\" or \
+      let .string _ body := value | throw "configuration key 'declaration-body' expects a string"
+      let declarationBody ←
+        match body with
+        | "next-line" =>
+          pure DeclarationBody.nextLine
+        | "same-line" =>
+          pure DeclarationBody.sameLine
+        | other =>
+          throw
+              s!"configuration key 'declaration-body' expects \"next-line\" or \
           \"same-line\", got \"{other}\""
-      config := { config with declarationBody? := some declarationBody, origins }
+      config :=
+        { config with
+          declarationBody? := some declarationBody, origins }
     | "import-layout" =>
-      let .string _ layout := value
-        | throw "configuration key 'import-layout' expects a string"
-      let importLayout ← match layout with
-        | "grouped" => pure Imports.ImportLayout.grouped
-        | "canonical" => pure Imports.ImportLayout.canonical
-        | other => throw s!"configuration key 'import-layout' expects \"grouped\" or \
+      let .string _ layout := value | throw "configuration key 'import-layout' expects a string"
+      let importLayout ←
+        match layout with
+        | "grouped" =>
+          pure Imports.ImportLayout.grouped
+        | "canonical" =>
+          pure Imports.ImportLayout.canonical
+        | other =>
+          throw
+              s!"configuration key 'import-layout' expects \"grouped\" or \
           \"canonical\", got \"{other}\""
-      config := { config with importLayout? := some importLayout, origins }
+      config :=
+        { config with
+          importLayout? := some importLayout, origins }
     | "import-groups" =>
       let prefixes ← valueStrings "import-groups" value
       if prefixes.any (fun grp => grp.isEmpty || grp.any Char.isWhitespace) then
         throw "configuration key 'import-groups' expects non-empty whitespace-free module prefixes"
-      config := { config with importGroups? := some prefixes, origins }
-    | unknown => throw s!"unknown configuration key: format.{unknown}"
+      config :=
+        { config with
+          importGroups? := some prefixes, origins }
+    | unknown =>
+      throw s!"unknown configuration key: format.{unknown}"
   for (key, value) in cacheSection do
     let origins := config.origins.push (s!"cache.{key}", file, valueLine fileMap value)
     match key with
     | "closure" =>
-      let .string _ mode := value
-        | throw "configuration key 'closure' expects a string"
-      let closureMode ← match mode with
-        | "artifacts" => pure ClosureMode.artifacts
-        | "interface" => pure ClosureMode.«interface»
-        | other => throw s!"configuration key 'closure' expects \"artifacts\" or \"interface\", \
+      let .string _ mode := value | throw "configuration key 'closure' expects a string"
+      let closureMode ←
+        match mode with
+        | "artifacts" =>
+          pure ClosureMode.artifacts
+        | "interface" =>
+          pure ClosureMode.«interface»
+        | other =>
+          throw
+              s!"configuration key 'closure' expects \"artifacts\" or \"interface\", \
           got \"{other}\""
-      config := { config with closureMode? := some closureMode, origins }
-    | unknown => throw s!"unknown configuration key: cache.{unknown}"
+      config :=
+        { config with
+          closureMode? := some closureMode, origins }
+    | unknown =>
+      throw s!"unknown configuration key: cache.{unknown}"
   for (key, value) in lintSection do
     unless lintKeys.contains key do
       throw s!"unknown configuration key: lint.{key}"
@@ -609,10 +651,13 @@ private def loadDocument (path : System.FilePath) : IO (Lake.Toml.Table × Lean.
   let input ← IO.FS.readFile path
   let context := Lean.Parser.mkInputContext input path.toString
   match ← Lake.Toml.loadToml context |>.toBaseIO with
-  | .ok table => return (table, context.fileMap)
+  | .ok table =>
+    return (table, context.fileMap)
   | .error messages =>
     let rendered ← messages.toArray.mapM (·.toString)
-    throw <| IO.userError s!"invalid formatter configuration {path}: \
+    throw <|
+        IO.userError
+          s!"invalid formatter configuration {path}: \
       {String.intercalate "; " rendered.toList}"
 
 /-- The directory a config file's patterns anchor at, relative to `root`, or `none` when the
@@ -620,7 +665,8 @@ file lies outside the project entirely. -/
 def anchorFor (root directory : System.FilePath) : IO (Option String) := do
   let root ← IO.FS.realPath root
   let directory ← IO.FS.realPath directory
-  if directory == root then return some ""
+  if directory == root then
+    return some ""
   let rootPrefix := root.toString ++ System.FilePath.pathSeparator.toString
   let text := directory.toString
   if text.startsWith rootPrefix then
@@ -629,7 +675,8 @@ def anchorFor (root directory : System.FilePath) : IO (Option String) := do
 
 /-- The maximum `extend` chain length. Cycle detection alone terminates, so this is a
 resource bound, not a correctness one. -/
-private def maxExtendDepth : Nat := 32
+private def maxExtendDepth : Nat :=
+  32
 
 /-- Load one configuration file and every ancestor it `extend`s, composing parent-first.
 
@@ -646,21 +693,26 @@ private partial def loadChain (root : System.FilePath) (path : System.FilePath) 
   if seen.size ≥ maxExtendDepth then
     throw <| IO.userError s!"configuration extend chain exceeds {maxExtendDepth} files: {resolved}"
   let (table, fileMap) ← loadDocument resolved
-  let child ← match parseFile anchor resolved.toString fileMap table with
-    | .ok config => pure config
+  let child ←
+    match parseFile anchor resolved.toString fileMap table with
+    | .ok config =>
+      pure config
     | .error message =>
       throw <| IO.userError s!"invalid formatter configuration {resolved}: {message}"
   match child.extend? with
-  | none => return child
+  | none =>
+    return child
   | some target =>
     let directory := resolved.parent.getD root
-    let targetPath := if (System.FilePath.mk target).isAbsolute then System.FilePath.mk target
+    let targetPath :=
+      if (System.FilePath.mk target).isAbsolute then System.FilePath.mk target
       else directory / target
     unless ← targetPath.pathExists do
       -- Name the path as written, beside the file that wrote it: the caller's own
       -- argument, per the `CLAUDE.md` path-error rule.
-      throw <| IO.userError
-        s!"configuration extend target does not exist: {target} (extended by {resolved})"
+      throw <|
+          IO.userError
+            s!"configuration extend target does not exist: {target} (extended by {resolved})"
     let parentAnchor := (← anchorFor root (targetPath.parent.getD root)).getD anchor
     let parent ← loadChain root targetPath parentAnchor (seen.push resolved)
     return parent.compose child
@@ -669,11 +721,14 @@ private partial def loadChain (root : System.FilePath) (path : System.FilePath) 
 def FormatterConfig.loadFrom (root : System.FilePath) (path : System.FilePath) (anchor : String) :
     IO FormatterConfig := do
   match (← loadChain root path anchor #[]).resolve with
-  | .ok config => return config
-  | .error message => throw <| IO.userError s!"invalid formatter configuration {path}: {message}"
+  | .ok config =>
+    return config
+  | .error message =>
+    throw <| IO.userError s!"invalid formatter configuration {path}: {message}"
 
 /-- The configuration file names this product recognizes, in descending priority. -/
-def recognizedConfigNames : Array String := #[".lean-fmt.toml", "lean-fmt.toml"]
+def recognizedConfigNames : Array String :=
+  #[".lean-fmt.toml", "lean-fmt.toml"]
 
 /-- The recognized configuration file in one directory, or `none`. Both names present is a
 hard error naming both paths rather than a silent priority win — the same reasoning as every other
@@ -682,10 +737,14 @@ def recognizedConfigIn? (directory : System.FilePath) : IO (Option System.FilePa
   let present : Array String ←
     recognizedConfigNames.filterM fun name => (directory / name).pathExists
   match present.toList with
-  | [] => return none
-  | [name] => return some (directory / name)
+  | [] =>
+    return none
+  | [name] =>
+    return some (directory / name)
   | names =>
-    throw <| IO.userError s!"directory {directory} has more than one formatter configuration: \
+    throw <|
+        IO.userError
+          s!"directory {directory} has more than one formatter configuration: \
       {String.intercalate ", " names}"
 
 /-- Load all formatter policy in one step. An explicit path must exist; an absent conventional
@@ -695,8 +754,8 @@ An explicit `--config` anchors its path patterns at the **project root**, not at
 directory: it is a run-wide override rather than a config that governs the subtree it sits in, and
 anchoring it at its own directory would make `include`/`exclude` in a config outside the tree match
 nothing. A *discovered* config anchors at its own directory. -/
-def FormatterConfig.load (root : System.FilePath)
-    (explicit? : Option System.FilePath := none) : IO FormatterConfig := do
+def FormatterConfig.load (root : System.FilePath) (explicit? : Option System.FilePath := none) :
+    IO FormatterConfig := do
   match explicit? with
   | some path =>
     unless ← path.pathExists do
@@ -704,8 +763,10 @@ def FormatterConfig.load (root : System.FilePath)
     FormatterConfig.loadFrom root path ""
   | none =>
     match ← recognizedConfigIn? root with
-    | none => return defaultConfig
-    | some path => FormatterConfig.loadFrom root path ""
+    | none =>
+      return defaultConfig
+    | some path =>
+      FormatterConfig.loadFrom root path ""
 
 /-- The `file:line` origins recorded for one key, in composition order. Empty when the
 setting was never written and the default applies. -/
@@ -717,8 +778,9 @@ private def renderStrings (values : Array String) : String :=
   "[" ++ String.intercalate ", " (values.toList.map fun value => "\"" ++ value ++ "\"") ++ "]"
 
 private def renderPatterns (patterns : Array PathPattern) : String :=
-  renderStrings (patterns.map fun pattern =>
-    if pattern.anchor.isEmpty then pattern.source else pattern.anchor ++ "/" ++ pattern.source)
+  renderStrings
+    (patterns.map fun pattern =>
+      if pattern.anchor.isEmpty then pattern.source else pattern.anchor ++ "/" ++ pattern.source)
 
 /-- Every effective setting as `(key, rendered value, origin)`, in schema order — the payload
 `config show` presents.
@@ -739,8 +801,7 @@ def FormatterConfig.describe (config : FormatterConfig) : Array (String × Strin
   let all := fun (key : String) =>
     let origins := config.originsOf key
     if origins.isEmpty then "default" else String.intercalate ", " origins.toList
-  #[
-    ("include", renderPatterns config.includePatterns, winner "include"),
+  #[("include", renderPatterns config.includePatterns, winner "include"),
     ("exclude", renderPatterns config.excludePatterns, winner "exclude"),
     ("force-exclude", toString config.forceExclude, winner "force-exclude"),
     ("respect-gitignore", toString config.respectGitignore, winner "respect-gitignore"),
@@ -758,9 +819,8 @@ def FormatterConfig.describe (config : FormatterConfig) : Array (String × Strin
     ("lint.extend-fixable", renderStrings config.extendFixableSelectors, all "extend-fixable"),
     ("lint.extend-safe-fixes", renderStrings config.extendSafeFixes, all "extend-safe-fixes"),
     ("lint.extend-unsafe-fixes", renderStrings config.extendUnsafeFixes, all "extend-unsafe-fixes"),
-    ("lint.per-file-ignores",
-      renderStrings (config.perFileIgnores.map (·.pattern.source)), all "per-file-ignores")
-  ]
+    ("lint.per-file-ignores", renderStrings (config.perFileIgnores.map (·.pattern.source)),
+      all "per-file-ignores")]
 
 /-- The configuration files that contributed to this value, in composition order: the
 `extend` chain plus the file that started it. Derived from `origins`, so a file that set nothing
@@ -783,14 +843,12 @@ itself. These contexts never need the preview gate or specificity — they only 
 — so they keep the flat expansion. Positive selection (`select`/`ignore`/`fixable`) instead goes
 through `resolveAxis`. -/
 private def expandSelector (selector : String) : Array String :=
-  if selector == "all" then
-    allRuleInfos.map (·.code)
-  else if selector == "default" then
-    allRuleInfos.filter (·.defaultEnabled) |>.map (·.code)
-  else if isCategory selector then
-    allRuleInfos.filter (·.category == selector) |>.map (·.code)
+  if selector == "all" then allRuleInfos.map (·.code)
   else
-    #[selector]
+    if selector == "default" then allRuleInfos.filter (·.defaultEnabled) |>.map (·.code)
+    else
+      if isCategory selector then allRuleInfos.filter (·.category == selector) |>.map (·.code)
+      else #[selector]
 
 private def expandSelectors (selectors : Array String) : Array String :=
   selectors.foldl (init := #[]) fun codes selector =>
@@ -802,9 +860,7 @@ more specific than a category (2), which is more specific than `all`/`default` (
 or unrecognized token has specificity 0 and mentions no live rule. -/
 private def selectorSpecificity (selector : String) : Nat :=
   if selector == "all" || selector == "default" then 1
-  else if isCategory selector then 2
-  else if allRuleInfos.any (·.code == selector) then 3
-  else 0
+  else if isCategory selector then 2 else if allRuleInfos.any (·.code == selector) then 3 else 0
 
 /-- Whether `selector` names live rule `info`, honoring the **preview gate**: `all`
 and a category expand to stable rules only unless `preview` is on (then their preview rules too);
@@ -813,15 +869,15 @@ only by its exact code; an exact-code selector names only its own code. -/
 private def selectorMentions (preview : Bool) (selector : String) (info : RuleInfo) : Bool :=
   let gated := info.lifecycle == .stable || (info.lifecycle == .preview && preview)
   if selector == "all" then gated
-  else if selector == "default" then info.defaultEnabled
-  else if isCategory selector then info.category == selector && gated
-  else selector == info.code
+  else
+    if selector == "default" then info.defaultEnabled
+    else if isCategory selector then info.category == selector && gated else selector == info.code
 
 /-- Resolve one selection axis over `universe` by specificity: a rule is enabled
 iff some `enable` selector names it and **strictly outranks** every `disable` selector that names
 it — a tie goes to the disabler ("ignore wins"). `preview` gates what `all`/category mention. -/
-private def resolveAxis (pool : Array RuleInfo) (preview : Bool)
-    (enable disable : Array String) : Array String :=
+private def resolveAxis (pool : Array RuleInfo) (preview : Bool) (enable disable : Array String) :
+    Array String :=
   let best := fun (tokens : Array String) (info : RuleInfo) =>
     tokens.foldl (init := 0) fun acc t =>
       if selectorMentions preview t info then Nat.max acc (selectorSpecificity t) else acc
@@ -863,11 +919,15 @@ def FormatterConfig.rulePlan (config : FormatterConfig) (cli : CliSelection) :
   let mut notices := #[]
   for t in enableTokens ++ ignoreTokens do
     if isReservedCode t then
-      notices := notices.push
-        s!"selector {t} names no live rule ({(reservedDisposition? t).getD "reserved code"})"
+      notices :=
+        notices.push
+          s!"selector {t} names no live rule ({(reservedDisposition? t).getD "reserved code"})"
     else if let some info := allRuleInfos.find? (·.code == t) then
       if info.lifecycle == .deprecated then
-        let migration := match info.replacement? with | some r => s!"; use {r} instead" | none => ""
+        let migration :=
+          match info.replacement? with
+          | some r => s!"; use {r} instead"
+          | none => ""
         notices := notices.push s!"rule {t} is deprecated{migration}"
   let selected := resolveAxis allRuleInfos preview enableTokens ignoreTokens
   -- Fix-selection axis, resolved over the *selected* set (already preview-gated, so
@@ -875,9 +935,11 @@ def FormatterConfig.rulePlan (config : FormatterConfig) (cli : CliSelection) :
   -- `extend-fixable` adds, `unfixable` removes. A selected-but-unfixable code stays reported; only
   -- its fix is withheld (`prepareFile`).
   let fixableOwns := !cli.fixable.isEmpty
-  let fixEnable := (if fixableOwns then cli.fixable
-      else if config.fixableSelectors.isEmpty then #["all"] else config.fixableSelectors)
-    ++ config.extendFixableSelectors ++ cli.extendFixable
+  let fixEnable :=
+    (if fixableOwns then cli.fixable
+        else if config.fixableSelectors.isEmpty then #["all"] else config.fixableSelectors) ++
+        config.extendFixableSelectors ++
+      cli.extendFixable
   let fixDisable := (if fixableOwns then #[] else config.unfixableSelectors) ++ cli.unfixable
   let selectedInfos := allRuleInfos.filter (selected.contains ·.code)
   let fixableSelected := resolveAxis selectedInfos true fixEnable fixDisable
@@ -889,13 +951,12 @@ def FormatterConfig.rulePlan (config : FormatterConfig) (cli : CliSelection) :
     if extendUnsafe.contains code then
       throw s!"rule {code} is in both extend-safe-fixes and extend-unsafe-fixes"
   return {
-    selected
-    fixableSelected
-    perFileIgnores := config.perFileIgnores
-    extendSafe
-    extendUnsafe
-    notices
-  }
+      selected
+      fixableSelected
+      perFileIgnores := config.perFileIgnores
+      extendSafe
+      extendUnsafe
+      notices }
 
 private def ignoredForPath (plan : RulePlan) (path code : String) : Bool :=
   plan.perFileIgnores.any fun entry =>
@@ -908,31 +969,31 @@ does not matter.
 
 A projection, never read by a rule: like selection, reclassification lives in the plan so that
 turning a fix safe cannot re-elaborate anything and a rule cannot decide its own admission. -/
-def RulePlan.effectiveApplicability (plan : RulePlan) (code : String)
-    (base : Applicability) : Applicability :=
+def RulePlan.effectiveApplicability (plan : RulePlan) (code : String) (base : Applicability) :
+    Applicability :=
   match base with
   | .displayOnly => .displayOnly
   | _ =>
     if plan.extendSafe.contains code then .safe
-    else if plan.extendUnsafe.contains code then .unsafe
-    else base
+    else if plan.extendUnsafe.contains code then .unsafe else base
 
 /-- Project canonical findings onto this plan: keep the selected, non-per-file-ignored
 ones, and rewrite each surviving fix's applicability to its effective value. The reported findings
 therefore carry the applicability a user will act on; admission (which of them `fix` applies) is a
 separate, downstream decision (`Applicability.admitted`). -/
-def RulePlan.findings (plan : RulePlan) (path : String)
-    (findings : Array Finding) : Array Finding :=
+def RulePlan.findings (plan : RulePlan) (path : String) (findings : Array Finding) :
+    Array Finding :=
   (findings.filter fun finding =>
-    plan.selected.contains finding.code && !ignoredForPath plan path finding.code).map
+        plan.selected.contains finding.code && !ignoredForPath plan path finding.code).map
     fun finding =>
-      match finding.fix? with
-      | some fix =>
+    match finding.fix? with
+    | some fix =>
         let applicability := plan.effectiveApplicability finding.code fix.applicability
         { finding with fix? := some { fix with applicability } }
-      | none => finding
+    | none => finding
 
-def RulePlan.activeCount (plan : RulePlan) : Nat := plan.selected.size
+def RulePlan.activeCount (plan : RulePlan) : Nat :=
+  plan.selected.size
 
 /-- The cheapest facts that can answer every selected rule of `rules`.
 
@@ -952,10 +1013,12 @@ def RulePlan.requiredTierOf (plan : RulePlan) (rules : Array Rule) : Tier :=
     if plan.selected.contains rule.code then tier.max rule.tier else tier
 
 /-- The cheapest facts that can answer every selected rule the product ships. -/
-def RulePlan.requiredTier (plan : RulePlan) : Tier := plan.requiredTierOf ruleRegistry
+def RulePlan.requiredTier (plan : RulePlan) : Tier :=
+  plan.requiredTierOf ruleRegistry
 
 /-- The tier selected rules require. Formatting is an exact-frontend demand, not a semantic fact. -/
-def RulePlan.demandedTier (plan : RulePlan) : Tier := plan.requiredTier
+def RulePlan.demandedTier (plan : RulePlan) : Tier :=
+  plan.requiredTier
 
 /-- Whether the plan selects a rule whose fix reads the owned deprecation-occurrence
 fact. Governs the `occurrences` capability and the info-tree fold's cost
@@ -976,8 +1039,7 @@ The `occurrences` demand keys off `applies` (true only for `fix`). A check does 
 `analysisServes` serves a `.semantic` entry only when `demandedCaps.subset entry.caps`, so a fix's
 `occurrences` demand misses a report-only check entry that never captured it. -/
 def RulePlan.demandedCaps (plan : RulePlan) (applies : Bool) : SemanticCaps :=
-  if plan.demandedTier == .semantic then
-    { occurrences := applies && plan.selectsOccurrenceRule }
-  else {}
+  if plan.demandedTier == .semantic then { occurrences := applies && plan.selectsOccurrenceRule }
+  else { }
 
 end LeanFmt.Internal

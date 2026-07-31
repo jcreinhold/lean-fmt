@@ -43,7 +43,8 @@ namespace LeanFmt.Internal.Profile
 /-- Serializes emission. With `--workers N` several workers bracket phases concurrently, and two
 unsynchronized `IO.eprintln` calls may interleave bytes inside a line, and the gates parse lines. The
 lock is taken only when the channel is on; production runs pay nothing. -/
-initialize emitLock : Std.BaseMutex ← Std.BaseMutex.new
+initialize emitLock : Std.BaseMutex ←
+  Std.BaseMutex.new
 
 /-- Write one record line, whole. `LEAN_FMT_PROFILE_OUT` redirects the line to a file (appended)
 instead of stderr: the batch's exact-frontend children run with null stderr — their envelopes and
@@ -57,8 +58,10 @@ private def emit (line : String) : IO Unit := do
     | some path =>
       let handle ← IO.FS.Handle.mk path IO.FS.Mode.append
       handle.putStr (line ++ "\n")
-    | none => IO.eprintln line
-  finally emitLock.unlock
+    | none =>
+      IO.eprintln line
+  finally
+    emitLock.unlock
 
 /-- Whether the channel is on.
 

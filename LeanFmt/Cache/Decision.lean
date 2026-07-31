@@ -100,8 +100,8 @@ structure Entry (Mod Analysis SDigest GDigest Schema : Type) where
 
 section
 
-variable {Mod Analysis SDigest GDigest Schema : Type}
-  [DecidableEq SDigest] [DecidableEq GDigest] [DecidableEq Schema]
+variable {Mod Analysis SDigest GDigest Schema : Type} [DecidableEq SDigest] [DecidableEq GDigest]
+  [DecidableEq Schema]
 
 /-- Is this entry about the world as it is now?
 
@@ -113,13 +113,12 @@ Note what is **absent**: the entry's own stored `depHash`. Read alone it records
 Currency here compares the entry's recorded expectation against the **currently observed** value. -/
 def Entry.identityCurrent (e : Entry Mod Analysis SDigest GDigest Schema)
     (o : Obs Mod SDigest GDigest Schema) : Bool :=
-  decide (e.schema = o.schema) &&
-  decide (e.sourceDigest = o.sourceDigest e.mod) &&
-  decide (e.closureDigest = o.closureDigest e.mod)
+  decide (e.schema = o.schema) && decide (e.sourceDigest = o.sourceDigest e.mod) &&
+    decide (e.closureDigest = o.closureDigest e.mod)
 
 /-- The currency decision, pure and entire. -/
-def serves (e : Entry Mod Analysis SDigest GDigest Schema)
-    (o : Obs Mod SDigest GDigest Schema) (d : Demand) : Bool :=
+def serves (e : Entry Mod Analysis SDigest GDigest Schema) (o : Obs Mod SDigest GDigest Schema)
+    (d : Demand) : Bool :=
   e.identityCurrent o && e.provided.meets d
 
 /-! ## The elaboration verdict -/
@@ -145,11 +144,11 @@ function; it lives here, beside `serves`, so the two decisions cannot drift. -/
 def elaborationVerdict? (e : Entry Mod Analysis SDigest GDigest Schema)
     (o : Obs Mod SDigest GDigest Schema) : Option ElabVerdict :=
   if e.identityCurrent o then
-    some (match e.provided with
+    some
+      (match e.provided with
       | .broken => .rejected
       | .success .. => .elaborates)
-  else
-    none
+  else none
 
 end
 

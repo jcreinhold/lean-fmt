@@ -50,8 +50,8 @@ structure Ctx where
 
 /-- One profiled `check` against the fixture project. -/
 private def profiledCheck (ctx : Ctx) (args : Array String := #[]) : IO ProcResult :=
-  runProc ctx.fmt (#["check"] ++ args) (cwd? := some ctx.project)
-    (env := #[("LEAN_FMT_PROFILE_PHASES", some "1")])
+  runProc ctx.fmt (#["check"] ++ args) (cwd? := some ctx.project) (env :=
+    #[("LEAN_FMT_PROFILE_PHASES", some "1")])
 
 /-- Entries served from cache on one `check`. -/
 private def served (ctx : Ctx) : IO Nat := do
@@ -63,13 +63,14 @@ private def targets (ctx : Ctx) : IO Nat := do
   statFrom (← profiledCheck ctx).stderr "targets"
 
 private def rebuild (ctx : Ctx) (label : String := "fixture rebuild") : IO Unit := do
-  discard <| expectExit 0 label "lake" #["build"] (cwd? := some ctx.project)
-    (env := #[("LEAN_NUM_THREADS", some "1")])
+  discard <|
+      expectExit 0 label "lake" #["build"] (cwd? := some ctx.project) (env :=
+        #[("LEAN_NUM_THREADS", some "1")])
 
 /-- For the shapes that deliberately break the build. -/
 private def rebuildBroken (ctx : Ctx) (label : String) : IO Unit := do
-  let result ← runProc "lake" #["build"] (cwd? := some ctx.project)
-    (env := #[("LEAN_NUM_THREADS", some "1")])
+  let result ←
+    runProc "lake" #["build"] (cwd? := some ctx.project) (env := #[("LEAN_NUM_THREADS", some "1")])
   ensure (result.exitCode != 0) s!"{label}: expected the fixture build to fail"
 
 /-- Restore sources *and* build outputs. Removing a source does not remove its `.olean`: Lake
@@ -87,7 +88,8 @@ private def restoreFixture (ctx : Ctx) : IO Unit := do
 /-- The `*.json` index files under the results cache. -/
 private partial def collectJson (dir : System.FilePath) (acc : Array System.FilePath) :
     IO (Array System.FilePath) := do
-  if !(← dir.isDir) then return acc
+  if !(← dir.isDir) then
+    return acc
   let mut acc := acc
   for entry in ← dir.readDir do
     if ← entry.path.isDir then
@@ -109,9 +111,9 @@ private def probe (ctx : Ctx) (label : String) : IO Nat := do
   let cached ← profiledCheck ctx #["--json"]
   let uncached ← runProc ctx.fmt #["check", "--json", "--no-cache"] (cwd? := some ctx.project)
   ensure (cached.exitCode == uncached.exitCode)
-    s!"{label}: cached exit {cached.exitCode}, --no-cache exit {uncached.exitCode}"
+      s!"{label}: cached exit {cached.exitCode}, --no-cache exit {uncached.exitCode}"
   ensure (cached.stdout == uncached.stdout)
-    s!"{label}: STALE HIT -- cached report differs from --no-cache"
+      s!"{label}: STALE HIT -- cached report differs from --no-cache"
   statFrom cached.stderr "served"
 
 /-- Restore one fixture file from the pristine snapshot and rewarm, as the sections do between
@@ -121,8 +123,11 @@ private def restoreFile (ctx : Ctx) (name : String) : IO Unit := do
   rebuild ctx
   discard <| served ctx
 
-private def leaf (ctx : Ctx) : System.FilePath := ctx.project / "Fixture" / "Leaf.lean"
-private def wide (ctx : Ctx) : System.FilePath := ctx.project / "Fixture" / "Wide.lean"
+private def leaf (ctx : Ctx) : System.FilePath :=
+  ctx.project / "Fixture" / "Leaf.lean"
+
+private def wide (ctx : Ctx) : System.FilePath :=
+  ctx.project / "Fixture" / "Wide.lean"
 
 private def testColdAndWarm (ctx : Ctx) : IO Unit := do
   ensureEq "cold run serves nothing" 0 (← served ctx)
@@ -135,8 +140,7 @@ private def testColdAndWarm (ctx : Ctx) : IO Unit := do
 entries and the next run repopulates from scratch. -/
 private def testSchemaReplacement (ctx : Ctx) : IO Unit := do
   let files ← indexFiles ctx
-  let some index := files[0]?
-    | throw <| IO.userError "no cache index to rewrite"
+  let some index := files[0]? | throw <| IO.userError "no cache index to rewrite"
   let parsed ← parseJson (← IO.FS.readFile index) "cache index"
   IO.FS.writeFile index ((parsed.setObjVal! "schema" "lean-fmt.result-cache.v3").compress)
   ensureEq "a v3 index is an unconditional miss" 0 (← served ctx)
@@ -153,7 +157,7 @@ private def testConcurrentColdWriters (ctx : Ctx) : IO Unit := do
   let a ← IO.ofExcept taskA.get
   let b ← IO.ofExcept taskB.get
   ensure (a.exitCode ≤ 1 && b.exitCode ≤ 1)
-    s!"concurrent cold cache writers failed: {a.exitCode}/{b.exitCode}"
+      s!"concurrent cold cache writers failed: {a.exitCode}/{b.exitCode}"
   ensureEq "a warm run after concurrent writers serves every target" ctx.total (← served ctx)
 
 /-- §2. A module with no dependents invalidates only itself (and the always-missing lakefile).
@@ -165,7 +169,7 @@ private def testLeafEdit (ctx : Ctx) : IO Unit := do
   rebuild ctx
   let servedCount ← probe ctx "edit of a module with no dependents"
   ensureEq "editing a module with no dependents invalidates it and the lakefile only"
-    (ctx.total - 2) servedCount
+      (ctx.total - 2) servedCount
   restoreFile ctx "Leaf.lean"
 
 /-- §3. A comment-only edit to a widely-imported module does not invalidate its dependents. Lake's
@@ -185,8 +189,8 @@ private def testSemanticEdit (ctx : Ctx) : IO Unit := do
   writeFile (wide ctx) (source.replace "def wideValue : Nat := 2" "def wideValue : Nat := 42")
   rebuild ctx
   let servedCount ← probe ctx "semantic edit to a dependency"
-  ensureEq "semantic edit to a dependency invalidates Wide, User, Other, lakefile"
-    (ctx.total - 4) servedCount
+  ensureEq "semantic edit to a dependency invalidates Wide, User, Other, lakefile" (ctx.total - 4)
+      servedCount
   restoreFile ctx "Wide.lean"
 
 /-- §5. The open-grammar hazard: editing only a `notation` re-analyzes its *users*, whose bytes
@@ -205,14 +209,15 @@ private def testNotationEdit (ctx : Ctx) : IO Unit := do
   -- Assert the *precondition*, not just the postcondition: a fixture already left in the edited
   -- state would make the replace a no-op that a postcondition-only guard still accepts.
   ensure (notationSource.contains "b => a + b") "§5 fixture is not in its baseline state"
-  writeFile notationPath (notationSource.replace
-    "notation:65 a \" <+> \" b => a + b" "notation:65 a \" <+> \" b => a * b")
+  writeFile notationPath
+      (notationSource.replace "notation:65 a \" <+> \" b => a + b"
+        "notation:65 a \" <+> \" b => a * b")
   ensure ((← IO.FS.readFile notationPath).contains "b => a * b") "§5 notation edit did not apply"
   rebuild ctx
   ensureEq "User's bytes are untouched by the notation edit" userBefore (← sha256 userPath)
   let servedCount ← probe ctx "notation-only edit"
   ensureEq "a notation edit invalidates Notation, User, lakefile -- and nothing else"
-    (ctx.total - 3) servedCount
+      (ctx.total - 3) servedCount
 
 /-- §6. Revisions do not accumulate index files: five rebuild-and-check cycles have run above, and
 a per-revision index would have left one orphan each. -/
@@ -223,11 +228,11 @@ private def testIndexBounded (ctx : Ctx) : IO Unit := do
 private def testModuleAdded (ctx : Ctx) : IO Unit := do
   restoreFixture ctx
   writeFile (ctx.project / "Fixture" / "Added.lean")
-    "module\n\npublic section\n\ndef addedValue : Nat := 9\n"
+      "module\n\npublic section\n\ndef addedValue : Nat := 9\n"
   rebuild ctx
   let servedCount ← probe ctx "module added"
-  ensureEq "adding a module invalidates the new module and the lakefile only"
-    (ctx.total + 1 - 2) servedCount
+  ensureEq "adding a module invalidates the new module and the lakefile only" (ctx.total + 1 - 2)
+      servedCount
 
 /-- §7.2. A module deleted from the middle of a closure. `User` and `Other` import `Wide`, so the
 build breaks; the point is that neither is served a result computed under the module that
@@ -246,13 +251,13 @@ private def testImportEdgeAdded (ctx : Ctx) : IO Unit := do
   let otherPath := ctx.project / "Fixture" / "Other.lean"
   let other ← IO.FS.readFile otherPath
   ensure ((other.splitOn "import Fixture.Wide").length == 2)
-    "§7.3 fixture does not import Wide exactly once"
-  writeFile otherPath (other.replace "import Fixture.Wide"
-    "import Fixture.Wide\nimport Fixture.Notation")
+      "§7.3 fixture does not import Wide exactly once"
+  writeFile otherPath
+      (other.replace "import Fixture.Wide" "import Fixture.Wide\nimport Fixture.Notation")
   rebuild ctx
   let servedCount ← probe ctx "import edge added"
-  ensureEq "adding an import edge invalidates the importer and the lakefile only"
-    (ctx.total - 2) servedCount
+  ensureEq "adding an import edge invalidates the importer and the lakefile only" (ctx.total - 2)
+      servedCount
 
 /-- §7.4. A module renamed. The old entry is orphaned inside the index; the new name is cold. -/
 private def testModuleRenamed (ctx : Ctx) : IO Unit := do
@@ -260,8 +265,8 @@ private def testModuleRenamed (ctx : Ctx) : IO Unit := do
   IO.FS.rename (leaf ctx) (ctx.project / "Fixture" / "Renamed.lean")
   rebuild ctx
   let servedCount ← probe ctx "module renamed"
-  ensureEq "renaming a module invalidates the new name and the lakefile only"
-    (ctx.total - 2) servedCount
+  ensureEq "renaming a module invalidates the new name and the lakefile only" (ctx.total - 2)
+      servedCount
   ensureEq "a rename does not create a second index" 1 (← indexCount ctx)
 
 /-- §7.5. A change visible only to normalization: LF to CRLF, identical normalized text. It still
@@ -286,7 +291,8 @@ private def testChoiceAndExit (ctx : Ctx) : IO Unit := do
   writeFile (leaf ctx) ((← IO.FS.readFile (leaf ctx)) ++ "\n-- unrelated\n")
   rebuild ctx
   let servedCount ← probe ctx "choice and #exit modules across an unrelated edit"
-  ensureEq "an unrelated edit leaves the choice and #exit modules cached" (ctx.total - 2) servedCount
+  ensureEq "an unrelated edit leaves the choice and #exit modules cached" (ctx.total - 2)
+      servedCount
 
 /-- The cache epoch, both directions.
 
@@ -313,12 +319,13 @@ private def testEpochChange (ctx : Ctx) : IO Unit := do
   let epochRun (tag : String) : IO Nat := do
     let existing := (← IO.getEnv "LEAN_PATH").getD ""
     let extra := ctx.pristine / s!"epoch-{tag}"
-    let result ← runProc ctx.fmt #["check"] (cwd? := some ctx.project)
-      (env := #[("LEAN_FMT_PROFILE_PHASES", some "1"),
-        ("LEAN_PATH", some s!"{extra}{System.SearchPath.separator}{existing}")])
+    let result ←
+      runProc ctx.fmt #["check"] (cwd? := some ctx.project) (env :=
+          #[("LEAN_FMT_PROFILE_PHASES", some "1"),
+            ("LEAN_PATH", some s!"{extra}{System.SearchPath.separator}{existing}")])
     statFrom result.stderr "served"
   ensureEq "a moved search path served stale entries" 0 (← epochRun "1")
-  for tag in ["2", "3", "4", "5", "6", "7"] do
+  for tag in ["2", "3", "4", "5", "6", "7"]do
     discard <| epochRun tag
   ensureEq "the survivors are the live index plus the retained three" 4 (← indexCount ctx)
 
@@ -352,7 +359,7 @@ private def testOrphanedDependencyArtifact (ctx : Ctx) : IO Unit := do
     -- reason that has nothing to do with the orphan. Assert it rather than warm past it silently.
     ensureEq "a dependency root appearing did not move the epoch" 0 (← served ctx)
     ensureEq "an orphaned dependency artifact disabled the cache" ctx.total
-      (← probe ctx "orphaned dependency artifact")
+        (← probe ctx "orphaned dependency artifact")
     writeFile orphan "different bytes, same absent trace\n"
     ensureEq "a changed untraced artifact served stale entries" 0 (← served ctx)
   finally
@@ -378,7 +385,7 @@ private def testLiveSetPrune (ctx : Ctx) : IO Unit := do
   -- first non-served full-project write.)
   removeDirAll? (ctx.project / ".lean-fmt-cache")
   ensureEq "a fresh cache's first write prunes nothing" 0
-    (← statFrom (← profiledCheck ctx).stderr "entries_pruned")
+      (← statFrom (← profiledCheck ctx).stderr "entries_pruned")
   -- Dead entries drop at the first write that can know: `Leaf`'s entry is orphaned by the
   -- deletion and `Wide`'s is superseded by the edit; the edit is what forces the write. The
   -- rebuild also moves the whole-workspace artifact digest, so the lakefile's old entry is the
@@ -388,7 +395,7 @@ private def testLiveSetPrune (ctx : Ctx) : IO Unit := do
   writeFile (wide ctx) (wideContents ++ "\n-- prune-test touch\n")
   rebuild ctx "leaf deleted, wide touched"
   ensureEq "the orphaned and superseded entries are pruned" 3
-    (← statFrom (← profiledCheck ctx).stderr "entries_pruned")
+      (← statFrom (← profiledCheck ctx).stderr "entries_pruned")
   -- A rejection verdict is a live entry: sabotage `User`'s header (disordered, unknown module),
   -- organize stores the verdict, and the next full-project write prunes only the pre-sabotage
   -- `User` entry — the verdict's candidate is still this header's candidate.
@@ -397,19 +404,19 @@ private def testLiveSetPrune (ctx : Ctx) : IO Unit := do
   discard <| profiledCheck ctx
   let userPath := ctx.project / "Fixture" / "User.lean"
   let user ← IO.FS.readFile userPath
-  writeFile userPath (user.replace "import Fixture.Wide"
-    "import Fixture.Wide\nimport Fixture.NoSuchModule")
-  let rejected ← runProc ctx.fmt #["organize", "--json", "Fixture/User.lean"]
-    (cwd? := some ctx.project)
+  writeFile userPath
+      (user.replace "import Fixture.Wide" "import Fixture.Wide\nimport Fixture.NoSuchModule")
+  let rejected ←
+    runProc ctx.fmt #["organize", "--json", "Fixture/User.lean"] (cwd? := some ctx.project)
   ensure (rejected.exitCode == 1)
-    s!"the sabotaged header was not rejected:\n{rejected.stdout}\n{rejected.stderr}"
+      s!"the sabotaged header was not rejected:\n{rejected.stdout}\n{rejected.stderr}"
   ensureEq "the old entry dies but the verdict lives" 1
-    (← statFrom (← profiledCheck ctx).stderr "entries_pruned")
-  let second ← runProc ctx.fmt #["organize", "--json", "Fixture/User.lean"]
-    (cwd? := some ctx.project) (env := #[("LEAN_FMT_PROFILE_PHASES", some "1")])
+      (← statFrom (← profiledCheck ctx).stderr "entries_pruned")
+  let second ←
+    runProc ctx.fmt #["organize", "--json", "Fixture/User.lean"] (cwd? := some ctx.project) (env :=
+        #[("LEAN_FMT_PROFILE_PHASES", some "1")])
   ensure (second.exitCode == 1) s!"the served verdict changed the outcome:\n{second.stdout}"
-  ensureEq "the verdict survived the full-project prune" 1
-    (← statFrom second.stderr "verdict_hits")
+  ensureEq "the verdict survived the full-project prune" 1 (← statFrom second.stderr "verdict_hits")
 
 /-- §15. The trace characterization, hermetically: a fully-built tree passes, a partial rebuild
 that leaves every importer's expectations stale refuses — naming the repairing build, computed
@@ -422,58 +429,59 @@ whose traces record only `importArts` — `importAllArts` exists under the modul
 modules, two import edges, so rebuilding the one importee stales every pair. -/
 private def testTraceCharacterization (ctx : Ctx) : IO Unit := do
   withTempDir fun project => do
-    copyFile (ctx.root / "lean-toolchain") (project / "lean-toolchain")
-    writeFile (project / "lakefile.lean")
-      "import Lake\nopen Lake DSL\n\npackage probe\n\n@[default_target]\n\
+      copyFile (ctx.root / "lean-toolchain") (project / "lean-toolchain")
+      writeFile (project / "lakefile.lean")
+          "import Lake\nopen Lake DSL\n\npackage probe\n\n@[default_target]\n\
         lean_lib Probe where\n  globs := #[Glob.submodules `Probe]\n"
-    IO.FS.createDirAll (project / "Probe")
-    writeFile (project / "Probe" / "A.lean") "module\n\npublic def a := 0\n"
-    -- `import all`: an `importAllArts` expectation is recorded per *all*-import only — a plain
-    -- `import` records the narrower `importArts`. The cache's currency consumes `importAllArts`,
-    -- so the probe imports the way `LeanFmt/*.lean` does.
-    writeFile (project / "Probe" / "B.lean") "module\nimport all Probe.A\n\ndef b := a\n"
-    writeFile (project / "Probe" / "C.lean") "module\nimport all Probe.A\n\ndef c := a + 1\n"
-    let lake (label : String) (targets : Array String := #[]) : IO Unit := do
-      discard <| expectExit 0 label "lake" (#["build"] ++ targets) (cwd? := some project)
-        (env := #[("LEAN_NUM_THREADS", some "1")])
-    let traceRoot := project / ".lake" / "build" / "lib" / "lean"
-    lake "characterization baseline"
-    Unit.Cache.characterizeLakeTraces traceRoot
-    -- A semantic edit, not comment-only: Lake must rerun the job and rewrite the trace, which a
-    -- content-identical rebuild is not guaranteed to do.
-    writeFile (project / "Probe" / "A.lean") "module\n\npublic def a := 0\n\npublic def a' := 1\n"
-    lake "importee-only rebuild" #["Probe.A"]
-    let rejected ← try
+      IO.FS.createDirAll (project / "Probe")
+      writeFile (project / "Probe" / "A.lean") "module\n\npublic def a := 0\n"
+      -- `import all`: an `importAllArts` expectation is recorded per *all*-import only — a plain
+      -- `import` records the narrower `importArts`. The cache's currency consumes `importAllArts`,
+      -- so the probe imports the way `LeanFmt/*.lean` does.
+      writeFile (project / "Probe" / "B.lean") "module\nimport all Probe.A\n\ndef b := a\n"
+      writeFile (project / "Probe" / "C.lean") "module\nimport all Probe.A\n\ndef c := a + 1\n"
+      let lake (label : String) (targets : Array String := #[]) : IO Unit := do
+        discard <|
+            expectExit 0 label "lake" (#["build"] ++ targets) (cwd? := some project) (env :=
+              #[("LEAN_NUM_THREADS", some "1")])
+      let traceRoot := project / ".lake" / "build" / "lib" / "lean"
+      lake "characterization baseline"
       Unit.Cache.characterizeLakeTraces traceRoot
-      pure ""
-    catch error =>
-      pure error.toString
-    ensure (rejected.contains "lake build" && rejected.contains "Probe.B")
-      s!"a fully-stale sample did not refuse with the repairing build: {rejected}"
-    lake "characterization repair"
-    Unit.Cache.characterizeLakeTraces traceRoot
+      -- A semantic edit, not comment-only: Lake must rerun the job and rewrite the trace, which a
+      -- content-identical rebuild is not guaranteed to do.
+      writeFile (project / "Probe" / "A.lean") "module\n\npublic def a := 0\n\npublic def a' := 1\n"
+      lake "importee-only rebuild" #["Probe.A"]
+      let rejected ←
+        try
+          Unit.Cache.characterizeLakeTraces traceRoot
+          pure ""
+        catch error =>
+          pure error.toString
+      ensure (rejected.contains "lake build" && rejected.contains "Probe.B")
+          s!"a fully-stale sample did not refuse with the repairing build: {rejected}"
+      lake "characterization repair"
+      Unit.Cache.characterizeLakeTraces traceRoot
 
-private def cases (ctx : Ctx) : Array Case := #[
-  { name := "cold-and-warm", run := testColdAndWarm ctx },
-  { name := "schema-replacement", run := testSchemaReplacement ctx },
-  { name := "concurrent-cold-writers", run := testConcurrentColdWriters ctx },
-  { name := "leaf-edit", run := testLeafEdit ctx },
-  { name := "comment-only-edit", run := testCommentOnlyEdit ctx },
-  { name := "semantic-edit", run := testSemanticEdit ctx },
-  { name := "notation-edit", run := testNotationEdit ctx },
-  { name := "index-bounded", run := testIndexBounded ctx },
-  { name := "module-added", run := testModuleAdded ctx },
-  { name := "module-deleted", run := testModuleDeleted ctx },
-  { name := "import-edge-added", run := testImportEdgeAdded ctx },
-  { name := "module-renamed", run := testModuleRenamed ctx },
-  { name := "crlf-only-change", run := testCrlfOnlyChange ctx },
-  { name := "live-set-prune", run := testLiveSetPrune ctx },
-  { name := "choice-and-exit", run := testChoiceAndExit ctx },
-  { name := "epoch-change", run := testEpochChange ctx },
-  { name := "orphaned-dependency-artifact", run := testOrphanedDependencyArtifact ctx },
-  { name := "toolchain-mismatch", run := testToolchainMismatch ctx },
-  { name := "trace-characterization", run := testTraceCharacterization ctx }
-]
+private def cases (ctx : Ctx) : Array Case :=
+  #[{ name := "cold-and-warm", run := testColdAndWarm ctx },
+    { name := "schema-replacement", run := testSchemaReplacement ctx },
+    { name := "concurrent-cold-writers", run := testConcurrentColdWriters ctx },
+    { name := "leaf-edit", run := testLeafEdit ctx },
+    { name := "comment-only-edit", run := testCommentOnlyEdit ctx },
+    { name := "semantic-edit", run := testSemanticEdit ctx },
+    { name := "notation-edit", run := testNotationEdit ctx },
+    { name := "index-bounded", run := testIndexBounded ctx },
+    { name := "module-added", run := testModuleAdded ctx },
+    { name := "module-deleted", run := testModuleDeleted ctx },
+    { name := "import-edge-added", run := testImportEdgeAdded ctx },
+    { name := "module-renamed", run := testModuleRenamed ctx },
+    { name := "crlf-only-change", run := testCrlfOnlyChange ctx },
+    { name := "live-set-prune", run := testLiveSetPrune ctx },
+    { name := "choice-and-exit", run := testChoiceAndExit ctx },
+    { name := "epoch-change", run := testEpochChange ctx },
+    { name := "orphaned-dependency-artifact", run := testOrphanedDependencyArtifact ctx },
+    { name := "toolchain-mismatch", run := testToolchainMismatch ctx },
+    { name := "trace-characterization", run := testTraceCharacterization ctx }]
 
 end CacheSuite
 
@@ -482,40 +490,47 @@ public def main (args : List String) : IO UInt32 := do
   let project := root / "tests" / "fixtures" / "cache" / "project"
   let fmt := (root / ".lake" / "build" / "bin" / "lean-fmt").toString
   ensure (← (root / ".lake" / "build" / "bin" / "lean-fmt").pathExists)
-    "lean-fmt binary not built; run 'lake build' first"
+      "lean-fmt binary not built; run 'lake build' first"
   -- Precondition for the absent-search-path-root regression: `tests/fixtures/cache/dep` is
   -- required by the fixture and imported by nothing, so Lake never builds its library and this
   -- directory never exists -- while still being on the workspace's `LEAN_PATH`. That is mathlib's
   -- `Cli` shape, and it disabled the cache for entire projects. Guard the precondition, or a
   -- future build that happens to create the directory turns all of that into decoration silently.
-  ensure (!(← (root / "tests" / "fixtures" / "cache" / "dep" / ".lake" / "build" / "lib" / "lean").pathExists))
-    "tests/fixtures/cache/dep has been built; the absent-search-path-root coverage is no longer real"
+  ensure
+      (!(←
+          (root / "tests" / "fixtures" / "cache" / "dep" / ".lake" / "build" / "lib" /
+                "lean").pathExists))
+      "tests/fixtures/cache/dep has been built; the absent-search-path-root coverage is no longer real"
   withTempDir fun pristine => do
-    copyTree (project / "Fixture") (pristine / "Fixture")
-    -- The fixture needs its own `lean-toolchain` -- `lean-fmt` reads one from the project root --
-    -- but a committed copy would drift from the repository's. Generate it instead, so there is
-    -- one source of truth. It is gitignored.
-    copyFile (root / "lean-toolchain") (project / "lean-toolchain")
-    removeDirAll? (project / ".lake" / "build")
-    let ctx0 : CacheSuite.Ctx := { root, project, fmt, pristine, total := 0 }
-    CacheSuite.rebuild ctx0
-    removeDirAll? (project / ".lean-fmt-cache")
-    let total ← CacheSuite.targets ctx0
-    removeDirAll? (project / ".lean-fmt-cache")
-    ensure (total >= 8) s!"fixture lost targets: discovered only {total}"
-    let ctx : CacheSuite.Ctx := { ctx0 with total }
-    let cleanup : IO Unit := do
-      -- Restore the fixture to pristine even when a case failed: sources, cache, and build
-      -- outputs, so the next run (and the human's tree) start clean.
-      removeDirAll? (project / "Fixture")
-      copyTree (pristine / "Fixture") (project / "Fixture")
-      removeDirAll? (project / ".lean-fmt-cache")
+      copyTree (project / "Fixture") (pristine / "Fixture")
+      -- The fixture needs its own `lean-toolchain` -- `lean-fmt` reads one from the project root --
+      -- but a committed copy would drift from the repository's. Generate it instead, so there is
+      -- one source of truth. It is gitignored.
       copyFile (root / "lean-toolchain") (project / "lean-toolchain")
-      try CacheSuite.rebuild ctx "post-suite fixture restore" catch _ => pure ()
-    let code ← try
-      runCases "cache" (CacheSuite.cases ctx) args
-    catch error =>
+      removeDirAll? (project / ".lake" / "build")
+      let ctx0 : CacheSuite.Ctx := { root, project, fmt, pristine, total := 0 }
+      CacheSuite.rebuild ctx0
+      removeDirAll? (project / ".lean-fmt-cache")
+      let total ← CacheSuite.targets ctx0
+      removeDirAll? (project / ".lean-fmt-cache")
+      ensure (total >= 8) s!"fixture lost targets: discovered only {total}"
+      let ctx : CacheSuite.Ctx := { ctx0 with total }
+      let cleanup : IO Unit := do
+        -- Restore the fixture to pristine even when a case failed: sources, cache, and build
+        -- outputs, so the next run (and the human's tree) start clean.
+        removeDirAll? (project / "Fixture")
+        copyTree (pristine / "Fixture") (project / "Fixture")
+        removeDirAll? (project / ".lean-fmt-cache")
+        copyFile (root / "lean-toolchain") (project / "lean-toolchain")
+        try
+          CacheSuite.rebuild ctx "post-suite fixture restore"
+        catch _ =>
+          pure ()
+      let code ←
+        try
+          runCases "cache" (CacheSuite.cases ctx) args
+        catch error =>
+          cleanup
+          throw error
       cleanup
-      throw error
-    cleanup
-    return code
+      return code

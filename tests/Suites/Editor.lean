@@ -32,14 +32,15 @@ public def main (args : List String) : IO UInt32 := do
   let parts := (((firstLine.drop 6).takeWhile (· != ' ')).toString).splitOn "."
   let (major, minor) := (((parts[0]?.getD "0").toNat?).getD 0, ((parts[1]?.getD "0").toNat?).getD 0)
   if major == 0 && minor < 11 then
-    IO.println s!"lean-fmt editor check SKIPPED (nvim {major}.{minor}, needs 0.11+ for \
+    IO.println
+        s!"lean-fmt editor check SKIPPED (nvim {major}.{minor}, needs 0.11+ for \
       vim.lsp.config)"
     return 0
-  let cases : Array Case := #[
-    { name := "neovim-client", run := do
-        discard <| expectExit 0 "the editor's client disagreed with the server" "nvim"
-          #["--headless", "--clean", "-u", "NONE", "-l", "tests/lsp/editor.lua"]
-          (cwd? := some root) (env := #[("LEAN_NUM_THREADS", some "1")])
-          (timeoutMs := some 600000) }
-  ]
+  let cases : Array Case :=
+    #[{ name := "neovim-client",
+        run := do
+          discard <|
+              expectExit 0 "the editor's client disagreed with the server" "nvim"
+                #["--headless", "--clean", "-u", "NONE", "-l", "tests/lsp/editor.lua"] (cwd? :=
+                some root) (env := #[("LEAN_NUM_THREADS", some "1")]) (timeoutMs := some 600000) }]
   runCases "editor" cases args

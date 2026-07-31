@@ -48,7 +48,8 @@ private structure LineMeasure where
 
 namespace LineMeasure
 
-def empty : LineMeasure := ⟨0, false, none⟩
+def empty : LineMeasure :=
+  ⟨0, false, none⟩
 
 def append (left right : LineMeasure) : LineMeasure :=
   if left.boundary then left
@@ -57,24 +58,23 @@ def append (left right : LineMeasure) : LineMeasure :=
 end LineMeasure
 
 mutual
-  private inductive DocKind where
-    | empty
-    | text (value : String)
-    | comment (value : String)
-    | line (flat : String)
-    | hard
-    | blank
-    | verbatim (value : String)
-    | cat (left right : Doc)
-    | nest (indent : Nat) (body : Doc)
-    | group (body : Doc)
-    | mark (source : SourceRange) (body : Doc)
-    | registered (format : Std.Format)
-
-  /-- A formatting document. Construct values through the operations in `Doc`; the cached measures
+private inductive DocKind where
+  | empty
+  | text (value : String)
+  | comment (value : String)
+  | line (flat : String)
+  | hard
+  | blank
+  | verbatim (value : String)
+  | cat (left right : Doc)
+  | nest (indent : Nat) (body : Doc)
+  | group (body : Doc)
+  | mark (source : SourceRange) (body : Doc)
+  | registered (format : Std.Format)
+/-- A formatting document. Construct values through the operations in `Doc`; the cached measures
   and well-formedness bit are not caller-settable, deliberately. -/
-  inductive Doc where
-    | private mk (kind : DocKind) (flat broken : LineMeasure) (nodes : Nat) (valid : Bool)
+inductive Doc where
+  | private mk (kind : DocKind) (flat broken : LineMeasure) (nodes : Nat) (valid : Bool)
 end
 
 namespace Doc
@@ -98,9 +98,11 @@ def wellFormed : Doc → Bool
   | .mk _ _ _ _ value => value
 
 /-- Column width in codepoints, the unit used by Lean's formatter. -/
-def width (value : String) : Nat := value.length
+def width (value : String) : Nat :=
+  value.length
 
-private def spansLines (value : String) : Bool := value.contains '\n'
+private def spansLines (value : String) : Bool :=
+  value.contains '\n'
 
 private def firstLine (value : String) : String :=
   match (value.splitOn "\n")[0]? with
@@ -116,7 +118,8 @@ private def literalMeasure (value : String) : LineMeasure :=
   if spansLines value then ⟨width (firstLine value), true, none⟩ else ⟨width value, false, none⟩
 
 /-- The empty document. -/
-def empty : Doc := .mk .empty .empty .empty 1 true
+def empty : Doc :=
+  .mk .empty .empty .empty 1 true
 
 /-- Literal single-line text. A newline makes the resulting document ill-formed. -/
 def text (value : String) : Doc :=
@@ -134,11 +137,13 @@ def line (flat : String) : Doc :=
   .mk (.line flat) (literalMeasure flat) ⟨0, true, none⟩ 1 (!spansLines flat)
 
 /-- An unconditional newline at the current indentation. -/
-def hard : Doc := .mk .hard ⟨0, true, none⟩ ⟨0, true, none⟩ 1 true
+def hard : Doc :=
+  .mk .hard ⟨0, true, none⟩ ⟨0, true, none⟩ 1 true
 
 /-- One empty line followed by the current indentation. Unlike two adjacent `hard` nodes, this does
 not materialize indentation whitespace on the empty line. -/
-def blank : Doc := .mk .blank ⟨0, true, none⟩ ⟨0, true, none⟩ 1 true
+def blank : Doc :=
+  .mk .blank ⟨0, true, none⟩ ⟨0, true, none⟩ 1 true
 
 /-- Literal text that may span lines. Interior lines are never re-indented. -/
 def verbatim (value : String) : Doc :=
@@ -147,10 +152,8 @@ def verbatim (value : String) : Doc :=
 
 /-- Concatenate two documents. -/
 def cat (left right : Doc) : Doc :=
-  .mk (.cat left right)
-    (left.flatMeasure.append right.flatMeasure)
-    (left.brokenMeasure.append right.brokenMeasure)
-    (1 + left.size + right.size)
+  .mk (.cat left right) (left.flatMeasure.append right.flatMeasure)
+    (left.brokenMeasure.append right.brokenMeasure) (1 + left.size + right.size)
     (left.wellFormed && right.wellFormed)
 
 /-- Increase indentation after a break inside `body`. -/
@@ -173,11 +176,9 @@ def registered (format : Std.Format) : Doc :=
 
 end Doc
 
-instance : Append Doc where
-  append := Doc.cat
+instance : Append Doc where append := Doc.cat
 
-instance : Inhabited Doc where
-  default := Doc.empty
+instance : Inhabited Doc where default := Doc.empty
 
 /-- One source-map entry. Both ranges use UTF-8 byte offsets. -/
 structure Mark where
@@ -253,11 +254,12 @@ private def appendNewline (state : RenderState) (indent : Nat) : RenderState :=
     column := indent
     outputBytes := state.outputBytes + value.utf8ByteSize }
 
-private instance : Std.Format.MonadPrettyFormat (StateM RenderState) where
-  pushOutput value := modify fun state =>
-    { appendLiteral state value with nativeEvents := state.nativeEvents + 1 }
-  pushNewline indent := modify fun state =>
-    { appendNewline state indent with nativeEvents := state.nativeEvents + 1 }
+private instance : Std.Format.MonadPrettyFormat (StateM RenderState)
+    where
+  pushOutput value :=
+    modify fun state => { appendLiteral state value with nativeEvents := state.nativeEvents + 1 }
+  pushNewline indent :=
+    modify fun state => { appendNewline state indent with nativeEvents := state.nativeEvents + 1 }
   currColumn := return (← get).column
   startTag _ := modify fun state => { state with nativeEvents := state.nativeEvents + 1 }
   endTags count := modify fun state => { state with nativeEvents := state.nativeEvents + count }
@@ -270,13 +272,17 @@ private partial def renderWork (width : Nat) (pinnedPhrases : Array String) :
     match command with
     | .closeMark source outputStart =>
       let state ← get
-      set { state with marks := state.marks.push {
-        source
-        output := ⟨outputStart, state.outputBytes⟩ } }
+      set
+          { state with
+            marks :=
+              state.marks.push
+                { source
+                  output := ⟨outputStart, state.outputBytes⟩ } }
       renderWork width pinnedPhrases rest
     | .document indent mode document =>
       match document.kind with
-      | .empty => renderWork width pinnedPhrases rest
+      | .empty =>
+        renderWork width pinnedPhrases rest
       | .text value =>
         modify (appendLiteral · value)
         renderWork width pinnedPhrases rest
@@ -287,33 +293,36 @@ private partial def renderWork (width : Nat) (pinnedPhrases : Array String) :
         modify (appendLiteral · value)
         renderWork width pinnedPhrases rest
       | .cat left right =>
-        renderWork width pinnedPhrases <| rest.push (.document indent mode right)
-          |>.push (.document indent mode left)
+        renderWork width pinnedPhrases <|
+            rest.push (.document indent mode right) |>.push (.document indent mode left)
       | .nest extra body =>
         renderWork width pinnedPhrases <| rest.push (.document (indent + extra) mode body)
       | .mark source body =>
         let outputStart := (← get).outputBytes
-        renderWork width pinnedPhrases <| rest.push (.closeMark source outputStart)
-          |>.push (.document indent mode body)
+        renderWork width pinnedPhrases <|
+            rest.push (.closeMark source outputStart) |>.push (.document indent mode body)
       | .hard =>
         modify (appendNewline · indent)
         renderWork width pinnedPhrases rest
       | .blank =>
         modify fun state =>
-          let value := "\n\n".pushn ' ' indent
-          { state with
-            output := state.output ++ value
-            column := indent
-            outputBytes := state.outputBytes + value.utf8ByteSize }
+            let value := "\n\n".pushn ' ' indent
+            { state with
+              output := state.output ++ value
+              column := indent
+              outputBytes := state.outputBytes + value.utf8ByteSize }
         renderWork width pinnedPhrases rest
       | .line flat =>
         match mode with
-        | .flat => modify (appendLiteral · flat)
-        | .broken => modify (appendNewline · indent)
+        | .flat =>
+          modify (appendLiteral · flat)
+        | .broken =>
+          modify (appendNewline · indent)
         renderWork width pinnedPhrases rest
       | .group body =>
         match mode with
-        | .flat => renderWork width pinnedPhrases <| rest.push (.document indent .flat body)
+        | .flat =>
+          renderWork width pinnedPhrases <| rest.push (.document indent .flat body)
         | .broken =>
           let candidate := rest.push (.document indent .flat body)
           let column := (← get).column
@@ -322,14 +331,15 @@ private partial def renderWork (width : Nat) (pinnedPhrases : Array String) :
           -- splitting would detach the directive from the construct it annotates. It cannot
           -- override a forced break inside the body — flat mode cannot make a hard newline
           -- disappear.
-          let pinned := candidate.measure.comment?.any fun comment =>
-            pinnedPhrases.any fun phrase => comment.contains phrase
+          let pinned :=
+            candidate.measure.comment?.any fun comment =>
+              pinnedPhrases.any fun phrase => comment.contains phrase
           let selected :=
-            if !body.flatMeasure.boundary &&
-                (column <= width && candidate.measure.width <= available || pinned) then
+            if
+                !body.flatMeasure.boundary &&
+                  (column <= width && candidate.measure.width <= available || pinned) then
               Mode.flat
-            else
-              Mode.broken
+            else Mode.broken
           renderWork width pinnedPhrases <| rest.push (.document indent selected body)
       | .registered format =>
         Std.Format.prettyM format width indent
@@ -338,16 +348,16 @@ private partial def renderWork (width : Nat) (pinnedPhrases : Array String) :
 /-- Render a document at `width`, returning text, byte source maps, and deterministic work counts.
 `pinnedPhrases` are the `pinned-comments` configuration: a comment containing one holds its line
 flat. -/
-def renderDetailed (width : Nat) (document : Doc) (pinnedPhrases : Array String := #[]) : Rendered :=
+def renderDetailed (width : Nat) (document : Doc) (pinnedPhrases : Array String := #[]) :
+    Rendered :=
   let initial := Work.empty.push (.document 0 .broken document)
-  let state := (renderWork width pinnedPhrases initial).run {} |>.2
-  {
-    text := state.output
+  let state := (renderWork width pinnedPhrases initial).run { } |>.2
+  { text := state.output
     sourceMap := state.marks
-    metrics := {
-      documentNodes := document.size
-      workSteps := state.workSteps
-      nativeEvents := state.nativeEvents } }
+    metrics :=
+      { documentNodes := document.size
+        workSteps := state.workSteps
+        nativeEvents := state.nativeEvents } }
 
 /-- Render text and byte source maps. -/
 def render (width : Nat) (document : Doc) (pinnedPhrases : Array String := #[]) :

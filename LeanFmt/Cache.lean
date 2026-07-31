@@ -45,17 +45,16 @@ be accepted, and every digest below would be computed from a shape this code no 
 — a stale hit, which is the one direction currency must never degrade toward.
 
 The contents come back with it because both callers digest the file's own bytes, not the parse. -/
-private def readTrace? (tracePath : System.FilePath) :
-    IO (Option (String × Lake.BuildMetadata)) := do
+private def readTrace? (tracePath : System.FilePath) : IO (Option (String × Lake.BuildMetadata)) :=
+  do
   try
     let contents ← IO.FS.readFile tracePath
-    let .ok json := Lean.Json.parse contents
-      | return none
-    unless (json.getObjValAs? String "schemaVersion").toOption ==
+    let .ok json := Lean.Json.parse contents | return none
+    unless
+      (json.getObjValAs? String "schemaVersion").toOption ==
         some Lake.BuildMetadata.schemaVersion do
       return none
-    let .ok metadata := Lake.BuildMetadata.fromJson? json
-      | return none
+    let .ok metadata := Lake.BuildMetadata.fromJson? json | return none
     return some (contents, metadata)
   catch _ =>
     return none
@@ -107,8 +106,7 @@ the analysis it describes, and that disagreement is a stale hit. One source of t
 def providedOf (analysis : SemanticAnalysis) : Cache.Decision.Provided :=
   match analysis.result? with
   | none => .broken
-  | some result =>
-    .success result.tier result.caps result.canonical?.isSome
+  | some result => .success result.tier result.caps result.canonical?.isSome
 
 private structure CacheIndex where
   schema : String
@@ -136,8 +134,7 @@ private inductive MemberFact where
   | unreadable
   deriving Inhabited
 
-structure ResultCache where
-  private mk ::
+structure ResultCache where private mk ::
   root : System.FilePath
   toolchain : String
   environment : Digest
@@ -168,7 +165,8 @@ structure ResultCache where
   way. -/
   artifactHashByModule : IO.Ref (Std.HashMap String MemberFact)
 
-def resultCacheSchema : String := "lean-fmt.result-cache.v4"
+def resultCacheSchema : String :=
+  "lean-fmt.result-cache.v4"
 
 private def digestParts (parts : Array String) : Digest :=
   Digest.ofString (String.intercalate "\u0000" parts.toList)
@@ -200,25 +198,29 @@ private def oleanPart (root olean : System.FilePath) : IO (String × Bool) := do
   let tracePath := olean.withExtension "trace"
   let contentPart : IO (String × Bool) := do
     let relative := Lake.relPathFrom root olean |>.toString
-    let hash? ← try pure (some (← Lake.computeFileHash olean)) catch _ => pure none
+    let hash? ←
+      try
+        pure (some (← Lake.computeFileHash olean))
+      catch _ =>
+        pure none
     return (s!"untraced\u0000{relative}\u0000{hash?.map (·.toString) |>.getD "unreadable"}", true)
-  let some (contents, metadata) ← readTrace? tracePath
-    | contentPart
-  let some outputs := moduleOutputs? metadata
-    | contentPart
+  let some (contents, metadata) ← readTrace? tracePath |
+    contentPart
+  let some outputs := moduleOutputs? metadata | contentPart
   -- A Lake artifact is named `<hash>.<ext>` where `ext` is the whole suffix — `olean`,
   -- `olean.server`, `olean.private` — so the sibling on disk is the module's own path with
   -- that extension put back.
-  let some base := olean.toString.dropSuffix? ".olean"
-    | contentPart
-  let intact ← try
+  let some base := olean.toString.dropSuffix? ".olean" | contentPart
+  let intact ←
+    try
       let mut intact := true
       for descr in outputs.oleanParts do
         let output := System.FilePath.mk s!"{base}.{descr.ext}"
         unless (← output.pathExists) && (← Lake.computeFileHash output) == descr.hash do
           intact := false
       pure intact
-    catch _ => pure false
+    catch _ =>
+      pure false
   unless intact do
     return ← contentPart
   let relative := Lake.relPathFrom root tracePath |>.toString
@@ -228,14 +230,15 @@ private def oleanPart (root olean : System.FilePath) : IO (String × Bool) := do
 private def rootTraceParts (root : System.FilePath) : IO (Array String × Nat) := do
   unless ← root.isDir do
     return (#[], 0)
-  let oleans := (← root.walkDir).filter (·.extension == some "olean")
-    |>.qsort (·.toString < ·.toString)
+  let oleans :=
+    (← root.walkDir).filter (·.extension == some "olean") |>.qsort (·.toString < ·.toString)
   let mut parts := #[s!"root\u0000{← IO.FS.realPath root}"]
   let mut untraced := 0
   for olean in oleans do
     let (part, byContent) ← oleanPart root olean
     parts := parts.push part
-    if byContent then untraced := untraced + 1
+    if byContent then
+      untraced := untraced + 1
   return (parts, untraced)
 
 /- A shared library's `outputs` is one artifact name rather than a module's several. -/
@@ -243,16 +246,22 @@ private def sharedPart (root library : System.FilePath) : IO (String × Bool) :=
   let tracePath := library.addExtension "trace"
   let contentPart : IO (String × Bool) := do
     let relative := Lake.relPathFrom root library |>.toString
-    let hash? ← try pure (some (← Lake.computeFileHash library)) catch _ => pure none
+    let hash? ←
+      try
+        pure (some (← Lake.computeFileHash library))
+      catch _ =>
+        pure none
     return (s!"shared-untraced\u0000{relative}\u0000{hash?.map (·.toString) |>.getD "unreadable"}",
-      true)
-  let some (contents, metadata) ← readTrace? tracePath
-    | contentPart
-  let some outputs := metadata.outputs?
-    | contentPart
-  let .ok descr := Lake.ArtifactDescr.fromJson? outputs
-    | contentPart
-  let intact ← try pure ((← Lake.computeFileHash library) == descr.hash) catch _ => pure false
+        true)
+  let some (contents, metadata) ← readTrace? tracePath |
+    contentPart
+  let some outputs := metadata.outputs? | contentPart
+  let .ok descr := Lake.ArtifactDescr.fromJson? outputs | contentPart
+  let intact ←
+    try
+      pure ((← Lake.computeFileHash library) == descr.hash)
+    catch _ =>
+      pure false
   unless intact do
     return ← contentPart
   let relative := Lake.relPathFrom root tracePath |>.toString
@@ -261,22 +270,24 @@ private def sharedPart (root library : System.FilePath) : IO (String × Bool) :=
 private def sharedTraceParts (root : System.FilePath) : IO (Array String × Nat) := do
   unless ← root.isDir do
     return (#[], 0)
-  let libraries := (← root.walkDir).filter (·.extension == some Lake.sharedLibExt)
-    |>.qsort (·.toString < ·.toString)
+  let libraries :=
+    (← root.walkDir).filter (·.extension == some Lake.sharedLibExt) |>.qsort
+      (·.toString < ·.toString)
   let mut parts := #[s!"shared-root\u0000{← IO.FS.realPath root}"]
   let mut untraced := 0
   for library in libraries do
     let (part, byContent) ← sharedPart root library
     parts := parts.push part
-    if byContent then untraced := untraced + 1
+    if byContent then
+      untraced := untraced + 1
   return (parts, untraced)
 
 private def pathParts (label : String) (paths : List System.FilePath) : Array String :=
   paths.toArray.mapIdx fun index path => s!"{label}\u0000{index}\u0000{path}"
 
 private def insideToolchain (toolchain path : System.FilePath) : Bool :=
-  path == toolchain || path.toString.startsWith
-    (toolchain.toString ++ System.FilePath.pathSeparator.toString)
+  path == toolchain ||
+    path.toString.startsWith (toolchain.toString ++ System.FilePath.pathSeparator.toString)
 
 /- ## Per-module currency
 
@@ -313,14 +324,13 @@ then `irSig?`, then `ir?`. A legacy non-module-system module has one `oleanPart`
 others, which folds correctly under the same loop. Reading the parts by name rather than by
 position in the `o` array is Lake's `ModuleOutputDescrs` doing it, not a convention repeated here. -/
 private def moduleArtifactHash? (tracePath : System.FilePath) : IO (Option Lake.Hash) := do
-  let some (_, metadata) ← readTrace? tracePath
-    | return none
-  let some outputs := moduleOutputs? metadata
-    | return none
+  let some (_, metadata) ← readTrace? tracePath |
+    return none
+  let some outputs := moduleOutputs? metadata | return none
   let mut hash := Lake.Hash.nil
   for descr in outputs.oleanParts do
     hash := hash.mix descr.hash
-  for extra in [outputs.irSig?, outputs.ir?] do
+  for extra in [outputs.irSig?, outputs.ir?]do
     if let some descr := extra then
       hash := hash.mix descr.hash
   return some hash
@@ -336,8 +346,7 @@ describe an *older* build than the `.olean` beside it. A sidecar older than the 
 is treated as absent — the fallback is the old behavior, never a stale hit. -/
 private def memberInterfaceFact (workspace : Lake.Workspace) (name : Lean.Name) :
     IO (Option MemberFact) := do
-  let some mod := workspace.findModule? name
-    | return none
+  let some mod := workspace.findModule? name | return none
   -- The facet's own path convention — `artifactFile` in the lakefile that declares
   -- `leanFmtArtifact`, duplicated in `Project.lean`'s facet probe; the compiler suite's
   -- mixed-selection case notices if the two drift.
@@ -347,19 +356,20 @@ private def memberInterfaceFact (workspace : Lake.Workspace) (name : Lean.Name) 
       if ← oleanPath.pathExists then
         let oleanTime := (← oleanPath.metadata).modified
         let sidecarTime := (← sidecar.metadata).modified
-        if sidecarTime.sec < oleanTime.sec ||
-            (sidecarTime.sec == oleanTime.sec && sidecarTime.nsec < oleanTime.nsec) then
+        if
+            sidecarTime.sec < oleanTime.sec ||
+              (sidecarTime.sec == oleanTime.sec && sidecarTime.nsec < oleanTime.nsec) then
           return none
     let contents ← IO.FS.readFile sidecar
-    let .ok json := Lean.Json.parse contents
-      | return none
-    let .ok artifact := (Lean.fromJson? json : Except String ModuleArtifact)
-      | return none
+    let .ok json := Lean.Json.parse contents | return none
+    let .ok artifact := (Lean.fromJson? json : Except String ModuleArtifact) | return none
     unless artifact.schema == artifactSchema do
       return none
     match artifact.interfaceHash with
-    | some value => return some (.interfaceHash value)
-    | none => return none
+    | some value =>
+      return some (.interfaceHash value)
+    | none =>
+      return none
   catch _ =>
     return none
 
@@ -369,21 +379,19 @@ private def memberInterfaceFact (workspace : Lake.Workspace) (name : Lean.Name) 
 but a fact, and the difference is worth a filesystem check. On mathlib, one unbuilt module in a
 62-file batch used to send every closure through the whole-workspace fallback digest: 7,018 ms, 30%
 of a cold `check`. -/
-private def memberFact (workspace : Lake.Workspace) (mode : ClosureMode)
-    (name : Lean.Name) : IO MemberFact := do
+private def memberFact (workspace : Lake.Workspace) (mode : ClosureMode) (name : Lean.Name) :
+    IO MemberFact := do
   if mode == .interface then
-    if let some fact ← memberInterfaceFact workspace name then
+    if let some fact← memberInterfaceFact workspace name then
       return fact
-  let some tracePath := Project.moduleTracePath? workspace name
-    | return .unreadable
-  if let some hash ← moduleArtifactHash? tracePath then
+  let some tracePath := Project.moduleTracePath? workspace name | return .unreadable
+  if let some hash← moduleArtifactHash? tracePath then
     return .hash hash
   -- The trace did not yield a hash. Absence of *every* output Lake would write is the one
   -- case that is a fact rather than an unknown, and it is checked here rather than inferred from
   -- the trace alone: an `.olean` sitting next to a missing trace is output whose currency is
   -- unknown.
-  let some outputs := Project.moduleOutputPaths? workspace name
-    | return .unreadable
+  let some outputs := Project.moduleOutputPaths? workspace name | return .unreadable
   for output in outputs do
     if ← output.pathExists then
       return .unreadable
@@ -402,26 +410,30 @@ This degrades **one entry**, not the cache, which is finer than `environmentDige
 disables everything when it returns `none`, correctly, because it reports a property of the epoch
 rather than of an entry. -/
 private def closureDigest? (workspace : Lake.Workspace) (mode : ClosureMode)
-    (memo : IO.Ref (Std.HashMap String MemberFact))
-    (closure : Option (Array Lean.Name)) : IO (Option Digest) := do
-  let some members := closure
-    | return none
+    (memo : IO.Ref (Std.HashMap String MemberFact)) (closure : Option (Array Lean.Name)) :
+    IO (Option Digest) := do
+  let some members := closure | return none
   let ordered := members.qsort (·.toString < ·.toString)
   let mut parts := #[]
   for name in ordered do
     let key := name.toString
-    let fact ← do
-      if let some hit := (← memo.get)[key]? then
-        pure hit
-      else
-        let computed ← memberFact workspace mode name
-        memo.modify (·.insert key computed)
-        pure computed
+    let fact ←
+      do
+        if let some hit := (← memo.get)[key]? then
+          pure hit
+        else
+          let computed ← memberFact workspace mode name
+          memo.modify (·.insert key computed)
+          pure computed
     match fact with
-    | .hash hash => parts := parts.push s!"closure {name} {hash}"
-    | .interfaceHash value => parts := parts.push s!"closure-interface {name} {value.hex}"
-    | .unbuilt => parts := parts.push s!"closure {name} unbuilt"
-    | .unreadable => return none
+    | .hash hash =>
+      parts := parts.push s!"closure {name} {hash}"
+    | .interfaceHash value =>
+      parts := parts.push s!"closure-interface {name} {value.hex}"
+    | .unbuilt =>
+      parts := parts.push s!"closure {name} unbuilt"
+    | .unreadable =>
+      return none
   return some (digestParts parts)
 
 /-- `realPath` for a configured search-path root that may not exist.
@@ -449,14 +461,16 @@ cache for the workspace. The `sysroot` resolution is guarded for the same reason
 `realPathIfDir?` exists — an exception here would reach `open?`'s catch-all and read as "no
 cache", which is exactly the failure this function stopped having. -/
 private def environmentDigest (workspace : Lake.Workspace) : IO Digest := do
-  let toolchain ← try IO.FS.realPath workspace.lakeEnv.lean.sysroot
-    catch _ => pure workspace.lakeEnv.lean.sysroot
+  let toolchain ←
+    try
+      IO.FS.realPath workspace.lakeEnv.lean.sysroot
+    catch _ =>
+      pure workspace.lakeEnv.lean.sysroot
   let roots := workspace.augmentedLeanPath
-  let mut parts := #[
-    s!"lean-version\u0000{Lean.versionString}",
-    s!"lean-githash\u0000{workspace.lakeEnv.lean.githash}",
-    s!"workspace-configuration\u0000{Project.externalConfigurationIdentity workspace}"
-  ]
+  let mut parts :=
+    #[s!"lean-version\u0000{Lean.versionString}",
+      s!"lean-githash\u0000{workspace.lakeEnv.lean.githash}",
+      s!"workspace-configuration\u0000{Project.externalConfigurationIdentity workspace}"]
   parts := parts ++ pathParts "lean-path" workspace.augmentedLeanPath
   parts := parts ++ pathParts "source-path" workspace.augmentedLeanSrcPath
   parts := parts ++ pathParts "shared-path" workspace.augmentedSharedLibPath
@@ -473,20 +487,24 @@ private def environmentDigest (workspace : Lake.Workspace) : IO Digest := do
   -- sources, and a dependency's artifacts are an epoch property: they
   -- change when the manifest or a dependency build changes, not when the user edits their own
   -- file.
-  let ownLibDir ← try IO.FS.realPath workspace.root.leanLibDir catch _ => pure workspace.root.leanLibDir
+  let ownLibDir ←
+    try
+      IO.FS.realPath workspace.root.leanLibDir
+    catch _ =>
+      pure workspace.root.leanLibDir
   for rawRoot in roots do
-    let some root ← realPathIfDir? rawRoot
-      | parts := parts.push s!"lean-path-absent\u0000{rawRoot}"
-        continue
+    let some root ← realPathIfDir? rawRoot |
+      parts := parts.push s!"lean-path-absent\u0000{rawRoot}"
+      continue
     if insideToolchain toolchain root || root == ownLibDir then
       continue
     let (rootParts, rootUntraced) ← rootTraceParts root
     parts := parts ++ rootParts
     untraced := untraced + rootUntraced
   for rawRoot in workspace.augmentedSharedLibPath do
-    let some root ← realPathIfDir? rawRoot
-      | parts := parts.push s!"shared-path-absent\u0000{rawRoot}"
-        continue
+    let some root ← realPathIfDir? rawRoot |
+      parts := parts.push s!"shared-path-absent\u0000{rawRoot}"
+      continue
     if insideToolchain toolchain root then
       continue
     let (rootParts, rootUntraced) ← sharedTraceParts root
@@ -506,13 +524,12 @@ target would mean one graph build per file, which `LeanFmt.Project` exists to pr
 private def identity (cache : ResultCache) (project : Project.Snapshot)
     (target : Project.SourceTarget) (closure : Digest) : IO CacheIdentity := do
   return {
-    source := Digest.ofString target.source
-    toolchain := cache.toolchain
-    environment := cache.environment
-    formatter := cache.formatter
-    configuration := ← Project.configurationIdentity project target
-    closure
-  }
+      source := Digest.ofString target.source
+      toolchain := cache.toolchain
+      environment := cache.environment
+      formatter := cache.formatter
+      configuration := ← Project.configurationIdentity project target
+      closure }
 
 /-- Conservative currency for any target whose precise closure cannot be established: the digest of
 every artifact in the workspace's own build directory.
@@ -538,15 +555,16 @@ have a precise closure.
 Measured here: a few targets need this beyond the standalone case. -/
 private def ResultCache.workspaceArtifactsDigest (cache : ResultCache)
     (workspace : Lake.Workspace) : IO (Option Digest) := do
-  if let some digest ← cache.workspaceArtifacts.get then
+  if let some digest← cache.workspaceArtifacts.get then
     return digest
-  let digest ← withPhase "workspace_artifacts" do
-    try
-      let root ← IO.FS.realPath workspace.root.leanLibDir
-      let (parts, _) ← rootTraceParts root
-      pure (some (digestParts parts))
-    catch _ =>
-      pure none
+  let digest ←
+    withPhase "workspace_artifacts" do
+        try
+          let root ← IO.FS.realPath workspace.root.leanLibDir
+          let (parts, _) ← rootTraceParts root
+          pure (some (digestParts parts))
+        catch _ =>
+          pure none
   cache.workspaceArtifacts.set (some digest)
   return digest
 
@@ -584,20 +602,27 @@ private def ResultCache.closureDigests (cache : ResultCache) (project : Project.
         let closure := (closures[name]?.bind (·.build)).map (·.push name)
         -- Precise when the closure resolves and every member's trace reads; otherwise the
         -- conservative whole-workspace digest rather than a permanent miss. See `fallback` below.
-        let digest? ← withPhase "closure_hash" <|
-          closureDigest? project.workspace cache.closureMode cache.artifactHashByModule closure
-        let resolved ← match digest? with
-          | some digest => pure (some digest)
-          | none => fallback
+        let digest? ←
+          withPhase "closure_hash" <|
+              closureDigest? project.workspace cache.closureMode cache.artifactHashByModule closure
+        let resolved ←
+          match digest? with
+          | some digest =>
+            pure (some digest)
+          | none =>
+            fallback
         known := known.insert name.toString resolved
       cache.closureDigestsByModule.set known
     targets.mapM fun target => do
-      match target.module? with
-      | none => fallback
-      | some mod =>
-        match known[mod.name.toString]? with
-        | some digest? => pure digest?
-        | none => fallback
+        match target.module? with
+        | none =>
+          fallback
+        | some mod =>
+          match known[mod.name.toString]? with
+          | some digest? =>
+            pure digest?
+          | none =>
+            fallback
   catch _ =>
     return Array.replicate targets.size none
 
@@ -605,18 +630,13 @@ private def resultDirectory (cache : ResultCache) : System.FilePath :=
   cache.root / "results"
 
 private def baseDigest (cache : ResultCache) : Digest :=
-  digestParts #[
-    resultCacheSchema,
-    cache.toolchain,
-    toString cache.environment,
-    toString cache.formatter
-  ]
+  digestParts
+    #[resultCacheSchema, cache.toolchain, toString cache.environment, toString cache.formatter]
 
 private def indexPath (cache : ResultCache) : System.FilePath :=
   resultDirectory cache / s!"{baseDigest cache}.json"
 
-private def validAnalysis (target : Project.SourceTarget)
-    (analysis : SemanticAnalysis) : Bool :=
+private def validAnalysis (target : Project.SourceTarget) (analysis : SemanticAnalysis) : Bool :=
   analysis.validFor target.source
 
 private def analysisDigest (analysis : SemanticAnalysis) : Digest :=
@@ -638,7 +658,8 @@ Not zero, deliberately. Two `lean-fmt` builds can share one project — an edito
 binary while the CLI runs a newer one — and each is a distinct epoch. At zero retention they would
 delete each other's index on every run and neither would ever hit. Retaining a few makes that case
 cost disk instead of correctness, while still bounding the directory. -/
-private def indexRetention : Nat := 3
+private def indexRetention : Nat :=
+  3
 
 /-- Delete all but the `indexRetention` most recently modified indexes other than the live one.
 
@@ -661,11 +682,12 @@ private def removeQuietly (path : System.FilePath) : IO Unit := do
 private def collectStaleIndexes (cache : ResultCache) : IO Unit := do
   try
     let live := indexPath cache
-    let candidates := (← (resultDirectory cache).readDir).filter fun entry =>
-      entry.path.extension == some "json" && entry.path.toString != live.toString
+    let candidates :=
+      (← (resultDirectory cache).readDir).filter fun entry =>
+        entry.path.extension == some "json" && entry.path.toString != live.toString
     let mut dated := #[]
     for candidate in candidates do
-      if let some seconds ← modifiedSeconds? candidate.path then
+      if let some seconds← modifiedSeconds? candidate.path then
         dated := dated.push (seconds, candidate.path)
     let ordered := dated.qsort fun a b => a.1 > b.1
     for (_, path) in ordered.extract indexRetention ordered.size do
@@ -716,15 +738,20 @@ private def formatterDigest (cacheRoot application : System.FilePath) : IO Diges
   let stamp :=
     s!"{application}\u0000{stat.byteSize}\u0000{stat.modified.sec}\u0000{stat.modified.nsec}"
   let memoPath := cacheRoot / "formatter-identity.json"
-  let memo? ← try
+  let memo? ←
+    try
       let contents ← IO.FS.readFile memoPath
-      pure ((Lean.Json.parse contents).toOption.bind (Lean.fromJson? (α := FormatterMemo) · |>.toOption))
-    catch _ => pure none
+      pure
+          ((Lean.Json.parse contents).toOption.bind
+            (Lean.fromJson? (α := FormatterMemo) · |>.toOption))
+    catch _ =>
+      pure none
   if let some memo := memo? then
     if memo.stamp == stamp then
       return memo.digest
-  let digest ← withPhase "formatter_hash" <| do
-    return Digest.ofString s!"content\u0000{← Lake.computeFileHash application}"
+  let digest ←
+    withPhase "formatter_hash" <| do
+        return Digest.ofString s!"content\u0000{← Lake.computeFileHash application}"
   try
     IO.FS.createDirAll cacheRoot
     IO.FS.writeFile memoPath (Lean.toJson ({ stamp, digest } : FormatterMemo)).compress
@@ -737,8 +764,7 @@ non-toolchain module artifact. An artifact whose Lake trace cannot be trusted is
 content rather than refused, so the epoch is total; absence is still a normal disabled-cache
 outcome, reached now only by an exception this function did not anticipate. -/
 def ResultCache.open? (workspace : Lake.Workspace) (application : System.FilePath)
-    (closureMode : ClosureMode := .artifacts) :
-    IO (Option ResultCache) := do
+    (closureMode : ClosureMode := .artifacts) : IO (Option ResultCache) := do
   try
     let environment ← environmentDigest workspace
     -- `toolchain` below pins the toolchain revision separately; this pins the binary.
@@ -747,40 +773,38 @@ def ResultCache.open? (workspace : Lake.Workspace) (application : System.FilePat
     let directoryReady ← IO.mkRef false
     let loadedEntries ← IO.mkRef none
     let workspaceArtifacts ← IO.mkRef none
-    let closureDigestsByModule ← IO.mkRef {}
-    let artifactHashByModule ← IO.mkRef {}
-    return some {
-      root := cacheRoot
-      toolchain := s!"{Lean.versionString}\u0000{workspace.lakeEnv.lean.githash}"
-      environment
-      formatter
-      closureMode
-      directoryReady
-      loadedEntries
-      workspaceArtifacts
-      closureDigestsByModule
-      artifactHashByModule
-    }
+    let closureDigestsByModule ← IO.mkRef { }
+    let artifactHashByModule ← IO.mkRef { }
+    return some
+        { root := cacheRoot
+          toolchain := s!"{Lean.versionString}\u0000{workspace.lakeEnv.lean.githash}"
+          environment
+          formatter
+          closureMode
+          directoryReady
+          loadedEntries
+          workspaceArtifacts
+          closureDigestsByModule
+          artifactHashByModule }
   catch _ =>
     return none
 
 private def ResultCache.loadEntries (cache : ResultCache) : IO (Std.HashMap String CacheEntry) := do
-  if let some entries ← cache.loadedEntries.get then
+  if let some entries← cache.loadedEntries.get then
     return entries
-  let entries ← try
-    let contents ← IO.FS.readFile (indexPath cache)
-    let .ok json := Lean.Json.parse contents
-      | pure {}
-    let .ok (index : CacheIndex) := Lean.fromJson? json
-      | pure {}
-    if index.schema != resultCacheSchema || index.base != baseDigest cache then
-      pure {}
-    else
-      pure <| index.entries.foldl
-        (init := Std.HashMap.emptyWithCapacity index.entries.size) fun entries entry =>
-          entries.insert (toString entry.identity) entry
-  catch _ =>
-    pure {}
+  let entries ←
+    try
+      let contents ← IO.FS.readFile (indexPath cache)
+      let .ok json := Lean.Json.parse contents | pure { }
+      let .ok (index : CacheIndex) := Lean.fromJson? json | pure { }
+      if index.schema != resultCacheSchema || index.base != baseDigest cache then
+        pure { }
+      else
+        pure <|
+            index.entries.foldl (init := Std.HashMap.emptyWithCapacity index.entries.size)
+              fun entries entry => entries.insert (toString entry.identity) entry
+    catch _ =>
+      pure { }
   cache.loadedEntries.set (some entries)
   return entries
 
@@ -819,31 +843,32 @@ applies `Entry.identityCurrent` (its `Provided.meets` half runs in `LeanFmt.Appl
 `probeVerdicts` applies `elaborationVerdict?` — neither re-implements currency. -/
 private def ResultCache.lookupAll (cache : ResultCache) (project : Project.Snapshot)
     (targets : Array Project.SourceTarget)
-    (decideEntry : Cache.Decision.Entry Unit SemanticAnalysis Digest Digest String →
-      Cache.Decision.Obs Unit Digest Digest String → Option α) : IO (Array (Option α)) := do
+    (decideEntry :
+      Cache.Decision.Entry Unit SemanticAnalysis Digest Digest String →
+        Cache.Decision.Obs Unit Digest Digest String → Option α) :
+    IO (Array (Option α)) := do
   let entries ← cache.loadEntries
   if entries.isEmpty then
     return Array.replicate targets.size none
   let closures ← cache.closureDigests project targets
   (targets.zip closures).mapM fun (target, closure?) => do
-    try
-      -- Undeterminable currency is an ordinary miss, never a hit. It is not
-      -- a cache-disabling condition: one target degrades, the rest of the batch is unaffected.
-      let some closure := closure?
-        | return none
-      let expected ← identity cache project target closure
-      let digest := cacheIdentityDigest expected
-      let some entry := entries.get? (toString digest)
-        | return none
-      -- Integrity of the record, which is not currency: the payload digest and
-      -- `validAnalysis` catch a truncated or mismatched entry, and `identity` confirms the hash
-      -- probe found the entry it meant to.
-      unless entry.identity == digest && entry.payload == analysisDigest entry.analysis &&
-          validAnalysis target entry.analysis do
+      try
+        -- Undeterminable currency is an ordinary miss, never a hit. It is not
+        -- a cache-disabling condition: one target degrades, the rest of the batch is unaffected.
+        let some closure := closure? | return none
+        let expected ← identity cache project target closure
+        let digest := cacheIdentityDigest expected
+        let some entry := entries.get? (toString digest) | return none
+        -- Integrity of the record, which is not currency: the payload digest and
+        -- `validAnalysis` catch a truncated or mismatched entry, and `identity` confirms the hash
+        -- probe found the entry it meant to.
+        unless
+          entry.identity == digest && entry.payload == analysisDigest entry.analysis &&
+            validAnalysis target entry.analysis do
+          return none
+        return decideEntry (entryDecision entry) (observation target closure)
+      catch _ =>
         return none
-      return decideEntry (entryDecision entry) (observation target closure)
-    catch _ =>
-      return none
 
 def ResultCache.readAll (cache : ResultCache) (project : Project.Snapshot)
     (targets : Array Project.SourceTarget) : IO (Array (Option SemanticAnalysis)) :=
@@ -911,10 +936,10 @@ private def mergeAnalysis (old new : SemanticAnalysis) : SemanticAnalysis :=
     let canonical? := newResult.canonical?.or oldResult.canonical?
     if newResult.tier.satisfies oldResult.tier && oldResult.caps.subset newResult.caps then
       { new with result? := some { newResult with canonical? } }
-    else if oldResult.tier.satisfies newResult.tier && newResult.caps.subset oldResult.caps then
-      { old with result? := some { oldResult with canonical? } }
     else
-      { new with result? := some { newResult with canonical? } }
+      if oldResult.tier.satisfies newResult.tier && newResult.caps.subset oldResult.caps then
+        { old with result? := some { oldResult with canonical? } }
+      else { new with result? := some { newResult with canonical? } }
 
 /-- The identity keys a full-project run can still serve: every current target's own key, and
 the key of each target's organize candidate — a stored rejection verdict has a consumer exactly
@@ -928,14 +953,14 @@ private def ResultCache.liveDigests? (cache : ResultCache) (project : Project.Sn
     IO (Option (Std.HashSet String)) := do
   let targets := project.targets
   let closures ← cache.closureDigests project targets
-  let mut live : Std.HashSet String := {}
+  let mut live : Std.HashSet String := { }
   for (target, closure?) in targets.zip closures do
-    let some closure := closure?
-      | return none
+    let some closure := closure? | return none
     let expected ← identity cache project target closure
     live := live.insert (toString (cacheIdentityDigest expected))
-    if let some output ← Imports.organizeCandidate? target.source
-        target.config.format.importLayout target.config.format.importGroups then
+    if let some output←
+        Imports.organizeCandidate? target.source target.config.format.importLayout
+          target.config.format.importGroups then
       let candidateExpected ← identity cache project (target.withSource output) closure
       live := live.insert (toString (cacheIdentityDigest candidateExpected))
   return some live
@@ -943,36 +968,34 @@ private def ResultCache.liveDigests? (cache : ResultCache) (project : Project.Sn
 /- Merge and atomically publish an ordered batch once. Cache failure never changes successful
 analysis; the next run simply observes the previous index or an empty cache. -/
 def ResultCache.writeAll (cache : ResultCache) (project : Project.Snapshot)
-    (targets : Array Project.SourceTarget)
-    (analyses : Array (Option SemanticAnalysis)) (prune : Bool := false) : IO Unit := do
+    (targets : Array Project.SourceTarget) (analyses : Array (Option SemanticAnalysis))
+    (prune : Bool := false) : IO Unit := do
   try
     let mut entries ← cache.loadEntries
     let closures ← withPhase "write_closures" <| cache.closureDigests project targets
     for ((target, analysis?), closure?) in (targets.zip analyses).zip closures do
-      let some analysis := analysis?
-        | continue
+      let some analysis := analysis? | continue
       unless validAnalysis target analysis && storableAnalysis analysis do
         continue
       -- A target whose currency could not be established is not written. Writing it under
       -- a placeholder closure would make it indistinguishable from a genuinely current entry on
       -- the next run, which is the stale hit this cache exists to remove.
-      let some closure := closure?
-        | continue
+      let some closure := closure? | continue
       let expected ← identity cache project target closure
       let digest := cacheIdentityDigest expected
       -- Merge, never replace: an entry already at this key recorded capabilities of these same
       -- bytes this run did not recompute (monotone writes — see `mergeAnalysis`).
-      let analysis := match entries.get? (toString digest) with
+      let analysis :=
+        match entries.get? (toString digest) with
         | some old => mergeAnalysis old.analysis analysis
         | none => analysis
-      let entry : CacheEntry := {
-        schema := resultCacheSchema
-        identity := digest
-        payload := analysisDigest analysis
-        sourceDigest := expected.source
-        closureDigest := expected.closure
-        analysis
-      }
+      let entry : CacheEntry :=
+        { schema := resultCacheSchema
+          identity := digest
+          payload := analysisDigest analysis
+          sourceDigest := expected.source
+          closureDigest := expected.closure
+          analysis }
       entries := entries.insert (toString digest) entry
     -- The minimum-storage rule: an entry lives exactly while some run can ask for it — a current
     -- target's own bytes, or a current organize candidate's. Only a full-project write prunes:
@@ -983,15 +1006,15 @@ def ResultCache.writeAll (cache : ResultCache) (project : Project.Snapshot)
         let before := entries.size
         entries := entries.filter fun key _ => live.contains key
         recordCount "entries_pruned" (before - entries.size)
-      | none => pure ()
+      | none =>
+        pure ()
     cache.ensureWriteDirectory
-    let ordered := entries.toList.toArray.map (·.2)
-      |>.qsort (toString ·.identity < toString ·.identity)
-    let index : CacheIndex := {
-      schema := resultCacheSchema
-      base := baseDigest cache
-      entries := ordered
-    }
+    let ordered :=
+      entries.toList.toArray.map (·.2) |>.qsort (toString ·.identity < toString ·.identity)
+    let index : CacheIndex :=
+      { schema := resultCacheSchema
+        base := baseDigest cache
+        entries := ordered }
     writeIndexAtomic (indexPath cache) index
     recordCount "cache_bytes" (← (indexPath cache).metadata).byteSize.toNat
     collectStaleIndexes cache

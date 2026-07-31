@@ -122,25 +122,27 @@ private def sourceRange (stx : Lean.Syntax) : SourceRange :=
   | none => ⟨0, 0⟩
 
 private def resolution (kind : Lean.Name) : Lean.CoreM FormatterResolution := do
-  let registrations := Lean.PrettyPrinter.formatterAttribute.getValues (← Lean.getEnv) kind |>.length
+  let registrations :=
+    Lean.PrettyPrinter.formatterAttribute.getValues (← Lean.getEnv) kind |>.length
   return if registrations == 0 then .descriptor else .explicit registrations
 
 /-- Record how the registry resolves a syntax root without invoking its formatter. The one caller
 that builds a document itself — the module header, parsed before any environment exists — uses this
 so its trace cannot be confused with a registry execution. -/
-def trace (ownership : CommentOwnership) (category : FormatterCategory)
-    (stx : Lean.Syntax) : Lean.CoreM FormatterTrace := do
+def trace (ownership : CommentOwnership) (category : FormatterCategory) (stx : Lean.Syntax) :
+    Lean.CoreM FormatterTrace := do
   let kind := stx.getKind
   return {
-    category
-    kind
-    resolution := ← resolution kind
-    commentOwners := (Comments.subtree ownership stx).size }
+      category
+      kind
+      resolution := ← resolution kind
+      commentOwners := (Comments.subtree ownership stx).size }
 
 /-- Resolve and run Lean's formatter registry against `stx` in the current frontend context. Errors
 remain typed refusals and never become verbatim output. -/
 def registeredAs (ownership : CommentOwnership) (category : FormatterCategory)
-    (traceSyntax formatSyntax : Lean.Syntax) : Lean.CoreM (Except FormatterFailure RegisteredDocument) := do
+    (traceSyntax formatSyntax : Lean.Syntax) :
+    Lean.CoreM (Except FormatterFailure RegisteredDocument) := do
   let kind := traceSyntax.getKind
   let trace ← trace ownership category traceSyntax
   try
@@ -148,20 +150,20 @@ def registeredAs (ownership : CommentOwnership) (category : FormatterCategory)
     return .ok { document := Doc.registered native, trace }
   catch exception =>
     let detail ← exception.toMessageData.toString
-    return .error {
-      category
-      kind
-      range := sourceRange traceSyntax
-      trace
-      detail }
+    return .error
+        { category
+          kind
+          range := sourceRange traceSyntax
+          trace
+          detail }
 
 private def stripBoundaryInfo (start stop : Nat) : Lean.SourceInfo → Lean.SourceInfo
   | .original leading position trailing endPos =>
-    let leading := if leading.startPos.byteIdx < start then
-        { leading with stopPos := leading.startPos }
+    let leading :=
+      if leading.startPos.byteIdx < start then { leading with stopPos := leading.startPos }
       else leading
-    let trailing := if stop < trailing.stopPos.byteIdx then
-        { trailing with stopPos := trailing.startPos }
+    let trailing :=
+      if stop < trailing.stopPos.byteIdx then { trailing with stopPos := trailing.startPos }
       else trailing
     .original leading position trailing endPos
   | info => info

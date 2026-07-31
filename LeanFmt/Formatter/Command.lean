@@ -56,22 +56,22 @@ structure CommandSequence where
 
 namespace Formatter.Command
 
-def sequence : CommandSequence := {}
+def sequence : CommandSequence :=
+  { }
 
 private def role (stx : Lean.Syntax) : CommandRole :=
-  if stx.isOfKind ``Lean.Parser.Command.namespace ||
-      stx.isOfKind ``Lean.Parser.Command.section then
+  if stx.isOfKind ``Lean.Parser.Command.namespace || stx.isOfKind ``Lean.Parser.Command.section then
     .scopeOpen
-  else if stx.isOfKind ``Lean.Parser.Command.end then
-    .scopeClose
-  else if stx.isOfKind ``Lean.Parser.Command.open ||
-      stx.isOfKind ``Lean.Parser.Command.export ||
-      stx.isOfKind ``Lean.Parser.Command.universe ||
-      stx.isOfKind ``Lean.Parser.Command.variable ||
-      stx.isOfKind ``Lean.Parser.Command.set_option then
-    .setup
   else
-    .declaration
+    if stx.isOfKind ``Lean.Parser.Command.end then .scopeClose
+    else
+      if
+          stx.isOfKind ``Lean.Parser.Command.open || stx.isOfKind ``Lean.Parser.Command.export ||
+                stx.isOfKind ``Lean.Parser.Command.universe ||
+              stx.isOfKind ``Lean.Parser.Command.variable ||
+            stx.isOfKind ``Lean.Parser.Command.set_option then
+        .setup
+      else .declaration
 
 private def separated (previous current : CommandRole) : Bool :=
   match previous, current with
@@ -131,36 +131,43 @@ everything after it on that line would otherwise be commented out. The tokens th
 with unbreakable spaces: an import row cannot be shortened, so a break would only stack
 `public`/`import`/the module name vertically while the row still overflowed — mathlib's longLine
 linter exempts whole import lines (`isImport`) precisely because they must stay whole. -/
-private def importDocument (ownership : CommentOwnership) (stx : Lean.Syntax) : Doc := Id.run do
-  let tokens := headerTokens stx
-  let some first := tokens[0]? | return Doc.empty
-  let tokenText := fun (token : HeaderToken) => Doc.text token.spelling
-  let mut document := if tokens.size == 1 then tokenText first
-    else Trivia.decorateTrailingBeforeBoundary ownership first.stx (tokenText first)
-  for index in [1:tokens.size] do
-    let previous := tokens[index - 1]!
-    let token := tokens[index]!
-    let boundary := if hasTrailingLine ownership previous.stx ||
-        !(Comments.leading ownership token.stx).isEmpty then
-      Doc.hard
-    else Doc.text " "
-    let tokenDocument := if index + 1 == tokens.size then
-        Trivia.decorateLeading ownership token.stx (tokenText token)
-      else Trivia.decorateBeforeBoundary ownership token.stx (tokenText token)
-    document := document ++ boundary ++ tokenDocument
-  let row := match tokens[0]? with
-    | some token => Trivia.decorateLeading ownership token.stx (Doc.group document)
-    | none => Doc.group document
-  let row := match tokens.back? with
-    | some token => Trivia.decorateTrailingBeforeBoundary ownership token.stx row
-    | none => row
-  Trivia.decorateBeforeBoundary ownership stx row
+private def importDocument (ownership : CommentOwnership) (stx : Lean.Syntax) : Doc :=
+  Id.run do
+    let tokens := headerTokens stx
+    let some first := tokens[0]? | return Doc.empty
+    let tokenText := fun (token : HeaderToken) => Doc.text token.spelling
+    let mut document :=
+      if tokens.size == 1 then tokenText first
+      else Trivia.decorateTrailingBeforeBoundary ownership first.stx (tokenText first)
+    for index in [1:tokens.size]do
+      let previous := tokens[index - 1]!
+      let token := tokens[index]!
+      let boundary :=
+        if
+            hasTrailingLine ownership previous.stx ||
+              !(Comments.leading ownership token.stx).isEmpty then
+          Doc.hard
+        else Doc.text " "
+      let tokenDocument :=
+        if index + 1 == tokens.size then
+          Trivia.decorateLeading ownership token.stx (tokenText token)
+        else Trivia.decorateBeforeBoundary ownership token.stx (tokenText token)
+      document := document ++ boundary ++ tokenDocument
+    let row :=
+      match tokens[0]? with
+      | some token => Trivia.decorateLeading ownership token.stx (Doc.group document)
+      | none => Doc.group document
+    let row :=
+      match tokens.back? with
+      | some token => Trivia.decorateTrailingBeforeBoundary ownership token.stx row
+      | none => row
+    Trivia.decorateBeforeBoundary ownership stx row
 
 private partial def headerRowsFrom (ownership : CommentOwnership) (stx : Lean.Syntax)
     (rows : Array (Lean.Syntax × Doc)) : Array (Lean.Syntax × Doc) :=
-  if stx.isOfKind ``Lean.Parser.Module.import then
-    rows.push (stx, importDocument ownership stx)
-  else match stx with
+  if stx.isOfKind ``Lean.Parser.Module.import then rows.push (stx, importDocument ownership stx)
+  else
+    match stx with
     | .atom _ value =>
       if value == "module" || value == "prelude" then
         rows.push (stx, Trivia.decorateBeforeBoundary ownership stx (Doc.text value))
@@ -194,14 +201,15 @@ private def blankLineAfter (trailing : String) : Bool :=
 private def headerDocument? (ownership : CommentOwnership) (stx : Lean.Syntax) : Option Doc :=
   if stx.isOfKind ``Lean.Parser.Module.header then
     let rows := headerRowsFrom ownership stx #[]
-    let document? : Option (Lean.Syntax × Doc) := rows.foldl (init := none) fun acc (rowStx, row) =>
-      match acc with
-      | none => some (rowStx, row)
-      | some (previousStx, document) =>
-        let separator := if (trailingText? previousStx).any blankLineAfter then
-          Doc.hard ++ Doc.hard
-        else Doc.hard
-        some (rowStx, document ++ separator ++ row)
+    let document? : Option (Lean.Syntax × Doc) :=
+      rows.foldl (init := none) fun acc (rowStx, row) =>
+        match acc with
+        | none => some (rowStx, row)
+        | some (previousStx, document) =>
+          let separator :=
+            if (trailingText? previousStx).any blankLineAfter then Doc.hard ++ Doc.hard
+            else Doc.hard
+          some (rowStx, document ++ separator ++ row)
     some (document?.map (·.2) |>.getD Doc.empty)
   else none
 

@@ -129,7 +129,7 @@ private inductive BoundaryLayout where
   | /-- A break whose continuation lands at this exact column. The column is read off the source:
     the layout that made a column-sensitive parse commit is the source's, and only spelling its
     column again keeps the candidate's reparse committing the same way. -/
-    columned (col : Nat)
+  columned (col : Nat)
   deriving BEq, Inhabited
 
 private structure TokenSpan where
@@ -198,9 +198,7 @@ private partial def terminalsFrom (source : String) (stx : Lean.Syntax)
       match children[0]? with
       | some selected => terminalsFrom source selected result
       | none => result
-    else
-      children.foldl (init := result) fun terminals child =>
-        terminalsFrom source child terminals
+    else children.foldl (init := result) fun terminals child => terminalsFrom source child terminals
 
 /- Verify what `terminalsFrom` assumes.
 
@@ -245,14 +243,16 @@ private partial def choiceDisagreement? (source : String) (stx : Lean.Syntax) :
         | none => none
         | some first =>
           let expected := choiceSpelling source first
-          match (children.extract 1 children.size).findIdx?
+          match
+            (children.extract 1 children.size).findIdx?
               (fun alternative => choiceSpelling source alternative != expected) with
           | some offset =>
             match children[offset + 1]? with
             | none => none
             | some actual =>
-              some (sourceRange? stx |>.getD ⟨0, 0⟩, offset + 1,
-                renderChoiceSpelling expected, renderChoiceSpelling (choiceSpelling source actual))
+              some
+                (sourceRange? stx |>.getD ⟨0, 0⟩, offset + 1, renderChoiceSpelling expected,
+                  renderChoiceSpelling (choiceSpelling source actual))
           | none => none
       else none
     match here with
@@ -306,10 +306,12 @@ its `` `(def $name : Nat := 1) `` while every rule that matters says it is fine.
 Protection is *in place*: the marker replaces the antiquotation and nothing else, because escalating to
 the smallest enclosing node hands a quotation a leaf where its grammar wants a subtree, which is the
 same failure from the other side. -/
-private def antiquotationKind (categories : Lean.Parser.ParserCategories) (kind : Lean.Name) : Bool :=
+private def antiquotationKind (categories : Lean.Parser.ParserCategories) (kind : Lean.Name) :
+    Bool :=
   match kind with
   | .str base "antiquot" =>
-    let base := match base with
+    let base :=
+      match base with
       | .str base "pseudo" => base
       | base => base
     categories.contains base || base.isAtomic
@@ -359,8 +361,8 @@ private def markerFor (range : SourceRange) : String :=
 Lean's formatter for a literal token calls the atom printer and refuses an identifier with
 `not an atom`. Only a protected interior node, which has no single spelling of its own, becomes an
 identifier. -/
-private def placeholder (protected? : Lean.Syntax) (info : Lean.SourceInfo)
-    (marker : String) : Lean.Syntax :=
+private def placeholder (protected? : Lean.Syntax) (info : Lean.SourceInfo) (marker : String) :
+    Lean.Syntax :=
   match protected? with
   | .atom .. => .atom info marker
   | _ => .ident info marker.toRawSubstring marker.toName []
@@ -372,11 +374,9 @@ private def stripTriviaInfo : Lean.SourceInfo → Lean.SourceInfo
   | info => info
 
 private partial def withoutTrivia : Lean.Syntax → Lean.Syntax
-  | .node info kind children =>
-    .node (stripTriviaInfo info) kind (children.map withoutTrivia)
+  | .node info kind children => .node (stripTriviaInfo info) kind (children.map withoutTrivia)
   | .atom info value => .atom (stripTriviaInfo info) value
-  | .ident info raw value preresolved =>
-    .ident (stripTriviaInfo info) raw value preresolved
+  | .ident info raw value preresolved => .ident (stripTriviaInfo info) raw value preresolved
   | .missing => .missing
 
 private structure ProtectedSyntax where
@@ -385,13 +385,12 @@ private structure ProtectedSyntax where
   pendingEnvelope : Bool := false
   deriving Inhabited
 
-private def exactPlaceholder (source : String) (stx : Lean.Syntax)
-    (info : Lean.SourceInfo) : ProtectedSyntax :=
+private def exactPlaceholder (source : String) (stx : Lean.Syntax) (info : Lean.SourceInfo) :
+    ProtectedSyntax :=
   match sourceRange? stx with
   | some range =>
     let marker := markerFor range
-    {
-      stx := placeholder stx info marker
+    { stx := placeholder stx info marker
       islands := #[{ marker, range, text := slice source range }] }
   | none => { stx }
 
@@ -417,28 +416,24 @@ private def whitespaceEnvelope (text : String) : Bool :=
   | some first, some last => first.isWhitespace || last.isWhitespace
   | _, _ => false
 
-private partial def protectSourceDataFrom (categories : Lean.Parser.ParserCategories) (source : String) :
-    Lean.Syntax → ProtectedSyntax
+private partial def protectSourceDataFrom (categories : Lean.Parser.ParserCategories)
+    (source : String) : Lean.Syntax → ProtectedSyntax
   | .missing => { stx := .missing }
   | .atom info spelling =>
     let stx := Lean.Syntax.atom info spelling
     match sourceRange? stx with
     | some range =>
       let text := slice source range
-      if text.contains '\n' then
-        exactPlaceholder source stx info
-      else if whitespaceEnvelope text then { stx, pendingEnvelope := true }
-      else { stx }
+      if text.contains '\n' then exactPlaceholder source stx info
+      else if whitespaceEnvelope text then { stx, pendingEnvelope := true } else { stx }
     | none => { stx }
   | .ident info raw value preresolved =>
     let stx := Lean.Syntax.ident info raw value preresolved
     match sourceRange? stx with
     | some range =>
       let text := slice source range
-      if text.contains '\n' then
-        exactPlaceholder source stx info
-      else if whitespaceEnvelope text then { stx, pendingEnvelope := true }
-      else { stx }
+      if text.contains '\n' then exactPlaceholder source stx info
+      else if whitespaceEnvelope text then { stx, pendingEnvelope := true } else { stx }
     | none => { stx }
   | .node info kind children =>
     let stx := Lean.Syntax.node info kind children
@@ -446,64 +441,67 @@ private partial def protectSourceDataFrom (categories : Lean.Parser.ParserCatego
       match sourceRange? stx with
       | some range =>
         let marker := markerFor range
-        {
-          stx := .node info kind (children.set! 1 (.atom body.getHeadInfo marker))
+        { stx := .node info kind (children.set! 1 (.atom body.getHeadInfo marker))
           islands := #[{ marker, range, text := slice source range, comment := true }] }
       | none => { stx }
-    else if sourceDataKind kind then
-      { stx, pendingEnvelope := true }
-    else if antiquotationKind categories kind then
-      exactPlaceholder source stx info
-    else if dynamicQuotationKind kind then
-      -- Protected here, not escalated: the quotation is a complete term, so a marker leaf standing in
-      -- for it keeps the grammar around it intact and the island as small as the defect.
-      exactPlaceholder source stx info
-    else if kind == Lean.choiceKind &&
-        (children.any (·.isOfKind `«term{_}») &&
-          children.any (·.isOfKind ``Lean.Parser.Term.structInst)) then
-      -- A `{a.1.2}` brace ties between the anonymous constructor and the structure instance, and
-      -- the formatter spells only the LAST alternative of a `choice` (`Formatter.lean:217,292`,
-      -- whose own TODO admits the elaborator's answer is the one it needs). With `structInst`
-      -- last, the spelling is the structure instance's: `{ a.1 .2 }`, a space inside the numeric
-      -- projection -- which does not parse at all ("unsupported structure instance field
-      -- abbreviation, expecting identifier", `AbstractEmbedding.lean`'s diagnostics refusal).
-      -- The elaboration that accepted the file picked the other side, so there is no spelling
-      -- this formatter can produce from the node: the island spells the source's bytes, whose
-      -- reparse ties the same way the original's did.
-      exactPlaceholder source stx info
     else
-      let (rewrittenChildren, islands, pending) := children.foldl (init := (#[], #[], false))
-        fun (rewritten, islands, pending) child =>
-          let child := protectSourceDataFrom categories source child
-          (rewritten.push child.stx, islands ++ child.islands,
-            pending || child.pendingEnvelope)
-      let rewritten := Lean.Syntax.node info kind rewrittenChildren
-      if pending then
-        -- Every range here is read off `stx`, the node as the source wrote it, never off `rewritten`.
-        -- A placeholder is a leaf built from its node's own `SourceInfo`, which for an interior node is
-        -- `.none`, so a subtree that already escalated contributes no position at all:
-        -- `Syntax.getRange?` on `rewritten` then stops at the last leaf the rewrite left intact.
-        -- `` `($(_) fun $x:ident ↦ $b) `` escalated its `basicFun` first, so the enclosing application
-        -- measured 112:120 — `$(_) fun` — while the marker it produced stood for all of 112:136. The
-        -- island was then too small to cover the terminals its own marker replaced, and the transform
-        -- refused with `exact island 112:120 cuts terminal ...`. Escalation must be able to run twice.
-        match sourceRange? stx with
-        | some range =>
-          let pendingRanges := children.filterMap sourceRange?
-          let strictlyEncloses := pendingRanges.any fun child =>
-            range.start < child.start || child.stop < range.stop
-          let transparentEnvelope := kind == `null || kind == Lean.choiceKind ||
-            interpolationKind kind
-          -- `stx` and `rewritten` are both nodes, so they pick the same placeholder constructor; only
-          -- the range differs, and the island's bytes are the original node's.
-          if strictlyEncloses && !transparentEnvelope then exactPlaceholder source stx info
-          else { stx := rewritten, islands, pendingEnvelope := true }
-        | none => { stx := rewritten, islands, pendingEnvelope := true }
-      else { stx := rewritten, islands }
+      if sourceDataKind kind then { stx, pendingEnvelope := true }
+      else
+        if antiquotationKind categories kind then exactPlaceholder source stx info
+        else
+          if dynamicQuotationKind kind then
+            -- Protected here, not escalated: the quotation is a complete term, so a marker leaf standing in
+            -- for it keeps the grammar around it intact and the island as small as the defect.
+            exactPlaceholder source stx info
+          else
+            if
+                kind == Lean.choiceKind &&
+                  (children.any (·.isOfKind `«term{_}») &&
+                    children.any (·.isOfKind ``Lean.Parser.Term.structInst)) then
+              -- A `{a.1.2}` brace ties between the anonymous constructor and the structure instance, and
+              -- the formatter spells only the LAST alternative of a `choice` (`Formatter.lean:217,292`,
+              -- whose own TODO admits the elaborator's answer is the one it needs). With `structInst`
+              -- last, the spelling is the structure instance's: `{ a.1 .2 }`, a space inside the numeric
+              -- projection -- which does not parse at all ("unsupported structure instance field
+              -- abbreviation, expecting identifier", `AbstractEmbedding.lean`'s diagnostics refusal).
+              -- The elaboration that accepted the file picked the other side, so there is no spelling
+              -- this formatter can produce from the node: the island spells the source's bytes, whose
+              -- reparse ties the same way the original's did.
+              exactPlaceholder source stx info
+            else
+              let (rewrittenChildren, islands, pending) :=
+                children.foldl (init := (#[], #[], false))
+                  fun (rewritten, islands, pending) child =>
+                  let child := protectSourceDataFrom categories source child
+                  (rewritten.push child.stx, islands ++ child.islands,
+                    pending || child.pendingEnvelope)
+              let rewritten := Lean.Syntax.node info kind rewrittenChildren
+              if pending then
+                -- Every range here is read off `stx`, the node as the source wrote it, never off `rewritten`.
+                -- A placeholder is a leaf built from its node's own `SourceInfo`, which for an interior node is
+                -- `.none`, so a subtree that already escalated contributes no position at all:
+                -- `Syntax.getRange?` on `rewritten` then stops at the last leaf the rewrite left intact.
+                -- `` `($(_) fun $x:ident ↦ $b) `` escalated its `basicFun` first, so the enclosing application
+                -- measured 112:120 — `$(_) fun` — while the marker it produced stood for all of 112:136. The
+                -- island was then too small to cover the terminals its own marker replaced, and the transform
+                -- refused with `exact island 112:120 cuts terminal ...`. Escalation must be able to run twice.
+                match sourceRange? stx with
+                | some range =>
+                  let pendingRanges := children.filterMap sourceRange?
+                  let strictlyEncloses :=
+                    pendingRanges.any fun child =>
+                      range.start < child.start || child.stop < range.stop
+                  let transparentEnvelope :=
+                    kind == `null || kind == Lean.choiceKind || interpolationKind kind
+                  -- `stx` and `rewritten` are both nodes, so they pick the same placeholder constructor; only
+                  -- the range differs, and the island's bytes are the original node's.
+                  if strictlyEncloses && !transparentEnvelope then exactPlaceholder source stx info
+                  else { stx := rewritten, islands, pendingEnvelope := true }
+                | none => { stx := rewritten, islands, pendingEnvelope := true }
+              else { stx := rewritten, islands }
 
 private def protectSourceData (categories : Lean.Parser.ParserCategories) (source : String)
-    (stx : Lean.Syntax) :
-    Lean.Syntax × Array ExactIsland :=
+    (stx : Lean.Syntax) : Lean.Syntax × Array ExactIsland :=
   let result := protectSourceDataFrom categories source stx
   if result.pendingEnvelope then
     -- The original node again, for the reason spelled at the escalation site above: `result.stx` may
@@ -511,34 +509,31 @@ private def protectSourceData (categories : Lean.Parser.ParserCategories) (sourc
     -- stands for, not what survived the rewrite.
     let result := exactPlaceholder source stx stx.getHeadInfo
     (result.stx, result.islands)
-  else
-    (result.stx, result.islands)
+  else (result.stx, result.islands)
 
-private partial def guardedSequenceRanges (stx : Lean.Syntax)
-    (ranges : Array SourceRange := #[]) : Array SourceRange :=
+private partial def guardedSequenceRanges (stx : Lean.Syntax) (ranges : Array SourceRange := #[]) :
+    Array SourceRange :=
   if stx.isOfKind ``Lean.Parser.Term.doSeqIndent then
     match sourceRange? stx with
     | some range => ranges.push range
     | none => ranges
-  else
-    stx.getArgs.foldl (init := ranges) fun ranges child =>
-      guardedSequenceRanges child ranges
+  else stx.getArgs.foldl (init := ranges) fun ranges child => guardedSequenceRanges child ranges
 
-private partial def guardedPipeRanges (stx : Lean.Syntax)
-    (ranges : Array SourceRange := #[]) : Array SourceRange :=
+private partial def guardedPipeRanges (stx : Lean.Syntax) (ranges : Array SourceRange := #[]) :
+    Array SourceRange :=
   if stx.isOfKind ``Lean.Parser.Term.doSeqIndent then ranges
-  else match stx with
+  else
+    match stx with
     | .atom _ "|" =>
       match sourceRange? stx with
       | some range => ranges.push range
       | none => ranges
     | .node _ _ children =>
-      children.foldl (init := ranges) fun ranges child =>
-        guardedPipeRanges child ranges
+      children.foldl (init := ranges) fun ranges child => guardedPipeRanges child ranges
     | _ => ranges
 
-private partial def selectedLeafRanges (stx : Lean.Syntax)
-    (ranges : Array SourceRange := #[]) : Array SourceRange :=
+private partial def selectedLeafRanges (stx : Lean.Syntax) (ranges : Array SourceRange := #[]) :
+    Array SourceRange :=
   match stx with
   | .atom .. | .ident .. =>
     match sourceRange? stx with
@@ -549,21 +544,18 @@ private partial def selectedLeafRanges (stx : Lean.Syntax)
       match children[0]? with
       | some selected => selectedLeafRanges selected ranges
       | none => ranges
-    else
-      children.foldl (init := ranges) fun ranges child =>
-        selectedLeafRanges child ranges
+    else children.foldl (init := ranges) fun ranges child => selectedLeafRanges child ranges
   | .missing => ranges
 
-private partial def collectReturnTermStarts (stx : Lean.Syntax)
-    (starts : Array Nat := #[]) : Array Nat :=
+private partial def collectReturnTermStarts (stx : Lean.Syntax) (starts : Array Nat := #[]) :
+    Array Nat :=
   let starts :=
     if stx.isOfKind ``Lean.Parser.Term.doReturn then
       match (selectedLeafRanges stx)[1]? with
       | some range => starts.push range.start
       | none => starts
     else starts
-  stx.getArgs.foldl (init := starts) fun starts child =>
-    collectReturnTermStarts child starts
+  stx.getArgs.foldl (init := starts) fun starts child => collectReturnTermStarts child starts
 
 /- Every `sepByIndent` list whose separators are written out begins on its own line.
 
@@ -641,7 +633,7 @@ private def ungroupedSequenceKind (kind : Lean.Name) : Bool :=
 
 private def delimitedSequenceKind (kind : Lean.Name) : Bool :=
   kind == ``Lean.Parser.Tactic.tacticSeqBracketed ||
-    kind == ``Lean.Parser.Tactic.Conv.convSeqBracketed ||
+      kind == ``Lean.Parser.Tactic.Conv.convSeqBracketed ||
     kind == ``Lean.Parser.Term.whereDecls
 
 /- `sepByIndent.formatter`'s own test, transcribed: an odd slot holding an empty null node is a
@@ -649,8 +641,9 @@ separator the source spelled as a line break. The final slot is excluded there b
 separator is skipped rather than emitted, and it is excluded here for the same reason. -/
 private def hasNewlineSeparator (list : Lean.Syntax) : Bool :=
   let args := list.getArgs
-  args.size != 0 && (List.range args.size).any fun index =>
-    index % 2 == 1 && args[index]!.matchesNull 0 && index != args.size - 1
+  args.size != 0 &&
+    (List.range args.size).any fun index =>
+      index % 2 == 1 && args[index]!.matchesNull 0 && index != args.size - 1
 
 /- `structInstFields` is the list's own wrapper, so the delimiter and anything between it and the list
 belong to the *parent*. Every other delimited carrier holds its own delimiter, and this walk sees the
@@ -672,7 +665,8 @@ parser environment — `Term.byTactic` and `Term.show` are in a category's `kind
 `Tactic.tacticSeq` are not. -/
 private def sequenceWrapperKind (kind : Lean.Name) : Bool :=
   kind == ``Lean.Parser.Tactic.tacticSeq || kind == ``Lean.Parser.Tactic.Conv.convSeq ||
-    kind == ``Lean.Parser.Term.byTactic' || kind == Lean.nullKind
+      kind == ``Lean.Parser.Term.byTactic' ||
+    kind == Lean.nullKind
 
 private partial def collectIndentedSequenceStarts (stx : Lean.Syntax)
     (carrier? : Option Lean.Syntax := none) (starts : Array Nat := #[]) : Array Nat :=
@@ -685,11 +679,12 @@ private partial def collectIndentedSequenceStarts (stx : Lean.Syntax)
       if kind == ``Lean.Parser.Term.structInst then
         (children.find? (·.isOfKind ``Lean.Parser.Term.structInstFields)).map fun fields =>
           (stx, fields, false)
-      else if delimitedSequenceKind kind then some (stx, stx, false)
-      else if ungroupedSequenceKind kind then
-        carrier?.map fun carrier =>
-          (carrier, stx, carrier.isOfKind ``Lean.Parser.Term.byTactic)
-      else none
+      else
+        if delimitedSequenceKind kind then some (stx, stx, false)
+        else
+          if ungroupedSequenceKind kind then
+            carrier?.map fun carrier => (carrier, stx, carrier.isOfKind ``Lean.Parser.Term.byTactic)
+          else none
     let starts :=
       match target? with
       | some (owner, holder, ungrouped) =>
@@ -710,8 +705,9 @@ private partial def collectIndentedSequenceStarts (stx : Lean.Syntax)
           -- guarantees) and stops the measurement where the row actually ends. The delimited case
           -- keeps the exemption: its first item follows the opening delimiter on the same row, so
           -- a written-separator list there is already positioned.
-          if list.getArgs.size >= 3 &&
-              (ungrouped || (!hasNewlineSeparator list && delimiterIntervenes owner list)) then
+          if
+              list.getArgs.size >= 3 &&
+                (ungrouped || (!hasNewlineSeparator list && delimiterIntervenes owner list)) then
             match (selectedLeafRanges list)[0]? with
             | some range => if starts.contains range.start then starts else starts.push range.start
             | none => starts
@@ -791,9 +787,10 @@ private def flattenWhitespace (value : String) : String :=
     let (blank?, out) := acc
     if character == ' ' || character == '\t' || character == '\n' || character == '\r' then
       (true, out)
-    else if blank? then
-      (false, if out.isEmpty then out.push character else (out.push ' ').push character)
-    else (false, out.push character)
+    else
+      if blank? then
+        (false, if out.isEmpty then out.push character else (out.push ' ').push character)
+      else (false, out.push character)
   (value.foldl step (true, "")).2
 
 /-- Would the line the `:=` sits on, joined through the body's end, fit `line-width`? The measure
@@ -804,7 +801,8 @@ private def joinedBodyFits (source : String) (width : Nat) (declVal body : Lean.
   match sourceRange? declVal, sourceRange? body with
   | some valRange, some bodyRange =>
     let before := slice source ⟨0, valRange.start⟩
-    let lineStart := match before.revFind? (· == '\n') with
+    let lineStart :=
+      match before.revFind? (· == '\n') with
       | some position => position.offset.byteIdx + 1
       | none => 0
     (flattenWhitespace (slice source ⟨lineStart, bodyRange.stop⟩)).length <= width
@@ -822,7 +820,8 @@ private partial def collectUngroupedBodyStarts (declarationBody : DeclarationBod
         | some body =>
           let join :=
             if body.isOfKind ``Lean.Parser.Term.byTactic then true
-            else match declarationBody with
+            else
+              match declarationBody with
               | .nextLine => false
               | .sameLine => joinedBodyFits source width stx body
           if join then
@@ -831,22 +830,23 @@ private partial def collectUngroupedBodyStarts (declarationBody : DeclarationBod
             | none => starts
           else starts
         | none => starts
-      else if kind == ``Lean.Parser.Term.letIdDecl then
-        -- The tactic-level `have`/`let`/`suffices` family spells its `:= body` through
-        -- `Term.letIdDecl` (`tacticHave__` reduces to it), not `Command.declValSimple`, so the
-        -- rule above never reaches it and the same over-measured soft `line` breaks
-        -- `have h : T :=` / `by` however short the line. `letIdDecl` is
-        -- `[letId, binders, type, :=, body]`, so the body is the last child; the join question
-        -- is the same one.
-        match children.back? with
-        | some body =>
-          if body.isOfKind ``Lean.Parser.Term.byTactic then
-            match (selectedLeafRanges body)[0]? with
-            | some range => starts.push range.start
-            | none => starts
-          else starts
-        | none => starts
-      else starts
+      else
+        if kind == ``Lean.Parser.Term.letIdDecl then
+          -- The tactic-level `have`/`let`/`suffices` family spells its `:= body` through
+          -- `Term.letIdDecl` (`tacticHave__` reduces to it), not `Command.declValSimple`, so the
+          -- rule above never reaches it and the same over-measured soft `line` breaks
+          -- `have h : T :=` / `by` however short the line. `letIdDecl` is
+          -- `[letId, binders, type, :=, body]`, so the body is the last child; the join question
+          -- is the same one.
+          match children.back? with
+          | some body =>
+            if body.isOfKind ``Lean.Parser.Term.byTactic then
+              match (selectedLeafRanges body)[0]? with
+              | some range => starts.push range.start
+              | none => starts
+            else starts
+          | none => starts
+        else starts
     let children := if kind == Lean.choiceKind then children[0]?.toArray else children
     children.foldl (init := starts) fun starts child =>
       collectUngroupedBodyStarts declarationBody source width child starts
@@ -937,8 +937,7 @@ on the next line and are not collected. The idiom bounds it: a guarded `let` exi
 leaving is short. -/
 /- The first `doSeqIndent` at or after `offset`, in traversal order -- the sequence a guard's own
 bar introduces, when the guard has one. -/
-private partial def firstDoSeqIndentAfter (offset : Nat) (stx : Lean.Syntax) :
-    Option Lean.Syntax :=
+private partial def firstDoSeqIndentAfter (offset : Nat) (stx : Lean.Syntax) : Option Lean.Syntax :=
   if stx.isOfKind ``Lean.Parser.Term.doSeqIndent then
     match sourceRange? stx with
     | some range => if offset <= range.start then some stx else none
@@ -960,10 +959,10 @@ private partial def collectGuardBailouts (source : String) (stx : Lean.Syntax)
   match stx with
   | .node _ kind children =>
     let ranges :=
-      if kind == ``Lean.Parser.Term.doLetElse ||
-          kind == ``Lean.Parser.Term.doLetExpr ||
-          kind == ``Lean.Parser.Term.doLetMetaExpr ||
-          kind == ``Lean.Parser.Term.doLetArrow then
+      if
+          kind == ``Lean.Parser.Term.doLetElse || kind == ``Lean.Parser.Term.doLetExpr ||
+              kind == ``Lean.Parser.Term.doLetMetaExpr ||
+            kind == ``Lean.Parser.Term.doLetArrow then
         -- The bail-out's bar is a *direct child* of the guard (`doLetElse`'s seventh child). A `|`
         -- deeper in the value is a match arm's bar -- `let args ← match … with | .error msg => …`
         -- -- and the one-line sequence after it is a match body, not a bail-out; joining it onto
@@ -980,8 +979,7 @@ private partial def collectGuardBailouts (source : String) (stx : Lean.Syntax)
                 -- one-line precondition above: `doSeqIndent`'s own formatter emits the
                 -- inter-item break as a leaf flattening cannot remove, one line of source
                 -- notwithstanding. Those keep the upstream break after the bar.
-                if doSeqItemCount sequence != 1 || (slice source range).contains '\n' then
-                  ranges
+                if doSeqItemCount sequence != 1 || (slice source range).contains '\n' then ranges
                 else ranges.push range
               | none => ranges
             | none => ranges
@@ -989,8 +987,7 @@ private partial def collectGuardBailouts (source : String) (stx : Lean.Syntax)
         | none => ranges
       else ranges
     let children := if kind == Lean.choiceKind then children[0]?.toArray else children
-    children.foldl (init := ranges) fun ranges child =>
-      collectGuardBailouts source child ranges
+    children.foldl (init := ranges) fun ranges child => collectGuardBailouts source child ranges
   | _ => ranges
 
 /- An application argument spelled `{ … }` keeps the head's row.
@@ -1012,8 +1009,8 @@ carried by the `brokenBefore` filter at the assembly site: a source that already
 brace's row parsed to the `choice`, and joining it would change that tree the same way. Only the
 `«term{_}»` shape is collected -- `{ a := 1 }` and `{ x | p x }` commit from either row
 (probes, same day), so they need no rule. -/
-private partial def collectBraceAppArgStarts (stx : Lean.Syntax)
-    (starts : Array Nat := #[]) : Array Nat :=
+private partial def collectBraceAppArgStarts (stx : Lean.Syntax) (starts : Array Nat := #[]) :
+    Array Nat :=
   match stx with
   | .node _ kind children =>
     let starts :=
@@ -1023,14 +1020,14 @@ private partial def collectBraceAppArgStarts (stx : Lean.Syntax)
           args.getArgs.foldl (init := starts) fun starts arg =>
             if arg.isOfKind `«term{_}» then
               match (selectedLeafRanges arg)[0]? with
-              | some range => if starts.contains range.start then starts else starts.push range.start
+              | some range =>
+                if starts.contains range.start then starts else starts.push range.start
               | none => starts
             else starts
         | none => starts
       else starts
     let children := if kind == Lean.choiceKind then children[0]?.toArray else children
-    children.foldl (init := starts) fun starts child =>
-      collectBraceAppArgStarts child starts
+    children.foldl (init := starts) fun starts child => collectBraceAppArgStarts child starts
   | _ => starts
 
 /- A committed anonymous-constructor brace keeps a newline inside.
@@ -1073,24 +1070,26 @@ private partial def collectBraceInteriorBreaks (source : String) (stx : Lean.Syn
           let args := list.getArgs
           -- Even slots are fields, odd slots separators; find the first separator the source
           -- spelled as a line break and hold the boundary in front of the field that follows it.
-          let broken? := (List.range args.size).findSome? fun index =>
-            -- The gap that can hold the line break runs from one field's end over the separator
-            -- to the next field's start, so even slots step by two.
-            if index % 2 == 1 || index + 2 >= args.size then none
-            else
-              match (selectedLeafRanges args[index]!).back?,
+          let broken? :=
+            (List.range args.size).findSome? fun index =>
+              -- The gap that can hold the line break runs from one field's end over the separator
+              -- to the next field's start, so even slots step by two.
+              if index % 2 == 1 || index + 2 >= args.size then none
+              else
+                match (selectedLeafRanges args[index]!).back?,
                   (selectedLeafRanges args[index + 2]!)[0]? with
-              | some itemEnd, some nextStart =>
-                if (slice source ⟨itemEnd.stop, nextStart.start⟩).contains '\n' then
-                  -- The continuation's source column: bytes back to its line's start, the same
-                  -- arithmetic the parser's `checkColGe` compares.
-                  let before := slice source ⟨0, nextStart.start⟩
-                  let lineStart := match before.revFind? (· == '\n') with
-                    | some position => position.offset.byteIdx + 1
-                    | none => 0
-                  some (nextStart.start, nextStart.start - lineStart)
-                else none
-              | _, _ => none
+                | some itemEnd, some nextStart =>
+                  if (slice source ⟨itemEnd.stop, nextStart.start⟩).contains '\n' then
+                    -- The continuation's source column: bytes back to its line's start, the same
+                    -- arithmetic the parser's `checkColGe` compares.
+                    let before := slice source ⟨0, nextStart.start⟩
+                    let lineStart :=
+                      match before.revFind? (· == '\n') with
+                      | some position => position.offset.byteIdx + 1
+                      | none => 0
+                    some (nextStart.start, nextStart.start - lineStart)
+                  else none
+                | _, _ => none
           match broken? with
           | some (start, col) =>
             if starts.any (·.1 == start) then starts else starts.push (start, col)
@@ -1105,10 +1104,137 @@ private partial def collectBraceInteriorBreaks (source : String) (stx : Lean.Syn
 /- The column of one source offset, in the parser's own byte arithmetic (`String.Pos`). -/
 private def sourceColumn (source : String) (offset : Nat) : Nat :=
   let before := slice source ⟨0, offset⟩
-  let lineStart := match before.revFind? (· == '\n') with
+  let lineStart :=
+    match before.revFind? (· == '\n') with
     | some position => position.offset.byteIdx + 1
     | none => 0
   offset - lineStart
+
+/- Whether a token opens its source row (only whitespace before it on the row). -/
+private def opensSourceRow (source : String) (start : Nat) : Bool :=
+  let lineStart :=
+    (slice source ⟨0, start⟩).revFind? (· == '\n') |>.map (·.offset.byteIdx + 1) |>.getD 0
+  (slice source ⟨lineStart, start⟩).trimAscii.copy.isEmpty
+
+/- A guarded `let`'s bail-out bar keeps its own row when the source gave it one.
+
+The bar's native boundary sits in a group with the value, and once the value's interior breaks — a
+multi-arm `match`, say — the group re-measures and the bar slides onto the value's last row. There it
+reads as one more match arm (`| fail "…"` is a pattern-shaped as anything else), and the reparse
+fails on the next statement with the bar's real owner nowhere in the message. The source always
+spells the bar on its own row in this case, so the correction is a `hard` boundary at the bar: the
+row the enclosing nest gives it sits at the guard's own column, left of any arm column, which is
+exactly the relationship the source spelled. A bar the source spelled mid-row — the one-line guard
+the join owns — opens no row and is not collected. -/
+private partial def collectGuardBarBreaks (source : String) (stx : Lean.Syntax)
+    (starts : Array Nat := #[]) : Array Nat :=
+  match stx with
+  | .node _ kind children =>
+    let starts :=
+      if
+          kind == ``Lean.Parser.Term.doLetElse || kind == ``Lean.Parser.Term.doLetExpr ||
+              kind == ``Lean.Parser.Term.doLetMetaExpr ||
+            kind == ``Lean.Parser.Term.doLetArrow then
+        match children.find? (· matches .atom _ "|") with
+        | some pipe =>
+          match sourceRange? pipe with
+          | some pipeRange =>
+            if opensSourceRow source pipeRange.start && !starts.contains pipeRange.start then
+              starts.push pipeRange.start
+            else starts
+          | none => starts
+        | none => starts
+      else starts
+    let children := if kind == Lean.choiceKind then children[0]?.toArray else children
+    children.foldl (init := starts) fun starts child => collectGuardBarBreaks source child starts
+  | _ => starts
+
+private partial def structInstFieldsInOrder (stx : Lean.Syntax)
+    (fields : Array Lean.Syntax := #[]) : Array Lean.Syntax :=
+  match stx with
+  | .node _ kind children =>
+    if kind == ``Lean.Parser.Term.structInstField then fields.push stx
+    else
+      let children := if kind == Lean.choiceKind then children[0]?.toArray else children
+      children.foldl (init := fields) fun fields child => structInstFieldsInOrder child fields
+  | _ => fields
+
+/- A `structInst` field row holds its source column.
+
+`structInstFields` is `sepByIndent` (`Term.lean:354`): a field that opens a row must start at or
+right of the first field's column, or `checkColGe` fails and the reparse ends the structure there.
+The native document spells a continuation at the enclosing `nest` with no regard for the first
+field's column — the first field rides the `return {`-row far to the right — and the continuation
+it dedents below that column is the parse error the validation gate reports. The source always
+spells a parseable column, so every source-broken field start is held at its source column. Unlike
+the anonymous-constructor pin above, one break is not enough: an unpinned sibling dedents just the
+same. -/
+private partial def collectStructInstFieldRows (source : String) (stx : Lean.Syntax)
+    (starts : Array (Nat × Nat) := #[]) : Array (Nat × Nat) :=
+  match stx with
+  | .node _ kind children =>
+    let starts :=
+      if kind == ``Lean.Parser.Term.structInstFields then
+        -- Hold every field the source opened a row on, i.e. whose gap from the previous field's
+        -- end holds a line break. The fields sit under a null wrapper inside the list node.
+        let fields := structInstFieldsInOrder stx
+        (List.range fields.size).foldl (init := starts) fun starts index =>
+          if index == 0 then starts
+          else
+            match (selectedLeafRanges fields[index - 1]!).back?,
+              (selectedLeafRanges fields[index]!)[0]? with
+            | some itemEnd, some fieldStart =>
+              if (slice source ⟨itemEnd.stop, fieldStart.start⟩).contains '\n' then
+                let col := sourceColumn source fieldStart.start
+                if starts.any (·.1 == fieldStart.start) then starts
+                else starts.push (fieldStart.start, col)
+              else starts
+            | _, _ => starts
+      else starts
+    let children := if kind == Lean.choiceKind then children[0]?.toArray else children
+    children.foldl (init := starts) fun starts child =>
+      collectStructInstFieldRows source child starts
+  | _ => starts
+
+/- The brace argument of a `return` keeps the keyword's row.
+
+`doReturn`'s argument does not cross rows: spelled `return` then a brace on the next row, the
+reparse reads an empty `return ()` and the brace as the start of something else — "unexpected token
+'{'; expected command". The native document breaks there the moment the fields reflow, so a brace
+the source hugged to `return` is joined to it: the same `.flat` the application-head rule spells,
+and for the same reason — the break, when one is needed, belongs inside the braces. The
+`brokenBefore` filter at the assembly site carries the hug: a brace that already opened its own
+row is the source's choice, and joining it back would only fight it. -/
+private partial def collectReturnBraceStarts (stx : Lean.Syntax) (starts : Array Nat := #[]) :
+    Array Nat :=
+  match stx with
+  | .node _ kind children =>
+    let starts :=
+      if kind == ``Lean.Parser.Term.doReturn || kind == ``Lean.Parser.Term.termReturn then
+        -- The argument is wrapped: `termReturn` is `"return" >> optional termParser`, so the
+        -- brace sits under the optional's null node rather than as a direct child.
+        let braceOf := fun (node : Lean.Syntax) =>
+          if node.isOfKind ``Lean.Parser.Term.structInst || node.isOfKind `«term{_}» then some node
+          else
+            match node with
+            | .node _ _ grandchildren =>
+              grandchildren.findSome? fun grandchild =>
+                if
+                    grandchild.isOfKind ``Lean.Parser.Term.structInst ||
+                      grandchild.isOfKind `«term{_}» then
+                  some grandchild
+                else none
+            | _ => none
+        match children.findSome? braceOf with
+        | some brace =>
+          match (selectedLeafRanges brace)[0]? with
+          | some range => if starts.contains range.start then starts else starts.push range.start
+          | none => starts
+        | none => starts
+      else starts
+    let children := if kind == Lean.choiceKind then children[0]?.toArray else children
+    children.foldl (init := starts) fun starts child => collectReturnBraceStarts child starts
+  | _ => starts
 
 /- A `letI`-family body keeps the keyword's column.
 
@@ -1135,10 +1261,14 @@ private partial def collectLetFamilyAlignments (source : String) (stx : Lean.Syn
   match stx with
   | .node _ kind children =>
     let starts :=
-      if kind == ``Lean.Parser.Term.letI || kind == ``Lean.Parser.Term.let ||
-          kind == ``Lean.Parser.Term.haveI || kind == ``Lean.Parser.Term.have ||
-          kind == ``Lean.Parser.Term.let_fun || kind == ``Lean.Parser.Term.let_delayed ||
-          kind == ``Lean.Parser.Term.let_tmp || kind == ``Lean.Parser.Term.suffices then
+      if
+          kind == ``Lean.Parser.Term.letI || kind == ``Lean.Parser.Term.let ||
+                      kind == ``Lean.Parser.Term.haveI ||
+                    kind == ``Lean.Parser.Term.have ||
+                  kind == ``Lean.Parser.Term.let_fun ||
+                kind == ``Lean.Parser.Term.let_delayed ||
+              kind == ``Lean.Parser.Term.let_tmp ||
+            kind == ``Lean.Parser.Term.suffices then
         match children[0]?, children.back? with
         | some kw, some body =>
           match sourceRange? kw, sourceRange? body with
@@ -1149,8 +1279,10 @@ private partial def collectLetFamilyAlignments (source : String) (stx : Lean.Syn
               let bodyCol := sourceColumn source bodyRange.start
               -- Whether a token opens its source row (only whitespace before it on the row).
               let opensRow (start : Nat) : Bool :=
-                let lineStart := (slice source ⟨0, start⟩).revFind? (· == '\n')
-                  |>.map (·.offset.byteIdx + 1) |>.getD 0
+                let lineStart :=
+                  (slice source ⟨0, start⟩).revFind? (· == '\n') |>.map
+                      (·.offset.byteIdx + 1) |>.getD
+                    0
                 (slice source ⟨lineStart, start⟩).trimAscii.copy.isEmpty
               -- The keyword's row: pin the `(` when the node is the paren's payload, else the
               -- keyword, in both cases only when the source opened a row there. A keyword
@@ -1226,18 +1358,17 @@ private partial def collectUnbreakableRuns (source : String) (stx : Lean.Syntax)
     -- one level down; `induction` spells `generalizing` as `null(atom, null(terms))` in its fourth
     -- slot. Both are the `null` node covering the run and nothing else.
     let run? : Option Lean.Syntax :=
-      if kind == ``Lean.Parser.Term.structInstField then
-        children[1]?.bind (·.getArgs[0]?)
-      else if kind == ``Lean.Parser.Tactic.induction ||
-          kind == ``Lean.Parser.Tactic.funInduction then
-        children[3]?.bind (·.getArgs[1]?)
-      else none
-    let ranges := match run?.bind sourceRange? with
+      if kind == ``Lean.Parser.Term.structInstField then children[1]?.bind (·.getArgs[0]?)
+      else
+        if kind == ``Lean.Parser.Tactic.induction || kind == ``Lean.Parser.Tactic.funInduction then
+          children[3]?.bind (·.getArgs[1]?)
+        else none
+    let ranges :=
+      match run?.bind sourceRange? with
       | some range => if (slice source range).contains '\n' then ranges else ranges.push range
       | none => ranges
     let children := if kind == Lean.choiceKind then children[0]?.toArray else children
-    children.foldl (init := ranges) fun ranges child =>
-      collectUnbreakableRuns source child ranges
+    children.foldl (init := ranges) fun ranges child => collectUnbreakableRuns source child ranges
   | _ => ranges
 
 /- The boundaries an unbreakable run asks for: one `.flat` per gap the source spells with spaces alone.
@@ -1249,7 +1380,11 @@ private def unbreakableRunBoundaries (source : String) (terminals : Array Termin
   runs.flatMap fun run =>
     (terminals.zipIdx.filterMap fun (terminal, index) => do
       guard (run.start <= terminal.range.start && terminal.range.stop <= run.stop)
-      let previous ← if index == 0 then none else terminals[index - 1]?
+      let previous ←
+        if index == 0 then
+          none
+        else
+          terminals[index - 1]?
       let gap := slice source ⟨previous.range.stop, terminal.range.start⟩
       guard (!gap.isEmpty && gap.all fun character => character == ' ' || character == '\t')
       some (terminal.range.start, BoundaryLayout.flat))
@@ -1270,8 +1405,8 @@ no ellipsis, and Lean reports the five fields it was standing in for as `Fields 
 The source decides, the way it decides a doc comment's side of a break: a `..` the source put on its
 own line gets a `hard` boundary and one the source spelled inline is left to the document. This asks
 nothing of a `..` whose parse was never in question. -/
-private partial def collectStructInstEllipses (stx : Lean.Syntax)
-    (starts : Array Nat := #[]) : Array Nat :=
+private partial def collectStructInstEllipses (stx : Lean.Syntax) (starts : Array Nat := #[]) :
+    Array Nat :=
   match stx with
   | .node _ kind children =>
     let starts :=
@@ -1281,8 +1416,7 @@ private partial def collectStructInstEllipses (stx : Lean.Syntax)
         | none => starts
       else starts
     let children := if kind == Lean.choiceKind then children[0]?.toArray else children
-    children.foldl (init := starts) fun starts child =>
-      collectStructInstEllipses child starts
+    children.foldl (init := starts) fun starts child => collectStructInstEllipses child starts
   | _ => starts
 
 /- The docstring of a constructor that has one.
@@ -1316,8 +1450,8 @@ from a badly placed one.
 
 This half is the boundary; `collectOffsideConstraints` carries the other. The offset is the
 docstring's own end, which `boundaryTable` resolves to the `|` — the first terminal at or after it. -/
-private partial def collectCtorDocStarts (stx : Lean.Syntax)
-    (starts : Array Nat := #[]) : Array Nat :=
+private partial def collectCtorDocStarts (stx : Lean.Syntax) (starts : Array Nat := #[]) :
+    Array Nat :=
   match stx with
   | .node _ kind children =>
     let starts :=
@@ -1406,10 +1540,10 @@ private partial def collectOffsideConstraints (indent : Nat) (stx : Lean.Syntax)
   match stx with
   | .node _ kind children =>
     let constraints :=
-      if kind == ``Lean.Parser.Term.doLetElse ||
-          kind == ``Lean.Parser.Term.doLetExpr ||
-          kind == ``Lean.Parser.Term.doLetMetaExpr ||
-          kind == ``Lean.Parser.Term.doLetArrow then
+      if
+          kind == ``Lean.Parser.Term.doLetElse || kind == ``Lean.Parser.Term.doLetExpr ||
+              kind == ``Lean.Parser.Term.doLetMetaExpr ||
+            kind == ``Lean.Parser.Term.doLetArrow then
         let pipes := guardedPipeRanges stx
         let sequences := guardedSequenceRanges stx
         match pipes.back? with
@@ -1418,12 +1552,12 @@ private partial def collectOffsideConstraints (indent : Nat) (stx : Lean.Syntax)
           if 2 <= continuations.size then
             match continuations.back? with
             | some range =>
-              constraints.push
-                { range, indentAdjustment := -(indent : Int), carrier := .boundary }
+              constraints.push { range, indentAdjustment := -(indent : Int), carrier := .boundary }
             | none => constraints
           else constraints
         | none => constraints
-      else match ctorDocComment? stx with
+      else
+        match ctorDocComment? stx with
         | some doc =>
           match sourceRange? doc with
           | some range =>
@@ -1521,7 +1655,7 @@ private structure TransformState where
   /- Islands whose interior the formatter has started to spell. See `insideIsland`. -/
   enteredIslands : Array String := #[]
   recentNativeLeaves : Array String := #[]
-  metrics : Metrics := {}
+  metrics : Metrics := { }
 
 private structure Transformed where
   format : Std.Format
@@ -1530,8 +1664,9 @@ private structure Transformed where
 private def nearbyTerminals (state : TransformState) : String :=
   let start := state.terminalIndex - min state.terminalIndex 2
   let stop := min state.terminals.size (state.terminalIndex + 3)
-  String.intercalate ", " <| (state.terminals.extract start stop).toList.map fun terminal =>
-    s!"{terminal.range.start}:{repr terminal.sourceSpelling}"
+  String.intercalate ", " <|
+    (state.terminals.extract start stop).toList.map fun terminal =>
+      s!"{terminal.range.start}:{repr terminal.sourceSpelling}"
 
 private def rememberNativeLeaf (leaves : Array String) (value : String) : Array String :=
   let leaves := leaves.push value
@@ -1571,17 +1706,16 @@ spells it as the cancelling `nest` around the newline. Dropping that alongside t
 boundary was marked applied before the format was discarded, so `applied n/m` stayed level and nothing
 refused. Both breaks take it: the one before the comment and the one after, because the source wrote
 the comment at the command's own column too. -/
-private def insertComments (dedent : Int) (rowBreak : Std.Format)
-    (comments : Array InteriorComment) (suffix : Std.Format) : Std.Format :=
-  let (document, atLineStart) := comments.foldl (init := (.nil, false))
-    fun (document, atLineStart) comment =>
+private def insertComments (dedent : Int) (rowBreak : Std.Format) (comments : Array InteriorComment)
+    (suffix : Std.Format) : Std.Format :=
+  let (document, atLineStart) :=
+    comments.foldl (init := (.nil, false)) fun (document, atLineStart) comment =>
       let payload := commentPayload dedent comment
       match comment.placement with
       | .trailing =>
         let boundary := if atLineStart then .nil else .text " "
         let document := .append document (.append boundary payload)
-        if comment.kind == .line then (.append document rowBreak, true)
-        else (document, false)
+        if comment.kind == .line then (.append document rowBreak, true) else (document, false)
       | .leading | .dangling =>
         let boundary := if atLineStart then .nil else rowBreak
         (.append document <| .append boundary <| .append payload rowBreak, true)
@@ -1595,8 +1729,7 @@ private def insertComments (dedent : Int) (rowBreak : Std.Format)
   -- A line comment needs nothing here; it already ended the row and set `atLineStart`. Only the block
   -- case can end mid-row with nothing after it, and one space is enough -- `pushToken`'s discretionary
   -- space is the tokenizer's own answer to the same question, and this is the case it never sees.
-  else if provablyEmpty suffix then .append document (.text " ")
-  else .append document suffix
+  else if provablyEmpty suffix then .append document (.text " ") else .append document suffix
 
 private partial def hasLineBoundary : Std.Format → Bool
   | .line | .align _ => true
@@ -1697,19 +1830,24 @@ private def finishConstraint (result : Transformed) (carrier? : Option Constrain
   let some carrier := carrier? | return result
   let state ← get
   match result.span? with
-  | none => return result
+  | none =>
+    return result
   | some span =>
-    match state.constraints.findIdx? fun (constraint, expected) =>
+    match
+      state.constraints.findIdx? fun (constraint, expected) =>
         expected == span && constraint.carrier == carrier with
     | some index =>
-      if state.appliedConstraints.contains index then return result
+      if state.appliedConstraints.contains index then
+        return result
       let (constraint, _) := state.constraints[index]!
-      set { state with
-        appliedConstraints := state.appliedConstraints.push index
-        metrics := { state.metrics with
-          offsideConstraints := state.metrics.offsideConstraints + 1 } }
+      set
+          { state with
+            appliedConstraints := state.appliedConstraints.push index
+            metrics :=
+              { state.metrics with offsideConstraints := state.metrics.offsideConstraints + 1 } }
       return { result with format := .nest constraint.indentAdjustment result.format }
-    | none => return result
+    | none =>
+      return result
 
 /- Remove every break inside a span the facts marked as joinable.
 
@@ -1725,12 +1863,15 @@ private def finishFlatten (result : Transformed) :
   let state ← get
   let some span := result.span? | return result
   match state.flattened.findIdx? (· == span) with
-  | none => return result
+  | none =>
+    return result
   | some index =>
-    if state.appliedFlattened.contains index then return result
+    if state.appliedFlattened.contains index then
+      return result
     match flattenNative result.format with
     | .error leaf =>
-      throw s!"native formatter cannot join a guarded bail-out onto the bar's line: its document \
+      throw
+          s!"native formatter cannot join a guarded bail-out onto the bar's line: its document \
 holds {leaf}, which flattening cannot remove"
     | .ok format =>
       set { state with appliedFlattened := state.appliedFlattened.push index }
@@ -1761,14 +1902,17 @@ private def finishTrailing (left right : Transformed) :
     StateT TransformState (Except String) (Option Std.Format) := do
   let state ← get
   let some span := right.span? | return none
-  unless left.span?.isNone && hasLineBoundary left.format do return none
+  unless left.span?.isNone && hasLineBoundary left.format do
+    return none
   -- Every comment this block still owns, not the first: a block can end in more than one dangling
   -- comment, and `Mathlib/Tactic/Linter/ValidatePRTitle.lean` ends one in two. They have to leave
   -- together, because the site is chosen by span and the *next* site with this span is an enclosing
   -- node, one nest level out -- which is the column the whole mechanism exists to avoid.
-  let pending := (List.range state.trailing.size).filter fun index =>
-    state.trailing[index]!.1 == span && !state.appliedTrailing.contains index
-  if pending.isEmpty then return none
+  let pending :=
+    (List.range state.trailing.size).filter fun index =>
+      state.trailing[index]!.1 == span && !state.appliedTrailing.contains index
+  if pending.isEmpty then
+    return none
   let comments := pending.map fun index => state.trailing[index]!.2
   -- `Format.text` re-indents its newline to the *current* indent, and the node that claims a span is
   -- not always at the indent that span's line was laid out at: post-order reaches the deepest such node
@@ -1777,14 +1921,18 @@ private def finishTrailing (left right : Transformed) :
   -- block recorded. Without it a comment closing a nested block came out one level too deep and
   -- reparsed as dangling on the inner block instead of the one that owns it.
   let target := (state.boundaryNest.find? (·.1 == span.start)).map (·.2) |>.getD state.ambientNest
-  set { state with
-    appliedTrailing := state.appliedTrailing ++ pending.toArray
-    metrics := { state.metrics with
-      commentLeaves := state.metrics.commentLeaves + comments.length
-      commentConstraints := state.metrics.commentConstraints + comments.length } }
-  return some (comments.foldl (init := right.format) fun document comment =>
-    .append document (.nest (target - state.ambientNest)
-      (.append (.text "\n") (.text comment.payload))))
+  set
+      { state with
+        appliedTrailing := state.appliedTrailing ++ pending.toArray
+        metrics :=
+          {
+            state.metrics with
+            commentLeaves := state.metrics.commentLeaves + comments.length
+            commentConstraints := state.metrics.commentConstraints + comments.length } }
+  return some
+      (comments.foldl (init := right.format) fun document comment =>
+        .append document
+          (.nest (target - state.ambientNest) (.append (.text "\n") (.text comment.payload))))
 
 /- Every span-keyed correction a finished node can carry, in the order they compose, so that adding a
 node kind to the walk cannot silently skip one. A constraint's `nest` is inert inside a subtree that no
@@ -1801,8 +1949,8 @@ private def islandAt (state : TransformState) : Option ExactIsland :=
   | none => none
   | some terminal =>
     state.islands.find? fun island =>
-      !state.appliedIslands.contains island.marker &&
-        island.range.start <= terminal.range.start && terminal.range.stop <= island.range.stop
+      !state.appliedIslands.contains island.marker && island.range.start <= terminal.range.start &&
+        terminal.range.stop <= island.range.stop
 
 /- An exact island's bytes are its whole rendering, so native layout emitted *between* the terminals it
 covers is inside a region the source owns and must not be emitted.
@@ -1830,7 +1978,8 @@ keeps it trailing.
 This is only consulted where the document native layout produced since the previous terminal is
 provably empty — the one case where the output is certainly on the previous token's line. -/
 private def beganLine (state : TransformState) (index : Nat) : Bool :=
-  if index == 0 then false else
+  if index == 0 then false
+  else
     match state.terminals[index - 1]?, state.terminals[index]? with
     | some previous, some next =>
       (slice state.source ⟨previous.range.stop, next.range.start⟩).contains '\n'
@@ -1871,12 +2020,14 @@ A command nested inside another takes the innermost, not the sum. Each recorded 
 distance to column zero from where its own boundary landed, so two of them do not compose; the inner
 one was measured inside the outer and already carries it. -/
 private def interiorDedent (state : TransformState) : Option Int :=
-  let containing := state.dedents.filter fun (span, _) =>
-    span.start < state.terminalIndex && state.terminalIndex < span.stop
+  let containing :=
+    state.dedents.filter fun (span, _) =>
+      span.start < state.terminalIndex && state.terminalIndex < span.stop
   (containing.foldl (init := none) fun best entry =>
-    match best with
-    | some (bestSpan, _) => if entry.1.start > bestSpan.start then some entry else best
-    | none => some entry).map (·.2)
+        match best with
+        | some (bestSpan, _) => if entry.1.start > bestSpan.start then some entry else best
+        | none => some entry).map
+    (·.2)
 
 /- What the adapter spells at a boundary it corrects. Three of the four are fixed text; `dedented`
 cancels every column between the enclosing command's own and this one, so the line after it starts at
@@ -1886,7 +2037,12 @@ private def boundaryFormat (state : TransformState) : BoundaryLayout → Std.For
   | .hard => .text "\n"
   | .elided => .nil
   | .dedented => .nest (-(dedentColumns state)) (.text "\n")
-  | .columned col => .nest ((col : Int) - state.ambientNest) (.text "\n")
+  -- A pin holds a row the document left *behind*: the collectors exist because the document
+  -- moved a sibling and stranded this row at a column that no longer parses. When the document
+  -- instead re-indented the whole construct past the pin's column, the pin's column is stale —
+  -- holding it would move the row *left* of where every sibling just went, which is how an arm
+  -- body ends up left of its own `|`. So the pin only ever moves a row right.
+  | .columned col => .nest (max (col : Int) state.ambientNest - state.ambientNest) (.text "\n")
 
 private def constrainBoundary (format : Std.Format) :
     StateT TransformState (Except String) Std.Format := do
@@ -1896,11 +2052,14 @@ private def constrainBoundary (format : Std.Format) :
     -- row there is cancelled back by the amount its command's boundary cancelled. `finishTrailing`
     -- reads this to place a dangling comment at its block's own column, so it has to be the column the
     -- block's items really got rather than the one the native document chose for them.
-    modify fun state => { state with
-      boundaryNest := state.boundaryNest.push
-        (state.terminalIndex, state.ambientNest - (interiorDedent state).getD 0) }
+    modify fun state =>
+        { state with
+          boundaryNest :=
+            state.boundaryNest.push
+              (state.terminalIndex, state.ambientNest - (interiorDedent state).getD 0) }
   let state ← get
-  if insideIsland state then return .nil
+  if insideIsland state then
+    return .nil
   let mut format := format
   -- A `dedented` boundary at this terminal governs every row the comment insertion below opens, not
   -- only the one the native document spelled. See `insertComments`.
@@ -1908,25 +2067,28 @@ private def constrainBoundary (format : Std.Format) :
   -- The first boundary leaf at this terminal, and only the first: the document can lay out more than
   -- one leaf between two terminals, and a correction that fired at each of them would spell itself
   -- twice. Eliding a doubled newline depends on exactly this -- it removes the first of the two.
-  if let some (_, layout) := state.boundaries.find? fun (index, _) => index == state.terminalIndex then
+  if let some (_, layout) :=
+      state.boundaries.find? fun (index, _) => index == state.terminalIndex then
     if layout matches .dedented then
       rowBreak := boundaryFormat state layout
     unless state.appliedBoundaries.contains state.terminalIndex do
-      set { state with
-        appliedBoundaries := state.appliedBoundaries.push state.terminalIndex
-        -- The command this boundary opens, and how far its rows are from the column the boundary just
-        -- set. Recorded here because this is where the amount is known: it is the ambient nest the
-        -- boundary cancelled, and a collector reading the syntax cannot tell whether the embedding
-        -- node nested the command or spelled `ppDedent` and did not.
-        dedents :=
-          if layout matches .dedented then
-            match state.nestedCommands.find? fun span : TokenSpan =>
-                span.start == state.terminalIndex with
-            | some span => state.dedents.push (span, dedentColumns state)
-            | none => state.dedents
-          else state.dedents
-        metrics := { state.metrics with
-          offsideConstraints := state.metrics.offsideConstraints + 1 } }
+      set
+          { state with
+            appliedBoundaries := state.appliedBoundaries.push state.terminalIndex
+            -- The command this boundary opens, and how far its rows are from the column the boundary just
+            -- set. Recorded here because this is where the amount is known: it is the ambient nest the
+            -- boundary cancelled, and a collector reading the syntax cannot tell whether the embedding
+            -- node nested the command or spelled `ppDedent` and did not.
+            dedents :=
+              if layout matches .dedented then
+                match
+                  state.nestedCommands.find? fun span : TokenSpan =>
+                    span.start == state.terminalIndex with
+                | some span => state.dedents.push (span, dedentColumns state)
+                | none => state.dedents
+              else state.dedents
+            metrics :=
+              { state.metrics with offsideConstraints := state.metrics.offsideConstraints + 1 } }
       format := boundaryFormat state layout
   let state ← get
   -- Every row this boundary opens inside a nested command is cancelled the way that command's own
@@ -1938,15 +2100,20 @@ private def constrainBoundary (format : Std.Format) :
   let start := state.commentIndex
   let mut stop := start
   while h : stop < state.comments.size do
-    if state.comments[stop].boundary == state.terminalIndex then stop := stop + 1
-    else break
+    if state.comments[stop].boundary == state.terminalIndex then
+      stop := stop + 1
+    else
+      break
   if start < stop then
     let comments := state.comments.extract start stop
-    set { state with
-      commentIndex := stop
-      metrics := { state.metrics with
-        commentLeaves := state.metrics.commentLeaves + comments.size
-        commentConstraints := state.metrics.commentConstraints + comments.size } }
+    set
+        { state with
+          commentIndex := stop
+          metrics :=
+            {
+              state.metrics with
+              commentLeaves := state.metrics.commentLeaves + comments.size
+              commentConstraints := state.metrics.commentConstraints + comments.size } }
     -- A comment payload carries absolute source columns and has to reach column zero whatever row it
     -- lands on, so the `interior` cancellation applied below is subtracted back out here rather than
     -- left to compose with it.
@@ -1961,16 +2128,16 @@ private def consumeIsland (value : String) (island : ExactIsland) :
   let state ← get
   let start := state.terminalIndex
   let mut stop := start
-  while stop < state.terminals.size &&
-      state.terminals[stop]!.range.start < island.range.stop do
+  while stop < state.terminals.size && state.terminals[stop]!.range.start < island.range.stop do
     let terminal := state.terminals[stop]!
-    unless island.range.start <= terminal.range.start &&
-        terminal.range.stop <= island.range.stop do
-      throw s!"exact island {island.range.start}:{island.range.stop} cuts terminal \
+    unless island.range.start <= terminal.range.start && terminal.range.stop <= island.range.stop do
+      throw
+          s!"exact island {island.range.start}:{island.range.stop} cuts terminal \
 {terminal.range.start}:{terminal.range.stop}"
     stop := stop + 1
   if start == stop then
-    throw s!"exact island {island.range.start}:{island.range.stop} contains no terminal at index \
+    throw
+        s!"exact island {island.range.start}:{island.range.stop} contains no terminal at index \
 {start}/{state.terminals.size}; nearby: {nearbyTerminals state}; recent native leaves: \
 {repr state.recentNativeLeaves}"
   let (leading, trailing) := splitPadding value
@@ -1988,23 +2155,26 @@ private def consumeIsland (value : String) (island : ExactIsland) :
   let startsLine :=
     island.comment && !state.separated && leading.isEmpty && beganLine state start &&
       provablyEmpty boundary
-  set { state with
-    terminalIndex := stop
-    separated := false
-    appliedIslands := state.appliedIslands.push island.marker
-    metrics := { state.metrics with
-      nativeNodes := state.metrics.nativeNodes + 1
-      tokenLeaves := state.metrics.tokenLeaves + 1
-      exactIslands := state.metrics.exactIslands + 1
-      exactIslandBytes := state.metrics.exactIslandBytes + island.text.utf8ByteSize } }
+  set
+      { state with
+        terminalIndex := stop
+        separated := false
+        appliedIslands := state.appliedIslands.push island.marker
+        metrics :=
+          { state.metrics with
+            nativeNodes := state.metrics.nativeNodes + 1
+            tokenLeaves := state.metrics.tokenLeaves + 1
+            exactIslands := state.metrics.exactIslands + 1
+            exactIslandBytes := state.metrics.exactIslandBytes + island.text.utf8ByteSize } }
   let state ← get
   -- The leading padding is `boundary`'s now, not the payload's: `constrainBoundary` returns it
   -- unchanged when no rule claims this terminal, and replaces it when one does.
   let payload := Std.Format.text (island.text ++ trailing)
   -- A single-line payload has no interior newline for the ambient indentation to reach.
-  let payload := if island.text.contains '\n' then
-      .nest (-(state.baseIndent + state.ambientNest +
-        containingConstraintNest state ⟨start, stop⟩)) payload
+  let payload :=
+    if island.text.contains '\n' then
+      .nest (-(state.baseIndent + state.ambientNest + containingConstraintNest state ⟨start, stop⟩))
+        payload
     else payload
   let payload := if startsLine then .append (.text "\n") payload else payload
   finishNode { format := .append boundary payload, span? := some ⟨start, stop⟩ }
@@ -2013,8 +2183,9 @@ private def transformOrdinaryText (value : String) :
     StateT TransformState (Except String) Transformed := do
   let state ← get
   if value.trimAscii.isEmpty then
-    set { state with metrics := { state.metrics with
-      nativeNodes := state.metrics.nativeNodes + 1 } }
+    set
+        { state with
+          metrics := { state.metrics with nativeNodes := state.metrics.nativeNodes + 1 } }
     finishNode { format := ← constrainBoundary (.text value) }
   else if let some island := islandAt state then
     -- This leaf spells a terminal the island covers, so the island's own bytes already carry it.
@@ -2027,58 +2198,67 @@ private def transformOrdinaryText (value : String) :
     -- way: the entry was recorded, `insideIsland` then held, and the boundary the doc rule collected
     -- at that terminal could never be applied by anyone. `Mathlib/Tactic/CasesM.lean`'s `where` binding
     -- reported this as `applied 4/5 boundaries`.
-    let boundary ← if state.enteredIslands.contains island.marker then pure .nil
-      else constrainBoundary (.text (splitPadding value).1)
-    modify fun state => { state with
-      enteredIslands :=
-        if state.enteredIslands.contains island.marker then state.enteredIslands
-        else state.enteredIslands.push island.marker
-      metrics := { state.metrics with nativeNodes := state.metrics.nativeNodes + 1 } }
+    let boundary ←
+      if state.enteredIslands.contains island.marker then
+        pure .nil
+      else
+        constrainBoundary (.text (splitPadding value).1)
+    modify fun state =>
+        {
+          state with
+          enteredIslands :=
+            if state.enteredIslands.contains island.marker then state.enteredIslands
+            else state.enteredIslands.push island.marker
+          metrics := { state.metrics with nativeNodes := state.metrics.nativeNodes + 1 } }
     return { format := boundary }
   else
-    let some terminal := state.terminals[state.terminalIndex]?
-      | if commentText value then
-          throw s!"comment-free native syntax emitted an interior comment leaf {repr value}"
-        else
-          throw s!"native formatter emitted extra text leaf {repr value} after \
+    let some terminal := state.terminals[state.terminalIndex]? |
+      if commentText value then
+        throw s!"comment-free native syntax emitted an interior comment leaf {repr value}"
+      else
+        throw
+            s!"native formatter emitted extra text leaf {repr value} after \
 {state.terminalIndex} terminals; nearby: {nearbyTerminals state}"
     -- `withoutTrivia` removes every comment the formatter could re-emit from `SourceInfo`, so a
     -- comment leaf is admissible only where the source spells a doc comment as syntax.
     if commentText value && !commentText terminal.sourceSpelling then
       throw s!"comment-free native syntax emitted an interior comment leaf {repr value}"
     let nativePayload := value.trimAscii.copy
-    let normalized := nativePayload != terminal.syntaxSpelling &&
-      nativePayload != terminal.sourceSpelling
+    let normalized :=
+      nativePayload != terminal.syntaxSpelling && nativePayload != terminal.sourceSpelling
     let (leading, trailing) := splitPadding value
     let boundary ← constrainBoundary (.text leading)
     let state ← get
-    set { state with
-      terminalIndex := state.terminalIndex + 1
-      separated := !trailing.isEmpty
-      metrics := { state.metrics with
-        nativeNodes := state.metrics.nativeNodes + 1
-        tokenLeaves := state.metrics.tokenLeaves + 1
-        normalizedTokens := state.metrics.normalizedTokens + if normalized then 1 else 0 } }
-    finishNode {
-      format := .append boundary (.append (.text terminal.sourceSpelling) (.text trailing))
-      span? := some ⟨state.terminalIndex, state.terminalIndex + 1⟩ }
+    set
+        { state with
+          terminalIndex := state.terminalIndex + 1
+          separated := !trailing.isEmpty
+          metrics :=
+            { state.metrics with
+              nativeNodes := state.metrics.nativeNodes + 1
+              tokenLeaves := state.metrics.tokenLeaves + 1
+              normalizedTokens := state.metrics.normalizedTokens + if normalized then 1 else 0 } }
+    finishNode
+        { format := .append boundary (.append (.text terminal.sourceSpelling) (.text trailing))
+          span? := some ⟨state.terminalIndex, state.terminalIndex + 1⟩ }
 
-private def transformText (value : String) :
-    StateT TransformState (Except String) Transformed := do
+private def transformText (value : String) : StateT TransformState (Except String) Transformed := do
   let state ← get
   set { state with recentNativeLeaves := rememberNativeLeaf state.recentNativeLeaves value }
   let state ← get
   match state.islands.find? fun island => value.trimAscii.copy == island.marker with
-  | some island => consumeIsland value island
+  | some island =>
+    consumeIsland value island
   | none =>
     -- Only an island the formatter dropped is placed ahead of its own marker. Placing an island the
     -- formatter *will* spell consumes the terminals that marker is still about to claim, which then
     -- reports the island as containing no terminal.
-    let pending? := state.terminals[state.terminalIndex]?.bind fun terminal =>
-      state.islands.find? fun island =>
-        state.droppedIslands.contains island.marker &&
-          !state.appliedIslands.contains island.marker &&
-          island.range.start == terminal.range.start
+    let pending? :=
+      state.terminals[state.terminalIndex]?.bind fun terminal =>
+        state.islands.find? fun island =>
+          state.droppedIslands.contains island.marker &&
+              !state.appliedIslands.contains island.marker &&
+            island.range.start == terminal.range.start
     match pending? with
     | some exact =>
       -- The formatter emitted no leaf for this island, so the native document also holds no decision
@@ -2093,28 +2273,31 @@ private def transformText (value : String) :
       -- width the renderer owns exactly as it owns every other break.
       let sourceGap :=
         if state.terminalIndex == 0 then ""
-        else match state.terminals[state.terminalIndex - 1]? with
+        else
+          match state.terminals[state.terminalIndex - 1]? with
           | some previous => slice state.source ⟨previous.range.stop, exact.range.start⟩
           | none => ""
       let separate := !state.separated && !sourceGap.isEmpty
       let island ← consumeIsland exact.marker exact
-      let island := if separate then { island with format := .append .line island.format } else island
+      let island :=
+        if separate then { island with format := .append .line island.format } else island
       let current ← transformOrdinaryText value
-      finishNode {
-        format := .append island.format current.format
-        span? := mergeSpan island.span? current.span? }
+      finishNode
+          { format := .append island.format current.format
+            span? := mergeSpan island.span? current.span? }
     | none =>
       transformOrdinaryText value
 
-private partial def transformNative : Std.Format →
-    StateT TransformState (Except String) Transformed
+private partial def transformNative : Std.Format → StateT TransformState (Except String) Transformed
   | .nil => do
-    modify fun state => { state with metrics := { state.metrics with
-      nativeNodes := state.metrics.nativeNodes + 1 } }
+    modify fun state =>
+        { state with
+          metrics := { state.metrics with nativeNodes := state.metrics.nativeNodes + 1 } }
     finishNode { format := .nil }
   | .line => do
-    modify fun state => { state with metrics := { state.metrics with
-      nativeNodes := state.metrics.nativeNodes + 1 } }
+    modify fun state =>
+        { state with
+          metrics := { state.metrics with nativeNodes := state.metrics.nativeNodes + 1 } }
     finishNode { format := ← constrainBoundary .line }
   -- An `align` is a boundary: it is layout the document put between two terminals, and a comment that
   -- belongs in that gap belongs *here*. It used to be the one boundary leaf that did not go through
@@ -2124,20 +2307,23 @@ private partial def transformNative : Std.Format →
   -- the align's column, which is `sepByIndent`'s reference column: the block ended at the first
   -- sibling. `constrainBoundary` subsumes the island and `separated` handling this case used to spell.
   | .align force => do
-    modify fun state => { state with metrics := { state.metrics with
-      nativeNodes := state.metrics.nativeNodes + 1 } }
+    modify fun state =>
+        { state with
+          metrics := { state.metrics with nativeNodes := state.metrics.nativeNodes + 1 } }
     finishNode { format := ← constrainBoundary (.align force) }
   | .text value => transformText value
   | .nest indent inner => do
-    modify fun state => { state with
-      ambientNest := state.ambientNest + indent
-      metrics := { state.metrics with nativeNodes := state.metrics.nativeNodes + 1 } }
+    modify fun state =>
+        { state with
+          ambientNest := state.ambientNest + indent
+          metrics := { state.metrics with nativeNodes := state.metrics.nativeNodes + 1 } }
     let inner ← transformNative inner
     modify fun state => { state with ambientNest := state.ambientNest - indent }
     finishNode { inner with format := .nest indent inner.format } (carrier? := some .nest)
   | .append left right => do
-    modify fun state => { state with metrics := { state.metrics with
-      nativeNodes := state.metrics.nativeNodes + 1 } }
+    modify fun state =>
+        { state with
+          metrics := { state.metrics with nativeNodes := state.metrics.nativeNodes + 1 } }
     let left ← transformNative left
     let right ← transformNative right
     let right := { right with format := (← finishTrailing left right).getD right.format }
@@ -2156,19 +2342,22 @@ private partial def transformNative : Std.Format →
         (dropTrailingBreak left.format).orElse fun _ => dropTrailingHardLine left.format
       else none
     if leftFormat.isSome then
-      modify fun state => { state with metrics := { state.metrics with
-        redundantBreaks := state.metrics.redundantBreaks + 1 } }
-    finishNode {
-      format := .append (leftFormat.getD left.format) right.format
-      span? := mergeSpan left.span? right.span? } carrier?
+      modify fun state =>
+          { state with
+            metrics := { state.metrics with redundantBreaks := state.metrics.redundantBreaks + 1 } }
+    finishNode
+        { format := .append (leftFormat.getD left.format) right.format
+          span? := mergeSpan left.span? right.span? } carrier?
   | .group inner behavior => do
-    modify fun state => { state with metrics := { state.metrics with
-      nativeNodes := state.metrics.nativeNodes + 1 } }
+    modify fun state =>
+        { state with
+          metrics := { state.metrics with nativeNodes := state.metrics.nativeNodes + 1 } }
     let inner ← transformNative inner
     finishNode { inner with format := .group inner.format behavior }
   | .tag tag inner => do
-    modify fun state => { state with metrics := { state.metrics with
-      nativeNodes := state.metrics.nativeNodes + 1 } }
+    modify fun state =>
+        { state with
+          metrics := { state.metrics with nativeNodes := state.metrics.nativeNodes + 1 } }
     let inner ← transformNative inner
     finishNode { inner with format := .tag tag inner.format }
 
@@ -2205,10 +2394,10 @@ private def transform (source : String) (terminals : Array Terminal)
     (comments : Array InteriorComment) (blockDangling : Array (SourceRange × InteriorComment))
     (islands : Array ExactIsland) (constraints : Array OffsideConstraint)
     (boundaryStarts : Array (Nat × BoundaryLayout)) (joined : Array SourceRange)
-    (nestedCommandRanges : Array SourceRange) (baseIndent : Nat)
-    (native : Std.Format) : Except String (Std.Format × Metrics) := do
-  let constraints := constraints.map fun constraint =>
-    (constraint, spanForRange terminals constraint.range)
+    (nestedCommandRanges : Array SourceRange) (baseIndent : Nat) (native : Std.Format) :
+    Except String (Std.Format × Metrics) := do
+  let constraints :=
+    constraints.map fun constraint => (constraint, spanForRange terminals constraint.range)
   -- An exact island's bytes are its whole rendering, so the adapter spells no boundary between the
   -- terminals it covers and `constrainBoundary` returns nothing there. A boundary collected inside one
   -- can therefore never be applied, and every collected boundary must be applied or the command is
@@ -2224,33 +2413,41 @@ private def transform (source : String) (terminals : Array Terminal)
   -- `Mathlib/Analysis/InnerProductSpace/Projection/Submodule.lean` reported as `applied 2/4 exact
   -- islands` with no unapplied entry to name. Equal markers mean equal ranges mean equal bytes, so
   -- they are the same island and collapsing them is the whole repair.
-  let islands := islands.foldl (init := #[]) fun kept island =>
-    if kept.any fun other : ExactIsland => other.marker == island.marker then kept
-    else kept.push island
+  let islands :=
+    islands.foldl (init := #[]) fun kept island =>
+      if kept.any fun other : ExactIsland => other.marker == island.marker then kept
+      else kept.push island
   -- The island's *first* covered terminal keeps its boundary: that boundary separates the island from
   -- the token in front of it and is the adapter's, which is why the bound is strict on the left.
-  let boundaryStarts := boundaryStarts.filter fun (start, _) =>
-    !islands.any fun island => island.range.start < start && start < island.range.stop
+  let boundaryStarts :=
+    boundaryStarts.filter fun (start, _) =>
+      !islands.any fun island => island.range.start < start && start < island.range.stop
   let boundaries ← boundaryTable terminals boundaryStarts
   let flattened := joined.map (spanForRange terminals)
   let nestedCommands := nestedCommandRanges.map (spanForRange terminals)
   let trailing := blockDangling.map fun (range, comment) => (spanForRange terminals range, comment)
-  let comments := comments.map fun comment =>
-    { comment with
-      boundary := terminals.findIdx? (comment.range.start < ·.range.start) |>.getD terminals.size }
+  let comments :=
+    comments.map fun comment =>
+      { comment with
+        boundary :=
+          terminals.findIdx? (comment.range.start < ·.range.start) |>.getD terminals.size }
   let spelled := spelledMarkers native
-  let droppedIslands := islands.filterMap fun island =>
-    if spelled.contains island.marker then none else some island.marker
-  let initial : TransformState := {
+  let droppedIslands :=
+    islands.filterMap fun island =>
+      if spelled.contains island.marker then none else some island.marker
+  let initial : TransformState :=
+    {
     source, terminals, comments, trailing, islands, droppedIslands, constraints, boundaries,
     flattened, nestedCommands, baseIndent }
   let (result, state) ← (transformNative native).run initial
   if state.terminalIndex != terminals.size then
-    throw s!"native formatter consumed {state.terminalIndex}/{terminals.size} terminals; \
+    throw
+        s!"native formatter consumed {state.terminalIndex}/{terminals.size} terminals; \
 nearby: {nearbyTerminals state}; recent native leaves: {repr state.recentNativeLeaves}"
   if state.commentIndex != comments.size then
     let nextRange := comments[state.commentIndex]?.map fun comment => comment.range
-    throw s!"native formatter inserted {state.commentIndex}/{comments.size} interior comments; \
+    throw
+        s!"native formatter inserted {state.commentIndex}/{comments.size} interior comments; \
 next expected range: {repr nextRange}; recent native leaves: \
 {repr state.recentNativeLeaves}"
   -- A count alone says a rule went unapplied and nothing about which one; every one of these was
@@ -2258,28 +2455,37 @@ next expected range: {repr nextRange}; recent native leaves: \
   -- unapplied entry and the source it was collected at.
   if state.appliedIslands.size != islands.size then
     let missing := islands.filter fun island => !state.appliedIslands.contains island.marker
-    throw s!"native formatter applied {state.appliedIslands.size}/{islands.size} exact islands; \
+    throw
+        s!"native formatter applied {state.appliedIslands.size}/{islands.size} exact islands; \
 first unapplied: {repr (missing[0]?.map fun island => (island.range.start, island.range.stop, island.text))}"
   if state.appliedConstraints.size != constraints.size then
-    let missing := (constraints.zipIdx.filter fun (_, index) =>
-      !state.appliedConstraints.contains index).map fun ((constraint, span), _) =>
+    let missing :=
+      (constraints.zipIdx.filter fun (_, index) => !state.appliedConstraints.contains index).map
+        fun ((constraint, span), _) =>
         (constraint.range.start, constraint.range.stop, span.start, span.stop)
-    throw s!"native formatter applied {state.appliedConstraints.size}/{constraints.size} \
+    throw
+        s!"native formatter applied {state.appliedConstraints.size}/{constraints.size} \
 offside constraints; first unapplied: {repr missing[0]?}"
   if state.appliedBoundaries.size != boundaries.size then
     let missing := boundaries.filter fun (index, _) => !state.appliedBoundaries.contains index
-    let described := missing.map fun (index, _) =>
-      (index, (terminals[index]?.map fun terminal : Terminal =>
-        (terminal.range.start, terminal.sourceSpelling)))
-    throw s!"native formatter applied {state.appliedBoundaries.size}/{boundaries.size} \
+    let described :=
+      missing.map fun (index, _) =>
+        (index,
+          (terminals[index]?.map fun terminal : Terminal =>
+            (terminal.range.start, terminal.sourceSpelling)))
+    throw
+        s!"native formatter applied {state.appliedBoundaries.size}/{boundaries.size} \
 boundaries; unapplied at {repr described}"
   if state.appliedFlattened.size != flattened.size then
-    let missing := (flattened.zipIdx.filter fun (_, index) =>
-      !state.appliedFlattened.contains index).map fun (span, _) => (span.start, span.stop)
-    throw s!"native formatter joined {state.appliedFlattened.size}/{flattened.size} guarded \
+    let missing :=
+      (flattened.zipIdx.filter fun (_, index) => !state.appliedFlattened.contains index).map
+        fun (span, _) => (span.start, span.stop)
+    throw
+        s!"native formatter joined {state.appliedFlattened.size}/{flattened.size} guarded \
 bail-outs; first unapplied span: {repr missing[0]?}"
   if state.appliedTrailing.size != trailing.size then
-    throw s!"native formatter placed {state.appliedTrailing.size}/{trailing.size} block-dangling \
+    throw
+        s!"native formatter placed {state.appliedTrailing.size}/{trailing.size} block-dangling \
 comments; the block's document holds no break to hang one on"
   return (result.format, state.metrics)
 
@@ -2296,15 +2502,16 @@ private def interiorComments (ownership : CommentOwnership) (stx : Lean.Syntax)
     if range.start <= comment.range.start && comment.range.stop <= range.stop then
       if comment.kind == .doc || blockDangling.contains comment.range then none
       else
-        let placement := if trailing.contains comment then .trailing
-          else if dangling.contains comment then .dangling
-          else if leading.contains comment then .leading
-          else .leading
-        some {
-          payload := Comments.payload ownership comment
-          range := comment.range
-          placement := placement
-          kind := comment.kind }
+        let placement :=
+          if trailing.contains comment then .trailing
+          else
+            if dangling.contains comment then .dangling
+            else if leading.contains comment then .leading else .leading
+        some
+          { payload := Comments.payload ownership comment
+            range := comment.range
+            placement := placement
+            kind := comment.kind }
     else none
 
 /- Every comment a block owns from past its own last token, with that block.
@@ -2328,11 +2535,13 @@ private def blockDanglingComments (ownership : CommentOwnership) (stx : Lean.Syn
     Array (SourceRange × InteriorComment) :=
   Comments.blockDangling ownership stx |>.filterMap fun (owner, comment) =>
     if comment.kind == .doc then none
-    else some (owner, {
-      payload := Comments.payload ownership comment
-      range := comment.range
-      placement := .dangling
-      kind := comment.kind })
+    else
+      some
+        (owner,
+          { payload := Comments.payload ownership comment
+            range := comment.range
+            placement := .dangling
+            kind := comment.kind })
 
 /- A syntax node kind carrying a `_root_` component, with the name that component was meant to be.
 
@@ -2386,7 +2595,8 @@ private partial def nativeSize : Std.Format → Nat
 only the structurally measured boundary and offside corrections collected below. `baseIndent` is the
 column the resulting registered leaf is rendered at; an exact island's dedent must cancel it. -/
 def command (source : String) (ownership : CommentOwnership) (stx : Lean.Syntax)
-    (format : FormatConfig) (baseIndent : Nat := 0) : Lean.CoreM (Except FormatterFailure Document) := do
+    (format : FormatConfig) (baseIndent : Nat := 0) :
+    Lean.CoreM (Except FormatterFailure Document) := do
   let trace ← Formatter.trace ownership .command stx
   -- The same `format.indent` Lean's own `ppIndent`/`ppDedent` read, so a constraint that cancels one
   -- level of native indentation cancels exactly the amount native layout introduced.
@@ -2398,12 +2608,13 @@ def command (source : String) (ownership : CommentOwnership) (stx : Lean.Syntax)
   -- instead of assuming it, and this is where lean-fmt does the same: one check on `stripped`, which
   -- is the tree all four walk, makes the assumption true for all four.
   if let some (range, alternative, expected, actual) := choiceDisagreement? source stripped then
-    return .error {
-      category := .command
-      kind := stx.getKind
-      range
-      trace
-      detail := s!"choice node at {range.start}:{range.stop} spells different source in its \
+    return .error
+        { category := .command
+          kind := stx.getKind
+          range
+          trace
+          detail :=
+            s!"choice node at {range.start}:{range.stop} spells different source in its \
 alternatives: alternative 0 is {expected}, alternative {alternative} is {actual}" }
   let blockDangling := blockDanglingComments ownership stx
   let comments := interiorComments ownership stx (blockDangling.map (·.2.range))
@@ -2416,7 +2627,7 @@ alternatives: alternative 0 is {expected}, alternative {alternative} is {actual}
   let joined := collectGuardBailouts source stripped
   let unbreakableRuns := collectUnbreakableRuns source stripped
   let categories := (Lean.Parser.parserExtension.getState (← Lean.getEnv)).categories
-  let commandKinds := (categories.find? `command).map (·.kinds) |>.getD {}
+  let commandKinds := (categories.find? `command).map (·.kinds) |>.getD { }
   let rootStart := ((selectedLeafRanges stripped)[0]?).map (·.start) |>.getD 0
   let ctorDocStarts := collectCtorDocStarts stripped
   let nestedCommandRanges := collectNestedCommandRanges commandKinds rootStart stripped
@@ -2438,16 +2649,21 @@ alternatives: alternative 0 is {expected}, alternative {alternative} is {actual}
       -- `open Foo in` / `/-- … -/` / `def …` is an ordinary mathlib shape. The command's column is the
       -- stronger claim -- it is a parse-relevant one and this is a line-side preference -- so the
       -- dedent owns that boundary and the doc rule steps aside rather than letting the two disagree.
-      if range.start == rootStart || ctorDocStarts.contains range.stop ||
-          nestedCommandStarts.contains range.start then none
+      if
+          range.start == rootStart || ctorDocStarts.contains range.stop ||
+            nestedCommandStarts.contains range.start then
+        none
       else
         let broken := brokenBefore range.start
         -- An attribute-owned doc comment broken in the source cannot take the `.hard` spelling
         -- every other doc takes: the nested column pushes its fixed payload past the width it was
         -- authored to fit, so it dedents to the attribute list's own column instead.
-        some (range.start, if !broken then BoundaryLayout.flat
-          else if attrDocStarts.contains range.start then BoundaryLayout.dedented
-          else BoundaryLayout.hard)
+        some
+          (range.start,
+            if !broken then BoundaryLayout.flat
+            else
+              if attrDocStarts.contains range.start then BoundaryLayout.dedented
+              else BoundaryLayout.hard)
   -- The bracket half of the attribute-doc decision: a doc the source broke pulls the closing `]`
   -- down to the same column, so the pair renders as one shape; a hugged doc keeps the `]` hugged with
   -- an `.elided` spelling -- `-/]`, no space -- because `Term.docComment` ends with `>> ppLine`
@@ -2457,70 +2673,82 @@ alternatives: alternative 0 is {expected}, alternative {alternative} is {actual}
   -- bracket always fell to its own line at the nested indent.
   let attrDocBoundaries : Array (Nat × BoundaryLayout) :=
     attrDocComments.filterMap fun (doc, bracket) =>
-      some (bracket.start,
-        if brokenBefore doc.start then BoundaryLayout.dedented else BoundaryLayout.elided)
+      some
+        (bracket.start,
+          if brokenBefore doc.start then BoundaryLayout.dedented else BoundaryLayout.elided)
   let boundaryStarts : Array (Nat × BoundaryLayout) :=
     (collectUngroupedBodyStarts format.declarationBody source format.lineWidth stripped
-        (collectReturnTermStarts stripped)).map
-        (·, BoundaryLayout.flat) ++
-      (collectIndentedSequenceStarts stripped).map (·, BoundaryLayout.hard) ++
-      (collectCdotStarts stripped).map (·, BoundaryLayout.flat) ++
-      nestedCommandStarts.map (·, BoundaryLayout.dedented) ++
-      ctorDocStarts.map (·, BoundaryLayout.elided) ++
-      docBoundaries ++
-      attrDocBoundaries ++
-      joined.map (·.start, BoundaryLayout.flat) ++
-      ((collectBraceAppArgStarts stripped).filterMap fun start =>
-        if brokenBefore start then none else some (start, BoundaryLayout.flat)) ++
-      (collectBraceInteriorBreaks source stripped).map
-        (fun p => (p.1, BoundaryLayout.columned p.2)) ++
-      (collectLetFamilyAlignments source stripped).map
-        (fun p => (p.1, BoundaryLayout.columned p.2)) ++
-      unbreakableRunBoundaries source terminals unbreakableRuns ++
+                                        (collectReturnTermStarts stripped)).map
+                                    (·, BoundaryLayout.flat) ++
+                                  (collectIndentedSequenceStarts stripped).map
+                                    (·, BoundaryLayout.hard) ++
+                                (collectCdotStarts stripped).map (·, BoundaryLayout.flat) ++
+                              nestedCommandStarts.map (·, BoundaryLayout.dedented) ++
+                            ctorDocStarts.map (·, BoundaryLayout.elided) ++
+                          docBoundaries ++
+                        attrDocBoundaries ++
+                      joined.map (·.start, BoundaryLayout.flat) ++
+                    (collectGuardBarBreaks source stripped).map (·, BoundaryLayout.hard) ++
+                  ((collectBraceAppArgStarts stripped).filterMap fun start =>
+                    if brokenBefore start then none else some (start, BoundaryLayout.flat)) ++
+                ((collectReturnBraceStarts stripped).filterMap fun start =>
+                  if brokenBefore start then none else some (start, BoundaryLayout.flat)) ++
+              (collectBraceInteriorBreaks source stripped).map
+                (fun p => (p.1, BoundaryLayout.columned p.2)) ++
+            (collectStructInstFieldRows source stripped).map
+              (fun p => (p.1, BoundaryLayout.columned p.2)) ++
+          (collectLetFamilyAlignments source stripped).map
+            (fun p => (p.1, BoundaryLayout.columned p.2)) ++
+        unbreakableRunBoundaries source terminals unbreakableRuns ++
       (collectStructInstEllipses stripped).filterMap fun start =>
-        let broken := (terminals.filter (·.range.stop <= start)).back?.any fun previous =>
-          (slice source ⟨previous.range.stop, start⟩).contains '\n'
+        let broken :=
+          (terminals.filter (·.range.stop <= start)).back?.any fun previous =>
+            (slice source ⟨previous.range.stop, start⟩).contains '\n'
         if broken then some (start, BoundaryLayout.hard) else none
   let commentFree := withoutTrivia stripped
   let (formattedSyntax, islands) := protectSourceData categories source commentFree
   -- Named before `formatCommand` reaches it. Both lookups this breaks fail with a message about
   -- a name nobody wrote, and the one that fires depends on which end is asked first.
   if let some (kind, suffix) := rootedKindNode? (← Lean.getEnv) formattedSyntax then
-    return .error {
-      category := .command
-      kind := stx.getKind
-      range := rootRange stx
-      trace
-      detail := s!"syntax node kind {kind} names no constant: it is a namespace prefixed onto a \
+    return .error
+        { category := .command
+          kind := stx.getKind
+          range := rootRange stx
+          trace
+          detail :=
+            s!"syntax node kind {kind} names no constant: it is a namespace prefixed onto a \
 declaration name that spelled `_root_`, which the parser constant {suffix} honoured and \
 Lean/Elab/Syntax.lean:465 did not. No formatter can be resolved for it. Write \
 {repr Formatter.Trivia.formatIgnoreNextText} above the command to leave it verbatim" }
   -- A marker is matched by its spelling when the formatter hands the leaf back, so a source that
   -- already spells one would be indistinguishable from the placeholder standing in for protected
   -- syntax. The shape is unlikely, not impossible, and "unlikely" is not a guarantee: refuse instead.
-  if let some marker := islands.find? fun island => terminals.any fun terminal =>
-      terminal.sourceSpelling == island.marker then
-    return .error {
-      category := .command
-      kind := stx.getKind
-      range := rootRange stx
-      trace
-      detail := s!"source spells the exact-island marker {repr marker.marker}, which the formatter \
+  if let some marker :=
+      islands.find? fun island =>
+        terminals.any fun terminal => terminal.sourceSpelling == island.marker then
+    return .error
+        { category := .command
+          kind := stx.getKind
+          range := rootRange stx
+          trace
+          detail :=
+            s!"source spells the exact-island marker {repr marker.marker}, which the formatter \
 cannot tell from the placeholder that protects {marker.range.start}:{marker.range.stop}" }
   try
     let native ← Lean.PrettyPrinter.formatCommand formattedSyntax
     let native := (dropTrailingHardLine native).getD native
-    match transform source terminals comments blockDangling islands constraints boundaryStarts
-        joined nestedCommandRanges baseIndent native with
+    match
+      transform source terminals comments blockDangling islands constraints boundaryStarts joined
+        nestedCommandRanges baseIndent native with
     | .ok (native, metrics) =>
       return .ok { document := Doc.registered native, trace, metrics }
     | .error detail =>
-      return .error {
-        category := .command
-        kind := stx.getKind
-        range := rootRange stx
-        trace
-        detail }
+      return .error
+          { category := .command
+            kind := stx.getKind
+            range := rootRange stx
+            trace
+            detail }
   catch exception =>
     let detail ← exception.toMessageData.toString
     -- A formatter `throwBacktrack` that no alternative catches is rethrown upstream as
@@ -2534,24 +2762,24 @@ cannot tell from the placeholder that protects {marker.range.start}:{marker.rang
     if (detail.splitOn "uncaught backtrack exception").length > 1 then
       match sourceRange? stx with
       | some range =>
-        return .ok {
-          document := Doc.verbatim (slice source range)
-          trace
-          metrics := { exactIslands := 1, exactIslandBytes := range.stop - range.start } }
+        return .ok
+            { document := Doc.verbatim (slice source range)
+              trace
+              metrics := { exactIslands := 1, exactIslandBytes := range.stop - range.start } }
       | none =>
-        return .error {
-          category := .command
-          kind := stx.getKind
-          range := rootRange stx
-          trace
-          detail := s!"{detail} (no source range for the verbatim fallback)" }
+        return .error
+            { category := .command
+              kind := stx.getKind
+              range := rootRange stx
+              trace
+              detail := s!"{detail} (no source range for the verbatim fallback)" }
     else
-      return .error {
-        category := .command
-        kind := stx.getKind
-        range := rootRange stx
-        trace
-        detail }
+      return .error
+          { category := .command
+            kind := stx.getKind
+            range := rootRange stx
+            trace
+            detail }
 
 end Formatter.NativeLayout
 

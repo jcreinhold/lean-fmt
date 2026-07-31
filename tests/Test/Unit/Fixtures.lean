@@ -51,44 +51,39 @@ token's span and trivia runs abut, covering `[headerStop, terminalStop)` exactly
     byte 0    3 4 5 6  8 9 10 11
          |def | |x| |:=| |1 |\n|
 -/
-private def fixtureSourceText : String := "def x := 1\n"
+private def fixtureSourceText : String :=
+  "def x := 1\n"
 
-private def fixtureLosslessSource (mainModule := "Test") : LosslessSource := {
-  schema := losslessSourceSchema
-  mainModule
-  normalizedBytes := fixtureSourceText.utf8ByteSize
-  normalizedDigest := Digest.ofString fixtureSourceText
-  headerStop := 0
-  terminalStop := fixtureSourceText.utf8ByteSize
-  kinds := #["Lean.Parser.Command.declaration"]
-  nodes := #[{ kind := 0, parent := none, range := { start := 0, stop := 10 } }]
-  tokens := #[
-    { node := 0, start := 0, stop := 3, trailing := #[{ kind := .whitespace, stop := 4 }] },
-    { node := 0, start := 4, stop := 5, trailing := #[{ kind := .whitespace, stop := 6 }] },
-    { node := 0, start := 6, stop := 8, trailing := #[{ kind := .whitespace, stop := 9 }] },
-    { node := 0, start := 9, stop := 10, trailing := #[{ kind := .whitespace, stop := 11 }] }
-  ]
-}
+private def fixtureLosslessSource (mainModule := "Test") : LosslessSource :=
+  { schema := losslessSourceSchema
+    mainModule
+    normalizedBytes := fixtureSourceText.utf8ByteSize
+    normalizedDigest := Digest.ofString fixtureSourceText
+    headerStop := 0
+    terminalStop := fixtureSourceText.utf8ByteSize
+    kinds := #["Lean.Parser.Command.declaration"]
+    nodes := #[{ kind := 0, parent := none, range := { start := 0, stop := 10 } }]
+    tokens :=
+      #[{ node := 0, start := 0, stop := 3, trailing := #[{ kind := .whitespace, stop := 4 }] },
+        { node := 0, start := 4, stop := 5, trailing := #[{ kind := .whitespace, stop := 6 }] },
+        { node := 0, start := 6, stop := 8, trailing := #[{ kind := .whitespace, stop := 9 }] },
+        { node := 0, start := 9, stop := 10, trailing := #[{ kind := .whitespace, stop := 11 }] }] }
 
-private def fixtureArtifact : ModuleArtifact := {
-  schema := artifactSchema
-  mainModule := "Test"
-  normalizedBytes := fixtureSourceText.utf8ByteSize
-  normalizedDigest := Digest.ofString fixtureSourceText
-  syntaxData := {
-    kinds := #[`Lean.Parser.Command.declaration]
-    entries := #[
-      .node .none 0 4,
-      .atom (.original 0 0 3 4) none,
-      .atom (.original 4 4 5 6) none,
-      .atom (.original 6 6 8 9) none,
-      .atom (.original 9 9 10 11) none,
-      .atom (.synthetic fixtureSourceText.utf8ByteSize fixtureSourceText.utf8ByteSize true) (some "")]
-    commands := #[{
-      entry := 0
-      range := ⟨0, fixtureSourceText.utf8ByteSize⟩ }]
-    terminal := 5
-  }
-}
+private def fixtureArtifact : ModuleArtifact :=
+  { schema := artifactSchema
+    mainModule := "Test"
+    normalizedBytes := fixtureSourceText.utf8ByteSize
+    normalizedDigest := Digest.ofString fixtureSourceText
+    syntaxData :=
+      { kinds := #[`Lean.Parser.Command.declaration]
+        entries :=
+          #[.node .none 0 4, .atom (.original 0 0 3 4) none, .atom (.original 4 4 5 6) none,
+            .atom (.original 6 6 8 9) none, .atom (.original 9 9 10 11) none,
+            .atom (.synthetic fixtureSourceText.utf8ByteSize fixtureSourceText.utf8ByteSize true)
+              (some "")]
+        commands :=
+          #[{ entry := 0
+              range := ⟨0, fixtureSourceText.utf8ByteSize⟩ }]
+        terminal := 5 } }
 
 end LeanFmt.Test.Unit.Fixtures

@@ -34,13 +34,12 @@ def structurallyValid (artifact : ModuleArtifact) : Bool :=
 
 /-- Validity against the file a caller actually read. Normalizing is the caller's only correct
 move: no compiler-produced offset or digest indexes the bytes on disk. -/
-def ModuleArtifact.validFor (artifact : ModuleArtifact) (moduleName : Lean.Name)
-    (raw : String) : Bool :=
+def ModuleArtifact.validFor (artifact : ModuleArtifact) (moduleName : Lean.Name) (raw : String) :
+    Bool :=
   let normalized := (LosslessSource.normalize raw).1
-  structurallyValid artifact &&
-    artifact.mainModule == moduleName.toString &&
-    artifact.normalizedBytes == normalized.utf8ByteSize &&
-    artifact.normalizedDigest == Digest.ofString normalized &&
+  structurallyValid artifact && artifact.mainModule == moduleName.toString &&
+        artifact.normalizedBytes == normalized.utf8ByteSize &&
+      artifact.normalizedDigest == Digest.ofString normalized &&
     (artifact.materialize raw).isOk
 
 private def decodeEntry? (entry : Lean.Linter.LintEntry) : Option CommandArtifactRecord := do
@@ -66,41 +65,49 @@ fold order. `none` when `env` does not index `moduleName` — an empty fold woul
 one constant hash shared by every module, the false-hit factory this exists to prevent. -/
 def moduleInterfaceHash? (env : Lean.Environment) (moduleName : Lean.Name) : Option Digest := do
   let moduleIdx ← env.getModuleIdx? moduleName
-  let parts := env.constants.fold (init := #[]) fun parts name info =>
-    if env.getModuleIdxFor? name != some moduleIdx then parts
-    else
-      let kind : UInt64 := match info with
-        | .axiomInfo .. => 1 | .defnInfo .. => 2 | .thmInfo .. => 3 | .opaqueInfo .. => 4
-        | .inductInfo .. => 5 | .ctorInfo .. => 6 | .recInfo .. => 7 | .quotInfo .. => 8
-      let reducibleBody : UInt64 := match info with
-        | .defnInfo value => if value.hints.isAbbrev then value.value.hash else 0
-        | _ => 0
-      let levels := info.levelParams.map (·.hash)
-      parts.push s!"{name.hash} {kind} {levels} {info.type.hash} {reducibleBody}"
+  let parts :=
+    env.constants.fold (init := #[]) fun parts name info =>
+      if env.getModuleIdxFor? name != some moduleIdx then parts
+      else
+        let kind : UInt64 :=
+          match info with
+          | .axiomInfo .. => 1
+          | .defnInfo .. => 2
+          | .thmInfo .. => 3
+          | .opaqueInfo .. => 4
+          | .inductInfo .. => 5
+          | .ctorInfo .. => 6
+          | .recInfo .. => 7
+          | .quotInfo .. => 8
+        let reducibleBody : UInt64 :=
+          match info with
+          | .defnInfo value => if value.hints.isAbbrev then value.value.hash else 0
+          | _ => 0
+        let levels := info.levelParams.map (·.hash)
+        parts.push s!"{name.hash} {kind} {levels} {info.type.hash} {reducibleBody}"
   return Digest.ofString (String.intercalate "\n" (parts.qsort (· < ·)).toList)
 
 /- Read the formatter result owned by `moduleName` from an already imported module environment.
 The caller cannot substitute a side-file path or an independent build identity. -/
-def fromEnvironment? (environment : Lean.Environment)
-    (moduleName : Lean.Name) : Option ModuleArtifact := do
+def fromEnvironment? (environment : Lean.Environment) (moduleName : Lean.Name) :
+    Option ModuleArtifact := do
   let (_, entries) ← Lean.Linter.getAllLints environment |>.find? (fun item => item.1 == moduleName)
   let records := entries.filterMap decodeEntry?
   let first ← records[0]?
   guard <| first.mainModule == moduleName.toString
-  guard <| records.all fun record =>
-    record.mainModule == first.mainModule &&
-      record.normalizedBytes == first.normalizedBytes &&
-      record.normalizedDigest == first.normalizedDigest
+  guard <|
+      records.all fun record =>
+        record.mainModule == first.mainModule && record.normalizedBytes == first.normalizedBytes &&
+          record.normalizedDigest == first.normalizedDigest
   let syntaxData ← ModuleSyntax.ofRecords records |>.toOption
   let interfaceHash ← moduleInterfaceHash? environment moduleName
-  let artifact : ModuleArtifact := {
-    schema := artifactSchema
-    mainModule := first.mainModule
-    normalizedBytes := first.normalizedBytes
-    normalizedDigest := first.normalizedDigest
-    syntaxData
-    interfaceHash := some interfaceHash
-  }
+  let artifact : ModuleArtifact :=
+    { schema := artifactSchema
+      mainModule := first.mainModule
+      normalizedBytes := first.normalizedBytes
+      normalizedDigest := first.normalizedDigest
+      syntaxData
+      interfaceHash := some interfaceHash }
   guard <| structurallyValid artifact
   return artifact
 
@@ -136,17 +143,15 @@ fetch. `Lake.Artifact` is publicly constructible and not authority by type alone
 stay behind that orchestration boundary. The content hash is recomputed rather than trusting Lake's
 adjacent `.hash` accelerator, then the payload is matched to the caller's current module and source
 snapshot. Every integrity or identity failure is an ordinary miss. -/
-def readFacet? (facet : Lake.Artifact) (moduleName : Lean.Name)
-    (source : String) : IO (Option ModuleArtifact) := do
+def readFacet? (facet : Lake.Artifact) (moduleName : Lean.Name) (source : String) :
+    IO (Option ModuleArtifact) := do
   try
     let actualHash ← Lake.computeFileHash facet.path (text := true)
     unless actualHash == facet.hash do
       return none
     let contents ← IO.FS.readFile facet.path
-    let .ok json := Lean.Json.parse contents
-      | return none
-    let .ok artifact := Lean.fromJson? json
-      | return none
+    let .ok json := Lean.Json.parse contents | return none
+    let .ok artifact := Lean.fromJson? json | return none
     unless artifact.validFor moduleName source do
       return none
     unless ← headerBoundaryValid artifact source do

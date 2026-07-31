@@ -26,8 +26,7 @@ private def JsonStep.render : List JsonStep → String
   | [] => "<root>"
   | .field name :: rest => "." ++ name ++ renderCont rest
   | .index position :: rest => s!"[{position}]" ++ renderCont rest
-where
-  renderCont : List JsonStep → String
+where renderCont : List JsonStep → String
     | [] => ""
     | .field name :: rest => "." ++ name ++ renderCont rest
     | .index position :: rest => s!"[{position}]" ++ renderCont rest
@@ -53,11 +52,15 @@ public def ensureJsonAt (json : Lean.Json) (path : List JsonStep) (expected : Le
   let location := JsonStep.render path
   match jsonAt? json path with
   | none =>
-    throw <| IO.userError s!"{message}{if message.isEmpty then "" else ": "}path {location} \
+    throw <|
+        IO.userError
+          s!"{message}{if message.isEmpty then "" else ": "}path {location} \
       does not exist in:\n{json.pretty}"
   | some actual =>
     unless actual == expected do
-      throw <| IO.userError s!"{message}{if message.isEmpty then "" else ": "}value at \
+      throw <|
+          IO.userError
+            s!"{message}{if message.isEmpty then "" else ": "}value at \
         {location}\n  expected: {expected.compress}\n  actual:   {actual.compress}"
 
 end LeanFmt.Test
