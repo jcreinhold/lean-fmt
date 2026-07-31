@@ -66,11 +66,16 @@ private def diffArgs (file : String) : Array String :=
 private def fixArgs (file : String) : Array String :=
   #["fix", "--root", ".", "--json", "--no-cache", file]
 
-/-- The old script's `stat -f %Lp || stat -c %a`: permission bits, portably. -/
+/-- Permission bits, portably. The old script's `stat -f %Lp || stat -c %a` picked by exit
+code, which never falls back on Linux: GNU `stat -f` is the filesystem report and exits 0. -/
 private def fileMode (path : System.FilePath) : IO String := do
+  -- Select by platform, not by exit code: GNU `stat -f` is the *filesystem* report and exits
+  -- 0, so the `||` fallback never fired and every Linux comparison embedded live free-block
+  -- counts — the two modes cases failed on "changes" that were other suites' disk writes.
   let result ←
     expectExit 0 "stat" "sh"
-        #["-c", "stat -f %Lp \"$1\" 2>/dev/null || stat -c %a \"$1\"", "sh", path.toString]
+        #["-c", "case \"$(uname)\" in Darwin) stat -f %Lp \"$1\" ;; *) stat -c %a \"$1\" ;; esac",
+          "sh", path.toString]
   return result.stdout.trimAscii.toString
 
 /-- One `metadata` line: path, sha256, mtime in nanoseconds, permission bits. -/

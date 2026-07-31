@@ -122,8 +122,12 @@ private unsafe def incrementalAnalyzerSpec (setupPath sourcePath : String) : IO 
       "hundred-edit process crossed the 8 GiB memory stop"
   ensure (rss[3]! <= rss[1]! + 256 * 1024)
       "resident memory did not stabilize over the final fifty updates"
+  -- 1200 declarations, not more: the file only has to be large enough that the analysis is
+  -- still in flight when the cancel lands, and every extra declaration is peak resident
+  -- memory against the full `import Lean` environment — 4000 of them pushed the suite past
+  -- what a 16 GB CI runner holds even with nothing else on it.
   let mut slow := incrementalSource
-  for i in [0:4000]do
+  for i in [0:1200]do
     slow := slow ++ s!"def cancellation_{i} : Nat := {i}\n"
   let task ← IO.asTask (analyzer.analyze setup slow path)
   let rec waitForFlight (fuel : Nat) : IO Unit := do
