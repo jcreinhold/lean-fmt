@@ -66,6 +66,13 @@ jobs:
           CODE=$?
           kill $TELEM_PID 2>/dev/null || true
           exit $CODE
+        env:
+          # Two suites at a time is only half the envelope: each lean-fmt invocation defaults
+          # to hardware-concurrency frontend children, each holding a full project environment
+          # (~1-2 GB). The telemetry showed 14.8 GB falling to 2.2 GB in 75 s in exactly that
+          # configuration. Capping the children at two caps a part at four heavyweight
+          # processes, and `resolveWorkers` reads this variable before the hardware default.
+          LEAN_NUM_THREADS: "2"
         timeout-minutes: 20
 
   slow:
