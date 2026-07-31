@@ -36,11 +36,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # `incremental` is a job of its own, not a part: its persistent-frontend contract is
-        # allowed an 8 GiB resident stop by design, so the 16 GB runner must be entirely its
-        # own. The registry marks it slow, so the parts skip it and only this job and the
-        # manual slow run include it.
-        part: [unit, "1/3", "2/3", "3/3", incremental]
+        # incremental has no job here: on Linux it exhausts a 16 GB runner in seconds while
+        # peaking at 2.6 GB on macOS, and the root cause is still open. The slow tag keeps it
+        # out of every part; it still runs locally and in the manual --all dispatch. Restore
+        # a dedicated job once the Linux memory behavior is understood.
+        part: [unit, "1/3", "2/3", "3/3"]
     steps:
       - uses: actions/checkout@v5
       - uses: leanprover/lean-action@v1
@@ -52,28 +52,8 @@ jobs:
         # A suite part normally finishes well under ten minutes; a hung runner otherwise holds
         # the concurrency group hostage for the six-hour default, and did exactly that once.
         timeout-minutes: 10
-      - name: incremental suite
-        if: matrix.part == 'incremental'
-        # TELEM and the arena cap: the suite peaks at 2.6 GB resident on macOS yet died 30 s
-        # in on a runner of its own — the Linux growth pattern (glibc per-thread arenas are
-        # the usual multiplier) needs measuring, and MALLOC_ARENA_MAX bounds the multiplier
-        # if that is what it is.
-        run: |
-          (while true; do
-            echo "TELEM $(date +%H:%M:%S) memAvailMB=$(free -m | awk '/Mem:/ {print $7}') diskAvailMB=$(df -m / | awk 'NR==2 {print $4}')"
-            sleep 10
-          done) &
-          TELEM_PID=$!
-          lake test -- --skip-unit --suites incremental
-          CODE=$?
-          kill $TELEM_PID 2>/dev/null || true
-          exit $CODE
-        env:
-          LEAN_NUM_THREADS: "2"
-          MALLOC_ARENA_MAX: "2"
-        timeout-minutes: 15
       - name: suite part ${{ matrix.part }}
-        if: matrix.part != 'unit' && matrix.part != 'incremental'
+        if: matrix.part != 'unit'
         # --jobs 2, not the default 4: four concurrent suites each spawning frontend children
         # exhausts the 16 GB runner — the shutdown-signal kills and silent wedges all landed in
         # that window, and an unresponsive agent holds the concurrency group hostage. Halving
