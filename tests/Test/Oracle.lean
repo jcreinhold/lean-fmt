@@ -1,13 +1,12 @@
 module
 
+public import LeanFmt.ArtifactModel
+public import LeanFmt.Imports
 public import Test.Analyze
 public import Test.Fixture
 public import Test.Harness
 public import Test.Json
 public import Test.Proc
-
-public import LeanFmt.ArtifactModel
-public import LeanFmt.Imports
 
 import all LeanFmt.ArtifactModel
 import all LeanFmt.Imports

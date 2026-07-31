@@ -1,6 +1,7 @@
 module
 
 public import Test
+
 import Test.Unit.Cache
 import Test.Unit.Config
 import Test.Unit.Digest

@@ -1,8 +1,7 @@
 module
 
-public import Test
-
 public import LeanFmt.Analysis
+public import Test
 
 import all LeanFmt.Analysis
 

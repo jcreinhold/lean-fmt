@@ -1062,13 +1062,16 @@ flags the redundant one."
   {
     code := "FMT005"
     category := "imports"
-    summary := "report imports out of canonical order within a group"
+    summary := "report imports out of the configured import layout's order"
     fixable := false
     defaultEnabled := true
     lifecycle := .stable
     explanation := "\
-Imports within a group are not in canonical (sorted) order. Report-only: reordering imports can change \
-initialization order in principle, so the reordering is surfaced rather than applied automatically."
+Imports are not in the order the configured `[format] import-layout` prescribes: module-name order \
+within each blank-line group under `grouped`, or the canonical layout's order — modifier bucket, \
+then prefix sub-block, then module path — under `canonical`. Report-only: reordering imports can \
+change initialization order in principle, so the reordering is surfaced rather than applied \
+automatically."
     examples := #[{ bad := "import Lean.Elab\nimport Lean.Data\n" }]
   }
 ]

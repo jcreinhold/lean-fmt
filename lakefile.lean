@@ -521,7 +521,9 @@ project file does, and `tests/Suites/NativeLayout.lean` formats them and then fo
 -- an idempotence claim needs a module the frontend can elaborate twice.
 
 They are deliberately *not* canonically laid out; that is the input the suite reflows. `lean-fmt.toml`
-still lints them, and that is intended: they are valid, finding-free Lean, and layout is not a rule. -/
+excludes every fixture tree wholesale: incidental lint coverage of valid finding-free fixtures
+(redundant with this build, which elaborates each of them) is not worth a bare `format` or
+`organize` from the repository root rewriting golden inputs. -/
 lean_lib NativeLayoutFixtures where
   srcDir := "tests/fixtures/native-layout"
   roots := #[`Alignment, `Boundaries, `Islands, `MathlibStyle, `Offside]

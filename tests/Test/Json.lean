@@ -1,8 +1,8 @@
 module
 
-import Test.Harness
-
 public import Lean.Data.Json
+
+import Test.Harness
 
 /-!
 # JSON assertions

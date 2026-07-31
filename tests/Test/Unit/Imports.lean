@@ -89,6 +89,28 @@ private def testImports : IO Unit := do
   ensure (Imports.orderFindings grouped "import Foo.B\n\nimport Foo.A\n").isEmpty
     "imports in different blank-line groups were wrongly reported out of order"
 
+  -- FMT005 under `canonical` follows the organizer's order key — modifier bucket, then prefix
+  -- sub-block (default groups Lean/Mathlib), then module path — across blank lines, stopping at
+  -- comments. The grouped reading stays the default.
+  let subblocks ← parseHeader! "import Lake.A\nimport Mathlib.B\n"
+  let subblockSource := "import Lake.A\nimport Mathlib.B\n"
+  ensure ((Imports.orderFindings subblocks subblockSource .canonical).map (·.message) ==
+      #["import Mathlib.B is out of order (after Lake.A)"])
+    "a sub-block violation did not fire FMT005 under the canonical layout"
+  ensure (Imports.orderFindings subblocks subblockSource).isEmpty
+    "the canonical sub-block order wrongly fired under the default grouped layout"
+  let buckets ← parseHeader! "module\n\nimport Lean.B\n\npublic import Lean.A\n"
+  ensure ((Imports.orderFindings buckets "module\n\nimport Lean.B\n\npublic import Lean.A\n"
+      .canonical).size == 1)
+    "a bucket descending across a blank line did not fire FMT005 under the canonical layout"
+  let metaTail ← parseHeader! "module\n\nimport Lean.B\n\nmeta import Lean.A\n"
+  ensure (Imports.orderFindings metaTail "module\n\nimport Lean.B\n\nmeta import Lean.A\n"
+      .canonical).isEmpty
+    "the meta bucket at the end wrongly fired FMT005 under the canonical layout"
+  let commentGap ← parseHeader! "import Lake.A\n-- pinned\nimport Lean.B\n"
+  ensure (Imports.orderFindings commentGap "import Lake.A\n-- pinned\nimport Lean.B\n" .canonical).isEmpty
+    "a comment-ended region wrongly fired FMT005 under the canonical layout"
+
   -- FMT004: `Foo.B` is reachable via `Foo.A`'s closure, so the plain `import Foo.B` is a candidate.
   let redundant ← parseHeader! "import Foo.A\nimport Foo.B\n"
   let closure : Lean.Name → Option (Array Lean.Name) := fun name =>

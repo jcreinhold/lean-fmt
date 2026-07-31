@@ -7,11 +7,11 @@ module
 
 import all LeanFmt.Project
 
-import Lake.Config.Package
-import Lake.Load.Workspace
 import Lean.Elab.ParseImportsFast
 import Std.Data.HashMap
 import Std.Data.HashSet
+import Lake.Config.Package
+import Lake.Load.Workspace
 
 open System Lean LeanFmt.Internal
 

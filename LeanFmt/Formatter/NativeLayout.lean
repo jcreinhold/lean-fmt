@@ -6,10 +6,11 @@ Authors: Jacob Reinhold
 
 module
 
-import Lean.Parser.StrInterpolation
 import all LeanFmt.Config
 import all LeanFmt.Formatter
 import all LeanFmt.Formatter.Trivia
+
+import Lean.Parser.StrInterpolation
 
 /-! The native grammar-layout adapter.
 

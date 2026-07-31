@@ -102,7 +102,7 @@ private def testLayoutWidths (root : System.FilePath) (application : String)
     for payload in payloads do
       ensure ((text.splitOn payload).length == 2)
         s!"layout width {width}: {payload} does not occur exactly once"
-    ensure (text.startsWith "module\n/- before import -/\nimport Lean\n")
+    ensure (text.startsWith "module\n\n/- before import -/\nimport Lean\n")
       s!"layout width {width}: header comment moved"
     ensureContains text "macro_rules\n  /- before macro alternative -/\n  |"
       s!"layout width {width}"

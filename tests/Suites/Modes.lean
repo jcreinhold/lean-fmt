@@ -475,6 +475,14 @@ private def testCompilerStatus (ctx : Ctx) : IO Unit := do
     fun m => (m.getObjValAs? String "status").toOption.getD "")
   ensure (moduleStatuses.all (· ∈ ["ready", "missing", "unbuilt"])) "an unknown status bucket"
 
+/-- The repository dogfoods the organizer: the committed tree is always `organize --check`
+clean, so header drift — a misplaced `import all`, an unsorted row, a bucket on the wrong side
+of a blank line — fails CI the day it lands rather than surfacing in someone's next `organize`. -/
+private def testOrganizeSelf (ctx : Ctx) : IO Unit := do
+  let report ← runJson ctx 0 "organize self"
+    #["organize", "--check", "--root", ".", "--json", "--no-cache"]
+  ensureJsonAt report [.field "changed"] (Lean.toJson (0 : Nat)) "the tree is not organize-clean"
+
 /-- Clean removes exactly the project result cache, is idempotent, and leaves source and build
 artifacts. -/
 private def testClean (ctx : Ctx) : IO Unit := do
@@ -509,7 +517,7 @@ private def testRdfImplMixed (ctx : Ctx) : IO Unit := do
     "mixed format"
   ensureEq "mixed format findings" ["FMT003"] (findingCodes formatted)
   ensureJsonAt formatted [.field "files", .index 0, .field "formatted"]
-    (Lean.toJson "module\nimport LeanFmt.Basic\nimport LeanFmt.Basic\n\nnamespace Alpha\n\n\
+    (Lean.toJson "module\n\nimport LeanFmt.Basic\nimport LeanFmt.Basic\n\nnamespace Alpha\n\n\
       def mixedValue : Nat :=\n  1\n\nend Alpha\n") "mixed format"
   let diff ← run ctx 1 "mixed diff" (diffArgs "tests/modes/.rdf-impl-mixed.lean")
   ensure (diff.stdout.contains "-namespace     Alpha" && diff.stdout.contains "+namespace Alpha")
@@ -534,7 +542,7 @@ private def testRdfImplMixed (ctx : Ctx) : IO Unit := do
     "postfix"
   ensureEq "postfix findings" ([] : List String) (findingCodes afterFix)
   ensureJsonAt afterFix [.field "files", .index 0, .field "formatted"]
-    (Lean.toJson "module\nimport LeanFmt.Basic\n\nnamespace Alpha\n\ndef mixedValue : Nat :=\n  1\n\n\
+    (Lean.toJson "module\n\nimport LeanFmt.Basic\n\nnamespace Alpha\n\ndef mixedValue : Nat :=\n  1\n\n\
       end Alpha\n") "postfix"
 
 /-- Canonical reflow owns inter-token trailing whitespace while preserving token content,
@@ -585,7 +593,7 @@ private def testRdfLayout (ctx : Ctx) : IO Unit := do
 either order reaches the same fixed point on disk, and the converged file is a fixed point of
 both. -/
 private def testCompositionConfluence (ctx : Ctx) : IO Unit := do
-  let canonical := "module\nimport LeanFmt.Basic\n\nnamespace Alpha\n\ndef mixedValue : Nat :=\n  1\n\
+  let canonical := "module\n\nimport LeanFmt.Basic\n\nnamespace Alpha\n\ndef mixedValue : Nat :=\n  1\n\
     \nend Alpha\n"
   let source := "module\n\nimport LeanFmt.Basic\nimport LeanFmt.Basic\n\nnamespace     Alpha\n\n\
     def mixedValue : Nat := 1\n\nend Alpha\n"
@@ -939,6 +947,7 @@ public def main (args : List String) : IO UInt32 := do
       { name := "compiler-setup", run := Modes.testCompilerSetup ctx },
       { name := "downstream-integration", run := Modes.testDownstream ctx },
       { name := "compiler-status", run := Modes.testCompilerStatus ctx },
+      { name := "organize-self", run := Modes.testOrganizeSelf ctx },
       { name := "clean", run := Modes.testClean ctx },
       { name := "rdf-impl-mixed", run := Modes.testRdfImplMixed ctx },
       { name := "rdf-layout", run := Modes.testRdfLayout ctx },

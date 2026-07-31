@@ -6,6 +6,10 @@ Authors: Jacob Reinhold
 
 module
 
+import all Lake.Build.Run
+import all Lake.DSL
+import all Lake.Load.Lean.Elab
+import all Lake.Load.Workspace
 import all LeanFmt.ArtifactStore
 import all LeanFmt.Config
 import all LeanFmt.Digest
@@ -13,14 +17,9 @@ import all LeanFmt.Discovery
 import all LeanFmt.Profile
 
 import Std.Sync.Mutex
-
 import Lake.Build.Module
-import all Lake.Build.Run
 import Lake.Config.Env
 import Lake.Config.InstallPath
-import all Lake.DSL
-import all Lake.Load.Lean.Elab
-import all Lake.Load.Workspace
 
 /-! Lake, held once.
 

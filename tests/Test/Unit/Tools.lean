@@ -34,8 +34,8 @@ import all LeanFmt.Rules
 import all LeanFmt.Suppression
 import all Test.Unit.Layout
 
-import Lake
 import Lean.Data.Lsp
+import Lake
 
 open LeanFmt LeanFmt.Internal
 

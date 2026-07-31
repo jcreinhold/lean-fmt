@@ -6,6 +6,7 @@ Authors: Jacob Reinhold
 
 module
 
+import all Lean.Shell
 import all LeanFmt.Analysis
 import all LeanFmt.Cache
 import all LeanFmt.Config
@@ -17,14 +18,13 @@ import all LeanFmt.Project
 import all LeanFmt.Semantic
 import all LeanFmt.Suppression
 
+import Lean.Util.Diff
+import Std.Sync.CancellationToken
 import Lake.Build.Module
 import Lake.Build.Run
 import Lake.Config.Env
 import Lake.Config.InstallPath
 import Lake.Load.Workspace
-import all Lean.Shell
-import Lean.Util.Diff
-import Std.Sync.CancellationToken
 
 open System
 
@@ -1027,7 +1027,7 @@ private def anyImportSelected (plan : RulePlan) : Bool :=
 /-- The import findings for one already-parsed header at `normalized`'s coordinates, plus the
 withheld-redundant count. Each rule is gated on selection so an unselected FMT004 never consults the
 graph closure. Pure — the caller did the IO (header parse, closure fetch). -/
-private def importFindingsOfHeader (plan : RulePlan)
+private def importFindingsOfHeader (plan : RulePlan) (format : FormatConfig)
     (closureOf : Lean.Name → Option (Array Lean.Name))
     (header : Imports.HeaderModel) (normalized : String) : Array Finding × Nat := Id.run do
   let mut findings : Array Finding := #[]
@@ -1035,7 +1035,8 @@ private def importFindingsOfHeader (plan : RulePlan)
   if plan.selected.contains "FMT003" then
     findings := findings ++ Imports.duplicateFindings header normalized
   if plan.selected.contains "FMT005" then
-    findings := findings ++ Imports.orderFindings header normalized
+    findings := findings ++
+      Imports.orderFindings header normalized format.importLayout format.importGroups
   if plan.selected.contains "FMT004" then
     let (redundant, w) := Imports.redundantFindings header closureOf
     findings := findings ++ redundant
@@ -1051,7 +1052,7 @@ private def headerImportNames (header : Imports.HeaderModel) : Array Lean.Name :
 import report. Used by the single-file editor path; the batch `execute` path shares one closure fetch
 across all files instead (`computeImportReports`). -/
 private def singleImportReport (plan : RulePlan) (workspace : Lake.Workspace)
-    (normalized : String) : IO (Array Finding × Nat) := do
+    (normalized : String) (format : FormatConfig) : IO (Array Finding × Nat) := do
   unless anyImportSelected plan do return (#[], 0)
   match ← Imports.parseHeaderModel normalized with
   | none => return (#[], 0)
@@ -1060,7 +1061,7 @@ private def singleImportReport (plan : RulePlan) (workspace : Lake.Workspace)
         let facts ← Project.graph workspace #[] (headerImportNames header) { closures := true }
         pure fun name => facts.imports[name]?.map (·.visible.getD #[])
       else pure fun _ => none
-    return importFindingsOfHeader plan closureOf header normalized
+    return importFindingsOfHeader plan format closureOf header normalized
 
 /-- Compute every target's import report in one pass: parse all headers, ask for the union of their
 import closures (FMT004 only), then project per file. Returns one `(findings, withheldRedundant)`
@@ -1091,10 +1092,10 @@ private def computeImportReports (plans : Array RulePlan) (project : Project.Sna
       let closures ← project.importClosures names
       pure fun name => closures[name]?.map (·.visible.getD #[])
     else pure fun _ => none
-  return (headers.zip plans).map fun ((normalized, header?), plan) =>
+  return (headers.zip (plans.zip snapshots)).map fun ((normalized, header?), plan, snapshot) =>
     match header? with
     | none => (#[], 0)
-    | some header => importFindingsOfHeader plan closureOf header normalized
+    | some header => importFindingsOfHeader plan snapshot.config.format closureOf header normalized
 
 /-- The fix this product would actually apply for a finding, or `none`.
 
@@ -1309,7 +1310,8 @@ def ExactRun.checkSnapshot (run : ExactRun) (plan : RulePlan)
   -- reports every finding's applicability and withholds nothing itself. It computes its own
   -- single-file import report (batch runs share one closure fetch via `computeImportReports`).
   let (normalized, _) := LosslessSource.normalize snapshot.source
-  let (reportImports, withheldRedundant) ← singleImportReport plan run.project.workspace normalized
+  let (reportImports, withheldRedundant) ←
+    singleImportReport plan run.project.workspace normalized snapshot.config.format
   previewFile .check plan (unsafeFixes := false) reportImports withheldRedundant snapshot analysis
 
 private def summarize (modeString : String) (files : Array FileReport)
@@ -1844,7 +1846,8 @@ def ExactRun.streamEnvelope (run : ExactRun) (target : Project.SourceTarget) (pl
   let analysis ← canonicalAnalysis target renderCanonical envelope
   let marks := analysis.result?.bind (·.canonical?) |>.map (·.sourceMap) |>.getD #[]
   let (normalized, _) := LosslessSource.normalize target.source
-  let (reportImports, withheldRedundant) ← singleImportReport plan project.workspace normalized
+  let (reportImports, withheldRedundant) ←
+    singleImportReport plan project.workspace normalized target.config.format
   match prepareFile plan renderCanonical unsafeFixes reportImports
       withheldRedundant target analysis with
   | .error report =>

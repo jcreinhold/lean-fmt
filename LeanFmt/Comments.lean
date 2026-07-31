@@ -6,8 +6,9 @@ Authors: Jacob Reinhold
 
 module
 
-import Lean.Syntax
 import all LeanFmt.LosslessSource
+
+import Lean.Syntax
 
 /-! Deterministic comment ownership over actual source-covering syntax.
 

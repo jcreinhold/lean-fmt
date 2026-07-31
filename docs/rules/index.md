@@ -26,7 +26,7 @@ Generated from the rule registry (`LeanFmt/Rules.lean`); do not edit by hand.
 | --- | --- | --- | --- | --- |
 | [FMT003](FMT003.md) | stable | on | fixable | remove a duplicate import |
 | [FMT004](FMT004.md) | stable | on | report-only | report an import made redundant by another import's transitive closure |
-| [FMT005](FMT005.md) | stable | on | report-only | report imports out of canonical order within a group |
+| [FMT005](FMT005.md) | stable | on | report-only | report imports out of the configured import layout's order |
 
 ## naming
 

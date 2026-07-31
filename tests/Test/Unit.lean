@@ -1,6 +1,7 @@
 module
 
 public import Test
+
 import all Test.Unit.Cases
 import all Test.Unit.Tools
 

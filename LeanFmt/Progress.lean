@@ -6,8 +6,8 @@ Authors: Jacob Reinhold
 
 module
 
-import Init.System.IO
 import Std.Sync.Mutex
+import Init.System.IO
 
 /-!
 # Batch progress display

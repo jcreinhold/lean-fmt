@@ -6,9 +6,10 @@ Authors: Jacob Reinhold
 
 module
 
-import Lean.PrettyPrinter
 import all LeanFmt.Comments
 import all LeanFmt.Doc
+
+import Lean.PrettyPrinter
 
 /-! The actual-syntax adapter for Lean's registered formatter.
 

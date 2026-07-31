@@ -6,9 +6,10 @@ Authors: Jacob Reinhold
 
 module
 
-import Lean.Parser.Module
 import all LeanFmt.Formatter
 import all LeanFmt.Formatter.Trivia
+
+import Lean.Parser.Module
 
 /-! Module-stream composition: the header document, the header contract, and the vertical boundary
 between two ordinary commands.
@@ -23,6 +24,12 @@ The header is the one place lean-fmt still spells tokens itself. `Lean.Parser.Mo
 delimiter, no projection dot, and no antiquotation, so the separator between two adjacent header tokens
 is always one space — which is why this module carries no spacing table. `headerDocument?` refuses
 anything that is not a header node and falls back to the registry.
+
+Vertical spacing between header rows is the one layout fact the source already got right: the
+organizer owns header structure (its grouped and canonical layouts both blank-line the bucket
+boundaries), so the formatter preserves a blank line where the source has one and collapses a run
+to one, rather than forcing every row tight. Import order remains the source's — organizing is a
+separate, validated command.
 
 `place` decides blank lines between commands, not indentation: top-level commands stay at column zero
 even inside a namespace, so indentation is a command's own business. -/
@@ -150,24 +157,52 @@ private def importDocument (ownership : CommentOwnership) (stx : Lean.Syntax) : 
   Trivia.decorateBeforeBoundary ownership stx row
 
 private partial def headerRowsFrom (ownership : CommentOwnership) (stx : Lean.Syntax)
-    (rows : Array Doc) : Array Doc :=
+    (rows : Array (Lean.Syntax × Doc)) : Array (Lean.Syntax × Doc) :=
   if stx.isOfKind ``Lean.Parser.Module.import then
-    rows.push (importDocument ownership stx)
+    rows.push (stx, importDocument ownership stx)
   else match stx with
     | .atom _ value =>
       if value == "module" || value == "prelude" then
-        rows.push (Trivia.decorateBeforeBoundary ownership stx (Doc.text value))
+        rows.push (stx, Trivia.decorateBeforeBoundary ownership stx (Doc.text value))
       else rows
     | .node _ _ children =>
       children.foldl (init := rows) fun result child => headerRowsFrom ownership child result
     | _ => rows
 
+/-- The trailing trivia of the row's last leaf. The lexer assigns the whole gap between two rows
+to the previous token's trailing — leadings are empty — so that trivia is the only record of
+whether a blank line stood there. -/
+private partial def trailingText? (stx : Lean.Syntax) : Option String :=
+  match stx with
+  | .atom info _ | .ident info _ _ _ =>
+    match info with
+    | .original _ _ trailing _ => some trailing.toString
+    | _ => none
+  | .node _ kind children =>
+    let children := if kind == Lean.choiceKind then children[0]?.toArray else children
+    children.reverse.findSome? trailingText?
+  | .missing => none
+
+/-- Whether a whitespace-only line stands in trailing trivia. A run of blank lines reads as one
+boundary — the document emits at most one blank line, however many the source holds. -/
+private def blankLineAfter (trailing : String) : Bool :=
+  let lines := trailing.splitOn "\n"
+  -- The first line finishes the row's own line and the last precedes the next row's first token;
+  -- a whitespace-only line between them is a blank line. Single-`\n` trivia has neither.
+  (lines.tail?.getD []).dropLast.any fun line => line.trimAscii.isEmpty
+
 private def headerDocument? (ownership : CommentOwnership) (stx : Lean.Syntax) : Option Doc :=
   if stx.isOfKind ``Lean.Parser.Module.header then
     let rows := headerRowsFrom ownership stx #[]
-    let document? : Option Doc := rows.foldl (init := none) fun document? row =>
-      some <| document?.map (· ++ Doc.hard ++ row) |>.getD row
-    some (document?.getD Doc.empty)
+    let document? : Option (Lean.Syntax × Doc) := rows.foldl (init := none) fun acc (rowStx, row) =>
+      match acc with
+      | none => some (rowStx, row)
+      | some (previousStx, document) =>
+        let separator := if (trailingText? previousStx).any blankLineAfter then
+          Doc.hard ++ Doc.hard
+        else Doc.hard
+        some (rowStx, document ++ separator ++ row)
+    some (document?.map (·.2) |>.getD Doc.empty)
   else none
 
 /-- Format the parsed module/import header as one closed structural document. Import order, modifiers,

@@ -1,7 +1,8 @@
 module
 
-import all LeanFmt.Progress
 public import Test
+
+import all LeanFmt.Progress
 
 /-!
 # The progress-display unit cases

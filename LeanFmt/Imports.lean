@@ -232,6 +232,22 @@ def duplicateFindings (header : HeaderModel) (normalized : String) : Array Findi
       }
   return findings
 
+/-- The modifier bucket of an import: `public` before non-`public`, `all` before plain, `meta`
+immediately after its non-`meta` counterpart. -/
+private def bucketRank (stmt : ImportStmt) : Nat :=
+  (if stmt.isPublic then 0 else 4) + (if stmt.importAll then 0 else 2) + (if stmt.isMeta then 1 else 0)
+
+/-- The sub-block of `module` within a bucket: the index of the first `groups` prefix it matches
+(`P` matches `P` itself and every `P.…`), or `groups.size` — the trailing "everything else"
+sub-block — when none does. -/
+private def subblockIndex (groups : Array String) (module : Lean.Name) : Nat := Id.run do
+  let s := module.toString
+  for h : i in [0:groups.size] do
+    let grp := groups[i]
+    if s == grp || s.startsWith (grp ++ ".") then return i
+  return groups.size
+
+
 /-! ## FMT005 — non-canonical import order within a group -/
 
 /-- Whether two adjacent imports are separated by a blank line or a comment in `normalized` — the
@@ -242,16 +258,33 @@ private def groupBreakBetween (normalized : String) (a b : ImportStmt) : Bool :=
   let newlines := gap.foldl (fun n c => if c == '\n' then n + 1 else n) 0
   newlines > 1 || gap.any (fun c => !c.isWhitespace)
 
-/-- FMT005: within a maximal run of imports uninterrupted by a blank line or comment, the module names
-are not in ascending order. Reported at the first out-of-order import; report-only, because reordering
-imports is observable to elaboration — the canonical rewrite is delivered
+/-- FMT005 under `grouped`: within a maximal run of imports uninterrupted by a blank line or
+comment, the module names are not in ascending order. Under `canonical`: the whole header follows
+the organizer's order key — modifier bucket, then prefix sub-block, then module path — across
+blank lines (they are bucket boundaries, not order resets), stopping only at comments, which end
+the organizer's canonical region too. Reported at the first out-of-order import; report-only,
+because reordering imports is observable to elaboration — the canonical rewrite is delivered
 only through the opt-in organizer, never an unattended `fix`. -/
-def orderFindings (header : HeaderModel) (normalized : String) : Array Finding := Id.run do
+def orderFindings (header : HeaderModel) (normalized : String)
+    (layout : ImportLayout := .grouped) (groups : Array String := defaultImportGroups) :
+    Array Finding := Id.run do
+  let before := fun (a b : ImportStmt) =>
+    let (ab, as_, am) := (bucketRank a, subblockIndex groups a.module, a.module.toString)
+    let (bb, bs, bm) := (bucketRank b, subblockIndex groups b.module, b.module.toString)
+    ab < bb || (ab == bb && (as_ < bs || (as_ == bs && am < bm)))
   let mut findings : Array Finding := #[]
   for i in [1:header.imports.size] do
     let prev := header.imports[i - 1]!
     let cur := header.imports[i]!
-    if !groupBreakBetween normalized prev cur && cur.module.toString < prev.module.toString then
+    let outOfOrder := match layout with
+      | .grouped =>
+        !groupBreakBetween normalized prev cur && cur.module.toString < prev.module.toString
+      | .canonical =>
+        -- A comment in the gap ends the canonical region (and this check); a blank-only gap is a
+        -- bucket boundary the order crosses.
+        let gap := slice normalized prev.range.stop cur.range.start
+        gap.all Char.isWhitespace && before cur prev
+    if outOfOrder then
       findings := findings.push {
         code := "FMT005"
         severity := .warning
@@ -327,21 +360,6 @@ private structure CanonicalImport where
   stmt : ImportStmt
   comment? : Option String := none
   deriving Inhabited
-
-/-- The modifier bucket of an import: `public` before non-`public`, `all` before plain, `meta`
-immediately after its non-`meta` counterpart. -/
-private def bucketRank (stmt : ImportStmt) : Nat :=
-  (if stmt.isPublic then 0 else 4) + (if stmt.importAll then 0 else 2) + (if stmt.isMeta then 1 else 0)
-
-/-- The sub-block of `module` within a bucket: the index of the first `groups` prefix it matches
-(`P` matches `P` itself and every `P.…`), or `groups.size` — the trailing "everything else"
-sub-block — when none does. -/
-private def subblockIndex (groups : Array String) (module : Lean.Name) : Nat := Id.run do
-  let s := module.toString
-  for h : i in [0:groups.size] do
-    let grp := groups[i]
-    if s == grp || s.startsWith (grp ++ ".") then return i
-  return groups.size
 
 /-- The position of the `\n` ending `pos`'s line (or end of file), excluding the newline. -/
 private def lineEnd (normalized : String) (pos : Nat) : Nat := Id.run do

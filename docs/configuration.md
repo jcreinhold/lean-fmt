@@ -63,6 +63,11 @@ comment or non-comment trailing text refuses the file outright. Like every `orga
 by re-elaboration before it is written. `"canonical"` moves lines across blank-line boundaries by design — that is why
 it is opt-in.
 
+The two commands share the header without fighting over it: `organize` owns order and bucket structure, and `format`
+preserves the blank lines between header rows (a run collapses to one) rather than forcing rows tight, so an
+organized file is format-stable. FMT005 reads the same setting, so `check` and `organize --check` never disagree
+about what "out of order" means.
+
 What `[format]` does not offer: indent width, quote style, comment rewrapping, or any other knob that would require
 overriding the grammar authority wholesale. lean-fmt's layout comes from Lean's registered formatter; this section
 configures the margin, comment placement policy, and boundary corrections — nothing more is honestly deliverable today.

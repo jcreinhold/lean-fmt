@@ -8,8 +8,8 @@ module
 
 import all LeanFmt.ArtifactModel
 
-import Lake.Build.Common
 import Lean.Linter.PersistentLintLog
+import Lake.Build.Common
 
 /-! Where a module artifact comes from, and how it is proved to be about the bytes in hand.
 

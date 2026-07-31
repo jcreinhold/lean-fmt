@@ -95,7 +95,8 @@ private def testTerminalDraft (root : System.FilePath) (application : String)
   ensure (sourceCursor == raw.utf8ByteSize && sourceCursor == sourceBytes)
     "terminal: source map does not cover the whole source"
   ensure (outputCursor == text.utf8ByteSize) "terminal: source map does not cover the whole output"
-  ensure (text.startsWith "module\nimport AdapterSyntax\n\n") "terminal: header changed"
+  ensure (text.startsWith "module\n\nimport AdapterSyntax\n\n")
+    "terminal: header lost the source's blank lines"
   -- `headerContract` is the header's node/atom spelling list; the import's identifier must be in
   -- it. (The old Python's `in` was list membership, not substring.)
   let some entries := (jsonAt? left [.field "headerContract"]).bind (·.getArr?.toOption)
@@ -191,6 +192,26 @@ private def testBrokenHeaders (root : System.FilePath) (application : String)
     let diagnostics := (jsonAt? report [.field "diagnostics"]).bind (·.getArr?.toOption)
     ensure ((diagnostics.map (·.size)).getD 0 > 0) s!"{label}: no diagnostics for a broken module"
 
+/-- Header blank lines are the organizer's structure, not the formatter's to remove: a blank after
+the `module` marker and between import groups survives formatting, and a run of blanks collapses
+to one. -/
+private def testHeaderBlankLines (root : System.FilePath) (application : String)
+    (work : System.FilePath) (borrowedSetup : System.FilePath) : IO Unit := do
+  let grouped := work / "Grouped.lean"
+  let groupedHeader := "module\n\nimport AdapterSyntax\n\nimport Lean.Data.Json\n\n"
+  writeFile grouped (groupedHeader ++ "def groupedValue : Nat := 1\n")
+  let collapsed := work / "Collapsed.lean"
+  writeFile collapsed "module\n\n\n\nimport AdapterSyntax\n\ndef collapsedValue : Nat := 1\n"
+  for (path, label, expected) in [
+      (grouped, "grouped", groupedHeader),
+      (collapsed, "collapsed", "module\n\nimport AdapterSyntax\n\n")] do
+    let report ← analyzeExact root application borrowedSetup path.toString path.toString "draft"
+      (viaLakeEnv := true)
+    let draft ← draftOf report label
+    let some text := (draft.getObjValAs? String "text").toOption
+      | throw <| IO.userError s!"{label}: draft text missing"
+    ensure (text.startsWith expected) s!"{label}: header blank lines changed"
+
 end ModuleFormatter
 
 public def main (args : List String) : IO UInt32 := do
@@ -208,6 +229,8 @@ public def main (args : List String) : IO UInt32 := do
       { name := "line-endings", run := ModuleFormatter.testLineEndings root application work },
       { name := "plugin-setup", run := ModuleFormatter.testPluginSetup root application work },
       { name := "broken-headers",
-        run := ModuleFormatter.testBrokenHeaders root application work borrowedSetup }
+        run := ModuleFormatter.testBrokenHeaders root application work borrowedSetup },
+      { name := "header-blank-lines",
+        run := ModuleFormatter.testHeaderBlankLines root application work borrowedSetup }
     ]
     runCases "module-formatter" cases args

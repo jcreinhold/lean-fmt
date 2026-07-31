@@ -1,9 +1,14 @@
 # The formatter's own configuration, under the name every project uses. `lake lint` and a bare
 # `lean-fmt check` both find it here by discovery; no `--config` stands between them.
 #
-# The excluded trees hold fixtures: sources that are deliberately malformed, unparseable, or
-# lint-dirty, because the tests need something to fail on. A driver that reported them would be red
-# on a clean tree, and everyone would learn to ignore it.
+# `tests/fixtures/**` is test data, not source: fixtures are deliberately malformed, unparseable,
+# lint-dirty, or non-canonically laid out, because the tests need something to fail on and
+# something to reflow. A driver that reported them would be red on a clean tree — and a bare
+# `lean-fmt format` or `organize` from the repository root would rewrite the golden inputs under
+# the suites' feet. The exclusion is wholesale, not per-directory: an enumeration only ever named
+# the directories someone remembered, so every new fixture directory started life as a format
+# target. Suites drive fixtures by explicit path, which bypasses `exclude` by design, so no test
+# loses its inputs.
 #
 # `exclude` prunes. The walk never enters these directories, so it reads neither their sources nor a
 # config file sitting in one. An `include` list stood here before, and it only filtered files, so
@@ -16,18 +21,7 @@
 # name fixture paths on purpose.
 exclude = [
   "docs/**",
-  "tests/fixtures/cache/**",
-  "tests/fixtures/check/**",
-  # Deliberately lint-dirty: duplicate imports and over-width comment lines are the fixture.
-  "tests/fixtures/comments/Imports.lean",
-  "tests/fixtures/compiler/**",
-  "tests/fixtures/downstream/**",
-  "tests/fixtures/format-suppression/**",
-  "tests/fixtures/imports/**",
-  "tests/fixtures/reporting/**",
-  "tests/fixtures/semantic/**",
-  "tests/fixtures/suppression/**",
-  "tests/fixtures/syntax/**",
+  "tests/fixtures/**",
 ]
 
 # Settings that change the bytes a run writes. Every key here is part of the cache identity.
