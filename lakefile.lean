@@ -102,17 +102,15 @@ lean_lib TestSupport where
 
 /- The suite orchestrator and the package's testDriver: `lake test` runs the unit tier in-process
 and then every non-slow registered suite as an executable. See `tests/Test/Runner.lean`.
-Two extra dependencies declare what the tests *read* rather than import: `check-modules` keeps a
-fresh trace sample on disk for the unit tier's trace characterization (its walk covers every trace
-in the build tree and skips stale pairs, so a thin sample, not a stale one, is the failure this
-prevents), and `CompilerFixtures` puts the plugin-built `LocalSyntax.olean` on the search path for
-the interface-hash unit test. CI caught the second: nothing else in a fresh checkout builds it
-before the unit tier runs. -/
+`check-modules` is an extra dependency so the unit tier's trace characterization finds a fresh
+sample: its walk covers every trace in the build tree and skips stale pairs, and building the
+largest closure here keeps the no-fresh-pairs outcome — whose message names the repairing build
+itself — from firing on an ordinary incremental tree. -/
 lean_exe «test-suites» where
   srcDir := "tests"
   root := `Test.Runner
   supportInterpreter := true
-  extraDepTargets := #[`«check-modules», `CompilerFixtures]
+  extraDepTargets := #[`«check-modules»]
 
 /- The boundary suite: repo hygiene (module headers, tracked artifacts, the plugin import and
 link-closure boundaries). Pure reads against the tracked tree, so it runs in the parallel lane. -/
@@ -398,14 +396,11 @@ lean_exe «suite-lsp-acceptance» where
 
 /- The unit tier: `LeanFmtTest.lean` split into per-domain modules under `tests/Test/Unit`,
 run by the shared harness. The executable's import closure, not a glob, determines what it
-builds — except for what a test *reads* without importing: `testInterfaceHash` loads the
-plugin-built `LocalSyntax.olean`, so the fixture library is a declared dependency, not a hope
-that some suite built it first. -/
+builds. -/
 lean_exe «lean-fmt-tests» where
   srcDir := "tests"
   root := `Test.Unit
   supportInterpreter := true
-  extraDepTargets := #[`CompilerFixtures]
 
 lean_exe artifactExtractor where
   srcDir := "tools"
