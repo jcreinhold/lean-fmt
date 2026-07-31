@@ -33,6 +33,8 @@ exclude = [
 # Settings that change the bytes a run writes. Every key here is part of the cache identity.
 [format]
 line-width = 100
+import-layout = "canonical"
+import-groups = ["Lean", "Mathlib", "Std"]
 
 # Settings that filter results. None of them is part of the cache identity.
 [lint]
