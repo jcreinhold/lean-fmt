@@ -758,8 +758,16 @@ private def entryDecision (entry : CacheEntry) :
     provided := providedOf entry.analysis
     analysis := entry.analysis }
 
-def ResultCache.readAll (cache : ResultCache) (project : Project.Snapshot)
-    (targets : Array Project.SourceTarget) : IO (Array (Option SemanticAnalysis)) := do
+/-- The per-target lookup walk shared by every read: integrity of the record, then one
+caller-supplied decision over the entry in the shared vocabulary and the current observation.
+
+Keeping the walk here and the decisions in `Cache.Decision` is the one-home rule: `readAll`
+applies `Entry.identityCurrent` (its `Provided.meets` half runs in `LeanFmt.Application`), and
+`probeVerdicts` applies `elaborationVerdict?` — neither re-implements currency. -/
+private def ResultCache.lookupAll (cache : ResultCache) (project : Project.Snapshot)
+    (targets : Array Project.SourceTarget)
+    (decideEntry : Cache.Decision.Entry Unit SemanticAnalysis Digest Digest String →
+      Cache.Decision.Obs Unit Digest Digest String → Option α) : IO (Array (Option α)) := do
   let entries ← cache.loadEntries
   if entries.isEmpty then
     return Array.replicate targets.size none
@@ -780,15 +788,31 @@ def ResultCache.readAll (cache : ResultCache) (project : Project.Snapshot)
       unless entry.identity == digest && entry.payload == analysisDigest entry.analysis &&
           validAnalysis target entry.analysis do
         return none
-      -- Currency is `Cache.Decision.Entry.identityCurrent`, the function
-      -- `LeanFmt.Cache.Spec` proves `serves_sound` and `serves_complete` about. The other half of
-      -- `Decision.serves` — `Provided.meets` — runs in `LeanFmt.Application`, which is where the
-      -- rule plan is known.
-      unless (entryDecision entry).identityCurrent (observation target closure) do
-        return none
-      return some entry.analysis
+      return decideEntry (entryDecision entry) (observation target closure)
     catch _ =>
       return none
+
+def ResultCache.readAll (cache : ResultCache) (project : Project.Snapshot)
+    (targets : Array Project.SourceTarget) : IO (Array (Option SemanticAnalysis)) :=
+  -- Currency is `Cache.Decision.Entry.identityCurrent`, the function
+  -- `LeanFmt.Cache.Spec` proves `serves_sound` and `serves_complete` about. The other half of
+  -- `Decision.serves` — `Provided.meets` — runs in `LeanFmt.Application`, which is where the
+  -- rule plan is known.
+  cache.lookupAll project targets fun entry obs =>
+    if entry.identityCurrent obs then some entry.analysis else none
+
+/-- The organize verdict probe: for each candidate target, the stored verdict about those bytes,
+paired with the analysis that recorded it (a rejection's diagnostics are its report).
+
+The decision is `Cache.Decision.elaborationVerdict?`, the function `LeanFmt.Cache.Spec` proves
+`verdict_sound` and `verdict_complete` about. `none` is a miss — validate. `unbuilt` is never
+in the store (`storableAnalysis`), so a missing dependency olean can only ever miss here and be
+validated again, never mistaken for a rejection. -/
+def ResultCache.probeVerdicts (cache : ResultCache) (project : Project.Snapshot)
+    (targets : Array Project.SourceTarget) :
+    IO (Array (Option (Cache.Decision.ElabVerdict × SemanticAnalysis))) :=
+  cache.lookupAll project targets fun entry obs =>
+    (Cache.Decision.elaborationVerdict? entry obs).map (·, entry.analysis)
 
 private def ResultCache.ensureWriteDirectory (cache : ResultCache) : IO Unit := do
   unless ← cache.directoryReady.get do

@@ -122,6 +122,35 @@ def serves (e : Entry Mod Analysis SDigest GDigest Schema)
     (o : Obs Mod SDigest GDigest Schema) (d : Demand) : Bool :=
   e.identityCurrent o && e.provided.meets d
 
+/-! ## The elaboration verdict -/
+
+/-- What `organize` asks the cache about a candidate's bytes.
+
+Not a lint demand: the question is "did these bytes elaborate", and `Provided` carries the
+answer the other way round from `meets` — a broken entry, which meets any lint demand, is a
+*rejection* here. `unbuilt` is deliberately absent from the verdicts and from the store (an
+unbuilt outcome says nothing about the bytes), so a missing dependency olean means *validate
+again*, never rejection. -/
+inductive ElabVerdict where
+  | elaborates
+  | rejected
+  deriving BEq, DecidableEq
+
+/-- The verdict decision, pure and entire: the proven currency half of `serves`, read against a
+candidate's digests, with `provided` mapped to the verdict it records.
+
+`none` is a miss — the entry is not about the current world, so validate. A caller applying
+`identityCurrent` alone and case-splitting `provided` itself would be visibly not applying this
+function; it lives here, beside `serves`, so the two decisions cannot drift. -/
+def elaborationVerdict? (e : Entry Mod Analysis SDigest GDigest Schema)
+    (o : Obs Mod SDigest GDigest Schema) : Option ElabVerdict :=
+  if e.identityCurrent o then
+    some (match e.provided with
+      | .broken => .rejected
+      | .success .. => .elaborates)
+  else
+    none
+
 end
 
 end LeanFmt.Internal.Cache.Decision

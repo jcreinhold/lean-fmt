@@ -284,13 +284,14 @@ private def commandHelps : Array CommandHelp := #[
     summary := "canonicalize import headers"
     description := "Rewrite each file's import header into the canonical form, validate every \
       changed file through the frontend, and publish it atomically — unchanged files skip the \
-      frontend. Exit 0 clean, 1 would-change under `--check` or rejected rewrites, 2 \
-      infrastructure failure."
-    usage := #["lean-fmt organize [--root PATH] [--config PATH] [--check] [--json] [--workers N] [FILE...]"]
+      frontend, and a candidate whose validation verdict is already cached skips it too. Exit 0 \
+      clean, 1 would-change under `--check` or rejected rewrites, 2 infrastructure failure."
+    usage := #["lean-fmt organize [--root PATH] [--config PATH] [--check] [--json] [--workers N] \
+      [--no-cache] [FILE...]"]
     sections := #[
       ("target options:", #[optRoot, optConfig]),
       ("organize options:", #[optCheckOrganize, optJson]),
-      ("execution options:", #[optWorkers])
+      ("execution options:", #[optWorkers, optNoCache])
     ] },
   { command := "rules"
     summary := "list the rule registry"

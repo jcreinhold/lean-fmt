@@ -217,6 +217,55 @@ private def testOrganizeWorkers (ctx : Ctx) : IO Unit := do
   ensureEq "organize-workers: statuses differ at 1 and 4 workers" serialStatuses parallelStatuses
   ensureEq "organize-workers: written bytes differ at 1 and 4 workers" serialBytes parallelBytes
 
+/-- The verdict cache: a stored rejection serves the re-run — no frontend child, the same
+diagnostics — and a published organize leaves the file's live entry, which `check` then serves
+without a child. Children are counted on the profile channel: a count gate, never wall time. -/
+private def testVerdictCache (ctx : Ctx) : IO Unit := do
+  -- Earlier cases publish and store verdicts for these same fixtures; the counts below assume
+  -- an empty cache, so start with one (as the lane's setup does for the whole suite).
+  removeDirAll? (ctx.root / ".lean-fmt-cache")
+  let profileEnv := fallbackEnv ++ #[("LEAN_FMT_PROFILE_PHASES", some "1")]
+  let countLines (haystack needle : String) : Nat :=
+    (haystack.splitOn "\n").countP fun line => (line.splitOn needle).length > 1
+  let childrenOf (stderr : String) : Nat := countLines stderr "cache.active_children="
+  let ordering := ctx.root / "tests" / "fixtures" / "imports" / "Ordering.lean"
+  let target := "tests/fixtures/imports/Ordering.lean"
+  -- A rejection is stored and served: same status, same diagnostics, no child on the re-run.
+  -- The sabotage imports a module the manifest does not know, so the candidate is broken —
+  -- never unbuilt, which would (correctly) re-validate instead.
+  withRestored ctx ordering do
+    let original ← IO.FS.readFile ordering
+    IO.FS.writeFile ordering <|
+      original.replace "import LeanFmt.Digest" "import LeanFmt.NoSuchModule\nimport LeanFmt.Digest"
+    let first ← expectExit 1 "verdict-store" ctx.application
+      #["organize", "--root", ".", "--json", target] (cwd? := some ctx.root) (env := profileEnv)
+    ensure (childrenOf first.stderr == 1)
+      s!"verdict-store: the first organize did not validate through the frontend:\n{first.stderr}"
+    let second ← expectExit 1 "verdict-serve" ctx.application
+      #["organize", "--root", ".", "--json", target] (cwd? := some ctx.root) (env := profileEnv)
+    ensure (childrenOf second.stderr == 0)
+      s!"verdict-serve: a stored rejection was re-validated:\n{second.stderr}"
+    ensure (countLines second.stderr "cache.verdict_hits=1" == 1)
+      s!"verdict-serve: the probe did not hit:\n{second.stderr}"
+    ensureEq "verdict-serve: the served rejection's report differs" first.stdout second.stdout
+  -- A published organize leaves the file's live entry: `check` is served, and its report is the
+  -- fresh run's report.
+  withRestored ctx ordering do
+    let organized ← expectExit 0 "publish" ctx.application
+      #["organize", "--root", ".", "--json", target] (cwd? := some ctx.root) (env := profileEnv)
+    ensure (childrenOf organized.stderr == 1)
+      s!"publish: organize did not validate its candidate:\n{organized.stderr}"
+    let fresh ← runProc ctx.application
+      #["check", "--root", ".", "--json", "--no-cache", target]
+      (cwd? := some ctx.root) (env := fallbackEnv)
+    let served ← runProc ctx.application
+      #["check", "--root", ".", "--json", target] (cwd? := some ctx.root) (env := profileEnv)
+    ensure (served.exitCode == fresh.exitCode)
+      s!"publish: served check exits {served.exitCode}, fresh exits {fresh.exitCode}"
+    ensureEq "publish: served check report differs from fresh" fresh.stdout served.stdout
+    ensure (childrenOf served.stderr == 0)
+      s!"publish: check re-ran the frontend for an organized file:\n{served.stderr}"
+
 /-- `fix` applies the FMT003 safe dedup through the canonical patch (the printer keeps the
 duplicate, so the fix is recomputed at canonical coordinates), validated and written; then
 restore. -/
@@ -315,6 +364,7 @@ public def main (args : List String) : IO UInt32 := do
       { name := "organize-dry-run", run := Imports.testOrganizeDryRun ctx },
       { name := "organize-write", run := Imports.testOrganizeWrite ctx },
       { name := "organize-workers", run := Imports.testOrganizeWorkers ctx },
+      { name := "organize-verdict-cache", run := Imports.testVerdictCache ctx },
       { name := "fix-dedup", run := Imports.testFixDedup ctx },
       { name := "suppression-composes", run := Imports.testSuppressionComposes ctx },
       { name := "fix-never-reorders", run := Imports.testFixNeverReorders ctx },

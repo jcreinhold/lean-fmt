@@ -1971,42 +1971,95 @@ structure OrganizeRequest where
   to pick the number the way Lake picks it for its own build (`resolveWorkers`). Outcomes are
   assembled by target index, so the report is identical at any value. -/
   workers : Option Nat := none
+  /-- Read and write the result cache (`--no-cache` disables both): stored validation verdicts
+  let a re-run skip the frontend for a candidate it has already validated. -/
+  cache : Bool := true
+
+/-- One organize worker's answer for one target. -/
+private structure OrganizeOutcome where
+  report : FileReport
+  /-- An infrastructure-failure note for the run trailer. -/
+  failure? : Option String := none
+  /-- The validation analysis of a candidate this worker ran the frontend for — the verdict the
+  run stores and the next probe serves. `none` when no child ran (clean, or the probe answered),
+  and when validation found an unbuilt dependency: that outcome says nothing about the bytes
+  (`storableAnalysis`), so it is reported but never stored. -/
+  validation? : Option SemanticAnalysis := none
+
+/-- Whether organize's validation child captures the semantic-diagnostics projection (capture
+"1") or runs bare (capture "0"). The projection is what a stored verdict serves later: "0"
+leaves the entry at `.syntax` tier, so a `.semantic` selection misses and recomputes; "1" makes
+the stored analysis serve every non-`fix` demand.
+
+Default-on, measured (2026-07-30, kan-proofs 8-file mathlib-closure batch, min of two runs,
+summed `exact_child_ms`): capture "0" 8158 ms vs capture "1" 8052 ms — the diagnostics capture
+is noise beside elaboration, so the one elaboration serves every later command it can. The
+occurrence fold (capture "2") is deliberately not paid: only `fix` consumes it, and organize's
+product is not fixes. -/
+private def organizeHarvestFindings : IO Bool :=
+  return true
 
 /-- Validate and publish one organize candidate. One worker is the serial loop; several are
 `--workers N`. Workers write only their own outcomes slot, and `publishAtomic` targets a
 distinct path per slot, so the shared state they touch (`next`, `outcomes`, the setup refs
 inside `exactRun`) is either atomic or immutable after `primeSetups`. -/
 private partial def organizeWorker (exactRun : ExactRun)
-    (work : Array (SourceSnapshot × Option String)) (next : IO.Ref Nat)
-    (outcomes : IO.Ref (Array (Option (FileReport × Option String)))) : IO Unit := do
+    (work : Array (SourceSnapshot × Option String ×
+      Option (Cache.Decision.ElabVerdict × SemanticAnalysis)))
+    (next : IO.Ref Nat) (outcomes : IO.Ref (Array (Option OrganizeOutcome))) : IO Unit := do
   let index ← next.modifyGet fun n => (n, n + 1)
   if h : index < work.size then
-    let (snapshot, candidate?) := work[index]
+    let (snapshot, candidate?, probe?) := work[index]
     match candidate? with
     | none =>
-      outcomes.modify (·.set! index (some (baseReport snapshot "clean", none)))
+      outcomes.modify (·.set! index (some { report := baseReport snapshot "clean" }))
     | some output =>
       try
-        let candidate := snapshot.withSource output
-        let validation ← exactRun.analyzeSnapshot candidate (renderCanonical := false) (validator := true)
-        match validation.result? with
-        | none =>
-          outcomes.modify (·.set! index
-            (some (baseReport snapshot "rejected" #[] validation.diagnostics, none)))
-        | some _ =>
+        match probe? with
+        | some (.rejected, verdict) =>
+          -- The stored verdict *is* the validation this run would have run — same bytes, same
+          -- closure — and its diagnostics are the report. No child is spawned.
+          outcomes.modify (·.set! index (some {
+            report := baseReport snapshot "rejected" #[] verdict.diagnostics }))
+        | some (.elaborates, _) =>
           match ← publishAtomic snapshot.path snapshot.source output with
           | .error message =>
-            outcomes.modify (·.set! index (some (baseReport snapshot "rejected" #[] #[message], none)))
+            outcomes.modify (·.set! index (some {
+              report := baseReport snapshot "rejected" #[] #[message] }))
           | .ok _ =>
-            outcomes.modify (·.set! index (some ({ (baseReport snapshot "organized") with
-              formatted := some output, written := true }, none)))
+            outcomes.modify (·.set! index (some {
+              report := { (baseReport snapshot "organized") with
+                formatted := some output, written := true } }))
+        | none =>
+          let candidate := snapshot.withSource output
+          let validation ← exactRun.analyzeSnapshot candidate (renderCanonical := false)
+            (validator := true) (captureSemantic := ← organizeHarvestFindings)
+          match validation.result? with
+          | none =>
+            -- An unbuilt dependency is not a verdict about the bytes — report it and store
+            -- nothing, so the next run validates again rather than serving a stored rejection.
+            let unbuilt := (unbuiltDependency? validation.diagnostics).isSome
+            outcomes.modify (·.set! index (some {
+              report := baseReport snapshot (if unbuilt then "unbuilt" else "rejected") #[]
+                validation.diagnostics
+              validation? := if unbuilt then none else some validation }))
+          | some _ =>
+            match ← publishAtomic snapshot.path snapshot.source output with
+            | .error message =>
+              outcomes.modify (·.set! index (some {
+                report := baseReport snapshot "rejected" #[] #[message] }))
+            | .ok _ =>
+              outcomes.modify (·.set! index (some {
+                report := { (baseReport snapshot "organized") with
+                  formatted := some output, written := true }
+                validation? := some validation }))
       catch error =>
         let message := toString error
-        outcomes.modify (·.set! index (some (
-          { path := snapshot.relativePath
-            status := "infrastructure-failure"
-            diagnostics := #[message] },
-          some s!"{snapshot.relativePath}: {message}")))
+        let report : FileReport := {
+          path := snapshot.relativePath, status := "infrastructure-failure",
+          diagnostics := #[message] }
+        outcomes.modify (·.set! index (some {
+          report, failure? := some s!"{snapshot.relativePath}: {message}" }))
     organizeWorker exactRun work next outcomes
 
 /-- The opt-in "organize imports" capability, exposing no graph
@@ -2043,12 +2096,39 @@ def organize (request : OrganizeRequest) : IO RunReport := do
     return summarize "organize" files
   let workers ← resolveWorkers request.workers
   recordCount "workers" workers
+  let epochStarted ← IO.monoNanosNow
+  let cache? ← if request.cache then
+    ResultCache.open? project.workspace (← IO.appPath)
+  else
+    pure none
+  recordPhase "cache_epoch" epochStarted (← IO.monoNanosNow)
+  -- The verdict probe, before any dispatch: a stored verdict *is* the validation this run would
+  -- perform (same candidate bytes, same closure), so a hit makes the worker pool idle for that
+  -- file. `none` everywhere means validate — a candidate never seen, or one whose last outcome
+  -- was unbuilt, which is never stored.
+  let probes ← match cache? with
+    | none => pure (Array.replicate snapshots.size
+      (none : Option (Cache.Decision.ElabVerdict × SemanticAnalysis)))
+    | some cache => do
+      let probing := ((snapshots.zip candidates).zipIdx).filterMap
+        fun ((snapshot, candidate?), index) =>
+          candidate?.map fun output => (index, snapshot.withSource output)
+      let found ← withPhase "cache_lookup" <| cache.probeVerdicts project (probing.map (·.2))
+      let mut perIndex := Array.replicate snapshots.size
+        (none : Option (Cache.Decision.ElabVerdict × SemanticAnalysis))
+      for ((index, _), verdict?) in probing.zip found do
+        perIndex := perIndex.set! index verdict?
+      recordCount "verdict_hits" (found.countP Option.isSome)
+      pure perIndex
   withExactRun project workers (action := fun exactRun => do
-    -- Only a snapshot with a candidate rewrite is validated, so only those reach the frontend.
-    exactRun.primeSetups <| (snapshots.zip candidates).filterMap fun (snapshot, candidate?) =>
-      if candidate?.isSome then some snapshot else none
-    let work := snapshots.zip candidates
-    let outcomes ← IO.mkRef (Array.replicate work.size (none : Option (FileReport × Option String)))
+    -- Only a snapshot with a candidate rewrite and no stored verdict is validated, so only
+    -- those reach the frontend.
+    exactRun.primeSetups <| ((snapshots.zip candidates).zip probes).filterMap
+      fun ((snapshot, candidate?), probe?) =>
+        if candidate?.isSome && probe?.isNone then some snapshot else none
+    let work := ((snapshots.zip candidates).zip probes).map
+      fun ((snapshot, candidate?), probe?) => (snapshot, candidate?, probe?)
+    let outcomes ← IO.mkRef (Array.replicate work.size (none : Option OrganizeOutcome))
     let next ← IO.mkRef 0
     if workers > 1 && work.size > 1 then
       -- The batch pattern (`execute`): dedicated priority is required because workers block on
@@ -2065,12 +2145,23 @@ def organize (request : OrganizeRequest) : IO RunReport := do
       organizeWorker exactRun work next outcomes
     let mut files := #[]
     let mut failures := #[]
-    for outcome? in ← outcomes.get do
-      let some (report, failure?) := outcome?
+    let mut validations : Array (SourceSnapshot × SemanticAnalysis) := #[]
+    for ((snapshot, candidate?, _), outcome?) in work.zip (← outcomes.get) do
+      let some outcome := outcome?
         | throw <| IO.userError "an organize worker finished without reporting its target"
-      files := files.push report
-      if let some failure := failure? then
+      files := files.push outcome.report
+      if let some failure := outcome.failure? then
         failures := failures.push failure
+      match candidate?, outcome.validation? with
+      | some output, some validation =>
+        validations := validations.push (snapshot.withSource output, validation)
+      | _, _ => pure ()
+    -- Every validation becomes a stored verdict: a published file's entry is its live analysis
+    -- for the next `check`/`format`, a rejected candidate's broken entry is the rejection the
+    -- next probe serves. Unbuilt outcomes are excluded upstream (`OrganizeOutcome.validation?`).
+    if let some cache := cache? then
+      withPhase "cache_write" <| cache.writeAll project
+        (validations.map (·.1)) (validations.map (some ·.2))
     return summarize "organize" files failures)
 
 /-- The whole analysis side of `__analyze-exact`: read the setup and source, run the exact

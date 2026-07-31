@@ -424,6 +424,8 @@ private def parseOrganizeArgs (args : List String) : Except String OrganizeComma
       loop rest { command with request := { command.request with configPath? := some path } }
     | "--check" :: rest =>
       loop rest { command with request := { command.request with check := true } }
+    | "--no-cache" :: rest =>
+      loop rest { command with request := { command.request with cache := false } }
     | "--workers" :: value :: rest =>
       match value.toNat? with
       | some workers =>
@@ -1360,7 +1362,7 @@ unsafe def runCli (arguments : List String) : IO UInt32 := do
       let report ← organize command.request
       renderReport command.outputFormat report
       if !report.infrastructureFailures.isEmpty then return 2
-      else if report.rejected > 0 then return 1
+      else if report.rejected > 0 || report.unbuilt > 0 then return 1
       else if command.request.check && report.changed > 0 then return 1
       else return 0
     catch error =>

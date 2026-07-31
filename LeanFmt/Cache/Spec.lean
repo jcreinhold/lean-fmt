@@ -144,11 +144,18 @@ variable {analyze : Grammar → Source → Analysis} {sd : Source → SDigest} {
   {e : Entry Mod Analysis SDigest GDigest Schema} {o : Obs Mod SDigest GDigest Schema}
   {w : World Mod Grammar Source Schema} {demand : Demand} {g : Grammar} {s : Source}
 
+private theorem identity_conjuncts (h : Entry.identityCurrent e o = true) :
+    e.schema = o.schema ∧ e.sourceDigest = o.sourceDigest e.mod ∧
+      e.closureDigest = o.closureDigest e.mod := by
+  simp only [Entry.identityCurrent, Bool.and_eq_true, decide_eq_true_eq] at h
+  exact ⟨h.1.1, h.1.2, h.2⟩
+
 private theorem serves_conjuncts (h : serves e o demand = true) :
     e.schema = o.schema ∧ e.sourceDigest = o.sourceDigest e.mod ∧
       e.closureDigest = o.closureDigest e.mod ∧ e.provided.meets demand = true := by
-  simp only [serves, Entry.identityCurrent, Bool.and_eq_true, decide_eq_true_eq] at h
-  exact ⟨h.1.1.1, h.1.1.2, h.1.2, h.2⟩
+  simp only [serves, Bool.and_eq_true] at h
+  let ⟨a, b, c⟩ := identity_conjuncts h.1
+  exact ⟨a, b, c, h.2⟩
 
 /-- **`schema_current`** — the entry's on-disk shape is the one this binary deserializes.
 
@@ -160,14 +167,15 @@ theorem schema_current (hobs : Faithful sd gd o w) (h : serves e o demand = true
 
 /-- **`source_current`** — the entry's source digest identifies the current source.
 
-Uses **A1** (digest injectivity on the values compared) and **A2**. A1 is cryptographic — SHA-256
-collision freedom — not provable in Lean and standard to assume; it is stated once, here, as an
-injectivity hypothesis on `sd`. -/
+Stated over the currency half (`Entry.identityCurrent`) rather than `serves`, so both decisions —
+the lint serve and the elaboration verdict — share the one proof. Uses **A1** (digest injectivity
+on the values compared) and **A2**. A1 is cryptographic — SHA-256 collision freedom — not provable
+in Lean and standard to assume; it is stated once, here, as an injectivity hypothesis on `sd`. -/
 theorem source_current (hsd : Function.Injective sd) (hobs : Faithful sd gd o w)
-    (hbuilt : BuiltFrom analyze sd gd e g s) (h : serves e o demand = true) :
+    (hbuilt : BuiltFrom analyze sd gd e g s) (h : Entry.identityCurrent e o = true) :
     s = w.source e.mod := by
   have hdig : sd s = sd (w.source e.mod) := by
-    rw [← hbuilt.1, (serves_conjuncts h).2.1, hobs.2.1 e.mod]
+    rw [← hbuilt.1, (identity_conjuncts h).2.1, hobs.2.1 e.mod]
   exact hsd hdig
 
 /-- **`grammar_current`** — the entry's artifact was built under `g`; establish `g` is the grammar the
@@ -185,10 +193,10 @@ It is a claim about *Lake's implementation*, checked by reading `computeExportIn
 measurement, and pinned by `testLakeTraceCharacterization` — but still a hypothesis, not a
 theorem. -/
 theorem grammar_current (hgd : Function.Injective gd) (hobs : Faithful sd gd o w)
-    (hbuilt : BuiltFrom analyze sd gd e g s) (h : serves e o demand = true) :
+    (hbuilt : BuiltFrom analyze sd gd e g s) (h : Entry.identityCurrent e o = true) :
     g = w.grammar e.mod := by
   have hdig : gd g = gd (w.grammar e.mod) := by
-    rw [← hbuilt.2.1, (serves_conjuncts h).2.2.1, hobs.2.2 e.mod]
+    rw [← hbuilt.2.1, (identity_conjuncts h).2.2, hobs.2.2 e.mod]
   exact hgd hdig
 
 /-- **`demand_met`** — a served entry answered what the run actually asked.
@@ -218,7 +226,10 @@ theorem serves_sound (hsd : Function.Injective sd) (hgd : Function.Injective gd)
     (h : serves e o demand = true) :
     Valid analyze e w demand := by
   refine ⟨?_, demand_met h⟩
-  rw [hbuilt.2.2, source_current hsd hobs hbuilt h, grammar_current hgd hobs hbuilt h]
+  have hid : Entry.identityCurrent e o = true := by
+    simp only [serves, Bool.and_eq_true] at h
+    exact h.1
+  rw [hbuilt.2.2, source_current hsd hobs hbuilt hid, grammar_current hgd hobs hbuilt hid]
 
 /-! ## Completeness
 
@@ -256,7 +267,11 @@ theorem stale_grammar_refused (hgd : Function.Injective gd) (hobs : Faithful sd 
     serves e o demand = false := by
   cases h : serves e o demand with
   | false => rfl
-  | true => exact absurd (grammar_current hgd hobs hbuilt h) hstale
+  | true =>
+    have hid : Entry.identityCurrent e o = true := by
+      simp only [serves, Bool.and_eq_true] at h
+      exact h.1
+    exact absurd (grammar_current hgd hobs hbuilt hid) hstale
 
 /-- **An entry built from bytes that are no longer on disk is never served.** -/
 theorem stale_source_refused (hsd : Function.Injective sd) (hobs : Faithful sd gd o w)
@@ -264,7 +279,69 @@ theorem stale_source_refused (hsd : Function.Injective sd) (hobs : Faithful sd g
     serves e o demand = false := by
   cases h : serves e o demand with
   | false => rfl
-  | true => exact absurd (source_current hsd hobs hbuilt h) hstale
+  | true =>
+    have hid : Entry.identityCurrent e o = true := by
+      simp only [serves, Bool.and_eq_true] at h
+      exact h.1
+    exact absurd (source_current hsd hobs hbuilt hid) hstale
+
+/-! ## The elaboration verdict
+
+`organize`'s question about a candidate — did these bytes elaborate — is a *different* decision
+from `serves`, proved here against the same hypotheses. Its currency half is literally
+`Entry.identityCurrent`, so `source_current` and `grammar_current` transfer without a second
+proof. -/
+
+/-- **verdict_sound** — a verdict is about the current world and says what it says.
+
+`elaborates` means the recorded analysis of these current bytes succeeded; `rejected` means the
+entry is the broken record of these current bytes. That a stored broken record is always a
+genuine elaboration failure of the bytes — never an `unbuilt` environment deficiency — is
+`writeAll`'s half, outside the model. -/
+theorem verdict_sound (hsd : Function.Injective sd) (hgd : Function.Injective gd)
+    (hobs : Faithful sd gd o w) (hbuilt : BuiltFrom analyze sd gd e g s) {v : ElabVerdict}
+    (h : elaborationVerdict? e o = some v) :
+    e.analysis = analyze (w.grammar e.mod) (w.source e.mod) ∧
+      (v = .rejected ↔ e.provided = .broken) := by
+  have hid : Entry.identityCurrent e o = true := by
+    simp only [elaborationVerdict?] at h
+    split at h
+    next hc => exact hc
+    next => contradiction
+  refine ⟨by rw [hbuilt.2.2, source_current hsd hobs hbuilt hid,
+    grammar_current hgd hobs hbuilt hid], ?_⟩
+  simp only [elaborationVerdict?] at h
+  split at h
+  next =>
+    have hv := Option.some.inj h
+    cases hp : e.provided with
+    | broken =>
+      simp only [hp] at hv
+      subst hv
+      exact iff_of_true rfl rfl
+    | success tier caps hasCanonical =>
+      simp only [hp] at hv
+      subst hv
+      exact iff_of_false (by decide) (by simp)
+  next => contradiction
+
+/-- **verdict_complete** — an entry genuinely built from the current world answers the verdict.
+
+No injectivity, for the same reason as `serves_complete`: a digest collision causes a wrong
+answer, never a spurious revalidation. -/
+theorem verdict_complete (hobs : Faithful sd gd o w) (hschema : e.schema = w.schema)
+    (hbuilt : BuiltFrom analyze sd gd e (w.grammar e.mod) (w.source e.mod)) :
+    elaborationVerdict? e o = some (match e.provided with
+      | .broken => .rejected
+      | .success .. => .elaborates) := by
+  have hid : Entry.identityCurrent e o = true := by
+    simp only [Entry.identityCurrent, Bool.and_eq_true, decide_eq_true_eq]
+    refine ⟨⟨hschema.trans hobs.1.symm, ?_⟩, ?_⟩
+    · rw [hbuilt.1, hobs.2.1 e.mod]
+    · rw [hbuilt.2.1, hobs.2.2 e.mod]
+  simp only [elaborationVerdict?]
+  rw [hid]
+  exact if_pos rfl
 
 /-! ## Anti-vacuity
 
@@ -325,5 +402,17 @@ theorem witness_sound_is_inhabited :
 theorem witness_stale_is_refused : serves Stale O Asks = false := by
   refine stale_grammar_refused (fun _ _ h => h) witness_faithful witness_stale_built ?_
   decide
+
+/-- A broken record of the current bytes. -/
+private abbrev Broken : Entry Unit (Bool × Bool) Bool Bool Unit :=
+  ⟨(), (), true, true, .broken, (true, true)⟩
+
+/-- The verdict decision on the same fixture: the fresh entry elaborates, a broken record of the
+current bytes rejects, and the stale entry answers nothing — a miss, so validate again. -/
+theorem witness_verdict_fresh : elaborationVerdict? Fresh O = some .elaborates := by decide
+
+theorem witness_verdict_broken : elaborationVerdict? Broken O = some .rejected := by decide
+
+theorem witness_verdict_stale : elaborationVerdict? Stale O = none := by decide
 
 end LeanFmt.Internal.Cache.Spec
