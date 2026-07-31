@@ -56,7 +56,7 @@ jobs:
           test: "false"
 
       # The full gate runs here, once, on every platform leg — a release stays thorough even
-      # where CI shards for speed.
+      # where CI splits the registry across jobs for speed.
       - name: test
         run: lake test
 

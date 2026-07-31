@@ -103,14 +103,14 @@ structure Options where
   /-- Run only the unit tier. -/
   unitOnly : Bool := false
   /-- Partition the selected suites modulo the count and run partition INDEX (one-based — the
-  same convention as the case harness's `--shard`), so a CI matrix of `1/3 … 3/3` covers the
-  registry exactly once and a suite added to the registry joins a shard without a workflow
+  same convention as the case harness's `--part`), so a CI matrix of `1/3 … 3/3` covers the
+  registry exactly once and a suite added to the registry joins a part without a workflow
   edit. -/
-  shard : Option (Nat × Nat) := none
+  part : Option (Nat × Nat) := none
 
 private def usage : String :=
   "usage: test-suites [--all] [--suites NAME...] [--list] [--jobs N] [--skip-unit] [--unit-only] \
-    [--shard INDEX/COUNT]"
+    [--part INDEX/COUNT]"
 
 private def parseArgs (args : List String) : Except String Options := do
   let arguments := args.toArray
@@ -137,24 +137,24 @@ private def parseArgs (args : List String) : Except String Options := do
           throw s!"--jobs expects a number, got: {count}"
       | none =>
         throw "--jobs expects a number"
-    | "--shard" =>
+    | "--part" =>
       index := index + 1
       match arguments[index]? with
       | some spec =>
         match spec.splitOn "/" with
         | [indexText, countText] =>
           match indexText.toNat?, countText.toNat? with
-          | some shardIndex, some count =>
-            if 1 ≤ shardIndex && shardIndex ≤ count then
-              options := { options with shard := some (shardIndex, count) }
+          | some partIndex, some count =>
+            if 1 ≤ partIndex && partIndex ≤ count then
+              options := { options with part := some (partIndex, count) }
             else
-              throw s!"--shard expects 1 ≤ INDEX ≤ COUNT, got: {spec}"
+              throw s!"--part expects 1 ≤ INDEX ≤ COUNT, got: {spec}"
           | _, _ =>
-            throw s!"--shard expects INDEX/COUNT, got: {spec}"
+            throw s!"--part expects INDEX/COUNT, got: {spec}"
         | _ =>
-          throw s!"--shard expects INDEX/COUNT, got: {spec}"
+          throw s!"--part expects INDEX/COUNT, got: {spec}"
       | none =>
-        throw "--shard expects INDEX/COUNT"
+        throw "--part expects INDEX/COUNT"
     | "--suites" =>
       index := index + 1
       let mut names : Array String := #[]
@@ -188,15 +188,20 @@ private def select (options : Options) : Except String (Array Suite) := do
       pure chosen
     | none =>
       pure <| registered.filter fun suite => options.all || !suite.slow
-  match options.shard with
+  match options.part with
   | none =>
     return selected
   | some (index, count) =>
-    let mut sharded : Array Suite := #[]
-    for position in [:selected.size]do
-      if position % count == index - 1 then
-        sharded := sharded.push selected[position]!
-    return sharded
+    -- Deal each lane separately. Workspace suites serialize inside a job and exclusive suites
+    -- run alone, so one modulo over the mixed list clusters the expensive tails into one part —
+    -- the first CI run put cache, layout, and modes together and let them set its wall time.
+    let mut picked : Array Suite := #[]
+    for lane in [Lane.«parallel», Lane.workspace, Lane.exclusive]do
+      let inLane := selected.filter (·.lane == lane)
+      for position in [:inLane.size]do
+        if position % count == index - 1 then
+          picked := picked.push inLane[position]!
+    return picked
 
 /-- The recorded outcome of one suite run. -/
 private structure Outcome where

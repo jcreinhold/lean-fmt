@@ -9,7 +9,7 @@ import all Test.Unit.Tools
 # The unit-tier runner
 
 What was `LeanFmtTest.lean`'s `main`, split two ways. The ~30 test functions are `Case`s now,
-run by the shared harness with per-test names, isolation, and `--list`/`--filter`/`--shard`
+run by the shared harness with per-test names, isolation, and `--list`/`--filter`/`--part`
 selection — one failure no longer hides the other twenty-nine. The argv subcommands keep their
 exact names, arities, and output until their consuming shell suites are ported and absorb them.
 -/
