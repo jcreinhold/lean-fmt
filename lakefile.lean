@@ -135,9 +135,10 @@ lean_lib TestSupport where
 
 /- The suite orchestrator and the package's testDriver: `lake test` runs the unit tier in-process
 and then every non-slow registered suite as an executable. See `tests/Test/Runner.lean`.
-`check-modules` is an extra dependency because the unit tier's trace characterization walks every
-trace in the build tree: building it here keeps its own trace from going stale against modules the
-suites rebuild, which the test would report as a Lake format change. -/
+`check-modules` is an extra dependency so the unit tier's trace characterization finds a fresh
+sample: its walk covers every trace in the build tree and skips stale pairs, and building the
+largest closure here keeps the no-fresh-pairs outcome — whose message names the repairing build
+itself — from firing on an ordinary incremental tree. -/
 lean_exe «test-suites» where
   srcDir := "tests"
   root := `Test.Runner

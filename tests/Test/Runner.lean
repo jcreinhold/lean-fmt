@@ -186,6 +186,22 @@ private def report (outcome : Outcome) : IO Unit :=
   IO.println s!"{pad outcome.suite.name 28} {if outcome.passed then "PASS" else "FAIL"}  \
     {pad (toString outcome.elapsedSec) 4}s"
 
+/-- The lines of a failure's captured output worth reading without opening the log: assertion
+failures and compiler errors from any build the suite ran, each with its following (indented)
+message line. The full output stays in the log; this is the difference between "six suites
+failed" and "six suites failed for one reason, visible here". -/
+private def digestLines (output : String) : Array String := Id.run do
+  let lines := output.splitOn "\n"
+  let mut picked : Array String := #[]
+  for i in [:lines.length] do
+    let line := lines[i]!
+    if line.startsWith "FAIL" || line.contains "error:" then
+      picked := picked.push line
+      if i + 1 < lines.length && lines[i + 1]!.startsWith " " then
+        picked := picked.push lines[i + 1]!
+  if picked.size > 10 then picked.extract 0 10 |>.push "  …"
+  else picked
+
 /-- Build every selected executable in one invocation, so the run itself contains no builds. -/
 private def buildSuites (root : System.FilePath) (suites : Array Suite) : IO Unit := do
   -- The product binary is built alongside: every suite drives it, so a source edit that
@@ -286,6 +302,11 @@ public def main (args : List String) : IO UInt32 := do
       keep.set true
       for failure in failures do
         IO.FS.writeFile (scratch / s!"{failure.suite.name}.log") failure.output
+        let digest := digestLines failure.output
+        unless digest.isEmpty do
+          IO.eprintln s!"--- {failure.suite.name} ---"
+          for line in digest do
+            IO.eprintln line
       IO.eprintln s!"logs kept at {scratch}"
       IO.eprintln s!"{failures.size} suite(s) failed: \
         {", ".intercalate (failures.map (·.suite.name)).toList}"

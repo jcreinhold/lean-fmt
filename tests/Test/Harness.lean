@@ -33,6 +33,17 @@ public def ensureEq [BEq α] [Repr α] (label : String) (expected actual : α) :
   unless actual == expected do
     throw <| IO.userError s!"{label}\n  expected: {repr expected}\n  actual:   {repr actual}"
 
+/-- The `cache.<key>=N` stat one `check` emits on stderr under `LEAN_FMT_PROFILE_PHASES=1`.
+Missing or malformed is a failure, not a zero — the old script's empty-variable arithmetic error. -/
+public def statFrom (stderr key : String) : IO Nat := do
+  let statPrefix := s!"cache.{key}="
+  for line in stderr.splitOn "\n" do
+    if line.startsWith statPrefix then
+      match (line.drop statPrefix.length).toNat? with
+      | some n => return n
+      | none => throw <| IO.userError s!"unparseable stat line: {line}"
+  throw <| IO.userError s!"missing {statPrefix} in the check's stderr:\n{stderr}"
+
 /-- Which tests a run should execute, parsed from the runner's command line. -/
 public structure Selection where
   /-- Substring a test name must contain to run. -/

@@ -2,6 +2,8 @@ module
 
 public import Test
 
+import all Test.Unit.Cache
+
 /-!
 # The cache suite: entry-granularity cache invalidation
 
@@ -45,17 +47,6 @@ structure Ctx where
   fmt : String
   pristine : System.FilePath
   total : Nat
-
-/-- The `cache.<key>=N` stat one `check` emits on stderr under `LEAN_FMT_PROFILE_PHASES=1`.
-Missing or malformed is a failure, not a zero — the old script's empty-variable arithmetic error. -/
-private def statFrom (stderr key : String) : IO Nat := do
-  let statPrefix := s!"cache.{key}="
-  for line in stderr.splitOn "\n" do
-    if line.startsWith statPrefix then
-      match (line.drop statPrefix.length).toNat? with
-      | some n => return n
-      | none => throw <| IO.userError s!"unparseable stat line: {line}"
-  throw <| IO.userError s!"missing {statPrefix} in the check's stderr:\n{stderr}"
 
 /-- One profiled `check` against the fixture project. -/
 private def profiledCheck (ctx : Ctx) (args : Array String := #[]) : IO ProcResult :=
@@ -420,6 +411,48 @@ private def testLiveSetPrune (ctx : Ctx) : IO Unit := do
   ensureEq "the verdict survived the full-project prune" 1
     (← statFrom second.stderr "verdict_hits")
 
+/-- §15. The trace characterization, hermetically: a fully-built tree passes, a partial rebuild
+that leaves every importer's expectations stale refuses — naming the repairing build, computed
+from the stale importers — and a full rebuild repairs it. The unit tier exercises the same gate
+against whatever the real tree holds; this proves the gate's verdicts against a tree whose
+freshness is controlled one variable at a time.
+
+It needs its own generated project: the cache fixture is a *legacy* (pre-`module`) package,
+whose traces record only `importArts` — `importAllArts` exists under the module system. Three
+modules, two import edges, so rebuilding the one importee stales every pair. -/
+private def testTraceCharacterization (ctx : Ctx) : IO Unit := do
+  withTempDir fun project => do
+    copyFile (ctx.root / "lean-toolchain") (project / "lean-toolchain")
+    writeFile (project / "lakefile.lean")
+      "import Lake\nopen Lake DSL\n\npackage probe\n\n@[default_target]\n\
+        lean_lib Probe where\n  globs := #[Glob.submodules `Probe]\n"
+    IO.FS.createDirAll (project / "Probe")
+    writeFile (project / "Probe" / "A.lean") "module\n\npublic def a := 0\n"
+    -- `import all`: an `importAllArts` expectation is recorded per *all*-import only — a plain
+    -- `import` records the narrower `importArts`. The cache's currency consumes `importAllArts`,
+    -- so the probe imports the way `LeanFmt/*.lean` does.
+    writeFile (project / "Probe" / "B.lean") "module\nimport all Probe.A\n\ndef b := a\n"
+    writeFile (project / "Probe" / "C.lean") "module\nimport all Probe.A\n\ndef c := a + 1\n"
+    let lake (label : String) (targets : Array String := #[]) : IO Unit := do
+      discard <| expectExit 0 label "lake" (#["build"] ++ targets) (cwd? := some project)
+        (env := #[("LEAN_NUM_THREADS", some "1")])
+    let traceRoot := project / ".lake" / "build" / "lib" / "lean"
+    lake "characterization baseline"
+    Unit.Cache.characterizeLakeTraces traceRoot
+    -- A semantic edit, not comment-only: Lake must rerun the job and rewrite the trace, which a
+    -- content-identical rebuild is not guaranteed to do.
+    writeFile (project / "Probe" / "A.lean") "module\n\npublic def a := 0\n\npublic def a' := 1\n"
+    lake "importee-only rebuild" #["Probe.A"]
+    let rejected ← try
+      Unit.Cache.characterizeLakeTraces traceRoot
+      pure ""
+    catch error =>
+      pure error.toString
+    ensure (rejected.contains "lake build" && rejected.contains "Probe.B")
+      s!"a fully-stale sample did not refuse with the repairing build: {rejected}"
+    lake "characterization repair"
+    Unit.Cache.characterizeLakeTraces traceRoot
+
 private def cases (ctx : Ctx) : Array Case := #[
   { name := "cold-and-warm", run := testColdAndWarm ctx },
   { name := "schema-replacement", run := testSchemaReplacement ctx },
@@ -438,7 +471,8 @@ private def cases (ctx : Ctx) : Array Case := #[
   { name := "choice-and-exit", run := testChoiceAndExit ctx },
   { name := "epoch-change", run := testEpochChange ctx },
   { name := "orphaned-dependency-artifact", run := testOrphanedDependencyArtifact ctx },
-  { name := "toolchain-mismatch", run := testToolchainMismatch ctx }
+  { name := "toolchain-mismatch", run := testToolchainMismatch ctx },
+  { name := "trace-characterization", run := testTraceCharacterization ctx }
 ]
 
 end CacheSuite

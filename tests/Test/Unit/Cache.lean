@@ -156,39 +156,71 @@ private def parseTraceFacts? (json : Lean.Json) : Option TraceFacts := do
 private def recomputeImportAllArts (facts : TraceFacts) : Lake.Hash :=
   facts.artifactHashes.foldl (init := Lake.Hash.nil) Lake.Hash.mix
 
+/-- The one freshness question a trace pair can answer: did the importee's build finish after the
+importer's trace was written? Lake writes a module's outputs and then its trace in the same job,
+so the trace's mtime stands for the outputs'. An importee rebuilt after its importer makes the
+importer's recorded `importAllArts` expectation stale — the recompute comparison would fail for
+a reason that has nothing to do with Lake's trace shape. -/
+private def traceNewer (importee importer : System.FilePath) : IO Bool := do
+  let importeeTime := (← importee.metadata).modified
+  let importerTime := (← importer.metadata).modified
+  return importeeTime.sec > importerTime.sec ||
+    (importeeTime.sec == importerTime.sec && importeeTime.nsec > importerTime.nsec)
+
+/-- Characterize Lake's trace shape over every `.trace` under `root`: each importer's recorded
+`importAllArts` for an in-workspace importee must reproduce from the importee's own trace
+outputs, in `computeExportInfo`'s mix order.
+
+The walk reads whatever the build tree contains — including modules no default target refreshes
+(the compiler plugin, the facet extractor, suite libraries, anything ever built ad hoc). A stale
+trace there is not evidence about Lake, so a pair whose importee rebuilt after its importer is
+**skipped**, and only fresh pairs are asserted on. Failure comes in exactly two shapes: a fresh
+pair whose mix does not reproduce (the trace shape changed — the cache's currency derivation
+must change with it), or no fresh pairs at all (staleness swallowed the sample — the error names
+the build that repairs it, computed from the stale importers rather than guessed). -/
+public def characterizeLakeTraces (root : System.FilePath) : IO Unit := do
+  let traces := (← root.walkDir).filter (·.extension == some "trace")
+  let mut byName : Std.HashMap String (System.FilePath × TraceFacts) := {}
+  for path in traces do
+    let contents ← IO.FS.readFile path
+    let .ok json := Lean.Json.parse contents | continue
+    let some facts := parseTraceFacts? json | continue
+    byName := byName.insert facts.moduleName (path, facts)
+  ensure (byName.size > 1)
+    "no module traces parsed; the Lake trace shape this stack consumes may have changed"
+  let mut checked := 0
+  let mut staleImporters : Array String := #[]
+  for (_, (importerPath, importer)) in byName do
+    for (importee, recorded) in importer.importAllArts do
+      -- Only in-workspace modules get a trace here; toolchain imports (`Lake.*`, `Lean.*`) are absent
+      -- from `deps.imports` entirely and are covered by the separate `"Lean <version>, commit …"`
+      -- input instead. That absence is itself part of what this pins down.
+      let some (importeePath, importeeFacts) := byName[importee]? | continue
+      ensure (!importeeFacts.artifactHashes.isEmpty)
+        s!"{importee} recorded no artifact hashes in its own trace outputs"
+      if ← traceNewer importeePath importerPath then
+        unless staleImporters.contains importer.moduleName do
+          staleImporters := staleImporters.push importer.moduleName
+        continue
+      ensure (recomputeImportAllArts importeeFacts == recorded)
+        s!"Lake's importAllArts mix no longer reproduces from the importee's own trace outputs: \
+          {importer.moduleName} records {recorded} for {importee}, recomputed \
+          {recomputeImportAllArts importeeFacts}. The importee's trace predates the importer's, \
+          so this is not staleness: the trace shape changed, and the cache's currency derivation \
+          must change with it."
+      checked := checked + 1
+  unless checked > 0 do
+    let targets := " ".intercalate (staleImporters.qsort (· < ·)).toList
+    throw <| IO.userError s!"no fresh (importer, importee) trace pairs under {root}: every pair's \
+      importee rebuilt after its importer. Run `lake build {targets}` and retry — rebuilding the \
+      importers refreshes their recorded expectations."
+
 private def testLakeTraceCharacterization : IO Unit := do
   let root : System.FilePath := ".lake" / "build" / "lib" / "lean"
   unless ← root.isDir do
     throw <| IO.userError s!"characterization needs a built tree; run `lake build` from the repository \
       root before `lake exe lean-fmt-tests` (missing {root})"
-  let traces := (← root.walkDir).filter (·.extension == some "trace")
-  let mut byName : Std.HashMap String TraceFacts := {}
-  for path in traces do
-    let contents ← IO.FS.readFile path
-    let .ok json := Lean.Json.parse contents | continue
-    let some facts := parseTraceFacts? json | continue
-    byName := byName.insert facts.moduleName facts
-  ensure (byName.size > 1)
-    "no module traces parsed; the Lake trace shape this stack consumes may have changed"
-  let mut checked := 0
-  for (_, importer) in byName do
-    for (importee, recorded) in importer.importAllArts do
-      -- Only in-workspace modules get a trace here; toolchain imports (`Lake.*`, `Lean.*`) are absent
-      -- from `deps.imports` entirely and are covered by the separate `"Lean <version>, commit …"`
-      -- input instead. That absence is itself part of what this test pins down.
-      let some importeeFacts := byName[importee]? | continue
-      ensure (!importeeFacts.artifactHashes.isEmpty)
-        s!"{importee} recorded no artifact hashes in its own trace outputs"
-      ensure (recomputeImportAllArts importeeFacts == recorded)
-        s!"Lake's importAllArts mix no longer reproduces from the importee's own trace outputs: \
-          {importer.moduleName} records {recorded} for {importee}, recomputed \
-          {recomputeImportAllArts importeeFacts}. A **stale trace** says this too: `lake build` \
-          skips non-default targets, so editing a module that `check-modules` imports leaves its \
-          old trace on disk and this walk reads it. Run `lake build check-modules` and retry before \
-          concluding Lake's trace shape changed."
-      checked := checked + 1
-  ensure (checked > 0)
-    "no (importer, importee) pair was checked; the deps.imports shape may have changed"
+  characterizeLakeTraces root
 
 /-- An unresolved closure and an empty one are different answers, and currency must not confuse
 them.
