@@ -79,11 +79,15 @@ private def registered : Array Suite :=
     { name := "formatter", lane := .«parallel» },
     { name := "formatter-adapter", lane := .«parallel» },
     { name := "application-formatter", lane := .workspace },
-    { name := "boundary", lane := .«parallel» }, { name := "incremental", lane := .«parallel» },
-    { name := "imports", lane := .workspace }, { name := "layout", lane := .«parallel» },
-    { name := "lossless", lane := .«parallel» }, { name := "lsp", lane := .workspace },
-    { name := "modes", lane := .exclusive }, { name := "reporting", lane := .workspace },
-    { name := "scale", lane := .«parallel» },
+    { name := "boundary", lane := .«parallel» },
+    -- Exclusive for memory, not for shared state: the persistent-frontend contract holds
+    -- several full `import Lean` environments at once (retained snapshots plus a fresh
+    -- one-shot per edit-table row), which is gigabytes a neighbor cannot survive — CI
+    -- telemetry showed the runner dying in the incremental window twice.
+    { name := "incremental", lane := .exclusive }, { name := "imports", lane := .workspace },
+    { name := "layout", lane := .«parallel» }, { name := "lossless", lane := .«parallel» },
+    { name := "lsp", lane := .workspace }, { name := "modes", lane := .exclusive },
+    { name := "reporting", lane := .workspace }, { name := "scale", lane := .«parallel» },
     { name := "security-bench", lane := .«parallel», slow := true },
     { name := "semantic", lane := .«parallel» },
     { name := "lsp-acceptance", lane := .exclusive, slow := true }]
