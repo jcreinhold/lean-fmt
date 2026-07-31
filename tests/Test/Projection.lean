@@ -26,12 +26,16 @@ Offsets are UTF-8 byte offsets into the *normalized* source (`raw.crlfToLf`), be
 The wire encoding — entry tags, source-info tags, the meaning of `terminal` — is pinned exactly to
 `lean-fmt.module-artifact.v10`. A later schema that reorders any of it would be mis-decoded rather
 than rejected, so bumping `artifactSchema` has to be a deliberate edit that re-reads the encoding.
--/
+
+`v10` → `v11` was such an edit: it adds the optional top-level `interfaceHash` field for the
+result cache's interface closure mode and changes nothing this decoder reads — the entry and
+info tags, `terminal`, and every field below are byte-identical, which this oracle continuing to
+pass verifies. -/
 
 namespace LeanFmt.Test.Projection
 
 /-- The one schema this file decodes. -/
-public def artifactSchema : String := "lean-fmt.module-artifact.v10"
+public def artifactSchema : String := "lean-fmt.module-artifact.v11"
 
 /-- A decoded source info: what the leaf owns of the normalized source. -/
 private inductive Info where

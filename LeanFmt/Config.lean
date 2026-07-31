@@ -6,6 +6,7 @@ Authors: Jacob Reinhold
 
 module
 
+import all LeanFmt.Imports
 import all LeanFmt.Rules
 
 import Lake.Toml.Load
@@ -75,6 +76,13 @@ structure FormatConfig where
   pinnedComments : Array String := #["shake: keep"]
   /-- Declaration body layout (`declaration-body`), default `next-line`. -/
   declarationBody : DeclarationBody := .nextLine
+  /-- Import header layout (`import-layout`), default `grouped`. -/
+  importLayout : Imports.ImportLayout := .grouped
+  /-- The ordered module-name prefixes that get their own sub-block inside an import bucket
+  under the `canonical` layout (`import-groups`), default `["Lean", "Mathlib"]`; a module
+  matching none of them trails in the final sub-block. A prefix `P` matches the module `P`
+  itself and every `P.…`. -/
+  importGroups : Array String := Imports.defaultImportGroups
   deriving BEq, Lean.ToJson, Lean.FromJson
 
 /-- The `[format]` settings as one string, for the `configuration` component of the cache
@@ -84,7 +92,10 @@ length-prefixed so a phrase containing the separator cannot alias a different li
 def FormatConfig.identityString (format : FormatConfig) : String :=
   let phrases := format.pinnedComments.foldl (init := "") fun acc phrase =>
     acc ++ s!"\n{phrase.length}:{phrase}"
-  s!"line-width={format.lineWidth}{phrases}\ndeclaration-body={format.declarationBody}"
+  let groups := format.importGroups.foldl (init := "") fun acc grp =>
+    acc ++ s!"\n{grp.length}:{grp}"
+  s!"line-width={format.lineWidth}{phrases}\ndeclaration-body={format.declarationBody}\n\
+    import-layout={format.importLayout}{groups}"
 
 /-- How a cache entry's closure currency is computed (`[cache] closure`).
 
@@ -299,6 +310,8 @@ private structure PartialConfig where
   lineWidth? : Option Nat := none
   pinnedComments? : Option (Array String) := none
   declarationBody? : Option DeclarationBody := none
+  importLayout? : Option Imports.ImportLayout := none
+  importGroups? : Option (Array String) := none
   closureMode? : Option ClosureMode := none
   selectedSelectors? : Option (Array String) := none
   ignoredSelectors? : Option (Array String) := none
@@ -338,6 +351,8 @@ private def PartialConfig.compose (parent child : PartialConfig) : PartialConfig
   lineWidth? := orParent child.lineWidth? parent.lineWidth?
   pinnedComments? := orParent child.pinnedComments? parent.pinnedComments?
   declarationBody? := orParent child.declarationBody? parent.declarationBody?
+  importLayout? := orParent child.importLayout? parent.importLayout?
+  importGroups? := orParent child.importGroups? parent.importGroups?
   selectedSelectors? := orParent child.selectedSelectors? parent.selectedSelectors?
   ignoredSelectors? := orParent child.ignoredSelectors? parent.ignoredSelectors?
   fixableSelectors? := orParent child.fixableSelectors? parent.fixableSelectors?
@@ -377,7 +392,9 @@ private def PartialConfig.resolve (config : PartialConfig) : Except String Forma
     format := {
       lineWidth := config.lineWidth?.getD 100
       pinnedComments := config.pinnedComments?.getD #["shake: keep"]
-      declarationBody := config.declarationBody?.getD .nextLine }
+      declarationBody := config.declarationBody?.getD .nextLine
+      importLayout := config.importLayout?.getD .grouped
+      importGroups := config.importGroups?.getD Imports.defaultImportGroups }
     closureMode := config.closureMode?.getD .artifacts
     notices := config.notices
     origins := config.origins
@@ -399,6 +416,7 @@ private def defaultConfig : FormatterConfig := {
   forceExclude := false
   respectGitignore := true
   format := {}
+  closureMode := .artifacts
   notices := #[]
   origins := #[]
   selectedSelectors := #["default"]
@@ -466,6 +484,7 @@ private def parseFile (anchor file : String) (fileMap : Lean.FileMap) (table : L
   let mut topLevel : Array (String × Lake.Toml.Value) := #[]
   let mut formatSection : Array (String × Lake.Toml.Value) := #[]
   let mut lintSection : Array (String × Lake.Toml.Value) := #[]
+  let mut cacheSection : Array (String × Lake.Toml.Value) := #[]
   for (key, value) in table.items do
     match keyString key with
     | "format" =>
@@ -476,6 +495,10 @@ private def parseFile (anchor file : String) (fileMap : Lean.FileMap) (table : L
       let .table _ entries := value
         | throw "configuration section '[lint]' expects a table"
       lintSection := entries.items.map fun (key, value) => (keyString key, value)
+    | "cache" =>
+      let .table _ entries := value
+        | throw "configuration section '[cache]' expects a table"
+      cacheSection := entries.items.map fun (key, value) => (keyString key, value)
     | other => topLevel := topLevel.push (other, value)
   -- A key set in both places is a contradiction the user can resolve in one edit, so it
   -- does not resolve itself (as with `extend-safe-fixes` ∩ `extend-unsafe-fixes` below).
@@ -518,8 +541,12 @@ private def parseFile (anchor file : String) (fileMap : Lean.FileMap) (table : L
         config := { config with preview? := some flag, origins }
       -- These `[format]` keys are new, so they have no legacy spelling to protect: a top-level
       -- use is an error rather than a notice, so the keys never acquire an ambiguous section.
-      | "line-width" | "pinned-comments" | "declaration-body" =>
+      | "line-width" | "pinned-comments" | "declaration-body" | "import-layout" |
+        "import-groups" =>
         throw s!"configuration key '{key}' belongs in the [format] section"
+      -- Same treatment as the `[format]` keys above: one spelling, one section, no ambiguity.
+      | "closure" =>
+        throw s!"configuration key '{key}' belongs in the [cache] section"
       | unknown => throw s!"unknown configuration key: {unknown}"
   for (key, value) in formatSection do
     let origins := config.origins.push (s!"format.{key}", file, valueLine fileMap value)
@@ -544,7 +571,34 @@ private def parseFile (anchor file : String) (fileMap : Lean.FileMap) (table : L
         | other => throw s!"configuration key 'declaration-body' expects \"next-line\" or \
           \"same-line\", got \"{other}\""
       config := { config with declarationBody? := some declarationBody, origins }
+    | "import-layout" =>
+      let .string _ layout := value
+        | throw "configuration key 'import-layout' expects a string"
+      let importLayout ← match layout with
+        | "grouped" => pure Imports.ImportLayout.grouped
+        | "canonical" => pure Imports.ImportLayout.canonical
+        | other => throw s!"configuration key 'import-layout' expects \"grouped\" or \
+          \"canonical\", got \"{other}\""
+      config := { config with importLayout? := some importLayout, origins }
+    | "import-groups" =>
+      let prefixes ← valueStrings "import-groups" value
+      if prefixes.any (fun grp => grp.isEmpty || grp.any Char.isWhitespace) then
+        throw "configuration key 'import-groups' expects non-empty whitespace-free module prefixes"
+      config := { config with importGroups? := some prefixes, origins }
     | unknown => throw s!"unknown configuration key: format.{unknown}"
+  for (key, value) in cacheSection do
+    let origins := config.origins.push (s!"cache.{key}", file, valueLine fileMap value)
+    match key with
+    | "closure" =>
+      let .string _ mode := value
+        | throw "configuration key 'closure' expects a string"
+      let closureMode ← match mode with
+        | "artifacts" => pure ClosureMode.artifacts
+        | "interface" => pure ClosureMode.«interface»
+        | other => throw s!"configuration key 'closure' expects \"artifacts\" or \"interface\", \
+          got \"{other}\""
+      config := { config with closureMode? := some closureMode, origins }
+    | unknown => throw s!"unknown configuration key: cache.{unknown}"
   for (key, value) in lintSection do
     unless lintKeys.contains key do
       throw s!"unknown configuration key: lint.{key}"

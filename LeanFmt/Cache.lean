@@ -126,6 +126,10 @@ and which way an unknown degrades is settled — toward a miss, never a hit. -/
 private inductive MemberFact where
   /-- The module's recomputed `importAllArts`. -/
   | hash (value : Lake.Hash)
+  /-- The elaboration-visible interface the module's `leanFmtArtifact` sidecar records
+  (`ClosureMode.interface`). A distinct constructor, not a converted `hash`: the prefix in
+  `closureDigest?` differs, so toggling the mode misses every entry instead of aliasing one. -/
+  | interfaceHash (value : Digest)
   /-- No compiled output of any form on disk. -/
   | unbuilt
   /-- Output may exist; currency cannot be recomputed from it. -/
@@ -138,6 +142,9 @@ structure ResultCache where
   toolchain : String
   environment : Digest
   formatter : Digest
+  /-- How closure currency is computed (`[cache] closure`); see `ClosureMode`. Per cache, not
+  per entry: the digest *prefixes* differ per mode, so a mode change misses every entry. -/
+  closureMode : ClosureMode
   directoryReady : IO.Ref Bool
   loadedEntries : IO.Ref (Option (Std.HashMap String CacheEntry))
   /-- Memoized conservative currency for standalone (non-workspace-module) targets: the digest
@@ -318,13 +325,55 @@ private def moduleArtifactHash? (tracePath : System.FilePath) : IO (Option Lake.
       hash := hash.mix descr.hash
   return some hash
 
+/-- Interface-mode preference for one closure member: the `interfaceHash` its `leanFmtArtifact`
+sidecar recorded, or `none` when no usable sidecar exists and the caller falls back to the
+trace path. Dependencies do not build the facet, and their artifact hash moves only on a
+dependency update — exactly when their interface would — so the fallback is both sound (the
+artifact hash is strictly more conservative than the interface hash) and cheap.
+
+Currency is the guard that makes this safe: the facet is fetched on demand, so a sidecar can
+describe an *older* build than the `.olean` beside it. A sidecar older than the module's `.olean`
+is treated as absent — the fallback is the old behavior, never a stale hit. -/
+private def memberInterfaceFact (workspace : Lake.Workspace) (name : Lean.Name) :
+    IO (Option MemberFact) := do
+  let some mod := workspace.findModule? name
+    | return none
+  -- The facet's own path convention — `artifactFile` in the lakefile that declares
+  -- `leanFmtArtifact`, duplicated in `Project.lean`'s facet probe; the compiler suite's
+  -- mixed-selection case notices if the two drift.
+  let sidecar := Lean.modToFilePath (mod.pkg.buildDir / "lean-fmt-artifacts") name "json"
+  try
+    if let some oleanPath := Project.moduleOutputPaths? workspace name |>.bind (·[0]?) then
+      if ← oleanPath.pathExists then
+        let oleanTime := (← oleanPath.metadata).modified
+        let sidecarTime := (← sidecar.metadata).modified
+        if sidecarTime.sec < oleanTime.sec ||
+            (sidecarTime.sec == oleanTime.sec && sidecarTime.nsec < oleanTime.nsec) then
+          return none
+    let contents ← IO.FS.readFile sidecar
+    let .ok json := Lean.Json.parse contents
+      | return none
+    let .ok artifact := (Lean.fromJson? json : Except String ModuleArtifact)
+      | return none
+    unless artifact.schema == artifactSchema do
+      return none
+    match artifact.interfaceHash with
+    | some value => return some (.interfaceHash value)
+    | none => return none
+  catch _ =>
+    return none
+
 /-- What Lake's recorded outputs say about one closure member.
 
 `unreadable` is the degradation an unknown takes; `unbuilt` is not a degradation at all
 but a fact, and the difference is worth a filesystem check. On mathlib, one unbuilt module in a
 62-file batch used to send every closure through the whole-workspace fallback digest: 7,018 ms, 30%
 of a cold `check`. -/
-private def memberFact (workspace : Lake.Workspace) (name : Lean.Name) : IO MemberFact := do
+private def memberFact (workspace : Lake.Workspace) (mode : ClosureMode)
+    (name : Lean.Name) : IO MemberFact := do
+  if mode == .interface then
+    if let some fact ← memberInterfaceFact workspace name then
+      return fact
   let some tracePath := Project.moduleTracePath? workspace name
     | return .unreadable
   if let some hash ← moduleArtifactHash? tracePath then
@@ -352,7 +401,7 @@ value would be indistinguishable from a real one on the next run.
 This degrades **one entry**, not the cache, which is finer than `environmentDigest?`. That one
 disables everything when it returns `none`, correctly, because it reports a property of the epoch
 rather than of an entry. -/
-private def closureDigest? (workspace : Lake.Workspace)
+private def closureDigest? (workspace : Lake.Workspace) (mode : ClosureMode)
     (memo : IO.Ref (Std.HashMap String MemberFact))
     (closure : Option (Array Lean.Name)) : IO (Option Digest) := do
   let some members := closure
@@ -365,11 +414,12 @@ private def closureDigest? (workspace : Lake.Workspace)
       if let some hit := (← memo.get)[key]? then
         pure hit
       else
-        let computed ← memberFact workspace name
+        let computed ← memberFact workspace mode name
         memo.modify (·.insert key computed)
         pure computed
     match fact with
     | .hash hash => parts := parts.push s!"closure {name} {hash}"
+    | .interfaceHash value => parts := parts.push s!"closure-interface {name} {value.hex}"
     | .unbuilt => parts := parts.push s!"closure {name} unbuilt"
     | .unreadable => return none
   return some (digestParts parts)
@@ -535,7 +585,7 @@ private def ResultCache.closureDigests (cache : ResultCache) (project : Project.
         -- Precise when the closure resolves and every member's trace reads; otherwise the
         -- conservative whole-workspace digest rather than a permanent miss. See `fallback` below.
         let digest? ← withPhase "closure_hash" <|
-          closureDigest? project.workspace cache.artifactHashByModule closure
+          closureDigest? project.workspace cache.closureMode cache.artifactHashByModule closure
         let resolved ← match digest? with
           | some digest => pure (some digest)
           | none => fallback
@@ -686,7 +736,8 @@ private def formatterDigest (cacheRoot application : System.FilePath) : IO Diges
 non-toolchain module artifact. An artifact whose Lake trace cannot be trusted is folded in by
 content rather than refused, so the epoch is total; absence is still a normal disabled-cache
 outcome, reached now only by an exception this function did not anticipate. -/
-def ResultCache.open? (workspace : Lake.Workspace) (application : System.FilePath) :
+def ResultCache.open? (workspace : Lake.Workspace) (application : System.FilePath)
+    (closureMode : ClosureMode := .artifacts) :
     IO (Option ResultCache) := do
   try
     let environment ← environmentDigest workspace
@@ -703,6 +754,7 @@ def ResultCache.open? (workspace : Lake.Workspace) (application : System.FilePat
       toolchain := s!"{Lean.versionString}\u0000{workspace.lakeEnv.lean.githash}"
       environment
       formatter
+      closureMode
       directoryReady
       loadedEntries
       workspaceArtifacts
@@ -882,7 +934,8 @@ private def ResultCache.liveDigests? (cache : ResultCache) (project : Project.Sn
       | return none
     let expected ← identity cache project target closure
     live := live.insert (toString (cacheIdentityDigest expected))
-    if let some output ← Imports.organizeCandidate? target.source then
+    if let some output ← Imports.organizeCandidate? target.source
+        target.config.format.importLayout target.config.format.importGroups then
       let candidateExpected ← identity cache project (target.withSource output) closure
       live := live.insert (toString (cacheIdentityDigest candidateExpected))
   return some live

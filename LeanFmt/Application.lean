@@ -236,6 +236,14 @@ def ExactRun.setupSnapshot (run : ExactRun) (snapshot : SourceSnapshot) : IO Lea
   run.documentSetups.modify (·.insert snapshot.relativePath (identity, setup))
   return setup
 
+/-- The project's `[cache] closure` mode, read off any target: the key is project-level
+configuration, so every target resolves to the same value, and an empty selection has no
+closures to compute anyway — the default is never observed. -/
+private def projectClosureMode (project : Project.Snapshot) : ClosureMode :=
+  match project.targets[0]? with
+  | some target => target.config.closureMode
+  | none => .artifacts
+
 /-- How many frontend children to run at once. `--workers N` decides it when given; otherwise this
 picks the number the way Lake picks it for its own build — `LEAN_NUM_THREADS` if that is set, else
 the hardware concurrency (`src/runtime/object.cpp`'s `get_lean_num_threads`). Lake bounds a build by
@@ -1600,7 +1608,7 @@ def execute (request : RunRequest) : IO RunOutcome := do
   let application ← IO.appPath
   let epochStarted ← IO.monoNanosNow
   let cache? ← if request.cache then
-    ResultCache.open? project.workspace application
+    ResultCache.open? project.workspace application (projectClosureMode project)
   else
     pure none
   let epochFinished ← IO.monoNanosNow
@@ -1952,7 +1960,8 @@ def ExactRun.organizeSnapshot (run : ExactRun) (target : Project.SourceTarget)
   let (normalized, lineEndings) := LosslessSource.normalize target.source
   let some header ← Imports.parseHeaderModel normalized
     | return .ok none
-  let output := LosslessSource.denormalize (Imports.organize header normalized) lineEndings
+  let output := LosslessSource.denormalize (Imports.organize header normalized
+    target.config.format.importLayout target.config.format.importGroups) lineEndings
   if output == target.source then return .ok none
   let validation ← run.analyzeSnapshot (target.withSource output) (renderCanonical := false)
     (validator := true) (cancel? := cancel?)
@@ -2086,6 +2095,7 @@ def organize (request : OrganizeRequest) : IO RunReport := do
   -- pay for the validator if some file actually changes. `Imports.organizeCandidate?` is the one
   -- definition — the cache's live set computes the same candidates when it prunes.
   let candidates ← snapshots.mapM fun snapshot => Imports.organizeCandidate? snapshot.source
+    snapshot.config.format.importLayout snapshot.config.format.importGroups
   let anyChange := candidates.any Option.isSome
   if request.check || !anyChange then
     let files := (snapshots.zip candidates).map fun (snapshot, candidate?) =>
@@ -2095,7 +2105,7 @@ def organize (request : OrganizeRequest) : IO RunReport := do
   recordCount "workers" workers
   let epochStarted ← IO.monoNanosNow
   let cache? ← if request.cache then
-    ResultCache.open? project.workspace (← IO.appPath)
+    ResultCache.open? project.workspace (← IO.appPath) (projectClosureMode project)
   else
     pure none
   recordPhase "cache_epoch" epochStarted (← IO.monoNanosNow)

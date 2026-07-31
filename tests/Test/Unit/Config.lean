@@ -180,6 +180,24 @@ ignore = [\"FMT002\"]\n\
       pure false
     catch _ => pure true
     ensure rejected "unknown configuration key was accepted"
+
+    -- `[cache] closure`: the closure-currency mode. Default is `artifacts`; `interface` is
+    -- accepted and lands on the resolved configuration; a bad value, a flat spelling, and an
+    -- unknown section key are all rejected rather than silently defaulted.
+    IO.FS.writeFile configPath ""
+    ensure ((← FormatterConfig.load directory).closureMode == .artifacts)
+      "the default closure mode is not artifacts"
+    IO.FS.writeFile configPath "[cache]\nclosure = \"interface\"\n"
+    ensure ((← FormatterConfig.load directory).closureMode == .interface)
+      "closure = interface did not resolve to the interface mode"
+    for document in ["[cache]\nclosure = \"everything\"\n", "closure = \"interface\"\n",
+        "[cache]\nunknown = true\n"] do
+      IO.FS.writeFile configPath document
+      let rejected ← try
+        discard <| FormatterConfig.load directory
+        pure false
+      catch _ => pure true
+      ensure rejected s!"an invalid [cache] closure configuration was accepted: {document}"
   finally
     IO.FS.removeDirAll directory
 
@@ -326,6 +344,33 @@ extend-select = [\"FMT009\"]\n"
     write ".lean-fmt.toml" "[format]\ndeclaration-body = \"flat\"\n"
     let badBody ← try discard <| Discovery.run root none; pure false catch _ => pure true
     ensure badBody "an unknown declaration-body value was accepted"
+    -- `import-layout` and `import-groups`: defaults, parsing, identity movement (both are
+    -- [format] keys), and misplaced/malformed errors.
+    write ".lean-fmt.toml" "[format]\nline-width = 100\n"
+    let layoutDefaults ← Discovery.run root none
+    ensure (layoutDefaults.fallback.format.importLayout == .grouped)
+      "import-layout lost its default"
+    ensure (layoutDefaults.fallback.format.importGroups == Imports.defaultImportGroups)
+      "import-groups lost its default"
+    write ".lean-fmt.toml"
+      "[format]\nimport-layout = \"canonical\"\nimport-groups = [\"Std\", \"Lean\"]\n"
+    let layoutConfigured ← Discovery.run root none
+    ensure (layoutConfigured.fallback.format.importLayout == .canonical)
+      "import-layout did not parse"
+    ensure (layoutConfigured.fallback.format.importGroups == #["Std", "Lean"])
+      "import-groups did not parse"
+    ensure (layoutDefaults.fallback.format.identityString !=
+        layoutConfigured.fallback.format.identityString)
+      "import-layout/import-groups did not change the configuration identity"
+    write ".lean-fmt.toml" "import-layout = \"canonical\"\n"
+    let misplacedLayout ← try discard <| Discovery.run root none; pure false catch _ => pure true
+    ensure misplacedLayout "import-layout at the top level was accepted"
+    write ".lean-fmt.toml" "[format]\nimport-layout = \"fancy\"\n"
+    let badLayout ← try discard <| Discovery.run root none; pure false catch _ => pure true
+    ensure badLayout "an unknown import-layout value was accepted"
+    write ".lean-fmt.toml" "[format]\nimport-groups = [\"\"]\n"
+    let emptyGroup ← try discard <| Discovery.run root none; pure false catch _ => pure true
+    ensure emptyGroup "an empty import-groups prefix was accepted"
     IO.FS.removeFile (root / "sub" / ".lean-fmt.toml")
     -- Both new keys are [format] keys: each moves the configuration identity.
     write ".lean-fmt.toml" "[format]\nline-width = 100\n"

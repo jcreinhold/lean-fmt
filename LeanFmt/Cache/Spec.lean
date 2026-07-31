@@ -135,6 +135,27 @@ def Faithful (sd : Source → SDigest) (gd : Grammar → GDigest)
   (∀ m, o.sourceDigest m = sd (w.source m)) ∧
   (∀ m, o.closureDigest m = gd (w.grammar m))
 
+/-! ## The observation's granularity: artifacts (default) vs interface (opt-in)
+
+The theorems quantify over `gd`, so they are indifferent to how the shipped closure digest
+observes grammar currency — but the *fidelity* of that observation is where the two shipped
+modes differ, and the difference belongs in this file's ledger.
+
+The default instantiates the observation with Lake's `importAllArts`: any rebuild moves it,
+whether or not the elaboration-visible environment moved. That over-observes — proof-only edits
+invalidate dependents — and the cost is measured in the plan
+(`plans/persistent-result-cache.md`), but it can never stale-hit.
+
+`[cache] closure = "interface"` observes each closure member by the interface hash its
+`leanFmtArtifact` sidecar records (falling back per member to `importAllArts` when no current
+sidecar exists — dependencies never build the facet, and a sidecar older than its `.olean` is
+treated as absent). That observation is *weaker* than grammar currency in two named ways:
+kernel `isDefEq` can unfold any definition, so a theorem's proof-term change is
+downstream-visible in pathological cases; and attribute deltas on imported declarations live in
+environment extensions, outside the hash. Neither gap is modeled above: `Faithful` still must
+hold, but the instantiation it quantifies over now approximates `Grammar` rather than
+dominating it. The mode is opt-in for exactly this reason, and the kill switch is the default. -/
+
 /-! ## The four obstacles, one lemma each
 
 Each is stated for its caller — "what does the decision entitle me to conclude" — rather than for the

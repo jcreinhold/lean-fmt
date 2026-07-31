@@ -206,10 +206,10 @@ cache case in this file. -/
 private def testClosureDegradationDirection : IO Unit := do
   let memo ← IO.mkRef ({} : Std.HashMap String MemberFact)
   let workspace ← Project.loadWorkspace (← IO.currentDir)
-  let unresolved ← closureDigest? workspace memo none
+  let unresolved ← closureDigest? workspace .artifacts memo none
   ensure unresolved.isNone
     "an unresolved import closure produced a digest; currency would hit on unknown grammar"
-  let empty ← closureDigest? workspace memo (some #[])
+  let empty ← closureDigest? workspace .artifacts memo (some #[])
   ensure empty.isSome
     "an empty import closure produced no digest; a module importing nothing cannot be cached"
 
@@ -318,6 +318,28 @@ private def testOrganizeCandidateAgreement : IO Unit := do
   ensure ((← Imports.organizeCandidate? "def x := 1\n").isNone)
     "organizeCandidate? rewrote a headerless source"
 
+/-- The interface-hash inputs of `[cache] closure = "interface"`: deterministic over one
+environment, and absent — never degenerate — for a module the environment does not index. The
+facet artifact's carried value is the direct computation over the same environment, so the
+sidecar and the extractor cannot drift apart. `LocalSyntax` is the integration library the
+compiler suite builds with the plugin, so its `.olean` is on this binary's search path under
+`lake exe`. -/
+private unsafe def testInterfaceHash : IO Unit := do
+  Lean.enableInitializersExecution
+  Lean.initSearchPath (← Lean.findSysroot)
+  let environment ← Lean.importModules #[{ module := `LocalSyntax }] {}
+    (trustLevel := 1024) (loadExts := true) (level := .exported)
+  let some first := moduleInterfaceHash? environment `LocalSyntax
+    | throw <| IO.userError "an integrated module's interface hash was not computed"
+  ensure (moduleInterfaceHash? environment `LocalSyntax == some first)
+    "interface hash was not deterministic over one environment"
+  ensure (moduleInterfaceHash? environment `No.Such.Module).isNone
+    "an unindexed module produced an interface hash"
+  let some artifact := fromEnvironment? environment `LocalSyntax
+    | throw <| IO.userError "module has no matching lean-fmt payload in its `.olean`"
+  ensure (artifact.interfaceHash == some first)
+    "the facet artifact's interface hash disagrees with the direct computation"
+
 /-- The cases this module contributes to the unit runner, in run order. -/
 public def cases : Array Case := #[
   { name := "testCacheIdentity", run := testCacheIdentity },
@@ -325,6 +347,7 @@ public def cases : Array Case := #[
   { name := "testClosureDegradationDirection", run := testClosureDegradationDirection },
   { name := "testStore", run := testStore },
   { name := "testMergeAnalysis", run := testMergeAnalysis },
-  { name := "testOrganizeCandidateAgreement", run := testOrganizeCandidateAgreement }]
+  { name := "testOrganizeCandidateAgreement", run := testOrganizeCandidateAgreement },
+  { name := "testInterfaceHash", run := unsafe testInterfaceHash }]
 
 end LeanFmt.Test.Unit.Cache
