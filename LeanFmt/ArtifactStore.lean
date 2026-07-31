@@ -50,6 +50,35 @@ private def decodeEntry? (entry : Lean.Linter.LintEntry) : Option CommandArtifac
   guard record.structurallyValid
   return record
 
+/-- What one module contributes to every downstream elaboration, hashed.
+
+Per own declaration — the ones `env` attributes to `moduleName`, which for an extractor-built
+environment is every constant whose module index names it: name, kind, universe parameters,
+type, and, for a definition visible at reducible transparency, its body. Exported syntax is
+covered structurally: `notation`/`macro` generate parser and unexpander declarations whose
+bodies are ordinary definition values. Attribute deltas on *imported* declarations (a `simp`
+added to an upstream lemma) are extension state, not constants, and are deliberately outside
+this hash — one of the two documented gaps of `[cache] closure = "interface"`, the other being
+kernel-unfoldable proof terms.
+
+The parts are sorted before digesting, so the hash is a function of the interface and not of
+fold order. `none` when `env` does not index `moduleName` — an empty fold would otherwise yield
+one constant hash shared by every module, the false-hit factory this exists to prevent. -/
+def moduleInterfaceHash? (env : Lean.Environment) (moduleName : Lean.Name) : Option Digest := do
+  let moduleIdx ← env.getModuleIdx? moduleName
+  let parts := env.constants.fold (init := #[]) fun parts name info =>
+    if env.getModuleIdxFor? name != some moduleIdx then parts
+    else
+      let kind : UInt64 := match info with
+        | .axiomInfo .. => 1 | .defnInfo .. => 2 | .thmInfo .. => 3 | .opaqueInfo .. => 4
+        | .inductInfo .. => 5 | .ctorInfo .. => 6 | .recInfo .. => 7 | .quotInfo .. => 8
+      let reducibleBody : UInt64 := match info with
+        | .defnInfo value => if value.hints.isAbbrev then value.value.hash else 0
+        | _ => 0
+      let levels := info.levelParams.map (·.hash)
+      parts.push s!"{name.hash} {kind} {levels} {info.type.hash} {reducibleBody}"
+  return Digest.ofString (String.intercalate "\n" (parts.qsort (· < ·)).toList)
+
 /- Read the formatter result owned by `moduleName` from an already imported module environment.
 The caller cannot substitute a side-file path or an independent build identity. -/
 def fromEnvironment? (environment : Lean.Environment)
@@ -63,12 +92,14 @@ def fromEnvironment? (environment : Lean.Environment)
       record.normalizedBytes == first.normalizedBytes &&
       record.normalizedDigest == first.normalizedDigest
   let syntaxData ← ModuleSyntax.ofRecords records |>.toOption
+  let interfaceHash ← moduleInterfaceHash? environment moduleName
   let artifact : ModuleArtifact := {
     schema := artifactSchema
     mainModule := first.mainModule
     normalizedBytes := first.normalizedBytes
     normalizedDigest := first.normalizedDigest
     syntaxData
+    interfaceHash := some interfaceHash
   }
   guard <| structurallyValid artifact
   return artifact

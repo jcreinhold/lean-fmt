@@ -187,6 +187,16 @@ structure ModuleArtifact where
   compiler plugin emits `none` (no capture in an integrated build), and the on-demand `analyzeExact`
   emits `some` only when selected rules reach `.semantic`. -/
   semantic : Option SemanticProjection := none
+  /-- What this module contributes to every downstream elaboration, hashed (`moduleInterfaceHash`
+  in `LeanFmt.ArtifactStore`): own declarations' names, kinds, universe parameters, types,
+  reducibility, and the bodies of definitions visible at reducible transparency — exported
+  syntax reaches the hash through the parser/macro declarations `notation`/`macro` generate.
+
+  `some` only from the facet extractor, which reads the module's own environment; transient
+  in-run artifacts (`ofParsedModule`) carry `none`, never a fabricated value. The result cache's
+  interface closure mode reads this; a theorem's proof term is deliberately outside it (kernel
+  `isDefEq` can unfold any definition — the documented hole behind `[cache] closure`'s opt-in). -/
+  interfaceHash : Option Digest := none
   deriving BEq, Repr, Lean.ToJson, Lean.FromJson
 
 /-- The capabilities a whole artifact provides: the projection's caps when a `.semantic` projection was
@@ -197,7 +207,7 @@ def ModuleArtifact.caps (artifact : ModuleArtifact) : SemanticCaps :=
   | none => {}
 
 /-- Current policy-free module artifact shape. The version is checked before any artifact is trusted. -/
-def artifactSchema : String := "lean-fmt.module-artifact.v10"
+def artifactSchema : String := "lean-fmt.module-artifact.v11"
 
 /-- Build the artifact for one accepted module.
 

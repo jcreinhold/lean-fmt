@@ -86,6 +86,23 @@ def FormatConfig.identityString (format : FormatConfig) : String :=
     acc ++ s!"\n{phrase.length}:{phrase}"
   s!"line-width={format.lineWidth}{phrases}\ndeclaration-body={format.declarationBody}"
 
+/-- How a cache entry's closure currency is computed (`[cache] closure`).
+
+`artifacts` (the default) keys each closure member by its build-artifact hash: sound, and
+maximal-invalidation — any rebuild, proof-only ones included, moves the key. `interface` keys a
+member by the elaboration-visible interface its `leanFmtArtifact` sidecar records when one
+exists (a module's own declarations' names, kinds, types, reducibility, reducible-visible
+bodies), falling back to the artifact hash for members without a sidecar — dependencies, which
+do not build the facet, change only on a dependency update, exactly when their interface would
+move anyway. The two documented gaps: kernel `isDefEq` can unfold any definition, so a theorem's
+proof-term change is downstream-visible in pathological cases; and attribute deltas on imported
+declarations are extension state, outside the hash. Both price a stale hit at nonzero, which is
+why the mode is opt-in and the kill switch stays. A member whose currency neither path can
+establish is an ordinary miss, never a hit. -/
+inductive ClosureMode where
+  | artifacts | «interface»
+  deriving BEq, Inhabited, Repr
+
 structure FormatterConfig where
   private mk ::
   includePatterns : Array PathPattern
@@ -102,6 +119,10 @@ structure FormatterConfig where
   respectGitignore : Bool
   /-- The `[format]` section — identity-bearing (`FormatConfig`). -/
   format : FormatConfig
+  /-- The `[cache]` section's `closure` key: how closure currency is computed (`ClosureMode`).
+  Not part of `configurationIdentity` — the mode changes the digest *values* themselves (the
+  member prefix differs), so toggling it misses every entry without an identity change. -/
+  closureMode : ClosureMode
   /-- Non-fatal notices raised while **loading** this configuration: a linter key still
   spelled at the top level. They follow the same contract as
   `RulePlan.notices` — stderr, never changing exit status or which rules run — but cannot live
@@ -278,6 +299,7 @@ private structure PartialConfig where
   lineWidth? : Option Nat := none
   pinnedComments? : Option (Array String) := none
   declarationBody? : Option DeclarationBody := none
+  closureMode? : Option ClosureMode := none
   selectedSelectors? : Option (Array String) := none
   ignoredSelectors? : Option (Array String) := none
   fixableSelectors? : Option (Array String) := none
@@ -356,6 +378,7 @@ private def PartialConfig.resolve (config : PartialConfig) : Except String Forma
       lineWidth := config.lineWidth?.getD 100
       pinnedComments := config.pinnedComments?.getD #["shake: keep"]
       declarationBody := config.declarationBody?.getD .nextLine }
+    closureMode := config.closureMode?.getD .artifacts
     notices := config.notices
     origins := config.origins
     selectedSelectors := selectedSelectors
