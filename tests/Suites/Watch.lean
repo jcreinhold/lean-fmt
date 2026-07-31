@@ -39,14 +39,29 @@ design rests on this; a binding that truncated to whole seconds would make `(siz
 to a fast edit. -/
 private def testMtimeGranularity (ctx : Ctx) : IO Unit := do
   let probe := ctx.work / "mtime-probe.txt"
-  writeFile probe "AAAA"
-  let first ← probe.metadata
-  writeFile probe "BBBB"
-  let second ← probe.metadata
   let nanos (m : IO.FS.Metadata) : Int := m.modified.sec * 1000000000 + m.modified.nsec.toNat
-  ensure (nanos first != nanos second)
-      "same-size rewrite produced an identical mtime; the adapter assumes sub-second granularity"
-  ensureEq "same-size rewrite kept its size (that is the point)" 4 second.byteSize
+  -- Real edits are seconds apart, so the adapter's assumption is that a same-size rewrite is
+  -- distinguishable well inside a second — not that the filesystem timestamps every write.
+  -- ubuntu-22.04 runners collide on back-to-back writes (the v0.2.1 release legs failed
+  -- there while ubuntu-latest passed), so probe with backoff up to about two seconds before
+  -- declaring the environment too coarse to watch.
+  let mut sleepMs : UInt32 := 0
+  let mut distinguished := false
+  for _ in [0:9]do
+    if distinguished then
+      break
+    if sleepMs != 0 then
+      IO.sleep sleepMs
+    writeFile probe "AAAA"
+    let first ← probe.metadata
+    writeFile probe "BBBB"
+    let second ← probe.metadata
+    ensureEq "same-size rewrite kept its size (that is the point)" 4 second.byteSize
+    if nanos first != nanos second then
+      distinguished := true
+    sleepMs := max 1 (sleepMs * 4)
+  ensure distinguished
+      "same-size rewrites stayed indistinguishable for two seconds; the adapter assumes sub-second granularity"
 
 /-- §9.4 `git diff` never reports untracked files — the assertion that protects users from the
 worst failure mode of a `--changed` mode built on `diff` alone — and `--exclude-standard` honours
