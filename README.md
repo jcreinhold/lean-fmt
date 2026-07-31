@@ -49,8 +49,16 @@ setup`/`status`/`build` (plugin), `clean` (remove cache). `lean-fmt <command> --
 Batch runs show a tqdm-style progress line on stderr when it is a terminal; pipes and `--json` never see it.
 
 Results are cached in `.lean-fmt-cache/`; a warm run where nothing changed skips the Lean frontend entirely.
-`--no-cache` disables it. `--workers N` parallelizes cold runs over many files; the report is identical at any N. It
+`organize` participates too: a candidate it already validated is neither re-elaborated nor re-rejected, and a file it
+published serves the next `check` or `format`. Entries are kept only while they have a consumer — a current target's
+bytes or a current organize candidate — and dropped on the next write otherwise; there is no size cap. `--no-cache`
+disables it. `--workers N` parallelizes cold runs over many files; the report is identical at any N. It
 defaults to `LEAN_NUM_THREADS`, else the machine's core count — what Lake uses for its own build.
+
+By default a cached entry's currency tracks build artifacts, so any rebuild — even a proof-only one — invalidates
+dependents. With `[cache] closure = "interface"` and the compiler plugin integrated, currency tracks the
+elaboration-visible interface instead and proof-only rebuilds stop moving it; see `docs/configuration.md` for the
+two documented gaps that keep the default at `"artifacts"`.
 
 ## Configuration
 
