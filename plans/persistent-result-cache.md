@@ -207,9 +207,9 @@ Baselines recorded *before* changing code, then gated in `suite-performance`:
       lag a rebuild); artifact schema v10 → v11. **Default stays `artifacts`** — the two
       documented gaps (kernel-unfoldable proof terms, attribute extension state) stand; the
       opt-in and kill switch are the mechanism.
-- [ ] Docs: README cache paragraph; `docs/configuration.md` — **blocked**: the file carries
-      another session's uncommitted `import-layout` work; per the shared-worktree rule the
-      `[cache]` section text waits rather than entangling. Text is ready (see below).
+- [x] Docs: README cache paragraph; `docs/configuration.md` `[cache]` section — landed once the
+      other session's `import-layout` work in that file was committed and the file was clean
+      (the deferred text below is what shipped, verbatim).
 - [x] `lake build`, `lake lint`, unit tier 37/37; suites green per-suite (the full-lane run
       was perturbed by a concurrent session's suite execution against the shared fixtures).
 

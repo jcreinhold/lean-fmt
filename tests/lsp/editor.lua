@@ -65,9 +65,23 @@ if not module_line then
   print(("\nchecks: %d ok, %d failed"):format(ok_count, fail_count))
   vim.cmd("cquit 1")
 end
+-- The landmark must be a *code* line: trailing whitespace in code is a formatting difference
+-- the oracle and the server must both produce, but inside a comment it is content and the
+-- formatter correctly leaves it alone. The tree's canonical layout puts the module doc right
+-- after `module`, so the first non-empty line is comment interior — that assumption held until
+-- the tree was reformatted, and it is why the scan below tracks block-comment state.
+local in_comment = false
 for i = module_line + 1, #original do
-  if original[i] ~= "" then code_line = i break end
+  local l = original[i]
+  if in_comment then
+    if l:find("-/", 1, true) then in_comment = false end
+  elseif l:find("/-", 1, true) then
+    if not l:find("-/", 1, true) then in_comment = true end
+  elseif l ~= "" then
+    code_line = i break
+  end
 end
+check("the buffer has a code line outside comments", code_line ~= nil)
 
 -- Trailing whitespace is a formatting difference, not a reported rule, so it
 -- publishes nothing. Introduce a duplicate import instead: FMT005 is stable,

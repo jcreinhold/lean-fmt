@@ -24,6 +24,9 @@ declaration-body = "next-line"       # or "same-line"
 import-layout = "grouped"            # or "canonical" (the organizer's header rewrite)
 import-groups = ["Lean", "Mathlib"]  # canonical layout: sub-block prefixes inside a bucket
 
+[cache]
+closure = "artifacts"                # or "interface" — see "Cache and compiler integration"
+
 [lint]                               # rule selection
 select = ["all"]
 ignore = ["FMT004"]
@@ -153,3 +156,11 @@ projection holds facts, never findings, so editing a rule cannot rebuild an inte
 `compiler setup` prints integration identifiers and guidance; it does not rewrite your `lakefile.lean`.
 `compiler status` audits toolchain compatibility and artifact coverage read-only. Plugin costs and Lake details: README
 §"Using lean-fmt in another project" and `docs/ci.md`.
+
+With the plugin integrated, `[cache] closure = "interface"` keys each closure member by the elaboration-visible
+interface its `leanFmtArtifact` sidecar records instead of its build artifacts, so a proof-only rebuild stops
+invalidating dependents. Members without a current sidecar — dependencies, which never build the facet, or a facet
+that lags its `.olean` — keep artifact-hash currency per member, so the mode degrades toward misses, never stale
+hits. Two documented gaps keep the default at `"artifacts"`: kernel `isDefEq` can unfold any definition, so a
+theorem's proof-term change is downstream-visible in pathological cases, and attribute changes to imported
+declarations live in environment extensions, outside the hash.
