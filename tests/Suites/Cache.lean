@@ -48,10 +48,20 @@ structure Ctx where
   pristine : System.FilePath
   total : Nat
 
+/-- Search-path variables the suite strips from its children. `lake test` exports the *host
+repository's* paths, and the cache epoch honestly covers whatever the environment injects — so
+the host's own build traces rode into the fixture's epoch, and a stale restored build on the
+ubuntu-22.04-arm release leg (the downstream suite rebuilds the repo in place through its path
+`require`) rewrote one mid-run and grew a second index. The fixture's world is its lakefile and
+the toolchain; nothing else may ride in. -/
+private def cleanEnv : Array (String × Option String) :=
+  #[("LEAN_PATH", none), ("LEAN_SRC_PATH", none), ("LD_LIBRARY_PATH", none),
+    ("DYLD_LIBRARY_PATH", none)]
+
 /-- One profiled `check` against the fixture project. -/
 private def profiledCheck (ctx : Ctx) (args : Array String := #[]) : IO ProcResult :=
   runProc ctx.fmt (#["check"] ++ args) (cwd? := some ctx.project) (env :=
-    #[("LEAN_FMT_PROFILE_PHASES", some "1")])
+    cleanEnv ++ #[("LEAN_FMT_PROFILE_PHASES", some "1")])
 
 /-- Entries served from cache on one `check`. -/
 private def served (ctx : Ctx) : IO Nat := do
@@ -65,12 +75,13 @@ private def targets (ctx : Ctx) : IO Nat := do
 private def rebuild (ctx : Ctx) (label : String := "fixture rebuild") : IO Unit := do
   discard <|
       expectExit 0 label "lake" #["build"] (cwd? := some ctx.project) (env :=
-        #[("LEAN_NUM_THREADS", some "1")])
+        cleanEnv ++ #[("LEAN_NUM_THREADS", some "1")])
 
 /-- For the shapes that deliberately break the build. -/
 private def rebuildBroken (ctx : Ctx) (label : String) : IO Unit := do
   let result ←
-    runProc "lake" #["build"] (cwd? := some ctx.project) (env := #[("LEAN_NUM_THREADS", some "1")])
+    runProc "lake" #["build"] (cwd? := some ctx.project) (env :=
+        cleanEnv ++ #[("LEAN_NUM_THREADS", some "1")])
   ensure (result.exitCode != 0) s!"{label}: expected the fixture build to fail"
 
 /-- Restore sources *and* build outputs. Removing a source does not remove its `.olean`: Lake
@@ -123,7 +134,8 @@ state and require byte-identical reports and exit codes. Returns the served coun
 run so a caller asserts granularity and correctness from one pair of runs. -/
 private def probe (ctx : Ctx) (label : String) : IO Nat := do
   let cached ← profiledCheck ctx #["--json"]
-  let uncached ← runProc ctx.fmt #["check", "--json", "--no-cache"] (cwd? := some ctx.project)
+  let uncached ←
+    runProc ctx.fmt #["check", "--json", "--no-cache"] (cwd? := some ctx.project) (env := cleanEnv)
   ensure (cached.exitCode == uncached.exitCode)
       s!"{label}: cached exit {cached.exitCode}, --no-cache exit {uncached.exitCode}"
   ensure (cached.stdout == uncached.stdout)
@@ -179,7 +191,8 @@ leave the cache unable to serve the complete identical selection. -/
 private def testConcurrentColdWriters (ctx : Ctx) : IO Unit := do
   wipeCache ctx
   let runWriter : IO ProcResult :=
-    runProc ctx.fmt #["check", "--output-format", "concise"] (cwd? := some ctx.project)
+    runProc ctx.fmt #["check", "--output-format", "concise"] (cwd? := some ctx.project) (env :=
+      cleanEnv)
   let taskA ← IO.asTask runWriter Task.Priority.dedicated
   let taskB ← IO.asTask runWriter Task.Priority.dedicated
   let a ← IO.ofExcept taskA.get
@@ -357,12 +370,13 @@ private def testEpochChange (ctx : Ctx) : IO Unit := do
   -- The extra entry need not exist: an absent search-path root is recorded as the fact that it is
   -- absent, which moves the digest the same way a present one does.
   let epochRun (tag : String) : IO Nat := do
-    let existing := (← IO.getEnv "LEAN_PATH").getD ""
+    -- The extra path alone, not prepended to the inherited one: the fixture's world is its
+    -- lakefile and the toolchain (see `cleanEnv`), so the move is exactly this directory.
     let extra := ctx.pristine / s!"epoch-{tag}"
     let result ←
       runProc ctx.fmt #["check"] (cwd? := some ctx.project) (env :=
-          #[("LEAN_FMT_PROFILE_PHASES", some "1"),
-            ("LEAN_PATH", some s!"{extra}{System.SearchPath.separator}{existing}")])
+          (cleanEnv.filter (·.1 != "LEAN_PATH")) ++
+            #[("LEAN_FMT_PROFILE_PHASES", some "1"), ("LEAN_PATH", some extra.toString)])
     statFrom result.stderr "served"
   ensureEq "a moved search path served stale entries" 0 (← epochRun "1")
   for tag in ["2", "3", "4", "5", "6", "7"]do
@@ -411,7 +425,7 @@ private def testToolchainMismatch (ctx : Ctx) : IO Unit := do
   let backup ← IO.FS.readFile toolchain
   writeFile toolchain "leanprover/lean4:v0.0.0\n"
   -- Restore before asserting: the assertion throws, and the fixture must not stay tampered.
-  let result ← runProc ctx.fmt #["check", "--json"] (cwd? := some ctx.project)
+  let result ← runProc ctx.fmt #["check", "--json"] (cwd? := some ctx.project) (env := cleanEnv)
   writeFile toolchain backup
   ensureEq "a toolchain mismatch exits 2" 2 result.exitCode
 
