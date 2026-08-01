@@ -250,13 +250,14 @@ private def digestLines (output : String) : Array String :=
       if line.startsWith "FAIL" || line.contains "error:" then
         picked := picked.push line
         -- Followers carry the assertion's evidence (`expected:`/`actual:` pairs indent under
-        -- the label), capped so one verbose failure cannot crowd out the others.
+        -- the label; the cache suite's epoch forensics trail them), capped only so one
+        -- pathological failure cannot crowd out the others — evidence is the point here.
         let mut j := i + 1
-        while j < lines.length && j ≤ i + 3 && lines[j]!.startsWith " " do
+        while j < lines.length && j ≤ i + 48 && lines[j]!.startsWith " " do
           picked := picked.push lines[j]!
           j := j + 1
-    if picked.size > 16 then
-      picked.extract 0 16 |>.push "  …"
+    if picked.size > 64 then
+      picked.extract 0 64 |>.push "  …"
     else
       picked
 

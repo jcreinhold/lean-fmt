@@ -109,9 +109,11 @@ private def epochTail (ctx : Ctx) : IO String := do
     let contents ← IO.FS.readFile (ctx.project / ".lean-fmt-cache" / "epoch.log")
     let lines := (contents.splitOn "\n").dropLast
     let tail := lines.drop (lines.length - 42)
-    return s!"\nepoch log tail:\n{"\n".intercalate tail}"
+    -- Indented throughout: the runner's digest keeps indented follower lines after a failure
+    -- and drops unindented ones, so an unindented header would end the capture exactly here.
+    return s!"\n  epoch log tail:\n{"\n  ".intercalate tail}"
   catch _ =>
-    return "\n(no epoch log; LEAN_FMT_DEBUG_CACHE was not set)"
+    return "\n  (no epoch log; LEAN_FMT_DEBUG_CACHE was not set)"
 
 private def indexCount (ctx : Ctx) : IO Nat := do
   return (← indexFiles ctx).size
