@@ -33,7 +33,10 @@ permissions:
 
 # A newer push supersedes a run still in flight on the same ref.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  # The event name keeps the weekly/manual flake-hunt out of the push group: they share a ref,
+  # and sharing a group meant every dispatch cancelled a push run and every push cancelled the
+  # hunt, with nothing ever completing. Pushes still supersede pushes, which is the point.
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
