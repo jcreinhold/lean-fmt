@@ -460,7 +460,7 @@ private def realPathIfDir? (path : System.FilePath) : IO (Option System.FilePath
 cache for the workspace. The `sysroot` resolution is guarded for the same reason
 `realPathIfDir?` exists — an exception here would reach `open?`'s catch-all and read as "no
 cache", which is exactly the failure this function stopped having. -/
-private def environmentDigest (workspace : Lake.Workspace) : IO Digest := do
+private def environmentDigest (workspace : Lake.Workspace) : IO (Digest × Array String) := do
   let toolchain ←
     try
       IO.FS.realPath workspace.lakeEnv.lean.sysroot
@@ -516,7 +516,24 @@ private def environmentDigest (workspace : Lake.Workspace) : IO Digest := do
   -- `CacheIdentity.closure`. The ordered *paths* above stay: search-path precedence is an epoch
   -- property and changing it changes what every module resolves to.
   recordCount "untraced_artifacts" untraced
-  return digestParts parts
+  return (digestParts parts, parts)
+
+/-- Best-effort epoch forensics, off by default: with `LEAN_FMT_DEBUG_CACHE` set, every cache
+open appends the epoch's component strings to `<cacheRoot>/epoch.log`. A moved epoch then names
+the component that moved instead of hiding behind a changed digest — written for the
+ubuntu-22.04 release legs, where the cache suite grew a second index no other platform grew. -/
+private def debugEpoch (cacheRoot : System.FilePath) (parts : Array String) (environment : Digest)
+    (formatter : Digest) : IO Unit := do
+  if (← IO.getEnv "LEAN_FMT_DEBUG_CACHE").isNone then
+    return
+  try
+    IO.FS.createDirAll cacheRoot
+    let handle ← IO.FS.Handle.mk (cacheRoot / "epoch.log") .append
+    handle.putStrLn s!"environment={environment} formatter={formatter}"
+    for part in parts do
+      handle.putStrLn s!"  {part.replace "\u0000" " | "}"
+  catch _ =>
+    pure ()
 
 /-- The per-target key. `closure` is supplied by the caller rather than computed here because
 it comes from one shared no-build Lake graph fetched once for the whole batch; computing it per
@@ -766,10 +783,11 @@ outcome, reached now only by an exception this function did not anticipate. -/
 def ResultCache.open? (workspace : Lake.Workspace) (application : System.FilePath)
     (closureMode : ClosureMode := .artifacts) : IO (Option ResultCache) := do
   try
-    let environment ← environmentDigest workspace
+    let (environment, parts) ← environmentDigest workspace
     -- `toolchain` below pins the toolchain revision separately; this pins the binary.
     let cacheRoot := workspace.root.dir / ".lean-fmt-cache"
     let formatter ← formatterDigest cacheRoot application
+    debugEpoch cacheRoot parts environment formatter
     let directoryReady ← IO.mkRef false
     let loadedEntries ← IO.mkRef none
     let workspaceArtifacts ← IO.mkRef none

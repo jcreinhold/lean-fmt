@@ -56,9 +56,13 @@ jobs:
           test: "false"
 
       # The full gate runs here, once, on every platform leg — a release stays thorough even
-      # where CI splits the registry across jobs for speed.
+      # where CI splits the registry across jobs for speed. Epoch forensics are on so a moved
+      # cache epoch names its component in the failure digest (ubuntu-22.04 grew a second
+      # index here that no other platform grew).
       - name: test
         run: lake test
+        env:
+          LEAN_FMT_DEBUG_CACHE: "1"
 
       # Verify what is about to ship: the binary starts, and a real check exercises the exact
       # frontend child, not just argument parsing.

@@ -76,7 +76,10 @@ jobs:
           # (~1-2 GB). The telemetry showed 14.8 GB falling to 2.2 GB in 75 s in exactly that
           # configuration. Capping the children at two caps a part at four heavyweight
           # processes, and `resolveWorkers` reads this variable before the hardware default.
+          # DEBUG_CACHE is epoch forensics: a moved cache epoch names its component in the
+          # failure digest instead of hiding behind a changed digest.
           LEAN_NUM_THREADS: "2"
+          LEAN_FMT_DEBUG_CACHE: "1"
         timeout-minutes: 20
 
   slow:

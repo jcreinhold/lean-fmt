@@ -101,6 +101,18 @@ private partial def collectJson (dir : System.FilePath) (acc : Array System.File
 private def indexFiles (ctx : Ctx) : IO (Array System.FilePath) :=
   collectJson (ctx.project / ".lean-fmt-cache" / "results") #[]
 
+/-- The tail of the formatter's epoch forensics log, for failure messages: when an index-count
+or served-count assertion fails on a platform nobody else reproduces, the moved epoch component
+is in this log rather than in a theory. Empty when `LEAN_FMT_DEBUG_CACHE` was not set. -/
+private def epochTail (ctx : Ctx) : IO String := do
+  try
+    let contents ← IO.FS.readFile (ctx.project / ".lean-fmt-cache" / "epoch.log")
+    let lines := (contents.splitOn "\n").dropLast
+    let tail := lines.drop (lines.length - 42)
+    return s!"\nepoch log tail:\n{"\n".intercalate tail}"
+  catch _ =>
+    return "\n(no epoch log; LEAN_FMT_DEBUG_CACHE was not set)"
+
 private def indexCount (ctx : Ctx) : IO Nat := do
   return (← indexFiles ctx).size
 
@@ -146,10 +158,24 @@ private def testSchemaReplacement (ctx : Ctx) : IO Unit := do
   ensureEq "a v3 index is an unconditional miss" 0 (← served ctx)
   ensureEq "the replacement index serves every target" ctx.total (← served ctx)
 
+/-- Wipe the cache while preserving the epoch forensics log: the log is evidence across the
+whole suite run, not cache state any case owns. -/
+private def wipeCache (ctx : Ctx) : IO Unit := do
+  let logPath := ctx.project / ".lean-fmt-cache" / "epoch.log"
+  let log? ←
+    (try
+        pure (some (← IO.FS.readFile logPath))
+      catch _ =>
+        pure none)
+  removeDirAll? (ctx.project / ".lean-fmt-cache")
+  if let some log := log? then
+    IO.FS.createDirAll (ctx.project / ".lean-fmt-cache")
+    IO.FS.writeFile logPath log
+
 /-- Two cold writers may race on the same atomic index, but neither may publish partial JSON or
 leave the cache unable to serve the complete identical selection. -/
 private def testConcurrentColdWriters (ctx : Ctx) : IO Unit := do
-  removeDirAll? (ctx.project / ".lean-fmt-cache")
+  wipeCache ctx
   let runWriter : IO ProcResult :=
     runProc ctx.fmt #["check", "--output-format", "concise"] (cwd? := some ctx.project)
   let taskA ← IO.asTask runWriter Task.Priority.dedicated
@@ -179,7 +205,8 @@ private def testCommentOnlyEdit (ctx : Ctx) : IO Unit := do
   writeFile (wide ctx) ((← IO.FS.readFile (wide ctx)) ++ "\n-- comment only\n")
   rebuild ctx
   let servedCount ← probe ctx "comment-only edit to a dependency"
-  ensureEq "comment-only edit to a dependency leaves dependents cached" (ctx.total - 2) servedCount
+  ensureEq s!"comment-only edit to a dependency leaves dependents cached{← epochTail ctx}"
+      (ctx.total - 2) servedCount
   restoreFile ctx "Wide.lean"
 
 /-- §4. A semantic edit to a widely-imported module invalidates its dependents. -/
@@ -222,7 +249,8 @@ private def testNotationEdit (ctx : Ctx) : IO Unit := do
 /-- §6. Revisions do not accumulate index files: five rebuild-and-check cycles have run above, and
 a per-revision index would have left one orphan each. -/
 private def testIndexBounded (ctx : Ctx) : IO Unit := do
-  ensureEq "index file count is still 1 after five revisions" 1 (← indexCount ctx)
+  ensureEq s!"index file count is still 1 after five revisions{← epochTail ctx}" 1
+      (← indexCount ctx)
 
 /-- §7.1. A module added. It is new, so it misses; nothing else should. -/
 private def testModuleAdded (ctx : Ctx) : IO Unit := do
@@ -265,8 +293,8 @@ private def testModuleRenamed (ctx : Ctx) : IO Unit := do
   IO.FS.rename (leaf ctx) (ctx.project / "Fixture" / "Renamed.lean")
   rebuild ctx
   let servedCount ← probe ctx "module renamed"
-  ensureEq "renaming a module invalidates the new name and the lakefile only" (ctx.total - 2)
-      servedCount
+  ensureEq s!"renaming a module invalidates the new name and the lakefile only{← epochTail ctx}"
+      (ctx.total - 2) servedCount
   let indexes ← indexFiles ctx
   -- Mtimes name the case that created each file: a second index means the epoch moved, and
   -- when it moved is the difference between a rename defect and an environment that flaps.
@@ -276,7 +304,7 @@ private def testModuleRenamed (ctx : Ctx) : IO Unit := do
     descriptions := descriptions.push s!"{index} (size {info.byteSize}, mtime {info.modified.sec})"
   ensure (indexes.size == 1)
       s!"a rename does not create a second index:\n  {"
-\n  ".intercalate descriptions.toList}"
+\n  ".intercalate descriptions.toList}{← epochTail ctx}"
 
 /-- §7.5. A change visible only to normalization: LF to CRLF, identical normalized text. It still
 misses: every compiler-produced offset indexes `raw.crlfToLf`, so the *analysis* is unchanged, but
@@ -290,7 +318,8 @@ private def testCrlfOnlyChange (ctx : Ctx) : IO Unit := do
   writeFile (leaf ctx) (source.replace "\n" "\r\n")
   rebuild ctx
   let servedCount ← probe ctx "CRLF-only change"
-  ensureEq "a CRLF-only change invalidates that file alone" (ctx.total - 1) servedCount
+  ensureEq s!"a CRLF-only change invalidates that file alone{← epochTail ctx}" (ctx.total - 1)
+      servedCount
 
 /-- §7.6. The `choice`-node and `#exit` modules stay served across an unrelated edit. Both are
 inside every count above; this asserts they are actually *served* rather than quietly failing into
@@ -392,7 +421,7 @@ private def testLiveSetPrune (ctx : Ctx) : IO Unit := do
   -- Baseline: the first write into an empty index has nothing to prune. (A fully-served check
   -- never reaches `writeAll` — there is nothing new to store — so pruning always happens at the
   -- first non-served full-project write.)
-  removeDirAll? (ctx.project / ".lean-fmt-cache")
+  wipeCache ctx
   ensureEq "a fresh cache's first write prunes nothing" 0
       (← statFrom (← profiledCheck ctx).stderr "entries_pruned")
   -- Dead entries drop at the first write that can know: `Leaf`'s entry is orphaned by the
@@ -409,7 +438,7 @@ private def testLiveSetPrune (ctx : Ctx) : IO Unit := do
   -- organize stores the verdict, and the next full-project write prunes only the pre-sabotage
   -- `User` entry — the verdict's candidate is still this header's candidate.
   restoreFixture ctx
-  removeDirAll? (ctx.project / ".lean-fmt-cache")
+  wipeCache ctx
   discard <| profiledCheck ctx
   let userPath := ctx.project / "Fixture" / "User.lean"
   let user ← IO.FS.readFile userPath
