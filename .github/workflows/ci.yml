@@ -42,10 +42,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # incremental has no job here: on Linux it exhausts a 16 GB runner in seconds while
-        # peaking at 2.6 GB on macOS, and the root cause is still open. The slow tag keeps it
-        # out of every part; it still runs locally and in the manual --all dispatch. Restore
-        # a dedicated job once the Linux memory behavior is understood.
+        # incremental has no job here: its persistent session's retention is thread-starved
+        # (4.9 GB peak at LEAN_NUM_THREADS=2 on any platform, unbounded on 2-4 core machines
+        # until the OOM killer), and the product-side bound has not landed yet. The slow tag
+        # keeps it out of every part; it still runs locally and in the manual slow run.
+        # docs/ci.md's ledger has the evidence; restore a job when the session bounds it.
         part: [unit, "1/3", "2/3", "3/3"]
     steps:
       - uses: actions/checkout@v5

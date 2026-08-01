@@ -80,11 +80,12 @@ private def registered : Array Suite :=
     { name := "formatter-adapter", lane := .«parallel» },
     { name := "application-formatter", lane := .workspace },
     { name := "boundary", lane := .«parallel» },
-    -- Exclusive, and out of the default set for memory rather than wall time: the
-    -- persistent-frontend contract holds several full `import Lean` environments at once and
-    -- its hundred-edit phase is allowed an 8 GiB resident stop by design — the 14.4 GB peak
-    -- measured locally. It runs alone at the end of `--all`, and in its own CI job, where a
-    -- 16 GB runner is entirely its own; in a shared part it starved the agent twice.
+    -- Exclusive, and out of the default set for memory rather than wall time — but not the way
+    -- the CI legs first suggested: the suite is thread-starved, not platform-cursed. At
+    -- LEAN_NUM_THREADS=2 its persistent session peaks at 4.9 GB even on macOS (2.6 GB
+    -- uncapped); on 2–4 core machines elaboration outruns finalization of released
+    -- environments and the OOM killer ends it. It runs alone at the end of `--all`, and
+    -- returns to CI when the session bounds retention. docs/ci.md's ledger has the evidence.
     { name := "incremental", lane := .exclusive, slow := true },
     { name := "imports", lane := .workspace }, { name := "layout", lane := .«parallel» },
     { name := "lossless", lane := .«parallel» }, { name := "lsp", lane := .workspace },

@@ -322,7 +322,7 @@ root-caused and fixed, not by stopping recurring on its own.
 | signature | first seen | runs since | status |
 | --- | --- | --- | --- |
 | `scale` FAIL at exactly 33 s, digest lost when the runner died | CI run 30663155905 | 6+ green runs | open — the next recurrence carries the 48-line follower digest, which is what the raised caps were for |
-| `incremental` OOM on Linux CI: exhausts a 16 GB runner in ~30 s while peaking at 2.6 GB on macOS | CI run 30665759922 | parked | open — suite is `slow`-tagged out of the default set; root-cause plan in `plans/test-reliability.md` workstream E |
+| `incremental` OOM on constrained machines | CI run 30665759922 | parked | **root-caused, product fix pending** — the persistent session's memory retention is thread-starved: at `LEAN_NUM_THREADS=2` the suite peaks at 4.9 GB *on macOS too* (2.6 GB uncapped), so on 2–4 core machines elaboration outruns finalization of released environments and RSS grows until the OOM killer (14 GB on CI, 3.5 GB in a capped container, SIGKILL both times). Plain `lean Fixture.lean` is 612 MB on Linux vs 564 MB on macOS — platform-elaboration is innocent. The session needs a finalization pump or bounded retention; suite stays `slow`-tagged until that lands |
 
 **Environment-shaped failures.** Before blaming a test, check what the failure knew: the suite
 part steps stream memory and disk headroom (TELEM lines) every 15 seconds, and the last sample

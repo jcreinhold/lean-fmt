@@ -41,10 +41,11 @@ private unsafe def incrementalAnalyzerSpec (setupPath sourcePath : String) : IO 
   let .ok setupJson := Lean.Json.parse (← IO.FS.readFile setupPath) | return 2
   let .ok (setup : Lean.ModuleSetup) := Lean.fromJson? setupJson | return 2
   let path : System.FilePath := sourcePath
-  let analyzer ← IncrementalAnalyzer.open
-  let base := incrementalSource
   -- Phase markers: this suite is one case, and on Linux CI it dies mid-case with no other
   -- witness — the last marker before a death is the only thing that names the phase.
+  IO.eprintln "phase: analyzer open"
+  let analyzer ← IncrementalAnalyzer.open
+  let base := incrementalSource
   IO.eprintln "phase: edit table"
   let opened ← analyzer.analyze setup base path
   let freshBase ← analyzeExact setup base path
