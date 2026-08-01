@@ -7,7 +7,7 @@ import Test.Harness
 /-!
 # A language-server test client
 
-The client half of every LSP suite, factored out of `tests/lsp/Acceptance.lean` so the suites
+The client half of every LSP suite, factored out of `tests/Lsp/Acceptance.lean` so the suites
 speak protocol and only protocol. The framing, message algebra, and error-code decoding come from
 `Lean.Data.Lsp.Ipc` — the client the Lean team wrote to test Lean's own language server — so a
 suite that asserts the server speaks LSP is not comparing the server against our own spelling of
