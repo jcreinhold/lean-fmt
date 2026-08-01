@@ -303,3 +303,29 @@ is not optional if you took the plugin. A consuming project that uses the plugin
 event to test, not a version-string edit.
 
 The bump invalidates the cache wholesale, so no stale result survives it.
+
+## Maintainer notes: intermittent failures
+
+This section is about lean-fmt's *own* CI, not a consumer's. Everything above is the consumer
+contract; what follows is how this repository treats a test that fails sometimes.
+
+**The zero-retry rule.** Re-running a failed job is legitimate only for a signature that is
+already filed in the ledger below and understood. A retry on an unfiled signature trades a bug
+report for a coin flip: the evidence is on a runner that no longer exists. Every failure digest
+is designed to be one cycle from a cause — heartbeats name the suite, indented followers carry
+the assertion's evidence, the cache suite's epoch forensics name the moved component. File the
+signature with its run ID and digest *first*; retry second, if the signature says it is safe to.
+
+**The ledger.** Intermittent signatures, worst-first. A signature leaves the ledger by being
+root-caused and fixed, not by stopping recurring on its own.
+
+| signature | first seen | runs since | status |
+| --- | --- | --- | --- |
+| `scale` FAIL at exactly 33 s, digest lost when the runner died | CI run 30663155905 | 6+ green runs | open — the next recurrence carries the 48-line follower digest, which is what the raised caps were for |
+| `incremental` OOM on Linux CI: exhausts a 16 GB runner in ~30 s while peaking at 2.6 GB on macOS | CI run 30665759922 | parked | open — suite is `slow`-tagged out of the default set; root-cause plan in `plans/test-reliability.md` workstream E |
+
+**Environment-shaped failures.** Before blaming a test, check what the failure knew: the suite
+part steps stream memory and disk headroom (TELEM lines) every 15 seconds, and the last sample
+before a kill names the resource. The fixes that pattern produced — `--jobs 2`,
+`LEAN_NUM_THREADS=2` on CI, per-step timeouts, the search-path scrub in the test spawn layer —
+are load-bearing; remove any of them and the class comes back.

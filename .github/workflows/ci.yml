@@ -10,9 +10,11 @@
 # `test: "false"` input, CI ran the whole suite phase twice per job. Suites that need a tool the
 # runner lacks (Neovim, uv) skip rather than fail.
 #
-# slow: the complete set — the minutes-long stream, performance, downstream, ci, lsp-acceptance,
-# editor, and security-bench suites included — on manual dispatch only, because it costs minutes
-# rather than seconds.
+# slow: the flake-hunt — the default set twice (a flake's signature is that it does not
+# survive repetition) plus the minutes-long stream, performance, downstream, ci,
+# lsp-acceptance, editor, and security-bench suites — weekly on a schedule and on manual
+# dispatch. incremental is the one registry suite excluded: it exhausts a 16 GB runner by
+# design, and docs/ci.md's ledger tracks its open Linux root-cause.
 
 name: CI
 
@@ -21,6 +23,10 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+  schedule:
+    # The flake-hunt: weekly, two repetitions of the default set plus the slow suites, because
+    # an intermittent failure nobody exercises is one everybody ships.
+    - cron: "0 6 * * 1"
 
 permissions:
   contents: read
@@ -83,11 +89,35 @@ jobs:
         timeout-minutes: 20
 
   slow:
-    if: github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
     runs-on: ubuntu-latest
+    # The weekly flake-hunt and the manual complete-set run. The default set runs twice: a
+    # flake's signature is that it does not survive repetition. incremental is the one suite
+    # excluded from --all here: it exhausts a 16 GB runner by design (8 GiB contract stop) and
+    # its Linux root-cause is still open — the ledger in docs/ci.md tracks it.
     steps:
       - uses: actions/checkout@v5
       - uses: leanprover/lean-action@v1
         with:
           test: "false"
-      - run: lake test -- --all
+      - name: default set, twice
+        run: |
+          (while true; do
+            echo "TELEM $(date +%H:%M:%S) memAvailMB=$(free -m | awk '/Mem:/ {print $7}') diskAvailMB=$(df -m / | awk 'NR==2 {print $4}')"
+            sleep 15
+          done) &
+          TELEM_PID=$!
+          lake test -- --skip-unit --jobs 2 && lake test -- --skip-unit --jobs 2
+          CODE=$?
+          kill $TELEM_PID 2>/dev/null || true
+          exit $CODE
+        env:
+          LEAN_NUM_THREADS: "2"
+          LEAN_FMT_DEBUG_CACHE: "1"
+        timeout-minutes: 40
+      - name: slow suites
+        run: lake test -- --skip-unit --suites "ci downstream editor performance stream security-bench lsp-acceptance" --jobs 2
+        env:
+          LEAN_NUM_THREADS: "2"
+          LEAN_FMT_DEBUG_CACHE: "1"
+        timeout-minutes: 60

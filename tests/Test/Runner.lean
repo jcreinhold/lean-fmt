@@ -214,16 +214,63 @@ private structure Outcome where
   suite : Suite
   passed : Bool
   elapsedSec : Nat
+  peakRssKb : Nat
   output : String
 
-/-- Run one suite's executable, capturing everything it says. -/
+/-- Resident KiB of `rootPid` and every descendant in one `ps -Ao rss=,pid=,ppid=` snapshot.
+A suite's frontend grandchildren are where the envelope actually goes, so the suite process
+alone would undercount by an order of magnitude. -/
+private def treeRssKb (snapshot : String) (rootPid : Nat) : Nat :=
+  Id.run do
+    let mut entries : Array (Nat × Nat × Nat) := #[]
+    for line in snapshot.splitOn "\n"do
+      let words := (line.trimAscii.toString.splitOn " ").filter (!·.isEmpty)
+      if let [rss, pid, ppid] := words then
+        if let (some rssKb, some pid, some ppid) := (rss.toNat?, pid.toNat?, ppid.toNat?) then
+          entries := entries.push (rssKb, pid, ppid)
+    let mut included : Array Nat := #[rootPid]
+    let mut changed := true
+    while changed do
+      changed := false
+      for (_, pid, ppid) in entries do
+        if !included.contains pid && included.contains ppid then
+          included := included.push pid
+          changed := true
+    return entries.foldl (init := 0) fun acc (rssKb, pid, _) =>
+        if included.contains pid then acc + rssKb else acc
+
+/-- Poll a suite child to completion, sampling its process tree's resident memory once a
+second into `peak`. Unbounded on purpose: a wedged suite must hang with its heartbeat as
+evidence (and the CI step timeout as the bound), not be killed into a false failure by a fuel
+count. -/
+private partial def suitePoll (child : IO.Process.Child ⟨.null, .piped, .piped⟩)
+    (peak : IO.Ref Nat) : IO UInt32 := do
+  if let some code← child.tryWait then
+    return code
+  let snapshot ← IO.Process.output { cmd := "ps", args := #["-Ao", "rss=,pid=,ppid="] }
+  peak.modify (max · (treeRssKb snapshot.stdout child.pid.toNat))
+  IO.sleep 1000
+  suitePoll child peak
+
+/-- Run one suite's executable, capturing everything it says, and sample its process tree's
+resident memory once a second: the number printed next to a suite's wall time is the envelope a
+CI job must budget for it, discovered while the run is green instead of by a dead runner. The
+sample is a floor, not a bound — a spike shorter than the interval is invisible to it. -/
 private def runSuite (root : System.FilePath) (suite : Suite) : IO Outcome := do
   let started ← IO.monoNanosNow
-  let result ←
-    runProc (root / ".lake" / "build" / "bin" / suite.exeName).toString (cwd? := some root)
+  let child ←
+    IO.Process.spawn
+        { cmd := (root / ".lake" / "build" / "bin" / suite.exeName).toString, cwd := some root
+          env := scrubbedSearchPaths, stdin := .null, stdout := .piped, stderr := .piped }
+  let stdoutTask ← IO.asTask child.stdout.readToEnd Task.Priority.dedicated
+  let stderrTask ← IO.asTask child.stderr.readToEnd Task.Priority.dedicated
+  let peak ← IO.mkRef 0
+  let exitCode ← suitePoll child peak
+  let stdout ← IO.ofExcept stdoutTask.get
+  let stderr ← IO.ofExcept stderrTask.get
   let elapsedSec := ((← IO.monoNanosNow) - started) / 1000000000
-  return { suite, passed := result.exitCode == 0, elapsedSec,
-           output := result.stdout ++ result.stderr }
+  return { suite, passed := exitCode == 0, elapsedSec, peakRssKb := ← peak.get,
+           output := stdout ++ stderr }
 
 private def pad (text : String) (width : Nat) : String :=
   text ++ String.ofList (List.replicate (width - text.length) ' ')
@@ -366,6 +413,13 @@ public def main (args : List String) : IO UInt32 := do
     let sorted := outcomes.qsort (·.elapsedSec > ·.elapsedSec)
     for outcome in sorted.toList.take 8do
       IO.println s!"{pad (toString outcome.elapsedSec) 7}s  {outcome.suite.name}"
+    -- Peak RSS is a count, not a wall time: the envelope a CI job budgets per suite, measured
+    -- while the run is green. One-second sampling can miss shorter spikes; this is for
+    -- envelope planning, and no assertion reads it yet.
+    IO.println "\n--- heaviest suites (peak RSS, sampled) ---"
+    let heaviest := outcomes.qsort (·.peakRssKb > ·.peakRssKb)
+    for outcome in heaviest.toList.take 8do
+      IO.println s!"{pad (toString (outcome.peakRssKb / 1024)) 7}MB  {outcome.suite.name}"
     if failures.isEmpty then
       IO.println s!"all {outcomes.size} suite(s) passed"
       return 0

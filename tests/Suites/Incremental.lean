@@ -43,6 +43,9 @@ private unsafe def incrementalAnalyzerSpec (setupPath sourcePath : String) : IO 
   let path : System.FilePath := sourcePath
   let analyzer ← IncrementalAnalyzer.open
   let base := incrementalSource
+  -- Phase markers: this suite is one case, and on Linux CI it dies mid-case with no other
+  -- witness — the last marker before a death is the only thing that names the phase.
+  IO.eprintln "phase: edit table"
   let opened ← analyzer.analyze setup base path
   let freshBase ← analyzeExact setup base path
   ensure (sameEnvelope opened.envelope freshBase) "initial incremental analysis differs from fresh"
@@ -111,6 +114,7 @@ private unsafe def incrementalAnalyzerSpec (setupPath sourcePath : String) : IO 
   ensure (formatted.envelope.canonical?.any (·.validation.frontendRuns == 1))
       "an interactive format elaborated its candidate a second time"
   let mut rss : Array Nat := #[]
+  IO.eprintln "phase: hundred-edit loop"
   for i in [0:100]do
     let value := if i % 2 == 0 then "6" else "7"
     let source := incrementalSource s!"def beta : Nat := alpha + {value}"
@@ -122,6 +126,7 @@ private unsafe def incrementalAnalyzerSpec (setupPath sourcePath : String) : IO 
       "hundred-edit process crossed the 8 GiB memory stop"
   ensure (rss[3]! <= rss[1]! + 256 * 1024)
       "resident memory did not stabilize over the final fifty updates"
+  IO.eprintln "phase: cancellation (1200 declarations)"
   -- 1200 declarations, not more: the file only has to be large enough that the analysis is
   -- still in flight when the cancel lands, and every extra declaration is peak resident
   -- memory against the full `import Lean` environment — 4000 of them pushed the suite past
@@ -151,6 +156,7 @@ private unsafe def incrementalAnalyzerSpec (setupPath sourcePath : String) : IO 
           counters.cancelled == 1 &&
         counters.invalidated >= 2)
       "incremental counters do not account for the exercised lifecycle"
+  IO.eprintln "phase: close"
   analyzer.close
   let rejected ←
     try

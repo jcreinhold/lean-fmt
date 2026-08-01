@@ -202,6 +202,36 @@ private def testLinkClosure (root : System.FilePath) : IO Unit := do
     ensure (count > 0)
         "link-closure probe found no LeanFmt_Digest symbols; the probe itself is broken"
 
+/-- `runProc` scrubs the host's search paths from every child, and opting back in is a
+deliberate, enumerated act: a suite may re-inject a variable only where the *point* of the case
+is the path itself. Any other re-injection reopens the host-contamination class that cost the
+v0.2.1 arc its ubuntu release legs — so a new one fails here until it joins this list with its
+reason. The scan covers every suite file, so suites not yet written are already covered. -/
+private def testSpawnScrubOptIns (root : System.FilePath) : IO Unit := do
+  let allowed : Array (String × String) :=
+    -- Cache.lean epochRun: the epoch-change case exists to move the search path; choosing it is
+    -- the assertion. Compiler.lean testExtractorExactOlean: the case proves the extractor uses
+    -- the facet's exact olean against a shadowing ambient path; the path is the adversary, and
+    -- the library path is how the extractor dynloads the plugin it reads the artifact through.
+    #[("tests/Suites/Cache.lean", "LEAN_PATH"), ("tests/Suites/Compiler.lean", "LEAN_PATH"),
+      ("tests/Suites/Compiler.lean", "LD_LIBRARY_PATH"),
+      ("tests/Suites/Compiler.lean", "DYLD_LIBRARY_PATH")]
+  let scrubbed := #["LEAN_PATH", "LEAN_SRC_PATH", "LD_LIBRARY_PATH", "DYLD_LIBRARY_PATH"]
+  let mut offenders : Array String := #[]
+  for entry in ← (root / "tests" / "Suites").readDir do
+    if entry.path.extension != some "lean" then
+      continue
+    let some fileName := entry.path.fileName | continue
+    let relative := s!"tests/Suites/{fileName}"
+    for line in (← readRepoFile root relative).splitOn "\n"do
+      for var in scrubbed do
+        -- The pattern is built from `var` so this case's own source never matches itself.
+        if line.contains (s!"\"{var}\", some") && !(allowed.contains (relative, var)) then
+          offenders := offenders.push s!"{relative}: {line.trimAscii}"
+  ensure offenders.isEmpty
+      s!"suite children re-inject scrubbed search paths outside the enumerated opt-ins:\n  {"
+\n  ".intercalate offenders.toList}"
+
 /-- The package's identity, and every place this repository spells its own version. Lake owns the
 version; the other two follow it.
 
@@ -242,6 +272,7 @@ private def cases (root : System.FilePath) : Array Case :=
     { name := "no-lean-server", run := testNoLeanServer root },
     { name := "no-legacy-architecture", run := testNoLegacyArchitecture root },
     { name := "link-closure", run := testLinkClosure root },
+    { name := "spawn-scrub-opt-ins", run := testSpawnScrubOptIns root },
     { name := "package-identity", run := testPackageIdentity root }]
 
 end Boundary

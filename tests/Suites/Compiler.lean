@@ -242,10 +242,15 @@ private unsafe def testExtractorExactOlean (ctx : Ctx) : IO Unit := do
             #[s!"--plugin={plugin}", "-o", "LocalSyntax.olean", "LocalSyntax.lean"] (cwd? :=
             some shadow) (env := #[("LEAN_PATH", some repoLib)])
       let exactJson := shadow / "exact.json"
+      -- The library-path re-injection is load-bearing, not ambient: the extractor dynloads the
+      -- compiler plugin to read the facet artifact, and `runProc`'s scrub removes the default
+      -- resolution path. It gets the repository's lib directory and nothing else.
       discard <|
           expectExit 0 "extractor" extractor
             #["LocalSyntax", ctx.olean.toString, exactJson.toString] (env :=
-            #[("LEAN_PATH", some s!"{shadow}:{repoLib}")])
+            #[("LEAN_PATH", some s!"{shadow}:{repoLib}"),
+              ("LD_LIBRARY_PATH", some (ctx.root / ".lake" / "build" / "lib").toString),
+              ("DYLD_LIBRARY_PATH", some (ctx.root / ".lake" / "build" / "lib").toString)])
       Unit.Tools.verifyFacetArtifact exactJson ctx.sourceFile (← lakeHash exactJson)
 
 /-- An up-to-date facet must continue to expose the payload embedded in the exact `.olean`. -/

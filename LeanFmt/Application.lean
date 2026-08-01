@@ -2710,9 +2710,14 @@ def compilerStatus (request : CompilerStatusRequest) : IO CompilerStatusReport :
   let outcomes ← IO.mkRef (Array.replicate work.size (none : Option CompilerModuleStatus))
   if work.size > 1 then
     -- The batch pattern (`execute`): dedicated priority is required because workers block on
-    -- child waits, and pooled blocking tasks can starve a small pool.
+    -- child waits, and pooled blocking tasks can starve a small pool. The ceiling is four
+    -- because each worker holds a loaded module environment (~1.6 GB) — and the floor under
+    -- that ceiling is `resolveWorkers`, so CI's LEAN_NUM_THREADS=2 halves the peak the way the
+    -- comment on the suite step promises; a hardcoded four ignored it and modes peaked at
+    -- 6.5 GB on a capped runner.
+    let workers := min 4 (← resolveWorkers none) |> min work.size
     let tasks ←
-      (List.range (min 4 work.size)).mapM fun _ =>
+      (List.range workers).mapM fun _ =>
           IO.asTask (compilerStatusWorker project.workspace application work next outcomes)
             Task.Priority.dedicated
     let mut firstError? : Option IO.Error := none
