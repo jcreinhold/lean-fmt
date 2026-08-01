@@ -315,7 +315,11 @@ private def buildSuites (root : System.FilePath) (suites : Array Suite) : IO Uni
   -- only rebuilds the suite would test a stale product.
   let result ←
     runProc "lake" (#["-q", "build", "lean-fmt"] ++ suites.map (·.exeName)) (cwd? := some root)
-  ensure (result.exitCode == 0) s!"suite executables failed to build:\n{result.stderr}"
+  -- Both streams: `lake -q` puts the failed job's log on stdout, and stderr alone showed
+  -- "error: build failed" with the cause nowhere — the flake-hunt's slow step failed
+  -- anonymous exactly once before this carried both.
+  ensure (result.exitCode == 0)
+      s!"suite executables failed to build:\nstdout:\n{result.stdout}\nstderr:\n{result.stderr}"
 
 /-- One worker of the lane pool: pull the next index, run it, record it, repeat. -/
 private partial def worker (root : System.FilePath) (suites : Array Suite) (next : Std.Mutex Nat)
