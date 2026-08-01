@@ -98,6 +98,28 @@ private unsafe def incrementalAnalyzerSpec (work setupPath sourcePath : String)
   let .ok (setup : Lean.ModuleSetup) := Lean.fromJson? setupJson | return 2
   let work : System.FilePath := work
   let path : System.FilePath := sourcePath
+  -- The thread-ratio baseline runs BEFORE the contract: this process ends the contract holding
+  -- ~2.5 GB of deliberately persistent lineage environments, and a baseline child spawned then
+  -- doubles the process tree's peak (5.4 GB, measured by the lane runner's tree sampler on the
+  -- flake-hunt). Sequential runs peak at one contract's worth; the comparison still happens at
+  -- the end, against this run's own peak. The gate guards the failure this suite used to die
+  -- to — a 2.5-11 GB peak that flipped run to run at any thread count; the measured post-fix
+  -- spread is ±7% around 2.5 GB at every count. `checkRatio` off is how `--peak-only` keeps
+  -- this from recursing; the 8 GiB stop stays the last-resort kill, this is the regression gate.
+  let childPeak? ←
+    if checkRatio then
+      do
+        let baseline ←
+          expectExit 0 "thread-ratio baseline" (← IO.appPath).toString
+              #["--peak-only", work.toString, setupPath, sourcePath] (env :=
+              #[("LEAN_NUM_THREADS", some "2")]) (timeoutMs := some 600000)
+        match (baseline.stdout.splitOn "peak_kib=")[1]? with
+        | some rest =>
+          pure (rest.takeWhile Char.isDigit).toNat?
+        | none =>
+          pure none
+    else
+      pure none
   -- Phase markers: this suite is one case, and on Linux CI it dies mid-case with no other
   -- witness — the last marker before a death is the only thing that names the phase.
   let openedAt ← IO.monoMsNow
@@ -241,20 +263,6 @@ private unsafe def incrementalAnalyzerSpec (work setupPath sourcePath : String)
 invalidated={counters.invalidated} failed={counters.failed} cancelled={counters.cancelled} \
 rss_kib={rss} retained=1 peak_kib={peak} phases={curve}"
   if checkRatio then
-    -- The thread-ratio gate: the same contract once more as a LEAN_NUM_THREADS=2 child, and
-    -- neither peak may exceed 1.5× the other. The failure this guards is the one this suite
-    -- used to die to — a 2.5-11 GB peak that flipped run to run at any thread count; the
-    -- measured post-fix spread is ±7% around 2.4 GB at every count. The child reuses the
-    -- parent's setup.json and temp dir; `checkRatio` is how `--peak-only` keeps this from
-    -- recursing. The 8 GiB stop above stays the last-resort kill; this is the regression gate.
-    let baseline ←
-      expectExit 0 "thread-ratio baseline" (← IO.appPath).toString
-          #["--peak-only", work.toString, setupPath, sourcePath] (env :=
-          #[("LEAN_NUM_THREADS", some "2")]) (timeoutMs := some 600000)
-    let childPeak? :=
-      match (baseline.stdout.splitOn "peak_kib=")[1]? with
-      | some rest => (rest.takeWhile Char.isDigit).toNat?
-      | none => none
     let some childPeak := childPeak?
       | throw <| IO.userError "thread-ratio baseline did not report a peak"
     ensure (peak * 2 <= childPeak * 3 && childPeak * 2 <= peak * 3)
