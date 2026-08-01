@@ -116,7 +116,7 @@ jobs:
           LEAN_FMT_DEBUG_CACHE: "1"
         timeout-minutes: 40
       - name: slow suites
-        run: lake test -- --skip-unit --suites "ci downstream editor performance stream security-bench lsp-acceptance" --jobs 2
+        run: lake test -- --skip-unit --suites ci downstream editor performance stream security-bench lsp-acceptance --jobs 2
         env:
           LEAN_NUM_THREADS: "2"
           LEAN_FMT_DEBUG_CACHE: "1"

@@ -39,7 +39,7 @@ test-linux:
 	  ubuntu:22.04 bash -c '\
 	  export PATH=/root/.elan/bin:$$PATH; \
 	  apt-get update -qq >/dev/null 2>&1; \
-	  apt-get install -y -qq curl git ca-certificates >/dev/null 2>&1; \
+	  apt-get install -y -qq curl git ca-certificates python3 binutils >/dev/null 2>&1; \
 	  if ! which lake >/dev/null 2>&1; then \
 	    curl -sL https://elan.lean-lang.org/elan-init.sh -o /tmp/elan.sh && \
 	    bash /tmp/elan.sh -y --default-toolchain none >/dev/null 2>&1; \

@@ -494,11 +494,16 @@ private def testCacheInvalidation (ctx : Ctx) : IO System.FilePath := do
       checkRaw ctx 2 #["check", "--root", ".", "--json", "tests/fixtures/check/Findings.lean"]
         "cache trace miss" (env := sabotageEnv)
   cpPreserve traceBackup trace
-  IO.FS.rename trace (ctx.work / "Findings.trace.missing")
+  -- Copy-and-remove, not `rename(2)`: the temp dir and the fixture can live on different
+  -- devices — the 22.04 repro container mounts the repository on its own filesystem — and
+  -- rename refuses cross-device moves with EXDEV.
+  cpPreserve trace (ctx.work / "Findings.trace.missing")
+  IO.FS.removeFile trace
   discard <|
       checkRaw ctx 2 #["check", "--root", ".", "--json", "tests/fixtures/check/Findings.lean"]
         "cache untrusted epoch" (env := sabotageEnv)
-  IO.FS.rename (ctx.work / "Findings.trace.missing") trace
+  cpPreserve (ctx.work / "Findings.trace.missing") trace
+  IO.FS.removeFile (ctx.work / "Findings.trace.missing")
   let restored ←
     checkRaw ctx 1 #["check", "--root", ".", "--json", "tests/fixtures/check/Findings.lean"]
         "cache restored identity" (env := sabotageEnv)
