@@ -570,9 +570,14 @@ public def main (args : List String) : IO UInt32 := do
   withTempDir fun work => do
       let manifest ←
         IO.FS.readFile (root / "tests" / "fixtures" / "performance" / "lean-fmt-self.txt")
-      let files :=
-        ((manifest.splitOn "\n").filter (· != "")).map fun relative =>
-          root.toString ++ "/" ++ relative
+      let relatives := (manifest.splitOn "\n").filter (· != "")
+      -- Every entry must resolve: a rename that changes only case passes silently on a
+      -- case-insensitive checkout and exits 2 with an empty profile channel on a
+      -- case-sensitive one — the hunt's slow step chased that ghost for a full cycle.
+      for relative in relatives do
+        ensure (← (root / relative).pathExists)
+            s!"performance manifest entry does not exist: {relative}"
+      let files := relatives.map fun relative => root.toString ++ "/" ++ relative
       let ctx : Performance.Ctx :=
         { root
           app := (root / ".lake" / "build" / "bin" / "lean-fmt").toString
