@@ -99,12 +99,13 @@ private def testEntryPointSet (root : System.FilePath) : IO Unit := do
       if line.startsWith "public def main" || line.startsWith "public unsafe def main" then
         entries := entries.push path
   let expected :=
-    #["Main.lean", "tests/Lsp/Acceptance.lean", "tests/Suites/ApplicationFormatter.lean", "tests/Suites/BlockFormatter.lean",
-      "tests/Suites/Boundary.lean", "tests/Suites/Cache.lean", "tests/Suites/Catalog.lean",
-      "tests/Suites/Check.lean", "tests/Suites/Ci.lean", "tests/Suites/CollectionFormatter.lean",
-      "tests/Suites/CommandFormatter.lean", "tests/Suites/Comments.lean",
-      "tests/Suites/Compiler.lean", "tests/Suites/DeclarationFormatter.lean",
-      "tests/Suites/Discovery.lean", "tests/Suites/Downstream.lean", "tests/Suites/Editor.lean",
+    #["Main.lean", "tests/Lsp/Acceptance.lean", "tests/Suites/ApplicationFormatter.lean",
+      "tests/Suites/BlockFormatter.lean", "tests/Suites/Boundary.lean", "tests/Suites/Cache.lean",
+      "tests/Suites/Catalog.lean", "tests/Suites/Check.lean", "tests/Suites/Ci.lean",
+      "tests/Suites/CollectionFormatter.lean", "tests/Suites/CommandFormatter.lean",
+      "tests/Suites/Comments.lean", "tests/Suites/Compiler.lean",
+      "tests/Suites/DeclarationFormatter.lean", "tests/Suites/Discovery.lean",
+      "tests/Suites/Downstream.lean", "tests/Suites/Editor.lean",
       "tests/Suites/FormatSuppression.lean", "tests/Suites/Formatter.lean",
       "tests/Suites/FormatterAdapter.lean", "tests/Suites/Imports.lean",
       "tests/Suites/Incremental.lean", "tests/Suites/Layout.lean", "tests/Suites/Lossless.lean",
@@ -114,8 +115,8 @@ private def testEntryPointSet (root : System.FilePath) : IO Unit := do
       "tests/Suites/Semantic.lean", "tests/Suites/Stream.lean", "tests/Suites/Style.lean",
       "tests/Suites/Suppression.lean", "tests/Suites/Syntax.lean",
       "tests/Suites/TermFormatter.lean", "tests/Suites/Validator.lean", "tests/Suites/Watch.lean",
-      "tests/Test/Runner.lean", "tests/Test/Unit.lean",
-      "tools/CheckModules.lean", "tools/LeanFmtArtifactExtract.lean"]
+      "tests/Test/Runner.lean", "tests/Test/Unit.lean", "tools/CheckModules.lean",
+      "tools/LeanFmtArtifactExtract.lean"]
   ensureEq "active public entry-point set changed" expected.toList (entries.qsort (· < ·)).toList
 
 private def testPluginImportBoundary (root : System.FilePath) : IO Unit := do
