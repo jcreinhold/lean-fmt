@@ -103,6 +103,9 @@ jobs:
       - name: publish
         env:
           GH_TOKEN: ${{ github.token }}
+          # No checkout in this job: without a repository hint, gh infers the repo from a git
+          # remote that does not exist here and dies with "not a git repository".
+          GH_REPO: ${{ github.repository }}
         run: |
           gh release view "$TAG" > /dev/null 2>&1 || gh release create "$TAG" --generate-notes
           cat SHA256SUMS
