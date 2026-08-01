@@ -45,11 +45,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # incremental has no job here: its persistent session's retention is thread-starved
-        # (4.9 GB peak at LEAN_NUM_THREADS=2 on any platform, unbounded on 2-4 core machines
-        # until the OOM killer), and the product-side bound has not landed yet. The slow tag
-        # keeps it out of every part; it still runs locally and in the manual slow run.
-        # docs/ci.md's ledger has the evidence; restore a job when the session bounds it.
+        # incremental stays slow-tagged for wall time, not fragility: the retention bomb that
+        # OOMed runners was its in-process oracle stacking import environments, fixed with a
+        # child-process oracle plus a targeted fixture import closure (peak ~2.5 GB at any
+        # thread count, gated by the suite's own thread-ratio check). It runs in the
+        # flake-hunt's slow list; docs/ci.md's ledger has the arc.
         part: [unit, "1/3", "2/3", "3/3"]
     steps:
       - uses: actions/checkout@v5
@@ -120,7 +120,7 @@ jobs:
           LEAN_FMT_DEBUG_CACHE: "1"
         timeout-minutes: 40
       - name: slow suites
-        run: lake test -- --skip-unit --suites ci downstream editor performance stream security-bench lsp-acceptance --jobs 2
+        run: lake test -- --skip-unit --suites ci downstream editor incremental performance stream security-bench lsp-acceptance --jobs 2
         env:
           LEAN_NUM_THREADS: "2"
           LEAN_FMT_DEBUG_CACHE: "1"

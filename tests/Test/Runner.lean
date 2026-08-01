@@ -80,12 +80,13 @@ private def registered : Array Suite :=
     { name := "formatter-adapter", lane := .«parallel» },
     { name := "application-formatter", lane := .workspace },
     { name := "boundary", lane := .«parallel» },
-    -- Exclusive, and out of the default set for memory rather than wall time — but not the way
-    -- the CI legs first suggested: the suite is thread-starved, not platform-cursed. At
-    -- LEAN_NUM_THREADS=2 its persistent session peaks at 4.9 GB even on macOS (2.6 GB
-    -- uncapped); on 2–4 core machines elaboration outruns finalization of released
-    -- environments and the OOM killer ends it. It runs alone at the end of `--all`, and
-    -- returns to CI when the session bounds retention. docs/ci.md's ledger has the evidence.
+    -- Exclusive, and out of the default set for wall time, not memory: the retention question
+    -- that parked it (a 2.5-11 GB run-to-run coin flip) was the suite's own in-process oracle
+    -- stacking import environments, not the session; with the oracle in child processes and a
+    -- targeted fixture import closure the peak is a stable ~2.5 GB at any thread count, and the
+    -- suite carries its own 1.5× thread-ratio gate to prove it stays that way. It runs alone
+    -- at the end of `--all`, and in the flake-hunt's slow list. docs/ci.md's ledger has the
+    -- whole arc.
     { name := "incremental", lane := .exclusive, slow := true },
     { name := "imports", lane := .workspace }, { name := "layout", lane := .«parallel» },
     { name := "lossless", lane := .«parallel» }, { name := "lsp", lane := .workspace },
