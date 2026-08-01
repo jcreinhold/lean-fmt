@@ -321,9 +321,29 @@ private def buildSuites (root : System.FilePath) (suites : Array Suite) : IO Uni
   ensure (result.exitCode == 0)
       s!"suite executables failed to build:\nstdout:\n{result.stdout}\nstderr:\n{result.stderr}"
 
+/-- Suites in flight right now, with their start times — the stall watchdog's reading. -/
+private abbrev InFlight :=
+  Std.Mutex (Array (String × Nat))
+
+/-- Wake every 15 s and name whatever has been in flight longer than a minute. A suite that
+never finishes used to be indistinguishable from a slow one until the step timeout chose —
+part 3/3, twice: `syntax` and `check` silent for 18 minutes after `layout`, and the
+completion line only prints after a suite ends, so the watchdog is the only witness while
+one hangs. It stops when `done` is set and is never awaited: a runtime that drops pending
+tasks at exit and one that joins them both behave, the join costing at most one wake. -/
+private partial def watchdog (inFlight : InFlight) (done : IO.Ref Bool) : IO Unit := do
+  IO.sleep 15000
+  unless (← done.get) do
+    let now ← IO.monoMsNow
+    for (name, started) in ← inFlight.atomically (fun state => state.get)do
+      if now - started > 60000 then
+        IO.eprintln s!"still running: {name} ({(now - started) / 1000} s)"
+    watchdog inFlight done
+
 /-- One worker of the lane pool: pull the next index, run it, record it, repeat. -/
 private partial def worker (root : System.FilePath) (suites : Array Suite) (next : Std.Mutex Nat)
-    (workspaceLock : Std.Mutex Unit) (collected : Std.Mutex (Array Outcome)) : IO Unit := do
+    (workspaceLock : Std.Mutex Unit) (collected : Std.Mutex (Array Outcome)) (inFlight : InFlight) :
+    IO Unit := do
   let index ←
     next.atomically fun state => do
         let index ← state.get
@@ -334,26 +354,31 @@ private partial def worker (root : System.FilePath) (suites : Array Suite) (next
     -- stderr is unbuffered even through a pipe: the last heartbeat before a wedge names the
     -- suite that hung, which the completion line — printed only after — never can.
     IO.eprintln s!"starting {suite.name}"
+    let startedAt ← IO.monoMsNow
+    inFlight.atomically fun state => state.modify (·.push (suite.name, startedAt))
     let outcome ←
-      if suite.lane == .workspace then
-        workspaceLock.atomically fun _ => runSuite root suite
-      else
-        runSuite root suite
+      try
+        if suite.lane == .workspace then
+          workspaceLock.atomically fun _ => runSuite root suite
+        else
+          runSuite root suite
+      finally
+        inFlight.atomically fun state => state.modify (·.filter (·.1 != suite.name))
     report outcome
     collected.atomically fun state => state.modify (·.push outcome)
-    worker root suites next workspaceLock collected
+    worker root suites next workspaceLock collected inFlight
 
 /-- Run the non-exclusive lanes through a worker pool. `workspace` suites hold one lock, so they
 serialize with each other while overlapping the `parallel` lane. -/
-private def runLanes (root : System.FilePath) (suites : Array Suite) (jobs : Nat) :
-    IO (Array Outcome) := do
+private def runLanes (root : System.FilePath) (suites : Array Suite) (jobs : Nat)
+    (inFlight : InFlight) : IO (Array Outcome) := do
   let next ← Std.Mutex.new 0
   let workspaceLock ← Std.Mutex.new ()
   let collected ← Std.Mutex.new (#[] : Array Outcome)
   let workers := min jobs (max suites.size 1)
   let tasks ←
     (List.range workers).mapM fun _ =>
-        IO.asTask (worker root suites next workspaceLock collected) Task.Priority.dedicated
+        IO.asTask (worker root suites next workspaceLock collected inFlight) Task.Priority.dedicated
   for task in tasks do
     IO.ofExcept (← IO.wait task)
   collected.atomically fun state => state.get
@@ -403,15 +428,25 @@ public def main (args : List String) : IO UInt32 := do
   buildSuites root selected
   let scratch ← IO.FS.createTempDir
   let keep ← IO.mkRef false
+  let inFlight : InFlight ← Std.Mutex.new #[]
+  let done ← IO.mkRef false
+  discard <| IO.asTask (watchdog inFlight done) Task.Priority.dedicated
   try
     let (ordinary, exclusive) := selected.partition (·.lane != .exclusive)
-    let ordinaryOutcomes ← runLanes root ordinary options.jobs
+    let ordinaryOutcomes ← runLanes root ordinary options.jobs inFlight
     let exclusiveOutcomes ←
       exclusive.mapM fun suite => do
           IO.eprintln s!"starting {suite.name}"
-          let outcome ← runSuite root suite
+          let startedAt ← IO.monoMsNow
+          inFlight.atomically fun state => state.modify (·.push (suite.name, startedAt))
+          let outcome ←
+            try
+              runSuite root suite
+            finally
+              inFlight.atomically fun state => state.modify (·.filter (·.1 != suite.name))
           report outcome
           return outcome
+    done.set true
     let outcomes := ordinaryOutcomes ++ exclusiveOutcomes
     let failures := outcomes.filter (!·.passed)
     IO.println "\n--- slowest suites ---"
@@ -444,5 +479,6 @@ public def main (args : List String) : IO UInt32 := do
         {", ".intercalate (failures.map (·.suite.name)).toList}"
       return 1
   finally
+    done.set true
     unless ← keep.get do
       IO.FS.removeDirAll scratch
