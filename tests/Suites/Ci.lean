@@ -261,7 +261,10 @@ public def main (args : List String) : IO UInt32 := do
       writeFile (consumer / "Demo" / "Basic.lean")
           "module\n\npublic def greeting : String := \"hello\"\n"
       writeFile (consumer / ".gitignore") ".lake/\n.lean-fmt-cache/\n*.sarif\n*.xml\n"
-      discard <| expectExit 0 "git init" "git" #["init", "-q", "."] (cwd? := some consumer)
+      -- `-b main`: the recipes branch and checkout `main` by name, and git's compiled-in
+      -- default is still `master` on some runners — the assumption must be made, not inherited.
+      discard <|
+          expectExit 0 "git init" "git" #["init", "-q", "-b", "main", "."] (cwd? := some consumer)
       let ctx : Ci.Ctx := { root, work, consumer }
       Ci.commitAll ctx "clean baseline"
       discard <| Ci.lake ctx #["update"] "lake update could not resolve the git dependency"

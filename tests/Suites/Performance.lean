@@ -362,6 +362,11 @@ checkout — and that is not what this section measures. -/
 private def testWarmFullyServed (ctx : Ctx) : IO Unit := do
   let prime ← profileRun ctx
   let warm ← profileRun ctx
+  -- The warm run's own evidence comes first: a run that died before the check path emits no
+  -- counters at all, and "expected some 40, actual none" alone sent the hunt's first slow
+  -- dispatch hunting for a manifest bug in what was really an early exit.
+  ensure (warm.exitCode == 0)
+      s!"warm run exited {warm.exitCode}; profile channel:\n{warm.stderr.take 2000}"
   ensureEq "the manifest's files are not the targets" (some ctx.files.size)
       ((counter "cache.targets" warm.stderr).map Int.toNat)
   ensure (gateFullyServed warm.stderr)
