@@ -87,7 +87,7 @@ captured streams — the first thing a debugging run needs is what the child act
 public def expectExit (expected : UInt32) (label : String) (cmd : String)
     (args : Array String := #[]) (input? : Option String := none)
     (cwd? : Option System.FilePath := none) (env : Array (String × Option String) := #[])
-    (timeoutMs : Option Nat := none) : IO ProcResult := do
+    (timeoutMs : Option Nat := some 600000) : IO ProcResult := do
   let result ← runProc cmd args input? cwd? env timeoutMs
   ensure (result.exitCode == expected)
       s!"{label}: expected exit {expected}, \
