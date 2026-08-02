@@ -2,6 +2,8 @@ module
 
 public import Test
 
+import all LeanFmt.Config
+
 /-!
 # The collection-formatter suite
 
@@ -110,6 +112,34 @@ private def testWideLayout (root setup : System.FilePath) (application : String)
   let middle ← widthText root setup application 40
   ensure (narrow ≠ middle && middle ≠ wide) "collection groups ignored configured width"
 
+/-- `magic-trailing-comma`: at the flat width every trailing-comma collection in the fixture
+explodes — one element per row at the collection-nested column, the closing bracket on its own
+row dedented to the collection's row — under `ignore` the same collections are width's alone,
+which keeps them flat here. The assertions are exact substrings: the columns are the contract. -/
+private def testMagicTrailingComma (root setup : System.FilePath) (application : String) :
+    IO Unit := do
+  let report ←
+    analyzeExact root application setup "tests/fixtures/collection-formatter/Collections.lean"
+        "Collections.lean" "4:80"
+  let (_, text) ← canonical report "magic-trailing-comma"
+  for exploded in
+    ["[\n    alpha,\n    beta,\n    gamma,\n  ]", "#[\n    alpha,\n    beta,\n    gamma,\n  ]",
+      "(\n    alpha,\n    beta,\n    gamma,\n  )", "⟨\n    alpha,\n    beta,\n    gamma,\n  ⟩",
+      "{\n    first := alpha,\n    second := beta,\n    third := gamma,\n  }",
+      "#[\n    alpha,\n  ]",
+      "(\n    #[\n      alpha,\n      beta,\n    ],\n    #[\n      gamma,\n    ],\n  )",
+      "#[\n    -- leading comment\n    alpha,\n    beta,\n    gamma,\n  ]"]do
+    ensureContains text exploded "magic-trailing-comma"
+  let ignore : LeanFmt.Internal.FormatConfig := { magicTrailingComma := .ignore }
+  let ignored ←
+    analyzeExact root application setup "tests/fixtures/collection-formatter/Collections.lean"
+        "Collections.lean" s!"4j{(Lean.toJson ignore).compress}"
+  let (_, ignoredText) ← canonical ignored "magic-trailing-comma ignore"
+  for flat in
+    ["[alpha, beta, gamma, ]", "#[alpha, beta, gamma, ]", "(alpha, beta, gamma, )",
+      "⟨alpha, beta, gamma, ⟩", "{ first := alpha, second := beta, third := gamma, }"]do
+    ensureContains ignoredText flat "magic-trailing-comma ignore"
+
 end CollectionFormatter
 
 public def main (args : List String) : IO UInt32 := do
@@ -127,5 +157,7 @@ public def main (args : List String) : IO UInt32 := do
           { name := "narrow-layout",
             run := CollectionFormatter.testNarrowLayout root setup application },
           { name := "wide-layout",
-            run := CollectionFormatter.testWideLayout root setup application }]
+            run := CollectionFormatter.testWideLayout root setup application },
+          { name := "magic-trailing-comma",
+            run := CollectionFormatter.testMagicTrailingComma root setup application }]
       runCases "collection-formatter" cases args

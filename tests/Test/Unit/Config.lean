@@ -438,6 +438,43 @@ extend-select = [\"FMT009\"]\n"
       catch _ =>
         pure true
     ensure badBody "an unknown declaration-body value was accepted"
+    -- `magic-trailing-comma`: default `respect` holds without a config; `ignore` parses; a child
+    -- inherits an unset key; misplaced at the top level and malformed are errors; and it moves
+    -- the configuration identity like every `[format]` key.
+    write ".lean-fmt.toml" "[format]\nline-width = 100\n"
+    let commaDefaults ← Discovery.run root none
+    ensure (commaDefaults.fallback.format.magicTrailingComma == .respect)
+        "magic-trailing-comma lost its default"
+    write ".lean-fmt.toml" "[format]\nmagic-trailing-comma = \"ignore\"\n"
+    let commaConfigured ← Discovery.run root none
+    ensure (commaConfigured.fallback.format.magicTrailingComma == .ignore)
+        "magic-trailing-comma did not parse"
+    ensure
+        (commaDefaults.fallback.format.identityString !=
+          commaConfigured.fallback.format.identityString)
+        "magic-trailing-comma did not change the configuration identity"
+    write "sub/.lean-fmt.toml" "extend = \"../.lean-fmt.toml\"\n[format]\nline-width = 42\n"
+    write "sub/B.lean" "module\n"
+    let commaChain ← Discovery.run root none
+    ensure ((commaChain.configFor "sub/B.lean").format.magicTrailingComma == .ignore)
+        "an unset child's magic-trailing-comma did not inherit"
+    write "sub/.lean-fmt.toml" "[format]\nline-width = 42\n"
+    write ".lean-fmt.toml" "magic-trailing-comma = \"ignore\"\n"
+    let misplacedComma ←
+      try
+        discard <| Discovery.run root none;
+        pure false
+      catch _ =>
+        pure true
+    ensure misplacedComma "magic-trailing-comma at the top level was accepted"
+    write ".lean-fmt.toml" "[format]\nmagic-trailing-comma = \"explode\"\n"
+    let badComma ←
+      try
+        discard <| Discovery.run root none;
+        pure false
+      catch _ =>
+        pure true
+    ensure badComma "an unknown magic-trailing-comma value was accepted"
     -- `import-layout` and `import-groups`: defaults, parsing, identity movement (both are
     -- [format] keys), and misplaced/malformed errors.
     write ".lean-fmt.toml" "[format]\nline-width = 100\n"

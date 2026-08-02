@@ -53,6 +53,23 @@ instance : ToString DeclarationBody where
     | .nextLine => "next-line"
     | .sameLine => "same-line"
 
+/-- How a trailing `,` in a collection literal steers its layout (`magic-trailing-comma`). -/
+inductive MagicTrailingComma where
+  /-- The canonical style (`respect`, default), ruff's and black's: a collection whose source
+  spells a trailing `,` before the closing bracket explodes -- one element per row, closing
+  bracket on its own dedented row. Without a trailing comma, width alone decides.
+  -/
+  | respect
+  /-- A trailing `,` is preserved but ignored for layout: width alone decides, and an exploded
+  collection whose trailing comma is removed is free to rejoin. -/
+  | ignore
+  deriving BEq, Lean.ToJson, Lean.FromJson
+
+instance : ToString MagicTrailingComma where
+  toString
+    | .respect => "respect"
+    | .ignore => "ignore"
+
 /-- The `[format]` section: settings that change the **canonical bytes** a run produces.
 
 The section split marks the cache-identity boundary, not a cosmetic grouping:
@@ -75,6 +92,9 @@ structure FormatConfig where private mk ::
   pinnedComments : Array String := #["shake: keep"]
   /-- Declaration body layout (`declaration-body`), default `next-line`. -/
   declarationBody : DeclarationBody := .nextLine
+  /-- Whether a trailing `,` explodes a collection literal (`magic-trailing-comma`), default
+  `respect`. -/
+  magicTrailingComma : MagicTrailingComma := .respect
   /-- Import header layout (`import-layout`), default `grouped`. -/
   importLayout : Imports.ImportLayout := .grouped
   /-- The ordered module-name prefixes that get their own sub-block inside an import bucket
@@ -94,6 +114,7 @@ def FormatConfig.identityString (format : FormatConfig) : String :=
   let groups :=
     format.importGroups.foldl (init := "") fun acc grp => acc ++ s!"\n{grp.length}:{grp}"
   s!"line-width={format.lineWidth}{phrases}\ndeclaration-body={format.declarationBody}\n\
+    magic-trailing-comma={format.magicTrailingComma}\n\
     import-layout={format.importLayout}{groups}"
 
 /-- How a cache entry's closure currency is computed (`[cache] closure`).
@@ -310,6 +331,7 @@ private structure PartialConfig where
   lineWidth? : Option Nat := none
   pinnedComments? : Option (Array String) := none
   declarationBody? : Option DeclarationBody := none
+  magicTrailingComma? : Option MagicTrailingComma := none
   importLayout? : Option Imports.ImportLayout := none
   importGroups? : Option (Array String) := none
   closureMode? : Option ClosureMode := none
@@ -352,6 +374,7 @@ private def PartialConfig.compose (parent child : PartialConfig) : PartialConfig
   lineWidth? := orParent child.lineWidth? parent.lineWidth?
   pinnedComments? := orParent child.pinnedComments? parent.pinnedComments?
   declarationBody? := orParent child.declarationBody? parent.declarationBody?
+  magicTrailingComma? := orParent child.magicTrailingComma? parent.magicTrailingComma?
   importLayout? := orParent child.importLayout? parent.importLayout?
   importGroups? := orParent child.importGroups? parent.importGroups?
   selectedSelectors? := orParent child.selectedSelectors? parent.selectedSelectors?
@@ -395,6 +418,7 @@ private def PartialConfig.resolve (config : PartialConfig) : Except String Forma
         { lineWidth := config.lineWidth?.getD 100
           pinnedComments := config.pinnedComments?.getD #["shake: keep"]
           declarationBody := config.declarationBody?.getD .nextLine
+          magicTrailingComma := config.magicTrailingComma?.getD .respect
           importLayout := config.importLayout?.getD .grouped
           importGroups := config.importGroups?.getD Imports.defaultImportGroups }
       closureMode := config.closureMode?.getD .artifacts
@@ -558,7 +582,8 @@ private def parseFile (anchor file : String) (fileMap : Lean.FileMap) (table : L
             preview? := some flag, origins }
       -- These `[format]` keys are new, so they have no legacy spelling to protect: a top-level
       -- use is an error rather than a notice, so the keys never acquire an ambiguous section.
-      | "line-width" | "pinned-comments" | "declaration-body" | "import-layout" | "import-groups" =>
+      | "line-width" | "pinned-comments" | "declaration-body" | "magic-trailing-comma" |
+        "import-layout" | "import-groups" =>
         throw s!"configuration key '{key}' belongs in the [format] section"
       -- Same treatment as the `[format]` keys above: one spelling, one section, no ambiguity.
       | "closure" =>
@@ -597,6 +622,22 @@ private def parseFile (anchor file : String) (fileMap : Lean.FileMap) (table : L
       config :=
         { config with
           declarationBody? := some declarationBody, origins }
+    | "magic-trailing-comma" =>
+      let .string _ trailing := value
+        | throw "configuration key 'magic-trailing-comma' expects a string"
+      let magicTrailingComma ←
+        match trailing with
+        | "respect" =>
+          pure MagicTrailingComma.respect
+        | "ignore" =>
+          pure MagicTrailingComma.ignore
+        | other =>
+          throw
+              s!"configuration key 'magic-trailing-comma' expects \"respect\" or \
+          \"ignore\", got \"{other}\""
+      config :=
+        { config with
+          magicTrailingComma? := some magicTrailingComma, origins }
     | "import-layout" =>
       let .string _ layout := value | throw "configuration key 'import-layout' expects a string"
       let importLayout ←
@@ -811,6 +852,8 @@ def FormatterConfig.describe (config : FormatterConfig) : Array (String × Strin
       winner "format.pinned-comments"),
     ("format.declaration-body", toString config.format.declarationBody,
       winner "format.declaration-body"),
+    ("format.magic-trailing-comma", toString config.format.magicTrailingComma,
+      winner "format.magic-trailing-comma"),
     ("lint.select", renderStrings config.selectedSelectors, winner "select"),
     ("lint.extend-select", renderStrings config.extendSelectSelectors, all "extend-select"),
     ("lint.ignore", renderStrings config.ignoredSelectors, winner "ignore"),

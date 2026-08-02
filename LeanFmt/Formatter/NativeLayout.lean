@@ -130,6 +130,11 @@ private inductive BoundaryLayout where
     the layout that made a column-sensitive parse commit is the source's, and only spelling its
     column again keeps the candidate's reparse committing the same way. -/
   columned (col : Nat)
+  | /-- The closing bracket of a magic-trailing-comma explosion: a hard break whose continuation
+    dedents to the collection's own line. The amount is the collection's private `nest`, which only
+    the walk can see, so this is spelled as a marker the `.nest` rewrite cancels; see
+    `boundaryFormat` and the `explodedCloseTag` it emits. -/
+  explodedClose
   deriving BEq, Inhabited
 
 private structure TokenSpan where
@@ -1196,6 +1201,124 @@ private partial def collectStructInstFieldRows (source : String) (stx : Lean.Syn
       collectStructInstFieldRows source child starts
   | _ => starts
 
+/- The last leaf of a node, atom or ident. The alternatives of a `choice` spell the same bytes
+(verified at `command`'s entry), so the selected one answers for all of them. -/
+private partial def lastLeaf? (stx : Lean.Syntax) : Option Lean.Syntax :=
+  match stx with
+  | .atom .. | .ident .. => some stx
+  | .node _ kind children =>
+    let children := if kind == Lean.choiceKind then children[0]?.toArray else children
+    children.reverse.findSome? lastLeaf?
+  | .missing => none
+
+/- The item-list `null` node of a collection the magic trailing comma can explode, or none.
+
+The collections are the comma-`sepBy` term literals: `«term#[_,]»` and `«term[_]»`
+(`Init/Data/Array/Basic.lean:29`, `Lean/Parser/Term.lean`), `Term.tuple`,
+`Term.anonymousCtor`, and `Term.structInst`'s fields. In each the list is between the opening
+bracket and the closing one: the second child for the bracketed four, the `structInstFields`
+node's own list for a structure instance. A structure whose fields the source already separated
+by rows keeps them through the `sepByIndent` machinery (`collectIndentedSequenceStarts`,
+`collectStructInstFieldRows`), so a trailing comma there is inert; only the flat spelling
+explodes. Other `sepByIndent`-family lists are not here at all: they already keep the source's
+row layout, so a trailing separator changes nothing a width decision has not already made. -/
+private def explodedCollectionList? (stx : Lean.Syntax) : Option Lean.Syntax :=
+  match stx with
+  | .node _ kind children =>
+    if
+        kind == `«term#[_,]» || kind == `«term[_]» || kind == ``Lean.Parser.Term.anonymousCtor ||
+          kind == ``Lean.Parser.Term.tuple then
+      match children[1]? with
+      | some list => if list.isOfKind Lean.nullKind then some list else none
+      | none => none
+    else
+      if kind == ``Lean.Parser.Term.structInst then
+        -- An ellipsis (`{ …, .. }`) is excluded: the comma before `..` separates the last field
+        -- from the ellipsis rather than closing the list, so it is never the signal this rule
+        -- reads, and exploding every spread struct would surprise.
+        match children.find? (·.isOfKind ``Lean.Parser.Term.optEllipsis) with
+        | some ellipsis =>
+          if ellipsis.getArgs.all (·.matchesNull 0) then
+            match children.find? (·.isOfKind ``Lean.Parser.Term.structInstFields) with
+            | some fields =>
+              match fields.getArgs[0]? with
+              | some list =>
+                if list.isOfKind Lean.nullKind && !hasNewlineSeparator list then some list else none
+              | none => none
+            | none => none
+          else none
+        | none => none
+      else none
+  | _ => none
+
+/- A trailing `,` explodes the collection it closes (the `magic-trailing-comma` setting).
+
+Ruff's and black's magic trailing comma, keyed on the source bytes rather than on width: a
+collection literal whose item list ends in a written `,` spells one element per row, keeps the
+trailing comma, and puts the closing bracket on its own row. The layout is self-perpetuating --
+the exploded spelling retains the comma -- so it is idempotent for free, and removing the comma
+is what re-admits the flat layout when the collection fits. A single-element `#[a,]` explodes
+too, as black's does.
+
+Which slot holds the trailing comma differs by parser: `#[a, b,]` keeps it an odd separator slot
+of the list, while `(a, b,)` nests the tail of the list one `null` deeper. The test is therefore
+the *last leaf* of the item list, which both shapes spell the same way, and the elements are the
+even slots' first leaves, descending a nested list (`explodedElementStarts`).
+
+The element boundaries are `.hard`: unconditional, so the group's fit measurement cannot rejoin
+two elements, and cannot lengthen a row either -- exactly what a self-perpetuating layout needs.
+The closing bracket's is `.explodedClose`, whose dedent the walk spells; see `BoundaryLayout`.
+
+Returns the exploded collections' ranges beside the boundaries: the walk's `.nest` rewrite reads
+them to learn which nest is a collection's own (`TransformState.explodedSpans`). -/
+/-- First-leaf range of every element in a comma-`sepBy` list: the even slots. A tuple's list
+nests its tail -- `` `(a, b, c) `` parses as `(null a "," (null b "," c))` -- so an even slot
+can itself be a list; the recursion descends one whose direct children hold separator atoms (a
+`null`-wrapped *item* never does, so it is not mistaken for a list). -/
+private partial def explodedElementStarts (list : Lean.Syntax) : Array SourceRange :=
+  list.getArgs.zipIdx.foldl (init := #[]) fun starts (arg, index) =>
+    if index % 2 == 1 then starts
+    else
+      if
+          arg.isOfKind Lean.nullKind &&
+            arg.getArgs.any fun child => child.isAtom && child.getAtomVal == "," then
+        starts ++ explodedElementStarts arg
+      else
+        match (selectedLeafRanges arg)[0]? with
+        | some range => starts.push range
+        | none => starts
+
+private partial def collectTrailingCommaExplosions (stx : Lean.Syntax)
+    (ranges : Array SourceRange := #[]) (starts : Array (Nat × BoundaryLayout) := #[]) :
+    Array SourceRange × Array (Nat × BoundaryLayout) :=
+  match stx with
+  | .node _ kind children =>
+    let (ranges, starts) :=
+      match explodedCollectionList? stx with
+      | some list =>
+        match lastLeaf? list with
+        | some (.atom _ ",") =>
+          let starts :=
+            (explodedElementStarts list).foldl (init := starts) fun starts range =>
+              if starts.any (·.1 == range.start) then starts
+              else starts.push (range.start, BoundaryLayout.hard)
+          match lastLeaf? stx with
+          | some bracket =>
+            match sourceRange? bracket, sourceRange? stx with
+            | some bracketRange, some collectionRange =>
+              let starts :=
+                if starts.any (·.1 == bracketRange.start) then starts
+                else starts.push (bracketRange.start, BoundaryLayout.explodedClose)
+              (ranges.push collectionRange, starts)
+            | _, _ => (ranges, starts)
+          | none => (ranges, starts)
+        | _ => (ranges, starts)
+      | none => (ranges, starts)
+    let children := if kind == Lean.choiceKind then children[0]?.toArray else children
+    children.foldl (init := (ranges, starts)) fun (ranges, starts) child =>
+      collectTrailingCommaExplosions child ranges starts
+  | _ => (ranges, starts)
+
 /- The brace argument of a `return` keeps the keyword's row.
 
 `doReturn`'s argument does not cross rows: spelled `return` then a brace on the next row, the
@@ -1628,6 +1751,14 @@ private structure TransformState where
   boundary like any other; this is the same command's *extent*, which is what says how far that
   boundary's column reaches. -/
   nestedCommands : Array TokenSpan
+  /- The terminal spans of collections a trailing comma exploded. A `.nest` whose content spans one
+  exactly is the collection's own private nest, and the `explodedClose` marker inside it cancels
+  exactly that amount; see `dedentExplodedClose`. -/
+  explodedSpans : Array TokenSpan
+  /- For each terminal that begins a syntax node, the terminal span of the smallest such node: the
+  construct a boundary at that terminal heads. The `.nest` hoist test compares its own span
+  against it (`Transformed.hoist?`). -/
+  headSpans : Array (Nat × TokenSpan)
   baseIndent : Nat
   terminalIndex : Nat := 0
   commentIndex : Nat := 0
@@ -1660,6 +1791,33 @@ private structure TransformState where
 private structure Transformed where
   format : Std.Format
   span? : Option TokenSpan := none
+  /- A comment-insertion prefix the enclosing `nest`/`group` rebuild may hoist, as
+  `(prefix, rest, head)` with `format ≡ .append prefix rest` and `head` the terminal span of the
+  smallest syntax node the boundary's terminal heads (`TransformState.headSpans`).
+
+  A leading comment is inserted at the first boundary leaf in front of its terminal, wherever the
+  native document put that leaf. When the terminal is the first element of a comma-separated
+  collection, the document offers no separator leaf between the opening bracket and the element, so
+  the insertion lands inside the element's own private `grp (nest …)` wrapper -- and `text "\n"`
+  re-indents to that nest, putting the comment and the element one level deeper than the siblings
+  the separator `line`s position. This is the defect the `.align` boundary case documents, one
+  grammar family over: there is no boundary leaf to claim, so the insertion itself has to move.
+
+  Moving the prefix out of a `nest` re-parents its rows from the nest's indent to the ambient one.
+  That is sound iff the sibling rows live at the ambient one, which holds exactly when the nest
+  wraps *only* the construct the boundary heads -- the sibling separators then live outside it.
+  The test is tree structure, not printer convention: a nest whose span lies inside `head` is that
+  construct's private wrapper and is climbed; a nest that reaches past it wraps siblings too -- a
+  `match`'s alternatives sit under one `nest -2` -- and stops the climb. A negative nest is never
+  climbed either way: it positions its rows *below* the ambient (`ppDedent`), and the comment's
+  rows are among them. A spanless nest wraps the boundary alone and belongs to it. The `.nest`
+  case spells the test; groups pass the prefix through (they move no columns), and the climb stops
+  at the first `append` with real content to its left.
+
+  Only single-line, relative-indent insertions are hoistable (see `constrainBoundary`): a
+  multi-line payload, an absolute column pin, or a nested-command dedent carries columns computed
+  against the insertion point's ambient nest, which hoisting would invalidate. -/
+  hoist? : Option (Std.Format × Std.Format × TokenSpan) := none
 
 private def nearbyTerminals (state : TransformState) : String :=
   let start := state.terminalIndex - min state.terminalIndex 2
@@ -1845,7 +2003,8 @@ private def finishConstraint (result : Transformed) (carrier? : Option Constrain
             appliedConstraints := state.appliedConstraints.push index
             metrics :=
               { state.metrics with offsideConstraints := state.metrics.offsideConstraints + 1 } }
-      return { result with format := .nest constraint.indentAdjustment result.format }
+      return { result with
+          format := .nest constraint.indentAdjustment result.format, hoist? := none }
     | none =>
       return result
 
@@ -1875,7 +2034,8 @@ private def finishFlatten (result : Transformed) :
 holds {leaf}, which flattening cannot remove"
     | .ok format =>
       set { state with appliedFlattened := state.appliedFlattened.push index }
-      return { result with format }
+      return { result with
+          format, hoist? := none }
 
 /- Put a block's dangling comment back at the end of that block.
 
@@ -2029,6 +2189,12 @@ private def interiorDedent (state : TransformState) : Option Int :=
         | none => some entry).map
     (·.2)
 
+/- The marker an `explodedClose` boundary carries until the `.nest` rewrite cancels it. A reserved
+value rather than a native one: `formatCategory` emits no such tag, and the rewrite consumes the
+leaf before rendering, so no renderer ever interprets it. -/
+private def explodedCloseTag : Nat :=
+  0x6C65616E466D74
+
 /- What the adapter spells at a boundary it corrects. Three of the four are fixed text; `dedented`
 cancels every column between the enclosing command's own and this one, so the line after it starts at
 that command's column whatever the document chose. -/
@@ -2043,9 +2209,49 @@ private def boundaryFormat (state : TransformState) : BoundaryLayout → Std.For
   -- holding it would move the row *left* of where every sibling just went, which is how an arm
   -- body ends up left of its own `|`. So the pin only ever moves a row right.
   | .columned col => .nest (max (col : Int) state.ambientNest - state.ambientNest) (.text "\n")
+  | .explodedClose => .tag explodedCloseTag (.text "\n")
 
+/- Replace every `explodedClose` marker in `format` with a `nest (-indent)`, reporting whether any
+was found.
+
+The closing bracket of an exploded collection sits inside the collection's own `nest`, so a plain
+hard break there lands at the elements' indent. Black's layout dedents the bracket to the
+collection's line, and the amount is the nest itself -- unknowable at `constrainBoundary` time,
+where the boundary is spelled. The `.nest` case is where both halves meet: the node's span says
+whether it wraps the collection, and `indent` is the amount to cancel. Nested exploded collections
+compose: the inner collection's nest is rebuilt first (post-order) and consumes its own marker,
+so each rewrite finds exactly the marker it owns. A collection whose document carries no matching
+nest keeps its marker, which renders as a plain break at the elements' indent -- a fallback, not
+a refusal. -/
+private partial def dedentExplodedClose (indent : Int) (format : Std.Format) : Std.Format × Bool :=
+  match format with
+  | .tag tag inner =>
+    if tag == explodedCloseTag then (.nest (-indent) inner, true)
+    else
+      let (inner, found) := dedentExplodedClose indent inner
+      (.tag tag inner, found)
+  | .nest amount inner =>
+    let (inner, found) := dedentExplodedClose indent inner
+    (.nest amount inner, found)
+  | .group inner behavior =>
+    let (inner, found) := dedentExplodedClose indent inner
+    (.group inner behavior, found)
+  | .append left right =>
+    let (left, foundLeft) := dedentExplodedClose indent left
+    let (right, foundRight) := dedentExplodedClose indent right
+    (.append left right, foundLeft || foundRight)
+  | leaf => (leaf, false)
+
+/- The boundary format, and whether it is a hoistable comment insertion (`Transformed.hoist?`).
+
+Hoistable means the whole boundary can be re-parented under fewer `nest`s without invalidating any
+column in it: comments were inserted here, every payload is single-line (a multi-line payload's
+cancelling `nest` is computed against this point's ambient nest), no nested-command dedent applies
+(`interior`), and the collected layout applied here -- if any -- is one of the relative spellings
+(`flat`/`hard`/`elided`). A `columned` pin and a `dedented` cancellation are spelled against the
+ambient nest at this point, so hoisting them would move rows they exist to hold. -/
 private def constrainBoundary (format : Std.Format) :
-    StateT TransformState (Except String) Std.Format := do
+    StateT TransformState (Except String) (Std.Format × Bool) := do
   let state ← get
   unless state.boundaryNest.any (·.1 == state.terminalIndex) do
     -- The column this row is laid out at, which inside a nested command is not `ambientNest`: every
@@ -2059,16 +2265,28 @@ private def constrainBoundary (format : Std.Format) :
               (state.terminalIndex, state.ambientNest - (interiorDedent state).getD 0) }
   let state ← get
   if insideIsland state then
-    return .nil
+    return (.nil, false)
+  -- Whether the native document spelled anything at all between the previous terminal and this
+  -- one. A collected boundary that fires on empty padding *replaces nothing*: it stands where the
+  -- grammar put no separator leaf, inside whatever private wrapper the following item carries, so
+  -- it is hoistable on the same terms as a comment insertion (`Transformed.hoist?`). A separator
+  -- `line` never satisfies this, so boundaries that correct an existing leaf are untouched.
+  let nativeEmpty := provablyEmpty format
   let mut format := format
   -- A `dedented` boundary at this terminal governs every row the comment insertion below opens, not
   -- only the one the native document spelled. See `insertComments`.
   let mut rowBreak : Std.Format := .text "\n"
+  -- Set false when a boundary whose spelling is keyed to this point's ambient nest is applied.
+  let mut layoutHoistable := true
+  -- Whether a collected boundary was applied here. Only read with `nativeEmpty`.
+  let mut boundaryApplied := false
   -- The first boundary leaf at this terminal, and only the first: the document can lay out more than
   -- one leaf between two terminals, and a correction that fired at each of them would spell itself
   -- twice. Eliding a doubled newline depends on exactly this -- it removes the first of the two.
   if let some (_, layout) :=
       state.boundaries.find? fun (index, _) => index == state.terminalIndex then
+    unless layout matches .flat | .hard | .elided do
+      layoutHoistable := false
     if layout matches .dedented then
       rowBreak := boundaryFormat state layout
     unless state.appliedBoundaries.contains state.terminalIndex do
@@ -2090,6 +2308,7 @@ private def constrainBoundary (format : Std.Format) :
             metrics :=
               { state.metrics with offsideConstraints := state.metrics.offsideConstraints + 1 } }
       format := boundaryFormat state layout
+      boundaryApplied := true
   let state ← get
   -- Every row this boundary opens inside a nested command is cancelled the way that command's own
   -- boundary was. `dedented` sets the column of one row and leaves the rest carrying the `nest` the
@@ -2104,8 +2323,14 @@ private def constrainBoundary (format : Std.Format) :
       stop := stop + 1
     else
       break
+  -- Whether comments were inserted here and every one of them keeps its columns when the insertion
+  -- moves out of the enclosing nests: single-line payloads only, and no absolute cancellation in
+  -- the rows. A multi-line payload's dedent is `interior - dedentColumns state`, spelled against
+  -- this point's ambient nest -- the same reason `layoutHoistable` exists.
+  let mut commentsHoistable := false
   if start < stop then
     let comments := state.comments.extract start stop
+    commentsHoistable := comments.all fun comment => !comment.payload.contains '\n'
     set
         { state with
           commentIndex := stop
@@ -2121,7 +2346,17 @@ private def constrainBoundary (format : Std.Format) :
   if interior != 0 then
     format := .nest (-interior) format
   modify fun state => { state with separated := state.separated || !provablyEmpty format }
-  return format
+  return (format,
+      (commentsHoistable || (boundaryApplied && nativeEmpty)) && layoutHoistable && interior == 0)
+
+/-- The hoist payload for a hoistable boundary at `state.terminalIndex`, or none when the terminal
+heads no recorded construct: without the construct's span the `.nest` privacy test cannot be
+made, and not hoisting is the behavior the walk had before `hoist?` existed. -/
+private def hoistPayload? (state : TransformState) (hoistable : Bool) (boundary rest : Std.Format) :
+    Option (Std.Format × Std.Format × TokenSpan) :=
+  if hoistable then
+    (state.headSpans.find? (·.1 == state.terminalIndex)).map fun (_, span) => (boundary, rest, span)
+  else none
 
 private def consumeIsland (value : String) (island : ExactIsland) :
     StateT TransformState (Except String) Transformed := do
@@ -2147,7 +2382,7 @@ private def consumeIsland (value : String) (island : ExactIsland) :
   -- before it, and that separator is the adapter's — but this consumed `start`..`stop` in one step
   -- and never called `constrainBoundary`, so the boundary stayed collected and unapplied and the
   -- command was refused.
-  let boundary ← constrainBoundary (.text leading)
+  let (boundary, _) ← constrainBoundary (.text leading)
   -- `startsLine` is the fallback for a comment island whose break the document did not spell. An
   -- applied boundary is the same decision made by a rule that read the grammar, so it wins outright
   -- rather than composing -- both spell `\n`, and both would spell a blank line.
@@ -2186,7 +2421,11 @@ private def transformOrdinaryText (value : String) :
     set
         { state with
           metrics := { state.metrics with nativeNodes := state.metrics.nativeNodes + 1 } }
-    finishNode { format := ← constrainBoundary (.text value) }
+    let (boundary, hoistable) ← constrainBoundary (.text value)
+    let state ← get
+    finishNode
+        { format := boundary
+          hoist? := hoistPayload? state hoistable boundary .nil }
   else if let some island := islandAt state then
     -- This leaf spells a terminal the island covers, so the island's own bytes already carry it.
     -- Recording the entry is what lets `insideIsland` suppress the boundaries that follow it.
@@ -2198,9 +2437,9 @@ private def transformOrdinaryText (value : String) :
     -- way: the entry was recorded, `insideIsland` then held, and the boundary the doc rule collected
     -- at that terminal could never be applied by anyone. `Mathlib/Tactic/CasesM.lean`'s `where` binding
     -- reported this as `applied 4/5 boundaries`.
-    let boundary ←
+    let (boundary, _) ←
       if state.enteredIslands.contains island.marker then
-        pure .nil
+        pure (.nil, false)
       else
         constrainBoundary (.text (splitPadding value).1)
     modify fun state =>
@@ -2227,7 +2466,7 @@ private def transformOrdinaryText (value : String) :
     let normalized :=
       nativePayload != terminal.syntaxSpelling && nativePayload != terminal.sourceSpelling
     let (leading, trailing) := splitPadding value
-    let boundary ← constrainBoundary (.text leading)
+    let (boundary, hoistable) ← constrainBoundary (.text leading)
     let state ← get
     set
         { state with
@@ -2240,7 +2479,10 @@ private def transformOrdinaryText (value : String) :
               normalizedTokens := state.metrics.normalizedTokens + if normalized then 1 else 0 } }
     finishNode
         { format := .append boundary (.append (.text terminal.sourceSpelling) (.text trailing))
-          span? := some ⟨state.terminalIndex, state.terminalIndex + 1⟩ }
+          span? := some ⟨state.terminalIndex, state.terminalIndex + 1⟩
+          hoist? :=
+            hoistPayload? state hoistable boundary
+              (.append (.text terminal.sourceSpelling) (.text trailing)) }
 
 private def transformText (value : String) : StateT TransformState (Except String) Transformed := do
   let state ← get
@@ -2298,7 +2540,11 @@ private partial def transformNative : Std.Format → StateT TransformState (Exce
     modify fun state =>
         { state with
           metrics := { state.metrics with nativeNodes := state.metrics.nativeNodes + 1 } }
-    finishNode { format := ← constrainBoundary .line }
+    let (boundary, hoistable) ← constrainBoundary .line
+    let state ← get
+    finishNode
+        { format := boundary
+          hoist? := hoistPayload? state hoistable boundary .nil }
   -- An `align` is a boundary: it is layout the document put between two terminals, and a comment that
   -- belongs in that gap belongs *here*. It used to be the one boundary leaf that did not go through
   -- `constrainBoundary`, so a comment landing in this gap was carried to the next leaf that did --
@@ -2310,7 +2556,10 @@ private partial def transformNative : Std.Format → StateT TransformState (Exce
     modify fun state =>
         { state with
           metrics := { state.metrics with nativeNodes := state.metrics.nativeNodes + 1 } }
-    finishNode { format := ← constrainBoundary (.align force) }
+    -- An `align` pads to the ambient indent at its own point, so it is never hoistable: moving it
+    -- out of a `nest` would change what it pads to.
+    let (boundary, _) ← constrainBoundary (.align force)
+    finishNode { format := boundary }
   | .text value => transformText value
   | .nest indent inner => do
     modify fun state =>
@@ -2319,14 +2568,64 @@ private partial def transformNative : Std.Format → StateT TransformState (Exce
           metrics := { state.metrics with nativeNodes := state.metrics.nativeNodes + 1 } }
     let inner ← transformNative inner
     modify fun state => { state with ambientNest := state.ambientNest - indent }
-    finishNode { inner with format := .nest indent inner.format } (carrier? := some .nest)
+    -- A hoistable comment prefix climbs out of the nest when -- and only when -- the nest is the
+    -- private wrapper of the construct the boundary heads: the sibling separators then live
+    -- outside it at the ambient indent, which is where the prefix's rows belong
+    -- (`Transformed.hoist?` states the soundness argument). The test is containment of the nest's
+    -- own terminal span in the headed construct's, plus two structural exclusions: a negative
+    -- nest positions its rows *below* the ambient (`ppDedent`'s `nest -2` over a `match`'s arms,
+    -- which the climb misaligned in `LeanFmt/Application.lean`), and a spanless nest wraps the
+    -- boundary alone and belongs to it (`first | …`'s separator `nest -2 T"\n"`, the
+    -- `tacticComment` fixture). Blocked, the prefix stays inside and stops: a nest it cannot
+    -- leave is one its siblings cannot leave either.
+    -- A nest whose content spans an exploded collection exactly is the collection's own private
+    -- wrapper: the `explodedClose` marker inside cancels this amount, dedenting the closing
+    -- bracket to the collection's line. Ancestors can share the span (a body wrapper around the
+    -- whole collection), but post-order reaches the innermost first, and it consumes the marker.
+    --
+    -- The rewrite runs on `inner`, *before* the hoist below: a comment insertion hoisted through
+    -- here carries the content in its payload (`Transformed.hoist?`), and rewriting only the
+    -- format would leave the payload holding the un-rewritten rest, which the next wrapper up
+    -- re-emits -- the `},` of an exploded struct commented as a collection's first element kept
+    -- the elements' indent from exactly that.
+    let state ← get
+    let inner :=
+      match inner.span? with
+      | some span =>
+        if state.explodedSpans.contains span then
+          { inner with
+            format := (dedentExplodedClose indent inner.format).1
+            hoist? :=
+              inner.hoist?.map fun (pre, rest, head) =>
+                (pre, (dedentExplodedClose indent rest).1, head) }
+        else inner
+      | none => inner
+    let rebuilt :=
+      match inner.hoist? with
+      | some (pre, rest, head) =>
+        match inner.span? with
+        | some span =>
+          if 0 <= indent && head.start <= span.start && span.stop <= head.stop then
+            { format := .append pre (.nest indent rest)
+              span? := inner.span?
+              hoist? := some (pre, .nest indent rest, head) }
+          else { format := .nest indent inner.format, span? := inner.span? }
+        | none => { format := .nest indent inner.format, span? := inner.span? }
+      | none => { inner with format := .nest indent inner.format }
+    finishNode rebuilt (carrier? := some .nest)
   | .append left right => do
     modify fun state =>
         { state with
           metrics := { state.metrics with nativeNodes := state.metrics.nativeNodes + 1 } }
     let left ← transformNative left
     let right ← transformNative right
-    let right := { right with format := (← finishTrailing left right).getD right.format }
+    let trailing? ← finishTrailing left right
+    -- A placed block-dangling comment rewrites the right side wholesale; the hoist split cannot be
+    -- tracked through it, so it does not survive.
+    let right :=
+      match trailing? with
+      | some format => ({ format, span? := right.span? } : Transformed)
+      | none => right
     -- Read off the *uncorrected* left, because this is what decides whether an offside constraint
     -- keyed to this append is applied here. Removing a redundant break can empty the left side; the
     -- constraint still belongs to this boundary, and an unapplied one refuses the command.
@@ -2345,26 +2644,97 @@ private partial def transformNative : Std.Format → StateT TransformState (Exce
       modify fun state =>
           { state with
             metrics := { state.metrics with redundantBreaks := state.metrics.redundantBreaks + 1 } }
+    -- The hoist prefix survives only while it stays leftmost: a provably empty left side yields
+    -- to the right's own prefix; a left side that still carries its prefix keeps it, with the
+    -- right appended to its rest. Anything else -- real left content, or a corrected left whose
+    -- reassociation the split cannot see through -- clears it.
+    let hoist? :=
+      match leftFormat with
+      | some _ => none
+      | none =>
+        if provablyEmpty left.format then right.hoist?
+        else
+          match left.hoist? with
+          | some (pre, rest, head) => some (pre, .append rest right.format, head)
+          | none => none
     finishNode
         { format := .append (leftFormat.getD left.format) right.format
-          span? := mergeSpan left.span? right.span? } carrier?
+          span? := mergeSpan left.span? right.span?
+          hoist? } carrier?
   | .group inner behavior => do
     modify fun state =>
         { state with
           metrics := { state.metrics with nativeNodes := state.metrics.nativeNodes + 1 } }
     let inner ← transformNative inner
-    finishNode { inner with format := .group inner.format behavior }
+    -- Hoisting through a group lets the group flatten as if the comment were not there: the
+    -- comment rows are hard breaks, so the insertion keeps its own layout either way, and a group
+    -- whose only forced break was the comment regains its width decision. This is the comment
+    -- layout-transparency rule applied inside native groups. A group wrapping the boundary alone
+    -- keeps it: that group is the renderer's fit measurement for the break itself, same as the
+    -- boundary-only `nest` above.
+    let rebuilt :=
+      match inner.hoist? with
+      | some (pre, rest, head) =>
+        if provablyEmpty rest then { inner with format := .group inner.format behavior }
+        else
+          { format := .append pre (.group rest behavior)
+            span? := inner.span?
+            hoist? := some (pre, .group rest behavior, head) }
+      | none => { inner with format := .group inner.format behavior }
+    finishNode rebuilt
   | .tag tag inner => do
     modify fun state =>
         { state with
           metrics := { state.metrics with nativeNodes := state.metrics.nativeNodes + 1 } }
     let inner ← transformNative inner
-    finishNode { inner with format := .tag tag inner.format }
+    -- A tag marks a semantic span; the insertion stays inside it rather than narrowing the mark.
+    finishNode
+        { inner with
+          format := .tag tag inner.format, hoist? := none }
 
 private def spanForRange (terminals : Array Terminal) (range : SourceRange) : TokenSpan :=
   let start := terminals.findIdx? (range.start <= ·.range.start) |>.getD terminals.size
   let stop := terminals.findIdx? (range.stop <= ·.range.start) |>.getD terminals.size
   ⟨start, stop⟩
+
+/- For every terminal that begins one or more syntax nodes, the terminal span of the construct a
+boundary at that terminal heads: the smallest node starting at the terminal that extends past it
+(`Term.tuple` beside its `hygienicLParen` delimiter wrapper), or, when the terminal *is* the whole
+construct (a literal element), the smallest node starting there at all. The `.nest` hoist test
+reads it (`Transformed.hoist?`); a boundary whose terminal has no entry does not hoist, which is
+the behavior the walk had before hoisting existed.
+
+The multi-terminal preference needs no grammar kinds: a delimiter wrapper spans exactly the token,
+a list-grouping node spans the first item *and its siblings* and so is never smaller than the item
+node itself, and either way the smallest remaining candidate is the headed construct. -/
+private partial def collectHeadSpans (terminals : Array Terminal) (stx : Lean.Syntax)
+    (starts : Array (Nat × TokenSpan) := #[]) : Array (Nat × TokenSpan) :=
+  match stx with
+  | .node _ kind children =>
+    let starts :=
+      match sourceRange? stx, (selectedLeafRanges stx)[0]? with
+      | some range, some leafRange =>
+        match terminals.findIdx? (·.range.start == leafRange.start) with
+        | some index =>
+          let span := spanForRange terminals range
+          let width := span.stop - span.start
+          -- `next` supersedes an earlier candidate when it is the first multi-terminal one, or a
+          -- smaller one: the pre-order walk meets the list before the item and the item before
+          -- its delimiter wrapper.
+          let supersedes (old : TokenSpan) : Bool :=
+            let oldWidth := old.stop - old.start
+            if 1 < width then oldWidth <= 1 || width < oldWidth else oldWidth <= 1
+          match starts.find? (·.1 == index) with
+          | some (_, old) =>
+            if supersedes old then
+              starts.map fun pair => if pair.1 == index then (index, span) else pair
+            else starts
+          | none => starts.push (index, span)
+        | none => starts
+      | _, _ => starts
+    let children := if kind == Lean.choiceKind then children[0]?.toArray else children
+    children.foldl (init := starts) fun starts child => collectHeadSpans terminals child starts
+  | _ => starts
 
 /- Which terminal a collected source offset names: the first one at or after it.
 
@@ -2394,7 +2764,8 @@ private def transform (source : String) (terminals : Array Terminal)
     (comments : Array InteriorComment) (blockDangling : Array (SourceRange × InteriorComment))
     (islands : Array ExactIsland) (constraints : Array OffsideConstraint)
     (boundaryStarts : Array (Nat × BoundaryLayout)) (joined : Array SourceRange)
-    (nestedCommandRanges : Array SourceRange) (baseIndent : Nat) (native : Std.Format) :
+    (nestedCommandRanges : Array SourceRange) (explodedRanges : Array SourceRange)
+    (headSpans : Array (Nat × TokenSpan)) (baseIndent : Nat) (native : Std.Format) :
     Except String (Std.Format × Metrics) := do
   let constraints :=
     constraints.map fun constraint => (constraint, spanForRange terminals constraint.range)
@@ -2425,6 +2796,7 @@ private def transform (source : String) (terminals : Array Terminal)
   let boundaries ← boundaryTable terminals boundaryStarts
   let flattened := joined.map (spanForRange terminals)
   let nestedCommands := nestedCommandRanges.map (spanForRange terminals)
+  let explodedSpans := explodedRanges.map (spanForRange terminals)
   let trailing := blockDangling.map fun (range, comment) => (spanForRange terminals range, comment)
   let comments :=
     comments.map fun comment =>
@@ -2438,7 +2810,7 @@ private def transform (source : String) (terminals : Array Terminal)
   let initial : TransformState :=
     {
     source, terminals, comments, trailing, islands, droppedIslands, constraints, boundaries,
-    flattened, nestedCommands, baseIndent }
+    flattened, nestedCommands, explodedSpans, headSpans, baseIndent }
   let (result, state) ← (transformNative native).run initial
   if state.terminalIndex != terminals.size then
     throw
@@ -2676,35 +3048,49 @@ alternatives: alternative 0 is {expected}, alternative {alternative} is {actual}
       some
         (bracket.start,
           if brokenBefore doc.start then BoundaryLayout.dedented else BoundaryLayout.elided)
+  -- The magic trailing comma, collected only under `respect`: under `ignore` the trailing comma
+  -- is inert layout evidence and no boundaries come of it.
+  let (explodedRanges, trailingCommaBoundaries) :=
+    if format.magicTrailingComma == .respect then collectTrailingCommaExplosions stripped
+    else (#[], #[])
+  -- What each boundary's terminal heads, for the hoist's privacy test (`Transformed.hoist?`).
+  let headSpans := collectHeadSpans terminals stripped
+  -- Inside an exploded collection the source-column pins are dropped: explosion and the pins
+  -- answer the same question (one element per row), the pin's column is stale once the collection
+  -- explodes, and `boundaryTable` refuses a `.hard`/`.columned` disagreement at one terminal.
+  let outsideExploded (start : Nat) : Bool :=
+    !explodedRanges.any fun range => range.start < start && start < range.stop
   let boundaryStarts : Array (Nat × BoundaryLayout) :=
     (collectUngroupedBodyStarts format.declarationBody source format.lineWidth stripped
-                                        (collectReturnTermStarts stripped)).map
-                                    (·, BoundaryLayout.flat) ++
-                                  (collectIndentedSequenceStarts stripped).map
-                                    (·, BoundaryLayout.hard) ++
-                                (collectCdotStarts stripped).map (·, BoundaryLayout.flat) ++
-                              nestedCommandStarts.map (·, BoundaryLayout.dedented) ++
-                            ctorDocStarts.map (·, BoundaryLayout.elided) ++
-                          docBoundaries ++
-                        attrDocBoundaries ++
-                      joined.map (·.start, BoundaryLayout.flat) ++
-                    (collectGuardBarBreaks source stripped).map (·, BoundaryLayout.hard) ++
-                  ((collectBraceAppArgStarts stripped).filterMap fun start =>
+                                          (collectReturnTermStarts stripped)).map
+                                      (·, BoundaryLayout.flat) ++
+                                    (collectIndentedSequenceStarts stripped).map
+                                      (·, BoundaryLayout.hard) ++
+                                  (collectCdotStarts stripped).map (·, BoundaryLayout.flat) ++
+                                nestedCommandStarts.map (·, BoundaryLayout.dedented) ++
+                              ctorDocStarts.map (·, BoundaryLayout.elided) ++
+                            docBoundaries ++
+                          attrDocBoundaries ++
+                        joined.map (·.start, BoundaryLayout.flat) ++
+                      (collectGuardBarBreaks source stripped).map (·, BoundaryLayout.hard) ++
+                    ((collectBraceAppArgStarts stripped).filterMap fun start =>
+                      if brokenBefore start then none else some (start, BoundaryLayout.flat)) ++
+                  ((collectReturnBraceStarts stripped).filterMap fun start =>
                     if brokenBefore start then none else some (start, BoundaryLayout.flat)) ++
-                ((collectReturnBraceStarts stripped).filterMap fun start =>
-                  if brokenBefore start then none else some (start, BoundaryLayout.flat)) ++
-              (collectBraceInteriorBreaks source stripped).map
+                ((collectBraceInteriorBreaks source stripped).filter fun p =>
+                      outsideExploded p.1).map
+                  (fun p => (p.1, BoundaryLayout.columned p.2)) ++
+              ((collectStructInstFieldRows source stripped).filter fun p => outsideExploded p.1).map
                 (fun p => (p.1, BoundaryLayout.columned p.2)) ++
-            (collectStructInstFieldRows source stripped).map
+            (collectLetFamilyAlignments source stripped).map
               (fun p => (p.1, BoundaryLayout.columned p.2)) ++
-          (collectLetFamilyAlignments source stripped).map
-            (fun p => (p.1, BoundaryLayout.columned p.2)) ++
-        unbreakableRunBoundaries source terminals unbreakableRuns ++
-      (collectStructInstEllipses stripped).filterMap fun start =>
-        let broken :=
-          (terminals.filter (·.range.stop <= start)).back?.any fun previous =>
-            (slice source ⟨previous.range.stop, start⟩).contains '\n'
-        if broken then some (start, BoundaryLayout.hard) else none
+          unbreakableRunBoundaries source terminals unbreakableRuns ++
+        ((collectStructInstEllipses stripped).filterMap fun start =>
+          let broken :=
+            (terminals.filter (·.range.stop <= start)).back?.any fun previous =>
+              (slice source ⟨previous.range.stop, start⟩).contains '\n'
+          if broken then some (start, BoundaryLayout.hard) else none) ++
+      trailingCommaBoundaries
   let commentFree := withoutTrivia stripped
   let (formattedSyntax, islands) := protectSourceData categories source commentFree
   -- Named before `formatCommand` reaches it. Both lookups this breaks fail with a message about
@@ -2739,7 +3125,7 @@ cannot tell from the placeholder that protects {marker.range.start}:{marker.rang
     let native := (dropTrailingHardLine native).getD native
     match
       transform source terminals comments blockDangling islands constraints boundaryStarts joined
-        nestedCommandRanges baseIndent native with
+        nestedCommandRanges explodedRanges headSpans baseIndent native with
     | .ok (native, metrics) =>
       return .ok { document := Doc.registered native, trace, metrics }
     | .error detail =>

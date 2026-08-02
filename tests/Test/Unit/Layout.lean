@@ -343,7 +343,7 @@ private def testAlignmentSequences : IO Unit := do
   let expected := spellings.map (·.2)
   let leaves := spellings.map (·.1)
   let run (native : Std.Format) :=
-    Formatter.NativeLayout.transform source terminals #[] #[] #[] #[] #[] #[] #[] 0 native
+    Formatter.NativeLayout.transform source terminals #[] #[] #[] #[] #[] #[] #[] #[] #[] 0 native
   let .ok (aligned, metrics) :=
     run (nativeSequence leaves) | throw (IO.userError "an ordinary terminal sequence was refused")
   ensure (alignedPayloads aligned == expected)

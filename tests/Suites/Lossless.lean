@@ -322,8 +322,8 @@ private def testMutations (ctx : Ctx) : IO Unit := do
   -- projection, and the tiling claims live on individual leaves.
   let checks : Array (String × (Lean.Json → IO Lean.Json)) :=
     #[
-        -- Identity: the artifact must be about the file the consumer holds, not another one.
-        ("wrong digest", fun artifact =>
+      -- Identity: the artifact must be about the file the consumer holds, not another one.
+      ("wrong digest", fun artifact =>
         pure <|
           artifact.setObjVal! "normalizedDigest"
             (Lean.toJson (String.ofList (List.replicate 64 '0')))),

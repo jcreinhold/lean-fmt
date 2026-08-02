@@ -21,6 +21,7 @@ preview = false                      # enable preview-stage rules
 line-width = 100                     # 1..1000
 pinned-comments = ["shake: keep"]    # inline comments that never move and never split their line
 declaration-body = "next-line"       # or "same-line"
+magic-trailing-comma = "respect"     # or "ignore"
 import-layout = "grouped"            # or "canonical" (the organizer's header rewrite)
 import-groups = ["Lean", "Mathlib"]  # canonical layout: sub-block prefixes inside a bucket
 
@@ -54,6 +55,13 @@ moves it and never splits its line, even when the code alone overflows — a pin
 style Lean's own formatter produces: the body begins on its own line (`def foo :=` then `1`). `"same-line"` keeps the
 body on the `:=` line when the joined line fits `line-width`, joining already-broken bodies that fit, and breaks exactly
 like the default when it does not.
+
+`magic-trailing-comma` is ruff's and black's magic trailing comma, with ruff's spelling. The default `"respect"`: a
+collection literal -- `#[…]`, `[…]`, a tuple, `⟨…⟩`, or a structure instance -- whose source spells a trailing `,`
+before the closing bracket explodes: one element per row, the trailing comma kept, and the closing bracket on its own
+row dedented back to the collection's line. The layout is self-perpetuating, because the exploded spelling retains the
+comma; removing the comma is what re-admits a flat layout when the collection fits. `"ignore"` preserves the trailing
+comma but ignores it: width alone decides, as if the comma were not there.
 
 `import-layout` chooses what `lean-fmt organize` (and the editor's organize-imports code action) rewrites the header to.
 The default `"grouped"` sorts within each blank-line/comment-delimited group and never crosses one. `"canonical"`

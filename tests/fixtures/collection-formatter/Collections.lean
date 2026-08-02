@@ -25,6 +25,29 @@ def listValue (alpha beta gamma delta epsilon : Nat) : List Nat :=
 def trailingList (alpha beta gamma : Nat) : List Nat :=
   [alpha, beta, gamma,]
 
+def trailingArray (alpha beta gamma : Nat) : Array Nat :=
+  #[alpha, beta, gamma,]
+
+def trailingTuple (alpha beta gamma : Nat) : Nat × Nat × Nat :=
+  (alpha, beta, gamma,)
+
+def trailingAnonymous (alpha beta gamma : Nat) : Packet :=
+  ⟨alpha, beta, gamma,⟩
+
+def trailingRecord (alpha beta gamma : Nat) : Packet :=
+  { first := alpha, second := beta, third := gamma, }
+
+def singleTrailing (alpha : Nat) : Array Nat :=
+  #[alpha,]
+
+def nestedTrailing (alpha beta gamma : Nat) : Array Nat × Array Nat :=
+  (#[alpha, beta,], #[gamma,],)
+
+def commentedTrailing (alpha beta gamma : Nat) : Array Nat :=
+  #[
+    -- leading comment
+    alpha, beta, gamma,]
+
 def arrayValue (alpha beta gamma delta epsilon : Nat) : Array Nat :=
   #[alpha, beta, gamma, delta, epsilon]
 

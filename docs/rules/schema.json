@@ -16,7 +16,8 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "line-width": { "type": "integer", "minimum": 1, "maximum": 1000 }
+        "line-width": { "type": "integer", "minimum": 1, "maximum": 1000 },
+        "magic-trailing-comma": { "type": "string", "enum": ["respect", "ignore"] }
       }
     },
     "lint": {
