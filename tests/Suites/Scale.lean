@@ -11,6 +11,10 @@ cached, and a single-source edit invalidates exactly that source's entry. It als
 project's own Lake arguments reach the exact frontend, which needs a second fixture project because
 the argument belongs in its lakefile.
 
+Two later cases gate the frontend child itself, on fixture projects of their own: what its
+transport leaves open (`descriptor-closure`) and how large a task pool it gets
+(`child-pool-starvation`).
+
 Lane: parallel — the fixture project and its `.lean-fmt-cache` live under a temp dir.
 -/
 
@@ -154,6 +158,60 @@ private def testDescriptorClosure (ctx : Scale.Ctx) : IO Unit := do
   ensure (finished ≤ started + 8)
       s!"descriptor closure: {started} descriptors open at start, {finished} at end"
 
+/-- The frontend child gets a task pool of its own, not the caller's `LEAN_NUM_THREADS`.
+
+The child elaborates under `Elab.async := true`, so its own elaboration sits on a pool thread and
+every pooled task that waits for another one holds a second. A nest two deep — `TacticM.parFirst`
+whose jobs each call `TacticM.parFirst` — needs four threads to make progress, and measured here it
+deadlocks at one, two, and three. The caller's `LEAN_NUM_THREADS` is not that number: for this
+product it names the worker count (`resolveWorkers`), and CI sets it to 1. Sizing the child's pool
+from it cost a whole-project mathlib run 45 silent minutes on one file.
+
+So the case runs under `LEAN_NUM_THREADS=1`, which is exactly the configuration that hung, and
+gives the child a one-minute bound so a regression reports a named file instead of sitting for the
+default ten. -/
+private def testChildPoolStarvation (ctx : Scale.Ctx) : IO Unit := do
+  let project := ctx.work / "pool"
+  IO.FS.createDirAll (project / "Probe")
+  copyFile (ctx.root / "lean-toolchain") (project / "lean-toolchain")
+  writeFile (project / "lakefile.lean")
+      "import Lake\n\nopen Lake DSL\n\npackage \"pool-fixture\"\n\nlean_lib Probe where\n  \
+     globs := #[.submodules `Probe]\n"
+  writeFile (project / "Probe" / "Nested.lean")
+      (String.intercalate "\n"
+        ["import Lean", "", "open Lean Elab Tactic", "",
+          "/-- Two levels of pooled waiting: each outer job blocks on an inner `parFirst`. -/",
+          "elab \"nested_par\" : tactic => do", "  let inner : TacticM Unit := do",
+          "    let jobs : List (TacticM Unit) := [pure (), pure ()]",
+          "    let _ ← TacticM.parFirst jobs", "  let jobs : List (TacticM Unit) := [inner, inner]",
+          "  let _ ← TacticM.parFirst jobs", "", "example : True := by", "  nested_par",
+          "  trivial", ""])
+  discard <|
+      expectExit 0 "lake build Probe" "lake" #["-d", project.toString, "build", "Probe"] (cwd? :=
+        some ctx.root)
+  let check (label : String) (expected : UInt32) (threads : Array (String × Option String))
+    (bound : String) : IO Lean.Json := do
+    let result ←
+      expectExit expected label ctx.application
+          #["check", "--root", project.toString, "--no-cache", "--select", "FMT011", "--workers",
+            "1", "--json"]
+          (env :=
+          #[("LEAN_NUM_THREADS", some "1"), ("LEAN_FMT_CHILD_TIMEOUT_MS", some bound)] ++ threads)
+          (timeoutMs := some 300000)
+    parseJson result.stdout label
+  let report ← check "child pool starvation" 0 #[] "60000"
+  ensureEq "the fixture lost its source" ["Probe/Nested.lean", "lakefile.lean"]
+      (Scale.pathsOf report)
+  ensureJsonAt report [.field "infrastructureFailures"] (.arr #[]) "child pool starvation"
+  -- Without the second arm the case cannot fail: a run that never spawned a child would pass it.
+  -- Two threads is what this product shipped, and it is what the nest starves.
+  let starved ←
+    check "child pool starvation (two threads)" 2 #[("LEAN_FMT_CHILD_THREADS", some "2")] "20000"
+  let starvedCount :=
+    (((jsonAt? starved [.field "infrastructureFailures"]).bind (·.getArr?.toOption)).getD #[]).size
+  ensure (starvedCount == 1)
+      s!"two threads did not starve the nest, so this case gates nothing: {starved.compress}"
+
 public def main (args : List String) : IO UInt32 := do
   let root ← repoRoot
   withTempDir fun work => do
@@ -181,5 +239,6 @@ public def main (args : List String) : IO UInt32 := do
           { name := "warm-all-hit", run := Scale.testWarm ctx cold },
           { name := "single-source-invalidation", run := Scale.testSingleSourceInvalidation ctx },
           { name := "lean-args-reach-the-frontend", run := Scale.testLeanArgsReachTheFrontend ctx },
-          { name := "descriptor-closure", run := testDescriptorClosure ctx }]
+          { name := "descriptor-closure", run := testDescriptorClosure ctx },
+          { name := "child-pool-starvation", run := testChildPoolStarvation ctx }]
       runCases "scale" cases args
