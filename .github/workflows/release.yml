@@ -80,14 +80,18 @@ jobs:
           cp .lake/build/bin/lean-fmt .lake/build/bin/lean-fmt-artifact-extract "$name/bin/"
           cp LICENSE README.md "$name/"
           tar -czf "$name.tar.gz" "$name"
-          shasum -a 256 "$name.tar.gz" >> SHA256SUMS
+          # One sums file per target, never a shared name: `download-artifact --merge-multiple`
+          # overwrites same-named files rather than concatenating them, so a shared SHA256SUMS
+          # ships one leg's line and install.sh's `grep` then fails on every other platform.
+          # The publish job concatenates these into the SHA256SUMS that ships.
+          shasum -a 256 "$name.tar.gz" > "$name.tar.gz.sha256"
 
       - uses: actions/upload-artifact@v4
         with:
           name: package-${{ matrix.target }}
           path: |
             *.tar.gz
-            SHA256SUMS
+            *.tar.gz.sha256
           if-no-files-found: error
 
   publish:
@@ -108,5 +112,8 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: |
           gh release view "$TAG" > /dev/null 2>&1 || gh release create "$TAG" --generate-notes
+          cat ./*.tar.gz.sha256 | sort -k2 > SHA256SUMS
+          # One line per tarball, or install.sh dies on the platforms that are missing.
+          [ "$(wc -l < SHA256SUMS)" -eq "$(ls ./*.tar.gz | wc -l)" ]
           cat SHA256SUMS
           gh release upload "$TAG" ./*.tar.gz ./SHA256SUMS --clobber

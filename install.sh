@@ -74,7 +74,12 @@ curl -sSfL "$base/$name.tar.gz" -o "$tmp/$name.tar.gz"
 curl -sSfL "$base/SHA256SUMS" -o "$tmp/SHA256SUMS"
 (
 	cd "$tmp"
-	grep " $name.tar.gz\$" SHA256SUMS >sum.txt
+	# A missing line is a broken release, not a tampered download. Say which, or `set -e`
+	# kills the script on grep's exit status and the user sees nothing at all.
+	grep " $name.tar.gz\$" SHA256SUMS >sum.txt || {
+		echo "install.sh: $version publishes no checksum for $name.tar.gz — report this at https://github.com/$REPO/issues" >&2
+		exit 1
+	}
 	# Require the OK line, not the checker's exit code: this platform's sha256sum only
 	# warns and exits 0 on an improperly formatted sum line, which would verify nothing.
 	if command -v sha256sum >/dev/null 2>&1; then
