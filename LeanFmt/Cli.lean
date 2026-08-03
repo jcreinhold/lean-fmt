@@ -475,7 +475,23 @@ the `PositionIndex` execution resolved beside the report). None of them reads a 
 analysis, or touches rule selection, which makes them golden-testable.
 `emitReport` is the single IO boundary. -/
 
-private def textReport (report : RunReport) : String :=
+/-- One line/column pair for a finding's start, or `1:1` when the index has no answer.
+
+Only a report entry whose source the run never snapshotted reaches the fallback, and it is a
+position, not a lie about one: it names the file, which is the part a reader acts on. -/
+private def startPosition (positions : PositionIndex) (path : String) (finding : Finding) :
+    Position :=
+  (positions.position? path finding.range.start).getD ⟨1, 1⟩
+
+private def stopPosition (positions : PositionIndex) (path : String) (finding : Finding) :
+    Position :=
+  (positions.position? path finding.range.stop).getD (startPosition positions path finding)
+
+/-- The default format. A finding prints `PATH:LINE:COLUMN`, the same coordinates `concise` prints
+and the same ones an editor jumps to. It printed the byte range instead until this changed: a
+reader cannot find byte 189 in a file, and the two default-adjacent formats disagreeing about where
+a finding is served nobody. -/
+private def textReport (positions : PositionIndex) (report : RunReport) : String :=
   Id.run do
     let mut out := ""
     match report.mode with
@@ -521,9 +537,10 @@ private def textReport (report : RunReport) : String :=
             match finding.fix? with
             | some fix => s!" [{fix.applicability}]"
             | none => ""
+          let start := startPosition positions file.path finding
           out :=
             out ++
-              s!"{file.path}:{finding.range.start}-{finding.range.stop}: \
+              s!"{file.path}:{start.line}:{start.column}: \
           {finding.code} {finding.message}{fixTag}\n"
         for diagnostic in file.diagnostics do
           out := out ++ s!"{file.path}: {file.status}: {diagnostic}\n"
@@ -535,21 +552,9 @@ private def textReport (report : RunReport) : String :=
 
 /-! ### Shared projections
 
-The four finding-shaped formats disagree about syntax and agree about content. These helpers are
+The finding-shaped formats disagree about syntax and agree about content. These helpers are
 that content, resolved once, so a change of policy (which statuses report, how a message is
 flattened) cannot reach three formats and miss the fourth. -/
-
-/-- One line/column pair for a finding's start, or `1:1` when the index has no answer.
-
-Only a report entry whose source the run never snapshotted reaches the fallback, and it is a
-position, not a lie about one: it names the file, which is the part a reader acts on. -/
-private def startPosition (positions : PositionIndex) (path : String) (finding : Finding) :
-    Position :=
-  (positions.position? path finding.range.start).getD ⟨1, 1⟩
-
-private def stopPosition (positions : PositionIndex) (path : String) (finding : Finding) :
-    Position :=
-  (positions.position? path finding.range.stop).getD (startPosition positions path finding)
 
 /-- Collapse a message to one line. No live rule message contains a newline; this is
 defensive, and `tests/fixtures/reporting` pins it with a synthetic finding rather than trusting the
@@ -953,7 +958,7 @@ private def junitReport (positions : PositionIndex) (report : RunReport) : Strin
 private def formatReport (format : ReportFormat) (positions : PositionIndex) (root : String)
     (report : RunReport) : String :=
   match format with
-  | .text => textReport report
+  | .text => textReport positions report
   | .concise => conciseReport positions report
   | .json => (Lean.toJson report).compress ++ "\n"
   | .github => githubReport positions report
@@ -1244,8 +1249,9 @@ private def renderStream (mode : RunMode) (format : ReportFormat) (outputFile? :
     if let some output := report.output then
       IO.print output
     for finding in report.findings do
+      let start := (positions.position? report.path finding.range.start).getD ⟨1, 1⟩
       IO.eprintln
-          s!"{report.path}:{finding.range.start}-{finding.range.stop}: \
+          s!"{report.path}:{start.line}:{start.column}: \
         {finding.code} {finding.message}"
     for diagnostic in report.diagnostics do
       IO.eprintln s!"{report.path}: {report.status}: {diagnostic}"

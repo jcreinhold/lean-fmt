@@ -241,6 +241,12 @@ def ModuleArtifact.ofParsedModule (mainModule normalized : String) (commands : A
       syntaxData
       semantic }
 
+/-- Marks the one materialization failure that is a limit of this tool rather than a mismatch: the
+parse is real and the bytes are right, but no lossless projection can hold it. Callers classify on
+this prefix (`unrepresentableProjection?`), so it is part of the contract, not a message. -/
+def unrepresentablePrefix : String :=
+  "lean-fmt cannot represent this file losslessly: "
+
 structure MaterializedArtifact where
   source : LosslessSource
   commands : Array Lean.Syntax
@@ -258,8 +264,10 @@ def ModuleArtifact.materialize (artifact : ModuleArtifact) (raw : String) :
   let sourceProjection :=
     LosslessSource.ofSource artifact.mainModule normalized materialized.commands
       (some materialized.terminal)
-  unless sourceProjection.structurallyValid && sourceProjection.validFor raw do
-    throw "reconstructed syntax does not form a complete lossless source projection"
+  if let some reason := sourceProjection.validationError? then
+    throw s!"{unrepresentablePrefix}{reason}"
+  unless sourceProjection.validFor raw do
+    throw "the reconstructed projection does not describe these bytes"
   return {
       source := sourceProjection
       commands := materialized.commands

@@ -403,42 +403,54 @@ private def triviaTiles (runs : Array Trivia) (start stop : Nat) : Bool :=
       cursor := run.stop
     return cursor == stop
 
-/-- Structural validity, independent of any source.
+/-- The first invariant a projection breaks, or `none` when it is valid.
 
 The tiling clause carries the weight: token spans and their trivia must cover `[headerStop,
 terminalStop)` once each, contiguously, with no gap and no overlap. That invariant is what makes
-this projection lossless rather than merely plausible. -/
-def structurallyValid (source : LosslessSource) : Bool :=
+this projection lossless rather than merely plausible.
+
+Naming the broken clause is worth its cost at the call site that rejects a file: a bare `false`
+sent one real defect — a Verso module docstring — to a stack sampler before anyone could see which
+clause it broke. -/
+def validationError? (source : LosslessSource) : Option String :=
   Id.run do
     unless source.schema == losslessSourceSchema do
-      return false
+      return some s!"schema {source.schema} is not {losslessSourceSchema}"
     unless
       source.headerStop <= source.terminalStop && source.terminalStop <= source.normalizedBytes do
-      return false
+      return some
+          s!"header stop {source.headerStop}, terminal stop {source.terminalStop} and \
+          {source.normalizedBytes} bytes are not ordered"
     for node in source.nodes do
       unless node.kind < source.kinds.size do
-        return false
+        return some s!"node kind {node.kind} is outside {source.kinds.size} kinds"
       unless node.parent.all (· < source.nodes.size) do
-        return false
+        return some "a node's parent is outside the node array"
       unless node.range.start <= node.range.stop && node.range.stop <= source.normalizedBytes do
-        return false
+        return some s!"node range {node.range.start}-{node.range.stop} is not within the source"
     let mut cursor := source.headerStop
     for token in source.tokens do
       -- A projection is only lossless if the parser recorded real positions for every leaf.
       unless token.info == .original do
-        return false
+        return some s!"the leaf at {token.start} carries no original position"
       unless token.node < source.nodes.size do
-        return false
+        return some s!"the leaf at {token.start} names a node outside the node array"
       unless triviaTiles token.leading cursor token.start do
-        return false
+        return some s!"leading trivia does not tile {cursor}-{token.start}"
       unless token.start <= token.stop do
-        return false
+        return some s!"the leaf at {token.start} ends before it starts"
       unless triviaTiles token.trailing token.stop token.trailingStop do
-        return false
+        return some s!"trailing trivia does not tile {token.stop}-{token.trailingStop}"
       cursor := token.trailingStop
     -- With no commands the header runs to the terminal, so an empty stream is valid exactly when the
     -- header already covers the parsed region.
-    return cursor == source.terminalStop
+    unless cursor == source.terminalStop do
+      return some s!"the leaves cover to {cursor}, the parsed region ends at {source.terminalStop}"
+    return none
+
+/-- Structural validity, independent of any source. One decider: `validationError?`. -/
+def structurallyValid (source : LosslessSource) : Bool :=
+  (validationError? source).isNone
 
 /-- Validity against a concrete on-disk source.
 

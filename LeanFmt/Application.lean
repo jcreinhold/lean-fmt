@@ -275,14 +275,44 @@ def cancellationMessage : String :=
 def cancelled? (error : IO.Error) : Bool :=
   ((toString error).splitOn cancellationMessage).length > 1
 
+/-- How long one frontend child may run before the run stops waiting for it.
+
+Unbounded was the wrong default: a single mathlib module deadlocked its child and a whole-project
+run sat on it for 45 minutes, producing nothing — no file named, no exit, no output, because a
+report prints only at the end. A bound converts that into one named file and exit 2, and the other
+8,840 files still get reported.
+
+Ten minutes is deliberately far above any real file — the slowest mathlib module measured here
+takes seconds — so this fires on a stall, not on slow work. `LEAN_FMT_CHILD_TIMEOUT_MS` overrides
+it; `0` disables the bound for someone deliberately debugging a hang. -/
+def childTimeoutMs : IO Nat := do
+  match (← IO.getEnv "LEAN_FMT_CHILD_TIMEOUT_MS").bind (·.toNat?) with
+  | some override =>
+    return override
+  | none =>
+    return 600000
+
+def timeoutMessage (budget : Nat) : String :=
+  s!"exact frontend child ran past its {budget} ms bound and was stopped; \
+    set LEAN_FMT_CHILD_TIMEOUT_MS to raise the bound, or 0 to remove it"
+
+/-- The wall-clock instant a child spawned now must finish by, or `none` when the bound is off.
+Computed per spawn, so a queued child's clock starts when it runs, not when the run began. -/
+def childDeadline? : IO (Option Nat) := do
+  match ← childTimeoutMs with
+  | 0 =>
+    return none
+  | budget =>
+    return some ((← IO.monoMsNow) + budget)
+
 /- Poll instead of blocking on `wait`: a long-running server must be able to drop a request while it
 is running, and this child is the only thing to drop. One look every 50 ms bounds how long a
 cancelled request keeps working without spinning. A batch run passes `cancel? := none` and never
 looks. -/
 private partial def awaitChild
     (child : IO.Process.Child { stdin := .inherit, stdout := .piped, stderr := .piped })
-    (stdoutTask stderrTask : Task (Except IO.Error String))
-    (cancel? : Option Std.CancellationToken) : IO ChildOutput := do
+    (stdoutTask stderrTask : Task (Except IO.Error String)) (cancel? : Option Std.CancellationToken)
+    (deadline? : Option Nat := none) : IO ChildOutput := do
   match ← child.tryWait with
   | some exitCode =>
     return {
@@ -290,18 +320,25 @@ private partial def awaitChild
         stdout := ← awaitRead stdoutTask
         stderr := ← awaitRead stderrTask }
   | none =>
-    if let some token := cancel? then
-      if ← token.isCancelled then
-        try
-          child.kill
-        catch _ =>
-          pure ()
-        discard child.wait
-        discard <| awaitRead stdoutTask
-        discard <| awaitRead stderrTask
-        throw <| IO.userError cancellationMessage
+    let expired ←
+      match deadline? with
+      | some deadline =>
+        do
+          pure (decide ((← IO.monoMsNow) >= deadline))
+      | none =>
+        pure false
+    if expired || (← cancel?.mapM (·.isCancelled)).getD false then
+      try
+        child.kill
+      catch _ =>
+        pure ()
+      discard child.wait
+      discard <| awaitRead stdoutTask
+      discard <| awaitRead stderrTask
+      let budget ← childTimeoutMs
+      throw <| IO.userError (if expired then timeoutMessage budget else cancellationMessage)
     IO.sleep 50
-    awaitChild child stdoutTask stderrTask cancel?
+    awaitChild child stdoutTask stderrTask cancel? deadline?
 
 private def runChild (arguments : IO.Process.SpawnArgs)
     (cancel? : Option Std.CancellationToken := none) : IO ChildOutput := do
@@ -323,28 +360,35 @@ private def runChild (arguments : IO.Process.SpawnArgs)
   recordCount "active_children" 1
   let stdoutTask ← IO.asTask child.stdout.readToEnd
   let stderrTask ← IO.asTask child.stderr.readToEnd
-  awaitChild child stdoutTask stderrTask cancel?
+  awaitChild child stdoutTask stderrTask cancel? (← childDeadline?)
 
 /-- The pipe-free equivalent of `awaitChild`, for children whose results travel on per-target
 files. Same cancellation contract: one poll every 50 ms, and a cancelled child is killed and
 reaped before the cancellation error propagates. -/
 private partial def awaitChildExit
     (child : IO.Process.Child { stdin := .inherit, stdout := .null, stderr := .null })
-    (cancel? : Option Std.CancellationToken) : IO UInt32 := do
+    (cancel? : Option Std.CancellationToken) (deadline? : Option Nat := none) : IO UInt32 := do
   match ← child.tryWait with
   | some exitCode =>
     return exitCode
   | none =>
-    if let some token := cancel? then
-      if ← token.isCancelled then
-        try
-          child.kill
-        catch _ =>
-          pure ()
-        discard child.wait
-        throw <| IO.userError cancellationMessage
+    let expired ←
+      match deadline? with
+      | some deadline =>
+        do
+          pure (decide ((← IO.monoMsNow) >= deadline))
+      | none =>
+        pure false
+    if expired || (← cancel?.mapM (·.isCancelled)).getD false then
+      try
+        child.kill
+      catch _ =>
+        pure ()
+      discard child.wait
+      let budget ← childTimeoutMs
+      throw <| IO.userError (if expired then timeoutMessage budget else cancellationMessage)
     IO.sleep 50
-    awaitChildExit child cancel?
+    awaitChildExit child cancel? deadline?
 
 /-- Spawn one pipe-free child and wait for its exit code: the one-worker branch of `spawnChild`,
 where one child runs at a time and the frame that spawned it is the only thing that needs to
@@ -363,7 +407,7 @@ private def spawnWait (arguments : IO.Process.SpawnArgs)
           stderr := .null
           setsid := true }
   recordCount "active_children" 1
-  awaitChildExit child cancel?
+  awaitChildExit child cancel? (← childDeadline?)
 
 /-- Spawn one pipe-free frontend child and wait for its exit code. At one worker this is
 `spawnWait`: one child at a time, one admission counted. Above one, the child joins the registry
@@ -406,7 +450,7 @@ private def ExactRun.spawnChild (run : ExactRun) (arguments : IO.Process.SpawnAr
   registry.modify (·.push entry)
   recordCount "active_children" (← registry.get).size
   try
-    awaitChildExit entry.child cancel?
+    awaitChildExit entry.child cancel? (← childDeadline?)
   finally
     registry.modify (·.filter (·.pgid != entry.pgid))
     -- `pollChild` may already have reaped the child (its exit branch), and Lean's `tryWait` does
@@ -703,8 +747,8 @@ def sliceRange (normalized rendered : String) (marks : Array Mark) (requested : 
 
 private def canonicalAnalysis (snapshot : SourceSnapshot) (renderCanonical : Bool)
     (analysis : AnalysisEnvelope) : IO SemanticAnalysis := do
-  match SemanticAnalysis.ofArtifact? snapshot.source analysis.artifact? analysis.diagnostics with
-  | some semantic =>
+  match SemanticAnalysis.ofArtifact snapshot.source analysis.artifact? analysis.diagnostics with
+  | .ok semantic =>
     if semantic.result?.isNone then
       return semantic
     if renderCanonical then
@@ -724,8 +768,12 @@ private def canonicalAnalysis (snapshot : SourceSnapshot) (renderCanonical : Boo
               s!"frontend-native formatting produced no admitted layout for {snapshot.relativePath}; \
             draft={analysis.formatDraft?.isSome} formatter-failure={analysis.formatFailure?.isSome}"
     return semantic
-  | none =>
-    throw <| IO.userError s!"invalid exact analysis for {snapshot.relativePath}"
+  | .error reason =>
+    -- A file this projection cannot hold is one file's outcome, not the run's. Everything else
+    -- here means the child and the source disagree, which is the run's problem.
+    if reason.startsWith unrepresentablePrefix then
+      return .broken #[reason]
+    throw <| IO.userError s!"invalid exact analysis for {snapshot.relativePath}: {reason}"
 
 /-- Analyze one snapshot: build the exact envelope the plan demanded and project it, rendering canonical
 layout when `renderCanonical`.
@@ -1227,8 +1275,11 @@ private def prepareFile (plan : RulePlan) (renderCanonical unsafeFixes : Bool)
   let some result := analysis.result? |
     throw
         (baseReport snapshot
-          (if (unbuiltDependency? analysis.diagnostics).isSome then "unbuilt" else "broken") #[]
-          analysis.diagnostics)
+          (if (unbuiltDependency? analysis.diagnostics).isSome then "unbuilt"
+          else
+            if (unrepresentableProjection? analysis.diagnostics).isSome then "rejected"
+            else "broken")
+          #[] analysis.diagnostics)
   let (normalized, lineEndings) := LosslessSource.normalize snapshot.source
   -- Import findings (`reportImports`, normalized coordinates) join the engine's findings *before*
   -- selection, so `--select imports`, per-file ignores, and suppression treat them like any rule.

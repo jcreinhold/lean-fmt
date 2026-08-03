@@ -72,6 +72,18 @@ def unbuiltDependency? (diagnostics : Array String) : Option String :=
       | _ => none
     | _ => none
 
+/-- Reads back the diagnostic `unrepresentablePrefix` marks.
+
+A file whose parse this projection cannot hold losslessly — Lean elaborates it, but some leaf
+carries no original position, as a Verso module docstring's does — is a limit of this tool, not a
+broken file and not a broken run. It reports as `rejected`, one file, exit 1. Reporting it as an
+infrastructure failure failed a whole 8,841-file mathlib run on one file's account. -/
+def unrepresentableProjection? (diagnostics : Array String) : Option String :=
+  diagnostics.findSome? fun line =>
+    if line.startsWith unrepresentablePrefix then
+      some (line.drop unrepresentablePrefix.length).toString
+    else none
+
 /-- The current cache shape stores the complete admitted `CanonicalLayout` with its source map and
 formatter/validation metrics. The version is part of cache identity; older result shapes miss. -/
 def semanticResultSchema : String :=
@@ -134,16 +146,26 @@ this artifact describes exactly these bytes: one input, one function, no second 
 
 Empirically: carrying findings in the artifact did not prevent disagreement; it caused the one
 measured disagreement: `check` reported a rule the artifact said was off. Two
-deciders disagreed, so there is now one. -/
-def SemanticAnalysis.ofArtifact? (raw : String) (artifact? : Option ModuleArtifact)
-    (diagnostics : Array String := #[]) : Option SemanticAnalysis :=
+deciders disagreed, so there is now one.
+
+Every rejection carries its reason. A caller that swallowed them reported one
+`invalid exact analysis` for four unrelated causes, and diagnosing a real one on mathlib took a
+stack sample against a hung process. -/
+def SemanticAnalysis.ofArtifact (raw : String) (artifact? : Option ModuleArtifact)
+    (diagnostics : Array String := #[]) : Except String SemanticAnalysis :=
   match artifact? with
-  | none => if diagnostics.isEmpty then none else some (.broken diagnostics)
+  | none =>
+    if diagnostics.isEmpty then
+      .error "the analysis produced neither a module artifact nor diagnostics"
+    else .ok (.broken diagnostics)
   | some artifact =>
     if diagnostics.isEmpty then
       let normalized := (LosslessSource.normalize raw).1
       match artifact.materialize raw with
-      | .error _ => none
+      | .error reason =>
+        -- A marked reason travels intact: the caller classifies on that prefix.
+        if reason.startsWith unrepresentablePrefix then .error reason
+        else .error s!"the module artifact does not describe this source: {reason}"
       | .ok materialized =>
         -- The projection is in hand here (and only here), so directives are parsed here:
         -- syntax-tier, exactly like the syntax facts the findings are computed from.
@@ -170,9 +192,14 @@ def SemanticAnalysis.ofArtifact? (raw : String) (artifact? : Option ModuleArtifa
           | none =>
             (Facts.syntax (SyntaxFacts.of normalized materialized.source), Tier.syntax,
               ({ } : SemanticCaps))
-        some
+        .ok
           (.success normalized (runRules facts) (tier := tier) (suppression :=
             Suppression.collect materialized.source normalized) (caps := caps))
-    else none
+    else .error s!"the analysis carried both a module artifact and {diagnostics.size} diagnostic(s)"
+
+/-- `ofArtifact` without its reason, for callers that only decide whether an entry is usable. -/
+def SemanticAnalysis.ofArtifact? (raw : String) (artifact? : Option ModuleArtifact)
+    (diagnostics : Array String := #[]) : Option SemanticAnalysis :=
+  (SemanticAnalysis.ofArtifact raw artifact? diagnostics).toOption
 
 end LeanFmt.Internal
