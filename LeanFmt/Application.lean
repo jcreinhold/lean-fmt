@@ -536,8 +536,8 @@ private def ExactRun.primeSetups (run : ExactRun) (targets : Array SourceSnapsho
 
 private def ExactRun.envelope (run : ExactRun) (snapshot : SourceSnapshot) (captureSemantic : Bool)
     (validator := false) (captureOccurrences : Bool := false)
-    (format? : Option FormatConfig := none) (cancel? : Option Std.CancellationToken := none) :
-    IO AnalysisEnvelope := do
+    (format? : Option FormatConfig := none) (cancel? : Option Std.CancellationToken := none)
+    (compiled : Bool := false) : IO AnalysisEnvelope := do
   let index ← run.nextPathIndex
   -- Three phases: this operation once reported as one unnamed 43-second gap,
   -- and the three do entirely different work: `exact_setup` resolves the module's Lake setup in
@@ -569,15 +569,19 @@ private def ExactRun.envelope (run : ExactRun) (snapshot : SourceSnapshot) (capt
               -- two semantic diagnostics, "2" diagnostics plus the info-tree occurrence fold. A direct
               -- three-argument invocation (every syntax-only harness) omits it and captures nothing.
               -- `occurrences` is only ever demanded together with the tier, so the token is a simple ladder.
+              -- A leading "c" prefixes any of those forms and says the parent holds evidence that these
+              -- exact bytes compiled, which is what lets the child skip elaborating declarations; it is a
+              -- prefix rather than a suffix so that "4j<json>" keeps its payload at a fixed offset.
               -- The two paths after it are the pipe-free transport: the child writes its envelope to the
               -- first and any failure diagnostic to the second (see `spawnChild` for what the pipes cost).
               args :=
                 #["__analyze-exact", setupPath.toString, sourcePath.toString,
                   snapshot.path.toString,
-                  match format? with
-                  | some format => s!"4j{(Lean.toJson format).compress}"
-                  | none =>
-                    if captureOccurrences then "2" else if captureSemantic then "1" else "0",
+                  (if compiled then "c" else "") ++
+                    match format? with
+                    | some format => s!"4j{(Lean.toJson format).compress}"
+                    | none =>
+                      if captureOccurrences then "2" else if captureSemantic then "1" else "0",
                   outPath.toString, errPath.toString]
               -- The parallelism that matters is here, one process per file, and `resolveWorkers`
               -- picks its degree the way Lake picks its own. The child's pool is not a second
@@ -809,11 +813,13 @@ coordinates (the walk already runs here for diagnostics); `captureSemantic` and 
 unchanged. -/
 def ExactRun.analyzeSnapshot (run : ExactRun) (snapshot : SourceSnapshot) (renderCanonical : Bool)
     (validator := false) (captureSemantic : Bool := false) (captureOccurrences : Bool := false)
-    (cancel? : Option Std.CancellationToken := none) : IO SemanticAnalysis := do
+    (cancel? : Option Std.CancellationToken := none) (compiled : Bool := false) :
+    IO SemanticAnalysis := do
   canonicalAnalysis snapshot renderCanonical
       (←
         run.envelope snapshot captureSemantic validator captureOccurrences (format? :=
-            if renderCanonical then some snapshot.config.format else none) (cancel? := cancel?))
+            if renderCanonical then some snapshot.config.format else none) (cancel? := cancel?)
+            (compiled := compiled))
 
 /- Bracket a complete exact-analysis run. The capability is constructed only after a real fallback
 or editor request needs it; cache-only and ordinary-evidence batch runs create no temporary state.
@@ -1666,14 +1672,25 @@ private structure FileOutcome where
   analysis? : Option SemanticAnalysis
   failure? : Option String
 
-/-- The per-target body of the batch loop: obtain the analysis the earlier decisions left
+/-- One target's whole assignment for a worker. This was a four-deep nest of pairs zipped at the
+call site, which is a shape that only ever gets deeper. -/
+private structure TargetWork where
+  snapshot : SourceSnapshot
+  /-- Whatever the decisions above already answered this target with, if any. -/
+  available? : Option SemanticAnalysis
+  importReport : Array Finding × Nat
+  plan : RulePlan
+  /-- Lake's verdict that this module's build is current: successful-compilation evidence for
+  exactly these bytes, and what lets a frontend child skip elaborating declarations. -/
+  compiled : Bool
+
+/- The per-target body of the batch loop: obtain the analysis the earlier decisions left
 unanswered, then run the mode's rule phase. Extracted so the serial path and the worker pool
 execute the same text; every throw becomes the target's `infrastructure-failure`, exactly what the
 serial loop's `catch` reported. -/
 private def processOneTarget (exactRun : ExactRun) (request : RunRequest) (renderCanonical : Bool)
-    (demanded : Tier) (demandedCaps : SemanticCaps) (snapshot : SourceSnapshot)
-    (available? : Option SemanticAnalysis) (ir : Array Finding × Nat) (plan : RulePlan) :
-    IO FileOutcome := do
+    (demanded : Tier) (demandedCaps : SemanticCaps) (target : TargetWork) : IO FileOutcome := do
+  let { snapshot, available?, importReport := ir, plan, compiled } := target
   try
     -- Anything left unanswered elaborates its source. There used to be a branch here that loaded the
     -- module's `.olean` and rendered from the artifact instead; it was deleted when the candidate
@@ -1689,7 +1706,7 @@ private def processOneTarget (exactRun : ExactRun) (request : RunRequest) (rende
         pure analysis
       | none =>
         exactRun.analyzeSnapshot snapshot renderCanonical (captureSemantic := demanded == .semantic)
-            (captureOccurrences := demandedCaps.occurrences)
+            (captureOccurrences := demandedCaps.occurrences) (compiled := compiled)
     let report ←
       withPhase "rules" <|
           match request.mode with
@@ -1720,17 +1737,14 @@ are `--workers N`. Workers write only their own outcomes slot; the shared refs t
 the temp-file counter) are either immutable after `primeSetups` or atomic. -/
 private partial def batchWorker (exactRun : ExactRun) (request : RunRequest)
     (renderCanonical : Bool) (demanded : Tier) (demandedCaps : SemanticCaps)
-    (work : Array (((SourceSnapshot × Option SemanticAnalysis) × (Array Finding × Nat)) × RulePlan))
-    (next : IO.Ref Nat) (outcomes : IO.Ref (Array (Option FileOutcome)))
+    (work : Array TargetWork) (next : IO.Ref Nat) (outcomes : IO.Ref (Array (Option FileOutcome)))
     (progress : Progress.Progress) : IO Unit := do
   let index ← next.modifyGet fun n => (n, n + 1)
   if h : index < work.size then
-    let (((snapshot, available?), ir), plan) := work[index]
-    let outcome ←
-      processOneTarget exactRun request renderCanonical demanded demandedCaps snapshot available? ir
-          plan
+    let target := work[index]
+    let outcome ← processOneTarget exactRun request renderCanonical demanded demandedCaps target
     outcomes.modify (·.set! index (some outcome))
-    LeanFmt.Progress.advance progress snapshot.path.toString
+    LeanFmt.Progress.advance progress target.snapshot.path.toString
     batchWorker exactRun request renderCanonical demanded demandedCaps work next outcomes progress
 
 /- Execute one immutable user request. This operation owns workspace discovery, exact module
@@ -1918,7 +1932,10 @@ def execute (request : RunRequest) : IO RunOutcome := do
       exactRun.primeSetups <|
           (snapshots.zip available).filterMap fun (snapshot, available?) =>
             if available?.isNone then some snapshot else none
-      let work := ((snapshots.zip available).zip importReports).zip plans
+      let work :=
+        ((((snapshots.zip available).zip importReports).zip plans).zip evidence).map
+          fun ((((snapshot, available?), importReport), plan), evidence) =>
+          { snapshot, available?, importReport, plan, compiled := evidence == .current }
       let outcomes ← IO.mkRef (Array.replicate work.size (none : Option FileOutcome))
       let next ← IO.mkRef 0
       -- Progress counts the targets the decisions above left unanswered — exactly the work that
@@ -2443,7 +2460,11 @@ def organize (request : OrganizeRequest) : IO RunReport := do
 frontend at the capture mode, and return the encoded envelope. Transport — stdout for a direct
 invocation, per-target files for the batch parent — is `runAnalyzeChild`'s, not this one's. -/
 private unsafe def analyzeChildEnvelope (setupPath snapshotPath displayPath : String)
-    (captureMode : String) : IO String := do
+    (rawCaptureMode : String) : IO String := do
+  -- The compile-evidence prefix comes off first so every form below reads exactly as it did before
+  -- there was one.
+  let compiled := rawCaptureMode.startsWith "c"
+  let captureMode := if compiled then (rawCaptureMode.drop 1).copy else rawCaptureMode
   -- The parent's `exact_child` minus the child's `child_analyze` left about 170 ms per file
   -- unattributed, and this is the half of it the child can see. A `ModuleSetup` names an artifact
   -- path for every module in the closure, so on a deep closure the JSON is large and parsing it is
@@ -2506,7 +2527,7 @@ private unsafe def analyzeChildEnvelope (setupPath snapshotPath displayPath : St
         analyzeExact setup source displayPath (captureSemantic :=
           captureMode == "1" || captureMode == "2") (captureOccurrences := captureMode == "2")
           (captureComments := captureMode == "3") (captureFormatDraft := draftWidth?.isSome)
-          (validateFormatDraft := validatedFormat?.isSome) (format := format)
+          (validateFormatDraft := validatedFormat?.isSome) (format := format) (compiled := compiled)
   withPhase "child_encode" do
       -- `IO.lazyPure` for the reason `profiledPositions` documents: a plain `let` of a pure value
       -- can be floated out of the action's closure, and then the bracket times nothing. The

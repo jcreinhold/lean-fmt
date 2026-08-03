@@ -196,7 +196,13 @@ private def testChildPoolStarvation (ctx : Scale.Ctx) : IO Unit := do
           #["check", "--root", project.toString, "--no-cache", "--select", "FMT011", "--workers",
             "1", "--json"]
           (env :=
-          #[("LEAN_NUM_THREADS", some "1"), ("LEAN_FMT_CHILD_TIMEOUT_MS", some bound)] ++ threads)
+          #[("LEAN_NUM_THREADS", some "1"), ("LEAN_FMT_CHILD_TIMEOUT_MS", some bound),
+              -- What starves here is elaborating the nested `parFirst`, and a child holding compile
+              -- evidence reads the module by skeleton and never elaborates the tactic at all. Denying
+              -- the evidence is what keeps this case about the child's task pool; without it both
+              -- arms pass and the pool size is gated by nothing.
+              ("LEAN_FMT_TEST_DISABLE_MODULE_EVIDENCE", some "1")] ++
+            threads)
           (timeoutMs := some 300000)
     parseJson result.stdout label
   let report ← check "child pool starvation" 0 #[] "60000"

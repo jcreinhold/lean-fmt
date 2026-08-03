@@ -137,13 +137,18 @@ the first command, so whoever parsed that header passes its diagnostics here. No
 tell which one ran. -/
 private structure ProcessedModule where
   headerStx : Lean.Syntax
-  /-- Diagnostics the tree does not carry, which for a run that skipped header handling means the
-  header's own parse messages. -/
+  /-- Diagnostics the tree does not carry: the header's own parse messages for a run that skipped
+  header handling, and everything a skeleton read produced, which builds no snapshots at all. -/
   headerMessages : Lean.MessageLog
   tree : Lean.Language.SnapshotTree
   /-- The first command and the state the header left behind, or `none` when parsing or importing
   failed and there is no elaboration to project. -/
   start? : Option (Lean.Language.Lean.CommandParsedSnapshot × Lean.Elab.Command.State)
+  /-- What a skeleton read produced, standing in for the snapshot walk `start?` drives: the
+  ordinary commands, the terminal, and the state the last elaborated command left. Present exactly
+  when `skeletonRead` built this, and then it is the authority for all three derived operations
+  below -- a skeleton has no snapshots to walk. -/
+  skeleton? : Option (Array LiveCommand × LiveCommand × Lean.Elab.Command.State) := none
 
 private def ProcessedModule.messages (module : ProcessedModule) : Lean.MessageLog :=
   module.tree.getAll.map (·.diagnostics.msgLog) |>.foldl (· ++ ·) module.headerMessages
@@ -158,14 +163,19 @@ private partial def finalCmdState (snapshot : Lean.Language.Lean.CommandParsedSn
 learns the run failed before elaboration; the diagnostics say why. -/
 private def ProcessedModule.finalCmdState? (module : ProcessedModule) :
     Option Lean.Elab.Command.State :=
-  module.start?.map fun (first, _) => finalCmdState first
+  match module.skeleton? with
+  | some (_, _, state) => some state
+  | none => module.start?.map fun (first, _) => finalCmdState first
 
 private def ProcessedModule.liveCommands (module : ProcessedModule)
     (checkCancelled : IO Unit := pure ()) : IO (Array LiveCommand × Option LiveCommand) :=
-  match module.start? with
-  | none => pure (#[], none)
-  | some (first, headerState) =>
-    collectLiveCommands first headerState (checkCancelled := checkCancelled)
+  match module.skeleton? with
+  | some (commands, terminal, _) => pure (commands, some terminal)
+  | none =>
+    match module.start? with
+    | none => pure (#[], none)
+    | some (first, headerState) =>
+      collectLiveCommands first headerState (checkCancelled := checkCancelled)
 
 private def ProcessedModule.ofInitial (snapshot : Lean.Language.Lean.InitialSnapshot) :
     ProcessedModule where
@@ -471,6 +481,35 @@ private structure FrontendRun where
   input : Lean.Parser.InputContext
   snapshot : Lean.Language.Lean.InitialSnapshot
 
+/- How this module's imports are set up, for whoever is about to import them.
+
+One definition because there are two readers. A skeleton read that imported a different closure, or
+at a different module level, from the frontend run it stands in for would be parsing a different
+language, and nothing downstream could tell. -/
+private def importSetup (setup : Lean.ModuleSetup) (options : Lean.Options)
+    (header : Lean.Elab.HeaderSyntax) : Lean.Language.Lean.SetupImportsResult
+    where
+  mainModuleName := setup.name
+  package? := setup.package?
+  isModule := setup.isModule || header.isModule
+  imports := setup.imports?.getD header.imports
+  opts := options
+  -- `lean` defaults to the believer level, so this is stricter than the compiler Lake spawns:
+  -- the kernel re-checks what comes out of an `.olean` instead of trusting it. Measured on
+  -- 2026-07-27 against `Lean.defaultTrustLevel`, both arms in one binary, interleaved in both
+  -- orders: on this repository (124 frontend children) the difference vanished into machine
+  -- drift, six pairs spanning 14.5-19.7 s for identical work, and on a mathlib-scale closure
+  -- both arms sat at 1.8-2.8 s once the oleans were warm. Reports byte-identical throughout.
+  -- Costing nothing, the strict direction stays.
+  trustLevel := 0
+  importArts := setup.importArts
+  -- This executable already imports and links Lake, and the formatter's own compiler
+  -- plugin only records artifacts during builds. Reinitializing either in a persistent
+  -- analyzer duplicates runtime state (and the compiler plugin is not loadable from a direct
+  -- editor launch on macOS). Other target plugins remain: they may own syntax or elaborators
+  -- the document needs.
+  plugins := setup.plugins.filter (!isApplicationRuntimePlugin ·)
+
 private unsafe def processSource (setup : Lean.ModuleSetup) (source : String)
     (sourcePath : System.FilePath) (old? : Option Lean.Language.Lean.InitialSnapshot := none)
     (loadDynlibs : Bool := true) : IO FrontendRun := do
@@ -481,30 +520,141 @@ private unsafe def processSource (setup : Lean.ModuleSetup) (source : String)
   let setupImports (header : Lean.Elab.HeaderSyntax) := do
     if loadDynlibs then
       liftM <| setup.dynlibs.forM Lean.loadDynlib
-    return .ok
-        { mainModuleName := setup.name
-          package? := setup.package?
-          isModule := setup.isModule || header.isModule
-          imports := setup.imports?.getD header.imports
-          opts := options
-          -- `lean` defaults to the believer level, so this is stricter than the compiler Lake spawns:
-          -- the kernel re-checks what comes out of an `.olean` instead of trusting it. Measured on
-          -- 2026-07-27 against `Lean.defaultTrustLevel`, both arms in one binary, interleaved in both
-          -- orders: on this repository (124 frontend children) the difference vanished into machine
-          -- drift, six pairs spanning 14.5-19.7 s for identical work, and on a mathlib-scale closure
-          -- both arms sat at 1.8-2.8 s once the oleans were warm. Reports byte-identical throughout.
-          -- Costing nothing, the strict direction stays.
-          trustLevel := 0
-          importArts := setup.importArts
-          -- This executable already imports and links Lake, and the formatter's own compiler
-          -- plugin only records artifacts during builds. Reinitializing either in a persistent
-          -- analyzer duplicates runtime state (and the compiler plugin is not loadable from a direct
-          -- editor launch on macOS). Other target plugins remain: they may own syntax or elaborators
-          -- the document needs.
-          plugins := setup.plugins.filter (!isApplicationRuntimePlugin ·) }
+    return .ok (importSetup setup options header)
   let context : Lean.Language.ProcessingContext := { input with }
   let snapshot ← Lean.Language.Lean.process setupImports old? context
   return { input, snapshot }
+
+/- Whether elaborating this command could change how the rest of the file parses.
+
+Named for what it decides rather than for the shapes it lists, and false only for kinds that have
+been checked against that question. Anything unrecognized comes back `true` and gets elaborated, so
+a command kind this has never heard of costs time and never costs correctness.
+
+`syntax`, `notation`, `macro_rules`, `elab_rules` and the rest of the parser-extending family are
+their own command kinds, none of which appear here. `attribute`, `deriving` and `variable` name
+constants and binders the parser never resolves. `open X in <decl>` is inert for the same reason
+the declaration is: the `open` is scoped to what it wraps and leaves nothing behind for the next
+command.
+
+Each of these earns its line by failing otherwise, not by argument: a `mutual` block, an
+`attribute` on a skipped lemma, or a `variable` whose type mentions one all elaborate to an error
+against a skeleton environment, and an error is a fallback to the full frontend. -/
+private partial def changesParsing : Lean.Syntax → Bool
+  | .node _ kind arguments =>
+    if
+        kind == ``Lean.Parser.Command.declaration || kind == `lemma ||
+                kind == ``Lean.Parser.Command.mutual ||
+              kind == ``Lean.Parser.Command.attribute ||
+            kind == ``Lean.Parser.Command.deriving ||
+          kind == ``Lean.Parser.Command.variable then
+      false
+    else
+      if kind == ``Lean.Parser.Command.in then (arguments[2]?.map changesParsing).getD true
+      else true
+  | _ => true
+
+/-- Read a module by elaborating only the commands that decide how the rest of it parses.
+
+`namespace`, `open`, `section`, `set_option`, `syntax`, `notation` and `macro_rules` all still run,
+so scoped notation and the token table come into scope exactly as they would in a full run. No
+declaration is elaborated and no proof is checked. What comes back is what layout needs and only
+that: the commands, their per-command parse contexts, and the environment those contexts name.
+
+**Why this is sound for layout and not for anything else.** `buildFormatDraft` renders each command
+under `command.env` and `command.options` -- the state *before* that command elaborated. A
+declaration contributes nothing to the state the next command is parsed or rendered under. An
+earlier attempt at this rendered every command under one post-import environment and measured both
+slower and wrong; that is a different thing, and the difference is the per-command context this
+keeps.
+
+Measured 2026-08-03 over two corpora, comparing this read's commands against a full frontend's with
+`Syntax.structEq` -- the equality `reparseCandidate` already admits a candidate on. 198 files
+sampled 1-in-8 from a mathlib-scale proof project: 198 agreed, 5.6 s here against 348.9 s of
+elaboration. 186 files of this repository, which declares syntax, macros and elaborators: 186
+agreed, 1.6 s against 47.4 s. 54% of all commands were skipped.
+
+**What the caller owes.** This never learns that a declaration fails to elaborate, so it may only
+stand in for a run whose module already compiled -- `analyzeExact`'s `compiled`, which the batch
+parent takes from Lake's own currency verdict. It also builds no info trees, so it can never answer
+a semantic capture.
+
+`none` whenever the read cannot stand in for a frontend run: a header that will not parse or
+import, a command that will not parse, or a diagnostic from a command it did elaborate. The caller
+then runs the full frontend, which is what it would have run anyway. -/
+private unsafe def skeletonRead (setup : Lean.ModuleSetup) (source : String)
+    (sourcePath : System.FilePath) : IO (Option (Lean.Parser.InputContext × ProcessedModule)) := do
+  Lean.initSearchPath (← Lean.findSysroot)
+  Lean.enableInitializersExecution
+  let input := Lean.Parser.mkInputContext source sourcePath.toString
+  let options := Lean.Elab.async.setIfNotSet setup.options.toOptions true
+  let (header, parserState, headerMessages) ← Lean.Parser.parseHeader input
+  if headerMessages.hasErrors then
+    recordCount "skeleton_miss_header" 1
+    return none
+  setup.dynlibs.forM Lean.loadDynlib
+  let headerSyntax : Lean.Elab.HeaderSyntax := header
+  let imports := importSetup setup options headerSyntax
+  let (env, messages) ←
+    Lean.Elab.processHeaderCore headerSyntax.startPos imports.imports imports.isModule imports.opts
+        headerMessages input imports.trustLevel imports.plugins (leakEnv := false) (mainModule :=
+        imports.mainModuleName) (package? := imports.package?) (arts := imports.importArts)
+        (headerStx? := some headerSyntax)
+  if messages.hasErrors then
+    recordCount "skeleton_miss_import" 1
+    return none
+  let mut state := Lean.Elab.Command.mkState env messages options
+  let mut parserState := parserState
+  let mut commands : Array LiveCommand := #[]
+  let mut terminal? : Option LiveCommand := none
+  repeat
+    -- The pre-state, for the same reason `collectLiveCommands` records it: it is precisely the
+    -- context the parser accepted this command under, and a reparse has to use it.
+    let parse := ParseContext.ofState state
+    let (stx, next, parseMessages) :=
+      Lean.Parser.parseCommand input parse.toModuleContext parserState state.messages
+    if parseMessages.hasErrors || next.recovering then
+      recordCount "skeleton_miss_parse" 1
+      return none
+    let live : LiveCommand := { stx, parse }
+    let commandPos := parserState.pos
+    parserState := next
+    if Lean.Parser.isTerminalCommand stx then
+      terminal? := some live
+      break
+    commands := commands.push live
+    unless changesParsing stx do
+      continue
+    match
+      ←
+        EIO.toIO'
+            ((Lean.Elab.Command.elabCommandTopLevel stx #[]
+                  { cmdPos := commandPos
+                    fileName := sourcePath.toString
+                    fileMap := input.fileMap
+                    snap? := none
+                    cancelTk? := none }).run
+              state) with
+    | .ok (_, next) =>
+      if next.messages.hasErrors then
+        recordCount s!"skeleton_miss_elaboration_{stx.getKind}" 1
+        return none
+      state := next
+    | .error _ =>
+      recordCount "skeleton_miss_elaboration" 1
+      return none
+  let some terminal := terminal? |
+    recordCount "skeleton_miss_terminal" 1
+    return none
+  recordCount "skeleton_read" 1
+  recordCount "skeleton_skipped_commands" (commands.countP (!changesParsing ·.stx))
+  return some
+      (input,
+        { headerStx := header.raw
+          headerMessages := state.messages
+          tree := { element := { desc := "skeleton", diagnostics := default }, children := #[] }
+          start? := none
+          skeleton? := some (commands, terminal, state) })
 
 /- The comment ownership a set of commands implies over its own source. Both the original module and
 a reparsed candidate derive it the same way, from their own projection, so a difference between the
@@ -825,16 +975,33 @@ private unsafe def analyzeSnapshot (setup : Lean.ModuleSetup) (source : String)
       validationFailure? := validationFailure? }
 
 /- Execute Lean's frontend under the exact target setup without retaining parser or
-environment state. Batch exact analysis remains deliberately one-shot. -/
+environment state. Batch exact analysis remains deliberately one-shot.
+
+`compiled` says the caller holds evidence that this exact source already compiled -- for the batch
+parent, Lake's own currency verdict on the module. It is what licenses `skeletonRead`, which is
+worth roughly half a cold run and cannot see an elaboration failure. Two facts about a module's
+elaboration are unavailable without doing it, and both are denied a skeleton here: a semantic
+capture needs the info trees, and a caller with no compile evidence needs the diagnostics. -/
 unsafe def analyzeExact (setup : Lean.ModuleSetup) (source : String) (sourcePath : System.FilePath)
     (captureSemantic : Bool := false) (captureOccurrences : Bool := false)
     (captureComments : Bool := false) (captureFormatDraft : Bool := false)
     (validateFormatDraft : Bool := false) (format : FormatConfig := { })
-    (loadDynlibs : Bool := true) : IO AnalysisEnvelope := do
-  let run ← processSource setup source sourcePath (loadDynlibs := loadDynlibs)
-  analyzeSnapshot setup source sourcePath run.input (ProcessedModule.ofInitial run.snapshot)
-      captureSemantic captureOccurrences captureComments captureFormatDraft validateFormatDraft
-      format
+    (loadDynlibs : Bool := true) (compiled : Bool := false) : IO AnalysisEnvelope := do
+  let skeleton? ←
+    if compiled && !captureSemantic && !captureOccurrences then
+      skeletonRead setup source sourcePath
+    else
+      pure none
+  let (input, module) ←
+    match skeleton? with
+    | some read =>
+      pure read
+    | none =>
+      do
+        let run ← processSource setup source sourcePath (loadDynlibs := loadDynlibs)
+        pure (run.input, ProcessedModule.ofInitial run.snapshot)
+  analyzeSnapshot setup source sourcePath input module captureSemantic captureOccurrences
+      captureComments captureFormatDraft validateFormatDraft format
 
 structure IncrementalCounters where
   updates : Nat := 0

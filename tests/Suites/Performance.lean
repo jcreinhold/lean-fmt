@@ -137,6 +137,26 @@ private def gateArtifactAvoidsExact (artifactCapture exactCapture : String) : Bo
       counter "cache.official_artifact_hit" exactCapture == some 0 &&
     phaseCount "exact_child" exactCapture == 1
 
+/-- §1j. Every rendering child read its module by skeleton, and none fell back.
+
+The quantity: a rendering run elaborates only the commands that decide how the rest of the file
+parses. Measured 2026-08-03 over a mathlib-scale proof project, 1,615 files, cold and cacheless,
+byte-identical reports both ways — 567.8 s wall and 5,428 s CPU without it, 340.5 s and 2,009 s
+with. A wall time would report that as machine load; the counter cannot.
+
+`skipped` is the ratio half: a read that elaborated everything would still record
+`skeleton_read` and would buy nothing, so the gate also demands that the read skipped commands. -/
+private def gateSkeletonRead (capture : String) (expected : Nat) : Bool :=
+  let lines := capture.splitOn "\n"
+  let skipped :=
+    lines.filterMap fun line =>
+      if line.startsWith "cache.skeleton_skipped_commands=" then (line.splitOn "=").getLast!.toNat?
+      else none
+  expected > 0 && (lines.filter (· == "cache.skeleton_read=1")).length == expected &&
+        !(lines.any (·.startsWith "cache.skeleton_miss_")) &&
+      skipped.length == expected &&
+    skipped.all (· > 0)
+
 /-- §1h. Every validated file confirmed its candidate by reparsing it, and none escalated to a
 second frontend. The exact child forwards these counts, so one `cache.candidate_reparse=1` line
 arrives per file that validated and any `cache.candidate_miss_` line is an escalation, whatever its
@@ -255,6 +275,15 @@ private def testGatesDiscriminate : IO Unit := do
   expect (!(gateCandidateReparsed reparsed 3))
       "rejects a run that validated fewer files than it was given"
   expect (!(gateCandidateReparsed healthy 0)) "rejects a capture that validated nothing"
+  -- §1j the rendering children read their modules by skeleton.
+  let skeleton := "cache.skeleton_read=1\ncache.skeleton_skipped_commands=12\n"
+  expect (gateSkeletonRead skeleton 1) "accepts one file read by skeleton"
+  expect (!(gateSkeletonRead (skeleton ++ "cache.skeleton_miss_parse=1\n") 1))
+      "rejects a run where a second file fell back to the full frontend"
+  expect (!(gateSkeletonRead "cache.skeleton_read=1\ncache.skeleton_skipped_commands=0\n" 1))
+      "rejects a skeleton that elaborated every command and so saved nothing"
+  expect (!(gateSkeletonRead skeleton 2)) "rejects a run that skeleton-read fewer files than given"
+  expect (!(gateSkeletonRead healthy 1)) "rejects a capture that read nothing by skeleton"
   -- §1e a syntax selection served from the artifact does no frontend work.
   let artifactCapture := "cache.official_artifact_hit=1\ncache.official_artifact_miss=0\n"
   let exactCapture :=
@@ -419,6 +448,29 @@ private def testCandidateReparse (ctx : Ctx) : IO Unit := do
       "child admission was absent or exceeded one active child"
   ensure (gateCandidateReparsed render.stderr 1)
       "the exact route stopped reparsing its candidate, or escalated to a second frontend"
+
+/-- §1j a rendering run over a built module reads it by skeleton, and reading it that way changes
+nothing it reports.
+
+Both halves matter and neither implies the other. The counter says the work was skipped; the
+comparison against the same run with module evidence disabled — the one switch that denies the
+skeleton its precondition — says skipping it produced the same answer. A skeleton that quietly
+formatted a file differently would pass the counter alone. -/
+private def testSkeletonRead (ctx : Ctx) : IO Unit := do
+  let fixture := ctx.root / "tests" / "fixtures" / "compiler" / "ArtifactLayout.lean"
+  let render (evidence : Bool) : IO ProcResult :=
+    runProc ctx.app #["diff", "--no-cache", fixture.toString] (cwd? := some ctx.root) (env :=
+      #[("LEAN_FMT_PROFILE_PHASES", some "1"), ("LEAN_NUM_THREADS", some "1"),
+        ("LEAN_FMT_TEST_DISABLE_MODULE_EVIDENCE", if evidence then none else some "1")])
+      (timeoutMs := some 600000)
+  let withSkeleton ← render true
+  ensure (gateSkeletonRead withSkeleton.stderr 1)
+      "a rendering run over a current module stopped reading it by skeleton"
+  let withoutSkeleton ← render false
+  ensure (!(gateSkeletonRead withoutSkeleton.stderr 1))
+      "a run denied its compile evidence read by skeleton anyway"
+  ensureEq "the skeleton read changed what the run reported" withoutSkeleton.stdout
+      withSkeleton.stdout
 
 /-- §1f parallel child admission stays within --workers. A sleeping fake analyzer holds both
 children alive long enough for the second admission to observe the first: concurrency is certain,
@@ -592,6 +644,7 @@ public def main (args : List String) : IO UInt32 := do
             { name := "traversal-counts", run := Performance.testTraversalCounts ctx },
             { name := "artifact-acceleration", run := Performance.testArtifactAcceleration ctx },
             { name := "candidate-reparse", run := Performance.testCandidateReparse ctx },
+            { name := "skeleton-read", run := Performance.testSkeletonRead ctx },
             { name := "parallel-admission", run := Performance.testParallelAdmission ctx },
             { name := "worker-resolution", run := Performance.testWorkerResolution ctx },
             { name := "g3-remainder", run := Performance.testG3Remainder ctx },
