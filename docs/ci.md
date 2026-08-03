@@ -36,7 +36,7 @@ them reports a broken runner as a lint failure.
 ## Recipe 1 — the minimal job
 
 This is what `.github/workflows/ci.yml` in this repository already runs, and the recipe to start from. It needs
-`lintDriver` configured in the consuming package (`README.md` §"Wire it into `lake lint`").
+`lintDriver` configured in the consuming package (`README.md` §"In another project").
 
 ```yaml
 name: CI
@@ -76,7 +76,7 @@ jobs:
         id: fmt
         run: |
           set +e
-          lake exe lean-fmt check --root . \
+          lake exe lean-fmt check \
             --output-format sarif --output-file lean-fmt.sarif
           echo "status=$?" >> "$GITHUB_OUTPUT"
       - uses: github/codeql-action/upload-sarif@v3
@@ -120,7 +120,7 @@ jobs:
       - uses: leanprover/lean-action@v1
         with:
           lint: false
-      - run: lake exe lean-fmt check --root . --changed-since origin/${{ github.base_ref }}
+      - run: lake exe lean-fmt check --changed-since origin/${{ github.base_ref }}
 ```
 
 `fetch-depth: 0` is required. GitHub's default checkout is shallow, and a merge base not in the clone cannot be
@@ -162,7 +162,7 @@ set -euo pipefail
 lake build
 
 set +e
-lake exe lean-fmt check --root . --output-format junit --output-file lean-fmt.xml
+lake exe lean-fmt check --output-format junit --output-file lean-fmt.xml
 status=$?
 set -e
 
@@ -189,8 +189,8 @@ are available there.
 Two other checks worth a CI step:
 
 ```sh
-lake exe lean-fmt docs --check --root .   # rule documentation matches the rule catalog
-lake exe lean-fmt compiler status --root . # read-only audit of artifact coverage
+lake exe lean-fmt docs --check     # rule documentation matches the rule catalog
+lake exe lean-fmt compiler status  # read-only audit of artifact coverage
 ```
 
 `docs --check` exits 1 on drift. `compiler status` is an audit and exits 0 whenever it could run; read its
@@ -236,7 +236,7 @@ strict job and a lenient job against the same warm cache.
 Per entry, the source's own bytes and its dependency closure are checked, so editing a file misses only that file's
 entry.
 
-An invalidated index is orphaned, not deleted; `lake exe lean-fmt clean --root .` removes the whole `.lean-fmt-cache`
+An invalidated index is orphaned, not deleted; `lake exe lean-fmt clean` removes the whole `.lean-fmt-cache`
 directory and is idempotent. `--no-cache` neither reads nor writes it, which is what a job measuring cold performance
 wants.
 
@@ -295,7 +295,7 @@ lake update
 lake build
 # 3. confirm the integration still resolves
 lake check-lint
-lake exe lean-fmt compiler status --root .
+lake exe lean-fmt compiler status
 ```
 
 Lake's `plugins` field is still officially experimental and its target-key syntax has changed more than once, so step 3

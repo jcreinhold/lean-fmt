@@ -29,11 +29,13 @@ toolchain. There is no Windows build; on Windows take the Lake dependency below.
 ## Use
 
 ```sh
-lean-fmt check --root .    # report findings, write nothing
-lean-fmt diff --root .     # preview formatting changes
-lean-fmt format --root .   # write the canonical layout in place (--check previews instead)
-lean-fmt fix --root .      # apply rule fixes in place, without reflowing layout
+lean-fmt check    # report findings, write nothing
+lean-fmt diff     # preview formatting changes
+lean-fmt format   # write the canonical layout in place (--check previews instead)
+lean-fmt fix      # apply rule fixes in place, without reflowing layout
 ```
+
+Each runs over the Lake project in the working directory; `--root PATH` points elsewhere, and named files narrow it.
 
 `check` and `diff` never write. `format` and `fix` publish a file atomically, and only after validating the whole
 result against the current source.
@@ -80,7 +82,7 @@ require «lean-fmt» from git
 
 ```sh
 lake update «lean-fmt»   # add it to the manifest
-lake exe lean-fmt check --root .
+lake exe lean-fmt check
 ```
 
 To make `lake lint` run it, add two lines to your package. A package has one lint driver, so if you already have one,
