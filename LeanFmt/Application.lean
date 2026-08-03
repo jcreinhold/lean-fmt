@@ -292,6 +292,33 @@ def childTimeoutMs : IO Nat := do
   | none =>
     return 600000
 
+/-- The frontend child's task-pool size: what Lake gives its own `lean`, never what this process
+inherited.
+
+The child must not read `LEAN_NUM_THREADS` from the environment, because for this product that
+variable already means something else — `resolveWorkers` reads it to decide how many children run
+at once. A caller who writes `LEAN_NUM_THREADS=2` to keep a build off their whole machine was
+silently also sizing each child's pool at 2, and that is the bug: the child elaborates with
+`Elab.async := true`, so its own elaboration sits on a pool thread, and a tactic that spawns pooled
+tasks and waits for them starves when the remaining threads are all themselves waiting.
+
+Measured, on a two-level nest (`TacticM.parFirst` whose jobs each call `TacticM.parFirst`): the
+child deadlocks at 1, 2, and 3 threads and finishes in 0.7 s at 4. The requirement is one thread per
+simultaneously blocked wait plus one to make progress, so it scales with the nest's width, not with
+a constant anyone can pick. The floor of 4 covers that measured case; the child timeout covers what
+no floor can.
+
+The size is free. Lean creates pool workers on demand, so raising the child from 2 to 12 over this
+repository's 105 files moved nothing: 12.3-12.9 s against 12.7-13.2 s, 90.1 s user against 91.2 s,
+and 829 MB peak against 832 MB. `LEAN_FMT_CHILD_THREADS` overrides it, which is how the deadlock
+above was bisected. -/
+def childThreads : IO Nat := do
+  match (← IO.getEnv "LEAN_FMT_CHILD_THREADS").bind (·.toNat?) with
+  | some override =>
+    return max override 1
+  | none =>
+    return max 4 (System.Platform.Internal.getHardwareConcurrency ()).toNat
+
 def timeoutMessage (budget : Nat) : String :=
   s!"exact frontend child ran past its {budget} ms bound and was stopped; \
     set LEAN_FMT_CHILD_TIMEOUT_MS to raise the bound, or 0 to remove it"
@@ -531,6 +558,7 @@ private def ExactRun.envelope (run : ExactRun) (snapshot : SourceSnapshot) (capt
             (setupResult, setupPath, sourcePath, run.temporary / s!"{index}.out",
               run.temporary / s!"{index}.err")
   try
+    let threads ← childThreads
     let overrideName := if validator then "LEAN_FMT_TEST_VALIDATOR" else "LEAN_FMT_TEST_ANALYZER"
     let analyzer := (← IO.getEnv overrideName).map FilePath.mk |>.getD run.application
     let exitCode ←
@@ -551,21 +579,14 @@ private def ExactRun.envelope (run : ExactRun) (snapshot : SourceSnapshot) (capt
                   | none =>
                     if captureOccurrences then "2" else if captureSemantic then "1" else "0",
                   outPath.toString, errPath.toString]
-              -- Lake caps nothing on its children, because it runs one `lean` per module and lets each use
-              -- the machine. This runs `workers` children at once and each has `Elab.async := true`
-              -- inside it, so an uncapped child would take the whole machine `workers` times over. The
-              -- parallelism is at this level, one process per file, and `resolveWorkers` picks its degree
-              -- the way Lake picks its own. A child that used more would be competing with its siblings.
-              --
-              -- Two, never one. The child's own elaboration occupies a pool thread, so at one thread a
-              -- command that spawns tasks and waits for them deadlocks: nothing can run what it waits
-              -- on. `try?`'s parallel combinator does exactly that, under `withUnlimitedHeartbeats`, so
-              -- no heartbeat ever breaks the wait. Measured on mathlib's `MathlibTest/RegisterTryTactic`:
-              -- at one thread the child sat 45 minutes with its CPU time frozen at 1.65 s, at two it
-              -- finished in 15 s. Plain `lean` survives one thread because its elaboration does not run
-              -- on the pool.
+              -- The parallelism that matters is here, one process per file, and `resolveWorkers`
+              -- picks its degree the way Lake picks its own. The child's pool is not a second
+              -- ration of the machine to spend — `childThreads` explains what it is and why it
+              -- costs nothing — but it must never be the inherited `LEAN_NUM_THREADS`, which for
+              -- this product names the worker count instead.
               env :=
-                run.project.workspace.augmentedEnvVars.push ⟨"LEAN_NUM_THREADS", some "2"⟩ |>.push
+                run.project.workspace.augmentedEnvVars.push
+                    ⟨"LEAN_NUM_THREADS", some (toString threads)⟩ |>.push
                   ⟨"LEAN_FMT_PROFILE_OUT", some errPath.toString⟩ }
             cancel?
     let errText ←
