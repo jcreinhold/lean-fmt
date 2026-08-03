@@ -512,8 +512,16 @@ private def ExactRun.envelope (run : ExactRun) (snapshot : SourceSnapshot) (capt
               -- inside it, so an uncapped child would take the whole machine `workers` times over. The
               -- parallelism is at this level, one process per file, and `resolveWorkers` picks its degree
               -- the way Lake picks its own. A child that used more would be competing with its siblings.
+              --
+              -- Two, never one. The child's own elaboration occupies a pool thread, so at one thread a
+              -- command that spawns tasks and waits for them deadlocks: nothing can run what it waits
+              -- on. `try?`'s parallel combinator does exactly that, under `withUnlimitedHeartbeats`, so
+              -- no heartbeat ever breaks the wait. Measured on mathlib's `MathlibTest/RegisterTryTactic`:
+              -- at one thread the child sat 45 minutes with its CPU time frozen at 1.65 s, at two it
+              -- finished in 15 s. Plain `lean` survives one thread because its elaboration does not run
+              -- on the pool.
               env :=
-                run.project.workspace.augmentedEnvVars.push ⟨"LEAN_NUM_THREADS", some "1"⟩ |>.push
+                run.project.workspace.augmentedEnvVars.push ⟨"LEAN_NUM_THREADS", some "2"⟩ |>.push
                   ⟨"LEAN_FMT_PROFILE_OUT", some errPath.toString⟩ }
             cancel?
     let errText ←
