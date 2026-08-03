@@ -75,7 +75,7 @@ after that:
 
 ```lean
 require «lean-fmt» from git
-  "https://github.com/jcreinhold/lean-fmt" @ "v0.2.2"
+  "https://github.com/jcreinhold/lean-fmt" @ "v0.2.3"
 ```
 
 ```sh
