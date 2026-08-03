@@ -2,11 +2,11 @@
 
 A formatter and linter for Lean 4.
 
-The formatter rewrites Lean source into one canonical style (`docs/style.md`); a few settings adjust it, and line width
-is the one most projects touch. Before lean-fmt reports or writes anything, it re-parses the result and compares it
-token-for-token against the original, refusing whatever does not match. The linter adds rules on top — duplicate and
-redundant imports, unused variables, stray `set_option`s, bidirectional control characters — some with automatic fixes.
-`lean-fmt rules` lists them.
+The formatter rewrites Lean source into one canonical style (`docs/style.md`). lean-fmt re-parses every result and
+compares it token-for-token against the original, refusing whatever does not match.
+
+The linter adds rules on top: duplicate and redundant imports, unused variables, stray `set_option`s, bidirectional
+control characters. Some carry fixes. `lean-fmt rules` lists them all.
 
 ## Install
 
