@@ -1243,8 +1243,8 @@ private def computeImportReports (plans : Array RulePlan) (project : Project.Sna
       -- `.getD #[]` is FMT004's degradation, written where its consequence is visible: an
       -- unresolvable closure loses at most one report-only redundancy and can never fabricate one.
       -- Cache currency makes the opposite choice on the same fact; see `closureDigests`.
-      let closures ← project.importClosures names
-      pure fun name => closures[name]?.map (·.visible.getD #[])
+      let imports ← project.importClosures names
+      pure fun name => imports.closures[name]?.map (·.visible.getD #[])
     else
       pure fun _ => none
   return (headers.zip (plans.zip snapshots)).map fun ((normalized, header?), plan, snapshot) =>

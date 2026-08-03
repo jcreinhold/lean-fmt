@@ -164,9 +164,15 @@ structure ResultCache where private mk ::
   changing mid-run is A2 (observation faithfulness), a named hypothesis and false in general either
   way. -/
   artifactHashByModule : IO.Ref (Std.HashMap String MemberFact)
+  /-- Memoized closure digest of every module the currency walk reaches, not just the selected
+  ones, and holding the honest `none` that `closureDigestsByModule` replaces with the fallback.
+
+  This is what makes the digest a fold over *edges* rather than over closure members. Two modules
+  that import the same thousand modules share that subtree here and hash it once between them. -/
+  closureNodeDigests : IO.Ref (Std.HashMap Lean.Name (Option Digest))
 
 def resultCacheSchema : String :=
-  "lean-fmt.result-cache.v4"
+  "lean-fmt.result-cache.v5"
 
 private def digestParts (parts : Array String) : Digest :=
   Digest.ofString (String.intercalate "\u0000" parts.toList)
@@ -397,12 +403,44 @@ private def memberFact (workspace : Lake.Workspace) (mode : ClosureMode) (name :
       return .unreadable
   return .unbuilt
 
+/-- One closure member's own contribution to a digest, or `none` when its currency is unknown. -/
+private def memberPart (workspace : Lake.Workspace) (mode : ClosureMode)
+    (memo : IO.Ref (Std.HashMap String MemberFact)) (name : Lean.Name) : IO (Option String) := do
+  let key := name.toString
+  let fact ←
+    do
+      if let some hit := (← memo.get)[key]? then
+        pure hit
+      else
+        let computed ← memberFact workspace mode name
+        memo.modify (·.insert key computed)
+        pure computed
+  match fact with
+  | .hash hash =>
+    return some s!"closure {name} {hash}"
+  | .interfaceHash value =>
+    return some s!"closure-interface {name} {value.hex}"
+  | .unbuilt =>
+    return some s!"closure {name} unbuilt"
+  | .unreadable =>
+    return none
+
 /-- The grammar-currency digest for one target: its transitive import closure, each member paired
 with its module artifacts as they are on disk **right now**.
 
+**Folded over edges, not over members.** A module's digest is its own artifact fact together with
+the digests of its direct imports, so a shared subtree is hashed once and every module above it
+reuses that one value. Folding over the flattened closure instead re-read and re-formatted a fact
+per member per module: over warm mathlib that was 67.8 s of a 134 s run, 7.7 ms for each of 8,834
+modules, growing with closure size. The same fold over edges takes 0.4 s, in a run of 58 s.
+
+The digest a module gets is different from the flat fold's, but it is a function of the same facts
+and moves whenever any of them moves, which is all currency asks of it. `resultCacheSchema` carries the change so every existing entry misses once.
+
 `none` — meaning the entry misses — whenever currency cannot be established: the closure could
 not be resolved, a member is not a workspace module, or a member's trace is absent, unparseable, or
-of an unrecognized schema. This direction is fixed: currency that cannot be determined
+of an unrecognized schema. A `none` anywhere in the subtree reaches the root, because a child's
+digest is part of its parent's. This direction is fixed: currency that cannot be determined
 degrades to a miss, never to a hit, and such an entry is not written either, since a placeholder
 value would be indistinguishable from a real one on the next run.
 
@@ -410,31 +448,48 @@ This degrades **one entry**, not the cache, which is finer than `environmentDige
 disables everything when it returns `none`, correctly, because it reports a property of the epoch
 rather than of an entry. -/
 private def closureDigest? (workspace : Lake.Workspace) (mode : ClosureMode)
-    (memo : IO.Ref (Std.HashMap String MemberFact)) (closure : Option (Array Lean.Name)) :
+    (memo : IO.Ref (Std.HashMap String MemberFact))
+    (digests : IO.Ref (Std.HashMap Lean.Name (Option Digest)))
+    (edges : Std.HashMap Lean.Name (Array (Lean.Name × Bool))) (root : Lean.Name) :
     IO (Option Digest) := do
-  let some members := closure | return none
-  let ordered := members.qsort (·.toString < ·.toString)
-  let mut parts := #[]
-  for name in ordered do
-    let key := name.toString
-    let fact ←
-      do
-        if let some hit := (← memo.get)[key]? then
-          pure hit
-        else
-          let computed ← memberFact workspace mode name
-          memo.modify (·.insert key computed)
-          pure computed
-    match fact with
-    | .hash hash =>
-      parts := parts.push s!"closure {name} {hash}"
-    | .interfaceHash value =>
-      parts := parts.push s!"closure-interface {name} {value.hex}"
-    | .unbuilt =>
-      parts := parts.push s!"closure {name} unbuilt"
-    | .unreadable =>
-      return none
-  return some (digestParts parts)
+  -- An explicit stack, because mathlib's import depth runs to the hundreds and a recursive walk
+  -- over it overflows. A frame is expanded once to push its imports and popped a second time, with
+  -- `expanded` set, to fold them.
+  let mut stack : Array (Lean.Name × Bool) := #[(root, false)]
+  -- Lake rejects import cycles, so `visiting` is a guard rather than a case: without it a cycle
+  -- would push frames forever. A back edge degrades to `none`, like any other unknown.
+  let mut visiting : Std.HashSet Lean.Name := { }
+  while !stack.isEmpty do
+    let (name, expanded) := stack.back!
+    stack := stack.pop
+    if (← digests.get).contains name then
+      continue
+    let some imports := edges[name]? | digests.modify (·.insert name none)
+    if !expanded then
+      if visiting.contains name then
+        digests.modify (·.insert name none)
+        continue
+      visiting := visiting.insert name
+      stack := stack.push (name, true)
+      for (imp, _) in imports do
+        unless (← digests.get).contains imp do
+          stack := stack.push (imp, false)
+      continue
+    visiting := visiting.erase name
+    let some own ← memberPart workspace mode memo name |
+      digests.modify (·.insert name none)
+    let known ← digests.get
+    let mut parts := #[own]
+    -- Every import counts, exported or not: anything imported could have shaped elaboration.
+    for (imp, _) in imports.qsort (·.1.toString < ·.1.toString)do
+      match known[imp]? with
+      | some (some digest) =>
+        parts := parts.push s!"import {imp} {digest.hex}"
+      | _ =>
+        parts := #[]
+        break
+    digests.modify (·.insert name (if parts.isEmpty then none else some (digestParts parts)))
+  return ((← digests.get)[root]?).getD none
 
 /-- `realPath` for a configured search-path root that may not exist.
 
@@ -611,17 +666,23 @@ private def ResultCache.closureDigests (cache : ResultCache) (project : Project.
       -- FMT004 legitimately does with the same fact, would read as "nothing to check" — a
       -- *permissive* answer, and a stale hit is the one direction currency must never degrade
       -- toward. The producer returns the honest `Option` so each caller states its own direction.
-      let closures ← withPhase "closure_resolve" <| project.importClosures missing
+      let imports ← withPhase "closure_resolve" <| project.importClosures missing
       for name in missing do
-        -- The closure Lake reports is the module's *imports*. Its own artifacts belong in
-        -- the digest too: its own `.olean` is what carries the projection being served, so a
-        -- rebuild of the module itself must move the key even when nothing it imports changed.
-        let closure := (closures[name]?.bind (·.build)).map (·.push name)
+        -- The closure is folded from `imports.edges`, and the module's own artifacts enter at its
+        -- own node: its `.olean` is what carries the projection being served, so a rebuild of the
+        -- module itself must move the key even when nothing it imports changed. Resolution is
+        -- still read from `build`, so a module whose closure Lake could not resolve misses here
+        -- exactly as it did when the flattened closure was the input.
+        let resolved := (imports.closures[name]?.bind (·.build)).isSome
         -- Precise when the closure resolves and every member's trace reads; otherwise the
         -- conservative whole-workspace digest rather than a permanent miss. See `fallback` below.
         let digest? ←
-          withPhase "closure_hash" <|
-              closureDigest? project.workspace cache.closureMode cache.artifactHashByModule closure
+          if !resolved then
+            pure none
+          else
+            withPhase "closure_hash" <|
+                closureDigest? project.workspace cache.closureMode cache.artifactHashByModule
+                  cache.closureNodeDigests imports.edges name
         let resolved ←
           match digest? with
           | some digest =>
@@ -792,6 +853,7 @@ def ResultCache.open? (workspace : Lake.Workspace) (application : System.FilePat
     let loadedEntries ← IO.mkRef none
     let workspaceArtifacts ← IO.mkRef none
     let closureDigestsByModule ← IO.mkRef { }
+    let closureNodeDigests ← IO.mkRef { }
     let artifactHashByModule ← IO.mkRef { }
     return some
         { root := cacheRoot
@@ -803,7 +865,8 @@ def ResultCache.open? (workspace : Lake.Workspace) (application : System.FilePat
           loadedEntries
           workspaceArtifacts
           closureDigestsByModule
-          artifactHashByModule }
+          artifactHashByModule
+          closureNodeDigests }
   catch _ =>
     return none
 

@@ -245,14 +245,22 @@ the stronger statement, because a future caller now has to write `.getD #[]` whe
 it.
 
 Nothing pinned this before. Folding `none` to `#[]` inside `closureDigest?` passes every other
-cache case in this file. -/
+cache case in this file.
+
+The fold walks edges now, so the unresolved closure is a module the edge map does not mention and
+the empty one is a module it maps to no imports. -/
 private def testClosureDegradationDirection : IO Unit := do
   let memo ← IO.mkRef ({ } : Std.HashMap String MemberFact)
+  let nodes ← IO.mkRef ({ } : Std.HashMap Lean.Name (Option Digest))
   let workspace ← Project.loadWorkspace (← IO.currentDir)
-  let unresolved ← closureDigest? workspace .artifacts memo none
+  let name := `LeanFmt.Digest
+  let unresolved ← closureDigest? workspace .artifacts memo nodes { } name
   ensure unresolved.isNone
       "an unresolved import closure produced a digest; currency would hit on unknown grammar"
-  let empty ← closureDigest? workspace .artifacts memo (some #[])
+  let nodes ← IO.mkRef ({ } : Std.HashMap Lean.Name (Option Digest))
+  let empty ←
+    closureDigest? workspace .artifacts memo nodes
+        (Std.HashMap.emptyWithCapacity 1 |>.insert name #[]) name
   ensure empty.isSome
       "an empty import closure produced no digest; a module importing nothing cannot be cached"
 
