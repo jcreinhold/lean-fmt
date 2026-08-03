@@ -147,9 +147,14 @@ from code or tests is gone — when you cannot find why something is the way it 
 - Do not call superset parsing exact. Say which of the four workloads a speed number came from. A passing test is not a
   measurement. Keep measured results apart from expected ones, and run the cheap check before you record either.
 - Treat formatter-cache cold, ordinary-project-built, formatter-integrated-built, and cache-warm as distinct workloads.
-- Stop memory experiments at 8 GiB aggregate RSS, abnormal pressure, or 256 MiB new swap.
-- Do not repeatedly run full mathlib during development. Use the frozen sample and named stress cases; save the
-  8,795-file run for a plausible late candidate.
+- Stop a memory experiment, which measures footprint, at 8 GiB aggregate RSS, abnormal pressure, or 256 MiB new swap. A
+  functional run, which asks whether the product works on a corpus, stops only on distress: free memory under 10%, or
+  swap 2 GiB over its baseline. A report prints at the end, so an early kill loses the whole run.
+- Summed RSS over a worker tree is not footprint; every worker re-counts the same mmapped `.olean` pages. It read
+  8.46 GiB while the system sat 61% free. Compare runs with it, never gate on it.
+- Do not repeatedly run full mathlib. Use the frozen sample and named stress cases; save the full-corpus run for a late
+  candidate.
+- Whole-project selection and named files are different workloads, minutes and gigabytes apart. Say which.
 
 ## Sharing this worktree
 
