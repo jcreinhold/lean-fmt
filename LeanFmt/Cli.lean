@@ -1506,6 +1506,12 @@ unsafe def runCli (arguments : List String) : IO UInt32 := do
   | "--help" :: _ =>
     printHelp (← IO.getStdout) CliHelp.overviewHelp;
     return 0
+  -- Anyone installing a prebuilt binary asks it what it is before they ask it anything else, and
+  -- an issue report is worth less without the answer. The language server already reports this
+  -- string; the boundary suite pins it against the lakefile.
+  | "--version" :: _ =>
+    IO.println s!"lean-fmt {LeanFmt.version}"
+    return 0
   | command :: "--help" :: _ =>
     match CliHelp.commandHelp? command with
     | some render =>

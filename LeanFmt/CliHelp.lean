@@ -396,7 +396,8 @@ def overviewHelp (color : Bool) (width : Nat) : String :=
           renderHelpSection color width "commands:"
             (commandHelps.map fun spec => ⟨spec.command, spec.summary⟩) ++
         "\n\n" ++
-      "Run `lean-fmt <command> --help` for that command's options." ++
+      "Run `lean-fmt <command> --help` for that command's options, `lean-fmt --version` for the \
+    version." ++
     renderNotesBlock color width
       #["exit 0 clean, 1 findings or drift, 2 failure.",
         "color follows the terminal: NO_COLOR or TERM=dumb disables it, and COLUMNS sets the wrap width."]

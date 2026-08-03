@@ -260,6 +260,14 @@ private def testPackageIdentity (root : System.FilePath) : IO Unit := do
       | _ => none
     | throw <| IO.userError "the README lost its dependency pin"
   ensureEq "the README's dependency pin drifted from the package version" pinned s!"v{packaged}"
+  -- The fourth place: what the binary answers when someone asks what they installed. It went
+  -- unanswered until publication was imminent -- `--version` fell through to the general help and
+  -- exit 2.
+  let reported ←
+    expectExit 0 "lean-fmt --version" (root / ".lake" / "build" / "bin" / "lean-fmt").toString
+        #["--version"]
+  ensureEq "the binary does not report the package version" s!"lean-fmt {packaged}\n"
+      reported.stdout
 
 private def cases (root : System.FilePath) : Array Case :=
   #[{ name := "module-headers", run := testModuleHeaders root },
