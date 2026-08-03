@@ -91,9 +91,20 @@ Both come from one traversal because both walk the same `mod.input` nodes. -/
 structure ImportClosures where private mk ::
   /-- Everything the module transitively imports. `none` if the graph could not resolve it. -/
   build : Option (Array Lean.Name) := none
-  /-- Everything a dependent sees through it. `none` if the graph could not resolve it. -/
-  visible : Option (Array Lean.Name) := none
+  /-- Everything a dependent sees through it. `none` if the graph could not resolve it. Private
+  because the one question anyone asks of it is membership; `sees` is that question, and holding
+  the answer as a set rather than a list is what makes it cheap. -/
+  private visible : Option (Std.HashSet Lean.Name) := none
   deriving Inhabited
+
+/-- Does a dependent that writes an import of this module see `name` through it?
+
+`false` for a closure the graph could not resolve. That is FMT004's degradation and the direction a
+report-only rule must take: an unresolved closure loses at most one redundancy report and can never
+fabricate one. Currency makes the opposite choice on its own closure; see
+`ResultCache.closureDigests`. -/
+def ImportClosures.sees (closure : ImportClosures) (name : Lean.Name) : Bool :=
+  (closure.visible.map (·.contains name)).getD false
 
 /-- What one selection asked of the import graph, and everything the answering traversal saw.
 
@@ -600,7 +611,7 @@ private def decodeFacetDescriptor? (encoded : String) : Option Lake.Artifact := 
       path := FilePath.mk descriptor.path
       mtime := 0 }
 
-/-- Modules reachable from `root` over exported edges only, `root` excluded.
+/-- The set of modules reachable from `root` over exported edges only, `root` excluded.
 
 `edges` maps a module to its direct imports, each flagged with whether the import is exported; the
 walk follows the exported ones. The flag rides along rather than being filtered out first so that
@@ -616,26 +627,28 @@ so `import all X` exposes more of `X` than `X` re-exports. Following exported ed
 true redundancy rather than inventing one, which is the direction a report-only rule must err in,
 and the same direction `redundancyEligible` already takes. -/
 private def visibleFrom (root : Lean.Name)
-    (edges : Std.HashMap Lean.Name (Array (Lean.Name × Bool))) : Array Lean.Name :=
+    (edges : Std.HashMap Lean.Name (Array (Lean.Name × Bool))) : Std.HashSet Lean.Name :=
   Id.run do
+    -- The walk's own `seen` set *is* the answer, so nothing is copied out of it. Its one consumer
+    -- asks membership, and answering that by scanning a list cost 38.6 s of a 58 s warm mathlib
+    -- run: every import pair in every file scanned a closure averaging 1,185 names.
+    --
+    -- A sorted array and a binary search answer the same question in 0.4 GB less, because the set
+    -- would be transient and the array retained. It was measured and rejected: the sort costs 7 s
+    -- of a 25 s run, and warm footprint is not this product's peak — the cold run needs 5.9 GB
+    -- whatever this holds.
+    --
+    -- Terminates on `seen` rather than on a bound, so a cyclic edge map cannot spin.
     let mut seen : Std.HashSet Lean.Name := { }
-    let exportedFrom := fun name =>
-      (edges[name]?.getD #[]).filterMap fun (imp, exported) => if exported then some imp else none
-    let mut frontier := exportedFrom root
-    let mut result := #[]
-    -- Bounded by the edge map, which is finite and built before the walk starts, so a cyclic header
-    -- graph terminates on `seen` rather than recursing.
-    for _ in [0:edges.size + 1]do
-      if frontier.isEmpty then
-        break
-      let mut next := #[]
-      for name in frontier do
-        unless seen.contains name do
-          seen := seen.insert name
-          result := result.push name
-          next := next ++ exportedFrom name
-      frontier := next
-    return result
+    let mut stack := #[root]
+    while !stack.isEmpty do
+      let name := stack.back!
+      stack := stack.pop
+      for (imp, exported) in edges[name]?.getD #[]do
+        if exported && !seen.contains imp then
+          seen := seen.insert imp
+          stack := stack.push imp
+    return seen
 
 /-- Every module any of the given closures passes through, mapped to its direct imports, as one job
 on the graph that is already running.

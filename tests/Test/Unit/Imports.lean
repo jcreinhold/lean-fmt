@@ -56,7 +56,7 @@ private def parseHeader! (source : String) : IO Imports.HeaderModel := do
 /-- `FMT003`/`FMT004`/`FMT005` and the organizer, tested directly — import rules live outside the
 `RuleImpl` engine, so the `runRulesOf` seam does not reach them; the
 header rules are pure functions of the parsed surface header, and `redundantFindings` is pure over the
-header plus a caller-supplied closure that stands in for the Lake graph. -/
+header plus a caller-supplied reachability answer that stands in for the Lake graph. -/
 private def testImports : IO Unit := do
   -- The surface header carries the modifier spelling, not the abstract import: `import all A` and
   -- `import A` are distinct statements, so neither is the other's duplicate (`notes` §3).
@@ -118,11 +118,10 @@ private def testImports : IO Unit := do
       (Imports.orderFindings commentGap "import Lake.A\n-- pinned\nimport Lean.B\n"
           .canonical).isEmpty
       "a comment-ended region wrongly fired FMT005 under the canonical layout"
-  -- FMT004: `Foo.B` is reachable via `Foo.A`'s closure, so the plain `import Foo.B` is a candidate.
+  -- FMT004: `Foo.B` is visible through `Foo.A`, so the plain `import Foo.B` is a candidate.
   let redundant ← parseHeader! "import Foo.A\nimport Foo.B\n"
-  let closure : Lean.Name → Option (Array Lean.Name) := fun name =>
-    if name == `Foo.A then some #[`Foo.B] else none
-  let (redFindings, redWithheld) := Imports.redundantFindings redundant closure
+  let covers : Lean.Name → Lean.Name → Bool := fun outer inner => outer == `Foo.A && inner == `Foo.B
+  let (redFindings, redWithheld) := Imports.redundantFindings redundant covers
   ensure (redFindings.map (·.code) == #["FMT004"])
       "a transitively-covered import did not fire FMT004"
   ensure (redFindings[0]!.fix?.isNone) "FMT004 must be report-only (no fix)"
@@ -130,7 +129,7 @@ private def testImports : IO Unit := do
   -- Withholding: `import all Foo.B` under a `module` marker exposes data reachability cannot reason
   -- about, so it is withheld (counted), never reported.
   let withheld ← parseHeader! "module\nimport Foo.A\nimport all Foo.B\n"
-  let (whFindings, whCount) := Imports.redundantFindings withheld closure
+  let (whFindings, whCount) := Imports.redundantFindings withheld covers
   ensure (whFindings.isEmpty)
       "an `import all` redundancy candidate was reported rather than withheld"
   ensure (whCount == 1) "the withheld-redundancy count was not recorded"

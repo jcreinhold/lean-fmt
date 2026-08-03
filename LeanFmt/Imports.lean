@@ -320,12 +320,12 @@ are eligible. -/
 def redundancyEligible (header : HeaderModel) (stmt : ImportStmt) : Bool :=
   !stmt.importAll && !stmt.isMeta && !(header.hasModule && stmt.isExported)
 
-/-- FMT004: a plain written import whose module is in the transitive closure of *another* written
-import is a redundancy candidate. `closureOf name` returns the modules `name` transitively imports (or
-`none` if the graph could not resolve it). Report-only always — reachability is necessary, not
-sufficient, for safe removal. Duplicates are excluded (they are FMT003's). Returns the findings and the
-withheld count (candidates skipped by `redundancyEligible`). -/
-def redundantFindings (header : HeaderModel) (closureOf : Lean.Name → Option (Array Lean.Name)) :
+/-- FMT004: a plain written import that another written import already makes available is a
+redundancy candidate. `covers outer inner` answers whether importing `outer` brings `inner` with it;
+the caller owns what an unresolvable graph answers there. Report-only always — reachability is
+necessary, not sufficient, for safe removal. Duplicates are excluded (they are FMT003's). Returns
+the findings and the withheld count (candidates skipped by `redundancyEligible`). -/
+def redundantFindings (header : HeaderModel) (covers : Lean.Name → Lean.Name → Bool) :
     Array Finding × Nat :=
   Id.run do
     let mut findings : Array Finding := #[]
@@ -343,10 +343,7 @@ def redundantFindings (header : HeaderModel) (closureOf : Lean.Name → Option (
       -- Is this module transitively pulled in by some *other* written import?
       let coveredBy :=
         header.imports.findIdx? fun other =>
-          other.module != stmt.module &&
-            (match closureOf other.module with
-            | some closure => closure.contains stmt.module
-            | none => false)
+          other.module != stmt.module && covers other.module stmt.module
       match coveredBy with
       | none =>
         pure ()

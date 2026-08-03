@@ -1173,8 +1173,8 @@ private def anyImportSelected (plan : RulePlan) : Bool :=
 withheld-redundant count. Each rule is gated on selection so an unselected FMT004 never consults the
 graph closure. Pure — the caller did the IO (header parse, closure fetch). -/
 private def importFindingsOfHeader (plan : RulePlan) (format : FormatConfig)
-    (closureOf : Lean.Name → Option (Array Lean.Name)) (header : Imports.HeaderModel)
-    (normalized : String) : Array Finding × Nat :=
+    (covers : Lean.Name → Lean.Name → Bool) (header : Imports.HeaderModel) (normalized : String) :
+    Array Finding × Nat :=
   Id.run do
     let mut findings : Array Finding := #[]
     let mut withheld := 0
@@ -1184,7 +1184,7 @@ private def importFindingsOfHeader (plan : RulePlan) (format : FormatConfig)
       findings :=
         findings ++ Imports.orderFindings header normalized format.importLayout format.importGroups
     if plan.selected.contains "FMT004" then
-      let (redundant, w) := Imports.redundantFindings header closureOf
+      let (redundant, w) := Imports.redundantFindings header covers
       findings := findings ++ redundant
       withheld := w
     return (findings, withheld)
@@ -1205,13 +1205,13 @@ private def singleImportReport (plan : RulePlan) (workspace : Lake.Workspace) (n
   | none =>
     return (#[], 0)
   | some header =>
-    let closureOf ←
+    let covers : Lean.Name → Lean.Name → Bool ←
       if plan.selected.contains "FMT004" then
         let facts ← Project.graph workspace #[] (headerImportNames header) { closures := true }
-        pure fun name => facts.imports[name]?.map (·.visible.getD #[])
+        pure fun outer inner => (facts.imports[outer]?.map (·.sees inner)).getD false
       else
-        pure fun _ => none
-    return importFindingsOfHeader plan format closureOf header normalized
+        pure fun _ _ => false
+    return importFindingsOfHeader plan format covers header normalized
 
 /-- Compute every target's import report in one pass: parse all headers, ask for the union of their
 import closures (FMT004 only), then project per file. Returns one `(findings, withheldRedundant)`
@@ -1231,7 +1231,7 @@ private def computeImportReports (plans : Array RulePlan) (project : Project.Sna
     snapshots.mapM fun snapshot => do
         let (normalized, _) := LosslessSource.normalize snapshot.source
         return (normalized, ← Imports.parseHeaderModel normalized)
-  let closureOf ←
+  let covers : Lean.Name → Lean.Name → Bool ←
     if plans.any (·.selected.contains "FMT004") then
       let names :=
         headers.foldl (init := #[]) fun acc (_, header?) =>
@@ -1240,18 +1240,14 @@ private def computeImportReports (plans : Array RulePlan) (project : Project.Sna
             (headerImportNames header).foldl (init := acc) fun acc name =>
               if acc.contains name then acc else acc.push name
           | none => acc
-      -- `.getD #[]` is FMT004's degradation, written where its consequence is visible: an
-      -- unresolvable closure loses at most one report-only redundancy and can never fabricate one.
-      -- Cache currency makes the opposite choice on the same fact; see `closureDigests`.
       let imports ← project.importClosures names
-      pure fun name => imports.closures[name]?.map (·.visible.getD #[])
+      pure fun outer inner => (imports.closures[outer]?.map (·.sees inner)).getD false
     else
-      pure fun _ => none
+      pure fun _ _ => false
   return (headers.zip (plans.zip snapshots)).map fun ((normalized, header?), plan, snapshot) =>
       match header? with
       | none => (#[], 0)
-      | some header =>
-        importFindingsOfHeader plan snapshot.config.format closureOf header normalized
+      | some header => importFindingsOfHeader plan snapshot.config.format covers header normalized
 
 /-- The fix this product would actually apply for a finding, or `none`.
 
