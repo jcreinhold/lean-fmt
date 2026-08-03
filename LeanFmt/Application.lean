@@ -2598,19 +2598,6 @@ private unsafe def runValidateCandidateChild (args : List String) : IO UInt32 :=
   IO.println (Lean.toJson result).compress
   return 0
 
-private unsafe def runInspectArtifactChild (args : List String) : IO UInt32 := do
-  let [moduleName, moduleFile, sourcePath] := args | return 2
-  let source ← IO.FS.readFile sourcePath
-  match ← compilerArtifact? moduleName.toName moduleFile with
-  | some artifact =>
-    if artifact.validFor moduleName.toName source then
-      IO.println "ready"
-    else
-      IO.println "missing"
-  | none =>
-    IO.println "missing"
-  return 0
-
 private unsafe def measureCacheEpoch (args : List String) : IO UInt32 := do
   let [root] := args | return 2
   let root ← IO.FS.realPath root
@@ -2705,7 +2692,8 @@ def clean (requestedRoot : FilePath) : IO CleanReport := do
     IO.FS.removeDirAll cache
   return { root := root.toString, removed }
 
-structure CompilerStatusRequest where
+/-- Where `compiler build` runs. -/
+structure CompilerRequest where
   root : FilePath := "."
 
 structure CompilerSetupReport where
@@ -2732,118 +2720,6 @@ def compilerSetupReport : CompilerSetupReport :=
         "run `lean-fmt compiler build` to extract every workspace module's artifact in one lake invocation",
         "editing the plugin re-elaborates every module that loads it; that trace edge is what makes the artifact trustworthy"] }
 
-structure CompilerModuleStatus where
-  path : String
-  module : String
-  status : String
-  deriving Lean.ToJson
-
-structure CompilerStatusReport where
-  root : String
-  toolchain : String
-  modules : Array CompilerModuleStatus
-  ready : Nat
-  missing : Nat
-  unbuilt : Nat
-  deriving Lean.ToJson
-
-/- `current` is this module's currency as the one graph reported it. It used to be a `checkNoBuild`
-per module, so an audit of N modules ran N full traversals over the same graph; `compilerStatus`
-now asks once for the whole selection. The child is unchanged: currency says the `.olean` is
-up to date, and only reading it says whether the formatter's record is in there. -/
-private def inspectCompilerArtifact (workspace : Lake.Workspace) (application : FilePath)
-    (snapshot : SourceSnapshot) (current : Bool) : IO String := do
-  let some mod := snapshot.module? | return "unbuilt"
-  unless current do
-    return "unbuilt"
-  let output ←
-    runChild
-        { cmd := application.toString
-          args :=
-            #["__inspect-artifact", mod.name.toString, mod.oleanFile.toString,
-              snapshot.path.toString]
-          env := workspace.augmentedEnvVars.push ⟨"LEAN_NUM_THREADS", some "1"⟩ }
-  unless output.exitCode == 0 do
-    throw <|
-        IO.userError
-          s!"compiler status child failed for {snapshot.relativePath}: \
-      {output.stderr.trimAscii}"
-  let status := output.stdout.trimAscii.copy
-  unless status == "ready" || status == "missing" do
-    throw <|
-        IO.userError
-          s!"compiler status child returned invalid output for \
-      {snapshot.relativePath}"
-  return status
-
-/-- One worker of the compiler-status pool: pull the next target, inspect it, record it in
-place. `current` arrives precomputed so the worker holds no `TargetFacts`, and a target that is
-not a module records nothing, exactly as the serial loop skipped it. -/
-private partial def compilerStatusWorker (workspace : Lake.Workspace) (application : FilePath)
-    (work : Array (SourceSnapshot × Bool)) (next : IO.Ref Nat)
-    (outcomes : IO.Ref (Array (Option CompilerModuleStatus))) : IO Unit := do
-  let index ← next.modifyGet fun n => (n, n + 1)
-  if h : index < work.size then
-    let (snapshot, current) := work[index]
-    if let some mod := snapshot.module? then
-      let status ← inspectCompilerArtifact workspace application snapshot current
-      outcomes.modify
-          (·.set! index
-            (some { path := snapshot.relativePath, module := mod.name.toString, status }))
-    compilerStatusWorker workspace application work next outcomes
-
-def compilerStatus (request : CompilerStatusRequest) : IO CompilerStatusReport := do
-  let root ← IO.FS.realPath request.root
-  let project ← Project.loadAll root
-  let application ← IO.appPath
-  let facts ← Project.graph project.workspace project.targets (demand := { status := true })
-  -- One inspector child per module, a few at a time instead of strictly one at a time: the
-  -- children are independent, and each holds a loaded module environment, so the bound is
-  -- memory, not cores. Measured on this repository: 34 modules, ~43 s serially, ~13 s at four.
-  let work :=
-    (project.targets.zip facts.targets).map fun (snapshot, resolved) =>
-      (snapshot, resolved.current? == some true)
-  let next ← IO.mkRef 0
-  let outcomes ← IO.mkRef (Array.replicate work.size (none : Option CompilerModuleStatus))
-  if work.size > 1 then
-    -- The batch pattern (`execute`): dedicated priority is required because workers block on
-    -- child waits, and pooled blocking tasks can starve a small pool. The ceiling is four
-    -- because each worker holds a loaded module environment (~1.6 GB) — and the floor under
-    -- that ceiling is `resolveWorkers`, so CI's LEAN_NUM_THREADS=2 halves the peak the way the
-    -- comment on the suite step promises; a hardcoded four ignored it and modes peaked at
-    -- 6.5 GB on a capped runner.
-    let workers := min 4 (← resolveWorkers none) |> min work.size
-    let tasks ←
-      (List.range workers).mapM fun _ =>
-          IO.asTask (compilerStatusWorker project.workspace application work next outcomes)
-            Task.Priority.dedicated
-    let mut firstError? : Option IO.Error := none
-    for task in tasks do
-      match ← IO.wait task with
-      | .ok _ =>
-        pure ()
-      | .error error =>
-        if firstError?.isNone then
-          firstError? := some error
-    if let some error := firstError? then
-      throw error
-  else
-    compilerStatusWorker project.workspace application work next outcomes
-  let statuses := (← outcomes.get).filterMap id
-  let ready :=
-    statuses.foldl (fun total item => if item.status == "ready" then total + 1 else total) 0
-  let missing :=
-    statuses.foldl (fun total item => if item.status == "missing" then total + 1 else total) 0
-  let unbuilt :=
-    statuses.foldl (fun total item => if item.status == "unbuilt" then total + 1 else total) 0
-  return {
-      root := root.toString
-      toolchain := s!"Lean {Lean.versionString} ({Lean.githash})"
-      modules := statuses
-      ready
-      missing
-      unbuilt }
-
 /-- Build every workspace module's `leanFmtArtifact` sidecar in one `lake build` invocation.
 
 Lake owns the build: topological order, parallelism, and cache reuse — a module whose olean is
@@ -2851,7 +2727,7 @@ fresh pays only for extraction, and dependency packages (mathlib) are never targ
 `Project.loadAll` enumerates the root package's modules. Hand-enumerating targets per module
 would re-traverse the same graph once per module instead of computing one fixpoint. Stdio is
 inherited so the user watches Lake's own progress; the exit code is Lake's. -/
-def compilerBuild (request : CompilerStatusRequest) : IO UInt32 := do
+def compilerBuild (request : CompilerRequest) : IO UInt32 := do
   let root ← IO.FS.realPath request.root
   let project ← Project.loadAll root
   let facetName := `module.leanFmtArtifact
@@ -2889,7 +2765,6 @@ unsafe def runInternal? (args : List String) : IO (Option UInt32) :=
   | "__analyze-exact" :: rest => some <$> runAnalyzeChild rest
   | "__validate-candidate" :: rest => some <$> runValidateCandidateChild rest
   | "__extract-artifact" :: rest => some <$> runExtractChild rest
-  | "__inspect-artifact" :: rest => some <$> runInspectArtifactChild rest
   | "__measure-cache-epoch" :: rest => some <$> measureCacheEpoch rest
   | _ => pure none
 

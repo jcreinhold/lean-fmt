@@ -169,9 +169,8 @@ private def gateCandidateReparsed (capture : String) (expected : Nat) : Bool :=
 /-- §1i. The run walked the Lake graph no more than `bound` times.
 
 The quantity a whole plan's worth of work moved, and the one a later change can quietly give back.
-Traversals were once per-operation and, for the audit, per *module*: a `compiler status` over 62
-modules walked the same graph 62 times, and an ordinary warm `check` walked it twice for two sets
-of import closures neither half could see the other had fetched. A wall time would have hidden all
+Traversals were once per operation: an ordinary warm `check` walked the same graph twice, for two
+sets of import closures neither half could see the other had fetched. A wall time would have hidden all
 of that behind a warm page cache; the count cannot.
 
 A capture with no `cache.lake_graphs` line fails. Every run gated here traverses at least once, so
@@ -516,10 +515,6 @@ Each bound is what the run needs and no more, so each is also a claim about *why
   compilation evidence the tier check reads. Neither can answer the other's question.
 - **FMT001, no cache: 1.** The same evidence walk, with no closure walk behind it — the gate that
   FMT004's closures are fetched because FMT004 was selected, not on every run.
-- **`compiler status`: 1.** The audit reports on every module in the workspace from one walk. It
-  called `isCurrent` per module before, so this is the bound that would regress silently: a
-  per-module loop reads as *correct*, just slow, and on this repository it was 107 walks.
-
 **On its own fixture, built first, and that is not incidental.** Pointed at this repository these
 bounds held or not depending on whether the modules happened to be current: a stale `.olean` sends
 its file to the exact frontend, which resolves a setup, which is a third walk — legitimate work,
@@ -559,7 +554,6 @@ private def testTraversalCounts (ctx : Ctx) : IO Unit := do
       (#["check", "--no-cache", "--preview", "--select", "FMT001", "--root", project.toString] ++
         files)
       1
-  profile "compiler status" #["compiler", "status", "--root", project.toString] 1
 
 /-- §2 gate G3. The wall clock covers the formatter process and nothing else — one parent times
 the child directly, because two interpreter timestamps around the run would put both startups in

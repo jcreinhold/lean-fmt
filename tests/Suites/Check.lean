@@ -128,8 +128,7 @@ private def testPerCommandHelp (ctx : Ctx) : IO Unit := do
       ("check", "  --fixable"), ("check", "  --select"), ("diff", "--output-format"),
       ("fix", "  --fixable"), ("fix", "  --unsafe-fixes"), ("lsp", "--debounce-ms"),
       ("organize", "  --check"), ("organize", "  --json"), ("docs", "  --check"),
-      ("clean", "  --json"), ("compiler", "setup"), ("compiler", "status"), ("compiler", "build"),
-      ("config", "show PATH")]
+      ("clean", "  --json"), ("compiler", "setup"), ("compiler", "build"), ("config", "show PATH")]
   for (command, flag) in present do
     let some (_, text) := helps.find? (·.1 == command) | continue
     ensure (text.contains flag) s!"{command} help lists {flag.trimAscii.copy}"

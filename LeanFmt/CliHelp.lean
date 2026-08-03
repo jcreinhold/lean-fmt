@@ -348,16 +348,13 @@ private def commandHelps : Array CommandHelp :=
     { command := "compiler"
       summary := "audit and build the compiler plugin's artifact"
       description :=
-        "Inspect and build the compiler plugin's per-module syntax artifact. The \
+        "Install and build the compiler plugin's per-module syntax artifact. The \
       plugin is optional: without it a syntax-tier rule runs the exact frontend and reports the \
       same finding; with it, that work is reused from the build."
-      usage :=
-        #["lean-fmt compiler setup [--json]", "lean-fmt compiler status [--root PATH] [--json]",
-          "lean-fmt compiler build [--root PATH]"]
+      usage := #["lean-fmt compiler setup [--json]", "lean-fmt compiler build [--root PATH]"]
       sections :=
         #[("subcommands:",
             #[⟨"setup", "print the plugin's installation guidance for this toolchain"⟩,
-              ⟨"status", "report each workspace module's artifact: ready, missing, or unbuilt"⟩,
               ⟨"build", "extract every workspace module's artifact in one Lake invocation"⟩]),
           ("compiler options:", #[optRoot, optJson])]
       notes := #["`build` prints Lake's own progress, so `--json` does not apply to it."] },

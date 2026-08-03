@@ -8,12 +8,13 @@
 The production tree is a native `lake init` project on Lean's private-by-default module system. Every compiled
 production, entry-point, test, and fixture source opens with `module` as its first token — a comment block may precede
 it; only `lakefile.lean` is exempt. The product has one private intent-to-report operation, an atomic aggregate
-semantic-result cache, preview/fix modes, a read-only compiler-integration audit, and a language server. A compiler
-plugin writes a silent formatter record into the successful module `.olean`; a Lake module facet extracts it into a
-compact content-addressed sidecar. The application reads that facet through one private no-build Lake operation, and
-only when a selected rule needs syntax.
+semantic-result cache, preview/fix modes, and a language server. A compiler plugin writes a silent formatter record
+into the successful module `.olean`; a Lake module facet extracts it into a compact content-addressed sidecar. The
+application reads that facet through one private no-build Lake operation, and only when a selected rule needs syntax.
 
-Do not restore the archived Rust workspace, worker protocol, `libleanshared` boundary, or seven-crate split.
+Do not restore the archived Rust workspace, worker protocol, `libleanshared` boundary, or seven-crate split, or the
+`compiler status` audit — it reported coverage and bought no speed, and `compiler build` fails loudly on the one
+condition it used to warn about.
 
 ## Directory guides
 

@@ -186,15 +186,13 @@ Pair formats with modes. The four finding-shaped formats — `concise`, `github`
 `diff` produces a patch, not a finding set, so an empty SARIF log from it would read as "clean". Only `text` and `json`
 are available there.
 
-Two other checks worth a CI step:
+One other check worth a CI step:
 
 ```sh
 lake exe lean-fmt docs --check     # rule documentation matches the rule catalog
-lake exe lean-fmt compiler status  # read-only audit of artifact coverage
 ```
 
-`docs --check` exits 1 on drift. `compiler status` is an audit and exits 0 whenever it could run; read its
-`ready=/missing=/unbuilt=` summary rather than its status.
+`docs --check` exits 1 on drift.
 
 ## Caching between runs
 
@@ -295,7 +293,7 @@ lake update
 lake build
 # 3. confirm the integration still resolves
 lake check-lint
-lake exe lean-fmt compiler status
+lake exe lean-fmt compiler build
 ```
 
 Lake's `plugins` field is still officially experimental and its target-key syntax has changed more than once, so step 3

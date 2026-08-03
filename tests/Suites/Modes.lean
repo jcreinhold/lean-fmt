@@ -468,8 +468,8 @@ private def testCompilerSetup (ctx : Ctx) : IO Unit := do
   ensureJsonAt report [.field "plugin"] (Lean.toJson "LeanFmtCompilerPlugin:shared") "setup"
   ensureJsonAt report [.field "facet"] (Lean.toJson "leanFmtArtifact") "setup"
 
-/-- A downstream project really is plugin-integrated: its artifact holds reconstructible syntax
-and nothing else, and `compiler status` earns a `ready` there. -/
+/-- A downstream project really is plugin-integrated: its artifact holds reconstructible syntax and
+nothing else, and a syntax-tier check there is answered from that artifact without a frontend. -/
 private def testDownstream (ctx : Ctx) : IO Unit := do
   let downstream := ctx.work / "downstream"
   IO.FS.createDirAll downstream
@@ -500,40 +500,20 @@ private def testDownstream (ctx : Ctx) : IO Unit := do
             (.arr #[])) |>.getArr?.toOption).getD
       #[]
   ensure (entries.size > 0) "the downstream projection recorded no syntax entries"
-  let status ←
-    runJson ctx 0 "status downstream"
-        #["compiler", "status", "--root", downstream.toString, "--json"]
-  let ready := ((field status "ready").getNum?.toOption.getD 0).mantissa.toNat
-  ensure (ready >= 1) "no module is ready in the integrated project"
-  let moduleStatuses :=
-    (((field status "modules").getArr?.toOption.getD #[]).toList.map fun m =>
-      (m.getObjValAs? String "status").toOption.getD "")
-  ensureEq "downstream statuses" ["ready"] moduleStatuses
-
-/-- `compiler status` at the repository root is deterministic and read-only over current module
-artifacts. -/
-private def testCompilerStatus (ctx : Ctx) : IO Unit := do
-  let before ← treeMetadata ctx.artifacts
-  let first ← run ctx 0 "status 1" #["compiler", "status", "--root", ".", "--json"]
-  let second ← run ctx 0 "status 2" #["compiler", "status", "--root", ".", "--json"]
-  ensureEq "compiler status is not deterministic" first.stdout second.stdout
-  ensureTreeUnchanged "compiler status touched the artifact tree" before
-      (← treeMetadata ctx.artifacts)
-  let report ← parseJson first.stdout "status"
-  let modulePaths :=
-    (((field report "modules").getArr?.toOption.getD #[]).toList.map fun m =>
-      (m.getObjValAs? String "path").toOption.getD "")
-  ensureEq "module paths are not sorted" (modulePaths.mergeSort (· < ·)) modulePaths
-  let count (key : String) : Nat := ((field report key).getNum?.toOption.getD 0).mantissa.toNat
-  -- Every module lands in exactly one bucket. Not `ready >= 2`: this repository's own modules
-  -- are not built with the plugin, so the earned `ready` is asserted against the downstream
-  -- project instead.
-  ensureEq "buckets do not cover the modules" modulePaths.length
-      (count "ready" + count "missing" + count "unbuilt")
-  let moduleStatuses :=
-    (((field report "modules").getArr?.toOption.getD #[]).toList.map fun m =>
-      (m.getObjValAs? String "status").toOption.getD "")
-  ensure (moduleStatuses.all (· ∈ ["ready", "missing", "unbuilt"])) "an unknown status bucket"
+  -- And the projection is actually *served*: a syntax-tier selection in the integrated project
+  -- answers from the sidecar and spawns no frontend child. That is the whole reason the plugin
+  -- exists, and the only place in the tree it can be observed -- lean-fmt cannot load its own
+  -- plugin into its own build.
+  let served ←
+    run ctx 0 "syntax check downstream"
+        #["check", "--root", downstream.toString, "--no-cache", "--preview", "--select", "FMT011",
+          (downstream / "Downstream.lean").toString]
+        #[("LEAN_FMT_PROFILE_PHASES", some "1"), ("LEAN_NUM_THREADS", some "1")]
+  let lines := served.stderr.splitOn "\n"
+  ensure (lines.contains "cache.official_artifact_hit=1")
+      s!"the integrated project did not serve its syntax check from the artifact: {served.stderr}"
+  ensure (!(lines.any (·.startsWith "phase.exact_child_ms=")))
+      "a served syntax check spawned a frontend child anyway"
 
 /-- The repository dogfoods the organizer: the committed tree is always `organize --check`
 clean, so header drift — a misplaced `import all`, an unsorted row, a bucket on the wrong side
@@ -1055,7 +1035,6 @@ public def main (args : List String) : IO UInt32 := do
           { name := "rules-registry", run := Modes.testRulesRegistry ctx },
           { name := "compiler-setup", run := Modes.testCompilerSetup ctx },
           { name := "downstream-integration", run := Modes.testDownstream ctx },
-          { name := "compiler-status", run := Modes.testCompilerStatus ctx },
           { name := "organize-self", run := Modes.testOrganizeSelf ctx },
           { name := "format-self", run := Modes.testFormatSelf ctx },
           { name := "clean", run := Modes.testClean ctx },

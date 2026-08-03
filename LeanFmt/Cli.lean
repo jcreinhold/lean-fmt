@@ -168,8 +168,8 @@ private structure RootCommand where
   root : FilePath := "."
   outputFormat : ReportFormat := .text
 
-private structure StatusCommand where
-  request : CompilerStatusRequest := { }
+private structure BuildCommand where
+  request : CompilerRequest := { }
   outputFormat : ReportFormat := .text
 
 private structure OrganizeCommand where
@@ -432,14 +432,14 @@ private def parseOutputArgs (args : List String) : Except String ReportFormat :=
   | ["--json"] => .ok .json
   | option :: _ => .error s!"unknown option: {option}"
 
-private def parseStatusArgs (args : List String) : Except String StatusCommand :=
-  let rec loop (remaining : List String) (command : StatusCommand) :=
+private def parseBuildArgs (args : List String) : Except String BuildCommand :=
+  let rec loop (remaining : List String) (command : BuildCommand) :=
     match remaining with
     | [] => .ok command
     | "--root" :: root :: rest =>
       loop rest { command with request := { command.request with root } }
     | "--json" :: rest => loop rest { command with outputFormat := .json }
-    | option :: _ => .error s!"unknown compiler status option: {option}"
+    | option :: _ => .error s!"unknown compiler build option: {option}"
   loop args { }
 
 private def parseOrganizeArgs (args : List String) : Except String OrganizeCommand :=
@@ -1157,15 +1157,6 @@ private def renderCompilerSetup (format : ReportFormat) : IO Unit := do
       for step in report.guidance, index in [1:report.guidance.size + 1]do
         IO.println s!"{index}. {step}"
 
-private def renderCompilerStatus (format : ReportFormat) (report : CompilerStatusReport) :
-    IO Unit :=
-  match format with
-  | .json => IO.println (Lean.toJson report).compress
-  | _ => do
-    for item in report.modules do
-      IO.println s!"{item.path}\t{item.module}\t{item.status}"
-    IO.println s!"ready={report.ready} missing={report.missing} unbuilt={report.unbuilt}"
-
 private def parseConfigShowArgs (args : List String) :
     Except String (FilePath × Option FilePath × String × ReportFormat) :=
   let rec loop (remaining : List String) (root : FilePath) (config? : Option FilePath)
@@ -1635,23 +1626,9 @@ unsafe def runCli (arguments : List String) : IO UInt32 := do
         return 2
     renderCompilerSetup format
     return 0
-  | "compiler" :: "status" :: rest =>
-    let command ←
-      match parseStatusArgs rest with
-      | .ok command =>
-        pure command
-      | .error message =>
-        IO.eprintln message;
-        return 2
-    try
-      renderCompilerStatus command.outputFormat (← compilerStatus command.request)
-      return 0
-    catch error =>
-      IO.eprintln s!"lean-fmt: {error}"
-      return 2
   | "compiler" :: "build" :: rest =>
     let command ←
-      match parseStatusArgs rest with
+      match parseBuildArgs rest with
       | .ok command =>
         pure command
       | .error message =>

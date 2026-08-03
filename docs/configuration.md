@@ -162,8 +162,9 @@ in each integrated `.olean`; without it, the exact frontend runs and returns the
 projection holds facts, never findings, so editing a rule cannot rebuild an integrating project.
 
 `compiler setup` prints integration identifiers and guidance; it does not rewrite your `lakefile.lean`.
-`compiler status` audits toolchain compatibility and artifact coverage read-only. Plugin costs and Lake details: README
-§"Using lean-fmt in another project" and `docs/ci.md`.
+`compiler build` extracts every workspace module's projection in one Lake invocation, which is what makes the
+projection available to a later run. Plugin costs and Lake details: README §"Using lean-fmt in another project" and
+`docs/ci.md`.
 
 With the plugin integrated, `[cache] closure = "interface"` keys each closure member by the elaboration-visible
 interface its `leanFmtArtifact` sidecar records instead of its build artifacts, so a proof-only rebuild stops
