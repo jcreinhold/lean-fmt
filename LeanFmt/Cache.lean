@@ -232,12 +232,19 @@ private def oleanPart (root olean : System.FilePath) : IO (String × Bool) := do
   let relative := Lake.relPathFrom root tracePath |>.toString
   return (s!"{relative}\u0000{Digest.ofString contents}", false)
 
+/- Every file under a dependency root, sorted, walked once. The artifact parts and the stamp that
+memoizes them read the same list: the walk is the cheap part of either, and walking twice would
+make the memo cost what it saves on the arm that misses. -/
+private def rootEntries (root : System.FilePath) : IO (Array System.FilePath) := do
+  try
+    return (← root.walkDir).qsort (·.toString < ·.toString)
+  catch _ =>
+    return #[]
+
 /-- The parts, and how many of them took the content arm. -/
-private def rootTraceParts (root : System.FilePath) : IO (Array String × Nat) := do
-  unless ← root.isDir do
-    return (#[], 0)
-  let oleans :=
-    (← root.walkDir).filter (·.extension == some "olean") |>.qsort (·.toString < ·.toString)
+private def rootTraceParts (root : System.FilePath) (entries : Array System.FilePath) :
+    IO (Array String × Nat) := do
+  let oleans := entries.filter (·.extension == some "olean")
   let mut parts := #[s!"root\u0000{← IO.FS.realPath root}"]
   let mut untraced := 0
   for olean in oleans do
@@ -273,12 +280,9 @@ private def sharedPart (root library : System.FilePath) : IO (String × Bool) :=
   let relative := Lake.relPathFrom root tracePath |>.toString
   return (s!"shared\u0000{relative}\u0000{Digest.ofString contents}", false)
 
-private def sharedTraceParts (root : System.FilePath) : IO (Array String × Nat) := do
-  unless ← root.isDir do
-    return (#[], 0)
-  let libraries :=
-    (← root.walkDir).filter (·.extension == some Lake.sharedLibExt) |>.qsort
-      (·.toString < ·.toString)
+private def sharedTraceParts (root : System.FilePath) (entries : Array System.FilePath) :
+    IO (Array String × Nat) := do
+  let libraries := entries.filter (·.extension == some Lake.sharedLibExt)
   let mut parts := #[s!"shared-root\u0000{← IO.FS.realPath root}"]
   let mut untraced := 0
   for library in libraries do
@@ -286,6 +290,119 @@ private def sharedTraceParts (root : System.FilePath) : IO (Array String × Nat)
     parts := parts.push part
     if byContent then
       untraced := untraced + 1
+  return (parts, untraced)
+
+/- What the memo below stores about one dependency root. -/
+private structure RootMemo where
+  /-- The root's absolute path. -/
+  root : String
+  /-- A digest over every entry under the root: relative path, size, and modification time. -/
+  stamp : Digest
+  /-- The digest of the artifact parts that root produced. -/
+  digest : Digest
+  /-- How many of those parts took the content arm, which `cache.untraced_artifacts` reports. -/
+  untraced : Nat
+  deriving Lean.ToJson, Lean.FromJson
+
+private def rootStamp (root : System.FilePath) (entries : Array System.FilePath) : IO Digest := do
+  let mut parts := #[s!"stamp\u0000{root}\u0000{entries.size}"]
+  for entry in entries do
+    let stamp ←
+      try
+        let stat ← entry.metadata
+        pure s!"{stat.byteSize}\u0000{stat.modified.sec}\u0000{stat.modified.nsec}"
+      catch _ =>
+        pure "unreadable"
+    parts := parts.push s!"{Lake.relPathFrom root entry}\u0000{stamp}"
+  return digestParts parts
+
+/- With `LEAN_FMT_DEBUG_CACHE` set the memo is skipped, and every artifact's own part is written
+here. The per-artifact forensics `debugEpoch` gives the rest of the epoch therefore survive the
+collapse to one part per root, in a second file rather than interleaved into `epoch.log`, which is
+written later and describes the epoch the memo already returned. -/
+private def debugArtifacts (cacheRoot : System.FilePath) (label : String) (root : System.FilePath)
+    (parts : Array String) : IO Unit := do
+  try
+    IO.FS.createDirAll cacheRoot
+    let handle ← IO.FS.Handle.mk (cacheRoot / "epoch-artifacts.log") .append
+    handle.putStrLn s!"{label} {root}"
+    for part in parts do
+      handle.putStrLn s!"  {part.replace "\u0000" " | "}"
+  catch _ =>
+    pure ()
+
+/-- The dependency-artifact section of the epoch: one part per root, holding a digest over every
+artifact under it, memoized against a stamp that only stats.
+
+**The parts above read whole artifacts, and a consuming project pays for all of them on every
+run.** Each `.olean` with a valid trace costs one `Lake.computeFileHash` per output part, and each
+without one costs a hash of the artifact itself. Measured on `~/Code/proofs`, which depends on
+mathlib: `phase.cache_epoch_ms` was 8,250 on a warm `check` whose whole run was 20,800, with
+`cache.untraced_artifacts` at 0 — so none of it was the expensive arm. It was the ordinary arm
+reading roughly five gigabytes of `.olean` to conclude that nothing had changed.
+
+**(path, size, mtime) is a fine answer to "has this changed since I last hashed it",** which is the
+only question the epoch asks of a *dependency* root. `formatterDigest` makes the same trade for the
+same reason one layer up. The memo can be wrong only where the stamp is: an artifact rewritten
+with its old size and its old modification time. Lake gives every artifact it writes a fresh
+modification time, so that is a copy preserving timestamps, and the recovery is a cold run rather
+than a wrong answer.
+
+**One part per root, not one per artifact.** The epoch is a digest either way; collapsing lets the
+memo store a fixed handful of lines instead of one per `.olean`. `debugArtifacts` keeps the
+per-artifact record when someone is looking for a moved epoch.
+
+**A memo that cannot be read or written costs the walk and nothing else.** -/
+private def dependencyArtifactParts (cacheRoot : System.FilePath)
+    (leanRoots sharedRoots : Array System.FilePath) : IO (Array String × Nat) := do
+  let path := cacheRoot / "dependency-artifacts.json"
+  let stored : Array RootMemo ←
+    try
+      let contents ← IO.FS.readFile path
+      pure
+          (((Lean.Json.parse contents).toOption.bind
+                (Lean.fromJson? (α := Array RootMemo) · |>.toOption)).getD
+            #[])
+    catch _ =>
+      pure #[]
+  let debug := (← IO.getEnv "LEAN_FMT_DEBUG_CACHE").isSome
+  let sections :=
+    #[("artifacts", leanRoots, rootTraceParts), ("shared-artifacts", sharedRoots, sharedTraceParts)]
+  let mut fresh : Array RootMemo := #[]
+  let mut parts : Array String := #[]
+  let mut untraced := 0
+  let mut recomputed := false
+  for (label, roots, detail) in sections do
+    for root in roots do
+      let entries ← rootEntries root
+      let stamp ← rootStamp root entries
+      let hit? :=
+        if debug then none
+        else stored.find? fun memo => memo.root == root.toString && memo.stamp == stamp
+      let memo ←
+        match hit? with
+        | some memo =>
+          pure memo
+        | none =>
+          do
+            let (detailParts, rootUntraced) ← detail root entries
+            if debug then
+              debugArtifacts cacheRoot label root detailParts
+            pure
+                { root := root.toString, stamp, digest := digestParts detailParts,
+                  untraced := rootUntraced }
+      recomputed := recomputed || hit?.isNone
+      fresh := fresh.push memo
+      parts := parts.push s!"{label}\u0000{root}\u0000{memo.digest}"
+      untraced := untraced + memo.untraced
+  if recomputed then
+    try
+      IO.FS.createDirAll cacheRoot
+      let temporary := path.addExtension "tmp"
+      IO.FS.writeFile temporary (Lean.toJson fresh).compress
+      IO.FS.rename temporary path
+    catch _ =>
+      pure ()
   return (parts, untraced)
 
 private def pathParts (label : String) (paths : List System.FilePath) : Array String :=
@@ -515,7 +632,8 @@ private def realPathIfDir? (path : System.FilePath) : IO (Option System.FilePath
 cache for the workspace. The `sysroot` resolution is guarded for the same reason
 `realPathIfDir?` exists — an exception here would reach `open?`'s catch-all and read as "no
 cache", which is exactly the failure this function stopped having. -/
-private def environmentDigest (workspace : Lake.Workspace) : IO (Digest × Array String) := do
+private def environmentDigest (workspace : Lake.Workspace) (cacheRoot : System.FilePath) :
+    IO (Digest × Array String) := do
   let toolchain ←
     try
       IO.FS.realPath workspace.lakeEnv.lean.sysroot
@@ -530,7 +648,6 @@ private def environmentDigest (workspace : Lake.Workspace) : IO (Digest × Array
   parts := parts ++ pathParts "source-path" workspace.augmentedLeanSrcPath
   parts := parts ++ pathParts "shared-path" workspace.augmentedSharedLibPath
   parts := parts ++ pathParts "binary-path" workspace.augmentedPath
-  let mut untraced := 0
   -- The workspace's own build directory is skipped here and covered per entry by
   -- `CacheIdentity.closure` instead. It was the *second* whole-project invalidator:
   -- `rootTraceParts` folds every `.olean`'s trace contents into `environment`, `environment`
@@ -547,24 +664,24 @@ private def environmentDigest (workspace : Lake.Workspace) : IO (Digest × Array
       IO.FS.realPath workspace.root.leanLibDir
     catch _ =>
       pure workspace.root.leanLibDir
+  let mut leanRoots : Array System.FilePath := #[]
+  let mut sharedRoots : Array System.FilePath := #[]
   for rawRoot in roots do
     let some root ← realPathIfDir? rawRoot |
       parts := parts.push s!"lean-path-absent\u0000{rawRoot}"
       continue
     if insideToolchain toolchain root || root == ownLibDir then
       continue
-    let (rootParts, rootUntraced) ← rootTraceParts root
-    parts := parts ++ rootParts
-    untraced := untraced + rootUntraced
+    leanRoots := leanRoots.push root
   for rawRoot in workspace.augmentedSharedLibPath do
     let some root ← realPathIfDir? rawRoot |
       parts := parts.push s!"shared-path-absent\u0000{rawRoot}"
       continue
     if insideToolchain toolchain root then
       continue
-    let (rootParts, rootUntraced) ← sharedTraceParts root
-    parts := parts ++ rootParts
-    untraced := untraced + rootUntraced
+    sharedRoots := sharedRoots.push root
+  let (artifactParts, untraced) ← dependencyArtifactParts cacheRoot leanRoots sharedRoots
+  parts := parts ++ artifactParts
   -- Project source *content* deliberately does not appear here. `environment` names the
   -- index file through `baseDigest`, so folding project sources in made one edit rename the index
   -- and orphan every entry. Project-source currency is per entry now, in
@@ -633,7 +750,7 @@ private def ResultCache.workspaceArtifactsDigest (cache : ResultCache)
     withPhase "workspace_artifacts" do
         try
           let root ← IO.FS.realPath workspace.root.leanLibDir
-          let (parts, _) ← rootTraceParts root
+          let (parts, _) ← rootTraceParts root (← rootEntries root)
           pure (some (digestParts parts))
         catch _ =>
           pure none
@@ -844,9 +961,9 @@ outcome, reached now only by an exception this function did not anticipate. -/
 def ResultCache.open? (workspace : Lake.Workspace) (application : System.FilePath)
     (closureMode : ClosureMode := .artifacts) : IO (Option ResultCache) := do
   try
-    let (environment, parts) ← environmentDigest workspace
     -- `toolchain` below pins the toolchain revision separately; this pins the binary.
     let cacheRoot := workspace.root.dir / ".lean-fmt-cache"
+    let (environment, parts) ← environmentDigest workspace cacheRoot
     let formatter ← formatterDigest cacheRoot application
     debugEpoch cacheRoot parts environment formatter
     let directoryReady ← IO.mkRef false

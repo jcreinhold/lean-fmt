@@ -89,6 +89,9 @@ structure FormatMetrics where
   normalizedTokens : Nat
   exactIslands : Nat
   exactIslandBytes : Nat
+  /-- Commands emitted as their own source bytes because the toolchain's formatter could not lay
+  them out. See `NativeLayout.command`. -/
+  verbatimCommands : Nat
   offsideConstraints : Nat
   commentConstraints : Nat
   registryNodes : Nat

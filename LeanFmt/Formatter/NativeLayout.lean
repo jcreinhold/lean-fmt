@@ -130,12 +130,45 @@ private inductive BoundaryLayout where
     the layout that made a column-sensitive parse commit is the source's, and only spelling its
     column again keeps the candidate's reparse committing the same way. -/
   columned (col : Nat)
+  | /-- A break whose continuation lands at this exact column, dedenting below the ambient nest
+    when the document indented past it.
+
+    `columned` above only ever moves a row right, because a stale pin that moves one left strands
+    it outside the construct it belongs to. The `letI`-family body is the one row where right is
+    the failing direction: it must stay at or left of its keyword's column or the parser reads it
+    as one more argument of the value. So this pin holds the source's column in both directions,
+    and `collectLetFamilyAlignments` pairs it with a `columned` pin on the keyword's own row -- the
+    two together reproduce the relationship the source proved parseable. -/
+  anchored (col : Nat)
+  | /-- A break in front of a `structInst` field row whose `{` opens a row of its own, landing at
+    the ambient nest -- where the fields' own nest puts the first field, which is the column
+    `sepByIndent` then measures the rest against.
+
+    Relative, where every other pin is absolute, because this row's target moves with the brace.
+    A source column was what this held first, and it is right only while the construct stays where
+    the source put it: `Proofs/RingTheory/Regular/ProjectiveDimension.lean` spelled an
+    over-indented tactic block, canonical layout dedented the whole `let` by two, the first field
+    moved with the brace and the pinned rows did not. Landing *right* of the reference column is
+    not the missing-field error the pin was written to prevent but its mirror -- the field parses
+    as an argument of the previous field's value, and `69:12: unexpected token ':='` is what the
+    diagnostics gate reported. -/
+  fieldRow
   | /-- The closing bracket of a magic-trailing-comma explosion: a hard break whose continuation
     dedents to the collection's own line. The amount is the collection's private `nest`, which only
     the walk can see, so this is spelled as a marker the `.nest` rewrite cancels; see
     `boundaryFormat` and the `explodedCloseTag` it emits. -/
   explodedClose
-  deriving BEq, Inhabited
+  deriving BEq, Inhabited, Repr
+
+/- The spelling that satisfies two rules naming one gap, or `none` when they genuinely disagree.
+
+`anchored c` and `columned c` name the same column and differ only in whether a document that
+indented past it may keep that indent, so the exact one satisfies both. A chain of `have`s reaches
+this: the outer body's `anchored` pin and the inner keyword's row pin land on one terminal. -/
+private def BoundaryLayout.join? : BoundaryLayout → BoundaryLayout → Option BoundaryLayout
+  | .anchored left, .columned right | .columned right, .anchored left =>
+    if left == right then some (.anchored left) else none
+  | left, right => if left == right then some left else none
 
 private structure TokenSpan where
   start : Nat
@@ -153,6 +186,9 @@ structure Metrics where
   offsideConstraints : Nat := 0
   commentConstraints : Nat := 0
   redundantBreaks : Nat := 0
+  /-- Commands the toolchain's own formatter could not lay out, emitted as their source bytes.
+  See `command`'s two degradation arms. -/
+  verbatimCommands : Nat := 0
   deriving Inhabited, BEq, Repr, Lean.ToJson, Lean.FromJson
 
 /-- One direct native-layout result before whole-module rendering and validation. -/
@@ -1164,37 +1200,101 @@ private partial def structInstFieldsInOrder (stx : Lean.Syntax)
       children.foldl (init := fields) fun fields child => structInstFieldsInOrder child fields
   | _ => fields
 
-/- A `structInst` field row holds its source column.
+/- A brace collection's continuation rows stay left of its first element.
 
-`structInstFields` is `sepByIndent` (`Term.lean:354`): a field that opens a row must start at or
-right of the first field's column, or `checkColGe` fails and the reparse ends the structure there.
-The native document spells a continuation at the enclosing `nest` with no regard for the first
-field's column — the first field rides the `return {`-row far to the right — and the continuation
-it dedents below that column is the parse error the validation gate reports. The source always
-spells a parseable column, so every source-broken field start is held at its source column. Unlike
-the anonymous-constructor pin above, one break is not enough: an unpinned sibling dedents just the
-same. -/
-private partial def collectStructInstFieldRows (source : String) (stx : Lean.Syntax)
-    (starts : Array (Nat × Nat) := #[]) : Array (Nat × Nat) :=
+`{a, b, c}` is two parsers: the collection literal `«term{_}»` and a `structInst` whose fields are
+all `structInstFieldAbbrev`s. Which of them applies is decided by a column -- `structInstFields` is
+`sepByIndent`, so the structure reading needs every later element at or right of the first one --
+and a source that spells a continuation left of its first element has already excluded it. Indent
+that row right and both parsers succeed: the reparse is a `choice` where the source had a literal,
+which the structure gate reports as one node too many. `Proofs/.../Projective/Smooth.lean` and
+`Proofs/.../Formula/Relation.lean` are that failure, at `3755 -> 3756` and `11443 -> 11444`.
+
+Elaboration would still pick the literal, so this is not a wrong candidate -- but a formatter that
+turns an unambiguous parse into an ambiguous one has changed the tree it promised to preserve. The
+correction holds each such row at its source column, which is the column that made the source
+unambiguous. Only rows the source put left of the first element are held: one already at or right
+of it is inside the window whatever the layout does, so its `choice` is the source's own. -/
+private partial def collectBraceLiteralRows (source : String) (stx : Lean.Syntax)
+    (starts : Array (Nat × BoundaryLayout) := #[]) : Array (Nat × BoundaryLayout) :=
   match stx with
   | .node _ kind children =>
     let starts :=
-      if kind == ``Lean.Parser.Term.structInstFields then
-        -- Hold every field the source opened a row on, i.e. whose gap from the previous field's
-        -- end holds a line break. The fields sit under a null wrapper inside the list node.
-        let fields := structInstFieldsInOrder stx
-        (List.range fields.size).foldl (init := starts) fun starts index =>
-          if index == 0 then starts
-          else
-            match (selectedLeafRanges fields[index - 1]!).back?,
-              (selectedLeafRanges fields[index]!)[0]? with
-            | some itemEnd, some fieldStart =>
-              if (slice source ⟨itemEnd.stop, fieldStart.start⟩).contains '\n' then
-                let col := sourceColumn source fieldStart.start
-                if starts.any (·.1 == fieldStart.start) then starts
-                else starts.push (fieldStart.start, col)
-              else starts
-            | _, _ => starts
+      if kind == `«term{_}» then
+        -- `"{" >> term,* >> "}"`: the elements sit at the even indices of the separated list,
+        -- with the commas between them.
+        match children[1]? with
+        | some list =>
+          let items :=
+            (list.getArgs.toList.zipIdx.filter fun (_, index) => index % 2 == 0).map (·.1)
+          match items.head?.bind fun item => (selectedLeafRanges item)[0]? with
+          | some firstRange =>
+            let firstColumn := sourceColumn source firstRange.start
+            items.foldl (init := starts) fun starts item =>
+              match (selectedLeafRanges item)[0]? with
+              | some range =>
+                if
+                    opensSourceRow source range.start &&
+                      sourceColumn source range.start < firstColumn then
+                  starts.push (range.start, .anchored (sourceColumn source range.start))
+                else starts
+              | none => starts
+          | none => starts
+        | none => starts
+      else starts
+    let children := if kind == Lean.choiceKind then children[0]?.toArray else children
+    children.foldl (init := starts) fun starts child => collectBraceLiteralRows source child starts
+  | _ => starts
+
+/- A `structInst` field row lands where its first field does, by whichever of the two routes the
+source left open.
+
+`structInstFields` is `sepByIndent` (`Term.lean:354`): a field that opens a row must start at the
+first field's column. Land left of it and `checkColGe` fails, ending the structure there --
+`Fields missing` -- and land right of it and the field is read as one more argument of the previous
+field's value, which is `69:12: unexpected token ':='`. Only the first field's own column will do,
+and the native document spells a continuation at the enclosing `nest` with no regard for it.
+
+Where that column ends up depends on the brace, so the pin does too:
+
+- A `{` the source put at the start of a row is positioned by the document, and the fields' nest
+  follows it. A `fieldRow` boundary lands there, which tracks the brace when canonical layout moves
+  it. `Proofs/RingTheory/Regular/ProjectiveDimension.lean` needs this: an over-indented tactic
+  block dedented by two, the first field moved with the brace, and source-column pins did not.
+- A `{` written mid-row -- `return { first, second,` -- puts its first field at a column no nest
+  names. The source column is then the only reference there is, held with `columned` so a document
+  that indents past it keeps its own indent. `tests/Test/Runner.lean` is that shape.
+
+Unlike the anonymous-constructor pin above, one break is not enough: an unpinned sibling dedents
+just the same. -/
+private partial def collectStructInstFieldRows (source : String) (stx : Lean.Syntax)
+    (starts : Array (Nat × BoundaryLayout) := #[]) : Array (Nat × BoundaryLayout) :=
+  match stx with
+  | .node _ kind children =>
+    let starts :=
+      if kind == ``Lean.Parser.Term.structInst then
+        match children[0]?.bind sourceRange?,
+          children.find? (·.isOfKind ``Lean.Parser.Term.structInstFields) with
+        | some braceRange, some fieldsNode =>
+          let braceOpensRow := opensSourceRow source braceRange.start
+          -- Hold every field the source opened a row on, i.e. whose gap from the previous field's
+          -- end holds a line break. The fields sit under a null wrapper inside the list node.
+          let fields := structInstFieldsInOrder fieldsNode
+          (List.range fields.size).foldl (init := starts) fun starts index =>
+            if index == 0 then starts
+            else
+              match (selectedLeafRanges fields[index - 1]!).back?,
+                (selectedLeafRanges fields[index]!)[0]? with
+              | some itemEnd, some fieldStart =>
+                if (slice source ⟨itemEnd.stop, fieldStart.start⟩).contains '\n' then
+                  let pin :=
+                    if braceOpensRow then BoundaryLayout.fieldRow
+                    else .columned (sourceColumn source fieldStart.start)
+                  if starts.any (·.1 == fieldStart.start) then starts
+                  else starts.push (fieldStart.start, pin)
+                else starts
+              | _, _ => starts
+        | _, _ => starts
       else starts
     let children := if kind == Lean.choiceKind then children[0]?.toArray else children
     children.foldl (init := starts) fun starts child =>
@@ -1375,12 +1475,15 @@ candidate stops parsing.
 
 The source always spells the relationship that parses, so the correction spells its columns: one
 `columned` boundary at the keyword's row -- at the parenthesized `(` when there is one, else at
-the keyword itself -- holding the row at its source column, and one at the body's first terminal
-holding it at its source column. Both are collected only when the source shows the same shape
-(the row broken, the body broken onto its own row): a keyword spelled mid-line needs nothing,
-because any `nest` the body's row can take is already left of it. -/
+the keyword itself -- holding the row at or right of its source column, and one `anchored`
+boundary at the body's first terminal holding it at that column exactly. The body's is the pin
+that must also dedent: a document that indents the value's continuations past the keyword indents
+the body with them, which is the failing direction here. Both are collected only when the source
+shows the same shape (the row broken, the body broken onto its own row): a keyword spelled
+mid-line needs nothing, because any `nest` the body's row can take is already left of it. -/
 private partial def collectLetFamilyAlignments (source : String) (stx : Lean.Syntax)
-    (paren? : Option Lean.Syntax := none) (starts : Array (Nat × Nat) := #[]) : Array (Nat × Nat) :=
+    (paren? : Option Lean.Syntax := none) (starts : Array (Nat × BoundaryLayout) := #[]) :
+    Array (Nat × BoundaryLayout) :=
   match stx with
   | .node _ kind children =>
     let starts :=
@@ -1410,17 +1513,17 @@ private partial def collectLetFamilyAlignments (source : String) (stx : Lean.Syn
               -- The keyword's row: pin the `(` when the node is the paren's payload, else the
               -- keyword, in both cases only when the source opened a row there. A keyword
               -- spelled mid-row needs no pin: any `nest` the body's row can take is left of it.
-              let rowPin : Array (Nat × Nat) :=
+              let rowPin : Array (Nat × BoundaryLayout) :=
                 match paren?.bind sourceRange? with
                 | some parenRange =>
                   if opensRow parenRange.start then
-                    #[(parenRange.start, sourceColumn source parenRange.start)]
+                    #[(parenRange.start, .columned (sourceColumn source parenRange.start))]
                   else #[]
                 | none =>
                   if opensRow kwRange.start then
-                    #[(kwRange.start, sourceColumn source kwRange.start)]
+                    #[(kwRange.start, .columned (sourceColumn source kwRange.start))]
                   else #[]
-              starts ++ rowPin ++ #[(bodyRange.start, bodyCol)]
+              starts ++ rowPin ++ #[(bodyRange.start, .anchored bodyCol)]
           | _, _ => starts
         | _, _ => starts
       else starts
@@ -2195,9 +2298,9 @@ leaf before rendering, so no renderer ever interprets it. -/
 private def explodedCloseTag : Nat :=
   0x6C65616E466D74
 
-/- What the adapter spells at a boundary it corrects. Three of the four are fixed text; `dedented`
-cancels every column between the enclosing command's own and this one, so the line after it starts at
-that command's column whatever the document chose. -/
+/- What the adapter spells at a boundary it corrects. Four are fixed text; the rest compute a
+`nest` against the document's own: `dedented` cancels every column between the enclosing command's
+and this one, and the two column pins hold a row where their constructor says. -/
 private def boundaryFormat (state : TransformState) : BoundaryLayout → Std.Format
   | .flat => .text " "
   | .hard => .text "\n"
@@ -2207,8 +2310,14 @@ private def boundaryFormat (state : TransformState) : BoundaryLayout → Std.For
   -- moved a sibling and stranded this row at a column that no longer parses. When the document
   -- instead re-indented the whole construct past the pin's column, the pin's column is stale —
   -- holding it would move the row *left* of where every sibling just went, which is how an arm
-  -- body ends up left of its own `|`. So the pin only ever moves a row right.
+  -- body ends up left of its own `|`. So this pin only ever moves a row right, and `anchored`
+  -- below is the one whose row must move either way.
   | .columned col => .nest (max (col : Int) state.ambientNest - state.ambientNest) (.text "\n")
+  -- `dedentColumns`, not `ambientNest`: an exact column has to be measured against every column
+  -- in front of this row, and the document's own nest is one of three. The pin above survives
+  -- the difference because `max` only ever discards it; this one renders it directly.
+  | .anchored col => .nest ((col : Int) - dedentColumns state) (.text "\n")
+  | .fieldRow => .text "\n"
   | .explodedClose => .tag explodedCloseTag (.text "\n")
 
 /- Replace every `explodedClose` marker in `format` with a `nest (-indent)`, reporting whether any
@@ -2746,19 +2855,43 @@ a boundary once, so a repeated index would leave the applied count permanently s
 one and turn every such command into a refusal. Two rules asking for the *same* spelling there is a
 duplicate and collapses; two rules asking for different spellings is a disagreement about the same
 gap, which no order of this table resolves -- so it is refused rather than decided by which collector
-the call site happens to list first. Neither has been observed; the second is the one that would
-otherwise be silent. -/
+the call site happens to list first. Both spellings are named in the refusal: a disagreement is a
+rule that needs narrowing, and the pair says which two. -/
 private def boundaryTable (terminals : Array Terminal) (starts : Array (Nat × BoundaryLayout)) :
     Except String (Array (Nat × BoundaryLayout)) :=
   starts.foldlM (init := #[]) fun table (start, layout) =>
     match terminals.findIdx? (start <= ·.range.start) with
     | some index =>
-      match table.find? fun (existing, _) => existing == index with
-      | some (_, existing) =>
-        if existing == layout then .ok table
-        else .error s!"two boundary rules disagree at terminal {index}"
+      match table.findIdx? fun (existing, _) => existing == index with
+      | some slot =>
+        let existing := table[slot]!.2
+        match existing.join? layout with
+        | some joined => .ok (table.set! slot (index, joined))
+        | none =>
+          .error s!"two boundary rules disagree at terminal {index}: {repr existing}, {repr layout}"
       | none => .ok (table.push (index, layout))
     | none => .ok table
+
+/-- Why one command's native document could not be adapted, in the only distinction the caller
+acts on.
+
+`incomplete` is the toolchain's: the combinators backtrack, so a subtree the formatter cannot
+format is omitted rather than reported, and the adapter sees a document that stops short of the
+command's terminals. There is nothing here to repair — the document holds no decision about a leaf
+it never emitted — so the command degrades to its own bytes, exactly as an escaping
+`uncaught backtrack exception` does.
+
+`unadapted` is this module's: a boundary, island, or offside constraint it collected from the
+grammar went unapplied, or a comment leaked into comment-free syntax. Those are refusals, and they
+stay refusals: `Mathlib/Util/ParseCommand.lean` reported `0/2` terminals when the nested-command
+rule reached a `` `(command| …) `` body, and degrading that would have hidden the defect rather
+than reporting it. The two are told apart by which check fails, not by reading a message. -/
+private inductive TransformFailure where
+  | incomplete (detail : String)
+  | unadapted (detail : String)
+
+private def TransformFailure.detail : TransformFailure → String
+  | .incomplete detail | .unadapted detail => detail
 
 private def transform (source : String) (terminals : Array Terminal)
     (comments : Array InteriorComment) (blockDangling : Array (SourceRange × InteriorComment))
@@ -2766,7 +2899,7 @@ private def transform (source : String) (terminals : Array Terminal)
     (boundaryStarts : Array (Nat × BoundaryLayout)) (joined : Array SourceRange)
     (nestedCommandRanges : Array SourceRange) (explodedRanges : Array SourceRange)
     (headSpans : Array (Nat × TokenSpan)) (baseIndent : Nat) (native : Std.Format) :
-    Except String (Std.Format × Metrics) := do
+    Except TransformFailure (Std.Format × Metrics) := do
   let constraints :=
     constraints.map fun constraint => (constraint, spanForRange terminals constraint.range)
   -- An exact island's bytes are its whole rendering, so the adapter spells no boundary between the
@@ -2793,7 +2926,7 @@ private def transform (source : String) (terminals : Array Terminal)
   let boundaryStarts :=
     boundaryStarts.filter fun (start, _) =>
       !islands.any fun island => island.range.start < start && start < island.range.stop
-  let boundaries ← boundaryTable terminals boundaryStarts
+  let boundaries ← (boundaryTable terminals boundaryStarts).mapError .unadapted
   let flattened := joined.map (spanForRange terminals)
   let nestedCommands := nestedCommandRanges.map (spanForRange terminals)
   let explodedSpans := explodedRanges.map (spanForRange terminals)
@@ -2811,15 +2944,17 @@ private def transform (source : String) (terminals : Array Terminal)
     {
     source, terminals, comments, trailing, islands, droppedIslands, constraints, boundaries,
     flattened, nestedCommands, explodedSpans, headSpans, baseIndent }
-  let (result, state) ← (transformNative native).run initial
+  let (result, state) ← ((transformNative native).run initial).mapError .unadapted
   if state.terminalIndex != terminals.size then
-    throw
-        s!"native formatter consumed {state.terminalIndex}/{terminals.size} terminals; \
+    throw <|
+        .incomplete
+          s!"native formatter consumed {state.terminalIndex}/{terminals.size} terminals; \
 nearby: {nearbyTerminals state}; recent native leaves: {repr state.recentNativeLeaves}"
   if state.commentIndex != comments.size then
     let nextRange := comments[state.commentIndex]?.map fun comment => comment.range
-    throw
-        s!"native formatter inserted {state.commentIndex}/{comments.size} interior comments; \
+    throw <|
+        .unadapted
+          s!"native formatter inserted {state.commentIndex}/{comments.size} interior comments; \
 next expected range: {repr nextRange}; recent native leaves: \
 {repr state.recentNativeLeaves}"
   -- A count alone says a rule went unapplied and nothing about which one; every one of these was
@@ -2827,16 +2962,18 @@ next expected range: {repr nextRange}; recent native leaves: \
   -- unapplied entry and the source it was collected at.
   if state.appliedIslands.size != islands.size then
     let missing := islands.filter fun island => !state.appliedIslands.contains island.marker
-    throw
-        s!"native formatter applied {state.appliedIslands.size}/{islands.size} exact islands; \
+    throw <|
+        .unadapted
+          s!"native formatter applied {state.appliedIslands.size}/{islands.size} exact islands; \
 first unapplied: {repr (missing[0]?.map fun island => (island.range.start, island.range.stop, island.text))}"
   if state.appliedConstraints.size != constraints.size then
     let missing :=
       (constraints.zipIdx.filter fun (_, index) => !state.appliedConstraints.contains index).map
         fun ((constraint, span), _) =>
         (constraint.range.start, constraint.range.stop, span.start, span.stop)
-    throw
-        s!"native formatter applied {state.appliedConstraints.size}/{constraints.size} \
+    throw <|
+        .unadapted
+          s!"native formatter applied {state.appliedConstraints.size}/{constraints.size} \
 offside constraints; first unapplied: {repr missing[0]?}"
   if state.appliedBoundaries.size != boundaries.size then
     let missing := boundaries.filter fun (index, _) => !state.appliedBoundaries.contains index
@@ -2845,19 +2982,22 @@ offside constraints; first unapplied: {repr missing[0]?}"
         (index,
           (terminals[index]?.map fun terminal : Terminal =>
             (terminal.range.start, terminal.sourceSpelling)))
-    throw
-        s!"native formatter applied {state.appliedBoundaries.size}/{boundaries.size} \
+    throw <|
+        .unadapted
+          s!"native formatter applied {state.appliedBoundaries.size}/{boundaries.size} \
 boundaries; unapplied at {repr described}"
   if state.appliedFlattened.size != flattened.size then
     let missing :=
       (flattened.zipIdx.filter fun (_, index) => !state.appliedFlattened.contains index).map
         fun (span, _) => (span.start, span.stop)
-    throw
-        s!"native formatter joined {state.appliedFlattened.size}/{flattened.size} guarded \
+    throw <|
+        .unadapted
+          s!"native formatter joined {state.appliedFlattened.size}/{flattened.size} guarded \
 bail-outs; first unapplied span: {repr missing[0]?}"
   if state.appliedTrailing.size != trailing.size then
-    throw
-        s!"native formatter placed {state.appliedTrailing.size}/{trailing.size} block-dangling \
+    throw <|
+        .unadapted
+          s!"native formatter placed {state.appliedTrailing.size}/{trailing.size} block-dangling \
 comments; the block's document holds no break to hang one on"
   return (result.format, state.metrics)
 
@@ -3062,28 +3202,28 @@ alternatives: alternative 0 is {expected}, alternative {alternative} is {actual}
     !explodedRanges.any fun range => range.start < start && start < range.stop
   let boundaryStarts : Array (Nat × BoundaryLayout) :=
     (collectUngroupedBodyStarts format.declarationBody source format.lineWidth stripped
-                                          (collectReturnTermStarts stripped)).map
-                                      (·, BoundaryLayout.flat) ++
-                                    (collectIndentedSequenceStarts stripped).map
-                                      (·, BoundaryLayout.hard) ++
-                                  (collectCdotStarts stripped).map (·, BoundaryLayout.flat) ++
-                                nestedCommandStarts.map (·, BoundaryLayout.dedented) ++
-                              ctorDocStarts.map (·, BoundaryLayout.elided) ++
-                            docBoundaries ++
-                          attrDocBoundaries ++
-                        joined.map (·.start, BoundaryLayout.flat) ++
-                      (collectGuardBarBreaks source stripped).map (·, BoundaryLayout.hard) ++
-                    ((collectBraceAppArgStarts stripped).filterMap fun start =>
+                                            (collectReturnTermStarts stripped)).map
+                                        (·, BoundaryLayout.flat) ++
+                                      (collectIndentedSequenceStarts stripped).map
+                                        (·, BoundaryLayout.hard) ++
+                                    (collectCdotStarts stripped).map (·, BoundaryLayout.flat) ++
+                                  nestedCommandStarts.map (·, BoundaryLayout.dedented) ++
+                                ctorDocStarts.map (·, BoundaryLayout.elided) ++
+                              docBoundaries ++
+                            attrDocBoundaries ++
+                          joined.map (·.start, BoundaryLayout.flat) ++
+                        (collectGuardBarBreaks source stripped).map (·, BoundaryLayout.hard) ++
+                      ((collectBraceAppArgStarts stripped).filterMap fun start =>
+                        if brokenBefore start then none else some (start, BoundaryLayout.flat)) ++
+                    ((collectReturnBraceStarts stripped).filterMap fun start =>
                       if brokenBefore start then none else some (start, BoundaryLayout.flat)) ++
-                  ((collectReturnBraceStarts stripped).filterMap fun start =>
-                    if brokenBefore start then none else some (start, BoundaryLayout.flat)) ++
-                ((collectBraceInteriorBreaks source stripped).filter fun p =>
-                      outsideExploded p.1).map
-                  (fun p => (p.1, BoundaryLayout.columned p.2)) ++
-              ((collectStructInstFieldRows source stripped).filter fun p => outsideExploded p.1).map
-                (fun p => (p.1, BoundaryLayout.columned p.2)) ++
-            (collectLetFamilyAlignments source stripped).map
-              (fun p => (p.1, BoundaryLayout.columned p.2)) ++
+                  ((collectBraceInteriorBreaks source stripped).filter fun p =>
+                        outsideExploded p.1).map
+                    (fun p => (p.1, BoundaryLayout.columned p.2)) ++
+                ((collectStructInstFieldRows source stripped).filter fun p =>
+                  outsideExploded p.1) ++
+              ((collectBraceLiteralRows source stripped).filter fun p => outsideExploded p.1) ++
+            collectLetFamilyAlignments source stripped ++
           unbreakableRunBoundaries source terminals unbreakableRuns ++
         ((collectStructInstEllipses stripped).filterMap fun start =>
           let broken :=
@@ -3120,6 +3260,26 @@ Lean/Elab/Syntax.lean:465 did not. No formatter can be resolved for it. Write \
           detail :=
             s!"source spells the exact-island marker {repr marker.marker}, which the formatter \
 cannot tell from the placeholder that protects {marker.range.start}:{marker.range.stop}" }
+  -- One command's own bytes, complete and validated downstream, in place of a layout the toolchain
+  -- could not produce. The file still formats; `verbatimCommands` counts what it cost.
+  let degrade (detail : String) : Except FormatterFailure Document :=
+    match sourceRange? stx with
+    | some range =>
+      .ok {
+          document := Doc.verbatim (slice source range)
+          trace
+          metrics :=
+            { exactIslands := 1, exactIslandBytes := range.stop - range.start,
+              verbatimCommands := 1 } }
+    | none =>
+      .error
+        { category := .command
+          kind := stx.getKind
+          range := rootRange stx
+          trace
+          detail := s!"{detail} (no source range for the verbatim fallback)" }
+  let refuse (detail : String) : Except FormatterFailure Document :=
+    .error { category := .command, kind := stx.getKind, range := rootRange stx, trace, detail }
   try
     let native ← Lean.PrettyPrinter.formatCommand formattedSyntax
     let native := (dropTrailingHardLine native).getD native
@@ -3128,44 +3288,34 @@ cannot tell from the placeholder that protects {marker.range.start}:{marker.rang
         nestedCommandRanges explodedRanges headSpans baseIndent native with
     | .ok (native, metrics) =>
       return .ok { document := Doc.registered native, trace, metrics }
-    | .error detail =>
-      return .error
-          { category := .command
-            kind := stx.getKind
-            range := rootRange stx
-            trace
-            detail }
+    | .error (.incomplete detail) =>
+      return degrade detail
+    | .error (.unadapted detail) =>
+      return refuse detail
   catch exception =>
     let detail ← exception.toMessageData.toString
-    -- A formatter `throwBacktrack` that no alternative catches is rethrown upstream as
-    -- `format: uncaught backtrack exception` (`Lean/PrettyPrinter/Formatter.lean:655`) -- the
-    -- grammar has no formatter for the shape as written (a doubly-declared infix whose whole
-    -- type is a binder's type is the sighted case). That is an upstream formatter gap, not a
-    -- defect this adapter can repair, so the command degrades to its source bytes verbatim:
-    -- they reparse and re-elaborate to exactly what the file already held, the structure and
-    -- diagnostics gates still hold, and the rest of the file formats. The metrics record the
-    -- degradation so a run can count it. Any other exception keeps refusing.
-    if (detail.splitOn "uncaught backtrack exception").length > 1 then
-      match sourceRange? stx with
-      | some range =>
-        return .ok
-            { document := Doc.verbatim (slice source range)
-              trace
-              metrics := { exactIslands := 1, exactIslandBytes := range.stop - range.start } }
-      | none =>
-        return .error
-            { category := .command
-              kind := stx.getKind
-              range := rootRange stx
-              trace
-              detail := s!"{detail} (no source range for the verbatim fallback)" }
+    -- The toolchain has two ways of saying it has no formatter for a shape as written, and neither
+    -- is a defect this adapter can repair.
+    --
+    -- A `throwBacktrack` no alternative catches is rethrown as `format: uncaught backtrack
+    -- exception` (`Lean/PrettyPrinter/Formatter.lean:655`); a doubly-declared infix whose whole type
+    -- is a binder's type is the sighted case. A dispatch that reaches `formatterForKind` with a kind
+    -- naming no declaration dies as `Unknown constant …`; the module docstring above lists three
+    -- shapes that reach it, and `Proofs/AlgebraicGeometry/Divisor/EffectiveCartier.lean` refused a
+    -- whole file over one `group` node, which `Lean.Parser.group` builds wherever a parser of arity
+    -- other than one is repeated.
+    --
+    -- Both degrade the command to its source bytes: they reparse and re-elaborate to exactly what
+    -- the file already held, the structure and diagnostics gates still hold, and the rest of the
+    -- file formats. Any other exception keeps refusing -- an exception this module did not
+    -- anticipate is not evidence about the grammar.
+    let formatterGap :=
+      (detail.splitOn "uncaught backtrack exception").length > 1 ||
+        (detail.splitOn "Unknown constant").length > 1
+    if formatterGap then
+      return degrade detail
     else
-      return .error
-          { category := .command
-            kind := stx.getKind
-            range := rootRange stx
-            trace
-            detail }
+      return refuse detail
 
 end Formatter.NativeLayout
 

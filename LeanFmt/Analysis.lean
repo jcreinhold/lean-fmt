@@ -201,6 +201,7 @@ private def buildFormatDraft (normalized : String) (source : LosslessSource)
   let mut normalizedTokens := 0
   let mut exactIslands := 0
   let mut exactIslandBytes := 0
+  let mut verbatimCommands := 0
   let mut offsideConstraints := 0
   let mut commentConstraints := 0
   let mut explicitDocuments := 0
@@ -275,6 +276,7 @@ private def buildFormatDraft (normalized : String) (source : LosslessSource)
     normalizedTokens := normalizedTokens + formatted.metrics.normalizedTokens
     exactIslands := exactIslands + formatted.metrics.exactIslands
     exactIslandBytes := exactIslandBytes + formatted.metrics.exactIslandBytes
+    verbatimCommands := verbatimCommands + formatted.metrics.verbatimCommands
     offsideConstraints := offsideConstraints + formatted.metrics.offsideConstraints
     commentConstraints := commentConstraints + formatted.metrics.commentConstraints
     registryNodes := registryNodes + formatted.metrics.nativeNodes
@@ -321,6 +323,12 @@ private def buildFormatDraft (normalized : String) (source : LosslessSource)
   let document := document?.getD Doc.empty
   checkCancelled
   let rendered := renderDetailed format.lineWidth document format.pinnedComments
+  -- A command the toolchain could not lay out is emitted verbatim rather than refusing the file
+  -- (`NativeLayout.command`). That is a degradation, so it is counted: the count rides the envelope
+  -- back to the parent, `LEAN_FMT_PROFILE_PHASES=1` reports it, and a corpus run that starts
+  -- dropping commands shows a rising number instead of nothing at all.
+  if verbatimCommands > 0 then
+    recordCount "verbatim_commands" verbatimCommands
   return .ok
       { text := rendered.text
         sourceMap := rendered.sourceMap
@@ -335,6 +343,7 @@ private def buildFormatDraft (normalized : String) (source : LosslessSource)
             normalizedTokens
             exactIslands
             exactIslandBytes
+            verbatimCommands
             offsideConstraints
             commentConstraints
             registryNodes

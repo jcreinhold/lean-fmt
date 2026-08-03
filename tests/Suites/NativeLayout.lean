@@ -395,6 +395,11 @@ private def testOffside (ctx : Ctx) : IO Unit := do
   ensureEq "  ... and the only bars left bare are the two negative halves" 2
       ((offside.splitOn "\n").filter
           (fun line => line.startsWith "    let some " && line.endsWith " |") |>.length)
+  -- A brace collection's continuation row: left of the first element is what excludes the
+  -- `structInst` reading of `{a, b, c}`, so indenting it makes the reparse a `choice` and the
+  -- structure gate refuses. The row must come back at the column the source gave it.
+  ensureEq "a brace collection's continuation row keeps its source column" "  fourthCollected}"
+      (← lineAfterExact offside "  {firstCollected, secondCollected, thirdCollected,")
   -- A two-statement bail-out falsifies the one-line precondition (`doSeqIndent`'s formatter emits
   -- the inter-item break as a leaf flattening cannot remove): the join is not collected, and the
   -- guard keeps the upstream break after the bar, both statements at one column under it.

@@ -239,6 +239,33 @@ def twoItemBailout (value : Option Nat) : Nat := Id.run do
   let some current := value | dbg_trace "missing"; return 0
   return current + 1
 
+/- A brace collection whose continuation row the source put left of its first element.
+
+`{a, b, c}` is two parsers: this collection literal and a `structInst` whose fields are all
+`structInstFieldAbbrev`s. `structInstFields` is `sepByIndent`, so the structure reading needs every
+later element at or right of the first one, and a source that spells a row left of it has excluded
+that reading. Indent the row and both parsers succeed: the reparse is a `choice` where the source
+had a literal, which the structure gate reports as one node too many.
+`Proofs/AlgebraicGeometry/EllipticCurve/Projective/Smooth.lean` reported `3755 -> 3756` for it. -/
+structure Collected where
+  items : List Nat
+
+instance : Singleton Nat Collected := ⟨fun value => ⟨[value]⟩⟩
+
+instance : Insert Nat Collected := ⟨fun value collected => ⟨value :: collected.items⟩⟩
+
+def firstCollected : Nat := 1
+
+def secondCollected : Nat := 2
+
+def thirdCollected : Nat := 3
+
+def fourthCollected : Nat := 4
+
+def collectedRows : Collected :=
+  {firstCollected, secondCollected, thirdCollected,
+  fourthCollected}
+
 end NativeLayoutOffside
 
 

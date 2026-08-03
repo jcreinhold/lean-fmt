@@ -388,6 +388,10 @@ The orphan must also be *covered*, not merely tolerated: rewriting its bytes mov
 nothing serves afterwards. Coverage is what the refusal was protecting, and it is why this asserts
 both directions.
 
+It is also where the epoch's per-root memo is held to its stamp: this is the one case with a
+dependency root whose contents this suite can change, so it asserts that an unchanged root
+reproduces its epoch and that a rewrite keeping the artifact's size still moves it.
+
 `finally` because leaving the directory behind would break the next run's absent-root
 precondition. -/
 private def testOrphanedDependencyArtifact (ctx : Ctx) : IO Unit := do
@@ -406,6 +410,12 @@ private def testOrphanedDependencyArtifact (ctx : Ctx) : IO Unit := do
         (← probe ctx "orphaned dependency artifact")
     writeFile orphan "different bytes, same absent trace\n"
     ensureEq "a changed untraced artifact served stale entries" 0 (← served ctx)
+    -- The epoch memoizes each dependency root against a stamp that only stats, so both arms of
+    -- that memo are asserted here. An unchanged root must reproduce the epoch it hashed...
+    ensureEq "a memoized dependency root did not reproduce its epoch" ctx.total (← served ctx)
+    -- ...and a rewrite the stamp could only catch by modification time must still move it.
+    writeFile orphan "DIFFERENT BYTES, same absent trace\n"
+    ensureEq "a same-size rewrite of a dependency artifact served stale entries" 0 (← served ctx)
   finally
     removeDirAll? depBuild
 

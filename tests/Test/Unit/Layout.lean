@@ -354,14 +354,17 @@ private def testAlignmentSequences : IO Unit := do
       s!"a leaf spelling one of its terminal's two spellings counted as normalized \
 ({metrics.normalizedTokens})"
   -- Insert: one native leaf more than there are terminals.
-  let .error inserted :=
+  -- Insert: one native leaf more than there are terminals. A leaf the adapter cannot place is
+  -- `unadapted` — this module's own machinery — and stays a refusal.
+  let .error (.unadapted inserted) :=
     run
       (nativeSequence
         (leaves.push "epsilon")) | throw (IO.userError "an extra native leaf was accepted")
   ensure ((inserted.splitOn "extra text leaf").length == 2)
       s!"the extra leaf was refused without naming it: {inserted}"
-  -- Delete: one native leaf fewer.
-  let .error deleted :=
+  -- Delete: one native leaf fewer. A document that stops short of the terminals is `incomplete` —
+  -- the toolchain's backtracking dropped a subtree — and the command degrades to its own bytes.
+  let .error (.incomplete deleted) :=
     run (nativeSequence leaves.pop) | throw (IO.userError "a missing native leaf was accepted")
   ensure
       ((deleted.splitOn s!"consumed {spellings.size - 1}/{spellings.size} terminals").length == 2)
@@ -419,11 +422,35 @@ private def testWhitespaceEnvelope : IO Unit := do
   ensure quotedIslands.isEmpty
       s!"interior whitespace escalated: {quotedIslands.size} islands over {repr quoted}"
 
+/-- A pinned row lands where its spelling says, in both directions.
+
+`columned` and `anchored` name one column and differ only in what they do when the document has
+already indented past it: the first keeps the document's indent, the second dedents to the column.
+The difference is a one-token distinction in `boundaryFormat`, it is invisible in any candidate
+whose ambient nest is left of the pin, and getting it wrong is a file-level refusal --
+`Proofs/.../Rational/GlobalMinimalModel.lean` reparsed its `letI` body as one more argument of the
+value. So it is stated here, over a document whose nest is deliberately right of both pins. -/
+private def testPinnedRows : IO Unit := do
+  let (source, terminals) := spelledTerminals #[("a", "a"), ("b", "b")]
+  -- `a`, then a break the document indents four columns, then `b`: the pin at `b` is the only
+  -- thing that can move that row.
+  let native := Std.Format.text "a" ++ .nest 4 (.line ++ .text "b")
+  let run (layout : Formatter.NativeLayout.BoundaryLayout) : IO String := do
+    let .ok (rendered, _) :=
+      Formatter.NativeLayout.transform source terminals #[] #[] #[] #[] #[(2, layout)] #[] #[] #[]
+        #[] 0 native | throw (IO.userError s!"a pinned row was refused: {repr layout}")
+    return rendered.pretty 200
+  ensureEq "a columned pin below the ambient nest kept the document's indent" "a\n    b"
+      (← run (.columned 2))
+  ensureEq "an anchored pin below the ambient nest did not dedent to its column" "a\n  b"
+      (← run (.anchored 2))
+
 /-- The cases this module contributes to the unit runner, in run order. -/
 public def cases : Array Case :=
   #[{ name := "testDoc", run := testDoc },
     { name := "testChoiceVerification", run := testChoiceVerification },
     { name := "testAlignmentSequences", run := testAlignmentSequences },
+    { name := "testPinnedRows", run := testPinnedRows },
     { name := "testWhitespaceEnvelope", run := testWhitespaceEnvelope }]
 
 end LeanFmt.Test.Unit.Layout

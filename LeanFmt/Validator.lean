@@ -105,6 +105,31 @@ def validateMap (draft : FormatDraft) : Except ValidationFailure Unit := do
     return ←
         fail .sourceMap s!"output map stops at {outputCursor}, expected {draft.text.utf8ByteSize}"
 
+/- A byte offset as `line:column`, both one-based and counted in characters, so a detail reads the
+way the compiler's own diagnostics do. -/
+private def position (text : String) (offset : Nat) : String :=
+  let lines := (String.Pos.Raw.extract text ⟨0⟩ ⟨min offset text.utf8ByteSize⟩).splitOn "\n"
+  s!"{lines.length}:{(lines.getLast?.map (·.length)).getD 0 + 1}"
+
+/- Where two node enumerations first disagree, as a phrase to append to a count mismatch.
+
+A count is the one structural failure that cannot name its own node -- every later index is shifted,
+so the ordered walk below reports only the first divergence, which is the one that shifted them. It
+is diagnostic only: the gate has already refused. -/
+private def firstNodeDivergence (before : LosslessSource) (afterText : String)
+    (after : LosslessSource) : String :=
+  let shared := min before.nodes.size after.nodes.size
+  match
+    (List.range shared).find? fun index =>
+      kindOfNode before index != kindOfNode after index ||
+        before.nodes[index]!.parent != after.nodes[index]!.parent with
+  | some index =>
+    let candidate := after.nodes[index]!
+    let location := position afterText candidate.range.start
+    s!"; node {index} is {kindOfNode before index} before and \
+      {kindOfNode after index} at {location} after"
+  | none => "; the enumerations agree up to the shorter one's end"
+
 /-- Compare the enumerated normalized structure. The first mismatch identifies its node/token path. -/
 def compare (beforeText : String) (before : LosslessSource) (afterText : String)
     (after : LosslessSource) : Except ValidationFailure Unit := do
@@ -115,7 +140,10 @@ def compare (beforeText : String) (before : LosslessSource) (afterText : String)
       slice afterBytes after.terminalStop afterBytes.size do
     return ← fail .terminal "terminal command or verbatim tail changed"
   unless before.nodes.size == after.nodes.size do
-    return ← fail .structure s!"node count changed: {before.nodes.size} -> {after.nodes.size}"
+    return ←
+        fail .structure
+            s!"node count changed: {before.nodes.size} -> {after.nodes.size}\
+      {firstNodeDivergence before afterText after}"
   for index in [0:before.nodes.size]do
     let left := before.nodes[index]!
     let right := after.nodes[index]!
