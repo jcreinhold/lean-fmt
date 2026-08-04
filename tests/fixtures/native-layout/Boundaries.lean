@@ -21,6 +21,9 @@ ownership layer as leading trivia of one command; the rule that keeps the comman
 being emitted twice has to select by comment kind, because dropping the whole run drops the ordinary
 comment with it. Mathlib writes the shape often. -/
 
+/- Baseline note (layout-redesign prompt 01): comment ownership and placement hold for the whole
+stack. Prompt 11 may replace the mechanism; it may not move a comment. -/
+
 public section
 
 namespace NativeLayoutBoundaries

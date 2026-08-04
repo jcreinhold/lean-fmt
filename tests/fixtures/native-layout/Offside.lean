@@ -30,6 +30,13 @@ Each constraint names a parser-significant column that native layout alone does 
 `do`, nested `match`, tactic blocks, `where`, and equation alternatives are here because the
 constraints have to compose with them, not because each needs a rule of its own. -/
 
+/- Baseline note (layout-redesign prompt 01): this file pins the unbracketed `sepByIndent`
+families -- structInst fields, the indented tactic and conv sequences, and `where` decls -- as
+the prompt-01 baseline; the bracketed tactic and conv sequences live in
+`BracketedSequences.lean` with their pinned narrow-width refusal. Prompts 09 and 10 may move the
+renders of the families they migrate, and prompt 11 the ones it retires; every other rank must
+hold them byte-for-byte. -/
+
 public section
 
 namespace NativeLayoutOffside
@@ -328,6 +335,32 @@ def semiOps : SemiOps where
   toFun := id; map_mul' x y := (x * y) + (y * x) + (x * y * x) + (y * x * y)
 
 def semiOpsFlat : SemiOps where toFun := id; map_mul' := Nat.add
+
+/- A conv sequence is `sepByIndent`'s remaining reachable family (`Init/Conv.lean:25-26`), under
+a carrier that does not group it: `conv =>` spells two terminals in front of the list, so the
+delimiter test forces the same boundary a `case` arm's tactics get. The line-break spelling is the
+path `sepByIndent.formatter` positions with its own forced `align`. -/
+theorem convSiblings (a b : Nat) (h : a = b) : a + 0 = b := by
+  conv =>
+    lhs
+    rw [Nat.add_zero]
+    rw [h]
+
+/- The same list spelled with `;`: like a `case` arm's tactics, the sequence starts right of the
+column its separators break to. -/
+theorem convSemicolon (a : Nat) : a + 0 = a := by
+  conv => lhs; rw [Nat.add_zero]
+
+/- One conv tactic has no separator to position: the negative half of the same rule. -/
+theorem convSingle (a : Nat) : a + 0 = a := by
+  conv => rw [Nat.add_zero]
+
+/- A conv sequence nested inside another: the inner carrier's boundary is its own decision. -/
+theorem convNested (a : Nat) : (a + 0) + 0 = a := by
+  conv =>
+    lhs
+    conv => lhs; rw [Nat.add_zero]
+    rw [Nat.add_zero]
 
 /- A `have` term whose body sits left of the keyword keeps no column pin.
 

@@ -14,6 +14,9 @@ text leaf to the ambient indentation, so a payload carrying its own absolute col
 that indentation to reach column zero. Growing this list by spelling rather than by class is what the
 route audit rejected. -/
 
+/- Baseline note (layout-redesign prompt 01): island payloads and their columns hold for the whole
+stack. Prompt 11 may replace the mechanism; it may not move a payload byte. -/
+
 public section
 
 namespace NativeLayoutIslands

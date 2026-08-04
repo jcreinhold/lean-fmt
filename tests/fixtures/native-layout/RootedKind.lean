@@ -23,6 +23,9 @@ first, and that the directive above leaves the command verbatim -- the only way 
 of these can be formatted at all. Three mathlib files use one of the four toolchain declarations
 spelled this way. -/
 
+/- Baseline note (layout-redesign prompt 01): the named refusal and the directive escape hold for
+the whole stack. Prompt 12 may change how this file is routed, never whether it refuses. -/
+
 public section
 
 def beforeTheRootedCommand : Nat := 0

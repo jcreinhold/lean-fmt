@@ -12,6 +12,9 @@ public   import   Lean.Parser.Module
 an import row broken across lines, a focusing `·` isolated from its first tactic, and an
 attribute-owned doc comment nested past the column its fixed payload was authored to fit. -/
 
+/- Baseline note (layout-redesign prompt 01): these three shapes hold for the whole stack; a linter
+the formatter trips is a defect at any rank. -/
+
 syntax (name := docCarrier) "doc_carrier" (docComment)? : attr
 
 macro_rules

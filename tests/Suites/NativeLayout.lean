@@ -15,6 +15,19 @@ declared fixture module each:
 - `MathlibStyle.lean` — the grammar shapes mathlib's style linters flag: broken import rows,
   isolated focusing dots, attribute-owned doc comments nested past their payload's column
 - `Offside.lean` — parser-significant columns native layout alone does not preserve
+- `BracketedSequences.lean` — the two bracketed `sepByIndentSemicolon` families and their pinned
+  narrow-width refusal (prompt 10 owns the structural fix); not in the admission `fixtures` array
+
+Prompt-01 baseline audit (layout-redesign stack): the `Std.Format` constructors reachable from
+registered-formatter output over parsed source are `nil`, `append`, `text` (plain and
+newline-bearing — `sepByIndent`'s line-break separator path), `line`, positive `nest`, `group`
+(both flatten behaviors), and `align true` (the same `sepByIndent` path). `tag` is unreachable:
+`withMaybeTag` reads `getExprPos?`, which only `SourceInfo.synthetic` populates. `align false`
+and negative `nest` have no producer in the pinned toolchain's formatter pipeline. The fixtures
+cover every reachable constructor and all five `sepByIndent` families — structInst fields,
+indented and bracketed tactic sequences, indented and bracketed conv sequences, and `where`
+decls, the bracketed halves in `BracketedSequences.lean`. Each fixture's header states which
+later prompt may move its renders.
 
 Everything runs through `format --check`, never `format`: these fixtures are committed, and a
 suite that invokes a writing mode against a committed fixture rewrites it the first time the path
@@ -335,7 +348,8 @@ private def testOffside (ctx : Ctx) : IO Unit := do
   -- `Term.byTactic` declares `ppAllowUngrouped` to keep `by` on the `:=` line; a flat boundary at
   -- the `by` terminal is what holds it, since the adapter does not own `fill`'s measurement. The
   -- count covers the five carrier theorems, `letIdBodyJoins`, and its tactic-level `have step`.
-  ensureEq "by stays on the := line" 7
+  -- The prompt-01 conv coverage added `convSiblings`, `convSemicolon`, and `convNested`.
+  ensureEq "by stays on the := line" 10
       ((offside.splitOn "\n").filter (·.endsWith " := by") |>.length)
   ensureEq "and its first tactic still starts the next line"
       "  have step : n + 0 = n := Nat.add_zero n"
@@ -368,6 +382,21 @@ private def testOffside (ctx : Ctx) : IO Unit := do
       (← lineAfterExact offside "  case left =>")
   ensureEq "  ... and a show's by opens its sequence as by's own does" "    constructor; rfl; rfl"
       (← lineAfterExact offside "  show value + 0 = value ∧ value + 0 = value by")
+  -- The fifth `sepByIndent` family. `conv =>` is a delimiter-intervenes carrier like `case h =>`,
+  -- so its `;`-spelled list opens on its own line; the line-break spelling is the formatter's own
+  -- `align`; one item has nothing to position; the bracketed spelling is already positioned.
+  ensureEq "a line-break conv sequence keeps its rows"
+      "  conv =>\n    lhs\n    rw [Nat.add_zero]\n    rw [h]"
+      (← linesAfter offside "theorem convSiblings" 4)
+  ensureEq "a semicolon conv sequence opens on its own line" "    lhs; rw [Nat.add_zero]"
+      (← lineAfterExact offside "theorem convSemicolon (a : Nat) : a + 0 = a := by" 2)
+  ensureEq "a single conv tactic stays on the => line" 1
+      (countExact offside
+        "theorem convSingle (a : Nat) : a + 0 = a := by conv => rw [Nat.add_zero]")
+  ensureEq "a nested conv carrier's sequence opens on its own line" 1
+      (countExact offside "    conv =>")
+  ensureEq "  ... and its list indents one level further" 1
+      (countExact offside "      lhs; rw [Nat.add_zero]")
   -- The other half of that rule: `sepByIndent.formatter` emits a forced `align` when the source spelled
   -- the separators as line breaks, which already positions the sequence.
   ensureEq "a line-break-separated record update keeps its own alignment" "    first := 1"
@@ -560,6 +589,45 @@ private def testRootedKind (ctx : Ctx) : IO Unit := do
   ensureEq "  ... and the directive it names leaves the command verbatim" 1
       (countExact formatted.stdout "register_label_attr leanFmtRootedKindFixture")
 
+/-- §6c: the two bracketed `sepByIndentSemicolon` families hug at width 100 and refuse --
+characterized, at the `diagnostics` gate -- at width 20, where the list must break left of the
+column `sepByIndent`'s inner `withPosition` saved. Prompt 10 owns the structural replacement that
+turns this refusal into admission; until then the refusal is the pinned baseline. -/
+private def testBracketedSequences (ctx : Ctx) : IO Unit := do
+  let once ← formatCheck ctx "BracketedSequences" none "bracketed-sequences admission"
+  ensureEq "a hugged conv bracket stays hugged" 1
+      (countExact once
+        "theorem convBracketedBreak (a : Nat) : a + 0 = a := by conv => {lhs; rw [Nat.add_zero]}")
+  ensureEq "the tactic bracket hugs its opening row" 1
+      (countExact once
+        "theorem tacticBracketedBreak (a : Nat) : a + 0 = a := by { skip; rw [Nat.add_zero a]")
+  ensureEq "  ... and its closing brace takes its own row" 1 (countExact once "}")
+  let twice ←
+    expectExit 0 "bracketed-sequences second pass" ctx.application
+        #["format", "-", "--stdin-filename",
+          "tests/fixtures/native-layout/BracketedSequences.lean", "--root", "."]
+        (input? := some once) (cwd? := some ctx.root)
+  ensureEq "bracketed sequences are not idempotent" once twice.stdout
+  let config := ctx.work / "width-20-bracketed.toml"
+  writeFile config "[format]\nline-width = 20\n"
+  let result ←
+    runProc ctx.application
+        #["format", "--check", "--root", ".", "--json", "--no-cache", "--config", config.toString,
+          "tests/fixtures/native-layout/BracketedSequences.lean"]
+        (cwd? := some ctx.root)
+  let report ← parseJson result.stdout "bracketed-sequences at 20"
+  let file := (jsonAt? report [.field "files", .index 0]).getD .null
+  let status := (file.getObjValAs? String "status").toOption.getD ""
+  ensureEq "bracketed sequences stopped refusing at width 20; prompt 10 must recharacterize \
+      this case" "infrastructure-failure" status
+  let diagnostics := ((jsonAt? file [.field "diagnostics"]).bind (·.getArr?.toOption)).getD #[]
+  let detail := "\n".intercalate (diagnostics.toList.map (·.compress))
+  ensureContains detail "ValidationGate.diagnostics"
+      "the width-20 refusal is not the diagnostics gate"
+  ensureContains detail "unexpected identifier; expected '}'"
+      "the width-20 refusal changed shape"
+  ensureEq "only one bracketed family refused" 2 ((detail.splitOn "unsolved goals").length - 1)
+
 end NativeLayout
 
 public def main (args : List String) : IO UInt32 := do
@@ -596,6 +664,7 @@ public def main (args : List String) : IO UInt32 := do
           { name := "boundaries-comments", run := NativeLayout.testBoundaries ctx },
           { name := "islands", run := NativeLayout.testIslands ctx },
           { name := "offside", run := NativeLayout.testOffside ctx },
+          { name := "bracketed-sequences", run := NativeLayout.testBracketedSequences ctx },
           { name := "mathlib-style", run := NativeLayout.testMathlibStyle ctx },
           { name := "rooted-kind", run := NativeLayout.testRootedKind ctx }]
       runCases "native-layout" cases args
