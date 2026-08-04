@@ -238,6 +238,16 @@ private def nestedCalls (n : Nat) : Doc :=
           (.cat (.text "f(") (.cat (.nest 2 (.cat (.line "") d)) (.cat (.line "") (.text ")"))))
     return d
 
+/-- A native fill with `n` elements at width 80: every line break re-decides the remainder of the
+group, the native path with the most decisions per node. Cached work summaries keep each
+re-decision constant-time, so steps stay exactly nodes. -/
+private def fillArgs (n : Nat) : Doc :=
+  Id.run do
+    let mut inner := Doc.text "a0"
+    for i in [1:n]do
+      inner := .cat inner (.cat (.line " ") (.text s!"a{i}"))
+    return .fill (.cat (.text "f ") inner)
+
 /-- `callArgs` with every argument marked, which is what a real printer does: one mark per token. The
 cost of `mark` is the open question this probe watches. -/
 private def markedCallArgs (n : Nat) : Doc :=
@@ -396,6 +406,7 @@ steps={rendered.metrics.workSteps} marks={rendered.sourceMap.size} native={rende
     report "zero-width-nesting" n (zeroWidthNesting n)
     report "call-args" n (callArgs n)
     report "marked-call-args" n (markedCallArgs n)
+    report "fill-args" n (fillArgs n)
   return 0
 
 /-! ## Report renderer scale

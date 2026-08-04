@@ -70,7 +70,7 @@ private def accounted (capture : String) : Nat :=
 all eight adversarial rows. -/
 private def gateDocStepsLinear (report : String) : Bool :=
   let rows := (report.splitOn "\n").filter (·.startsWith "doc-steps ")
-  rows.length == 8 &&
+  rows.length == 10 &&
     rows.all fun row =>
       let value (key : String) : Option Nat :=
         ((row.splitOn " ").filterMap fun field =>
@@ -214,10 +214,12 @@ private def docHealthy : String :=
    doc-steps label=zero-width-nesting n=1000 nodes=2001 steps=2001 marks=0 native=0\n\
    doc-steps label=call-args n=1000 nodes=6005 steps=6005 marks=0 native=0\n\
    doc-steps label=marked-call-args n=1000 nodes=7005 steps=8005 marks=1000 native=0\n\
+   doc-steps label=fill-args n=1000 nodes=4000 steps=4000 marks=0 native=0\n\
    doc-steps label=zero-width-siblings n=8000 nodes=32001 steps=32001 marks=0 native=0\n\
    doc-steps label=zero-width-nesting n=8000 nodes=16001 steps=16001 marks=0 native=0\n\
    doc-steps label=call-args n=8000 nodes=48005 steps=48005 marks=0 native=0\n\
-   doc-steps label=marked-call-args n=8000 nodes=56005 steps=64005 marks=8000 native=0\n"
+   doc-steps label=marked-call-args n=8000 nodes=56005 steps=64005 marks=8000 native=0\n\
+   doc-steps label=fill-args n=8000 nodes=32000 steps=32000 marks=0 native=0\n"
 
 private def testGatesDiscriminate : IO Unit := do
   let expect (holds : Bool) (description : String) : IO Unit := ensure holds description

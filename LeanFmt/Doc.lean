@@ -205,9 +205,11 @@ def group (body : Doc) : Doc :=
   .mk (.group body) body.flatMeasure body.flatMeasure (1 + body.size) body.wellFormed
 
 /-- The native fill group: the body starts flat when the segment up to its first break fits, and
-each break re-decides the remainder with one column charged for the candidate space. -/
+each break re-decides the remainder with one column charged for the candidate space. As an
+unexpanded item in another group's measure it is flat like every native group; the broken
+measure of a fill candidate comes from its items, not this node. -/
 def fill (body : Doc) : Doc :=
-  .mk (.fill body) body.flatMeasure body.brokenMeasure (1 + body.size) body.wellFormed
+  .mk (.fill body) body.flatMeasure body.flatMeasure (1 + body.size) body.wellFormed
 
 /-- The native `align`: pad to the current indent, or break to it when already at or past it.
 `force = false` renders as nothing inside a flattened group. Its measure depends on the decision
@@ -505,26 +507,27 @@ private partial def renderWork (width : Nat) (pinnedPhrases : Array String) :
           endTags
           resume items
         | .nativeText value =>
-          -- Native multiline text: emit up to each newline, break to the entry's indent, and
-          -- re-group the remainder of the enclosing group after every hard line. The root group
-          -- (`disallow`) never re-groups.
-          let parts := value.splitOn "\n"
-          let mut headGroup := group
-          for part in parts.dropLast do
-            modify (appendLiteral · part)
+          match value.splitOn "\n" with
+          | [_] =>
+            modify (appendLiteral · value)
+            endTags
+            resume items
+          | head :: tailParts =>
+            -- Native multiline text: emit up to the first newline, break to the entry's indent,
+            -- and re-queue the remainder as this group's next item — the tail is part of the
+            -- re-grouping's fit candidate, which is why the queue cannot be skipped. The root
+            -- group (`disallow`) never re-groups. Tags close when the tail completes, as in the
+            -- machine.
+            let tail := "\n".intercalate tailParts
+            modify (appendLiteral · head)
             modify fun state => { appendNewline state indent.toNat with }
-            match headGroup.fla with
-            | .disallow => pure ()
-            | _ =>
-              -- The machine's re-grouping after a hard line break: the remainder of the
-              -- enclosing group is re-decided, and its decision governs what follows.
-              let pushed ← pushGroup headGroup.fill items rest width false
-              match pushed with
-              | .empty => pure ()
-              | .more group' _ _ => headGroup := group'
-          modify (appendLiteral · (parts.getLast?.getD ""))
-          endTags
-          resumeWork (Work.pack { headGroup with items } rest)
+            let items' := items.push (.document (.nativeText tail) indent activeTags)
+            match group.fla with
+            | .disallow => resume items'
+            | _ => resumeWork (← pushGroup group.fill items' rest width false)
+          | [] =>
+            endTags
+            resume items
         | .cat left right =>
           resume
             (items.push (.document right indent activeTags) |>.push

@@ -503,10 +503,171 @@ private def testAnchor : IO Unit := do
   ensure (Doc.wellFormed (.anchor (.text "x"))) "a text-first anchor was rejected"
   ensure (!Doc.wellFormed (.anchor (.line " "))) "a break-first anchor was accepted"
 
+/-! ## The native oracle (LAY-RENDERER-ORACLE)
+
+A differential oracle between the pinned `Std.Format.prettyM` renderer and the `Doc` machine for
+unannotated native input. `toDoc` lowers a `Std.Format` tree onto the native fragment; both sides
+render at the same width, indent, and entry column; bytes and the tag-event count must agree.
+The pinned renderer stays an in-test oracle — production never falls back to it.
+
+Every compared render also gates renderer work by counts: an unannotated document is emitted in
+exactly `size` work steps (no marks, one item per node), however many group re-decisions the fill
+and hard-line paths make. A failure prints the seed, the tree, and the configuration, which is
+enough to reproduce it. -/
+
+/-- A structural printer for failing trees, since `ToString Std.Format` would render the very
+bytes under comparison. -/
+private partial def dumpFormat : Std.Format → String
+  | .nil => "nil"
+  | .line => "line"
+  | .align force => s!"align {force}"
+  | .text value => s!"text {repr value}"
+  | .nest n body => s!"nest {n} ({dumpFormat body})"
+  | .append left right => s!"append ({dumpFormat left}) ({dumpFormat right})"
+  | .group body behavior =>
+    s!"group[{if behavior == .fill then "fill" else "allOrNone"}] ({dumpFormat body})"
+  | .tag tag body => s!"tag {tag} ({dumpFormat body})"
+
+/-- Lower a native tree onto the native fragment of `Doc`. A newline-bearing `text` is
+`nativeText`, the constructor with native multiline semantics; anything else is one `Doc` node
+per `Std.Format` node. -/
+private partial def toDoc : Std.Format → Doc
+  | .nil => .empty
+  | .line => .line " "
+  | .align force => .align force
+  | .text value => if value.contains '\n' then .nativeText value else .text value
+  | .nest n body => .nest n (toDoc body)
+  | .append left right => .cat (toDoc left) (toDoc right)
+  | .group body behavior => if behavior == .fill then .fill (toDoc body) else .group (toDoc body)
+  | .tag tag body => .tag tag (toDoc body)
+
+/-- Oracle-side render state: the pinned machine's column discipline (`pushOutput` never sees a
+newline, so the column advances by the whole atom) plus a tag-event counter, the observation the
+default `String` instance erases. -/
+private structure OracleState where
+  out : String := ""
+  column : Nat := 0
+  tagEvents : Nat := 0
+
+private instance : Std.Format.MonadPrettyFormat (StateM OracleState) where
+  pushOutput value :=
+    modify fun state =>
+      { state with out := state.out ++ value, column := state.column + value.length }
+  pushNewline indent :=
+    modify fun state => { state with out := state.out ++ "\n".pushn ' ' indent, column := indent }
+  currColumn := return (← get).column
+  startTag _ := modify fun state => { state with tagEvents := state.tagEvents + 1 }
+  endTags count := modify fun state => { state with tagEvents := state.tagEvents + count }
+
+/-- The pinned renderer, observed: bytes and tag events at an entry column. -/
+private def nativeObserved (format : Std.Format) (width indent column : Nat) : String × Nat :=
+  let act : StateM OracleState Unit := Std.Format.prettyM format width indent
+  let state := act.run { column } |>.2
+  (state.out, state.tagEvents)
+
+/-- A deterministic native-tree generator over every constructor: nil, single- and multi-line
+text, line, append, signed nests (down to -3), both group behaviors, both align flags, and tags.
+Seeded, so a failure reproduces from the printed seed alone. -/
+private partial def genFormat (depth : Nat) (seed : Nat) : Std.Format × Nat :=
+  let r := nextRand seed
+  let atom := atomFor r
+  if depth == 0 then
+    match r % 4 with
+    | 0 => (.nil, r)
+    | 1 => (.text atom, r)
+    | 2 => (.line, r)
+    | _ => (.text (atom ++ "\n" ++ atomFor (r / 7)), r)
+  else
+    match r % 10 with
+    | 0 => (.nil, r)
+    | 1 => (.text atom, r)
+    | 2 => (.line, r)
+    | 3 =>
+      let (left, seed₁) := genFormat (depth - 1) r
+      let (right, seed₂) := genFormat (depth - 1) seed₁
+      (.append left right, seed₂)
+    | 4 =>
+      let (body, seed₁) := genFormat (depth - 1) r
+      (.nest (((r % 9 : Nat) : Int) - 3) body, seed₁)
+    | 5 =>
+      let (body, seed₁) := genFormat (depth - 1) r
+      (.group body .allOrNone, seed₁)
+    | 6 =>
+      let (body, seed₁) := genFormat (depth - 1) r
+      (.group body .fill, seed₁)
+    | 7 =>
+      let (body, seed₁) := genFormat (depth - 1) r
+      (.align (r % 2 == 0) ++ body, seed₁)
+    | 8 =>
+      let (body, seed₁) := genFormat (depth - 1) r
+      (.tag (r % 8) body, seed₁)
+    | _ => (.text (atom ++ "\n" ++ atomFor (r / 7)), r)
+
+/-- The newline count inside native `text` atoms: each one re-queues the remainder of its atom
+as a fresh work item after the hard line, so it adds exactly one renderer work step beyond the
+node count. -/
+private partial def hardLineRequeues : Std.Format → Nat
+  | .text value => value.foldl (fun acc char => if char == '\n' then acc + 1 else acc) 0
+  | .nest _ body | .group body _ | .tag _ body => hardLineRequeues body
+  | .append left right => hardLineRequeues left + hardLineRequeues right
+  | _ => 0
+
+/-- One tree at one configuration: bytes, tag events, and the work-step gate. -/
+private def oracleAgrees (label : String) (format : Std.Format) (width indent column : Nat) :
+    IO Unit := do
+  let document := toDoc format
+  let (nativeBytes, nativeTags) := nativeObserved format width indent column
+  let rendered := renderDetailed width document #[] indent column
+  ensure (rendered.text == nativeBytes)
+      s!"{label}: byte divergence at width {width}, indent {indent}, column {column}\n      tree: {dumpFormat format}\nnative:\n{repr nativeBytes}\nlean-fmt:\n{repr rendered.text}"
+  ensure (rendered.metrics.nativeEvents == nativeTags)
+      s!"{label}: tag-event divergence at width {width}, indent {indent}, column {column}\n      tree: {dumpFormat format}\nnative: {nativeTags} events, lean-fmt:       {rendered.metrics.nativeEvents}"
+  ensure (rendered.metrics.workSteps == Doc.size document + hardLineRequeues format)
+      s!"{label}: renderer work {rendered.metrics.workSteps} != nodes {Doc.size document} + \
+      hard-line requeues {hardLineRequeues format} at width {width}, indent {indent}, column \
+      {column}\ntree: {dumpFormat format}"
+
+/-- Hand-curated corners, one per behavior the contract pins: the root group that never flattens,
+a hard line re-grouping its tail, fill inheriting a flattened enclosing group, an `align false`
+vanishing inside a flattened group while charging the phantom measure, an `align true` at and past
+its indent, a negative nest clamping, a tag around a breaking group, and a multiline text denying
+flattening. The generated trees reach these shapes only by luck; these must hit them every run. -/
+private def oracleCorners : Array (String × Std.Format) :=
+  #[("root-disallow-hard", .text "a\nb"),
+    ("hard-regroups-tail", .group (.text "a\nb" ++ .line ++ .text "c")),
+    ("fill-in-flattened", .group (.text "x" ++ .line ++ (.group (.text "y" ++ .line ++ .text "z") .fill))),
+    ("align-false-flat", .group (.text "ab" ++ .align false ++ .text "cd")),
+    ("align-false-phantom",
+      .group (.align false ++ .text "aaaa" ++ .line ++ .text "bbbb") ++ .text "cccccccc"),
+    ("align-true-nested", .nest 4 (.text "x" ++ .align true ++ .text "y")),
+    ("negative-nest", .nest (-3) (.text "x" ++ .line ++ .text "y")),
+    ("tag-around-group", .tag 7 (.group (.text "aa" ++ .line ++ .text "bb"))),
+    ("multiline-denies-flatten", .group (.text "aa\nbb" ++ .line ++ .text "cc")),
+    ("fill-wraps-tail",
+      .group (.text "call" ++ .line ++ (.group (.text "aaa" ++ .line ++ .text "bbb" ++ .line ++ .text "ccc") .fill))),
+    ("empty-text-atom", .group (.text "" ++ .line ++ .text "x")),
+    ("align-at-root", .align true ++ .text "x")]
+
+private def testNativeOracle : IO Unit := do
+  let widths := [0, 1, 5, 20, 80, hugeWidth]
+  let mut seed := 20260804
+  for i in [0:300]do
+    let (format, nextSeed) := genFormat 5 seed
+    seed := nextRand nextSeed
+    for width in widths do
+      for column in [0, 5] do
+        for indent in [0, 3] do
+          oracleAgrees s!"generated {i} (seed {seed})" format width indent column
+  for (label, format) in oracleCorners do
+    for width in widths do
+      for column in [0, 3] do
+        oracleAgrees s!"corner {label}" format width column 0
+
 /-- The cases this module contributes to the unit runner, in run order. -/
 public def cases : Array Case :=
   #[{ name := "testDoc", run := testDoc },
     { name := "testAnchor", run := testAnchor },
+    { name := "testNativeOracle", run := testNativeOracle },
     { name := "testChoiceVerification", run := testChoiceVerification },
     { name := "testAlignmentSequences", run := testAlignmentSequences },
     { name := "testPinnedRows", run := testPinnedRows },
