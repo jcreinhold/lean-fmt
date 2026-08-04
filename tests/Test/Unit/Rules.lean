@@ -347,68 +347,38 @@ would fail every assertion below. -/
 
 /-- `syntax`-tier: reports the projection's first token. Registered last, finds earliest. -/
 private def probeSyntax : Rule :=
-  {
-    info :=
-      {
-        code := "TST900",
-        category := "test",
-        summary := "probe: first token"
-        fixable := false,
-        defaultEnabled := false,
-        lifecycle := .preview
-        explanation := "probe",
-        examples := #[] }
+  { info :=
+      { code := "TST900", category := "test", summary := "probe: first token"
+        fixable := false, defaultEnabled := false, lifecycle := .preview
+        explanation := "probe", examples := #[] }
     impl :=
       .syntax fun facts =>
         match facts.projection.tokens[0]? with
         | none => #[]
         | some token =>
-          #[{
-              code := "TST900",
-              severity := .warning,
-              message := "first token"
+          #[{ code := "TST900", severity := .warning, message := "first token"
               range := { start := token.start, stop := token.stop } }] }
 
 /-- `source`-tier: reports the whole file. Shares its range with `probeTie` to pin tie-breaking. -/
 private def probeSource : Rule :=
-  {
-    info :=
-      {
-        code := "TST901",
-        category := "test",
-        summary := "probe: whole file"
-        fixable := false,
-        defaultEnabled := false,
-        lifecycle := .preview
-        explanation := "probe",
-        examples := #[] }
+  { info :=
+      { code := "TST901", category := "test", summary := "probe: whole file"
+        fixable := false, defaultEnabled := false, lifecycle := .preview
+        explanation := "probe", examples := #[] }
     impl :=
       .source fun facts =>
-        #[{
-            code := "TST901",
-            severity := .warning,
-            message := "whole file"
+        #[{ code := "TST901", severity := .warning, message := "whole file"
             range := { start := 0, stop := facts.bytes.size } }] }
 
 /-- `source`-tier, same range as `probeSource`, registered after it but ordering before it by code. -/
 private def probeTie : Rule :=
-  {
-    info :=
-      {
-        code := "TST900",
-        category := "test",
-        summary := "probe: tie"
-        fixable := false,
-        defaultEnabled := false,
-        lifecycle := .preview
-        explanation := "probe",
-        examples := #[] }
+  { info :=
+      { code := "TST900", category := "test", summary := "probe: tie"
+        fixable := false, defaultEnabled := false, lifecycle := .preview
+        explanation := "probe", examples := #[] }
     impl :=
       .source fun facts =>
-        #[{
-            code := "TST900",
-            severity := .warning,
-            message := "tie"
+        #[{ code := "TST900", severity := .warning, message := "tie"
             range := { start := 0, stop := facts.bytes.size } }] }
 
 private def testEngineTiers : IO Unit := do
@@ -510,7 +480,7 @@ private def testMixedSelection : IO Unit := do
       (ruleRegistry.all
         (fun rule =>
           ({ selected := #[rule.code], perFileIgnores := #[], extendSafe := #[],
-                  extendUnsafe := #[] } :
+             extendUnsafe := #[] } :
                 RulePlan).requiredTier ==
             rule.tier))
       "a shipped rule's single selection costs a different tier than the rule's own"

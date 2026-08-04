@@ -56,8 +56,7 @@ fails when the tree's Lake traces are stale rather than when the code is wrong. 
 
 private def testCacheIdentity : IO Unit := do
   let base : CacheIdentity :=
-    {
-      source := Digest.ofString "source"
+    { source := Digest.ofString "source"
       toolchain := "toolchain"
       environment := Digest.ofString "environment"
       formatter := Digest.ofString "formatter"
@@ -297,8 +296,7 @@ private def testStore : IO Unit := do
     writeArtifactAtomic path artifact
     let hash ← Lake.computeFileHash path (text := true)
     let facet : Lake.Artifact :=
-      {
-        descr := Lake.artifactWithExt hash "json"
+      { descr := Lake.artifactWithExt hash "json"
         path
         mtime := 0 }
     ensure ((← readFacet? facet `Test fixtureSourceText) == some artifact)
@@ -355,8 +353,7 @@ private def testMergeAnalysis : IO Unit := do
       "incomparable merge did not keep the fresher analysis"
   -- Unbuilt outcomes are never stored; broken and successful ones are.
   let unbuilt : SemanticAnalysis :=
-    {
-      result? := none
+    { result? := none
       diagnostics :=
         #["Mathlib/Foo.lean:1:0: error: failed to open file 'Mathlib.Foo.olean': No such file or directory"] }
   ensure (!storableAnalysis unbuilt) "an unbuilt outcome was storable"

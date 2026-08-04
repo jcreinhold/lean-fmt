@@ -140,19 +140,6 @@ private inductive BoundaryLayout where
     and `collectLetFamilyAlignments` pairs it with a `columned` pin on the keyword's own row -- the
     two together reproduce the relationship the source proved parseable. -/
   anchored (col : Nat)
-  | /-- A break in front of a `structInst` field row whose `{` opens a row of its own, landing at
-    the ambient nest -- where the fields' own nest puts the first field, which is the column
-    `sepByIndent` then measures the rest against.
-
-    Relative, where every other pin is absolute, because this row's target moves with the brace.
-    A source column was what this held first, and it is right only while the construct stays where
-    the source put it: `Proofs/RingTheory/Regular/ProjectiveDimension.lean` spelled an
-    over-indented tactic block, canonical layout dedented the whole `let` by two, the first field
-    moved with the brace and the pinned rows did not. Landing *right* of the reference column is
-    not the missing-field error the pin was written to prevent but its mirror -- the field parses
-    as an argument of the previous field's value, and `69:12: unexpected token ':='` is what the
-    diagnostics gate reported. -/
-  fieldRow
   | /-- The closing bracket of a magic-trailing-comma explosion: a hard break whose continuation
     dedents to the collection's own line. The amount is the collection's private `nest`, which only
     the walk can see, so this is spelled as a marker the `.nest` rewrite cancels; see
@@ -431,8 +418,7 @@ private def exactPlaceholder (source : String) (stx : Lean.Syntax) (info : Lean.
   match sourceRange? stx with
   | some range =>
     let marker := markerFor range
-    {
-      stx := placeholder stx info marker
+    { stx := placeholder stx info marker
       islands := #[{ marker, range, text := slice source range }] }
   | none => { stx }
 
@@ -483,8 +469,7 @@ private partial def protectSourceDataFrom (categories : Lean.Parser.ParserCatego
       match sourceRange? stx with
       | some range =>
         let marker := markerFor range
-        {
-          stx := .node info kind (children.set! 1 (.atom body.getHeadInfo marker))
+        { stx := .node info kind (children.set! 1 (.atom body.getHeadInfo marker))
           islands := #[{ marker, range, text := slice source range, comment := true }] }
       | none => { stx }
     else
@@ -1244,6 +1229,33 @@ private partial def structInstFieldsInOrder (stx : Lean.Syntax)
       children.foldl (init := fields) fun fields child => structInstFieldsInOrder child fields
   | _ => fields
 
+/- The anchor interval for a multi-field `structInstFields` list (LAY-STRUCT-INST): exactly the
+fields, first to last. The renderer re-bases every break inside the interval to the column the
+first field lands at, wherever the document places it -- mid-row after a `{` the source wrote
+there included -- which is the invariant `structInstFields`'s `sepByIndent` grammar needs
+(`Term.lean:354`). One structural fact says what the per-field `fieldRow` pins and the row-spread
+explosion approximated row by row; their retirement is this prompt's checklist, and what keeps the
+first field on a mid-row brace's row is that the interval *starts* there. -/
+private partial def collectStructInstFieldAnchors (stx : Lean.Syntax)
+    (ranges : Array SourceRange := #[]) : Array SourceRange :=
+  match stx with
+  | .node _ kind children =>
+    let ranges :=
+      if kind == ``Lean.Parser.Term.structInst then
+        match children.find? (·.isOfKind ``Lean.Parser.Term.structInstFields) with
+        | some fieldsNode =>
+          let fields := structInstFieldsInOrder fieldsNode
+          if fields.size < 2 then ranges
+          else
+            match (selectedLeafRanges fields[0]!)[0]?, (selectedLeafRanges fields.back!).back? with
+            | some first, some last => ranges.push ⟨first.start, last.stop⟩
+            | _, _ => ranges
+        | none => ranges
+      else ranges
+    let children := if kind == Lean.choiceKind then children[0]?.toArray else children
+    children.foldl (init := ranges) fun ranges child => collectStructInstFieldAnchors child ranges
+  | _ => ranges
+
 /- A brace collection's continuation rows stay left of its first element.
 
 `{a, b, c}` is two parsers: the collection literal `«term{_}»` and a `structInst` whose fields are
@@ -1298,71 +1310,15 @@ private partial def collectBraceLiteralRows (source : String) (stx : Lean.Syntax
     children.foldl (init := starts) fun starts child => collectBraceLiteralRows source child starts
   | _ => starts
 
-/- A `structInst` field row lands where its first field does.
-
-`structInstFields` is `sepByIndent` (`Term.lean:354`): a field that opens a row must start at the
-first field's column. Land left of it and `checkColGe` fails, ending the structure there --
-`Fields missing` -- and land right of it and the field is read as one more argument of the previous
-field's value, which is `69:12: unexpected token ':='`. Only the first field's own column will do,
-and the native document spells a continuation at the enclosing `nest` with no regard for it.
-
-Where that column ends up depends on the brace, so the pin does too, and what decides is whether
-anything holds the brace:
-
-- `fieldRow` is relative, so it tracks the brace the document places.
-  `Proofs/RingTheory/Regular/ProjectiveDimension.lean` needs that: an over-indented tactic block
-  dedented by two, the first field moved with the brace, and source-column pins did not.
-- A `return { first, second,` brace is held on the keyword's row by `collectReturnBraceStarts`,
-  and its first field then sits at a column no nest names. A held brace is the only place a source
-  column means anything, and `tests/Test/Runner.lean` is that shape.
-
-The mid-row test this used to make instead is not the same test, because a break in front of the
-brace is an ordinary width decision: a `{` the source wrote mid-row opens a row of its own in the
-output whenever the head does not fit, and the source column then holds the later rows where
-nothing else went. Six mathlib modules refused as non-idempotent for it, the second pass reading
-the brace position the first pass wrote. Holding those braces flat instead does not rescue the
-column -- it stays absolute, so a construct that moves at all strands it, and five modules failed
-the diagnostics gate.
-
-Unlike the anonymous-constructor pin above, one break is not enough: an unpinned sibling dedents
-just the same. -/
-private partial def collectStructInstFieldRows (source : String) (heldBraces : Array Nat)
-    (stx : Lean.Syntax) (starts : Array (Nat × BoundaryLayout) := #[]) :
-    Array (Nat × BoundaryLayout) :=
-  match stx with
-  | .node _ kind children =>
-    let starts :=
-      if kind == ``Lean.Parser.Term.structInst then
-        match children[0]?.bind sourceRange?,
-          children.find? (·.isOfKind ``Lean.Parser.Term.structInstFields) with
-        | some braceRange, some fieldsNode =>
-          -- A brace `collectReturnBraceStarts` holds on the keyword's row cannot move, and only a
-          -- brace that cannot move makes a source column mean anything; every other one is placed
-          -- by the document.
-          let braceHeld := heldBraces.contains braceRange.start
-          -- Hold every field the source opened a row on, i.e. whose gap from the previous field's
-          -- end holds a line break. The fields sit under a null wrapper inside the list node.
-          let fields := structInstFieldsInOrder fieldsNode
-          (List.range fields.size).foldl (init := starts) fun starts index =>
-            if index == 0 then starts
-            else
-              match (selectedLeafRanges fields[index - 1]!).back?,
-                (selectedLeafRanges fields[index]!)[0]? with
-              | some itemEnd, some fieldStart =>
-                if (slice source ⟨itemEnd.stop, fieldStart.start⟩).contains '\n' then
-                  let pin :=
-                    if braceHeld then .columned (sourceColumn source fieldStart.start)
-                    else BoundaryLayout.fieldRow
-                  if starts.any (·.1 == fieldStart.start) then starts
-                  else starts.push (fieldStart.start, pin)
-                else starts
-              | _, _ => starts
-        | _, _ => starts
-      else starts
-    let children := if kind == Lean.choiceKind then children[0]?.toArray else children
-    children.foldl (init := starts) fun starts child =>
-      collectStructInstFieldRows source heldBraces child starts
-  | _ => starts
+/- The `structInst` field-row pins this collector used to emit are retired (LAY-STRUCT-INST): one
+anchor interval per multi-field `structInstFields` list states the same invariant structurally --
+every field row breaks at the column the first field lands at, wherever the document places it --
+without a source column that goes stale when canonical layout moves the brace, and without the
+mid-row test that read brace positions off the first pass's output. The held-brace `columned`
+variant is retired with it: a held brace holds the *first* field's row, and the anchor captures
+that field's column wherever it is held to. What the pins were for is recorded in git history
+alongside the `Proofs/RingTheory/Regular/ProjectiveDimension.lean` and `tests/Test/Runner.lean`
+cases that motivated them; what replaces them is `collectStructInstFieldAnchors`. -/
 
 /- The last leaf of a node, atom or ident. The alternatives of a `choice` spell the same bytes
 (verified at `command`'s entry), so the selected one answers for all of them. -/
@@ -1451,63 +1407,12 @@ private partial def explodedElementStarts (list : Lean.Syntax) : Array SourceRan
         | some range => starts.push range
         | none => starts
 
-/- A structure instance whose fields the source spread over rows keeps one field per row, laid out
-by the document rather than pinned to columns read off the source.
-
-`collectStructInstFieldRows` pins such a row, and for a `{` written mid-row it must pin with
-`columned`: a mid-row brace puts the first field at a column no `nest` names, so the source's column
-is the only reference there is. That reference holds only while the brace stays on the row the
-source wrote it on, and canonical layout moves it -- `obj X := { obj G := …` breaks after `:=` and
-the brace lands further left, while every pinned sibling stays put, now right of the first field.
-`sepByIndent` reads such a row as one more argument of the previous field's value and refuses the
-`:=` after it. That was 28 of mathlib's 174 refusals, `Mathlib/Algebra/Category/Grp/Yoneda.lean`
-among them.
-
-Holding the brace still instead was tried and is not enough: pin the brace's row and the *first
-field* breaks away to the enclosing nest, which strands the siblings exactly as before, one row
-further down. Pinning that gap too collides with the boundary rules that own it. The head of the
-row cannot be held, so the column is dropped instead -- the first field opens a row of its own, and
-every field then lands where the document puts the rest, with no source column in the answer.
-
-Registering the range is what removes the stale pins: `outsideExploded` drops every source-column
-pin inside an exploded collection. The closing brace is deliberately *not* moved -- the magic
-trailing comma dedents its bracket to its own row, and doing that here rewrote mathlib's universal
-`… }` into a dangling brace across 17% of a sample for no correctness gain.
-
-The trigger is the source's rows, not the brace's position, and that is what makes the result a
-fixed point: the exploded spelling gives the brace a row of its own, so a trigger keyed on a mid-row
-brace stopped matching its own output and `Grp/Yoneda.lean` traded a parse error for an idempotence
-refusal. Rows are evidence this spelling preserves, the way the trailing comma preserves its comma.
-
-Unlike the trailing comma this is not under a setting: a stranded row is a correctness question. A
-structure the source spelled flat is not here, having no row to strand. -/
-private partial def collectRowSpreadStructInsts (stx : Lean.Syntax)
-    (ranges : Array SourceRange := #[]) (starts : Array (Nat × BoundaryLayout) := #[]) :
-    Array SourceRange × Array (Nat × BoundaryLayout) :=
-  match stx with
-  | .node _ kind children =>
-    let (ranges, starts) :=
-      if kind == ``Lean.Parser.Term.structInst then
-        match children.find? (·.isOfKind ``Lean.Parser.Term.structInstFields) with
-        | some fieldsNode =>
-          match fieldsNode.getArgs[0]? with
-          | some list =>
-            if list.isOfKind Lean.nullKind && hasNewlineSeparator list then
-              let starts :=
-                (explodedElementStarts list).foldl (init := starts) fun starts range =>
-                  if starts.any (·.1 == range.start) then starts
-                  else starts.push (range.start, BoundaryLayout.hard)
-              match sourceRange? stx with
-              | some collectionRange => (ranges.push collectionRange, starts)
-              | none => (ranges, starts)
-            else (ranges, starts)
-          | none => (ranges, starts)
-        | none => (ranges, starts)
-      else (ranges, starts)
-    let children := if kind == Lean.choiceKind then children[0]?.toArray else children
-    children.foldl (init := (ranges, starts)) fun (ranges, starts) child =>
-      collectRowSpreadStructInsts child ranges starts
-  | _ => (ranges, starts)
+/- The row-spread explosion is retired (LAY-STRUCT-INST): the anchor interval on the fields list
+keeps the first field on a mid-row `{`'s row and lands every later row at that field's column, so
+there is no stranded row to explode away and no stale source column to drop. The fixed-point
+argument the explosion needed -- a trigger keyed on the source's rows, not the brace the first
+pass placed -- is the anchor's own fit invisibility: the anchor re-bases breaks wherever the
+document put the first field, so the second pass reads the same fact. -/
 
 private partial def collectTrailingCommaExplosions (stx : Lean.Syntax)
     (ranges : Array SourceRange := #[]) (starts : Array (Nat × BoundaryLayout) := #[]) :
@@ -2096,6 +2001,11 @@ private structure TransformState where
   appliedFlattened : Array Nat := #[]
   anchors : Array TokenSpan := #[]
   appliedAnchors : Array Nat := #[]
+  /- The outermost finished node starting (resp. ending) exactly at an anchor interval's edge, by
+  interval index. Overwritten as the walk ascends, so the entry always names the outermost
+  candidate; the append case drops the interval's spine marker where the chain leaves it. -/
+  anchorOpens : Array (Nat × TokenSpan) := #[]
+  anchorCloses : Array (Nat × TokenSpan) := #[]
   /- Whether the document emitted since the previous terminal is known to render as something other
   than the empty string. A command starts separated because its first terminal has no predecessor to
   merge with. -/
@@ -2440,6 +2350,27 @@ so a collision is impossible by the same argument `markerCollision?` makes for i
 private def anchorTag : Nat :=
   0x6C65616E466D75
 
+/- The open/close spine markers for an anchor interval that is a *sub-sequence* of an append chain
+rather than one of its subtrees -- the shape every `sepByIndent` list takes, where items and
+separators splice in one right-leaning chain and no node spans exactly the items. `finishAnchors`
+tracks the outermost finished node starting (resp. ending) exactly at the interval's edge; the
+append case drops the marker where the chain next leaves the interval; `isolateAnchors` pairs them
+after the walk and re-associates the chain, which the renderer's append-associativity makes
+sound. The index rides in the tag so the ledger can name an interval the walk could not claim;
+the block sits far below `anchorTag` and native tags have no producer over parsed source
+(native-layout suite docstring, prompt 01), so neither collides. -/
+private def anchorOpenMarker (index : Nat) : Nat :=
+  0x6C65616E00 + 2 * index
+
+private def anchorCloseMarker (index : Nat) : Nat :=
+  0x6C65616E01 + 2 * index
+
+/- Decode an open/close marker as `(interval index, isOpen)`, or none for any other tag. -/
+private def anchorMarker? (tag : Nat) : Option (Nat × Bool) :=
+  if 0x6C65616E00 <= tag && tag < 0x6C65616E00 + 8192 then
+    some ((tag - 0x6C65616E00) / 2, (tag - 0x6C65616E00) % 2 == 0)
+  else none
+
 /- Whether this native document's first emission is a break. An anchor wrapped around such a
 document would capture the column of no token -- `Doc.anchor`'s development-error case -- so
 `finishAnchors` refuses on it instead of lowering a document that fails `Doc.wellFormed`. An
@@ -2453,30 +2384,54 @@ private partial def nativeBeginsWithBreak : Std.Format → Bool
   | .tag _ f => nativeBeginsWithBreak f
   | .append f₁ f₂ => if provablyEmpty f₁ then nativeBeginsWithBreak f₂ else nativeBeginsWithBreak f₁
 
-/- Claim a plan-owned structural anchor interval for the deepest node spelling exactly its
-terminals -- the same post-order discipline `finishFlatten` documents: an `append` of the span and
-a pure-layout leaf after or before it carries the same span, and the deeper node claims it first,
-so the scope starts at the interval's first terminal rather than swallowing the separator in front
-of it. That break belongs to the ambient layout; the anchor captures the column the first terminal
-lands at, and a body that would begin with one is refused rather than lowered into
-`Doc.anchor`'s development-error case. -/
+/- Claim a plan-owned structural anchor interval. Two shapes, both grammar-independent:
+
+- *Exact*: the interval is one node's terminal span. The deepest such node wraps in
+  `.tag anchorTag` directly -- an `append` beside pure layout carries the same span, and the
+  deeper node claims it first, so the scope opens at the interval's first terminal rather than
+  swallowing the separator in front of it.
+- *Sub-sequence*: the interval is a run of items inside a `sepByIndent`-shaped append chain, so
+  no node spans it. The outermost finished node starting (resp. ending) exactly at the interval's
+  edge is recorded as the open (resp. close) candidate -- post-order ascent means each overwrite
+  names a strictly outer node -- and the append case drops the spine markers.
+
+A body that would begin with a break is refused rather than lowered into `Doc.anchor`'s
+development-error case; `hoist?` is cleared like `finishConstraint` does. -/
 private def finishAnchors (result : Transformed) :
     StateT TransformState (Except String) Transformed := do
   let some span := result.span? | return result
-  let state ← get
-  match state.anchors.findIdx? (· == span) with
-  | none =>
-    return result
-  | some index =>
+  let mut result := result
+  for index in [0:(← get).anchors.size]do
+    let state ← get
+    let interval := state.anchors[index]!
     if state.appliedAnchors.contains index then
-      return result
-    if nativeBeginsWithBreak result.format then
-      throw
-          s!"structural anchor interval {span.start}:{span.stop} begins with a break; the scope \
+      continue
+    if interval == span then
+      if nativeBeginsWithBreak result.format then
+        throw
+            s!"structural anchor interval {span.start}:{span.stop} begins with a break; the scope \
 must open at the interval's first terminal"
-    set { state with appliedAnchors := state.appliedAnchors.push index }
-    return { result with
-        format := .tag anchorTag result.format, hoist? := none }
+      set
+          { state with
+            appliedAnchors := state.appliedAnchors.push index
+            anchorOpens := state.anchorOpens.filter (·.1 != index)
+            anchorCloses := state.anchorCloses.filter (·.1 != index) }
+      result :=
+        { result with
+          format := .tag anchorTag result.format, hoist? := none }
+    else if interval.start <= span.start && span.stop <= interval.stop then
+      let opens :=
+        if span.start == interval.start then
+          (state.anchorOpens.filter (·.1 != index)).push (index, span)
+        else state.anchorOpens
+      let closes :=
+        if span.stop == interval.stop then
+          (state.anchorCloses.filter (·.1 != index)).push (index, span)
+        else state.anchorCloses
+      modify fun s =>
+          { s with
+            anchorOpens := opens, anchorCloses := closes }
+  return result
 
 private def finishNode (result : Transformed) (carrier? : Option ConstraintCarrier := none) :
     StateT TransformState (Except String) Transformed := do
@@ -2610,7 +2565,6 @@ private def boundaryFormat (state : TransformState) : BoundaryLayout → Std.For
   -- the difference because `max` only ever discards it; this one renders it directly.
   | .anchored col =>
     .nest ((col : Int) - dedentColumns state + (interiorDedent state).getD 0) (.text "\n")
-  | .fieldRow => .text "\n"
   | .explodedClose => .tag explodedCloseTag (.text "\n")
 
 /- Replace every `explodedClose` marker in `format` with a `nest (-indent)`, reporting whether any
@@ -2876,8 +2830,7 @@ private def transformOrdinaryText (value : String) :
     let (boundary, hoistable) ← constrainBoundary (.text value)
     let state ← get
     finishNode
-        {
-          format := boundary
+        { format := boundary
           hoist? := hoistPayload? state hoistable boundary .nil }
   else if let some island := islandAt state then
     -- This leaf spells a terminal the island covers, so the island's own bytes already carry it.
@@ -2932,8 +2885,7 @@ private def transformOrdinaryText (value : String) :
     finishNode
         (←
           placeDroppedIslandsAfter
-              {
-                format :=
+              { format :=
                   .append boundary (.append (.text terminal.sourceSpelling) (.text trailing))
                 span? := some ⟨state.terminalIndex, state.terminalIndex + 1⟩
                 hoist? :=
@@ -2981,8 +2933,7 @@ private def transformText (value : String) : StateT TransformState (Except Strin
         if separate then { island with format := .append .line island.format } else island
       let current ← transformOrdinaryText value
       finishNode
-          {
-            format := .append island.format current.format
+          { format := .append island.format current.format
             span? := mergeSpan island.span? current.span? }
     | none =>
       transformOrdinaryText value
@@ -3000,8 +2951,7 @@ private partial def transformNative : Std.Format → StateT TransformState (Exce
     let (boundary, hoistable) ← constrainBoundary .line
     let state ← get
     finishNode
-        {
-          format := boundary
+        { format := boundary
           hoist? := hoistPayload? state hoistable boundary .nil }
   -- An `align` is a boundary: it is layout the document put between two terminals, and a comment that
   -- belongs in that gap belongs *here*. It used to be the one boundary leaf that did not go through
@@ -3064,8 +3014,7 @@ private partial def transformNative : Std.Format → StateT TransformState (Exce
         match inner.span? with
         | some span =>
           if 0 <= indent && head.start <= span.start && span.stop <= head.stop then
-            {
-              format := .append pre (.nest indent rest)
+            { format := .append pre (.nest indent rest)
               span? := inner.span?
               hoist? := some (pre, .nest indent rest, head) }
           else { format := .nest indent inner.format, span? := inner.span? }
@@ -3116,12 +3065,92 @@ private partial def transformNative : Std.Format → StateT TransformState (Exce
           match left.hoist? with
           | some (pre, rest, head) => some (pre, .append rest right.format, head)
           | none => none
+    -- The spine-marker half of `finishAnchors`: the outermost open (resp. close) candidate is one
+    -- of the children, and this append is where the chain next leaves the interval -- the merged
+    -- span is no longer inside it. The marker drops onto the spine at the exact edge: before the
+    -- left child or between the children for an open (right-leaning chains hold the interval's
+    -- head on the left; a chain entering the interval holds it on the right), after the right
+    -- child or between the children for a close. `isolateAnchors` pairs them after the walk, so
+    -- same-edge markers nest: opens outermost-first, closes innermost-first. A prepended marker
+    -- invalidates the hoist split's `format ≡ .append prefix rest`, so the hoist does not
+    -- survive it.
+    let mergedSpan := mergeSpan left.span? right.span?
+    let mut opensBeforeLeft : Array Nat := #[]
+    let mut opensBeforeRight : Array Nat := #[]
+    let mut closesAfterLeft : Array Nat := #[]
+    let mut closesAfterRight : Array Nat := #[]
+    let mut hoist? := hoist?
+    for index in [0:(← get).anchors.size]do
+      let state ← get
+      let interval := state.anchors[index]!
+      if state.appliedAnchors.contains index then
+        continue
+      let inside :=
+        match mergedSpan with
+        | some span => interval.start <= span.start && span.stop <= interval.stop
+        | none => true
+      match state.anchorOpens.find? (·.1 == index) with
+      | some (_, candidate) =>
+        if left.span? == some candidate then
+          if inside then
+            modify fun s =>
+                { s with
+                  anchorOpens :=
+                    (s.anchorOpens.filter (·.1 != index)).push (index, mergedSpan.getD candidate) }
+          else
+            opensBeforeLeft := opensBeforeLeft.push index
+            hoist? := none
+            modify fun s => { s with anchorOpens := s.anchorOpens.filter (·.1 != index) }
+        else if right.span? == some candidate then
+          if inside then
+            modify fun s =>
+                { s with
+                  anchorOpens :=
+                    (s.anchorOpens.filter (·.1 != index)).push (index, mergedSpan.getD candidate) }
+          else
+            opensBeforeRight := opensBeforeRight.push index
+            modify fun s => { s with anchorOpens := s.anchorOpens.filter (·.1 != index) }
+      | none =>
+        pure ()
+      match state.anchorCloses.find? (·.1 == index) with
+      | some (_, candidate) =>
+        if left.span? == some candidate then
+          if inside then
+            modify fun s =>
+                { s with
+                  anchorCloses :=
+                    (s.anchorCloses.filter (·.1 != index)).push (index, mergedSpan.getD candidate) }
+          else
+            closesAfterLeft := closesAfterLeft.push index
+            modify fun s => { s with anchorCloses := s.anchorCloses.filter (·.1 != index) }
+        else if right.span? == some candidate then
+          if inside then
+            modify fun s =>
+                { s with
+                  anchorCloses :=
+                    (s.anchorCloses.filter (·.1 != index)).push (index, mergedSpan.getD candidate) }
+          else
+            closesAfterRight := closesAfterRight.push index
+            modify fun s => { s with anchorCloses := s.anchorCloses.filter (·.1 != index) }
+      | none =>
+        pure ()
+    let leftFormat := leftFormat.getD left.format
+    let leftFormat :=
+      closesAfterLeft.reverse.foldl (init := leftFormat) fun format index =>
+        .append format (.tag (anchorCloseMarker index) .nil)
+    let leftFormat :=
+      opensBeforeLeft.reverse.foldl (init := leftFormat) fun format index =>
+        .append (.tag (anchorOpenMarker index) .nil) format
+    let rightFormat :=
+      closesAfterRight.reverse.foldl (init := right.format) fun format index =>
+        .append format (.tag (anchorCloseMarker index) .nil)
+    let rightFormat :=
+      opensBeforeRight.reverse.foldl (init := rightFormat) fun format index =>
+        .append (.tag (anchorOpenMarker index) .nil) format
     finishNode
-        {
-          format := .append (leftFormat.getD left.format) right.format
-          span? := mergeSpan left.span? right.span?
-          hoist? }
-        carrier?
+        { format := .append leftFormat rightFormat
+          span? := mergedSpan
+          hoist? } carrier?
   | .group inner behavior => do
     modify fun state =>
         { state with
@@ -3138,8 +3167,7 @@ private partial def transformNative : Std.Format → StateT TransformState (Exce
       | some (pre, rest, head) =>
         if provablyEmpty rest then { inner with format := .group inner.format behavior }
         else
-          {
-            format := .append pre (.group rest behavior)
+          { format := .append pre (.group rest behavior)
             span? := inner.span?
             hoist? := some (pre, .group rest behavior, head) }
       | none => { inner with format := .group inner.format behavior }
@@ -3378,6 +3406,24 @@ private def CommandPlan.resolve (source : String) (terminals : Array Terminal)
   let anchors :=
     (sortedAnchors.map (spanForRange terminals)).foldl (init := #[]) fun kept span =>
       if kept.contains span then kept else kept.push span
+  -- An anchor whose open or close edge falls strictly inside an island's terminal coverage can
+  -- never be claimed: the island consumes those terminals in one step, so no node starts or ends
+  -- at the edge and the marker never drops. Quotations with an antiquotation are the sighted
+  -- shape (`Mathlib/Tactic/ProxyType.lean`): the whole quotation is one exact island, and a
+  -- struct instance's fields inside it are not the adapter's to lay out. Edges exactly at an
+  -- island's own boundary are fine -- the island's node is a candidate like any other -- as is an
+  -- island wholly inside the interval. This is the island/boundary conflict settle's mirror.
+  let anchors :=
+    anchors.filter fun span =>
+      !islands.any fun island =>
+          let islandStart := terminals.findIdx? (island.range.start <= ·.range.start)
+          let islandStop :=
+            terminals.findIdx? (island.range.stop <= ·.range.start) |>.getD terminals.size
+          match islandStart with
+          | some start =>
+            (start < span.start && span.start < islandStop) ||
+              (start < span.stop && span.stop < islandStop)
+          | none => false
   let trailing := blockDangling.map fun (range, comment) => (spanForRange terminals range, comment)
   let comments :=
     comments.map fun comment =>
@@ -3387,6 +3433,79 @@ private def CommandPlan.resolve (source : String) (terminals : Array Terminal)
   return {
     source, terminals, comments, trailing, islands, constraints, boundaries, flattened,
     nestedCommands, explodedSpans, headSpans, anchors, baseIndent }
+
+/- The items of an append spine, in order. Appends are associative in the renderer's machine, so
+flattening and rebuilding the spine spells the same bytes with the same decisions. -/
+private partial def spineItems : Std.Format → Array Std.Format
+  | .append left right => spineItems left ++ spineItems right
+  | other => #[other]
+
+/- Pair the anchor markers the walk dropped and give each region a subtree: the spine items
+between an open and its matching close re-associate under `.tag anchorTag`, and the interval
+becomes one node the lowering maps to `Doc.anchor`. Items are processed bottom-up first, so a
+nested interval's pair -- which lands on an inner spine or inside a spine item -- wraps before the
+enclosing interval's. An unpaired marker (open without close, close without open, a pair split
+across spines, or a break-led body) is the interval the walk could not claim, refused by index so
+the ledger can name it. -/
+private partial def isolateAnchors (plan : CommandPlan) (format : Std.Format) :
+    Except TransformFailure (Std.Format × Array Nat) := do
+  match format with
+  | .append _ _ =>
+    let mut applied : Array Nat := #[]
+    let mut items : Array Std.Format := #[]
+    for item in spineItems format do
+      let (item, innerApplied) ← isolateAnchors plan item
+      items := items.push item
+      applied := applied ++ innerApplied
+    let mut out : Array Std.Format := #[]
+    let mut stack : Array (Nat × Nat) := #[]
+    let spanOf (index : Nat) : String :=
+      match plan.anchors[index]? with
+      | some span => s!"{span.start}:{span.stop}"
+      | none => "?"
+    let refuse (index : Nat) (why : String) : Except TransformFailure (Std.Format × Array Nat) :=
+      throw <| .unadapted s!"structural anchor interval {spanOf index} could not be isolated: {why}"
+    for item in items do
+      match item with
+      | .tag tag .nil =>
+        match anchorMarker? tag with
+        | some (index, true) =>
+          stack := stack.push (index, out.size)
+        | some (index, false) =>
+          match stack.back? with
+          | none =>
+            return ← refuse index "a close marker with no open on its spine"
+          | some (openIndex, start) =>
+            do
+              if openIndex != index then
+                return ← refuse index s!"its close met interval {spanOf openIndex}'s open first"
+              let region := out.extract start out.size
+              let body := region.foldl (init := .nil) Std.Format.append
+              if nativeBeginsWithBreak body then
+                return ← refuse index "the claimed region begins with a break"
+              out := (out.extract 0 start).push (.tag anchorTag body)
+              stack := stack.pop
+              applied := applied.push index
+        | none =>
+          out := out.push item
+      | _ =>
+        out := out.push item
+    match stack.back? with
+    | some (index, _) =>
+      return ← refuse index "an open marker whose spine never closed it"
+    | none =>
+      return (out.foldl (init := .nil) Std.Format.append, applied)
+  | .group inner behavior =>
+    let (inner, applied) ← isolateAnchors plan inner
+    return (.group inner behavior, applied)
+  | .nest indent inner =>
+    let (inner, applied) ← isolateAnchors plan inner
+    return (.nest indent inner, applied)
+  | .tag tag inner =>
+    let (inner, applied) ← isolateAnchors plan inner
+    return (.tag tag inner, applied)
+  | other =>
+    return (other, #[])
 
 /-- Transform one native format under a resolved plan. Every ledger refusal below is a plan entry
 the walk could not apply exactly once; the counts name the first unapplied entry and the source it
@@ -3398,8 +3517,7 @@ private def transform (plan : CommandPlan) (native : Std.Format) :
     plan.islands.filterMap fun island =>
       if spelled.contains island.marker then none else some island.marker
   let initial : TransformState :=
-    {
-      source := plan.source
+    { source := plan.source
       terminals := plan.terminals
       comments := plan.comments
       trailing := plan.trailing
@@ -3414,6 +3532,10 @@ private def transform (plan : CommandPlan) (native : Std.Format) :
       anchors := plan.anchors
       baseIndent := plan.baseIndent }
   let (result, state) ← ((transformNative native).run initial).mapError .unadapted
+  let (isolated, isolatedAnchors) ← isolateAnchors plan result.format
+  let appliedAnchors :=
+    (state.appliedAnchors ++ isolatedAnchors).foldl (init := #[]) fun kept index =>
+      if kept.contains index then kept else kept.push index
   if state.terminalIndex != state.terminals.size then
     throw <|
         .incomplete
@@ -3469,15 +3591,21 @@ bail-outs; first unapplied span: {repr missing[0]?}"
         .unadapted
           s!"native formatter placed {state.appliedTrailing.size}/{state.trailing.size} block-dangling \
 comments; the block's document holds no break to hang one on"
-  if state.appliedAnchors.size != state.anchors.size then
+  if appliedAnchors.size != state.anchors.size then
     let missing :=
-      (state.anchors.zipIdx.filter fun (_, index) => !state.appliedAnchors.contains index).map
-        fun (span, _) => (span.start, span.stop)
+      (state.anchors.zipIdx.filter fun (_, index) => !appliedAnchors.contains index).map
+        fun (span, _) =>
+        (span.start, span.stop,
+          match state.terminals[span.start]?, state.terminals[span.stop - 1]? with
+          | some first, some last =>
+            (slice state.source ⟨first.range.start, last.range.stop⟩).toList.take 80 |>
+              String.ofList
+          | _, _ => "?")
     throw <|
         .unadapted
-          s!"native formatter applied {state.appliedAnchors.size}/{state.anchors.size} structural \
-anchors; first unapplied span: {repr missing[0]?}"
-  return (result.format, state.metrics)
+          s!"native formatter applied {appliedAnchors.size}/{state.anchors.size} structural \
+anchors; first unapplied: {repr missing[0]?}"
+  return (isolated, state.metrics)
 
 private def rootRange (stx : Lean.Syntax) : SourceRange :=
   sourceRange? stx |>.getD ⟨0, 0⟩
@@ -3498,8 +3626,7 @@ private def interiorComments (ownership : CommentOwnership) (stx : Lean.Syntax)
             if dangling.contains comment then .dangling
             else if leading.contains comment then .leading else .leading
         some
-          {
-            payload := Comments.payload ownership comment
+          { payload := Comments.payload ownership comment
             range := comment.range
             placement := placement
             kind := comment.kind }
@@ -3529,8 +3656,7 @@ private def blockDanglingComments (ownership : CommentOwnership) (stx : Lean.Syn
     else
       some
         (owner,
-          {
-            payload := Comments.payload ownership comment
+          { payload := Comments.payload ownership comment
             range := comment.range
             placement := .dangling
             kind := comment.kind })
@@ -3658,13 +3784,11 @@ private def CommandPlan.collect (source : String) (ownership : CommentOwnership)
   let (commaRanges, trailingCommaBoundaries) :=
     if format.magicTrailingComma == .respect then collectTrailingCommaExplosions stripped
     else (#[], #[])
-  -- Not under the setting: a stranded field row is a correctness question, not a style one.
-  let (rowSpreadRanges, rowSpreadBoundaries) := collectRowSpreadStructInsts stripped
   -- The closing brace's own row decision (`collectStructInstCloseBraces`): its ranges join
   -- `explodedRanges` only at the `transform` call, after the pin filter has run.
   let (closeBraceBoundaries, closeBraceRanges) :=
     collectStructInstCloseBraces source comments stripped
-  let explodedRanges := commaRanges ++ rowSpreadRanges
+  let explodedRanges := commaRanges
   -- The `return` braces held on the keyword's row: the boundary in front of each, and the one
   -- fact `collectStructInstFieldRows` needs to know a field's source column still means something.
   let returnBraceStarts :=
@@ -3678,44 +3802,44 @@ private def CommandPlan.collect (source : String) (ownership : CommentOwnership)
     !explodedRanges.any fun range => range.start < start && start < range.stop
   let boundaryStarts : Array (Nat × BoundaryLayout) :=
     (collectUngroupedBodyStarts format.declarationBody source format.lineWidth stripped
-                                                (collectReturnTermStarts stripped)).map
-                                            (·, BoundaryLayout.flat) ++
-                                          (collectIndentedSequenceStarts source stripped).map
-                                            (·, BoundaryLayout.hard) ++
-                                        (collectCdotStarts stripped).map (·, BoundaryLayout.flat) ++
-                                      nestedCommandStarts.map (·, BoundaryLayout.dedented) ++
-                                    ctorDocStarts.map (·, BoundaryLayout.elided) ++
-                                  docBoundaries ++
-                                attrDocBoundaries ++
-                              joined.map (·.start, BoundaryLayout.flat) ++
-                            (collectGuardBarBreaks source stripped).map (·, BoundaryLayout.hard) ++
-                          ((collectBraceAppArgStarts stripped).filterMap fun start =>
-                            if brokenBefore start then none
-                            else some (start, BoundaryLayout.flat)) ++
-                        returnBraceStarts.map (·, BoundaryLayout.flat) ++
-                      ((collectBraceInteriorBreaks source stripped).filter fun p =>
-                            outsideExploded p.1).map
-                        (fun p => (p.1, BoundaryLayout.columned p.2)) ++
-                    ((collectStructInstFieldRows source returnBraceStarts stripped).filter fun p =>
-                      outsideExploded p.1) ++
-                  ((collectBraceLiteralRows source stripped).filter fun p => outsideExploded p.1) ++
-                collectLetFamilyAlignments source stripped ++
-              unbreakableRunBoundaries source terminals unbreakableRuns ++
-            ((collectStructInstEllipses stripped).filterMap fun start =>
+                                            (collectReturnTermStarts stripped)).map
+                                        (·, BoundaryLayout.flat) ++
+                                      (collectIndentedSequenceStarts source stripped).map
+                                        (·, BoundaryLayout.hard) ++
+                                    (collectCdotStarts stripped).map (·, BoundaryLayout.flat) ++
+                                  nestedCommandStarts.map (·, BoundaryLayout.dedented) ++
+                                ctorDocStarts.map (·, BoundaryLayout.elided) ++
+                              docBoundaries ++
+                            attrDocBoundaries ++
+                          joined.map (·.start, BoundaryLayout.flat) ++
+                        (collectGuardBarBreaks source stripped).map (·, BoundaryLayout.hard) ++
+                      ((collectBraceAppArgStarts stripped).filterMap fun start =>
+                        if brokenBefore start then none else some (start, BoundaryLayout.flat)) ++
+                    returnBraceStarts.map (·, BoundaryLayout.flat) ++
+                  ((collectBraceInteriorBreaks source stripped).filter fun p =>
+                        outsideExploded p.1).map
+                    (fun p => (p.1, BoundaryLayout.columned p.2)) ++
+                ((collectBraceLiteralRows source stripped).filter fun p => outsideExploded p.1) ++
+              collectLetFamilyAlignments source stripped ++
+            unbreakableRunBoundaries source terminals unbreakableRuns ++
+          ((collectStructInstEllipses stripped).filterMap fun start =>
               let broken :=
-                (terminals.filter (·.range.stop <= start)).back?.any fun previous =>
-                  (slice source ⟨previous.range.stop, start⟩).contains '\n'
+              (terminals.filter (·.range.stop <= start)).back?.any fun previous =>
+                (slice source ⟨previous.range.stop, start⟩).contains '\n'
               if broken then some (start, BoundaryLayout.hard) else none) ++
-          trailingCommaBoundaries ++
-        closeBraceBoundaries ++
-      rowSpreadBoundaries
+        trailingCommaBoundaries ++
+      closeBraceBoundaries
+  -- One anchor interval per multi-field `structInstFields` list, collected with the old row
+  -- machinery still active: what the anchors make redundant is what the deletion checklist names.
+  let structInstAnchors := collectStructInstFieldAnchors stripped
   let commentFree := withoutTrivia stripped
   let (formattedSyntax, islands) := protectSourceData categories source commentFree
   -- The closing brace's own row decision (`collectStructInstCloseBraces`): its ranges join
   -- `explodedRanges` only here, after the pin filter has run.
   match
     CommandPlan.resolve source terminals comments blockDangling islands constraints boundaryStarts
-      joined nestedCommandRanges (explodedRanges ++ closeBraceRanges) headSpans baseIndent with
+      joined nestedCommandRanges (explodedRanges ++ closeBraceRanges) headSpans baseIndent
+      structInstAnchors with
   | .error failure =>
     return .error failure
   | .ok plan =>
@@ -3735,8 +3859,7 @@ def command (source : String) (ownership : CommentOwnership) (stx : Lean.Syntax)
   -- assumption true for all four.
   if let some (range, alternative, expected, actual) := choiceDisagreement? source stripped then
     return .error
-        {
-          category := .command
+        { category := .command
           kind := stx.getKind
           range
           trace
@@ -3750,8 +3873,7 @@ alternatives: alternative 0 is {expected}, alternative {alternative} is {actual}
       pure pair
     | .error (.incomplete detail) | .error (.unadapted detail) =>
       return .error
-          {
-            category := .command
+          { category := .command
             kind := stx.getKind
             range := rootRange stx
             trace
@@ -3760,8 +3882,7 @@ alternatives: alternative 0 is {expected}, alternative {alternative} is {actual}
   -- a name nobody wrote, and the one that fires depends on which end is asked first.
   if let some (kind, suffix) := rootedKindNode? (← Lean.getEnv) formattedSyntax then
     return .error
-        {
-          category := .command
+        { category := .command
           kind := stx.getKind
           range := rootRange stx
           trace
@@ -3777,8 +3898,7 @@ Lean/Elab/Syntax.lean:465 did not. No formatter can be resolved for it. Write \
       plan.islands.find? fun island =>
         plan.terminals.any fun terminal => terminal.sourceSpelling == island.marker then
     return .error
-        {
-          category := .command
+        { category := .command
           kind := stx.getKind
           range := rootRange stx
           trace
@@ -3790,8 +3910,7 @@ cannot tell from the placeholder that protects {marker.range.start}:{marker.rang
   let degrade (detail : String) : Except FormatterFailure Document :=
     match sourceRange? stx with
     | some range =>
-      .ok
-        {
+      .ok {
           document := Doc.verbatim (slice source range)
           trace
           metrics :=
@@ -3799,8 +3918,7 @@ cannot tell from the placeholder that protects {marker.range.start}:{marker.rang
               verbatimCommands := 1 } }
     | none =>
       .error
-        {
-          category := .command
+        { category := .command
           kind := stx.getKind
           range := rootRange stx
           trace

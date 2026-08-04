@@ -976,8 +976,7 @@ public def main (args : List String) : IO UInt32 := do
   let root ← repoRoot
   withTempDir fun work => do
       let ctx : Modes.Ctx :=
-        {
-          root
+        { root
           app := (root / ".lake" / "build" / "bin" / "lean-fmt").toString
           work
           findings := root / "tests" / "fixtures" / "check" / "Findings.lean"

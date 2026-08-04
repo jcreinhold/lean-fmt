@@ -255,8 +255,7 @@ private def testSuppression : IO Unit := do
   let mkProj (text : String) (headerStop : Nat) : LosslessSource :=
     let size := text.utf8ByteSize
     let tokenStop := headerStop + 3
-    {
-      schema := losslessSourceSchema
+    { schema := losslessSourceSchema
       mainModule := "Test"
       normalizedBytes := size
       normalizedDigest := Digest.ofString text

@@ -415,8 +415,7 @@ private def PartialConfig.resolve (config : PartialConfig) : Except String Forma
       forceExclude := config.forceExclude?.getD false
       respectGitignore := config.respectGitignore?.getD true
       format :=
-        {
-          lineWidth := config.lineWidth?.getD 100
+        { lineWidth := config.lineWidth?.getD 100
           pinnedComments := config.pinnedComments?.getD #["shake: keep"]
           declarationBody := config.declarationBody?.getD .nextLine
           magicTrailingComma := config.magicTrailingComma?.getD .respect
@@ -437,8 +436,7 @@ private def PartialConfig.resolve (config : PartialConfig) : Except String Forma
       preview := config.preview?.getD false }
 
 private def defaultConfig : FormatterConfig :=
-  {
-    includePatterns := #[]
+  { includePatterns := #[]
     excludePatterns := #[]
     forceExclude := false
     respectGitignore := true

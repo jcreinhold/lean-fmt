@@ -201,8 +201,7 @@ private def writeSetup (directory : FilePath) (index : Nat) (setup : Lean.Module
 private def diagnosticSetup (snapshot : SourceSnapshot) : Lean.ModuleSetup :=
   match snapshot.module? with
   | some mod =>
-    {
-      name := mod.name
+    { name := mod.name
       package? := mod.pkg.id?
       isModule := true
       options := mod.leanOptions }
@@ -372,8 +371,7 @@ private def runChild (arguments : IO.Process.SpawnArgs)
     (cancel? : Option Std.CancellationToken := none) : IO ChildOutput := do
   let child ←
     IO.Process.spawn
-        {
-          cmd := arguments.cmd
+        { cmd := arguments.cmd
           args := arguments.args
           cwd := arguments.cwd
           env := arguments.env
@@ -426,8 +424,7 @@ private def spawnWait (arguments : IO.Process.SpawnArgs)
     (cancel? : Option Std.CancellationToken := none) : IO UInt32 := do
   let child ←
     IO.Process.spawn
-        {
-          cmd := arguments.cmd
+        { cmd := arguments.cmd
           args := arguments.args
           cwd := arguments.cwd
           env := arguments.env
@@ -465,8 +462,7 @@ private def ExactRun.spawnChild (run : ExactRun) (arguments : IO.Process.SpawnAr
   let some registry := run.registry? | spawnWait arguments cancel?
   let child ←
     IO.Process.spawn
-        {
-          cmd := arguments.cmd
+        { cmd := arguments.cmd
           args := arguments.args
           cwd := arguments.cwd
           env := arguments.env
@@ -476,8 +472,7 @@ private def ExactRun.spawnChild (run : ExactRun) (arguments : IO.Process.SpawnAr
           stderr := .null
           setsid := true }
   let entry : LiveChild :=
-    {
-      child
+    { child
       pgid := child.pid }
   registry.modify (·.push entry)
   recordCount "active_children" (← registry.get).size
@@ -569,8 +564,7 @@ private def ExactRun.envelope (run : ExactRun) (snapshot : SourceSnapshot) (capt
     let exitCode ←
       withPhase "exact_child" <|
           run.spawnChild
-            {
-              cmd := analyzer.toString
+            { cmd := analyzer.toString
               -- The trailing capture token encodes the demanded semantic capabilities: "0" none, "1" the
               -- two semantic diagnostics, "2" diagnostics plus the info-tree occurrence fold. A direct
               -- three-argument invocation (every syntax-only harness) omits it and captures nothing.
@@ -844,8 +838,7 @@ def withExactRun (project : Project.Snapshot) (workers : Nat := 1) (action : Exa
     else
       pure none
   let run : ExactRun :=
-    {
-      project
+    { project
       application := ← IO.appPath
       temporary
       workers
@@ -1438,12 +1431,11 @@ private def fixFile (run : ExactRun) (plan : RulePlan) (unsafeFixes : Bool)
       return { (baseReport snapshot "rejected" findings #[message]) with
           withheldUnsafe, suppressed, withheldRedundant }
     | .ok _ =>
-      return { (baseReport snapshot "fixed" findings) with
+      return { (baseReport snapshot "fixed"
+            findings) with
           formatted := some output
           written := true
-          withheldUnsafe,
-          suppressed,
-          withheldRedundant }
+          withheldUnsafe, suppressed, withheldRedundant }
 
 /-- Publish the canonical layout in place — `format`'s default disposition.
 
@@ -1487,12 +1479,11 @@ private def formatFile (plan : RulePlan) (unsafeFixes : Bool) (reportImports : A
       return { (baseReport snapshot "rejected" findings #[message]) with
           withheldUnsafe, suppressed, withheldRedundant }
     | .ok _ =>
-      return { (baseReport snapshot "formatted" findings) with
+      return { (baseReport snapshot "formatted"
+            findings) with
           formatted := some output
           written := true
-          withheldUnsafe,
-          suppressed,
-          withheldRedundant }
+          withheldUnsafe, suppressed, withheldRedundant }
 
 def ExactRun.checkSnapshot (run : ExactRun) (plan : RulePlan) (snapshot : SourceSnapshot) :
     IO FileReport := do
@@ -1733,8 +1724,7 @@ private def processOneTarget (exactRun : ExactRun) (request : RunRequest) (rende
     let message := toString error
     return {
         report :=
-          {
-            path := snapshot.relativePath
+          { path := snapshot.relativePath
             status := "infrastructure-failure"
             diagnostics := #[message] }
         analysis? := none
@@ -2135,17 +2125,11 @@ def ExactRun.streamEnvelope (run : ExactRun) (target : Project.SourceTarget) (pl
       if formatCheck then
         return { base with
             status := if changed then "would-format" else "clean"
-            changed,
-            requested?,
-            actual?,
-            sourceMap }
+            changed, requested?, actual?, sourceMap }
       return { base with
           status := if changed then "formatted" else "clean"
           output := some output
-          changed,
-          requested?,
-          actual?,
-          sourceMap }
+          changed, requested?, actual?, sourceMap }
 
 def ExactRun.streamSnapshot (run : ExactRun) (target : Project.SourceTarget) (plan : RulePlan)
     (mode : RunMode) (range? : Option SourceRange := none) (unsafeFixes : Bool := false)
@@ -2326,8 +2310,7 @@ private partial def organizeWorker (exactRun : ExactRun)
             outcomes.modify
                 (·.set! index
                   (some
-                    {
-                      report :=
+                    { report :=
                         baseReport snapshot (if unbuilt then "unbuilt" else "rejected") #[]
                           validation.diagnostics
                       validation? := if unbuilt then none else some validation }))
@@ -2340,8 +2323,7 @@ private partial def organizeWorker (exactRun : ExactRun)
               outcomes.modify
                   (·.set! index
                     (some
-                      {
-                        report :=
+                      { report :=
                           { (baseReport snapshot "organized") with
                             formatted := some output, written := true }
                         validation? := some validation }))
@@ -2721,8 +2703,7 @@ structure CompilerSetupReport where
   deriving Lean.ToJson
 
 def compilerSetupReport : CompilerSetupReport :=
-  {
-    schema := "lean-fmt.compiler-setup.v1"
+  { schema := "lean-fmt.compiler-setup.v1"
     package := "lean-fmt"
     plugin := "LeanFmtCompilerPlugin:shared"
     facet := "leanFmtArtifact"

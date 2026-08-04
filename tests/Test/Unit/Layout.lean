@@ -97,8 +97,7 @@ private partial def genDoc (depth : Nat) (seed : Nat) : GeneratedDoc :=
     | 3 =>
       let left := genDoc (depth - 1) r
       let right := genDoc (depth - 1) left.nextSeed
-      {
-        document := .cat left.document right.document
+      { document := .cat left.document right.document
         flat := left.flat ++ right.flat
         atoms := left.atoms ++ right.atoms
         nextSeed := right.nextSeed }
@@ -764,8 +763,7 @@ private def testPlanLedgers : IO Unit := do
   -- boundaries out of a collected plan (that is the fix the filter's comment documents), so the
   -- plan is built directly: the ledger is what stands between such a plan and silent loss.
   let islandPlan : Formatter.NativeLayout.CommandPlan :=
-    {
-      source
+    { source
       terminals
       comments := #[]
       trailing := #[]
@@ -868,12 +866,32 @@ private def testStructuralAnchors : IO Unit := do
   for width in [0, 1, 2, 3, 4, 5, 6, 8, 16]do
     ensure (renderText width anchored == renderText width plain)
         s!"an anchor changed the rendering at width {width}"
-  -- An interval no node spans exactly is refused by the ledger: the right-associated tree has no
-  -- node covering terminals `a..b` alone.
+  -- A sub-sequence interval claims through the spine markers: the right-associated tree has no
+  -- node covering terminals `a..b` alone, but `a` and `b` are adjacent items of one append chain,
+  -- and the open/close markers isolate exactly that region.
   let rightAssoc := Std.Format.text "a" ++ (Std.Format.text "b" ++ .line ++ Std.Format.text "c")
-  match Formatter.NativeLayout.transform (← planOf #[⟨0, 3⟩]) rightAssoc with
+  let slicedFormat ←
+    match Formatter.NativeLayout.transform (← planOf #[⟨0, 3⟩]) rightAssoc with
+    | .ok (format, _) =>
+      pure format
+    | .error failure =>
+      throw (IO.userError s!"a sub-sequence anchor interval was refused: {failure.detail}")
+  ensure (countTag Formatter.NativeLayout.anchorTag slicedFormat == 1)
+      "a sub-sequence anchor interval was not claimed exactly once"
+  -- An interval whose close edge falls inside an island is settled at resolve, the mirror of the
+  -- island/boundary filter: the island consumes its terminals in one step, so no node can end at
+  -- the edge, and the claim could never fire. The plan comes back with the interval dropped.
+  let filtered ←
+    planOf #[⟨2, 4⟩] (islands := #[{ marker := "⟪island⟫", range := ⟨2, 5⟩, text := "b c" }])
+  ensure (filtered.anchors.isEmpty) "an island-straddling anchor interval survived resolve"
+  -- The ledger still guards a plan built directly, the way `testPlanLedgers` builds one: an
+  -- interval no node starts inside is never claimed.
+  let directPlan : Formatter.NativeLayout.CommandPlan := { filtered with anchors := #[⟨1, 2⟩] }
+  match
+    Formatter.NativeLayout.transform directPlan
+      (Std.Format.text "a" ++ .line ++ Std.Format.text "⟪island⟫") with
   | .ok _ =>
-    throw (IO.userError "an unspanned anchor interval was applied anyway")
+    throw (IO.userError "an island-straddling anchor interval was applied anyway")
   | .error (.unadapted detail) =>
     ensure (detail.contains "applied 0/1 structural anchors")
         s!"the anchor ledger lost its count: {detail}"

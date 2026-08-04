@@ -216,8 +216,7 @@ def admit (beforeText : String) (before : LosslessSource) (first : FormatDraft)
       sourceMap := first.sourceMap
       metrics := { first.metrics with frontendRuns := evidence.frontendRuns }
       validation :=
-        {
-          frontendRuns := evidence.frontendRuns
+        { frontendRuns := evidence.frontendRuns
           renders := 2
           structuralComparisons := 1
           idempotencePasses := 1

@@ -902,8 +902,7 @@ private def junitReport (positions : PositionIndex) (report : RunReport) : Strin
         let where_ := s!"{file.path}:{start.line}:{start.column}"
         cases :=
           cases.push
-            {
-              name := s!"{finding.code} {where_}"
+            { name := s!"{finding.code} {where_}"
               message := flattenMessage finding.message
               type := finding.code
               detail := s!"{where_}: {finding.code} {flattenMessage finding.message}"
@@ -911,21 +910,14 @@ private def junitReport (positions : PositionIndex) (report : RunReport) : Strin
       if let some message := statusMessage? file.status then
         cases :=
           cases.push
-            {
-              name := s!"{statusRuleId} {file.path}",
-              message,
-              type := statusRuleId
+            { name := s!"{statusRuleId} {file.path}", message, type := statusRuleId
               detail := s!"{file.path}: {message}"
               isError := statusIsInfrastructure file.status }
       for diagnostic in file.diagnostics do
         cases :=
           cases.push
-            {
-              name := s!"{statusRuleId} {file.path}",
-              message := flattenMessage diagnostic
-              type := statusRuleId,
-              detail := flattenMessage diagnostic,
-              isError := true }
+            { name := s!"{statusRuleId} {file.path}", message := flattenMessage diagnostic
+              type := statusRuleId, detail := flattenMessage diagnostic, isError := true }
       let failures := cases.foldl (fun total case => if case.isError then total else total + 1) 0
       let errors := cases.size - failures
       -- A clean file emits a *passing* case, not an empty suite: a suite with zero cases reads
@@ -948,12 +940,8 @@ private def junitReport (positions : PositionIndex) (report : RunReport) : Strin
           (fun acc failure =>
             acc ++
               junitCaseXml "lean-fmt"
-                {
-                  name := s!"{statusRuleId} lean-fmt",
-                  message := flattenMessage failure
-                  type := statusRuleId,
-                  detail := flattenMessage failure,
-                  isError := true })
+                { name := s!"{statusRuleId} lean-fmt", message := flattenMessage failure
+                  type := statusRuleId, detail := flattenMessage failure, isError := true })
           ""
       let count := report.infrastructureFailures.size
       totalTests := totalTests + count
@@ -1218,8 +1206,7 @@ private def renderConfigShow (format : ReportFormat) (report : ConfigReport) : I
 /-- One stream answer viewed as a one-file run report, so the four finding-shaped renderers
 serve the stdin surface without a second implementation of any of them. -/
 private def streamAsRunReport (mode : RunMode) (report : StreamReport) : RunReport :=
-  {
-    mode := mode.toString
+  { mode := mode.toString
     files :=
       #[{ path := report.path, status := report.status, findings := report.findings,
           diagnostics := report.diagnostics }]
@@ -1229,9 +1216,7 @@ private def streamAsRunReport (mode : RunMode) (report : StreamReport) : RunRepo
     broken := if report.status == "broken" then 1 else 0
     unbuilt := if report.status == "unbuilt" then 1 else 0
     rejected := if report.status == "rejected" then 1 else 0
-    withheldUnsafe := 0,
-    suppressed := 0,
-    withheldRedundant := 0
+    withheldUnsafe := 0, suppressed := 0, withheldRedundant := 0
     infrastructureFailures := #[] }
 
 /-- Render one stream answer.
@@ -1314,8 +1299,7 @@ private unsafe def runStreamCommand (mode : RunMode) (command : FileCommand) (fi
         return 2
   let report ←
     stream
-        {
-          mode
+        { mode
           root := command.run.root
           filename
           source := raw
@@ -1471,8 +1455,7 @@ private unsafe def runFileCommand (mode : RunMode) (args : List String) : IO UIn
           try
             let child ←
               IO.Process.spawn
-                  {
-                    cmd := self.toString
+                  { cmd := self.toString
                     args := generationArgs mode args }
             let code ← child.wait
             if code != 0 && code != 1 then

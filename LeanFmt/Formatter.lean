@@ -154,8 +154,7 @@ def registeredAs (ownership : CommentOwnership) (category : FormatterCategory)
   catch exception =>
     let detail ← exception.toMessageData.toString
     return .error
-        {
-          category
+        { category
           kind
           range := sourceRange traceSyntax
           trace

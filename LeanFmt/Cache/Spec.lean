@@ -285,8 +285,7 @@ theorem stale_grammar_refused (hgd : Function.Injective gd) (hobs : Faithful sd 
     serves e o demand = false := by
   cases h : serves e o demand with
   | false => rfl
-  |
-    true =>
+  | true =>
     have hid : Entry.identityCurrent e o = true := by
       simp only [serves, Bool.and_eq_true] at h
       exact h.1
@@ -298,8 +297,7 @@ theorem stale_source_refused (hsd : Function.Injective sd) (hobs : Faithful sd g
     serves e o demand = false := by
   cases h : serves e o demand with
   | false => rfl
-  |
-    true =>
+  | true =>
     have hid : Entry.identityCurrent e o = true := by
       simp only [serves, Bool.and_eq_true] at h
       exact h.1

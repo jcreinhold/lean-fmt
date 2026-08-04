@@ -473,10 +473,7 @@ public def main (args : List String) : IO UInt32 := do
       -- generated file can borrow a declared module's setup.
       let borrowedSetup ← setupFile root work "tests/fixtures/check/Clean.lean"
       let ctx : Lossless.Ctx :=
-        {
-          root,
-          application := (root / ".lake" / "build" / "bin" / "lean-fmt").toString,
-          work
+        { root, application := (root / ".lake" / "build" / "bin" / "lean-fmt").toString, work
           borrowedSetup }
       -- The repository's own modules, sorted (byte order, like `LC_ALL=C sort`) so a regression
       -- surfaces on the small ones first.

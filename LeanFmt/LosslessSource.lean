@@ -316,8 +316,7 @@ private partial def collect (source : String) (parent : Option Nat) (stx : Lean.
     match info with
     | .original leading pos trailing endPos =>
       let token : Token :=
-        {
-          node
+        { node
           leading := scanTrivia source leading.startPos pos
           start := pos.byteIdx
           stop := endPos.byteIdx
@@ -379,8 +378,7 @@ def ofSource (mainModule : String) (normalized : String) (commands : Array Lean.
   -- Its header ends where the terminal begins, not at EOF; otherwise the header and verbatim tail
   -- overlap and violate the structural invariant below.
   let headerStop := min headerCandidate terminalStop
-  {
-    schema := losslessSourceSchema
+  { schema := losslessSourceSchema
     mainModule
     normalizedBytes := normalized.utf8ByteSize
     normalizedDigest := Digest.ofString normalized

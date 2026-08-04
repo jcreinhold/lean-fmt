@@ -223,8 +223,7 @@ def inScope (scope : SourceRange) (finding : Finding) : Bool :=
       (finding.range.start == scope.stop && finding.range.start == finding.range.stop))
 
 private def malformedFinding (comment : SourceRange) (reason : String) : Finding :=
-  {
-    code := "FMT901"
+  { code := "FMT901"
     severity := .warning
     message := s!"malformed suppression directive: {reason}"
     range := comment
@@ -344,9 +343,7 @@ def collect (src : LosslessSource) (normalized : String) : SuppressionFacts :=
           | .ok (scope, codes?) =>
             directives :=
               directives.push
-                {
-                  scope,
-                  codes?
+                { scope, codes?
                   scopeRange := directiveScope src bytes scope range
                   commentRange := range }
     return { directives, malformed }

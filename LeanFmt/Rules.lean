@@ -285,8 +285,7 @@ private def isForbiddenControl (byte : UInt8) : Bool :=
   (byte < 0x20 && byte != 0x09 && byte != 0x0a) || byte == 0x7f
 
 private def controlFinding (start : Nat) (codepoint : Nat) : Finding :=
-  {
-    code := "FMT001"
+  { code := "FMT001"
     severity := .warning
     message := s!"forbidden control byte U+{hex4 codepoint}"
     range := { start, stop := start + 1 }
@@ -314,8 +313,7 @@ private def isBidiControl (c : Char) : Bool :=
     (0x2066 ≤ n && n ≤ 0x2069)
 
 private def bidiFinding (start width codepoint : Nat) : Finding :=
-  {
-    code := "FMT002"
+  { code := "FMT002"
     severity := .warning
     message := s!"suspicious bidirectional control U+{hex4 codepoint}"
     range := { start, stop := start + width }
@@ -536,8 +534,7 @@ private def duplicateSiblings (bytes : ByteArray) (projection : LosslessSource)
         let editRange : SourceRange := { start := prevStop, stop := range.stop }
         findings :=
           findings.push
-            {
-              code
+            { code
               severity := .warning
               message
               range
@@ -621,8 +618,7 @@ private def developmentSetOption (facts : SyntaxFacts) : Array Finding :=
           if isDevelopmentOption name then
             findings :=
               findings.push
-                {
-                  code := "FMT010"
+                { code := "FMT010"
                   severity := .warning
                   message := s!"development-only option '{name}' set in committed source"
                   range := { start := projection.nodes[i]!.range.start, stop := nameToken.stop }
@@ -655,8 +651,7 @@ private def redundantNestedParen (facts : SyntaxFacts) : Array Finding :=
           let inner := projection.nodes[inner[0]!]!.range
           findings :=
             findings.push
-              {
-                code := "FMT011"
+              { code := "FMT011"
                 severity := .warning
                 message := "redundant nested parentheses"
                 range := outer
@@ -761,10 +756,8 @@ this product has no public runtime plugin interface.
 Accepted source cannot contain an isolated `\r`, so after normalization no carriage return
 survives for a line-oriented rule to consider. -/
 def ruleRegistry : Array Rule :=
-  #[{
-      info :=
-        {
-          code := "FMT001"
+  #[{ info :=
+        { code := "FMT001"
           category := "security"
           summary := "reject forbidden control bytes in source"
           fixable := false
@@ -783,10 +776,8 @@ NUL is flagged at the NUL."
           -- illustration.
           examples := #[] }
       impl := .source forbiddenControlByte },
-    {
-      info :=
-        {
-          code := "FMT002"
+    { info :=
+        { code := "FMT002"
           category := "security"
           summary := "flag suspicious bidirectional controls in source"
           fixable := false
@@ -803,10 +794,8 @@ ending in a right-to-left override U+202E is flagged at the mark."
           -- Example-exempt (see `exampleExemptCodes`): a verbatim bidi mark would reorder the doc itself.
           examples := #[] }
       impl := .source bidiControl },
-    {
-      info :=
-        {
-          code := "FMT006"
+    { info :=
+        { code := "FMT006"
           category := "docs"
           summary := "require a module docstring when a module declares anything"
           fixable := false
@@ -827,10 +816,8 @@ files this rule still reports are formatter fixtures, whose layout is the thing 
 one would change what it tests."
           examples := #[{ bad := "def answer : Nat := 42\n" }] }
       impl := .syntax moduleDocRequired },
-    {
-      info :=
-        {
-          code := "FMT007"
+    { info :=
+        { code := "FMT007"
           category := "structure"
           summary := "report an unclosed section or namespace"
           fixable := false
@@ -853,10 +840,8 @@ case out or by keeping it reportable with the reason recorded; until then the me
 freeze, which is what `stable` would promise."
           examples := #[{ bad := "namespace Demo\n\ndef answer : Nat := 42\n" }] }
       impl := .syntax unclosedScopes },
-    {
-      info :=
-        {
-          code := "FMT008"
+    { info :=
+        { code := "FMT008"
           category := "redundancy"
           summary := "remove a duplicate attribute in an attribute list"
           fixable := true
@@ -875,14 +860,11 @@ Its fix already passes the safety, idempotence, convergence, and composition aud
 evidence that the rule fires correctly on code its author did not write. It found nothing across 85 \
 mathlib modules including `Mathlib/Data/Finset/Attr.lean`, which was chosen for being attribute-dense."
           examples :=
-            #[{
-                bad := "@[simp, simp] def idem : Nat := 0\n"
+            #[{ bad := "@[simp, simp] def idem : Nat := 0\n"
                 good? := "@[simp] def idem : Nat := 0\n" }] }
       impl := .syntax duplicateAttribute },
-    {
-      info :=
-        {
-          code := "FMT009"
+    { info :=
+        { code := "FMT009"
           category := "redundancy"
           summary := "remove a duplicate deriving class"
           fixable := true
@@ -899,14 +881,11 @@ Graduates on the same condition as FMT008, for duplicate `deriving` classes: at 
 positives with zero false positives on a corpus that is not attribute-reviewed. Its fix passes the same \
 audit; it found nothing across 85 mathlib modules."
           examples :=
-            #[{
-                bad := "inductive Color where\n  | red\n  deriving Repr, Repr\n"
+            #[{ bad := "inductive Color where\n  | red\n  deriving Repr, Repr\n"
                 good? := "inductive Color where\n  | red\n  deriving Repr\n" }] }
       impl := .syntax duplicateDerivingClass },
-    {
-      info :=
-        {
-          code := "FMT010"
+    { info :=
+        { code := "FMT010"
           category := "debug"
           summary := "report a development-only set_option left in source"
           fixable := false
@@ -926,10 +905,8 @@ with no `set_option` linter of its own. mathlib cannot supply that evidence by c
 modules says what mathlib already enforces and nothing about whether this rule is correct."
           examples := #[{ bad := "set_option trace.Meta.debug true\n\ndef answer : Nat := 42\n" }] }
       impl := .syntax developmentSetOption },
-    {
-      info :=
-        {
-          code := "FMT011"
+    { info :=
+        { code := "FMT011"
           category := "redundancy"
           summary := "remove redundant nested parentheses"
           fixable := true
@@ -950,14 +927,11 @@ This rule is stable but off by default. It is syntax tier, so running it on a pr
 the lean-fmt compiler plugin costs one compiler frontend run per module; select it with \
 `--select FMT011`, or `--select redundancy`, or enable it in `lean-fmt.toml`."
           examples :=
-            #[{
-                bad := "def twice : Nat := ((1))\n"
+            #[{ bad := "def twice : Nat := ((1))\n"
                 good? := "def twice : Nat := (1)\n" }] }
       impl := .syntax redundantNestedParen },
-    {
-      info :=
-        {
-          code := "FMT012"
+    { info :=
+        { code := "FMT012"
           category := "deprecation"
           summary := "report use of a deprecated declaration"
           fixable := true
@@ -977,16 +951,13 @@ a corpus that actually uses deprecated declarations; it found none across 85 mat
 rename fix stays `unsafe` and opt-in regardless of that outcome, because a textual name swap is \
 plausibly intended but unproven — so graduation would enable the report, never the fix."
           examples :=
-            #[{
-                bad :=
+            #[{ bad :=
                   "def new : Nat := 0\n@[deprecated new (since := \"1.0\")] def old : Nat := 0\ndef use : Nat := old\n"
                 good? :=
                   "def new : Nat := 0\n@[deprecated new (since := \"1.0\")] def old : Nat := 0\ndef use : Nat := new\n" }] }
       impl := .semantic deprecatedUse },
-    {
-      info :=
-        {
-          code := "FMT013"
+    { info :=
+        { code := "FMT013"
           category := "unused"
           summary := "report an unused variable or binder"
           fixable := false
@@ -1004,10 +975,8 @@ that is not already `linter.unusedVariables`-clean. mathlib runs that linter, so
 evidence: the zero this rule scored across 85 mathlib modules measures mathlib's CI, not this rule."
           examples := #[{ bad := "def constZero (x : Nat) : Nat := 0\n" }] }
       impl := .semantic unusedVariable },
-    {
-      info :=
-        {
-          code := "FMT014"
+    { info :=
+        { code := "FMT014"
           category := "unused"
           summary := "report a section variable unused in a theorem"
           fixable := false
@@ -1026,10 +995,8 @@ with zero false positives on a corpus that does not already run `linter.unusedSe
                 bad :=
                   "section\nvariable {α : Type} [inst : Inhabited α]\ntheorem refl_eq (a : α) : a = a := rfl\nend\n" }] }
       impl := .semantic unusedSectionVariable },
-    {
-      info :=
-        {
-          code := "FMT015"
+    { info :=
+        { code := "FMT015"
           category := "naming"
           summary := "report a bound variable that resembles a nullary constructor"
           fixable := false
@@ -1117,8 +1084,7 @@ and cannot drift. They are declared here as `RuleInfo`s and added to `allRuleInf
 `Config`'s selectors and the `rules` command read in place of `ruleRegistry` alone. -/
 
 def importRuleInfos : Array RuleInfo :=
-  #[{
-      code := "FMT003"
+  #[{ code := "FMT003"
       category := "imports"
       summary := "remove a duplicate import"
       fixable := true
@@ -1129,11 +1095,9 @@ def importRuleInfos : Array RuleInfo :=
 The same module is imported twice in a header. The safe fix removes the later duplicate line. An exact \
 repeat imports nothing new, so removing it preserves the module's environment and import order."
       examples :=
-        #[{
-            bad := "import Lean\nimport Lean\n"
+        #[{ bad := "import Lean\nimport Lean\n"
             good? := "import Lean\n" }] },
-    {
-      code := "FMT004"
+    { code := "FMT004"
       category := "imports"
       summary := "report an import made redundant by another import's transitive closure"
       fixable := false
@@ -1149,8 +1113,7 @@ flags the redundant one."
       -- Example-exempt (see `exampleExemptCodes`): redundancy is a cross-module graph fact,
       -- not a self-contained single-file snippet.
       examples := #[] },
-    {
-      code := "FMT005"
+    { code := "FMT005"
       category := "imports"
       summary := "report imports out of the configured import layout's order"
       fixable := false

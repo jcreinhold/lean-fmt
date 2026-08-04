@@ -231,8 +231,7 @@ private def stdinSection (ranged : Bool) : String × Array HelpEntry :=
 /-! ## The command table -/
 
 private def commandHelps : Array CommandHelp :=
-  #[{
-      command := "check"
+  #[{ command := "check"
       summary := "report rule findings; write nothing"
       description :=
         "Report the selected rules' findings for each file, and nothing else: a \
@@ -245,8 +244,7 @@ private def commandHelps : Array CommandHelp :=
           outputSection optOutputFormat, executionSection true, stdinSection false]
       notes :=
         #["`check` previews the fixes `fix` would apply; the fix-selection flags shape that preview."] },
-    {
-      command := "format"
+    { command := "format"
       summary := "format files to the canonical layout"
       description :=
         "Render each file's canonical layout and publish it in place, atomically. \
@@ -265,8 +263,7 @@ private def commandHelps : Array CommandHelp :=
           "format publishes only layout — no rule fix applies — so `--unsafe-fixes` changes only the \
         reported withheld count, never the bytes.",
           "`--watch` requires `--check`: a writing mode retriggers itself."] },
-    {
-      command := "diff"
+    { command := "diff"
       summary := "preview formatting changes as a patch"
       description :=
         "Print the patch `format` would publish, file by file. Never writes. Exit 0 no \
@@ -277,8 +274,7 @@ private def commandHelps : Array CommandHelp :=
           executionSection true, stdinSection false]
       notes :=
         #["no rule fix applies to a patch, so `--unsafe-fixes` changes only the reported withheld count."] },
-    {
-      command := "fix"
+    { command := "fix"
       summary := "apply rule fixes in place"
       description :=
         "Apply the admitted rules' fixes in place, atomically, at each file's original \
@@ -292,8 +288,7 @@ private def commandHelps : Array CommandHelp :=
       notes :=
         #["`--watch` is unavailable: a writing mode retriggers itself.",
           "`--check` is a `format` flag; `fix` ignores it."] },
-    {
-      command := "lsp"
+    { command := "lsp"
       summary := "serve the language server on stdio"
       description :=
         "Speak LSP on stdio — document formatting, range formatting, code actions, and \
@@ -306,8 +301,7 @@ private def commandHelps : Array CommandHelp :=
         #[("server options:",
             #[optRoot, optConfig, optSelect, optIgnore, optPreview, optUnsafeFixes,
               optDebounceMs])] },
-    {
-      command := "organize"
+    { command := "organize"
       summary := "canonicalize import headers"
       description :=
         "Rewrite each file's import header into the canonical form, validate every \
@@ -321,16 +315,14 @@ private def commandHelps : Array CommandHelp :=
         #[("target options:", #[optRoot, optConfig]),
           ("organize options:", #[optCheckOrganize, optJson]),
           ("execution options:", #[optWorkers, optNoCache])] },
-    {
-      command := "rules"
+    { command := "rules"
       summary := "list the rule registry"
       description :=
         "Print every rule in the registry, one row each: code, category, lifecycle, \
       fixable, default-enabled, summary. `--json` prints the array instead. Exit 0."
       usage := #["lean-fmt rules [--json]"]
       sections := #[("output options:", #[optJson])] },
-    {
-      command := "explain"
+    { command := "explain"
       summary := "describe one rule"
       description :=
         "Print one rule's full description. A retired code prints its disposition; a \
@@ -338,8 +330,7 @@ private def commandHelps : Array CommandHelp :=
       all exit 0. Only a token the product could never have emitted exits 2."
       usage := #["lean-fmt explain RULE [--json]"]
       sections := #[("output options:", #[optJson])] },
-    {
-      command := "docs"
+    { command := "docs"
       summary := "regenerate the rule documentation"
       description :=
         "Write docs/rules/{index,FMT###}.md fresh from the rule registry. `--check` \
@@ -347,16 +338,14 @@ private def commandHelps : Array CommandHelp :=
       documented. Exit 0 in sync, 1 drifted, 2 failure."
       usage := #["lean-fmt docs [--root PATH] [--check]"]
       sections := #[("target options:", #[optRoot]), ("docs options:", #[optCheckDocs])] },
-    {
-      command := "clean"
+    { command := "clean"
       summary := "remove the result cache"
       description :=
         "Remove .lean-fmt-cache/ under the root. Exit 0 whether or not it existed, 2 \
       failure."
       usage := #["lean-fmt clean [--root PATH] [--json]"]
       sections := #[("target options:", #[optRoot]), ("output options:", #[optJson])] },
-    {
-      command := "compiler"
+    { command := "compiler"
       summary := "audit and build the compiler plugin's artifact"
       description :=
         "Install and build the compiler plugin's per-module syntax artifact. The \
@@ -369,8 +358,7 @@ private def commandHelps : Array CommandHelp :=
               ⟨"build", "extract every workspace module's artifact in one Lake invocation"⟩]),
           ("compiler options:", #[optRoot, optJson])]
       notes := #["`build` prints Lake's own progress, so `--json` does not apply to it."] },
-    {
-      command := "config"
+    { command := "config"
       summary := "inspect the effective configuration for a file"
       description :=
         "`config show PATH` prints the settings in force for one file and where each \

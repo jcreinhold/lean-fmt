@@ -189,11 +189,8 @@ def parseHeaderModel (normalized : String) : IO (Option HeaderModel) := do
     let isPublic := hasKind node ``Lean.Parser.Module.«public»
     imports :=
       imports.push
-        {
-          «module» := name
-          importAll,
-          isMeta,
-          isPublic
+        { «module» := name
+          importAll, isMeta, isPublic
           isExported := isPublic || !hasModule
           range := { start, stop }
           lineRange := lineExtent normalized start stop }
@@ -238,8 +235,7 @@ def duplicateFindings (header : HeaderModel) (normalized : String) : Array Findi
           else none
         findings :=
           findings.push
-            {
-              code := "FMT003"
+            { code := "FMT003"
               severity := .warning
               message := s!"duplicate import of {stmt.module}"
               range := stmt.range
@@ -304,8 +300,7 @@ def orderFindings (header : HeaderModel) (normalized : String) (layout : ImportL
       if outOfOrder then
         findings :=
           findings.push
-            {
-              code := "FMT005"
+            { code := "FMT005"
               severity := .warning
               message := s!"import {cur.module} is out of order (after {prev.module})"
               range := cur.range
@@ -356,8 +351,7 @@ def redundantFindings (header : HeaderModel) (covers : Lean.Name → Lean.Name �
         if redundancyEligible header stmt then
           findings :=
             findings.push
-              {
-                code := "FMT004"
+              { code := "FMT004"
                 severity := .warning
                 message :=
                   s!"import {stmt.module} is redundant: transitively available via \

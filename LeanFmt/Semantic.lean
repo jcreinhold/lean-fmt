@@ -100,8 +100,7 @@ def SemanticAnalysis.success (normalized : String) (findings : Array Finding)
   {
     result? :=
       some
-        {
-          schema := semanticResultSchema
+        { schema := semanticResultSchema
           source := Digest.ofString normalized
           sourceBytes := normalized.utf8ByteSize
           findings
@@ -119,8 +118,7 @@ def SemanticAnalysis.withCanonical (analysis : SemanticAnalysis) (canonical : Ca
   { analysis with result? := analysis.result?.map ({ · with canonical? := some canonical }) }
 
 def SemanticAnalysis.broken (diagnostics : Array String) : SemanticAnalysis :=
-  {
-    result? := none
+  { result? := none
     diagnostics }
 
 /-- `raw` is the file as the caller read it; identity is normalized, so normalize before comparing.

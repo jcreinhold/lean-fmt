@@ -84,8 +84,7 @@ this.
 The `#print axioms` audit is **not** in the module; re-running it is a manual step before marking a claim verified. That is a real loss of
 enforcement over keeping it inline: an assumption introduced later will not announce itself in the
 build that introduced it. -/
-@[default_target] lean_lib
-  LeanFmtCacheSpec where
+@[default_target] lean_lib LeanFmtCacheSpec where
   roots := #[`LeanFmt.Cache.Spec]
   globs := #[Glob.one `LeanFmt.Cache.Spec]
 
@@ -439,8 +438,7 @@ module_facet leanFmtArtifact (mod : Module) : Artifact := do
       withCurrPackage mod.pkg do
           buildArtifactUnlessUpToDate (artifactFile mod) (text := true) (ext := "json") (restore :=
               true) (platformIndependent := true) do
-              proc
-                  {
+              proc {
                     cmd := extractor.toString
                     args := #[mod.name.toString, olean.toString, (artifactFile mod).toString]
                     env := #[⟨"LEAN_PATH", (← getLeanPath).toString⟩, ⟨"LEAN_NUM_THREADS", "1"⟩] }

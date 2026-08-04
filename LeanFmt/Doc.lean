@@ -648,12 +648,10 @@ def renderDetailed (width : Nat) (document : Doc) (pinnedPhrases : Array String 
     { fla := .disallow, fill := false, items := Items.ofList [.document document indent 0] }
   let initial := Work.pack root .empty
   let state := (renderWork width pinnedPhrases initial).run { column } |>.2
-  {
-    text := state.output
+  { text := state.output
     sourceMap := state.marks
     metrics :=
-      {
-        documentNodes := document.size
+      { documentNodes := document.size
         workSteps := state.workSteps
         nativeEvents := state.nativeEvents } }
 

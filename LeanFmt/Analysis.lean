@@ -340,14 +340,12 @@ private def buildFormatDraft (normalized : String) (source : LosslessSource)
   if verbatimCommands > 0 then
     recordCount "verbatim_commands" verbatimCommands
   return .ok
-      {
-        text := rendered.text
+      { text := rendered.text
         sourceMap := rendered.sourceMap
         headerContract := Formatter.Command.headerContract header
         commentContract := Comments.contract normalized ownership
         metrics :=
-          {
-            frontendRuns := 1
+          { frontendRuns := 1
             commands := commands.size
             nativeDocuments
             alignedTokens
@@ -405,8 +403,7 @@ private def captureDiagnostics (fileMap : Lean.FileMap) (sourceBytes : Nat)
         let serial ← msg.serialize
         diagnostics :=
           diagnostics.push
-            {
-              kind := msg.kind.toString
+            { kind := msg.kind.toString
               range
               severity := ofMessageSeverity msg.severity
               message := serial.data }
@@ -632,8 +629,7 @@ private unsafe def skeletonRead (setup : Lean.ModuleSetup) (source : String)
       ←
         EIO.toIO'
             ((Lean.Elab.Command.elabCommandTopLevel stx #[]
-                  {
-                    cmdPos := commandPos
+                  { cmdPos := commandPos
                     fileName := sourcePath.toString
                     fileMap := input.fileMap
                     snap? := none
@@ -654,8 +650,7 @@ private unsafe def skeletonRead (setup : Lean.ModuleSetup) (source : String)
   recordCount "skeleton_skipped_commands" (commands.countP (!changesParsing ·.stx))
   return some
       (input,
-        {
-          headerStx := header.raw
+        { headerStx := header.raw
           headerMessages := state.messages
           tree := { element := { desc := "skeleton", diagnostics := default }, children := #[] }
           start? := none
@@ -799,8 +794,7 @@ private unsafe def candidateFrontend (setup : Lean.ModuleSetup) (original : Proc
   recordCount "candidate_import_reuse" 1
   let first := (← Lean.Language.Lean.processCommands input parserState headerState).get
   return (input,
-      {
-        headerStx := header.raw
+      { headerStx := header.raw
         headerMessages
         tree := Lean.Language.toSnapshotTree first
         start? := some (first, headerState) })
@@ -886,15 +880,13 @@ private unsafe def analyzeSnapshot (setup : Lean.ModuleSetup) (source : String)
             pure
                 (none,
                   some
-                    {
-                      gate := .formatter
+                    { gate := .formatter
                       detail := failure.detail })
           | none =>
             pure
                 (none,
                   some
-                    {
-                      gate := .formatter
+                    { gate := .formatter
                       detail := "format draft was not produced" })
         let candidateText := (LosslessSource.normalize first.text).1
         let reparsed ←
@@ -923,8 +915,7 @@ private unsafe def analyzeSnapshot (setup : Lean.ModuleSetup) (source : String)
               pure
                   (none,
                     some
-                      {
-                        gate := .structure
+                      { gate := .structure
                         detail :=
                           "reparsed candidate did not project losslessly over its own bytes" })
             else
@@ -948,8 +939,7 @@ private unsafe def analyzeSnapshot (setup : Lean.ModuleSetup) (source : String)
             pure
                 (none,
                   some
-                    {
-                      gate := .diagnostics
+                    { gate := .diagnostics
                       detail := String.intercalate "\n" candidate.diagnostics.toList })
           else
             match candidate.artifact?, candidate.formatDraft?, candidate.formatFailure? with
@@ -971,8 +961,7 @@ private unsafe def analyzeSnapshot (setup : Lean.ModuleSetup) (source : String)
               pure
                   (none,
                     some
-                      {
-                        gate := .structure
+                      { gate := .structure
                         detail := "candidate frontend returned no artifact or second draft" })
     else
       pure (none, none)
@@ -1166,10 +1155,7 @@ private unsafe def IncrementalAnalyzer.run (analyzer : IncrementalAnalyzer)
           else
             if succeeded then
               some
-                {
-                  setupIdentity := identity,
-                  sourcePath := path,
-                  headerIdentity := newHeader
+                { setupIdentity := identity, sourcePath := path, headerIdentity := newHeader
                   snapshot := run.snapshot }
             else state.good?
         ref.set
@@ -1177,12 +1163,8 @@ private unsafe def IncrementalAnalyzer.run (analyzer : IncrementalAnalyzer)
               good?, flight? := none, counters }
         return (good?, counters)
   return {
-      envelope,
-      reusedCommands := reused,
-      invalidated,
-      cancelled := wasCancelled
-      retainedSnapshots := if good?.isSome then 1 else 0,
-      counters }
+      envelope, reusedCommands := reused, invalidated, cancelled := wasCancelled
+      retainedSnapshots := if good?.isSome then 1 else 0, counters }
 
 /-- Analyze the current document version, retaining it only when the frontend succeeds. -/
 private unsafe def IncrementalAnalyzer.analyzeUnsafe (analyzer : IncrementalAnalyzer)
@@ -1269,8 +1251,7 @@ unsafe def validateCandidateExact (setup : Lean.ModuleSetup) (source candidate :
       { beforeDraft with
         text := normalizedCandidate
         sourceMap :=
-          #[{
-              source := ⟨0, normalizedSource.utf8ByteSize⟩
+          #[{ source := ⟨0, normalizedSource.utf8ByteSize⟩
               output := ⟨0, normalizedCandidate.utf8ByteSize⟩ }] }
     match beforeArtifact.materialize source, afterArtifact.materialize candidate with
     | .ok beforeMaterialized, .ok afterMaterialized =>

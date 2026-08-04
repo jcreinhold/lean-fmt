@@ -344,8 +344,7 @@ def commandArtifactSchema : String :=
 
 def CommandArtifactRecord.ofSyntax (mainModule normalized : String) (terminal : Bool)
     (stx : Lean.Syntax) : CommandArtifactRecord :=
-  {
-    schema := commandArtifactSchema
+  { schema := commandArtifactSchema
     mainModule
     normalizedBytes := normalized.utf8ByteSize
     normalizedDigest := Digest.ofString normalized

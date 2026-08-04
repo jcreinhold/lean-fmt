@@ -610,13 +610,7 @@ private def handleDidOpen (session : Session) (params : Json) : IO Unit := do
     session.refusals.modify (·.erase uri)
     session.documents.modify
         (·.insert uri
-          {
-            uri,
-            path,
-            relativePath,
-            lineEndings,
-            version,
-            analyzer
+          { uri, path, relativePath, lineEndings, version, analyzer
             text := FileMap.ofString normalized })
     session.analyses.modify (·.erase uri)
     session.envelopes.modify (·.erase uri)
@@ -974,8 +968,7 @@ private def handleFormatting (session : Session) (id : RequestID) (params : Json
         session.sink.respond id
             (Json.arr
               #[Lean.toJson
-                  ({
-                      range := lspRangeOf document.text actual
+                  ({  range := lspRangeOf document.text actual
                       newText := LosslessSource.denormalize body document.lineEndings } :
                     Lsp.TextEdit)])
       | _, _, _ =>
@@ -1312,13 +1305,7 @@ def serveLanguageServer (options : ServerOptions) : IO UInt32 := do
         Std.CloseableChannel.Sync.new (capacity := some maxQueuedMessages)
       let settings ← IO.mkRef options
       let session : Session :=
-        {
-          options,
-          settings,
-          root,
-          project,
-          run,
-          sink
+        { options, settings, root, project, run, sink
           discovery := ← IO.mkRef discovery
           documents := ← IO.mkRef { }
           refusals := ← IO.mkRef { }

@@ -676,9 +676,7 @@ public def main (args : List String) : IO UInt32 := do
       let configToml := work / "lean-fmt.toml"
       writeFile configToml "[lint]\nextend-unsafe-fixes = [\"FMT003\"]\n"
       let ctx : Lsp.Ctx :=
-        {
-          root,
-          application := (root / ".lake" / "build" / "bin" / "lean-fmt").toString
+        { root, application := (root / ".lake" / "build" / "bin" / "lean-fmt").toString
           configToml }
       let cases : Array Case :=
         #[{ name := "lifecycle", run := Lsp.testLifecycle ctx },

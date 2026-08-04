@@ -52,11 +52,7 @@ public def runProc (cmd : String) (args : Array String := #[]) (input? : Option 
     -- handle is dropped unwritten, the same EOF `.null` would give.
     let child ←
       IO.Process.spawn
-          {
-            cmd,
-            args,
-            cwd := cwd?,
-            env
+          { cmd, args, cwd := cwd?, env
             stdin := .piped
             stdout := .piped
             stderr := .piped }

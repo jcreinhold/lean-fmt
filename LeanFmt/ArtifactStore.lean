@@ -102,8 +102,7 @@ def fromEnvironment? (environment : Lean.Environment) (moduleName : Lean.Name) :
   let syntaxData ← ModuleSyntax.ofRecords records |>.toOption
   let interfaceHash ← moduleInterfaceHash? environment moduleName
   let artifact : ModuleArtifact :=
-    {
-      schema := artifactSchema
+    { schema := artifactSchema
       mainModule := first.mainModule
       normalizedBytes := first.normalizedBytes
       normalizedDigest := first.normalizedDigest

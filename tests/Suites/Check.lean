@@ -652,10 +652,7 @@ public def main (args : List String) : IO UInt32 := do
         some root)
   withScratchDir "check" fun work => do
       let ctx : Check.Ctx :=
-        {
-          root,
-          application := (root / ".lake" / "build" / "bin" / "lean-fmt").toString,
-          work
+        { root, application := (root / ".lake" / "build" / "bin" / "lean-fmt").toString, work
           cacheRoot := root / ".lean-fmt-cache" }
       let before ← Check.snapshot root
       -- These two cases share state (the reference report the invalidation cases compare against
