@@ -55,7 +55,8 @@ private def fixtureSourceText : String :=
   "def x := 1\n"
 
 private def fixtureLosslessSource (mainModule := "Test") : LosslessSource :=
-  { schema := losslessSourceSchema
+  {
+    schema := losslessSourceSchema
     mainModule
     normalizedBytes := fixtureSourceText.utf8ByteSize
     normalizedDigest := Digest.ofString fixtureSourceText
@@ -70,19 +71,22 @@ private def fixtureLosslessSource (mainModule := "Test") : LosslessSource :=
         { node := 0, start := 9, stop := 10, trailing := #[{ kind := .whitespace, stop := 11 }] }] }
 
 private def fixtureArtifact : ModuleArtifact :=
-  { schema := artifactSchema
+  {
+    schema := artifactSchema
     mainModule := "Test"
     normalizedBytes := fixtureSourceText.utf8ByteSize
     normalizedDigest := Digest.ofString fixtureSourceText
     syntaxData :=
-      { kinds := #[`Lean.Parser.Command.declaration]
+      {
+        kinds := #[`Lean.Parser.Command.declaration]
         entries :=
           #[.node .none 0 4, .atom (.original 0 0 3 4) none, .atom (.original 4 4 5 6) none,
             .atom (.original 6 6 8 9) none, .atom (.original 9 9 10 11) none,
             .atom (.synthetic fixtureSourceText.utf8ByteSize fixtureSourceText.utf8ByteSize true)
               (some "")]
         commands :=
-          #[{ entry := 0
+          #[{
+              entry := 0
               range := ⟨0, fixtureSourceText.utf8ByteSize⟩ }]
         terminal := 5 } }
 

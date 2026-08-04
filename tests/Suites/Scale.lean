@@ -236,7 +236,10 @@ public def main (args : List String) : IO UInt32 := do
           expectExit 0 "lake build Demo" "lake" #["-d", project.toString, "build", "Demo"] (cwd? :=
             some root)
       let ctx : Scale.Ctx :=
-        { root, application := (root / ".lake" / "build" / "bin" / "lean-fmt").toString, project
+        {
+          root,
+          application := (root / ".lake" / "build" / "bin" / "lean-fmt").toString,
+          project
           work }
       -- The warm run compares against the cold report, so cold hands its bytes along.
       let cold ← Scale.testCold ctx

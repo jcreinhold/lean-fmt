@@ -625,7 +625,8 @@ public def main (args : List String) : IO UInt32 := do
             s!"performance manifest entry does not exist: {relative}"
       let files := relatives.map fun relative => root.toString ++ "/" ++ relative
       let ctx : Performance.Ctx :=
-        { root
+        {
+          root
           app := (root / ".lake" / "build" / "bin" / "lean-fmt").toString
           tests := (root / ".lake" / "build" / "bin" / "lean-fmt-tests").toString
           work

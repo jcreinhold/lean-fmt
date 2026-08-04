@@ -61,3 +61,21 @@ example (n : Nat) (h : n = n) : n = n ∧ n = n := by
   case right => exact h
 
 def addPair : Nat → Nat → Nat := (· + ·)
+
+/- A structure instance whose `{` the source wrote mid-row and whose fields it then spread over
+rows. The field rows used to be pinned to the columns the source spelled them at, which held only
+while the brace stayed on its row; at a narrow width the value before it breaks, the brace lands
+further left, and every pinned row is then right of the first field, where `sepByIndent` reads it
+as one more argument of the previous field's value. 28 mathlib modules refused to format for it. -/
+structure Pair where
+  left : Nat
+  right : Nat
+
+structure Nested where
+  inner : Pair
+  tag : Nat
+
+def midRowBrace (n : Nat) : Nested :=
+  { inner := { left := n
+               right := n }
+    tag := n }

@@ -47,7 +47,8 @@ the only thing keeping a partial write off disk. -/
 
 private def findingWithEdit (range : SourceRange) (replacement : String)
     (applicability : Applicability := .safe) (code : String := "TEST") : Finding :=
-  { code
+  {
+    code
     severity := .warning
     message := "test edit"
     range
@@ -131,7 +132,8 @@ private def testEdits : IO Unit := do
 
 private def findingWithEdits (edits : Array Edit) (applicability : Applicability := .safe)
     (code : String := "TEST") : Finding :=
-  { code
+  {
+    code
     severity := .warning
     message := "test multi-edit"
     range := edits[0]?.map (·.range) |>.getD { start := 0, stop := 0 }

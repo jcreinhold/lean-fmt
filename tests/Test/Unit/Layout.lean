@@ -97,7 +97,8 @@ private partial def genDoc (depth : Nat) (seed : Nat) : GeneratedDoc :=
     | 3 =>
       let left := genDoc (depth - 1) r
       let right := genDoc (depth - 1) left.nextSeed
-      { document := .cat left.document right.document
+      {
+        document := .cat left.document right.document
         flat := left.flat ++ right.flat
         atoms := left.atoms ++ right.atoms
         nextSeed := right.nextSeed }

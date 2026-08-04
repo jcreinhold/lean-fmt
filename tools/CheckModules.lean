@@ -142,7 +142,8 @@ private def resolve (root : FilePath) : IO Resolution := do
         unparsedHeaders := unparsedHeaders.push mod.name
   return {
       layout :=
-        { sources := modules
+        {
+          sources := modules
           seeds := globbed ++ package.leanExes.map (·.config.root)
           importsOf
           unparsedHeaders }

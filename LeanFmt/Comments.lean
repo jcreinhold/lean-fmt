@@ -478,7 +478,8 @@ def contract (normalized : String) (ownership : CommentOwnership) : Array Commen
       match assignment.owner with
       | .file => ("file", #[])
       | .node stx path => (stx.getKind.toString, path)
-    { kind := assignment.comment.kind
+    {
+      kind := assignment.comment.kind
       placement := assignment.placement
       ownerKind
       ownerPath

@@ -135,7 +135,8 @@ private def assemble (source : String) (ordered : Array IndexedEdit) :
     let original ← decode (sourceBytes.extract edit.range.start edit.range.stop)
     inverse :=
       inverse.push
-        { range := { start := outputStart, stop := outputStart + replacement.size }
+        {
+          range := { start := outputStart, stop := outputStart + replacement.size }
           replacement := original }
     cursor := edit.range.stop
   output := output ++ sourceBytes.extract cursor sourceBytes.size

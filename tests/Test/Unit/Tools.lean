@@ -128,7 +128,8 @@ private def verifyFacetArtifact (path sourcePath : System.FilePath) (expectedHas
     IO Unit := do
   let source ← IO.FS.readFile sourcePath
   let facet : Lake.Artifact :=
-    { descr := Lake.artifactWithExt expectedHash "json"
+    {
+      descr := Lake.artifactWithExt expectedHash "json"
       path
       mtime := 0 }
   let some artifact ← readFacet? facet `LocalSyntax source |
@@ -426,7 +427,8 @@ private def benchFile (index : Nat) (count : Nat) : FileReport × String :=
       source := source ++ benchLine
       findings :=
         findings.push
-          { code := codes[i % codes.size]!
+          {
+            code := codes[i % codes.size]!
             severity := if i % 3 == 0 then .error else .warning
             message := s!"synthetic finding {i} in file {index}"
             range := { start := i * width, stop := i * width + 7 }

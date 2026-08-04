@@ -428,12 +428,19 @@ public unsafe def main (args : List String) : IO UInt32 := do
   let fixtureBackup := sourceBackup.replace "emit_local_command\n" "emit_local_command  \n"
   writeFile sourceFile fixtureBackup
   let ctx : CompilerSuite.Ctx :=
-    { root, application := (root / ".lake" / "build" / "bin" / "lean-fmt").toString
-      sourceFile, pluginSource, rulesSource
+    {
+      root,
+      application := (root / ".lake" / "build" / "bin" / "lean-fmt").toString
+      sourceFile,
+      pluginSource,
+      rulesSource
       olean := root / ".lake" / "build" / "lib" / "lean" / "LocalSyntax.olean"
       trace := root / ".lake" / "build" / "lib" / "lean" / "LocalSyntax.trace"
       artifact := root / ".lake" / "build" / "lean-fmt-artifacts" / "LocalSyntax.json"
-      sourceBackup, pluginBackup, rulesBackup, fixtureBackup }
+      sourceBackup,
+      pluginBackup,
+      rulesBackup,
+      fixtureBackup }
   let cleanup : IO Unit := do
     writeFile ctx.sourceFile ctx.sourceBackup
     writeFile ctx.pluginSource ctx.pluginBackup

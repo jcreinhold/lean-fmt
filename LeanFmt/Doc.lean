@@ -276,7 +276,8 @@ private partial def renderWork (width : Nat) (pinnedPhrases : Array String) :
           { state with
             marks :=
               state.marks.push
-                { source
+                {
+                  source
                   output := ⟨outputStart, state.outputBytes⟩ } }
       renderWork width pinnedPhrases rest
     | .document indent mode document =>
@@ -352,10 +353,12 @@ def renderDetailed (width : Nat) (document : Doc) (pinnedPhrases : Array String 
     Rendered :=
   let initial := Work.empty.push (.document 0 .broken document)
   let state := (renderWork width pinnedPhrases initial).run { } |>.2
-  { text := state.output
+  {
+    text := state.output
     sourceMap := state.marks
     metrics :=
-      { documentNodes := document.size
+      {
+        documentNodes := document.size
         workSteps := state.workSteps
         nativeEvents := state.nativeEvents } }
 

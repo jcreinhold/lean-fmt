@@ -262,8 +262,13 @@ private def runSuite (root : System.FilePath) (suite : Suite) : IO Outcome := do
   let started ← IO.monoNanosNow
   let child ←
     IO.Process.spawn
-        { cmd := (root / ".lake" / "build" / "bin" / suite.exeName).toString, cwd := some root
-          env := scrubbedSearchPaths, stdin := .null, stdout := .piped, stderr := .piped }
+        {
+          cmd := (root / ".lake" / "build" / "bin" / suite.exeName).toString,
+          cwd := some root
+          env := scrubbedSearchPaths,
+          stdin := .null,
+          stdout := .piped,
+          stderr := .piped }
   let stdoutTask ← IO.asTask child.stdout.readToEnd Task.Priority.dedicated
   let stderrTask ← IO.asTask child.stderr.readToEnd Task.Priority.dedicated
   let peak ← IO.mkRef 0

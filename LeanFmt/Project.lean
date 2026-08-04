@@ -153,7 +153,8 @@ private def targetLeanInstall (root : FilePath) : IO Lake.LeanInstall := do
         throw <| IO.userError "target Lean discovery was disabled by an empty LEAN value"
       let output ←
         IO.Process.output
-            { cmd := lean
+            {
+              cmd := lean
               args := #["--print-prefix"]
               cwd := root }
       unless output.exitCode == 0 do
@@ -766,7 +767,8 @@ whole-workspace digest. Resolving them from `module?` would silently re-key ever
 def graph (workspace : Lake.Workspace) (targets : Array SourceTarget)
     (extraImports : Array Lean.Name := #[]) (demand : Demand := { }) : IO GraphFacts := do
   let blank : GraphFacts :=
-    { targets := Array.replicate targets.size { }
+    {
+      targets := Array.replicate targets.size { }
       imports := Std.HashMap.emptyWithCapacity 0
       edges := Std.HashMap.emptyWithCapacity 0 }
   let statusModules : Array (Option Lake.Module) :=
@@ -922,7 +924,8 @@ def graph (workspace : Lake.Workspace) (targets : Array SourceTarget)
           (closureModules.zip closures.1).foldl (init :=
             Std.HashMap.emptyWithCapacity closureModules.size) fun map ((name, _), build) =>
             map.insert name
-              { build := build.map (·.map (·.name))
+              {
+                build := build.map (·.map (·.name))
                 -- The honest `none` survives the shared map: a root whose own input did not
                 -- resolve has no entry, and an empty visible closure is a different answer from an
                 -- unresolved one.
@@ -1006,7 +1009,8 @@ def moduleEvidence (snapshot : Snapshot) (facts : GraphFacts) : IO (Array Module
           let parent := target.path.parent.getD snapshot.root
           let loaded ←
             Lake.loadWorkspaceRoot
-                  { lakeEnv := snapshot.workspace.lakeEnv
+                  {
+                    lakeEnv := snapshot.workspace.lakeEnv
                     wsDir := parent } |>.toBaseIO
           evidence := evidence.push (if loaded.isSome then .current else .needsFrontend)
       else

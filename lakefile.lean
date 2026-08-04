@@ -439,7 +439,8 @@ module_facet leanFmtArtifact (mod : Module) : Artifact := do
       withCurrPackage mod.pkg do
           buildArtifactUnlessUpToDate (artifactFile mod) (text := true) (ext := "json") (restore :=
               true) (platformIndependent := true) do
-              proc {
+              proc
+                  {
                     cmd := extractor.toString
                     args := #[mod.name.toString, olean.toString, (artifactFile mod).toString]
                     env := #[⟨"LEAN_PATH", (← getLeanPath).toString⟩, ⟨"LEAN_NUM_THREADS", "1"⟩] }

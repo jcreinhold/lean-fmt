@@ -431,7 +431,8 @@ private def exactPlaceholder (source : String) (stx : Lean.Syntax) (info : Lean.
   match sourceRange? stx with
   | some range =>
     let marker := markerFor range
-    { stx := placeholder stx info marker
+    {
+      stx := placeholder stx info marker
       islands := #[{ marker, range, text := slice source range }] }
   | none => { stx }
 
@@ -482,7 +483,8 @@ private partial def protectSourceDataFrom (categories : Lean.Parser.ParserCatego
       match sourceRange? stx with
       | some range =>
         let marker := markerFor range
-        { stx := .node info kind (children.set! 1 (.atom body.getHeadInfo marker))
+        {
+          stx := .node info kind (children.set! 1 (.atom body.getHeadInfo marker))
           islands := #[{ marker, range, text := slice source range, comment := true }] }
       | none => { stx }
     else
@@ -1388,6 +1390,64 @@ private partial def explodedElementStarts (list : Lean.Syntax) : Array SourceRan
         | some range => starts.push range
         | none => starts
 
+/- A structure instance whose fields the source spread over rows keeps one field per row, laid out
+by the document rather than pinned to columns read off the source.
+
+`collectStructInstFieldRows` pins such a row, and for a `{` written mid-row it must pin with
+`columned`: a mid-row brace puts the first field at a column no `nest` names, so the source's column
+is the only reference there is. That reference holds only while the brace stays on the row the
+source wrote it on, and canonical layout moves it -- `obj X := { obj G := …` breaks after `:=` and
+the brace lands further left, while every pinned sibling stays put, now right of the first field.
+`sepByIndent` reads such a row as one more argument of the previous field's value and refuses the
+`:=` after it. That was 28 of mathlib's 174 refusals, `Mathlib/Algebra/Category/Grp/Yoneda.lean`
+among them.
+
+Holding the brace still instead was tried and is not enough: pin the brace's row and the *first
+field* breaks away to the enclosing nest, which strands the siblings exactly as before, one row
+further down. Pinning that gap too collides with the boundary rules that own it. The head of the
+row cannot be held, so the column is dropped instead -- the first field opens a row of its own, and
+every field then lands where the document puts the rest, with no source column in the answer.
+
+Registering the range is what removes the stale pins: `outsideExploded` drops every source-column
+pin inside an exploded collection. The closing brace is deliberately *not* moved -- the magic
+trailing comma dedents its bracket to its own row, and doing that here rewrote mathlib's universal
+`… }` into a dangling brace across 17% of a sample for no correctness gain.
+
+The trigger is the source's rows, not the brace's position, and that is what makes the result a
+fixed point: the exploded spelling gives the brace a row of its own, so a trigger keyed on a mid-row
+brace stopped matching its own output and `Grp/Yoneda.lean` traded a parse error for an idempotence
+refusal. Rows are evidence this spelling preserves, the way the trailing comma preserves its comma.
+
+Unlike the trailing comma this is not under a setting: a stranded row is a correctness question. A
+structure the source spelled flat is not here, having no row to strand. -/
+private partial def collectRowSpreadStructInsts (stx : Lean.Syntax)
+    (ranges : Array SourceRange := #[]) (starts : Array (Nat × BoundaryLayout) := #[]) :
+    Array SourceRange × Array (Nat × BoundaryLayout) :=
+  match stx with
+  | .node _ kind children =>
+    let (ranges, starts) :=
+      if kind == ``Lean.Parser.Term.structInst then
+        match children.find? (·.isOfKind ``Lean.Parser.Term.structInstFields) with
+        | some fieldsNode =>
+          match fieldsNode.getArgs[0]? with
+          | some list =>
+            if list.isOfKind Lean.nullKind && hasNewlineSeparator list then
+              let starts :=
+                (explodedElementStarts list).foldl (init := starts) fun starts range =>
+                  if starts.any (·.1 == range.start) then starts
+                  else starts.push (range.start, BoundaryLayout.hard)
+              match sourceRange? stx with
+              | some collectionRange => (ranges.push collectionRange, starts)
+              | none => (ranges, starts)
+            else (ranges, starts)
+          | none => (ranges, starts)
+        | none => (ranges, starts)
+      else (ranges, starts)
+    let children := if kind == Lean.choiceKind then children[0]?.toArray else children
+    children.foldl (init := (ranges, starts)) fun (ranges, starts) child =>
+      collectRowSpreadStructInsts child ranges starts
+  | _ => (ranges, starts)
+
 private partial def collectTrailingCommaExplosions (stx : Lean.Syntax)
     (ranges : Array SourceRange := #[]) (starts : Array (Nat × BoundaryLayout) := #[]) :
     Array SourceRange × Array (Nat × BoundaryLayout) :=
@@ -2188,8 +2248,7 @@ private def finishTrailing (left right : Transformed) :
       { state with
         appliedTrailing := state.appliedTrailing ++ pending.toArray
         metrics :=
-          {
-            state.metrics with
+          { state.metrics with
             commentLeaves := state.metrics.commentLeaves + comments.length
             commentConstraints := state.metrics.commentConstraints + comments.length } }
   return some
@@ -2444,8 +2503,7 @@ private def constrainBoundary (format : Std.Format) :
         { state with
           commentIndex := stop
           metrics :=
-            {
-              state.metrics with
+            { state.metrics with
               commentLeaves := state.metrics.commentLeaves + comments.size
               commentConstraints := state.metrics.commentConstraints + comments.size } }
     -- A comment payload carries absolute source columns and has to reach column zero whatever row it
@@ -2533,7 +2591,8 @@ private def transformOrdinaryText (value : String) :
     let (boundary, hoistable) ← constrainBoundary (.text value)
     let state ← get
     finishNode
-        { format := boundary
+        {
+          format := boundary
           hoist? := hoistPayload? state hoistable boundary .nil }
   else if let some island := islandAt state then
     -- This leaf spells a terminal the island covers, so the island's own bytes already carry it.
@@ -2552,8 +2611,7 @@ private def transformOrdinaryText (value : String) :
       else
         constrainBoundary (.text (splitPadding value).1)
     modify fun state =>
-        {
-          state with
+        { state with
           enteredIslands :=
             if state.enteredIslands.contains island.marker then state.enteredIslands
             else state.enteredIslands.push island.marker
@@ -2587,7 +2645,8 @@ private def transformOrdinaryText (value : String) :
               tokenLeaves := state.metrics.tokenLeaves + 1
               normalizedTokens := state.metrics.normalizedTokens + if normalized then 1 else 0 } }
     finishNode
-        { format := .append boundary (.append (.text terminal.sourceSpelling) (.text trailing))
+        {
+          format := .append boundary (.append (.text terminal.sourceSpelling) (.text trailing))
           span? := some ⟨state.terminalIndex, state.terminalIndex + 1⟩
           hoist? :=
             hoistPayload? state hoistable boundary
@@ -2634,7 +2693,8 @@ private def transformText (value : String) : StateT TransformState (Except Strin
         if separate then { island with format := .append .line island.format } else island
       let current ← transformOrdinaryText value
       finishNode
-          { format := .append island.format current.format
+          {
+            format := .append island.format current.format
             span? := mergeSpan island.span? current.span? }
     | none =>
       transformOrdinaryText value
@@ -2652,7 +2712,8 @@ private partial def transformNative : Std.Format → StateT TransformState (Exce
     let (boundary, hoistable) ← constrainBoundary .line
     let state ← get
     finishNode
-        { format := boundary
+        {
+          format := boundary
           hoist? := hoistPayload? state hoistable boundary .nil }
   -- An `align` is a boundary: it is layout the document put between two terminals, and a comment that
   -- belongs in that gap belongs *here*. It used to be the one boundary leaf that did not go through
@@ -2715,7 +2776,8 @@ private partial def transformNative : Std.Format → StateT TransformState (Exce
         match inner.span? with
         | some span =>
           if 0 <= indent && head.start <= span.start && span.stop <= head.stop then
-            { format := .append pre (.nest indent rest)
+            {
+              format := .append pre (.nest indent rest)
               span? := inner.span?
               hoist? := some (pre, .nest indent rest, head) }
           else { format := .nest indent inner.format, span? := inner.span? }
@@ -2767,9 +2829,11 @@ private partial def transformNative : Std.Format → StateT TransformState (Exce
           | some (pre, rest, head) => some (pre, .append rest right.format, head)
           | none => none
     finishNode
-        { format := .append (leftFormat.getD left.format) right.format
+        {
+          format := .append (leftFormat.getD left.format) right.format
           span? := mergeSpan left.span? right.span?
-          hoist? } carrier?
+          hoist? }
+        carrier?
   | .group inner behavior => do
     modify fun state =>
         { state with
@@ -2786,7 +2850,8 @@ private partial def transformNative : Std.Format → StateT TransformState (Exce
       | some (pre, rest, head) =>
         if provablyEmpty rest then { inner with format := .group inner.format behavior }
         else
-          { format := .append pre (.group rest behavior)
+          {
+            format := .append pre (.group rest behavior)
             span? := inner.span?
             hoist? := some (pre, .group rest behavior, head) }
       | none => { inner with format := .group inner.format behavior }
@@ -3020,7 +3085,8 @@ private def interiorComments (ownership : CommentOwnership) (stx : Lean.Syntax)
             if dangling.contains comment then .dangling
             else if leading.contains comment then .leading else .leading
         some
-          { payload := Comments.payload ownership comment
+          {
+            payload := Comments.payload ownership comment
             range := comment.range
             placement := placement
             kind := comment.kind }
@@ -3050,7 +3116,8 @@ private def blockDanglingComments (ownership : CommentOwnership) (stx : Lean.Syn
     else
       some
         (owner,
-          { payload := Comments.payload ownership comment
+          {
+            payload := Comments.payload ownership comment
             range := comment.range
             placement := .dangling
             kind := comment.kind })
@@ -3121,7 +3188,8 @@ def command (source : String) (ownership : CommentOwnership) (stx : Lean.Syntax)
   -- is the tree all four walk, makes the assumption true for all four.
   if let some (range, alternative, expected, actual) := choiceDisagreement? source stripped then
     return .error
-        { category := .command
+        {
+          category := .command
           kind := stx.getKind
           range
           trace
@@ -3190,9 +3258,12 @@ alternatives: alternative 0 is {expected}, alternative {alternative} is {actual}
           if brokenBefore doc.start then BoundaryLayout.dedented else BoundaryLayout.elided)
   -- The magic trailing comma, collected only under `respect`: under `ignore` the trailing comma
   -- is inert layout evidence and no boundaries come of it.
-  let (explodedRanges, trailingCommaBoundaries) :=
+  let (commaRanges, trailingCommaBoundaries) :=
     if format.magicTrailingComma == .respect then collectTrailingCommaExplosions stripped
     else (#[], #[])
+  -- Not under the setting: a stranded field row is a correctness question, not a style one.
+  let (rowSpreadRanges, rowSpreadBoundaries) := collectRowSpreadStructInsts stripped
+  let explodedRanges := commaRanges ++ rowSpreadRanges
   -- What each boundary's terminal heads, for the hoist's privacy test (`Transformed.hoist?`).
   let headSpans := collectHeadSpans terminals stripped
   -- Inside an exploded collection the source-column pins are dropped: explosion and the pins
@@ -3202,42 +3273,44 @@ alternatives: alternative 0 is {expected}, alternative {alternative} is {actual}
     !explodedRanges.any fun range => range.start < start && start < range.stop
   let boundaryStarts : Array (Nat × BoundaryLayout) :=
     (collectUngroupedBodyStarts format.declarationBody source format.lineWidth stripped
-                                            (collectReturnTermStarts stripped)).map
-                                        (·, BoundaryLayout.flat) ++
-                                      (collectIndentedSequenceStarts stripped).map
-                                        (·, BoundaryLayout.hard) ++
-                                    (collectCdotStarts stripped).map (·, BoundaryLayout.flat) ++
-                                  nestedCommandStarts.map (·, BoundaryLayout.dedented) ++
-                                ctorDocStarts.map (·, BoundaryLayout.elided) ++
-                              docBoundaries ++
-                            attrDocBoundaries ++
-                          joined.map (·.start, BoundaryLayout.flat) ++
-                        (collectGuardBarBreaks source stripped).map (·, BoundaryLayout.hard) ++
-                      ((collectBraceAppArgStarts stripped).filterMap fun start =>
+                                              (collectReturnTermStarts stripped)).map
+                                          (·, BoundaryLayout.flat) ++
+                                        (collectIndentedSequenceStarts stripped).map
+                                          (·, BoundaryLayout.hard) ++
+                                      (collectCdotStarts stripped).map (·, BoundaryLayout.flat) ++
+                                    nestedCommandStarts.map (·, BoundaryLayout.dedented) ++
+                                  ctorDocStarts.map (·, BoundaryLayout.elided) ++
+                                docBoundaries ++
+                              attrDocBoundaries ++
+                            joined.map (·.start, BoundaryLayout.flat) ++
+                          (collectGuardBarBreaks source stripped).map (·, BoundaryLayout.hard) ++
+                        ((collectBraceAppArgStarts stripped).filterMap fun start =>
+                          if brokenBefore start then none else some (start, BoundaryLayout.flat)) ++
+                      ((collectReturnBraceStarts stripped).filterMap fun start =>
                         if brokenBefore start then none else some (start, BoundaryLayout.flat)) ++
-                    ((collectReturnBraceStarts stripped).filterMap fun start =>
-                      if brokenBefore start then none else some (start, BoundaryLayout.flat)) ++
-                  ((collectBraceInteriorBreaks source stripped).filter fun p =>
-                        outsideExploded p.1).map
-                    (fun p => (p.1, BoundaryLayout.columned p.2)) ++
-                ((collectStructInstFieldRows source stripped).filter fun p =>
-                  outsideExploded p.1) ++
-              ((collectBraceLiteralRows source stripped).filter fun p => outsideExploded p.1) ++
-            collectLetFamilyAlignments source stripped ++
-          unbreakableRunBoundaries source terminals unbreakableRuns ++
-        ((collectStructInstEllipses stripped).filterMap fun start =>
-          let broken :=
-            (terminals.filter (·.range.stop <= start)).back?.any fun previous =>
-              (slice source ⟨previous.range.stop, start⟩).contains '\n'
+                    ((collectBraceInteriorBreaks source stripped).filter fun p =>
+                          outsideExploded p.1).map
+                      (fun p => (p.1, BoundaryLayout.columned p.2)) ++
+                  ((collectStructInstFieldRows source stripped).filter fun p =>
+                    outsideExploded p.1) ++
+                ((collectBraceLiteralRows source stripped).filter fun p => outsideExploded p.1) ++
+              collectLetFamilyAlignments source stripped ++
+            unbreakableRunBoundaries source terminals unbreakableRuns ++
+          ((collectStructInstEllipses stripped).filterMap fun start =>
+            let broken :=
+              (terminals.filter (·.range.stop <= start)).back?.any fun previous =>
+                (slice source ⟨previous.range.stop, start⟩).contains '\n'
           if broken then some (start, BoundaryLayout.hard) else none) ++
-      trailingCommaBoundaries
+        trailingCommaBoundaries ++
+      rowSpreadBoundaries
   let commentFree := withoutTrivia stripped
   let (formattedSyntax, islands) := protectSourceData categories source commentFree
   -- Named before `formatCommand` reaches it. Both lookups this breaks fail with a message about
   -- a name nobody wrote, and the one that fires depends on which end is asked first.
   if let some (kind, suffix) := rootedKindNode? (← Lean.getEnv) formattedSyntax then
     return .error
-        { category := .command
+        {
+          category := .command
           kind := stx.getKind
           range := rootRange stx
           trace
@@ -3253,7 +3326,8 @@ Lean/Elab/Syntax.lean:465 did not. No formatter can be resolved for it. Write \
       islands.find? fun island =>
         terminals.any fun terminal => terminal.sourceSpelling == island.marker then
     return .error
-        { category := .command
+        {
+          category := .command
           kind := stx.getKind
           range := rootRange stx
           trace
@@ -3265,7 +3339,8 @@ cannot tell from the placeholder that protects {marker.range.start}:{marker.rang
   let degrade (detail : String) : Except FormatterFailure Document :=
     match sourceRange? stx with
     | some range =>
-      .ok {
+      .ok
+        {
           document := Doc.verbatim (slice source range)
           trace
           metrics :=
@@ -3273,7 +3348,8 @@ cannot tell from the placeholder that protects {marker.range.start}:{marker.rang
               verbatimCommands := 1 } }
     | none =>
       .error
-        { category := .command
+        {
+          category := .command
           kind := stx.getKind
           range := rootRange stx
           trace

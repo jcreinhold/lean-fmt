@@ -186,7 +186,8 @@ six defect maps (missing tail, overlapping, out-of-order, inverted source, inver
 output) are each rejected by the sourceMap gate. -/
 private def testMapNegative : IO Unit := do
   let base : FormatDraft :=
-    { text := "abc"
+    {
+      text := "abc"
       headerContract := #[]
       commentContract := #[]
       metrics := default

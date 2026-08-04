@@ -423,7 +423,8 @@ public def main (args : List String) : IO UInt32 := do
   let root ← repoRoot
   withTempDir fun work => do
       let ctx : Stream.Ctx :=
-        { root
+        {
+          root
           app := (root / ".lake" / "build" / "bin" / "lean-fmt").toString
           work }
       -- A buffer with one layout defect in its own command and a second command after it — the

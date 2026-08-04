@@ -973,7 +973,8 @@ def ResultCache.open? (workspace : Lake.Workspace) (application : System.FilePat
     let closureNodeDigests ← IO.mkRef { }
     let artifactHashByModule ← IO.mkRef { }
     return some
-        { root := cacheRoot
+        {
+          root := cacheRoot
           toolchain := s!"{Lean.versionString}\u0000{workspace.lakeEnv.lean.githash}"
           environment
           formatter
@@ -1019,14 +1020,16 @@ nothing prevents the tree changing in between. `LeanFmt.Cache.Spec` carries that
 rather than proving it away, and this is the code the hypothesis is about. -/
 private def observation (target : Project.SourceTarget) (closure : Digest) :
     Cache.Decision.Obs Unit Digest Digest String :=
-  { schema := resultCacheSchema
+  {
+    schema := resultCacheSchema
     sourceDigest := fun _ => Digest.ofString target.source
     closureDigest := fun _ => closure }
 
 /-- A stored entry in the shared decision's vocabulary. -/
 private def entryDecision (entry : CacheEntry) :
     Cache.Decision.Entry Unit SemanticAnalysis Digest Digest String :=
-  { mod := ()
+  {
+    mod := ()
     schema := entry.schema
     sourceDigest := entry.sourceDigest
     closureDigest := entry.closureDigest
@@ -1188,7 +1191,8 @@ def ResultCache.writeAll (cache : ResultCache) (project : Project.Snapshot)
         | some old => mergeAnalysis old.analysis analysis
         | none => analysis
       let entry : CacheEntry :=
-        { schema := resultCacheSchema
+        {
+          schema := resultCacheSchema
           identity := digest
           payload := analysisDigest analysis
           sourceDigest := expected.source
@@ -1210,7 +1214,8 @@ def ResultCache.writeAll (cache : ResultCache) (project : Project.Snapshot)
     let ordered :=
       entries.toList.toArray.map (·.2) |>.qsort (toString ·.identity < toString ·.identity)
     let index : CacheIndex :=
-      { schema := resultCacheSchema
+      {
+        schema := resultCacheSchema
         base := baseDigest cache
         entries := ordered }
     writeIndexAtomic (indexPath cache) index

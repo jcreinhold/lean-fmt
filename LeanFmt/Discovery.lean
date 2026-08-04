@@ -399,7 +399,8 @@ def run (root : FilePath) (explicit? : Option FilePath) : IO Discovery := do
         layers := layers.push layer
         ignoreSources := ignoreSources.push layer.origin
   let seed : Discovery :=
-    { root
+    {
+      root
       sources := #[]
       configs := #[]
       fallback
