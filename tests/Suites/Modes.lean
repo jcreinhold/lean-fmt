@@ -138,6 +138,14 @@ private def paths (report : Lean.Json) : List String :=
   (((field report "files").getArr?.toOption.getD #[]).toList.map fun file =>
     (file.getObjValAs? String "path").toOption.getD "")
 
+/-- Paths of the report's files carrying one of `dirtyStatuses` — the offenders a "the tree is
+clean" assertion names, instead of pointing at an exit code and leaving the JSON unread. -/
+private def pathsWithStatus (report : Lean.Json) (dirtyStatuses : List String) : List String :=
+  ((field report "files").getArr?.toOption.getD #[]).toList.filterMap fun file =>
+    let status := (file.getObjValAs? String "status").toOption.getD ""
+    if dirtyStatuses.contains status then some ((file.getObjValAs? String "path").toOption.getD "")
+    else none
+
 /-- Temp files orphaned beside a target: the `.lean-fmt-tmp-*` family the crash tests count. -/
 private def tmpOrphans (dir : System.FilePath) (stem : String) : IO (Array String) := do
   return ((← dir.readDir).map (·.fileName)).filter (·.startsWith stem)
@@ -517,20 +525,30 @@ private def testDownstream (ctx : Ctx) : IO Unit := do
 
 /-- The repository dogfoods the organizer: the committed tree is always `organize --check`
 clean, so header drift — a misplaced `import all`, an unsorted row, a bucket on the wrong side
-of a blank line — fails CI the day it lands rather than surfacing in someone's next `organize`. -/
+of a blank line — fails CI the day it lands rather than surfacing in someone's next `organize`.
+The assertion names the offending files; anything but exit 0/1 carries its stderr. -/
 private def testOrganizeSelf (ctx : Ctx) : IO Unit := do
-  let report ←
-    runJson ctx 0 "organize self" #["organize", "--check", "--root", ".", "--json", "--no-cache"]
-  ensureJsonAt report [.field "changed"] (Lean.toJson (0 : Nat)) "the tree is not organize-clean"
+  let result ←
+    runProc ctx.app #["organize", "--check", "--root", ".", "--json", "--no-cache"] (cwd? :=
+        some ctx.root) (timeoutMs := some 600000)
+  ensure (result.exitCode == 0 || result.exitCode == 1)
+      s!"organize self: unexpected exit {result.exitCode}\nstderr:\n{result.stderr}"
+  let report ← parseJson result.stdout "organize self"
+  ensureEq "the tree is not organize-clean" [] (pathsWithStatus report ["would-organize", "broken"])
 
 /-- The repository dogfoods the formatter: the committed tree is always `format --check` clean,
 so layout drift — and every formatter defect that would refuse one of this repository's own
 files — fails CI the day it lands. The validator refusing a file is the loudest bug report the
-formatter has: nine of these files were unformattable until the offside pins learned to yield. -/
+formatter has: nine of these files were unformattable until the offside pins learned to yield.
+The assertion names the offending files; anything but exit 0/1 carries its stderr. -/
 private def testFormatSelf (ctx : Ctx) : IO Unit := do
-  let report ←
-    runJson ctx 0 "format self" #["format", "--check", "--root", ".", "--json", "--no-cache"]
-  ensureJsonAt report [.field "changed"] (Lean.toJson (0 : Nat)) "the tree is not format-clean"
+  let result ←
+    runProc ctx.app #["format", "--check", "--root", ".", "--json", "--no-cache"] (cwd? :=
+        some ctx.root) (timeoutMs := some 600000)
+  ensure (result.exitCode == 0 || result.exitCode == 1)
+      s!"format self: unexpected exit {result.exitCode}\nstderr:\n{result.stderr}"
+  let report ← parseJson result.stdout "format self"
+  ensureEq "the tree is not format-clean" [] (pathsWithStatus report ["would-format", "broken"])
   let failures := ((field report "infrastructureFailures").getArr?.toOption.getD #[]).size
   ensureEq "the formatter refused one of this repository's own files" 0 failures
 
