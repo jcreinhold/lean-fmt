@@ -2268,7 +2268,7 @@ private structure OrganizeOutcome where
 leaves the entry at `.syntax` tier, so a `.semantic` selection misses and recomputes; "1" makes
 the stored analysis serve every non-`fix` demand.
 
-Default-on, measured (2026-07-30, kan-proofs 8-file mathlib-closure batch, min of two runs,
+Default-on, measured (2026-07-30, local repo 8-file mathlib-closure batch, min of two runs,
 summed `exact_child_ms`): capture "0" 8158 ms vs capture "1" 8052 ms — the diagnostics capture
 is noise beside elaboration, so the one elaboration serves every later command it can. The
 occurrence fold (capture "2") is deliberately not paid: only `fix` consumes it, and organize's
