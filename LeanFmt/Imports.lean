@@ -42,11 +42,11 @@ open LeanFmt.Internal (Finding Fix Edit Applicability Severity SourceRange)
 
 `grouped` (the default) is the conservative rewrite: duplicates removed and each
 blank-line/comment-delimited group sorted, no line ever crossing a group boundary. `canonical`
-is the kan-proofs header style: imports re-bucketed by modifier (`public import`,
+is the proofs header style: imports re-bucketed by modifier (`public import`,
 `public meta import`, `import all`, `import`, `meta import` — each `meta` variant directly
 after its non-`meta` counterpart), each bucket internally ordered by prefix sub-block
 (`import-groups`, then everything else) and alphabetically within a sub-block. Blank lines
-separate buckets only; sub-blocks are contiguous — that is the kan-proofs script's pinned
+separate buckets only; sub-blocks are contiguous — that is the proofs script's pinned
 behavior (its own test suite keeps a contiguous Lean/Mathlib/local run unchanged). `canonical`
 moves lines across blank-line boundaries by design, which is why it is opt-in. The type lives here, not in `Config`, because the bucket order *is* the layout:
 the module that implements both layouts owns the decision. -/
@@ -370,7 +370,7 @@ def redundantFindings (header : HeaderModel) (covers : Lean.Name → Lean.Name �
 
 /-! ## The canonical layout (`import-layout = "canonical"`)
 
-The kan-proofs header style: one rewrite of the whole import region into modifier buckets,
+The proofs header style: one rewrite of the whole import region into modifier buckets,
 prefix sub-blocks, and alphabetical order. Unlike `grouped`, lines move across blank-line
 boundaries, so the safety rule is inverted: anything the reorder cannot account for (a block
 comment, non-comment trailing text) refuses the file outright, and a standalone comment line

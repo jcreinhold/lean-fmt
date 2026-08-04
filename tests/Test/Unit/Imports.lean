@@ -164,7 +164,7 @@ private def testImports : IO Unit := do
   ensure (prelude.hasPrelude && prelude.imports.map (·.module) == #[`Foo.A])
       "the prelude header model does not match the written imports"
 
-/-- The canonical layout (`import-layout = "canonical"`), pinned against the kan-proofs script's
+/-- The canonical layout (`import-layout = "canonical"`), pinned against the proofs script's
 own test suite — bucket order, contiguous sub-blocks, trailing comments, idempotence — plus the
 refusal cases the script never faces because it never moves a line across a comment. -/
 private def testCanonicalLayout : IO Unit := do
@@ -178,19 +178,19 @@ private def testCanonicalLayout : IO Unit := do
       "canonical layout did not sort within a bucket"
   -- Sub-blocks order Lean, Mathlib, then other — contiguous, no blank lines between them
   -- (the script's own suite pins contiguous sub-blocks).
-  let subblocks := "import KanProofs.Foo\nimport Mathlib.X\nimport Lean\n\ndef x := 0\n"
+  let subblocks := "import Proofs.Foo\nimport Mathlib.X\nimport Lean\n\ndef x := 0\n"
   ensure
-      ((← canon subblocks) == "import Lean\nimport Mathlib.X\nimport KanProofs.Foo\n\ndef x := 0\n")
+      ((← canon subblocks) == "import Lean\nimport Mathlib.X\nimport Proofs.Foo\n\ndef x := 0\n")
       "canonical layout did not order Lean/Mathlib/other sub-blocks contiguously"
   -- Buckets separate with one blank line: `public import`, `import all`, `import`; the `module`
   -- marker and the body are preserved with one blank line on each side of the region.
   let buckets :=
-    "module\nimport KanProofs.Z\npublic import KanProofs.A\nimport all KanProofs.M\n\
+    "module\nimport Proofs.Z\npublic import Proofs.A\nimport all Proofs.M\n\
       import Mathlib.B\npublic import Mathlib.A\n\nnoncomputable section\n"
   ensure
       ((← canon buckets) ==
-        "module\n\npublic import Mathlib.A\npublic import KanProofs.A\n\nimport all KanProofs.M\n\n\
-        import Mathlib.B\nimport KanProofs.Z\n\nnoncomputable section\n")
+        "module\n\npublic import Mathlib.A\npublic import Proofs.A\n\nimport all Proofs.M\n\n\
+        import Mathlib.B\nimport Proofs.Z\n\nnoncomputable section\n")
       "canonical layout did not separate the modifier buckets"
   -- A `meta` variant sits directly after its non-`meta` counterpart, in its own bucket.
   let metaCase :=
