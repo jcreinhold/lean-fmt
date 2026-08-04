@@ -186,8 +186,7 @@ private def testDoc : IO Unit := do
   ensure (renderText hugeWidth regrouped == "a\nb c")
       "a native hard line did not re-group its fitting tail"
   let forced : Doc := .group (.text "a" ++ .hard ++ .text "b" ++ .line " " ++ .text "c")
-  ensure (renderText hugeWidth forced == "a\nb\nc")
-      "a custom hard break re-grouped its tail"
+  ensure (renderText hugeWidth forced == "a\nb\nc") "a custom hard break re-grouped its tail"
   -- The entry column enters the first row's fit measurement, as in the native machine: the same
   -- group that flattens at column zero breaks when one column is already spent.
   let entry : Doc := .group (.text "ab" ++ .line " " ++ .text "cd")
@@ -497,7 +496,8 @@ private def testAnchor : IO Unit := do
   let both : Doc :=
     .group
       (.text "a " ++
-        .anchor (.text "b " ++ .anchor (.text "c" ++ .line " " ++ .text "d") ++ .line " " ++ .text "e"))
+        .anchor
+          (.text "b " ++ .anchor (.text "c" ++ .line " " ++ .text "d") ++ .line " " ++ .text "e"))
   ensure (renderText 3 both == "a b c\n    d\n  e") "a nested anchor did not re-capture"
   -- A break-first body captured nothing: rejected at construction-checking time.
   ensure (Doc.wellFormed (.anchor (.text "x"))) "a text-first anchor was rejected"
@@ -549,12 +549,16 @@ private structure OracleState where
   column : Nat := 0
   tagEvents : Nat := 0
 
-private instance : Std.Format.MonadPrettyFormat (StateM OracleState) where
+private instance : Std.Format.MonadPrettyFormat (StateM OracleState)
+    where
   pushOutput value :=
     modify fun state =>
-      { state with out := state.out ++ value, column := state.column + value.length }
+      { state with
+        out := state.out ++ value, column := state.column + value.length }
   pushNewline indent :=
-    modify fun state => { state with out := state.out ++ "\n".pushn ' ' indent, column := indent }
+    modify fun state =>
+      { state with
+        out := state.out ++ "\n".pushn ' ' indent, column := indent }
   currColumn := return (← get).column
   startTag _ := modify fun state => { state with tagEvents := state.tagEvents + 1 }
   endTags count := modify fun state => { state with tagEvents := state.tagEvents + count }
@@ -635,7 +639,8 @@ flattening. The generated trees reach these shapes only by luck; these must hit 
 private def oracleCorners : Array (String × Std.Format) :=
   #[("root-disallow-hard", .text "a\nb"),
     ("hard-regroups-tail", .group (.text "a\nb" ++ .line ++ .text "c")),
-    ("fill-in-flattened", .group (.text "x" ++ .line ++ (.group (.text "y" ++ .line ++ .text "z") .fill))),
+    ("fill-in-flattened",
+      .group (.text "x" ++ .line ++ (.group (.text "y" ++ .line ++ .text "z") .fill))),
     ("align-false-flat", .group (.text "ab" ++ .align false ++ .text "cd")),
     ("align-false-phantom",
       .group (.align false ++ .text "aaaa" ++ .line ++ .text "bbbb") ++ .text "cccccccc"),
@@ -644,9 +649,26 @@ private def oracleCorners : Array (String × Std.Format) :=
     ("tag-around-group", .tag 7 (.group (.text "aa" ++ .line ++ .text "bb"))),
     ("multiline-denies-flatten", .group (.text "aa\nbb" ++ .line ++ .text "cc")),
     ("fill-wraps-tail",
-      .group (.text "call" ++ .line ++ (.group (.text "aaa" ++ .line ++ .text "bbb" ++ .line ++ .text "ccc") .fill))),
+      .group
+        (.text "call" ++ .line ++
+          (.group (.text "aaa" ++ .line ++ .text "bbb" ++ .line ++ .text "ccc") .fill))),
     ("empty-text-atom", .group (.text "" ++ .line ++ .text "x")),
-    ("align-at-root", .align true ++ .text "x")]
+    ("align-at-root", .align true ++ .text "x"),
+    -- The Rotate.lean case: a fill lookahead whose remainder is a group item with a hard line in
+    -- its flat interior. The machine measures the group item flat, so the hard line is a
+    -- *flattened* hard line and denies the fill's flatten even though the candidate fits.
+    ("fill-lookahead-flattened-hard",
+      .group (.text "aa" ++ .line ++ .group (.text "bbb\nccc" ++ .text "dd") .allOrNone) .fill),
+    -- Same denial one level down: the hard line sits inside a nested group inside the fill
+    -- candidate's broken walk, behind an ordinary line that would otherwise stop it.
+    ("fill-lookahead-nested-hard",
+      .group
+        (.text "aa" ++ .line ++
+          (.group (.text "b" ++ .line ++ .group (.text "ccc\nddd") .fill) .allOrNone))
+        .fill),
+    -- An allOrNone candidate whose own flat interior has the hard line behind a nested group.
+    ("group-candidate-nested-hard",
+      .group (.text "aa" ++ .line ++ .group (.text "bbb\nccc") .fill))]
 
 private def testNativeOracle : IO Unit := do
   let widths := [0, 1, 5, 20, 80, hugeWidth]
@@ -655,18 +677,17 @@ private def testNativeOracle : IO Unit := do
     let (format, nextSeed) := genFormat 5 seed
     seed := nextRand nextSeed
     for width in widths do
-      for column in [0, 5] do
-        for indent in [0, 3] do
+      for column in [0, 5]do
+        for indent in [0, 3]do
           oracleAgrees s!"generated {i} (seed {seed})" format width indent column
   for (label, format) in oracleCorners do
     for width in widths do
-      for column in [0, 3] do
+      for column in [0, 3]do
         oracleAgrees s!"corner {label}" format width column 0
 
 /-- The cases this module contributes to the unit runner, in run order. -/
 public def cases : Array Case :=
-  #[{ name := "testDoc", run := testDoc },
-    { name := "testAnchor", run := testAnchor },
+  #[{ name := "testDoc", run := testDoc }, { name := "testAnchor", run := testAnchor },
     { name := "testNativeOracle", run := testNativeOracle },
     { name := "testChoiceVerification", run := testChoiceVerification },
     { name := "testAlignmentSequences", run := testAlignmentSequences },

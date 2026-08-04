@@ -19,9 +19,16 @@
 #
 # Do not add `force-exclude` here. It applies exclusion to explicitly named paths, and the suites
 # name fixture paths on purpose.
+#
+# `LeanFmt/NativeFormat.lean` is vendored third-party code: the boundary suite's
+# `vendored-provenance` case pins its vendored region byte-identical to the pinned toolchain's
+# `Init/Data/Format/Basic.lean`, which is not canonically laid out under this configuration.
+# Formatting it would rewrite the very bytes the tripwire compares, so the formatter leaves the
+# whole file alone and the tripwire guards its content instead.
 exclude = [
   "docs/**",
   "tests/fixtures/**",
+  "LeanFmt/NativeFormat.lean",
 ]
 
 # Settings that change the bytes a run writes. Every key here is part of the cache identity.

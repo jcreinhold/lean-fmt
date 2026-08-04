@@ -59,7 +59,12 @@ private def testMetrics (ctx : Ctx) : IO Unit := do
   ensure (metric "explicitDocuments" > 0) "adapter: explicitDocuments"
   ensure (metric "descriptorDocuments" > 0) "adapter: descriptorDocuments"
   ensureEq "adapter: commentOwners" 3 (metric "commentOwners")
-  ensure (metric "nativeEvents" > 0) "adapter: nativeEvents"
+  -- `nativeEvents` counted tag events from the `Doc.registered` leaves that command output used
+  -- to be wrapped in. Since LAY-NATIVE-LOWERING routes commands through `lowerNative`, no
+  -- registered leaf remains on this workload's command path and the count is exactly zero — a
+  -- nonzero value now means a registered leaf crept back onto it, or a native `tag` survived a
+  -- transform that was expected to consume it.
+  ensureEq "adapter: nativeEvents" 0 (metric "nativeEvents")
   ensureJsonAt canonical [.field "validation", .field "structuralComparisons"]
       (Lean.toJson (1 : Nat)) "adapter"
   ensureJsonAt canonical [.field "validation", .field "idempotencePasses"] (Lean.toJson (1 : Nat))

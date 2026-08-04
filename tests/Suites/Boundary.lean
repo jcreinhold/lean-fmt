@@ -273,8 +273,7 @@ private def testPackageIdentity (root : System.FilePath) : IO Unit := do
 against a `<past end>` marker so a truncation is as visible as a changed token. -/
 private def firstRegionDrift (golden region : List String) : Option (Nat × String × String) :=
   go 0 golden region
-where
-  go (index : Nat) : List String → List String → Option (Nat × String × String)
+where go (index : Nat) : List String → List String → Option (Nat × String × String)
     | g :: gs, r :: rs => if g == r then go (index + 1) gs rs else some (index, g, r)
     | [], [] => none
     | [], r :: _ => some (index, "<past end>", r)
@@ -308,10 +307,12 @@ private def testVendoredProvenance (root : System.FilePath) : IO Unit := do
   let leanPrefix ← expectExit 0 "lean --print-prefix" "lean" #["--print-prefix"] (cwd? := some root)
   let upstreamPath :=
     (System.FilePath.mk leanPrefix.stdout.trimAscii.copy) / "src" / "lean" / "Init" / "Data" /
-      "Format" / "Basic.lean"
+        "Format" /
+      "Basic.lean"
   let upstream ← IO.FS.readFile upstreamPath
   let toolchain := (← readRepoFile root "lean-toolchain").trimAscii
-  let golden := (← readRepoFile root "tests/fixtures/boundary/native-format-region.txt").splitOn "\n"
+  let golden :=
+    (← readRepoFile root "tests/fixtures/boundary/native-format-region.txt").splitOn "\n"
   let some header := golden[0]?
     | throw <| IO.userError "vendored region fixture is empty"
   ensure (header == s!"# toolchain: {toolchain}")
@@ -324,18 +325,18 @@ private def testVendoredProvenance (root : System.FilePath) : IO Unit := do
     | lines => lines.reverse
   match firstRegionDrift goldenRegion region with
   | some (index, goldenLine, upstreamLine) =>
-    throw <| IO.userError
-      s!"unreviewed drift in the vendored `Std.Format` region at region line {index}:\n\
+    throw <|
+        IO.userError
+          s!"unreviewed drift in the vendored `Std.Format` region at region line {index}:\n\
       reviewed: {goldenLine}\nupstream: {upstreamLine}"
-  | none => pure ()
+  | none =>
+    pure ()
   -- Discrimination: a changed fixture must fail. A dropped line, a changed token, and a truncated
   -- upstream are each caught; a comparator that cannot fail would report a healthy tree exactly
   -- as convincingly as `true` does.
-  ensure
-      (firstRegionDrift (goldenRegion.take 10 ++ goldenRegion.drop 11) region).isSome
+  ensure (firstRegionDrift (goldenRegion.take 10 ++ goldenRegion.drop 11) region).isSome
       "the provenance comparator does not discriminate a dropped fixture line"
-  ensure
-      (firstRegionDrift (goldenRegion.map (· ++ " ")) region).isSome
+  ensure (firstRegionDrift (goldenRegion.map (· ++ " ")) region).isSome
       "the provenance comparator does not discriminate a changed fixture token"
   ensure (firstRegionDrift goldenRegion (region.take 20)).isSome
       "the provenance comparator does not discriminate a truncated upstream region"

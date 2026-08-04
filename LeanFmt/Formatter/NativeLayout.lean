@@ -3199,6 +3199,39 @@ private inductive TransformFailure where
 private def TransformFailure.detail : TransformFailure → String
   | .incomplete detail | .unadapted detail => detail
 
+/- Lower an adapted native format onto `Doc`'s native fragment, constructor by constructor, with no
+grammar evidence and no structural annotations: nothing here reads the source, the terminals, or a
+constraint; the transform above already spent all of that. The mapping is the oracle's `toDoc`
+(`tests/Test/Unit/Layout.lean`), so every lowered document renders byte- and tag-event-identically
+to the `Std.Format` it came from at any width, indent, and entry column. A newline-bearing `text`
+is `nativeText`, the constructor with the native multiline semantics; both flatten behaviors and
+both align flags map one-for-one.
+
+The routing is byte-safe at the command boundary for two reasons, both about what surrounds a
+command document in whole-module composition (`Analysis.lean`): no enclosing `group` spans a
+command document — the assembly is `cat`/`mark`/`nest` only, so the opaque fit boundary
+`Doc.registered` used to be was never observed — and every command is followed by zero-width
+trailing trivia and a `Doc.hard`, so a trailing group's fit candidate inside the lowered format
+measures the same suffix the native run measured: the rest of the format and nothing else. The
+top level of the format also keeps the registered run's root semantics, because the only group
+above it is the render's own root, which never flattens.
+
+Total over the eight constructors and both flatten behaviors; the one check after it,
+`Doc.wellFormed`, is the typed diagnostic for the impossible state (a lowerer that produced a
+malformed document), and it refuses rather than degrading to verbatim source. -/
+private partial def lowerNative : Std.Format → Doc
+  | .nil => .empty
+  | .line => .line " "
+  | .align force => .align force
+  | .text value => if value.contains '\n' then .nativeText value else .text value
+  | .nest indent body => .nest indent (lowerNative body)
+  | .append left right => lowerNative left ++ lowerNative right
+  | .group body behavior =>
+    match behavior with
+    | .allOrNone => .group (lowerNative body)
+    | .fill => .fill (lowerNative body)
+  | .tag tag body => .tag tag (lowerNative body)
+
 private def transform (source : String) (terminals : Array Terminal)
     (comments : Array InteriorComment) (blockDangling : Array (SourceRange × InteriorComment))
     (islands : Array ExactIsland) (constraints : Array OffsideConstraint)
@@ -3613,7 +3646,13 @@ cannot tell from the placeholder that protects {marker.range.start}:{marker.rang
       transform source terminals comments blockDangling islands constraints boundaryStarts joined
         nestedCommandRanges (explodedRanges ++ closeBraceRanges) headSpans baseIndent native with
     | .ok (native, metrics) =>
-      return .ok { document := Doc.registered native, trace, metrics }
+      let document := lowerNative native
+      if document.wellFormed then
+        return .ok { document, trace, metrics }
+      else
+        return refuse
+            "the lowered document is not well formed: a lowerer defect produced a constructor \
+`Doc.text` with a newline or a `Doc.line` with a multiline flat spelling"
     | .error (.incomplete detail) =>
       return degrade detail
     | .error (.unadapted detail) =>

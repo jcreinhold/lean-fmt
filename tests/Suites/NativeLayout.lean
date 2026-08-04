@@ -604,8 +604,8 @@ private def testBracketedSequences (ctx : Ctx) : IO Unit := do
   ensureEq "  ... and its closing brace takes its own row" 1 (countExact once "}")
   let twice ←
     expectExit 0 "bracketed-sequences second pass" ctx.application
-        #["format", "-", "--stdin-filename",
-          "tests/fixtures/native-layout/BracketedSequences.lean", "--root", "."]
+        #["format", "-", "--stdin-filename", "tests/fixtures/native-layout/BracketedSequences.lean",
+          "--root", "."]
         (input? := some once) (cwd? := some ctx.root)
   ensureEq "bracketed sequences are not idempotent" once twice.stdout
   let config := ctx.work / "width-20-bracketed.toml"
@@ -618,14 +618,15 @@ private def testBracketedSequences (ctx : Ctx) : IO Unit := do
   let report ← parseJson result.stdout "bracketed-sequences at 20"
   let file := (jsonAt? report [.field "files", .index 0]).getD .null
   let status := (file.getObjValAs? String "status").toOption.getD ""
-  ensureEq "bracketed sequences stopped refusing at width 20; prompt 10 must recharacterize \
-      this case" "infrastructure-failure" status
+  ensureEq
+      "bracketed sequences stopped refusing at width 20; prompt 10 must recharacterize \
+      this case"
+      "infrastructure-failure" status
   let diagnostics := ((jsonAt? file [.field "diagnostics"]).bind (·.getArr?.toOption)).getD #[]
   let detail := "\n".intercalate (diagnostics.toList.map (·.compress))
   ensureContains detail "ValidationGate.diagnostics"
       "the width-20 refusal is not the diagnostics gate"
-  ensureContains detail "unexpected identifier; expected '}'"
-      "the width-20 refusal changed shape"
+  ensureContains detail "unexpected identifier; expected '}'" "the width-20 refusal changed shape"
   ensureEq "only one bracketed family refused" 2 ((detail.splitOn "unsolved goals").length - 1)
 
 end NativeLayout

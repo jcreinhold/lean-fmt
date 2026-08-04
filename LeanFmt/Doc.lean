@@ -55,6 +55,12 @@ namespace LeanFmt.Internal
 private structure LineMeasure where
   width : Nat
   boundary : Bool
+  /-- The machine's `foundFlattenedHardLine`: a hard line this measure would flatten if its group
+  flattened. Set only on measures taken flat — a broken measure stops *at* the hard line instead —
+  except through an unexpanded `group`/`fill` node, whose interior the machine always measures
+  flat. A group decision denies the flatten when its candidate's own measure carries this, for
+  both flatten behaviors. -/
+  flattenedHard : Bool
   /-- The first comment text between here and the next forced break, if any. Renderers match it
   against the pinned phrases when a group decision is made; one entry suffices because a line
   comment is always the last comment on its line, and stacked block comments are the rare case the
@@ -68,15 +74,15 @@ private structure LineMeasure where
 namespace LineMeasure
 
 def empty : LineMeasure :=
-  ⟨0, false, none, false⟩
+  ⟨0, false, false, none, false⟩
 
 /-- Compose two adjacent measures. A hard stop on the left ends the walk, so the right side —
 contextual or not — is unreachable; otherwise contextuality propagates. -/
 def append (left right : LineMeasure) : LineMeasure :=
   if left.boundary then left
   else
-    ⟨left.width + right.width, right.boundary, left.comment? <|> right.comment?,
-      left.contextual || right.contextual⟩
+    ⟨left.width + right.width, right.boundary, left.flattenedHard || right.flattenedHard,
+      left.comment? <|> right.comment?, left.contextual || right.contextual⟩
 
 end LineMeasure
 
@@ -143,7 +149,13 @@ private def lastLine (value : String) : String :=
   | none => value
 
 private def literalMeasure (value : String) : LineMeasure :=
-  if spansLines value then ⟨width (firstLine value), true, none, false⟩ else ⟨width value, false, none, false⟩
+  if spansLines value then ⟨width (firstLine value), true, true, none, false⟩
+  else ⟨width value, false, false, none, false⟩
+
+/-- The broken-mode column of a literal: it stops at the newline, so nothing is flattened over it
+and `flattenedHard` stays clear. -/
+private def literalBrokenMeasure (value : String) : LineMeasure :=
+  ⟨width (firstLine value), spansLines value, false, none, false⟩
 
 /-- The empty document. -/
 def empty : Doc :=
@@ -152,41 +164,39 @@ def empty : Doc :=
 /-- Literal single-line text. A newline makes the resulting document ill-formed; a newline-bearing
 literal with native re-indentation is `nativeText`. -/
 def text (value : String) : Doc :=
-  let measure := literalMeasure value
-  .mk (.text value) measure measure 1 (!spansLines value)
+  .mk (.text value) (literalMeasure value) (literalBrokenMeasure value) 1 (!spansLines value)
 
 /-- Newline-bearing literal text with native semantics: each embedded newline breaks to the item's
 current indent and re-groups the remainder of the enclosing group. This is what native
 `Std.Format.text` lowers to; `verbatim` is the annotation-tier literal that owns its columns. -/
 def nativeText (value : String) : Doc :=
-  let measure := literalMeasure value
-  .mk (.nativeText value) measure measure 1 true
+  .mk (.nativeText value) (literalMeasure value) (literalBrokenMeasure value) 1 true
 
 /-- A single-line comment payload. Renders exactly like `text`, but carries a zero fit measure and
 discloses its text, so no group decision is driven by a comment's width while a pinned comment can
 still hold its line flat. -/
 def comment (value : String) : Doc :=
-  .mk (.comment value) ⟨0, false, some value, false⟩ ⟨0, false, some value, false⟩ 1 (!spansLines value)
+  .mk (.comment value) ⟨0, false, false, some value, false⟩ ⟨0, false, false, some value, false⟩ 1
+    (!spansLines value)
 
 /-- A break opportunity with its exact flat spelling. A newline in the flat spelling is rejected.
 The native `Std.Format.line` is `line " "`. -/
 def line (flat : String) : Doc :=
-  .mk (.line flat) (literalMeasure flat) ⟨0, true, none, false⟩ 1 (!spansLines flat)
+  .mk (.line flat) (literalMeasure flat) ⟨0, true, false, none, false⟩ 1 (!spansLines flat)
 
 /-- An unconditional newline at the current indentation. Annotation-tier: the enclosing group
 stays broken (native re-grouping belongs to `nativeText`, which is what native `text` lowers to). -/
 def hard : Doc :=
-  .mk .hard ⟨0, true, none, false⟩ ⟨0, true, none, false⟩ 1 true
+  .mk .hard ⟨0, true, true, none, false⟩ ⟨0, true, false, none, false⟩ 1 true
 
 /-- One empty line followed by the current indentation. Unlike two adjacent `hard` nodes, this does
 not materialize indentation whitespace on the empty line. -/
 def blank : Doc :=
-  .mk .blank ⟨0, true, none, false⟩ ⟨0, true, none, false⟩ 1 true
+  .mk .blank ⟨0, true, true, none, false⟩ ⟨0, true, false, none, false⟩ 1 true
 
 /-- Literal text that may span lines. Interior lines are never re-indented. -/
 def verbatim (value : String) : Doc :=
-  let measure := literalMeasure value
-  .mk (.verbatim value) measure measure 1 true
+  .mk (.verbatim value) (literalMeasure value) (literalBrokenMeasure value) 1 true
 
 /-- Concatenate two documents. -/
 def cat (left right : Doc) : Doc :=
@@ -215,7 +225,7 @@ def fill (body : Doc) : Doc :=
 `force = false` renders as nothing inside a flattened group. Its measure depends on the decision
 column, so it is the one contextual leaf. -/
 def align (force : Bool) : Doc :=
-  .mk (.align force) ⟨0, false, none, true⟩ ⟨0, false, none, true⟩ 1 true
+  .mk (.align force) ⟨0, false, false, none, true⟩ ⟨0, false, false, none, true⟩ 1 true
 
 /-- A native tag: invisible to fit, invisible in the default output, recorded as tag events for a
 tag-aware consumer. -/
@@ -232,8 +242,7 @@ private partial def beginsWithBreak (document : Doc) : Bool :=
   | .nest _ body | .group body | .fill body | .tag _ body | .anchor body | .mark _ body =>
     beginsWithBreak body
   | _ => false
-where
-  isEmptyDoc (document : Doc) : Bool :=
+where isEmptyDoc (document : Doc) : Bool :=
     match document.kind with
     | .empty => true
     | .cat left right => isEmptyDoc left && isEmptyDoc right
@@ -257,7 +266,7 @@ def mark (source : SourceRange) (body : Doc) : Doc :=
 at render time through the vendored machine and forms a fit boundary for surrounding custom
 groups. -/
 def registered (format : Std.Format) : Doc :=
-  .mk (.registered format) ⟨0, true, none, true⟩ ⟨0, true, none, true⟩ 1 true
+  .mk (.registered format) ⟨0, true, true, none, true⟩ ⟨0, true, false, none, true⟩ 1 true
 
 end Doc
 
@@ -407,22 +416,20 @@ walk where it would break. `m` is the machine's align allowance; `flatten` the m
 private partial def measureContextual : Doc → Bool → Int → Nat → NativeFormat.SpaceResult
   | doc, flatten, m, w =>
     match doc.kind with
-    | .empty => {}
-    | .comment _ => {}
+    | .empty => { }
+    | .comment _ => { }
     | .hard | .blank => { foundLine := true }
     | .registered _ => { foundLine := true }
     | .line _ => if flatten then { space := 1 } else { foundLine := true }
     | .align force =>
-      if flatten && !force then {}
-      else if w < m then { space := (m - w).toNat }
-      else { foundLine := true }
+      if flatten && !force then { }
+      else if w < m then { space := (m - w).toNat } else { foundLine := true }
     | .text value | .nativeText value | .verbatim value =>
       let first := Doc.firstLine value
       { foundLine := Doc.spansLines value,
         foundFlattenedHardLine := flatten && Doc.spansLines value, space := Doc.width first }
     | .cat left right =>
-      NativeFormat.merge w (measureContextual left flatten m w)
-        (measureContextual right flatten m)
+      NativeFormat.merge w (measureContextual left flatten m w) (measureContextual right flatten m)
     | .nest n body => measureContextual body flatten (m - n) w
     | .group body => measureContextual body true m w
     | .fill body => measureContextual body true m w
@@ -434,7 +441,7 @@ private partial def measureContextual : Doc → Bool → Int → Nat → NativeF
 entry the allowance is the machine's `w + col - indent`; the walk stops at the first hard stop. -/
 private partial def measureEntries (decisionColumn : Nat) (w : Nat) (flatten : Bool) :
     Items → NativeFormat.SpaceResult
-  | .nil => {}
+  | .nil => { }
   | .cons entry _ _ rest =>
     match entry with
     | .closeMark .. => measureEntries decisionColumn w flatten rest
@@ -442,23 +449,26 @@ private partial def measureEntries (decisionColumn : Nat) (w : Nat) (flatten : B
       let itemResult : NativeFormat.SpaceResult :=
         if !doc.flatMeasure.contextual then
           let measure := if flatten then doc.flatMeasure else doc.brokenMeasure
-          { foundLine := measure.boundary, foundFlattenedHardLine := flatten && measure.boundary,
+          { foundLine := measure.boundary, foundFlattenedHardLine := measure.flattenedHard,
             space := measure.width }
-        else
-          measureContextual doc flatten (w + decisionColumn - indent) w
+        else measureContextual doc flatten (w + decisionColumn - indent) w
       NativeFormat.merge w itemResult fun w' => measureEntries decisionColumn w' flatten rest
 
 private partial def measureWork (decisionColumn : Nat) (w : Nat) : Work → NativeFormat.SpaceResult
-  | .empty => {}
+  | .empty => { }
   | .more group _ rest =>
-    NativeFormat.merge w
-      (measureEntries decisionColumn w group.fla.shouldFlatten group.items)
+    NativeFormat.merge w (measureEntries decisionColumn w group.fla.shouldFlatten group.items)
       fun w' => measureWork decisionColumn w' rest
 
 /-- Push a group for decision: the vendored machine's `pushGroup`. The candidate measures its
 entries flat for allOrNone and broken (up to the first break) for fill, merged with the whole
-enclosing remainder; a flattened hard line in an allOrNone candidate denies the fit; a pinned
-comment holds the row flat regardless. Returns the work list with the decided group on top. -/
+enclosing remainder. A flattened hard line anywhere in the candidate denies the fit, for both
+behaviors: an allOrNone candidate is measured flat, so any interior hard line is flattened; a
+fill candidate is measured broken, but an unexpanded `group`/`fill` item inside it is measured
+flat — a hard line in *its* interior is flattened too, and denies the fill's flatten just the
+same (`Mathlib/Logic/Equiv/Fin/Rotate.lean`'s `haveI := …;` sequence is the measured case). A
+pinned comment holds the row flat regardless. Returns the work list with the decided group on
+top. -/
 private def pushGroup (fill : Bool) (items : Items) (rest : Work) (width : Nat) (pinned : Bool) :
     StateM RenderState Work := do
   let column := (← get).column
@@ -467,7 +477,7 @@ private def pushGroup (fill : Bool) (items : Items) (rest : Work) (width : Nat) 
   let cumulative := candidateMeasure.append rest.measure
   let fits :=
     if !cumulative.contextual then
-      (!( !fill && candidateMeasure.boundary)) && cumulative.width ≤ width - column
+      !candidateMeasure.flattenedHard && cumulative.width ≤ width - column
     else
       let available := width - column
       let r := measureEntries column available (!fill) items
@@ -485,14 +495,13 @@ private partial def renderWork (width : Nat) (pinnedPhrases : Array String) :
     | .cons entry _ _ items =>
       let resume (is' : Items) : StateM RenderState Unit :=
         renderWork width pinnedPhrases (Work.pack { group with items := is' } rest)
-      let resumeWork (work : Work) : StateM RenderState Unit :=
-        renderWork width pinnedPhrases work
+      let resumeWork (work : Work) : StateM RenderState Unit := renderWork width pinnedPhrases work
       match entry with
       | .closeMark source outputStart => do
         modify fun state =>
-          { state with
-            workSteps := state.workSteps + 1,
-            marks := state.marks.push { source, output := ⟨outputStart, state.outputBytes⟩ } }
+            { state with
+              workSteps := state.workSteps + 1,
+              marks := state.marks.push { source, output := ⟨outputStart, state.outputBytes⟩ } }
         resume items
       | .document doc indent activeTags => do
         modify fun state => { state with workSteps := state.workSteps + 1 }
@@ -523,21 +532,22 @@ private partial def renderWork (width : Nat) (pinnedPhrases : Array String) :
             modify fun state => { appendNewline state indent.toNat with }
             let items' := items.push (.document (.nativeText tail) indent activeTags)
             match group.fla with
-            | .disallow => resume items'
-            | _ => resumeWork (← pushGroup group.fill items' rest width false)
+            | .disallow =>
+              resume items'
+            | _ =>
+              resumeWork (← pushGroup group.fill items' rest width false)
           | [] =>
             endTags
             resume items
         | .cat left right =>
-          resume
-            (items.push (.document right indent activeTags) |>.push
-              (.document left indent 0))
+          resume (items.push (.document right indent activeTags) |>.push (.document left indent 0))
         | .nest extra body =>
           resume (items.push (.document body (indent + extra) activeTags))
         | .mark source body =>
           let outputStart := (← get).outputBytes
           resume
-            (items.push (.closeMark source outputStart) |>.push (.document body indent activeTags))
+              (items.push (.closeMark source outputStart) |>.push
+                (.document body indent activeTags))
         | .tag _ body =>
           modify fun state => { state with nativeEvents := state.nativeEvents + 1 }
           resume (items.push (.document body indent (activeTags + 1)))
@@ -555,11 +565,11 @@ private partial def renderWork (width : Nat) (pinnedPhrases : Array String) :
           resume items
         | .blank =>
           modify fun state =>
-            let value := "\n\n".pushn ' ' indent.toNat
-            { state with
-              output := state.output ++ value
-              column := indent.toNat
-              outputBytes := state.outputBytes + value.utf8ByteSize }
+              let value := "\n\n".pushn ' ' indent.toNat
+              { state with
+                output := state.output ++ value
+                column := indent.toNat
+                outputBytes := state.outputBytes + value.utf8ByteSize }
           endTags
           resume items
         | .line flat =>
@@ -613,7 +623,7 @@ private partial def renderWork (width : Nat) (pinnedPhrases : Array String) :
                 pinnedPhrases.any fun phrase => comment.contains phrase
             let pushed ←
               pushGroup false (Items.ofList [.document body indent activeTags])
-                (Work.pack { group with items } rest) width pinned
+                  (Work.pack { group with items } rest) width pinned
             resumeWork pushed
         | .fill body =>
           if group.fla.shouldFlatten then
@@ -621,7 +631,7 @@ private partial def renderWork (width : Nat) (pinnedPhrases : Array String) :
           else
             let pushed ←
               pushGroup true (Items.ofList [.document body indent activeTags])
-                (Work.pack { group with items } rest) width false
+                  (Work.pack { group with items } rest) width false
             resumeWork pushed
         | .registered format =>
           NativeFormat.renderM format width indent.toNat
