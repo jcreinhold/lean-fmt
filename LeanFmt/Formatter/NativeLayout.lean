@@ -1240,8 +1240,12 @@ private partial def collectStructInstFieldAnchors (stx : Lean.Syntax)
     (ranges : Array SourceRange := #[]) : Array SourceRange :=
   match stx with
   | .node _ kind children =>
+    -- `Term.structInst` spells its fields inside `{ }`; `Command.whereStructInst` spells the same
+    -- `structInstFields` list after `where` (`Command.lean:174`). The anchor is the same fact for
+    -- both: every field row breaks at the first field's column, wherever the document places it --
+    -- on the `where` row included, which is what the retired `whereForm` carve-out approximated.
     let ranges :=
-      if kind == ``Lean.Parser.Term.structInst then
+      if kind == ``Lean.Parser.Term.structInst || kind == ``Lean.Parser.Command.whereStructInst then
         match children.find? (·.isOfKind ``Lean.Parser.Term.structInstFields) with
         | some fieldsNode =>
           let fields := structInstFieldsInOrder fieldsNode
