@@ -1216,7 +1216,15 @@ Elaboration would still pick the literal, so this is not a wrong candidate -- bu
 turns an unambiguous parse into an ambiguous one has changed the tree it promised to preserve. The
 correction holds each such row at its source column, which is the column that made the source
 unambiguous. Only rows the source put left of the first element are held: one already at or right
-of it is inside the window whatever the layout does, so its `choice` is the source's own. -/
+of it is inside the window whatever the layout does, so its `choice` is the source's own.
+
+The column is absolute and so it goes stale, which is a known refusal rather than a fixed one:
+`Analysis/Calculus/ContDiff/FaaDiBruno.lean` shifts a `have` by two, the pinned row stays, and the
+second pass reads the column the first pass wrote. `columned`, which would follow the shift, is not
+the answer -- this pin is a cap on how far right the row may go and `max` is a floor, so it hands
+back the ambiguity the pin exists to prevent (`Offside.lean`, node count 1664 -> 1665). The
+relationship that would survive both is "left of wherever the first element lands", and an output
+column is what `Std.Format` has no way to name; see `Formatter/AGENTS.md`. -/
 private partial def collectBraceLiteralRows (source : String) (stx : Lean.Syntax)
     (starts : Array (Nat × BoundaryLayout) := #[]) : Array (Nat × BoundaryLayout) :=
   match stx with
