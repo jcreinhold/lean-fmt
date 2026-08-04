@@ -313,6 +313,22 @@ def rebuiltConfig (config : Config) : Config := { config with
 
 def flushConfig : Config := { baseConfig with retries := 5 }
 
+/- A `;`-separated field list under `where` keeps its first field on its own row.
+
+`where` is a keyword whose fields' nest is keyed to the declaration, not to the keyword's own
+column: a first field that joins the `where` row sets the `sepByIndent` reference column there,
+and a later `;` that breaks to the fields' nest orphans below it, which the reparse reports as
+`Fields missing`. `Mathlib/Algebra/Group/Pointwise/Finset/Basic.lean`'s `singletonMulHom`. The
+flat spelling is the negative half: a source that joined everything keeps the join. -/
+structure SemiOps where
+  toFun : Nat → Nat
+  map_mul' : Nat → Nat → Nat
+
+def semiOps : SemiOps where
+  toFun := id; map_mul' x y := (x * y) + (y * x) + (x * y * x) + (y * x * y)
+
+def semiOpsFlat : SemiOps where toFun := id; map_mul' := Nat.add
+
 end NativeLayoutOffside
 
 

@@ -412,6 +412,14 @@ private def testOffside (ctx : Ctx) : IO Unit := do
   -- The negative half: the document hugs the brace, and a source that hugged it stays hugged.
   ensureEq "a hugged closing brace stays hugged" 1
       (countExact offside "  { baseConfig with retries := 5 }")
+  -- The `where` carrier's fields' nest is keyed to the declaration: the first field of a
+  -- `;`-separated list keeps its own row, so a later `;` breaking to the nest lands among
+  -- siblings -- `Mathlib/Algebra/Group/Pointwise/Finset/Basic.lean`'s `Fields missing` refusal.
+  ensureEq "a ;-separated where field list keeps its first field on its own row"
+      "  toFun := id; map_mul' x y := (x * y) + (y * x) + (x * y * x) + (y * x * y)"
+      (← lineAfterExact offside "def semiOps : SemiOps where")
+  ensureEq "  ... while a flat source keeps the join" 1
+      (countExact offside "def semiOpsFlat : SemiOps where toFun := id; map_mul' := Nat.add")
   -- The join is collected only where the source already spelled the bail-out on one line.
   ensureEq "a bail-out the source spelled on several lines keeps its break"
       "      let fallback := 3" (← lineAfterExact offside "    let some measured := value |")

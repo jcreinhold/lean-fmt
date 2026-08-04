@@ -711,26 +711,42 @@ private def sequenceWrapperKind (kind : Lean.Name) : Bool :=
       kind == ``Lean.Parser.Term.byTactic' ||
     kind == Lean.nullKind
 
-private partial def collectIndentedSequenceStarts (stx : Lean.Syntax)
+/- Whether a token opens its source row (only whitespace before it on the row). -/
+private def opensSourceRow (source : String) (start : Nat) : Bool :=
+  let lineStart :=
+    (slice source ⟨0, start⟩).revFind? (· == '\n') |>.map (·.offset.byteIdx + 1) |>.getD 0
+  (slice source ⟨lineStart, start⟩).trimAscii.copy.isEmpty
+
+private partial def collectIndentedSequenceStarts (source : String) (stx : Lean.Syntax)
     (carrier? : Option Lean.Syntax := none) (starts : Array Nat := #[]) : Array Nat :=
   match stx with
   | .node _ kind children =>
     -- `(owner, holder)`: the node whose terminals include the opening delimiter, and the node that
     -- holds the list. They differ for `structInst`, whose `{` is a sibling of the field list, and for
-    -- an indented sequence, whose delimiter belongs to whatever carries it.
-    let target? : Option (Lean.Syntax × Lean.Syntax × Bool) :=
+    -- an indented sequence, whose delimiter belongs to whatever carries it. The fourth slot marks the
+    -- `whereStructInst` carrier: its `where` is a keyword whose fields' nest is keyed to the
+    -- declaration, not to the keyword's own column, so the delimited exemption does not apply -- a
+    -- first field that joins the `where` row sets the reference column there, and a later `;` that
+    -- breaks to the fields' nest orphans below it (`Fields missing`,
+    -- `Mathlib/Algebra/Group/Pointwise/Finset/Basic.lean`'s `singletonMulHom`).
+    let target? : Option (Lean.Syntax × Lean.Syntax × Bool × Bool) :=
       if kind == ``Lean.Parser.Term.structInst then
         (children.find? (·.isOfKind ``Lean.Parser.Term.structInstFields)).map fun fields =>
-          (stx, fields, false)
+          (stx, fields, false, false)
       else
-        if delimitedSequenceKind kind then some (stx, stx, false)
+        if kind == ``Lean.Parser.Command.whereStructInst then
+          (children.find? (·.isOfKind ``Lean.Parser.Term.structInstFields)).map fun fields =>
+            (stx, fields, false, true)
         else
-          if ungroupedSequenceKind kind then
-            carrier?.map fun carrier => (carrier, stx, carrier.isOfKind ``Lean.Parser.Term.byTactic)
-          else none
+          if delimitedSequenceKind kind then some (stx, stx, false, false)
+          else
+            if ungroupedSequenceKind kind then
+              carrier?.map fun carrier =>
+                (carrier, stx, carrier.isOfKind ``Lean.Parser.Term.byTactic, false)
+            else none
     let starts :=
       match target? with
-      | some (owner, holder, ungrouped) =>
+      | some (owner, holder, ungrouped, whereForm) =>
         match holder.getArgs.find? (·.isOfKind Lean.nullKind) with
         -- One item has no separator to break at the wrong column, so it needs no boundary; two do.
         | some list =>
@@ -750,7 +766,13 @@ private partial def collectIndentedSequenceStarts (stx : Lean.Syntax)
           -- a written-separator list there is already positioned.
           if
               list.getArgs.size >= 3 &&
-                (ungrouped || (!hasNewlineSeparator list && delimiterIntervenes owner list)) then
+                (ungrouped ||
+                  (!hasNewlineSeparator list &&
+                    match (selectedLeafRanges list)[0]? with
+                    | some first =>
+                      delimiterIntervenes owner list ||
+                        (whereForm && opensSourceRow source first.start)
+                    | none => delimiterIntervenes owner list)) then
             match (selectedLeafRanges list)[0]? with
             | some range => if starts.contains range.start then starts else starts.push range.start
             | none => starts
@@ -760,7 +782,7 @@ private partial def collectIndentedSequenceStarts (stx : Lean.Syntax)
     let carrier? := if sequenceWrapperKind kind then carrier? else some stx
     let children := if kind == Lean.choiceKind then children[0]?.toArray else children
     children.foldl (init := starts) fun starts child =>
-      collectIndentedSequenceStarts child carrier? starts
+      collectIndentedSequenceStarts source child carrier? starts
   | _ => starts
 
 /- A focusing `·` keeps its first tactic on its own line.
@@ -1178,12 +1200,6 @@ private def sourceColumn (source : String) (offset : Nat) : Nat :=
     | some position => position.offset.byteIdx + 1
     | none => 0
   offset - lineStart
-
-/- Whether a token opens its source row (only whitespace before it on the row). -/
-private def opensSourceRow (source : String) (start : Nat) : Bool :=
-  let lineStart :=
-    (slice source ⟨0, start⟩).revFind? (· == '\n') |>.map (·.offset.byteIdx + 1) |>.getD 0
-  (slice source ⟨lineStart, start⟩).trimAscii.copy.isEmpty
 
 /- A guarded `let`'s bail-out bar keeps its own row when the source gave it one.
 
@@ -3497,7 +3513,7 @@ alternatives: alternative 0 is {expected}, alternative {alternative} is {actual}
     (collectUngroupedBodyStarts format.declarationBody source format.lineWidth stripped
                                                 (collectReturnTermStarts stripped)).map
                                             (·, BoundaryLayout.flat) ++
-                                          (collectIndentedSequenceStarts stripped).map
+                                          (collectIndentedSequenceStarts source stripped).map
                                             (·, BoundaryLayout.hard) ++
                                         (collectCdotStarts stripped).map (·, BoundaryLayout.flat) ++
                                       nestedCommandStarts.map (·, BoundaryLayout.dedented) ++
