@@ -1248,8 +1248,7 @@ private partial def collectBraceLiteralRows (source : String) (stx : Lean.Syntax
     children.foldl (init := starts) fun starts child => collectBraceLiteralRows source child starts
   | _ => starts
 
-/- A `structInst` field row lands where its first field does, by whichever of the two routes the
-source left open.
+/- A `structInst` field row lands where its first field does.
 
 `structInstFields` is `sepByIndent` (`Term.lean:354`): a field that opens a row must start at the
 first field's column. Land left of it and `checkColGe` fails, ending the structure there --
@@ -1257,20 +1256,29 @@ first field's column. Land left of it and `checkColGe` fails, ending the structu
 field's value, which is `69:12: unexpected token ':='`. Only the first field's own column will do,
 and the native document spells a continuation at the enclosing `nest` with no regard for it.
 
-Where that column ends up depends on the brace, so the pin does too:
+Where that column ends up depends on the brace, so the pin does too, and what decides is whether
+anything holds the brace:
 
-- A `{` the source put at the start of a row is positioned by the document, and the fields' nest
-  follows it. A `fieldRow` boundary lands there, which tracks the brace when canonical layout moves
-  it. `Proofs/RingTheory/Regular/ProjectiveDimension.lean` needs this: an over-indented tactic
-  block dedented by two, the first field moved with the brace, and source-column pins did not.
-- A `{` written mid-row -- `return { first, second,` -- puts its first field at a column no nest
-  names. The source column is then the only reference there is, held with `columned` so a document
-  that indents past it keeps its own indent. `tests/Test/Runner.lean` is that shape.
+- `fieldRow` is relative, so it tracks the brace the document places.
+  `Proofs/RingTheory/Regular/ProjectiveDimension.lean` needs that: an over-indented tactic block
+  dedented by two, the first field moved with the brace, and source-column pins did not.
+- A `return { first, second,` brace is held on the keyword's row by `collectReturnBraceStarts`,
+  and its first field then sits at a column no nest names. A held brace is the only place a source
+  column means anything, and `tests/Test/Runner.lean` is that shape.
+
+The mid-row test this used to make instead is not the same test, because a break in front of the
+brace is an ordinary width decision: a `{` the source wrote mid-row opens a row of its own in the
+output whenever the head does not fit, and the source column then holds the later rows where
+nothing else went. Six mathlib modules refused as non-idempotent for it, the second pass reading
+the brace position the first pass wrote. Holding those braces flat instead does not rescue the
+column -- it stays absolute, so a construct that moves at all strands it, and five modules failed
+the diagnostics gate.
 
 Unlike the anonymous-constructor pin above, one break is not enough: an unpinned sibling dedents
 just the same. -/
-private partial def collectStructInstFieldRows (source : String) (stx : Lean.Syntax)
-    (starts : Array (Nat × BoundaryLayout) := #[]) : Array (Nat × BoundaryLayout) :=
+private partial def collectStructInstFieldRows (source : String) (heldBraces : Array Nat)
+    (stx : Lean.Syntax) (starts : Array (Nat × BoundaryLayout) := #[]) :
+    Array (Nat × BoundaryLayout) :=
   match stx with
   | .node _ kind children =>
     let starts :=
@@ -1278,7 +1286,10 @@ private partial def collectStructInstFieldRows (source : String) (stx : Lean.Syn
         match children[0]?.bind sourceRange?,
           children.find? (·.isOfKind ``Lean.Parser.Term.structInstFields) with
         | some braceRange, some fieldsNode =>
-          let braceOpensRow := opensSourceRow source braceRange.start
+          -- A brace `collectReturnBraceStarts` holds on the keyword's row cannot move, and only a
+          -- brace that cannot move makes a source column mean anything; every other one is placed
+          -- by the document.
+          let braceHeld := heldBraces.contains braceRange.start
           -- Hold every field the source opened a row on, i.e. whose gap from the previous field's
           -- end holds a line break. The fields sit under a null wrapper inside the list node.
           let fields := structInstFieldsInOrder fieldsNode
@@ -1290,8 +1301,8 @@ private partial def collectStructInstFieldRows (source : String) (stx : Lean.Syn
               | some itemEnd, some fieldStart =>
                 if (slice source ⟨itemEnd.stop, fieldStart.start⟩).contains '\n' then
                   let pin :=
-                    if braceOpensRow then BoundaryLayout.fieldRow
-                    else .columned (sourceColumn source fieldStart.start)
+                    if braceHeld then .columned (sourceColumn source fieldStart.start)
+                    else BoundaryLayout.fieldRow
                   if starts.any (·.1 == fieldStart.start) then starts
                   else starts.push (fieldStart.start, pin)
                 else starts
@@ -1300,7 +1311,7 @@ private partial def collectStructInstFieldRows (source : String) (stx : Lean.Syn
       else starts
     let children := if kind == Lean.choiceKind then children[0]?.toArray else children
     children.foldl (init := starts) fun starts child =>
-      collectStructInstFieldRows source child starts
+      collectStructInstFieldRows source heldBraces child starts
   | _ => starts
 
 /- The last leaf of a node, atom or ident. The alternatives of a `choice` spell the same bytes
@@ -1535,12 +1546,13 @@ candidate stops parsing.
 
 The source always spells the relationship that parses, so the correction spells its columns: one
 `columned` boundary at the keyword's row -- at the parenthesized `(` when there is one, else at
-the keyword itself -- holding the row at or right of its source column, and one `anchored`
-boundary at the body's first terminal holding it at that column exactly. The body's is the pin
-that must also dedent: a document that indents the value's continuations past the keyword indents
-the body with them, which is the failing direction here. Both are collected only when the source
-shows the same shape (the row broken, the body broken onto its own row): a keyword spelled
-mid-line needs nothing, because any `nest` the body's row can take is already left of it. -/
+the keyword itself -- holding the row at or right of its source column, and one at the body's
+first terminal. The body's must be able to dedent, because a document that indents the value's
+continuations past the keyword indents the body with them, which is the failing direction here;
+which spelling gives it that depends on the shape, and the comment on `bodyPin` says how. The row
+pin is collected only when the source shows the same shape (the row broken, the body broken onto
+its own row): a keyword spelled mid-line needs none, because any `nest` the body's row can take is
+already left of it. -/
 private partial def collectLetFamilyAlignments (source : String) (stx : Lean.Syntax)
     (paren? : Option Lean.Syntax := none) (starts : Array (Nat × BoundaryLayout) := #[]) :
     Array (Nat × BoundaryLayout) :=
@@ -1583,7 +1595,22 @@ private partial def collectLetFamilyAlignments (source : String) (stx : Lean.Syn
                   if opensRow kwRange.start then
                     #[(kwRange.start, .columned (sourceColumn source kwRange.start))]
                   else #[]
-              starts ++ rowPin ++ #[(bodyRange.start, .anchored bodyCol)]
+              -- The body's pin needs opposite spellings for the two shapes the source can have,
+              -- and whether the body sits *under* the keyword or *left* of it is what tells them
+              -- apart. Under it, the two are one column that canonical layout moves together, so
+              -- `columned` -- whose `max` follows the move -- keeps them together, and the second
+              -- pass reads back the columns the first one wrote. An absolute pin instead holds the
+              -- body at the source column while the keyword moves right without it, which is a
+              -- body stranded outside its own construct and five mathlib modules refusing as
+              -- non-idempotent. Left of it -- `⟨have : … :=`, `⟨fun n ↦ let f := …` -- the body's
+              -- column is not the keyword's and no move preserves it: it is left of the enclosing
+              -- bracket's own nest, which is exactly where `max` would push it back to, and
+              -- `Computability/Primrec/Basic.lean` answers with `expected ';' or line break`.
+              -- Only the source column will do there.
+              let bodyPin :=
+                if bodyCol == sourceColumn source kwRange.start then BoundaryLayout.columned bodyCol
+                else .anchored bodyCol
+              starts ++ rowPin ++ #[(bodyRange.start, bodyPin)]
           | _, _ => starts
         | _, _ => starts
       else starts
@@ -3288,6 +3315,10 @@ alternatives: alternative 0 is {expected}, alternative {alternative} is {actual}
   -- Not under the setting: a stranded field row is a correctness question, not a style one.
   let (rowSpreadRanges, rowSpreadBoundaries) := collectRowSpreadStructInsts stripped
   let explodedRanges := commaRanges ++ rowSpreadRanges
+  -- The `return` braces held on the keyword's row: the boundary in front of each, and the one
+  -- fact `collectStructInstFieldRows` needs to know a field's source column still means something.
+  let returnBraceStarts :=
+    (collectReturnBraceStarts stripped).filter fun start => !brokenBefore start
   -- What each boundary's terminal heads, for the hoist's privacy test (`Transformed.hoist?`).
   let headSpans := collectHeadSpans terminals stripped
   -- Inside an exploded collection the source-column pins are dropped: explosion and the pins
@@ -3310,12 +3341,11 @@ alternatives: alternative 0 is {expected}, alternative {alternative} is {actual}
                           (collectGuardBarBreaks source stripped).map (·, BoundaryLayout.hard) ++
                         ((collectBraceAppArgStarts stripped).filterMap fun start =>
                           if brokenBefore start then none else some (start, BoundaryLayout.flat)) ++
-                      ((collectReturnBraceStarts stripped).filterMap fun start =>
-                        if brokenBefore start then none else some (start, BoundaryLayout.flat)) ++
+                      returnBraceStarts.map (·, BoundaryLayout.flat) ++
                     ((collectBraceInteriorBreaks source stripped).filter fun p =>
                           outsideExploded p.1).map
                       (fun p => (p.1, BoundaryLayout.columned p.2)) ++
-                  ((collectStructInstFieldRows source stripped).filter fun p =>
+                  ((collectStructInstFieldRows source returnBraceStarts stripped).filter fun p =>
                     outsideExploded p.1) ++
                 ((collectBraceLiteralRows source stripped).filter fun p => outsideExploded p.1) ++
               collectLetFamilyAlignments source stripped ++

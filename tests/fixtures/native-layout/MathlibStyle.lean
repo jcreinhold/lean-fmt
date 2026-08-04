@@ -102,3 +102,29 @@ body the source already broke, so the first pass created the shape the second pa
 x : Bool -/
 #guard_msgs in
 #check let x := true; x
+
+/- A structure instance the source wrote with its `{` mid-row, whose fields were pinned to their
+source columns. Canonical layout breaks in front of `mk`, so the brace opens a row of its own, and
+the second pass reads that brace and lays the fields out relative to it -- somewhere the first pass
+never put them. Six mathlib modules refused as non-idempotent for it. -/
+structure Unital where
+  leftIdentity : Nat
+  rightIdentity : Nat
+
+def unitalOf (n : Nat) (mk : Unital → Unital) : Unital :=
+  mk { leftIdentity := n,
+       rightIdentity := n }
+
+/- A `let` whose body the source broke onto its own row, directly under the keyword, inside a
+construct canonical layout indents. The body carried an absolute source-column pin, so the keyword
+moved right and the body stayed -- stranded outside the construct it belongs to, and read by the
+second pass as a column the first pass never chose. Five mathlib modules refused as non-idempotent
+for it. -/
+def letBodyShift (h : Nat → Nat → Nat) (m : Option Nat) : Nat → Nat := Id.run do
+  if let some p := m then return fun _ => p
+  return fun n =>
+  let a := [1, 2, 3].foldl (init := 0) fun r p => Id.run do
+    if r > 0 then return r
+    return h (h (h (h (h (h (h r p) p) p) p) p) p) n
+  if a > 0 then a
+  else n
