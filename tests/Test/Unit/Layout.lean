@@ -173,6 +173,27 @@ private def testDoc : IO Unit := do
   ensure (narrowHybrid.text == "x a\nb") "an opaque registered document did not reflow"
   ensure (wideHybrid.metrics.nativeEvents > 0 && narrowHybrid.metrics.nativeEvents > 0)
       "the registered document was not interpreted through the native renderer"
+  -- `fill` is the native flatten behavior, decided per break against the whole remainder. At
+  -- width five every element stays on the row; at four the last one wraps.
+  let fillDoc : Doc := .fill (.text "a" ++ .line " " ++ .text "b" ++ .line " " ++ .text "c")
+  ensure (renderText 5 fillDoc == "a b c") "a fill that fit was broken"
+  ensure (renderText 4 fillDoc == "a b\nc") "a fill did not wrap its overflowing element"
+  -- `nativeText` carries the native semantics: its interior newline breaks to the entry's indent
+  -- and re-groups the remainder of the enclosing group, so a tail that fits flattens even though
+  -- the group's own decision was broken. `hard` is the custom contrast: it forces every enclosing
+  -- group open and nothing re-groups after it.
+  let regrouped : Doc := .group (.nativeText "a\nb" ++ .line " " ++ .text "c")
+  ensure (renderText hugeWidth regrouped == "a\nb c")
+      "a native hard line did not re-group its fitting tail"
+  let forced : Doc := .group (.text "a" ++ .hard ++ .text "b" ++ .line " " ++ .text "c")
+  ensure (renderText hugeWidth forced == "a\nb\nc")
+      "a custom hard break re-grouped its tail"
+  -- The entry column enters the first row's fit measurement, as in the native machine: the same
+  -- group that flattens at column zero breaks when one column is already spent.
+  let entry : Doc := .group (.text "ab" ++ .line " " ++ .text "cd")
+  ensure ((renderDetailed 5 entry (column := 1)).text == "ab\ncd")
+      "the entry column did not enter the first row's fit measurement"
+  ensure ((renderDetailed 5 entry).text == "ab cd") "a fitting group broke at column zero"
   -- Source map. Output ranges are bytes; `mark` carries no width and renders exactly as its body.
   let marked : Doc := .text "a" ++ .mark ⟨10, 20⟩ (.text "bcd") ++ .text "e"
   let (out, marks) := render hugeWidth marked
@@ -446,9 +467,46 @@ private def testPinnedRows : IO Unit := do
   ensureEq "an anchored pin below the ambient nest did not dedent to its column" "a\n  b"
       (← run (.anchored 2))
 
+/- `anchor` captures the entry column — the column of the next byte its body would emit — and
+re-bases the body's indent to it. That is the primitive prompt 04 adds for the structural
+annotations of prompts 09-10: Lean's parser records an offside column in source columns, and the
+layout engine needs a way to break at exactly that column no matter what nest surrounds it.
+
+The contract from `notes/02-native-contract.md`: backward-only (the capture looks at bytes already
+emitted, never ahead), fit-invisible (the anchor contributes zero width and no hard-stop, so no
+enclosing group's decision changes), innermost-wins (a nested anchor re-captures). A body whose
+first emission is a break captured nothing and is a development error, pinned by `wellFormed`
+here — the renderer panics on it, which no in-process test can survive. -/
+private def testAnchor : IO Unit := do
+  -- Under a nest: the break lands on the captured column, not the nest's. `f(` ends at column 2,
+  -- so the anchored tail breaks to 2 where the nested one breaks to 10.
+  let anchored : Doc := .group (.text "f(" ++ .anchor (.text "x" ++ .line " " ++ .text "y"))
+  ensure (renderText 4 anchored == "f(x\n  y") "an anchor did not re-base its break column"
+  let nested : Doc := .group (.text "f(" ++ .nest 10 (.text "x" ++ .line " " ++ .text "y"))
+  ensure (renderText 4 nested == "f(x\n          y") "the nest contrast drifted"
+  -- Fit-invisible: the decision at every width matches the un-anchored document; only the broken
+  -- layout differs, because the anchor re-based the indent.
+  let plain : Doc := .text "p " ++ .group (.text "xy" ++ .line " " ++ .text "z")
+  let captured : Doc := .text "p " ++ .group (.anchor (.text "xy" ++ .line " " ++ .text "z"))
+  ensure (renderText 6 captured == renderText 6 plain)
+      "an anchor changed an enclosing group's flat decision"
+  ensure (renderText 5 plain == "p xy\nz" && renderText 5 captured == "p xy\n  z")
+      "an anchor changed an enclosing group's broken decision"
+  -- Innermost-wins: the inner anchor re-captures at column 4; the outer anchor's own line still
+  -- breaks to the outer capture, column 2.
+  let both : Doc :=
+    .group
+      (.text "a " ++
+        .anchor (.text "b " ++ .anchor (.text "c" ++ .line " " ++ .text "d") ++ .line " " ++ .text "e"))
+  ensure (renderText 3 both == "a b c\n    d\n  e") "a nested anchor did not re-capture"
+  -- A break-first body captured nothing: rejected at construction-checking time.
+  ensure (Doc.wellFormed (.anchor (.text "x"))) "a text-first anchor was rejected"
+  ensure (!Doc.wellFormed (.anchor (.line " "))) "a break-first anchor was accepted"
+
 /-- The cases this module contributes to the unit runner, in run order. -/
 public def cases : Array Case :=
   #[{ name := "testDoc", run := testDoc },
+    { name := "testAnchor", run := testAnchor },
     { name := "testChoiceVerification", run := testChoiceVerification },
     { name := "testAlignmentSequences", run := testAlignmentSequences },
     { name := "testPinnedRows", run := testPinnedRows },

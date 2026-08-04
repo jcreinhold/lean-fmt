@@ -7,33 +7,48 @@ Authors: Jacob Reinhold
 module
 
 import all LeanFmt.LosslessSource
+import all LeanFmt.NativeFormat
 
-/-! A width-independent formatting document and its bounded renderer.
+/-! A formatting document and its bounded renderer, native-compatible.
 
-The document has one flat/broken choice: `group`. A break carries its flat spelling, so separators
-such as `"; "` can disappear when a construct opens. No generic alternative, alignment, or
-best-fitting search.
+The document algebra has two tiers. The **native fragment** — `empty`, `text`, `nativeText`,
+`line`, `cat`, `nest`, `group`, `fill`, `align`, `tag` — expresses every `Std.Format`
+constructor, and renders with the semantics of the vendored machine in `LeanFmt/NativeFormat.lean`
+(the compatibility contract is `notes/02-native-contract.md` in the layout-redesign stack): an
+allOrNone group decides once against its body *and the enclosing remainder*, a `fill` group
+re-decides per break with one column charged for the candidate space, an `align` pads to the
+current indent or breaks at it, a `nest` is signed, a `tag` is invisible to fit, and a
+newline-bearing `nativeText` re-indents its continuations and re-groups the remainder of its
+group. Columns count codepoints, matching `Std.Format`; source and output ranges count UTF-8
+bytes.
 
-The renderer is linear in document nodes plus emitted bytes. Each document caches the width up to its
-first forced break in flat and broken modes; the work stack caches the same summary for its suffix,
-so deciding a group is constant-time even for adversarial zero-width siblings. This avoids the
-repeated suffix walk of the former renderer. Opaque leaves use Lean's own bounded work-list renderer
-and expose its output events separately from custom work counts.
+The **annotation tier** — `comment`, `hard`, `blank`, `verbatim`, `mark`, `registered`, and the
+one layout relation native cannot express, `anchor` — carries lean-fmt's own semantics, which
+never alter a native decision: a comment is zero-width to fit, `hard`/`blank`/`verbatim` are hard
+stops (and stay broken — the native re-grouping after a hard event applies to `nativeText` only,
+which is what native `text` lowers to), a `mark` composes like a `tag`, and a `registered` leaf
+stays an opaque fit boundary interpreted through the vendored machine.
 
-Registered Lean formatter output stays opaque. `registered` stores one `Std.Format` and interprets it
-incrementally at the active width and column through `Std.Format.prettyM`; it neither clones the
-native tree nor renders it before width selection. A registered leaf is a fit boundary for enclosing
-custom groups, so core rules compose it as a leaf rather than inside a custom group whose decision
-would require inspecting Lean's private layout tree.
+`anchor body` captures the column at which `body` begins — an already-emitted, backward-only
+column — and renders `body` with its base indent re-set to that column: breaks inside `body`
+land where the row started, not at the ambient indent. It is invisible to fit (measurement
+passes through it), and nested anchors use the innermost capture. An `anchor` whose body begins
+with a break captured nothing and is a development error, not a source fallback.
 
-Comments are layout-transparent: a `comment` leaf renders its bytes exactly like `text`, but carries
-a zero fit measure, so no group decision is ever driven by a comment's width — a trailing comment
-overflows the margin rather than splitting the code it trails. The one counterweight is pinning:
-a group that would otherwise break because its code alone overflows still flattens when the line it
-sits on carries a pinned comment (`pinned-comments`), because splitting there would detach a
-tooling directive from the construct it annotates.
-
-Columns count codepoints, matching `Std.Format`; source and output ranges count UTF-8 bytes. -/
+The renderer is the vendored machine's work list: groups of `(indent, document, open-tags)`
+items, each group carrying a flatten decision and a flatten behavior. Every document caches the
+width up to its first forced break in flat and broken modes, plus a `contextual` bit that is set
+exactly where the cached measure is not the whole story — an `align`, whose native measure
+charges phantom columns against the decision column, or a `registered` leaf. The caches are
+composed at every item-list node, so a group decision on a context-free suffix is constant time,
+and a fill's per-break re-decision or the re-grouping after a native hard line wraps the *same*
+items in a freshly decided group without re-measuring them. A contextual suffix is walked item by
+item with the native measure. This keeps renderer work linear in document nodes plus marks on the
+context-free documents the adversarial rows exercise, while native measures stay exact where they
+can be observed. A `group`'s decision is the native one except for the `pinned-comments`
+override: a group that would break because its code alone overflows still flattens when the line
+carries a pinned comment, because splitting there would detach a tooling directive from the
+construct it annotates. -/
 
 namespace LeanFmt.Internal
 
@@ -45,15 +60,23 @@ private structure LineMeasure where
   comment is always the last comment on its line, and stacked block comments are the rare case the
   first entry already represents. -/
   comment? : Option String := none
+  /-- Set where the cached measure is not the native measure: an `align` (whose measure depends on
+  the decision column) or a `registered` leaf (opaque). A context-free suffix decides in constant
+  time; a contextual one is walked with the native measure. -/
+  contextual : Bool := false
 
 namespace LineMeasure
 
 def empty : LineMeasure :=
-  ⟨0, false, none⟩
+  ⟨0, false, none, false⟩
 
+/-- Compose two adjacent measures. A hard stop on the left ends the walk, so the right side —
+contextual or not — is unreachable; otherwise contextuality propagates. -/
 def append (left right : LineMeasure) : LineMeasure :=
   if left.boundary then left
-  else ⟨left.width + right.width, right.boundary, left.comment? <|> right.comment?⟩
+  else
+    ⟨left.width + right.width, right.boundary, left.comment? <|> right.comment?,
+      left.contextual || right.contextual⟩
 
 end LineMeasure
 
@@ -61,14 +84,19 @@ mutual
 private inductive DocKind where
   | empty
   | text (value : String)
+  | nativeText (value : String)
   | comment (value : String)
   | line (flat : String)
   | hard
   | blank
   | verbatim (value : String)
   | cat (left right : Doc)
-  | nest (indent : Nat) (body : Doc)
+  | nest (indent : Int) (body : Doc)
   | group (body : Doc)
+  | fill (body : Doc)
+  | align (force : Bool)
+  | tag (tag : Nat) (body : Doc)
+  | anchor (body : Doc)
   | mark (source : SourceRange) (body : Doc)
   | registered (format : Std.Format)
 /-- A formatting document. Construct values through the operations in `Doc`; the cached measures
@@ -115,35 +143,45 @@ private def lastLine (value : String) : String :=
   | none => value
 
 private def literalMeasure (value : String) : LineMeasure :=
-  if spansLines value then ⟨width (firstLine value), true, none⟩ else ⟨width value, false, none⟩
+  if spansLines value then ⟨width (firstLine value), true, none, false⟩ else ⟨width value, false, none, false⟩
 
 /-- The empty document. -/
 def empty : Doc :=
   .mk .empty .empty .empty 1 true
 
-/-- Literal single-line text. A newline makes the resulting document ill-formed. -/
+/-- Literal single-line text. A newline makes the resulting document ill-formed; a newline-bearing
+literal with native re-indentation is `nativeText`. -/
 def text (value : String) : Doc :=
   let measure := literalMeasure value
   .mk (.text value) measure measure 1 (!spansLines value)
+
+/-- Newline-bearing literal text with native semantics: each embedded newline breaks to the item's
+current indent and re-groups the remainder of the enclosing group. This is what native
+`Std.Format.text` lowers to; `verbatim` is the annotation-tier literal that owns its columns. -/
+def nativeText (value : String) : Doc :=
+  let measure := literalMeasure value
+  .mk (.nativeText value) measure measure 1 true
 
 /-- A single-line comment payload. Renders exactly like `text`, but carries a zero fit measure and
 discloses its text, so no group decision is driven by a comment's width while a pinned comment can
 still hold its line flat. -/
 def comment (value : String) : Doc :=
-  .mk (.comment value) ⟨0, false, some value⟩ ⟨0, false, some value⟩ 1 (!spansLines value)
+  .mk (.comment value) ⟨0, false, some value, false⟩ ⟨0, false, some value, false⟩ 1 (!spansLines value)
 
-/-- A break opportunity with its exact flat spelling. A newline in the flat spelling is rejected. -/
+/-- A break opportunity with its exact flat spelling. A newline in the flat spelling is rejected.
+The native `Std.Format.line` is `line " "`. -/
 def line (flat : String) : Doc :=
-  .mk (.line flat) (literalMeasure flat) ⟨0, true, none⟩ 1 (!spansLines flat)
+  .mk (.line flat) (literalMeasure flat) ⟨0, true, none, false⟩ 1 (!spansLines flat)
 
-/-- An unconditional newline at the current indentation. -/
+/-- An unconditional newline at the current indentation. Annotation-tier: the enclosing group
+stays broken (native re-grouping belongs to `nativeText`, which is what native `text` lowers to). -/
 def hard : Doc :=
-  .mk .hard ⟨0, true, none⟩ ⟨0, true, none⟩ 1 true
+  .mk .hard ⟨0, true, none, false⟩ ⟨0, true, none, false⟩ 1 true
 
 /-- One empty line followed by the current indentation. Unlike two adjacent `hard` nodes, this does
 not materialize indentation whitespace on the empty line. -/
 def blank : Doc :=
-  .mk .blank ⟨0, true, none⟩ ⟨0, true, none⟩ 1 true
+  .mk .blank ⟨0, true, none, false⟩ ⟨0, true, none, false⟩ 1 true
 
 /-- Literal text that may span lines. Interior lines are never re-indented. -/
 def verbatim (value : String) : Doc :=
@@ -156,13 +194,57 @@ def cat (left right : Doc) : Doc :=
     (left.brokenMeasure.append right.brokenMeasure) (1 + left.size + right.size)
     (left.wellFormed && right.wellFormed)
 
-/-- Increase indentation after a break inside `body`. -/
-def nest (indent : Nat) (body : Doc) : Doc :=
+/-- Increase indentation after a break inside `body`. Signed, matching the native machine: a
+negative nest subtracts, and emission clamps the running indent with `Int.toNat`. -/
+def nest (indent : Int) (body : Doc) : Doc :=
   .mk (.nest indent body) body.flatMeasure body.brokenMeasure (1 + body.size) body.wellFormed
 
-/-- Keep `body` flat when its current line fits, otherwise enable its breaks. -/
+/-- Keep `body` flat when its current line fits, otherwise enable its breaks. The native
+allOrNone group: one decision against the body and the enclosing remainder. -/
 def group (body : Doc) : Doc :=
   .mk (.group body) body.flatMeasure body.flatMeasure (1 + body.size) body.wellFormed
+
+/-- The native fill group: the body starts flat when the segment up to its first break fits, and
+each break re-decides the remainder with one column charged for the candidate space. -/
+def fill (body : Doc) : Doc :=
+  .mk (.fill body) body.flatMeasure body.brokenMeasure (1 + body.size) body.wellFormed
+
+/-- The native `align`: pad to the current indent, or break to it when already at or past it.
+`force = false` renders as nothing inside a flattened group. Its measure depends on the decision
+column, so it is the one contextual leaf. -/
+def align (force : Bool) : Doc :=
+  .mk (.align force) ⟨0, false, none, true⟩ ⟨0, false, none, true⟩ 1 true
+
+/-- A native tag: invisible to fit, invisible in the default output, recorded as tag events for a
+tag-aware consumer. -/
+def tag (tag : Nat) (body : Doc) : Doc :=
+  .mk (.tag tag body) body.flatMeasure body.brokenMeasure (1 + body.size) body.wellFormed
+
+/-- An anchor body whose first emission is a break captured nothing: the development error the
+contract names. The left spine decides; `empty` is transparent to it. -/
+private partial def beginsWithBreak (document : Doc) : Bool :=
+  match document.kind with
+  | .line _ | .hard | .blank => true
+  | .nativeText value => value.startsWith "\n"
+  | .cat left right => beginsWithBreak left || (isEmptyDoc left && beginsWithBreak right)
+  | .nest _ body | .group body | .fill body | .tag _ body | .anchor body | .mark _ body =>
+    beginsWithBreak body
+  | _ => false
+where
+  isEmptyDoc (document : Doc) : Bool :=
+    match document.kind with
+    | .empty => true
+    | .cat left right => isEmptyDoc left && isEmptyDoc right
+    | .nest _ body | .tag _ body | .mark _ body => isEmptyDoc body
+    | _ => false
+
+/-- Capture the column at which `body` begins and render `body` with its base indent re-set to
+that column: breaks inside `body` land where the row started. Backward-only (the column is always
+already emitted), invisible to fit, innermost-wins. A body whose first emission is a break is a
+development error. -/
+def anchor (body : Doc) : Doc :=
+  let flag := !beginsWithBreak body && body.wellFormed
+  .mk (.anchor body) body.flatMeasure body.brokenMeasure (1 + body.size) flag
 
 /-- Associate the complete rendering of `body` with a normalized-source byte range. -/
 def mark (source : SourceRange) (body : Doc) : Doc :=
@@ -170,9 +252,10 @@ def mark (source : SourceRange) (body : Doc) : Doc :=
     (source.start <= source.stop && body.wellFormed)
 
 /-- Embed one formatter-registry result without converting its native tree. The leaf is interpreted
-at render time and forms a fit boundary for surrounding custom groups. -/
+at render time through the vendored machine and forms a fit boundary for surrounding custom
+groups. -/
 def registered (format : Std.Format) : Doc :=
-  .mk (.registered format) ⟨0, true, none⟩ ⟨0, true, none⟩ 1 true
+  .mk (.registered format) ⟨0, true, none, true⟩ ⟨0, true, none, true⟩ 1 true
 
 end Doc
 
@@ -187,7 +270,7 @@ structure Mark where
   deriving Inhabited, BEq, Repr, Lean.ToJson, Lean.FromJson
 
 /-- Deterministic renderer work counters. Native events count incremental outputs, newlines, and tag
-events observed while interpreting opaque `Std.Format` leaves. -/
+events observed while interpreting opaque `Std.Format` leaves and native `tag` nodes. -/
 structure RenderMetrics where
   documentNodes : Nat
   workSteps : Nat
@@ -205,20 +288,70 @@ private inductive Mode where
   | flat
   | broken
 
-private inductive Command where
-  | document (indent : Nat) (mode : Mode) (document : Doc)
+/-- One work entry: a document with its current indent and open-tag count, or a source-map close
+sentinel. -/
+private inductive WorkEntry where
+  | document (doc : Doc) (indent : Int) (activeTags : Nat)
   | closeMark (source : SourceRange) (outputStart : Nat)
 
-private def Command.measure : Command → LineMeasure
-  | .closeMark .. => .empty
-  | .document _ mode doc =>
-    match mode with
-    | .flat => doc.flatMeasure
-    | .broken => doc.brokenMeasure
+private def WorkEntry.measure : Mode → WorkEntry → LineMeasure
+  | _, .closeMark .. => .empty
+  | .flat, .document doc .. => doc.flatMeasure
+  | .broken, .document doc .. => doc.brokenMeasure
 
+/-- A list of work entries caching both cumulative mode measures at every node. Regrouping a fill
+or re-grouping after a hard line wraps the *same* entries in a new group without re-measuring
+them; the group's decision reads the column its mode names. -/
+private inductive Items where
+  | nil
+  | cons (entry : WorkEntry) (flat broken : LineMeasure) (rest : Items)
+
+namespace Items
+
+private def cumulative : Mode → Items → LineMeasure
+  | _, .nil => .empty
+  | .flat, .cons _ value _ _ => value
+  | .broken, .cons _ _ value _ => value
+
+private def push (entry : WorkEntry) (rest : Items) : Items :=
+  let flat := (WorkEntry.measure .flat entry).append (cumulative .flat rest)
+  let broken := (WorkEntry.measure .broken entry).append (cumulative .broken rest)
+  .cons entry flat broken rest
+
+private def ofList (entries : List WorkEntry) : Items :=
+  entries.foldr push .nil
+
+end Items
+
+/-- Whether a group's entries may flatten: the vendored machine's `FlattenAllowability`.
+`disallow` is the root group, which never flattens and never re-groups. -/
+private inductive FlattenAllowability where
+  | allow (fits : Bool)
+  | disallow
+
+private def FlattenAllowability.shouldFlatten : FlattenAllowability → Bool
+  | .allow true => true
+  | _ => false
+
+/-- One work group: a flatten decision, a flatten behavior (`fill` or allOrNone), and its
+remaining entries. -/
+private structure WorkGroup where
+  fla : FlattenAllowability
+  fill : Bool
+  items : Items
+
+/-- The mode a group's entries are measured in for the cumulative caches: its current decision. -/
+private def WorkGroup.mode (group : WorkGroup) : Mode :=
+  if group.fla.shouldFlatten then .flat else .broken
+
+private def WorkGroup.contribution (group : WorkGroup) : LineMeasure :=
+  group.items.cumulative group.mode
+
+/-- The work list: groups whose every node caches the cumulative suffix measure in the group's
+own decision mode, rebuilt in constant time as entries are consumed. -/
 private inductive Work where
   | empty
-  | more (command : Command) (measure : LineMeasure) (rest : Work)
+  | more (group : WorkGroup) (measure : LineMeasure) (rest : Work)
 
 namespace Work
 
@@ -226,8 +359,10 @@ def measure : Work → LineMeasure
   | .empty => .empty
   | .more _ value _ => value
 
-def push (command : Command) (rest : Work) : Work :=
-  .more command (command.measure.append rest.measure) rest
+/-- Re-pack a group with its entries and the running suffix: constant time because both measures
+are cached. -/
+private def pack (group : WorkGroup) (rest : Work) : Work :=
+  .more group (group.contribution.append rest.measure) rest
 
 end Work
 
@@ -264,95 +399,242 @@ private instance : Std.Format.MonadPrettyFormat (StateM RenderState)
   startTag _ := modify fun state => { state with nativeEvents := state.nativeEvents + 1 }
   endTags count := modify fun state => { state with nativeEvents := state.nativeEvents + count }
 
+/-- The vendored machine's `spaceUptoLine` over one document, for the suffixes the cache cannot
+answer: an `align` charges the pad it would need against the row it would start on, and stops the
+walk where it would break. `m` is the machine's align allowance; `flatten` the measuring mode. -/
+private partial def measureContextual : Doc → Bool → Int → Nat → NativeFormat.SpaceResult
+  | doc, flatten, m, w =>
+    match doc.kind with
+    | .empty => {}
+    | .comment _ => {}
+    | .hard | .blank => { foundLine := true }
+    | .registered _ => { foundLine := true }
+    | .line _ => if flatten then { space := 1 } else { foundLine := true }
+    | .align force =>
+      if flatten && !force then {}
+      else if w < m then { space := (m - w).toNat }
+      else { foundLine := true }
+    | .text value | .nativeText value | .verbatim value =>
+      let first := Doc.firstLine value
+      { foundLine := Doc.spansLines value,
+        foundFlattenedHardLine := flatten && Doc.spansLines value, space := Doc.width first }
+    | .cat left right =>
+      NativeFormat.merge w (measureContextual left flatten m w)
+        (measureContextual right flatten m)
+    | .nest n body => measureContextual body flatten (m - n) w
+    | .group body => measureContextual body true m w
+    | .fill body => measureContextual body true m w
+    | .tag _ body => measureContextual body flatten m w
+    | .anchor body => measureContextual body flatten m w
+    | .mark _ body => measureContextual body flatten m w
+
+/-- The vendored machine's `spaceUptoLine'` over the work list, for a contextual suffix. Per
+entry the allowance is the machine's `w + col - indent`; the walk stops at the first hard stop. -/
+private partial def measureEntries (decisionColumn : Nat) (w : Nat) (flatten : Bool) :
+    Items → NativeFormat.SpaceResult
+  | .nil => {}
+  | .cons entry _ _ rest =>
+    match entry with
+    | .closeMark .. => measureEntries decisionColumn w flatten rest
+    | .document doc indent _ =>
+      let itemResult : NativeFormat.SpaceResult :=
+        if !doc.flatMeasure.contextual then
+          let measure := if flatten then doc.flatMeasure else doc.brokenMeasure
+          { foundLine := measure.boundary, foundFlattenedHardLine := flatten && measure.boundary,
+            space := measure.width }
+        else
+          measureContextual doc flatten (w + decisionColumn - indent) w
+      NativeFormat.merge w itemResult fun w' => measureEntries decisionColumn w' flatten rest
+
+private partial def measureWork (decisionColumn : Nat) (w : Nat) : Work → NativeFormat.SpaceResult
+  | .empty => {}
+  | .more group _ rest =>
+    NativeFormat.merge w
+      (measureEntries decisionColumn w group.fla.shouldFlatten group.items)
+      fun w' => measureWork decisionColumn w' rest
+
+/-- Push a group for decision: the vendored machine's `pushGroup`. The candidate measures its
+entries flat for allOrNone and broken (up to the first break) for fill, merged with the whole
+enclosing remainder; a flattened hard line in an allOrNone candidate denies the fit; a pinned
+comment holds the row flat regardless. Returns the work list with the decided group on top. -/
+private def pushGroup (fill : Bool) (items : Items) (rest : Work) (width : Nat) (pinned : Bool) :
+    StateM RenderState Work := do
+  let column := (← get).column
+  let candidateMode : Mode := if fill then .broken else .flat
+  let candidateMeasure := items.cumulative candidateMode
+  let cumulative := candidateMeasure.append rest.measure
+  let fits :=
+    if !cumulative.contextual then
+      (!( !fill && candidateMeasure.boundary)) && cumulative.width ≤ width - column
+    else
+      let available := width - column
+      let r := measureEntries column available (!fill) items
+      let r' := NativeFormat.merge available r fun w' => measureWork column w' rest
+      !r.foundFlattenedHardLine && r'.space ≤ available
+  let group : WorkGroup := { fla := .allow (fits || pinned), fill, items }
+  return Work.pack group rest
+
 private partial def renderWork (width : Nat) (pinnedPhrases : Array String) :
     Work → StateM RenderState Unit
   | .empty => pure ()
-  | .more command _ rest => do
-    modify fun state => { state with workSteps := state.workSteps + 1 }
-    match command with
-    | .closeMark source outputStart =>
-      let state ← get
-      set
-          { state with
-            marks :=
-              state.marks.push
-                {
-                  source
-                  output := ⟨outputStart, state.outputBytes⟩ } }
-      renderWork width pinnedPhrases rest
-    | .document indent mode document =>
-      match document.kind with
-      | .empty =>
-        renderWork width pinnedPhrases rest
-      | .text value =>
-        modify (appendLiteral · value)
-        renderWork width pinnedPhrases rest
-      | .comment value =>
-        modify (appendLiteral · value)
-        renderWork width pinnedPhrases rest
-      | .verbatim value =>
-        modify (appendLiteral · value)
-        renderWork width pinnedPhrases rest
-      | .cat left right =>
-        renderWork width pinnedPhrases <|
-            rest.push (.document indent mode right) |>.push (.document indent mode left)
-      | .nest extra body =>
-        renderWork width pinnedPhrases <| rest.push (.document (indent + extra) mode body)
-      | .mark source body =>
-        let outputStart := (← get).outputBytes
-        renderWork width pinnedPhrases <|
-            rest.push (.closeMark source outputStart) |>.push (.document indent mode body)
-      | .hard =>
-        modify (appendNewline · indent)
-        renderWork width pinnedPhrases rest
-      | .blank =>
+  | .more group _ rest =>
+    match group.items with
+    | .nil => renderWork width pinnedPhrases rest
+    | .cons entry _ _ items =>
+      let resume (is' : Items) : StateM RenderState Unit :=
+        renderWork width pinnedPhrases (Work.pack { group with items := is' } rest)
+      let resumeWork (work : Work) : StateM RenderState Unit :=
+        renderWork width pinnedPhrases work
+      match entry with
+      | .closeMark source outputStart => do
         modify fun state =>
-            let value := "\n\n".pushn ' ' indent
+          { state with
+            workSteps := state.workSteps + 1,
+            marks := state.marks.push { source, output := ⟨outputStart, state.outputBytes⟩ } }
+        resume items
+      | .document doc indent activeTags => do
+        modify fun state => { state with workSteps := state.workSteps + 1 }
+        let endTags : StateM RenderState Unit :=
+          modify fun state => { state with nativeEvents := state.nativeEvents + activeTags }
+        match doc.kind with
+        | .empty =>
+          endTags
+          resume items
+        | .text value | .comment value | .verbatim value =>
+          modify (appendLiteral · value)
+          endTags
+          resume items
+        | .nativeText value =>
+          -- Native multiline text: emit up to each newline, break to the entry's indent, and
+          -- re-group the remainder of the enclosing group after every hard line. The root group
+          -- (`disallow`) never re-groups.
+          let parts := value.splitOn "\n"
+          let mut headGroup := group
+          for part in parts.dropLast do
+            modify (appendLiteral · part)
+            modify fun state => { appendNewline state indent.toNat with }
+            match headGroup.fla with
+            | .disallow => pure ()
+            | _ =>
+              -- The machine's re-grouping after a hard line break: the remainder of the
+              -- enclosing group is re-decided, and its decision governs what follows.
+              let pushed ← pushGroup headGroup.fill items rest width false
+              match pushed with
+              | .empty => pure ()
+              | .more group' _ _ => headGroup := group'
+          modify (appendLiteral · (parts.getLast?.getD ""))
+          endTags
+          resumeWork (Work.pack { headGroup with items } rest)
+        | .cat left right =>
+          resume
+            (items.push (.document right indent activeTags) |>.push
+              (.document left indent 0))
+        | .nest extra body =>
+          resume (items.push (.document body (indent + extra) activeTags))
+        | .mark source body =>
+          let outputStart := (← get).outputBytes
+          resume
+            (items.push (.closeMark source outputStart) |>.push (.document body indent activeTags))
+        | .tag _ body =>
+          modify fun state => { state with nativeEvents := state.nativeEvents + 1 }
+          resume (items.push (.document body indent (activeTags + 1)))
+        | .anchor body =>
+          -- Backward-only capture: the entry column is the column of the next emitted byte. The
+          -- body's base indent is re-set to it; measurement never sees the change.
+          if Doc.beginsWithBreak body then
+            panic! "anchor body begins with a break: the entry column captured nothing"
+          else
+            let column := (← get).column
+            resume (items.push (.document body column activeTags))
+        | .hard =>
+          modify (appendNewline · indent.toNat)
+          endTags
+          resume items
+        | .blank =>
+          modify fun state =>
+            let value := "\n\n".pushn ' ' indent.toNat
             { state with
               output := state.output ++ value
-              column := indent
+              column := indent.toNat
               outputBytes := state.outputBytes + value.utf8ByteSize }
-        renderWork width pinnedPhrases rest
-      | .line flat =>
-        match mode with
-        | .flat =>
-          modify (appendLiteral · flat)
-        | .broken =>
-          modify (appendNewline · indent)
-        renderWork width pinnedPhrases rest
-      | .group body =>
-        match mode with
-        | .flat =>
-          renderWork width pinnedPhrases <| rest.push (.document indent .flat body)
-        | .broken =>
-          let candidate := rest.push (.document indent .flat body)
-          let column := (← get).column
-          let available := width - column
-          -- A pinned comment on the row holds the group flat even when the code alone overflows:
-          -- splitting would detach the directive from the construct it annotates. It cannot
-          -- override a forced break inside the body — flat mode cannot make a hard newline
-          -- disappear.
-          let pinned :=
-            candidate.measure.comment?.any fun comment =>
-              pinnedPhrases.any fun phrase => comment.contains phrase
-          let selected :=
-            if
-                !body.flatMeasure.boundary &&
-                  (column <= width && candidate.measure.width <= available || pinned) then
-              Mode.flat
-            else Mode.broken
-          renderWork width pinnedPhrases <| rest.push (.document indent selected body)
-      | .registered format =>
-        Std.Format.prettyM format width indent
-        renderWork width pinnedPhrases rest
+          endTags
+          resume items
+        | .line flat =>
+          if !group.fill then
+            if group.fla.shouldFlatten then
+              modify (appendLiteral · flat)
+            else
+              modify (appendNewline · indent.toNat)
+            endTags
+            resume items
+          else
+            -- Native fill: one column is charged for the candidate space; the remainder re-groups
+            -- either way.
+            if group.fla.shouldFlatten then
+              -- The lookahead charges one column for the space it would emit.
+              let candidate ← pushGroup true items rest (width - 1) false
+              let flattenNext :=
+                match candidate with
+                | .empty => false
+                | .more group' _ _ => group'.fla.shouldFlatten
+              if flattenNext then
+                modify (appendLiteral · flat)
+                endTags
+                resumeWork candidate
+              else
+                modify (appendNewline · indent.toNat)
+                endTags
+                resumeWork (← pushGroup true items rest width false)
+            else
+              modify (appendNewline · indent.toNat)
+              endTags
+              resumeWork (← pushGroup true items rest width false)
+        | .align force =>
+          if group.fla.shouldFlatten && !force then
+            endTags
+            resume items
+          else
+            let column := (← get).column
+            if column < indent then
+              modify (appendLiteral · ("".pushn ' ' (indent - column).toNat))
+            else
+              modify (appendNewline · indent.toNat)
+            endTags
+            resume items
+        | .group body =>
+          if group.fla.shouldFlatten then
+            resume (items.push (.document body indent activeTags))
+          else
+            let pinned :=
+              (items.cumulative .flat).comment?.any fun comment =>
+                pinnedPhrases.any fun phrase => comment.contains phrase
+            let pushed ←
+              pushGroup false (Items.ofList [.document body indent activeTags])
+                (Work.pack { group with items } rest) width pinned
+            resumeWork pushed
+        | .fill body =>
+          if group.fla.shouldFlatten then
+            resume (items.push (.document body indent activeTags))
+          else
+            let pushed ←
+              pushGroup true (Items.ofList [.document body indent activeTags])
+                (Work.pack { group with items } rest) width false
+            resumeWork pushed
+        | .registered format =>
+          NativeFormat.renderM format width indent.toNat
+          endTags
+          resume items
 
 /-- Render a document at `width`, returning text, byte source maps, and deterministic work counts.
 `pinnedPhrases` are the `pinned-comments` configuration: a comment containing one holds its line
-flat. -/
-def renderDetailed (width : Nat) (document : Doc) (pinnedPhrases : Array String := #[]) :
-    Rendered :=
-  let initial := Work.empty.push (.document 0 .broken document)
-  let state := (renderWork width pinnedPhrases initial).run { } |>.2
+flat. `indent` and `column` are the native machine's entry state: the wrap indent for later rows
+and the column the first row's fit measurement starts at. -/
+def renderDetailed (width : Nat) (document : Doc) (pinnedPhrases : Array String := #[])
+    (indent : Nat := 0) (column : Nat := 0) : Rendered :=
+  let root : WorkGroup :=
+    { fla := .disallow, fill := false, items := Items.ofList [.document document indent 0] }
+  let initial := Work.pack root .empty
+  let state := (renderWork width pinnedPhrases initial).run { column } |>.2
   {
     text := state.output
     sourceMap := state.marks
