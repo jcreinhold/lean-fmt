@@ -179,8 +179,7 @@ private def testCanonicalLayout : IO Unit := do
   -- Sub-blocks order Lean, Mathlib, then other — contiguous, no blank lines between them
   -- (the script's own suite pins contiguous sub-blocks).
   let subblocks := "import Proofs.Foo\nimport Mathlib.X\nimport Lean\n\ndef x := 0\n"
-  ensure
-      ((← canon subblocks) == "import Lean\nimport Mathlib.X\nimport Proofs.Foo\n\ndef x := 0\n")
+  ensure ((← canon subblocks) == "import Lean\nimport Mathlib.X\nimport Proofs.Foo\n\ndef x := 0\n")
       "canonical layout did not order Lean/Mathlib/other sub-blocks contiguously"
   -- Buckets separate with one blank line: `public import`, `import all`, `import`; the `module`
   -- marker and the body are preserved with one blank line on each side of the region.
