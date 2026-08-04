@@ -2036,7 +2036,16 @@ private def insertComments (dedent : Int) (rowBreak : Std.Format) (comments : Ar
       | .trailing =>
         let boundary := if atLineStart then .nil else .text " "
         let document := .append document (.append boundary payload)
-        if comment.kind == .line then (.append document rowBreak, true) else (document, false)
+        -- A line comment ends its row by construction. So does a block comment the source wrote
+        -- over more than one row: its closing `-/` sits at whatever column the payload's last row
+        -- reached, which is a column no layout decision here chose. Letting the next token follow
+        -- it there puts code on the comment's closing row -- `-/ intro h` -- and the token lands
+        -- offside of the block it belongs to, which ends the block and leaves the rest of it to
+        -- reparse as sibling commands. 17 mathlib modules refused to format for it. Only a
+        -- single-row block comment leaves the row in a state the surrounding layout still owns.
+        if comment.kind == .line || comment.payload.contains '\n' then
+          (.append document rowBreak, true)
+        else (document, false)
       | .leading | .dangling =>
         let boundary := if atLineStart then .nil else rowBreak
         (.append document <| .append boundary <| .append payload rowBreak, true)

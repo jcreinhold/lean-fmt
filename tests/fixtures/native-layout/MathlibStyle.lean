@@ -79,3 +79,15 @@ def midRowBrace (n : Nat) : Nested :=
   { inner := { left := n
                right := n }
     tag := n }
+
+/- A block comment the source wrote over more than one row, in front of the first tactic of a
+focusing dot. The comment is trailing on the `·`, and a trailing block comment used to leave the
+row open, so the tactic followed the comment's closing bytes onto its last row -- offside of the
+block it belongs to. 17 mathlib modules refused to format for it. -/
+theorem dotComment (a : Nat) : a = a ∨ a = a := by
+  rcases Nat.lt_or_ge a 1 with h | h
+  · /- A comment the source wrote over
+      more than one row, in front of the
+      first tactic of a focusing dot. -/
+    exact Or.inl rfl
+  · exact Or.inr rfl

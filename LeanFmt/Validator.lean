@@ -116,7 +116,7 @@ private def position (text : String) (offset : Nat) : String :=
 A count is the one structural failure that cannot name its own node -- every later index is shifted,
 so the ordered walk below reports only the first divergence, which is the one that shifted them. It
 is diagnostic only: the gate has already refused. -/
-private def firstNodeDivergence (before : LosslessSource) (afterText : String)
+private def firstNodeDivergence (beforeText : String) (before : LosslessSource) (afterText : String)
     (after : LosslessSource) : String :=
   let shared := min before.nodes.size after.nodes.size
   match
@@ -126,8 +126,19 @@ private def firstNodeDivergence (before : LosslessSource) (afterText : String)
   | some index =>
     let candidate := after.nodes[index]!
     let location := position afterText candidate.range.start
+    -- The divergence is usually an optional slot, which is empty and carries no range, so its own
+    -- position reads `1:1` and names nothing. The enumeration is ordered, so the nearest earlier
+    -- node that does carry a range is the site in the *source* -- which is the file a reader has
+    -- open.
+    let anchor :=
+      match
+        ((List.range index).reverse.find? fun earlier =>
+          before.nodes[earlier]!.range.start != before.nodes[earlier]!.range.stop) with
+      | some earlier =>
+        s!"; after {position beforeText before.nodes[earlier]!.range.start} in source"
+      | none => ""
     s!"; node {index} is {kindOfNode before index} before and \
-      {kindOfNode after index} at {location} after"
+      {kindOfNode after index} at {location} after{anchor}"
   | none => "; the enumerations agree up to the shorter one's end"
 
 /-- Compare the enumerated normalized structure. The first mismatch identifies its node/token path. -/
@@ -143,7 +154,7 @@ def compare (beforeText : String) (before : LosslessSource) (afterText : String)
     return ←
         fail .structure
             s!"node count changed: {before.nodes.size} -> {after.nodes.size}\
-      {firstNodeDivergence before afterText after}"
+      {firstNodeDivergence beforeText before afterText after}"
   for index in [0:before.nodes.size]do
     let left := before.nodes[index]!
     let right := after.nodes[index]!
@@ -187,7 +198,19 @@ def admit (beforeText : String) (before : LosslessSource) (first : FormatDraft)
         return ← fail .comments s!"comment {index} changed: {repr left} -> {repr right}"
     return ← fail .comments "comment kind, payload, order, or logical owner path changed"
   unless second.text == first.text do
-    return ← fail .idempotence "formatting the reparsed candidate changed bytes"
+    -- A byte count alone says the second pass moved something and nothing about what. Every one of
+    -- these has to be minimized by hand out of a whole module otherwise, so the failure names the
+    -- line the two passes first disagree on and spells both.
+    let firstLines := first.text.splitOn "\n"
+    let secondLines := second.text.splitOn "\n"
+    let divergence :=
+      match
+        (List.range (min firstLines.length secondLines.length)).find? fun index =>
+          firstLines[index]! != secondLines[index]! with
+      | some index =>
+        s!" at line {index + 1}: {repr firstLines[index]!} -> {repr secondLines[index]!}"
+      | none => s!"; line counts {firstLines.length} -> {secondLines.length}"
+    return ← fail .idempotence s!"formatting the reparsed candidate changed bytes{divergence}"
   return {
       text := first.text
       sourceMap := first.sourceMap
