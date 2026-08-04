@@ -91,3 +91,14 @@ theorem dotComment (a : Nat) : a = a ∨ a = a := by
       first tactic of a focusing dot. -/
     exact Or.inl rfl
   · exact Or.inr rfl
+
+/- A `let` whose body the source broke onto its own row, inside the one command-embedding parser
+that has no `ppDedent` of its own. The body carries an absolute source-column pin, and every row
+inside a nested command carries that command's own cancellation -- so the cancellation reached the
+pin twice and the body landed a level left of where the pin named. The pin is collected only for a
+body the source already broke, so the first pass created the shape the second pass mis-pinned, and
+13 mathlib modules refused as non-idempotent for it. -/
+/-- info: let x := true;
+x : Bool -/
+#guard_msgs in
+#check let x := true; x

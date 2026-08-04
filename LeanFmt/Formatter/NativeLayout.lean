@@ -2366,6 +2366,20 @@ leaf before rendering, so no renderer ever interprets it. -/
 private def explodedCloseTag : Nat :=
   0x6C65616E466D74
 
+/- The column a row opened at this terminal actually starts at, which is the document's own nest less
+the cancellation a nested command's rows inherit (`interiorDedent`).
+
+`constrainBoundary` wraps everything this terminal emits in that cancellation, *outside* whatever
+`boundaryFormat` returns, so a spelling that computes a column has to account for it or the
+cancellation is applied to the column twice. Both absolute pins do compute one; the three fixed-text
+spellings do not and are unaffected. A `let` body pinned to source column 2 inside a `#guard_msgs in`
+command -- the one embedding parser with no `ppDedent` of its own, so the only one whose rows carry a
+cancellation -- came out at column 0, and since the pin is collected only for a body the source
+already broke onto its own row, the first pass created exactly the condition the second pass then
+mis-pinned. 13 mathlib modules refused as non-idempotent for it. -/
+private def rowIndent (state : TransformState) : Int :=
+  state.ambientNest - (interiorDedent state).getD 0
+
 /- What the adapter spells at a boundary it corrects. Four are fixed text; the rest compute a
 `nest` against the document's own: `dedented` cancels every column between the enclosing command's
 and this one, and the two column pins hold a row where their constructor says. -/
@@ -2380,11 +2394,12 @@ private def boundaryFormat (state : TransformState) : BoundaryLayout → Std.For
   -- holding it would move the row *left* of where every sibling just went, which is how an arm
   -- body ends up left of its own `|`. So this pin only ever moves a row right, and `anchored`
   -- below is the one whose row must move either way.
-  | .columned col => .nest (max (col : Int) state.ambientNest - state.ambientNest) (.text "\n")
+  | .columned col => .nest ((max (col : Int) (rowIndent state)) - rowIndent state) (.text "\n")
   -- `dedentColumns`, not `ambientNest`: an exact column has to be measured against every column
   -- in front of this row, and the document's own nest is one of three. The pin above survives
   -- the difference because `max` only ever discards it; this one renders it directly.
-  | .anchored col => .nest ((col : Int) - dedentColumns state) (.text "\n")
+  | .anchored col =>
+    .nest ((col : Int) - dedentColumns state + (interiorDedent state).getD 0) (.text "\n")
   | .fieldRow => .text "\n"
   | .explodedClose => .tag explodedCloseTag (.text "\n")
 
