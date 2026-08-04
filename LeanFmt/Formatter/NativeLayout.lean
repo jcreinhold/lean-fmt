@@ -3232,13 +3232,43 @@ private partial def lowerNative : Std.Format → Doc
     | .fill => .fill (lowerNative body)
   | .tag tag body => .tag tag (lowerNative body)
 
-private def transform (source : String) (terminals : Array Terminal)
+/- The one private command plan: every fact the collector assembly derives about a command,
+resolved against its terminals exactly once, before the native format exists. The transform and
+the lowering consume it completely — every entry must be applied exactly once or the command is
+refused — and no part of it is public: there is no `Plan` trait, no evidence registry, and no
+callback into the engine, only this structure and its two construction steps.
+
+Phase one (`CommandPlan.collect`) reads the source and the syntax and assembles the raw facts:
+terminals, comments, exact islands, offside constraints, and the boundary table with its conflict
+order. Phase two (`CommandPlan.resolve`) maps every range-keyed fact onto terminal intervals and
+settles the conflicts that need the whole table in hand: one island per marker, no boundary inside
+an island, one layout per terminal. A later structural-annotation interval (prompts 09–10) joins
+as another resolved field here, not as a parallel channel. -/
+private structure CommandPlan where
+  source : String
+  terminals : Array Terminal
+  comments : Array InteriorComment
+  trailing : Array (TokenSpan × InteriorComment)
+  islands : Array ExactIsland
+  constraints : Array (OffsideConstraint × TokenSpan)
+  boundaries : Array (Nat × BoundaryLayout)
+  flattened : Array TokenSpan
+  nestedCommands : Array TokenSpan
+  explodedSpans : Array TokenSpan
+  headSpans : Array (Nat × TokenSpan)
+  baseIndent : Nat
+  deriving Inhabited
+
+/-- Phase two: resolve the raw collected facts against the terminal sequence. Every per-range fact
+leaves here as a per-interval one, the island/boundary conflicts are settled, and the boundary
+table's disagreements are the one typed failure. -/
+private def CommandPlan.resolve (source : String) (terminals : Array Terminal)
     (comments : Array InteriorComment) (blockDangling : Array (SourceRange × InteriorComment))
     (islands : Array ExactIsland) (constraints : Array OffsideConstraint)
     (boundaryStarts : Array (Nat × BoundaryLayout)) (joined : Array SourceRange)
     (nestedCommandRanges : Array SourceRange) (explodedRanges : Array SourceRange)
-    (headSpans : Array (Nat × TokenSpan)) (baseIndent : Nat) (native : Std.Format) :
-    Except TransformFailure (Std.Format × Metrics) := do
+    (headSpans : Array (Nat × TokenSpan)) (baseIndent : Nat) :
+    Except TransformFailure CommandPlan := do
   let constraints :=
     constraints.map fun constraint => (constraint, spanForRange terminals constraint.range)
   -- An exact island's bytes are its whole rendering, so the adapter spells no boundary between the
@@ -3275,68 +3305,89 @@ private def transform (source : String) (terminals : Array Terminal)
       { comment with
         boundary :=
           terminals.findIdx? (comment.range.start < ·.range.start) |>.getD terminals.size }
+  return {
+    source, terminals, comments, trailing, islands, constraints, boundaries, flattened,
+    nestedCommands, explodedSpans, headSpans, baseIndent }
+
+/-- Transform one native format under a resolved plan. Every ledger refusal below is a plan entry
+the walk could not apply exactly once; the counts name the first unapplied entry and the source it
+was collected at. -/
+private def transform (plan : CommandPlan) (native : Std.Format) :
+    Except TransformFailure (Std.Format × Metrics) := do
   let spelled := spelledMarkers native
   let droppedIslands :=
-    islands.filterMap fun island =>
+    plan.islands.filterMap fun island =>
       if spelled.contains island.marker then none else some island.marker
   let initial : TransformState :=
     {
-    source, terminals, comments, trailing, islands, droppedIslands, constraints, boundaries,
-    flattened, nestedCommands, explodedSpans, headSpans, baseIndent }
+      source := plan.source
+      terminals := plan.terminals
+      comments := plan.comments
+      trailing := plan.trailing
+      islands := plan.islands
+      droppedIslands
+      constraints := plan.constraints
+      boundaries := plan.boundaries
+      flattened := plan.flattened
+      nestedCommands := plan.nestedCommands
+      explodedSpans := plan.explodedSpans
+      headSpans := plan.headSpans
+      baseIndent := plan.baseIndent }
   let (result, state) ← ((transformNative native).run initial).mapError .unadapted
-  if state.terminalIndex != terminals.size then
+  if state.terminalIndex != state.terminals.size then
     throw <|
         .incomplete
-          s!"native formatter consumed {state.terminalIndex}/{terminals.size} terminals; \
+          s!"native formatter consumed {state.terminalIndex}/{state.terminals.size} terminals; \
 nearby: {nearbyTerminals state}; recent native leaves: {repr state.recentNativeLeaves}"
-  if state.commentIndex != comments.size then
-    let nextRange := comments[state.commentIndex]?.map fun comment => comment.range
+  if state.commentIndex != state.comments.size then
+    let nextRange := state.comments[state.commentIndex]?.map fun comment => comment.range
     throw <|
         .unadapted
-          s!"native formatter inserted {state.commentIndex}/{comments.size} interior comments; \
+          s!"native formatter inserted {state.commentIndex}/{state.comments.size} interior comments; \
 next expected range: {repr nextRange}; recent native leaves: \
 {repr state.recentNativeLeaves}"
   -- A count alone says a rule went unapplied and nothing about which one; every one of these was
   -- minimized by hand from a whole mathlib module because of it. Each refusal below names the first
   -- unapplied entry and the source it was collected at.
-  if state.appliedIslands.size != islands.size then
-    let missing := islands.filter fun island => !state.appliedIslands.contains island.marker
+  if state.appliedIslands.size != state.islands.size then
+    let missing := state.islands.filter fun island => !state.appliedIslands.contains island.marker
     throw <|
         .unadapted
-          s!"native formatter applied {state.appliedIslands.size}/{islands.size} exact islands; \
+          s!"native formatter applied {state.appliedIslands.size}/{state.islands.size} exact islands; \
 first unapplied: {repr (missing[0]?.map fun island => (island.range.start, island.range.stop, island.text))}"
-  if state.appliedConstraints.size != constraints.size then
+  if state.appliedConstraints.size != state.constraints.size then
     let missing :=
-      (constraints.zipIdx.filter fun (_, index) => !state.appliedConstraints.contains index).map
+      (state.constraints.zipIdx.filter fun (_, index) =>
+            !state.appliedConstraints.contains index).map
         fun ((constraint, span), _) =>
         (constraint.range.start, constraint.range.stop, span.start, span.stop)
     throw <|
         .unadapted
-          s!"native formatter applied {state.appliedConstraints.size}/{constraints.size} \
+          s!"native formatter applied {state.appliedConstraints.size}/{state.constraints.size} \
 offside constraints; first unapplied: {repr missing[0]?}"
-  if state.appliedBoundaries.size != boundaries.size then
-    let missing := boundaries.filter fun (index, _) => !state.appliedBoundaries.contains index
+  if state.appliedBoundaries.size != state.boundaries.size then
+    let missing := state.boundaries.filter fun (index, _) => !state.appliedBoundaries.contains index
     let described :=
       missing.map fun (index, _) =>
         (index,
-          (terminals[index]?.map fun terminal : Terminal =>
+          (state.terminals[index]?.map fun terminal : Terminal =>
             (terminal.range.start, terminal.sourceSpelling)))
     throw <|
         .unadapted
-          s!"native formatter applied {state.appliedBoundaries.size}/{boundaries.size} \
+          s!"native formatter applied {state.appliedBoundaries.size}/{state.boundaries.size} \
 boundaries; unapplied at {repr described}"
-  if state.appliedFlattened.size != flattened.size then
+  if state.appliedFlattened.size != state.flattened.size then
     let missing :=
-      (flattened.zipIdx.filter fun (_, index) => !state.appliedFlattened.contains index).map
+      (state.flattened.zipIdx.filter fun (_, index) => !state.appliedFlattened.contains index).map
         fun (span, _) => (span.start, span.stop)
     throw <|
         .unadapted
-          s!"native formatter joined {state.appliedFlattened.size}/{flattened.size} guarded \
+          s!"native formatter joined {state.appliedFlattened.size}/{state.flattened.size} guarded \
 bail-outs; first unapplied span: {repr missing[0]?}"
-  if state.appliedTrailing.size != trailing.size then
+  if state.appliedTrailing.size != state.trailing.size then
     throw <|
         .unadapted
-          s!"native formatter placed {state.appliedTrailing.size}/{trailing.size} block-dangling \
+          s!"native formatter placed {state.appliedTrailing.size}/{state.trailing.size} block-dangling \
 comments; the block's document holds no break to hang one on"
   return (result.format, state.metrics)
 
@@ -3444,32 +3495,16 @@ private partial def nativeSize : Std.Format → Nat
   | .append left right => 1 + nativeSize left + nativeSize right
   | _ => 1
 
-/-- Format one actual command through Lean's live registry, preserving source payloads and applying
-only the structurally measured boundary and offside corrections collected below. `baseIndent` is the
-column the resulting registered leaf is rendered at; an exact island's dedent must cancel it. -/
-def command (source : String) (ownership : CommentOwnership) (stx : Lean.Syntax)
-    (format : FormatConfig) (baseIndent : Nat := 0) :
-    Lean.CoreM (Except FormatterFailure Document) := do
-  let trace ← Formatter.trace ownership .command stx
+/-- Phase one: read the source and the syntax and assemble the plan. Returns the protected syntax
+alongside, which `command` still needs for the formatter registry and the `rootedKind` guard; it
+is an input to the formatter run, not a plan fact. -/
+private def CommandPlan.collect (source : String) (ownership : CommentOwnership) (stx : Lean.Syntax)
+    (stripped : Lean.Syntax) (format : FormatConfig) (baseIndent : Nat) :
+    Lean.CoreM (Except TransformFailure (CommandPlan × Lean.Syntax)) := do
   -- The same `format.indent` Lean's own `ppIndent`/`ppDedent` read, so a constraint that cancels one
   -- level of native indentation cancels exactly the amount native layout introduced.
   let formatIndent := Lean.Std.Format.getIndent (← Lean.getOptions)
-  let stripped := Formatter.withoutBoundaryTrivia stx
   let terminals := terminalsFrom source stripped
-  -- `terminals` above, and the three other walks that spell `children[0]?`, each pick one alternative
-  -- of a `choice` node and assume the rest spell the same bytes. `Syntax.reprint` verifies that
-  -- instead of assuming it, and this is where lean-fmt does the same: one check on `stripped`, which
-  -- is the tree all four walk, makes the assumption true for all four.
-  if let some (range, alternative, expected, actual) := choiceDisagreement? source stripped then
-    return .error
-        {
-          category := .command
-          kind := stx.getKind
-          range
-          trace
-          detail :=
-            s!"choice node at {range.start}:{range.stop} spells different source in its \
-alternatives: alternative 0 is {expected}, alternative {alternative} is {actual}" }
   let blockDangling := blockDanglingComments ownership stx
   let comments := interiorComments ownership stx (blockDangling.map (·.2.range))
   let constraints := collectOffsideConstraints formatIndent stripped
@@ -3588,6 +3623,51 @@ alternatives: alternative 0 is {expected}, alternative {alternative} is {actual}
       rowSpreadBoundaries
   let commentFree := withoutTrivia stripped
   let (formattedSyntax, islands) := protectSourceData categories source commentFree
+  -- The closing brace's own row decision (`collectStructInstCloseBraces`): its ranges join
+  -- `explodedRanges` only here, after the pin filter has run.
+  match
+    CommandPlan.resolve source terminals comments blockDangling islands constraints boundaryStarts
+      joined nestedCommandRanges (explodedRanges ++ closeBraceRanges) headSpans baseIndent with
+  | .error failure =>
+    return .error failure
+  | .ok plan =>
+    return .ok (plan, formattedSyntax)
+
+/-- Format one actual command through Lean's live registry, preserving source payloads and applying
+only the structurally measured boundary and offside corrections collected below. `baseIndent` is the
+column the resulting registered leaf is rendered at; an exact island's dedent must cancel it. -/
+def command (source : String) (ownership : CommentOwnership) (stx : Lean.Syntax)
+    (format : FormatConfig) (baseIndent : Nat := 0) :
+    Lean.CoreM (Except FormatterFailure Document) := do
+  let trace ← Formatter.trace ownership .command stx
+  let stripped := Formatter.withoutBoundaryTrivia stx
+  -- The walks below each pick one alternative of a `choice` node and assume the rest spell the
+  -- same bytes. `Syntax.reprint` verifies that instead of assuming it, and this is where lean-fmt
+  -- does the same: one check on `stripped`, which is the tree all of them walk, makes the
+  -- assumption true for all four.
+  if let some (range, alternative, expected, actual) := choiceDisagreement? source stripped then
+    return .error
+        {
+          category := .command
+          kind := stx.getKind
+          range
+          trace
+          detail :=
+            s!"choice node at {range.start}:{range.stop} spells different source in its \
+alternatives: alternative 0 is {expected}, alternative {alternative} is {actual}" }
+  let collected ← CommandPlan.collect source ownership stx stripped format baseIndent
+  let (plan, formattedSyntax) ←
+    match collected with
+    | .ok pair =>
+      pure pair
+    | .error (.incomplete detail) | .error (.unadapted detail) =>
+      return .error
+          {
+            category := .command
+            kind := stx.getKind
+            range := rootRange stx
+            trace
+            detail }
   -- Named before `formatCommand` reaches it. Both lookups this breaks fail with a message about
   -- a name nobody wrote, and the one that fires depends on which end is asked first.
   if let some (kind, suffix) := rootedKindNode? (← Lean.getEnv) formattedSyntax then
@@ -3606,8 +3686,8 @@ Lean/Elab/Syntax.lean:465 did not. No formatter can be resolved for it. Write \
   -- already spells one would be indistinguishable from the placeholder standing in for protected
   -- syntax. The shape is unlikely, not impossible, and "unlikely" is not a guarantee: refuse instead.
   if let some marker :=
-      islands.find? fun island =>
-        terminals.any fun terminal => terminal.sourceSpelling == island.marker then
+      plan.islands.find? fun island =>
+        plan.terminals.any fun terminal => terminal.sourceSpelling == island.marker then
     return .error
         {
           category := .command
@@ -3642,9 +3722,7 @@ cannot tell from the placeholder that protects {marker.range.start}:{marker.rang
   try
     let native ← Lean.PrettyPrinter.formatCommand formattedSyntax
     let native := (dropTrailingHardLine native).getD native
-    match
-      transform source terminals comments blockDangling islands constraints boundaryStarts joined
-        nestedCommandRanges (explodedRanges ++ closeBraceRanges) headSpans baseIndent native with
+    match transform plan native with
     | .ok (native, metrics) =>
       let document := lowerNative native
       if document.wellFormed then

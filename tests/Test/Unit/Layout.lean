@@ -314,9 +314,10 @@ private def testChoiceVerification : IO Unit := do
 
 /- Generated terminal sequences through the alignment walk, with no syntax tree and no formatter.
 
-`Formatter.NativeLayout.transform` is the adapter minus syntax collection: terminals, comments,
-islands, constraints, and boundaries arrive as data, one state machine runs over an `Std.Format`, and
-the command is refused unless every one of them was applied exactly once. Nothing in that signature
+`Formatter.NativeLayout.transform` is the adapter minus syntax collection: the plan's terminals,
+comments, islands, constraints, and boundaries arrive as data (`CommandPlan.resolve` is the
+construction under test here), one state machine runs over an `Std.Format`, and the command is
+refused unless every one of them was applied exactly once. Nothing in that signature
 is a `Lean.Syntax`, so the sequences below are built rather than parsed -- which is the only way to
 put a duplicate spelling, a multi-byte payload, and a deliberately wrong native document next to each
 other in one test. `private` is not an obstacle: `import all` above reaches it, the same way
@@ -363,8 +364,14 @@ private def testAlignmentSequences : IO Unit := do
   let (source, terminals) := spelledTerminals spellings
   let expected := spellings.map (·.2)
   let leaves := spellings.map (·.1)
-  let run (native : Std.Format) :=
-    Formatter.NativeLayout.transform source terminals #[] #[] #[] #[] #[] #[] #[] #[] #[] 0 native
+  let plan :=
+    match
+      Formatter.NativeLayout.CommandPlan.resolve source terminals #[] #[] #[] #[] #[] #[] #[] #[]
+        #[] 0 with
+    | .ok plan => plan
+    | .error failure =>
+      panic! s!"an ordinary terminal sequence's plan was refused: {failure.detail}"
+  let run (native : Std.Format) := Formatter.NativeLayout.transform plan native
   let .ok (aligned, metrics) :=
     run (nativeSequence leaves) | throw (IO.userError "an ordinary terminal sequence was refused")
   ensure (alignedPayloads aligned == expected)
@@ -457,9 +464,17 @@ private def testPinnedRows : IO Unit := do
   -- thing that can move that row.
   let native := Std.Format.text "a" ++ .nest 4 (.line ++ .text "b")
   let run (layout : Formatter.NativeLayout.BoundaryLayout) : IO String := do
+    let plan ←
+      match
+        Formatter.NativeLayout.CommandPlan.resolve source terminals #[] #[] #[] #[] #[(2, layout)]
+          #[] #[] #[] #[] 0 with
+      | .ok plan =>
+        pure plan
+      | .error failure =>
+        throw (IO.userError s!"a pinned row's plan was refused: {failure.detail}")
     let .ok (rendered, _) :=
-      Formatter.NativeLayout.transform source terminals #[] #[] #[] #[] #[(2, layout)] #[] #[] #[]
-        #[] 0 native | throw (IO.userError s!"a pinned row was refused: {repr layout}")
+      Formatter.NativeLayout.transform plan
+        native | throw (IO.userError s!"a pinned row was refused: {repr layout}")
     return rendered.pretty 200
   ensureEq "a columned pin below the ambient nest kept the document's indent" "a\n    b"
       (← run (.columned 2))
@@ -685,10 +700,102 @@ private def testNativeOracle : IO Unit := do
       for column in [0, 3]do
         oracleAgrees s!"corner {label}" format width column 0
 
+/- The command plan's completeness ledgers, starved synthetically (LAY-PLAN-BOUNDARY). Each case
+builds a plan with one entry the native walk cannot apply and proves the matching refusal still
+fires with its count and kind: the repackaged `CommandPlan.resolve`/`transform` split must not
+lose an entry on the way through. The suites cover these refusals from real files; here each one
+is reachable on its own, which is what a plan refactor can silently break. -/
+private def testPlanLedgers : IO Unit := do
+  let (source, terminals) := spelledTerminals #[("a", "a"), ("b", "b")]
+  let (source3, terminals3) := spelledTerminals #[("a", "a"), ("b", "b"), ("c", "c")]
+  let adjacent := Std.Format.text "a" ++ Std.Format.text "b"
+  let sequenced := Std.Format.text "a" ++ .line ++ Std.Format.text "b"
+  -- Right-associated: no node of the document spans exactly `{a, b}`.
+  let rightAssoc := Std.Format.text "a" ++ (Std.Format.text "b" ++ .line ++ Std.Format.text "c")
+  let planOf (src terminals) (comments : Array Formatter.NativeLayout.InteriorComment)
+    (dangling : Array (SourceRange × Formatter.NativeLayout.InteriorComment))
+    (islands : Array Formatter.NativeLayout.ExactIsland)
+    (constraints : Array Formatter.NativeLayout.OffsideConstraint)
+    (boundaries : Array (Nat × Formatter.NativeLayout.BoundaryLayout))
+    (joined : Array SourceRange) : IO Formatter.NativeLayout.CommandPlan := do
+    match
+      Formatter.NativeLayout.CommandPlan.resolve src terminals comments dangling islands constraints
+        boundaries joined #[] #[] #[] 0 with
+    | .ok plan =>
+      return plan
+    | .error failure =>
+      throw (IO.userError s!"a synthetic plan was refused at resolve: {failure.detail}")
+  let expectRefusal (label : String) (plan : Formatter.NativeLayout.CommandPlan)
+    (native : Std.Format) (incomplete : Bool) (fragment : String) : IO Unit := do
+    match Formatter.NativeLayout.transform plan native with
+    | .ok _ =>
+      throw (IO.userError s!"{label}: the starved plan was applied anyway")
+    | .error (.incomplete detail) =>
+      ensure incomplete s!"{label}: expected an unadapted refusal, got incomplete: {detail}"
+      ensure (detail.contains fragment) s!"{label}: refusal lost its count: {detail}"
+    | .error (.unadapted detail) =>
+      ensure (!incomplete) s!"{label}: expected an incomplete refusal, got unadapted: {detail}"
+      ensure (detail.contains fragment) s!"{label}: refusal lost its count: {detail}"
+  -- Terminals: the document spells one of two leaves.
+  expectRefusal "terminals" (← planOf source terminals #[] #[] #[] #[] #[] #[])
+      (Std.Format.text "a") true "consumed 1/2 terminals"
+  -- Interior comment: its boundary index is past the last terminal, so no boundary leaf can
+  -- ever claim it.
+  expectRefusal "comments"
+      (←
+        planOf source terminals
+            #[{ payload := "-- c", range := ⟨5, 9⟩, placement := .leading, kind := .line }] #[] #[]
+            #[] #[] #[])
+      adjacent false "inserted 0/1 interior comments"
+  -- Exact island: never spelled, and its start matches no terminal, so it is never placed.
+  expectRefusal "islands"
+      (←
+        planOf source terminals #[] #[] #[{ marker := "⟪island⟫", range := ⟨1, 2⟩, text := "xy" }]
+            #[] #[] #[])
+      sequenced false "applied 0/1 exact islands"
+  -- Offside constraint: its span matches no node of a right-associated document.
+  expectRefusal "constraints"
+      (←
+        planOf source3 terminals3 #[] #[] #[]
+            #[{ range := ⟨0, 3⟩, indentAdjustment := 2, carrier := .nest }] #[] #[])
+      rightAssoc false "applied 0/1 offside constraints"
+  -- Boundary: its terminal is the island's *second* terminal, so the one-step island
+  -- consumption never runs `constrainBoundary` at its index. `resolve` filters exactly these
+  -- boundaries out of a collected plan (that is the fix the filter's comment documents), so the
+  -- plan is built directly: the ledger is what stands between such a plan and silent loss.
+  let islandPlan : Formatter.NativeLayout.CommandPlan :=
+    {
+      source
+      terminals
+      comments := #[]
+      trailing := #[]
+      islands := #[{ marker := "⟪island⟫", range := ⟨0, 3⟩, text := "a b" }]
+      constraints := #[]
+      boundaries := #[(1, .hard)]
+      flattened := #[]
+      nestedCommands := #[]
+      explodedSpans := #[]
+      headSpans := #[]
+      baseIndent := 0 }
+  expectRefusal "boundaries" islandPlan (Std.Format.text "⟪island⟫") false "applied 0/1 boundaries"
+  -- Joined span: no node of a right-associated document spans it.
+  expectRefusal "flattened" (← planOf source3 terminals3 #[] #[] #[] #[] #[] #[⟨0, 3⟩]) rightAssoc
+      false "joined 0/1 guarded bail-outs"
+  -- Block-dangling comment: no node of a right-associated document spans its block.
+  expectRefusal "trailing"
+      (←
+        planOf source3 terminals3 #[]
+            #[(⟨0, 3⟩,
+                ({ payload := "-- d", range := ⟨3, 4⟩, placement := .dangling, kind := .line } :
+                  Formatter.NativeLayout.InteriorComment))]
+            #[] #[] #[] #[])
+      rightAssoc false "placed 0/1 block-dangling comments"
+
 /-- The cases this module contributes to the unit runner, in run order. -/
 public def cases : Array Case :=
   #[{ name := "testDoc", run := testDoc }, { name := "testAnchor", run := testAnchor },
     { name := "testNativeOracle", run := testNativeOracle },
+    { name := "testPlanLedgers", run := testPlanLedgers },
     { name := "testChoiceVerification", run := testChoiceVerification },
     { name := "testAlignmentSequences", run := testAlignmentSequences },
     { name := "testPinnedRows", run := testPinnedRows },
