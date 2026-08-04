@@ -791,11 +791,166 @@ private def testPlanLedgers : IO Unit := do
             #[] #[] #[] #[])
       rightAssoc false "placed 0/1 block-dangling comments"
 
+private partial def countTag (tag : Nat) : Std.Format → Nat
+  | .nil | .text _ | .line | .align _ => 0
+  | .group f _ | .nest _ f => countTag tag f
+  | .tag t f => (if t == tag then 1 else 0) + countTag tag f
+  | .append f₁ f₂ => countTag tag f₁ + countTag tag f₂
+
+/- Plan-owned structural anchors (LAY-ANCHOR-ENGINE): interval validation at plan construction,
+claiming during the walk, lowering to `Doc.anchor`, and the anchor's interaction with fill, native
+align, signed nests, comments, islands, dedents, fit boundaries, and nesting. Unannotated trees
+keep byte parity at every width; an anchor is fit-invisible by the renderer oracle's contract. -/
+private def testStructuralAnchors : IO Unit := do
+  let (source, terminals) := spelledTerminals #[("a", "a"), ("b", "b"), ("c", "c")]
+  -- Terminal byte ranges: `a` is ⟨0,1⟩, `b` is ⟨2,3⟩, `c` is ⟨4,5⟩.
+  let planOf (anchorRanges : Array SourceRange) (nestedCommandRanges : Array SourceRange := #[])
+    (islands : Array Formatter.NativeLayout.ExactIsland := #[])
+    (comments : Array Formatter.NativeLayout.InteriorComment := #[]) :
+    IO Formatter.NativeLayout.CommandPlan := do
+    match
+      Formatter.NativeLayout.CommandPlan.resolve source terminals comments #[] islands #[] #[] #[]
+        nestedCommandRanges #[] #[] 0 anchorRanges with
+    | .ok plan =>
+      return plan
+    | .error failure =>
+      throw (IO.userError s!"a synthetic anchor plan was refused at resolve: {failure.detail}")
+  let lowered (plan : Formatter.NativeLayout.CommandPlan) (native : Std.Format) : IO Doc := do
+    match Formatter.NativeLayout.transform plan native with
+    | .ok (format, _) =>
+      return Formatter.NativeLayout.lowerNative format
+    | .error failure =>
+      throw (IO.userError s!"an anchored tree was refused: {failure.detail}")
+  -- Validation: overlapping without containment is refused; empty is refused; nested is accepted.
+  match
+    Formatter.NativeLayout.CommandPlan.resolve source terminals #[] #[] #[] #[] #[] #[] #[] #[] #[]
+      0 #[⟨0, 3⟩, ⟨2, 5⟩] with
+  | .ok _ =>
+    throw (IO.userError "overlapping anchor intervals were accepted")
+  | .error (.unadapted detail) =>
+    ensure (detail.contains "overlap without containment")
+        s!"overlap refusal lost its reason: {detail}"
+  | .error failure =>
+    throw (IO.userError s!"overlap refused with the wrong kind: {failure.detail}")
+  match
+    Formatter.NativeLayout.CommandPlan.resolve source terminals #[] #[] #[] #[] #[] #[] #[] #[] #[]
+      0 #[⟨2, 2⟩] with
+  | .ok _ =>
+    throw (IO.userError "an empty anchor interval was accepted")
+  | .error (.unadapted detail) =>
+    ensure (detail.contains "empty") s!"empty-interval refusal lost its reason: {detail}"
+  | .error failure =>
+    throw (IO.userError s!"empty refused with the wrong kind: {failure.detail}")
+  let _ ← planOf #[⟨0, 5⟩, ⟨2, 3⟩]
+  -- Application: the anchor around `b` claims the deepest node with span ⟨1,2⟩ -- the text leaf,
+  -- not the enclosing appends, which carry the same span only beside layout leaves.
+  let tree := Std.Format.text "a" ++ .line ++ Std.Format.text "b" ++ .line ++ Std.Format.text "c"
+  let grouped := .group tree
+  let anchoredFormat ←
+    match Formatter.NativeLayout.transform (← planOf #[⟨2, 3⟩]) grouped with
+    | .ok (format, _) =>
+      pure format
+    | .error failure =>
+      throw (IO.userError s!"the anchor around `b` was refused: {failure.detail}")
+  ensure (countTag Formatter.NativeLayout.anchorTag anchoredFormat == 1)
+      "the anchor interval was not claimed exactly once"
+  let anchored := Formatter.NativeLayout.lowerNative anchoredFormat
+  let plain :=
+    Formatter.NativeLayout.lowerNative
+      (←
+        match Formatter.NativeLayout.transform (← planOf #[]) grouped with
+        | .ok (format, _) =>
+          pure format
+        | .error failure =>
+          throw (IO.userError s!"the unanchored tree was refused: {failure.detail}"))
+  -- Fit boundaries: at every width, and in particular across the group's flip width, the anchored
+  -- rendering is byte-identical to the un-annotated one.
+  for width in [0, 1, 2, 3, 4, 5, 6, 8, 16]do
+    ensure (renderText width anchored == renderText width plain)
+        s!"an anchor changed the rendering at width {width}"
+  -- An interval no node spans exactly is refused by the ledger: the right-associated tree has no
+  -- node covering terminals `a..b` alone.
+  let rightAssoc := Std.Format.text "a" ++ (Std.Format.text "b" ++ .line ++ Std.Format.text "c")
+  match Formatter.NativeLayout.transform (← planOf #[⟨0, 3⟩]) rightAssoc with
+  | .ok _ =>
+    throw (IO.userError "an unspanned anchor interval was applied anyway")
+  | .error (.unadapted detail) =>
+    ensure (detail.contains "applied 0/1 structural anchors")
+        s!"the anchor ledger lost its count: {detail}"
+  | .error failure =>
+    throw (IO.userError s!"the anchor ledger fired with the wrong kind: {failure.detail}")
+  -- A scope whose claim begins with a break captures nothing: refused at the claim, before
+  -- `Doc.wellFormed` would have to.
+  let breakLed :=
+    Std.Format.text "a" ++ .group (.line ++ Std.Format.text "b" ++ .line ++ Std.Format.text "c")
+  match Formatter.NativeLayout.transform (← planOf #[⟨2, 5⟩]) breakLed with
+  | .ok _ =>
+    throw (IO.userError "a break-led anchor scope was claimed")
+  | .error (.unadapted detail) =>
+    ensure (detail.contains "begins with a break")
+        s!"the break-led refusal lost its reason: {detail}"
+  | .error failure =>
+    throw (IO.userError s!"break-led refused with the wrong kind: {failure.detail}")
+  -- Nested intervals both claim; the enclosing comment, island, and nested command stay
+  -- applicable inside an anchored region.
+  let nestedFormat ←
+    match Formatter.NativeLayout.transform (← planOf #[⟨0, 5⟩, ⟨2, 3⟩]) grouped with
+    | .ok (format, _) =>
+      pure format
+    | .error failure =>
+      throw (IO.userError s!"nested anchors were refused: {failure.detail}")
+  ensure (countTag Formatter.NativeLayout.anchorTag nestedFormat == 2)
+      "nested anchor intervals were not both claimed"
+  let withComment ←
+    lowered
+        (←
+          planOf #[⟨0, 5⟩] (comments :=
+              #[{ payload := "-- note", range := ⟨1, 2⟩, placement := .leading, kind := .line }]))
+        tree
+  ensure ((renderText 80 withComment).contains "-- note")
+      "a comment inside an anchored region was not inserted"
+  let withIsland ←
+    lowered
+        (← planOf #[⟨0, 5⟩] (islands := #[{ marker := "⟪island⟫", range := ⟨2, 3⟩, text := "b" }]))
+        (Std.Format.text "a" ++ .line ++ Std.Format.text "⟪island⟫" ++ .line ++ Std.Format.text "c")
+  let withDedent ←
+    lowered (← planOf #[⟨0, 5⟩] (nestedCommandRanges := #[⟨2, 3⟩]))
+        (Std.Format.text "a" ++ .line ++ .nest 2 (Std.Format.text "b") ++ .line ++
+          Std.Format.text "c")
+  ensure (renderText 80 withIsland == "a\nb\nc" && renderText 80 withDedent == "a\nb\nc")
+      "an island or dedent inside an anchored region changed the layout"
+  -- Fill under an anchor: subsequent items break at the captured column. `x` lands at column 4
+  -- under the nest; the anchor captures there and the overflowing `z` returns to it.
+  let fillDoc : Doc :=
+    .text "p " ++ .anchor (.fill (.text "x" ++ .line " " ++ .text "yy" ++ .line " " ++ .text "z"))
+  ensure
+      (renderText 6 fillDoc ==
+        "p x yy
+  z")
+      "a fill item did not break at its anchor's column"
+  -- Native align under an anchor breaks at the captured column, not the ambient one: `x` is
+  -- emitted at column 1 after `p`, and the align break returns to 1, not 0.
+  let alignDoc : Doc := .text "p" ++ .anchor (.text "x" ++ .align false ++ .text "y")
+  ensure
+      (renderText 2 alignDoc ==
+        "px
+ y")
+      "a native align did not break at its anchor's column"
+  -- A signed nest inside the anchor shifts from the captured column and clamps at zero: the
+  -- break's indent is 1 + (-2), clamped.
+  let signedDoc : Doc := .text "p" ++ .anchor (.text "x" ++ .nest (-2) (.line " " ++ .text "y"))
+  ensure
+      (renderText 2 signedDoc ==
+        "px
+y")
+      "a signed nest under an anchor did not clamp at zero"
+
 /-- The cases this module contributes to the unit runner, in run order. -/
 public def cases : Array Case :=
   #[{ name := "testDoc", run := testDoc }, { name := "testAnchor", run := testAnchor },
     { name := "testNativeOracle", run := testNativeOracle },
     { name := "testPlanLedgers", run := testPlanLedgers },
+    { name := "testStructuralAnchors", run := testStructuralAnchors },
     { name := "testChoiceVerification", run := testChoiceVerification },
     { name := "testAlignmentSequences", run := testAlignmentSequences },
     { name := "testPinnedRows", run := testPinnedRows },

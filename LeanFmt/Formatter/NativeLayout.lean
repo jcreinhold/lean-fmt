@@ -2094,6 +2094,8 @@ private structure TransformState where
   appliedBoundaries : Array Nat := #[]
   appliedTrailing : Array Nat := #[]
   appliedFlattened : Array Nat := #[]
+  anchors : Array TokenSpan := #[]
+  appliedAnchors : Array Nat := #[]
   /- Whether the document emitted since the previous terminal is known to render as something other
   than the empty string. A command starts separated because its first terminal has no predecessor to
   merge with. -/
@@ -2431,9 +2433,54 @@ private def finishTrailing (left right : Transformed) :
 /- Every span-keyed correction a finished node can carry, in the order they compose, so that adding a
 node kind to the walk cannot silently skip one. A constraint's `nest` is inert inside a subtree that no
 longer breaks, so the order matters only in that it is fixed. -/
+/- The reserved tag marking a plan-owned structural anchor interval (LAY-ANCHOR-ENGINE), applied by
+`finishAnchors` around the deepest node spelling exactly the interval's terminals and lowered to
+`Doc.anchor` by `lowerNative`. Distinct from `explodedCloseTag`; no native document carries either,
+so a collision is impossible by the same argument `markerCollision?` makes for island markers. -/
+private def anchorTag : Nat :=
+  0x6C65616E466D75
+
+/- Whether this native document's first emission is a break. An anchor wrapped around such a
+document would capture the column of no token -- `Doc.anchor`'s development-error case -- so
+`finishAnchors` refuses on it instead of lowering a document that fails `Doc.wellFormed`. An
+`align` leaf is a break here because it renders as one once the line has broken. -/
+private partial def nativeBeginsWithBreak : Std.Format → Bool
+  | .nil => false
+  | .text s => s.startsWith "\n"
+  | .line | .align _ => true
+  | .group f _ => nativeBeginsWithBreak f
+  | .nest _ f => nativeBeginsWithBreak f
+  | .tag _ f => nativeBeginsWithBreak f
+  | .append f₁ f₂ => if provablyEmpty f₁ then nativeBeginsWithBreak f₂ else nativeBeginsWithBreak f₁
+
+/- Claim a plan-owned structural anchor interval for the deepest node spelling exactly its
+terminals -- the same post-order discipline `finishFlatten` documents: an `append` of the span and
+a pure-layout leaf after or before it carries the same span, and the deeper node claims it first,
+so the scope starts at the interval's first terminal rather than swallowing the separator in front
+of it. That break belongs to the ambient layout; the anchor captures the column the first terminal
+lands at, and a body that would begin with one is refused rather than lowered into
+`Doc.anchor`'s development-error case. -/
+private def finishAnchors (result : Transformed) :
+    StateT TransformState (Except String) Transformed := do
+  let some span := result.span? | return result
+  let state ← get
+  match state.anchors.findIdx? (· == span) with
+  | none =>
+    return result
+  | some index =>
+    if state.appliedAnchors.contains index then
+      return result
+    if nativeBeginsWithBreak result.format then
+      throw
+          s!"structural anchor interval {span.start}:{span.stop} begins with a break; the scope \
+must open at the interval's first terminal"
+    set { state with appliedAnchors := state.appliedAnchors.push index }
+    return { result with
+        format := .tag anchorTag result.format, hoist? := none }
+
 private def finishNode (result : Transformed) (carrier? : Option ConstraintCarrier := none) :
     StateT TransformState (Except String) Transformed := do
-  finishFlatten (← finishConstraint result carrier?)
+  finishFlatten (← finishConstraint (← finishAnchors result) carrier?)
 
 /- The unapplied island covering the terminal the transform is waiting for, if any. An island consumes
 every terminal it covers at once, so this stays fixed at the island's first covered terminal for as
@@ -3230,7 +3277,8 @@ private partial def lowerNative : Std.Format → Doc
     match behavior with
     | .allOrNone => .group (lowerNative body)
     | .fill => .fill (lowerNative body)
-  | .tag tag body => .tag tag (lowerNative body)
+  | .tag tag body =>
+    if tag == anchorTag then .anchor (lowerNative body) else .tag tag (lowerNative body)
 
 /- The one private command plan: every fact the collector assembly derives about a command,
 resolved against its terminals exactly once, before the native format exists. The transform and
@@ -3256,6 +3304,10 @@ private structure CommandPlan where
   nestedCommands : Array TokenSpan
   explodedSpans : Array TokenSpan
   headSpans : Array (Nat × TokenSpan)
+  /- Plan-owned structural anchor intervals as terminal-index spans (LAY-ANCHOR-ENGINE): validated
+  as a proper interval forest at construction, claimed by the deepest node spelling exactly the
+  interval's terminals during the walk (`finishAnchors`), lowered to `Doc.anchor`. -/
+  anchors : Array TokenSpan := #[]
   baseIndent : Nat
   deriving Inhabited
 
@@ -3267,8 +3319,8 @@ private def CommandPlan.resolve (source : String) (terminals : Array Terminal)
     (islands : Array ExactIsland) (constraints : Array OffsideConstraint)
     (boundaryStarts : Array (Nat × BoundaryLayout)) (joined : Array SourceRange)
     (nestedCommandRanges : Array SourceRange) (explodedRanges : Array SourceRange)
-    (headSpans : Array (Nat × TokenSpan)) (baseIndent : Nat) :
-    Except TransformFailure CommandPlan := do
+    (headSpans : Array (Nat × TokenSpan)) (baseIndent : Nat)
+    (anchorRanges : Array SourceRange := #[]) : Except TransformFailure CommandPlan := do
   let constraints :=
     constraints.map fun constraint => (constraint, spanForRange terminals constraint.range)
   -- An exact island's bytes are its whole rendering, so the adapter spells no boundary between the
@@ -3299,6 +3351,33 @@ private def CommandPlan.resolve (source : String) (terminals : Array Terminal)
   let flattened := joined.map (spanForRange terminals)
   let nestedCommands := nestedCommandRanges.map (spanForRange terminals)
   let explodedSpans := explodedRanges.map (spanForRange terminals)
+  -- Structural anchor intervals must form a proper forest: sorted by start, each interval either
+  -- closes before the next opens or contains it whole. Two intervals that overlap without
+  -- containment would both own their shared region's indentation; refuse at construction rather
+  -- than discover it mid-walk. Intervals mapping to the same terminal span collapse, the way
+  -- duplicate islands do: one scope per span, and the second would never find a node to claim.
+  let sortedAnchors :=
+    anchorRanges.qsort fun a b => a.start < b.start || (a.start == b.start && b.stop < a.stop)
+  let mut openAnchors : Array SourceRange := #[]
+  for range in sortedAnchors do
+    unless range.start < range.stop do
+      throw <| .unadapted s!"structural anchor interval is empty: {range.start}:{range.stop}"
+    let mut stack := openAnchors
+    while h : 0 < stack.size do
+      if stack[stack.size - 1].stop <= range.start then
+        stack := stack.pop
+      else
+        break
+    if let some enclosing := stack.back? then
+      unless range.stop <= enclosing.stop do
+        throw <|
+            .unadapted
+              s!"structural anchor intervals overlap without containment: \
+{enclosing.start}:{enclosing.stop} and {range.start}:{range.stop}"
+    openAnchors := stack.push range
+  let anchors :=
+    (sortedAnchors.map (spanForRange terminals)).foldl (init := #[]) fun kept span =>
+      if kept.contains span then kept else kept.push span
   let trailing := blockDangling.map fun (range, comment) => (spanForRange terminals range, comment)
   let comments :=
     comments.map fun comment =>
@@ -3307,7 +3386,7 @@ private def CommandPlan.resolve (source : String) (terminals : Array Terminal)
           terminals.findIdx? (comment.range.start < ·.range.start) |>.getD terminals.size }
   return {
     source, terminals, comments, trailing, islands, constraints, boundaries, flattened,
-    nestedCommands, explodedSpans, headSpans, baseIndent }
+    nestedCommands, explodedSpans, headSpans, anchors, baseIndent }
 
 /-- Transform one native format under a resolved plan. Every ledger refusal below is a plan entry
 the walk could not apply exactly once; the counts name the first unapplied entry and the source it
@@ -3332,6 +3411,7 @@ private def transform (plan : CommandPlan) (native : Std.Format) :
       nestedCommands := plan.nestedCommands
       explodedSpans := plan.explodedSpans
       headSpans := plan.headSpans
+      anchors := plan.anchors
       baseIndent := plan.baseIndent }
   let (result, state) ← ((transformNative native).run initial).mapError .unadapted
   if state.terminalIndex != state.terminals.size then
@@ -3389,6 +3469,14 @@ bail-outs; first unapplied span: {repr missing[0]?}"
         .unadapted
           s!"native formatter placed {state.appliedTrailing.size}/{state.trailing.size} block-dangling \
 comments; the block's document holds no break to hang one on"
+  if state.appliedAnchors.size != state.anchors.size then
+    let missing :=
+      (state.anchors.zipIdx.filter fun (_, index) => !state.appliedAnchors.contains index).map
+        fun (span, _) => (span.start, span.stop)
+    throw <|
+        .unadapted
+          s!"native formatter applied {state.appliedAnchors.size}/{state.anchors.size} structural \
+anchors; first unapplied span: {repr missing[0]?}"
   return (result.format, state.metrics)
 
 private def rootRange (stx : Lean.Syntax) : SourceRange :=
