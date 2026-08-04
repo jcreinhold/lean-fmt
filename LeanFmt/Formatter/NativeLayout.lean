@@ -1604,8 +1604,8 @@ pin is collected only when the source shows the same shape (the row broken, the 
 its own row): a keyword spelled mid-line needs none, because any `nest` the body's row can take is
 already left of it. -/
 private partial def collectLetFamilyAlignments (source : String) (stx : Lean.Syntax)
-    (paren? : Option Lean.Syntax := none) (starts : Array (Nat × BoundaryLayout) := #[]) :
-    Array (Nat × BoundaryLayout) :=
+    (paren? : Option Lean.Syntax := none) (bracket : Bool := false)
+    (starts : Array (Nat × BoundaryLayout) := #[]) : Array (Nat × BoundaryLayout) :=
   match stx with
   | .node _ kind children =>
     let starts :=
@@ -1645,29 +1645,40 @@ private partial def collectLetFamilyAlignments (source : String) (stx : Lean.Syn
                   if opensRow kwRange.start then
                     #[(kwRange.start, .columned (sourceColumn source kwRange.start))]
                   else #[]
-              -- The body's pin needs opposite spellings for the two shapes the source can have,
-              -- and whether the body sits *under* the keyword or *left* of it is what tells them
-              -- apart. Under it, the two are one column that canonical layout moves together, so
-              -- `columned` -- whose `max` follows the move -- keeps them together, and the second
-              -- pass reads back the columns the first one wrote. An absolute pin instead holds the
-              -- body at the source column while the keyword moves right without it, which is a
-              -- body stranded outside its own construct and five mathlib modules refusing as
-              -- non-idempotent. Left of it -- `⟨have : … :=`, `⟨fun n ↦ let f := …` -- the body's
-              -- column is not the keyword's and no move preserves it: it is left of the enclosing
-              -- bracket's own nest, which is exactly where `max` would push it back to, and
-              -- `Computability/Primrec/Basic.lean` answers with `expected ';' or line break`.
-              -- Only the source column will do there.
+              -- The body's pin needs different spellings for the shapes the source can have,
+              -- told apart by where the body sits against the keyword. Under it, the two are one
+              -- column that canonical layout moves together, so `columned` -- whose `max` follows
+              -- the move -- keeps them together, and the second pass reads back the columns the
+              -- first one wrote. An absolute pin instead holds the body at the source column
+              -- while the keyword moves right without it, which is a body stranded outside its
+              -- own construct and five mathlib modules refusing as non-idempotent.
+              --
+              -- Left of it there are two cases. A keyword that is itself an element of an
+              -- anonymous constructor -- `⟨have : … :=`, `⟨fun n ↦ let f := …` -- holds the body
+              -- left of the bracket's own nest, which is exactly where `max` would push it back
+              -- to, and `Computability/Primrec/Basic.lean` answers with
+              -- `expected ';' or line break`. Only the source column will do there. Every other
+              -- left-of-keyword body needs no pin at all: the keyword's own formatter dedents the
+              -- body break two columns under the keyword, which is parse-safe however far the
+              -- keyword moves -- the body must sit at or left of the keyword's column -- and
+              -- self-stable across passes. The absolute pin only invented a crossing: a keyword
+              -- the document moved *left* of the pinned body, inverting that order
+              -- (`Logic/Function/Basic.lean`'s `IsPartialInv`).
               let bodyPin :=
-                if bodyCol == sourceColumn source kwRange.start then BoundaryLayout.columned bodyCol
-                else .anchored bodyCol
-              starts ++ rowPin ++ #[(bodyRange.start, bodyPin)]
+                if bodyCol == sourceColumn source kwRange.start then
+                  some (BoundaryLayout.columned bodyCol)
+                else
+                  if bodyCol < sourceColumn source kwRange.start && !bracket then none
+                  else some (.anchored bodyCol)
+              starts ++ rowPin ++ (bodyPin.toArray.map fun pin => (bodyRange.start, pin))
           | _, _ => starts
         | _, _ => starts
       else starts
     let children := if kind == Lean.choiceKind then children[0]?.toArray else children
     children.foldl (init := starts) fun starts child =>
       collectLetFamilyAlignments source child
-        (if kind == ``Lean.Parser.Term.paren then some stx else none) starts
+        (if kind == ``Lean.Parser.Term.paren then some stx else none)
+        (kind == ``Lean.Parser.Term.anonymousCtor || (bracket && kind == Lean.nullKind)) starts
   | _ => starts
 
 /- The other runs that must not break, for the same reason and with the same source precondition.
@@ -3538,7 +3549,7 @@ alternatives: alternative 0 is {expected}, alternative {alternative} is {actual}
               let broken :=
                 (terminals.filter (·.range.stop <= start)).back?.any fun previous =>
                   (slice source ⟨previous.range.stop, start⟩).contains '\n'
-          if broken then some (start, BoundaryLayout.hard) else none) ++
+              if broken then some (start, BoundaryLayout.hard) else none) ++
           trailingCommaBoundaries ++
         closeBraceBoundaries ++
       rowSpreadBoundaries

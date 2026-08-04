@@ -329,6 +329,17 @@ def semiOps : SemiOps where
 
 def semiOpsFlat : SemiOps where toFun := id; map_mul' := Nat.add
 
+/- A `have` term whose body sits left of the keyword keeps no column pin.
+
+The keyword's own formatter dedents the body break two columns under the keyword, which is
+parse-safe however far the keyword moves -- the body must sit at or left of the keyword's column
+-- and self-stable across passes. An absolute pin at the source column only invented a crossing:
+the document moved the keyword left of the pinned body, inverting that order
+(`Mathlib/Logic/Function/Basic.lean`'s `IsPartialInv`). -/
+def arrowHave (someLongVariableName : Nat) : Nat ×' someLongVariableName = someLongVariableName :=
+  ⟨someLongVariableName, (rfl : someLongVariableName = someLongVariableName) ▸ have h : someLongVariableName = someLongVariableName := rfl
+        h⟩
+
 end NativeLayoutOffside
 
 

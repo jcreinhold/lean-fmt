@@ -420,6 +420,12 @@ private def testOffside (ctx : Ctx) : IO Unit := do
       (← lineAfterExact offside "def semiOps : SemiOps where")
   ensureEq "  ... while a flat source keeps the join" 1
       (countExact offside "def semiOpsFlat : SemiOps where toFun := id; map_mul' := Nat.add")
+  -- A `have` whose body sits left of the keyword keeps no pin: the keyword's own formatter
+  -- dedents the body two under the keyword, which stays at-or-left-of the keyword wherever the
+  -- keyword lands -- the absolute pin's crossing was `Logic/Function/Basic.lean`'s refusal.
+  ensureEq "a have body left of the keyword follows the keyword's dedent"
+      "      have h : someLongVariableName = someLongVariableName := rfl\n      h⟩"
+      (← linesAfter offside "(rfl : someLongVariableName = someLongVariableName) ▸" 2)
   -- The join is collected only where the source already spelled the bail-out on one line.
   ensureEq "a bail-out the source spelled on several lines keeps its break"
       "      let fallback := 3" (← lineAfterExact offside "    let some measured := value |")
