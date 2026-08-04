@@ -384,11 +384,34 @@ private def testOffside (ctx : Ctx) : IO Unit := do
   ensureEq "two guards in one sequence each join their own bail-out" 2
       (countAny offside
         ["    let some first := left | return 0", "    let some second := right | return first"])
+  -- An arrow guard parses through `doPatDecl`, which wraps the bar one `null` deeper; the
+  -- bail-out's interpolated string is a protected island the toolchain's formatter drops from
+  -- the document. Both halves are `Mathlib/Tactic/Simproc/VecPerm.lean`'s `0/2` refusal: the
+  -- island glued anywhere but to `throwError` leaves no node for the flatten or the constraint.
+  ensureEq "an arrow guard's interpolated bail-out joins its bar" 1
+      (countExact offside "  let some current ← pure value | Lean.throwError m!\"missing {value}\"")
+  ensureEq "  ... and the continuation still stays at the owning indentation" "  return current"
+      (← lineAfter offside "Lean.throwError m!")
   -- The join has to survive a bail-out long enough to break: flattening the joined span leaves no
   -- break there to land wrong. §1b renders this same fixture at 20 and 40.
   ensureEq "a bail-out long enough to break still joins the bar" 1
       (countExact offside
         "    let some measured := value | return (Array.replicate 12 0).size + Array.size #[1, 2, 3]")
+  -- The closing-brace rule. A comment forces the brace onto its own row; the source's brace was
+  -- not at the field column, so the candidate's dedents to the collection's line -- the field
+  -- column is the one position that would spell a `sepByIndent` continuation the source did not
+  -- have. Both comment fixtures render this, `MathlibTest/Spread.lean`'s refusal.
+  ensureEq "a comment-forced closing brace dedents to the collection's line" 2
+      (countExact offside "  }")
+  -- The mirror: a source brace alone at the field column carries the continuation slot, so the
+  -- fields break onto their own rows and the brace lands at that same nest -- equal by
+  -- construction, `Mathlib/Algebra/Category/AlgCat/Limits.lean`'s refusal.
+  ensureEq "a field-column brace keeps the fields on their own rows" "    retries := 3"
+      (← lineAfterExact offside "def rebuiltConfig (config : Config) : Config :=" 2)
+  ensureEq "  ... and the brace lands at the fields' own column" 1 (countExact offside "    }")
+  -- The negative half: the document hugs the brace, and a source that hugged it stays hugged.
+  ensureEq "a hugged closing brace stays hugged" 1
+      (countExact offside "  { baseConfig with retries := 5 }")
   -- The join is collected only where the source already spelled the bail-out on one line.
   ensureEq "a bail-out the source spelled on several lines keeps its break"
       "      let fallback := 3" (← lineAfterExact offside "    let some measured := value |")

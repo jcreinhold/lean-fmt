@@ -6,12 +6,16 @@ Authors: Jacob Reinhold
 
 module
 
+public import Lean
+
 /- The offside constraints the adapter enforces, and the constructs they must compose with.
 
 Each constraint names a parser-significant column that native layout alone does not preserve:
 
 - a guarded `let ... | ...` whose continuation is a sibling statement, which native layout can
-  reparent under the guard's own sequence;
+  reparent under the guard's own sequence -- including an arrow guard, whose bar `doPatDecl`
+  wraps a `null` deeper, and a bail-out carrying an interpolated string, whose island the
+  toolchain's formatter drops from the document;
 - the first item of a `sepByIndent` list whose separators the source wrote out, which has to begin on
   its own line so that a later separator breaking cannot dedent an item below it -- and the same list
   spelled with line-break separators, which the formatter's own `align` already positions and which a
@@ -60,6 +64,18 @@ def guardedSpanningBailout (value : Option Nat) : Nat := Id.run do
     let fallback := 3
     return fallback + 1
   return measured
+
+/- A guarded arrow-let whose bail-out carries an interpolated string, and two things that guard
+hides. The guard parses through `doPatDecl`, which wraps its `| bail-out` one `null` deeper than
+the `doLetElse` shape above, so the bail-out's bar is not a direct child of the guard node. And
+the `m!` is a protected island the toolchain's formatter drops from the document entirely: glued
+to the leaf that follows it, neither the bail-out's flatten nor the continuation's offside
+constraint has a node to land on, which is what `Mathlib/Tactic/Simproc/VecPerm.lean` reported as
+`applied 0/2 offside constraints`. Glued to the terminal before it, the island is inside the
+bail-out's own node and the join proceeds. -/
+def guardedDroppedIsland (value : Option Nat) : Lean.MetaM Nat := do
+  let some current ← pure value | Lean.throwError m!"missing {value}"
+  return current
 
 structure Packet where
   first : Nat
@@ -265,6 +281,37 @@ def fourthCollected : Nat := 4
 def collectedRows : Collected :=
   {firstCollected, secondCollected, thirdCollected,
   fourthCollected}
+
+/- A struct instance's closing brace is parse-significant on its own row.
+
+`structInstFields` is a `sepByIndent`, and its indent check fires at exactly the first field's
+column: a `}` that begins a row there is read as a continuation of the field list, one empty slot
+wider than any other position produces. Hugging the brace, or ending its row anywhere else, parses
+to the narrower list. The candidate must reproduce whichever list the source wrote: a brace alone
+at the field column keeps a break there, with the fields broken onto their own rows so the columns
+still coincide (`rebuiltConfig`); a comment that forces the brace onto the next row anywhere else
+dedents it off the field column (`commentedConfig`, `fieldColumnConfig`). The document's own hug
+is already safe, so a source that hugs keeps hugging (`flushConfig`).
+`MathlibTest/Spread.lean` and `Mathlib/Algebra/Category/AlgCat/Limits.lean` refused on the two
+directions of this one rule. -/
+structure Config where
+  retries : Nat
+  verbose : Bool
+
+def baseConfig : Config := ⟨1, false⟩
+
+def commentedConfig : Config := { baseConfig with retries := 2 -- the count that matters
+  }
+
+def fieldColumnConfig : Config := { baseConfig with retries := 2 -- the count that matters
+    }
+
+def rebuiltConfig (config : Config) : Config := { config with
+  retries := 3
+  verbose := decide (config.retries = 0)
+  }
+
+def flushConfig : Config := { baseConfig with retries := 5 }
 
 end NativeLayoutOffside
 

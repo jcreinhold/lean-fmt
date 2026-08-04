@@ -997,6 +997,36 @@ private def doSeqItemCount (stx : Lean.Syntax) : Nat :=
   | some wrapper => wrapper.getArgs.countP (·.isOfKind ``Lean.Parser.Term.doSeqItem)
   | none => 0
 
+/- The guard's own `|`, wherever the declaration shape put it.
+
+For `doLetElse` the bar is a direct child (the seventh). An arrow guard parses through `doPatDecl`
+or `doIdDecl`, which wraps its `| bail-out` one `null` deeper (`let some x ← v | b` is
+`doLetArrow[let, doPatDecl[…, ←, doExpr, null[|, doSeqIndent], null[doSeqIndent]]]`). Only that
+wrapper counts: descending further reaches the value's own bars — `let r ← match … with | none => …`
+wraps its match in `doMatch`, not `doExpr`, and joining a one-line match arm onto its bar is not
+this rule (measured: `LeanFmt/Cli.lean`'s `match command.range? with` joined `| none => pure none`
+under a descendant search that excluded only `doExpr`). -/
+private def guardedPipe? (stx : Lean.Syntax) : Option Lean.Syntax :=
+  match stx with
+  | .node _ _ children =>
+    match children.find? (· matches .atom _ "|") with
+    | some pipe => some pipe
+    | none =>
+      match
+        children.find? fun child =>
+          child.isOfKind ``Lean.Parser.Term.doPatDecl ||
+            child.isOfKind ``Lean.Parser.Term.doIdDecl with
+      | some decl =>
+        decl.getArgs.findSome? fun arg =>
+          match arg with
+          | .node _ _ args =>
+            match args[0]? with
+            | some first => if first matches .atom _ "|" then some first else none
+            | _ => none
+          | _ => none
+      | none => none
+  | _ => none
+
 private partial def collectGuardBailouts (source : String) (stx : Lean.Syntax)
     (ranges : Array SourceRange := #[]) : Array SourceRange :=
   match stx with
@@ -1006,11 +1036,7 @@ private partial def collectGuardBailouts (source : String) (stx : Lean.Syntax)
           kind == ``Lean.Parser.Term.doLetElse || kind == ``Lean.Parser.Term.doLetExpr ||
               kind == ``Lean.Parser.Term.doLetMetaExpr ||
             kind == ``Lean.Parser.Term.doLetArrow then
-        -- The bail-out's bar is a *direct child* of the guard (`doLetElse`'s seventh child). A `|`
-        -- deeper in the value is a match arm's bar -- `let args ← match … with | .error msg => …`
-        -- -- and the one-line sequence after it is a match body, not a bail-out; joining it onto
-        -- the arm's bar is not this rule.
-        match children.find? (· matches .atom _ "|") with
+        match guardedPipe? stx with
         | some pipe =>
           match sourceRange? pipe with
           | some pipeRange =>
@@ -1739,6 +1765,81 @@ private partial def collectStructInstEllipses (stx : Lean.Syntax) (starts : Arra
     let children := if kind == Lean.choiceKind then children[0]?.toArray else children
     children.foldl (init := starts) fun starts child => collectStructInstEllipses child starts
   | _ => starts
+
+/- A struct instance's closing brace is parse-significant on its own row.
+
+`structInstFields` is a `sepByIndent`, and its indent check fires at exactly the first field's
+column: a `}` that begins a row there is read as a continuation of the field list, which leaves
+the list one empty slot wider than any other `}` position produces. Hugging the brace, or ending
+its row left or right of the field column, all parse to the narrower list. So the brace's row
+position is not layout; it decides the list's arity, and the candidate must reproduce whichever
+the source wrote. (Both directions fail closed today: `MathlibTest/Spread.lean` -- "optEllipsis
+before and null after" -- and `Algebra/Category/AlgCat/Limits.lean` -- "null before and
+optEllipsis after" -- are this brace at opposite ends of the same rule.)
+
+The native document always hugs the brace (`text " }"`). That loses the wide list for a source
+that spelled `}` alone at the field column, and a trailing comment on the last field pushes the
+hugged brace onto the next row at the fields' nest -- exactly the field column -- which *creates*
+the wide list for a source that never had it.
+
+The source decides. A source brace alone at the field column gets two `.hard` boundaries: the
+first field breaks off the brace's row and the brace breaks onto its own. Both land at the fields'
+nest, so the candidate's field column and brace column are equal by construction and the wide list
+survives. A source brace elsewhere on its own row, separated from its field by a comment, gets
+`.explodedClose`: the brace dedents to the collection's own row, off the field column, so the
+comment-forced break cannot invent the slot. (Without the comment the document hugs, which is
+already safe.) A collection the trailing-comma rule already owns is left to it. The returned
+ranges join `explodedRanges` for the nest cancellation only -- the pin filter has already run --
+so registering one drops no interior source-column pins. -/
+private partial def collectStructInstCloseBraces (source : String)
+    (comments : Array InteriorComment) (stx : Lean.Syntax)
+    (starts : Array (Nat × BoundaryLayout) := #[]) (ranges : Array SourceRange := #[]) :
+    Array (Nat × BoundaryLayout) × Array SourceRange :=
+  match stx with
+  | .node _ kind children =>
+    let (starts, ranges) :=
+      if kind == ``Lean.Parser.Term.structInst then
+        match children.find? (·.isOfKind ``Lean.Parser.Term.structInstFields) with
+        | some fieldsNode =>
+          match structInstFieldsInOrder fieldsNode with
+          | #[] => (starts, ranges)
+          | fields =>
+            match lastLeaf? fieldsNode, lastLeaf? stx, fields[0]?.bind sourceRange?,
+              sourceRange? stx with
+            | some fieldsEnd, some brace, some fieldRange, some collectionRange =>
+              match sourceRange? fieldsEnd, sourceRange? brace with
+              | some fieldsEndRange, some braceRange =>
+                let gap := slice source ⟨fieldsEndRange.stop, braceRange.start⟩
+                if fieldsEnd matches .atom _ "," then (starts, ranges)
+                else
+                  if !gap.contains '\n' then (starts, ranges)
+                  else
+                    if
+                        sourceColumn source braceRange.start ==
+                          sourceColumn source fieldRange.start then
+                      let starts :=
+                        if starts.any (·.1 == fieldRange.start) then starts
+                        else starts.push (fieldRange.start, BoundaryLayout.hard)
+                      if starts.any (·.1 == braceRange.start) then (starts, ranges)
+                      else (starts.push (braceRange.start, BoundaryLayout.hard), ranges)
+                    else
+                      if
+                          comments.any fun comment =>
+                            fieldsEndRange.stop <= comment.range.start &&
+                              comment.range.stop <= braceRange.start then
+                        if starts.any (·.1 == braceRange.start) then (starts, ranges)
+                        else
+                          (starts.push (braceRange.start, BoundaryLayout.explodedClose),
+                            ranges.push collectionRange)
+                      else (starts, ranges)
+              | _, _ => (starts, ranges)
+            | _, _, _, _ => (starts, ranges)
+        | none => (starts, ranges)
+      else (starts, ranges)
+    let children := if kind == Lean.choiceKind then children[0]?.toArray else children
+    children.foldl (init := (starts, ranges)) fun (starts, ranges) child =>
+      collectStructInstCloseBraces source comments child starts ranges
+  | _ => (starts, ranges)
 
 /- The docstring of a constructor that has one.
 
@@ -2500,8 +2601,13 @@ private def constrainBoundary (format : Std.Format) :
   -- `line` never satisfies this, so boundaries that correct an existing leaf are untouched.
   let nativeEmpty := provablyEmpty format
   let mut format := format
-  -- A `dedented` boundary at this terminal governs every row the comment insertion below opens, not
-  -- only the one the native document spelled. See `insertComments`.
+  -- A boundary that carries more than a plain break -- a dedent, a column pin, the exploded
+  -- close's marker -- governs every row the comment insertion below opens, not only the one the
+  -- native document spelled: a row-ending comment replaces the boundary leaf itself (`insertComments`
+  -- drops the suffix once a line comment has ended the row), so the row break after the comment *is*
+  -- the boundary and must spell the collected layout's format. A `flat`/`hard`/`elided`/`fieldRow`
+  -- boundary spells nothing a plain `"\n"` does not -- or is a join the comment's own newline already
+  -- overruled -- and keeps the default. See `insertComments`.
   let mut rowBreak : Std.Format := .text "\n"
   -- Set false when a boundary whose spelling is keyed to this point's ambient nest is applied.
   let mut layoutHoistable := true
@@ -2514,7 +2620,7 @@ private def constrainBoundary (format : Std.Format) :
       state.boundaries.find? fun (index, _) => index == state.terminalIndex then
     unless layout matches .flat | .hard | .elided do
       layoutHoistable := false
-    if layout matches .dedented then
+    if layout matches .dedented | .columned _ | .anchored _ | .explodedClose then
       rowBreak := boundaryFormat state layout
     unless state.appliedBoundaries.contains state.terminalIndex do
       set
@@ -2640,6 +2746,52 @@ private def consumeIsland (value : String) (island : ExactIsland) :
   let payload := if startsLine then .append (.text "\n") payload else payload
   finishNode { format := .append boundary payload, span? := some ⟨start, stop⟩ }
 
+/- Place every island the formatter dropped that starts exactly at the next terminal, glued to
+the terminal just consumed rather than to the next leaf the document happens to spell.
+
+A dropped marker leaves no leaf between the terminal before the island and the terminal after it,
+so either neighbor can carry the island. The *previous* terminal is the right owner: the document
+nodes are assembled around the leaves that exist, and an island appended to the following sibling
+merges its span into that sibling's. Every span-keyed correction naming the sibling's own span then
+misses -- `Mathlib/Tactic/Simproc/VecPerm.lean` reported `applied 0/2 offside constraints` because a
+dropped `m!"…"` island, placed ahead of the continuation's leaf, left the break before the
+continuation with a span of its own and the `.boundary` carrier unmatched; the guarded-let bail-out
+the island belonged to likewise no longer had a node spanning it, so its flatten was next. Glued to
+the previous terminal, the island lands inside the bail-out's own node, the flatten joins
+`throwError m!"…"` back onto the guard's line, and the continuation's break stays pure layout.
+
+The separator evidence is the same as `transformText`'s pending path: the source gap between the
+previous terminal and the island, as a boolean, spelled `.line` so the renderer owns the break. -/
+private partial def placeDroppedIslandsAfter (result : Transformed) :
+    StateT TransformState (Except String) Transformed := do
+  let state ← get
+  let pending? :=
+    state.terminals[state.terminalIndex]?.bind fun terminal =>
+      state.islands.find? fun island =>
+        state.droppedIslands.contains island.marker &&
+            !state.appliedIslands.contains island.marker &&
+          island.range.start == terminal.range.start
+  match pending? with
+  | none =>
+    return result
+  | some exact =>
+    let sourceGap :=
+      if state.terminalIndex == 0 then ""
+      else
+        match state.terminals[state.terminalIndex - 1]? with
+        | some previous => slice state.source ⟨previous.range.stop, exact.range.start⟩
+        | none => ""
+    let separate := !state.separated && !sourceGap.isEmpty
+    let island ← consumeIsland exact.marker exact
+    let island := if separate then { island with format := .append .line island.format } else island
+    placeDroppedIslandsAfter
+        { result with
+          format := .append result.format island.format
+          span? := mergeSpan result.span? island.span?
+          -- The island inserted itself between the boundary and the payload the hoist split
+          -- describes, so the split no longer tracks the format.
+          hoist? := none }
+
 private def transformOrdinaryText (value : String) :
     StateT TransformState (Except String) Transformed := do
   let state ← get
@@ -2704,12 +2856,15 @@ private def transformOrdinaryText (value : String) :
               tokenLeaves := state.metrics.tokenLeaves + 1
               normalizedTokens := state.metrics.normalizedTokens + if normalized then 1 else 0 } }
     finishNode
-        {
-          format := .append boundary (.append (.text terminal.sourceSpelling) (.text trailing))
-          span? := some ⟨state.terminalIndex, state.terminalIndex + 1⟩
-          hoist? :=
-            hoistPayload? state hoistable boundary
-              (.append (.text terminal.sourceSpelling) (.text trailing)) }
+        (←
+          placeDroppedIslandsAfter
+              {
+                format :=
+                  .append boundary (.append (.text terminal.sourceSpelling) (.text trailing))
+                span? := some ⟨state.terminalIndex, state.terminalIndex + 1⟩
+                hoist? :=
+                  hoistPayload? state hoistable boundary
+                    (.append (.text terminal.sourceSpelling) (.text trailing)) })
 
 private def transformText (value : String) : StateT TransformState (Except String) Transformed := do
   let state ← get
@@ -3322,6 +3477,10 @@ alternatives: alternative 0 is {expected}, alternative {alternative} is {actual}
     else (#[], #[])
   -- Not under the setting: a stranded field row is a correctness question, not a style one.
   let (rowSpreadRanges, rowSpreadBoundaries) := collectRowSpreadStructInsts stripped
+  -- The closing brace's own row decision (`collectStructInstCloseBraces`): its ranges join
+  -- `explodedRanges` only at the `transform` call, after the pin filter has run.
+  let (closeBraceBoundaries, closeBraceRanges) :=
+    collectStructInstCloseBraces source comments stripped
   let explodedRanges := commaRanges ++ rowSpreadRanges
   -- The `return` braces held on the keyword's row: the boundary in front of each, and the one
   -- fact `collectStructInstFieldRows` needs to know a field's source column still means something.
@@ -3336,34 +3495,36 @@ alternatives: alternative 0 is {expected}, alternative {alternative} is {actual}
     !explodedRanges.any fun range => range.start < start && start < range.stop
   let boundaryStarts : Array (Nat × BoundaryLayout) :=
     (collectUngroupedBodyStarts format.declarationBody source format.lineWidth stripped
-                                              (collectReturnTermStarts stripped)).map
-                                          (·, BoundaryLayout.flat) ++
-                                        (collectIndentedSequenceStarts stripped).map
-                                          (·, BoundaryLayout.hard) ++
-                                      (collectCdotStarts stripped).map (·, BoundaryLayout.flat) ++
-                                    nestedCommandStarts.map (·, BoundaryLayout.dedented) ++
-                                  ctorDocStarts.map (·, BoundaryLayout.elided) ++
-                                docBoundaries ++
-                              attrDocBoundaries ++
-                            joined.map (·.start, BoundaryLayout.flat) ++
-                          (collectGuardBarBreaks source stripped).map (·, BoundaryLayout.hard) ++
-                        ((collectBraceAppArgStarts stripped).filterMap fun start =>
-                          if brokenBefore start then none else some (start, BoundaryLayout.flat)) ++
-                      returnBraceStarts.map (·, BoundaryLayout.flat) ++
-                    ((collectBraceInteriorBreaks source stripped).filter fun p =>
-                          outsideExploded p.1).map
-                      (fun p => (p.1, BoundaryLayout.columned p.2)) ++
-                  ((collectStructInstFieldRows source returnBraceStarts stripped).filter fun p =>
-                    outsideExploded p.1) ++
-                ((collectBraceLiteralRows source stripped).filter fun p => outsideExploded p.1) ++
-              collectLetFamilyAlignments source stripped ++
-            unbreakableRunBoundaries source terminals unbreakableRuns ++
-          ((collectStructInstEllipses stripped).filterMap fun start =>
-            let broken :=
-              (terminals.filter (·.range.stop <= start)).back?.any fun previous =>
-                (slice source ⟨previous.range.stop, start⟩).contains '\n'
+                                                (collectReturnTermStarts stripped)).map
+                                            (·, BoundaryLayout.flat) ++
+                                          (collectIndentedSequenceStarts stripped).map
+                                            (·, BoundaryLayout.hard) ++
+                                        (collectCdotStarts stripped).map (·, BoundaryLayout.flat) ++
+                                      nestedCommandStarts.map (·, BoundaryLayout.dedented) ++
+                                    ctorDocStarts.map (·, BoundaryLayout.elided) ++
+                                  docBoundaries ++
+                                attrDocBoundaries ++
+                              joined.map (·.start, BoundaryLayout.flat) ++
+                            (collectGuardBarBreaks source stripped).map (·, BoundaryLayout.hard) ++
+                          ((collectBraceAppArgStarts stripped).filterMap fun start =>
+                            if brokenBefore start then none
+                            else some (start, BoundaryLayout.flat)) ++
+                        returnBraceStarts.map (·, BoundaryLayout.flat) ++
+                      ((collectBraceInteriorBreaks source stripped).filter fun p =>
+                            outsideExploded p.1).map
+                        (fun p => (p.1, BoundaryLayout.columned p.2)) ++
+                    ((collectStructInstFieldRows source returnBraceStarts stripped).filter fun p =>
+                      outsideExploded p.1) ++
+                  ((collectBraceLiteralRows source stripped).filter fun p => outsideExploded p.1) ++
+                collectLetFamilyAlignments source stripped ++
+              unbreakableRunBoundaries source terminals unbreakableRuns ++
+            ((collectStructInstEllipses stripped).filterMap fun start =>
+              let broken :=
+                (terminals.filter (·.range.stop <= start)).back?.any fun previous =>
+                  (slice source ⟨previous.range.stop, start⟩).contains '\n'
           if broken then some (start, BoundaryLayout.hard) else none) ++
-        trailingCommaBoundaries ++
+          trailingCommaBoundaries ++
+        closeBraceBoundaries ++
       rowSpreadBoundaries
   let commentFree := withoutTrivia stripped
   let (formattedSyntax, islands) := protectSourceData categories source commentFree
@@ -3423,7 +3584,7 @@ cannot tell from the placeholder that protects {marker.range.start}:{marker.rang
     let native := (dropTrailingHardLine native).getD native
     match
       transform source terminals comments blockDangling islands constraints boundaryStarts joined
-        nestedCommandRanges explodedRanges headSpans baseIndent native with
+        nestedCommandRanges (explodedRanges ++ closeBraceRanges) headSpans baseIndent native with
     | .ok (native, metrics) =>
       return .ok { document := Doc.registered native, trace, metrics }
     | .error (.incomplete detail) =>

@@ -210,8 +210,7 @@ private def oleanPart (root olean : System.FilePath) : IO (String × Bool) := do
       catch _ =>
         pure none
     return (s!"untraced\u0000{relative}\u0000{hash?.map (·.toString) |>.getD "unreadable"}", true)
-  let some (contents, metadata) ← readTrace? tracePath |
-    contentPart
+  let some (contents, metadata) ← readTrace? tracePath | contentPart
   let some outputs := moduleOutputs? metadata | contentPart
   -- A Lake artifact is named `<hash>.<ext>` where `ext` is the whole suffix — `olean`,
   -- `olean.server`, `olean.private` — so the sibling on disk is the module's own path with
@@ -266,8 +265,7 @@ private def sharedPart (root library : System.FilePath) : IO (String × Bool) :=
         pure none
     return (s!"shared-untraced\u0000{relative}\u0000{hash?.map (·.toString) |>.getD "unreadable"}",
         true)
-  let some (contents, metadata) ← readTrace? tracePath |
-    contentPart
+  let some (contents, metadata) ← readTrace? tracePath | contentPart
   let some outputs := metadata.outputs? | contentPart
   let .ok descr := Lake.ArtifactDescr.fromJson? outputs | contentPart
   let intact ←
@@ -447,8 +445,7 @@ then `irSig?`, then `ir?`. A legacy non-module-system module has one `oleanPart`
 others, which folds correctly under the same loop. Reading the parts by name rather than by
 position in the `o` array is Lake's `ModuleOutputDescrs` doing it, not a convention repeated here. -/
 private def moduleArtifactHash? (tracePath : System.FilePath) : IO (Option Lake.Hash) := do
-  let some (_, metadata) ← readTrace? tracePath |
-    return none
+  let some (_, metadata) ← readTrace? tracePath | return none
   let some outputs := moduleOutputs? metadata | return none
   let mut hash := Lake.Hash.nil
   for descr in outputs.oleanParts do
@@ -593,8 +590,7 @@ private def closureDigest? (workspace : Lake.Workspace) (mode : ClosureMode)
           stack := stack.push (imp, false)
       continue
     visiting := visiting.erase name
-    let some own ← memberPart workspace mode memo name |
-      digests.modify (·.insert name none)
+    let some own ← memberPart workspace mode memo name | digests.modify (·.insert name none)
     let known ← digests.get
     let mut parts := #[own]
     -- Every import counts, exported or not: anything imported could have shaped elaboration.

@@ -132,8 +132,9 @@ private def verifyFacetArtifact (path sourcePath : System.FilePath) (expectedHas
       descr := Lake.artifactWithExt expectedHash "json"
       path
       mtime := 0 }
-  let some artifact ← readFacet? facet `LocalSyntax source |
-    throw <| IO.userError "facet artifact failed integrity or semantic validation"
+  let some artifact ←
+    readFacet? facet `LocalSyntax
+        source | throw <| IO.userError "facet artifact failed integrity or semantic validation"
   ensure (artifact.mainModule == "LocalSyntax") "facet artifact lost module identity"
   let .ok materialized :=
     artifact.materialize source | throw <| IO.userError "facet syntax artifact did not reconstruct"

@@ -625,8 +625,7 @@ private def handleDidOpen (session : Session) (params : Json) : IO Unit := do
 private def handleDidChange (session : Session) (params : Json) : IO Unit := do
   let .ok identifier := params.getObjVal? "textDocument" | return
   let .ok uri := identifier.getObjValAs? String "uri" | return
-  let some document ← documentOf? session uri |
-    return
+  let some document ← documentOf? session uri | return
   let version := (identifier.getObjValAs? Int "version").toOption.getD document.version
   -- Strictly increasing. An equal or older version is a client bug; applying it would move
   -- the buffer under a request in flight.
@@ -887,8 +886,7 @@ private def findingsFor (session : Session) (document : Document)
 An analysis failure is a `window/logMessage`, not a diagnostic and not an empty publish: an
 empty set reads as "clean", and a broken buffer mid-keystroke is the normal state of editing. -/
 private def analyzeAndPublish (session : Session) (uri : String) (version : Int) : IO Unit := do
-  let some document ← documentOf? session uri |
-    return
+  let some document ← documentOf? session uri | return
   -- Superseded: a newer version arrived while this analysis waited its turn. Publishing now
   -- would describe bytes the client has already edited past, which is the stale publication §6
   -- forbids.

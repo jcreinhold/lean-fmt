@@ -2218,8 +2218,7 @@ reaches their file.
 def ExactRun.organizeSnapshot (run : ExactRun) (target : Project.SourceTarget)
     (cancel? : Option Std.CancellationToken := none) : IO (Except String (Option String)) := do
   let (normalized, lineEndings) := LosslessSource.normalize target.source
-  let some header ← Imports.parseHeaderModel normalized |
-    return .ok none
+  let some header ← Imports.parseHeaderModel normalized | return .ok none
   let output :=
     LosslessSource.denormalize
       (Imports.organize header normalized target.config.format.importLayout

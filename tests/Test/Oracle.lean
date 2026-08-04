@@ -178,8 +178,8 @@ private def analyze (root : System.FilePath) (application : String) (setup : Sys
 from `formatter-header`. -/
 private def headerSignature (source : String) : IO Lean.Json := do
   let normalized := (LosslessSource.normalize source).1
-  let some header ← Imports.parseHeaderModel normalized |
-    reject "imports" "header parser refused the candidate"
+  let some header ←
+    Imports.parseHeaderModel normalized | reject "imports" "header parser refused the candidate"
   let imports :=
     header.imports.map fun stmt =>
       Lean.Json.mkObj

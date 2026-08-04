@@ -425,8 +425,10 @@ private def testDiagnostics (ctx : Ctx) : IO Unit := do
   let ((), code) ←
     liveSession ctx do
         openDocument (findingsUri ctx) findingsSource
-        let some diagnostics ← awaitDiagnostics (findingsUri ctx) |
-          throw <| IO.userError "no diagnostics were published for the findings fixture"
+        let some diagnostics ←
+          awaitDiagnostics
+              (findingsUri
+                ctx) | throw <| IO.userError "no diagnostics were published for the findings fixture"
         ensureEq "a document publishes its findings" 1 diagnostics.size
         let first := diagnostics[0]!
         ensureJsonAt first [.field "source"] (Lean.toJson "lean-fmt") "the diagnostic is ours"
@@ -441,8 +443,10 @@ private def testDiagnostics (ctx : Ctx) : IO Unit := do
             "the diagnostic's range is a client range"
         -- A clean document publishes an empty set -- which is a claim, not an absence.
         openDocument (cleanUri ctx) cleanSource
-        let some cleanDiagnostics ← awaitDiagnostics (cleanUri ctx) |
-          throw <| IO.userError "no diagnostics were published for the clean fixture"
+        let some cleanDiagnostics ←
+          awaitDiagnostics
+              (cleanUri
+                ctx) | throw <| IO.userError "no diagnostics were published for the clean fixture"
         ensureEq "a clean document publishes nothing to report" 0 cleanDiagnostics.size
         request 90 "shutdown" (Json.mkObj [])
         discard <| awaitResponse 90
@@ -583,8 +587,9 @@ private def testIgnoreOption (ctx : Ctx) : IO Unit := do
   let ((), code) ←
     liveSession ctx (options := Json.mkObj [("ignore", Lean.toJson #["FMT003"])]) do
         openDocument (findingsUri ctx) findingsSource
-        let some diagnostics ← awaitDiagnostics (findingsUri ctx) |
-          throw <| IO.userError "no publication for the configured session"
+        let some diagnostics ←
+          awaitDiagnostics
+              (findingsUri ctx) | throw <| IO.userError "no publication for the configured session"
         ensureEq "an ignored rule reports nothing" 0 diagnostics.size
         request 1 "textDocument/codeAction" (codeActionParam (findingsUri ctx) 3)
         let actions ← editsOf (← awaitResponse 1) "configured actions"
@@ -604,8 +609,9 @@ private def testUnsafeDemoted (ctx : Ctx) : IO Unit := do
     let ((reported, kinds), code) ←
       liveSession ctx (extraArgs := #["--config", ctx.configToml.toString] ++ extraArgs) do
           openDocument (findingsUri ctx) findingsSource
-          let some diagnostics ← awaitDiagnostics (findingsUri ctx) |
-            throw <| IO.userError "no publication for the demoted session"
+          let some diagnostics ←
+            awaitDiagnostics
+                (findingsUri ctx) | throw <| IO.userError "no publication for the demoted session"
           request 1 "textDocument/codeAction" (codeActionParam (findingsUri ctx) 3)
           let actions ← editsOf (← awaitResponse 1) "demoted actions"
           request 90 "shutdown" (Json.mkObj [])
