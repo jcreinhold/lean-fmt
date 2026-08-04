@@ -54,7 +54,7 @@ lean_lib LeanFmtApplication where
     Glob.one `LeanFmt.Formatter.Trivia, Glob.one `LeanFmt.GitSelection, Glob.one `LeanFmt.Project,
     Glob.one `LeanFmt.Semantic, Glob.one `LeanFmt.SyntaxArtifact, Glob.one `LeanFmt.Validator,
     Glob.one `LeanFmt.LanguageServer, Glob.one `LeanFmt.Watch, Glob.one `LeanFmt.Application,
-    Glob.one `LeanFmt.Cli]
+    Glob.one `LeanFmt.NativeFormat, Glob.one `LeanFmt.Cli]
 
 /- The plugin shared library bundles the small semantic core at the process boundary. This
 later declaration stays the canonical owner for ordinary application imports, so changing

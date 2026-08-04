@@ -269,6 +269,77 @@ private def testPackageIdentity (root : System.FilePath) : IO Unit := do
   ensureEq "the binary does not report the package version" s!"lean-fmt {packaged}\n"
       reported.stdout
 
+/-- The first position at which two line lists differ, with both lines. Length drift reports
+against a `<past end>` marker so a truncation is as visible as a changed token. -/
+private def firstRegionDrift (golden region : List String) : Option (Nat × String × String) :=
+  go 0 golden region
+where
+  go (index : Nat) : List String → List String → Option (Nat × String × String)
+    | g :: gs, r :: rs => if g == r then go (index + 1) gs rs else some (index, g, r)
+    | [], [] => none
+    | [], r :: _ => some (index, "<past end>", r)
+    | g :: _, [] => some (index, g, "<past end>")
+
+/-- The reviewed region of the pinned toolchain's `Init/Data/Format/Basic.lean`, from the
+`FlattenBehavior` inductive through the end of `Format.pretty` — the slice
+`LeanFmt/NativeFormat.lean` vendors. Markers are content-anchored so upstream line movement
+outside the region is invisible; drift inside it is not. -/
+private def upstreamFormatRegion (source : String) : IO (List String) := do
+  let lines := source.splitOn "\n"
+  let startMarker := "inductive Format.FlattenBehavior where"
+  let endMarker := "State.out <| act.run (State.mk \"\" column) |>.snd"
+  let starts := (lines.filter (· == startMarker)).length
+  let ends := (lines.filter (·.contains endMarker)).length
+  ensure (starts == 1) s!"the vendored region's start marker occurs {starts} times upstream"
+  ensure (ends == 1) s!"the vendored region's end marker occurs {ends} times upstream"
+  let some start := lines.findIdx? (· == startMarker)
+    | throw <| IO.userError "vendored region start marker missing"
+  let some stop := lines.findIdx? (·.contains endMarker)
+    | throw <| IO.userError "vendored region end marker missing"
+  return (lines.drop start).take (stop - start + 1)
+
+/-- The provenance tripwire for the vendored `Std.Format` machine. `LeanFmt/NativeFormat.lean`
+was reviewed against the committed region fixture; this case fails the moment the pinned
+toolchain's region drifts from it — which is what a toolchain upgrade is. The upgrade procedure:
+re-review the region, re-vendor, regenerate the fixture from the new toolchain, update its
+`# toolchain:` line and this repository's `lean-toolchain` together. The discrimination arms
+prove the comparator rejects a changed fixture rather than passing everything. -/
+private def testVendoredProvenance (root : System.FilePath) : IO Unit := do
+  let leanPrefix ← expectExit 0 "lean --print-prefix" "lean" #["--print-prefix"] (cwd? := some root)
+  let upstreamPath :=
+    (System.FilePath.mk leanPrefix.stdout.trimAscii.copy) / "src" / "lean" / "Init" / "Data" /
+      "Format" / "Basic.lean"
+  let upstream ← IO.FS.readFile upstreamPath
+  let toolchain := (← readRepoFile root "lean-toolchain").trimAscii
+  let golden := (← readRepoFile root "tests/fixtures/boundary/native-format-region.txt").splitOn "\n"
+  let some header := golden[0]?
+    | throw <| IO.userError "vendored region fixture is empty"
+  ensure (header == s!"# toolchain: {toolchain}")
+      s!"the pinned toolchain ({toolchain}) drifted from the reviewed region fixture: {header}"
+  let region ← upstreamFormatRegion upstream
+  -- The fixture ends in a newline; `splitOn` turns that into one trailing empty entry.
+  let goldenRegion :=
+    match (golden.drop 3).reverse with
+    | "" :: rest => rest.reverse
+    | lines => lines.reverse
+  match firstRegionDrift goldenRegion region with
+  | some (index, goldenLine, upstreamLine) =>
+    throw <| IO.userError
+      s!"unreviewed drift in the vendored `Std.Format` region at region line {index}:\n\
+      reviewed: {goldenLine}\nupstream: {upstreamLine}"
+  | none => pure ()
+  -- Discrimination: a changed fixture must fail. A dropped line, a changed token, and a truncated
+  -- upstream are each caught; a comparator that cannot fail would report a healthy tree exactly
+  -- as convincingly as `true` does.
+  ensure
+      (firstRegionDrift (goldenRegion.take 10 ++ goldenRegion.drop 11) region).isSome
+      "the provenance comparator does not discriminate a dropped fixture line"
+  ensure
+      (firstRegionDrift (goldenRegion.map (· ++ " ")) region).isSome
+      "the provenance comparator does not discriminate a changed fixture token"
+  ensure (firstRegionDrift goldenRegion (region.take 20)).isSome
+      "the provenance comparator does not discriminate a truncated upstream region"
+
 private def cases (root : System.FilePath) : Array Case :=
   #[{ name := "module-headers", run := testModuleHeaders root },
     { name := "no-tracked-artifacts", run := testNoTrackedArtifacts root },
@@ -282,7 +353,8 @@ private def cases (root : System.FilePath) : Array Case :=
     { name := "no-legacy-architecture", run := testNoLegacyArchitecture root },
     { name := "link-closure", run := testLinkClosure root },
     { name := "spawn-scrub-opt-ins", run := testSpawnScrubOptIns root },
-    { name := "package-identity", run := testPackageIdentity root }]
+    { name := "package-identity", run := testPackageIdentity root },
+    { name := "vendored-provenance", run := testVendoredProvenance root }]
 
 end Boundary
 
