@@ -199,6 +199,13 @@ private unsafe def incrementalAnalyzerSpec (work setupPath sourcePath : String)
   -- document is the whole latency budget.
   ensure (formatted.envelope.canonical?.any (·.validation.frontendRuns == 1))
       "an interactive format elaborated its candidate a second time"
+  -- The editor shares the batch's exact candidate validation: unsaved bytes have no admitted
+  -- frontier, so `--no-validate`'s bypass has nothing to stand on, and the policy field the
+  -- batch threads never leaves it `.exact` here.
+  ensure
+      (formatted.envelope.canonical?.any fun canonical =>
+        canonical.validation.idempotencePasses == 1 && !canonical.validation.bypassed)
+      "an interactive format skipped exact candidate validation"
   let mut rss : Array Nat := #[]
   phaseSample samples openedAt "edit-table"
   IO.eprintln "phase: hundred-edit loop"

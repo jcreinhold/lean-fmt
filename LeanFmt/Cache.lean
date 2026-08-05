@@ -1103,11 +1103,13 @@ structural reparse alone, and the cache identity deliberately has no validation 
 would let a later *default* `format` publish on a validation that run never performed. The
 rendered bytes are a deterministic function of the source and configuration, so nothing is lost:
 the next exact run recomputes and stores. -/
+private def bypassedValidation (analysis : SemanticAnalysis) : Bool :=
+  match analysis.result?.bind (·.canonical?) with
+  | some canonical => canonical.validation.bypassed
+  | none => false
+
 private def storableAnalysis (analysis : SemanticAnalysis) : Bool :=
-  (unbuiltDependency? analysis.diagnostics).isNone &&
-    (match analysis.result?.bind (·.canonical?) with
-    | some canonical => !canonical.validation.bypassed
-    | none => true)
+  (unbuiltDependency? analysis.diagnostics).isNone && !bypassedValidation analysis
 
 /-- Merge two analyses recorded under **one identity key** — same source bytes, same closure,
 same configuration — so that storing keeps every capability either run computed.
@@ -1178,7 +1180,13 @@ def ResultCache.writeAll (cache : ResultCache) (project : Project.Snapshot)
     let closures ← withPhase "write_closures" <| cache.closureDigests project targets
     for ((target, analysis?), closure?) in (targets.zip analyses).zip closures do
       let some analysis := analysis? | continue
-      unless validAnalysis target analysis && storableAnalysis analysis do
+      unless validAnalysis target analysis do
+        continue
+      unless storableAnalysis analysis do
+        -- The one refusal a run can ask about: `--no-validate` published these bytes, and the
+        -- write boundary says no, audibly. An unbuilt analysis is a non-verdict and stays quiet.
+        if bypassedValidation analysis then
+          recordCount "cache_write_refused_bypassed" 1
         continue
       -- A target whose currency could not be established is not written. Writing it under
       -- a placeholder closure would make it indistinguishable from a genuinely current entry on

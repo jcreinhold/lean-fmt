@@ -214,6 +214,36 @@ private def testCommentOnlyEdit (ctx : Ctx) : IO Unit := do
       (ctx.total - 2) servedCount
   restoreFile ctx "Wide.lean"
 
+/-- A `--no-validate` publication never becomes persistent cache evidence. A rebuilt leaf edit
+gives the bypass its admitted frontier; the run bypasses and reports it, and the write boundary
+refuses the bypassed analysis audibly (`cache_write_refused_bypassed`). The default `format`
+over the same bytes must then *revalidate* — a stored bypass would be served back instead,
+reporting `validationBypassed=1` with no `candidate_reparse` line. -/
+private def testBypassNeverStored (ctx : Ctx) : IO Unit := do
+  writeFile (leaf ctx) ((← IO.FS.readFile (leaf ctx)) ++ "\n-- bypass storage probe\n")
+  rebuild ctx
+  let args := #["format", "--json", "Fixture/Leaf.lean"]
+  let bypassed ←
+    runProc ctx.fmt (args ++ #["--no-validate"]) (cwd? := some ctx.project) (env :=
+        #[("LEAN_FMT_PROFILE_PHASES", some "1")])
+  ensureEq "bypass probe: --no-validate format exit" 0 bypassed.exitCode
+  ensureContains bypassed.stderr "cache.candidate_validation_bypass="
+      "bypass probe: the bypass did not fire"
+  ensureContains bypassed.stderr "cache.cache_write_refused_bypassed="
+      "bypass probe: the write refusal was not counted"
+  let bypassedReport ← parseJson bypassed.stdout "bypass probe"
+  ensureJsonAt bypassedReport [.field "validationBypassed"] (Lean.toJson (1 : Nat)) "bypass probe"
+  let exact ←
+    runProc ctx.fmt args (cwd? := some ctx.project) (env :=
+        #[("LEAN_FMT_PROFILE_PHASES", some "1")])
+  ensureEq "bypass probe: default format exit" 0 exact.exitCode
+  let exactReport ← parseJson exact.stdout "bypass probe"
+  ensureJsonAt exactReport [.field "validationBypassed"] (Lean.toJson (0 : Nat))
+      "bypass probe: the default run published on someone else's validation"
+  ensureContains exact.stderr "cache.candidate_reparse="
+      "bypass probe: the default run did not revalidate -- the bypassed candidate was served"
+  restoreFile ctx "Leaf.lean"
+
 /-- §4. A semantic edit to a widely-imported module invalidates its dependents. -/
 private def testSemanticEdit (ctx : Ctx) : IO Unit := do
   let source ← IO.FS.readFile (wide ctx)
@@ -522,6 +552,7 @@ private def cases (ctx : Ctx) : Array Case :=
     { name := "concurrent-cold-writers", run := testConcurrentColdWriters ctx },
     { name := "leaf-edit", run := testLeafEdit ctx },
     { name := "comment-only-edit", run := testCommentOnlyEdit ctx },
+    { name := "bypass-never-stored", run := testBypassNeverStored ctx },
     { name := "semantic-edit", run := testSemanticEdit ctx },
     { name := "notation-edit", run := testNotationEdit ctx },
     { name := "index-bounded", run := testIndexBounded ctx },

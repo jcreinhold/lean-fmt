@@ -15,7 +15,9 @@ The two halves are fed differently on purpose, as in the old script. Lifecycle a
 the whole session in one go and read what comes back, which is the strongest way to assert
 ordering (`runSession` + `parseFrames`). Diagnostics cannot be tested that way — they are
 published after a quiet interval and `exit` closes the queue before the timer fires — so the
-feature half drives the live `Test.LspClient`.
+feature half drives the live `Test.LspClient`. `no-persistent-evidence` runs a whole session
+against a scratch project and pins the unsaved-evidence bound: no `.lean-fmt-cache` is created,
+and the formatting is the exactly validated canonical.
 
 Lane: workspace — the server analyzes committed fixtures against the real root and shares the
 root `.lean-fmt-cache`.
@@ -668,6 +670,36 @@ private def testSuperseded (ctx : Ctx) : IO Unit := do
         notify "exit" (Json.mkObj [])
   ensureEq "the superseding session ends cleanly" 0 code
 
+/-- Unsaved-document evidence is bounded to the session and never persists. A complete session —
+open, format, shutdown — against a scratch project writes no `.lean-fmt-cache` (the server never
+opens the result cache; this pins that it stays so), and the formatting it returns is the
+exactly validated canonical: unsaved bytes have no admitted frontier, so there is nothing for
+`--no-validate`'s bypass to stand on and the session shares the batch's exact policy. -/
+private def testNoPersistentEvidence (ctx : Ctx) : IO Unit := do
+  withScratchDir "lsp-evidence" fun work => do
+      writeFile (work / "lakefile.lean")
+          "import Lake\nopen Lake DSL\n\npackage isolation\n\nlean_lib Isolation\n"
+      writeFile (work / "lean-toolchain") (← IO.FS.readFile (ctx.root / "lean-toolchain"))
+      let source := "module\n\ndef drifted : Nat :=\n    1\n"
+      let documentPath := work / "Isolation.lean"
+      writeFile documentPath source
+      let uri := s!"file://{documentPath}"
+      let ((), code) ←
+        LspClient.withServer ctx.app work.toString do
+            discard <| initializeSession work.toString
+            openDocument uri source
+            request 1 "textDocument/formatting" (LspClient.documentParam uri)
+            let edits ← editsOf (← awaitResponse 1) "isolation formatting"
+            ensureEq "a non-canonical document gets exactly one edit" 1 edits.size
+            ensureEq "the edit is the exactly validated canonical"
+                "module\n\ndef drifted : Nat :=\n  1\n" (strField edits[0]! "newText")
+            request 90 "shutdown" (Json.mkObj [])
+            discard <| awaitResponse 90
+            notify "exit" (Json.mkObj [])
+      ensureEq "the isolation session ends cleanly" 0 code
+      ensure (!(← (work / ".lean-fmt-cache").pathExists))
+          "an LSP session left persistent cache evidence"
+
 end Lsp
 
 public def main (args : List String) : IO UInt32 := do
@@ -693,5 +725,6 @@ public def main (args : List String) : IO UInt32 := do
           { name := "code-actions", run := Lsp.testCodeActions ctx },
           { name := "ignore-option", run := Lsp.testIgnoreOption ctx },
           { name := "unsafe-demoted", run := Lsp.testUnsafeDemoted ctx },
-          { name := "superseded", run := Lsp.testSuperseded ctx }]
+          { name := "superseded", run := Lsp.testSuperseded ctx },
+          { name := "no-persistent-evidence", run := Lsp.testNoPersistentEvidence ctx }]
       runCases "lsp" cases args
