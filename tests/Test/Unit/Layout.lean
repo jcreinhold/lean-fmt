@@ -897,18 +897,35 @@ private def testStructuralAnchors : IO Unit := do
         s!"the anchor ledger lost its count: {detail}"
   | .error failure =>
     throw (IO.userError s!"the anchor ledger fired with the wrong kind: {failure.detail}")
-  -- A scope whose claim begins with a break captures nothing: refused at the claim, before
-  -- `Doc.wellFormed` would have to.
+  -- A break-led claim is not refused when the break can stay where the ambient layout put it:
+  -- `group (line ++ rest)` claims as `group (line ++ anchor[rest])` (`wrapAnchorCore`), the
+  -- group's flattening untouched and the anchor's entry at `rest`'s first token.
   let breakLed :=
     Std.Format.text "a" ++ .group (.line ++ Std.Format.text "b" ++ .line ++ Std.Format.text "c")
-  match Formatter.NativeLayout.transform (← planOf #[⟨2, 5⟩]) breakLed with
+  let breakLedFormat ←
+    match Formatter.NativeLayout.transform (← planOf #[⟨2, 5⟩]) breakLed with
+    | .ok (format, _) =>
+      pure format
+    | .error failure =>
+      throw (IO.userError s!"a wrapped break-led scope was refused: {failure.detail}")
+  ensure (countTag Formatter.NativeLayout.anchorTag breakLedFormat == 1)
+      "a wrapped break-led scope was not claimed"
+  let breakLedDoc ← lowered (← planOf #[⟨2, 5⟩]) breakLed
+  ensure (renderText 80 breakLedDoc == "a b c") "a wrapped break-led scope changed the flat render"
+  ensure (renderText 1 breakLedDoc == "a\nb\nc") "a wrapped break-led scope moved its edge breaks"
+  -- A break-led spine with siblings has no sound claim: the tag cannot cover the interval
+  -- without crossing the leading wrapper's boundary, so the claim refuses. This is the shape
+  -- that stops the `whereDecls` family (recorded in the redesign state).
+  let breakLedSpine :=
+    Std.Format.text "a" ++ (.group (.line ++ Std.Format.text "b") ++ Std.Format.text "c")
+  match Formatter.NativeLayout.transform (← planOf #[⟨2, 5⟩]) breakLedSpine with
   | .ok _ =>
-    throw (IO.userError "a break-led anchor scope was claimed")
+    throw (IO.userError "a break-led spine anchor scope was claimed")
   | .error (.unadapted detail) =>
-    ensure (detail.contains "begins with a break")
-        s!"the break-led refusal lost its reason: {detail}"
+    ensure (detail.contains "no break-free core")
+        s!"the break-led spine refusal lost its reason: {detail}"
   | .error failure =>
-    throw (IO.userError s!"break-led refused with the wrong kind: {failure.detail}")
+    throw (IO.userError s!"break-led spine refused with the wrong kind: {failure.detail}")
   -- Nested intervals both claim; the enclosing comment, island, and nested command stay
   -- applicable inside an anchored region.
   let nestedFormat ←

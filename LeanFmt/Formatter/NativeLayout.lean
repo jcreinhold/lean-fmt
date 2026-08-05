@@ -1240,24 +1240,35 @@ private partial def collectStructInstFieldAnchors (stx : Lean.Syntax)
     (ranges : Array SourceRange := #[]) : Array SourceRange :=
   match stx with
   | .node _ kind children =>
-    -- `Term.structInst` spells its fields inside `{ }`; `Command.whereStructInst` spells the same
-    -- `structInstFields` list after `where` (`Command.lean:174`). The anchor is the same fact for
-    -- both: every field row breaks at the first field's column, wherever the document places it --
-    -- on the `where` row included, which is what the retired `whereForm` carve-out approximated.
-    let ranges :=
-      if kind == ``Lean.Parser.Term.structInst || kind == ``Lean.Parser.Command.whereStructInst then
-        match children.find? (·.isOfKind ``Lean.Parser.Term.structInstFields) with
-        | some fieldsNode =>
-          let fields := structInstFieldsInOrder fieldsNode
-          if fields.size < 2 then ranges
-          else
-            match (selectedLeafRanges fields[0]!)[0]?, (selectedLeafRanges fields.back!).back? with
-            | some first, some last => ranges.push ⟨first.start, last.stop⟩
-            | _, _ => ranges
-        | none => ranges
-      else ranges
-    let children := if kind == Lean.choiceKind then children[0]?.toArray else children
-    children.foldl (init := ranges) fun ranges child => collectStructInstFieldAnchors child ranges
+    -- No anchor intervals inside a quotation. The quotation's template formats as ordinary
+    -- syntax, but the template's own layout bakes its offside positions into the item groups
+    -- (`Mathlib/Data/UInt.lean`'s `rw [...] rfl` ends its last item's group with a dedent-wrapped
+    -- hard newline whose arithmetic assumes the ambient indent), so the interval has no
+    -- break-free core to claim and the claim refuses. The pre-anchor offside machinery lays out
+    -- quotation interiors; the island filter at resolve covers the whole-quotation case.
+    if stx.isQuot then ranges
+    else
+      -- `Term.structInst` spells its fields inside `{ }`; `Command.whereStructInst` spells the same
+      -- `structInstFields` list after `where` (`Command.lean:174`). The anchor is the same fact for
+      -- both: every field row breaks at the first field's column, wherever the document places it --
+      -- on the `where` row included, which is what the retired `whereForm` carve-out approximated.
+      let ranges :=
+        if
+            kind == ``Lean.Parser.Term.structInst ||
+              kind == ``Lean.Parser.Command.whereStructInst then
+          match children.find? (·.isOfKind ``Lean.Parser.Term.structInstFields) with
+          | some fieldsNode =>
+            let fields := structInstFieldsInOrder fieldsNode
+            if fields.size < 2 then ranges
+            else
+              match (selectedLeafRanges fields[0]!)[0]?,
+                (selectedLeafRanges fields.back!).back? with
+              | some first, some last => ranges.push ⟨first.start, last.stop⟩
+              | _, _ => ranges
+          | none => ranges
+        else ranges
+      let children := if kind == Lean.choiceKind then children[0]?.toArray else children
+      children.foldl (init := ranges) fun ranges child => collectStructInstFieldAnchors child ranges
   | _ => ranges
 
 /- The anchor interval for a multi-item indented tactic sequence (LAY-INDENTED-SEQUENCES):
@@ -1271,57 +1282,34 @@ private partial def collectTacticSequenceAnchors (stx : Lean.Syntax)
     (ranges : Array SourceRange := #[]) : Array SourceRange :=
   match stx with
   | .node _ kind children =>
-    -- The conv half (`Conv.convSeq1Indented`) is the same `sepByIndentSemicolon` family one
-    -- grammar over, and the bracketed halves (`tacticSeqBracketed`, `convSeqBracketed`) hold the
-    -- same list between their braces: items land at the first item's column or the sequence ends
-    -- early, and the anchor states it identically. For the bracketed families it is also the
-    -- structural fix for the prompt-01 defect: a sequence hugging `{` on its row broke its `;` at
-    -- the row's nest, left of the first item, and the reparse ended the sequence -- the anchor
-    -- re-bases those breaks to the first item's column wherever the hug lands it.
-    let ranges :=
-      if
-          kind == ``Lean.Parser.Tactic.tacticSeq1Indented ||
-                kind == ``Lean.Parser.Tactic.Conv.convSeq1Indented ||
-              kind == ``Lean.Parser.Tactic.tacticSeqBracketed ||
-            kind == ``Lean.Parser.Tactic.Conv.convSeqBracketed then
-        match children.find? (·.isOfKind Lean.nullKind) with
-        | some list =>
-          let items := (list.getArgs.zipIdx.filter fun (_, index) => index % 2 == 0).map (·.1)
-          if items.size < 2 then ranges
-          else
-            match (selectedLeafRanges items[0]!)[0]?, (selectedLeafRanges items.back!).back? with
-            | some first, some last => ranges.push ⟨first.start, last.stop⟩
-            | _, _ => ranges
-        | none => ranges
-      else ranges
-    let children := if kind == Lean.choiceKind then children[0]?.toArray else children
-    children.foldl (init := ranges) fun ranges child => collectTacticSequenceAnchors child ranges
-  | _ => ranges
-
-/- The anchor interval for a multi-declaration `whereDecls` block (LAY-INDENTED-SEQUENCES):
-exactly the declarations, first to last. `whereDecls` is `sepByIndentSemicolon(whereDecl)`, so a
-declaration row lands at the first declaration's column or the block ends early and the next token
-is read outside it; the anchor states that with no `where`-keyword special case -- the retired
-delimited arm's exemption asked where the keyword's nest pointed, and the anchor asks the first
-declaration instead, which is the column `sepByIndent` itself measures against. -/
-private partial def collectWhereDeclsAnchors (stx : Lean.Syntax)
-    (ranges : Array SourceRange := #[]) : Array SourceRange :=
-  match stx with
-  | .node _ kind children =>
-    let ranges :=
-      if kind == ``Lean.Parser.Term.whereDecls then
-        match children.find? (·.isOfKind Lean.nullKind) with
-        | some list =>
-          let items := (list.getArgs.zipIdx.filter fun (_, index) => index % 2 == 0).map (·.1)
-          if items.size < 2 then ranges
-          else
-            match (selectedLeafRanges items[0]!)[0]?, (selectedLeafRanges items.back!).back? with
-            | some first, some last => ranges.push ⟨first.start, last.stop⟩
-            | _, _ => ranges
-        | none => ranges
-      else ranges
-    let children := if kind == Lean.choiceKind then children[0]?.toArray else children
-    children.foldl (init := ranges) fun ranges child => collectWhereDeclsAnchors child ranges
+    -- Quotation interiors are skipped for the reason `collectStructInstFieldAnchors` states.
+    if stx.isQuot then ranges
+    else
+      -- The conv half (`Conv.convSeq1Indented`) is the same `sepByIndentSemicolon` family one
+      -- grammar over, and the bracketed halves (`tacticSeqBracketed`, `convSeqBracketed`) hold the
+      -- same list between their braces: items land at the first item's column or the sequence ends
+      -- early, and the anchor states it identically. For the bracketed families it is also the
+      -- structural fix for the prompt-01 defect: a sequence hugging `{` on its row broke its `;` at
+      -- the row's nest, left of the first item, and the reparse ended the sequence -- the anchor
+      -- re-bases those breaks to the first item's column wherever the hug lands it.
+      let ranges :=
+        if
+            kind == ``Lean.Parser.Tactic.tacticSeq1Indented ||
+                  kind == ``Lean.Parser.Tactic.Conv.convSeq1Indented ||
+                kind == ``Lean.Parser.Tactic.tacticSeqBracketed ||
+              kind == ``Lean.Parser.Tactic.Conv.convSeqBracketed then
+          match children.find? (·.isOfKind Lean.nullKind) with
+          | some list =>
+            let items := (list.getArgs.zipIdx.filter fun (_, index) => index % 2 == 0).map (·.1)
+            if items.size < 2 then ranges
+            else
+              match (selectedLeafRanges items[0]!)[0]?, (selectedLeafRanges items.back!).back? with
+              | some first, some last => ranges.push ⟨first.start, last.stop⟩
+              | _, _ => ranges
+          | none => ranges
+        else ranges
+      let children := if kind == Lean.choiceKind then children[0]?.toArray else children
+      children.foldl (init := ranges) fun ranges child => collectTacticSequenceAnchors child ranges
   | _ => ranges
 
 /- A brace collection's continuation rows stay left of its first element.
@@ -2452,6 +2440,63 @@ private partial def nativeBeginsWithBreak : Std.Format → Bool
   | .tag _ f => nativeBeginsWithBreak f
   | .append f₁ f₂ => if provablyEmpty f₁ then nativeBeginsWithBreak f₂ else nativeBeginsWithBreak f₁
 
+/- The items of an append spine, in order. Appends are associative in the renderer's machine, so
+flattening and rebuilding the spine spells the same bytes with the same decisions. -/
+private partial def spineItems : Std.Format → Array Std.Format
+  | .append left right => spineItems left ++ spineItems right
+  | other => #[other]
+
+/- Whether this native document's last emission is a break: an anchor scope closing after one
+would swallow the separator the *following* terminal's row belongs to. -/
+private partial def nativeEndsWithBreak : Std.Format → Bool
+  | .nil => false
+  | .text s => s.endsWith "\n"
+  | .line | .align _ => true
+  | .group f _ => nativeEndsWithBreak f
+  | .nest _ f => nativeEndsWithBreak f
+  | .tag _ f => nativeEndsWithBreak f
+  | .append f₁ f₂ => if provablyEmpty f₂ then nativeEndsWithBreak f₁ else nativeEndsWithBreak f₂
+
+/- A spine item that is nothing but a break: a `line`, an `align`, or a text of only newlines.
+Leading and trailing items of this shape belong to the ambient layout, not to an anchor's body. -/
+private def pureBreakItem : Std.Format → Bool
+  | .line | .align _ => true
+  | .text s => !s.isEmpty && s.all (· == '\n')
+  | _ => false
+
+/- Wrap the break-free core of a claimed node in the anchor tag, keeping the break items on
+either edge -- and any `group`/`nest`/`tag` wrappers around them -- exactly where the ambient
+layout put them. Edge items are spine items that are nothing but a break (`line`, `align`, a
+text of only newlines) or provably empty; they belong to the ambient layout: the separator in
+front of the first terminal positions the row the anchor captures, and the one behind the last
+positions the next construct. The breaks are not hoisted out of a wrapper: `group (line ++ rest)`
+becomes `group (line ++ tag rest)`, so the group's flattening decision is unchanged and the
+anchor captures its first token's column wherever the break landed it. Descent is only sound
+through a *single* wrapped core item -- a break-led first item beside siblings would put the tag
+inside it and leave the siblings outside the scope -- so anything else with no break-free core
+(a glued `\nfoo` text leaf is the reachable shape) is `none`, which the caller refuses on. -/
+private partial def wrapAnchorCore (anchorTag : Nat) (format : Std.Format) : Option Std.Format :=
+  let items := spineItems format
+  let edge (item : Std.Format) : Bool := pureBreakItem item || provablyEmpty item
+  let lead := items.takeWhile edge
+  let rest := items.drop lead.size
+  let trail := rest.reverse.takeWhile edge
+  let core := rest.take (rest.size - trail.size)
+  let chain (parts : Array Std.Format) : Std.Format := parts.foldl (init := .nil) Std.Format.append
+  if core.isEmpty then none
+  else
+    let attach (inner : Std.Format) : Std.Format := chain (lead ++ #[inner] ++ trail)
+    if nativeBeginsWithBreak (chain core) || nativeEndsWithBreak (chain core) then
+      if core.size == 1 then
+        match core[0]! with
+        | .group f behavior =>
+          (wrapAnchorCore anchorTag f).map fun wrapped => attach (.group wrapped behavior)
+        | .nest k f => (wrapAnchorCore anchorTag f).map fun wrapped => attach (.nest k wrapped)
+        | .tag t f => (wrapAnchorCore anchorTag f).map fun wrapped => attach (.tag t wrapped)
+        | _ => none
+      else none
+    else attach (.tag anchorTag (chain core))
+
 /- Claim a plan-owned structural anchor interval. Two shapes, both grammar-independent:
 
 - *Exact*: the interval is one node's terminal span. The deepest such node wraps in
@@ -2475,25 +2520,38 @@ private def finishAnchors (result : Transformed) :
     if state.appliedAnchors.contains index then
       continue
     if interval == span then
-      if nativeBeginsWithBreak result.format then
+      -- The scope opens at the interval's first terminal and closes after its last: break items
+      -- on either edge belong to the ambient layout, so the claim wraps the break-free core in
+      -- place (`wrapAnchorCore`). A node with no break-free core captures nothing and refuses
+      -- here, before `Doc.wellFormed` would have to.
+      match wrapAnchorCore anchorTag result.format with
+      | some claimed =>
+        set
+            { state with
+              appliedAnchors := state.appliedAnchors.push index
+              anchorOpens := state.anchorOpens.filter (·.1 != index)
+              anchorCloses := state.anchorCloses.filter (·.1 != index) }
+        result :=
+          { result with
+            format := claimed, hoist? := none }
+      | none =>
+        let range? := state.terminals[span.start]?.map (·.range)
+        let fullSource := (← get).source
+        let slice :=
+          match range? with
+          | some r =>
+            (fullSource.toRawSubstring.drop r.start).take (min 100 (r.stop - r.start)) |>.toString
+          | none => "<none>"
         throw
-            s!"structural anchor interval {span.start}:{span.stop} begins with a break; the scope \
-must open at the interval's first terminal"
-      set
-          { state with
-            appliedAnchors := state.appliedAnchors.push index
-            anchorOpens := state.anchorOpens.filter (·.1 != index)
-            anchorCloses := state.anchorCloses.filter (·.1 != index) }
-      result :=
-        { result with
-          format := .tag anchorTag result.format, hoist? := none }
+            s!"structural anchor interval {span.start}:{span.stop} has no break-free core; the \
+scope must open at the interval's first terminal; near '{slice}'"
     else if interval.start <= span.start && span.stop <= interval.stop then
       let opens :=
-        if span.start == interval.start then
+        if span.start == interval.start && !nativeBeginsWithBreak result.format then
           (state.anchorOpens.filter (·.1 != index)).push (index, span)
         else state.anchorOpens
       let closes :=
-        if span.stop == interval.stop then
+        if span.stop == interval.stop && !nativeEndsWithBreak result.format then
           (state.anchorCloses.filter (·.1 != index)).push (index, span)
         else state.anchorCloses
       modify fun s =>
@@ -3510,12 +3568,6 @@ private def CommandPlan.resolve (source : String) (terminals : Array Terminal)
     source, terminals, comments, trailing, islands, constraints, boundaries, flattened,
     nestedCommands, explodedSpans, headSpans, anchors, baseIndent }
 
-/- The items of an append spine, in order. Appends are associative in the renderer's machine, so
-flattening and rebuilding the spine spells the same bytes with the same decisions. -/
-private partial def spineItems : Std.Format → Array Std.Format
-  | .append left right => spineItems left ++ spineItems right
-  | other => #[other]
-
 /- Pair the anchor markers the walk dropped and give each region a subtree: the spine items
 between an open and its matching close re-associate under `.tag anchorTag`, and the interval
 becomes one node the lowering maps to `Doc.anchor`. Items are processed bottom-up first, so a
@@ -3908,8 +3960,7 @@ private def CommandPlan.collect (source : String) (ownership : CommentOwnership)
   -- One anchor interval per multi-field `structInstFields` list, collected with the old row
   -- machinery still active: what the anchors make redundant is what the deletion checklist names.
   let structInstAnchors :=
-    collectStructInstFieldAnchors stripped ++ collectTacticSequenceAnchors stripped ++
-      collectWhereDeclsAnchors stripped
+    collectStructInstFieldAnchors stripped ++ collectTacticSequenceAnchors stripped
   let commentFree := withoutTrivia stripped
   let (formattedSyntax, islands) := protectSourceData categories source commentFree
   -- The closing brace's own row decision (`collectStructInstCloseBraces`): its ranges join
