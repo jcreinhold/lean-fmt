@@ -442,12 +442,14 @@ private def testOffside (ctx : Ctx) : IO Unit := do
   -- The negative half: the document hugs the brace, and a source that hugged it stays hugged.
   ensureEq "a hugged closing brace stays hugged" 1
       (countExact offside "  { baseConfig with retries := 5 }")
-  -- The `where` carrier's fields' nest is keyed to the declaration: the first field of a
-  -- `;`-separated list keeps its own row, so a later `;` breaking to the nest lands among
-  -- siblings -- `Mathlib/Algebra/Group/Pointwise/Finset/Basic.lean`'s `Fields missing` refusal.
-  ensureEq "a ;-separated where field list keeps its first field on its own row"
-      "  toFun := id; map_mul' x y := (x * y) + (y * x) + (x * y * x) + (y * x * y)"
-      (← lineAfterExact offside "def semiOps : SemiOps where")
+  -- The `where` field list rides the generic anchor (LAY-INDENTED-SEQUENCES): the first field of
+  -- a `;`-separated list joins the `where` row and the later field breaks at its column -- the
+  -- positioning the retired carve-out forced a break for, now stated without a break decision.
+  ensureEq "a ;-separated where field list hugs the where row" 1
+      (countExact offside "def semiOps : SemiOps where toFun := id;")
+  ensureEq "  ... and the later field lands at the first field's column" 1
+      (countExact offside
+        "                            map_mul' x y := (x * y) + (y * x) + (x * y * x) + (y * x * y)")
   ensureEq "  ... while a flat source keeps the join" 1
       (countExact offside "def semiOpsFlat : SemiOps where toFun := id; map_mul' := Nat.add")
   -- A `have` whose body sits left of the keyword keeps no pin: the keyword's own formatter

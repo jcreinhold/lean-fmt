@@ -708,30 +708,26 @@ private partial def collectIndentedSequenceStarts (source : String) (stx : Lean.
   | .node _ kind children =>
     -- `(owner, holder)`: the node whose terminals include the opening delimiter, and the node that
     -- holds the list. They differ for `structInst`, whose `{` is a sibling of the field list, and for
-    -- an indented sequence, whose delimiter belongs to whatever carries it. The fourth slot marks the
-    -- `whereStructInst` carrier: its `where` is a keyword whose fields' nest is keyed to the
-    -- declaration, not to the keyword's own column, so the delimited exemption does not apply -- a
-    -- first field that joins the `where` row sets the reference column there, and a later `;` that
-    -- breaks to the fields' nest orphans below it (`Fields missing`,
-    -- `Mathlib/Algebra/Group/Pointwise/Finset/Basic.lean`'s `singletonMulHom`).
-    let target? : Option (Lean.Syntax × Lean.Syntax × Bool × Bool) :=
-      if kind == ``Lean.Parser.Term.structInst then
+    -- an indented sequence, whose delimiter belongs to whatever carries it. The `whereStructInst`
+    -- carve-out this collector used to carry is retired (LAY-INDENTED-SEQUENCES): its `.hard`
+    -- forced the fields off the `where` row because a first field joining that row set the
+    -- reference column there and a later `;` broke to the fields' nest below it -- exactly the
+    -- positioning the anchor interval now owns, so the delimited exemption reads the same for
+    -- both spellings of `structInstFields` and the fourth tuple slot is gone with it. The
+    -- `singletonMulHom` motivation survives in git history.
+    let target? : Option (Lean.Syntax × Lean.Syntax × Bool) :=
+      if kind == ``Lean.Parser.Term.structInst || kind == ``Lean.Parser.Command.whereStructInst then
         (children.find? (·.isOfKind ``Lean.Parser.Term.structInstFields)).map fun fields =>
-          (stx, fields, false, false)
+          (stx, fields, false)
       else
-        if kind == ``Lean.Parser.Command.whereStructInst then
-          (children.find? (·.isOfKind ``Lean.Parser.Term.structInstFields)).map fun fields =>
-            (stx, fields, false, true)
+        if delimitedSequenceKind kind then some (stx, stx, false)
         else
-          if delimitedSequenceKind kind then some (stx, stx, false, false)
-          else
-            if ungroupedSequenceKind kind then
-              carrier?.map fun carrier =>
-                (carrier, stx, carrier.isOfKind ``Lean.Parser.Term.byTactic, false)
-            else none
+          if ungroupedSequenceKind kind then
+            carrier?.map fun carrier => (carrier, stx, carrier.isOfKind ``Lean.Parser.Term.byTactic)
+          else none
     let starts :=
       match target? with
-      | some (owner, holder, ungrouped, whereForm) =>
+      | some (owner, holder, ungrouped) =>
         match holder.getArgs.find? (·.isOfKind Lean.nullKind) with
         -- One item has no separator to break at the wrong column, so it needs no boundary; two do.
         | some list =>
@@ -754,10 +750,7 @@ private partial def collectIndentedSequenceStarts (source : String) (stx : Lean.
                 (ungrouped ||
                   (!hasNewlineSeparator list &&
                     match (selectedLeafRanges list)[0]? with
-                    | some first =>
-                      delimiterIntervenes owner list ||
-                        (whereForm && opensSourceRow source first.start)
-                    | none => delimiterIntervenes owner list)) then
+                    | _ => delimiterIntervenes owner list)) then
             match (selectedLeafRanges list)[0]? with
             | some range => if starts.contains range.start then starts else starts.push range.start
             | none => starts
