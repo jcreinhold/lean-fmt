@@ -86,6 +86,13 @@ structure RunRequest where
   nothing and reports `would-format`/`clean`, the former default. `check`/`diff`/`fix` ignore
   it. -/
   formatCheck : Bool := false
+  /-- How much candidate validation a publishing `format` owes its result. The default `.exact`
+  structurally reparses the candidate and then admits it with a second render and
+  `Validator.admit`; `--no-validate` sets `.structural`, which skips that final exact validator
+  where the module's syntax frontier was admitted, still requiring the structural reparse. The
+  CLI rejects every other mode and every non-publishing `format` form, so no other value ever
+  reaches here — see `ValidationPolicy`. -/
+  validationPolicy : ValidationPolicy := .exact
   /-- How many frontend children may run concurrently (`--workers`), or `none` to pick the number
   the way Lake picks it for its own build: `LEAN_NUM_THREADS` if that is set, else the machine's
   hardware concurrency. `resolveWorkers` does the picking. Scheduling only: every result is
@@ -121,6 +128,10 @@ structure FileReport where
   reachability cannot reason about (`import all`, `meta import`, a re-exported `public import`) makes
   them unsafe even to name. Recorded, never silent. -/
   withheldRedundant : Nat := 0
+  /-- Published under `format --no-validate`: the candidate was admitted on its structural reparse
+  over an admitted syntax frontier, without the second render and `Validator.admit`. Zero on every
+  default run and every non-publishing mode. -/
+  validationBypassed : Nat := 0
   deriving Inhabited, Lean.ToJson
 
 structure RunReport where
@@ -135,6 +146,8 @@ structure RunReport where
   withheldUnsafe : Nat
   suppressed : Nat
   withheldRedundant : Nat
+  /-- Files published under `format --no-validate` — summed `FileReport.validationBypassed`. -/
+  validationBypassed : Nat := 0
   infrastructureFailures : Array String
   deriving Lean.ToJson
 
@@ -537,7 +550,8 @@ private def ExactRun.primeSetups (run : ExactRun) (targets : Array SourceSnapsho
 private def ExactRun.envelope (run : ExactRun) (snapshot : SourceSnapshot) (captureSemantic : Bool)
     (validator := false) (captureOccurrences : Bool := false)
     (format? : Option FormatConfig := none) (cancel? : Option Std.CancellationToken := none)
-    (compiled : Bool := false) : IO AnalysisEnvelope := do
+    (compiled : Bool := false) (validationPolicy : ValidationPolicy := .exact) :
+    IO AnalysisEnvelope := do
   let index ← run.nextPathIndex
   -- Three phases: this operation once reported as one unnamed 43-second gap,
   -- and the three do entirely different work: `exact_setup` resolves the module's Lake setup in
@@ -572,6 +586,8 @@ private def ExactRun.envelope (run : ExactRun) (snapshot : SourceSnapshot) (capt
               -- A leading "c" prefixes any of those forms and says the parent holds evidence that these
               -- exact bytes compiled, which is what lets the child skip elaborating declarations; it is a
               -- prefix rather than a suffix so that "4j<json>" keeps its payload at a fixed offset.
+              -- "4s<json>" is "4j" under `--no-validate`: the child admits on the structural
+              -- candidate reparse alone, and only over an admitted frontier.
               -- The two paths after it are the pipe-free transport: the child writes its envelope to the
               -- first and any failure diagnostic to the second (see `spawnChild` for what the pipes cost).
               args :=
@@ -579,7 +595,12 @@ private def ExactRun.envelope (run : ExactRun) (snapshot : SourceSnapshot) (capt
                   snapshot.path.toString,
                   (if compiled then "c" else "") ++
                     match format? with
-                    | some format => s!"4j{(Lean.toJson format).compress}"
+                    | some format =>
+                      -- "4j" is the exact candidate validation; "4s" is `--no-validate`'s
+                      -- structural-reparse-only admission, valid only over an admitted
+                      -- frontier (the child falls back to the exact path without one).
+                      let tag := if validationPolicy == .structural then "4s" else "4j"
+                      s!"{tag}{(Lean.toJson format).compress}"
                     | none =>
                       if captureOccurrences then "2" else if captureSemantic then "1" else "0",
                   outPath.toString, errPath.toString]
@@ -813,13 +834,13 @@ coordinates (the walk already runs here for diagnostics); `captureSemantic` and 
 unchanged. -/
 def ExactRun.analyzeSnapshot (run : ExactRun) (snapshot : SourceSnapshot) (renderCanonical : Bool)
     (validator := false) (captureSemantic : Bool := false) (captureOccurrences : Bool := false)
-    (cancel? : Option Std.CancellationToken := none) (compiled : Bool := false) :
-    IO SemanticAnalysis := do
+    (cancel? : Option Std.CancellationToken := none) (compiled : Bool := false)
+    (validationPolicy : ValidationPolicy := .exact) : IO SemanticAnalysis := do
   canonicalAnalysis snapshot renderCanonical
       (←
         run.envelope snapshot captureSemantic validator captureOccurrences (format? :=
             if renderCanonical then some snapshot.config.format else none) (cancel? := cancel?)
-            (compiled := compiled))
+            (compiled := compiled) (validationPolicy := validationPolicy))
 
 /- Bracket a complete exact-analysis run. The capability is constructed only after a real fallback
 or editor request needs it; cache-only and ordinary-evidence batch runs create no temporary state.
@@ -1456,6 +1477,12 @@ output die with the target. -/
 private def formatFile (plan : RulePlan) (unsafeFixes : Bool) (reportImports : Array Finding)
     (withheldRedundant : Nat) (snapshot : SourceSnapshot) (analysis : SemanticAnalysis) :
     IO FileReport := do
+  -- The bypass flag travels with the admitted layout; a file this run published (or found
+  -- clean) under `--no-validate` carries it into the run's accounting either way.
+  let validationBypassed :=
+    match analysis.result?.bind (·.canonical?) with
+    | some canonical => if canonical.validation.bypassed then 1 else 0
+    | none => 0
   match
     prepareFile plan (renderCanonical := true) unsafeFixes reportImports withheldRedundant snapshot
       analysis with
@@ -1468,7 +1495,7 @@ private def formatFile (plan : RulePlan) (unsafeFixes : Bool) (reportImports : A
     let withheldRedundant := prepared.withheldRedundant
     unless prepared.changed do
       return { (baseReport snapshot "clean" findings) with
-          withheldUnsafe, suppressed, withheldRedundant }
+          withheldUnsafe, suppressed, withheldRedundant, validationBypassed }
     let output := prepared.output
     -- Admission already read these exact normalized bytes back under this setup and found the
     -- same commands, so nothing here re-reads them. What that reading proves is `Validator.admit`'s
@@ -1483,7 +1510,7 @@ private def formatFile (plan : RulePlan) (unsafeFixes : Bool) (reportImports : A
             findings) with
           formatted := some output
           written := true
-          withheldUnsafe, suppressed, withheldRedundant }
+          withheldUnsafe, suppressed, withheldRedundant, validationBypassed }
 
 def ExactRun.checkSnapshot (run : ExactRun) (plan : RulePlan) (snapshot : SourceSnapshot) :
     IO FileReport := do
@@ -1522,8 +1549,10 @@ private def summarize (modeString : String) (files : Array FileReport)
   let withheldUnsafe := files.foldl (fun total file => total + file.withheldUnsafe) 0
   let suppressed := files.foldl (fun total file => total + file.suppressed) 0
   let withheldRedundant := files.foldl (fun total file => total + file.withheldRedundant) 0
+  let validationBypassed := files.foldl (fun total file => total + file.validationBypassed) 0
   { mode := modeString, files, findings, changed, written, broken, unbuilt, rejected,
-    withheldUnsafe, suppressed, withheldRedundant, infrastructureFailures := failures }
+    withheldUnsafe, suppressed, withheldRedundant, validationBypassed,
+    infrastructureFailures := failures }
 
 /-! ## Report positions
 
@@ -1705,6 +1734,7 @@ private def processOneTarget (exactRun : ExactRun) (request : RunRequest) (rende
       | none =>
         exactRun.analyzeSnapshot snapshot renderCanonical (captureSemantic := demanded == .semantic)
             (captureOccurrences := demandedCaps.occurrences) (compiled := compiled)
+            (validationPolicy := request.validationPolicy)
     let report ←
       withPhase "rules" <|
           match request.mode with
@@ -2480,8 +2510,9 @@ private unsafe def analyzeChildEnvelope (setupPath snapshotPath displayPath : St
   -- fold, "3" test/audit-only comment ownership, "draft[:WIDTH]" the deliberately unvalidated test
   -- hook, "4[:WIDTH]" the structurally/idempotently admitted layout at a bare margin, and
   -- "4j<json>" the same with the full `FormatConfig` (which a bare margin predates: the config
-  -- gained pinned comments and a body policy after the width ladder). Product callers do not
-  -- request the draft form.
+  -- gained pinned comments and a body policy after the width ladder). "4s" is any of the "4"
+  -- forms under `--no-validate`'s structural policy; without the "c" prefix's compiled evidence
+  -- the child has no admitted frontier and validates exactly anyway.
   --
   -- Two phases, on this side of the process boundary where the parent cannot see: `child_analyze`
   -- is the frontend itself, `child_encode` is turning its result into the JSON the parent reads
@@ -2490,15 +2521,22 @@ private unsafe def analyzeChildEnvelope (setupPath snapshotPath displayPath : St
   -- records go to the profile channel (stderr, or the file `LEAN_FMT_PROFILE_OUT` names — the
   -- batch parent points it at the target's err file and forwards the lines); the envelope travels
   -- alone.
-  let validatedFormat? ←
+  let (validatedFormat?, validationPolicy) ←
     match captureMode.splitOn ":" with
     | ["4"] =>
-      pure (some ({ } : FormatConfig))
+      pure (some ({ } : FormatConfig), ValidationPolicy.exact)
+    | ["4s"] =>
+      pure (some ({ } : FormatConfig), ValidationPolicy.structural)
     | ["4", width] =>
-      pure (width.toNat?.map fun width => { lineWidth := width })
+      pure (width.toNat?.map fun width => { lineWidth := width }, ValidationPolicy.exact)
+    | ["4s", width] =>
+      pure (width.toNat?.map fun width => { lineWidth := width }, ValidationPolicy.structural)
     | _ =>
-      if captureMode.startsWith "4j" then
+      if captureMode.startsWith "4j" || captureMode.startsWith "4s" then
         do
+          let policy :=
+            if captureMode.startsWith "4s" then ValidationPolicy.structural
+            else ValidationPolicy.exact
           let .ok json :=
             Lean.Json.parse
               (captureMode.drop
@@ -2506,9 +2544,9 @@ private unsafe def analyzeChildEnvelope (setupPath snapshotPath displayPath : St
           let .ok (format : FormatConfig) :=
             Lean.fromJson?
               json | throw <| IO.userError "invalid FormatConfig payload in capture mode"
-          pure (some format)
+          pure (some format, policy)
       else
-        pure none
+        pure (none, ValidationPolicy.exact)
   let draftWidth? :=
     match captureMode.splitOn ":" with
     | ["draft"] => some 100
@@ -2525,6 +2563,7 @@ private unsafe def analyzeChildEnvelope (setupPath snapshotPath displayPath : St
           captureMode == "1" || captureMode == "2") (captureOccurrences := captureMode == "2")
           (captureComments := captureMode == "3") (captureFormatDraft := draftWidth?.isSome)
           (validateFormatDraft := validatedFormat?.isSome) (format := format) (compiled := compiled)
+          (validationPolicy := validationPolicy)
   withPhase "child_encode" do
       -- `IO.lazyPure` for the reason `profiledPositions` documents: a plain `let` of a pure value
       -- can be floated out of the action's closure, and then the bracket times nothing. The

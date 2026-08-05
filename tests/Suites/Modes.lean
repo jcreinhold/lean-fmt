@@ -180,7 +180,7 @@ private def testPreviews (ctx : Ctx) : IO Unit := do
   ensure
       (diff.stdout.endsWith
         "mode=diff files=1 findings=1 changed=1 written=0 broken=0 unbuilt=0 rejected=0 \
-     withheld_unsafe=0 suppressed=0 infrastructure_failures=0\n")
+     withheld_unsafe=0 suppressed=0 validation_bypassed=0 infrastructure_failures=0\n")
       "the diff trailer"
 
 /-- `format` formats — the pin on the layout-only fixture, with the exact canonical
@@ -208,6 +208,43 @@ private def testLayoutFormat (ctx : Ctx) : IO Unit := do
   ensureJsonAt check [.field "files", .index 0, .field "status"] (Lean.toJson "clean")
       "layout check"
 
+/-- `format --no-validate`: the authorized bypass publishes the same bytes the exact path does
+and records itself per file and in the run counter; every form that cannot publish rejects the
+flag rather than silently validating exactly. The drifted fixture is the same `Layout.lean`
+`layout-format` previews, restored afterwards for the same reason. -/
+private def testNoValidate (ctx : Ctx) : IO Unit := do
+  for mode in ["check", "fix", "diff"]do
+    let rejected ←
+      run ctx 2 s!"--no-validate {mode}"
+          #[mode, "tests/fixtures/check/Findings.lean", "--no-validate"]
+    ensure (rejected.stderr.contains s!"--no-validate is valid only for format, not {mode}")
+        s!"--no-validate {mode}: wrong rejection"
+  let preview ←
+    run ctx 2 "--no-validate --check"
+        #["format", "tests/fixtures/check/Layout.lean", "--check", "--no-validate"]
+  ensure (preview.stderr.contains "--no-validate is not available with --check")
+      "--no-validate --check: wrong rejection"
+  let stream ←
+    run ctx 2 "--no-validate stdin"
+        #["format", "-", "--stdin-filename", "Repro.lean", "--no-validate"]
+  ensure (stream.stderr.contains "--no-validate is not available for the - stdin target")
+      "--no-validate stdin: wrong rejection"
+  withRestored ctx.backupLayout ctx.layout do
+      let args :=
+        #["format", "--root", ".", "--json", "--no-cache", "tests/fixtures/check/Layout.lean"]
+      let exact ← runJson ctx 0 "format exact" args
+      let exactBytes ← IO.FS.readFile ctx.layout
+      ensureJsonAt exact [.field "validationBypassed"] (Lean.toJson (0 : Nat)) "exact"
+      ensureJsonAt exact [.field "written"] (Lean.toJson (1 : Nat)) "exact"
+      cpPreserve ctx.backupLayout ctx.layout
+      let bypassed ← runJson ctx 0 "format --no-validate" (args ++ #["--no-validate"])
+      ensureJsonAt bypassed [.field "validationBypassed"] (Lean.toJson (1 : Nat)) "bypassed"
+      ensureJsonAt bypassed [.field "written"] (Lean.toJson (1 : Nat)) "bypassed"
+      ensureJsonAt bypassed [.field "files", .index 0, .field "validationBypassed"]
+          (Lean.toJson (1 : Nat)) "bypassed"
+      ensureEq "the bypass published different bytes than exact validation" exactBytes
+          (← IO.FS.readFile ctx.layout)
+
 /-- A layout-dirty file without a final newline: the diff retains the missing-terminator marker
 while showing the namespace edit. -/
 private def testLayoutNoNewline (ctx : Ctx) : IO Unit := do
@@ -228,7 +265,7 @@ private def testLayoutNoNewline (ctx : Ctx) : IO Unit := do
       ensure
           (diff.stdout.endsWith
             "mode=diff files=1 findings=0 changed=1 written=0 broken=0 unbuilt=0 rejected=0 \
-       withheld_unsafe=0 suppressed=0 infrastructure_failures=0\n")
+       withheld_unsafe=0 suppressed=0 validation_bypassed=0 infrastructure_failures=0\n")
           "the no-newline trailer"
 
 /-- Artifact, exact fallback, and semantic-cache hit project to identical formatted output. -/
@@ -600,7 +637,7 @@ private def testRdfImplMixed (ctx : Ctx) : IO Unit := do
   ensure
       (((diff.stdout.trimAsciiEnd).toString.endsWith
         "findings=1 changed=1 written=0 broken=0 unbuilt=0 rejected=0 withheld_unsafe=0 suppressed=0 \
-     infrastructure_failures=0"))
+     validation_bypassed=0 infrastructure_failures=0"))
       "the mixed diff trailer"
   let fixed ← runJson ctx 0 "mixed fix" (fixArgs "tests/modes/.rdf-impl-mixed.lean")
   ensureJsonAt fixed [.field "written"] (Lean.toJson (1 : Nat)) "mixed fix"
@@ -1035,6 +1072,7 @@ public def main (args : List String) : IO UInt32 := do
       let cases : Array Case :=
         #[{ name := "previews", run := Modes.testPreviews ctx },
           { name := "layout-format", run := Modes.testLayoutFormat ctx },
+          { name := "no-validate", run := Modes.testNoValidate ctx },
           { name := "layout-no-newline", run := Modes.testLayoutNoNewline ctx },
           { name := "cache-paths", run := Modes.testCachePaths ctx },
           { name := "check-populated-miss", run := Modes.testCheckPopulatedMiss ctx },

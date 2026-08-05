@@ -1096,9 +1096,18 @@ private def ResultCache.ensureWriteDirectory (cache : ResultCache) : IO Unit := 
 A broken analysis is a fact about the bytes — they did not elaborate — and is stored (it is
 organize's rejection verdict). An *unbuilt* analysis carries no information about the bytes: the
 dependency olean was missing, so the frontend never reached them. Storing one would poison every
-later probe with a non-verdict, so it is the one outcome class `writeAll` refuses. -/
+later probe with a non-verdict, so it is the one outcome class `writeAll` refuses.
+
+A `--no-validate` analysis is the other refusal. Its canonical layout was admitted on the
+structural reparse alone, and the cache identity deliberately has no validation level — storing it
+would let a later *default* `format` publish on a validation that run never performed. The
+rendered bytes are a deterministic function of the source and configuration, so nothing is lost:
+the next exact run recomputes and stores. -/
 private def storableAnalysis (analysis : SemanticAnalysis) : Bool :=
-  (unbuiltDependency? analysis.diagnostics).isNone
+  (unbuiltDependency? analysis.diagnostics).isNone &&
+    (match analysis.result?.bind (·.canonical?) with
+    | some canonical => !canonical.validation.bypassed
+    | none => true)
 
 /-- Merge two analyses recorded under **one identity key** — same source bytes, same closure,
 same configuration — so that storing keeps every capability either run computed.

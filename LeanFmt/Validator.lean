@@ -39,6 +39,19 @@ structure ValidationFailure where
   detail : String
   deriving Inhabited, BEq, Repr, Lean.ToJson, Lean.FromJson
 
+/-- How much candidate validation a publishing `format` run owes its result. `.exact` is the
+default and every non-`format` mode's only value: the candidate is structurally reparsed and then
+admitted by a second render plus `Validator.admit`, with a full candidate frontend as the reparse's
+escalation. `.structural` is the authorized `format --no-validate` exception: the candidate's
+structural reparse still runs and still refuses, but the second render, `admit`, and the escalation
+are skipped, and the bypass applies only where the module's syntax frontier was admitted (a
+skeleton read over compiled evidence). The policy chooses evidence, never bytes: the rendered
+candidate is the same deterministic function of source and configuration under either value. -/
+inductive ValidationPolicy where
+  | exact
+  | structural
+  deriving Inhabited, BEq, Repr
+
 structure ValidationMetrics where
   frontendRuns : Nat
   renders : Nat
@@ -47,6 +60,10 @@ structure ValidationMetrics where
   /-- Commands the candidate's parse confirmed against the original's, one by one. Zero when a
   second frontend elaborated the candidate instead. -/
   reparsedCommands : Nat := 0
+  /-- The layout was published on the structural candidate reparse alone (`format --no-validate`
+  over an admitted syntax frontier): the second render, `Validator.admit`, and the candidate
+  frontend escalation never ran. Always false on the default exact path. -/
+  bypassed : Bool := false
   deriving Inhabited, BEq, Repr, Lean.ToJson, Lean.FromJson
 
 /-- How the caller obtained the second projection. `admit` records it rather than inferring it: the

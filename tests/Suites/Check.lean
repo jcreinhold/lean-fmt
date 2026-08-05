@@ -119,16 +119,18 @@ private def testPerCommandHelp (ctx : Ctx) : IO Unit := do
     #[("check", "  --range"), ("check", "  --check"), ("diff", "  --range"), ("diff", "  --check"),
       ("fix", "  --range"), ("fix", "  --watch"), ("fix", "  --poll-interval"),
       ("fix", "  --check"), ("rules", "  --root"), ("explain", "  --root"), ("lsp", "  --changed"),
-      ("lsp", "  --fixable")]
+      ("lsp", "  --fixable"), ("check", "  --no-validate"), ("diff", "  --no-validate"),
+      ("fix", "  --no-validate")]
   for (command, flag) in absent do
     let some (_, text) := helps.find? (·.1 == command) | continue
     ensure (!(text.contains flag)) s!"{command} help omits parser-rejected {flag.trimAscii.copy}"
   let present : Array (String × String) :=
     #[("format", "  --check"), ("format", "  --range"), ("format", "  --stdin-filename"),
-      ("check", "  --fixable"), ("check", "  --select"), ("diff", "--output-format"),
-      ("fix", "  --fixable"), ("fix", "  --unsafe-fixes"), ("lsp", "--debounce-ms"),
-      ("organize", "  --check"), ("organize", "  --json"), ("docs", "  --check"),
-      ("clean", "  --json"), ("compiler", "setup"), ("compiler", "build"), ("config", "show PATH")]
+      ("format", "  --no-validate"), ("check", "  --fixable"), ("check", "  --select"),
+      ("diff", "--output-format"), ("fix", "  --fixable"), ("fix", "  --unsafe-fixes"),
+      ("lsp", "--debounce-ms"), ("organize", "  --check"), ("organize", "  --json"),
+      ("docs", "  --check"), ("clean", "  --json"), ("compiler", "setup"), ("compiler", "build"),
+      ("config", "show PATH")]
   for (command, flag) in present do
     let some (_, text) := helps.find? (·.1 == command) | continue
     ensure (text.contains flag) s!"{command} help lists {flag.trimAscii.copy}"
@@ -145,6 +147,10 @@ private def testPerCommandHelp (ctx : Ctx) : IO Unit := do
   discard <|
       checkRaw ctx 2 #["fix", "--poll-interval", "500", "tests/fixtures/check/Clean.lean"]
         "--poll-interval requires --watch"
+  for mode in ["check", "diff", "fix"]do
+    discard <|
+        checkRaw ctx 2 #[mode, "--no-validate", "tests/fixtures/check/Clean.lean"]
+          s!"{mode} rejects --no-validate"
 
 /-- The two producers agree on Findings, and both reproduce the recorded golden byte for
 byte. The golden was recorded *before* any renderer shipped, so it is evidence and not a

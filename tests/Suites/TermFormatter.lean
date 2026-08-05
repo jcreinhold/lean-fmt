@@ -21,7 +21,8 @@ private def expectedValidation : Lean.Json :=
   Lean.Json.mkObj
     [("frontendRuns", Lean.toJson (1 : Nat)), ("renders", Lean.toJson (2 : Nat)),
       ("structuralComparisons", Lean.toJson (1 : Nat)),
-      ("idempotencePasses", Lean.toJson (1 : Nat)), ("reparsedCommands", Lean.toJson (23 : Nat))]
+      ("idempotencePasses", Lean.toJson (1 : Nat)), ("reparsedCommands", Lean.toJson (23 : Nat)),
+      ("bypassed", Lean.toJson false)]
 
 /-- The spellings every width asserted: operator and projection shapes, the project notation, one
 binder, one explicit application. -/

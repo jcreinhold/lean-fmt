@@ -296,6 +296,10 @@ private def parseFileArgs (mode : RunMode) (args : List String) : Except String 
       if mode == .format then
         loop rest { command with run := { command.run with formatCheck := true } }
       else .error "--check is valid only for format"
+    | "--no-validate" :: rest =>
+      if mode == .format then
+        loop rest { command with run := { command.run with validationPolicy := .structural } }
+      else .error s!"--no-validate is valid only for format, not {mode.toString}"
     | "--unsafe-fixes" :: rest =>
       loop rest { command with run := { command.run with unsafeFixes := true } }
     | "--workers" :: value :: rest =>
@@ -398,6 +402,27 @@ private def validateWatch (mode : RunMode) (command : FileCommand) : Except Stri
       .ok ()
   else if command.pollMillis != 200 then
     .error "--poll-interval is valid only with --watch"
+  else
+    .ok ()
+
+/-- `--no-validate`'s publishing-only consistency, checked once after parsing.
+
+The flag narrows `format`'s candidate admission to the structural reparse over an admitted
+syntax frontier; that is a statement about *publication*, so every form that cannot publish
+rejects it rather than silently validating exactly: `--check` and `--watch` render without
+writing, and the stdin stream has no in-place destination. -/
+private def validateNoValidate (command : FileCommand) : Except String Unit := do
+  if command.run.validationPolicy == .structural then
+    if command.run.formatCheck then
+      .error
+          "--no-validate is not available with --check; a preview publishes nothing and always \
+        validates exactly"
+    else if command.stdin then
+      .error "--no-validate is not available for the - stdin target; the stream validates exactly"
+    else if command.watch then
+      .error "--no-validate is not available with --watch; watch runs previews"
+    else
+      .ok ()
   else
     .ok ()
 
@@ -548,7 +573,8 @@ private def textReport (positions : PositionIndex) (report : RunReport) : String
         s!"mode={report.mode} files={report.files.size} findings={report.findings} \
     changed={report.changed} written={report.written} broken={report.broken} \
     unbuilt={report.unbuilt} rejected={report.rejected} withheld_unsafe={report.withheldUnsafe} \
-    suppressed={report.suppressed} infrastructure_failures={report.infrastructureFailures.size}\n"
+    suppressed={report.suppressed} validation_bypassed={report.validationBypassed} \
+    infrastructure_failures={report.infrastructureFailures.size}\n"
 
 /-! ### Shared projections
 
@@ -1035,7 +1061,8 @@ private def renderStatistics (report : RunReport) : IO Unit := do
     findings={report.findings} changed={report.changed} written={report.written} \
     broken={report.broken} unbuilt={report.unbuilt} rejected={report.rejected} \
     withheld_unsafe={report.withheldUnsafe} \
-    suppressed={report.suppressed} infrastructure_failures={report.infrastructureFailures.size}"
+    suppressed={report.suppressed} validation_bypassed={report.validationBypassed} \
+    infrastructure_failures={report.infrastructureFailures.size}"
   if report.unbuilt > 0 then
     let missing :=
       report.files.filterMap fun file =>
@@ -1406,6 +1433,9 @@ private unsafe def runFileCommand (mode : RunMode) (args : List String) : IO UIn
     IO.eprintln message
     return 2
   if let .error message := validateChanged command then
+    IO.eprintln message
+    return 2
+  if let .error message := validateNoValidate command then
     IO.eprintln message
     return 2
   if let some path := command.outputFile? then

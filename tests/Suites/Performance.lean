@@ -426,8 +426,8 @@ private def testValidationCounts (ctx : Ctx) : IO Unit := do
       (Lean.Json.mkObj
         [("frontendRuns", Lean.toJson (1 : Nat)), ("renders", Lean.toJson (2 : Nat)),
           ("structuralComparisons", Lean.toJson (1 : Nat)),
-          ("idempotencePasses", Lean.toJson (1 : Nat)),
-          ("reparsedCommands", Lean.toJson (1 : Nat))])
+          ("idempotencePasses", Lean.toJson (1 : Nat)), ("reparsedCommands", Lean.toJson (1 : Nat)),
+          ("bypassed", Lean.toJson false)])
       "validation work counts changed from \
       frontend/renders/comparisons/idempotence/reparsed = 1/2/1/1/1"
   ensureJsonAt json [.field "canonical", .field "metrics", .field "frontendRuns"]

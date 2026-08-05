@@ -99,7 +99,8 @@ private def testAdmission (ctx : Ctx) : IO Unit := do
     Lean.Json.mkObj
       [("frontendRuns", Lean.toJson (1 : Nat)), ("renders", Lean.toJson (2 : Nat)),
         ("structuralComparisons", Lean.toJson (1 : Nat)),
-        ("idempotencePasses", Lean.toJson (1 : Nat)), ("reparsedCommands", Lean.toJson (2 : Nat))]
+        ("idempotencePasses", Lean.toJson (1 : Nat)), ("reparsedCommands", Lean.toJson (2 : Nat)),
+        ("bypassed", Lean.toJson false)]
   ensureJsonAt canonicalJson [.field "validation"] expectedValidation label
   let some text :=
     (canonicalJson.getObjValAs? String
@@ -156,6 +157,84 @@ private def testReparseAgrees (ctx : Ctx) : IO Unit := do
       [.field "sourceMap"] | throw <| IO.userError s!"{label}: the elaborated run has no sourceMap"
   ensureJsonAt reparsed [.field "text"] elaboratedText label
   ensureJsonAt reparsed [.field "sourceMap"] elaboratedMap label
+
+/-- `--no-validate`'s admission shape, pinned against the exact path's on the same bytes. The "c"
+prefix supplies compiled evidence, so the skeleton read is admitted and "4s" admits on the
+structural reparse alone: one render, no idempotence pass, `bypassed` recorded. The text and
+source map must be byte-identical to the exact run's — the policy narrows evidence, never
+bytes. -/
+private def testBypassAdmission (ctx : Ctx) : IO Unit := do
+  let label := "bypass admission"
+  let source := ctx.work / "Bypassed.lean"
+  writeFile source
+      "module\n\nimport AdapterSyntax\n\nopen AdapterSyntax\n\n-- custom lead\n\
+     explicit_command selectedName -- custom trail\n"
+  let setup ← setupFile ctx.root ctx.work source.toString
+  let admit (mode what : String) : IO Lean.Json := do
+    let envelope ← analyzeExact ctx.root ctx.application setup source.toString "Bypassed.lean" mode
+    let some canonical :=
+      jsonAt? envelope
+        [.field "canonical"] | throw <| IO.userError s!"{label}: {what} produced no canonical"
+    return canonical
+  let exact ← admit "c4:80" "the exact run"
+  let bypassed ← admit "c4s:80" "the bypassed run"
+  ensureJsonAt bypassed [.field "validation"]
+      (Lean.Json.mkObj
+        [("frontendRuns", Lean.toJson (1 : Nat)), ("renders", Lean.toJson (1 : Nat)),
+          ("structuralComparisons", Lean.toJson (1 : Nat)),
+          ("idempotencePasses", Lean.toJson (0 : Nat)), ("reparsedCommands", Lean.toJson (2 : Nat)),
+          ("bypassed", Lean.toJson true)])
+      label
+  let some exactText :=
+    jsonAt? exact [.field "text"] | throw <| IO.userError s!"{label}: the exact run has no text"
+  let some exactMap :=
+    jsonAt? exact
+      [.field "sourceMap"] | throw <| IO.userError s!"{label}: the exact run has no sourceMap"
+  ensureJsonAt bypassed [.field "text"] exactText label
+  ensureJsonAt bypassed [.field "sourceMap"] exactMap label
+
+/-- Without compiled evidence there is no admitted frontier, and "4s" must validate exactly: two
+renders, one idempotence pass, no bypass — the flag narrows nothing it has no evidence for. -/
+private def testBypassNeedsFrontier (ctx : Ctx) : IO Unit := do
+  let label := "bypass needs the frontier"
+  let source := ctx.work / "Unadmitted.lean"
+  writeFile source
+      "module\n\nimport AdapterSyntax\n\nopen AdapterSyntax\n\n-- custom lead\n\
+     explicit_command selectedName -- custom trail\n"
+  let setup ← setupFile ctx.root ctx.work source.toString
+  let envelope ←
+    analyzeExact ctx.root ctx.application setup source.toString "Unadmitted.lean" "4s:80"
+  let some canonical :=
+    jsonAt? envelope [.field "canonical"] | throw <| IO.userError s!"{label}: no canonical"
+  ensureJsonAt canonical [.field "validation"]
+      (Lean.Json.mkObj
+        [("frontendRuns", Lean.toJson (1 : Nat)), ("renders", Lean.toJson (2 : Nat)),
+          ("structuralComparisons", Lean.toJson (1 : Nat)),
+          ("idempotencePasses", Lean.toJson (1 : Nat)), ("reparsedCommands", Lean.toJson (2 : Nat)),
+          ("bypassed", Lean.toJson false)])
+      label
+
+/-- A candidate the structural reparse refuses is never published under the flag — there is no
+escalation, because the escalation *is* the exact validation the flag skips.
+`LEAN_FMT_DISABLE_CANDIDATE_REPARSE=1` stands in for structural invalidity, as it does for the
+elaborated route in `reparse-agrees`. -/
+private def testBypassRefused (ctx : Ctx) : IO Unit := do
+  let label := "bypass refuses a reparse failure"
+  let source := ctx.work / "Refused.lean"
+  writeFile source
+      "module\n\nimport AdapterSyntax\n\nopen AdapterSyntax\n\n-- custom lead\n\
+     explicit_command selectedName -- custom trail\n"
+  let setup ← setupFile ctx.root ctx.work source.toString
+  let envelope ←
+    analyzeExact ctx.root ctx.application setup source.toString "Refused.lean" "c4s:80" (env :=
+        #[("LEAN_FMT_DISABLE_CANDIDATE_REPARSE", some "1")])
+  ensure ((jsonAt? envelope [.field "canonical"]).isNone) s!"{label}: canonical escaped"
+  ensureJsonAt envelope [.field "validationFailure", .field "gate"] (Lean.toJson "structure") label
+  let some detail :=
+    jsonAt? envelope
+      [.field "validationFailure",
+        .field "detail"] | throw <| IO.userError s!"{label}: no refusal detail"
+  ensureContains (detail.getStr?.toOption.getD "") "--no-validate" label
 
 /-- A candidate that does not parse is rejected by the diagnostics gate, before any structural
 comparison runs. -/
@@ -242,7 +321,11 @@ public def main (args : List String) : IO UInt32 := do
           ("Contract.lean", "second-pass-drift", "idempotence")]
       let cases : Array Case :=
         #[{ name := "admission", run := ValidatorSuite.testAdmission ctx },
-              { name := "reparse-agrees", run := ValidatorSuite.testReparseAgrees ctx }] ++
+              { name := "reparse-agrees", run := ValidatorSuite.testReparseAgrees ctx },
+              { name := "bypass-admission", run := ValidatorSuite.testBypassAdmission ctx },
+              { name := "bypass-needs-frontier",
+                run := ValidatorSuite.testBypassNeedsFrontier ctx },
+              { name := "bypass-refused", run := ValidatorSuite.testBypassRefused ctx }] ++
             (mutations.map fun (fixture, mode, gate) =>
               ({ name := mode, run := ValidatorSuite.testGate ctx fixture mode gate } : Case)) ++
           #[{ name := "malformed-diagnostics", run := ValidatorSuite.testMalformed ctx },

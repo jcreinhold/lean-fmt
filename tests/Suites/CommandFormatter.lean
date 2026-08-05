@@ -21,7 +21,8 @@ private def expectedValidation : Lean.Json :=
   Lean.Json.mkObj
     [("frontendRuns", Lean.toJson (1 : Nat)), ("renders", Lean.toJson (2 : Nat)),
       ("structuralComparisons", Lean.toJson (1 : Nat)),
-      ("idempotencePasses", Lean.toJson (1 : Nat)), ("reparsedCommands", Lean.toJson (22 : Nat))]
+      ("idempotencePasses", Lean.toJson (1 : Nat)), ("reparsedCommands", Lean.toJson (22 : Nat)),
+      ("bypassed", Lean.toJson false)]
 
 /-- One CoreInput width: the exact validation dict, the descriptor and alignment invariants, the
 header and footer, the custom commands, and no trailing whitespace. -/

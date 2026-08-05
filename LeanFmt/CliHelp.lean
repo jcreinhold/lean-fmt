@@ -197,6 +197,10 @@ private def optRangeLines : HelpEntry :=
 private def optCheckFormat : HelpEntry :=
   ⟨"--check", "report what would change, write nothing (CI preview)"⟩
 
+private def optNoValidate : HelpEntry :=
+  ⟨"--no-validate",
+    "publish on the structural candidate reparse alone, skipping exact candidate validation"⟩
+
 private def optCheckOrganize : HelpEntry :=
   ⟨"--check", "report what would be reorganized, write nothing"⟩
 
@@ -256,12 +260,17 @@ private def commandHelps : Array CommandHelp :=
         #["lean-fmt format [OPTIONS] [FILE...]",
           "lean-fmt format - --stdin-filename PATH [--range S:E | --range-lines L:C-L:C]"]
       sections :=
-        #[targetSection, ruleSelectionSection, ("format options:", #[optCheckFormat]),
-          outputSection optOutputFormat, executionSection true, stdinSection true]
+        #[targetSection, ruleSelectionSection,
+          ("format options:", #[optCheckFormat, optNoValidate]), outputSection optOutputFormat,
+          executionSection true, stdinSection true]
       notes :=
         #["`--range`/`--range-lines` are valid only with the `-` stdin target.",
           "format publishes only layout — no rule fix applies — so `--unsafe-fixes` changes only the \
         reported withheld count, never the bytes.",
+          "`--no-validate` applies only where the module's syntax frontier is admitted (built \
+        modules): the candidate's structural reparse still runs and still refuses, and the bypass \
+        is recorded as `validation_bypassed` in the report and never stored in the cache. Without \
+        the frontier, or anywhere else, validation stays exact.",
           "`--watch` requires `--check`: a writing mode retriggers itself."] },
     { command := "diff"
       summary := "preview formatting changes as a patch"

@@ -839,6 +839,7 @@ private unsafe def analyzeSnapshot (setup : Lean.ModuleSetup) (source : String)
     (captureSemantic : Bool := false) (captureOccurrences : Bool := false)
     (captureComments : Bool := false) (captureFormatDraft : Bool := false)
     (validateFormatDraft : Bool := false) (format : FormatConfig := { })
+    (validationPolicy : ValidationPolicy := .exact)
     (trackSnapshot? : Option (Lean.Language.Lean.InitialSnapshot → IO Unit) := none)
     (checkCancelled : IO Unit := pure ()) : IO AnalysisEnvelope := do
   checkCancelled
@@ -931,70 +932,100 @@ private unsafe def analyzeSnapshot (setup : Lean.ModuleSetup) (source : String)
         match reparsed with
         | .ok (candidateHeader, candidateCommands, candidateTerminal) =>
           recordCount "candidate_reparse" 1
-          -- The candidate's own text decides its coordinates, so its own header, commands, and file
-          -- map are what lay it out. Its final environment is the original's: that is what the
-          -- induction concluded.
-          let candidateInput := Lean.Parser.mkInputContext candidateText sourcePath.toString
-          let (candidateProjection, second?) ←
-            projectAndRender setup.name.toString candidateText sourcePath candidateInput.fileMap
-                candidateHeader commandState.env options candidateCommands candidateTerminal format
-                checkCancelled
-          match second? with
-          | .error failure =>
-            pure (none, some { gate := .formatter, detail := failure.detail })
-          | .ok second =>
-            if !candidateProjection.validFor candidateText then
-              pure
-                  (none,
-                    some
-                      { gate := .structure
-                        detail :=
-                          "reparsed candidate did not project losslessly over its own bytes" })
-            else
-              match
-                Validator.admit normalizedSource projection first candidateProjection second
-                  { frontendRuns := 1, reparsedCommands := candidateCommands.size } with
-              | .ok layout =>
-                pure (some layout, none)
-              | .error failure =>
-                pure (none, some failure)
-        | .error tag =>
-          recordCount s!"candidate_miss_{tag}" 1
-          let (candidateInput, candidateModule) ←
-            candidateFrontend setup module first.text sourcePath trackSnapshot?
-          checkCancelled
-          let candidate ←
-            analyzeSnapshot setup first.text sourcePath candidateInput candidateModule
-                (captureFormatDraft := true) (format := format) (trackSnapshot? := trackSnapshot?)
-                (checkCancelled := checkCancelled)
-          if !candidate.diagnostics.isEmpty then
+          -- `--no-validate`'s whole exception: the frontier was admitted (a skeleton read over
+          -- compiled evidence) and the candidate just reparsed structurally identical command by
+          -- command, so the run publishes the first draft on that evidence alone — no second
+          -- render, no `Validator.admit`, no candidate-frontend escalation. A reparse failure
+          -- below still refuses rather than escalating: the escalation *is* exact validation.
+          if validationPolicy == .structural && module.skeleton?.isSome then
+            recordCount "candidate_validation_bypass" 1
             pure
-                (none,
-                  some
-                    { gate := .diagnostics
-                      detail := String.intercalate "\n" candidate.diagnostics.toList })
+                (some {
+                      text := first.text
+                      sourceMap := first.sourceMap
+                      metrics := { first.metrics with frontendRuns := 1 }
+                      validation :=
+                        { frontendRuns := 1
+                          renders := 1
+                          structuralComparisons := 1
+                          idempotencePasses := 0
+                          reparsedCommands := candidateCommands.size
+                          bypassed := true } },
+                  none)
           else
-            match candidate.artifact?, candidate.formatDraft?, candidate.formatFailure? with
-            | some candidateArtifact, some second, none =>
-              match candidateArtifact.materialize first.text with
-              | .error error =>
-                pure (none, some { gate := .structure, detail := error })
-              | .ok candidateMaterialized =>
+            -- The candidate's own text decides its coordinates, so its own header, commands, and file
+            -- map are what lay it out. Its final environment is the original's: that is what the
+            -- induction concluded.
+            let candidateInput := Lean.Parser.mkInputContext candidateText sourcePath.toString
+            let (candidateProjection, second?) ←
+              projectAndRender setup.name.toString candidateText sourcePath candidateInput.fileMap
+                  candidateHeader commandState.env options candidateCommands candidateTerminal
+                  format checkCancelled
+            match second? with
+            | .error failure =>
+              pure (none, some { gate := .formatter, detail := failure.detail })
+            | .ok second =>
+              if !candidateProjection.validFor candidateText then
+                pure
+                    (none,
+                      some
+                        { gate := .structure
+                          detail :=
+                            "reparsed candidate did not project losslessly over its own bytes" })
+              else
                 match
-                  Validator.admit normalizedSource projection first candidateMaterialized.source
-                    second { frontendRuns := 2 } with
+                  Validator.admit normalizedSource projection first candidateProjection second
+                    { frontendRuns := 1, reparsedCommands := candidateCommands.size } with
                 | .ok layout =>
                   pure (some layout, none)
                 | .error failure =>
                   pure (none, some failure)
-            | _, _, some failure =>
-              pure (none, some { gate := .formatter, detail := failure.detail })
-            | _, _, _ =>
+        | .error tag =>
+          recordCount s!"candidate_miss_{tag}" 1
+          if validationPolicy == .structural then
+            pure
+                (none,
+                  some
+                    { gate := .structure
+                      detail :=
+                        s!"candidate reparse refused under --no-validate ({tag}); \
+                      rerun without the flag for exact validation" })
+          else
+            let (candidateInput, candidateModule) ←
+              candidateFrontend setup module first.text sourcePath trackSnapshot?
+            checkCancelled
+            let candidate ←
+              analyzeSnapshot setup first.text sourcePath candidateInput candidateModule
+                  (captureFormatDraft := true) (format := format) (trackSnapshot? := trackSnapshot?)
+                  (checkCancelled := checkCancelled)
+            if !candidate.diagnostics.isEmpty then
               pure
                   (none,
                     some
-                      { gate := .structure
-                        detail := "candidate frontend returned no artifact or second draft" })
+                      { gate := .diagnostics
+                        detail := String.intercalate "\n" candidate.diagnostics.toList })
+            else
+              match candidate.artifact?, candidate.formatDraft?, candidate.formatFailure? with
+              | some candidateArtifact, some second, none =>
+                match candidateArtifact.materialize first.text with
+                | .error error =>
+                  pure (none, some { gate := .structure, detail := error })
+                | .ok candidateMaterialized =>
+                  match
+                    Validator.admit normalizedSource projection first candidateMaterialized.source
+                      second { frontendRuns := 2 } with
+                  | .ok layout =>
+                    pure (some layout, none)
+                  | .error failure =>
+                    pure (none, some failure)
+              | _, _, some failure =>
+                pure (none, some { gate := .formatter, detail := failure.detail })
+              | _, _, _ =>
+                pure
+                    (none,
+                      some
+                        { gate := .structure
+                          detail := "candidate frontend returned no artifact or second draft" })
     else
       pure (none, none)
   let formatDraft? := if captureFormatDraft then firstDraft? else none
@@ -1036,7 +1067,13 @@ unsafe def analyzeExact (setup : Lean.ModuleSetup) (source : String) (sourcePath
     (captureSemantic : Bool := false) (captureOccurrences : Bool := false)
     (captureComments : Bool := false) (captureFormatDraft : Bool := false)
     (validateFormatDraft : Bool := false) (format : FormatConfig := { })
-    (loadDynlibs : Bool := true) (compiled : Bool := false) : IO AnalysisEnvelope := do
+    (loadDynlibs : Bool := true) (compiled : Bool := false)
+    (validationPolicy : ValidationPolicy := .exact) : IO AnalysisEnvelope := do
+  -- The `c` prefix's promise: these exact bytes compiled, so a skeleton read over the
+  -- toolchain's parser state may stand in for elaborating declarations a second time. A
+  -- skeleton miss is not an error here — the full frontend below is the ordinary path, and the
+  -- flag only ever skips work it has evidence for. The `--no-validate` bypass keys on the
+  -- same admission: it publishes on the structural reparse only where this read succeeded.
   let skeleton? ←
     if compiled && !captureSemantic && !captureOccurrences then
       skeletonRead setup source sourcePath
@@ -1053,7 +1090,8 @@ unsafe def analyzeExact (setup : Lean.ModuleSetup) (source : String) (sourcePath
   if (← IO.getEnv "LEAN_FMT_TEST_FRONTIER_PROJECTION") == some "1" then
     Profile.recordLine s!"cache.frontier_projection={← frontierProjectionDigest module}"
   analyzeSnapshot setup source sourcePath input module captureSemantic captureOccurrences
-      captureComments captureFormatDraft validateFormatDraft format
+      captureComments captureFormatDraft validateFormatDraft format (validationPolicy :=
+      validationPolicy)
 
 structure IncrementalCounters where
   updates : Nat := 0
@@ -1170,7 +1208,7 @@ private unsafe def IncrementalAnalyzer.run (analyzer : IncrementalAnalyzer)
       -- `checkCancelled` between commands instead.
       analyzeSnapshot setup source sourcePath run.input (ProcessedModule.ofInitial run.snapshot)
           captureSemantic captureOccurrences captureComments captureFormatDraft validateFormatDraft
-          format (some trackSnapshot) checkCancelled
+          format (validationPolicy := .exact) (some trackSnapshot) checkCancelled
     catch error =>
       if ← cancelRef.get then
         pure { artifact? := none, diagnostics := #["analysis cancelled"] }
