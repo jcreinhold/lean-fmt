@@ -1271,8 +1271,13 @@ private partial def collectTacticSequenceAnchors (stx : Lean.Syntax)
     (ranges : Array SourceRange := #[]) : Array SourceRange :=
   match stx with
   | .node _ kind children =>
+    -- The conv half (`Conv.convSeq1Indented`) is the same `sepByIndentSemicolon` family one
+    -- grammar over: items land at the first item's column or the conv block ends early, and the
+    -- anchor states it identically.
     let ranges :=
-      if kind == ``Lean.Parser.Tactic.tacticSeq1Indented then
+      if
+          kind == ``Lean.Parser.Tactic.tacticSeq1Indented ||
+            kind == ``Lean.Parser.Tactic.Conv.convSeq1Indented then
         match children.find? (·.isOfKind Lean.nullKind) with
         | some list =>
           let items := (list.getArgs.zipIdx.filter fun (_, index) => index % 2 == 0).map (·.1)
