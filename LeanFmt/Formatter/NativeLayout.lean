@@ -20,13 +20,23 @@ terminals and replaced by their original bytes, while groups, fills, nesting, al
 remain native. Source-data syntax is replaced before formatter execution by a typed marker and restored
 at that marker, so a private formatter failure or normalization cannot become a source-text fallback.
 
-Two corrections sit on top of that, both collected from grammar shape and both refusing the command if
-the document turns out not to have the node they name. A `BoundaryLayout` replaces the layout between
-two named terminals with a space, a newline, or nothing. An `OffsideConstraint` adds a `nest` the
-document never had, over exactly one source range, on the node its `ConstraintCarrier` names — the
-`append` that carries the break before the range, or the `nest` the document wrapped the range in. Both
-are documented at their declarations, including why the carrier is not a predicate and why a flat
-boundary is not free.
+Three mechanisms sit on top of that, all collected from grammar shape and all refusing the command
+if the document turns out not to have the node they name. A structural anchor interval
+(`CommandPlan.anchors`, lowered to `Doc.anchor`) re-bases every break inside one contiguous terminal
+interval to the column its first terminal lands at — the `sepByIndent` invariant stated once for
+struct-instance fields and indented or bracketed tactic/conv sequences, where per-field pins used to
+approximate it row by row. A `BoundaryLayout` replaces the layout between two named terminals with a
+space, a newline, or nothing. An `OffsideConstraint` adds a `nest` the document never had, over
+exactly one source range, on the node its `ConstraintCarrier` names — the `append` that carries the
+break before the range, or the `nest` the document wrapped the range in. All are documented at their
+declarations, including why the carrier is not a predicate and why a flat boundary is not free.
+
+The `BoundaryLayout` census (LAY-POSTHOC-RETIREMENT) lives at `CommandPlan.collect`. The distinction
+that matters: the anchor is a structural fact about a grammar family, while the surviving
+`.columned`/`.anchored` pins are *evidential caps* — they hold a row at the source column that made
+the source's own parse commit, capped so a stale pin is a known refusal rather than a silent follow.
+The relationship that would survive every layout ("left of wherever the first element lands") names
+an output column, which `Std.Format` cannot express, so no resolved-column machinery is introduced.
 
 Doc comments are syntax, not trivia, so they are ordinary terminals: their opening token and body align
 and emit original bytes exactly where their owner spells them. Hoisting them to a command prefix moved
@@ -121,6 +131,17 @@ guarded `let`'s bar was reverted once for exactly that (`7e838a1`) and is joined
 `collectGuardBailouts` pairs the boundary with a flatten that leaves no soft line behind — a `flat`
 alone would not be sound there. `hard` and `elided` do not have this failure mode: neither can make a
 line longer. -/
+/- The layout one boundary spells between two named terminals, in three classes (the
+LAY-POSTHOC-RETIREMENT census; the per-producer table is at `CommandPlan.collect`):
+
+- *Break spellings* — `flat`, `hard`, `elided`: a space, a newline, or nothing, where the native
+  document would otherwise have decided by width.
+- *Evidential caps* — `columned`, `anchored`: the continuation lands at the source's column, the
+  column that made the source's parse commit. Capped, never a resolved output column, so a stale
+  pin refuses rather than follows.
+- *Structure-aware spellings* — `dedented`, `explodedClose`: the row's column is computed from the
+  walk's own spans (a nested command's interior dedent, an exploded collection's private nest) --
+  neither source evidence nor a width decision. -/
 private inductive BoundaryLayout where
   | flat
   | hard
@@ -1386,8 +1407,8 @@ The collections are the comma-`sepBy` term literals: `«term#[_,]»` and `«term
 `Term.anonymousCtor`, and `Term.structInst`'s fields. In each the list is between the opening
 bracket and the closing one: the second child for the bracketed four, the `structInstFields`
 node's own list for a structure instance. A structure whose fields the source already separated
-by rows keeps them through the `sepByIndent` machinery (`collectIndentedSequenceStarts`,
-`collectStructInstFieldRows`), so a trailing comma there is inert; only the flat spelling
+by rows keeps them through the `sepByIndent` machinery (the structural anchor interval of
+`collectStructInstFieldAnchors`), so a trailing comma there is inert; only the flat spelling
 explodes. Other `sepByIndent`-family lists are not here at all: they already keep the source's
 row layout, so a trailing separator changes nothing a width decision has not already made. -/
 private def explodedCollectionList? (stx : Lean.Syntax) : Option Lean.Syntax :=
@@ -2752,7 +2773,7 @@ private def constrainBoundary (format : Std.Format) :
   -- close's marker -- governs every row the comment insertion below opens, not only the one the
   -- native document spelled: a row-ending comment replaces the boundary leaf itself (`insertComments`
   -- drops the suffix once a line comment has ended the row), so the row break after the comment *is*
-  -- the boundary and must spell the collected layout's format. A `flat`/`hard`/`elided`/`fieldRow`
+  -- the boundary and must spell the collected layout's format. A `flat`/`hard`/`elided`
   -- boundary spells nothing a plain `"\n"` does not -- or is a join the comment's own newline already
   -- overruled -- and keeps the default. See `insertComments`.
   let mut rowBreak : Std.Format := .text "\n"
@@ -3910,8 +3931,8 @@ private def CommandPlan.collect (source : String) (ownership : CommentOwnership)
   let (closeBraceBoundaries, closeBraceRanges) :=
     collectStructInstCloseBraces source comments stripped
   let explodedRanges := commaRanges
-  -- The `return` braces held on the keyword's row: the boundary in front of each, and the one
-  -- fact `collectStructInstFieldRows` needs to know a field's source column still means something.
+  -- The `return` braces held on the keyword's row: each gets a `.flat` join below, so the brace
+  -- stays on `return`'s row whatever the document's width decisions say.
   let returnBraceStarts :=
     (collectReturnBraceStarts stripped).filter fun start => !brokenBefore start
   -- What each boundary's terminal heads, for the hoist's privacy test (`Transformed.hoist?`).
@@ -3921,6 +3942,38 @@ private def CommandPlan.collect (source : String) (ownership : CommentOwnership)
   -- explodes, and `boundaryTable` refuses a `.hard`/`.columned` disagreement at one terminal.
   let outsideExploded (start : Nat) : Bool :=
     !explodedRanges.any fun range => range.start < start && start < range.stop
+  -- LAY-POSTHOC-RETIREMENT census: every surviving `BoundaryLayout` producer, its class, and the
+  -- record that keeps it live. Liveness is not argued here but enforced: the applied-boundary
+  -- ledger (`transform`'s "applied X/Y boundaries" refusal) makes a pin that never lands a loud
+  -- failure, so a silently dead producer cannot exist, and retirement is settled by corpus parity
+  -- instead. What anchors retired is already gone (`BoundaryLayout.fieldRow`,
+  -- `collectStructInstFieldRows`, `collectRowSpreadStructInsts`, the `whereForm` carve-out --
+  -- LAY-STRUCT-INST and LAY-INDENTED-SEQUENCES). What remains:
+  --
+  --   producer                                   layout             class / record
+  --   collectUngroupedBodyStarts/ReturnTermStarts .flat             compatibility join
+  --   collectIndentedSequenceStarts               .hard              compatibility break
+  --     (break decisions, kept at LAY-INDENTED-SEQUENCES: the phantom-`column - indent` fit
+  --     measurement the anchor does not answer)
+  --   collectCdotStarts                           .flat              join, mathlib's cdot linter
+  --   nestedCommandStarts                         .dedented          structure-aware, Offside.lean
+  --   ctorDocStarts/docBoundaries/attrDocBoundaries .elided/.flat/.dedented/.hard
+  --                                                              comment handling, MathlibStyle.lean
+  --   collectGuardBailouts (`joined`)             .flat              join, flattenedHard guard
+  --   collectGuardBarBreaks                       .hard              compatibility break
+  --   collectBraceAppArgStarts/ReturnBraceStarts  .flat              compatibility join
+  --   collectBraceInteriorBreaks                  .columned          evidential cap, `«term{_}»` rows
+  --   collectBraceLiteralRows                     .anchored          evidential cap, the
+  --     `«term{_}»`/abbrev-`structInst` ambiguity cap (Smooth.lean 3755 -> 3756); the pin holds
+  --     source columns inside anchor intervals too, where the anchor's uniform re-base would
+  --     otherwise move a nested literal's continuation row
+  --   collectLetFamilyAlignments                  .columned/.anchored evidential cap, the
+  --     letI-family both-directions pairing (`BoundaryLayout.join?`)
+  --   unbreakableRunBoundaries                    .flat              compatibility join
+  --   collectStructInstEllipses                   .hard              compatibility break
+  --   collectTrailingCommaExplosions              .hard/.explodedClose break + structure marker,
+  --     Boundaries.lean and the CollectionFormatter suite
+  --   collectStructInstCloseBraces                .hard/.explodedClose closing-brace row decision
   let boundaryStarts : Array (Nat × BoundaryLayout) :=
     (collectUngroupedBodyStarts format.declarationBody source format.lineWidth stripped
                                             (collectReturnTermStarts stripped)).map
