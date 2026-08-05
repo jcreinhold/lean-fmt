@@ -1292,6 +1292,32 @@ private partial def collectTacticSequenceAnchors (stx : Lean.Syntax)
     children.foldl (init := ranges) fun ranges child => collectTacticSequenceAnchors child ranges
   | _ => ranges
 
+/- The anchor interval for a multi-declaration `whereDecls` block (LAY-INDENTED-SEQUENCES):
+exactly the declarations, first to last. `whereDecls` is `sepByIndentSemicolon(whereDecl)`, so a
+declaration row lands at the first declaration's column or the block ends early and the next token
+is read outside it; the anchor states that with no `where`-keyword special case -- the retired
+delimited arm's exemption asked where the keyword's nest pointed, and the anchor asks the first
+declaration instead, which is the column `sepByIndent` itself measures against. -/
+private partial def collectWhereDeclsAnchors (stx : Lean.Syntax)
+    (ranges : Array SourceRange := #[]) : Array SourceRange :=
+  match stx with
+  | .node _ kind children =>
+    let ranges :=
+      if kind == ``Lean.Parser.Term.whereDecls then
+        match children.find? (·.isOfKind Lean.nullKind) with
+        | some list =>
+          let items := (list.getArgs.zipIdx.filter fun (_, index) => index % 2 == 0).map (·.1)
+          if items.size < 2 then ranges
+          else
+            match (selectedLeafRanges items[0]!)[0]?, (selectedLeafRanges items.back!).back? with
+            | some first, some last => ranges.push ⟨first.start, last.stop⟩
+            | _, _ => ranges
+        | none => ranges
+      else ranges
+    let children := if kind == Lean.choiceKind then children[0]?.toArray else children
+    children.foldl (init := ranges) fun ranges child => collectWhereDeclsAnchors child ranges
+  | _ => ranges
+
 /- A brace collection's continuation rows stay left of its first element.
 
 `{a, b, c}` is two parsers: the collection literal `«term{_}»` and a `structInst` whose fields are
@@ -3876,7 +3902,8 @@ private def CommandPlan.collect (source : String) (ownership : CommentOwnership)
   -- One anchor interval per multi-field `structInstFields` list, collected with the old row
   -- machinery still active: what the anchors make redundant is what the deletion checklist names.
   let structInstAnchors :=
-    collectStructInstFieldAnchors stripped ++ collectTacticSequenceAnchors stripped
+    collectStructInstFieldAnchors stripped ++ collectTacticSequenceAnchors stripped ++
+      collectWhereDeclsAnchors stripped
   let commentFree := withoutTrivia stripped
   let (formattedSyntax, islands) := protectSourceData categories source commentFree
   -- The closing brace's own row decision (`collectStructInstCloseBraces`): its ranges join
