@@ -88,6 +88,12 @@ def recordCount (name : String) (value : Nat) : IO Unit := do
   if ← enabled then
     emit s!"cache.{name}={value}"
 
+/-- Emit one preformatted record line, for a caller that gates on its own flag rather than the
+profile channel. The parent's child-record forwarding keeps only `phase.`/`cache.` prefixes, so a
+line that must survive the trip carries one. -/
+def recordLine (line : String) : IO Unit :=
+  emit line
+
 /-- Run `action` and report how long it took under `name`.
 
 The duration is reported even when `action` throws: a phase reporting only on success would hide

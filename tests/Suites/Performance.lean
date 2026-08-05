@@ -157,6 +157,37 @@ private def gateSkeletonRead (capture : String) (expected : Nat) : Bool :=
       skipped.length == expected &&
     skipped.all (· > 0)
 
+/-- §1k. The frontier's skip ratio: every read skipped at least `minSkipped` commands, advanced
+at least `minAdvanced`, and skipped at least `minPercent` percent of the commands it walked.
+
+`skipped` alone cannot prove the read still elaborates what decides parsing -- a read that
+skipped *everything* would score highest and parse the next syntax extension against a stale
+table. `advanced` is the other half, and the ratio keeps a file of only declarations from passing
+on one token `syntax` command. All three quantities are counts, so a slower machine moves none of
+them. -/
+private def gateFrontierSkipRatio (capture : String) (minSkipped minAdvanced minPercent : Nat) :
+    Bool :=
+  let lines := capture.splitOn "\n"
+  let counts (key : String) : List Nat :=
+    lines.filterMap fun line =>
+      if line.startsWith key then (line.splitOn "=").getLast!.toNat? else none
+  let skipped := counts "cache.skeleton_skipped_commands="
+  let advanced := counts "cache.skeleton_advanced_commands="
+  skipped.length == advanced.length && !skipped.isEmpty &&
+    (skipped.zip advanced).all fun (skipped, advanced) =>
+      minSkipped <= skipped && minAdvanced <= advanced &&
+        minPercent * (skipped + advanced) <= 100 * skipped
+
+/-- §1k. The frontier's fallback rate: `cache.skeleton_miss_*` lines against
+`cache.skeleton_read=1` lines, at most `maxPercent` percent. A fallback is correct behavior -- the
+exact route is what the file would have run anyway -- so the gate is a rate, not an absence; what
+it refuses is a frontier that quietly stopped standing in for the frontend. -/
+private def gateFrontierFallbackRate (capture : String) (maxPercent : Nat) : Bool :=
+  let lines := capture.splitOn "\n"
+  let reads := (lines.filter (· == "cache.skeleton_read=1")).length
+  let misses := (lines.filter (·.startsWith "cache.skeleton_miss_")).length
+  0 < reads && 100 * misses <= maxPercent * reads
+
 /-- §1h. Every validated file confirmed its candidate by reparsing it, and none escalated to a
 second frontend. The exact child forwards these counts, so one `cache.candidate_reparse=1` line
 arrives per file that validated and any `cache.candidate_miss_` line is an escalation, whatever its
@@ -285,6 +316,24 @@ private def testGatesDiscriminate : IO Unit := do
       "rejects a skeleton that elaborated every command and so saved nothing"
   expect (!(gateSkeletonRead skeleton 2)) "rejects a run that skeleton-read fewer files than given"
   expect (!(gateSkeletonRead healthy 1)) "rejects a capture that read nothing by skeleton"
+  -- §1k the frontier's ratio and fallback-rate gates.
+  let frontier := "cache.skeleton_skipped_commands=17\ncache.skeleton_advanced_commands=6\n"
+  expect (gateFrontierSkipRatio frontier 10 4 50) "accepts a read with both halves of the ratio"
+  expect (!(gateFrontierSkipRatio frontier 10 7 50))
+      "rejects a read that elaborated too little to trust its parser state"
+  expect (!(gateFrontierSkipRatio frontier 10 4 80))
+      "rejects a read whose skip ratio fell under the bound"
+  expect (!(gateFrontierSkipRatio "cache.skeleton_skipped_commands=17\n" 1 1 1))
+      "rejects a read with no advanced half recorded at all"
+  expect (gateFrontierFallbackRate "cache.skeleton_read=1\n" 0) "accepts a fallback-free read"
+  expect (!(gateFrontierFallbackRate "cache.skeleton_read=1\ncache.skeleton_miss_parse=1\n" 0))
+      "rejects one fallback in one read at a zero rate"
+  expect
+      (gateFrontierFallbackRate
+        "cache.skeleton_read=1\ncache.skeleton_read=1\ncache.skeleton_read=1\ncache.skeleton_read=1\ncache.skeleton_miss_header=1\n"
+        25)
+      "accepts one fallback in four reads at a quarter rate"
+  expect (!(gateFrontierFallbackRate healthy 0)) "rejects a capture that read nothing"
   -- §1e a syntax selection served from the artifact does no frontend work.
   let artifactCapture := "cache.official_artifact_hit=1\ncache.official_artifact_miss=0\n"
   let exactCapture :=
@@ -473,6 +522,60 @@ private def testSkeletonRead (ctx : Ctx) : IO Unit := do
   ensureEq "the skeleton read changed what the run reported" withoutSkeleton.stdout
       withSkeleton.stdout
 
+/-- §1k the frontier's projection equals the exact route's, command boundary for command
+boundary, over the compiler fixtures -- and the counters prove the equality was earned.
+
+The digest (`LEAN_FMT_TEST_FRONTIER_PROJECTION`) hashes each live command's kind and source range
+in order: what both routes exist to agree on. The exact arm is the same run with module evidence
+disabled, the one switch that denies the frontier its precondition. Equal digests over an equal
+report say the skip classes (`changesParsing`'s reporting and binder-bookkeeping family:
+`universe`, `include`/`omit`, `export`, and the query commands) leave the parser state untouched;
+`FrontierMix` exercises each with a local the exact route alone can see. The counters keep the
+comparison honest: a read that skipped nothing, or one that skipped the `syntax` command that
+decides the next parse, fails the ratio gate either way. -/
+private def testFrontierProjection (ctx : Ctx) : IO Unit := do
+  let fixtures := #["ArtifactLayout", "LocalSyntax", "FrontierMix"]
+  discard <|
+      expectExit 0 "frontier fixture build" "lake"
+        #["build", "+ArtifactLayout", "+LocalSyntax", "+FrontierMix"] (cwd? := some ctx.root)
+        (env := #[("LEAN_NUM_THREADS", some "1")]) (timeoutMs := some 1800000)
+  let digest (evidence : Bool) (name : String) : IO (ProcResult × String) := do
+    let result ←
+      runProc ctx.app
+          #["diff", "--no-cache",
+            (ctx.root / "tests" / "fixtures" / "compiler" / s!"{name}.lean").toString]
+          (cwd? := some ctx.root) (env :=
+          #[("LEAN_FMT_PROFILE_PHASES", some "1"), ("LEAN_NUM_THREADS", some "1"),
+            ("LEAN_FMT_TEST_FRONTIER_PROJECTION", some "1"),
+            ("LEAN_FMT_TEST_DISABLE_MODULE_EVIDENCE", if evidence then none else some "1")])
+          (timeoutMs := some 600000)
+    let lines := result.stderr.splitOn "\n" |>.filter (·.startsWith "cache.frontier_projection=")
+    ensure (lines.length == 1) s!"{name}: expected one projection digest, saw {lines.length}"
+    pure (result, lines[0]!)
+  for name in fixtures do
+    let (frontier, frontierDigest) ← digest true name
+    let (exact, exactDigest) ← digest false name
+    ensureEq s!"{name}: frontier and exact projections diverged" exactDigest frontierDigest
+    ensureEq s!"{name}: the frontier read changed what the run reported" exact.stdout
+        frontier.stdout
+    ensure (gateSkeletonRead frontier.stderr 1) s!"{name}: the run stopped reading by skeleton"
+    ensure (gateFrontierFallbackRate frontier.stderr 0)
+        s!"{name}: a current fixture fell back to the exact frontend"
+  let (mixResult, _) ← digest true "FrontierMix"
+  ensure (gateFrontierSkipRatio mixResult.stderr 10 4 50)
+      "FrontierMix no longer exercises both halves of the skip ratio"
+  -- The fallback half, live: the broken fixture cannot parse, so its read misses and the exact
+  -- route takes over -- the rate gate at zero must refuse it.
+  let broken ←
+    runProc ctx.app
+        #["diff", "--no-cache",
+          (ctx.root / "tests" / "fixtures" / "compiler" / "Broken.lean").toString]
+        (cwd? := some ctx.root) (env :=
+        #[("LEAN_FMT_PROFILE_PHASES", some "1"), ("LEAN_NUM_THREADS", some "1")]) (timeoutMs :=
+        some 600000)
+  ensure (!(gateFrontierFallbackRate broken.stderr 0))
+      "a file the frontier cannot read passed the zero-rate gate"
+
 /-- §1f parallel child admission stays within --workers. A sleeping fake analyzer holds both
 children alive long enough for the second admission to observe the first: concurrency is certain,
 not timed. -/
@@ -641,6 +744,7 @@ public def main (args : List String) : IO UInt32 := do
             { name := "artifact-acceleration", run := Performance.testArtifactAcceleration ctx },
             { name := "candidate-reparse", run := Performance.testCandidateReparse ctx },
             { name := "skeleton-read", run := Performance.testSkeletonRead ctx },
+            { name := "frontier-projection", run := Performance.testFrontierProjection ctx },
             { name := "parallel-admission", run := Performance.testParallelAdmission ctx },
             { name := "worker-resolution", run := Performance.testWorkerResolution ctx },
             { name := "g3-remainder", run := Performance.testG3Remainder ctx },

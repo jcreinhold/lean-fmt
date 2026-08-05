@@ -447,7 +447,7 @@ module_facet leanFmtArtifact (mod : Module) : Artifact := do
 own implementation depend on itself as a compiler plugin. -/
 lean_lib CompilerFixtures where
   srcDir := "tests/fixtures/compiler"
-  roots := #[`LocalSyntax, `ArtifactLayout]
+  roots := #[`LocalSyntax, `ArtifactLayout, `FrontierMix]
   plugins := #[`@/LeanFmtCompilerPlugin:shared]
 
 lean_lib BrokenCompilerFixtures where

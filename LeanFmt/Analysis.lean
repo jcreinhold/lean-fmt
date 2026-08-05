@@ -537,9 +537,19 @@ constants and binders the parser never resolves. `open X in <decl>` is inert for
 the declaration is: the `open` is scoped to what it wraps and leaves nothing behind for the next
 command.
 
+The second skip family is the reporting and binder-bookkeeping classes (LAY-SYNTAX-FRONTIER):
+`universe`, `include`, `omit`, `export`, and the query commands (`#check`, `#eval`, `#print`,
+`#synth`, and their siblings). None is reachable from the token table or the parser state -- a
+query prints or runs, it does not extend -- and the parser never resolves the constants,
+variables, or universe names the others carry, so skipping them leaves the next command's parse
+context untouched. Anything unrecognized still comes back `true` and gets elaborated.
+
 Each of these earns its line by failing otherwise, not by argument: a `mutual` block, an
-`attribute` on a skipped lemma, or a `variable` whose type mentions one all elaborate to an error
-against a skeleton environment, and an error is a fallback to the full frontend. -/
+`attribute` on a skipped lemma, a `variable` whose type mentions one, an `include` of one, or a
+`#check` of one all elaborate to an error against a skeleton environment, and an error is a
+fallback to the full frontend. The skip is what keeps an ordinary file with a doc-side `#check`
+off the exact route entirely; the paired fixture `tests/fixtures/compiler/FrontierMix.lean`
+proves the projection unchanged for every class listed. -/
 private partial def changesParsing : Lean.Syntax → Bool
   | .node _ kind arguments =>
     if
@@ -550,8 +560,29 @@ private partial def changesParsing : Lean.Syntax → Bool
           kind == ``Lean.Parser.Command.variable then
       false
     else
-      if kind == ``Lean.Parser.Command.in then (arguments[2]?.map changesParsing).getD true
-      else true
+      if
+          kind == ``Lean.Parser.Command.universe || kind == ``Lean.Parser.Command.include ||
+                        kind == ``Lean.Parser.Command.omit ||
+                      kind == ``Lean.Parser.Command.export ||
+                    kind == ``Lean.Parser.Command.check ||
+                  kind == ``Lean.Parser.Command.check_failure ||
+                kind == ``Lean.Parser.Command.eval ||
+              kind == ``Lean.Parser.Command.evalBang ||
+            kind == ``Lean.Parser.Command.synth then
+        false
+      else
+        if
+            kind == ``Lean.Parser.Command.print || kind == ``Lean.Parser.Command.printSig ||
+                        kind == ``Lean.Parser.Command.printAxioms ||
+                      kind == ``Lean.Parser.Command.printEqns ||
+                    kind == ``Lean.Parser.Command.printTacTags ||
+                  kind == ``Lean.Parser.Command.checkAssertions ||
+                kind == ``Lean.Parser.Command.assertNotExists ||
+              kind == ``Lean.Parser.Command.assertNotImported then
+          false
+        else
+          if kind == ``Lean.Parser.Command.in then (arguments[2]?.map changesParsing).getD true
+          else true
   | _ => true
 
 /-- Read a module by elaborating only the commands that decide how the rest of it parses.
@@ -648,6 +679,7 @@ private unsafe def skeletonRead (setup : Lean.ModuleSetup) (source : String)
     return none
   recordCount "skeleton_read" 1
   recordCount "skeleton_skipped_commands" (commands.countP (!changesParsing ·.stx))
+  recordCount "skeleton_advanced_commands" (commands.countP (changesParsing ·.stx))
   return some
       (input,
         { headerStx := header.raw
@@ -974,6 +1006,24 @@ private unsafe def analyzeSnapshot (setup : Lean.ModuleSetup) (source : String)
       canonical? := canonical?
       validationFailure? := validationFailure? }
 
+/- A digest of the module's command projection: each live command's kind and source range, in
+order, with the terminal last. Test-only (`LEAN_FMT_TEST_FRONTIER_PROJECTION`): the frontier and
+exact routes must spell the same digest over the same source -- the command boundaries and the
+syntax projection are what both routes exist to agree on, and a digest that moves says they
+stopped agreeing. The walk is extra work, so it runs only under the flag. -/
+private def frontierProjectionDigest (module : ProcessedModule) : IO String := do
+  let (commands, terminal) ← module.liveCommands
+  let rangeOf (stx : Lean.Syntax) : String :=
+    match stx.getRange? with
+    | some range => s!"{range.start}:{range.stop}"
+    | none => "-"
+  let entries := commands.map fun command => s!"{command.stx.getKind}@{rangeOf command.stx}"
+  let terminalEntry :=
+    match terminal with
+    | some command => s!"terminal:{command.stx.getKind}@{rangeOf command.stx}"
+    | none => "terminal:none"
+  return (Digest.ofString (";".intercalate (entries.push terminalEntry).toList)).hex
+
 /- Execute Lean's frontend under the exact target setup without retaining parser or
 environment state. Batch exact analysis remains deliberately one-shot.
 
@@ -1000,6 +1050,8 @@ unsafe def analyzeExact (setup : Lean.ModuleSetup) (source : String) (sourcePath
       do
         let run ← processSource setup source sourcePath (loadDynlibs := loadDynlibs)
         pure (run.input, ProcessedModule.ofInitial run.snapshot)
+  if (← IO.getEnv "LEAN_FMT_TEST_FRONTIER_PROJECTION") == some "1" then
+    Profile.recordLine s!"cache.frontier_projection={← frontierProjectionDigest module}"
   analyzeSnapshot setup source sourcePath input module captureSemantic captureOccurrences
       captureComments captureFormatDraft validateFormatDraft format
 
