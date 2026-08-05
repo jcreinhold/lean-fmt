@@ -253,6 +253,31 @@ def letChainAligned (x : Nat) : Nat × Nat × Nat :=
    letI : OfNat Nat x := ⟨x⟩
    (default, 5, x))
 
+/- The same constraint with the keyword spelled mid-row (`change (letI …`): the source keeps the
+body left of the keyword, but a signature shatter moves the keyword's own row left while the body
+row stays at the enclosing nest, inverting the relationship — `GlobalMinimalModel.lean` re-parse
+died `expected ';' or line break`. The row pin cannot wait for the source to open a row at the
+keyword: mid-row is exactly where the keyword needs its column held. -/
+example : 1 + 1 = 2 := by
+  change (letI : Inhabited Nat := ⟨1⟩
+       (default : Nat) + 1) = 2
+  sorry
+
+/- The same constraint with the keyword opening a row and the body *under* it: a declaration
+spanning rows indents the payload nest one column past the keyword, and the equal-column pin's
+`max` followed it, landing the body one column right of the keyword — the actual
+`GlobalMinimalModel.lean` shape. The `anchored` pin holds the body at its source column in both
+directions. -/
+example (z : Nat) : 1 + z = 1 + z := by
+  change
+    (letI :
+        Inhabited
+          Nat :=
+        ⟨1⟩
+     (default : Nat) + z) =
+      1 + z
+  sorry
+
 
 /- A two-statement bail-out falsifies the one-line precondition the single-statement joins rely on:
 `doSeqIndent`'s own formatter emits the inter-item break as a leaf flattening cannot remove, one

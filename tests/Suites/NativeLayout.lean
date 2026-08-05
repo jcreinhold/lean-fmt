@@ -349,8 +349,10 @@ private def testOffside (ctx : Ctx) : IO Unit := do
   -- `Term.byTactic` declares `ppAllowUngrouped` to keep `by` on the `:=` line; a flat boundary at
   -- the `by` terminal is what holds it, since the adapter does not own `fill`'s measurement. The
   -- count covers the five carrier theorems, `letIdBodyJoins`, and its tactic-level `have step`.
-  -- The prompt-01 conv coverage added `convSiblings`, `convSemicolon`, and `convNested`.
-  ensureEq "by stays on the := line" 10
+  -- The prompt-01 conv coverage added `convSiblings`, `convSemicolon`, and `convNested`; the
+  -- mid-row `change (letI …` example adds one more, and the equal-column `change` example one
+  -- after that.
+  ensureEq "by stays on the := line" 12
       ((offside.splitOn "\n").filter (·.endsWith " := by") |>.length)
   ensureEq "and its first tactic still starts the next line"
       "  have step : n + 0 = n := Nat.add_zero n"

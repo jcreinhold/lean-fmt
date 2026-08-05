@@ -1608,43 +1608,64 @@ private partial def collectLetFamilyAlignments (source : String) (stx : Lean.Syn
                     0
                 (slice source ⟨lineStart, start⟩).trimAscii.copy.isEmpty
               -- The keyword's row: pin the `(` when the node is the paren's payload, else the
-              -- keyword, in both cases only when the source opened a row there. A keyword
-              -- spelled mid-row needs no pin: any `nest` the body's row can take is left of it.
+              -- keyword. A parenthesized keyword whose body sits at or left of it is pinned only
+              -- as far right as the constraint needs, at `bodyCol - 1`: the pair with the body's
+              -- pin (below) holds the keyword at or right of its body however the signature
+              -- shatters, and the keyword at the body's own column still parses, so pinning the
+              -- source's column would only keep narrow widths from shattering the declaration
+              -- safely (`GlobalMinimalModel.lean`'s `change (letI …`). Every other case pins
+              -- only when the source opened a row there: a keyword spelled mid-row needs no
+              -- pin, since any `nest` the body's row can take is left of it.
               let rowPin : Array (Nat × BoundaryLayout) :=
                 match paren?.bind sourceRange? with
                 | some parenRange =>
-                  if opensRow parenRange.start then
-                    #[(parenRange.start, .columned (sourceColumn source parenRange.start))]
-                  else #[]
+                  if bodyCol <= sourceColumn source kwRange.start && !bracket then
+                    #[(parenRange.start, .columned (bodyCol - 1))]
+                  else
+                    if opensRow parenRange.start then
+                      #[(parenRange.start, .columned (sourceColumn source parenRange.start))]
+                    else #[]
                 | none =>
                   if opensRow kwRange.start then
                     #[(kwRange.start, .columned (sourceColumn source kwRange.start))]
                   else #[]
               -- The body's pin needs different spellings for the shapes the source can have,
-              -- told apart by where the body sits against the keyword. Under it, the two are one
-              -- column that canonical layout moves together, so `columned` -- whose `max` follows
-              -- the move -- keeps them together, and the second pass reads back the columns the
-              -- first one wrote. An absolute pin instead holds the body at the source column
-              -- while the keyword moves right without it, which is a body stranded outside its
-              -- own construct and five mathlib modules refusing as non-idempotent.
+              -- told apart by where the body sits against the keyword and what encloses it.
               --
-              -- Left of it there are two cases. A keyword that is itself an element of an
-              -- anonymous constructor -- `⟨have : … :=`, `⟨fun n ↦ let f := …` -- holds the body
-              -- left of the bracket's own nest, which is exactly where `max` would push it back
-              -- to, and `Computability/Primrec/Basic.lean` answers with
-              -- `expected ';' or line break`. Only the source column will do there. Every other
-              -- left-of-keyword body needs no pin at all: the keyword's own formatter dedents the
-              -- body break two columns under the keyword, which is parse-safe however far the
-              -- keyword moves -- the body must sit at or left of the keyword's column -- and
-              -- self-stable across passes. The absolute pin only invented a crossing: a keyword
-              -- the document moved *left* of the pinned body, inverting that order
-              -- (`Logic/Function/Basic.lean`'s `IsPartialInv`).
+              -- A parenthesized keyword, body at or left of it: `anchored`, paired with the row
+              -- pin above. The paren's payload nest can spell the body's row one column right
+              -- of the keyword -- it does whenever the declaration spans rows -- so `columned`,
+              -- whose `max` follows the nest, cannot hold the body at the keyword's column at
+              -- all (`GlobalMinimalModel.lean`'s re-parse died `expected ';' or line break` on
+              -- exactly that). The pair holds the relationship by construction: `anchored`
+              -- keeps the body at its source column in both directions, and the row pinned at
+              -- `bodyCol - 1` keeps the keyword at or right of the body however the signature
+              -- shatters, since the keyword always follows the `(` by one column. The
+              -- five-module non-idempotence the absolute pin once caused does not recur: the
+              -- second pass reads back a body at or left of its keyword and collects the same
+              -- pair. Pinning the keyword's *source* column instead would keep narrow widths
+              -- from shattering the declaration at all; the keyword at the body's own column
+              -- still parses, so `bodyCol - 1` is all the constraint needs.
+              --
+              -- A keyword that is itself an element of an anonymous constructor -- `⟨have : … :=`,
+              -- `⟨fun n ↦ let f := …` -- holds the body left of the bracket's own nest, which is
+              -- exactly where `max` would push it back to, and `Computability/Primrec/Basic.lean`
+              -- answers with `expected ';' or line break`. Only the source column will do there.
+              -- An unparenthesized keyword with its body under it keeps `columned`: the two are
+              -- one column the document moves together. Left of it needs no pin at all: the
+              -- keyword's own formatter dedents the body break two columns under the keyword,
+              -- which is parse-safe however far the keyword moves -- the body must sit at or
+              -- left of the keyword's column -- and self-stable across passes. The absolute pin
+              -- only invented a crossing there: a keyword the document moved *left* of the
+              -- pinned body, inverting that order (`Logic/Function/Basic.lean`'s `IsPartialInv`).
               let bodyPin :=
-                if bodyCol == sourceColumn source kwRange.start then
-                  some (BoundaryLayout.columned bodyCol)
+                if bracket || paren?.isSome then some (.anchored bodyCol)
                 else
-                  if bodyCol < sourceColumn source kwRange.start && !bracket then none
-                  else some (.anchored bodyCol)
+                  if bodyCol == sourceColumn source kwRange.start then
+                    some (BoundaryLayout.columned bodyCol)
+                  else
+                    if bodyCol < sourceColumn source kwRange.start then none
+                    else some (.anchored bodyCol)
               starts ++ rowPin ++ (bodyPin.toArray.map fun pin => (bodyRange.start, pin))
           | _, _ => starts
         | _, _ => starts
