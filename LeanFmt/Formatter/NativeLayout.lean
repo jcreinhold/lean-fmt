@@ -2010,16 +2010,6 @@ private def splitPadding (value : String) : String × String :=
   let trailing := remainder.reverse.takeWhile layoutWhitespace |>.reverse
   (String.ofList leading, String.ofList trailing)
 
-/- Put `payload` where a native leaf spelled something, keeping the leaf's own padding.
-
-`splitPadding` already decides where the padding ends and the spelling begins, so the spelling is
-whatever lies between. This replaced `value.replace trimmed payload`, a substring substitution that
-searched the leaf for its own trimmed text: on a leaf whose padding repeats inside the spelling, or
-whose spelling occurs twice, `String.replace` rewrites every occurrence rather than the one. -/
-private def withPayload (value payload : String) : String :=
-  let (leading, trailing) := splitPadding value
-  leading ++ payload ++ trailing
-
 /- Which markers the formatter kept. A marker replaces the syntax it protects, so a formatter that
 drops or restructures that syntax drops the marker with it; the island then has to be placed at the
 terminal it covers instead of at a leaf that never arrives. -/
