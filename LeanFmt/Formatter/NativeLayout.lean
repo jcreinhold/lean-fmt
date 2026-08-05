@@ -1272,12 +1272,18 @@ private partial def collectTacticSequenceAnchors (stx : Lean.Syntax)
   match stx with
   | .node _ kind children =>
     -- The conv half (`Conv.convSeq1Indented`) is the same `sepByIndentSemicolon` family one
-    -- grammar over: items land at the first item's column or the conv block ends early, and the
-    -- anchor states it identically.
+    -- grammar over, and the bracketed halves (`tacticSeqBracketed`, `convSeqBracketed`) hold the
+    -- same list between their braces: items land at the first item's column or the sequence ends
+    -- early, and the anchor states it identically. For the bracketed families it is also the
+    -- structural fix for the prompt-01 defect: a sequence hugging `{` on its row broke its `;` at
+    -- the row's nest, left of the first item, and the reparse ended the sequence -- the anchor
+    -- re-bases those breaks to the first item's column wherever the hug lands it.
     let ranges :=
       if
           kind == ``Lean.Parser.Tactic.tacticSeq1Indented ||
-            kind == ``Lean.Parser.Tactic.Conv.convSeq1Indented then
+                kind == ``Lean.Parser.Tactic.Conv.convSeq1Indented ||
+              kind == ``Lean.Parser.Tactic.tacticSeqBracketed ||
+            kind == ``Lean.Parser.Tactic.Conv.convSeqBracketed then
         match children.find? (·.isOfKind Lean.nullKind) with
         | some list =>
           let items := (list.getArgs.zipIdx.filter fun (_, index) => index % 2 == 0).map (·.1)

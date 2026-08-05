@@ -15,8 +15,9 @@ declared fixture module each:
 - `MathlibStyle.lean` — the grammar shapes mathlib's style linters flag: broken import rows,
   isolated focusing dots, attribute-owned doc comments nested past their payload's column
 - `Offside.lean` — parser-significant columns native layout alone does not preserve
-- `BracketedSequences.lean` — the two bracketed `sepByIndentSemicolon` families and their pinned
-  narrow-width refusal (prompt 10 owns the structural fix); not in the admission `fixtures` array
+- `BracketedSequences.lean` — the two bracketed `sepByIndentSemicolon` families: prompt 01's
+  pinned narrow-width refusal became admission under prompt 10's anchor intervals, and the case
+  now pins the anchored width-20 rows; not in the admission `fixtures` array (it has its own)
 
 Prompt-01 baseline audit (layout-redesign stack): the `Std.Format` constructors reachable from
 registered-formatter output over parsed source are `nil`, `append`, `text` (plain and
@@ -615,19 +616,23 @@ private def testBracketedSequences (ctx : Ctx) : IO Unit := do
         #["format", "--check", "--root", ".", "--json", "--no-cache", "--config", config.toString,
           "tests/fixtures/native-layout/BracketedSequences.lean"]
         (cwd? := some ctx.root)
+  -- Prompt 10 (`LAY-INDENTED-SEQUENCES`) turned the pinned width-20 refusal into admission: the
+  -- anchor interval over the sequence's items re-bases the `;` break to the first item's column.
+  -- The pins below are the anchored rows, not the gate.
   let report ← parseJson result.stdout "bracketed-sequences at 20"
-  let file := (jsonAt? report [.field "files", .index 0]).getD .null
-  let status := (file.getObjValAs? String "status").toOption.getD ""
-  ensureEq
-      "bracketed sequences stopped refusing at width 20; prompt 10 must recharacterize \
-      this case"
-      "infrastructure-failure" status
-  let diagnostics := ((jsonAt? file [.field "diagnostics"]).bind (·.getArr?.toOption)).getD #[]
-  let detail := "\n".intercalate (diagnostics.toList.map (·.compress))
-  ensureContains detail "ValidationGate.diagnostics"
-      "the width-20 refusal is not the diagnostics gate"
-  ensureContains detail "unexpected identifier; expected '}'" "the width-20 refusal changed shape"
-  ensureEq "only one bracketed family refused" 2 ((detail.splitOn "unsolved goals").length - 1)
+  ensureEq "bracketed sequences admit at width 20" 1 result.exitCode
+  let narrow ←
+    expectExit 0 "bracketed-sequences width-20 render" ctx.application
+        #["format", "-", "--stdin-filename", "tests/fixtures/native-layout/BracketedSequences.lean",
+          "--root", ".", "--config", config.toString, "--no-cache"]
+        (input? :=
+        some (← IO.FS.readFile (ctx.root / "tests/fixtures/native-layout/BracketedSequences.lean")))
+        (cwd? := some ctx.root)
+  ensureEq "the tactic bracket breaks its semicolon at the first item's column" 1
+      (countExact narrow.stdout "    rw [Nat.add_zero")
+  ensureEq "the conv bracket breaks its semicolon at the first item's column" 1
+      (countExact narrow.stdout "           rw [Nat.add_zero]}")
+  discard <| pure report
 
 end NativeLayout
 
