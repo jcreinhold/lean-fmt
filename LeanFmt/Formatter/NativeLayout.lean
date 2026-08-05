@@ -1260,6 +1260,33 @@ private partial def collectStructInstFieldAnchors (stx : Lean.Syntax)
     children.foldl (init := ranges) fun ranges child => collectStructInstFieldAnchors child ranges
   | _ => ranges
 
+/- The anchor interval for a multi-item indented tactic sequence (LAY-INDENTED-SEQUENCES):
+exactly the items, first to last. `tacticSeq1Indented` is `sepByIndentSemicolon(tactic)`
+(`Lean/Parser/Tactic.lean`), so every item row -- a written `;` or a bare line break -- must land
+at the first item's column or the reparse ends the sequence; the anchor states that where the
+`.hard` break after `by` cannot: the break decision stays, and the anchor owns the column. The
+`.hard` boundary in front of the first item is outside the interval, so the two compose the way
+the struct-instance brace and fields did. -/
+private partial def collectTacticSequenceAnchors (stx : Lean.Syntax)
+    (ranges : Array SourceRange := #[]) : Array SourceRange :=
+  match stx with
+  | .node _ kind children =>
+    let ranges :=
+      if kind == ``Lean.Parser.Tactic.tacticSeq1Indented then
+        match children.find? (·.isOfKind Lean.nullKind) with
+        | some list =>
+          let items := (list.getArgs.zipIdx.filter fun (_, index) => index % 2 == 0).map (·.1)
+          if items.size < 2 then ranges
+          else
+            match (selectedLeafRanges items[0]!)[0]?, (selectedLeafRanges items.back!).back? with
+            | some first, some last => ranges.push ⟨first.start, last.stop⟩
+            | _, _ => ranges
+        | none => ranges
+      else ranges
+    let children := if kind == Lean.choiceKind then children[0]?.toArray else children
+    children.foldl (init := ranges) fun ranges child => collectTacticSequenceAnchors child ranges
+  | _ => ranges
+
 /- A brace collection's continuation rows stay left of its first element.
 
 `{a, b, c}` is two parsers: the collection literal `«term{_}»` and a `structInst` whose fields are
@@ -2707,7 +2734,15 @@ private def constrainBoundary (format : Std.Format) :
     -- lands on, so the `interior` cancellation applied below is subtracted back out here rather than
     -- left to compose with it.
     format := insertComments (interior - dedentColumns state) rowBreak comments format
-  if interior != 0 then
+  -- ...unless the boundary lies strictly inside a structural anchor interval: the anchor re-bases
+  -- every break in its body to the first item's column, which already *includes* this correction's
+  -- effect -- the first item's row kept it, being outside the interval -- so cancelling again here
+  -- would land the separator rows the correction's amount below the first item. The boundary at
+  -- the interval's own first terminal keeps the wrap: it opens the row the anchor captures.
+  let anchored :=
+    state.anchors.any fun span =>
+      span.start < state.terminalIndex && state.terminalIndex < span.stop
+  if interior != 0 && !anchored then
     format := .nest (-interior) format
   modify fun state => { state with separated := state.separated || !provablyEmpty format }
   return (format,
@@ -3835,7 +3870,8 @@ private def CommandPlan.collect (source : String) (ownership : CommentOwnership)
       closeBraceBoundaries
   -- One anchor interval per multi-field `structInstFields` list, collected with the old row
   -- machinery still active: what the anchors make redundant is what the deletion checklist names.
-  let structInstAnchors := collectStructInstFieldAnchors stripped
+  let structInstAnchors :=
+    collectStructInstFieldAnchors stripped ++ collectTacticSequenceAnchors stripped
   let commentFree := withoutTrivia stripped
   let (formattedSyntax, islands) := protectSourceData categories source commentFree
   -- The closing brace's own row decision (`collectStructInstCloseBraces`): its ranges join
