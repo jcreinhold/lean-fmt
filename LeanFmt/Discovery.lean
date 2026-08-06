@@ -367,6 +367,19 @@ private partial def walkDirectory (root : FilePath) (explicit? : Option Formatte
     accumulated ← walkDirectory root explicit? path childRelative current layers accumulated
   return accumulated
 
+/-- Apply a command-line `reflow-comments` override to every configuration the walk resolved:
+the fallback and each per-directory entry, so the override reaches cache identity and rule plans
+alike. -/
+def Discovery.overrideReflowComments (discovery : Discovery) (reflow? : Option Bool) : Discovery :=
+  match reflow? with
+  | none => discovery
+  | some flag =>
+    { discovery with
+      fallback := discovery.fallback.overrideReflowComments flag
+      configs :=
+        discovery.configs.map fun (directory, config) =>
+          (directory, config.overrideReflowComments flag) }
+
 /-- Run discovery for one project root.
 
 `explicit?` is a `--config` override: it applies to every file, no directory is searched for a nested

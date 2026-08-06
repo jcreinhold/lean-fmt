@@ -136,6 +136,34 @@ private def testNested (ctx : Ctx) : IO Unit := do
         setting (← showConfig ctx nested (nested / "app" / "App.lean")) "format.reflow-comments"
             "nested")
 
+/-- `--reflow-comments` / `--no-reflow-comments`: the command-line flag overrides the
+configuration both ways, and reaches the layout without a configuration file. -/
+private def testCliReflowOverride (ctx : Ctx) : IO Unit := do
+  let proj := ctx.work / "reflow-cli"
+  newProject ctx proj
+  let long :=
+    "  -- This is a deliberately long comment line whose total width exceeds one hundred columns at its indentation, so the reflow must repack it."
+  let continuation := "+  -- indentation, so the reflow must repack it."
+  writeFile (proj / "Root.lean")
+      ("module\n\nexample : 1 + 1 = 2 := by\n" ++ long ++
+        "\n  have h : 1 + 1 = 2 := rfl\n  exact h\n")
+  let runDiff (label : String) (exitCode : UInt32) (extra : Array String) : IO String := do
+    let result ←
+      expectExit exitCode label ctx.application
+          (#["diff", "--root", proj.toString, "--no-cache", "Root.lean"] ++ extra)
+    pure result.stdout
+  let occurs (text needle : String) : Bool := (text.splitOn needle).length == 2
+  -- A clean `diff` prints no patch at all, so the no-reflow cases assert the continuation line
+  -- never appears; the reflow cases assert it does.
+  ensure (!(occurs (← runDiff "default" 0 #[]) continuation)) "the default reflowed a comment line"
+  ensure (occurs (← runDiff "flag on" 1 #["--reflow-comments"]) continuation)
+      "--reflow-comments did not rewrap the block"
+  writeFile (proj / "lean-fmt.toml") "[format]\nreflow-comments = true\n"
+  ensure (occurs (← runDiff "config on" 1 #[]) continuation)
+      "the configuration did not rewrap the block"
+  ensure (!(occurs (← runDiff "flag off" 0 #["--no-reflow-comments"]) continuation))
+      "--no-reflow-comments did not beat the configuration"
+
 /-- Extend: composition, anchors, and provenance. -/
 private def testExtend (ctx : Ctx) : IO Unit := do
   let ext := ctx.work / "extend"
@@ -400,5 +428,6 @@ public def main (args : List String) : IO UInt32 := do
           { name := "explicit-paths", run := Discovery.testExplicitPaths ctx },
           { name := "migration", run := Discovery.testMigration ctx },
           { name := "introspection", run := Discovery.testIntrospection ctx },
+          { name := "cli-reflow-override", run := Discovery.testCliReflowOverride ctx },
           { name := "large-tree", run := Discovery.testLargeTree ctx }]
       runCases "discovery" cases args

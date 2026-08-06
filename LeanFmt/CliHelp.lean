@@ -137,6 +137,10 @@ private def optIgnore : HelpEntry :=
 private def optPreview : HelpEntry :=
   ⟨"--preview", "unlock preview (experimental) rules"⟩
 
+private def optReflowComments : HelpEntry :=
+  ⟨"--[no-]reflow-comments",
+    "override reflow-comments: rewrap overflowing standalone `--` comment blocks"⟩
+
 private def optFixable : HelpEntry :=
   ⟨"--fixable SELECTOR", "restrict which rules' fixes apply (repeatable)"⟩
 
@@ -245,7 +249,8 @@ private def commandHelps : Array CommandHelp :=
       usage := #["lean-fmt check [OPTIONS] [FILE...]", "lean-fmt check - --stdin-filename PATH"]
       sections :=
         #[targetSection, ruleSelectionSection, fixSelectionSection optUnsafeFixesPreview,
-          outputSection optOutputFormat, executionSection true, stdinSection false]
+          ("layout options:", #[optReflowComments]), outputSection optOutputFormat,
+          executionSection true, stdinSection false]
       notes :=
         #["`check` previews the fixes `fix` would apply; the fix-selection flags shape that preview."] },
     { command := "format"
@@ -261,8 +266,8 @@ private def commandHelps : Array CommandHelp :=
           "lean-fmt format - --stdin-filename PATH [--range S:E | --range-lines L:C-L:C]"]
       sections :=
         #[targetSection, ruleSelectionSection,
-          ("format options:", #[optCheckFormat, optNoValidate]), outputSection optOutputFormat,
-          executionSection true, stdinSection true]
+          ("format options:", #[optCheckFormat, optNoValidate, optReflowComments]),
+          outputSection optOutputFormat, executionSection true, stdinSection true]
       notes :=
         #["`--range`/`--range-lines` are valid only with the `-` stdin target.",
           "format publishes only layout — no rule fix applies — so `--unsafe-fixes` changes only the \
@@ -279,8 +284,8 @@ private def commandHelps : Array CommandHelp :=
       differences, 1 differences or files that failed to analyze, 2 infrastructure failure."
       usage := #["lean-fmt diff [OPTIONS] [FILE...]", "lean-fmt diff - --stdin-filename PATH"]
       sections :=
-        #[targetSection, ruleSelectionSection, outputSection optOutputFormatDiff,
-          executionSection true, stdinSection false]
+        #[targetSection, ruleSelectionSection, ("layout options:", #[optReflowComments]),
+          outputSection optOutputFormatDiff, executionSection true, stdinSection false]
       notes :=
         #["no rule fix applies to a patch, so `--unsafe-fixes` changes only the reported withheld count."] },
     { command := "fix"
@@ -293,7 +298,8 @@ private def commandHelps : Array CommandHelp :=
       usage := #["lean-fmt fix [OPTIONS] [FILE...]", "lean-fmt fix - --stdin-filename PATH"]
       sections :=
         #[targetSection, ruleSelectionSection, fixSelectionSection optUnsafeFixes,
-          outputSection optOutputFormat, executionSection false, stdinSection false]
+          ("layout options:", #[optReflowComments]), outputSection optOutputFormat,
+          executionSection false, stdinSection false]
       notes :=
         #["`--watch` is unavailable: a writing mode retriggers itself.",
           "`--check` is a `format` flag; `fix` ignores it."] },

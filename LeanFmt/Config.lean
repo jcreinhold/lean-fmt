@@ -1017,6 +1017,13 @@ def FormatterConfig.rulePlan (config : FormatterConfig) (cli : CliSelection) :
       extendUnsafe
       notices }
 
+/-- Apply a command-line `reflow-comments` override to one resolved configuration: the flag wins
+over every file, `--config` included -- naming it on the command line is a statement about this
+run. -/
+def FormatterConfig.overrideReflowComments (config : FormatterConfig) (flag : Bool) :
+    FormatterConfig :=
+  { config with format := { config.format with reflowComments := flag } }
+
 private def ignoredForPath (plan : RulePlan) (path code : String) : Bool :=
   plan.perFileIgnores.any fun entry =>
     entry.pattern.matches path && (expandSelectors entry.selectors).contains code

@@ -59,6 +59,7 @@ trailing comments, doc comments, block comments, and pinned comments are never t
 keeps its bytes, so the flag does not churn comments that are already fine, and a block with under twenty columns of
 room keeps its bytes too -- confetti is worse than the overflow. The rewrap rides the block's final column, so a
 comment that fits at its source column is repacked when canonical layout indents its construct deeper.
+`--reflow-comments` and `--no-reflow-comments` override the key for one run, configuration files included.
 
 `declaration-body` chooses where a declaration's body goes relative to `:=`. The default `"next-line"` is the canonical
 style Lean's own formatter produces: the body begins on its own line (`def foo :=` then `1`). `"same-line"` keeps the

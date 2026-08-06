@@ -74,6 +74,9 @@ structure RunRequest where
   unfixable : Array String := #[]
   extendFixable : Array String := #[]
   preview : Bool := false
+  /-- `--reflow-comments` / `--no-reflow-comments`: a command-line override of the
+  configuration's `reflow-comments`. `none` leaves every file's configuration as written. -/
+  reflowComments? : Option Bool := none
   /-- Apply unsafe fixes too, not just safe ones. Decides which fixes `fix` admits into its patch
   (and `check`'s preview of it), never relaxing validation or conflict rejection. The
   rendering modes carry no rule fix — `format` publishes only layout, `diff` diffs only
@@ -1788,11 +1791,21 @@ def execute (request : RunRequest) : IO RunOutcome := do
     { select := request.select, extendSelect := request.extendSelect, ignore := request.ignore,
       fixable := request.fixable, unfixable := request.unfixable,
       extendFixable := request.extendFixable, preview := request.preview }
+  -- Startup milestones: one stderr line before each phase that can sit silent for seconds on a
+  -- real project, so an interactive run never looks hung. TTY-gated like the progress display
+  -- (`Progress.start`): piped stderr -- suites, CI logs, editor pipes -- stays untouched.
+  let milestone (message : String) : IO Unit := do
+    let tty ← (← IO.getStderr).isTty
+    let term ← IO.getEnv "TERM"
+    if tty && term != some "dumb" then
+      IO.eprintln s!"lean-fmt: {message}"
   -- Discovery is timed separately from the workspace load and the selection snapshot because it
   -- is the one phase this feature added to every run's critical path: a single tree walk. Folding
   -- it into an existing phase would hide the cost.
+  milestone "discovering configuration and sources..."
   let discoveryStarted ← IO.monoNanosNow
   let discovery ← Discovery.run root configPath?
+  let discovery := discovery.overrideReflowComments request.reflowComments?
   recordDuration "discovery" ((← IO.monoNanosNow) - discoveryStarted)
   -- The fallback plan is resolved first and unconditionally, so an invalid CLI selector is still
   -- a hard error on a run that selects no files at all — the behavior before configuration became
@@ -1808,10 +1821,12 @@ def execute (request : RunRequest) : IO RunOutcome := do
     unless announced.contains notice do
       announced := announced.push notice
       IO.eprintln s!"lean-fmt: {notice}"
+  milestone "loading the Lake workspace..."
   let project ← Project.load root discovery request.files
   recordDuration "workspace_load" project.workspaceLoadNanos
   recordDuration "selection_snapshot" project.selectionNanos
   let snapshots := project.targets
+  milestone s!"selected {snapshots.size} {if snapshots.size == 1 then "file" else "files"}"
   -- One `RulePlan` per **distinct effective configuration**, not one per file: `configKey` is
   -- the directory whose config governs a target, so files sharing a config share a plan and a
   -- project with one config still resolves exactly one. Selection stays a projection — this
@@ -1846,6 +1861,8 @@ def execute (request : RunRequest) : IO RunOutcome := do
   recordDuration "import_findings" ((← IO.monoNanosNow) - importStarted)
   let application ← IO.appPath
   let epochStarted ← IO.monoNanosNow
+  if request.cache then
+    milestone "checking cached results..."
   let cache? ←
     if request.cache then
       ResultCache.open? project.workspace application (projectClosureMode project)
@@ -1928,6 +1945,7 @@ def execute (request : RunRequest) : IO RunOutcome := do
   -- pure waste: both ask the same graph about the same modules at the same moment, and a
   -- `BuildStore` is per-`startBuild`, so nothing the first resolved was reused by the second.
   let evidenceStarted ← IO.monoNanosNow
+  milestone "resolving module build state..."
   let facts ←
     Project.graph project.workspace snapshots (demand :=
         { status := true, artifacts := artifactServes })
@@ -1954,6 +1972,7 @@ def execute (request : RunRequest) : IO RunOutcome := do
             cache.writeAll project snapshots available (prune := request.files.isEmpty)
       let positions ← profiledPositions snapshots files
       return { report := summarize request.mode.toString files, positions }
+  milestone "starting the toolchain..."
   withExactRun project workers fun exactRun => do
       -- Exactly the files the decisions above left unanswered, which is exactly the set that
       -- will spawn a frontend child and so need a Lake setup.

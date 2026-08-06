@@ -266,6 +266,10 @@ private def parseFileArgs (mode : RunMode) (args : List String) : Except String 
         { command with
           run := { command.run with extendFixable := command.run.extendFixable.push selector } }
     | "--preview" :: rest => loop rest { command with run := { command.run with preview := true } }
+    | "--reflow-comments" :: rest =>
+      loop rest { command with run := { command.run with reflowComments? := some true } }
+    | "--no-reflow-comments" :: rest =>
+      loop rest { command with run := { command.run with reflowComments? := some false } }
     | "--statistics" :: rest => loop rest { command with statistics := true }
     | "--watch" :: rest => loop rest { command with watch := true }
     | "--poll-interval" :: value :: rest =>
