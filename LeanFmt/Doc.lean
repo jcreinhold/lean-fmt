@@ -22,12 +22,16 @@ newline-bearing `nativeText` re-indents its continuations and re-groups the rema
 group. Columns count codepoints, matching `Std.Format`; source and output ranges count UTF-8
 bytes.
 
-The **annotation tier** — `comment`, `hard`, `blank`, `verbatim`, `mark`, `registered`, and the
-one layout relation native cannot express, `anchor` — carries lean-fmt's own semantics, which
-never alter a native decision: a comment is zero-width to fit, `hard`/`blank`/`verbatim` are hard
-stops (and stay broken — the native re-grouping after a hard event applies to `nativeText` only,
-which is what native `text` lowers to), a `mark` composes like a `tag`, and a `registered` leaf
-stays an opaque fit boundary interpreted through the vendored machine.
+The **annotation tier** — `comment`, `hard`, `blank`, `verbatim`, `mark`, `registered`,
+`fillWords`, and the one layout relation native cannot express, `anchor` — carries lean-fmt's own
+semantics, which never alter a native decision: a comment is zero-width to fit,
+`hard`/`blank`/`verbatim` are hard stops (and stay broken — the native re-grouping after a hard
+event applies to `nativeText` only, which is what native `text` lowers to), a `mark` composes like
+a `tag`, and a `registered` leaf stays an opaque fit boundary interpreted through the vendored
+machine. A `fillWords` block is the one leaf whose bytes are spelled at render: its prose
+paragraphs pack greedily against the margin remaining at the block's column when `reflowComments`
+is set, and it spells its source lines otherwise — off, cramped, or pinned — so the policy that
+decides it lives beside `pinnedPhrases` in the render call, not in the document's producers.
 
 `anchor body` captures the column at which `body` begins — an already-emitted, backward-only
 column — and renders `body` with its base indent re-set to that column: breaks inside `body`

@@ -43,6 +43,15 @@ and emit original bytes exactly where their owner spells them. Hoisting them to 
 a field or constructor docstring off its owner and left the native separator behind — which is why no
 prefix mechanism exists here.
 
+Interior comments the walk only *locates*: it splices each boundary's comment run into the document,
+and a maximal run of fill-eligible lines (consecutive source rows at one column) goes in as one node
+tagged `fillTagBase + index`, carrying the block's verbatim spelling as its body. The lowering maps
+the tag to one `Doc.fillWords` leaf, so the block's spelling — verbatim, or paragraphs packed against
+the margin — is the renderer's decision, made at the block's true final column with the render-time
+policy (`reflow-comments`, `line-width`, `pinned-comments`). The plan and the walk hold no policy:
+the comment's bytes are a source fact, the column it lands on is a layout outcome, and the two meet
+only at render.
+
 An exact island whose payload spans lines carries its own absolute source columns. `Std.Format`
 re-indents every newline inside a `text` leaf to the ambient indentation, and that indentation is
 exactly the sum of the enclosing `nest` amounts plus the column the leaf is rendered at — `align` pads
