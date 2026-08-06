@@ -1196,14 +1196,12 @@ private partial def collectBraceInteriorBreaks (source : String) (stx : Lean.Syn
       collectBraceInteriorBreaks source child (kind == Lean.choiceKind) starts
   | _ => starts
 
-/- The column of one source offset, in the parser's own byte arithmetic (`String.Pos`). -/
-private def sourceColumn (source : String) (offset : Nat) : Nat :=
-  let before := slice source ⟨0, offset⟩
-  let lineStart :=
-    match before.revFind? (· == '\n') with
-    | some position => position.offset.byteIdx + 1
-    | none => 0
-  offset - lineStart
+/- The column of one source offset, in the parser's own byte arithmetic (`String.Pos`): the
+offset less the start of its row, answered from the row-start table in logarithmic time. The
+table replaces a per-call slice of the whole prefix, which made every boundary collector here
+quadratic in the file's size. -/
+private def sourceColumn (rowStarts : Array Nat) (offset : Nat) : Nat :=
+  offset - rowStarts[Comments.rowOf rowStarts offset]!
 
 /- A guarded `let`'s bail-out bar keeps its own row when the source gave it one.
 
@@ -1354,8 +1352,9 @@ the answer -- this pin is a cap on how far right the row may go and `max` is a f
 back the ambiguity the pin exists to prevent (`Offside.lean`, node count 1664 -> 1665). The
 relationship that would survive both is "left of wherever the first element lands", and an output
 column is what `Std.Format` has no way to name; see `Formatter/AGENTS.md`. -/
-private partial def collectBraceLiteralRows (source : String) (stx : Lean.Syntax)
-    (starts : Array (Nat × BoundaryLayout) := #[]) : Array (Nat × BoundaryLayout) :=
+private partial def collectBraceLiteralRows (source : String) (rowStarts : Array Nat)
+    (stx : Lean.Syntax) (starts : Array (Nat × BoundaryLayout) := #[]) :
+    Array (Nat × BoundaryLayout) :=
   match stx with
   | .node _ kind children =>
     let starts :=
@@ -1368,21 +1367,22 @@ private partial def collectBraceLiteralRows (source : String) (stx : Lean.Syntax
             (list.getArgs.toList.zipIdx.filter fun (_, index) => index % 2 == 0).map (·.1)
           match items.head?.bind fun item => (selectedLeafRanges item)[0]? with
           | some firstRange =>
-            let firstColumn := sourceColumn source firstRange.start
+            let firstColumn := sourceColumn rowStarts firstRange.start
             items.foldl (init := starts) fun starts item =>
               match (selectedLeafRanges item)[0]? with
               | some range =>
                 if
                     opensSourceRow source range.start &&
-                      sourceColumn source range.start < firstColumn then
-                  starts.push (range.start, .anchored (sourceColumn source range.start))
+                      sourceColumn rowStarts range.start < firstColumn then
+                  starts.push (range.start, .anchored (sourceColumn rowStarts range.start))
                 else starts
               | none => starts
           | none => starts
         | none => starts
       else starts
     let children := if kind == Lean.choiceKind then children[0]?.toArray else children
-    children.foldl (init := starts) fun starts child => collectBraceLiteralRows source child starts
+    children.foldl (init := starts) fun starts child =>
+      collectBraceLiteralRows source rowStarts child starts
   | _ => starts
 
 /- The `structInst` field-row pins this collector used to emit are retired (LAY-STRUCT-INST): one
@@ -1583,8 +1583,8 @@ which spelling gives it that depends on the shape, and the comment on `bodyPin` 
 pin is collected only when the source shows the same shape (the row broken, the body broken onto
 its own row): a keyword spelled mid-line needs none, because any `nest` the body's row can take is
 already left of it. -/
-private partial def collectLetFamilyAlignments (source : String) (stx : Lean.Syntax)
-    (paren? : Option Lean.Syntax := none) (bracket : Bool := false)
+private partial def collectLetFamilyAlignments (source : String) (rowStarts : Array Nat)
+    (stx : Lean.Syntax) (paren? : Option Lean.Syntax := none) (bracket : Bool := false)
     (starts : Array (Nat × BoundaryLayout) := #[]) : Array (Nat × BoundaryLayout) :=
   match stx with
   | .node _ kind children =>
@@ -1604,7 +1604,7 @@ private partial def collectLetFamilyAlignments (source : String) (stx : Lean.Syn
             -- The body's own row in the source, or there is no constraint to preserve.
             if !(slice source ⟨kwRange.stop, bodyRange.start⟩).contains '\n' then starts
             else
-              let bodyCol := sourceColumn source bodyRange.start
+              let bodyCol := sourceColumn rowStarts bodyRange.start
               -- Whether a token opens its source row (only whitespace before it on the row).
               let opensRow (start : Nat) : Bool :=
                 let lineStart :=
@@ -1624,15 +1624,15 @@ private partial def collectLetFamilyAlignments (source : String) (stx : Lean.Syn
               let rowPin : Array (Nat × BoundaryLayout) :=
                 match paren?.bind sourceRange? with
                 | some parenRange =>
-                  if bodyCol <= sourceColumn source kwRange.start && !bracket then
+                  if bodyCol <= sourceColumn rowStarts kwRange.start && !bracket then
                     #[(parenRange.start, .columned (bodyCol - 1))]
                   else
                     if opensRow parenRange.start then
-                      #[(parenRange.start, .columned (sourceColumn source parenRange.start))]
+                      #[(parenRange.start, .columned (sourceColumn rowStarts parenRange.start))]
                     else #[]
                 | none =>
                   if opensRow kwRange.start then
-                    #[(kwRange.start, .columned (sourceColumn source kwRange.start))]
+                    #[(kwRange.start, .columned (sourceColumn rowStarts kwRange.start))]
                   else #[]
               -- The body's pin needs different spellings for the shapes the source can have,
               -- told apart by where the body sits against the keyword and what encloses it.
@@ -1666,10 +1666,10 @@ private partial def collectLetFamilyAlignments (source : String) (stx : Lean.Syn
               let bodyPin :=
                 if bracket || paren?.isSome then some (.anchored bodyCol)
                 else
-                  if bodyCol == sourceColumn source kwRange.start then
+                  if bodyCol == sourceColumn rowStarts kwRange.start then
                     some (BoundaryLayout.columned bodyCol)
                   else
-                    if bodyCol < sourceColumn source kwRange.start then none
+                    if bodyCol < sourceColumn rowStarts kwRange.start then none
                     else some (.anchored bodyCol)
               starts ++ rowPin ++ (bodyPin.toArray.map fun pin => (bodyRange.start, pin))
           | _, _ => starts
@@ -1677,7 +1677,7 @@ private partial def collectLetFamilyAlignments (source : String) (stx : Lean.Syn
       else starts
     let children := if kind == Lean.choiceKind then children[0]?.toArray else children
     children.foldl (init := starts) fun starts child =>
-      collectLetFamilyAlignments source child
+      collectLetFamilyAlignments source rowStarts child
         (if kind == ``Lean.Parser.Term.paren then some stx else none)
         (kind == ``Lean.Parser.Term.anonymousCtor || (bracket && kind == Lean.nullKind)) starts
   | _ => starts
@@ -1819,7 +1819,7 @@ comment-forced break cannot invent the slot. (Without the comment the document h
 already safe.) A collection the trailing-comma rule already owns is left to it. The returned
 ranges join `explodedRanges` for the nest cancellation only -- the pin filter has already run --
 so registering one drops no interior source-column pins. -/
-private partial def collectStructInstCloseBraces (source : String)
+private partial def collectStructInstCloseBraces (source : String) (rowStarts : Array Nat)
     (comments : Array InteriorComment) (stx : Lean.Syntax)
     (starts : Array (Nat × BoundaryLayout) := #[]) (ranges : Array SourceRange := #[]) :
     Array (Nat × BoundaryLayout) × Array SourceRange :=
@@ -1843,8 +1843,8 @@ private partial def collectStructInstCloseBraces (source : String)
                   if !gap.contains '\n' then (starts, ranges)
                   else
                     if
-                        sourceColumn source braceRange.start ==
-                          sourceColumn source fieldRange.start then
+                        sourceColumn rowStarts braceRange.start ==
+                          sourceColumn rowStarts fieldRange.start then
                       let starts :=
                         if starts.any (·.1 == fieldRange.start) then starts
                         else starts.push (fieldRange.start, BoundaryLayout.hard)
@@ -1866,7 +1866,7 @@ private partial def collectStructInstCloseBraces (source : String)
       else (starts, ranges)
     let children := if kind == Lean.choiceKind then children[0]?.toArray else children
     children.foldl (init := (starts, ranges)) fun (starts, ranges) child =>
-      collectStructInstCloseBraces source comments child starts ranges
+      collectStructInstCloseBraces source rowStarts comments child starts ranges
   | _ => (starts, ranges)
 
 /- The docstring of a constructor that has one.
@@ -3962,6 +3962,9 @@ is an input to the formatter run, not a plan fact. -/
 private def CommandPlan.collect (source : String) (ownership : CommentOwnership) (stx : Lean.Syntax)
     (stripped : Lean.Syntax) (format : FormatConfig) (baseIndent : Nat) :
     Lean.CoreM (Except TransformFailure (CommandPlan × Lean.Syntax)) := do
+  -- One table, computed once: every column question the collectors below ask is a binary search
+  -- against it, not a slice of the file's prefix per question.
+  let rowStarts := Comments.rowStarts source.toUTF8
   -- The same `format.indent` Lean's own `ppIndent`/`ppDedent` read, so a constraint that cancels one
   -- level of native indentation cancels exactly the amount native layout introduced.
   let formatIndent := Lean.Std.Format.getIndent (← Lean.getOptions)
@@ -4034,7 +4037,7 @@ private def CommandPlan.collect (source : String) (ownership : CommentOwnership)
   -- The closing brace's own row decision (`collectStructInstCloseBraces`): its ranges join
   -- `explodedRanges` only at the `transform` call, after the pin filter has run.
   let (closeBraceBoundaries, closeBraceRanges) :=
-    collectStructInstCloseBraces source comments stripped
+    collectStructInstCloseBraces source rowStarts comments stripped
   let explodedRanges := commaRanges
   -- The `return` braces held on the keyword's row: each gets a `.flat` join below, so the brace
   -- stays on `return`'s row whatever the document's width decisions say.
@@ -4098,8 +4101,9 @@ private def CommandPlan.collect (source : String) (ownership : CommentOwnership)
                   ((collectBraceInteriorBreaks source stripped).filter fun p =>
                         outsideExploded p.1).map
                     (fun p => (p.1, BoundaryLayout.columned p.2)) ++
-                ((collectBraceLiteralRows source stripped).filter fun p => outsideExploded p.1) ++
-              collectLetFamilyAlignments source stripped ++
+                ((collectBraceLiteralRows source rowStarts stripped).filter fun p =>
+                  outsideExploded p.1) ++
+              collectLetFamilyAlignments source rowStarts stripped ++
             unbreakableRunBoundaries source terminals unbreakableRuns ++
           ((collectStructInstEllipses stripped).filterMap fun start =>
               let broken :=

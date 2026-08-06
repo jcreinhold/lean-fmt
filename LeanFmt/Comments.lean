@@ -231,9 +231,9 @@ private def suppressedBy (regions : Array SourceRange) (comment : Comment) : Com
   { comment with suppressed := regions.any (containsRange · comment.range) }
 
 /-- The byte offset each source row starts at, in one pass: `rowStarts.get i` is row `i`'s first
-byte. Row facts come from this table rather than a backwards scan per comment, so a file of
-comments costs its size once. -/
-private def rowStarts (bytes : ByteArray) : Array Nat :=
+byte. Row facts come from this table rather than a backwards scan per question, so a file costs
+its size once no matter how many rows are asked about. -/
+def rowStarts (bytes : ByteArray) : Array Nat :=
   Id.run do
     let mut starts := #[0]
     let mut cursor := 0
@@ -244,7 +244,7 @@ private def rowStarts (bytes : ByteArray) : Array Nat :=
     return starts
 
 /-- The row one byte offset sits on: the greatest row start at or before it, by binary search. -/
-private def rowOf (starts : Array Nat) (offset : Nat) : Nat :=
+def rowOf (starts : Array Nat) (offset : Nat) : Nat :=
   Id.run do
     let mut low := 0
     let mut high := starts.size
