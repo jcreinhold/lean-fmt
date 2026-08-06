@@ -338,6 +338,35 @@ private def testFillWords : IO Unit := do
   ensure (!(Doc.fillWords #[.prose "-- two\nlines"]).wellFormed)
       "a multiline payload read as well formed"
 
+/-- The extraction-side classifier: a standalone `--` line that begins its row is prose, an
+empty line or a list item is a keep, and anything else contributes no fill line. Block shape is
+answered from row facts alone. -/
+private def testFillLineClassification : IO Unit := do
+  let prose : Comment :=
+    { kind := .line, range := ⟨4, 17⟩, row := 1, column := 2, startsRow := true }
+  ensure (Comments.fillLine? prose .leading "-- some prose" == some (.prose "-- some prose"))
+      "a standalone prose line was not prose"
+  ensure (Comments.fillLine? { prose with range := ⟨4, 6⟩ } .leading "--" == some (.keep "--"))
+      "an empty comment line was not a keep"
+  ensure
+      (Comments.fillLine? prose .leading "-- - item" == some (.keep "-- - item") &&
+        Comments.fillLine? prose .leading "-- * item" == some (.keep "-- * item"))
+      "a list item was not a keep"
+  ensure
+      (Comments.fillLine? { prose with kind := .block } .leading "/- prose -/" == none &&
+              Comments.fillLine? { prose with kind := .doc } .leading "/-- prose -/" == none &&
+            Comments.fillLine? prose .trailing "-- some prose" == none &&
+          Comments.fillLine? { prose with startsRow := false } .leading "-- some prose" == none &&
+        Comments.fillLine? prose .leading "-- two\nlines" == none)
+      "a comment outside the standalone prose shape contributed a fill line"
+  let next : Comment :=
+    { kind := .line, range := ⟨20, 33⟩, row := 2, column := 2, startsRow := true }
+  ensure (Comments.sameBlock prose next) "consecutive rows at one column were not a block"
+  ensure (!Comments.sameBlock prose { next with row := 3 }) "a skipped row continued a block"
+  ensure (!Comments.sameBlock prose { next with column := 4 }) "a column change continued a block"
+  ensure (!Comments.sameBlock prose { next with startsRow := false })
+      "a mid-row comment continued a block"
+
 /- `NativeLayout` refuses a `choice` node whose alternatives do not spell the same source, rather than
 taking `children[0]?` on faith the way `terminalsFrom` used to. The parser does not build a
 disagreeing `choice`, so no fixture reaches that refusal from a file and no suite under `tests/` can
@@ -1055,6 +1084,7 @@ public def cases : Array Case :=
     { name := "testAlignmentSequences", run := testAlignmentSequences },
     { name := "testPinnedRows", run := testPinnedRows },
     { name := "testWhitespaceEnvelope", run := testWhitespaceEnvelope },
-    { name := "testFillWords", run := testFillWords }]
+    { name := "testFillWords", run := testFillWords },
+    { name := "testFillLineClassification", run := testFillLineClassification }]
 
 end LeanFmt.Test.Unit.Layout

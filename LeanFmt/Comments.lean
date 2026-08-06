@@ -34,6 +34,14 @@ structure Comment where
   kind : CommentKind
   range : SourceRange
   suppressed : Bool := false
+  /-- The source row the comment starts on, zero-based: an extraction fact, filled by `build`'s
+  row pass; hand-built comments carry the default and answer no row questions. -/
+  row : Nat := 0
+  /-- Its byte column on that row. Bytes, like `columnOf`: compared only between columns of one
+  file, and indentation is whitespace, so no multi-byte character can sit inside it. -/
+  column : Nat := 0
+  /-- Whether only indentation precedes the comment on its row. -/
+  startsRow : Bool := false
   deriving Inhabited, BEq, Repr
 
 inductive CommentPlacement where
@@ -222,6 +230,51 @@ private def hasNewline (bytes : ByteArray) (start stop : Nat) : Bool :=
 private def suppressedBy (regions : Array SourceRange) (comment : Comment) : Comment :=
   { comment with suppressed := regions.any (containsRange · comment.range) }
 
+/-- The byte offset each source row starts at, in one pass: `rowStarts.get i` is row `i`'s first
+byte. Row facts come from this table rather than a backwards scan per comment, so a file of
+comments costs its size once. -/
+private def rowStarts (bytes : ByteArray) : Array Nat :=
+  Id.run do
+    let mut starts := #[0]
+    let mut cursor := 0
+    while cursor < bytes.size do
+      if bytes[cursor]! == 0x0a then
+        starts := starts.push (cursor + 1)
+      cursor := cursor + 1
+    return starts
+
+/-- The row one byte offset sits on: the greatest row start at or before it, by binary search. -/
+private def rowOf (starts : Array Nat) (offset : Nat) : Nat :=
+  Id.run do
+    let mut low := 0
+    let mut high := starts.size
+    while low + 1 < high do
+      let mid := (low + high) / 2
+      if starts[mid]! <= offset then
+        low := mid
+      else
+        high := mid
+    return low
+
+/-- Whether only spaces and tabs stand between the row's start and the offset. -/
+private def indentOnly (bytes : ByteArray) (lineStart stop : Nat) : Bool :=
+  Id.run do
+    let stop := min stop bytes.size
+    for cursor in [lineStart:stop]do
+      let byte := bytes[cursor]!
+      if byte != 0x20 && byte != 0x09 then
+        return false
+    return true
+
+/-- Fill one comment's row facts from the table. -/
+private def annotateRow (bytes : ByteArray) (starts : Array Nat) (comment : Comment) : Comment :=
+  let row := rowOf starts comment.range.start
+  let lineStart := starts[row]!
+  { comment with
+    row
+    column := comment.range.start - lineStart
+    startsRow := indentOnly bytes lineStart comment.range.start }
+
 /- The column a byte offset sits at, counted from the last newline before it.
 
 Bytes, not codepoints: this feeds only comparisons between two columns on two lines of the same file,
@@ -338,6 +391,7 @@ def build (normalized : String) (header : Lean.Syntax) (commands : Array Lean.Sy
     (terminal? : Option Lean.Syntax := none) (suppressed : Array SourceRange := #[]) :
     CommentOwnership :=
   let bytes := normalized.toUTF8
+  let starts := rowStarts bytes
   let roots := #[header] ++ commands ++ terminal?.toArray
   let (sites, rawComments) := collectSites bytes roots
   -- A terminal command begins the verbatim tail. Its syntax still owns comments immediately before
@@ -346,7 +400,9 @@ def build (normalized : String) (header : Lean.Syntax) (commands : Array Lean.Sy
   let rawComments := rawComments.filter (·.range.start < parsedStop)
   let sites := sites.qsort siteOrder
   let leaves := sites.filter (·.leaf)
-  let extracted := (uniqueComments rawComments).map (suppressedBy suppressed)
+  let extracted :=
+    (uniqueComments rawComments).map fun comment =>
+      suppressedBy suppressed (annotateRow bytes starts comment)
   let assignments := assignAll bytes sites leaves extracted
   ⟨assignments, extracted, normalized⟩
 
@@ -490,15 +546,37 @@ private def assignmentComments (ownership : CommentOwnership) : Array Comment :=
   ownership.assignments.map (·.comment)
 
 /-- The text a `--` line carries after its marker: one leading space is part of the spelling,
-not the prose. Shared by the layout's reflow and the validator's reflow-invariant contract. -/
+not the prose. One implementation, owned by `LeanFmt/Doc.lean` since the fill-words render
+became the other consumer; the validator's reflow-invariant contract compares with these words. -/
 def commentLineText (payload : String) : String :=
-  let text := (payload.drop 2).toString
-  if text.startsWith " " then (text.drop 1).toString else text
+  Doc.commentLineText payload
 
 /-- The words one line of prose carries, runs of spaces and tabs collapsed. -/
 def commentWords (text : String) : Array String :=
-  ((text.map fun c => if c == '\t' then ' ' else c).splitOn " ").filter
-      (fun s => !s.isEmpty) |>.toArray
+  Doc.commentWords text
+
+/-- The fill line one comment contributes to a reflowable block, if any: a standalone `--`
+comment that begins its row, prose unless it is a paragraph break or a list item. Doc comments,
+block comments, trailing comments, and mid-row comments are none -- their bytes answer other
+questions. The pinned carve-out is deliberately absent: pinned phrases are render policy, and
+the renderer holds them. -/
+def fillLine? (comment : Comment) (placement : CommentPlacement) (payload : String) :
+    Option FillLine :=
+  if
+      comment.kind == .line && placement == .leading && comment.startsRow &&
+        !payload.contains '\n' then
+    let trimmed := (Doc.commentLineText payload).trimAscii.copy
+    if trimmed.isEmpty || trimmed.startsWith "- " || trimmed.startsWith "* " then
+      some (.keep payload)
+    else some (.prose payload)
+  else none
+
+/-- Whether two row-annotated comments sit on consecutive rows at the same column: the block
+shape a reflow packs, answered from extraction facts with no source re-read. A `--` comment runs
+to its row's end, so consecutive rows make the gap exactly a newline and the second comment's
+indentation. -/
+def sameBlock (prev cur : Comment) : Bool :=
+  cur.startsRow && cur.row == prev.row + 1 && cur.column == prev.column
 
 /-- The table owns every extracted comment exactly once, in source order. -/
 def valid (ownership : CommentOwnership) : Bool :=
