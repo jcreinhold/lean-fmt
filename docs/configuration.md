@@ -20,6 +20,7 @@ preview = false                      # enable preview-stage rules
 [format]                             # settings that change the formatted bytes
 line-width = 100                     # 1..1000
 pinned-comments = ["shake: keep"]    # inline comments that never move and never split their line
+reflow-comments = false              # rewrap standalone `--` blocks whose rows overflow the margin
 declaration-body = "next-line"       # or "same-line"
 magic-trailing-comma = "respect"     # or "ignore"
 import-layout = "grouped"            # or "canonical" (the organizer's header rewrite)
@@ -50,6 +51,14 @@ imports whose only overflow was a long trailing comment.
 moves it and never splits its line, even when the code alone overflows — a pinned tooling directive like
 `-- shake: keep` must not dangle off an import it annotates. Setting the key replaces the default `["shake: keep"]`;
 `pinned-comments = []` disables pinning. Matching is by substring, so `-- shake: keep (reason)` matches `"shake: keep"`.
+
+`reflow-comments` opts into rewrapping prose, and is off by default. With it on, a standalone `--` comment block
+whose rows overflow the margin is repacked to fit: the words are preserved in order, the lines are not. Empty comment
+lines split a block into paragraphs that are packed independently; list items (`- `, `* `) keep their rows verbatim;
+trailing comments, doc comments, block comments, and pinned comments are never touched. A block that already fits
+keeps its bytes, so the flag does not churn comments that are already fine, and a block with under twenty columns of
+room keeps its bytes too -- confetti is worse than the overflow. The rewrap rides the block's final column, so a
+comment that fits at its source column is repacked when canonical layout indents its construct deeper.
 
 `declaration-body` chooses where a declaration's body goes relative to `:=`. The default `"next-line"` is the canonical
 style Lean's own formatter produces: the body begins on its own line (`def foo :=` then `1`). `"same-line"` keeps the

@@ -975,7 +975,8 @@ private unsafe def analyzeSnapshot (setup : Lean.ModuleSetup) (source : String)
               else
                 match
                   Validator.admit normalizedSource projection first candidateProjection second
-                    { frontendRuns := 1, reparsedCommands := candidateCommands.size } with
+                    { frontendRuns := 1, reparsedCommands := candidateCommands.size }
+                    format.reflowComments with
                 | .ok layout =>
                   pure (some layout, none)
                 | .error failure =>
@@ -999,6 +1000,11 @@ private unsafe def analyzeSnapshot (setup : Lean.ModuleSetup) (source : String)
                   (captureFormatDraft := true) (format := format) (trackSnapshot? := trackSnapshot?)
                   (checkCancelled := checkCancelled)
             if !candidate.diagnostics.isEmpty then
+              match <- IO.getEnv "LEAN_FMT_DUMP_REJECTED" with
+              | some dumpPath =>
+                IO.FS.writeFile dumpPath first.text
+              | none =>
+                pure ()
               pure
                   (none,
                     some

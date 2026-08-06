@@ -193,16 +193,39 @@ def compare (beforeText : String) (before : LosslessSource) (afterText : String)
     unless leftText == rightText do
       return ← fail .tokens s!"token {index} ({kindOfNode before left.node}) changed spelling"
 
+/-- The contract as a reflow-invariant word sequence: a standalone leading `--` prose line
+contributes its words one at a time, anything else its whole entry. With `reflow-comments` on,
+the layout may repack such a block's lines, which changes payload spellings and line counts but
+never the word sequence -- so two contracts comparable here differ only by a reflow the
+configuration authorized. Non-prose lines (empty, list items) and every other kind stay whole,
+because the reflow keeps them verbatim and in order. -/
+def reflowInvariantContract (entries : Array CommentContractEntry) : Array String :=
+  entries.foldl (init := #[]) fun tokens entry =>
+    let prose :=
+      entry.kind == .line && entry.placement == .leading && entry.payload.startsWith "--" &&
+        (Comments.commentLineText entry.payload).trimAscii.copy.isEmpty == false
+    if prose && !entry.suppressed then
+      tokens ++ (Comments.commentWords (Comments.commentLineText entry.payload)).map ("w:" ++ ·)
+    else
+      tokens.push
+        s!"{repr entry.kind}/{repr entry.placement}/{entry.ownerKind}/{entry.ownerPath}/\
+          {entry.suppressed}/{entry.payload}"
+
 /-- Admit the first draft using a freshly parsed/formatted second draft. -/
 def admit (beforeText : String) (before : LosslessSource) (first : FormatDraft)
-    (after : LosslessSource) (second : FormatDraft) (evidence : ValidationEvidence) :
-    Except ValidationFailure CanonicalLayout := do
+    (after : LosslessSource) (second : FormatDraft) (evidence : ValidationEvidence)
+    (reflowComments : Bool := false) : Except ValidationFailure CanonicalLayout := do
   validateMap first
   validateMap second
   compare beforeText before first.text after
   unless first.headerContract == second.headerContract do
     return ← fail .header "module/header/import structure or token spelling changed"
-  unless first.commentContract == second.commentContract do
+  let commentsMatch :=
+    if reflowComments then
+      reflowInvariantContract first.commentContract ==
+        reflowInvariantContract second.commentContract
+    else first.commentContract == second.commentContract
+  unless commentsMatch do
     if first.commentContract.size != second.commentContract.size then
       return ←
           fail .comments

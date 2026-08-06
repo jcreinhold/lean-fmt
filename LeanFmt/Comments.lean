@@ -488,6 +488,17 @@ def contract (normalized : String) (ownership : CommentOwnership) : Array Commen
 private def assignmentComments (ownership : CommentOwnership) : Array Comment :=
   ownership.assignments.map (·.comment)
 
+/-- The text a `--` line carries after its marker: one leading space is part of the spelling,
+not the prose. Shared by the layout's reflow and the validator's reflow-invariant contract. -/
+def commentLineText (payload : String) : String :=
+  let text := (payload.drop 2).toString
+  if text.startsWith " " then (text.drop 1).toString else text
+
+/-- The words one line of prose carries, runs of spaces and tabs collapsed. -/
+def commentWords (text : String) : Array String :=
+  ((text.map fun c => if c == '\t' then ' ' else c).splitOn " ").filter
+      (fun s => !s.isEmpty) |>.toArray
+
 /-- The table owns every extracted comment exactly once, in source order. -/
 def valid (ownership : CommentOwnership) : Bool :=
   assignmentComments ownership == ownership.extracted

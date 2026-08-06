@@ -2071,6 +2071,13 @@ private structure TransformState where
   construct a boundary at that terminal heads. The `.nest` hoist test compares its own span
   against it (`Transformed.hoist?`). -/
   headSpans : Array (Nat × TokenSpan)
+  /-- `reflow-comments` ([format]), threaded from the plan: whether overflowing standalone `--`
+  blocks are rewrapped at comment insertion. -/
+  reflowComments : Bool := false
+  /-- `line-width` ([format]): the render margin the reflow budget is measured against. -/
+  lineWidth : Nat := 100
+  /-- `pinned-comments` ([format]): phrases a reflow must never touch. -/
+  pinnedPhrases : Array String := #[]
   baseIndent : Nat
   terminalIndex : Nat := 0
   commentIndex : Nat := 0
@@ -2183,8 +2190,122 @@ spells it as the cancelling `nest` around the newline. Dropping that alongside t
 boundary was marked applied before the format was discarded, so `applied n/m` stayed level and nothing
 refused. Both breaks take it: the one before the comment and the one after, because the source wrote
 the comment at the command's own column too. -/
+/- What one comment reflow needs: the source (to tell where rows begin), the column budget the
+block may spend (the render margin less the column its row lands on), and the phrases a pinned
+comment carries. Collected once at the insertion site; `none` keeps every byte. -/
+private structure ReflowContext where
+  source : String
+  budget : Nat
+  pinnedPhrases : Array String
+
+/-- Below this much room for prose, reflowing makes a comment less readable than the overflow it
+fixes, so the block keeps its bytes. -/
+private def minReflowBudget : Nat :=
+  20
+
+/-- Pack words greedily into lines of at most `budget` columns of prose, each spelled `-- …`. A
+word longer than the budget stands on its own line, unbroken -- a URL is not hyphenated. -/
+private def packCommentWords (budget : Nat) (words : Array String) : Array String :=
+  let (lines, cur) :=
+    words.foldl (init := ((#[], "") : Array String × String)) fun (lines, cur) word =>
+      if cur.isEmpty then if word.length <= budget then (lines, word) else (lines.push word, "")
+      else
+        if cur.length + 1 + word.length <= budget then (lines, cur ++ " " ++ word)
+        else
+          if word.length <= budget then (lines.push cur, word) else ((lines.push cur).push word, "")
+  let lines := if cur.isEmpty then lines else lines.push cur
+  lines.map ("-- " ++ ·)
+
+/-- Whether a comment range begins its source row: only indentation in front of it. -/
+private def startsItsRow (source : String) (range : SourceRange) : Bool :=
+  let before := slice source ⟨0, range.start⟩
+  let lineStart :=
+    match before.revFind? (· == '\n') with
+    | some position => position.offset.byteIdx + 1
+    | none => 0
+  (slice source ⟨lineStart, range.start⟩).all fun c => c == ' ' || c == '\t'
+
+/-- Whether two comment ranges sit on consecutive source rows at the same column. -/
+private def sameBlockRows (source : String) (prev cur : SourceRange) : Bool :=
+  let between := slice source ⟨prev.stop, cur.start⟩
+  let afterNewline := (between.drop 1).toString
+  between.startsWith "\n" && !afterNewline.contains '\n' &&
+      afterNewline.all (fun c => c == ' ' || c == '\t') &&
+    sourceColumn source prev.start == sourceColumn source cur.start
+
+/-- Whether one comment may join a reflowed block at all: a standalone leading `--` comment
+carrying no pinned phrase. Doc comments, block comments, and trailing comments stay out --
+their bytes answer other questions. -/
+private def reflowable (ctx : ReflowContext) (comment : InteriorComment) : Bool :=
+  comment.kind == .line && comment.placement == .leading && !comment.payload.contains '\n' &&
+    !ctx.pinnedPhrases.any (comment.payload.contains ·)
+
+/-- Whether a line is prose the reflow may move: an empty comment line is a paragraph break, and
+a list item keeps its marker at the row's start -- both stay verbatim and split the block. -/
+private def proseLine (comment : InteriorComment) : Bool :=
+  let text := Comments.commentLineText comment.payload
+  let trimmed := text.trimAscii.copy
+  !trimmed.isEmpty && !trimmed.startsWith "- " && !trimmed.startsWith "* "
+
+/-- Rewrap one prose sub-block whose rows overflow the budget; one that already fits keeps its
+bytes, so a comment under the margin is untouched. The rewrap preserves the word sequence by
+construction and is checked: a mismatch returns the source lines, which is what the run would
+have spelled anyway. -/
+private def reflowProseBlock (ctx : ReflowContext) (lines : Array InteriorComment) :
+    Array InteriorComment :=
+  if lines.all (fun comment => comment.payload.length <= ctx.budget) then lines
+  else
+    let words :=
+      lines.foldl (init := #[]) fun words comment =>
+        words ++ Comments.commentWords (Comments.commentLineText comment.payload)
+    let packed := packCommentWords (ctx.budget - 3) words
+    let repacked :=
+      packed.foldl (init := #[]) fun words line =>
+        words ++ Comments.commentWords (Comments.commentLineText line)
+    if repacked == words then
+      let first := lines[0]!
+      packed.map fun line => { first with payload := line }
+    else lines
+
+/-- One block of standalone comment lines, rewrapped sub-block by sub-block. -/
+private def reflowBlock (ctx : ReflowContext) (block : Array InteriorComment) :
+    Array InteriorComment :=
+  let flush (out prose : Array InteriorComment) : Array InteriorComment :=
+    if prose.isEmpty then out else out ++ reflowProseBlock ctx prose
+  let (out, prose) :=
+    block.foldl (init := ((#[], #[]) : Array InteriorComment × Array InteriorComment))
+      fun (out, prose) comment =>
+      if proseLine comment then (out, prose.push comment)
+      else (flush out prose |>.push comment, #[])
+  flush out prose
+
+/-- Reflow the standalone `--` comment blocks in one boundary's comment run whose rows overflow
+`ctx.budget`. A block is a maximal run of `reflowable` comments on consecutive source rows at
+one column; anything else passes through with its bytes untouched. -/
+private def reflowCommentRun (ctx : ReflowContext) (comments : Array InteriorComment) :
+    Array InteriorComment :=
+  let flush (out block : Array InteriorComment) : Array InteriorComment :=
+    if block.isEmpty then out else out ++ reflowBlock ctx block
+  let (out, block) :=
+    comments.foldl (init := ((#[], #[]) : Array InteriorComment × Array InteriorComment))
+      fun (out, block) comment =>
+        let continues :=
+        match block.back? with
+        | some prev => reflowable ctx comment && sameBlockRows ctx.source prev.range comment.range
+        | none => false
+        if continues then (out, block.push comment)
+      else
+        if reflowable ctx comment && startsItsRow ctx.source comment.range then
+          (flush out block, #[comment])
+        else (flush out block |>.push comment, #[])
+  flush out block
+
 private def insertComments (dedent : Int) (rowBreak : Std.Format) (comments : Array InteriorComment)
-    (suffix : Std.Format) : Std.Format :=
+    (suffix : Std.Format) (reflowContext? : Option ReflowContext := none) : Std.Format :=
+  let comments :=
+    match reflowContext? with
+    | some ctx => reflowCommentRun ctx comments
+    | none => comments
   let (document, atLineStart) :=
     comments.foldl (init := (.nil, false)) fun (document, atLineStart) comment =>
       let payload := commentPayload dedent comment
@@ -2853,7 +2974,15 @@ private def constrainBoundary (format : Std.Format) :
     -- A comment payload carries absolute source columns and has to reach column zero whatever row it
     -- lands on, so the `interior` cancellation applied below is subtracted back out here rather than
     -- left to compose with it.
-    format := insertComments (interior - dedentColumns state) rowBreak comments format
+    let reflowContext? :=
+      if state.reflowComments then
+        let budget := state.lineWidth - (rowIndent state).toNat
+        if budget >= minReflowBudget then
+          some { source := state.source, budget, pinnedPhrases := state.pinnedPhrases }
+        else none
+      else none
+    format :=
+      insertComments (interior - dedentColumns state) rowBreak comments format reflowContext?
   -- ...unless the boundary lies strictly inside a structural anchor interval: the anchor re-bases
   -- every break in its body to the first item's column, which already *includes* this correction's
   -- effect -- the first item's row kept it, being outside the interval -- so cancelling again here
@@ -3496,6 +3625,13 @@ private structure CommandPlan where
   interval's terminals during the walk (`finishAnchors`), lowered to `Doc.anchor`. -/
   anchors : Array TokenSpan := #[]
   baseIndent : Nat
+  /-- `reflow-comments` ([format]): whether standalone `--` blocks whose rows overflow are
+  rewrapped to fit. -/
+  reflowComments : Bool := false
+  /-- `line-width` ([format]): the render margin the reflow budget is measured against. -/
+  lineWidth : Nat := 100
+  /-- `pinned-comments` ([format]): phrases a reflow must never touch. -/
+  pinnedPhrases : Array String := #[]
   deriving Inhabited
 
 /-- Phase two: resolve the raw collected facts against the terminal sequence. Every per-range fact
@@ -3507,7 +3643,9 @@ private def CommandPlan.resolve (source : String) (terminals : Array Terminal)
     (boundaryStarts : Array (Nat × BoundaryLayout)) (joined : Array SourceRange)
     (nestedCommandRanges : Array SourceRange) (explodedRanges : Array SourceRange)
     (headSpans : Array (Nat × TokenSpan)) (baseIndent : Nat)
-    (anchorRanges : Array SourceRange := #[]) : Except TransformFailure CommandPlan := do
+    (anchorRanges : Array SourceRange := #[]) (reflowComments : Bool := false)
+    (lineWidth : Nat := 100) (pinnedPhrases : Array String := #[]) :
+    Except TransformFailure CommandPlan := do
   let constraints :=
     constraints.map fun constraint => (constraint, spanForRange terminals constraint.range)
   -- An exact island's bytes are its whole rendering, so the adapter spells no boundary between the
@@ -3591,7 +3729,8 @@ private def CommandPlan.resolve (source : String) (terminals : Array Terminal)
           terminals.findIdx? (comment.range.start < ·.range.start) |>.getD terminals.size }
   return {
     source, terminals, comments, trailing, islands, constraints, boundaries, flattened,
-    nestedCommands, explodedSpans, headSpans, anchors, baseIndent }
+    nestedCommands, explodedSpans, headSpans, anchors, baseIndent, reflowComments, lineWidth,
+    pinnedPhrases }
 
 /- Pair the anchor markers the walk dropped and give each region a subtree: the spine items
 between an open and its matching close re-associate under `.tag anchorTag`, and the interval
@@ -3682,6 +3821,9 @@ private def transform (plan : CommandPlan) (native : Std.Format) :
       nestedCommands := plan.nestedCommands
       explodedSpans := plan.explodedSpans
       headSpans := plan.headSpans
+      reflowComments := plan.reflowComments
+      lineWidth := plan.lineWidth
+      pinnedPhrases := plan.pinnedPhrases
       anchors := plan.anchors
       baseIndent := plan.baseIndent }
   let (result, state) ← ((transformNative native).run initial).mapError .unadapted
@@ -4025,7 +4167,7 @@ private def CommandPlan.collect (source : String) (ownership : CommentOwnership)
   match
     CommandPlan.resolve source terminals comments blockDangling islands constraints boundaryStarts
       joined nestedCommandRanges (explodedRanges ++ closeBraceRanges) headSpans baseIndent
-      structInstAnchors with
+      structInstAnchors format.reflowComments format.lineWidth format.pinnedComments with
   | .error failure =>
     return .error failure
   | .ok plan =>

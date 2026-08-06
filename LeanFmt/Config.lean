@@ -90,6 +90,12 @@ structure FormatConfig where private mk ::
   `["shake: keep"]` : the formatter never moves them and never splits their line, even when the
   code alone overflows — a pinned directive must not dangle off a construct it annotates. -/
   pinnedComments : Array String := #["shake: keep"]
+  /-- Whether standalone `--` comment blocks whose lines overflow `line-width` are rewrapped to
+  fit (`reflow-comments`), default `false` (off). Empty comment lines and list-item lines break
+  a block into independently rewrapped sub-blocks; a comment naming a `pinned-comments` phrase
+  is never touched. Only standalone leading line comments qualify -- trailing comments, doc
+  comments, and block comments keep their bytes. -/
+  reflowComments : Bool := false
   /-- Declaration body layout (`declaration-body`), default `next-line`. -/
   declarationBody : DeclarationBody := .nextLine
   /-- Whether a trailing `,` explodes a collection literal (`magic-trailing-comma`), default
@@ -115,7 +121,7 @@ def FormatConfig.identityString (format : FormatConfig) : String :=
     format.importGroups.foldl (init := "") fun acc grp => acc ++ s!"\n{grp.length}:{grp}"
   s!"line-width={format.lineWidth}{phrases}\ndeclaration-body={format.declarationBody}\n\
     magic-trailing-comma={format.magicTrailingComma}\n\
-    import-layout={format.importLayout}{groups}"
+    import-layout={format.importLayout}{groups}\nreflow-comments={format.reflowComments}"
 
 /-- How a cache entry's closure currency is computed (`[cache] closure`).
 
@@ -330,6 +336,7 @@ private structure PartialConfig where
   preview? : Option Bool := none
   lineWidth? : Option Nat := none
   pinnedComments? : Option (Array String) := none
+  reflowComments? : Option Bool := none
   declarationBody? : Option DeclarationBody := none
   magicTrailingComma? : Option MagicTrailingComma := none
   importLayout? : Option Imports.ImportLayout := none
@@ -372,6 +379,7 @@ private def PartialConfig.compose (parent child : PartialConfig) : PartialConfig
   respectGitignore? := orParent child.respectGitignore? parent.respectGitignore?
   preview? := orParent child.preview? parent.preview?
   lineWidth? := orParent child.lineWidth? parent.lineWidth?
+  reflowComments? := orParent child.reflowComments? parent.reflowComments?
   pinnedComments? := orParent child.pinnedComments? parent.pinnedComments?
   declarationBody? := orParent child.declarationBody? parent.declarationBody?
   magicTrailingComma? := orParent child.magicTrailingComma? parent.magicTrailingComma?
@@ -417,6 +425,7 @@ private def PartialConfig.resolve (config : PartialConfig) : Except String Forma
       format :=
         { lineWidth := config.lineWidth?.getD 100
           pinnedComments := config.pinnedComments?.getD #["shake: keep"]
+          reflowComments := config.reflowComments?.getD false
           declarationBody := config.declarationBody?.getD .nextLine
           magicTrailingComma := config.magicTrailingComma?.getD .respect
           importLayout := config.importLayout?.getD .grouped
@@ -582,8 +591,8 @@ private def parseFile (anchor file : String) (fileMap : Lean.FileMap) (table : L
             preview? := some flag, origins }
       -- These `[format]` keys are new, so they have no legacy spelling to protect: a top-level
       -- use is an error rather than a notice, so the keys never acquire an ambiguous section.
-      | "line-width" | "pinned-comments" | "declaration-body" | "magic-trailing-comma" |
-        "import-layout" | "import-groups" =>
+      | "line-width" | "pinned-comments" | "reflow-comments" | "declaration-body" |
+        "magic-trailing-comma" | "import-layout" | "import-groups" =>
         throw s!"configuration key '{key}' belongs in the [format] section"
       -- Same treatment as the `[format]` keys above: one spelling, one section, no ambiguity.
       | "closure" =>
@@ -607,6 +616,11 @@ private def parseFile (anchor file : String) (fileMap : Lean.FileMap) (table : L
       config :=
         { config with
           pinnedComments? := some phrases, origins }
+    | "reflow-comments" =>
+      let .boolean _ flag := value | throw "configuration key 'reflow-comments' expects a boolean"
+      config :=
+        { config with
+          reflowComments? := some flag, origins }
     | "declaration-body" =>
       let .string _ body := value | throw "configuration key 'declaration-body' expects a string"
       let declarationBody ←
@@ -850,6 +864,8 @@ def FormatterConfig.describe (config : FormatterConfig) : Array (String × Strin
     ("format.line-width", toString config.format.lineWidth, winner "format.line-width"),
     ("format.pinned-comments", renderStrings config.format.pinnedComments,
       winner "format.pinned-comments"),
+    ("format.reflow-comments", toString config.format.reflowComments,
+      winner "format.reflow-comments"),
     ("format.declaration-body", toString config.format.declarationBody,
       winner "format.declaration-body"),
     ("format.magic-trailing-comma", toString config.format.magicTrailingComma,

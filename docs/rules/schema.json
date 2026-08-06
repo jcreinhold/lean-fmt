@@ -17,6 +17,11 @@
       "additionalProperties": false,
       "properties": {
         "line-width": { "type": "integer", "minimum": 1, "maximum": 1000 },
+        "pinned-comments": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+        "reflow-comments": { "type": "boolean" },
+        "declaration-body": { "type": "string", "enum": ["next-line", "same-line"] },
+        "import-layout": { "type": "string", "enum": ["grouped", "canonical"] },
+        "import-groups": { "type": "array", "items": { "type": "string", "minLength": 1 } },
         "magic-trailing-comma": { "type": "string", "enum": ["respect", "ignore"] }
       }
     },

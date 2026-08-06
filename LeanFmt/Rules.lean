@@ -1448,23 +1448,28 @@ def catalogSchemaJson : String :=
         sel ++
       " }\n"
   "{\n" ++ "  \"$schema\": \"http://json-schema.org/draft-07/schema#\",\n" ++
-                                                                                                                                            "  \"$id\": \"lean-fmt.toml\",\n" ++
-                                                                                                                                          "  \"title\": \"lean-fmt configuration\",\n" ++
-                                                                                                                                        "  \"description\": \"Generated from the rule registry (LeanFmt/Rules.lean); do not edit by hand.\",\n" ++
-                                                                                                                                      "  \"type\": \"object\",\n" ++
-                                                                                                                                    "  \"additionalProperties\": false,\n" ++
-                                                                                                                                  "  \"properties\": {\n" ++
-                                                                                                                                "    \"include\": { \"type\": \"array\", \"items\": { \"type\": \"string\" } },\n" ++
-                                                                                                                              "    \"exclude\": { \"type\": \"array\", \"items\": { \"type\": \"string\" } },\n" ++
-                                                                                                                            "    \"extend\": { \"type\": \"string\" },\n" ++
-                                                                                                                          "    \"force-exclude\": { \"type\": \"boolean\" },\n" ++
-                                                                                                                        "    \"respect-gitignore\": { \"type\": \"boolean\" },\n" ++
-                                                                                                                      "    \"preview\": { \"type\": \"boolean\" },\n" ++
-                                                                                                                    "    \"format\": {\n" ++
-                                                                                                                  "      \"type\": \"object\",\n" ++
-                                                                                                                "      \"additionalProperties\": false,\n" ++
-                                                                                                              "      \"properties\": {\n" ++
-                                                                                                            "        \"line-width\": { \"type\": \"integer\", \"minimum\": 1, \"maximum\": 1000 },\n" ++
+                                                                                                                                                      "  \"$id\": \"lean-fmt.toml\",\n" ++
+                                                                                                                                                    "  \"title\": \"lean-fmt configuration\",\n" ++
+                                                                                                                                                  "  \"description\": \"Generated from the rule registry (LeanFmt/Rules.lean); do not edit by hand.\",\n" ++
+                                                                                                                                                "  \"type\": \"object\",\n" ++
+                                                                                                                                              "  \"additionalProperties\": false,\n" ++
+                                                                                                                                            "  \"properties\": {\n" ++
+                                                                                                                                          "    \"include\": { \"type\": \"array\", \"items\": { \"type\": \"string\" } },\n" ++
+                                                                                                                                        "    \"exclude\": { \"type\": \"array\", \"items\": { \"type\": \"string\" } },\n" ++
+                                                                                                                                      "    \"extend\": { \"type\": \"string\" },\n" ++
+                                                                                                                                    "    \"force-exclude\": { \"type\": \"boolean\" },\n" ++
+                                                                                                                                  "    \"respect-gitignore\": { \"type\": \"boolean\" },\n" ++
+                                                                                                                                "    \"preview\": { \"type\": \"boolean\" },\n" ++
+                                                                                                                              "    \"format\": {\n" ++
+                                                                                                                            "      \"type\": \"object\",\n" ++
+                                                                                                                          "      \"additionalProperties\": false,\n" ++
+                                                                                                                        "      \"properties\": {\n" ++
+                                                                                                                      "        \"line-width\": { \"type\": \"integer\", \"minimum\": 1, \"maximum\": 1000 },\n" ++
+                                                                                                                    "        \"pinned-comments\": { \"type\": \"array\", \"items\": { \"type\": \"string\", \"minLength\": 1 } },\n" ++
+                                                                                                                  "        \"reflow-comments\": { \"type\": \"boolean\" },\n" ++
+                                                                                                                "        \"declaration-body\": { \"type\": \"string\", \"enum\": [\"next-line\", \"same-line\"] },\n" ++
+                                                                                                              "        \"import-layout\": { \"type\": \"string\", \"enum\": [\"grouped\", \"canonical\"] },\n" ++
+                                                                                                            "        \"import-groups\": { \"type\": \"array\", \"items\": { \"type\": \"string\", \"minLength\": 1 } },\n" ++
                                                                                                           "        \"magic-trailing-comma\": { \"type\": \"string\", \"enum\": [\"respect\", \"ignore\"] }\n" ++
                                                                                                         "      }\n" ++
                                                                                                       "    },\n" ++

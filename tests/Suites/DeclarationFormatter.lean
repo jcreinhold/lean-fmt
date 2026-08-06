@@ -150,6 +150,70 @@ private def testDeclarationBody (root work setup : System.FilePath) (application
   ensureContains joinedText "def baz :=\n  Nat.succ"
       "same-line joined a body whose joined line overflows"
 
+/-- `reflow-comments`: a standalone `--` block whose rows overflow the margin is repacked to fit
+when the flag is on, and keeps its bytes when it is off. Empty comment lines split a block into
+paragraphs packed independently; list items, pinned directives, trailing comments, and doc
+comments keep their bytes either way. -/
+private def testCommentReflow (root work setup : System.FilePath) (application : String) :
+    IO Unit := do
+  let fixture := work / "Reflow.lean"
+  let long1 :=
+    "-- This is a deliberately long comment line whose total width exceeds one hundred columns at its indentation, so the reflow must repack it."
+  let long2 :=
+    "-- A second paragraph, also long enough that it must be rewrapped on its own, independently of the first paragraph's packing."
+  let bullet :=
+    "-- - a bullet item that is quite long but must stay verbatim because reflow never moves list items"
+  let pinned :=
+    "-- shake: keep this pinned directive stays exactly where it is no matter how long its line runs"
+  let doc :=
+    "/-- A doc comment whose bytes are syntax and must stay exact however long the line runs on. -/"
+  writeFile fixture
+      ("module\n\n" ++ doc ++
+                        "\ntheorem documented : 1 + 1 = 2 := rfl\n\nexample : 1 + 1 = 2 := by\n  " ++
+                      long1 ++
+                    "\n  --\n  " ++
+                  long2 ++
+                "\n  " ++
+              bullet ++
+            "\n  " ++
+          pinned ++
+        "\n  have h : 1 + 1 = 2 := rfl -- trailing bytes stay\n  exact h\n")
+  let ensureFits (width : Nat) (text : String) : IO Unit := do
+    for line in text.splitOn "\n"do
+      ensure (line.length <= width) s!"a row over the margin survived reflow: {line}"
+  let default : LeanFmt.Internal.FormatConfig := { }
+  let off ←
+    analyzeExact root application setup fixture.toString "Reflow.lean"
+        s!"4j{(Lean.toJson default).compress}"
+  let (_, offText) ← canonical off "reflow-comments default"
+  ensureContains offText long1 "the default rewrapped a comment line"
+  let reflow : LeanFmt.Internal.FormatConfig := { reflowComments := true }
+  let on ←
+    analyzeExact root application setup fixture.toString "Reflow.lean"
+        s!"4j{(Lean.toJson reflow).compress}"
+  let (_, onText) ← canonical on "reflow-comments on"
+  ensureFits 100 onText
+  ensureContains onText "--\n  -- A second paragraph" "the paragraph break did not survive"
+  ensureContains onText "-- indentation, so the reflow must repack it."
+      "the first paragraph's words did not survive"
+  ensureContains onText "-- first paragraph's packing."
+      "the second paragraph was packed against the first"
+  ensureContains onText bullet "a list item lost its bytes"
+  ensureContains onText pinned "a pinned directive lost its bytes"
+  ensureContains onText "-- trailing bytes stay" "a trailing comment lost its bytes"
+  ensureContains onText doc "a doc comment lost its bytes"
+  -- The Hales-Jewett shape: a comment that fits at its source column overflows once canonical
+  -- layout indents its block deeper, and must be repacked to the deeper row's smaller budget.
+  let deep := work / "ReflowDeep.lean"
+  writeFile deep
+      "module\n\nexample (P : Nat → Prop) (h : ∀ n, P n) : P 1 := by\n  exact (by\n        -- This comment fits at column two but overflows once the enclosing construct gets indented\n        -- deeper by canonical layout, so it must be repacked to the deeper row's much smaller budget here.\n        exact h 1)\n"
+  let deepReport ←
+    analyzeExact root application setup deep.toString "ReflowDeep.lean"
+        s!"4j{(Lean.toJson reflow).compress}"
+  let (_, deepText) ← canonical deepReport "reflow-comments deep"
+  ensureFits 100 deepText
+  ensureContains deepText "-- here." "the deep block's last word did not land on its own row"
+
 end DeclarationFormatter
 
 public def main (args : List String) : IO UInt32 := do
@@ -168,5 +232,7 @@ public def main (args : List String) : IO UInt32 := do
             run := DeclarationFormatter.testWideLayout root setup application },
           { name := "comments", run := DeclarationFormatter.testComments root setup application },
           { name := "declaration-body",
-            run := DeclarationFormatter.testDeclarationBody root work setup application }]
+            run := DeclarationFormatter.testDeclarationBody root work setup application },
+          { name := "comment-reflow",
+            run := DeclarationFormatter.testCommentReflow root work setup application }]
       runCases "declaration-formatter" cases args

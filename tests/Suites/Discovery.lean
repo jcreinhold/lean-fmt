@@ -104,7 +104,8 @@ private def testNested (ctx : Ctx) : IO Unit := do
     ["Root.lean", "app/App.lean", "lib/Lib.lean", "lib/deep/Deep.lean", "skipped/Skipped.lean"]do
     writeFile (nested / file) "module\n"
   writeFile (nested / ".lean-fmt.toml") "exclude = [\"skipped\"]\n[format]\nline-width = 100\n"
-  writeFile (nested / "lib" / ".lean-fmt.toml") "[format]\nline-width = 42\n"
+  writeFile (nested / "lib" / ".lean-fmt.toml")
+      "[format]\nline-width = 42\nreflow-comments = true\n"
   ensureEq "the excluded directory is pruned and every other source is selected"
       ["Root.lean", "app/App.lean", "lakefile.lean", "lib/Lib.lean", "lib/deep/Deep.lean"]
       (← selected ctx nested)
@@ -126,6 +127,14 @@ private def testNested (ctx : Ctx) : IO Unit := do
       (← setting (← showConfig ctx nested (nested / "lib" / "Lib.lean")) "exclude" "nested")
   ensureEq "the root exclude reaches only the subtree it governs" 3
       (← gate (← showConfig ctx nested (nested / "skipped" / "Skipped.lean")) "nested")
+  ensureEq "reflow-comments parses and governs its own directory" "true"
+      (←
+        setting (← showConfig ctx nested (nested / "lib" / "Lib.lean")) "format.reflow-comments"
+            "nested")
+  ensureEq "reflow-comments defaults off outside it" "false"
+      (←
+        setting (← showConfig ctx nested (nested / "app" / "App.lean")) "format.reflow-comments"
+            "nested")
 
 /-- Extend: composition, anchors, and provenance. -/
 private def testExtend (ctx : Ctx) : IO Unit := do
