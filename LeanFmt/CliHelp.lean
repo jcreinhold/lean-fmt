@@ -151,10 +151,7 @@ private def optExtendFixable : HelpEntry :=
   ⟨"--extend-fixable SEL", "add to the fixable set without replacing (repeatable)"⟩
 
 private def optUnsafeFixes : HelpEntry :=
-  ⟨"--unsafe-fixes", "apply unsafe fixes too (default: safe only)"⟩
-
-private def optUnsafeFixesPreview : HelpEntry :=
-  ⟨"--unsafe-fixes", "preview unsafe fixes too (default: safe only)"⟩
+  ⟨"--unsafe-fixes", "include unsafe fixes too (default: safe only)"⟩
 
 private def optJson : HelpEntry :=
   ⟨"--json", "deterministic JSON output"⟩
@@ -165,9 +162,11 @@ private def optJsonAlias : HelpEntry :=
 private def optOutputFormat : HelpEntry :=
   ⟨"--output-format FMT", "text|concise|json|github|sarif|junit (default: text)"⟩
 
-private def optOutputFormatDiff : HelpEntry :=
-  ⟨"--output-format FMT",
-    "text|json (default: text); concise/github/sarif/junit describe findings, and a patch carries none"⟩
+private def optDiffFormat : HelpEntry :=
+  ⟨"--diff", "print the patch format would publish; writes nothing"⟩
+
+private def optFixCheck : HelpEntry :=
+  ⟨"--fix", "apply the admitted rule fixes in place (default: report only)"⟩
 
 private def optOutputFile : HelpEntry :=
   ⟨"--output-file PATH", "write the report to PATH atomically instead of stdout"⟩
@@ -240,69 +239,52 @@ private def stdinSection (ranged : Bool) : String × Array HelpEntry :=
 
 private def commandHelps : Array CommandHelp :=
   #[{ command := "check"
-      summary := "report rule findings; write nothing"
+      summary := "report rule findings; --fix applies them"
       description :=
         "Report the selected rules' findings for each file, and nothing else: a \
       badly-laid-out but lint-clean file is clean — layout is `format`'s product, not a finding. \
-      Never writes. Exit 0 clean, 1 findings or files that failed to analyze, 2 infrastructure \
-      failure."
-      usage := #["lean-fmt check [OPTIONS] [FILE...]", "lean-fmt check - --stdin-filename PATH"]
+      Never writes without `--fix`. With `--fix`, apply the admitted rules' fixes in place, \
+      atomically, at each file's original coordinates — like `ruff check --fix`. A fixed file \
+      keeps its layout until `format` runs, so run `check --fix` then `format` for both. Safe \
+      fixes only unless `--unsafe-fixes`. Exit 0 clean (or applied), 1 findings or files that \
+      failed to analyze, 2 infrastructure failure."
+      usage :=
+        #["lean-fmt check [--fix] [OPTIONS] [FILE...]", "lean-fmt check - --stdin-filename PATH"]
       sections :=
-        #[targetSection, ruleSelectionSection, fixSelectionSection optUnsafeFixesPreview,
+        #[targetSection, ruleSelectionSection, fixSelectionSection optUnsafeFixes,
           ("layout options:", #[optReflowComments]), outputSection optOutputFormat,
           executionSection true, stdinSection false]
       notes :=
-        #["`check` previews the fixes `fix` would apply; the fix-selection flags shape that preview."] },
+        #["a bare `check` previews the fixes `--fix` would apply; the fix-selection flags shape \
+        that preview.",
+          "`--watch` is unavailable with `--fix`: a writing mode retriggers itself."] },
     { command := "format"
       summary := "format files to the canonical layout"
       description :=
         "Render each file's canonical layout and publish it in place, atomically. \
-      `--check` renders but writes nothing and reports would-format/clean — the CI preview. With \
+      `--check` renders but writes nothing and reports would-format/clean — the CI preview. \
+      `--diff` prints the patch it would publish, file by file, and also writes nothing. With \
       the `-` target the one source comes from stdin and the formatted text goes to stdout. Exit \
-      0 clean (or published), 1 differences under `--check` or files that failed to analyze, 2 \
+      0 clean (or published), 1 differences under a preview or files that failed to analyze, 2 \
       infrastructure failure."
       usage :=
-        #["lean-fmt format [OPTIONS] [FILE...]",
+        #["lean-fmt format [--check | --diff] [OPTIONS] [FILE...]",
           "lean-fmt format - --stdin-filename PATH [--range S:E | --range-lines L:C-L:C]"]
       sections :=
         #[targetSection, ruleSelectionSection,
-          ("format options:", #[optCheckFormat, optNoValidate, optReflowComments]),
+          ("format options:", #[optCheckFormat, optDiffFormat, optNoValidate, optReflowComments]),
           outputSection optOutputFormat, executionSection true, stdinSection true]
       notes :=
         #["`--range`/`--range-lines` are valid only with the `-` stdin target.",
           "format publishes only layout — no rule fix applies — so `--unsafe-fixes` changes only the \
         reported withheld count, never the bytes.",
+          "under `--diff`, `--output-format` is text|json: concise/github/sarif/junit describe \
+        findings, and a patch carries none.",
           "`--no-validate` applies only where the module's syntax frontier is admitted (built \
         modules): the candidate's structural reparse still runs and still refuses, and the bypass \
         is recorded as `validation_bypassed` in the report and never stored in the cache. Without \
         the frontier, or anywhere else, validation stays exact.",
-          "`--watch` requires `--check`: a writing mode retriggers itself."] },
-    { command := "diff"
-      summary := "preview formatting changes as a patch"
-      description :=
-        "Print the patch `format` would publish, file by file. Never writes. Exit 0 no \
-      differences, 1 differences or files that failed to analyze, 2 infrastructure failure."
-      usage := #["lean-fmt diff [OPTIONS] [FILE...]", "lean-fmt diff - --stdin-filename PATH"]
-      sections :=
-        #[targetSection, ruleSelectionSection, ("layout options:", #[optReflowComments]),
-          outputSection optOutputFormatDiff, executionSection true, stdinSection false]
-      notes :=
-        #["no rule fix applies to a patch, so `--unsafe-fixes` changes only the reported withheld count."] },
-    { command := "fix"
-      summary := "apply rule fixes in place"
-      description :=
-        "Apply the admitted rules' fixes in place, atomically, at each file's original \
-      coordinates — like `ruff check --fix`. A fixed file keeps its layout until `format` runs, so \
-      run `fix` then `format` for both. Safe fixes only unless `--unsafe-fixes`. Exit 0 clean (or \
-      applied), 1 files that failed to analyze or fixes rejected, 2 infrastructure failure."
-      usage := #["lean-fmt fix [OPTIONS] [FILE...]", "lean-fmt fix - --stdin-filename PATH"]
-      sections :=
-        #[targetSection, ruleSelectionSection, fixSelectionSection optUnsafeFixes,
-          ("layout options:", #[optReflowComments]), outputSection optOutputFormat,
-          executionSection false, stdinSection false]
-      notes :=
-        #["`--watch` is unavailable: a writing mode retriggers itself.",
-          "`--check` is a `format` flag; `fix` ignores it."] },
+          "`--watch` requires a preview (`--check` or `--diff`): a writing mode retriggers itself."] },
     { command := "lsp"
       summary := "serve the language server on stdio"
       description :=
@@ -398,7 +380,7 @@ a command cannot be documented in one place and missing from the other), and the
 def overviewHelp (color : Bool) (width : Nat) : String :=
   renderUsageBlock color
                   #["lean-fmt <command> [OPTIONS] [FILE...]",
-                    "lean-fmt {check|format|diff|fix} - --stdin-filename PATH [--range S:E]"] ++
+                    "lean-fmt {check|format} - --stdin-filename PATH [--range S:E]"] ++
                 "\n\n" ++
               String.intercalate "\n"
                 (wrapHelp width

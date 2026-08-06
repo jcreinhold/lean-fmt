@@ -121,7 +121,8 @@ private def testExamples (ctx : Ctx) : IO Unit := do
           -- fully fixed form regardless of the rule's applicability.
           discard <|
               runFallback ctx 0
-                (#["fix", "--root", ".", "--json", "--no-cache", "--unsafe-fixes"] ++ preview ++
+                (#["check", "--fix", "--root", ".", "--json", "--no-cache", "--unsafe-fixes"] ++
+                    preview ++
                   #["--select", code, relative])
                 tag
           let produced ← IO.FS.readFile probe

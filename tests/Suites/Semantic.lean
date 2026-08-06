@@ -338,8 +338,8 @@ private def testAcceptance (ctx : Ctx) : IO Unit := do
   let original ← IO.FS.readFile mixed
   let withheld ←
     check
-        #["fix", "--root", proj.toString, "--json", "--no-cache", "--preview", "--select", "FMT012",
-          mixed.toString]
+        #["check", "--fix", "--root", proj.toString, "--json", "--no-cache", "--preview",
+          "--select", "FMT012", mixed.toString]
         0 "acc withheld"
   ensureJsonAt withheld [.field "written"] (Lean.toJson (0 : Nat)) "acc withheld"
   ensureJsonAt withheld [.field "changed"] (Lean.toJson (0 : Nat)) "acc withheld"
@@ -350,8 +350,8 @@ private def testAcceptance (ctx : Ctx) : IO Unit := do
   -- 3b. Admitted owned fix applies a real rename at original-source coordinates.
   let applied ←
     check
-        #["fix", "--root", proj.toString, "--json", "--no-cache", "--preview", "--unsafe-fixes",
-          "--select", "FMT012", mixed.toString]
+        #["check", "--fix", "--root", proj.toString, "--json", "--no-cache", "--preview",
+          "--unsafe-fixes", "--select", "FMT012", mixed.toString]
         0 "acc apply"
   ensureJsonAt applied [.field "written"] (Lean.toJson (1 : Nat)) "acc apply"
   ensureJsonAt applied [.field "changed"] (Lean.toJson (1 : Nat)) "acc apply"
@@ -395,8 +395,8 @@ private def testAcceptance (ctx : Ctx) : IO Unit := do
   let fixedBytes ← IO.FS.readFile mixed
   let idem ←
     check
-        #["fix", "--root", proj.toString, "--json", "--no-cache", "--preview", "--unsafe-fixes",
-          "--select", "FMT012", mixed.toString]
+        #["check", "--fix", "--root", proj.toString, "--json", "--no-cache", "--preview",
+          "--unsafe-fixes", "--select", "FMT012", mixed.toString]
         0 "acc idem"
   ensureJsonAt idem [.field "written"] (Lean.toJson (0 : Nat)) "acc idem"
   ensureJsonAt idem [.field "changed"] (Lean.toJson (0 : Nat)) "acc idem"
@@ -409,13 +409,13 @@ private def testAcceptance (ctx : Ctx) : IO Unit := do
   writeFile orderB original
   discard <|
       check
-        #["fix", "--root", proj.toString, "--json", "--no-cache", "--preview", "--unsafe-fixes",
-          "--select", "FMT012", "--select", "FMT011", orderA.toString]
+        #["check", "--fix", "--root", proj.toString, "--json", "--no-cache", "--preview",
+          "--unsafe-fixes", "--select", "FMT012", "--select", "FMT011", orderA.toString]
         0 "order A"
   discard <|
       check
-        #["fix", "--root", proj.toString, "--json", "--no-cache", "--preview", "--unsafe-fixes",
-          "--select", "FMT011", "--select", "FMT012", orderB.toString]
+        #["check", "--fix", "--root", proj.toString, "--json", "--no-cache", "--preview",
+          "--unsafe-fixes", "--select", "FMT011", "--select", "FMT012", orderB.toString]
         0 "order B"
   ensureEq "pass order changed the published bytes" (← IO.FS.readFile orderA)
       (← IO.FS.readFile orderB)

@@ -49,7 +49,7 @@ private def testPreviewDiffAgreement (ctx : Ctx) : IO Unit := do
         (cwd? := some ctx.root) (env := #[("LEAN_FMT_PROFILE_PHASES", some "1")])
   let diffRun ←
     runProc ctx.application
-        #["diff", "--root", ctx.root.toString, "--no-cache", "--output-format", "json",
+        #["format", "--diff", "--root", ctx.root.toString, "--no-cache", "--output-format", "json",
           (aLean ctx).toString, (bLean ctx).toString]
         (cwd? := some ctx.root)
   ensure (preview.exitCode == 1 && diffRun.exitCode == 1)

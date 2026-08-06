@@ -86,12 +86,12 @@ private def testFlagSurface (ctx : Ctx) : IO Unit := do
   -- §2.3 — a finding-shaped format for `diff`, whose product is a patch and which was *measured*
   -- to carry no findings at all. Rejected rather than rendered empty.
   for format in ["concise", "github", "sarif", "junit"]do
-    let rejected ← fmt ctx #["diff", findings, "--output-format", format]
+    let rejected ← fmt ctx #["format", "--diff", findings, "--output-format", format]
     ensureEq s!"--output-format {format} is rejected for diff"
         s!"--output-format {format} is not available for diff; diff reports a patch, not findings"
         (firstStderrLine rejected)
   ensureEq "--output-format json is still allowed for diff" 1
-      (← fmtCode ctx #["diff", findings, "--output-format", "json"])
+      (← fmtCode ctx #["format", "--diff", findings, "--output-format", "json"])
   -- §2.2 — two spellings of one choice. Agreement is fine; disagreement is an error, never a
   -- precedence rule, because a caller who typed two formats has no preference for us to guess.
   let disagree ← fmt ctx #["check", findings, "--json", "--output-format", "github"]

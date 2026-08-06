@@ -61,10 +61,10 @@ private def formatCheckArgs (file : String) : Array String :=
   #["format", "--check", "--root", ".", "--json", "--no-cache", file]
 
 private def diffArgs (file : String) : Array String :=
-  #["diff", "--root", ".", "--no-cache", file]
+  #["format", "--diff", "--root", ".", "--no-cache", file]
 
 private def fixArgs (file : String) : Array String :=
-  #["fix", "--root", ".", "--json", "--no-cache", file]
+  #["check", "--fix", "--root", ".", "--json", "--no-cache", file]
 
 /-- Permission bits, portably. The old script's `stat -f %Lp || stat -c %a` picked by exit
 code, which never falls back on Linux: GNU `stat -f` is the filesystem report and exits 0. -/
@@ -213,10 +213,12 @@ and records itself per file and in the run counter; every form that cannot publi
 flag rather than silently validating exactly. The drifted fixture is the same `Layout.lean`
 `layout-format` previews, restored afterwards for the same reason. -/
 private def testNoValidate (ctx : Ctx) : IO Unit := do
-  for mode in ["check", "fix", "diff"]do
+  let forms : Array (String × Array String) :=
+    #[("check", #["check"]), ("fix", #["check", "--fix"]), ("diff", #["format", "--diff"])]
+  for (mode, command) in forms do
     let rejected ←
       run ctx 2 s!"--no-validate {mode}"
-          #[mode, "tests/fixtures/check/Findings.lean", "--no-validate"]
+          (command ++ #["tests/fixtures/check/Findings.lean", "--no-validate"])
     ensure (rejected.stderr.contains s!"--no-validate is valid only for format, not {mode}")
         s!"--no-validate {mode}: wrong rejection"
   let preview ←
@@ -353,7 +355,7 @@ private def testUnsafeDemotion (ctx : Ctx) : IO Unit := do
   let before ← metadataLine ctx.findings
   let withheld ←
     runJson ctx 0 "demote withhold"
-        (#["fix", "--root", ".", "--json", "--no-cache", "--config", demote,
+        (#["check", "--fix", "--root", ".", "--json", "--no-cache", "--config", demote,
           "tests/fixtures/check/Findings.lean"])
   ensureEq "a withheld fix touched the source" before (← metadataLine ctx.findings)
   ensureJsonAt withheld [.field "written"] (Lean.toJson (0 : Nat)) "withhold"
@@ -362,8 +364,8 @@ private def testUnsafeDemotion (ctx : Ctx) : IO Unit := do
   withRestored ctx.backupFindings ctx.findings do
       let applied ←
         runJson ctx 0 "demote apply"
-            (#["fix", "--root", ".", "--json", "--no-cache", "--unsafe-fixes", "--config", demote,
-              "tests/fixtures/check/Findings.lean"])
+            (#["check", "--fix", "--root", ".", "--json", "--no-cache", "--unsafe-fixes",
+              "--config", demote, "tests/fixtures/check/Findings.lean"])
       ensureJsonAt applied [.field "written"] (Lean.toJson (1 : Nat)) "apply"
       ensureJsonAt applied [.field "withheldUnsafe"] (Lean.toJson (0 : Nat)) "apply"
       ensureJsonAt applied [.field "files", .index 0, .field "status"] (Lean.toJson "fixed") "apply"
@@ -719,7 +721,7 @@ private def testCompositionConfluence (ctx : Ctx) : IO Unit := do
   writeFile compA source
   discard <|
       run ctx 0 "comp A fix"
-        #["fix", "--root", ".", "--no-cache", "tests/modes/.rdf-final-comp-a.lean"]
+        #["check", "--fix", "--root", ".", "--no-cache", "tests/modes/.rdf-final-comp-a.lean"]
   let formatA ←
     runJson ctx 0 "comp A format"
         #["format", "--root", ".", "--json", "--no-cache", "tests/modes/.rdf-final-comp-a.lean"]
@@ -738,7 +740,7 @@ private def testCompositionConfluence (ctx : Ctx) : IO Unit := do
       "order B format did not write"
   discard <|
       run ctx 0 "comp B fix"
-        #["fix", "--root", ".", "--no-cache", "tests/modes/.rdf-final-comp-b.lean"]
+        #["check", "--fix", "--root", ".", "--no-cache", "tests/modes/.rdf-final-comp-b.lean"]
   -- Both orders converge to the identical canonical bytes on disk.
   ensureEq "order A (fix;format) diverged" canonical (← IO.FS.readFile compA)
   ensureEq "order B (format;fix) diverged" canonical (← IO.FS.readFile compB)
@@ -897,17 +899,20 @@ private def testRcdFloor (ctx : Ctx) : IO Unit := do
   let floor := ctx.root / ".lake" / "build" / ".rcd-impl-floor.lean"
   writeFile floor "module\n\nnamespace     Floor\n\ndef floorValue : Nat := 1\n\nend Floor\n"
   let before ← metadataLine floor
-  for mode in ["format", "fix"]do
+  let forms : Array (String × Array String) :=
+    #[("format", #["format"]), ("fix", #["check", "--fix"])]
+  for (mode, command) in forms do
     let plain ←
       run ctx 2 s!"floor {mode}"
-          #[mode, "--root", ".", "--no-cache", ".lake/build/.rcd-impl-floor.lean"]
+          (command ++ #["--root", ".", "--no-cache", ".lake/build/.rcd-impl-floor.lean"])
     ensure (plain.stderr.contains "inside the Lake build directory") "the floor is not named"
     for setting in ["on", "off"]do
       let configured ←
         run ctx 2 s!"floor {mode} {setting}"
-            #[mode, "--root", ".", "--no-cache", "--config",
-              (ctx.work / s!"rcd-force-{setting}.toml").toString,
-              ".lake/build/.rcd-impl-floor.lean"]
+            (command ++
+              #["--root", ".", "--no-cache", "--config",
+                (ctx.work / s!"rcd-force-{setting}.toml").toString,
+                ".lake/build/.rcd-impl-floor.lean"])
       ensure (configured.stderr.contains "inside the Lake build directory")
           "the floor is not named under configuration"
   ensureEq "something inside .lake was written" before (← metadataLine floor)

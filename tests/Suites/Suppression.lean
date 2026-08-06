@@ -112,8 +112,8 @@ private def testMovement (root : System.FilePath) (application : String) (work :
   -- `fix` is a no-op: no rule finding here, and layout is not fix's job, so the file -- spacing
   -- and all -- is written zero times and left byte-for-byte.
   let fixRun ←
-    expectExit 0 "move-fix" application #["fix", "--root", ".", "--no-cache", scratch.toString]
-        (cwd? := some root)
+    expectExit 0 "move-fix" application
+        #["check", "--fix", "--root", ".", "--no-cache", scratch.toString] (cwd? := some root)
   ensureContains fixRun.stdout "written=0" "move-fix"
   ensure ((← IO.FS.readFile scratch) == original) "fix reflowed the item -- it must not"
   -- The directive is unused (its item carries no finding): check reports a lone FMT900.

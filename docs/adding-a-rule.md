@@ -181,7 +181,8 @@ rule, you have crossed the boundary; the boundary suite will stop you.
   from. If your rule ships an `.unsafe` or `.displayOnly` fix, assert its applicability there and add a `--unsafe-fixes`
   case to the modes suite.
 - All three tiers ship. The first `.syntax` rules (FMT006–FMT011) and the first `.semantic` ones (FMT012–FMT015) are
-  present. `check` reports a rule of any tier, and `fix` applies a syntax fix by re-projecting the canonical text.
+  present. `check` reports a rule of any tier, and `check --fix` applies a syntax fix by re-projecting the canonical
+text.
   `SemanticResult.tier` and `cacheHitServes` gate the result cache, so a source-only shortcut entry never answers a
   `.syntax` or `.semantic` selection with a false negative. `testEngineTiers` asserts that the registry still holds all
   three.

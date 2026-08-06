@@ -94,19 +94,22 @@ private def testFlagSurface (ctx : Ctx) : IO Unit := do
   let help ← checkRaw ctx 0 #["check", "--help"] "check --help"
   ensure (!(help.stdout.contains "--check-elab")) "--check-elab leaked into help"
   discard <|
-      checkRaw ctx 2 #["fix", "--check-elab", "tests/fixtures/check/Clean.lean"]
+      checkRaw ctx 2 #["check", "--fix", "--check-elab", "tests/fixtures/check/Clean.lean"]
         "removed --check-elab"
 
 /-- Per-command help: every dispatched command has one (exit 0, usage block, self-named), the root
-overview names them all, and no help lists a flag its command's parser rejects (`--range` is
-format-only, `fix` cannot watch) or omits the flags that define it. The probes at the foot pin the
-constraints the help now documents: they must stay exit-2 errors. -/
+overview names them all and does not name the retired `diff`/`fix` commands, and no help lists a
+flag its command's parser rejects (`--range` is format-only, `check --fix` cannot watch) or omits
+the flags that define it. The probes at the foot pin the constraints the help now documents: they
+must stay exit-2 errors. -/
 private def testPerCommandHelp (ctx : Ctx) : IO Unit := do
   let commands : Array String :=
-    #["check", "format", "diff", "fix", "lsp", "organize", "rules", "explain", "docs", "clean",
-      "compiler", "config"]
+    #["check", "format", "lsp", "organize", "rules", "explain", "docs", "clean", "compiler",
+      "config"]
   let overview ← checkRaw ctx 0 #["--help"] "root --help"
   let overviewLines := overview.stdout.splitOn "\n"
+  ensure (!(overviewLines.any (·.startsWith "  diff"))) "root help omits retired `diff`"
+  ensure (!(overviewLines.any (·.startsWith "  fix"))) "root help omits retired `fix`"
   for command in commands do
     ensure (overviewLines.any (·.startsWith s!"  {command}")) s!"root help names `{command}`"
     let help ← checkRaw ctx 0 #[command, "--help"] s!"{command} --help"
@@ -116,41 +119,53 @@ private def testPerCommandHelp (ctx : Ctx) : IO Unit := do
     commands.mapM fun command => do
         pure (command, (← checkRaw ctx 0 #[command, "--help"] s!"{command} --help").stdout)
   let absent : Array (String × String) :=
-    #[("check", "  --range"), ("check", "  --check"), ("diff", "  --range"), ("diff", "  --check"),
-      ("fix", "  --range"), ("fix", "  --watch"), ("fix", "  --poll-interval"),
-      ("fix", "  --check"), ("rules", "  --root"), ("explain", "  --root"), ("lsp", "  --changed"),
-      ("lsp", "  --fixable"), ("check", "  --no-validate"), ("diff", "  --no-validate"),
-      ("fix", "  --no-validate")]
+    #[("check", "  --range"), ("check", "  --check"), ("check", "  --diff"), ("format", "  --fix"),
+      ("rules", "  --root"), ("explain", "  --root"), ("lsp", "  --changed"),
+      ("lsp", "  --fixable"), ("check", "  --no-validate")]
   for (command, flag) in absent do
     let some (_, text) := helps.find? (·.1 == command) | continue
     ensure (!(text.contains flag)) s!"{command} help omits parser-rejected {flag.trimAscii.copy}"
   let present : Array (String × String) :=
-    #[("format", "  --check"), ("format", "  --range"), ("format", "  --stdin-filename"),
-      ("format", "  --no-validate"), ("check", "  --fixable"), ("check", "  --select"),
-      ("diff", "--output-format"), ("fix", "  --fixable"), ("fix", "  --unsafe-fixes"),
-      ("lsp", "--debounce-ms"), ("organize", "  --check"), ("organize", "  --json"),
-      ("docs", "  --check"), ("clean", "  --json"), ("compiler", "setup"), ("compiler", "build"),
-      ("config", "show PATH")]
+    #[("format", "  --check"), ("format", "  --diff"), ("format", "  --range"),
+      ("format", "  --stdin-filename"), ("format", "  --no-validate"), ("check", "  --fix"),
+      ("check", "  --fixable"), ("check", "  --select"), ("format", "--output-format"),
+      ("check", "  --unsafe-fixes"), ("lsp", "--debounce-ms"), ("organize", "  --check"),
+      ("organize", "  --json"), ("docs", "  --check"), ("clean", "  --json"), ("compiler", "setup"),
+      ("compiler", "build"), ("config", "show PATH")]
   for (command, flag) in present do
     let some (_, text) := helps.find? (·.1 == command) | continue
     ensure (text.contains flag) s!"{command} help lists {flag.trimAscii.copy}"
   discard <| checkRaw ctx 2 #["bogus", "--help"] "unknown command --help"
   -- Parser truth: the constraints the help documents must stay errors.
   discard <|
-      checkRaw ctx 2 #["diff", "--output-format", "sarif", "tests/fixtures/check/Clean.lean"]
-        "diff rejects finding-shaped formats"
+      checkRaw ctx 2 #["diff", "tests/fixtures/check/Clean.lean"] "retired diff command migrates"
   discard <|
-      checkRaw ctx 2 #["fix", "--watch", "tests/fixtures/check/Clean.lean"] "fix rejects --watch"
+      checkRaw ctx 2 #["fix", "tests/fixtures/check/Clean.lean"] "retired fix command migrates"
+  discard <|
+      checkRaw ctx 2
+        #["format", "--diff", "--output-format", "sarif", "tests/fixtures/check/Clean.lean"]
+        "format --diff rejects finding-shaped formats"
+  discard <|
+      checkRaw ctx 2 #["check", "--fix", "--watch", "tests/fixtures/check/Clean.lean"]
+        "check --fix rejects --watch"
   discard <|
       checkRaw ctx 2 #["check", "--range", "0:1", "tests/fixtures/check/Clean.lean"]
         "check rejects --range"
   discard <|
-      checkRaw ctx 2 #["fix", "--poll-interval", "500", "tests/fixtures/check/Clean.lean"]
+      checkRaw ctx 2
+        #["check", "--fix", "--poll-interval", "500", "tests/fixtures/check/Clean.lean"]
         "--poll-interval requires --watch"
-  for mode in ["check", "diff", "fix"]do
+  discard <|
+      checkRaw ctx 2 #["format", "--check", "--diff", "tests/fixtures/check/Clean.lean"]
+        "--check and --diff conflict"
+  let noValidate : Array (Array String) :=
+    #[#["check", "--no-validate"], #["check", "--fix", "--no-validate"],
+      #["format", "--diff", "--no-validate"], #["format", "--no-validate", "--diff"],
+      #["format", "--check", "--no-validate"]]
+  for args in noValidate do
     discard <|
-        checkRaw ctx 2 #[mode, "--no-validate", "tests/fixtures/check/Clean.lean"]
-          s!"{mode} rejects --no-validate"
+        checkRaw ctx 2 (args.push "tests/fixtures/check/Clean.lean")
+          s!"{" ".intercalate args.toList} rejects"
 
 /-- The two producers agree on Findings, and both reproduce the recorded golden byte for
 byte. The golden was recorded *before* any renderer shipped, so it is evidence and not a
@@ -611,7 +626,7 @@ private def testFixShortcut (ctx : Ctx) : IO Unit := do
   cpPreserve findingsPath backup
   let report ←
     checkJson ctx 0
-        #["fix", "--root", ".", "--json", "--no-cache", "--select", "FMT003",
+        #["check", "--fix", "--root", ".", "--json", "--no-cache", "--select", "FMT003",
           "tests/fixtures/check/Findings.lean"]
         "fix shortcut" (env :=
         #[("LEAN_FMT_DISABLE_ARTIFACT", some "1"),

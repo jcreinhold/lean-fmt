@@ -491,9 +491,9 @@ still runs a frontend per unanswered file. -/
 private def testCandidateReparse (ctx : Ctx) : IO Unit := do
   let fixture := ctx.root / "tests" / "fixtures" / "compiler" / "ArtifactLayout.lean"
   let render ←
-    runProc ctx.app #["diff", "--no-cache", fixture.toString] (cwd? := some ctx.root) (env :=
-        #[("LEAN_FMT_PROFILE_PHASES", some "1"), ("LEAN_NUM_THREADS", some "1")]) (timeoutMs :=
-        some 600000)
+    runProc ctx.app #["format", "--diff", "--no-cache", fixture.toString] (cwd? := some ctx.root)
+        (env := #[("LEAN_FMT_PROFILE_PHASES", some "1"), ("LEAN_NUM_THREADS", some "1")])
+        (timeoutMs := some 600000)
   ensure (gateSerialChildren render.stderr 1)
       "child admission was absent or exceeded one active child"
   ensure (gateCandidateReparsed render.stderr 1)
@@ -509,7 +509,8 @@ formatted a file differently would pass the counter alone. -/
 private def testSkeletonRead (ctx : Ctx) : IO Unit := do
   let fixture := ctx.root / "tests" / "fixtures" / "compiler" / "ArtifactLayout.lean"
   let render (evidence : Bool) : IO ProcResult :=
-    runProc ctx.app #["diff", "--no-cache", fixture.toString] (cwd? := some ctx.root) (env :=
+    runProc ctx.app #["format", "--diff", "--no-cache", fixture.toString] (cwd? := some ctx.root)
+      (env :=
       #[("LEAN_FMT_PROFILE_PHASES", some "1"), ("LEAN_NUM_THREADS", some "1"),
         ("LEAN_FMT_TEST_DISABLE_MODULE_EVIDENCE", if evidence then none else some "1")])
       (timeoutMs := some 600000)
@@ -542,7 +543,7 @@ private def testFrontierProjection (ctx : Ctx) : IO Unit := do
   let digest (evidence : Bool) (name : String) : IO (ProcResult × String) := do
     let result ←
       runProc ctx.app
-          #["diff", "--no-cache",
+          #["format", "--diff", "--no-cache",
             (ctx.root / "tests" / "fixtures" / "compiler" / s!"{name}.lean").toString]
           (cwd? := some ctx.root) (env :=
           #[("LEAN_FMT_PROFILE_PHASES", some "1"), ("LEAN_NUM_THREADS", some "1"),
@@ -568,7 +569,7 @@ private def testFrontierProjection (ctx : Ctx) : IO Unit := do
   -- route takes over -- the rate gate at zero must refuse it.
   let broken ←
     runProc ctx.app
-        #["diff", "--no-cache",
+        #["format", "--diff", "--no-cache",
           (ctx.root / "tests" / "fixtures" / "compiler" / "Broken.lean").toString]
         (cwd? := some ctx.root) (env :=
         #[("LEAN_FMT_PROFILE_PHASES", some "1"), ("LEAN_NUM_THREADS", some "1")]) (timeoutMs :=

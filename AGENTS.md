@@ -92,9 +92,10 @@ from code or tests is gone — when you cannot find why something is the way it 
 
 ### What the commands do
 
-- `check` and `diff` never write source. `format` and `fix` publish only a complete, conflict-free result validated
-  under the exact module setup, after a stale-source check: `format` publishes the canonical layout (no rule fix), `fix`
-  publishes admitted rule fixes at original coordinates. `format --check` and `diff` are the non-writing previews.
+- `check` and `format`'s previews never write source. `format` and `check --fix` publish only a complete, conflict-free
+  result validated under the exact module setup, after a stale-source check: `format` publishes the canonical layout
+  (no rule fix), `check --fix` publishes admitted rule fixes at original coordinates. `format --check` and
+  `format --diff` are the non-writing previews.
   `format --no-validate` is the one authorized exception: over an admitted syntax frontier it publishes on the
   structural candidate reparse alone, skipping the second render and `Validator.admit`; the reparse still runs and
   still refuses, the bypass is recorded per file, a bypassed analysis is never cached, and every other mode and every

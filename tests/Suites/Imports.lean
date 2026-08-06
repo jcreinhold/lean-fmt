@@ -328,7 +328,7 @@ private def testFixDedup (ctx : Ctx) : IO Unit := do
   withRestored ctx path do
       let report ←
         checkJson ctx 0
-            #["fix", "--root", ".", "--json", "--no-cache", "--select", "imports",
+            #["check", "--fix", "--root", ".", "--json", "--no-cache", "--select", "imports",
               "tests/fixtures/imports/Duplicate.lean"]
             "fix-dedup" (fallback := false)
       let file ← oneFile report "fix-dedup"
@@ -359,7 +359,8 @@ private def testFixNeverReorders (ctx : Ctx) : IO Unit := do
   withRestored ctx path do
       discard <|
           checkJson ctx 0
-            #["fix", "--root", ".", "--json", "--no-cache", "tests/fixtures/imports/Ordering.lean"]
+            #["check", "--fix", "--root", ".", "--json", "--no-cache",
+              "tests/fixtures/imports/Ordering.lean"]
             "fix-noreorder"
       let imports := (← IO.FS.readFile path).splitOn "\n" |>.filter (·.startsWith "import ")
       ensureEq "fix reordered the header -- it must never"
@@ -376,7 +377,7 @@ private def testFixFormatSplit (ctx : Ctx) : IO Unit := do
       "module\n\nimport LeanFmt.Basic\nimport LeanFmt.Basic\n\ndef importFixConflictNoop : Nat := 0  \n"
   seed
   let fixReport ←
-    checkJson ctx 0 #["fix", "--root", ".", "--json", "--no-cache", conflict.toString]
+    checkJson ctx 0 #["check", "--fix", "--root", ".", "--json", "--no-cache", conflict.toString]
         "fix-conflict"
   let fixFile ← oneFile fixReport "fix-conflict"
   ensure (((fixFile.getObjValAs? String "status").toOption) == some "fixed")

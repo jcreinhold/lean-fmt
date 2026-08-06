@@ -102,8 +102,8 @@ private def testOtherModes (ctx : Ctx) (dirty : System.FilePath) : IO Unit := do
         some source) (cwd? := some ctx.root)
   ensureEq "check - is not silent on stdout" 0 check.stdout.length
   let diff ←
-    expectExit 1 "diff -" ctx.app #["diff", "-", "--stdin-filename", ctx.identity] (input? :=
-        some source) (cwd? := some ctx.root)
+    expectExit 1 "diff -" ctx.app #["format", "--diff", "-", "--stdin-filename", ctx.identity]
+        (input? := some source) (cwd? := some ctx.root)
   ensureEq "diff - emits a unified diff" s!"--- a/{ctx.identity}"
       ((diff.stdout.splitOn "\n").head?.getD "")
   let formatCheck ←
@@ -404,14 +404,17 @@ private def testPipes (ctx : Ctx) : IO Unit := do
 /-- §2 a range names the only mode that can honor it, and §6 `fix -` streams the buffer at
 original coordinates. -/
 private def testRangeModesAndFix (ctx : Ctx) (dirty : System.FilePath) : IO Unit := do
-  for mode in ["check", "diff", "fix"]do
-    let result ← fmt ctx #[mode, "-", "--stdin-filename", ctx.identity, "--range", "30:49"] dirty
+  let forms : Array (String × Array String) :=
+    #[("check", #["check"]), ("diff", #["format", "--diff"]), ("fix", #["check", "--fix"])]
+  for (mode, command) in forms do
+    let result ←
+      fmt ctx (command ++ #["-", "--stdin-filename", ctx.identity, "--range", "30:49"]) dirty
     ensureEq s!"--range is not rejected for {mode} -"
         s!"--range is valid only with format, not {mode}" (firstErr result)
   let source ← IO.FS.readFile dirty
   let fixed ←
-    expectExit 0 "fix -" ctx.app #["fix", "-", "--stdin-filename", ctx.identity] (input? :=
-        some source) (cwd? := some ctx.root)
+    expectExit 0 "fix -" ctx.app #["check", "--fix", "-", "--stdin-filename", ctx.identity]
+        (input? := some source) (cwd? := some ctx.root)
   -- `fix` publishes admitted rule fixes at *original* coordinates; a buffer with no admitted fix
   -- streams back unchanged.
   ensureEq "fix - streams the buffer at original coordinates" "namespace     Alpha"

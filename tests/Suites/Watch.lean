@@ -144,7 +144,8 @@ private def expectRejection (ctx : Ctx) (what fragment : String) (args : Array S
 private def testWatchRejections (ctx : Ctx) : IO Unit := do
   -- §10 A writing mode under watch publishes source, which changes the mtimes the poll observes:
   -- self-sustaining by construction, so both writers are refused.
-  expectRejection ctx "fix --watch" "not available for fix" #["fix", "--watch"]
+  expectRejection ctx "check --fix --watch" "not available for check --fix"
+      #["check", "--fix", "--watch"]
   expectRejection ctx "format --watch" "not available for format" #["format", "--watch"]
   -- §7 A stream of documents is not a document, so json/sarif/junit need a destination.
   expectRejection ctx "sarif on stdout under watch" "requires --output-file"

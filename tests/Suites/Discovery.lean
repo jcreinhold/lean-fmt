@@ -150,7 +150,7 @@ private def testCliReflowOverride (ctx : Ctx) : IO Unit := do
   let runDiff (label : String) (exitCode : UInt32) (extra : Array String) : IO String := do
     let result ←
       expectExit exitCode label ctx.application
-          (#["diff", "--root", proj.toString, "--no-cache", "Root.lean"] ++ extra)
+          (#["format", "--diff", "--root", proj.toString, "--no-cache", "Root.lean"] ++ extra)
     pure result.stdout
   let occurs (text needle : String) : Bool := (text.splitOn needle).length == 2
   -- A clean `diff` prints no patch at all, so the no-reflow cases assert the continuation line

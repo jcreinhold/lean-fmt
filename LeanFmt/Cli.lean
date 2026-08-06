@@ -209,8 +209,8 @@ private def printHelp (stream : IO.FS.Stream) (render : Bool → Nat → String)
 /-- Reconcile the two spellings of one choice, and refuse a mode the chosen format cannot describe.
 
 Both checks are deliberately errors rather than precedence rules. A caller who typed two
-different formats does not have a preference for us to guess, and a caller who asked `diff` for
-SARIF wants findings `diff` does not produce. -/
+different formats does not have a preference for us to guess, and a caller who asked `format --diff`
+for SARIF wants findings a patch does not produce. -/
 private def resolveOutputFormat (mode : RunMode) (command : FileCommand) :
     Except String FileCommand :=
   let chosen :=
@@ -227,107 +227,126 @@ private def resolveOutputFormat (mode : RunMode) (command : FileCommand) :
       diff reports a patch, not findings"
     else .ok { command with outputFormat := chosen }
 
-private def parseFileArgs (mode : RunMode) (args : List String) : Except String FileCommand :=
-  let rec loop (remaining : List String) (command : FileCommand) :=
+private def parseFileArgs (mode : RunMode) (args : List String) :
+    Except String (RunMode × FileCommand) :=
+  let rec loop (mode : RunMode) (remaining : List String) (command : FileCommand) :
+    Except String (RunMode × FileCommand) :=
     match remaining with
-    | [] => resolveOutputFormat mode command
-    | "--root" :: root :: rest => loop rest { command with run := { command.run with root } }
-    | "--json" :: rest => loop rest { command with jsonFlag := true }
+    | [] => (resolveOutputFormat mode command).map (mode, ·)
+    | "--root" :: root :: rest => loop mode rest { command with run := { command.run with root } }
+    | "--json" :: rest => loop mode rest { command with jsonFlag := true }
     | "--output-format" :: value :: rest =>
       match ReportFormat.ofWire? value with
-      | some format => loop rest { command with formatFlag? := some format }
+      | some format => loop mode rest { command with formatFlag? := some format }
       | none =>
         .error
           s!"unknown --output-format: {value} \
           (expected text, concise, json, github, sarif, or junit)"
-    | "--output-file" :: path :: rest => loop rest { command with outputFile? := some path }
-    | "--no-cache" :: rest => loop rest { command with run := { command.run with cache := false } }
+    | "--output-file" :: path :: rest => loop mode rest { command with outputFile? := some path }
+    | "--no-cache" :: rest =>
+      loop mode rest { command with run := { command.run with cache := false } }
     | "--config" :: path :: rest =>
-      loop rest { command with run := { command.run with configPath? := some path } }
+      loop mode rest { command with run := { command.run with configPath? := some path } }
     | "--select" :: selector :: rest =>
-      loop rest
+      loop mode rest
         { command with run := { command.run with select := command.run.select.push selector } }
     | "--extend-select" :: selector :: rest =>
-      loop rest
+      loop mode rest
         { command with
           run := { command.run with extendSelect := command.run.extendSelect.push selector } }
     | "--ignore" :: selector :: rest =>
-      loop rest
+      loop mode rest
         { command with run := { command.run with ignore := command.run.ignore.push selector } }
     | "--fixable" :: selector :: rest =>
-      loop rest
+      loop mode rest
         { command with run := { command.run with fixable := command.run.fixable.push selector } }
     | "--unfixable" :: selector :: rest =>
-      loop rest
+      loop mode rest
         { command with
           run := { command.run with unfixable := command.run.unfixable.push selector } }
     | "--extend-fixable" :: selector :: rest =>
-      loop rest
+      loop mode rest
         { command with
           run := { command.run with extendFixable := command.run.extendFixable.push selector } }
-    | "--preview" :: rest => loop rest { command with run := { command.run with preview := true } }
+    | "--preview" :: rest =>
+      loop mode rest { command with run := { command.run with preview := true } }
     | "--reflow-comments" :: rest =>
-      loop rest { command with run := { command.run with reflowComments? := some true } }
+      loop mode rest { command with run := { command.run with reflowComments? := some true } }
     | "--no-reflow-comments" :: rest =>
-      loop rest { command with run := { command.run with reflowComments? := some false } }
-    | "--statistics" :: rest => loop rest { command with statistics := true }
-    | "--watch" :: rest => loop rest { command with watch := true }
+      loop mode rest { command with run := { command.run with reflowComments? := some false } }
+    | "--statistics" :: rest => loop mode rest { command with statistics := true }
+    | "--watch" :: rest => loop mode rest { command with watch := true }
     | "--poll-interval" :: value :: rest =>
       match value.toNat? with
       | some amount =>
         if amount == 0 then .error "--poll-interval expects a nonzero interval in milliseconds"
-        else loop rest { command with pollMillis := amount }
+        else loop mode rest { command with pollMillis := amount }
       | none => .error "--poll-interval expects a whole number of milliseconds"
     -- Three separate spellings rather than one `--changed [BASE]` with an optional argument.
     -- An optional-argument flag cannot be told from a file target — `check --changed main` would
     -- be ambiguous between "compare against main" and "compare the worktree, and format `main`" —
     -- and guessing there makes a caller format the wrong set without knowing.
     | "--changed" :: rest =>
-      loop rest
+      loop mode rest
         { command with
           changed? := some .worktree, changedFlag := "--changed" }
     | "--changed-since" :: revision :: rest =>
-      loop rest
+      loop mode rest
         { command with
           changed? := some (.base revision), changedFlag := "--changed-since" }
     | "--staged" :: rest =>
-      loop rest
+      loop mode rest
         { command with
           changed? := some .staged, changedFlag := "--staged" }
     | "--changed-since" :: [] => .error "--changed-since expects a revision"
     | "--poll-interval" :: [] => .error "--poll-interval expects a whole number of milliseconds"
     | "--check" :: rest =>
       if mode == .format then
-        loop rest { command with run := { command.run with formatCheck := true } }
-      else .error "--check is valid only for format"
+        loop mode rest { command with run := { command.run with formatCheck := true } }
+      else
+        if mode == .diff then .error "--check and --diff both name the format preview; pass one"
+        else .error "--check is valid only for format"
+    | "--diff" :: rest =>
+      -- The flag selects `format`'s patch-preview strategy; both the loop state and the
+      -- request's own `mode` move, since execution and reporting read the request.
+      if mode == .format && !command.run.formatCheck then
+        loop .diff rest { command with run := { command.run with mode := .diff } }
+      else
+        if mode == .format then .error "--check and --diff both name the format preview; pass one"
+        else .error "--diff is valid only for format"
+    | "--fix" :: rest =>
+      if mode == .check then
+        loop .fix rest { command with run := { command.run with mode := .fix } }
+      else .error "--fix is valid only for check"
     | "--no-validate" :: rest =>
       if mode == .format then
-        loop rest { command with run := { command.run with validationPolicy := .structural } }
+        loop mode rest { command with run := { command.run with validationPolicy := .structural } }
       else .error s!"--no-validate is valid only for format, not {mode.toString}"
     | "--unsafe-fixes" :: rest =>
-      loop rest { command with run := { command.run with unsafeFixes := true } }
+      loop mode rest { command with run := { command.run with unsafeFixes := true } }
     | "--workers" :: value :: rest =>
       match value.toNat? with
       | some amount =>
         if amount == 0 then .error "--workers expects a nonzero worker count"
-        else loop rest { command with run := { command.run with workers := some amount } }
+        else loop mode rest { command with run := { command.run with workers := some amount } }
       | none => .error "--workers expects a whole number of workers"
     | "--workers" :: [] => .error "--workers expects a whole number of workers"
     -- `-` is a *target*, not an option, so it is matched before the `startsWith "-"` catch-all
     -- below.
-    | "-" :: rest => loop rest { command with stdin := true }
-    | "--stdin-filename" :: path :: rest => loop rest { command with stdinFilename? := some path }
+    | "-" :: rest => loop mode rest { command with stdin := true }
+    | "--stdin-filename" :: path :: rest =>
+      loop mode rest { command with stdinFilename? := some path }
     | "--range" :: value :: rest =>
       match parseByteRange? value with
       | some spec =>
-        loop rest
+        loop mode rest
           { command with
             range? := some spec, rangeFlag := "--range" }
       | none => .error s!"--range expects START:STOP byte offsets, got: {value}"
     | "--range-lines" :: value :: rest =>
       match parseLineRange? value with
       | some spec =>
-        loop rest
+        loop mode rest
           { command with
             range? := some spec, rangeFlag := "--range-lines" }
       | none => .error s!"--range-lines expects LINE:COL-LINE:COL, got: {value}"
@@ -337,9 +356,9 @@ private def parseFileArgs (mode : RunMode) (args : List String) : Except String 
     | option :: rest =>
       if option.startsWith "-" then .error s!"unknown option: {option}"
       else
-        loop rest
+        loop mode rest
           { command with run := { command.run with files := command.run.files.push option } }
-  loop args { run := { mode, root := ".", files := #[] } }
+  loop mode args { run := { mode, root := ".", files := #[] } }
 
 /-- The stdin form's own consistency, checked once after parsing rather than at each use.
 
@@ -389,10 +408,11 @@ private def validateWatch (mode : RunMode) (command : FileCommand) : Except Stri
     -- loop sustains itself — not a race, a certainty.
     if mode == .fix then
       .error
-          "--watch is not available for fix; watch runs previews, and a writing mode retriggers itself"
+          "--watch is not available for check --fix; watch runs previews, and a writing mode \
+        retriggers itself"
     else if command.run.writesFormat then
       .error
-          "--watch is not available for format; pass --check to preview, \
+          "--watch is not available for format; pass --check or --diff to preview, \
         or a writing mode retriggers itself"
     else if command.stdin then
       .error "--watch is not available for the - stdin target; watch observes files on disk"
@@ -415,9 +435,11 @@ The flag narrows `format`'s candidate admission to the structural reparse over a
 syntax frontier; that is a statement about *publication*, so every form that cannot publish
 rejects it rather than silently validating exactly: `--check` and `--watch` render without
 writing, and the stdin stream has no in-place destination. -/
-private def validateNoValidate (command : FileCommand) : Except String Unit := do
+private def validateNoValidate (mode : RunMode) (command : FileCommand) : Except String Unit := do
   if command.run.validationPolicy == .structural then
-    if command.run.formatCheck then
+    if mode != .format then
+      .error "--no-validate is valid only when format publishes"
+    else if command.run.formatCheck then
       .error
           "--no-validate is not available with --check; a preview publishes nothing and always \
         validates exactly"
@@ -559,7 +581,7 @@ private def textReport (positions : PositionIndex) (report : RunReport) : String
     | _ =>
       for file in report.files do
         for finding in file.findings do
-          -- A fix's applicability is shown next to the finding so a reader knows whether `fix`
+          -- A fix's applicability is shown next to the finding so a reader knows whether `check --fix`
           -- would apply it by default (safe), only under `--unsafe-fixes` (unsafe), or never
           -- (display-only).
           let fixTag :=
@@ -1077,7 +1099,7 @@ private def renderStatistics (report : RunReport) : IO Unit := do
 
 /-- `writer` is whether this run publishes source (`fix`, or `format` without `--check`). A
 writer that successfully published a change exits 0, like `ruff format`/`ruff check --fix`; a
-non-writing preview (`check`, `diff`, `format --check`) exits 1 when anything would change (the CI
+non-writing preview (`check`, `format --diff`, `format --check`) exits 1 when anything would change (the CI
 code). Both exit 2 on infrastructure failure and 1 on a broken/rejected file. -/
 private def reportExitCode (writer : Bool) (report : RunReport) : UInt32 :=
   if !report.infrastructureFailures.isEmpty then 2
@@ -1252,8 +1274,8 @@ private def streamAsRunReport (mode : RunMode) (report : StreamReport) : RunRepo
 
 /-- Render one stream answer.
 
-**stdout carries the result and nothing else** — bytes for `format`/`fix`, a unified diff for
-`diff`, nothing for `check`/`format --check`. Findings and the range report go to stderr in text
+**stdout carries the result and nothing else** — bytes for `format`/`check --fix`, a unified diff for
+`format --diff`, nothing for `check`/`format --check`. Findings and the range report go to stderr in text
 mode so a pipe consumer needs no framing. `--json` puts the whole
 answer, source map included, on stdout instead, because a machine consumer asked for structure.
 
@@ -1407,7 +1429,14 @@ diverging spelling of every flag, and once those diverge the watched run and the
 different things. -/
 private def generationArgs (mode : RunMode) (args : List String) : Array String :=
   Id.run do
-    let mut out : Array String := #[mode.toString]
+    -- The child is spawned in the *command* grammar, so the leading word is the command, not the
+    -- settled strategy: `format --diff` settles to `.diff`, and the `--diff` token rides in `args`.
+    let command :=
+      match mode with
+      | .diff => "format"
+      | .fix => "check"
+      | _ => mode.toString
+    let mut out : Array String := #[command]
     let mut remaining := args
     while true do
       match remaining with
@@ -1423,10 +1452,10 @@ private def generationArgs (mode : RunMode) (args : List String) : Array String 
     return out
 
 private unsafe def runFileCommand (mode : RunMode) (args : List String) : IO UInt32 := do
-  let command ←
+  let (mode, command) ←
     match parseFileArgs mode args with
-    | .ok command =>
-      pure command
+    | .ok pair =>
+      pure pair
     | .error message =>
       IO.eprintln message;
       return 2
@@ -1439,7 +1468,7 @@ private unsafe def runFileCommand (mode : RunMode) (args : List String) : IO UIn
   if let .error message := validateChanged command then
     IO.eprintln message
     return 2
-  if let .error message := validateNoValidate command then
+  if let .error message := validateNoValidate mode command then
     IO.eprintln message
     return 2
   if let some path := command.outputFile? then
@@ -1549,10 +1578,12 @@ unsafe def runCli (arguments : List String) : IO UInt32 := do
     runFileCommand .check rest
   | "format" :: rest =>
     runFileCommand .format rest
-  | "diff" :: rest =>
-    runFileCommand .diff rest
-  | "fix" :: rest =>
-    runFileCommand .fix rest
+  | "diff" :: _ =>
+    IO.eprintln "`diff` is now a flag of `format`: run `lean-fmt format --diff`"
+    return 2
+  | "fix" :: _ =>
+    IO.eprintln "`fix` is now a flag of `check`: run `lean-fmt check --fix`"
+    return 2
   | "organize" :: rest =>
     let command ←
       match parseOrganizeArgs rest with

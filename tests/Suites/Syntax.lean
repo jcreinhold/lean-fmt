@@ -146,8 +146,8 @@ private def fixApplies (ctx : Ctx) (label fixture selector gone present : String
   copyFile (ctx.root / "tests" / "fixtures" / "syntax" / fixture) probe
   let fixRun ←
     expectExit 0 s!"{label}-fix" ctx.application
-        #["fix", "--root", ".", "--json", "--no-cache", "--preview", "--select", selector,
-          probe.toString]
+        #["check", "--fix", "--root", ".", "--json", "--no-cache", "--preview", "--select",
+          selector, probe.toString]
         (cwd? := some ctx.root) (env := sfmtEnv)
   let report ← parseJson fixRun.stdout s!"{label}-fix"
   ensureJsonAt report [.field "written"] (Lean.toJson (1 : Nat)) s!"{label}-fix"
@@ -212,7 +212,7 @@ private def testMultiRuleComposition (ctx : Ctx) : IO Unit := do
   let selectors := #["--select", "FMT008", "--select", "FMT011"]
   let fixRun ←
     expectExit 0 "mover-fix" ctx.application
-        (#["fix", "--root", ".", "--json", "--no-cache", "--preview"] ++ selectors ++
+        (#["check", "--fix", "--root", ".", "--json", "--no-cache", "--preview"] ++ selectors ++
           #[probe.toString])
         (cwd? := some ctx.root) (env := sfmtEnv)
   let report ← parseJson fixRun.stdout "mover-fix"
@@ -224,7 +224,7 @@ private def testMultiRuleComposition (ctx : Ctx) : IO Unit := do
   ensureContains got "@[simp]" "mover"
   let refix ←
     expectExit 0 "mover-refix" ctx.application
-        (#["fix", "--root", ".", "--json", "--no-cache", "--preview"] ++ selectors ++
+        (#["check", "--fix", "--root", ".", "--json", "--no-cache", "--preview"] ++ selectors ++
           #[probe.toString])
         (cwd? := some ctx.root) (env := sfmtEnv)
   let refixed ← parseJson refix.stdout "mover-refix"
@@ -244,13 +244,13 @@ private def testPassOrderIndependence (ctx : Ctx) : IO Unit := do
   copyFile (ctx.root / "tests" / "fixtures" / "syntax" / "AttrThenParen.lean") probeB
   discard <|
       expectExit 0 "order-a" ctx.application
-        #["fix", "--root", ".", "--json", "--no-cache", "--preview", "--select", "FMT008",
-          "--select", "FMT011", probeA.toString]
+        #["check", "--fix", "--root", ".", "--json", "--no-cache", "--preview", "--select",
+          "FMT008", "--select", "FMT011", probeA.toString]
         (cwd? := some ctx.root) (env := sfmtEnv)
   discard <|
       expectExit 0 "order-b" ctx.application
-        #["fix", "--root", ".", "--json", "--no-cache", "--preview", "--select", "FMT011",
-          "--select", "FMT008", probeB.toString]
+        #["check", "--fix", "--root", ".", "--json", "--no-cache", "--preview", "--select",
+          "FMT011", "--select", "FMT008", probeB.toString]
         (cwd? := some ctx.root) (env := sfmtEnv)
   ensureEq "pass-order changed the composed bytes" (← IO.FS.readFile probeB)
       (← IO.FS.readFile probeA)

@@ -144,7 +144,7 @@ lean-fmt: no changed Lean sources under .
 ```
 
 This matters because an empty file list means "the whole project" everywhere else in the CLI. Any wrapper that
-reimplements selection must preserve the distinction, or a no-op commit will lint — or with `fix`, reformat — the entire
+reimplements selection must preserve the distinction, or a no-op commit will lint — or with `check --fix`, rewrite — the entire
 tree.
 
 `--staged` is the same mechanism against the index rather than a revision, which is what a pre-commit hook wants.
@@ -176,15 +176,15 @@ esac
 `junit` suits any runner with a JUnit XML collector. `concise` (`path:line:col: CODE message`) suits one that scrapes
 logs. `github` emits workflow annotation commands and is meaningless elsewhere.
 
-Pair formats with modes. The four finding-shaped formats — `concise`, `github`, `sarif`, `junit` — are **rejected for
-`diff`** at parse time, with exit 2:
+Pair formats with modes. The four finding-shaped formats — `concise`, `github`, `sarif`, `junit` — are **rejected
+for `format --diff`** at parse time, with exit 2:
 
 ```
 --output-format sarif is not available for diff; diff reports a patch, not findings
 ```
 
-`diff` produces a patch, not a finding set, so an empty SARIF log from it would read as "clean". Only `text` and `json`
-are available there.
+`format --diff` produces a patch, not a finding set, so an empty SARIF log from it would read as "clean". Only `text`
+and `json` are available there.
 
 One other check worth a CI step:
 
@@ -279,8 +279,8 @@ Expect three things to change:
    must not acquire new rules on upgrade.
 2. **A cold cache.** The binary changes, so every entry is orphaned. The first run after an upgrade pays full cost —
    expected, not a regression.
-3. **Nothing about your source.** `check` and `diff` never write. Only `format` and `fix` do, and only when you run
-   them.
+3. **Nothing about your source.** `check` and the `format` previews never write. Only `format` and `check --fix` do,
+   and only when you run them.
 
 **Toolchain bumps.** lean-fmt's `lean-toolchain` and the consumer's must match. Lean's ABI is not stable across
 releases, and the compiler plugin — if you use it — is a shared library loaded into your compiler. A mismatch is not a
