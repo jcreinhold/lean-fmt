@@ -273,6 +273,71 @@ private def testDoc : IO Unit := do
       ensure (lineCount rendered.text <= Doc.size wrapped + 1)
           s!"document {i} (seed {seed}) produced more lines than nodes at width {width}"
 
+/-- The fill-words leaf: with `reflowComments` on, a prose paragraph packs greedily against the
+column the block lands on; off, fitting, pinned, keep, and cramped blocks all spell their source
+bytes. The leaf is zero-width to fit, like `comment`, so no group decision moves. -/
+private def testFillWords : IO Unit := do
+  let block : Doc := .fillWords #[.prose "-- alpha beta gamma delta", .prose "-- epsilon zeta"]
+  let doc : Doc := .text "def f := 1" ++ .hard ++ block ++ .hard ++ .text "def g := 2"
+  ensure (renderText 20 doc == "def f := 1\n-- alpha beta gamma delta\n-- epsilon zeta\ndef g := 2")
+      "an off-mode fill-words block changed its source bytes"
+  ensure
+      (renderText 20 doc #[] true ==
+        "def f := 1\n-- alpha beta gamma\n-- delta epsilon\n-- zeta\ndef g := 2")
+      "a reflowed fill-words block did not pack to the margin"
+  ensure (renderText 10 doc #[] true == renderText 10 doc)
+      "a fill-words block with no room for prose did not keep its bytes"
+  -- Continuation rows land where the block began, not at the ambient indent: the nest carries
+  -- the first row to column 4 and every packed row follows it there.
+  let nested : Doc := .text "def f := 1" ++ .nest 4 (.hard ++ block) ++ .hard ++ .text "def g := 2"
+  ensure
+      (renderText 24 nested #[] true ==
+        "def f := 1\n    -- alpha beta gamma\n    -- delta epsilon\n    -- zeta\ndef g := 2")
+      "a packed continuation row did not land at its block's column"
+  -- A paragraph that fits keeps its source line breaks; a pinned line splits the block around
+  -- itself and stands verbatim between independently decided paragraphs.
+  let pinned : Doc :=
+    .fillWords
+      #[.prose "-- tune the solver carefully please", .prose "-- leanfmt off",
+        .prose "-- more prose here to pack"]
+  ensure
+      (renderText 30 pinned #["leanfmt"] true ==
+        "-- tune the solver carefully\n-- please\n-- leanfmt off\n-- more prose here to pack")
+      "a pinned line did not split its fill-words block"
+  -- Keep lines: an empty comment line splits paragraphs; list items stand verbatim. Width 20
+  -- packs the two paragraphs around them; width 40 leaves every byte alone.
+  let kept : Doc :=
+    .fillWords
+      #[.prose "-- first paragraph words here", .keep "--", .prose "-- second paragraph words here",
+        .keep "-- - item one", .keep "-- - item two"]
+  ensure
+      (renderText 20 kept #[] true ==
+        "-- first paragraph\n-- words here\n--\n-- second paragraph\n-- words here\n\
+         -- - item one\n-- - item two")
+      "a keep line did not split its fill-words block"
+  ensure (renderText 40 kept #[] true == renderText 40 kept)
+      "a fitting fill-words block was repacked"
+  -- A word longer than the budget stands on its own line, unbroken.
+  let url : Doc := .fillWords #[.prose "-- see https://example.com/some/very/long/url here"]
+  ensure
+      (renderText 20 url #[] true == "-- see\n-- https://example.com/some/very/long/url\n-- here")
+      "an overlong word was hyphenated or dropped"
+  -- Zero-width to fit: a fill-words leaf moves no group decision, exactly like `comment`.
+  let body : Doc := .text "abc" ++ .line " " ++ .text "def"
+  let withComment : Doc := .group (body ++ .comment "-- tail")
+  let withFill : Doc := .group (body ++ .fillWords #[.prose "-- tail"])
+  ensure
+      (renderText 7 withComment == renderText 7 withFill &&
+        renderText 6 withComment == renderText 6 withFill)
+      "a fill-words leaf moved a group decision"
+  -- Well-formedness: single-line `--` payloads only, at least one of them.
+  ensure (Doc.fillWords #[.prose "-- ok"]).wellFormed "a well-formed block read as ill-formed"
+  ensure (!(Doc.fillWords #[]).wellFormed) "an empty block read as well formed"
+  ensure (!(Doc.fillWords #[.prose "no marker"]).wellFormed)
+      "a payload without its marker read as well formed"
+  ensure (!(Doc.fillWords #[.prose "-- two\nlines"]).wellFormed)
+      "a multiline payload read as well formed"
+
 /- `NativeLayout` refuses a `choice` node whose alternatives do not spell the same source, rather than
 taking `children[0]?` on faith the way `terminalsFrom` used to. The parser does not build a
 disagreeing `choice`, so no fixture reaches that refusal from a file and no suite under `tests/` can
@@ -635,7 +700,7 @@ private def oracleAgrees (label : String) (format : Std.Format) (width indent co
     IO Unit := do
   let document := toDoc format
   let (nativeBytes, nativeTags) := nativeObserved format width indent column
-  let rendered := renderDetailed width document #[] indent column
+  let rendered := renderDetailed width document #[] (indent := indent) (column := column)
   ensure (rendered.text == nativeBytes)
       s!"{label}: byte divergence at width {width}, indent {indent}, column {column}\n      tree: {dumpFormat format}\nnative:\n{repr nativeBytes}\nlean-fmt:\n{repr rendered.text}"
   ensure (rendered.metrics.nativeEvents == nativeTags)
@@ -989,6 +1054,7 @@ public def cases : Array Case :=
     { name := "testChoiceVerification", run := testChoiceVerification },
     { name := "testAlignmentSequences", run := testAlignmentSequences },
     { name := "testPinnedRows", run := testPinnedRows },
-    { name := "testWhitespaceEnvelope", run := testWhitespaceEnvelope }]
+    { name := "testWhitespaceEnvelope", run := testWhitespaceEnvelope },
+    { name := "testFillWords", run := testFillWords }]
 
 end LeanFmt.Test.Unit.Layout

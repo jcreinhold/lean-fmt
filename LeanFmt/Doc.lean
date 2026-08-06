@@ -86,6 +86,21 @@ def append (left right : LineMeasure) : LineMeasure :=
 
 end LineMeasure
 
+/-- One source line of a reflowable comment block: a `prose` line joins the paragraph around it
+and packs against the render column; a `keep` line — an empty comment line or a list item —
+splits the paragraph and always keeps its bytes. The payload is the full source line, marker
+included. The pack decision itself is the renderer's: it owns the column, the margin, and the
+pinned phrases, so a block whose bytes depend on them is spelled nowhere else. -/
+inductive FillLine where
+  | prose (payload : String)
+  | keep (payload : String)
+  deriving Inhabited, BEq, Repr
+
+/-- The full source line a fill line carries. -/
+def FillLine.payload : FillLine → String
+  | .prose value => value
+  | .keep value => value
+
 mutual
 private inductive DocKind where
   | empty
@@ -105,6 +120,7 @@ private inductive DocKind where
   | anchor (body : Doc)
   | mark (source : SourceRange) (body : Doc)
   | registered (format : Std.Format)
+  | fillWords (lines : Array FillLine)
 /-- A formatting document. Construct values through the operations in `Doc`; the cached measures
   and well-formedness bit are not caller-settable, deliberately. -/
 inductive Doc where
@@ -178,6 +194,27 @@ still hold its line flat. -/
 def comment (value : String) : Doc :=
   .mk (.comment value) ⟨0, false, false, some value, false⟩ ⟨0, false, false, some value, false⟩ 1
     (!spansLines value)
+
+/-- The text a `--` line carries after its marker: one leading space is part of the spelling,
+not the prose. Shared by the fill-words render and the validator's reflow-invariant contract. -/
+def commentLineText (payload : String) : String :=
+  let text := (payload.drop 2).toString
+  if text.startsWith " " then (text.drop 1).toString else text
+
+/-- The words one line of prose carries, runs of spaces and tabs collapsed. -/
+def commentWords (text : String) : Array String :=
+  ((text.map fun c => if c == '\t' then ' ' else c).splitOn " ").filter
+      (fun s => !s.isEmpty) |>.toArray
+
+/-- A standalone `--` comment block whose prose paragraphs the renderer may repack against the
+column the block lands on. Zero-width to fit like `comment` — no group decision is driven by a
+comment's bytes, packed or not — and the first payload is disclosed for the pinned hold-flat.
+Well-formed when every line is a single-line `--` payload. -/
+def fillWords (lines : Array FillLine) : Doc :=
+  let measure : LineMeasure := ⟨0, false, false, lines[0]?.map (·.payload), false⟩
+  .mk (.fillWords lines) measure measure 1
+    (!lines.isEmpty &&
+      lines.all fun line => !spansLines line.payload && line.payload.startsWith "--")
 
 /-- A break opportunity with its exact flat spelling. A newline in the flat spelling is rejected.
 The native `Std.Format.line` is `line " "`. -/
@@ -418,6 +455,7 @@ private partial def measureContextual : Doc → Bool → Int → Nat → NativeF
     match doc.kind with
     | .empty => { }
     | .comment _ => { }
+    | .fillWords .. => { }
     | .hard | .blank => { foundLine := true }
     | .registered _ => { foundLine := true }
     | .line _ => if flatten then { space := 1 } else { foundLine := true }
@@ -486,16 +524,73 @@ private def pushGroup (fill : Bool) (items : Items) (rest : Work) (width : Nat) 
   let group : WorkGroup := { fla := .allow (fits || pinned), fill, items }
   return Work.pack group rest
 
-private partial def renderWork (width : Nat) (pinnedPhrases : Array String) :
-    Work → StateM RenderState Unit
+/-- Below this much room for prose, repacking makes a comment less readable than the overflow it
+fixes, so the block keeps its bytes. -/
+private def minFillBudget : Nat :=
+  20
+
+/-- Pack words greedily into lines of at most `budget` columns of prose, each spelled `-- …`. A
+word longer than the budget stands on its own line, unbroken -- a URL is not hyphenated. -/
+private def packWords (budget : Nat) (words : Array String) : Array String :=
+  let (lines, cur) :=
+    words.foldl (init := ((#[], "") : Array String × String)) fun (lines, cur) word =>
+      if cur.isEmpty then if word.length <= budget then (lines, word) else (lines.push word, "")
+      else
+        if cur.length + 1 + word.length <= budget then (lines, cur ++ " " ++ word)
+        else
+          if word.length <= budget then (lines.push cur, word) else ((lines.push cur).push word, "")
+  let lines := if cur.isEmpty then lines else lines.push cur
+  lines.map ("-- " ++ ·)
+
+/-- The payload lines one `fillWords` block renders at `column`: the source bytes when reflow is
+off, the margin left of the column is below `minFillBudget`, or any line is pinned; otherwise
+each paragraph of unpinned `prose` lines packs greedily, a paragraph that already fits keeps its
+bytes, and `keep` lines split paragraphs and stand verbatim. The pack is word-preserving by
+construction and is checked: a mismatch falls back to the source lines, which is what the block
+would have spelled anyway. -/
+private def renderFillLines (width : Nat) (pinnedPhrases : Array String) (reflow : Bool)
+    (column : Nat) (lines : Array FillLine) : Array String :=
+  let verbatim := lines.map (·.payload)
+  if !reflow then verbatim
+  else
+    let budget := width - column
+    if budget < minFillBudget then verbatim
+    else
+      let flush (out paragraph : Array String) : Array String :=
+        if paragraph.isEmpty then out
+        else
+          if paragraph.all (·.length <= budget) then out ++ paragraph
+          else
+            let words :=
+              paragraph.foldl (init := #[]) fun collected line =>
+                collected ++ Doc.commentWords (Doc.commentLineText line)
+            let packed := packWords (budget - 3) words
+            let repacked :=
+              packed.foldl (init := #[]) fun collected line =>
+                collected ++ Doc.commentWords (Doc.commentLineText line)
+            if repacked == words then out ++ packed else out ++ paragraph
+      let (out, paragraph) :=
+        lines.foldl (init := ((#[], #[]) : Array String × Array String))
+          fun (out, paragraph) line =>
+          match line with
+          | .prose payload =>
+            if pinnedPhrases.any (payload.contains ·) then
+              (flush out paragraph |>.push payload, #[])
+            else (out, paragraph.push payload)
+          | .keep payload => (flush out paragraph |>.push payload, #[])
+      flush out paragraph
+
+private partial def renderWork (width : Nat) (pinnedPhrases : Array String)
+    (reflowComments : Bool) : Work → StateM RenderState Unit
   | .empty => pure ()
   | .more group _ rest =>
     match group.items with
-    | .nil => renderWork width pinnedPhrases rest
+    | .nil => renderWork width pinnedPhrases reflowComments rest
     | .cons entry _ _ items =>
       let resume (is' : Items) : StateM RenderState Unit :=
-        renderWork width pinnedPhrases (Work.pack { group with items := is' } rest)
-      let resumeWork (work : Work) : StateM RenderState Unit := renderWork width pinnedPhrases work
+        renderWork width pinnedPhrases reflowComments (Work.pack { group with items := is' } rest)
+      let resumeWork (work : Work) : StateM RenderState Unit :=
+        renderWork width pinnedPhrases reflowComments work
       match entry with
       | .closeMark source outputStart => do
         modify fun state =>
@@ -515,6 +610,21 @@ private partial def renderWork (width : Nat) (pinnedPhrases : Array String) :
           modify (appendLiteral · value)
           endTags
           resume items
+        | .fillWords fillLines =>
+          do
+            -- The block's continuation rows land where its first row began: the entry column is
+            -- the block's own, whatever nest carried the row there.
+            let column := (← get).column
+            let emitted := renderFillLines width pinnedPhrases reflowComments column fillLines
+            let mut first := true
+            for value in emitted do
+              if first then
+                first := false
+              else
+                modify (appendNewline · column)
+              modify (appendLiteral · value)
+            endTags
+            resume items
         | .nativeText value =>
           match value.splitOn "\n" with
           | [_] =>
@@ -640,14 +750,16 @@ private partial def renderWork (width : Nat) (pinnedPhrases : Array String) :
 
 /-- Render a document at `width`, returning text, byte source maps, and deterministic work counts.
 `pinnedPhrases` are the `pinned-comments` configuration: a comment containing one holds its line
-flat. `indent` and `column` are the native machine's entry state: the wrap indent for later rows
-and the column the first row's fit measurement starts at. -/
+flat, and a fill-words block carrying one keeps its bytes. `reflowComments` is the
+`reflow-comments` configuration: a fill-words block's prose paragraphs repack against the column
+the block lands on. `indent` and `column` are the native machine's entry state: the wrap indent
+for later rows and the column the first row's fit measurement starts at. -/
 def renderDetailed (width : Nat) (document : Doc) (pinnedPhrases : Array String := #[])
-    (indent : Nat := 0) (column : Nat := 0) : Rendered :=
+    (reflowComments : Bool := false) (indent : Nat := 0) (column : Nat := 0) : Rendered :=
   let root : WorkGroup :=
     { fla := .disallow, fill := false, items := Items.ofList [.document document indent 0] }
   let initial := Work.pack root .empty
-  let state := (renderWork width pinnedPhrases initial).run { column } |>.2
+  let state := (renderWork width pinnedPhrases reflowComments initial).run { column } |>.2
   { text := state.output
     sourceMap := state.marks
     metrics :=
@@ -656,13 +768,14 @@ def renderDetailed (width : Nat) (document : Doc) (pinnedPhrases : Array String 
         nativeEvents := state.nativeEvents } }
 
 /-- Render text and byte source maps. -/
-def render (width : Nat) (document : Doc) (pinnedPhrases : Array String := #[]) :
-    String × Array Mark :=
-  let rendered := renderDetailed width document pinnedPhrases
+def render (width : Nat) (document : Doc) (pinnedPhrases : Array String := #[])
+    (reflowComments : Bool := false) : String × Array Mark :=
+  let rendered := renderDetailed width document pinnedPhrases reflowComments
   (rendered.text, rendered.sourceMap)
 
 /-- Render only text. -/
-def renderText (width : Nat) (document : Doc) (pinnedPhrases : Array String := #[]) : String :=
-  (renderDetailed width document pinnedPhrases).text
+def renderText (width : Nat) (document : Doc) (pinnedPhrases : Array String := #[])
+    (reflowComments : Bool := false) : String :=
+  (renderDetailed width document pinnedPhrases reflowComments).text
 
 end LeanFmt.Internal

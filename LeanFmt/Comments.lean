@@ -6,6 +6,7 @@ Authors: Jacob Reinhold
 
 module
 
+import all LeanFmt.Doc
 import all LeanFmt.LosslessSource
 
 import Lean.Syntax
