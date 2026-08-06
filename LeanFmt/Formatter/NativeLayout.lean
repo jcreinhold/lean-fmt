@@ -81,6 +81,11 @@ private structure InteriorComment where
   range : SourceRange
   placement : CommentPlacement
   kind : CommentKind
+  /-- The extraction row facts (Comments.Comment): the fill-block grouping reads them and never
+  re-scans the source. -/
+  row : Nat := 0
+  column : Nat := 0
+  startsRow : Bool := false
   boundary : Nat := 0
   deriving Inhabited
 
@@ -2071,13 +2076,9 @@ private structure TransformState where
   construct a boundary at that terminal heads. The `.nest` hoist test compares its own span
   against it (`Transformed.hoist?`). -/
   headSpans : Array (Nat × TokenSpan)
-  /-- `reflow-comments` ([format]), threaded from the plan: whether overflowing standalone `--`
-  blocks are rewrapped at comment insertion. -/
-  reflowComments : Bool := false
-  /-- `line-width` ([format]): the render margin the reflow budget is measured against. -/
-  lineWidth : Nat := 100
-  /-- `pinned-comments` ([format]): phrases a reflow must never touch. -/
-  pinnedPhrases : Array String := #[]
+  /-- The fill-words blocks registered at comment insertion, in order; `fillTagBase + index`
+  tags ride the document to the lowering, which maps them back to these. -/
+  fillBlocks : Array (Array FillLine) := #[]
   baseIndent : Nat
   terminalIndex : Nat := 0
   commentIndex : Nat := 0
@@ -2190,143 +2191,100 @@ spells it as the cancelling `nest` around the newline. Dropping that alongside t
 boundary was marked applied before the format was discarded, so `applied n/m` stayed level and nothing
 refused. Both breaks take it: the one before the comment and the one after, because the source wrote
 the comment at the command's own column too. -/
-/- What one comment reflow needs: the source (to tell where rows begin), the column budget the
-block may spend (the render margin less the column its row lands on), and the phrases a pinned
-comment carries. Collected once at the insertion site; `none` keeps every byte. -/
-private structure ReflowContext where
-  source : String
-  budget : Nat
-  pinnedPhrases : Array String
 
-/-- Below this much room for prose, reflowing makes a comment less readable than the overflow it
-fixes, so the block keeps its bytes. -/
-private def minReflowBudget : Nat :=
-  20
+/-- The tag base a fill-words block rides from this walk to the lowering: `fillTagBase + index`
+names `fillBlocks[index]`, and the tag's body is the block's verbatim spelling, so every
+document-walking predicate sees exactly what the spliced comments showed before. Native tags have
+no producer over parsed source (the anchor markers' argument), and the base sits past their
+reserved range, so neither collides. -/
+private def fillTagBase : Nat :=
+  0x6C65616E00 + 8192
 
-/-- Pack words greedily into lines of at most `budget` columns of prose, each spelled `-- …`. A
-word longer than the budget stands on its own line, unbroken -- a URL is not hyphenated. -/
-private def packCommentWords (budget : Nat) (words : Array String) : Array String :=
-  let (lines, cur) :=
-    words.foldl (init := ((#[], "") : Array String × String)) fun (lines, cur) word =>
-      if cur.isEmpty then if word.length <= budget then (lines, word) else (lines.push word, "")
-      else
-        if cur.length + 1 + word.length <= budget then (lines, cur ++ " " ++ word)
-        else
-          if word.length <= budget then (lines.push cur, word) else ((lines.push cur).push word, "")
-  let lines := if cur.isEmpty then lines else lines.push cur
-  lines.map ("-- " ++ ·)
+/- Decode a fill-words tag as its block index, or none for any other tag. -/
+private def fillTag? (tag : Nat) : Option Nat :=
+  if fillTagBase <= tag && tag < fillTagBase + 8192 then some (tag - fillTagBase) else none
 
-/-- Whether a comment range begins its source row: only indentation in front of it. -/
-private def startsItsRow (source : String) (range : SourceRange) : Bool :=
-  let before := slice source ⟨0, range.start⟩
-  let lineStart :=
-    match before.revFind? (· == '\n') with
-    | some position => position.offset.byteIdx + 1
-    | none => 0
-  (slice source ⟨lineStart, range.start⟩).all fun c => c == ' ' || c == '\t'
+/-- One comment-run insertion item: a single comment spelled as its payload, or a maximal block
+of fill-eligible comments on consecutive rows at one column, carried as fill lines the lowering
+maps to one `Doc.fillWords` leaf. The pack decision is the renderer's, made at the block's true
+column; this walk only locates blocks. -/
+private inductive CommentItem where
+  | single (comment : InteriorComment)
+  | block (lines : Array FillLine)
 
-/-- Whether two comment ranges sit on consecutive source rows at the same column. -/
-private def sameBlockRows (source : String) (prev cur : SourceRange) : Bool :=
-  let between := slice source ⟨prev.stop, cur.start⟩
-  let afterNewline := (between.drop 1).toString
-  between.startsWith "\n" && !afterNewline.contains '\n' &&
-      afterNewline.all (fun c => c == ' ' || c == '\t') &&
-    sourceColumn source prev.start == sourceColumn source cur.start
+/-- The extraction facts one interior comment carries, as the `Comments` classifiers read them. -/
+private def commentFact (comment : InteriorComment) : Comment :=
+  { kind := comment.kind, range := comment.range, row := comment.row, column := comment.column,
+    startsRow := comment.startsRow }
 
-/-- Whether one comment may join a reflowed block at all: a standalone leading `--` comment
-carrying no pinned phrase. Doc comments, block comments, and trailing comments stay out --
-their bytes answer other questions. -/
-private def reflowable (ctx : ReflowContext) (comment : InteriorComment) : Bool :=
-  comment.kind == .line && comment.placement == .leading && !comment.payload.contains '\n' &&
-    !ctx.pinnedPhrases.any (comment.payload.contains ·)
-
-/-- Whether a line is prose the reflow may move: an empty comment line is a paragraph break, and
-a list item keeps its marker at the row's start -- both stay verbatim and split the block. -/
-private def proseLine (comment : InteriorComment) : Bool :=
-  let text := Comments.commentLineText comment.payload
-  let trimmed := text.trimAscii.copy
-  !trimmed.isEmpty && !trimmed.startsWith "- " && !trimmed.startsWith "* "
-
-/-- Rewrap one prose sub-block whose rows overflow the budget; one that already fits keeps its
-bytes, so a comment under the margin is untouched. The rewrap preserves the word sequence by
-construction and is checked: a mismatch returns the source lines, which is what the run would
-have spelled anyway. -/
-private def reflowProseBlock (ctx : ReflowContext) (lines : Array InteriorComment) :
-    Array InteriorComment :=
-  if lines.all (fun comment => comment.payload.length <= ctx.budget) then lines
-  else
-    let words :=
-      lines.foldl (init := #[]) fun words comment =>
-        words ++ Comments.commentWords (Comments.commentLineText comment.payload)
-    let packed := packCommentWords (ctx.budget - 3) words
-    let repacked :=
-      packed.foldl (init := #[]) fun words line =>
-        words ++ Comments.commentWords (Comments.commentLineText line)
-    if repacked == words then
-      let first := lines[0]!
-      packed.map fun line => { first with payload := line }
-    else lines
-
-/-- One block of standalone comment lines, rewrapped sub-block by sub-block. -/
-private def reflowBlock (ctx : ReflowContext) (block : Array InteriorComment) :
-    Array InteriorComment :=
-  let flush (out prose : Array InteriorComment) : Array InteriorComment :=
-    if prose.isEmpty then out else out ++ reflowProseBlock ctx prose
-  let (out, prose) :=
-    block.foldl (init := ((#[], #[]) : Array InteriorComment × Array InteriorComment))
-      fun (out, prose) comment =>
-      if proseLine comment then (out, prose.push comment)
-      else (flush out prose |>.push comment, #[])
-  flush out prose
-
-/-- Reflow the standalone `--` comment blocks in one boundary's comment run whose rows overflow
-`ctx.budget`. A block is a maximal run of `reflowable` comments on consecutive source rows at
-one column; anything else passes through with its bytes untouched. -/
-private def reflowCommentRun (ctx : ReflowContext) (comments : Array InteriorComment) :
-    Array InteriorComment :=
-  let flush (out block : Array InteriorComment) : Array InteriorComment :=
-    if block.isEmpty then out else out ++ reflowBlock ctx block
-  let (out, block) :=
-    comments.foldl (init := ((#[], #[]) : Array InteriorComment × Array InteriorComment))
-      fun (out, block) comment =>
+/-- Group one boundary's comments into singles and fill blocks. A block's members are
+fill-eligible by construction -- only an eligible comment opens or continues one -- so the
+`filterMap` over them is total. -/
+private def groupFillBlocks (comments : Array InteriorComment) : Array CommentItem :=
+  let eligible (comment : InteriorComment) : Bool :=
+    (Comments.fillLine? (commentFact comment) comment.placement comment.payload).isSome
+  let flush (items : Array CommentItem) (block : Array InteriorComment) : Array CommentItem :=
+    if block.isEmpty then items
+    else
+      items.push
+        (.block
+          (block.filterMap fun comment =>
+            Comments.fillLine? (commentFact comment) comment.placement comment.payload))
+  let (items, block) :=
+    comments.foldl (init := ((#[], #[]) : Array CommentItem × Array InteriorComment))
+      fun (items, block) comment =>
         let continues :=
         match block.back? with
-        | some prev => reflowable ctx comment && sameBlockRows ctx.source prev.range comment.range
+        | some prev =>
+          eligible comment && Comments.sameBlock (commentFact prev) (commentFact comment)
         | none => false
-        if continues then (out, block.push comment)
+        if continues then (items, block.push comment)
       else
-        if reflowable ctx comment && startsItsRow ctx.source comment.range then
-          (flush out block, #[comment])
-        else (flush out block |>.push comment, #[])
-  flush out block
+        if eligible comment then (flush items block, #[comment])
+        else (flush items block |>.push (.single comment), #[])
+  flush items block
 
 private def insertComments (dedent : Int) (rowBreak : Std.Format) (comments : Array InteriorComment)
-    (suffix : Std.Format) (reflowContext? : Option ReflowContext := none) : Std.Format :=
-  let comments :=
-    match reflowContext? with
-    | some ctx => reflowCommentRun ctx comments
-    | none => comments
-  let (document, atLineStart) :=
-    comments.foldl (init := (.nil, false)) fun (document, atLineStart) comment =>
-      let payload := commentPayload dedent comment
-      match comment.placement with
-      | .trailing =>
-        let boundary := if atLineStart then .nil else .text " "
-        let document := .append document (.append boundary payload)
-        -- A line comment ends its row by construction. So does a block comment the source wrote
-        -- over more than one row: its closing `-/` sits at whatever column the payload's last row
-        -- reached, which is a column no layout decision here chose. Letting the next token follow
-        -- it there puts code on the comment's closing row -- `-/ intro h` -- and the token lands
-        -- offside of the block it belongs to, which ends the block and leaves the rest of it to
-        -- reparse as sibling commands. 17 mathlib modules refused to format for it. Only a
-        -- single-row block comment leaves the row in a state the surrounding layout still owns.
-        if comment.kind == .line || comment.payload.contains '\n' then
-          (.append document rowBreak, true)
-        else (document, false)
-      | .leading | .dangling =>
-        let boundary := if atLineStart then .nil else rowBreak
-        (.append document <| .append boundary <| .append payload rowBreak, true)
-  if atLineStart then document
+    (suffix : Std.Format) : StateT TransformState (Except String) Std.Format := do
+  let (document, atLineStart) ←
+    (groupFillBlocks comments).foldlM (init := (.nil, false)) fun (document, atLineStart) item =>
+        match item with
+        | .block lines => do
+          let index := (← get).fillBlocks.size
+          modify fun state => { state with fillBlocks := state.fillBlocks.push lines }
+          let boundary := if atLineStart then .nil else rowBreak
+          let body :=
+            match lines.toList with
+            | [] => .nil
+            | first :: rest =>
+              rest.foldl (init := Std.Format.text first.payload) fun doc line =>
+                .append doc (.append rowBreak (.text line.payload))
+          -- The tag's body is the block's verbatim spelling, so the tree keeps the shape every
+          -- predicate read before; the lowering replaces the whole node with one fill-words leaf.
+          let tagged := .tag (fillTagBase + index) body
+          return (.append document <| .append boundary <| .append tagged rowBreak, true)
+        | .single comment => do
+          let payload := commentPayload dedent comment
+          match comment.placement with
+          | .trailing =>
+            let boundary := if atLineStart then .nil else .text " "
+            let document := .append document (.append boundary payload)
+            -- A line comment ends its row by construction. So does a block comment the source wrote
+            -- over more than one row: its closing `-/` sits at whatever column the payload's last row
+            -- reached, which is a column no layout decision here chose. Letting the next token follow
+            -- it there puts code on the comment's closing row -- `-/ intro h` -- and the token lands
+            -- offside of the block it belongs to, which ends the block and leaves the rest of it to
+            -- reparse as sibling commands. 17 mathlib modules refused to format for it. Only a
+            -- single-row block comment leaves the row in a state the surrounding layout still owns.
+            if comment.kind == .line || comment.payload.contains '\n' then
+              return (.append document rowBreak, true)
+            else
+              return (document, false)
+          | .leading | .dangling =>
+            let boundary := if atLineStart then .nil else rowBreak
+            return (.append document <| .append boundary <| .append payload rowBreak, true)
+  if atLineStart then
+    return document
   -- The adapter owns *both* sides of a comment, not just the side facing the token behind it. `suffix`
   -- is the native boundary between the two tokens the comment sits between, and the native document
   -- holds no decision about a leaf it never emitted -- so where the grammar spells those tokens
@@ -2336,7 +2294,10 @@ private def insertComments (dedent : Int) (rowBreak : Std.Format) (comments : Ar
   -- A line comment needs nothing here; it already ended the row and set `atLineStart`. Only the block
   -- case can end mid-row with nothing after it, and one space is enough -- `pushToken`'s discretionary
   -- space is the tokenizer's own answer to the same question, and this is the case it never sees.
-  else if provablyEmpty suffix then .append document (.text " ") else .append document suffix
+  else if provablyEmpty suffix then
+    return .append document (.text " ")
+  else
+    return .append document suffix
 
 private partial def hasLineBoundary : Std.Format → Bool
   | .line | .align _ => true
@@ -2974,15 +2935,7 @@ private def constrainBoundary (format : Std.Format) :
     -- A comment payload carries absolute source columns and has to reach column zero whatever row it
     -- lands on, so the `interior` cancellation applied below is subtracted back out here rather than
     -- left to compose with it.
-    let reflowContext? :=
-      if state.reflowComments then
-        let budget := state.lineWidth - (rowIndent state).toNat
-        if budget >= minReflowBudget then
-          some { source := state.source, budget, pinnedPhrases := state.pinnedPhrases }
-        else none
-      else none
-    format :=
-      insertComments (interior - dedentColumns state) rowBreak comments format reflowContext?
+    format ← insertComments (interior - dedentColumns state) rowBreak comments format
   -- ...unless the boundary lies strictly inside a structural anchor interval: the anchor re-bases
   -- every break in its body to the first item's column, which already *includes* this correction's
   -- effect -- the first item's row kept it, being outside the interval -- so cancelling again here
@@ -3582,19 +3535,28 @@ above it is the render's own root, which never flattens.
 Total over the eight constructors and both flatten behaviors; the one check after it,
 `Doc.wellFormed`, is the typed diagnostic for the impossible state (a lowerer that produced a
 malformed document), and it refuses rather than degrading to verbatim source. -/
-private partial def lowerNative : Std.Format → Doc
+private partial def lowerNative (blocks : Array (Array FillLine) := #[]) : Std.Format → Doc
   | .nil => .empty
   | .line => .line " "
   | .align force => .align force
   | .text value => if value.contains '\n' then .nativeText value else .text value
-  | .nest indent body => .nest indent (lowerNative body)
-  | .append left right => lowerNative left ++ lowerNative right
+  | .nest indent body => .nest indent (lowerNative blocks body)
+  | .append left right => lowerNative blocks left ++ lowerNative blocks right
   | .group body behavior =>
     match behavior with
-    | .allOrNone => .group (lowerNative body)
-    | .fill => .fill (lowerNative body)
+    | .allOrNone => .group (lowerNative blocks body)
+    | .fill => .fill (lowerNative blocks body)
   | .tag tag body =>
-    if tag == anchorTag then .anchor (lowerNative body) else .tag tag (lowerNative body)
+    if tag == anchorTag then .anchor (lowerNative blocks body)
+    else
+      match fillTag? tag with
+      | some index =>
+        match blocks[index]? with
+        | some lines => Doc.fillWords lines
+        -- A tag naming no registered block keeps its body: the verbatim spelling the walk
+        -- spliced, which is what the block would have spelled anyway.
+        | none => .tag tag (lowerNative blocks body)
+      | none => .tag tag (lowerNative blocks body)
 
 /- The one private command plan: every fact the collector assembly derives about a command,
 resolved against its terminals exactly once, before the native format exists. The transform and
@@ -3625,13 +3587,6 @@ private structure CommandPlan where
   interval's terminals during the walk (`finishAnchors`), lowered to `Doc.anchor`. -/
   anchors : Array TokenSpan := #[]
   baseIndent : Nat
-  /-- `reflow-comments` ([format]): whether standalone `--` blocks whose rows overflow are
-  rewrapped to fit. -/
-  reflowComments : Bool := false
-  /-- `line-width` ([format]): the render margin the reflow budget is measured against. -/
-  lineWidth : Nat := 100
-  /-- `pinned-comments` ([format]): phrases a reflow must never touch. -/
-  pinnedPhrases : Array String := #[]
   deriving Inhabited
 
 /-- Phase two: resolve the raw collected facts against the terminal sequence. Every per-range fact
@@ -3643,9 +3598,7 @@ private def CommandPlan.resolve (source : String) (terminals : Array Terminal)
     (boundaryStarts : Array (Nat × BoundaryLayout)) (joined : Array SourceRange)
     (nestedCommandRanges : Array SourceRange) (explodedRanges : Array SourceRange)
     (headSpans : Array (Nat × TokenSpan)) (baseIndent : Nat)
-    (anchorRanges : Array SourceRange := #[]) (reflowComments : Bool := false)
-    (lineWidth : Nat := 100) (pinnedPhrases : Array String := #[]) :
-    Except TransformFailure CommandPlan := do
+    (anchorRanges : Array SourceRange := #[]) : Except TransformFailure CommandPlan := do
   let constraints :=
     constraints.map fun constraint => (constraint, spanForRange terminals constraint.range)
   -- An exact island's bytes are its whole rendering, so the adapter spells no boundary between the
@@ -3729,8 +3682,7 @@ private def CommandPlan.resolve (source : String) (terminals : Array Terminal)
           terminals.findIdx? (comment.range.start < ·.range.start) |>.getD terminals.size }
   return {
     source, terminals, comments, trailing, islands, constraints, boundaries, flattened,
-    nestedCommands, explodedSpans, headSpans, anchors, baseIndent, reflowComments, lineWidth,
-    pinnedPhrases }
+    nestedCommands, explodedSpans, headSpans, anchors, baseIndent }
 
 /- Pair the anchor markers the walk dropped and give each region a subtree: the spine items
 between an open and its matching close re-associate under `.tag anchorTag`, and the interval
@@ -3803,7 +3755,7 @@ private partial def isolateAnchors (plan : CommandPlan) (format : Std.Format) :
 the walk could not apply exactly once; the counts name the first unapplied entry and the source it
 was collected at. -/
 private def transform (plan : CommandPlan) (native : Std.Format) :
-    Except TransformFailure (Std.Format × Metrics) := do
+    Except TransformFailure (Std.Format × Metrics × Array (Array FillLine)) := do
   let spelled := spelledMarkers native
   let droppedIslands :=
     plan.islands.filterMap fun island =>
@@ -3821,9 +3773,6 @@ private def transform (plan : CommandPlan) (native : Std.Format) :
       nestedCommands := plan.nestedCommands
       explodedSpans := plan.explodedSpans
       headSpans := plan.headSpans
-      reflowComments := plan.reflowComments
-      lineWidth := plan.lineWidth
-      pinnedPhrases := plan.pinnedPhrases
       anchors := plan.anchors
       baseIndent := plan.baseIndent }
   let (result, state) ← ((transformNative native).run initial).mapError .unadapted
@@ -3900,7 +3849,7 @@ comments; the block's document holds no break to hang one on"
         .unadapted
           s!"native formatter applied {appliedAnchors.size}/{state.anchors.size} structural \
 anchors; first unapplied: {repr missing[0]?}"
-  return (isolated, state.metrics)
+  return (isolated, state.metrics, state.fillBlocks)
 
 private def rootRange (stx : Lean.Syntax) : SourceRange :=
   sourceRange? stx |>.getD ⟨0, 0⟩
@@ -3924,7 +3873,10 @@ private def interiorComments (ownership : CommentOwnership) (stx : Lean.Syntax)
           { payload := Comments.payload ownership comment
             range := comment.range
             placement := placement
-            kind := comment.kind }
+            kind := comment.kind
+            row := comment.row
+            column := comment.column
+            startsRow := comment.startsRow }
     else none
 
 /- Every comment a block owns from past its own last token, with that block.
@@ -4167,7 +4119,7 @@ private def CommandPlan.collect (source : String) (ownership : CommentOwnership)
   match
     CommandPlan.resolve source terminals comments blockDangling islands constraints boundaryStarts
       joined nestedCommandRanges (explodedRanges ++ closeBraceRanges) headSpans baseIndent
-      structInstAnchors format.reflowComments format.lineWidth format.pinnedComments with
+      structInstAnchors with
   | .error failure =>
     return .error failure
   | .ok plan =>
@@ -4257,8 +4209,8 @@ cannot tell from the placeholder that protects {marker.range.start}:{marker.rang
     let native ← Lean.PrettyPrinter.formatCommand formattedSyntax
     let native := (dropTrailingHardLine native).getD native
     match transform plan native with
-    | .ok (native, metrics) =>
-      let document := lowerNative native
+    | .ok (native, metrics, blocks) =>
+      let document := lowerNative blocks native
       if document.wellFormed then
         return .ok { document, trace, metrics }
       else

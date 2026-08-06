@@ -332,7 +332,8 @@ private def buildFormatDraft (normalized : String) (source : LosslessSource)
         Doc.mark tailRange (Doc.verbatim (normalizedSlice bytes tailRange))
   let document := document?.getD Doc.empty
   checkCancelled
-  let rendered := renderDetailed format.lineWidth document format.pinnedComments
+  let rendered :=
+    renderDetailed format.lineWidth document format.pinnedComments format.reflowComments
   -- A command the toolchain could not lay out is emitted verbatim rather than refusing the file
   -- (`NativeLayout.command`). That is a degradation, so it is counted: the count rides the envelope
   -- back to the parent, `LEAN_FMT_PROFILE_PHASES=1` reports it, and a corpus run that starts

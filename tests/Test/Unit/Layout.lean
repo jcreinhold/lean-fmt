@@ -465,7 +465,7 @@ private def testAlignmentSequences : IO Unit := do
     | .error failure =>
       panic! s!"an ordinary terminal sequence's plan was refused: {failure.detail}"
   let run (native : Std.Format) := Formatter.NativeLayout.transform plan native
-  let .ok (aligned, metrics) :=
+  let .ok (aligned, metrics, _) :=
     run (nativeSequence leaves) | throw (IO.userError "an ordinary terminal sequence was refused")
   ensure (alignedPayloads aligned == expected)
       s!"alignment did not preserve the ordered payloads: {repr (alignedPayloads aligned)}"
@@ -493,7 +493,7 @@ private def testAlignmentSequences : IO Unit := do
   -- Reorder: the payloads still come out in terminal order, and the two moved leaves are the two
   -- that now spell neither of their terminal's spellings.
   let swapped := leaves.swapIfInBounds 1 3
-  let .ok (reordered, reorderedMetrics) :=
+  let .ok (reordered, reorderedMetrics, _) :=
     run
       (nativeSequence
         swapped) | throw (IO.userError "a reordered native document was refused rather than counted")
@@ -910,7 +910,7 @@ private def testStructuralAnchors : IO Unit := do
   let lowered (plan : Formatter.NativeLayout.CommandPlan) (native : Std.Format) : IO Doc := do
     match Formatter.NativeLayout.transform plan native with
     | .ok (format, _) =>
-      return Formatter.NativeLayout.lowerNative format
+      return Formatter.NativeLayout.lowerNative #[] format
     | .error failure =>
       throw (IO.userError s!"an anchored tree was refused: {failure.detail}")
   -- Validation: overlapping without containment is refused; empty is refused; nested is accepted.
@@ -946,9 +946,9 @@ private def testStructuralAnchors : IO Unit := do
       throw (IO.userError s!"the anchor around `b` was refused: {failure.detail}")
   ensure (countTag Formatter.NativeLayout.anchorTag anchoredFormat == 1)
       "the anchor interval was not claimed exactly once"
-  let anchored := Formatter.NativeLayout.lowerNative anchoredFormat
+  let anchored := Formatter.NativeLayout.lowerNative #[] anchoredFormat
   let plain :=
-    Formatter.NativeLayout.lowerNative
+    Formatter.NativeLayout.lowerNative #[]
       (←
         match Formatter.NativeLayout.transform (← planOf #[]) grouped with
         | .ok (format, _) =>
