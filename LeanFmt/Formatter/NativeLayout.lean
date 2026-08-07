@@ -708,6 +708,14 @@ private def hasNewlineSeparator (list : Lean.Syntax) : Bool :=
     (List.range args.size).any fun index =>
       index % 2 == 1 && args[index]!.matchesNull 0 && index != args.size - 1
 
+/- The mirror: a separator the source *wrote*, `sepByIndent`'s `"; "` rather than a row break.
+`hasNewlineSeparator` is not its negation -- a one-item list satisfies neither, having no
+separator slot at all. -/
+private def hasWrittenSeparator (list : Lean.Syntax) : Bool :=
+  let args := list.getArgs
+  (List.range args.size).any fun index =>
+    index % 2 == 1 && !args[index]!.matchesNull 0 && index != args.size - 1
+
 /- `structInstFields` is the list's own wrapper, so the delimiter and anything between it and the list
 belong to the *parent*. Every other delimited carrier holds its own delimiter, and this walk sees the
 node that holds the list either way — so the terminals to count are the ones under `owner` that start
@@ -860,11 +868,13 @@ never applied and the hard line is correct.
 keep the body on the `:=` line when the joined spelling fits `line-width`, joining an
 already-broken body that fits. `joinedBodyFits` is that fit question, answered on the source
 spelling because a flat body's rendered bytes are the source's bytes. -/
+private def layoutWhitespace (char : Char) : Bool :=
+  char == ' ' || char == '\t' || char == '\n' || char == '\r'
+
 private def flattenWhitespace (value : String) : String :=
   let step (acc : Bool × String) (character : Char) : Bool × String :=
     let (blank?, out) := acc
-    if character == ' ' || character == '\t' || character == '\n' || character == '\r' then
-      (true, out)
+    if layoutWhitespace character then (true, out)
     else
       if blank? then
         (false, if out.isEmpty then out.push character else (out.push ' ').push character)
@@ -874,7 +884,13 @@ private def flattenWhitespace (value : String) : String :=
 /-- Would the line the `:=` sits on, joined through the body's end, fit `line-width`? The measure
 is the source from that line's first column with every whitespace run collapsed to one space —
 the same bytes the renderer spells for a flat body. Over-measurement (a nested `let`'s line
-carries its whole command prefix) only ever declines a join, never accepts one that overflows. -/
+carries its whole command prefix) only ever declines a join, never accepts one that overflows.
+
+The line's own indentation is counted separately because `flattenWhitespace` drops a *leading*
+run rather than collapsing it — it has no column to collapse toward. Dropping it here instead
+under-measured every joined line by its indent, the one direction that wrongly accepts: a
+`declVal` at column 4 whose joined line ran 101 columns measured 97 and joined, and the renderer
+then bought that back by breaking the signature it had already fitted. -/
 private def joinedBodyFits (source : String) (width : Nat) (declVal body : Lean.Syntax) : Bool :=
   match sourceRange? declVal, sourceRange? body with
   | some valRange, some bodyRange =>
@@ -883,7 +899,9 @@ private def joinedBodyFits (source : String) (width : Nat) (declVal body : Lean.
       match before.revFind? (· == '\n') with
       | some position => position.offset.byteIdx + 1
       | none => 0
-    (flattenWhitespace (slice source ⟨lineStart, bodyRange.stop⟩)).length <= width
+    let joined := slice source ⟨lineStart, bodyRange.stop⟩
+    let indent := (joined.toList.takeWhile layoutWhitespace).length
+    indent + (flattenWhitespace joined).length <= width
   | _, _ => false
 
 private partial def collectUngroupedBodyStarts (declarationBody : DeclarationBody) (source : String)
@@ -928,6 +946,104 @@ private partial def collectUngroupedBodyStarts (declarationBody : DeclarationBod
     let children := if kind == Lean.choiceKind then children[0]?.toArray else children
     children.foldl (init := starts) fun starts child =>
       collectUngroupedBodyStarts declarationBody source width child starts
+  | _ => starts
+
+/- Every `where` that opens a `whereStructInst`, and whether it fits its signature's row.
+
+`Command.whereStructInst` (`Command.lean:173`) is `ppIndent ppSpace >> "where" >> structInstFields
+(sepByIndent …)`, so the only break in front of `where` is that `ppSpace`'s soft `line` -- and the
+group holding it runs on into `sepByIndent`'s `align(true)`, the same phantom-`column - indent`
+measurement `collectIndentedSequenceStarts` documents for `:= by`. The group shatters at roughly
+half the margin whatever the signature costs: measured at `line-width` 100 a signature of 49
+columns stayed joined and 50 broke, and at 60 the pair was 32 and 33. A rule that fires at half a
+margin it was handed is not answering a width question, so this boundary replaces that
+measurement rather than repairing the align -- which `collectIndentedSequenceStarts` already says
+cannot be repaired from inside the document.
+
+`where` is the second site of that defect and takes the same repair `by` did, one column count
+wider: six columns for `" where"` against `by`'s three. The fields are unaffected either way --
+they are newline-separated and `collectStructInstFieldAnchors` re-bases their rows to the first
+field's column, the `where` row included.
+
+The fit is asked of the whole header flattened -- the declaration's own first terminal through
+the `where`, every whitespace run collapsed to one space -- and not of the row the `where` would
+actually land on, which is the tighter question and the wrong one. A row-shaped measure is not
+invariant under its own output: `instance [Inhabited α] : Inhabited (α × α) where` at
+`line-width` 20 declines, the renderer breaks the signature, and the row carrying the last token
+is then `      (α × α)`, which fits -- so the second pass joins and `ValidationGate.idempotence`
+refuses the file. A flattened header holds the same token sequence however those tokens are
+currently broken, so the answer cannot move between passes.
+
+`declModifiers` is what the header starts *after*, not at: a doc comment is syntax rather than
+trivia, so a header taken from the command's first terminal carries the whole docstring into the
+measure and every documented declaration declines. Attributes sit in the same node and are
+skipped with it -- they occupy their own row ahead of the keyword, so they are not on the row
+being measured either.
+
+The cost is that a header overflowing the margin declines even where its final row had room. That
+is the safe direction: declining forces nothing and leaves the boundary to the native document.
+Declarations start at column zero, so the header carries no indent to add back. -/
+private def whereJoinFits (source : String) (width : Nat) (headerStart whereStart : Nat) : Bool :=
+  (flattenWhitespace (slice source ⟨headerStart, whereStart⟩)).length + " where".length <= width
+
+/- Each `whereStructInst`'s `where`, paired with the first field that has to stop the measurement.
+
+Joining `where` removes the soft `line` that used to terminate its group's fit measurement, so on
+its own the join only moves the shatter one boundary out: the signature then breaks at the `:`
+instead, however short it is. That is the knock-on `collectIndentedSequenceStarts` records for
+`:= by`, and it takes the same answer -- a real `text "\n"` at the sequence's first item, which
+spells the bytes the `align` would have (its render case is `pushNewline indent` whenever the
+column is already past the indent, which a `where ` ahead of it guarantees) and ends the
+measurement where the row really ends.
+
+The pairing fires exactly when the first field is going to open its own row, which is when the
+source opens it there and no written `;` drags it back up. Both halves are load-bearing. What the
+retired `whereForm` carve-out got wrong was firing on `;`-separated fields: there the first field
+belongs on the `where` row -- the anchor puts it there and the later `;` breaks to its column --
+and a `.hard` drives it off, which is `Offside.lean`'s `semiOps`, whose source opens the field's
+row and whose output still hugs it. The source half is what `hasNewlineSeparator` cannot answer:
+a one-field list has no separator to read, and without the boundary a `where` joined onto a long
+signature pulls its only field up with it or breaks the signature at the `:` instead. -/
+private partial def collectWhereStarts (source : String) (width : Nat) (stx : Lean.Syntax)
+    (headerStart : Nat := 0) (starts : Array (Nat × Option Nat × Bool) := #[]) :
+    Array (Nat × Option Nat × Bool) :=
+  match stx with
+  | .node _ kind children =>
+    -- `declaration` is `declModifiers >> (definition <|> theorem <|> …)`, so the header the fit
+    -- is measured from opens at the first terminal past the modifiers. A `whereStructInst` under
+    -- no declaration at all keeps whatever header its ancestors set.
+    let headerStart :=
+      if kind == ``Lean.Parser.Command.declaration then
+        match
+          children.findSome? fun child =>
+            if child.isOfKind ``Lean.Parser.Command.declModifiers then none
+            else (selectedLeafRanges child)[0]?.map (·.start) with
+        | some start => start
+        | none => headerStart
+      else headerStart
+    let starts :=
+      if kind == ``Lean.Parser.Command.whereStructInst then
+        -- `ppSpace` pushes no syntax, so the node's first terminal is the `where` atom. Checked
+        -- rather than assumed: this walk is the fifth to take a node's head, and the entry-point
+        -- gate covers `choice` alternatives, not what a head spells.
+        match (selectedLeafRanges stx)[0]? with
+        | some range =>
+          if slice source range != "where" then starts
+          else
+            let fieldStart? := do
+              let fields ← children.find? (·.isOfKind ``Lean.Parser.Term.structInstFields)
+              let list ← fields.getArgs.find? (·.isOfKind Lean.nullKind)
+              guard !(hasWrittenSeparator list)
+              let first ← (selectedLeafRanges list)[0]?
+              guard (opensSourceRow source first.start)
+              some first.start
+            starts.push
+              (range.start, fieldStart?, whereJoinFits source width headerStart range.start)
+        | none => starts
+      else starts
+    let children := if kind == Lean.choiceKind then children[0]?.toArray else children
+    children.foldl (init := starts) fun starts child =>
+      collectWhereStarts source width child headerStart starts
   | _ => starts
 
 /- Where a command nested inside another command begins.
@@ -2034,9 +2150,6 @@ private partial def collectOffsideConstraints (indent : Nat) (stx : Lean.Syntax)
 private def commentText (value : String) : Bool :=
   let trimmed := value.trimAscii.copy
   trimmed.startsWith "--" || trimmed.startsWith "/-"
-
-private def layoutWhitespace (char : Char) : Bool :=
-  char == ' ' || char == '\t' || char == '\n' || char == '\r'
 
 private def splitPadding (value : String) : String × String :=
   let chars := value.toList
@@ -4069,6 +4182,8 @@ private def CommandPlan.collect (source : String) (ownership : CommentOwnership)
   --
   --   producer                                   layout             class / record
   --   collectUngroupedBodyStarts/ReturnTermStarts .flat             compatibility join
+  --   collectWhereStarts                          .flat/.hard        the same phantom measurement
+  --     at `whereStructInst`'s `ppSpace`, answered by `declaration-where` instead
   --   collectIndentedSequenceStarts               .hard              compatibility break
   --     (break decisions, kept at LAY-INDENTED-SEQUENCES: the phantom-`column - indent` fit
   --     measurement the anchor does not answer)
@@ -4093,8 +4208,21 @@ private def CommandPlan.collect (source : String) (ownership : CommentOwnership)
   --   collectStructInstCloseBraces                .hard/.explodedClose closing-brace row decision
   let boundaryStarts : Array (Nat × BoundaryLayout) :=
     (collectUngroupedBodyStarts format.declarationBody source format.lineWidth stripped
-                                            (collectReturnTermStarts stripped)).map
-                                        (·, BoundaryLayout.flat) ++
+                                              (collectReturnTermStarts stripped)).map
+                                          (·, BoundaryLayout.flat) ++
+                                        (match format.declarationWhere with
+                                        | .sameLine =>
+                                          (collectWhereStarts source format.lineWidth
+                                                stripped).flatMap
+                                            fun (whereStart, fieldStart?, _) =>
+                                            match fieldStart? with
+                                            | none => #[]
+                                            | some fieldStart =>
+                                              #[(whereStart, BoundaryLayout.flat),
+                                                (fieldStart, BoundaryLayout.hard)]
+                                        | .nextLine =>
+                                          (collectWhereStarts source format.lineWidth stripped).map
+                                            (·.1, BoundaryLayout.hard)) ++
                                       (collectIndentedSequenceStarts source stripped).map
                                         (·, BoundaryLayout.hard) ++
                                     (collectCdotStarts stripped).map (·, BoundaryLayout.flat) ++

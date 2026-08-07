@@ -8,8 +8,8 @@
 The production tree is a native `lake init` project on Lean's private-by-default module system. Every compiled
 production, entry-point, test, and fixture source opens with `module` as its first token — a comment block may precede
 it; only `lakefile.lean` is exempt. The product has one private intent-to-report operation, an atomic aggregate
-semantic-result cache, preview/fix modes, and a language server. A compiler plugin writes a silent formatter record
-into the successful module `.olean`; a Lake module facet extracts it into a compact content-addressed sidecar. The
+semantic-result cache, preview/fix modes, and a language server. A compiler plugin writes a silent formatter record into
+the successful module `.olean`; a Lake module facet extracts it into a compact content-addressed sidecar. The
 application reads that facet through one private no-build Lake operation, and only when a selected rule needs syntax.
 
 Do not restore the archived Rust workspace, worker protocol, `libleanshared` boundary, or seven-crate split, or the
@@ -93,13 +93,12 @@ from code or tests is gone — when you cannot find why something is the way it 
 ### What the commands do
 
 - `check` and `format`'s previews never write source. `format` and `check --fix` publish only a complete, conflict-free
-  result validated under the exact module setup, after a stale-source check: `format` publishes the canonical layout
-  (no rule fix), `check --fix` publishes admitted rule fixes at original coordinates. `format --check` and
-  `format --diff` are the non-writing previews.
-  `format --no-validate` is the one authorized exception: over an admitted syntax frontier it publishes on the
-  structural candidate reparse alone, skipping the second render and `Validator.admit`; the reparse still runs and
-  still refuses, the bypass is recorded per file, a bypassed analysis is never cached, and every other mode and every
-  non-publishing `format` form rejects the flag.
+  result validated under the exact module setup, after a stale-source check: `format` publishes the canonical layout (no
+  rule fix), `check --fix` publishes admitted rule fixes at original coordinates. `format --check` and `format --diff`
+  are the non-writing previews. `format --no-validate` is the one authorized exception: over an admitted syntax frontier
+  it publishes on the structural candidate reparse alone, skipping the second render and `Validator.admit`; the reparse
+  still runs and still refuses, the bypass is recorded per file, a bypassed analysis is never cached, and every other
+  mode and every non-publishing `format` form rejects the flag.
 - Path errors name the caller's own argument, as `selected file does not exist: <arg>` does. New path-taking CLI surface
   — ranges, LSP URIs, integration entry points — pre-checks and does the same.
 - Rule selection is a projection over canonical results. It must not enter execution strategy or result-cache identity.
@@ -156,8 +155,8 @@ from code or tests is gone — when you cannot find why something is the way it 
 - Stop a memory experiment, which measures footprint, at 8 GiB aggregate RSS, abnormal pressure, or 256 MiB new swap. A
   functional run, which asks whether the product works on a corpus, stops only on distress: free memory under 10%, or
   swap 2 GiB over its baseline. A report prints at the end, so an early kill loses the whole run.
-- Summed RSS over a worker tree is not footprint; every worker re-counts the same mmapped `.olean` pages. It read
-  8.46 GiB while the system sat 61% free. Compare runs with it, never gate on it.
+- Summed RSS over a worker tree is not footprint; every worker re-counts the same mmapped `.olean` pages. It read 8.46
+  GiB while the system sat 61% free. Compare runs with it, never gate on it.
 - Do not repeatedly run full mathlib. Use the frozen sample and named stress cases; save the full-corpus run for a late
   candidate.
 - Whole-project selection and named files are different workloads, minutes and gigabytes apart. Say which.

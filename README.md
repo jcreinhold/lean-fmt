@@ -37,12 +37,13 @@ lean-fmt format --diff  # preview formatting changes as a patch
 
 Each runs over the Lake project in the working directory; `--root PATH` points elsewhere, and named files narrow it.
 
-`check` and the `format` previews never write. `check --fix` and `format` publish a file atomically, and only after validating the whole
-result against the current source. `format --no-validate` is the one authorized exception: where the module's syntax
-frontier is admitted (built modules), it publishes on the candidate's structural reparse alone, skipping the second
-render and final admission — same bytes, narrower evidence. The reparse still runs and still refuses, the bypass is
-counted as `validation_bypassed` in the report, and a bypassed result is never stored in the cache, so a later default
-run always validates exactly. Every non-publishing form (`--check`, `--diff`, stdin, `check --fix`) rejects the flag.
+`check` and the `format` previews never write. `check --fix` and `format` publish a file atomically, and only after
+validating the whole result against the current source. `format --no-validate` is the one authorized exception: where
+the module's syntax frontier is admitted (built modules), it publishes on the candidate's structural reparse alone,
+skipping the second render and final admission — same bytes, narrower evidence. The reparse still runs and still
+refuses, the bypass is counted as `validation_bypassed` in the report, and a bypassed result is never stored in the
+cache, so a later default run always validates exactly. Every non-publishing form (`--check`, `--diff`, stdin,
+`check --fix`) rejects the flag.
 
 Exit 0 clean, 1 findings or files that failed to analyze, 2 infrastructure failure. `--json` prints one JSON object;
 `--output-format` also takes `concise|github|sarif|junit`, and `--statistics` writes totals to stderr. `--changed`,
@@ -112,7 +113,8 @@ Lean's own. Setup for VS Code, Neovim, and Emacs: `docs/editor-setup.md`.
 ## More
 
 - `docs/style.md` — the canonical style, including `format-ignore-next` suppression.
-- `docs/configuration.md` — config discovery, selection gates, streaming and ranges, memory and workers, cache internals.
+- `docs/configuration.md` — config discovery, selection gates, streaming and ranges, memory and workers, cache
+  internals.
 - `docs/adding-a-rule.md` — writing a lint rule.
 - `docs/toolchain-upgrade.md` — maintainer checklist for toolchain bumps.
 

@@ -144,8 +144,8 @@ lean-fmt: no changed Lean sources under .
 ```
 
 This matters because an empty file list means "the whole project" everywhere else in the CLI. Any wrapper that
-reimplements selection must preserve the distinction, or a no-op commit will lint — or with `check --fix`, rewrite — the entire
-tree.
+reimplements selection must preserve the distinction, or a no-op commit will lint — or with `check --fix`, rewrite — the
+entire tree.
 
 `--staged` is the same mechanism against the index rather than a revision, which is what a pre-commit hook wants.
 `--changed` compares against `HEAD` and adds untracked files.
@@ -176,8 +176,8 @@ esac
 `junit` suits any runner with a JUnit XML collector. `concise` (`path:line:col: CODE message`) suits one that scrapes
 logs. `github` emits workflow annotation commands and is meaningless elsewhere.
 
-Pair formats with modes. The four finding-shaped formats — `concise`, `github`, `sarif`, `junit` — are **rejected
-for `format --diff`** at parse time, with exit 2:
+Pair formats with modes. The four finding-shaped formats — `concise`, `github`, `sarif`, `junit` — are **rejected for
+`format --diff`** at parse time, with exit 2:
 
 ```
 --output-format sarif is not available for diff; diff reports a patch, not findings
@@ -234,9 +234,8 @@ strict job and a lenient job against the same warm cache.
 Per entry, the source's own bytes and its dependency closure are checked, so editing a file misses only that file's
 entry.
 
-An invalidated index is orphaned, not deleted; `lake exe lean-fmt clean` removes the whole `.lean-fmt-cache`
-directory and is idempotent. `--no-cache` neither reads nor writes it, which is what a job measuring cold performance
-wants.
+An invalidated index is orphaned, not deleted; `lake exe lean-fmt clean` removes the whole `.lean-fmt-cache` directory
+and is idempotent. `--no-cache` neither reads nor writes it, which is what a job measuring cold performance wants.
 
 ## Installing and upgrading
 
@@ -279,8 +278,8 @@ Expect three things to change:
    must not acquire new rules on upgrade.
 2. **A cold cache.** The binary changes, so every entry is orphaned. The first run after an upgrade pays full cost —
    expected, not a regression.
-3. **Nothing about your source.** `check` and the `format` previews never write. Only `format` and `check --fix` do,
-   and only when you run them.
+3. **Nothing about your source.** `check` and the `format` previews never write. Only `format` and `check --fix` do, and
+   only when you run them.
 
 **Toolchain bumps.** lean-fmt's `lean-toolchain` and the consumer's must match. Lean's ABI is not stable across
 releases, and the compiler plugin — if you use it — is a shared library loaded into your compiler. A mismatch is not a
@@ -304,18 +303,17 @@ The bump invalidates the cache wholesale, so no stale result survives it.
 
 ## Maintainer notes: intermittent failures
 
-This section is about lean-fmt's *own* CI, not a consumer's. Everything above is the consumer
-contract; what follows is how this repository treats a test that fails sometimes.
+This section is about lean-fmt's *own* CI, not a consumer's. Everything above is the consumer contract; what follows is
+how this repository treats a test that fails sometimes.
 
-**The zero-retry rule.** Re-running a failed job is legitimate only for a signature that is
-already filed in the ledger below and understood. A retry on an unfiled signature trades a bug
-report for a coin flip: the evidence is on a runner that no longer exists. Every failure digest
-is designed to be one cycle from a cause — heartbeats name the suite, indented followers carry
-the assertion's evidence, the cache suite's epoch forensics name the moved component. File the
+**The zero-retry rule.** Re-running a failed job is legitimate only for a signature that is already filed in the ledger
+below and understood. A retry on an unfiled signature trades a bug report for a coin flip: the evidence is on a runner
+that no longer exists. Every failure digest is designed to be one cycle from a cause — heartbeats name the suite,
+indented followers carry the assertion's evidence, the cache suite's epoch forensics name the moved component. File the
 signature with its run ID and digest *first*; retry second, if the signature says it is safe to.
 
-**The ledger.** Intermittent signatures, worst-first. A signature leaves the ledger by being
-root-caused and fixed, not by stopping recurring on its own.
+**The ledger.** Intermittent signatures, worst-first. A signature leaves the ledger by being root-caused and fixed, not
+by stopping recurring on its own.
 
 | signature | first seen | runs since | status |
 | --- | --- | --- | --- |
@@ -323,8 +321,7 @@ root-caused and fixed, not by stopping recurring on its own.
 | part 3/3 stalls after `layout` passes: `syntax` and `check` start, then ~18 min of silence until the 20-minute step timeout | CI runs 30702577635, 30704463051, 30724311657 | 3×, identical signature | **named by the watchdog on the third** — both suites wedged 1000+ s simultaneously behind *unbounded* child waits: `runProc` defaulted to no timeout, and syntax/check passed none, so any wedged `lean-fmt` child hung its suite forever. `runProc`/`expectExit` now kill children at a 10-minute default with the command in the error; the next wedge is a named suite failure, not a step timeout. Root cause of the child wedge itself is still open — the timeout names it when it recurs |
 | `incremental` OOM on constrained machines | CI run 30665759922 | resolved | **root-caused and fixed** — the peak was never the session: per-case RSS samples showed session edits flat while the suite's own in-process fresh-oracle one-shots stacked import environments (release lags on the runtime's finalizer thread), a 2.5–11 GB run-to-run coin flip at *any* thread count. Fix: the oracle runs in child processes (exit releases deterministically) and the fixture's `import Lean` became a targeted closure; peak is now a stable ~2.5 GB everywhere, the suite gates it with a 1.5× thread-ratio check against a `--peak-only` baseline child, and the 8 GiB stop stays as the kill. Back in the flake-hunt's slow list |
 
-**Environment-shaped failures.** Before blaming a test, check what the failure knew: the suite
-part steps stream memory and disk headroom (TELEM lines) every 15 seconds, and the last sample
-before a kill names the resource. The fixes that pattern produced — `--jobs 2`,
-`LEAN_NUM_THREADS=2` on CI, per-step timeouts, the search-path scrub in the test spawn layer —
-are load-bearing; remove any of them and the class comes back.
+**Environment-shaped failures.** Before blaming a test, check what the failure knew: the suite part steps stream memory
+and disk headroom (TELEM lines) every 15 seconds, and the last sample before a kill names the resource. The fixes that
+pattern produced — `--jobs 2`, `LEAN_NUM_THREADS=2` on CI, per-step timeouts, the search-path scrub in the test spawn
+layer — are load-bearing; remove any of them and the class comes back.

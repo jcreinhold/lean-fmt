@@ -127,12 +127,18 @@ private def testComments (root setup : System.FilePath) (application : String) :
 /-- `declaration-body`: the canonical `next-line` default breaks even a short body in both
 directions; `same-line` joins when the joined line fits `line-width` — source-flat and
 already-broken alike — and breaks exactly as the default when it does not. The bodies live in a
-scratch file so the two configurations render the same source through the full config plumbing. -/
+scratch file so the two configurations render the same source through the full config plumbing.
+
+The last two declarations pin the fit measure against the `:=` line's own indentation, one column
+either side of the margin. Their `:=` sits at column 4 on a continuation line, so a measure that
+drops the leading run rather than counting it reads both as four columns short: the 101-column
+`indentedJoinOverflow` measured 97 and joined, and the renderer bought the join back by breaking
+the signature it had already fitted. -/
 private def testDeclarationBody (root work setup : System.FilePath) (application : String) :
     IO Unit := do
   let fixture := work / "Bodies.lean"
   writeFile fixture
-      "module\n\ndef foo := 1\n\ndef bar :=\n  2\n\ndef baz := Nat.succ (Nat.succ (Nat.succ (Nat.succ (Nat.succ (Nat.succ (Nat.succ Nat.zero)))))) + 1111\n"
+      "module\n\ndef foo := 1\n\ndef bar :=\n  2\n\ndef baz := Nat.succ (Nat.succ (Nat.succ (Nat.succ (Nat.succ (Nat.succ (Nat.succ Nat.zero)))))) + 1111\n\ndef indentedJoinOverflow (firstArgument secondArgument thirdArgument fourthArgumentXY : Nat) :\n    Nat :=\n  firstArgument + secondArgument + thirdArgument + fourthArgumentXY + 1111111111111111111111\n\ndef indentedJoinExactFit (firstArgument secondArgument thirdArgument fourthArgumentXY : Nat) :\n    Nat :=\n  firstArgument + secondArgument + thirdArgument + fourthArgumentXY + 111111111111111111111\n"
   let canonicalFormat : LeanFmt.Internal.FormatConfig := { }
   let report ←
     analyzeExact root application setup fixture.toString "Bodies.lean"
@@ -149,6 +155,60 @@ private def testDeclarationBody (root work setup : System.FilePath) (application
   ensureContains joinedText "def bar := 2\n" "same-line did not join an already-broken body"
   ensureContains joinedText "def baz :=\n  Nat.succ"
       "same-line joined a body whose joined line overflows"
+  ensureContains joinedText
+      "    Nat :=\n  firstArgument + secondArgument + thirdArgument + \
+    fourthArgumentXY + 1111111111111111111111"
+      "same-line joined a body whose joined line overflows by the `:=` line's indentation"
+  ensureContains joinedText
+      "    Nat := firstArgument + secondArgument + thirdArgument + \
+    fourthArgumentXY + 111111111111111111111"
+      "same-line declined a joined line that fits the margin exactly"
+  for line in joinedText.splitOn "\n"do
+    ensure (line.length <= 100) s!"same-line put a row over the margin: {line}"
+
+/-- `declaration-where`: the default `same-line` keeps `where` on the signature row whenever the
+flattened signature plus `" where"` fits `line-width`, and `next-line` always gives it its own
+row. The fixture pins the measure's two edges at 100 and 101 columns, that a doc comment stays
+out of it, that a `;`-separated field list still hugs the `where` row, and that a lone field
+keeps the row the source gave it.
+
+Left to the native document, this boundary fires at roughly half the margin whatever the
+signature costs -- 49 columns joined and 50 broke at `line-width` 100, 32 and 33 at 60 -- because
+`whereStructInst`'s only break sits in a group that measures on through `sepByIndent`'s `align`.
+The scratch file renders one source under both configurations through the full config plumbing;
+`ValidationGate.idempotence` covers the second pass, which is what refuses a row-shaped fit
+measure. -/
+private def testDeclarationWhere (root work setup : System.FilePath) (application : String) :
+    IO Unit := do
+  let fixture := work / "Wheres.lean"
+  writeFile fixture
+      "module\n\nstructure Packet where\n  first : Nat\n  second : Nat\n\nstructure Single where\n  only : Nat\n\n/-- A doc comment is syntax, not trivia, and must stay out of the fit measure. -/\ndef documented (input : Nat) : Packet where\n  first := input\n  second := input\n\ndef whereJoinFitsExactly (inputXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX : Nat) : Packet where\n  first := 0\n  second := 0\n\ndef whereJoinOverflows (inputXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX : Nat) : Packet where\n  first := 0\n  second := 0\n\ndef semiSeparated (input : Nat) : Packet where\n  first := input; second := input\n\ndef singleField (input : Nat) : Single where\n  only := input\n"
+  let canonicalFormat : LeanFmt.Internal.FormatConfig := { }
+  let report ←
+    analyzeExact root application setup fixture.toString "Wheres.lean"
+        s!"4j{(Lean.toJson canonicalFormat).compress}"
+  let (_, text) ← canonical report "declaration-where default"
+  ensureContains text "def documented (input : Nat) : Packet where\n  first := input"
+      "the default let a doc comment push `where` off the signature row"
+  ensureContains text ": Packet where\n  first := 0\n  second := 0\n\ndef whereJoinOverflows"
+      "the default broke a `where` whose joined row fits the margin exactly"
+  ensureContains text ") : Packet\n    where\n  first := 0\n  second := 0\n\ndef semiSeparated"
+      "the default joined a `where` whose joined row is one column over the margin"
+  ensureContains text "def semiSeparated (input : Nat) : Packet where first := input;"
+      "the default drove a `;`-separated list's first field off the `where` row"
+  ensureContains text "def singleField (input : Nat) : Single where\n  only := input"
+      "the default pulled a lone field onto the `where` row"
+  for line in text.splitOn "\n"do
+    ensure (line.length <= 100) s!"the default put a row over the margin: {line}"
+  let nextLine : LeanFmt.Internal.FormatConfig := { declarationWhere := .nextLine }
+  let broken ←
+    analyzeExact root application setup fixture.toString "Wheres.lean"
+        s!"4j{(Lean.toJson nextLine).compress}"
+  let (_, brokenText) ← canonical broken "declaration-where next-line"
+  ensureContains brokenText "def documented (input : Nat) : Packet\n    where"
+      "next-line kept `where` on a signature row that had room"
+  ensureContains brokenText "def singleField (input : Nat) : Single\n    where"
+      "next-line kept `where` on a short signature's row"
 
 /-- `reflow-comments`: a standalone `--` block whose rows overflow the margin is repacked to fit
 when the flag is on, and keeps its bytes when it is off. Empty comment lines split a block into
@@ -233,6 +293,8 @@ public def main (args : List String) : IO UInt32 := do
           { name := "comments", run := DeclarationFormatter.testComments root setup application },
           { name := "declaration-body",
             run := DeclarationFormatter.testDeclarationBody root work setup application },
+          { name := "declaration-where",
+            run := DeclarationFormatter.testDeclarationWhere root work setup application },
           { name := "comment-reflow",
             run := DeclarationFormatter.testCommentReflow root work setup application }]
       runCases "declaration-formatter" cases args

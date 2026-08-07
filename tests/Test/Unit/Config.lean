@@ -380,6 +380,8 @@ extend-select = [\"FMT009\"]\n"
         "pinned-comments lost its default"
     ensure (defaults.fallback.format.declarationBody == .nextLine)
         "declaration-body lost its default"
+    ensure (defaults.fallback.format.declarationWhere == .sameLine)
+        "declaration-where lost its default"
     write ".lean-fmt.toml"
         "[format]\npinned-comments = [\"fmt: off\", \"shake: keep\"]\ndeclaration-body = \"same-line\"\n"
     let configured ← Discovery.run root none
@@ -387,6 +389,10 @@ extend-select = [\"FMT009\"]\n"
         "pinned-comments did not parse"
     ensure (configured.fallback.format.declarationBody == .sameLine)
         "declaration-body did not parse"
+    write ".lean-fmt.toml" "[format]\ndeclaration-where = \"next-line\"\n"
+    let configuredWhere ← Discovery.run root none
+    ensure (configuredWhere.fallback.format.declarationWhere == .nextLine)
+        "declaration-where did not parse"
     write ".lean-fmt.toml" "[format]\npinned-comments = []\n"
     let disabled ← Discovery.run root none
     ensure (disabled.fallback.format.pinnedComments.isEmpty)
@@ -438,6 +444,22 @@ extend-select = [\"FMT009\"]\n"
       catch _ =>
         pure true
     ensure badBody "an unknown declaration-body value was accepted"
+    write ".lean-fmt.toml" "declaration-where = \"next-line\"\n"
+    let misplacedWhere ←
+      try
+        discard <| Discovery.run root none;
+        pure false
+      catch _ =>
+        pure true
+    ensure misplacedWhere "declaration-where at the top level was accepted"
+    write ".lean-fmt.toml" "[format]\ndeclaration-where = \"hanging\"\n"
+    let badWhere ←
+      try
+        discard <| Discovery.run root none;
+        pure false
+      catch _ =>
+        pure true
+    ensure badWhere "an unknown declaration-where value was accepted"
     -- `magic-trailing-comma`: default `respect` holds without a config; `ignore` parses; a child
     -- inherits an unset key; misplaced at the top level and malformed are errors; and it moves
     -- the configuration identity like every `[format]` key.
@@ -532,6 +554,12 @@ extend-select = [\"FMT009\"]\n"
     ensure
         (identityBase.fallback.format.identityString != identityBody.fallback.format.identityString)
         "declaration-body did not change the configuration identity"
+    write ".lean-fmt.toml" "[format]\nline-width = 100\ndeclaration-where = \"next-line\"\n"
+    let identityWhere ← Discovery.run root none
+    ensure
+        (identityBase.fallback.format.identityString !=
+          identityWhere.fallback.format.identityString)
+        "declaration-where did not change the configuration identity"
     -- A `.gitignore` prunes, and a nearer file's negation wins over a farther file's exclusion.
     write ".lean-fmt.toml" "[format]\nline-width = 100\n"
     write ".gitignore" "build/\n*.tmp.lean\n"
@@ -577,6 +605,10 @@ extend-select = [\"FMT009\"]\n"
         (described.any fun (key, value, origin) =>
           key == "format.declaration-body" && value == "next-line" && origin == "default")
         "config introspection lost the declaration-body default"
+    ensure
+        (described.any fun (key, value, origin) =>
+          key == "format.declaration-where" && value == "same-line" && origin == "default")
+        "config introspection lost the declaration-where default"
   finally
     IO.FS.removeDirAll directory
 

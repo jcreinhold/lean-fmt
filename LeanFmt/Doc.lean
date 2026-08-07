@@ -441,8 +441,7 @@ private def appendNewline (state : RenderState) (indent : Nat) : RenderState :=
     column := indent
     outputBytes := state.outputBytes + value.utf8ByteSize }
 
-private instance : Std.Format.MonadPrettyFormat (StateM RenderState)
-    where
+private instance : Std.Format.MonadPrettyFormat (StateM RenderState) where
   pushOutput value :=
     modify fun state => { appendLiteral state value with nativeEvents := state.nativeEvents + 1 }
   pushNewline indent :=

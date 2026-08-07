@@ -53,6 +53,25 @@ instance : ToString DeclarationBody where
     | .nextLine => "next-line"
     | .sameLine => "same-line"
 
+/-- Where a `where`-form declaration's `where` goes relative to its signature
+(`declaration-where`).
+
+Separate from `declaration-body` because the two answer independent questions: mathlib's house
+style is the canonical `next-line` body with `where` on the signature row, which one key cannot
+spell. -/
+inductive DeclarationWhere where
+  /-- The default (`same-line`): `where` rides the signature row whenever the joined row fits
+  `line-width`, and starts its own line when it does not. -/
+  | sameLine
+  /-- `where` always begins its own line, whatever the signature's width. -/
+  | nextLine
+  deriving BEq, Lean.ToJson, Lean.FromJson
+
+instance : ToString DeclarationWhere where
+  toString
+    | .sameLine => "same-line"
+    | .nextLine => "next-line"
+
 /-- How a trailing `,` in a collection literal steers its layout (`magic-trailing-comma`). -/
 inductive MagicTrailingComma where
   /-- The canonical style (`respect`, default), ruff's and black's: a collection whose source
@@ -98,6 +117,8 @@ structure FormatConfig where private mk ::
   reflowComments : Bool := false
   /-- Declaration body layout (`declaration-body`), default `next-line`. -/
   declarationBody : DeclarationBody := .nextLine
+  /-- Declaration `where` layout (`declaration-where`), default `same-line`. -/
+  declarationWhere : DeclarationWhere := .sameLine
   /-- Whether a trailing `,` explodes a collection literal (`magic-trailing-comma`), default
   `respect`. -/
   magicTrailingComma : MagicTrailingComma := .respect
@@ -120,6 +141,7 @@ def FormatConfig.identityString (format : FormatConfig) : String :=
   let groups :=
     format.importGroups.foldl (init := "") fun acc grp => acc ++ s!"\n{grp.length}:{grp}"
   s!"line-width={format.lineWidth}{phrases}\ndeclaration-body={format.declarationBody}\n\
+    declaration-where={format.declarationWhere}\n\
     magic-trailing-comma={format.magicTrailingComma}\n\
     import-layout={format.importLayout}{groups}\nreflow-comments={format.reflowComments}"
 
@@ -338,6 +360,7 @@ private structure PartialConfig where
   pinnedComments? : Option (Array String) := none
   reflowComments? : Option Bool := none
   declarationBody? : Option DeclarationBody := none
+  declarationWhere? : Option DeclarationWhere := none
   magicTrailingComma? : Option MagicTrailingComma := none
   importLayout? : Option Imports.ImportLayout := none
   importGroups? : Option (Array String) := none
@@ -370,8 +393,7 @@ parent.
 Duplicates and order survive concatenation on purpose. `resolveAxis` folds selector specificity
 with `Nat.max`, so a repeated token is idempotent and neither duplicates nor order show up in the
 resolved plan — but `origins` needs every contributing file to answer `config show`. -/
-private def PartialConfig.compose (parent child : PartialConfig) : PartialConfig
-    where
+private def PartialConfig.compose (parent child : PartialConfig) : PartialConfig where
   extend? := none
   includePatterns? := orParent child.includePatterns? parent.includePatterns?
   excludePatterns? := orParent child.excludePatterns? parent.excludePatterns?
@@ -382,6 +404,7 @@ private def PartialConfig.compose (parent child : PartialConfig) : PartialConfig
   reflowComments? := orParent child.reflowComments? parent.reflowComments?
   pinnedComments? := orParent child.pinnedComments? parent.pinnedComments?
   declarationBody? := orParent child.declarationBody? parent.declarationBody?
+  declarationWhere? := orParent child.declarationWhere? parent.declarationWhere?
   magicTrailingComma? := orParent child.magicTrailingComma? parent.magicTrailingComma?
   importLayout? := orParent child.importLayout? parent.importLayout?
   importGroups? := orParent child.importGroups? parent.importGroups?
@@ -427,6 +450,7 @@ private def PartialConfig.resolve (config : PartialConfig) : Except String Forma
           pinnedComments := config.pinnedComments?.getD #["shake: keep"]
           reflowComments := config.reflowComments?.getD false
           declarationBody := config.declarationBody?.getD .nextLine
+          declarationWhere := config.declarationWhere?.getD .sameLine
           magicTrailingComma := config.magicTrailingComma?.getD .respect
           importLayout := config.importLayout?.getD .grouped
           importGroups := config.importGroups?.getD Imports.defaultImportGroups }
@@ -592,7 +616,7 @@ private def parseFile (anchor file : String) (fileMap : Lean.FileMap) (table : L
       -- These `[format]` keys are new, so they have no legacy spelling to protect: a top-level
       -- use is an error rather than a notice, so the keys never acquire an ambiguous section.
       | "line-width" | "pinned-comments" | "reflow-comments" | "declaration-body" |
-        "magic-trailing-comma" | "import-layout" | "import-groups" =>
+        "declaration-where" | "magic-trailing-comma" | "import-layout" | "import-groups" =>
         throw s!"configuration key '{key}' belongs in the [format] section"
       -- Same treatment as the `[format]` keys above: one spelling, one section, no ambiguity.
       | "closure" =>
@@ -636,6 +660,21 @@ private def parseFile (anchor file : String) (fileMap : Lean.FileMap) (table : L
       config :=
         { config with
           declarationBody? := some declarationBody, origins }
+    | "declaration-where" =>
+      let .string _ form := value | throw "configuration key 'declaration-where' expects a string"
+      let declarationWhere ←
+        match form with
+        | "same-line" =>
+          pure DeclarationWhere.sameLine
+        | "next-line" =>
+          pure DeclarationWhere.nextLine
+        | other =>
+          throw
+              s!"configuration key 'declaration-where' expects \"same-line\" or \
+          \"next-line\", got \"{other}\""
+      config :=
+        { config with
+          declarationWhere? := some declarationWhere, origins }
     | "magic-trailing-comma" =>
       let .string _ trailing := value
         | throw "configuration key 'magic-trailing-comma' expects a string"
@@ -868,6 +907,8 @@ def FormatterConfig.describe (config : FormatterConfig) : Array (String × Strin
       winner "format.reflow-comments"),
     ("format.declaration-body", toString config.format.declarationBody,
       winner "format.declaration-body"),
+    ("format.declaration-where", toString config.format.declarationWhere,
+      winner "format.declaration-where"),
     ("format.magic-trailing-comma", toString config.format.magicTrailingComma,
       winner "format.magic-trailing-comma"),
     ("lint.select", renderStrings config.selectedSelectors, winner "select"),

@@ -22,6 +22,7 @@ line-width = 100                     # 1..1000
 pinned-comments = ["shake: keep"]    # inline comments that never move and never split their line
 reflow-comments = false              # rewrap standalone `--` blocks whose rows overflow the margin
 declaration-body = "next-line"       # or "same-line"
+declaration-where = "same-line"      # or "next-line"
 magic-trailing-comma = "respect"     # or "ignore"
 import-layout = "grouped"            # or "canonical" (the organizer's header rewrite)
 import-groups = ["Lean", "Mathlib"]  # canonical layout: sub-block prefixes inside a bucket
@@ -52,19 +53,27 @@ moves it and never splits its line, even when the code alone overflows — a pin
 `-- shake: keep` must not dangle off an import it annotates. Setting the key replaces the default `["shake: keep"]`;
 `pinned-comments = []` disables pinning. Matching is by substring, so `-- shake: keep (reason)` matches `"shake: keep"`.
 
-`reflow-comments` opts into rewrapping prose, and is off by default. With it on, a standalone `--` comment block
-whose rows overflow the margin is repacked to fit: the words are preserved in order, the lines are not. Empty comment
-lines split a block into paragraphs that are packed independently; list items (`- `, `* `) keep their rows verbatim;
-trailing comments, doc comments, block comments, and pinned comments are never touched. A block that already fits
-keeps its bytes, so the flag does not churn comments that are already fine, and a block with under twenty columns of
-room keeps its bytes too -- confetti is worse than the overflow. The rewrap rides the block's final column, so a
-comment that fits at its source column is repacked when canonical layout indents its construct deeper.
-`--reflow-comments` and `--no-reflow-comments` override the key for one run, configuration files included.
+`reflow-comments` opts into rewrapping prose, and is off by default. With it on, a standalone `--` comment block whose
+rows overflow the margin is repacked to fit: the words are preserved in order, the lines are not. Empty comment lines
+split a block into paragraphs that are packed independently; list items (`- `, `* `) keep their rows verbatim; trailing
+comments, doc comments, block comments, and pinned comments are never touched. A block that already fits keeps its
+bytes, so the flag does not churn comments that are already fine, and a block with under twenty columns of room keeps
+its bytes too -- confetti is worse than the overflow. The rewrap rides the block's final column, so a comment that fits
+at its source column is repacked when canonical layout indents its construct deeper. `--reflow-comments` and
+`--no-reflow-comments` override the key for one run, configuration files included.
 
 `declaration-body` chooses where a declaration's body goes relative to `:=`. The default `"next-line"` is the canonical
 style Lean's own formatter produces: the body begins on its own line (`def foo :=` then `1`). `"same-line"` keeps the
 body on the `:=` line when the joined line fits `line-width`, joining already-broken bodies that fit, and breaks exactly
 like the default when it does not.
+
+`declaration-where` chooses where the `where` of a structure-instance declaration goes relative to its signature. The
+default `"same-line"` keeps it on the signature row -- `def foo : T where` -- whenever the flattened signature plus
+` where` fits `line-width`. `"next-line"` always starts it on its own row. The fit is measured on the whole signature
+flattened rather than on the row the `where` would land on: the tighter measure is not stable under its own output, so a
+file could format two different ways on two runs. A signature that overflows the margin therefore keeps whatever row the
+layout gives it under either setting. This key is separate from `declaration-body` because the two are independent --
+mathlib's style is the canonical next-line body with `where` on the signature row.
 
 `magic-trailing-comma` is ruff's and black's magic trailing comma, with ruff's spelling. The default `"respect"`: a
 collection literal -- `#[…]`, `[…]`, a tuple, `⟨…⟩`, or a structure instance -- whose source spells a trailing `,`
@@ -85,9 +94,9 @@ by re-elaboration before it is written. `"canonical"` moves lines across blank-l
 it is opt-in.
 
 The two commands share the header without fighting over it: `organize` owns order and bucket structure, and `format`
-preserves the blank lines between header rows (a run collapses to one) rather than forcing rows tight, so an
-organized file is format-stable. FMT005 reads the same setting, so `check` and `organize --check` never disagree
-about what "out of order" means.
+preserves the blank lines between header rows (a run collapses to one) rather than forcing rows tight, so an organized
+file is format-stable. FMT005 reads the same setting, so `check` and `organize --check` never disagree about what "out
+of order" means.
 
 What `[format]` does not offer: indent width, quote style, comment rewrapping, or any other knob that would require
 overriding the grammar authority wholesale. lean-fmt's layout comes from Lean's registered formatter; this section
@@ -171,15 +180,14 @@ successful-compilation evidence. For syntax-tier rules, the optional compiler pl
 in each integrated `.olean`; without it, the exact frontend runs and returns the same findings more slowly. The
 projection holds facts, never findings, so editing a rule cannot rebuild an integrating project.
 
-`compiler setup` prints integration identifiers and guidance; it does not rewrite your `lakefile.lean`.
-`compiler build` extracts every workspace module's projection in one Lake invocation, which is what makes the
-projection available to a later run. Plugin costs and Lake details: README §"Using lean-fmt in another project" and
-`docs/ci.md`.
+`compiler setup` prints integration identifiers and guidance; it does not rewrite your `lakefile.lean`. `compiler build`
+extracts every workspace module's projection in one Lake invocation, which is what makes the projection available to a
+later run. Plugin costs and Lake details: README §"Using lean-fmt in another project" and `docs/ci.md`.
 
 With the plugin integrated, `[cache] closure = "interface"` keys each closure member by the elaboration-visible
 interface its `leanFmtArtifact` sidecar records instead of its build artifacts, so a proof-only rebuild stops
-invalidating dependents. Members without a current sidecar — dependencies, which never build the facet, or a facet
-that lags its `.olean` — keep artifact-hash currency per member, so the mode degrades toward misses, never stale
-hits. Two documented gaps keep the default at `"artifacts"`: kernel `isDefEq` can unfold any definition, so a
-theorem's proof-term change is downstream-visible in pathological cases, and attribute changes to imported
-declarations live in environment extensions, outside the hash.
+invalidating dependents. Members without a current sidecar — dependencies, which never build the facet, or a facet that
+lags its `.olean` — keep artifact-hash currency per member, so the mode degrades toward misses, never stale hits. Two
+documented gaps keep the default at `"artifacts"`: kernel `isDefEq` can unfold any definition, so a theorem's proof-term
+change is downstream-visible in pathological cases, and attribute changes to imported declarations live in environment
+extensions, outside the hash.

@@ -20,6 +20,7 @@
         "pinned-comments": { "type": "array", "items": { "type": "string", "minLength": 1 } },
         "reflow-comments": { "type": "boolean" },
         "declaration-body": { "type": "string", "enum": ["next-line", "same-line"] },
+        "declaration-where": { "type": "string", "enum": ["same-line", "next-line"] },
         "import-layout": { "type": "string", "enum": ["grouped", "canonical"] },
         "import-groups": { "type": "array", "items": { "type": "string", "minLength": 1 } },
         "magic-trailing-comma": { "type": "string", "enum": ["respect", "ignore"] }

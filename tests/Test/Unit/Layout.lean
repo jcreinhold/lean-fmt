@@ -657,8 +657,7 @@ private structure OracleState where
   column : Nat := 0
   tagEvents : Nat := 0
 
-private instance : Std.Format.MonadPrettyFormat (StateM OracleState)
-    where
+private instance : Std.Format.MonadPrettyFormat (StateM OracleState) where
   pushOutput value :=
     modify fun state =>
       { state with
