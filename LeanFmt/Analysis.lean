@@ -178,7 +178,8 @@ private def ProcessedModule.liveCommands (module : ProcessedModule)
       collectLiveCommands first headerState (checkCancelled := checkCancelled)
 
 private def ProcessedModule.ofInitial (snapshot : Lean.Language.Lean.InitialSnapshot) :
-    ProcessedModule where
+    ProcessedModule
+    where
   headerStx := snapshot.stx
   headerMessages := { }
   tree := Lean.Language.toSnapshotTree snapshot

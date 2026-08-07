@@ -745,6 +745,48 @@ private def opensSourceRow (source : String) (start : Nat) : Bool :=
     (slice source ⟨0, start⟩).revFind? (· == '\n') |>.map (·.offset.byteIdx + 1) |>.getD 0
   (slice source ⟨lineStart, start⟩).trimAscii.copy.isEmpty
 
+/- LAY-ALIGN-COMPENSATION -- the three collectors below, and what to delete when the toolchain moves.
+
+`Std.Format.spaceUptoLine`'s `align` case (`Init/Data/Format/Basic.lean`) measures in *budget*
+coordinates -- `w = width - column`, `m = width - indent` -- while `be` renders in *column*
+coordinates, so the one case that has to reason about position asks the inverse question: it charges
+`column - indent` phantom columns and keeps measuring where the renderer would break. Every group
+that runs on into a `sepByIndent`'s `align(true)` therefore flattens as a function of the margin
+rather than of the row being laid out -- shattering at roughly half the margin whatever the content
+costs. That is the whole reason the collectors below force boundaries the document should have
+chosen for itself, and it is why none of them is a style rule.
+
+Filed as leanprover/lean4#14692 (the stranded space and the blank row) and #14715 (the measure),
+fixed together by leanprover/lean4#14693. This tree pins `leanprover/lean4:v4.33.0-rc2`; the fix
+lands in 4.34. After that bump the document answers correctly on its own, and a boundary forced here
+stops being conservative and starts over-breaking. So each of these is a *deletion* on the bump, not
+a re-tuning.
+
+The removal test, one clause at a time rather than one collector at a time:
+
+    lake test -- --suites declaration-formatter native-layout command-formatter term-formatter
+    lake lint
+
+A pass means the document now decides it, and the clause was the compensation. A failure means it
+was answering something the measure never entered, and it stays. Two clauses are known to be in the
+second group and must not be deleted with their collector:
+
+- `collectUngroupedBodyStarts`' `declaration-body = "same-line"` half. That is a user-configured
+  preference answered by `joinedBodyFits`, not a repair. Only the unconditional `:= by` join goes.
+- `collectIndentedSequenceStarts`' delimited clause, `!hasNewlineSeparator && delimiterIntervenes`.
+  It positions a written-separator list whose first item follows the opening delimiter, a column
+  question the fit measure never entered. Only the `ungrouped` clause is the compensation, and it
+  goes together with the `:= by` join that provoked it.
+
+`collectWhereStarts` is undecided and the test has to settle it, in two parts. Its `.flat` at the
+`where` is plainly the compensation, and `whereJoinFits` exists only to bound it -- but the bound is
+not itself compensation, because `where` genuinely cannot always be given a row (this suite's
+`unbreakableReturnRow`), so a corrected document still needs some form of it. Its `.hard` at the
+first field substitutes a real `text "\n"` for the `align` so the measurement stops at the row's
+real end; under the corrected measure the `align` reports the break itself, which would make the
+substitution redundant, but that has not been verified against this tree's corpus.
+
+`declaration-where = "next-line"` and `declaration-body` are preferences and outlive all of it. -/
 private partial def collectIndentedSequenceStarts (source : String) (stx : Lean.Syntax)
     (carrier? : Option Lean.Syntax := none) (starts : Array Nat := #[]) : Array Nat :=
   match stx with
@@ -948,7 +990,40 @@ private partial def collectUngroupedBodyStarts (declarationBody : DeclarationBod
       collectUngroupedBodyStarts declarationBody source width child starts
   | _ => starts
 
-/- Every `where` that opens a `whereStructInst`, and whether it fits its signature's row.
+/- Can this declaration's `where` be joined to its signature at all? Unlike the rest of this section
+the question is a safety valve, not a repair: a return type that fills its own continuation row
+leaves no columns for `" where"` under any break placement, so some form of this measure survives
+the upstream fix.
+
+The measure is the whole header flattened -- the declaration's own first terminal through the
+`where`, every whitespace run collapsed to one space -- and deliberately not the row the `where`
+would land on, which is the tighter question and the one that cannot be asked from here. A
+row-shaped measure is not invariant under its own output: `instance [Inhabited α] : Inhabited
+(α × α) where` at `line-width` 20 declines, the renderer breaks the signature, the row carrying the
+last token is then `      (α × α)`, which fits, so the second pass joins and
+`ValidationGate.idempotence` refuses the file. A flattened header holds the same token sequence
+however those tokens are currently broken, so its answer cannot move between passes.
+
+`declModifiers` is what the header starts *after*, not at: a doc comment is syntax rather than
+trivia, so a header taken from the command's first terminal carries the whole docstring into the
+measure and every documented declaration declines. Attributes sit in the same node and are skipped
+with it -- they occupy their own row ahead of the keyword, so they are not on the row being measured
+either.
+
+The cost is over-measurement, and it is real rather than theoretical: a header that overflows the
+margin declines even where its final row had room, so `ProcessedModule.ofInitial` in
+`LeanFmt/Analysis.lean` -- 103 columns flattened, 25 on the row the `where` would have joined --
+spends three rows (`… :` / `ProcessedModule` / `where`) where two would do. Measuring the return
+type instead buys that row back and was tried; it bounds the final row from *below*, so it also
+accepts a join that overflows, which is `declaration-formatter`'s `unbreakableReturnRow`. Between a
+spare row and a row over the margin, the margin is the contract and the row is a preference, so the
+over-measuring direction stays. Declining forces nothing -- it leaves the boundary to the native
+document. Declarations start at column zero, so the header carries no indent to add back. -/
+private def whereJoinFits (source : String) (width : Nat) (headerStart whereStart : Nat) : Bool :=
+  (flattenWhitespace (slice source ⟨headerStart, whereStart⟩)).length + " where".length <= width
+
+/- Each `whereStructInst`'s `where`, paired with the first field that has to stop the measurement,
+and whether `whereJoinFits` lets the two be joined.
 
 `Command.whereStructInst` (`Command.lean:173`) is `ppIndent ppSpace >> "where" >> structInstFields
 (sepByIndent …)`, so the only break in front of `where` is that `ppSpace`'s soft `line` -- and the
@@ -960,41 +1035,13 @@ margin it was handed is not answering a width question, so this boundary replace
 measurement rather than repairing the align -- which `collectIndentedSequenceStarts` already says
 cannot be repaired from inside the document.
 
-`where` is the second site of that defect and takes the same repair `by` did, one column count
-wider: six columns for `" where"` against `by`'s three. The fields are unaffected either way --
-they are newline-separated and `collectStructInstFieldAnchors` re-bases their rows to the first
-field's column, the `where` row included.
-
-The fit is asked of the whole header flattened -- the declaration's own first terminal through
-the `where`, every whitespace run collapsed to one space -- and not of the row the `where` would
-actually land on, which is the tighter question and the wrong one. A row-shaped measure is not
-invariant under its own output: `instance [Inhabited α] : Inhabited (α × α) where` at
-`line-width` 20 declines, the renderer breaks the signature, and the row carrying the last token
-is then `      (α × α)`, which fits -- so the second pass joins and `ValidationGate.idempotence`
-refuses the file. A flattened header holds the same token sequence however those tokens are
-currently broken, so the answer cannot move between passes.
-
-`declModifiers` is what the header starts *after*, not at: a doc comment is syntax rather than
-trivia, so a header taken from the command's first terminal carries the whole docstring into the
-measure and every documented declaration declines. Attributes sit in the same node and are
-skipped with it -- they occupy their own row ahead of the keyword, so they are not on the row
-being measured either.
-
-The cost is that a header overflowing the margin declines even where its final row had room. That
-is the safe direction: declining forces nothing and leaves the boundary to the native document.
-Declarations start at column zero, so the header carries no indent to add back. -/
-private def whereJoinFits (source : String) (width : Nat) (headerStart whereStart : Nat) : Bool :=
-  (flattenWhitespace (slice source ⟨headerStart, whereStart⟩)).length + " where".length <= width
-
-/- Each `whereStructInst`'s `where`, paired with the first field that has to stop the measurement.
-
-Joining `where` removes the soft `line` that used to terminate its group's fit measurement, so on
-its own the join only moves the shatter one boundary out: the signature then breaks at the `:`
-instead, however short it is. That is the knock-on `collectIndentedSequenceStarts` records for
-`:= by`, and it takes the same answer -- a real `text "\n"` at the sequence's first item, which
-spells the bytes the `align` would have (its render case is `pushNewline indent` whenever the
-column is already past the indent, which a `where ` ahead of it guarantees) and ends the
-measurement where the row really ends.
+Joining removes the soft `line` that used to terminate the group's fit measurement, so on its own
+the join only moves the shatter one boundary out: the signature then breaks at the `:` instead,
+however short it is. That is the knock-on `collectIndentedSequenceStarts` records for `:= by`, and
+it takes the same answer -- a real `text "\n"` at the sequence's first item, which spells the bytes
+the `align` would have (its render case is `pushNewline indent` whenever the column is already past
+the indent, which a `where ` ahead of it guarantees) and ends the measurement where the row really
+ends.
 
 The pairing fires exactly when the first field is going to open its own row, which is when the
 source opens it there and no written `;` drags it back up. Both halves are load-bearing. What the
@@ -1003,15 +1050,20 @@ belongs on the `where` row -- the anchor puts it there and the later `;` breaks 
 and a `.hard` drives it off, which is `Offside.lean`'s `semiOps`, whose source opens the field's
 row and whose output still hugs it. The source half is what `hasNewlineSeparator` cannot answer:
 a one-field list has no separator to read, and without the boundary a `where` joined onto a long
-signature pulls its only field up with it or breaks the signature at the `:` instead. -/
+signature pulls its only field up with it or breaks the signature at the `:` instead.
+
+The field's row is the same question whether or not the `where` joined, so the caller applies that
+half of the pairing under both answers. Beyond it the fields are untouched: they are
+newline-separated and `collectStructInstFieldAnchors` re-bases their rows to the first field's
+column, the `where` row included. -/
 private partial def collectWhereStarts (source : String) (width : Nat) (stx : Lean.Syntax)
     (headerStart : Nat := 0) (starts : Array (Nat × Option Nat × Bool) := #[]) :
     Array (Nat × Option Nat × Bool) :=
   match stx with
   | .node _ kind children =>
-    -- `declaration` is `declModifiers >> (definition <|> theorem <|> …)`, so the header the fit
-    -- is measured from opens at the first terminal past the modifiers. A `whereStructInst` under
-    -- no declaration at all keeps whatever header its ancestors set.
+    -- `declaration` is `declModifiers >> (definition <|> theorem <|> …)`, so the header the fit is
+    -- measured from opens at the first terminal past the modifiers. A `whereStructInst` under no
+    -- declaration at all keeps whatever header its ancestors set.
     let headerStart :=
       if kind == ``Lean.Parser.Command.declaration then
         match
@@ -4214,11 +4266,22 @@ private def CommandPlan.collect (source : String) (ownership : CommentOwnership)
                                         | .sameLine =>
                                           (collectWhereStarts source format.lineWidth
                                                 stripped).flatMap
-                                            fun (whereStart, fieldStart?, _) =>
-                                            match fieldStart? with
-                                            | none => #[]
-                                            | some fieldStart =>
-                                              #[(whereStart, BoundaryLayout.flat),
+                                            fun (whereStart, fieldStart?, fits) =>
+                                            -- A header that cannot carry `" where"` takes the
+                                            -- `next-line` answer at the `where`. Declining forces
+                                            -- nothing: the native document then shatters the
+                                            -- signature at its own `:`, and `where` gets the row
+                                            -- it needs. Whether the *field* opens its own row is a
+                                            -- different question, so it is answered the same way
+                                            -- either way -- otherwise a lone field rides up onto
+                                            -- the `where` row exactly when the signature is long.
+                                            match fieldStart?, fits with
+                                            | none, true => #[]
+                                            | none, false => #[(whereStart, BoundaryLayout.hard)]
+                                            | some fieldStart, _ =>
+                                              #[(whereStart,
+                                                  if fits then BoundaryLayout.flat
+                                                  else BoundaryLayout.hard),
                                                 (fieldStart, BoundaryLayout.hard)]
                                         | .nextLine =>
                                           (collectWhereStarts source format.lineWidth stripped).map

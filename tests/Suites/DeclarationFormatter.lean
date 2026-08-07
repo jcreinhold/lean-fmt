@@ -167,22 +167,31 @@ private def testDeclarationBody (root work setup : System.FilePath) (application
     ensure (line.length <= 100) s!"same-line put a row over the margin: {line}"
 
 /-- `declaration-where`: the default `same-line` keeps `where` on the signature row whenever the
-flattened signature plus `" where"` fits `line-width`, and `next-line` always gives it its own
-row. The fixture pins the measure's two edges at 100 and 101 columns, that a doc comment stays
-out of it, that a `;`-separated field list still hugs the `where` row, and that a lone field
-keeps the row the source gave it.
+flattened signature plus `" where"` fits `line-width`, and `next-line` always gives it its own row.
+The fixture pins the measure's two edges at 100 and 101 columns, that a doc comment stays out of it,
+that a `;`-separated field list still hugs the `where` row, that a lone field keeps the row the
+source gave it, and that a return type filling its own continuation row still declines.
 
-Left to the native document, this boundary fires at roughly half the margin whatever the
-signature costs -- 49 columns joined and 50 broke at `line-width` 100, 32 and 33 at 60 -- because
-`whereStructInst`'s only break sits in a group that measures on through `sepByIndent`'s `align`.
-The scratch file renders one source under both configurations through the full config plumbing;
-`ValidationGate.idempotence` covers the second pass, which is what refuses a row-shaped fit
-measure. -/
+Left to the native document, this boundary fires at roughly half the margin whatever the signature
+costs -- 49 columns joined and 50 broke at `line-width` 100, 32 and 33 at 60 -- because
+`whereStructInst`'s only break sits in a group that measures on through `sepByIndent`'s `align`. So
+the join is a repair (LAY-ALIGN-COMPENSATION), not a preference; the gate on it is not, because
+`where` cannot always be given a row at all.
+
+Two narrower measures were tried here and both are refused by cases below. A row-shaped one is not
+idempotent: `instance [Inhabited α] : Inhabited (α × α) where` at `line-width` 20 declines, the
+renderer breaks the signature, the row carrying the last token then fits, and the second pass joins
+-- `ValidationGate.idempotence` refuses that file, which is why this suite renders through the full
+config plumbing rather than once. Measuring the flattened *return type* is idempotent and buys back
+the row the header measure spends on an overflowing signature, but it bounds the final row from
+below rather than above: `unbreakableReturnRow` joins under it and renders 103 columns. The header
+measure over-measures in the one safe direction, so it stays, and `whereJoinOverflows` pins the
+column it costs. -/
 private def testDeclarationWhere (root work setup : System.FilePath) (application : String) :
     IO Unit := do
   let fixture := work / "Wheres.lean"
   writeFile fixture
-      "module\n\nstructure Packet where\n  first : Nat\n  second : Nat\n\nstructure Single where\n  only : Nat\n\n/-- A doc comment is syntax, not trivia, and must stay out of the fit measure. -/\ndef documented (input : Nat) : Packet where\n  first := input\n  second := input\n\ndef whereJoinFitsExactly (inputXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX : Nat) : Packet where\n  first := 0\n  second := 0\n\ndef whereJoinOverflows (inputXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX : Nat) : Packet where\n  first := 0\n  second := 0\n\ndef semiSeparated (input : Nat) : Packet where\n  first := input; second := input\n\ndef singleField (input : Nat) : Single where\n  only := input\n"
+      "module\n\nstructure Packet where\n  first : Nat\n  second : Nat\n\nstructure Single where\n  only : Nat\n\n/-- A doc comment is syntax, not trivia, and must stay out of the fit measure. -/\ndef documented (input : Nat) : Packet where\n  first := input\n  second := input\n\ndef whereJoinFitsExactly (inputXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX : Nat) : Packet where\n  first := 0\n  second := 0\n\ndef whereJoinOverflows (inputXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX : Nat) : Packet where\n  first := 0\n  second := 0\n\ndef semiSeparated (input : Nat) : Packet where\n  first := input; second := input\n\ndef singleField (input : Nat) : Single where\n  only := input\n\nnamespace NamespaceSegmentAlphaGivenAGenerousLongName\nnamespace NamespaceSegmentBetaGivenAGenerousLongNames\n\nstructure Inner where\n  solo : Nat\n\nend NamespaceSegmentBetaGivenAGenerousLongNames\nend NamespaceSegmentAlphaGivenAGenerousLongName\n\ndef unbreakableReturnRow :\n    NamespaceSegmentAlphaGivenAGenerousLongName.NamespaceSegmentBetaGivenAGenerousLongNames.Inner where\n  solo := 0\n"
   let canonicalFormat : LeanFmt.Internal.FormatConfig := { }
   let report ←
     analyzeExact root application setup fixture.toString "Wheres.lean"
@@ -198,6 +207,10 @@ private def testDeclarationWhere (root work setup : System.FilePath) (applicatio
       "the default drove a `;`-separated list's first field off the `where` row"
   ensureContains text "def singleField (input : Nat) : Single where\n  only := input"
       "the default pulled a lone field onto the `where` row"
+  -- 93 columns of return type: the row it lands on holds it (97) but cannot also hold `" where"`
+  -- (103). No break placement joins this one, which is what the header measure has to cover for.
+  ensureContains text "GenerousLongNames.Inner\n    where\n  solo := 0"
+      "the default joined a `where` onto a return type that fills its own row"
   for line in text.splitOn "\n"do
     ensure (line.length <= 100) s!"the default put a row over the margin: {line}"
   let nextLine : LeanFmt.Internal.FormatConfig := { declarationWhere := .nextLine }
