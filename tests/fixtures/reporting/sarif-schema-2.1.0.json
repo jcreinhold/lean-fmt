@@ -1723,14 +1723,7 @@
         "kind": {
           "description": "A value that categorizes results by evaluation state.",
           "default": "fail",
-          "enum": [
-            "notApplicable",
-            "pass",
-            "fail",
-            "review",
-            "open",
-            "informational"
-          ]
+          "enum": ["notApplicable", "pass", "fail", "review", "open", "informational"]
         },
         "level": {
           "description": "A value specifying the severity level of the result.",

@@ -20,7 +20,7 @@
         "pinned-comments": { "type": "array", "items": { "type": "string", "minLength": 1 } },
         "reflow-comments": { "type": "boolean" },
         "declaration-body": { "type": "string", "enum": ["next-line", "same-line"] },
-        "declaration-where": { "type": "string", "enum": ["same-line", "next-line"] },
+        "declaration-where": { "type": "string", "enum": ["next-line", "same-line"] },
         "import-layout": { "type": "string", "enum": ["grouped", "canonical"] },
         "import-groups": { "type": "array", "items": { "type": "string", "minLength": 1 } },
         "magic-trailing-comma": { "type": "string", "enum": ["respect", "ignore"] }
@@ -30,26 +30,73 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
-      "select": { "type": "array", "items": { "$ref": "#/$defs/selector" } },
-      "extend-select": { "type": "array", "items": { "$ref": "#/$defs/selector" } },
-      "ignore": { "type": "array", "items": { "$ref": "#/$defs/selector" } },
-      "fixable": { "type": "array", "items": { "$ref": "#/$defs/selector" } },
-      "unfixable": { "type": "array", "items": { "$ref": "#/$defs/selector" } },
-      "extend-fixable": { "type": "array", "items": { "$ref": "#/$defs/selector" } },
-      "extend-safe-fixes": { "type": "array", "items": { "$ref": "#/$defs/selector" } },
-      "extend-unsafe-fixes": { "type": "array", "items": { "$ref": "#/$defs/selector" } },
-      "per-file-ignores": { "type": "object", "additionalProperties": { "type": "array", "items": { "$ref": "#/$defs/selector" } } }
+        "select": { "type": "array", "items": { "$ref": "#/$defs/selector" } },
+        "extend-select": { "type": "array", "items": { "$ref": "#/$defs/selector" } },
+        "ignore": { "type": "array", "items": { "$ref": "#/$defs/selector" } },
+        "fixable": { "type": "array", "items": { "$ref": "#/$defs/selector" } },
+        "unfixable": { "type": "array", "items": { "$ref": "#/$defs/selector" } },
+        "extend-fixable": { "type": "array", "items": { "$ref": "#/$defs/selector" } },
+        "extend-safe-fixes": { "type": "array", "items": { "$ref": "#/$defs/selector" } },
+        "extend-unsafe-fixes": { "type": "array", "items": { "$ref": "#/$defs/selector" } },
+        "per-file-ignores": {
+          "type": "object",
+          "additionalProperties": { "type": "array", "items": { "$ref": "#/$defs/selector" } }
+        }
       }
     },
-    "select": { "type": "array", "items": { "$ref": "#/$defs/selector" }, "deprecated": true, "description": "moved to [lint]; still accepted, see $defs/migration" },
-    "extend-select": { "type": "array", "items": { "$ref": "#/$defs/selector" }, "deprecated": true, "description": "moved to [lint]; still accepted, see $defs/migration" },
-    "ignore": { "type": "array", "items": { "$ref": "#/$defs/selector" }, "deprecated": true, "description": "moved to [lint]; still accepted, see $defs/migration" },
-    "fixable": { "type": "array", "items": { "$ref": "#/$defs/selector" }, "deprecated": true, "description": "moved to [lint]; still accepted, see $defs/migration" },
-    "unfixable": { "type": "array", "items": { "$ref": "#/$defs/selector" }, "deprecated": true, "description": "moved to [lint]; still accepted, see $defs/migration" },
-    "extend-fixable": { "type": "array", "items": { "$ref": "#/$defs/selector" }, "deprecated": true, "description": "moved to [lint]; still accepted, see $defs/migration" },
-    "extend-safe-fixes": { "type": "array", "items": { "$ref": "#/$defs/selector" }, "deprecated": true, "description": "moved to [lint]; still accepted, see $defs/migration" },
-    "extend-unsafe-fixes": { "type": "array", "items": { "$ref": "#/$defs/selector" }, "deprecated": true, "description": "moved to [lint]; still accepted, see $defs/migration" },
-    "per-file-ignores": { "type": "object", "additionalProperties": { "type": "array", "items": { "$ref": "#/$defs/selector" } }, "deprecated": true }
+    "select": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/selector" },
+      "deprecated": true,
+      "description": "moved to [lint]; still accepted, see $defs/migration"
+    },
+    "extend-select": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/selector" },
+      "deprecated": true,
+      "description": "moved to [lint]; still accepted, see $defs/migration"
+    },
+    "ignore": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/selector" },
+      "deprecated": true,
+      "description": "moved to [lint]; still accepted, see $defs/migration"
+    },
+    "fixable": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/selector" },
+      "deprecated": true,
+      "description": "moved to [lint]; still accepted, see $defs/migration"
+    },
+    "unfixable": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/selector" },
+      "deprecated": true,
+      "description": "moved to [lint]; still accepted, see $defs/migration"
+    },
+    "extend-fixable": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/selector" },
+      "deprecated": true,
+      "description": "moved to [lint]; still accepted, see $defs/migration"
+    },
+    "extend-safe-fixes": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/selector" },
+      "deprecated": true,
+      "description": "moved to [lint]; still accepted, see $defs/migration"
+    },
+    "extend-unsafe-fixes": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/selector" },
+      "deprecated": true,
+      "description": "moved to [lint]; still accepted, see $defs/migration"
+    },
+    "per-file-ignores": {
+      "type": "object",
+      "additionalProperties": { "type": "array", "items": { "$ref": "#/$defs/selector" } },
+      "deprecated": true
+    }
   },
   "$defs": {
     "migration": {
@@ -58,32 +105,32 @@
     "selector": {
       "description": "a live rule code, a category, a reserved code, or the words all/default",
       "enum": [
-      "all",
-      "default",
-      "debug",
-      "deprecation",
-      "docs",
-      "imports",
-      "naming",
-      "redundancy",
-      "security",
-      "structure",
-      "unused",
-      "FMT001",
-      "FMT002",
-      "FMT003",
-      "FMT004",
-      "FMT005",
-      "FMT006",
-      "FMT007",
-      "FMT008",
-      "FMT009",
-      "FMT010",
-      "FMT011",
-      "FMT012",
-      "FMT013",
-      "FMT014",
-      "FMT015"
+        "all",
+        "default",
+        "debug",
+        "deprecation",
+        "docs",
+        "imports",
+        "naming",
+        "redundancy",
+        "security",
+        "structure",
+        "unused",
+        "FMT001",
+        "FMT002",
+        "FMT003",
+        "FMT004",
+        "FMT005",
+        "FMT006",
+        "FMT007",
+        "FMT008",
+        "FMT009",
+        "FMT010",
+        "FMT011",
+        "FMT012",
+        "FMT013",
+        "FMT014",
+        "FMT015"
       ]
     }
   }
