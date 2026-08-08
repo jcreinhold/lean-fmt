@@ -66,8 +66,9 @@ private def testMtimeGranularity (ctx : Ctx) : IO Unit := do
       resolvedAt := some gapMs.toUInt32
   match resolvedAt with
   | some gapMs =>
-    -- Printed on success too: the number is the runner's mtime granularity, and the next machine
-    -- that fails this case is diagnosed by comparing against the machines that passed it.
+    -- The number is this machine's mtime granularity. It goes into the suite's captured output,
+    -- which the runner surfaces when a suite fails and `suite-watch` prints at any time — so the
+    -- machine that fails this case reports what it measured rather than only that it lost.
     IO.println s!"     mtime distinguished a same-size rewrite {gapMs} ms apart"
   | none =>
     ensure false
