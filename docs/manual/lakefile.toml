@@ -1,0 +1,19 @@
+# The Verso documentation package. It is deliberately separate from the lean-fmt package: cache
+# identity folds the ordered Lake environment, so a dependency in the root lakefile would invalidate
+# every .lean-fmt-cache entry whenever its pin moved. See .claude/skills/verso-docs/SKILL.md.
+#
+# The verso rev must equal lean-toolchain's version. scripts/check-pins.sh enforces that.
+name = "lean-fmt-manual"
+defaultTargets = ["Manual", "docs"]
+
+[[require]]
+name = "verso"
+git = "https://github.com/leanprover/verso"
+rev = "v4.33.0-rc2"
+
+[[lean_lib]]
+name = "Manual"
+
+[[lean_exe]]
+name = "docs"
+root = "Main"

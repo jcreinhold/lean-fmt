@@ -14,8 +14,8 @@ consuming project a working example to copy. `leanprover/lean-action` probes `la
 runs `lake lint` when it succeeds, so this is also the CI integration.
 
 Both driver names need guillemets: `lean-fmt` is not a legal Lean identifier and Lake resolves a
-driver by `String.toName`, so the bare spelling does not find the executable. `tests/Suites/Downstream.lean`
-§5 pins the consuming form, which needs them in the package half too. -/
+driver by `String.toName`, so the bare spelling does not find the executable. The downstream suite's
+`lint-driver` case pins the consuming form, which needs them in the package half too. -/
 package «lean-fmt» where
   version := v!"0.3.1"
   testDriver := "«test-suites»"

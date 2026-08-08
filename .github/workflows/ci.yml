@@ -12,9 +12,8 @@
 #
 # slow: the flake-hunt — the default set twice (a flake's signature is that it does not
 # survive repetition) plus the minutes-long stream, performance, downstream, ci,
-# lsp-acceptance, editor, and security-bench suites — weekly on a schedule and on manual
-# dispatch. incremental is the one registry suite excluded: it exhausts a 16 GB runner by
-# design, and docs/ci.md's ledger tracks its open Linux root-cause.
+# lsp-acceptance, editor, incremental, and security-bench suites — weekly on a schedule and on
+# manual dispatch. docs/flaky-tests.md tracks incremental's open Linux root-cause.
 
 name: CI
 
@@ -49,7 +48,7 @@ jobs:
         # OOMed runners was its in-process oracle stacking import environments, fixed with a
         # child-process oracle plus a targeted fixture import closure (peak ~2.5 GB at any
         # thread count, gated by the suite's own thread-ratio check). It runs in the
-        # flake-hunt's slow list; docs/ci.md's ledger has the arc.
+        # flake-hunt's slow list; docs/flaky-tests.md has the arc.
         part: [unit, "1/3", "2/3", "3/3"]
     steps:
       - uses: actions/checkout@v5
@@ -96,9 +95,10 @@ jobs:
     if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
     runs-on: ubuntu-latest
     # The weekly flake-hunt and the manual complete-set run. The default set runs twice: a
-    # flake's signature is that it does not survive repetition. incremental is the one suite
-    # excluded from --all here: it exhausts a 16 GB runner by design (8 GiB contract stop) and
-    # its Linux root-cause is still open — the ledger in docs/ci.md tracks it.
+    # flake's signature is that it does not survive repetition. The slow suites are then named
+    # explicitly rather than run through --all, so incremental — which exhausts a 16 GB runner
+    # by design, at the 8 GiB contract stop — is isolated in its own step with its own timeout.
+    # docs/flaky-tests.md tracks its open Linux root-cause.
     steps:
       - uses: actions/checkout@v5
       - uses: leanprover/lean-action@v1

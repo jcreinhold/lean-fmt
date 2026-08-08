@@ -1,0 +1,122 @@
+# Publish the Verso manual to GitHub Pages.
+#
+# The manual lives in its own Lake package under docs/manual, separate from lean-fmt's. That
+# separation is deliberate: lean-fmt's result-cache identity folds the ordered Lake environment, so
+# adding Verso to the root lakefile would invalidate every cache entry whenever Verso's pin moved.
+#
+# Verso emits relative URLs under a `<base href>` — `./` at the root, `./../` a level down — so the
+# site works unchanged at whatever subpath it lands on, with no base-URL configuration. It lands at
+# https://www.jcreinhold.com/lean-fmt/ rather than under github.io, because the account's user site
+# carries a custom domain and project pages inherit it. Nothing here depends on that: renaming the
+# repository or dropping the custom domain moves the site without needing an edit.
+#
+# The shape follows the template Verso ships as gh-setup/verso-literate-pages.yml, with two
+# departures, each noted where it appears: pull requests build the manual without deploying it, and
+# the pins step fails a toolchain bump that left the manual behind.
+#
+# One-time setup, which only a repository admin can do: Settings → Pages → Source → GitHub Actions.
+# Until that is set, deploy-pages fails with a message about Pages not being enabled.
+
+name: Pages
+
+on:
+  push:
+    branches: [main]
+  # Not in Verso's template. A pull request builds the manual and stops; the deploy job is gated
+  # below. Without this a broken example — Verso elaborates every one, so a snippet that stops
+  # compiling is a build failure — would only surface after merge, on the deploy path.
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    # Builds are per-ref and supersede themselves. Only the deploy job takes the `pages` group,
+    # which is what GitHub's one-deployment-at-a-time rule actually constrains; putting it here
+    # instead would make every pull-request build queue behind a deployment.
+    concurrency:
+      group: pages-build-${{ github.ref }}
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@v6
+
+      # Not in Verso's template. Verso's tags track Lean releases one for one, so the manual's
+      # toolchain, the verso rev, and the repository's toolchain are one decision recorded in three
+      # files. A bump that moves only the repository still builds — and documents a compiler the
+      # code no longer uses. This is the step that says so.
+      - name: the manual is pinned to the repository's toolchain
+        run: |
+          root=$(tr -d '[:space:]' < lean-toolchain)
+          docs=$(tr -d '[:space:]' < docs/manual/lean-toolchain)
+          rev=$(awk '/name = "verso"/ {f=1} f && /rev =/ {gsub(/.*rev = "|".*/, ""); print; exit}' \
+            docs/manual/lakefile.toml)
+          fail=
+          if [ "$root" != "$docs" ]; then
+            echo "docs/manual/lean-toolchain is '$docs'; the repository uses '$root'." >&2
+            echo "  fix: cp lean-toolchain docs/manual/lean-toolchain" >&2
+            fail=1
+          fi
+          if [ "$rev" != "${root#*:}" ]; then
+            echo "docs/manual/lakefile.toml pins verso at '$rev'; the toolchain wants '${root#*:}'." >&2
+            echo "  fix: set rev = \"${root#*:}\", then run lake update verso in docs/manual" >&2
+            fail=1
+          fi
+          [ -z "$fail" ] || exit 1
+
+      # lean-action installs elan, reads docs/manual/lean-toolchain, and caches docs/manual/.lake.
+      #
+      # Its build stays ON, unlike Verso's template, and that is the whole reason the cache works:
+      # lean-action saves the cache immediately after its own build step, before any step this
+      # workflow adds. With `build: false` the save would capture a .lake that never had Verso in
+      # it, and every deploy would rebuild Verso from scratch — about ten minutes, forever. `lake
+      # build` here builds the package's default targets, which is Verso and the manual, so the
+      # render below is left with an incremental no-op and the actual page generation.
+      #
+      # Test is off (the docs package has no tests). Lint is off because it has no lint driver:
+      # lean-fmt lints itself from the root package, and lean-fmt.toml excludes docs/**, so Verso
+      # sources are never formatter input.
+      - uses: leanprover/lean-action@v1
+        with:
+          lake-package-directory: docs/manual
+          build: "true"
+          test: "false"
+          lint: "false"
+
+      # Renders to docs/manual/_out/html-multi, per Main.lean's RenderConfig. Every code example in
+      # the manual is elaborated here, so this step failing means an example went stale.
+      - name: build the manual
+        run: lake exe docs
+        working-directory: docs/manual
+        timeout-minutes: 30
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs/manual/_out/html-multi
+
+  deploy:
+    # Pull requests build and stop. A fork's pull request cannot be granted pages:write anyway, so
+    # gating here is what keeps such a run from failing on a permission it was never going to have.
+    if: github.event_name != 'pull_request'
+    needs: build
+    runs-on: ubuntu-latest
+    # GitHub Pages accepts one deployment at a time. A run that arrives mid-deployment waits rather
+    # than cancelling: an interrupted deployment can leave the published site half-written.
+    concurrency:
+      group: pages
+      cancel-in-progress: false
+    permissions:
+      # pages:write publishes; id-token:write is the OIDC token the Pages deployment API takes
+      # instead of a long-lived secret. Job-level permissions replace the workflow-level block
+      # rather than adding to it, so contents:read is repeated here.
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

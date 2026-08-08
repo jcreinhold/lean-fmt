@@ -35,6 +35,14 @@ lake test -- --suites modes watch   # exactly these suites, slow or not
 lake lint            # the formatter on itself, under lean-fmt.toml
 ```
 
+`docs/manual` is a second Lake package, holding the Verso manual published to GitHub Pages by
+`.github/workflows/pages.yml`. None of the commands above touch it: it requires Verso, and the
+`lean-fmt` package requires nothing, because cache identity folds the ordered Lake environment and a
+dependency there would invalidate every entry whenever its pin moved. Build it with `lake exe docs`
+from that directory. Its `lean-toolchain` and its `verso` rev must equal the root `lean-toolchain`,
+and the Pages workflow fails when they do not — a bump that moves only the root leaves the manual
+documenting a compiler the code no longer uses.
+
 Suites are compiled Lean executables: `tests/Suites/<Name>.lean` builds as `suite-<name>`, and
 `tests/Test/Runner.lean`'s registry enumerates them with their lane. Read the registry, not a list in prose — an
 unregistered suite file fails the boundary suite's entry-point pin. `lake test -- --list` prints every suite with its

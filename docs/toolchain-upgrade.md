@@ -65,8 +65,12 @@ move, which is why this checklist exists.
      `docs/editor-setup.md`.
    Run them with `lake test -- --suites native-layout style lossless module-formatter compiler downstream lsp
    lsp-acceptance editor`.
-4. Run everything — `lake test -- --all` — plus `git diff --check`.
-5. If canonical bytes legitimately changed, the frozen mathlib evidence no longer describes this toolchain: re-freeze a
+4. Move the manual with you. `docs/manual` is a separate Lake package, and Verso's tags follow Lean releases one for
+   one, so set its `lean-toolchain` to the new value and its `verso` rev to the new version, then run `lake update
+   verso` and `lake exe docs` there. The Pages workflow fails when these disagree; left behind, the published manual
+   would document a compiler this repository no longer uses.
+5. Run everything — `lake test -- --all` — plus `git diff --check`.
+6. If canonical bytes legitimately changed, the frozen mathlib evidence no longer describes this toolchain: re-freeze a
    sample under the new one, and say in the commit message which upstream change moved which bytes.
 
 A bump that changes bytes without a named upstream cause is not done; it is an undiagnosed defect with a green suite.
