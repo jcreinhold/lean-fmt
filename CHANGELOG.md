@@ -8,6 +8,24 @@ this file; their notes are on the
 
 lean-fmt is pre-1.0. Breaking changes raise the minor version.
 
+## 0.4.1 — 2026-08-08
+
+Same formatter, same linter, same output as 0.4.0 — this release exists because 0.4.0's prebuilt
+binaries do not. Its release build failed on two of the four platforms, both times in lean-fmt's own
+test suite rather than in anything the tool does, so no tarballs were ever published. If you took
+0.4.0 as a Lake dependency, nothing here changes for you and you need not move. If you wanted the
+binary or the install script, use this version.
+
+### Fixed
+
+- The release build's macOS arm64 leg no longer hangs. A test fixture built to exhaust a small task
+  pool was itself compiled with a pool sized from the machine's core count, so on a three-core
+  runner it deadlocked before the test began.
+- The release build's Linux x86-64 leg no longer fails at random. A test asserted that two files
+  written microseconds apart carry different timestamps, which no filesystem promises; it now
+  measures how far apart two writes must be to be told apart, and only fails if that is further than
+  half a second.
+
 ## 0.4.0 — 2026-08-08
 
 ### Upgrading
