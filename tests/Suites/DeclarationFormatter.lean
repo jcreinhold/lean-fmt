@@ -242,14 +242,14 @@ private def testCommentReflow (root work setup : System.FilePath) (application :
     "/-- A doc comment whose bytes are syntax and must stay exact however long the line runs on. -/"
   writeFile fixture
       ("module\n\n" ++ doc ++
-                        "\ntheorem documented : 1 + 1 = 2 := rfl\n\nexample : 1 + 1 = 2 := by\n  " ++
-                      long1 ++
-                    "\n  --\n  " ++
-                  long2 ++
-                "\n  " ++
-              bullet ++
-            "\n  " ++
-          pinned ++
+        "\ntheorem documented : 1 + 1 = 2 := rfl\n\nexample : 1 + 1 = 2 := by\n  " ++
+        long1 ++
+        "\n  --\n  " ++
+        long2 ++
+        "\n  " ++
+        bullet ++
+        "\n  " ++
+        pinned ++
         "\n  have h : 1 + 1 = 2 := rfl -- trailing bytes stay\n  exact h\n")
   let ensureFits (width : Nat) (text : String) : IO Unit := do
     for line in text.splitOn "\n"do

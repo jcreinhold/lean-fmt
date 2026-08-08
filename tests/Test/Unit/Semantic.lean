@@ -110,7 +110,9 @@ private def testSemanticRules : IO Unit := do
       mkDiag "linter.unusedSectionVars" 7 8 "unused section variable `inst`",
       mkDiag "linter.constructorNameAsVariable" 9 10 "`true` resembles a constructor",
       mkDiag "linter.unownedByAnyRule" 2 3 "no rule surfaces this kind"]
-  let facts := Facts.semantic (SemanticFacts.of fixtureSourceText fixtureLosslessSource diagnostics)
+  let facts :=
+    Facts.semantic
+      (SemanticFacts.of fixtureSourceText fixtureLosslessSource defaultLineWidth diagnostics)
   let findings := runRulesOf ruleRegistry facts
   -- Each surfaced kind maps to exactly its code, preserving the compiler's own range/severity/message.
   let expect : Array (String × String × Nat × Nat) :=
@@ -142,10 +144,12 @@ private def testSemanticRules : IO Unit := do
   -- what makes the skip sound (it decided not to obtain these diagnostics), and it reads one registry.
   let semanticCodes := #["FMT012", "FMT013", "FMT014", "FMT015"]
   let onSyntax :=
-    runRulesOf ruleRegistry (.syntax (SyntaxFacts.of fixtureSourceText fixtureLosslessSource))
+    runRulesOf ruleRegistry
+      (.syntax (SyntaxFacts.of fixtureSourceText fixtureLosslessSource defaultLineWidth))
   ensure (onSyntax.all (fun f => !semanticCodes.contains f.code))
       "a semantic rule fired on syntax facts that never carried a diagnostic"
-  let onSource := runRulesOf ruleRegistry (.source (SourceFacts.of fixtureSourceText))
+  let onSource :=
+    runRulesOf ruleRegistry (.source (SourceFacts.of fixtureSourceText defaultLineWidth))
   ensure (onSource.all (fun f => !semanticCodes.contains f.code))
       "a semantic rule fired on source facts that never carried a diagnostic"
 
@@ -164,7 +168,9 @@ private def testOwnedDeprecationFix : IO Unit := do
   -- set of occurrences; return the single FMT012 finding (there is exactly one surfaced diagnostic).
   let fmt014 (occurrences : Array DeprecatedOccurrence) : IO Finding := do
     let facts :=
-      Facts.semantic (SemanticFacts.of fixtureSourceText fixtureLosslessSource #[diag] occurrences)
+      Facts.semantic
+        (SemanticFacts.of fixtureSourceText fixtureLosslessSource defaultLineWidth #[diag]
+          occurrences)
     match (runRulesOf ruleRegistry facts).filter (·.code == "FMT012") with
     | #[f] =>
       return f
@@ -241,11 +247,42 @@ private def testSemanticCaps : IO Unit := do
   ensure ((ruleRegistry.filter (·.info.needsOccurrences)).map (·.info.code) == #["FMT012"])
       "exactly FMT012 must declare needsOccurrences (a new owner needs its own capture + tests)"
 
+/-- Nothing a user reads names a private constructor.
+
+`ValidationGate` and `BoundaryLayout` are private, so `Repr` renders their mangled names --
+`_private.LeanFmt.Validator.0.LeanFmt.Internal.ValidationGate.formatter` is what a user got in
+place of an explanation when a file was refused. Both carry a `describe` now. This pins that every
+constructor has one, that none of them leaks a namespace, and that `internalFailure`'s envelope
+still tells the reader the three things they need whatever the technical clause says: the file was
+not touched, the defect is ours, and here is where to report it. -/
+private def testMessagesPlain : IO Unit := do
+  let plain (label described : String) : IO Unit := do
+    ensure (!described.isEmpty) s!"{label} has an empty description"
+    ensure ((described.splitOn "_private").length == 1)
+        s!"{label} leaks a private name: {described}"
+    ensure ((described.splitOn "LeanFmt").length == 1) s!"{label} leaks a namespace: {described}"
+  let gates : Array ValidationGate :=
+    #[.sourceMap, .header, .terminal, .structure, .tokens, .comments, .diagnostics, .formatter,
+      .idempotence]
+  for gate in gates do
+    plain "a validation gate" gate.describe
+  let layouts : Array Formatter.NativeLayout.BoundaryLayout :=
+    #[.flat, .hard, .elided, .dedented, .columned 4, .anchored 4, .explodedClose]
+  for layout in layouts do
+    plain "a boundary layout" layout.describe
+  let envelope : String := Application.internalFailure "SOME-TECHNICAL-CLAUSE"
+  for required in
+    #["left unchanged", "defect in lean-fmt", "https://github.com/jcreinhold/lean-fmt/issues",
+      "SOME-TECHNICAL-CLAUSE"]do
+    ensure ((envelope.splitOn required).length == 2)
+        s!"the internal-failure message dropped {repr required}: {envelope}"
+
 /-- The cases this module contributes to the unit runner, in run order. -/
 public def cases : Array Case :=
   #[{ name := "testSemanticArtifact", run := testSemanticArtifact },
     { name := "testSemanticRules", run := testSemanticRules },
     { name := "testOwnedDeprecationFix", run := testOwnedDeprecationFix },
-    { name := "testSemanticCaps", run := testSemanticCaps }]
+    { name := "testSemanticCaps", run := testSemanticCaps },
+    { name := "testMessagesPlain", run := testMessagesPlain }]
 
 end LeanFmt.Test.Unit.Semantic

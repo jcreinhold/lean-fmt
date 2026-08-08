@@ -773,7 +773,7 @@ def sliceRange (normalized rendered : String) (marks : Array Mark) (requested : 
             while
               stop < next.output.stop &&
                 (renderedBytes[stop]! == 0x20 || renderedBytes[stop]! == 0x09 ||
-                    renderedBytes[stop]! == 0x0a ||
+                  renderedBytes[stop]! == 0x0a ||
                   renderedBytes[stop]! == 0x0d) do
               stop := stop + 1
         return stop
@@ -794,9 +794,24 @@ def sliceRange (normalized rendered : String) (marks : Array Mark) (requested : 
           output := ⟨mark.output.start - output.start + shift, stop - output.start + shift⟩ }
     return some { text := before ++ body ++ after, requested, actual, marks := selected }
 
+/-- What a user is told when lean-fmt cannot finish a file through no fault of their code.
+
+Every branch that reaches this left the file untouched, so the message leads with that, says
+plainly whose defect it is, and gives the one action available. `technical` is the single
+implementation clause; it goes last and is labelled as report material, because it is written for
+whoever fixes the bug rather than for the person reading the terminal. Before this existed the
+whole message was that clause, including a mangled private constructor name. -/
+private def internalFailure (technical : String) : String :=
+  s!"lean-fmt hit a problem it could not work around, so this file was left unchanged. Your code \
+    is fine — this is a defect in lean-fmt, not in what you wrote. Please report it at \
+    https://github.com/jcreinhold/lean-fmt/issues and attach this file if you can. Include this \
+    line in the report: {technical}"
+
 private def canonicalAnalysis (snapshot : SourceSnapshot) (renderCanonical : Bool)
     (analysis : AnalysisEnvelope) : IO SemanticAnalysis := do
-  match SemanticAnalysis.ofArtifact snapshot.source analysis.artifact? analysis.diagnostics with
+  match
+    SemanticAnalysis.ofArtifact snapshot.source snapshot.config.format.lineWidth analysis.artifact?
+      analysis.diagnostics with
   | .ok semantic =>
     if semantic.result?.isNone then
       return semantic
@@ -807,22 +822,18 @@ private def canonicalAnalysis (snapshot : SourceSnapshot) (renderCanonical : Boo
         return semantic.withCanonical layout
       | none, some failure =>
         recordCount "path_validation_failure" 1
-        throw <|
-            IO.userError
-              s!"frontend-native formatting rejected {snapshot.relativePath} at {reprStr failure.gate}: {failure.detail}"
+        let clause := s!"the check on {failure.gate.describe} did not pass ({failure.detail})"
+        throw <| IO.userError (internalFailure clause)
       | _, _ =>
         recordCount "path_validation_failure" 1
-        throw <|
-            IO.userError
-              s!"frontend-native formatting produced no admitted layout for {snapshot.relativePath}; \
-            draft={analysis.formatDraft?.isSome} formatter-failure={analysis.formatFailure?.isSome}"
+        throw <| IO.userError (internalFailure "no layout was produced")
     return semantic
   | .error reason =>
     -- A file this projection cannot hold is one file's outcome, not the run's. Everything else
     -- here means the child and the source disagree, which is the run's problem.
     if reason.startsWith unrepresentablePrefix then
       return .broken #[reason]
-    throw <| IO.userError s!"invalid exact analysis for {snapshot.relativePath}: {reason}"
+    throw <| IO.userError (internalFailure reason)
 
 /-- Analyze one snapshot: build the exact envelope the plan demanded and project it, rendering canonical
 layout when `renderCanonical`.
@@ -927,7 +938,9 @@ private def availableAnalysis (plan : RulePlan) (renderCanonical applies : Bool)
     -- sigil without a valid directive, never under-fetches.
     let normalized := (LosslessSource.normalize snapshot.source).1
     recordCount "path_source_shortcut" 1
-    return some <| SemanticAnalysis.success normalized (runSourceRules normalized)
+    return some <|
+        SemanticAnalysis.success normalized
+          (runSourceRules normalized snapshot.config.format.lineWidth)
   else if renderCanonical then
     return none
   else if let some artifact := officialArtifact? then
@@ -1534,10 +1547,10 @@ private def summarize (modeString : String) (files : Array FileReport)
       (fun total file =>
         if
             file.status == "findings" || file.status == "would-format" ||
-                      file.status == "would-diff" ||
-                    file.status == "fixed" ||
-                  file.status == "formatted" ||
-                file.status == "would-organize" ||
+              file.status == "would-diff" ||
+              file.status == "fixed" ||
+              file.status == "formatted" ||
+              file.status == "would-organize" ||
               file.status == "organized" then
           total + 1
         else total)
@@ -2085,24 +2098,24 @@ private def markJson (mark : Mark) : Lean.Json :=
 def StreamReport.toJson (report : StreamReport) : Lean.Json :=
   Lean.Json.mkObj <|
     [("schema", Lean.Json.str "lean-fmt.stream.v1"), ("path", Lean.Json.str report.path),
-                ("status", Lean.Json.str report.status), ("changed", Lean.Json.bool report.changed),
-                ("findings", Lean.toJson report.findings),
-                ("diagnostics", Lean.toJson report.diagnostics)] ++
-              (match report.output with
-              -- The bytes go in the JSON too. Text mode puts them on stdout bare; a `--json` caller asked
-              -- for one structured document and must not have to run the command twice to get the result out
-              -- of it. Named `formatted` to match the file-target report's `FileReport.formatted`.
-              | some output => [("formatted", Lean.Json.str output)]
-              | none => []) ++
-            (match report.diff with
-            | some diff => [("diff", Lean.Json.str diff)]
-            | none => []) ++
-          (match report.requested? with
-          | some range => [("requestedRange", rangeJson range)]
-          | none => []) ++
-        (match report.actual? with
-        | some range => [("actualRange", rangeJson range)]
-        | none => []) ++
+        ("status", Lean.Json.str report.status), ("changed", Lean.Json.bool report.changed),
+        ("findings", Lean.toJson report.findings),
+        ("diagnostics", Lean.toJson report.diagnostics)] ++
+      (match report.output with
+      -- The bytes go in the JSON too. Text mode puts them on stdout bare; a `--json` caller asked
+      -- for one structured document and must not have to run the command twice to get the result out
+      -- of it. Named `formatted` to match the file-target report's `FileReport.formatted`.
+      | some output => [("formatted", Lean.Json.str output)]
+      | none => []) ++
+      (match report.diff with
+      | some diff => [("diff", Lean.Json.str diff)]
+      | none => []) ++
+      (match report.requested? with
+      | some range => [("requestedRange", rangeJson range)]
+      | none => []) ++
+      (match report.actual? with
+      | some range => [("actualRange", rangeJson range)]
+      | none => []) ++
       (if report.sourceMap.isEmpty then []
       else [("sourceMap", Lean.Json.arr (report.sourceMap.map markJson))])
 

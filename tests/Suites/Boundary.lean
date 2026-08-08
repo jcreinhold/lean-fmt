@@ -61,8 +61,8 @@ private def testNoTrackedArtifacts (root : System.FilePath) : IO Unit := do
     let forbidden :=
       components.any fun component =>
         component == "Cargo.toml" || component == "Cargo.lock" || component == "target" ||
-              component == ".lake" ||
-            component == ".lean-fmt-cache" ||
+          component == ".lake" ||
+          component == ".lean-fmt-cache" ||
           component.endsWith ".rs"
     ensure (!forbidden)
         s!"tracked Rust, cache, or build artifact crossed the native source boundary: {path}"
@@ -307,7 +307,7 @@ private def testVendoredProvenance (root : System.FilePath) : IO Unit := do
   let leanPrefix ← expectExit 0 "lean --print-prefix" "lean" #["--print-prefix"] (cwd? := some root)
   let upstreamPath :=
     (System.FilePath.mk leanPrefix.stdout.trimAscii.copy) / "src" / "lean" / "Init" / "Data" /
-        "Format" /
+      "Format" /
       "Basic.lean"
   let upstream ← IO.FS.readFile upstreamPath
   let toolchain := (← readRepoFile root "lean-toolchain").trimAscii

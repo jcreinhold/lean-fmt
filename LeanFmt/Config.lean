@@ -329,7 +329,7 @@ private def selectorsValid (selectors : Array String) : Except String Unit := do
   for selector in selectors do
     unless
       selector == "all" || selector == "default" || isCategory selector ||
-          allRuleInfos.any (·.code == selector) ||
+        allRuleInfos.any (·.code == selector) ||
         isReservedCode selector do
       throw s!"unknown rule selector: {selector}"
 
@@ -1037,8 +1037,8 @@ def FormatterConfig.rulePlan (config : FormatterConfig) (cli : CliSelection) :
   let fixableOwns := !cli.fixable.isEmpty
   let fixEnable :=
     (if fixableOwns then cli.fixable
-        else if config.fixableSelectors.isEmpty then #["all"] else config.fixableSelectors) ++
-        config.extendFixableSelectors ++
+      else if config.fixableSelectors.isEmpty then #["all"] else config.fixableSelectors) ++
+      config.extendFixableSelectors ++
       cli.extendFixable
   let fixDisable := (if fixableOwns then #[] else config.unfixableSelectors) ++ cli.unfixable
   let selectedInfos := allRuleInfos.filter (selected.contains ·.code)

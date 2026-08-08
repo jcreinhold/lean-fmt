@@ -65,7 +65,7 @@ private def testWidth20 (root setup : System.FilePath) (application : String) : 
   | [first, second] =>
     ensure
         ((text.splitOn "| 0, _ => alpha").length == 2 &&
-            (text.splitOn "| _, 1 => beta").length == 2 &&
+          (text.splitOn "| _, 1 => beta").length == 2 &&
           first < second)
         "width 20: match arms reordered"
   | _ =>

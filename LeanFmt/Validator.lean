@@ -34,6 +34,23 @@ inductive ValidationGate where
   | idempotence
   deriving Inhabited, BEq, Repr, Lean.ToJson, Lean.FromJson
 
+/-- What a gate checks, in the words someone using the formatter would use.
+
+A message that reaches a user must call this rather than `Repr`. Under the private-by-default
+module system `reprStr` on this type renders the mangled constructor name -- users were reading
+`_private.LeanFmt.Validator.0.LeanFmt.Internal.ValidationGate.formatter` -- which names an
+implementation detail they cannot act on and cannot look up. -/
+def ValidationGate.describe : ValidationGate → String
+  | .sourceMap => "source positions"
+  | .header => "the import header"
+  | .terminal => "the end of the file"
+  | .structure => "the code's structure"
+  | .tokens => "the tokens"
+  | .comments => "the comments"
+  | .diagnostics => "the compiler's messages"
+  | .formatter => "the layout"
+  | .idempotence => "formatting the result a second time"
+
 structure ValidationFailure where
   gate : ValidationGate
   detail : String

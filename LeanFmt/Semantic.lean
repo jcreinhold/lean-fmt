@@ -130,7 +130,7 @@ def SemanticAnalysis.validFor (analysis : SemanticAnalysis) (raw : String) : Boo
   | some result =>
     let normalized := (LosslessSource.normalize raw).1
     analysis.diagnostics.isEmpty && result.schema == semanticResultSchema &&
-        result.source == Digest.ofString normalized &&
+      result.source == Digest.ofString normalized &&
       result.sourceBytes == normalized.utf8ByteSize
 
 /- Project a compiler protocol response into the product result. The projection stays compiler
@@ -151,7 +151,7 @@ deciders disagreed, so there is now one.
 Every rejection carries its reason. A caller that swallowed them reported one
 `invalid exact analysis` for four unrelated causes, and diagnosing a real one on mathlib took a
 stack sample against a hung process. -/
-def SemanticAnalysis.ofArtifact (raw : String) (artifact? : Option ModuleArtifact)
+def SemanticAnalysis.ofArtifact (raw : String) (lineWidth : Nat) (artifact? : Option ModuleArtifact)
     (diagnostics : Array String := #[]) : Except String SemanticAnalysis :=
   match artifact? with
   | none =>
@@ -186,11 +186,11 @@ def SemanticAnalysis.ofArtifact (raw : String) (artifact? : Option ModuleArtifac
           match artifact.semantic with
           | some projection =>
             (Facts.semantic
-                (SemanticFacts.of normalized materialized.source projection.diagnostics
+                (SemanticFacts.of normalized materialized.source lineWidth projection.diagnostics
                   (projection.occurrences?.getD #[])),
               Tier.semantic, projection.caps)
           | none =>
-            (Facts.syntax (SyntaxFacts.of normalized materialized.source), Tier.syntax,
+            (Facts.syntax (SyntaxFacts.of normalized materialized.source lineWidth), Tier.syntax,
               ({ } : SemanticCaps))
         .ok
           (.success normalized (runRules facts) (tier := tier) (suppression :=
@@ -198,8 +198,9 @@ def SemanticAnalysis.ofArtifact (raw : String) (artifact? : Option ModuleArtifac
     else .error s!"the analysis carried both a module artifact and {diagnostics.size} diagnostic(s)"
 
 /-- `ofArtifact` without its reason, for callers that only decide whether an entry is usable. -/
-def SemanticAnalysis.ofArtifact? (raw : String) (artifact? : Option ModuleArtifact)
-    (diagnostics : Array String := #[]) : Option SemanticAnalysis :=
-  (SemanticAnalysis.ofArtifact raw artifact? diagnostics).toOption
+def SemanticAnalysis.ofArtifact? (raw : String) (lineWidth : Nat)
+    (artifact? : Option ModuleArtifact) (diagnostics : Array String := #[]) :
+    Option SemanticAnalysis :=
+  (SemanticAnalysis.ofArtifact raw lineWidth artifact? diagnostics).toOption
 
 end LeanFmt.Internal

@@ -32,6 +32,7 @@ import all LeanFmt.Imports
 import all LeanFmt.LanguageServer
 import all LeanFmt.Rules
 import all LeanFmt.Suppression
+import all Test.Unit.Fixtures
 import all Test.Unit.Layout
 
 import Lean.Data.Lsp
@@ -39,6 +40,7 @@ import Lake
 
 open LeanFmt LeanFmt.Internal
 open LeanFmt.Test.Unit.Layout
+open LeanFmt.Test.Unit.Fixtures
 
 namespace LeanFmt.Test.Unit.Tools
 
@@ -162,7 +164,7 @@ private def verifyOfficialFacet (root sourcePath : System.FilePath) : IO Unit :=
   let some artifact :=
     targetFacts.artifact? | throw <| IO.userError "registered official facet was unavailable or invalid"
   let some semantic :=
-    SemanticAnalysis.ofArtifact? target.source
+    SemanticAnalysis.ofArtifact? target.source defaultLineWidth
       (some
         artifact) | throw <| IO.userError "registered official facet did not produce a semantic result"
   let normalized := (LosslessSource.normalize target.source).1
@@ -176,8 +178,8 @@ private def verifyOfficialFacet (root sourcePath : System.FilePath) : IO Unit :=
   ensure
       (semantic ==
         SemanticAnalysis.success normalized
-          (runRules (.syntax (SyntaxFacts.of normalized materialized.source))) (tier := .syntax)
-          (suppression := Suppression.collect materialized.source normalized))
+          (runRules (.syntax (SyntaxFacts.of normalized materialized.source defaultLineWidth)))
+          (tier := .syntax) (suppression := Suppression.collect materialized.source normalized))
       "registered official facet differed from direct product semantics"
   let some artifactResult :=
     semantic.result? | throw <| IO.userError "registered official facet produced no result to compare"
@@ -187,7 +189,7 @@ private def verifyOfficialFacet (root sourcePath : System.FilePath) : IO Unit :=
   -- so the full-registry findings still coincide with the source-only ones here. This is the
   -- cross-path agreement this test exists to pin; the tier tag on the cache entry, not finding
   -- equality, is what keeps the paths honest when a file *does* trigger a syntax rule.
-  ensure (artifactResult.findings == runSourceRules normalized)
+  ensure (artifactResult.findings == runSourceRules normalized defaultLineWidth)
       "the artifact path and the source-only shortcut disagree about one unchanged file"
 
 /- Layout cost, including the zero-width shapes that exposed the former renderer's suffix-rescan
@@ -328,7 +330,7 @@ private def securityBenchOne (label : String) (input : String) : IO Unit := do
   if input.utf8ByteSize == 0 then
     throw (IO.userError "the bench input is empty")
   let start ← IO.monoNanosNow
-  let findings := runSourceRules input
+  let findings := runSourceRules input defaultLineWidth
   -- Force the scan; a size comparison walks nothing but pins the array.
   if findings.size == 999999999 then
     throw (IO.userError "impossible")

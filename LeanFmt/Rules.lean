@@ -58,7 +58,8 @@ def Tier.satisfies (available required : Tier) : Bool :=
 def Tier.max (left right : Tier) : Tier :=
   if left.satisfies right then left else right
 
-/-- What a `source`-tier rule may read: the module's normalized source, and nothing else.
+/-- What a `source`-tier rule may read: the module's normalized source, and the margin the file
+is laid out to.
 
 Normalized, never raw. `Parser.mkInputContext` normalizes before assigning any position, so
 every compiler-produced offset indexes `raw.crlfToLf`; a finding measured against the file's own
@@ -67,14 +68,31 @@ artifact. Only reading a file and publishing one may touch raw bytes.
 
 `bytes` is derived once. Source rules work on bytes, and computing `normalized.toUTF8` inside each
 rule would walk the source once per rule. Sharing that derivation is why this is a structure rather
-than a bare `String`. -/
+than a bare `String`.
+
+`lineWidth` is `format.line-width` for *this* file — configuration, and the one kind a rule may
+read. The line the reader sees is the file's bytes measured against the project's margin, so a rule
+about it needs both; there is no width-free statement of the question. Two conditions make it safe,
+and a third kind of configuration fails both, which is why the exemption does not generalize:
+
+- It is already in cache identity. `Project.configurationIdentity` folds `format.identityString`,
+  which spells `line-width=`, into `CacheIdentity.configuration`, so a width change misses every
+  stored entry rather than serving findings computed at the old margin.
+- It cannot decide whether a rule runs. `runRules` still produces every rule's findings and
+  `RulePlan.findings` still projects afterwards, so one entry serves any `--select`.
+
+`[lint]`'s selection and `extend-safe-fixes` fail both: they are not in the format identity, and
+they are exactly the "rule reads its own enablement" mechanism that once made `check` and `format`
+report different findings for the same unchanged file. See `docs/adding-a-rule.md`. -/
 structure SourceFacts where private mk ::
   normalized : String
   bytes : ByteArray
+  lineWidth : Nat
 
-/-- `normalized` must be `(LosslessSource.normalize raw).1`. -/
-def SourceFacts.of (normalized : String) : SourceFacts :=
-  { normalized, bytes := normalized.toUTF8 }
+/-- `normalized` must be `(LosslessSource.normalize raw).1`, and `lineWidth` the effective
+`format.line-width` for the file it came from. -/
+def SourceFacts.of (normalized : String) (lineWidth : Nat) : SourceFacts :=
+  { normalized, bytes := normalized.toUTF8, lineWidth }
 
 /-- What a `syntax`-tier rule may read: the exact frontend's lossless projection, and the
 source it indexes. A syntax rule needs both — `LosslessSource` is offsets into the normalized
@@ -87,8 +105,9 @@ structure SyntaxFacts where private mk ::
 proves. This does not re-check it: every caller passes a `validFor` first, and re-deriving the
 projection's own validity inside the fact view would make the check circular rather than
 independent. -/
-def SyntaxFacts.of (normalized : String) (projection : LosslessSource) : SyntaxFacts :=
-  { source := SourceFacts.of normalized, projection }
+def SyntaxFacts.of (normalized : String) (projection : LosslessSource) (lineWidth : Nat) :
+    SyntaxFacts :=
+  { source := SourceFacts.of normalized lineWidth, projection }
 
 /-- What a `semantic`-tier rule may read: the syntax projection plus the exact frontend's
 normalized compiler diagnostics. A semantic rule needs the syntax facts too — its range coordinate
@@ -110,10 +129,10 @@ structure SemanticFacts where private mk ::
 carries. `diagnostics` are the projection's captured `Diagnostic`s, already in normalized-source
 coordinates; `occurrences` are the owned deprecation-occurrence facts (empty when the capability
 was not demanded). -/
-def SemanticFacts.of (normalized : String) (projection : LosslessSource)
+def SemanticFacts.of (normalized : String) (projection : LosslessSource) (lineWidth : Nat)
     (diagnostics : Array Diagnostic) (occurrences : Array DeprecatedOccurrence := #[]) :
     SemanticFacts :=
-  { «syntax» := SyntaxFacts.of normalized projection, diagnostics, occurrences }
+  { «syntax» := SyntaxFacts.of normalized projection lineWidth, diagnostics, occurrences }
 
 /-- The facts a run actually obtained. `SyntaxFacts` contains `SourceFacts` and
 `SemanticFacts` contains `SyntaxFacts`, so richer facts run every cheaper rule too, and one run
@@ -330,6 +349,47 @@ private def bidiControl (facts : SourceFacts) : Array Finding :=
       if isBidiControl c then findings.push (bidiFinding bytePos c.utf8Size c.toNat) else findings
     (bytePos + c.utf8Size, findings)
   (facts.normalized.foldl step (0, #[])).2
+
+/-- The finding covers the overflow, not the whole row: the row's first `lineWidth` characters are
+within the margin and highlighting them says nothing. The message carries the row's width because a
+range in a report tells the reader where, not how far over. -/
+private def overlongLineFinding (start stop width lineWidth : Nat) : Finding :=
+  { code := "FMT016"
+    severity := .warning
+    message := s!"line is {width} characters wide, over the {lineWidth}-character line width"
+    range := { start, stop }
+    -- Report-only: where to break a line is a choice about what the code means, and `format`
+    -- already made the one it could. A row still over the margin after formatting is one no
+    -- break placement fixes.
+    fix? := none }
+
+/-- Rows are counted in **characters**, not bytes, because that is what `Std.Format` counts when
+it decides where to break: a rule measuring bytes would report rows the layout engine considers
+inside the margin, on every file that uses `∀` or `→`.
+
+One pass, carrying the byte offset where the row crossed the margin, so the finding's range needs
+no second walk. The final row is checked after the fold because normalized source need not end in a
+newline. -/
+private def overlongLine (facts : SourceFacts) : Array Finding :=
+  Id.run do
+    let limit := facts.lineWidth
+    let mut findings := #[]
+    let mut bytePos := 0
+    let mut column := 0
+    let mut overflowAt := 0
+    for c in facts.normalized do
+      if c == '\n' then
+        if column > limit then
+          findings := findings.push (overlongLineFinding overflowAt bytePos column limit)
+        column := 0
+      else
+        if column == limit then
+          overflowAt := bytePos
+        column := column + 1
+      bytePos := bytePos + c.utf8Size
+    if column > limit then
+      findings := findings.push (overlongLineFinding overflowAt bytePos column limit)
+    return findings
 
 /-! ## Syntax-tier rules
 
@@ -1018,7 +1078,30 @@ the rule is worth imposing."
             #[{
                 bad :=
                   "inductive Light where\n  | red\n  | green\n\ndef f (red : Light) : Light := red\n" }] }
-      impl := .semantic constructorNameVariable }]
+      impl := .semantic constructorNameVariable },
+    { info :=
+        { code := "FMT016"
+          category := "layout"
+          summary := "report a line wider than the configured line width"
+          fixable := false
+          defaultEnabled := false
+          lifecycle := .stable
+          explanation :=
+            "\
+A line is wider than `format.line-width`, counted in characters — the same unit Lean's layout \
+engine counts when it decides where to break, so a line this rule reports is one the engine also \
+considers over the margin. Report-only, and off by default: on unformatted source it repeats what \
+`format` is about to fix, so run `format` first. What is left after that is the interesting case — a \
+line lean-fmt could not break within the margin, either because the source pins its shape (a long \
+string literal, a URL in a comment) or because lean-fmt found no break placement. Enable it in \
+`lean-fmt.toml` under `[lint] extend-select = [\"FMT016\"]` to hold a formatted tree to its own margin."
+          -- 109 characters, and one string token: `format` cannot shorten it, so the example
+          -- shows the case worth reporting rather than one the formatter would have fixed.
+          examples :=
+            #[{
+                bad :=
+                  "def documentation : String := \"https://example.com/a/path/long/enough/that/no/break/placement/can/shorten/it\"\n" }] }
+      impl := .source overlongLine }]
 
 /-- Findings sort by position, then by code.
 
@@ -1066,8 +1149,8 @@ def runRules (facts : Facts) : Array Finding :=
   runRulesOf ruleRegistry facts
 
 /-- Run every rule the module's own source can answer. -/
-def runSourceRules (normalized : String) : Array Finding :=
-  runRules (.source (SourceFacts.of normalized))
+def runSourceRules (normalized : String) (lineWidth : Nat) : Array Finding :=
+  runRules (.source (SourceFacts.of normalized lineWidth))
 
 /-! ## Import rules — declared here, produced elsewhere
 
@@ -1296,7 +1379,7 @@ def explainText (info : RuleInfo) : String :=
       out := out ++ "\n  Example\n    - bad -\n"
       out :=
         out ++
-            String.intercalate "\n" ((ex.bad.trimAsciiEnd.copy.splitOn "\n").map ("    " ++ ·)) ++
+          String.intercalate "\n" ((ex.bad.trimAsciiEnd.copy.splitOn "\n").map ("    " ++ ·)) ++
           "\n"
       match ex.good? with
       | some g =>
@@ -1426,103 +1509,103 @@ def catalogSchemaJson : String :=
     String.intercalate ",\n" (selectorVocabulary.toList.map fun s => "      \"" ++ s ++ "\"")
   let lintProperties :=
     "      \"select\": " ++ sel ++ ",\n" ++ "      \"extend-select\": " ++ sel ++ ",\n" ++
-                                              "      \"ignore\": " ++
-                                            sel ++
-                                          ",\n" ++
-                                        "      \"fixable\": " ++
-                                      sel ++
-                                    ",\n" ++
-                                  "      \"unfixable\": " ++
-                                sel ++
-                              ",\n" ++
-                            "      \"extend-fixable\": " ++
-                          sel ++
-                        ",\n" ++
-                      "      \"extend-safe-fixes\": " ++
-                    sel ++
-                  ",\n" ++
-                "      \"extend-unsafe-fixes\": " ++
-              sel ++
-            ",\n" ++
-          "      \"per-file-ignores\": { \"type\": \"object\", \"additionalProperties\": " ++
-        sel ++
+      "      \"ignore\": " ++
+      sel ++
+      ",\n" ++
+      "      \"fixable\": " ++
+      sel ++
+      ",\n" ++
+      "      \"unfixable\": " ++
+      sel ++
+      ",\n" ++
+      "      \"extend-fixable\": " ++
+      sel ++
+      ",\n" ++
+      "      \"extend-safe-fixes\": " ++
+      sel ++
+      ",\n" ++
+      "      \"extend-unsafe-fixes\": " ++
+      sel ++
+      ",\n" ++
+      "      \"per-file-ignores\": { \"type\": \"object\", \"additionalProperties\": " ++
+      sel ++
       " }\n"
   "{\n" ++ "  \"$schema\": \"http://json-schema.org/draft-07/schema#\",\n" ++
-                                                                                                                                                        "  \"$id\": \"lean-fmt.toml\",\n" ++
-                                                                                                                                                      "  \"title\": \"lean-fmt configuration\",\n" ++
-                                                                                                                                                    "  \"description\": \"Generated from the rule registry (LeanFmt/Rules.lean); do not edit by hand.\",\n" ++
-                                                                                                                                                  "  \"type\": \"object\",\n" ++
-                                                                                                                                                "  \"additionalProperties\": false,\n" ++
-                                                                                                                                              "  \"properties\": {\n" ++
-                                                                                                                                            "    \"include\": { \"type\": \"array\", \"items\": { \"type\": \"string\" } },\n" ++
-                                                                                                                                          "    \"exclude\": { \"type\": \"array\", \"items\": { \"type\": \"string\" } },\n" ++
-                                                                                                                                        "    \"extend\": { \"type\": \"string\" },\n" ++
-                                                                                                                                      "    \"force-exclude\": { \"type\": \"boolean\" },\n" ++
-                                                                                                                                    "    \"respect-gitignore\": { \"type\": \"boolean\" },\n" ++
-                                                                                                                                  "    \"preview\": { \"type\": \"boolean\" },\n" ++
-                                                                                                                                "    \"format\": {\n" ++
-                                                                                                                              "      \"type\": \"object\",\n" ++
-                                                                                                                            "      \"additionalProperties\": false,\n" ++
-                                                                                                                          "      \"properties\": {\n" ++
-                                                                                                                        "        \"line-width\": { \"type\": \"integer\", \"minimum\": 1, \"maximum\": 1000 },\n" ++
-                                                                                                                      "        \"pinned-comments\": { \"type\": \"array\", \"items\": { \"type\": \"string\", \"minLength\": 1 } },\n" ++
-                                                                                                                    "        \"reflow-comments\": { \"type\": \"boolean\" },\n" ++
-                                                                                                                  "        \"declaration-body\": { \"type\": \"string\", \"enum\": [\"next-line\", \"same-line\"] },\n" ++
-                                                                                                                "        \"declaration-where\": { \"type\": \"string\", \"enum\": [\"same-line\", \"next-line\"] },\n" ++
-                                                                                                              "        \"import-layout\": { \"type\": \"string\", \"enum\": [\"grouped\", \"canonical\"] },\n" ++
-                                                                                                            "        \"import-groups\": { \"type\": \"array\", \"items\": { \"type\": \"string\", \"minLength\": 1 } },\n" ++
-                                                                                                          "        \"magic-trailing-comma\": { \"type\": \"string\", \"enum\": [\"respect\", \"ignore\"] }\n" ++
-                                                                                                        "      }\n" ++
-                                                                                                      "    },\n" ++
-                                                                                                    "    \"lint\": {\n" ++
-                                                                                                  "      \"type\": \"object\",\n" ++
-                                                                                                "      \"additionalProperties\": false,\n" ++
-                                                                                              "      \"properties\": {\n" ++
-                                                                                            lintProperties ++
-                                                                                          "      }\n" ++
-                                                                                        "    },\n" ++
-                                                                                      "    \"select\": " ++
-                                                                                    deprecated ++
-                                                                                  ",\n" ++
-                                                                                "    \"extend-select\": " ++
-                                                                              deprecated ++
-                                                                            ",\n" ++
-                                                                          "    \"ignore\": " ++
-                                                                        deprecated ++
-                                                                      ",\n" ++
-                                                                    "    \"fixable\": " ++
-                                                                  deprecated ++
-                                                                ",\n" ++
-                                                              "    \"unfixable\": " ++
-                                                            deprecated ++
-                                                          ",\n" ++
-                                                        "    \"extend-fixable\": " ++
-                                                      deprecated ++
-                                                    ",\n" ++
-                                                  "    \"extend-safe-fixes\": " ++
-                                                deprecated ++
-                                              ",\n" ++
-                                            "    \"extend-unsafe-fixes\": " ++
-                                          deprecated ++
-                                        ",\n" ++
-                                      "    \"per-file-ignores\": { \"type\": \"object\", \"additionalProperties\": " ++
-                                    sel ++
-                                  ", " ++
-                                "\"deprecated\": true }\n" ++
-                              "  },\n" ++
-                            "  \"$defs\": {\n" ++
-                          "    \"migration\": {\n" ++
-                        "      \"description\": \"A linter key at the top level is the pre-[lint] spelling; it still works \
+    "  \"$id\": \"lean-fmt.toml\",\n" ++
+    "  \"title\": \"lean-fmt configuration\",\n" ++
+    "  \"description\": \"Generated from the rule registry (LeanFmt/Rules.lean); do not edit by hand.\",\n" ++
+    "  \"type\": \"object\",\n" ++
+    "  \"additionalProperties\": false,\n" ++
+    "  \"properties\": {\n" ++
+    "    \"include\": { \"type\": \"array\", \"items\": { \"type\": \"string\" } },\n" ++
+    "    \"exclude\": { \"type\": \"array\", \"items\": { \"type\": \"string\" } },\n" ++
+    "    \"extend\": { \"type\": \"string\" },\n" ++
+    "    \"force-exclude\": { \"type\": \"boolean\" },\n" ++
+    "    \"respect-gitignore\": { \"type\": \"boolean\" },\n" ++
+    "    \"preview\": { \"type\": \"boolean\" },\n" ++
+    "    \"format\": {\n" ++
+    "      \"type\": \"object\",\n" ++
+    "      \"additionalProperties\": false,\n" ++
+    "      \"properties\": {\n" ++
+    "        \"line-width\": { \"type\": \"integer\", \"minimum\": 1, \"maximum\": 1000 },\n" ++
+    "        \"pinned-comments\": { \"type\": \"array\", \"items\": { \"type\": \"string\", \"minLength\": 1 } },\n" ++
+    "        \"reflow-comments\": { \"type\": \"boolean\" },\n" ++
+    "        \"declaration-body\": { \"type\": \"string\", \"enum\": [\"next-line\", \"same-line\"] },\n" ++
+    "        \"declaration-where\": { \"type\": \"string\", \"enum\": [\"same-line\", \"next-line\"] },\n" ++
+    "        \"import-layout\": { \"type\": \"string\", \"enum\": [\"grouped\", \"canonical\"] },\n" ++
+    "        \"import-groups\": { \"type\": \"array\", \"items\": { \"type\": \"string\", \"minLength\": 1 } },\n" ++
+    "        \"magic-trailing-comma\": { \"type\": \"string\", \"enum\": [\"respect\", \"ignore\"] }\n" ++
+    "      }\n" ++
+    "    },\n" ++
+    "    \"lint\": {\n" ++
+    "      \"type\": \"object\",\n" ++
+    "      \"additionalProperties\": false,\n" ++
+    "      \"properties\": {\n" ++
+    lintProperties ++
+    "      }\n" ++
+    "    },\n" ++
+    "    \"select\": " ++
+    deprecated ++
+    ",\n" ++
+    "    \"extend-select\": " ++
+    deprecated ++
+    ",\n" ++
+    "    \"ignore\": " ++
+    deprecated ++
+    ",\n" ++
+    "    \"fixable\": " ++
+    deprecated ++
+    ",\n" ++
+    "    \"unfixable\": " ++
+    deprecated ++
+    ",\n" ++
+    "    \"extend-fixable\": " ++
+    deprecated ++
+    ",\n" ++
+    "    \"extend-safe-fixes\": " ++
+    deprecated ++
+    ",\n" ++
+    "    \"extend-unsafe-fixes\": " ++
+    deprecated ++
+    ",\n" ++
+    "    \"per-file-ignores\": { \"type\": \"object\", \"additionalProperties\": " ++
+    sel ++
+    ", " ++
+    "\"deprecated\": true }\n" ++
+    "  },\n" ++
+    "  \"$defs\": {\n" ++
+    "    \"migration\": {\n" ++
+    "      \"description\": \"A linter key at the top level is the pre-[lint] spelling; it still works \
     and emits a deprecation notice, and setting the same key in both places is an error.\"\n" ++
-                      "    },\n" ++
-                    "    \"selector\": {\n" ++
-                  "      \"description\": \"a live rule code, a category, a reserved code, or the words all/default\",\n" ++
-                "      \"enum\": [\n" ++
-              enumBody ++
-            "\n" ++
-          "      ]\n" ++
-        "    }\n" ++
-      "  }\n" ++
+    "    },\n" ++
+    "    \"selector\": {\n" ++
+    "      \"description\": \"a live rule code, a category, a reserved code, or the words all/default\",\n" ++
+    "      \"enum\": [\n" ++
+    enumBody ++
+    "\n" ++
+    "      ]\n" ++
+    "    }\n" ++
+    "  }\n" ++
     "}\n"
 
 /-- Every generated documentation file as `(relative path, content)` under `docs/rules/`,

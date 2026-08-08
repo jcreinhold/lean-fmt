@@ -116,10 +116,18 @@ private inductive ConstraintCarrier where
   | nest
   deriving BEq, Inhabited
 
+/- `required` says what an unapplied constraint means, and the two answers are not the same failure.
+
+A fidelity constraint corrects a column the parser reads back, so if it never lands the walk lost the
+node it was collected at and the output may not reparse: that refuses the command. A readability
+constraint cancels an indent level the document did not have to introduce, so if it never lands the
+row is wider than it could be and nothing else changes; refusing there would turn a missed
+improvement into a failed file. Only `LAY-CHAIN-COMPENSATION` is not required, and it says why. -/
 private structure OffsideConstraint where
   range : SourceRange
   indentAdjustment : Int
   carrier : ConstraintCarrier
+  required : Bool := true
   deriving Inhabited
 
 /- What the adapter puts at one boundary in place of whatever the native document laid out there.
@@ -181,6 +189,18 @@ private inductive BoundaryLayout where
     `boundaryFormat` and the `explodedCloseTag` it emits. -/
   explodedClose
   deriving BEq, Inhabited, Repr
+
+/-- What a pin asks for, in words rather than a constructor. This type is `private`, so `Repr`
+renders its mangled name (`_private.LeanFmt.Formatter.NativeLayout.0.…`); any message that can
+reach a user calls this instead. -/
+private def BoundaryLayout.describe : BoundaryLayout → String
+  | .flat => "no break"
+  | .hard => "a break"
+  | .elided => "no break and no space"
+  | .dedented => "a break back to column zero"
+  | .columned col => s!"a break landing at column {col}"
+  | .anchored col => s!"a break anchored at column {col}"
+  | .explodedClose => "a break before a closing bracket"
 
 /- The spelling that satisfies two rules naming one gap, or `none` when they genuinely disagree.
 
@@ -696,7 +716,7 @@ private def ungroupedSequenceKind (kind : Lean.Name) : Bool :=
 
 private def delimitedSequenceKind (kind : Lean.Name) : Bool :=
   kind == ``Lean.Parser.Tactic.tacticSeqBracketed ||
-      kind == ``Lean.Parser.Tactic.Conv.convSeqBracketed ||
+    kind == ``Lean.Parser.Tactic.Conv.convSeqBracketed ||
     kind == ``Lean.Parser.Term.whereDecls
 
 /- `sepByIndent.formatter`'s own test, transcribed: an odd slot holding an empty null node is a
@@ -736,7 +756,7 @@ parser environment — `Term.byTactic` and `Term.show` are in a category's `kind
 `Tactic.tacticSeq` are not. -/
 private def sequenceWrapperKind (kind : Lean.Name) : Bool :=
   kind == ``Lean.Parser.Tactic.tacticSeq || kind == ``Lean.Parser.Tactic.Conv.convSeq ||
-      kind == ``Lean.Parser.Term.byTactic' ||
+    kind == ``Lean.Parser.Term.byTactic' ||
     kind == Lean.nullKind
 
 /- Whether a token opens its source row (only whitespace before it on the row). -/
@@ -1237,7 +1257,7 @@ private partial def collectGuardBailouts (source : String) (stx : Lean.Syntax)
     let ranges :=
       if
           kind == ``Lean.Parser.Term.doLetElse || kind == ``Lean.Parser.Term.doLetExpr ||
-              kind == ``Lean.Parser.Term.doLetMetaExpr ||
+            kind == ``Lean.Parser.Term.doLetMetaExpr ||
             kind == ``Lean.Parser.Term.doLetArrow then
         match guardedPipe? stx with
         | some pipe =>
@@ -1397,7 +1417,7 @@ private partial def collectGuardBarBreaks (source : String) (stx : Lean.Syntax)
     let starts :=
       if
           kind == ``Lean.Parser.Term.doLetElse || kind == ``Lean.Parser.Term.doLetExpr ||
-              kind == ``Lean.Parser.Term.doLetMetaExpr ||
+            kind == ``Lean.Parser.Term.doLetMetaExpr ||
             kind == ``Lean.Parser.Term.doLetArrow then
         match children.find? (· matches .atom _ "|") with
         | some pipe =>
@@ -1489,8 +1509,8 @@ private partial def collectTacticSequenceAnchors (stx : Lean.Syntax)
       let ranges :=
         if
             kind == ``Lean.Parser.Tactic.tacticSeq1Indented ||
-                  kind == ``Lean.Parser.Tactic.Conv.convSeq1Indented ||
-                kind == ``Lean.Parser.Tactic.tacticSeqBracketed ||
+              kind == ``Lean.Parser.Tactic.Conv.convSeq1Indented ||
+              kind == ``Lean.Parser.Tactic.tacticSeqBracketed ||
               kind == ``Lean.Parser.Tactic.Conv.convSeqBracketed then
           match children.find? (·.isOfKind Lean.nullKind) with
           | some list =>
@@ -1768,11 +1788,11 @@ private partial def collectLetFamilyAlignments (source : String) (rowStarts : Ar
     let starts :=
       if
           kind == ``Lean.Parser.Term.letI || kind == ``Lean.Parser.Term.let ||
-                      kind == ``Lean.Parser.Term.haveI ||
-                    kind == ``Lean.Parser.Term.have ||
-                  kind == ``Lean.Parser.Term.let_fun ||
-                kind == ``Lean.Parser.Term.let_delayed ||
-              kind == ``Lean.Parser.Term.let_tmp ||
+            kind == ``Lean.Parser.Term.haveI ||
+            kind == ``Lean.Parser.Term.have ||
+            kind == ``Lean.Parser.Term.let_fun ||
+            kind == ``Lean.Parser.Term.let_delayed ||
+            kind == ``Lean.Parser.Term.let_tmp ||
             kind == ``Lean.Parser.Term.suffices then
         match children[0]?, children.back? with
         | some kw, some body =>
@@ -2155,6 +2175,101 @@ private partial def collectAttrDocComments (stx : Lean.Syntax)
     children.foldl (init := entries) fun entries child => collectAttrDocComments child entries
   | _ => entries
 
+/-! ### LAY-CHAIN-COMPENSATION — one indent level per link of an operator chain
+
+Lean's generated formatters wrap **every** category node in `group (nest format.indent …)`, including
+a bare literal: `"a0"` alone formats to `grp[nest2[T"\"a0\""]]`. That wrapper covers the node's own
+operands, so a chain of one operator — which parses as nested applications of that operator, once per
+link — stacks one `nest` per link, and each link's `line` renders one level further in than the
+link outside it. `"a0" ++ … ++ "a09"` at width 100 rendered a staircase from column 16 back down to
+4, and the deepest indent grows without bound: measured `2 × operands − 6` on chains of 4, 8, 16, 32
+and 64, reaching column 122 and rows 145 characters wide.
+
+Nothing in the document says "these operands are a chain", so `Std.Format` cannot recover the shape;
+the accumulation is in what the formatter emits, not in how the engine renders it. A printer never
+paid for it — an error message rarely holds a long chain, and nobody diffs a re-print — so it is
+unreported upstream. Fixing it there means changing what the generic category formatter wraps, which
+moves the layout of every construct in the language; that is a change to propose on its own evidence,
+not a rider on this one.
+
+So the adapter cancels the accumulation: one `nest (-format.indent)` on each operand that continues
+its parent's chain, which leaves every link's break at exactly one level in. `binaryInfixOperands?`
+is structural — three children with the operator as the middle atom — rather than a list of kinds,
+because every `infixl`/`infixr` notation in every project produces that shape and a kind list would
+cover only the ones someone remembered.
+
+The price of a shape test is that some shapes match and are not chains, and the shape cannot tell
+which: `a.1.2` is `proj` inside `proj`, the same node kind on the same side, and dot projection has
+no break and so no `nest` to cancel. These constraints are therefore `required := false`. A shape
+test over a grammar nobody controls will keep meeting nodes like that one, and the honest reading is
+that an unapplied compensation is a row that stayed as wide as it already was. Making it refuse
+instead cost one module of the verification corpus a hard failure before this was found.
+
+**When upstream fixes the wrapper**, delete `chainedOperandRanges` and its call in
+`collectOffsideConstraints`, then run:
+
+    lake test -- --suites term-formatter native-layout declaration-formatter command-formatter
+    lake lint
+
+Those suites hold the chain rows this produces. If they still pass with the collector gone, the
+compensation is no longer doing anything and should be gone with it. -/
+
+/- The two operands of a binary infix node, with the operator atom between them.
+
+`null` and `choice` are excluded, and the exclusion is the whole reason this is not just a shape
+test. A `sepBy`'s separated items are a `null` node, so `(_, _, state)` holds `[hole, ",", [hole,
+",", state]]` — three children, an atom between them, and the inner one carries the *same* kind,
+because every `null` node does. It reads as a chain and is not one: a `null` node is a grouping
+artifact with no formatter of its own and no `nest` to cancel, so a constraint written on it never
+matches a document node. It was a refusal that found this, back when these constraints were required;
+they are not, so keeping the exclusion is now about not asking a question whose answer is known. -/
+private def binaryInfixOperands? (stx : Lean.Syntax) :
+    Option (Lean.SyntaxNodeKind × Lean.Syntax × Lean.Syntax) :=
+  match stx with
+  | .node _ kind children =>
+    if kind == Lean.nullKind || kind == Lean.choiceKind || kind.isAnonymous then none
+    else
+      match children[0]?, children[1]?, children[2]?, children[3]? with
+      | some left, some (Lean.Syntax.atom _ _), some right, none => some (kind, left, right)
+      | _, _, _, _ => none
+  | _ => none
+
+/- The operands of `stx` that are themselves applications of `stx`'s own operator, and so continue
+one chain rather than opening a nested expression.
+
+Both sides are checked. `++` is `infixl`, so its chain nests left and the leftmost operand ends
+deepest; `::` is `infixr` and nests right, which stacks the same `nest` per link in the other
+direction. Parentheses interpose a node of a different kind, so a parenthesized sub-chain is not a
+continuation and keeps its own indentation — which is the reading the parentheses ask for.
+
+`columnPinStarts` are the rows the evidential caps hold at a source column. An operand with one
+*strictly inside* it is declined, because the two corrections contradict each other there: the cap
+reproduces the column the source proved parseable, and this constraint moves that row without moving
+the cap's evidence, so each pass writes a column the next one reads back and shifts again.
+`(xs.filterMap fun start => let broken := …)` inside an `xs ++ … ++ xs` chain walked two columns left
+per pass and never converged. Correcting the caps to see the constraint instead — `rowIndent` is the
+one line — is measured there and costs 13 modules their reparse; declining is the answer that keeps
+both corrections true.
+
+Strictly inside, and not *at* the operand's first byte, which is the whole difference between this
+reaching ordinary code and not. A pin at that byte is the row the operand begins on, and the break
+that places that row is the one *before* the operand, outside the subtree this constraint wraps —
+so there is no contradiction to avoid. The leftmost operand of a chain always starts where the chain
+does, so testing `<=` declined every chain written as the body of a `let`, a brace literal, or a
+brace-interior row. That is ordinary Lean, and `catalogSchemaJson` in `LeanFmt/Rules.lean` was
+rendering at 152 columns of indent and 254 characters wide because of it. -/
+private def chainedOperandRanges (columnPinStarts : Array Nat) (stx : Lean.Syntax) :
+    Array SourceRange :=
+  match binaryInfixOperands? stx with
+  | none => #[]
+  | some (kind, left, right) =>
+    #[left, right].filterMap fun operand => do
+      let (operandKind, _, _) ← binaryInfixOperands? operand
+      guard (operandKind == kind)
+      let range ← sourceRange? operand
+      guard (!columnPinStarts.any fun start => range.start < start && start < range.stop)
+      return range
+
 /- `indent` is `Std.Format.getIndent`, the `format.indent` option Lean's own `ppIndent`/`ppDedent`
 read. A constraint here cancels one level of the indentation native layout introduced, so it is that
 same quantity negated — not the literal `-2` this used to spell. The default happens to be 2, which is
@@ -2162,14 +2277,14 @@ why the constant went unnoticed; a project setting `format.indent` would have si
 
 The constructor-docstring branch cancels a `nest -2` rather than introducing one, so its adjustment is
 that same quantity un-negated. Both are one level; nothing here knows how to ask for two. -/
-private partial def collectOffsideConstraints (indent : Nat) (stx : Lean.Syntax)
-    (constraints : Array OffsideConstraint := #[]) : Array OffsideConstraint :=
+private partial def collectOffsideConstraints (indent : Nat) (columnPinStarts : Array Nat)
+    (stx : Lean.Syntax) (constraints : Array OffsideConstraint := #[]) : Array OffsideConstraint :=
   match stx with
   | .node _ kind children =>
     let constraints :=
       if
           kind == ``Lean.Parser.Term.doLetElse || kind == ``Lean.Parser.Term.doLetExpr ||
-              kind == ``Lean.Parser.Term.doLetMetaExpr ||
+            kind == ``Lean.Parser.Term.doLetMetaExpr ||
             kind == ``Lean.Parser.Term.doLetArrow then
         let pipes := guardedPipeRanges stx
         let sequences := guardedSequenceRanges stx
@@ -2191,12 +2306,19 @@ private partial def collectOffsideConstraints (indent : Nat) (stx : Lean.Syntax)
             constraints.push { range, indentAdjustment := (indent : Int), carrier := .nest }
           | none => constraints
         | none => constraints
+    -- LAY-CHAIN-COMPENSATION: cancel the level this link's operand inherited from the link outside
+    -- it, so every break in one operator chain lands at the same column.
+    let constraints :=
+      (chainedOperandRanges columnPinStarts stx).foldl (init := constraints)
+        fun constraints range =>
+        constraints.push
+          { range, indentAdjustment := -(indent : Int), carrier := .nest, required := false }
     -- As in the boundary collectors: one alternative of a `choice` spells the bytes, and collecting
     -- from all of them would name the same range once per alternative. A constraint is applied once,
     -- so the duplicate would leave the applied count short and refuse the command.
     let children := if kind == Lean.choiceKind then children[0]?.toArray else children
     children.foldl (init := constraints) fun constraints child =>
-      collectOffsideConstraints indent child constraints
+      collectOffsideConstraints indent columnPinStarts child constraints
   | _ => constraints
 
 private def commentText (value : String) : Bool :=
@@ -2948,7 +3070,16 @@ spellings do not and are unaffected. A `let` body pinned to source column 2 insi
 command -- the one embedding parser with no `ppDedent` of its own, so the only one whose rows carry a
 cancellation -- came out at column 0, and since the pin is collected only for a body the source
 already broke onto its own row, the first pass created exactly the condition the second pass then
-mis-pinned. 13 mathlib modules refused as non-idempotent for it. -/
+mis-pinned. 13 mathlib modules refused as non-idempotent for it.
+
+`containingConstraintNest` is deliberately *not* here, though `dedentColumns` carries it and the
+same staleness argument applies: a constraint wrapping this subtree is a `nest` the post-order walk
+has not finished, so `ambientNest` reports the column this row would have had without it. Adding it
+is a one-line change and it was measured: 13 modules in this repository stopped reparsing, because
+`columned`'s "only ever move right" is calibrated against a `rowIndent` that excludes it and a
+smaller `rowIndent` lets the `max` push rows past the offside column their siblings sit at. The
+staleness is real and is instead avoided at the source -- `chainedOperandRanges` declines any
+operand a pin sits inside, so no constraint ever wraps a `columned` row. -/
 private def rowIndent (state : TransformState) : Int :=
   state.ambientNest - (interiorDedent state).getD 0
 
@@ -3212,7 +3343,7 @@ private partial def placeDroppedIslandsAfter (result : Transformed) :
     state.terminals[state.terminalIndex]?.bind fun terminal =>
       state.islands.find? fun island =>
         state.droppedIslands.contains island.marker &&
-            !state.appliedIslands.contains island.marker &&
+          !state.appliedIslands.contains island.marker &&
           island.range.start == terminal.range.start
   match pending? with
   | none =>
@@ -3322,7 +3453,7 @@ private def transformText (value : String) : StateT TransformState (Except Strin
       state.terminals[state.terminalIndex]?.bind fun terminal =>
         state.islands.find? fun island =>
           state.droppedIslands.contains island.marker &&
-              !state.appliedIslands.contains island.marker &&
+            !state.appliedIslands.contains island.marker &&
             island.range.start == terminal.range.start
     match pending? with
     | some exact =>
@@ -3664,7 +3795,8 @@ private def boundaryTable (terminals : Array Terminal) (starts : Array (Nat × B
         match existing.join? layout with
         | some joined => .ok (table.set! slot (index, joined))
         | none =>
-          .error s!"two boundary rules disagree at terminal {index}: {repr existing}, {repr layout}"
+          let asks := s!"one asks for {existing.describe}, the other for {layout.describe}"
+          .error s!"two layout rules disagree at terminal {index}: {asks}"
       | none => .ok (table.push (index, layout))
     | none => .ok table
 
@@ -3975,16 +4107,20 @@ next expected range: {repr nextRange}; recent native leaves: \
         .unadapted
           s!"native formatter applied {state.appliedIslands.size}/{state.islands.size} exact islands; \
 first unapplied: {repr (missing[0]?.map fun island => (island.range.start, island.range.stop, island.text))}"
-  if state.appliedConstraints.size != state.constraints.size then
-    let missing :=
-      (state.constraints.zipIdx.filter fun (_, index) =>
-            !state.appliedConstraints.contains index).map
-        fun ((constraint, span), _) =>
+  -- Only the required constraints are counted here; see `OffsideConstraint.required`. A chain
+  -- compensation that finds no `nest` to cancel is a row that stayed wide, not a walk that lost its
+  -- place, and `a.1.2` -- `proj` nested in `proj`, a chain by shape with no break in it -- is the
+  -- shape that showed the difference matters on ordinary source.
+  let required := state.constraints.zipIdx.filter fun ((constraint, _), _) => constraint.required
+  let missing := required.filter fun (_, index) => !state.appliedConstraints.contains index
+  if !missing.isEmpty then
+    let described :=
+      missing.map fun ((constraint, span), _) =>
         (constraint.range.start, constraint.range.stop, span.start, span.stop)
     throw <|
         .unadapted
-          s!"native formatter applied {state.appliedConstraints.size}/{state.constraints.size} \
-offside constraints; first unapplied: {repr missing[0]?}"
+          s!"native formatter applied {required.size - missing.size}/{required.size} \
+offside constraints; first unapplied: {repr described[0]?}"
   if state.appliedBoundaries.size != state.boundaries.size then
     let missing := state.boundaries.filter fun (index, _) => !state.appliedBoundaries.contains index
     let described :=
@@ -4145,7 +4281,16 @@ private def CommandPlan.collect (source : String) (ownership : CommentOwnership)
   let terminals := terminalsFrom source stripped
   let blockDangling := blockDanglingComments ownership stx
   let comments := interiorComments ownership stx (blockDangling.map (·.2.range))
-  let constraints := collectOffsideConstraints formatIndent stripped
+  -- The three evidential caps, collected here rather than at their boundary rows because
+  -- `collectOffsideConstraints` has to decline any operand one of them sits inside; see
+  -- LAY-CHAIN-COMPENSATION. The arrays are reused at `boundaryStarts` below, so this is one walk
+  -- each, not two.
+  let braceInteriorBreaks := collectBraceInteriorBreaks source stripped
+  let braceLiteralRows := collectBraceLiteralRows source rowStarts stripped
+  let letFamilyAlignments := collectLetFamilyAlignments source rowStarts stripped
+  let columnPinStarts :=
+    braceInteriorBreaks.map (·.1) ++ braceLiteralRows.map (·.1) ++ letFamilyAlignments.map (·.1)
+  let constraints := collectOffsideConstraints formatIndent columnPinStarts stripped
   -- One table, one line per rule, and the spelling each rule asks for is right here rather than in the
   -- collector's name. A collector answers "where", `BoundaryLayout` answers "what".
   -- Both halves of the guarded-`let` join come from one collected range: the boundary joins the
@@ -4260,51 +4405,44 @@ private def CommandPlan.collect (source : String) (ownership : CommentOwnership)
   --   collectStructInstCloseBraces                .hard/.explodedClose closing-brace row decision
   let boundaryStarts : Array (Nat × BoundaryLayout) :=
     (collectUngroupedBodyStarts format.declarationBody source format.lineWidth stripped
-                                              (collectReturnTermStarts stripped)).map
-                                          (·, BoundaryLayout.flat) ++
-                                        (match format.declarationWhere with
-                                        | .sameLine =>
-                                          (collectWhereStarts source format.lineWidth
-                                                stripped).flatMap
-                                            fun (whereStart, fieldStart?, fits) =>
-                                            -- A header that cannot carry `" where"` takes the
-                                            -- `next-line` answer at the `where`. Declining forces
-                                            -- nothing: the native document then shatters the
-                                            -- signature at its own `:`, and `where` gets the row
-                                            -- it needs. Whether the *field* opens its own row is a
-                                            -- different question, so it is answered the same way
-                                            -- either way -- otherwise a lone field rides up onto
-                                            -- the `where` row exactly when the signature is long.
-                                            match fieldStart?, fits with
-                                            | none, true => #[]
-                                            | none, false => #[(whereStart, BoundaryLayout.hard)]
-                                            | some fieldStart, _ =>
-                                              #[(whereStart,
-                                                  if fits then BoundaryLayout.flat
-                                                  else BoundaryLayout.hard),
-                                                (fieldStart, BoundaryLayout.hard)]
-                                        | .nextLine =>
-                                          (collectWhereStarts source format.lineWidth stripped).map
-                                            (·.1, BoundaryLayout.hard)) ++
-                                      (collectIndentedSequenceStarts source stripped).map
-                                        (·, BoundaryLayout.hard) ++
-                                    (collectCdotStarts stripped).map (·, BoundaryLayout.flat) ++
-                                  nestedCommandStarts.map (·, BoundaryLayout.dedented) ++
-                                ctorDocStarts.map (·, BoundaryLayout.elided) ++
-                              docBoundaries ++
-                            attrDocBoundaries ++
-                          joined.map (·.start, BoundaryLayout.flat) ++
-                        (collectGuardBarBreaks source stripped).map (·, BoundaryLayout.hard) ++
-                      ((collectBraceAppArgStarts stripped).filterMap fun start =>
-                        if brokenBefore start then none else some (start, BoundaryLayout.flat)) ++
-                    returnBraceStarts.map (·, BoundaryLayout.flat) ++
-                  ((collectBraceInteriorBreaks source stripped).filter fun p =>
-                        outsideExploded p.1).map
-                    (fun p => (p.1, BoundaryLayout.columned p.2)) ++
-                ((collectBraceLiteralRows source rowStarts stripped).filter fun p =>
-                  outsideExploded p.1) ++
-              collectLetFamilyAlignments source rowStarts stripped ++
-            unbreakableRunBoundaries source terminals unbreakableRuns ++
+                (collectReturnTermStarts stripped)).map
+            (·, BoundaryLayout.flat) ++
+          (match format.declarationWhere with
+          | .sameLine =>
+            (collectWhereStarts source format.lineWidth stripped).flatMap
+              fun (whereStart, fieldStart?, fits) =>
+              -- A header that cannot carry `" where"` takes the
+              -- `next-line` answer at the `where`. Declining forces
+              -- nothing: the native document then shatters the
+              -- signature at its own `:`, and `where` gets the row
+              -- it needs. Whether the *field* opens its own row is a
+              -- different question, so it is answered the same way
+              -- either way -- otherwise a lone field rides up onto
+              -- the `where` row exactly when the signature is long.
+              match fieldStart?, fits with
+              | none, true => #[]
+              | none, false => #[(whereStart, BoundaryLayout.hard)]
+              | some fieldStart, _ =>
+                #[(whereStart, if fits then BoundaryLayout.flat else BoundaryLayout.hard),
+                  (fieldStart, BoundaryLayout.hard)]
+          | .nextLine =>
+            (collectWhereStarts source format.lineWidth stripped).map (·.1, BoundaryLayout.hard)) ++
+          (collectIndentedSequenceStarts source stripped).map (·, BoundaryLayout.hard) ++
+          (collectCdotStarts stripped).map (·, BoundaryLayout.flat) ++
+          nestedCommandStarts.map (·, BoundaryLayout.dedented) ++
+          ctorDocStarts.map (·, BoundaryLayout.elided) ++
+          docBoundaries ++
+          attrDocBoundaries ++
+          joined.map (·.start, BoundaryLayout.flat) ++
+          (collectGuardBarBreaks source stripped).map (·, BoundaryLayout.hard) ++
+          ((collectBraceAppArgStarts stripped).filterMap fun start =>
+            if brokenBefore start then none else some (start, BoundaryLayout.flat)) ++
+          returnBraceStarts.map (·, BoundaryLayout.flat) ++
+          (braceInteriorBreaks.filter fun p => outsideExploded p.1).map
+            (fun p => (p.1, BoundaryLayout.columned p.2)) ++
+          (braceLiteralRows.filter fun p => outsideExploded p.1) ++
+          letFamilyAlignments ++
+          unbreakableRunBoundaries source terminals unbreakableRuns ++
           ((collectStructInstEllipses stripped).filterMap fun start =>
               let broken :=
               (terminals.filter (·.range.stop <= start)).back?.any fun previous =>

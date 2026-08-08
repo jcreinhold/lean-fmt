@@ -250,7 +250,7 @@ private unsafe def incrementalAnalyzerSpec (work setupPath sourcePath : String)
   let counters ← analyzer.counters
   ensure
       (counters.updates >= 110 && counters.reusedCommands > 0 && counters.failed == 1 &&
-          counters.cancelled == 1 &&
+        counters.cancelled == 1 &&
         counters.invalidated >= 2)
       "incremental counters do not account for the exercised lifecycle"
   IO.eprintln "phase: close"

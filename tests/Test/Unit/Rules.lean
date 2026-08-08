@@ -65,7 +65,7 @@ private def testRules : IO Unit := do
   -- would have turned that guard into "the security rules never fire" -- vacuously true on this
   -- fixture, and a silent hole exactly where the strongest rules are. The by-name guard is gone; the
   -- emptiness assertion below is what the case was always really claiming.
-  let findings := runSourceRules normalized
+  let findings := runSourceRules normalized defaultLineWidth
   ensure (findings.isEmpty)
       "the default source rules should be silent on trailing whitespace and a missing final newline"
 
@@ -77,7 +77,8 @@ private def testSourceSecurityRules : IO Unit := do
   let ctl (n : Nat) : String := String.ofList [Char.ofNat n]
   -- NUL inside a string literal, RLO (U+202E) inside a line comment.
   let src := "def s := \"a" ++ ctl 0x00 ++ "b\"\n-- x" ++ ctl 0x202e ++ "y\n"
-  let security := (runSourceRules src).filter fun f => f.code == "FMT001" || f.code == "FMT002"
+  let security :=
+    (runSourceRules src defaultLineWidth).filter fun f => f.code == "FMT001" || f.code == "FMT002"
   ensure (security.map (·.code) == #["FMT001", "FMT002"])
       "control/bidi coverage or sort order changed"
   ensure (security.all fun f => f.fix?.isNone)
@@ -92,18 +93,55 @@ private def testSourceSecurityRules : IO Unit := do
         security[1]!.message == "suspicious bidirectional control U+202E")
       "FMT002 range is not the mark's exact three-byte span, or its message changed"
   -- A two-byte mark (ALM U+061C) gets a two-byte range: width is the scalar's, not a constant.
-  let alm := (runSourceRules ("-- " ++ ctl 0x061c ++ "\n")).filter (·.code == "FMT002")
+  let alm :=
+    (runSourceRules ("-- " ++ ctl 0x061c ++ "\n") defaultLineWidth).filter (·.code == "FMT002")
   ensure
       (alm.size == 1 && alm[0]!.range == { start := 3, stop := 5 } &&
         alm[0]!.message == "suspicious bidirectional control U+061C")
       "FMT002 width or zero-padded hex is wrong for a two-byte mark"
   -- DEL (0x7F) is forbidden; TAB (0x09) and LF (0x0A) are not.
-  ensure (((runSourceRules ("-- " ++ ctl 0x7f ++ "\n")).filter (·.code == "FMT001")).size == 1)
+  ensure
+      (((runSourceRules ("-- " ++ ctl 0x7f ++ "\n") defaultLineWidth).filter
+            (·.code == "FMT001")).size ==
+        1)
       "DEL (0x7F) was not flagged as a forbidden control byte"
   ensure
-      ((runSourceRules "def a := 1\n\tx := 2\n").all fun f =>
+      ((runSourceRules "def a := 1\n\tx := 2\n" defaultLineWidth).all fun f =>
         f.code != "FMT001" && f.code != "FMT002")
       "TAB or LF was flagged as a forbidden control byte"
+
+/-- `FMT016`: rows wider than the file's own `format.line-width`.
+
+Four claims, each of which a plausible implementation gets wrong: the boundary is `>` and not `>=`;
+the range covers the overflow only, so a report points at the part that does not fit; the unit is
+**characters**, because that is what `Std.Format` counts when it chooses a break, and a byte-counting
+version would report every `∀`-dense row inside the margin; and the width comes from the facts, so
+one file's configuration cannot decide another's. The last row is checked separately from the rest
+because normalized source need not end in a newline. -/
+private def testLineWidth : IO Unit := do
+  let atWidth (source : String) (width : Nat) : Array Finding :=
+    (runSourceRules source width).filter (·.code == "FMT016")
+  let row (n : Nat) : String := String.ofList (List.replicate n 'x')
+  ensure (atWidth (row 100 ++ "\n") 100).isEmpty "a row exactly at the width was reported"
+  match atWidth (row 103 ++ "\n") 100 with
+  | #[finding] =>
+    ensure (finding.range == { start := 100, stop := 103 })
+        s!"the range is not the three characters past the margin: {repr finding.range}"
+    ensure (finding.message == "line is 103 characters wide, over the 100-character line width")
+        s!"the message changed: {finding.message}"
+    ensure finding.fix?.isNone "FMT016 produced a fix; it is report-only"
+    ensure (finding.severity == .warning) "FMT016 severity changed"
+  | other =>
+    throw <| IO.userError s!"a 103-character row produced {other.size} findings"
+  -- 60 three-byte scalars: 180 bytes, 60 characters. A byte-counting rule reports it.
+  ensure (atWidth (String.ofList (List.replicate 60 '∀') ++ "\n") 100).isEmpty
+      "a 60-character row of multibyte scalars was reported against a 100-character width"
+  -- Same source, two widths: the facts decide, not a constant.
+  ensure ((atWidth (row 50 ++ "\n") 40).size == 1) "a 50-character row was clean at width 40"
+  ensure (atWidth (row 50 ++ "\n") 60).isEmpty "a 50-character row was reported at width 60"
+  -- A final row with no newline after it is still a row.
+  ensure ((atWidth (row 30 ++ "\n" ++ row 50) 40).size == 1)
+      "the last row of a file that does not end in a newline went unchecked"
 
 /- Property/fuzz boundary test for the two source-security scans.
 
@@ -137,14 +175,14 @@ private def testSourceSecurityProperties : IO Unit := do
           if a.2.1 != b.2.1 then a.2.1 < b.2.1
           else if a.2.2 != b.2.2 then a.2.2 < b.2.2 else a.1 < b.1
   let actual (s : String) : Array (String × Nat × Nat) :=
-    (runSourceRules s).filterMap fun f =>
+    (runSourceRules s defaultLineWidth).filterMap fun f =>
       if f.code == "FMT001" || f.code == "FMT002" then some (f.code, f.range.start, f.range.stop)
       else none
   let check (s : String) : IO Unit := do
     ensure (actual s == oracle s)
         "a source-security scan disagreed with the independent oracle on a generated input"
     ensure
-        ((runSourceRules s).all fun f =>
+        ((runSourceRules s defaultLineWidth).all fun f =>
           (f.code != "FMT001" && f.code != "FMT002") || f.fix?.isNone)
         "a source-security rule emitted a fix on a generated input; both are report-only"
   -- Pool: forbidden controls, allowed controls, every bidi width, safe ASCII, safe 2/3/4-byte scalars.
@@ -384,8 +422,8 @@ private def probeTie : Rule :=
 private def testEngineTiers : IO Unit := do
   let normalized := fixtureSourceText
   let projection := fixtureLosslessSource
-  let syntaxFacts := Facts.syntax (SyntaxFacts.of normalized projection)
-  let sourceFacts := Facts.source (SourceFacts.of normalized)
+  let syntaxFacts := Facts.syntax (SyntaxFacts.of normalized projection defaultLineWidth)
+  let sourceFacts := Facts.source (SourceFacts.of normalized defaultLineWidth)
   let registry := #[probeSource, probeSyntax]
   -- Mixed tiers, sorted by position and not by registry order. `probeSource` covers [0, 11) and
   -- `probeSyntax` finds the `def` token at [0, 3): same start, so the shorter range wins the tie.
@@ -470,7 +508,8 @@ private def testMixedSelection : IO Unit := do
   -- And the derivation must agree with what the engine will actually run, or a batch obtains facts
   -- for rules it skips, or skips rules it obtained facts for.
   ensure
-      ((runRulesOf registry (.source (SourceFacts.of fixtureSourceText))).map (·.code) ==
+      ((runRulesOf registry (.source (SourceFacts.of fixtureSourceText defaultLineWidth))).map
+          (·.code) ==
         #["TST901"])
       "requiredTierOf and runRulesOf disagree about what source facts can answer"
   -- Selecting exactly one shipped rule must cost exactly that rule's own tier — no more (paying for
@@ -522,6 +561,7 @@ public def cases : Array Case :=
   #[{ name := "testRules", run := testRules },
     { name := "testSourceSecurityRules", run := testSourceSecurityRules },
     { name := "testSourceSecurityProperties", run := testSourceSecurityProperties },
+    { name := "testLineWidth", run := testLineWidth },
     { name := "testEngineTiers", run := testEngineTiers },
     { name := "testMixedSelection", run := testMixedSelection },
     { name := "testCatalogInvariants", run := testCatalogInvariants },

@@ -173,7 +173,7 @@ private theorem identity_conjuncts (h : Entry.identityCurrent e o = true) :
 private theorem serves_conjuncts (h : serves e o demand = true) :
     e.schema = o.schema ∧
       e.sourceDigest = o.sourceDigest e.mod ∧
-        e.closureDigest = o.closureDigest e.mod ∧ e.provided.meets demand = true := by
+      e.closureDigest = o.closureDigest e.mod ∧ e.provided.meets demand = true := by
   simp only [serves, Bool.and_eq_true] at h
   let ⟨a, b, c⟩ := identity_conjuncts h.1
   exact ⟨a, b, c, h.2⟩

@@ -321,7 +321,10 @@ private def parseFileArgs (mode : RunMode) (args : List String) :
     | "--no-validate" :: rest =>
       if mode == .format then
         loop mode rest { command with run := { command.run with validationPolicy := .structural } }
-      else .error s!"--no-validate is valid only for format, not {mode.toString}"
+      -- Naming `mode` here would print the strategy the flags settled on, not the command the
+      -- caller typed: `check --fix` reads as "not fix", and `format --diff` as "not diff", a
+      -- command token that no longer exists. Name what --no-validate needs instead.
+      else .error "--no-validate is available only when `format` writes files"
     | "--unsafe-fixes" :: rest =>
       loop mode rest { command with run := { command.run with unsafeFixes := true } }
     | "--workers" :: value :: rest =>
@@ -438,15 +441,19 @@ writing, and the stdin stream has no in-place destination. -/
 private def validateNoValidate (mode : RunMode) (command : FileCommand) : Except String Unit := do
   if command.run.validationPolicy == .structural then
     if mode != .format then
-      .error "--no-validate is valid only when format publishes"
+      .error "--no-validate is available only when `format` writes files"
     else if command.run.formatCheck then
       .error
-          "--no-validate is not available with --check; a preview publishes nothing and always \
-        validates exactly"
+          "--no-validate is not available with --check; --check never writes files, so there \
+        is nothing to skip"
     else if command.stdin then
-      .error "--no-validate is not available for the - stdin target; the stream validates exactly"
+      .error
+          "--no-validate is not available when the target is - (standard input); lean-fmt never \
+        writes there, so there is nothing to skip"
     else if command.watch then
-      .error "--no-validate is not available with --watch; watch runs previews"
+      .error
+          "--no-validate is not available with --watch; --watch never writes files, so there \
+        is nothing to skip"
     else
       .ok ()
   else
@@ -631,9 +638,9 @@ private def statusMessage? (status : String) : Option String :=
   | "would-format" => some "file would be reformatted"
   | "would-organize" => some "imports would be reorganized"
   | "broken" => some "file could not be parsed"
-  | "unbuilt" => some "a dependency's olean is missing; run `lake build`"
-  | "rejected" => some "result was rejected by validation"
-  | "infrastructure-failure" => some "analysis did not complete"
+  | "unbuilt" => some "a dependency has not been compiled yet; run `lake build`"
+  | "rejected" => some "left unchanged: lean-fmt could not confirm its own result was equivalent"
+  | "infrastructure-failure" => some "left unchanged: lean-fmt could not finish this file"
   | _ => none
 
 /-- Whether a status is an *infrastructure* problem rather than a finding.
@@ -715,8 +722,8 @@ private def githubReport (positions : PositionIndex) (report : RunReport) : Stri
         let stop := stopPosition positions file.path finding
         out :=
           out ++
-              githubCommand (githubSeverity finding.severity) file.path finding.code start stop
-                (flattenMessage finding.message) ++
+            githubCommand (githubSeverity finding.severity) file.path finding.code start stop
+              (flattenMessage finding.message) ++
             "\n"
       if let some message := statusMessage? file.status then
         let severity := if statusIsInfrastructure file.status then "error" else "warning"
@@ -724,8 +731,8 @@ private def githubReport (positions : PositionIndex) (report : RunReport) : Stri
       for diagnostic in file.diagnostics do
         out :=
           out ++
-              githubCommand "error" file.path statusRuleId ⟨1, 1⟩ ⟨1, 1⟩
-                (flattenMessage diagnostic) ++
+            githubCommand "error" file.path statusRuleId ⟨1, 1⟩ ⟨1, 1⟩
+              (flattenMessage diagnostic) ++
             "\n"
     for failure in report.infrastructureFailures do
       out := out ++ s!"::error title=lean-fmt::{githubEscapeData failure}\n"
@@ -937,8 +944,8 @@ private structure JUnitCase where
 private def junitCaseXml (classname : String) (case : JUnitCase) : String :=
   let tag := if case.isError then "error" else "failure"
   s!"    <testcase name=\"{xmlEscape case.name}\" classname=\"{xmlEscape classname}\">\n" ++
-        s!"      <{tag} message=\"{xmlEscape case.message}\" type=\"{xmlEscape case.type}\">" ++
-      s!"{xmlEscape case.detail}</{tag}>\n" ++
+    s!"      <{tag} message=\"{xmlEscape case.message}\" type=\"{xmlEscape case.type}\">" ++
+    s!"{xmlEscape case.detail}</{tag}>\n" ++
     "    </testcase>\n"
 
 private def junitReport (positions : PositionIndex) (report : RunReport) : String :=

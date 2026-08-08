@@ -14,7 +14,8 @@ cannot silently omit or rename a decision.
 - A group uses its flat form when it fits. Otherwise it uses the named broken form; width decisions do not depend on the
   input's line breaks.
 - Ordinary breakable syntax must reflow at the configured width. A literal token, URL, identifier, exact comment
-  payload, or registry-owned opaque atom may exceed it.
+  payload, or registry-owned opaque atom may exceed it. `FMT016` reports every row that does, breakable or not; it is
+  off by default because the unbreakable ones are the common case.
 - Horizontal whitespace is one space where separation is required and absent next to hugged delimiters. There are no
   tabs or trailing spaces in formatter-owned output.
 - Ordinary modules end in one newline. Bytes beginning at a terminal command such as `#exit` are a verbatim tail and are
@@ -93,7 +94,9 @@ their value boundary. Projections hug their receiver and projection name.
 
 `terms.operator` reads precedence and association from syntax, never from a flat token stream. A flat chain has one
 space around an infix operator. A broken chain leaves the operator with its left operand and indents the following
-operand two spaces. Identifier operands are ordinary operands: `a+1`, `a+b`, qualified names, and Unicode notation all
+operand two spaces. Two spaces once, not once per link: every break in one chain lands at the same column however many
+operands it has, and either associativity reads the same way. A parenthesised sub-chain is a separate chain and holds a
+column of its own. Identifier operands are ordinary operands: `a+1`, `a+b`, qualified names, and Unicode notation all
 participate in spacing and reflow.
 
 `terms.lambda-let-if` keeps a small lambda or `let` flat. Broken lambda bodies are indented two spaces after `=>`;

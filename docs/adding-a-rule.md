@@ -153,10 +153,21 @@ A rule is `Facts → Array Finding`. It has no `IO`, no `Environment`, no worksp
 by the argument type, not by convention. If your rule seems to need one of those, it is not a rule yet; say so in the
 owning stack's notes rather than widening the signature.
 
-Rules must not consult configuration either. `runRules` produces *every* rule's findings and `RulePlan.findings`
-projects afterwards. That is what lets one cache entry serve any `--select`, and it is not an optimization to preserve
-casually: the last mechanism that let a rule read its own enablement made `check` and `format` report different findings
-for the same unchanged file.
+A rule reads configuration only through `SourceFacts`, and today that is one field: `lineWidth`, the effective
+`format.line-width` for the file. Everything else is off limits. `runRules` produces *every* rule's findings and
+`RulePlan.findings` projects afterwards. That is what lets one cache entry serve any `--select`, and it is not an
+optimization to preserve casually: the last mechanism that let a rule read its own enablement made `check` and `format`
+report different findings for the same unchanged file.
+
+Two conditions admitted `lineWidth`, and a new field needs both:
+
+- **It is already in cache identity.** `Project.configurationIdentity` folds `format.identityString` — which spells
+  `line-width=` — into `CacheIdentity.configuration`. A width change therefore misses every stored entry instead of
+  serving findings computed at the old margin. A setting outside that string would not.
+- **It cannot decide whether a rule runs.** Selection stays a projection over the complete finding set.
+
+`[lint]`'s `select`/`ignore` and `extend-safe-fixes` fail both tests, which is why the exemption does not reach them.
+If you want a knob for your rule, the answer is almost always no: state the rule's meaning without one.
 
 ## Rules do not run in the compiler
 

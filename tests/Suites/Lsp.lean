@@ -167,9 +167,9 @@ private def readFixture (ctx : Ctx) (name : String) : IO String :=
 
 private def lifecyclePayload : String :=
   requestFrame 1 "initialize" (some (Json.mkObj [])) ++
-          notificationFrame "initialized" (some (Json.mkObj [])) ++
-        requestFrame 2 "$/lean-fmt/health" ++
-      requestFrame 3 "shutdown" ++
+    notificationFrame "initialized" (some (Json.mkObj [])) ++
+    requestFrame 2 "$/lean-fmt/health" ++
+    requestFrame 3 "shutdown" ++
     notificationFrame "exit"
 
 private def testLifecycle (ctx : Ctx) : IO Unit := do
@@ -199,7 +199,7 @@ private def testInitializationGuard (ctx : Ctx) : IO Unit := do
   let (_, messages) ←
     runSession ctx
         (requestFrame 1 "$/lean-fmt/health" ++ requestFrame 2 "initialize" (some (Json.mkObj [])) ++
-            requestFrame 3 "shutdown" ++
+          requestFrame 3 "shutdown" ++
           notificationFrame "exit")
         "pre-initialize"
   ensureJsonAt (← answerOf messages 1) [.field "error", .field "code"] (Lean.toJson (-32002 : Int))
@@ -221,10 +221,10 @@ private def testMalformedRecovery (ctx : Ctx) : IO Unit := do
   let (code, messages) ←
     runSession ctx
         (requestFrame 1 "initialize" (some (Json.mkObj [])) ++ "Content-Length: nope\r\n\r\n" ++
-                  "Content-Length: 4\r\n\r\n{,,," ++
-                "X-Only-Header: 1\r\n\r\n" ++
-              requestFrame 2 "$/lean-fmt/health" ++
-            requestFrame 3 "shutdown" ++
+          "Content-Length: 4\r\n\r\n{,,," ++
+          "X-Only-Header: 1\r\n\r\n" ++
+          requestFrame 2 "$/lean-fmt/health" ++
+          requestFrame 3 "shutdown" ++
           notificationFrame "exit")
         "malformed"
   let parseErrors :=
@@ -241,9 +241,9 @@ private def testUnknownMethods (ctx : Ctx) : IO Unit := do
   let (code, messages) ←
     runSession ctx
         (requestFrame 1 "initialize" (some (Json.mkObj [])) ++
-                requestFrame 2 "textDocument/hover" (some (Json.mkObj [])) ++
-              notificationFrame "$/setTrace" (some (Json.mkObj [("value", Json.str "verbose")])) ++
-            requestFrame 3 "shutdown" ++
+          requestFrame 2 "textDocument/hover" (some (Json.mkObj [])) ++
+          notificationFrame "$/setTrace" (some (Json.mkObj [("value", Json.str "verbose")])) ++
+          requestFrame 3 "shutdown" ++
           notificationFrame "exit")
         "unknown"
   ensureJsonAt (← answerOf messages 2) [.field "error", .field "code"] (Lean.toJson (-32601 : Int))
@@ -255,12 +255,12 @@ private def testDocumentAdmission (ctx : Ctx) : IO Unit := do
   let (_, messages) ←
     runSession ctx
         (requestFrame 1 "initialize" (some (Json.mkObj [])) ++ openFrame (findingsUri ctx) source ++
-                      openFrame "untitled:Untitled-1" "def x := 1\n" ++
-                    openFrame "file:///etc/hosts" "def x := 1\n" ++
-                  openFrame s!"file://{ctx.rootStr}/.lake/packages/x/X.lean" "def x := 1\n" ++
-                openFrame s!"file://{ctx.rootStr}/README.md" "# not lean\n" ++
-              requestFrame 2 "$/lean-fmt/health" ++
-            requestFrame 3 "shutdown" ++
+          openFrame "untitled:Untitled-1" "def x := 1\n" ++
+          openFrame "file:///etc/hosts" "def x := 1\n" ++
+          openFrame s!"file://{ctx.rootStr}/.lake/packages/x/X.lean" "def x := 1\n" ++
+          openFrame s!"file://{ctx.rootStr}/README.md" "# not lean\n" ++
+          requestFrame 2 "$/lean-fmt/health" ++
+          requestFrame 3 "shutdown" ++
           notificationFrame "exit")
         "admission"
   let health ← answerOf messages 2
@@ -286,8 +286,8 @@ private def testDocumentAdmission (ctx : Ctx) : IO Unit := do
   let (_, onceMessages) ←
     runSession ctx
         (requestFrame 1 "initialize" (some (Json.mkObj [])) ++
-              openFrame "untitled:Untitled-1" "def x := 1\n" ++
-            requestFrame 2 "shutdown" ++
+          openFrame "untitled:Untitled-1" "def x := 1\n" ++
+          requestFrame 2 "shutdown" ++
           notificationFrame "exit")
         "refusal-once"
   ensureEq "the refusal is announced once" 1
@@ -298,29 +298,27 @@ private def testVersionsSync (ctx : Ctx) : IO Unit := do
   let (_, messages) ←
     runSession ctx
         (requestFrame 1 "initialize" (some (Json.mkObj [])) ++ openFrame uri "def a := 1\n"
-                  -- An incremental change: replace `1` with `22`.
-                  ++
-                  notificationFrame "textDocument/didChange"
-                    (some
-                      (Json.mkObj
-                        [("textDocument",
-                            Json.mkObj [("uri", Json.str uri), ("version", Lean.toJson (2 : Nat))]),
-                          ("contentChanges",
-                            Json.arr
-                              #[Json.mkObj
-                                  [("range", LspClient.range 0 9 0 10),
-                                    ("text", Json.str "22")]])]))
-                -- A stale version, which must be ignored rather than applied.
-                ++
-                notificationFrame "textDocument/didChange"
-                  (some
-                    (Json.mkObj
-                      [("textDocument",
-                          Json.mkObj [("uri", Json.str uri), ("version", Lean.toJson (2 : Nat))]),
-                        ("contentChanges",
-                          Json.arr #[Json.mkObj [("text", Json.str "wiped\n")]])])) ++
-              requestFrame 2 "$/lean-fmt/health" ++
-            requestFrame 3 "shutdown" ++
+          -- An incremental change: replace `1` with `22`.
+          ++
+          notificationFrame "textDocument/didChange"
+            (some
+              (Json.mkObj
+                [("textDocument",
+                    Json.mkObj [("uri", Json.str uri), ("version", Lean.toJson (2 : Nat))]),
+                  ("contentChanges",
+                    Json.arr
+                      #[Json.mkObj
+                          [("range", LspClient.range 0 9 0 10), ("text", Json.str "22")]])]))
+          -- A stale version, which must be ignored rather than applied.
+          ++
+          notificationFrame "textDocument/didChange"
+            (some
+              (Json.mkObj
+                [("textDocument",
+                    Json.mkObj [("uri", Json.str uri), ("version", Lean.toJson (2 : Nat))]),
+                  ("contentChanges", Json.arr #[Json.mkObj [("text", Json.str "wiped\n")]])])) ++
+          requestFrame 2 "$/lean-fmt/health" ++
+          requestFrame 3 "shutdown" ++
           notificationFrame "exit")
         "versions"
   ensureJsonAt (← answerOf messages 2) [.field "result", .field "openDocumentBytes"]
@@ -334,10 +332,10 @@ private def testCloseClears (ctx : Ctx) : IO Unit := do
   let (_, messages) ←
     runSession ctx
         (requestFrame 1 "initialize" (some (Json.mkObj [])) ++ openFrame uri source ++
-                notificationFrame "textDocument/didClose"
-                  (some (Json.mkObj [("textDocument", Json.mkObj [("uri", Json.str uri)])])) ++
-              requestFrame 2 "$/lean-fmt/health" ++
-            requestFrame 3 "shutdown" ++
+          notificationFrame "textDocument/didClose"
+            (some (Json.mkObj [("textDocument", Json.mkObj [("uri", Json.str uri)])])) ++
+          requestFrame 2 "$/lean-fmt/health" ++
+          requestFrame 3 "shutdown" ++
           notificationFrame "exit")
         "close"
   let published := notificationsOf messages "textDocument/publishDiagnostics"
@@ -354,11 +352,10 @@ private def testCancellation (ctx : Ctx) : IO Unit := do
   let (_, messages) ←
     runSession ctx
         (requestFrame 1 "initialize" (some (Json.mkObj [])) ++
-                  notificationFrame "$/cancelRequest"
-                    (some (Json.mkObj [("id", Lean.toJson (2 : Nat))])) ++
-                requestFrame 2 "$/lean-fmt/health" ++
-              requestFrame 3 "$/lean-fmt/health" ++
-            requestFrame 4 "shutdown" ++
+          notificationFrame "$/cancelRequest" (some (Json.mkObj [("id", Lean.toJson (2 : Nat))])) ++
+          requestFrame 2 "$/lean-fmt/health" ++
+          requestFrame 3 "$/lean-fmt/health" ++
+          requestFrame 4 "shutdown" ++
           notificationFrame "exit")
         "cancellation"
   ensureJsonAt (← answerOf messages 2) [.field "error", .field "code"] (Lean.toJson (-32800 : Int))
@@ -374,8 +371,8 @@ private def testBounds (ctx : Ctx) : IO Unit := do
   let (code, messages) ←
     runSession ctx
         (requestFrame 1 "initialize" (some (Json.mkObj [])) ++ openFrame (findingsUri ctx) big ++
-              requestFrame 2 "$/lean-fmt/health" ++
-            requestFrame 3 "shutdown" ++
+          requestFrame 2 "$/lean-fmt/health" ++
+          requestFrame 3 "shutdown" ++
           notificationFrame "exit")
         "bounds"
   ensureJsonAt (← answerOf messages 2) [.field "result", .field "openDocuments"]
@@ -638,7 +635,7 @@ private partial def awaitPublication (uri : String) (version : Nat) (budget : Na
   let params := field json "params"
   if
       (json.getObjValAs? String "method").toOption == some "textDocument/publishDiagnostics" &&
-          (params.getObjValAs? String "uri").toOption == some uri &&
+        (params.getObjValAs? String "uri").toOption == some uri &&
         (params.getObjValAs? Nat "version").toOption == some version then
     return params
   awaitPublication uri version (budget - 1)

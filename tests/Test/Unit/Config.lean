@@ -32,10 +32,12 @@ import all LeanFmt.Imports
 import all LeanFmt.LanguageServer
 import all LeanFmt.Rules
 import all LeanFmt.Suppression
+import all Test.Unit.Fixtures
 
 import Lean.Data.Lsp
 
 open LeanFmt LeanFmt.Internal
+open LeanFmt.Test.Unit.Fixtures
 
 namespace LeanFmt.Test.Unit.Config
 
@@ -74,7 +76,7 @@ ignore = [\"FMT002\"]\n\
     -- Specificity precedence: config `ignore = [FMT002]` (exact) outranks `select = [security]`
     -- (category), so only FMT001 survives.
     ensure (plan.activeCount == 1) "configured ignore did not win"
-    let findings := runSourceRules secBytes
+    let findings := runSourceRules secBytes defaultLineWidth
     ensure ((plan.findings "LeanFmt/File.lean" findings).map (·.code) == #["FMT001"])
         "configured selector projection was wrong"
     ensure ((plan.findings "LeanFmt/Legacy/File.lean" findings).isEmpty)

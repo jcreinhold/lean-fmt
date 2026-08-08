@@ -107,7 +107,7 @@ private def sortedEdits (edits : Array ProvenancedEdit) : Array IndexedEdit :=
 private def conflict? (left right : IndexedEdit) : Bool :=
   right.edit.range.start < left.edit.range.stop ||
     (left.edit.range.start == left.edit.range.stop &&
-        right.edit.range.start == right.edit.range.stop &&
+      right.edit.range.start == right.edit.range.stop &&
       left.edit.range.start == right.edit.range.start)
 
 private def validateConflicts (edits : Array IndexedEdit) : Except PatchError Unit := do

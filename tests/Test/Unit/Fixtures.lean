@@ -45,6 +45,13 @@ One source text and the projection and module artifact that describe it exactly,
 modules that need a valid artifact to mutate. They are written out by hand rather than produced by a
 run, so a case can assert against a projection the product did not choose. -/
 
+/-- The `format.line-width` a fact view gets when the case is not about the margin: the product's
+own default, so a case reads the same width a user's first run does. A case that *is* about the
+margin passes its own width. Spelled once because the alternative — a literal per call site — lets
+two cases in one file disagree about what "the default" is. -/
+private def defaultLineWidth : Nat :=
+  ({ } : LeanFmt.Internal.FormatConfig).lineWidth
+
 /- The projection of `def x := 1\n`, written by hand so the tiling invariant is legible: every
 token's span and trivia runs abut, covering `[headerStop, terminalStop)` exactly once.
 

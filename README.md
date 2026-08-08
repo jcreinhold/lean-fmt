@@ -110,6 +110,35 @@ costs, and CI recipes: `docs/ci.md`.
 `lean-fmt lsp` serves a language server offering formatting, range formatting, code actions, and diagnostics, alongside
 Lean's own. Setup for VS Code, Neovim, and Emacs: `docs/editor-setup.md`.
 
+## Stability
+
+Output is not stable across versions yet. Three things move it, and all three are expected to move again:
+
+- **lean-fmt itself.** Layout fixes change layout. The operator-chain indentation fix alone reformatted 43% of a
+  1,610-file Lean corpus (measured 2026-08-07), up from 20% before it.
+- **The target project's toolchain.** lean-fmt renders through Lean's own pretty-printer, so a Lean release that changes
+  a formatter changes lean-fmt's output.
+- **Upstream fixes still in flight.** lean-fmt works around defects in Lean's own layout engine. Some have fixes
+  proposed upstream; when one lands the workaround goes, and the rows it produced move with it.
+
+Pin a version rather than tracking `main`, and land a reformat as its own commit so later review diffs stay readable.
+
+What does not move is whether a file is safe. lean-fmt publishes a result only after re-parsing it and comparing it
+token-for-token against the original; a file it cannot verify is left exactly as it was and reported as `rejected` or
+`infrastructure-failure`, never written half-formatted. Over that same corpus: no result failed validation, and 2 files
+(0.12%) were refused before one was produced.
+
+The line width is a target for breakable syntax, not a guarantee. A string literal, URL, long identifier, or comment
+payload can exceed it because no break placement would shorten it. `FMT016` reports every row that does. It is off by
+default:
+
+```toml
+[lint]
+extend-select = ["FMT016"]
+```
+
+Prose inside comments is not rewrapped at all unless you turn on `reflow-comments` (`docs/configuration.md`).
+
 ## More
 
 - `docs/style.md` — the canonical style, including `format-ignore-next` suppression.

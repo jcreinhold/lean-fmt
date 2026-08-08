@@ -67,8 +67,8 @@ private def role (stx : Lean.Syntax) : CommandRole :=
     else
       if
           stx.isOfKind ``Lean.Parser.Command.open || stx.isOfKind ``Lean.Parser.Command.export ||
-                stx.isOfKind ``Lean.Parser.Command.universe ||
-              stx.isOfKind ``Lean.Parser.Command.variable ||
+            stx.isOfKind ``Lean.Parser.Command.universe ||
+            stx.isOfKind ``Lean.Parser.Command.variable ||
             stx.isOfKind ``Lean.Parser.Command.set_option then
         .setup
       else .declaration

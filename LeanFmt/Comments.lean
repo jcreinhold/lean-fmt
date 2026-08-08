@@ -620,10 +620,10 @@ def summary (normalized : String) (ownership : CommentOwnership) : CommentSummar
           | none => s!"{stx.getKind}:none"
       digestInput :=
         digestInput ++
-              s!"{kindName assignment.comment.kind}:\
+          s!"{kindName assignment.comment.kind}:\
 {assignment.comment.range.start}:{assignment.comment.range.stop}:\
 {placementName assignment.placement}:{owner}:" ++
-            slice bytes assignment.comment.range ++
+          slice bytes assignment.comment.range ++
           "\n"
     return {
         comments := ownership.extracted.size

@@ -64,6 +64,7 @@
       "deprecation",
       "docs",
       "imports",
+      "layout",
       "naming",
       "redundancy",
       "security",
@@ -83,7 +84,8 @@
       "FMT012",
       "FMT013",
       "FMT014",
-      "FMT015"
+      "FMT015",
+      "FMT016"
       ]
     }
   }

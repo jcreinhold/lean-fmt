@@ -32,10 +32,10 @@ open LeanFmt.Test
 /-- Every unit case, concatenated module by module. -/
 def allCases : Array Case :=
   Unit.Digest.cases ++ Unit.Rules.cases ++ Unit.Imports.cases ++ Unit.Lsp.cases ++
-                Unit.Edit.cases ++
-              Unit.Config.cases ++
-            Unit.Cache.cases ++
-          Unit.Source.cases ++
-        Unit.Semantic.cases ++
-      Unit.Layout.cases ++
+    Unit.Edit.cases ++
+    Unit.Config.cases ++
+    Unit.Cache.cases ++
+    Unit.Source.cases ++
+    Unit.Semantic.cases ++
+    Unit.Layout.cases ++
     Unit.Progress.cases

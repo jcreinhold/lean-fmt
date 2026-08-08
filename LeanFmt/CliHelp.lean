@@ -368,29 +368,29 @@ private def commandHelps : Array CommandHelp :=
 
 private def renderCommandHelp (spec : CommandHelp) (color : Bool) (width : Nat) : String :=
   renderUsageBlock color spec.usage ++ "\n\n" ++
-          String.intercalate "\n" (wrapHelp width spec.description) ++
-        "\n\n" ++
-      String.intercalate "\n\n"
-        ((spec.sections.map fun (title, entries) =>
-            renderHelpSection color width title entries).toList) ++
+    String.intercalate "\n" (wrapHelp width spec.description) ++
+    "\n\n" ++
+    String.intercalate "\n\n"
+      ((spec.sections.map fun (title, entries) =>
+          renderHelpSection color width title entries).toList) ++
     renderNotesBlock color width spec.notes
 
 /-- The root `--help`: what the product is, the commands table (generated from `commandHelps`, so
 a command cannot be documented in one place and missing from the other), and the global notes. -/
 def overviewHelp (color : Bool) (width : Nat) : String :=
   renderUsageBlock color
-                  #["lean-fmt <command> [OPTIONS] [FILE...]",
-                    "lean-fmt {check|format} - --stdin-filename PATH [--range S:E]"] ++
-                "\n\n" ++
-              String.intercalate "\n"
-                (wrapHelp width
-                  "Format, lint, and fix Lean 4 source. Batch runs cache results in .lean-fmt-cache/; a warm \
+      #["lean-fmt <command> [OPTIONS] [FILE...]",
+        "lean-fmt {check|format} - --stdin-filename PATH [--range S:E]"] ++
+    "\n\n" ++
+    String.intercalate "\n"
+      (wrapHelp width
+        "Format, lint, and fix Lean 4 source. Batch runs cache results in .lean-fmt-cache/; a warm \
       run where nothing changed skips the frontend.") ++
-            "\n\n" ++
-          renderHelpSection color width "commands:"
-            (commandHelps.map fun spec => ⟨spec.command, spec.summary⟩) ++
-        "\n\n" ++
-      "Run `lean-fmt <command> --help` for that command's options, `lean-fmt --version` for the \
+    "\n\n" ++
+    renderHelpSection color width "commands:"
+      (commandHelps.map fun spec => ⟨spec.command, spec.summary⟩) ++
+    "\n\n" ++
+    "Run `lean-fmt <command> --help` for that command's options, `lean-fmt --version` for the \
     version." ++
     renderNotesBlock color width
       #["exit 0 clean, 1 findings or drift, 2 failure.",

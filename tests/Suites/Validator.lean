@@ -321,13 +321,12 @@ public def main (args : List String) : IO UInt32 := do
           ("Contract.lean", "second-pass-drift", "idempotence")]
       let cases : Array Case :=
         #[{ name := "admission", run := ValidatorSuite.testAdmission ctx },
-              { name := "reparse-agrees", run := ValidatorSuite.testReparseAgrees ctx },
-              { name := "bypass-admission", run := ValidatorSuite.testBypassAdmission ctx },
-              { name := "bypass-needs-frontier",
-                run := ValidatorSuite.testBypassNeedsFrontier ctx },
-              { name := "bypass-refused", run := ValidatorSuite.testBypassRefused ctx }] ++
-            (mutations.map fun (fixture, mode, gate) =>
-              ({ name := mode, run := ValidatorSuite.testGate ctx fixture mode gate } : Case)) ++
+            { name := "reparse-agrees", run := ValidatorSuite.testReparseAgrees ctx },
+            { name := "bypass-admission", run := ValidatorSuite.testBypassAdmission ctx },
+            { name := "bypass-needs-frontier", run := ValidatorSuite.testBypassNeedsFrontier ctx },
+            { name := "bypass-refused", run := ValidatorSuite.testBypassRefused ctx }] ++
+          (mutations.map fun (fixture, mode, gate) =>
+            ({ name := mode, run := ValidatorSuite.testGate ctx fixture mode gate } : Case)) ++
           #[{ name := "malformed-diagnostics", run := ValidatorSuite.testMalformed ctx },
             { name := "throwing-refusal", run := ValidatorSuite.testThrowing ctx },
             { name := "map-negative", run := ValidatorSuite.testMapNegative }]

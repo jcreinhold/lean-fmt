@@ -132,9 +132,9 @@ deleted and the gate moved onto the capability that survived — which is also t
 the same 200 files answered a syntax `check` from their artifacts in 12.4 s. -/
 private def gateArtifactAvoidsExact (artifactCapture exactCapture : String) : Bool :=
   counter "cache.official_artifact_hit" artifactCapture == some 1 &&
-          phaseCount "exact_child" artifactCapture == 0 &&
-        phaseCount "exact_setup" artifactCapture == 0 &&
-      counter "cache.official_artifact_hit" exactCapture == some 0 &&
+    phaseCount "exact_child" artifactCapture == 0 &&
+    phaseCount "exact_setup" artifactCapture == 0 &&
+    counter "cache.official_artifact_hit" exactCapture == some 0 &&
     phaseCount "exact_child" exactCapture == 1
 
 /-- §1j. Every rendering child read its module by skeleton, and none fell back.
@@ -153,8 +153,8 @@ private def gateSkeletonRead (capture : String) (expected : Nat) : Bool :=
       if line.startsWith "cache.skeleton_skipped_commands=" then (line.splitOn "=").getLast!.toNat?
       else none
   expected > 0 && (lines.filter (· == "cache.skeleton_read=1")).length == expected &&
-        !(lines.any (·.startsWith "cache.skeleton_miss_")) &&
-      skipped.length == expected &&
+    !(lines.any (·.startsWith "cache.skeleton_miss_")) &&
+    skipped.length == expected &&
     skipped.all (· > 0)
 
 /-- §1k. The frontier's skip ratio: every read skipped at least `minSkipped` commands, advanced
@@ -693,8 +693,8 @@ private def testPhaseMeasures (ctx : Ctx) : IO Unit := do
         (List.replicate (2000000 / 80) (String.ofList (List.replicate 79 'x')))
     writeFile (fixtureDir / "Late.lean")
         ("/-\nCopyright (c) 2026 Jacob Reinhold. All rights reserved.\n-/\n\nmodule\n\n/-\n" ++
-              body ++
-            "\x01" ++
+          body ++
+          "\x01" ++
           "\n-/\n")
     let result ←
       runProc ctx.app

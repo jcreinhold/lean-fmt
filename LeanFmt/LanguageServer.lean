@@ -300,7 +300,7 @@ private structure DocumentEnvelope where
 private def DocumentEnvelope.meets (cached : DocumentEnvelope) (version : Int)
     (semantic occurrences : Bool) (format? : Option FormatConfig) : Bool :=
   cached.version == version && (!semantic || cached.semantic) &&
-      (!occurrences || cached.occurrences) &&
+    (!occurrences || cached.occurrences) &&
     match format? with
     | some format => cached.format? == some format
     | none => true

@@ -219,7 +219,9 @@ private def testNoValidate (ctx : Ctx) : IO Unit := do
     let rejected ←
       run ctx 2 s!"--no-validate {mode}"
           (command ++ #["tests/fixtures/check/Findings.lean", "--no-validate"])
-    ensure (rejected.stderr.contains s!"--no-validate is valid only for format, not {mode}")
+    -- One message for all three: naming the settled strategy printed a command token the caller
+    -- never typed (`check --fix` read as "not fix"), so the rejection names what the flag needs.
+    ensure (rejected.stderr.contains "--no-validate is available only when `format` writes files")
         s!"--no-validate {mode}: wrong rejection"
   let preview ←
     run ctx 2 "--no-validate --check"
@@ -229,7 +231,9 @@ private def testNoValidate (ctx : Ctx) : IO Unit := do
   let stream ←
     run ctx 2 "--no-validate stdin"
         #["format", "-", "--stdin-filename", "Repro.lean", "--no-validate"]
-  ensure (stream.stderr.contains "--no-validate is not available for the - stdin target")
+  ensure
+      (stream.stderr.contains
+        "--no-validate is not available when the target is - (standard input)")
       "--no-validate stdin: wrong rejection"
   withRestored ctx.backupLayout ctx.layout do
       let args :=
@@ -472,7 +476,7 @@ private def testRulesRegistry (ctx : Ctx) : IO Unit := do
   let codes := all.map fun rule => (rule.getObjValAs? String "code").toOption.getD ""
   ensureEq "the registry order"
       ["FMT001", "FMT002", "FMT006", "FMT007", "FMT008", "FMT009", "FMT010", "FMT011", "FMT012",
-        "FMT013", "FMT014", "FMT015", "FMT003", "FMT004", "FMT005"]
+        "FMT013", "FMT014", "FMT015", "FMT016", "FMT003", "FMT004", "FMT005"]
       codes
   let byCode (code : String) : Lean.Json :=
     (all.find? fun rule => (rule.getObjValAs? String "code").toOption == some code).getD .null

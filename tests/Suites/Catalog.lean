@@ -122,7 +122,7 @@ private def testExamples (ctx : Ctx) : IO Unit := do
           discard <|
               runFallback ctx 0
                 (#["check", "--fix", "--root", ".", "--json", "--no-cache", "--unsafe-fixes"] ++
-                    preview ++
+                  preview ++
                   #["--select", code, relative])
                 tag
           let produced ← IO.FS.readFile probe

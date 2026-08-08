@@ -832,7 +832,7 @@ def graph (workspace : Lake.Workspace) (targets : Array SourceTarget)
       (Lake.Job
         (Array (Option Bool) ×
           (Array (Option (Array Lake.Module)) × Std.HashMap Lean.Name (Array (Lean.Name × Bool))) ×
-            Array (Option String) × Array (Option Lean.ModuleSetup))) :=
+          Array (Option String) × Array (Option Lean.ModuleSetup))) :=
     do
     let statusJobs ←
       statusModules.mapM fun mod? => do
@@ -877,7 +877,7 @@ def graph (workspace : Lake.Workspace) (targets : Array SourceTarget)
     -- A short array would silently mis-pair facts with targets, which is worse than no batch.
     if
         statuses.size != statusModules.size || closures.1.size != closureModules.size ||
-            facets.size != facetModules.size ||
+          facets.size != facetModules.size ||
           probed.size != setupTargets.size then
       return blank
     -- The one place this operation may build, and it builds setups only. A stale `.olean` *is* the

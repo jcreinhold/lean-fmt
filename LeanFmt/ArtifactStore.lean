@@ -38,8 +38,8 @@ def ModuleArtifact.validFor (artifact : ModuleArtifact) (moduleName : Lean.Name)
     Bool :=
   let normalized := (LosslessSource.normalize raw).1
   structurallyValid artifact && artifact.mainModule == moduleName.toString &&
-        artifact.normalizedBytes == normalized.utf8ByteSize &&
-      artifact.normalizedDigest == Digest.ofString normalized &&
+    artifact.normalizedBytes == normalized.utf8ByteSize &&
+    artifact.normalizedDigest == Digest.ofString normalized &&
     (artifact.materialize raw).isOk
 
 private def decodeEntry? (entry : Lean.Linter.LintEntry) : Option CommandArtifactRecord := do

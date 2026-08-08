@@ -354,9 +354,9 @@ private def testFillLineClassification : IO Unit := do
       "a list item was not a keep"
   ensure
       (Comments.fillLine? { prose with kind := .block } .leading "/- prose -/" == none &&
-              Comments.fillLine? { prose with kind := .doc } .leading "/-- prose -/" == none &&
-            Comments.fillLine? prose .trailing "-- some prose" == none &&
-          Comments.fillLine? { prose with startsRow := false } .leading "-- some prose" == none &&
+        Comments.fillLine? { prose with kind := .doc } .leading "/-- prose -/" == none &&
+        Comments.fillLine? prose .trailing "-- some prose" == none &&
+        Comments.fillLine? { prose with startsRow := false } .leading "-- some prose" == none &&
         Comments.fillLine? prose .leading "-- two\nlines" == none)
       "a comment outside the standalone prose shape contributed a fill line"
   let next : Comment :=

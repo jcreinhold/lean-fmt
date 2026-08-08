@@ -487,5 +487,5 @@ excludes every fixture tree wholesale: incidental lint coverage of valid finding
 `organize` from the repository root rewriting golden inputs. -/
 lean_lib NativeLayoutFixtures where
   srcDir := "tests/fixtures/native-layout"
-  roots := #[`Alignment, `Boundaries, `Islands, `MathlibStyle, `Offside]
+  roots := #[`Alignment, `Boundaries, `Chains, `Islands, `MathlibStyle, `Offside]
   plugins := #[`@/LeanFmtCompilerPlugin:shared]

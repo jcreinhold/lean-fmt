@@ -11,6 +11,8 @@ declared fixture module each:
 - `Alignment.lean` — positional terminal alignment: repeated spellings, multibyte columns, and
   literal bases whose source spelling the formatter is free to change
 - `Boundaries.lean` — comment ownership at every boundary the adapter distinguishes
+- `Chains.lean` — operator chains, whose links each inherit an indent level from the link outside
+  them, and the one shape that is a chain by node kind with no break in it
 - `Islands.lean` — typed exact islands: multiline payloads, interpolation, quotation
 - `MathlibStyle.lean` — the grammar shapes mathlib's style linters flag: broken import rows,
   isolated focusing dots, attribute-owned doc comments nested past their payload's column
@@ -49,7 +51,7 @@ structure Ctx where
   once : String → IO String
 
 private def fixtures : Array String :=
-  #["Alignment", "Boundaries", "Islands", "MathlibStyle", "Offside"]
+  #["Alignment", "Boundaries", "Chains", "Islands", "MathlibStyle", "Offside"]
 
 /-- Lines containing the needle (grep -cF). -/
 private def count (text needle : String) : Nat :=
@@ -163,6 +165,53 @@ private def testHygiene (ctx : Ctx) : IO Unit := do
             (fun line => line.back?.map Char.isWhitespace |>.getD false) |>.length
       ensureEq s!"{fixture} leaves trailing whitespace" 0 trailing
       ensureEq s!"{fixture} holds a double blank line" 0 ((render.splitOn "\n\n\n").length - 1)
+
+/-- The leading-space count of each line after the one equal to `header`, up to the next blank line.
+A staircase is visible in this list and in nothing shorter: every row is a legal place to break, so
+what is wrong with an uncompensated chain is only that the numbers keep going up. -/
+private def bodyIndents (text header : String) : IO (List Nat) := do
+  let lines := text.splitOn "\n"
+  let some index :=
+    lines.findIdx? (· == header) | throw <| IO.userError s!"bodyIndents: {header} not found"
+  let body := (lines.drop (index + 1)).takeWhile (· != "")
+  return body.map fun line => line.length - (line.dropWhile (· == ' ')).length
+
+/-- §2b: one operator chain, one column. Lean's generated formatters wrap every category node in
+`group (nest format.indent …)`, so a chain — one node per link — stacks one `nest` per link, and each
+break lands one column further in than the one before it. `LAY-CHAIN-COMPENSATION` cancels the level
+each link inherits, and these are the rows that says. The width-40 render is where it is legible: the
+chains are long enough there that an uncompensated one would walk off the margin. -/
+private def testChains (ctx : Ctx) : IO Unit := do
+  let chains ← ctx.once "Chains"
+  ensureEq "an infixl chain breaks one level in at width 100" "    \"golf\""
+      (← lineAfter chains "\"foxtrot\" ++ f ++")
+  -- A `let` holds its body's row at a source column, and a chain's leftmost operand starts exactly
+  -- where that row does. Declining an operand that merely *touches* a pin declined every chain
+  -- written as a `let` body -- ordinary Lean, and 152 columns of indent in this repository's own
+  -- `catalogSchemaJson` until it was narrowed to pins strictly inside.
+  ensureEq "a chain that is a let body is compensated like any other" [4, 4, 4]
+      (←
+        bodyIndents chains
+            "  head ++ \"alpha\" ++ a ++ \"bravo\" ++ b ++ \"charlie\" ++ c ++ \
+\"delta\" ++ d ++ \"echo\" ++ e ++")
+  -- `proj` inside `proj` is a chain by node kind with no break in it, so the compensation finds no
+  -- `nest` to cancel and lands nowhere. A corpus module carrying one refused outright while these
+  -- constraints were required; this row is what says they are not.
+  ensureEq "a dot-projection chain formats rather than refusing" 1 (countExact chains "  p.1.2")
+  let config := ctx.work / "width-40-chains.toml"
+  writeFile config "[format]\nline-width = 40\n"
+  let narrow ← formatCheck ctx "Chains" (some config) "chains at 40"
+  let joined ← bodyIndents narrow "    (a b c d e f : String) : String :="
+  ensureEq "an infixl chain breaks nine times" 9 (joined.length - 1)
+  ensureEq "  ... and every one of them at the same column" [] (joined.drop 1 |>.filter (· != 4))
+  let stacked ← bodyIndents narrow "public def stacked (a b c d : Nat) :"
+  ensureEq "an infixr chain, which nests the other way, does the same" []
+      (stacked.drop 2 |>.filter (· != 4))
+  -- The negative half. Parentheses interpose a node of another kind, so the sub-chain does not
+  -- continue the chain around it: it keeps the level the parenthesis opened, and the outer chain
+  -- keeps its own. Two columns, neither of them climbing.
+  ensureEq "a parenthesised sub-chain holds a column of its own" [6, 6, 6, 6, 6, 6, 6, 4, 4, 4]
+      (← bodyIndents narrow "  (a ++ \"alpha\" ++ b ++ \"bravo\" ++ c ++")
 
 /-- §3: terminal payloads are original bytes, matched by position. Includes the live upstream pin: the
 space Lean's `pushToken` does not put between `]` and `do`. -/
@@ -670,6 +719,7 @@ public def main (args : List String) : IO UInt32 := do
         #[{ name := "admission", run := NativeLayout.testAdmission ctx },
           { name := "idempotence", run := NativeLayout.testIdempotence ctx },
           { name := "hygiene", run := NativeLayout.testHygiene ctx },
+          { name := "chains", run := NativeLayout.testChains ctx },
           { name := "alignment-payloads", run := NativeLayout.testAlignment ctx },
           { name := "boundaries-comments", run := NativeLayout.testBoundaries ctx },
           { name := "islands", run := NativeLayout.testIslands ctx },

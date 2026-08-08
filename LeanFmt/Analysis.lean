@@ -556,30 +556,30 @@ private partial def changesParsing : Lean.Syntax → Bool
   | .node _ kind arguments =>
     if
         kind == ``Lean.Parser.Command.declaration || kind == `lemma ||
-                kind == ``Lean.Parser.Command.mutual ||
-              kind == ``Lean.Parser.Command.attribute ||
-            kind == ``Lean.Parser.Command.deriving ||
+          kind == ``Lean.Parser.Command.mutual ||
+          kind == ``Lean.Parser.Command.attribute ||
+          kind == ``Lean.Parser.Command.deriving ||
           kind == ``Lean.Parser.Command.variable then
       false
     else
       if
           kind == ``Lean.Parser.Command.universe || kind == ``Lean.Parser.Command.include ||
-                        kind == ``Lean.Parser.Command.omit ||
-                      kind == ``Lean.Parser.Command.export ||
-                    kind == ``Lean.Parser.Command.check ||
-                  kind == ``Lean.Parser.Command.check_failure ||
-                kind == ``Lean.Parser.Command.eval ||
-              kind == ``Lean.Parser.Command.evalBang ||
+            kind == ``Lean.Parser.Command.omit ||
+            kind == ``Lean.Parser.Command.export ||
+            kind == ``Lean.Parser.Command.check ||
+            kind == ``Lean.Parser.Command.check_failure ||
+            kind == ``Lean.Parser.Command.eval ||
+            kind == ``Lean.Parser.Command.evalBang ||
             kind == ``Lean.Parser.Command.synth then
         false
       else
         if
             kind == ``Lean.Parser.Command.print || kind == ``Lean.Parser.Command.printSig ||
-                        kind == ``Lean.Parser.Command.printAxioms ||
-                      kind == ``Lean.Parser.Command.printEqns ||
-                    kind == ``Lean.Parser.Command.printTacTags ||
-                  kind == ``Lean.Parser.Command.checkAssertions ||
-                kind == ``Lean.Parser.Command.assertNotExists ||
+              kind == ``Lean.Parser.Command.printAxioms ||
+              kind == ``Lean.Parser.Command.printEqns ||
+              kind == ``Lean.Parser.Command.printTacTags ||
+              kind == ``Lean.Parser.Command.checkAssertions ||
+              kind == ``Lean.Parser.Command.assertNotExists ||
               kind == ``Lean.Parser.Command.assertNotImported then
           false
         else

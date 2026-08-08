@@ -257,7 +257,7 @@ def ModuleArtifact.materialize (artifact : ModuleArtifact) (raw : String) :
   let (normalized, _) := LosslessSource.normalize raw
   unless
     artifact.schema == artifactSchema && artifact.normalizedBytes == normalized.utf8ByteSize &&
-        artifact.normalizedDigest == Digest.ofString normalized &&
+      artifact.normalizedDigest == Digest.ofString normalized &&
       artifact.syntaxData.structurallyValid artifact.normalizedBytes do
     throw "module artifact identity or structure is invalid"
   let materialized ← artifact.syntaxData.materialize normalized

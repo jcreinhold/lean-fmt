@@ -28,6 +28,12 @@ Generated from the rule registry (`LeanFmt/Rules.lean`); do not edit by hand.
 | [FMT004](FMT004.md) | stable | on | report-only | report an import made redundant by another import's transitive closure |
 | [FMT005](FMT005.md) | stable | on | report-only | report imports out of the configured import layout's order |
 
+## layout
+
+| Code | Lifecycle | Default | Fix | Summary |
+| --- | --- | --- | --- | --- |
+| [FMT016](FMT016.md) | stable | off | report-only | report a line wider than the configured line width |
+
 ## naming
 
 | Code | Lifecycle | Default | Fix | Summary |

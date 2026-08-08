@@ -353,7 +353,7 @@ def CommandArtifactRecord.ofSyntax (mainModule normalized : String) (terminal : 
 
 def CommandArtifactRecord.structurallyValid (record : CommandArtifactRecord) : Bool :=
   record.schema == commandArtifactSchema && record.tree.structurallyValid record.normalizedBytes &&
-      record.tree.leadingStart?.isSome &&
+    record.tree.leadingStart?.isSome &&
     record.tree.range?.isSome
 
 private structure ModuleBuild where
