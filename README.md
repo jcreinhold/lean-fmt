@@ -23,8 +23,12 @@ From source (`PREFIX=/usr/local` to override, `DESTDIR` to stage, `make uninstal
 git clone https://github.com/jcreinhold/lean-fmt.git && cd lean-fmt && make install
 ```
 
-With elan on `PATH`, the first build installs the pinned toolchain. At runtime lean-fmt uses the *target* project's
-toolchain. There is no Windows build; on Windows take the Lake dependency below.
+lean-fmt is built for one Lean toolchain, the one named in this repository's `lean-toolchain`. Lean's ABI is not stable
+across releases, so the binary refuses a project pinned to anything else and names both versions. The Lake dependency
+below has no such gate: `lake update` moves your project onto lean-fmt's toolchain instead. With elan on `PATH`, the
+source build installs that toolchain itself.
+
+There is no Windows build; on Windows take the Lake dependency.
 
 ## Use
 
@@ -85,7 +89,7 @@ require «lean-fmt» from git
 ```
 
 ```sh
-lake update «lean-fmt»   # add it to the manifest
+lake update «lean-fmt»   # add it to the manifest, and move lean-toolchain to lean-fmt's
 lake exe lean-fmt check
 ```
 
@@ -111,14 +115,13 @@ Lean's own. Setup for VS Code, Neovim, and Emacs: `docs/editor-setup.md`.
 
 ## Stability
 
-Output is not stable across versions yet. Three things move it, and all three are expected to move again:
+Output will change again before 1.0, from two causes:
 
-- **lean-fmt itself.** Layout fixes change layout. The operator-chain indentation fix alone reformatted 43% of a
-  1,610-file Lean corpus (measured 2026-08-07), up from 20% before it.
-- **The target project's toolchain.** lean-fmt renders through Lean's own pretty-printer, so a Lean release that changes
-  a formatter changes lean-fmt's output.
-- **Upstream fixes still in flight.** lean-fmt works around defects in Lean's own layout engine. Some have fixes
-  proposed upstream; when one lands the workaround goes, and the rows it produced move with it.
+- **Layout fixes.** The operator-chain fix in 0.4.0 reformatted 43% of a 1,610-file Lean corpus (measured 2026-08-07),
+  up from 20% before it. A reformat that size is a pre-1.0 cost, not the steady state.
+- **Lean itself.** lean-fmt renders through Lean's pretty-printer, so a Lean release that changes it changes lean-fmt.
+  One such move is already scheduled: lean-fmt compensates for a defect in Lean's layout engine that upstream fixes in
+  4.34, and that bump deletes the compensation.
 
 Pin a version rather than tracking `main`, and land a reformat as its own commit so later review diffs stay readable.
 
