@@ -55,6 +55,20 @@ jobs:
           # the explicit step below would then run the whole suite phase a second time.
           test: "false"
 
+      # Core count is a test input, not trivia: `lean` sizes its task pool from it, and a fixture
+      # that needs four threads deadlocks on a three-core runner. Three release runs were spent
+      # finding that out from logs that never recorded the machine. Printed on every leg, passing
+      # or not, so the next comparison is between numbers rather than guesses.
+      - name: runner facts
+        run: |
+          uname -sm
+          if [ "$(uname -s)" = "Darwin" ]; then
+            echo "cores=$(sysctl -n hw.logicalcpu) memMB=$(( $(sysctl -n hw.memsize) / 1048576 ))"
+          else
+            echo "cores=$(nproc) memMB=$(free -m | awk '/Mem:/ {print $2}')"
+          fi
+          df -m . | awk 'NR==2 {print "diskAvailMB=" $4}'
+
       # The full gate runs here, once, on every platform leg — a release stays thorough even
       # where CI splits the registry across jobs for speed. Epoch forensics are on so a moved
       # cache epoch names its component in the failure digest (ubuntu-22.04 grew a second

@@ -173,9 +173,16 @@ private def testChildPoolStarvation (ctx : Scale.Ctx) : IO Unit := do
   let project := ctx.work / "pool"
   IO.FS.createDirAll (project / "Probe")
   copyFile (ctx.root / "lean-toolchain") (project / "lean-toolchain")
+  -- The setup build elaborates the same nest the arms study, and `lean` sizes its pool from the
+  -- machine's core count with no floor — so on a runner with three cores the *fixture* deadlocks
+  -- before the case starts. That is what killed three release runs on `macos-14`, at ten minutes
+  -- each, under a digest that named the arm rather than the setup. Pin the pool at the floor
+  -- `Application.childThreads` applies for the same measured reason: this nest wedges at 1, 2 and
+  -- 3 threads and finishes in about a second at 4. `LEAN_NUM_THREADS` is not this knob and never
+  -- was, which is why CI's `LEAN_NUM_THREADS=2` never reproduced it.
   writeFile (project / "lakefile.lean")
       "import Lake\n\nopen Lake DSL\n\npackage \"pool-fixture\"\n\nlean_lib Probe where\n  \
-     globs := #[.submodules `Probe]\n"
+     globs := #[.submodules `Probe]\n  moreLeanArgs := #[\"--threads=4\"]\n"
   writeFile (project / "Probe" / "Nested.lean")
       (String.intercalate "\n"
         ["import Lean", "", "open Lean Elab Tactic", "",
@@ -185,9 +192,13 @@ private def testChildPoolStarvation (ctx : Scale.Ctx) : IO Unit := do
           "    let _ ← TacticM.parFirst jobs", "  let jobs : List (TacticM Unit) := [inner, inner]",
           "  let _ ← TacticM.parFirst jobs", "", "example : True := by", "  nested_par",
           "  trivial", ""])
+  -- A bound of its own, for the same reason the arms below carry one: the pinned build takes about
+  -- a second, so anything past two minutes is a wedge, and reporting it in two minutes rather than
+  -- the default ten keeps a stuck fixture from costing a release leg an hour.
   discard <|
-      expectExit 0 "lake build Probe" "lake" #["-d", project.toString, "build", "Probe"] (cwd? :=
-        some ctx.root)
+      expectExit 0 "lake build Probe (fixture setup)" "lake"
+        #["-d", project.toString, "build", "Probe"] (cwd? := some ctx.root) (timeoutMs :=
+        some 120000)
   let check (label : String) (expected : UInt32) (threads : Array (String × Option String))
     (bound : String) : IO Lean.Json := do
     let result ←

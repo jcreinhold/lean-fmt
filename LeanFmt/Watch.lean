@@ -37,8 +37,10 @@ rule.
 `(relative path, byteSize, mtime.sec, mtime.nsec)` over the files `LeanFmt.Project` selects, plus the
 control files below.
 
-Nanoseconds carry real values: repeated writes inside one wall-clock second produce distinct stamps,
-and a same-size rewrite stays distinguishable, so detection needs no content digest.
+Nanoseconds carry real values, so a same-size rewrite one ordinary edit apart produces a distinct
+stamp and detection needs no content digest. The resolution is the kernel's timestamp tick, not the
+nanosecond the field can express: two writes inside one tick carry the same stamp on every platform,
+which is why the claim below is about latency rather than correctness.
 
 **This bounds latency, never correctness.** On a filesystem with coarse `mtime` granularity a
 same-second same-size edit can produce an identical tuple and be missed by that poll. A generation

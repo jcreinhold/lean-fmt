@@ -34,34 +34,45 @@ private def git (args : Array String) (cwd : System.FilePath) (label : String) :
 private def gitAny (args : Array String) (cwd : System.FilePath) : IO ProcResult :=
   runProc "git" args (cwd? := some cwd)
 
-/-- mtime carries populated nanoseconds, and distinguishes a same-size rewrite. The whole poll
-design rests on this; a binding that truncated to whole seconds would make `(size, mtime)` blind
-to a fast edit. -/
+/-- mtime distinguishes a same-size rewrite at the interval real edits arrive at. `(size, mtime)`
+is the whole change signal, so a filesystem that stamped only whole seconds would leave the poll
+blind to an ordinary edit.
+
+What this deliberately does *not* assert is that two writes issued microseconds apart differ.
+File timestamps come from a clock the kernel advances on a tick, so a pair inside one tick collides
+by construction — and `LeanFmt/Watch.lean` says so, in the paragraph beginning "This bounds latency,
+never correctness". An earlier version of this case demanded exactly that, and retried with backoff
+*between* pairs, which only re-rolls where the pair lands in the tick rather than separating the two
+writes; it cost three release runs on `ubuntu-22.04` before the ledger caught it.
+
+So measure the tick rather than assume it away: widen the gap between the two writes until the
+stamps differ, print what it took, and fail only if a same-size rewrite is still invisible half a
+second later. -/
 private def testMtimeGranularity (ctx : Ctx) : IO Unit := do
   let probe := ctx.work / "mtime-probe.txt"
   let nanos (m : IO.FS.Metadata) : Int := m.modified.sec * 1000000000 + m.modified.nsec.toNat
-  -- Real edits are seconds apart, so the adapter's assumption is that a same-size rewrite is
-  -- distinguishable well inside a second — not that the filesystem timestamps every write.
-  -- ubuntu-22.04 runners collide on back-to-back writes (the v0.2.1 release legs failed
-  -- there while ubuntu-latest passed), so probe with backoff up to about two seconds before
-  -- declaring the environment too coarse to watch.
-  let mut sleepMs : UInt32 := 0
-  let mut distinguished := false
-  for _ in [0:9]do
-    if distinguished then
+  let mut resolvedAt : Option UInt32 := none
+  for gapMs in [0, 1, 4, 16, 64, 256, 512]do
+    if resolvedAt.isSome then
       break
-    if sleepMs != 0 then
-      IO.sleep sleepMs
     writeFile probe "AAAA"
     let first ← probe.metadata
+    if gapMs != 0 then
+      IO.sleep gapMs.toUInt32
     writeFile probe "BBBB"
     let second ← probe.metadata
     ensureEq "same-size rewrite kept its size (that is the point)" 4 second.byteSize
     if nanos first != nanos second then
-      distinguished := true
-    sleepMs := max 1 (sleepMs * 4)
-  ensure distinguished
-      "same-size rewrites stayed indistinguishable for two seconds; the adapter assumes sub-second granularity"
+      resolvedAt := some gapMs.toUInt32
+  match resolvedAt with
+  | some gapMs =>
+    -- Printed on success too: the number is the runner's mtime granularity, and the next machine
+    -- that fails this case is diagnosed by comparing against the machines that passed it.
+    IO.println s!"     mtime distinguished a same-size rewrite {gapMs} ms apart"
+  | none =>
+    ensure false
+        "a same-size rewrite stayed invisible half a second later; (size, mtime) cannot see an \
+      ordinary edit on this filesystem"
 
 /-- `git diff` never reports untracked files — the assertion that protects users from the
 worst failure mode of a `--changed` mode built on `diff` alone — and `--exclude-standard` honours
