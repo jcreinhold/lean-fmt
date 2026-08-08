@@ -17,6 +17,6 @@ namespace LeanFmt
 `package-identity` case fails when it does not: the two drifted to 0.1.0 against 0.1.3, and the
 language server told every editor the wrong number until the gate existed. -/
 def version : String :=
-  "0.3.1"
+  "0.4.0"
 
 end LeanFmt

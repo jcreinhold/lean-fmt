@@ -81,7 +81,7 @@ after that:
 
 ```lean
 require «lean-fmt» from git
-  "https://github.com/jcreinhold/lean-fmt" @ "v0.3.1"
+  "https://github.com/jcreinhold/lean-fmt" @ "v0.4.0"
 ```
 
 ```sh
@@ -142,6 +142,9 @@ Prose inside comments is not rewrapped at all unless you turn on `reflow-comment
 
 For using lean-fmt:
 
+- [The manual](https://www.jcreinhold.com/lean-fmt/) — the layout, the rules, and configuration, worked through with
+  compiled examples.
+- `CHANGELOG.md` — what changed in each release, and what upgrading asks of you.
 - `docs/style.md` — the canonical style, including `format-ignore-next` suppression.
 - `docs/configuration.md` — every config key, selection gates, streaming and ranges, workers, and the cache.
 - `docs/ci.md` — CI recipes, caching between runs, pinning and upgrading.
