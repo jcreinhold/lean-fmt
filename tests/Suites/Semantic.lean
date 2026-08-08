@@ -5,9 +5,9 @@ public import Test
 /-!
 # The semantic suite
 
-Port of `tests/fixtures/semantic/run.sh`: acceptance for semantic rule facts. Formatting is deliberately
-absent from this capability: the exact formatter uses live syntax and registry state, while this
-suite gates compiler diagnostics and owned deprecation occurrences.
+Acceptance for semantic rule facts. Formatting is deliberately absent from this capability: the
+exact formatter uses live syntax and registry state, while this suite gates compiler diagnostics and
+owned deprecation occurrences.
 
 The differentials never touch the capture code: Lean's own `--json` frontend is the independent
 oracle for both the surfaced-diagnostics fact and the owned-occurrence fact.
@@ -26,7 +26,7 @@ structure Ctx where
   application : String
   work : System.FilePath
 
-/-- `__analyze-exact` at the given capture token, via `lake env` as the old script ran it. -/
+/-- `__analyze-exact` at the given capture token, via `lake env`. -/
 private def capture (ctx : Ctx) (setup : System.FilePath) (fixture : String) (token : String)
     (label : String) : IO Lean.Json := do
   let result ←

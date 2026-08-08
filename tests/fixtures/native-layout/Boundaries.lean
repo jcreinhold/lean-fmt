@@ -19,10 +19,9 @@ An ordinary comment written *above* a docstring is the case that must not be swe
 stores a docstring's opening token in the following token's trivia, so both comments arrive at the
 ownership layer as leading trivia of one command; the rule that keeps the command's own docstring from
 being emitted twice has to select by comment kind, because dropping the whole run drops the ordinary
-comment with it. Mathlib writes the shape often. -/
+comment with it. Mathlib writes the shape often.
 
-/- Baseline note (layout-redesign prompt 01): comment ownership and placement hold for the whole
-stack. Prompt 11 may replace the mechanism; it may not move a comment. -/
+A change may replace the ownership mechanism; it may not move a comment. -/
 
 public section
 

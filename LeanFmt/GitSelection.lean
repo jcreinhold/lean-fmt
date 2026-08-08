@@ -18,19 +18,18 @@ The private adapter behind changed-file selection. It answers one question — *
 version control change* — and produces a path list plus the provenance a partial run must report. It
 does not decide what a path means: `.lean`-ness, `.lake` exclusion, configured `include`/`exclude`,
 ordering, and snapshotting stay in `LeanFmt.Project` and `LeanFmt.Discovery`, reached through the
-ordinary `execute` (§9.5 steps 3–4).
+ordinary `execute`.
 
-Two observed facts shape everything here, both recorded in `evidence/01-watch-baseline.md`:
+Two observed facts shape everything here:
 
 * Only `-z` yields byte-exact paths. Default `git diff` C-quotes non-ASCII into octal escapes, and
   `core.quotePath=false` fixes that case while **still** quoting an embedded double quote. A
-  line-splitting adapter is wrong on ordinary Unicode filenames (§9.2).
+  line-splitting adapter is wrong on ordinary Unicode filenames.
 * A missing binary is an exit code, not an exception. `IO.Process.output` returns 255 rather than
-  throwing, so the natural `try`/`catch` spelling of "Git absence is a request error" never fires
-  (§9.7).
+  throwing, so the natural `try`/`catch` spelling of "Git absence is a request error" never fires.
 -/
 
-/-- Which comparison the caller asked for (§9.1).
+/-- Which comparison the caller asked for.
 
 Three questions, not three spellings of one. `worktree` asks what differs from `HEAD` right now,
 `base` asks what this branch changed since it diverged, and `staged` asks what is about to be
@@ -49,7 +48,7 @@ def Comparison.describe : Comparison → String
   | .base revision => s!"{revision}...HEAD (merge base)"
   | .staged => "index vs HEAD"
 
-/-- Why a path git named was not selected (§9.6).
+/-- Why a path git named was not selected.
 
 Dropping a path silently is what makes a partial run look complete, so the adapter carries out every
 reason a caller would want to know rather than discarding it inside. Paths the *ordinary* selection
@@ -77,13 +76,13 @@ structure Selection where
   comparison : Comparison
   /-- The resolved commit the comparison ran against, when there is one. -/
   resolvedBase? : Option String
-  /-- Paths git named that this adapter withheld, with the reason (§9.6). -/
+  /-- Paths git named that this adapter withheld, with the reason. -/
   dropped : Array Dropped
 
 /-! ## Running git
 
-Every invocation goes through `git`, whose absence and whose non-repository state are request errors
-(§9.7). -/
+Every invocation goes through `git`, whose absence and whose non-repository state are request
+errors. -/
 
 private structure GitOutput where
   exitCode : UInt32
@@ -91,7 +90,7 @@ private structure GitOutput where
   stderr : String
 
 /-- `exitCode = 255` is what `IO.Process.output` returns when the binary does not exist
-(`evidence` §4) — it does not throw, so this is the only place absence can be detected. -/
+— it does not throw, so this is the only place absence can be detected. -/
 private def missingBinaryCode : UInt32 :=
   255
 
@@ -101,8 +100,8 @@ private def runGit (cwd : FilePath) (args : Array String) : IO GitOutput := do
 
 /-- The first line of git's stderr, which is the whole diagnostic for the commands used here.
 
-`git diff` outside a repository exits 129 after printing its whole option usage, which is why §9.7
-probes with `rev-parse` instead; a surprising failure should not fill the user's terminal with a
+`git diff` outside a repository exits 129 after printing its whole option usage, which is why the
+probe below uses `rev-parse` instead; a surprising failure should not fill the user's terminal with a
 manual. -/
 private def firstLine (text : String) : String :=
   match (text.trimAscii.toString.splitOn "\n").head? with
@@ -115,8 +114,7 @@ private def absent : String :=
 /-- Establish that `root` is inside a work tree and return its toplevel.
 
 Probes with `rev-parse --show-toplevel`, never with `git diff`: outside a repository `rev-parse` exits
-128 with one clean line, where `git diff` exits 129 after dumping its entire option usage
-(`evidence` §5). -/
+128 with one clean line, where `git diff` exits 129 after dumping its entire option usage. -/
 private def repositoryToplevel (root : FilePath) : IO (Except String FilePath) := do
   let output ← runGit root #["rev-parse", "--show-toplevel"]
   if output.exitCode == missingBinaryCode then
@@ -128,7 +126,7 @@ private def repositoryToplevel (root : FilePath) : IO (Except String FilePath) :
     return .error "git reported no repository toplevel"
   return .ok (FilePath.mk toplevel)
 
-/-- Resolve a caller-supplied revision, naming what they typed when it does not exist (§9.7). -/
+/-- Resolve a caller-supplied revision, naming what they typed when it does not exist. -/
 private def resolveRevision (root : FilePath) (revision : String) : IO (Except String String) := do
   let output ← runGit root #["rev-parse", "--verify", "--quiet", revision ++ "^{commit}"]
   if output.exitCode == missingBinaryCode then
@@ -140,7 +138,7 @@ private def resolveRevision (root : FilePath) (revision : String) : IO (Except S
 /-! ## Parsing the `-z` stream
 
 NUL-terminated fields with a **status-dependent field count**: a rename is three fields (`R###`, old
-path, new path), every other status is two (§9.2). A parser that assumes pairs desynchronizes on the
+path, new path), every other status is two. A parser that assumes pairs desynchronizes on the
 first rename and mis-assigns every path after it, so the arity is read from the status letter. -/
 
 /-- Split a NUL-terminated stream into fields, discarding the empty tail after the final NUL.
@@ -161,7 +159,7 @@ private structure Record where
 
 /-- `R` (rename) and `C` (copy) carry a source *and* a destination; every other status carries one
 path. Reading the arity from the status letter is what keeps the parser in phase — assuming pairs
-desynchronizes on the first rename and mis-assigns every path after it (§9.2). -/
+desynchronizes on the first rename and mis-assigns every path after it. -/
 private def hasTwoPaths (status : String) : Bool :=
   status.startsWith "R" || status.startsWith "C"
 
@@ -190,7 +188,7 @@ private def diffArguments : Comparison → Array String
   | .worktree => #["diff", "--name-status", "-z", "--find-renames", "HEAD"]
   -- Three-dot, from the evidence: on a diverged fixture, two-dot reported paths the branch never
   -- touched — including a deletion it never performed — where three-dot reported only the files it
-  -- changed (`evidence` §8). "What did my branch change" is the merge-base question.
+  -- changed. "What did my branch change" is the merge-base question.
   | .base revision => #["diff", "--name-status", "-z", "--find-renames", revision ++ "...HEAD"]
   | .staged => #["diff", "--cached", "--name-status", "-z", "--find-renames", "HEAD"]
 
@@ -201,10 +199,10 @@ private def untrackedArguments : Array String :=
 
 /-- Whether this comparison unions in untracked files.
 
-`git diff` **never** reports them (`evidence` §7): a newly created file appears only in
+`git diff` **never** reports them: a newly created file appears only in
 `ls-files --others`, so a selection built from `diff` alone silently skips every brand-new file —
 which is exactly when a formatter is most wanted. A merge-base comparison is a question about
-committed history and does not union them (§9.4). -/
+committed history and does not union them. -/
 private def includesUntracked : Comparison → Bool
   | .worktree => true
   | .base _ => false
@@ -219,8 +217,8 @@ error, `selected file is not a Lean source`. **Git** named these paths, not the 
 the wrong answer: an ordinary untracked `README.md`, or the `.lake` build tree in a repository that
 does not ignore it, would abort the whole run.
 
-Dropped silently rather than disclosed. §9.6 reports paths withheld "for a reason the caller would
-want to know"; that a `README.md` is not a Lean source is not one, and git names all manner of
+Dropped silently rather than disclosed. `withheld` carries the paths a caller would want to know
+about; that a `README.md` is not a Lean source is not one of them, and git names all manner of
 files. Configured `include`/`exclude` still belong to `Discovery` and are not repeated here. -/
 private def isCandidate (relative : String) : Bool :=
   let components := relative.splitOn "/"
@@ -229,11 +227,11 @@ private def isCandidate (relative : String) : Bool :=
 /-- Resolve a repository-relative path against the toplevel and confine it to `root`.
 
 Returns `none` for a path outside the root: a repository can hold several projects, and formatting a
-sibling because it shares a repository would violate the root contract (§9.5 step 2). -/
+sibling because it shares a repository would violate the root contract. -/
 private def confine (toplevel root : FilePath) (relative : String) : IO (Option FilePath) := do
   let candidate := toplevel / FilePath.mk relative
   -- Compare resolved paths so that a symlinked or `..`-bearing root still confines correctly. A path
-  -- that does not exist cannot be selected anyway, so a failed resolution is simply not selected.
+  -- that does not exist cannot be selected anyway, so a failed resolution is not selected.
   try
     let resolved ← IO.FS.realPath candidate
     let rootResolved ← IO.FS.realPath root
@@ -245,7 +243,7 @@ private def confine (toplevel root : FilePath) (relative : String) : IO (Option 
   catch _ =>
     return none
 
-/-- Select the paths version control reports as changed (§9).
+/-- Select the paths version control reports as changed.
 
 The result is a path list and its provenance. Everything about what a path *means* — whether it is a
 Lean source, whether configuration excludes it, what order it runs in — is left to the ordinary

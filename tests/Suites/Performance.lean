@@ -5,7 +5,7 @@ public import Test
 /-!
 # The performance suite
 
-Port of `tests/fixtures/performance/run.sh`: durable per-commit performance gates.
+Durable per-commit performance gates.
 
 It does not assert a wall time. The same unchanged binary was measured
 over the same warm corpus at 3,977 ms and at 19,968 ms depending on nothing but what else the machine was doing, so
@@ -19,11 +19,11 @@ is the durable form of a whole plan's worth of work: the traversals were once pe
 for the compiler audit per *module*.
 
 The gate predicates are pure functions over the profile channel, defined once in this module and
-used twice: the `gates-discriminate` case is the native form of `negative.sh`, feeding every
-predicate both input it must accept and input it must reject — a gate that cannot fail would
-report a healthy tree exactly as convincingly as `true` does. The remaining cases are `run.sh`'s
-real runs. Lane: workspace+slow — the suite primes the root result cache and builds one artifact
-fixture.
+used twice: the `gates-discriminate` case feeds every predicate both input it must accept and input
+it must reject — a gate that cannot fail would report a healthy tree exactly as convincingly as
+`true` does. The remaining cases are the real runs.
+
+Lane: workspace+slow — the suite primes the root result cache and builds one artifact fixture.
 -/
 
 open LeanFmt.Test
@@ -31,7 +31,7 @@ open LeanFmt.Test
 namespace Performance
 
 -- -----------------------------------------------------------------------------------------------
--- The gate predicates (`gates.sh`). Reporting belongs to the caller; these are pure.
+-- The gate predicates. Reporting belongs to the caller; these are pure.
 
 /-- The top-level phase names. Sub-phases nest inside a top-level bracket, so counting both
 double-counts the same milliseconds: `lake_graph` inside `module_evidence`, `closure_resolve` and
@@ -229,7 +229,7 @@ private def gateReportsIdentical (a b : String) : Bool :=
   a == b
 
 -- -----------------------------------------------------------------------------------------------
--- §0 the gates themselves discriminate (`negative.sh`, native). Each predicate sees input it must
+-- §0 the gates themselves discriminate. Each predicate sees input it must
 -- accept and input it must reject; only the pair pins the behavior.
 
 /-- A healthy warm capture: 45 targets, all hit and served, no frontend work, phases that
@@ -383,7 +383,7 @@ private def testGatesDiscriminate : IO Unit := do
       "rejects reports differing by one column"
 
 -- -----------------------------------------------------------------------------------------------
--- The real runs (`run.sh`).
+-- The real runs.
 
 structure Ctx where
   root : System.FilePath

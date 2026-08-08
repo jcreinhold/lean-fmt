@@ -81,7 +81,7 @@ private def testCacheIdentity : IO Unit := do
 /- Characterization of the Lake module trace facts.
 
 This test exists because the currency design rests on a reading of Lake's trace format that is not
-documented and was, in this stack's first draft, **wrong**. The roadmap described the check as comparing `B`'s recorded
+documented and was, in the first draft, **wrong**. That draft compared `B`'s recorded
 `["A transitive imports (all)", h]` against `A`'s current value. Measurement refuted that: editing `A`
 so its `.olean` changed left every `"A transitive imports (all)"` entry in `A`'s own dependents
 untouched, because that key hashes the closure of `A`'s *imports* and excludes `A` itself. The key
@@ -95,8 +95,7 @@ that carries `A`'s own artifacts is the sibling `["A:importAllArts", h]`.
 with `BuildTrace.nil`'s hash being `Hash.nil` and the caption not entering the hash. Each mixed value
 is the content hash Lake also writes as the leading 16 hex digits of the corresponding entry in that
 module's own `outputs`. So a dependent's recorded expectation for `A` is recomputable from `A`'s own
-trace file alone — no import resolution and no closure walk, which is what this stack's stop rules
-forbid.
+trace file alone — no import resolution and no closure walk.
 
 The assertion runs over every (importer, importee) pair the build tree actually contains, so it does
 not encode one hard-coded pair that a refactor would silently drop. If Lake changes the mix, its
@@ -194,7 +193,7 @@ public def characterizeLakeTraces (root : System.FilePath) : IO Unit := do
     let some facts := parseTraceFacts? json | continue
     byName := byName.insert facts.moduleName (path, facts)
   ensure (byName.size > 1)
-      "no module traces parsed; the Lake trace shape this stack consumes may have changed"
+      "no module traces parsed; the Lake trace shape the cache consumes may have changed"
   let mut checked := 0
   let mut staleImporters : Array String := #[]
   for (_, (importerPath, importer)) in byName do

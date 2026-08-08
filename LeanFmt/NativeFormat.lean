@@ -18,8 +18,7 @@ the upstream source. The changes are:
 - upstream `private` markers are dropped (this repository's module system is
   private-by-default);
 - nothing else: the machine's decisions, measures, and emissions are
-  upstream's, and `notes/02-native-contract.md` states them as the
-  compatibility contract this renderer exists to satisfy.
+  upstream's, and this renderer exists to reproduce them exactly.
 
 Deliberately NOT vendored, because the machine does not reach them: the
 pretty-printer's formatter registry, parser aliases, and parser internals

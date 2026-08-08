@@ -5,10 +5,10 @@ public import Test
 /-!
 # The style suite
 
-Port of `tests/fixtures/style/run.sh`. A specification gate: the intended rows of `docs/style.md` are
-structurally validated, the frozen intended candidate passes the independent oracle with full structure
-preserved, a currently safe style fixed point passes production admission at four widths, and a
-multiline literal survives structural declaration layout byte-for-byte.
+A specification gate: the intended rows of `docs/style.md` are structurally validated, the frozen
+intended candidate passes the independent oracle with full structure preserved, a currently safe
+style fixed point passes production admission at four widths, and a multiline literal survives
+structural declaration layout byte-for-byte.
 -/
 
 open LeanFmt.Test

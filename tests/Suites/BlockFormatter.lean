@@ -5,11 +5,10 @@ public import Test
 /-!
 # The block-formatter suite
 
-Port of `tests/fixtures/block-formatter/run.sh`. The fixture's tactic, do, control, match, and where roots
-are analyzed through the exact frontend at four widths; every width must validate, render
-idempotently through one aligned native document per command, and keep every block construct and
-comment the fixture carries. The narrow width additionally proves the reflow is real: the registry
-is not width-blind.
+The fixture's tactic, do, control, match, and where roots are analyzed through the exact frontend at
+four widths; every width must validate, render idempotently through one aligned native document per
+command, and keep every block construct and comment the fixture carries. The narrow width
+additionally proves the reflow is real: the registry is not width-blind.
 -/
 
 open LeanFmt.Test

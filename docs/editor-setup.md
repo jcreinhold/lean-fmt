@@ -1,5 +1,7 @@
 # Editor setup
 
+**Audience: anyone running lean-fmt.**
+
 `lean-fmt lsp` speaks the Language Server Protocol over stdio. It offers formatting, range formatting,
 formatting-derived code actions, and diagnostics — and nothing else. It runs *alongside* Lean's own language server, not
 instead of it.
@@ -38,12 +40,11 @@ selection expanded to.
 
 ## Incremental analysis
 
-Each open document owns one bounded incremental frontend. The first analysis of a buffer pays the full exact frontend; a
-`didChange` after it reuses the document's last-good snapshot instead of starting over, and an identical repeated
-request — a code-action query on cursor movement is the common one — is answered from the validated envelope of the
-current version. Cancellation propagates into the frontend's snapshot tree, so a superseded analysis stops rather than
-finishing in the background. Analysis reads the buffer the client sent, never the disk, and never a persistent cache
-entry.
+Each open document gets its own Lean frontend. The first analysis of a buffer runs it in full; every `didChange` after
+that reuses the document's last good state instead of starting over. A repeated identical request — a code-action query
+on cursor movement is the common one — is answered from the result already computed for that version. Cancelling
+reaches into the frontend, so a superseded analysis stops rather than finishing in the background. Analysis reads the
+buffer your editor sent, never the file on disk and never the on-disk cache.
 
 ## Multiple formatters on one file
 

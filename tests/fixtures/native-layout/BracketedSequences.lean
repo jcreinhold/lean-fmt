@@ -18,13 +18,11 @@ break, Lean's document broke the `;` at the row's own nest column, left of the f
 reparse read the dedented item as the end of the sequence. The validator refused rather than
 publish it.
 
-Fixed in the layout-redesign stack, prompt 10 (`LAY-INDENTED-SEQUENCES`): an anchor interval
-covers exactly the items of a multi-item bracketed sequence, and every break inside it re-bases to
-the first item's column, wherever the hug lands it. At width 100 both theorems format and
-validate, as they did at baseline; at width 20 the same two cases now ADMIT -- `{ skip;` breaks to
-`rw` at `skip`'s column, `conv => {lhs;` breaks to `rw` at `lhs`'s -- and the suite pins the
-anchored rows where it pinned the refusal. The pinned baseline refusal and the parse analysis
-above survive in git history (prompt 01's record). -/
+`LAY-INDENTED-SEQUENCES` fixed it: an anchor interval covers exactly the items of a multi-item
+bracketed sequence, and every break inside it re-bases to the first item's column, wherever the hug
+lands it. Both theorems still format and validate at width 100, and at width 20 they now admit --
+`{ skip;` breaks to `rw` at `skip`'s column, `conv => {lhs;` breaks to `rw` at `lhs`'s -- so the
+suite pins the anchored rows where it once pinned the refusal. -/
 
 public section
 

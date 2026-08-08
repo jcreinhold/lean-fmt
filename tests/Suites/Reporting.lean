@@ -5,7 +5,7 @@ public import Test
 /-!
 # The reporting suite
 
-Port of `tests/fixtures/reporting/run.sh`: the machine-readable report formats.
+The machine-readable report formats.
 
 Every case drives the real executable, because what is under test is the bytes a CI system
 receives: the grammar, the escaping, the exit code, and where the report lands. The structured
@@ -14,8 +14,7 @@ formats are checked with **independent parsers** wherever one exists — `check-
 bespoke checker can agree on the same mistake, and a real consumer is the thing we actually
 promise to satisfy.
 
-Lane: workspace — several cases populate the root `.lean-fmt-cache`, and the old script deleted it
-on exit; the preamble clears it instead.
+Lane: workspace — several cases populate the root `.lean-fmt-cache`, which the preamble clears.
 -/
 
 open LeanFmt.Test
@@ -47,7 +46,7 @@ private def fmt (ctx : Ctx) (args : Array String) (input? : Option String := non
 private def fmtCode (ctx : Ctx) (args : Array String) : IO UInt32 :=
   return (← fmt ctx args).exitCode
 
-/-- The first line of stderr — the old script's `2>&1 >/dev/null | head -1`. -/
+/-- The first line of stderr. -/
 private def firstStderrLine (result : ProcResult) : String :=
   (((result.stderr.splitOn "\n").head?.getD "").trimAsciiEnd).toString
 
@@ -110,8 +109,8 @@ private def testJsonCompat (ctx : Ctx) : IO Unit := do
     IO.FS.readFile (ctx.root / "tests" / "fixtures" / "reporting" / "golden" / "json-check.json")
   ensureEq "--output-format json still reproduces the pre-change golden" golden viaJson.stdout
 
--- §9.1 — the worst regression this stack could ship is a CI job that starts passing because it
--- swapped a format in. Every format must agree with `text` on the verdict.
+-- §9.1 — the worst regression here is a CI job that starts passing because it swapped a format
+-- in. Every format must agree with `text` on the verdict.
 private def testExitCodes (ctx : Ctx) : IO Unit := do
   let baseline ← fmtCode ctx #["check", findings]
   ensureEq "the baseline is the CI failure code" 1 baseline
@@ -362,7 +361,7 @@ private def testOutputFiles (ctx : Ctx) : IO Unit := do
 
 -- §9.3 — `… | head -1` is the standard idiom. It must not print a diagnostic — and must NOT be
 -- turned into a success, which would make the pipe a way to silence CI. The pipeline needs
--- PIPESTATUS, so it runs under bash exactly as the old script ran it.
+-- PIPESTATUS, so it runs under bash.
 private def testBrokenPipe (ctx : Ctx) : IO Unit := do
   for format in ["text", "concise", "json", "github", "sarif", "junit"]do
     let script :=

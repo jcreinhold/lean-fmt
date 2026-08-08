@@ -6,11 +6,10 @@ public import Test.Oracle
 /-!
 # The formatter suite
 
-Port of `tests/fixtures/formatter/run.sh`: the frontend-native formatter contract. Thirteen injected
-negative gates, each a candidate-shaped lie `tests/fixtures/formatter/candidate.py` tells on purpose, and
-the identity baseline with its pinned digest. The oracle is `Test.Oracle` (the port of
-`oracle.py`); the candidate stays Python — the admission protocol must keep facing an adversary
-this repo does not control.
+The frontend-native formatter contract. Thirteen injected negative gates, each a candidate-shaped
+lie `tests/fixtures/formatter/candidate.py` tells on purpose, and the identity baseline with its
+pinned digest. The oracle is `Test.Oracle`; the candidate stays Python —
+the admission protocol must keep facing an adversary this repo does not control.
 
 Lane: parallel — the analyzer probes run against the borrowed Clean.lean setup in a scratch dir.
 -/
@@ -74,8 +73,8 @@ public def main (args : List String) : IO UInt32 := do
       let ctx : Formatter.Ctx :=
         { root, application := (root / ".lake" / "build" / "bin" / "lean-fmt").toString, setup,
           work }
-      -- A supplied candidate (the old script's `"$@"` branch): any non-flag argument means the
-      -- whole argv is one candidate command to admit against the Contract fixture.
+      -- A supplied candidate: any non-flag argument means the whole argv is one candidate
+      -- command to admit against the Contract fixture.
       if args.any (!·.startsWith "--") then
         let outcome ←
           LeanFmt.Test.Oracle.run root ctx.application setup work

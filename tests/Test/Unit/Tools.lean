@@ -116,8 +116,8 @@ private unsafe def verifyPluginArtifact (moduleName : Lean.Name) (sourcePath : S
   let .ok materialized :=
     artifact.materialize source | throw <| IO.userError "plugin syntax artifact did not reconstruct"
   checkProjection materialized.source source
-  -- The roadmap asks for a compact representation. What grows with a file is the token and node
-  -- tables, so bound their cost per element; the fixed schema strings and two digests dominate a
+  -- The representation must stay compact. What grows with a file is the token and node tables, so
+  -- bound their cost per element; the fixed schema strings and two digests dominate a
   -- small module and say nothing about compactness (a 34-byte module measures 29x its source and
   -- is not thereby extravagant). Derived field-name JSON measured 114 bytes per token and 54 per
   -- node on this fixture, against 28 and 13 for the array wire format.
@@ -294,8 +294,8 @@ private def docDump : IO UInt32 := do
 The two source-security scans are linear in source size: `FMT001` is one pass over the byte array,
 `FMT002` one fold over the codepoints carrying a running offset. This measures that claim the way
 `docBench` measures the printer — by growth *ratio* over doubling inputs, not a wall-clock budget,
-because linear and quadratic differ by the size step (here 8×) and mean the same thing on any machine.
-`tests/security/bench.sh` asserts the ratios.
+because linear and quadratic differ by the size step (here 8×) and mean the same thing on any
+machine. The security-bench suite asserts the ratios.
 
 The measured input is scan-clean — no control or bidi byte — so the shared post-scan `qsort` over
 findings (`Rules.findingOrder`), which every rule pays and is O(m log m) in the finding count m rather
@@ -355,10 +355,10 @@ private def securityBench : IO UInt32 := do
 
 /-! ## Frontend-native formatter contract harness
 
-`tests/fixtures/formatter/oracle.py` owns the independent comparison. This one test-only command exposes the
+`Test.Oracle` owns the independent comparison. This one test-only command exposes the
 already-shipped lossless header parser so the oracle compares Lean's parsed ordered imports rather
-than approximating the header with a regular expression. It returns facts only; the Python harness
-decides whether two signatures agree. -/
+than approximating the header with a regular expression. It returns facts only; the oracle decides
+whether two signatures agree. -/
 
 private def formatterHeader (sourcePath : String) : IO UInt32 := do
   let raw ← IO.FS.readFile sourcePath
@@ -385,9 +385,9 @@ private def docBench : IO UInt32 := do
     benchOne "zero-width-nesting" n (zeroWidthNesting n)
   for n in [1000, 10000, 100000]do
     benchOne "call-args" n (callArgs n)
-  -- Capped at 10,000: `nest` is unclamped by contract (§4.6), so depth `n` at unit 2 emits Θ(n²)
+  -- Capped at 10,000: `nest` is unclamped by contract, so depth `n` at unit 2 emits Θ(n²)
   -- *bytes* — 200 MB here, and 20 GB at n=100,000. That cost is the output, not the fit test, which is
-  -- why the assertion in `bench.sh` is per output byte rather than per node.
+  -- why the assertion is per output byte rather than per node.
   for n in [100, 1000, 10000]do
     benchOne "nested-calls" n (nestedCalls n)
   for n in [1000, 10000, 100000]do

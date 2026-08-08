@@ -5,10 +5,9 @@ public import Test
 /-!
 # The security-bench suite
 
-Port of `tests/security/bench.sh`: source-security scan cost, asserted rather than
-asserted-about. `FMT001` is one pass over the byte array and `FMT002` one fold over the
-codepoints, so each is O(n) by construction — but a note cannot notice a regression, and this
-can.
+Source-security scan cost, asserted rather than asserted-about. `FMT001` is one pass over the byte
+array and `FMT002` one fold over the codepoints, so each is O(n) by construction — but a note cannot
+notice a regression, and this can.
 
 **Growth ratios, not wall-clock budgets.** A machine-time threshold would be a number invented
 here that fails on a slow machine while catching nothing. A ratio across an 8x size step

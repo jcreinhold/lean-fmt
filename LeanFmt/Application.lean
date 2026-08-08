@@ -536,7 +536,7 @@ It is also where every Lake build this run needs happens: `Project.graph` builds
 pass cannot answer, here, on one thread, before a worker exists. Lake cannot run twice at once in
 one process, and the per-target fallback behind this used to put one build on each worker thread.
 
-Best effort by construction. Anything this fails to resolve is simply absent from the map, and
+Best effort by construction. Anything this fails to resolve is absent from the map, and
 `ExactRun.setupResult` falls back to the per-target path, holding `run.lake`. -/
 private def ExactRun.primeSetups (run : ExactRun) (targets : Array SourceSnapshot) : IO Unit := do
   if targets.size < 2 then
@@ -2209,7 +2209,7 @@ def ExactRun.streamSnapshot (run : ExactRun) (target : Project.SourceTarget) (pl
 
 /-- Format, check, diff, or fix one unsaved buffer and stream the answer.
 
-Every clause the freeze fixes is enforced here:
+Every clause of the streaming contract is enforced here:
 
 - **No write.** `publishAtomic` is not reachable from this operation. `fix`/`format` return their
   bytes in `output` for the caller to redirect; the file, if there even is one, is untouched.

@@ -7,11 +7,10 @@ import all LeanFmt.Config
 /-!
 # The collection-formatter suite
 
-Port of `tests/fixtures/collection-formatter/run.sh`. Tuples, lists, arrays, and trailing separators use
-native flat/broken documents; comma-bearing, update, and layout-separated records preserve their
-parser contracts; actual operator association controls left-, right-, and arrow-chain reflow; and
-project-defined entries remain opaque while their collection ancestor reflows. The old Python
-`re.search` assertions are `FlexPattern`s here — same property, no golden text.
+Tuples, lists, arrays, and trailing separators use native flat/broken documents; comma-bearing,
+update, and layout-separated records preserve their parser contracts; actual operator association
+controls left-, right-, and arrow-chain reflow; and project-defined entries remain opaque while
+their collection ancestor reflows.
 -/
 
 open LeanFmt.Test

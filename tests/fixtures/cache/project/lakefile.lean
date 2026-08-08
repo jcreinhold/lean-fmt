@@ -10,7 +10,7 @@ package fixture
 -- `RCI-FINAL` measured mathlib and found *zero* cache entries ever written on a project with 8,276
 -- built modules: `IO.FS.realPath` threw on that one absent directory, the exception escaped into
 -- `ResultCache.open?`'s catch-all, and the cache silently disabled itself for the whole project.
--- With this `require` in place, every section of `run.sh` runs with an absent search-path root, so
+-- With this `require` in place, every section of the cache suite runs with an absent search-path root, so
 -- any regression turns the entire file red rather than needing its own assertion.
 require dep from ".." / "dep"
 

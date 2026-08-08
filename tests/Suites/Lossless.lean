@@ -6,15 +6,15 @@ public import Test.Projection
 /-!
 # The lossless suite
 
-Port of `tests/lossless/run.sh`. Round-trip and differential corpus for the lossless projection.
+Round-trip and differential corpus for the lossless projection.
 
 The corpus is this repository's own Lean modules. They are real, non-trivial, always present, and
 they change as the project changes, which a frozen fixture cannot. Production `LeanFmt/*` modules
 cannot carry the plugin without depending on themselves, so the exact frontend is the only path
 for them; the check suite is what proves the two producers agree.
 
-Every claim is re-derived by `Test.Projection` (the port of `check_projection.py`), which shares no
-code with the product and can therefore contradict it. The mutation case is what makes that
+Every claim is re-derived by `Test.Projection`, which shares no code with the product and can
+therefore contradict it. The mutation case is what makes that
 non-vacuous.
 
 Lane: parallel — generated fixtures live in the scratch dir; `lake setup-file` is Lake-cached.
@@ -34,8 +34,8 @@ structure Ctx where
   work : System.FilePath
   borrowedSetup : System.FilePath
 
-/-- `__analyze-exact SETUP SOURCE DISPLAY` — no mode argument, exactly as the old script's
-`project` ran it: the lossless claim is about the projection, not any formatter draft. -/
+/-- `__analyze-exact SETUP SOURCE DISPLAY` — no mode argument: the lossless claim is about the
+projection, not any formatter draft. -/
 private def project (ctx : Ctx) (setup source display : String) (label : String) : IO Lean.Json :=
   do
   let result ←
@@ -63,7 +63,7 @@ private def exotic (ctx : Ctx) (name content : String) : IO Lean.Json := do
   return envelope
 
 /-- The exotic corpus: each is a case the projection's coordinate system or boundaries must
-survive, and each was a real defect at some point in this stack's history. -/
+survive, and each was a real defect at some point. -/
 private def testExotic (ctx : Ctx) : IO Unit := do
   -- CRLF: every compiler offset indexes `raw.crlfToLf`, so the oracle's digest of the *normalized*
   -- bytes must match while `raw_bytes` exceeds `normalized_bytes`.
@@ -480,16 +480,15 @@ public def main (args : List String) : IO UInt32 := do
       let mut modules := #[]
       for entry in ← (root / "LeanFmt").walkDir do
         if entry.extension == some "lean" then
-          -- Repo-relative, as the old script's `find` produced: `lake setup-file` wants the
-          -- relative path, and the corpus case name is the same string.
+          -- Repo-relative: `lake setup-file` wants the relative path, and the corpus case name
+          -- is the same string.
           let absolute := entry.toString
           modules :=
             modules.push
               (String.Pos.Raw.extract absolute ⟨root.toString.utf8ByteSize + 1⟩
                 ⟨absolute.utf8ByteSize⟩)
       modules := modules.qsort (· < ·)
-      -- The old script also projected `LeanFmtTest.lean`; the unit split deleted that file, and the
-      -- old script fails at exactly that line on this tree. `Main.lean` remains.
+      -- `Main.lean` is the only module outside `LeanFmt/` left to project.
       let extras := #["Main.lean"]
       let corpus :=
         (modules ++ extras).map fun moduleName =>

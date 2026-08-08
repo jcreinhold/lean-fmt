@@ -575,11 +575,11 @@ private def testPinnedRows : IO Unit := do
       (← run (.anchored 2))
 
 /- `anchor` captures the entry column — the column of the next byte its body would emit — and
-re-bases the body's indent to it. That is the primitive prompt 04 adds for the structural
-annotations of prompts 09-10: Lean's parser records an offside column in source columns, and the
-layout engine needs a way to break at exactly that column no matter what nest surrounds it.
+re-bases the body's indent to it. That is the primitive the structural annotations are built on:
+Lean's parser records an offside column in source columns, and the layout engine needs a way to
+break at exactly that column no matter what nest surrounds it.
 
-The contract from `notes/02-native-contract.md`: backward-only (the capture looks at bytes already
+The anchor's contract: backward-only (the capture looks at bytes already
 emitted, never ahead), fit-invisible (the anchor contributes zero width and no hard-stop, so no
 enclosing group's decision changes), innermost-wins (a nested anchor re-captures). A body whose
 first emission is a break captured nothing and is a development error, pinned by `wellFormed`

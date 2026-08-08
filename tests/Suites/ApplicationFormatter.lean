@@ -5,12 +5,11 @@ public import Test
 /-!
 # The application-formatter suite
 
-Port of `tests/application-formatter/run.sh`. Validated frontend-native layout through preview,
-diff, cache, and per-file publication: `format --check` and `diff` admit the same candidates,
-a cached canonical answer is served without a frontend rerun, a stale member is rejected while
-its healthy sibling still publishes, the complete admitted batch publishes the previewed bytes,
-one elaboration-broken member does not stop another member's publication, and an admission
-refusal maps to infrastructure exit 2.
+Validated frontend-native layout through preview, diff, cache, and per-file publication: `format
+--check` and `diff` admit the same candidates, a cached canonical answer is served without a
+frontend rerun, a stale member is rejected while its healthy sibling still publishes, the complete
+admitted batch publishes the previewed bytes, one elaboration-broken member does not stop another
+member's publication, and an admission refusal maps to infrastructure exit 2.
 -/
 
 open LeanFmt.Test

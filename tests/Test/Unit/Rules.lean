@@ -208,7 +208,7 @@ private def testSourceSecurityProperties : IO Unit := do
 /-- Catalog metadata invariants. Pure over the registry:
 unique/well-shaped codes, namespace disjointness, lifecycle/default coherence, and documentation
 presence. The *executable*-example check (each `bad` fires, each fix yields `good?`) runs through the
-real frontend in `tests/catalog/run.sh`; this test pins everything answerable without a projection. -/
+real frontend in the catalog suite; this test pins everything answerable without a projection. -/
 private def testCatalogInvariants : IO Unit := do
   let infos := allRuleInfos
   let codes := infos.map (·.code)
@@ -480,7 +480,7 @@ private def testEngineTiers : IO Unit := do
 Selection "never selects worker, artifact, cache, or
 scheduling strategy" — the clause has two halves. This is the half about cost: what a selection is allowed to
 make a run pay for. The other half, that selection stays out of cache identity, is
-`tests/fixtures/check/run.sh`'s one-entry-two-selections check, which needs a real cache and a real project.
+the check suite's one-entry-two-selections check, which needs a real cache and a real project.
 
 `plan.selected` is what the fold reads, so these plans are built directly rather than through
 `FormatterConfig.rulePlan`: the probe codes are not in `ruleRegistry` and `selectorsValid` would

@@ -54,7 +54,7 @@ def maxOpenDocuments : Nat :=
   256
 
 /-- How many messages may wait behind the one being served. The queue is bounded because
-the reader runs ahead of the worker by construction (§9), so an unbounded one would grow with
+the reader runs ahead of the worker by construction, so an unbounded one would grow with
 typing speed. -/
 def maxQueuedMessages : Nat :=
   64
@@ -66,12 +66,11 @@ structure ServerOptions where
   ignore : Array String := #[]
   preview : Bool := false
   /-- Offer unsafe fixes as code actions. A withheld fix produces no action rather than a
-  disabled one: `CodeActionDisabled` would advertise a fix the product has decided not to apply
-  (`notes` §8). -/
+  disabled one: `CodeActionDisabled` would advertise a fix the product has decided not to apply. -/
   unsafeFixes : Bool := false
   /-- Quiet interval before a changed document is analyzed. Every analysis is one exact
-  frontend run over the whole buffer (`evidence/03-stream-cost.txt`), so this is the
-  difference between one run per pause and one run per character. -/
+  frontend run over the whole buffer, so this is the difference between one run per pause and one
+  run per character. -/
   debounceMs : Nat := 150
 
 /-- The rule selection every document's plan is resolved against. -/
@@ -94,7 +93,7 @@ reasons:
 
 The same split governs `Lean.Server.Utils`, whose `replaceLspRange` would otherwise be
 `applyChange` below: it converts both endpoints with `lspPosToUtf8Pos` and clamps neither, so an
-unclamped client position resolves past the end of the buffer (§4).
+unclamped client position resolves past the end of the buffer.
 
 Lean's reader was named as the framing layer; this is the amendment, and it records the decision. -/
 
@@ -240,7 +239,7 @@ def lineBytes (text : FileMap) (line : Nat) : Nat × Nat :=
 /-- Bring a client position inside the document.
 
 `FileMap.lspPosToUtf8Pos` does not validate: a client position past the end of a line
-answers a byte offset past the end of the document (`evidence/01-position-probe.txt`). Every
+answers a byte offset past the end of the document. Every
 position that arrives from a client passes through here before it is converted, so no offset
 derived from a client position can leave the buffer. -/
 def clampPosition (text : FileMap) (position : Lsp.Position) : Lsp.Position :=
@@ -256,7 +255,7 @@ def offsetOf (text : FileMap) (position : Lsp.Position) : Nat :=
 /-- A byte offset in the normalized document as a client position.
 
 The offset must lie on a codepoint boundary: an offset interior to a character answers a
-column rather than an error (`evidence/01-position-probe.txt`). Every offset this server converts
+column rather than an error. Every offset this server converts
 outward comes from the compiler or from a layout mark, both of which are boundaries. -/
 def positionOf (text : FileMap) (offset : Nat) : Lsp.Position :=
   text.utf8PosToLspPos ⟨min offset text.source.utf8ByteSize⟩
@@ -281,7 +280,7 @@ structure Document where
   relativePath : String
   text : FileMap
   /-- Decided once, at open, from the bytes the client first sent; edits do not change a
-  file's line-ending convention, and output is denormalized back to it (`notes` §4). -/
+  file's line-ending convention, and output is denormalized back to it. -/
   lineEndings : LineEndings
   version : Int
   /-- One bounded last-good frontend session for this document's normalized lineage. -/
@@ -314,8 +313,8 @@ abbrev Rejection :=
 
 structure Session where private mk ::
   /-- The options the process started with. `root` is read from here and only from here: one Lake
-  workspace is fixed when the session opens, and a client that asks to move it is told to restart
-  (§3, §10). -/
+  workspace is fixed when the session opens, and a client that asks to move it is told to
+  restart. -/
   options : ServerOptions
   /-- The options a client may still change: rule selection, preview, unsafe fixes, the
   quiet interval, and the configuration path. Written by `initialize` from `initializationOptions`,
@@ -339,7 +338,7 @@ structure Session where private mk ::
   /-- Request ids the client has cancelled. Written by the reader, read by the worker, so it
   is a mutex and not a ref. -/
   cancelled : Std.Mutex (Std.HashSet RequestID)
-  /-- The request being served right now, with the cancellation token its operation observes (§9).
+  /-- The request being served right now, with the cancellation token its operation observes.
 
   A cancellation for a *queued* request is answered out of `cancelled` when the worker reaches
   it. A cancellation for the request already running is delivered directly: the reader cancels this
@@ -476,7 +475,7 @@ Incremental; `applyChange` is all of it. -/
 
 /-- Apply one content change to a normalized document.
 
-Both endpoints are clamped before conversion (§4) and the result is re-ordered, so an inverted
+Both endpoints are clamped before conversion and the result is re-ordered, so an inverted
 or out-of-range range from a client deletes a well-defined region of the buffer instead of an
 arbitrary one. Inserted text is normalized on the way in for the same reason the document is: one
 coordinate system, the compiler's. -/
@@ -495,8 +494,8 @@ def applyChanges (text : FileMap) (changes : Array Lsp.TextDocumentContentChange
 /-! ## Capabilities
 
 Ours, because the toolchain has none for formatting: `Lean.Lsp.ServerCapabilities` has no
-formatting provider, and no formatting method is implemented anywhere in `Lean/Server/`
-(`evidence/01-lsp-baseline.md` §3-§4). So there is nothing to contend with. -/
+formatting provider, and no formatting method is implemented anywhere in `Lean/Server/`. So there
+is nothing to contend with. -/
 
 def serverCapabilities : Json :=
   Json.mkObj
@@ -504,7 +503,7 @@ def serverCapabilities : Json :=
         Json.mkObj
           [("openClose", true),
             -- 2 is incremental. Sync payload is per keystroke where analysis is per debounced
-            -- request, so full sync would retransmit the buffer on every character (`notes` §6).
+            -- request, so full sync would retransmit the buffer on every character.
             ("change", (2 : Nat))]),
       ("documentFormattingProvider", true), ("documentRangeFormattingProvider", true),
       ("codeActionProvider",
@@ -540,14 +539,14 @@ private def handleInitialize (session : Session) (id : RequestID) (params : Json
     session.sink.fail id .invalidRequest "initialize was already answered"
     return
   -- One root is served. A client offering several gets the one it asked for first and is
-  -- told which ones it is not getting (`notes` §10).
+  -- told which ones it is not getting.
   let folders := (params.getObjValAs? (Array Json) "workspaceFolders").toOption.getD #[]
   if folders.size > 1 then
     let names := folders.filterMap fun folder => (folder.getObjValAs? String "uri").toOption
     session.sink.show 2
         s!"lean-fmt serves one workspace root ({session.root}); \
       not serving: {String.intercalate ", " (names.toList.drop 1)}"
-  -- `initializationOptions` (§10). Absent keys keep the command line's value, so a client
+  -- `initializationOptions`. Absent keys keep the command line's value, so a client
   -- that sends `{}` is configured as the process was started.
   if let .ok initialization := params.getObjVal? "initializationOptions" then
     let str? (key : String) := (initialization.getObjValAs? String key).toOption
@@ -634,7 +633,7 @@ private def handleDidChange (session : Session) (params : Json) : IO Unit := do
   let text := applyChanges document.text changes
   if text.source.utf8ByteSize > maxDocumentBytes then
     -- The document is closed rather than left at a stale version: continuing to answer from
-    -- bytes the client has since edited past is the stale publication the freeze forbids.
+    -- bytes the client has since edited past would be a stale publication.
     session.documents.modify (·.erase uri)
     document.analyzer.close
     session.analyses.modify (·.erase uri)
@@ -689,8 +688,8 @@ private def handleDidChangeConfiguration (session : Session) : IO Unit := do
   for (uri, document) in documents.toList do
     match ← admit session uri with
     | .ok _ =>
-      -- Re-analyzed, not merely re-admitted. The roadmap requires a `line-width` change to
-      -- re-format affected open documents rather than serve output rendered at the old margin. The
+      -- Re-analyzed, not merely re-admitted: a `line-width` change must re-format affected open
+      -- documents rather than serve output rendered at the old margin. The
       -- margin is `FormatConfig.lineWidth`, resolved per document from discovery.
       session.schedule uri document.version
     | .error reason =>
@@ -725,7 +724,7 @@ remain the same `ExactRun.streamEnvelope` path used outside the editor. -/
 /-- The document's identity and the rule plan that identity resolves.
 
 Both come from the *buffer's location*, never its content, which is why a document with no
-location cannot be served at all (§5). The plan is per document rather than per session because
+location cannot be served at all. The plan is per document rather than per session because
 two files in one project can legitimately disagree about `line-width` or `[lint]`. -/
 private def resolve (session : Session) (document : Document) :
     IO (Except String (Project.SourceTarget × RulePlan)) := do
@@ -824,7 +823,7 @@ private def sourceRangeOf (text : FileMap) (range : Lsp.Range) : SourceRange :=
 
 private def severityJson : Severity → Nat
   -- Warning. A formatter finding is not an error: the file compiles, and a client that
-  -- treated these as errors would gate the user's workflow on layout (§7).
+  -- treated these as errors would gate the user's workflow on layout.
   | _ => 2
 
 /-- One finding as a published diagnostic. `source` names the tool. LSP scopes published
@@ -862,7 +861,7 @@ private def findingsFor (session : Session) (document : Document)
     try
       let report ← incrementalReport session document target plan .check (cancel? := cancel?)
       -- A buffer that did not analyze reports its diagnostics as a log line, not as
-      -- findings: it is mid-keystroke, and reporting that as a finding is wrong (§7). It is also
+      -- findings: it is mid-keystroke, and reporting that as a finding is wrong. It is also
       -- not memoized, because the next request should try again.
       if report.status == "broken" then
         return .error (String.intercalate "; " report.diagnostics.toList)
@@ -882,8 +881,7 @@ empty set reads as "clean", and a broken buffer mid-keystroke is the normal stat
 private def analyzeAndPublish (session : Session) (uri : String) (version : Int) : IO Unit := do
   let some document ← documentOf? session uri | return
   -- Superseded: a newer version arrived while this analysis waited its turn. Publishing now
-  -- would describe bytes the client has already edited past, which is the stale publication §6
-  -- forbids.
+  -- would describe bytes the client has already edited past.
   unless document.version == version do
     return
   match ← findingsFor session document with
@@ -906,7 +904,7 @@ private def wholeEdit (document : Document) (output : String) : Json :=
 One operation, because they are one operation below: `streamEnvelope .format` with or
 without a range. A range answer replaces the **actual** range — the hull of the layout units the
 selection expands to — not the range the client asked for, because reflow can rebreak the enclosing
-unit past the selection (§8). Clients that re-format are expected to send back the range
+unit past the selection. Clients that re-format are expected to send back the range
 the unit now occupies; repeated range formatting is a fixed point only in output coordinates. -/
 private def handleFormatting (session : Session) (id : RequestID) (params : Json) (ranged : Bool)
     (cancel : Std.CancellationToken) : IO Unit := do
@@ -1199,9 +1197,9 @@ private inductive Work where
   | message (json : Json)
   | malformed (detail : String)
   /-- A debounced analysis, scheduled by `didOpen`/`didChange` and dropped by the worker if
-  the document has moved past `version` in the meantime (§9). It goes on the same queue as
-  everything else, so analysis and message handling share the single FIFO the freeze specifies and
-  nothing touches a document concurrently. -/
+  the document has moved past `version` in the meantime. It goes on the same queue as everything
+  else, so analysis and message handling share one FIFO and nothing touches a document
+  concurrently. -/
   | analyze (uri : String) (version : Int)
   deriving Inhabited
 

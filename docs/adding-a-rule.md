@@ -1,5 +1,8 @@
 # Adding a rule
 
+**Audience: lean-fmt contributors.** This covers writing a new lint rule for lean-fmt itself. Rules are not pluggable
+from outside the repository.
+
 Everything a rule is lives in `LeanFmt/Rules.lean`. A rule is a `RuleInfo` and a `RuleImpl`; the `RuleImpl` constructor
 you pick decides both what your rule reads and what a run pays to answer it. No attribute to apply, no typeclass to
 instantiate, no registration order — add an entry to `ruleRegistry` and you are done.
@@ -150,8 +153,8 @@ Do not think about it. `runRulesOf` sorts every finding by start, then stop, the
 ## What a rule cannot do
 
 A rule is `Facts → Array Finding`. It has no `IO`, no `Environment`, no workspace, no cache, and no project — enforced
-by the argument type, not by convention. If your rule seems to need one of those, it is not a rule yet; say so in the
-owning stack's notes rather than widening the signature.
+by the argument type, not by convention. If your rule seems to need one of those, it is not a rule yet; write down why
+in the module docstring rather than widening the signature.
 
 A rule reads configuration only through `SourceFacts`, and today that is one field: `lineWidth`, the effective
 `format.line-width` for the file. Everything else is off limits. `runRules` produces *every* rule's findings and
@@ -193,15 +196,14 @@ rule, you have crossed the boundary; the boundary suite will stop you.
   case to the modes suite.
 - All three tiers ship. The first `.syntax` rules (FMT006–FMT011) and the first `.semantic` ones (FMT012–FMT015) are
   present. `check` reports a rule of any tier, and `check --fix` applies a syntax fix by re-projecting the canonical
-text.
-  `SemanticResult.tier` and `cacheHitServes` gate the result cache, so a source-only shortcut entry never answers a
-  `.syntax` or `.semantic` selection with a false negative. `testEngineTiers` asserts that the registry still holds all
-  three.
+  text. `SemanticResult.tier` and `cacheHitServes` gate the result cache, so a source-only shortcut entry never answers
+  a `.syntax` or `.semantic` selection with a false negative. `testEngineTiers` asserts that the registry still holds
+  all three.
 - `testEngineTiers` and `testMixedSelection` exercise the engine itself through `runRulesOf` and `requiredTierOf`, which
   take a rule array so the tests can register probe rules without shipping fake ones. Test engine behavior through that
   array; test your rule through `ruleRegistry`.
 
 ## Where the reasoning lives
 
-`LeanFmt/Rules.lean`'s module docstring is the design: why a function table rather than an attribute or a typeclass
-(§7), why the artifact carries facts and never findings (§6), and what each tier costs (§5, §8).
+`LeanFmt/Rules.lean`'s module docstring carries the design: why a function table rather than an attribute or a
+typeclass, why the compiler records facts and never findings, and what each tier costs.

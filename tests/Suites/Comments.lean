@@ -7,8 +7,8 @@ import all LeanFmt.Config
 /-!
 # The comments suite: actual-syntax comment ownership
 
-Port of `tests/fixtures/comments/run.sh`. No projection-token attachment path is exercised here: the exact
-frontend's live-syntax summary owns every payload exactly once — over a synthetic fixture covering
+No projection-token attachment path is exercised here: the exact frontend's live-syntax summary owns
+every payload exactly once — over a synthetic fixture covering
 custom/macro/delimiter/terminal/suppression shapes, over the imported-syntax `LocalSyntax` fixture,
 over CRLF normalization, and through structural comment layout at three widths.
 -/

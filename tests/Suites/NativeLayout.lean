@@ -5,8 +5,7 @@ public import Test
 /-!
 # The native-layout suite
 
-Port of `tests/fixtures/native-layout/run.sh`: the native grammar adapter's invariant families, one
-declared fixture module each:
+The native grammar adapter's invariant families, one declared fixture module each:
 
 - `Alignment.lean` — positional terminal alignment: repeated spellings, multibyte columns, and
   literal bases whose source spelling the formatter is free to change
@@ -17,26 +16,24 @@ declared fixture module each:
 - `MathlibStyle.lean` — the grammar shapes mathlib's style linters flag: broken import rows,
   isolated focusing dots, attribute-owned doc comments nested past their payload's column
 - `Offside.lean` — parser-significant columns native layout alone does not preserve
-- `BracketedSequences.lean` — the two bracketed `sepByIndentSemicolon` families: prompt 01's
-  pinned narrow-width refusal became admission under prompt 10's anchor intervals, and the case
-  now pins the anchored width-20 rows; not in the admission `fixtures` array (it has its own)
+- `BracketedSequences.lean` — the two bracketed `sepByIndentSemicolon` families, whose narrow-width
+  refusal became admission under `LAY-INDENTED-SEQUENCES`; the case pins the anchored width-20
+  rows, and is not in the admission `fixtures` array (it has its own)
 
-Prompt-01 baseline audit (layout-redesign stack): the `Std.Format` constructors reachable from
-registered-formatter output over parsed source are `nil`, `append`, `text` (plain and
-newline-bearing — `sepByIndent`'s line-break separator path), `line`, positive `nest`, `group`
-(both flatten behaviors), and `align true` (the same `sepByIndent` path). `tag` is unreachable:
-`withMaybeTag` reads `getExprPos?`, which only `SourceInfo.synthetic` populates. `align false`
-and negative `nest` have no producer in the pinned toolchain's formatter pipeline. The fixtures
-cover every reachable constructor and all five `sepByIndent` families — structInst fields,
-indented and bracketed tactic sequences, indented and bracketed conv sequences, and `where`
-decls, the bracketed halves in `BracketedSequences.lean`. Each fixture's header states which
-later prompt may move its renders.
+Constructor coverage: the `Std.Format` constructors reachable from registered-formatter output over
+parsed source are `nil`, `append`, `text` (plain and newline-bearing — `sepByIndent`'s line-break
+separator path), `line`, positive `nest`, `group` (both flatten behaviors), and `align true` (the
+same `sepByIndent` path). `tag` is unreachable: `withMaybeTag` reads `getExprPos?`, which only
+`SourceInfo.synthetic` populates. `align false` and negative `nest` have no producer in the pinned
+toolchain's formatter pipeline. The fixtures cover every reachable constructor and all five
+`sepByIndent` families — structInst fields, indented and bracketed tactic sequences, indented and
+bracketed conv sequences, and `where` decls, the bracketed halves in `BracketedSequences.lean`.
 
 Everything runs through `format --check`, never `format`: these fixtures are committed, and a
 suite that invokes a writing mode against a committed fixture rewrites it the first time the path
 under test starts succeeding.
 
-Lane: workspace — the preamble clears the root cache (the old script's trap removed it).
+Lane: workspace — the preamble clears the root cache.
 -/
 
 open LeanFmt.Test
@@ -398,7 +395,7 @@ private def testOffside (ctx : Ctx) : IO Unit := do
   -- `Term.byTactic` declares `ppAllowUngrouped` to keep `by` on the `:=` line; a flat boundary at
   -- the `by` terminal is what holds it, since the adapter does not own `fill`'s measurement. The
   -- count covers the five carrier theorems, `letIdBodyJoins`, and its tactic-level `have step`.
-  -- The prompt-01 conv coverage added `convSiblings`, `convSemicolon`, and `convNested`; the
+  -- The conv coverage added `convSiblings`, `convSemicolon`, and `convNested`; the
   -- mid-row `change (letI …` example adds one more, and the equal-column `change` example one
   -- after that.
   ensureEq "by stays on the := line" 12
@@ -643,10 +640,10 @@ private def testRootedKind (ctx : Ctx) : IO Unit := do
   ensureEq "  ... and the directive it names leaves the command verbatim" 1
       (countExact formatted.stdout "register_label_attr leanFmtRootedKindFixture")
 
-/-- §6c: the two bracketed `sepByIndentSemicolon` families hug at width 100 and refuse --
-characterized, at the `diagnostics` gate -- at width 20, where the list must break left of the
-column `sepByIndent`'s inner `withPosition` saved. Prompt 10 owns the structural replacement that
-turns this refusal into admission; until then the refusal is the pinned baseline. -/
+/-- §6c: the two bracketed `sepByIndentSemicolon` families hug at width 100, and at width 20 -- where
+the list must break left of the column `sepByIndent`'s inner `withPosition` saved -- they admit
+rather than refuse. `LAY-INDENTED-SEQUENCES` is what changed that, and the pins below are the rows
+it produces. -/
 private def testBracketedSequences (ctx : Ctx) : IO Unit := do
   let once ← formatCheck ctx "BracketedSequences" none "bracketed-sequences admission"
   ensureEq "a hugged conv bracket stays hugged" 1
@@ -669,9 +666,9 @@ private def testBracketedSequences (ctx : Ctx) : IO Unit := do
         #["format", "--check", "--root", ".", "--json", "--no-cache", "--config", config.toString,
           "tests/fixtures/native-layout/BracketedSequences.lean"]
         (cwd? := some ctx.root)
-  -- Prompt 10 (`LAY-INDENTED-SEQUENCES`) turned the pinned width-20 refusal into admission: the
-  -- anchor interval over the sequence's items re-bases the `;` break to the first item's column.
-  -- The pins below are the anchored rows, not the gate.
+  -- `LAY-INDENTED-SEQUENCES` turned the width-20 refusal into admission: the anchor interval over
+  -- the sequence's items re-bases the `;` break to the first item's column. The pins below are the
+  -- anchored rows, not the gate.
   let report ← parseJson result.stdout "bracketed-sequences at 20"
   ensureEq "bracketed sequences admit at width 20" 1 result.exitCode
   let narrow ←

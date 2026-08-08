@@ -7,10 +7,9 @@ import all Test.Unit.Cache
 /-!
 # The cache suite: entry-granularity cache invalidation
 
-Port of `tests/fixtures/cache/run.sh`. The claim under test is the one `LeanFmt/Cache/Spec.lean` proved
-over a pure decision function: an entry is served only when its
-source **and its grammar** are current, and an edit invalidates the entries that depend on it and
-no others.
+The claim under test is the one `LeanFmt/Cache/Spec.lean` proved over a pure decision function: an
+entry is served only when its source **and its grammar** are current, and an edit invalidates the
+entries that depend on it and no others.
 
 This runs against `tests/fixtures/cache/project`, a self-contained Lean package, and not against the
 lean-fmt repository itself. Editing any `LeanFmt/*.lean` rebuilds the `lean-fmt` binary, which
@@ -192,8 +191,8 @@ private def testConcurrentColdWriters (ctx : Ctx) : IO Unit := do
   ensureEq "a warm run after concurrent writers serves every target" ctx.total (← served ctx)
 
 /-- §2. A module with no dependents invalidates only itself (and the always-missing lakefile).
-Guards the property the old whole-project source walk destroyed: before this stack, editing one of
-112 files left 0 entries hitting, because `environment` folded project source bytes into the index
+Guards the property the old whole-project source walk destroyed: under it, editing one of 112 files
+left 0 entries hitting, because `environment` folded project source bytes into the index
 *filename* and renamed it. -/
 private def testLeafEdit (ctx : Ctx) : IO Unit := do
   writeFile (leaf ctx) ((← IO.FS.readFile (leaf ctx)) ++ "\n-- entry-granularity probe\n")
@@ -260,7 +259,7 @@ never changed. This is the case a source-digest-only key cannot see, and the rea
 `CacheIdentity` carries `closure` at all. `Other` and `Leaf` must keep hitting — catching the
 hazard must not mean invalidating the world.
 
-Mutation-checked in the old script: with `closureDigest?` returning a constant, this run serves one
+Mutation-checked: with `closureDigest?` returning a constant, this run serves one
 entry more than expected, and the extra entry is `User` — a stale hit on byte-identical source
 under a changed grammar, which `probe` catches independently of the count. -/
 private def testNotationEdit (ctx : Ctx) : IO Unit := do

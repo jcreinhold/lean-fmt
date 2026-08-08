@@ -51,7 +51,7 @@ server clamps every inbound position itself.
 
 `𝔘` (U+1D518) is 4 UTF-8 bytes, 2 UTF-16 code units, and 1 codepoint, so one character separates all
 three encodings. It is the same fixture used for the reporting columns
-(`tests/fixtures/reporting/run.sh`, "codepoint columns are neither bytes nor UTF-16"). -/
+(the reporting suite, "codepoint columns are neither bytes nor UTF-16"). -/
 private def testLspPositions : IO Unit := do
   let source := "theorem t : 𝔘 = 𝔘 := rfl\nsecond line\n"
   let fileMap := Lean.FileMap.ofString source
@@ -104,8 +104,8 @@ private def testLspPositions : IO Unit := do
 
 /-! ### The language server's document layer
 
-The differential test below is obligation 2 of the freeze, and it is
-the one obligation whose failure would corrupt a user's file rather than merely annoy them. -/
+The differential test below covers the one failure that would corrupt a user's file rather than
+merely annoy them. -/
 
 section LanguageServerDocuments
 
@@ -123,7 +123,7 @@ private def lspLines (source : String) : Array String :=
   go source.toList "" #[]
 
 /-- An independent resolution of an LSP position to a byte offset: sum the byte sizes of the preceding
-lines, then walk this line counting UTF-16 units. Clamped as `notes` §4 requires — line to the last
+lines, then walk this line counting UTF-16 units. Clamped as the contract requires — line to the last
 line, column to that line's UTF-16 width — because clamping is the frozen contract, not an
 implementation detail of the operation under test. -/
 private def naiveOffset (source : String) (position : Lean.Lsp.Position) : Nat :=

@@ -5,11 +5,10 @@ public import Test
 /-!
 # The downstream suite
 
-Port of `tests/fixtures/downstream/run.sh`: downstream integration. Every other suite exercises the
-formatter from inside its own workspace, where the plugin is reached as
-`@/LeanFmtCompilerPlugin:shared` and the facet is declared in the lakefile that owns the modules.
-A consuming project has neither; until this suite existed the downstream recipe was a string
-printed by `compiler setup` and nothing ran it.
+Downstream integration. Every other suite exercises the formatter from inside its own workspace,
+where the plugin is reached as `@/LeanFmtCompilerPlugin:shared` and the facet is declared in the
+lakefile that owns the modules. A consuming project has neither; until this suite existed the
+downstream recipe was a string printed by `compiler setup` and nothing ran it.
 
 Lane: exclusive+slow — the fixture project builds this checkout as a dependency.
 -/

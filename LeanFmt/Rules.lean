@@ -24,7 +24,7 @@ this does not.
 Rules run **outside** the compiler, against immutable facts. A rule cannot reach a workspace, a
 cache, an `Environment`, or `IO`: `run` takes a fact view and returns an `Array Finding`. -/
 
-/-- What a rule needs in order to decide, ordered by what it costs to obtain.
+/-- What a rule needs to decide, ordered by what it costs to obtain.
 
 `source` facts are free: the file was read. `syntax` facts need the exact frontend, so a
 run that selects any `syntax` rule needs a current `.olean` and its facet, or a frontend

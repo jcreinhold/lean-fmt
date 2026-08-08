@@ -56,7 +56,7 @@ instance : Lean.FromJson DirectiveScope :=
 `codes?` is `none` for a blanket directive; `some codes` names specific rule codes (`codes` is
 nonempty — an empty `[]` is malformed and never reaches here). `scopeRange` is the byte range whose
 findings this suppresses, and `commentRange` is the directive comment's own range, needed by the
-`FMT900` removal fix. Both ranges derive from the comment's position every run (§3 of the spec), so
+`FMT900` removal fix. Both ranges derive from the comment's position every run, so
 they are stable under formatting, not stored offsets a reflow could invalidate. -/
 structure Directive where
   scope : DirectiveScope
@@ -410,7 +410,7 @@ structure Outcome where
 
 A finding is kept unless some directive suppresses it. A directive — or one code of a list — is
 *unused* when it suppressed nothing among these findings, which is why unused is computed against the
-config-selected set (§8): a directive naming a config-disabled or unknown code can never fire and is
+config-selected set: a directive naming a config-disabled or unknown code can never fire and is
 reported. The `bytes` are the normalized source, needed to compute removal ranges. -/
 def apply (facts : SuppressionFacts) (bytes : ByteArray) (findings : Array Finding) : Outcome :=
   Id.run do

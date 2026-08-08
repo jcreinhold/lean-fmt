@@ -8,11 +8,11 @@ import all LeanFmt.Validator
 /-!
 # The validator suite
 
-Port of `tests/validator/run.sh`. Production admission: a candidate is canonical only after a fresh
-parse, structural comparison, logical-comment comparison, complete source maps, and a byte-identical
-second rendering. The mutated candidates come from `tests/fixtures/formatter/candidate.py`, the deliberately
-foreign adversary — it stays Python and the suite pipes through it, so the validator is still
-exercised by output nobody in this repo controls.
+Production admission: a candidate is canonical only after a fresh parse, structural comparison,
+logical-comment comparison, complete source maps, and a byte-identical second rendering. The mutated
+candidates come from `tests/fixtures/formatter/candidate.py`, the deliberately foreign adversary —
+it stays Python and the suite pipes through it, so the validator is still exercised by output nobody
+in this repo controls.
 
 `reparse-agrees` pins the one thing the fast path could break: the reparsed and elaborated routes
 must produce the same bytes. A failure there means reparsing the candidate under the original run's

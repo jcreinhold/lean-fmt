@@ -1,11 +1,11 @@
 # Upgrading the pinned Lean toolchain
 
-This checklist is for maintaining **this repository** across a `lean-toolchain` bump. A consuming project's side of the
-same event is `docs/ci.md` §"Installing and upgrading".
+**Audience: lean-fmt maintainers.** This checklist covers moving *this repository* to a new `lean-toolchain`. If you
+are upgrading lean-fmt inside your own project, you want `docs/ci.md` §"Installing and upgrading" instead.
 
-lean-fmt is pinned to one toolchain and leans on Lean internals that are private or de-facto-stable rather than
-versioned APIs. A bump is an event to test, not a version-string edit. Nothing here is public API: every name below is
-an internal this product happens to depend on, and the checklist exists because Lean is free to move any of them.
+lean-fmt is pinned to one toolchain and depends on Lean internals that are private or de-facto-stable rather than
+versioned APIs. A bump is an event to test, not a version-string edit. Every name below is an internal Lean is free to
+move, which is why this checklist exists.
 
 ## What a bump can move
 
@@ -33,16 +33,19 @@ an internal this product happens to depend on, and the checklist exists because 
    build path — `recFetchSetup` over `presetup` — and a file read from disk takes it; a buffer or a rewritten candidate
    takes `setupServerModule`, because their imports are not the ones on disk. If a bump changes what `presetup` folds
    into `leanOptions`, or moves imports out of `ModulePreSetup`, the two paths stop agreeing for unchanged files and the
-   modes suite sees it. `LeanFmt/Cache.lean` reads Lake's `.trace` files through Lake's own readers —
-   `BuildMetadata.fromJson?`, `ModuleOutputDescrs.fromJson?`, and `ArtifactDescr` — plus one more non-`public` name,
+   modes suite sees it.
+
+   `LeanFmt/Cache.lean` reads Lake's `.trace` files through Lake's own readers — `BuildMetadata.fromJson?`,
+   `ModuleOutputDescrs.fromJson?`, and `ArtifactDescr` — plus one more non-`public` name,
    `BuildMetadata.schemaVersion`, reached through `import all Lake.Build.Common`. That last one is the schema pin, and
    it is ours to make because Lake's parse does not: `BuildMetadata` does not carry the version it parsed, so nothing
-   below would notice a schema change on its own. A rename breaks the build, which is the good case; a *behaviour*
-   change does not. Two behaviours are load-bearing and silent if they move: `monitorBuild` failing the whole batch on
-   any one registered job's failure, which is why `Project.graph` awaits jobs itself and never calls it, and
-   `finalizeBuild` turning a stale `noBuild` target into `IO.Process.exit`, which is why it is never called on the
-   no-build pass. If a bump makes a whole selection report artifact or setup misses at once, suspect the first; if a run
-   exits silently mid-check, suspect the second.
+   below would notice a schema change on its own.
+
+   A rename breaks the build, which is the good case; a *behaviour* change does not. Two behaviours are load-bearing
+   and silent if they move: `monitorBuild` fails the whole batch on any one registered job's failure, which is why
+   `Project.graph` awaits jobs itself and never calls it, and `finalizeBuild` turns a stale `noBuild` target into
+   `IO.Process.exit`, which is why it is never called on the no-build pass. If a bump makes a whole selection report
+   artifact or setup misses at once, suspect the first; if a run exits silently mid-check, suspect the second.
 
 ## Checklist
 

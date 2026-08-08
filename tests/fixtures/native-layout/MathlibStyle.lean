@@ -10,10 +10,8 @@ public   import   Lean.Parser.Module
 
 /-! The three shapes mathlib's style linters flag and the formatter therefore never produces:
 an import row broken across lines, a focusing `·` isolated from its first tactic, and an
-attribute-owned doc comment nested past the column its fixed payload was authored to fit. -/
-
-/- Baseline note (layout-redesign prompt 01): these three shapes hold for the whole stack; a linter
-the formatter trips is a defect at any rank. -/
+attribute-owned doc comment nested past the column its fixed payload was authored to fit. A linter
+the formatter trips is a defect, whatever mechanism produced the row. -/
 
 syntax (name := docCarrier) "doc_carrier" (docComment)? : attr
 

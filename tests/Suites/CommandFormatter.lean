@@ -5,9 +5,9 @@ public import Test
 /-!
 # The command-formatter suite
 
-Port of `tests/fixtures/command-formatter/run.sh`. Parsed headers, command boundaries, comments, and custom
-commands use native layout; widths 32/60/100 are admitted and byte-idempotent with a descriptor
-command; and lean-fmt's own commented command module aligns every command through native layout.
+Parsed headers, command boundaries, comments, and custom commands use native layout; widths
+32/60/100 are admitted and byte-idempotent with a descriptor command; and lean-fmt's own commented
+command module aligns every command through native layout.
 -/
 
 open LeanFmt.Test

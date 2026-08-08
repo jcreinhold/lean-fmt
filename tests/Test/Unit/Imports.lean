@@ -59,7 +59,7 @@ header rules are pure functions of the parsed surface header, and `redundantFind
 header plus a caller-supplied reachability answer that stands in for the Lake graph. -/
 private def testImports : IO Unit := do
   -- The surface header carries the modifier spelling, not the abstract import: `import all A` and
-  -- `import A` are distinct statements, so neither is the other's duplicate (`notes` §3).
+  -- `import A` are distinct statements, so neither is the other's duplicate.
   let dup ← parseHeader! "import Foo.A\nimport Foo.A\n"
   let dupFindings := Imports.duplicateFindings dup "import Foo.A\nimport Foo.A\n"
   ensure (dupFindings.map (·.code) == #["FMT003"])
@@ -77,7 +77,7 @@ private def testImports : IO Unit := do
   ensure (Imports.duplicateFindings notDup notDupSrc).isEmpty
       "`import A` and `import all A` were wrongly treated as duplicates"
   -- A literal `import Init` twice is a surface duplicate — it is the phantom `Init` the abstract list
-  -- injects that a surface rule can never see, not a written one (`notes` §1a).
+  -- injects that a surface rule can never see, not a written one.
   let dupInit ← parseHeader! "import Init\nimport Init\n"
   ensure ((Imports.duplicateFindings dupInit "import Init\nimport Init\n").size == 1)
       "a literal repeated `import Init` did not fire FMT003"
@@ -159,7 +159,7 @@ private def testImports : IO Unit := do
       (Imports.organize (← parseHeader! modifier) modifier ==
         "module\nimport Foo.A\nimport all Foo.B\n")
       "the organizer dropped a modifier while reordering"
-  -- A `prelude` file has no phantom `Init`: the surface model sees only the written imports (`notes` §1a).
+  -- A `prelude` file has no phantom `Init`: the surface model sees only the written imports.
   let prelude ← parseHeader! "prelude\nimport Foo.A\n"
   ensure (prelude.hasPrelude && prelude.imports.map (·.module) == #[`Foo.A])
       "the prelude header model does not match the written imports"

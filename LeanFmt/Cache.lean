@@ -1171,7 +1171,7 @@ private def ResultCache.liveDigests? (cache : ResultCache) (project : Project.Sn
   return some live
 
 /- Merge and atomically publish an ordered batch once. Cache failure never changes successful
-analysis; the next run simply observes the previous index or an empty cache. -/
+analysis; the next run observes the previous index or an empty cache. -/
 def ResultCache.writeAll (cache : ResultCache) (project : Project.Snapshot)
     (targets : Array Project.SourceTarget) (analyses : Array (Option SemanticAnalysis))
     (prune : Bool := false) : IO Unit := do

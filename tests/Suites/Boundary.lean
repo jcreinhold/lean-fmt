@@ -7,11 +7,11 @@ import all LeanFmt.Basic
 /-!
 # The native source boundary suite
 
-Port of `tests/boundary/run.sh`. Repo hygiene, not product behavior: lakefiles are executable
-configuration, every compiled Lean source uses private-by-default modules, and no Rust workspace,
-cache, build output, or generated binary is tracked. The link-closure probes at the end are the
-invariant in its observable form: the proof library is globbed alone and builds with
-every `lake build`, but it must never enter a link closure an integrating project pays for.
+Repo hygiene, not product behavior: lakefiles are executable configuration, every compiled Lean
+source uses private-by-default modules, and no Rust workspace, cache, build output, or generated
+binary is tracked. The link-closure probes at the end are the invariant in its observable form: the
+proof library is globbed alone and builds with every `lake build`, but it must never enter a link
+closure an integrating project pays for.
 -/
 
 open LeanFmt.Test

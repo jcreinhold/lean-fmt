@@ -5,12 +5,12 @@ public import Test
 /-!
 # The syntax suite
 
-Port of `tests/fixtures/syntax/run.sh`. The first `syntax`-tier rules (FMT006-FMT011) run against the
-compiler projection, not the raw bytes. These fixtures are deliberately *not* built modules: there
-is no `.olean`, no module evidence, and no artifact for them, so the exact frontend is the only
-path that can project them — `LEAN_FMT_DISABLE_ARTIFACT=1` and
-`LEAN_FMT_TEST_DISABLE_MODULE_EVIDENCE=1` make that explicit rather than dependent on whatever the
-build tree happens to hold. `--no-cache` keeps each run independent of the last.
+The first `syntax`-tier rules (FMT006-FMT011) run against the compiler projection, not the raw
+bytes. These fixtures are deliberately *not* built modules: there is no `.olean`, no module
+evidence, and no artifact for them, so the exact frontend is the only path that can project them —
+`LEAN_FMT_DISABLE_ARTIFACT=1` and `LEAN_FMT_TEST_DISABLE_MODULE_EVIDENCE=1` make that explicit
+rather than dependent on whatever the build tree happens to hold. `--no-cache` keeps each run
+independent of the last.
 
 Lane: workspace — the preamble clears the root `.lean-fmt-cache`.
 -/
@@ -105,7 +105,7 @@ private def testFixSpans (ctx : Ctx) : IO Unit := do
   pinEdits (← fixOf "fmt013-pos" "NestedParen.lean" "FMT011") [(51, 52, ""), (55, 56, "")]
       "fmt013-pos"
 
-/-- A clean file trips none of the six, and each rule's documented exclusion (catalog 01 §5) stays
+/-- A clean file trips none of the six, and each rule's documented exclusion stays
 silent under all six: no-declaration modules, whole-file `noncomputable section`, dotted and nested
 scope closes, `attrKind`-distinct attributes, distinct deriving classes, proof-scaling options,
 tuple/ascription/cdot parens, comment-buried defects, quotation data, and custom `(`-reusing

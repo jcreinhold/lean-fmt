@@ -5,9 +5,9 @@ public import Test
 /-!
 # The term-formatter suite
 
-Port of `tests/fixtures/term-formatter/run.sh`. Applications and structural control terms reflow at widths
-20/40/80/100; let continuations, nested conditionals, match discriminants, and arm order survive;
-project notation stays registry-driven only at its actual syntax node.
+Applications and structural control terms reflow at widths 20/40/80/100; let continuations, nested
+conditionals, match discriminants, and arm order survive; project notation stays registry-driven
+only at its actual syntax node.
 -/
 
 open LeanFmt.Test

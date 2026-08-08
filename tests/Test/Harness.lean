@@ -34,7 +34,8 @@ public def ensureEq [BEq α] [Repr α] (label : String) (expected actual : α) :
     throw <| IO.userError s!"{label}\n  expected: {repr expected}\n  actual:   {repr actual}"
 
 /-- The `cache.<key>=N` stat one `check` emits on stderr under `LEAN_FMT_PROFILE_PHASES=1`.
-Missing or malformed is a failure, not a zero — the old script's empty-variable arithmetic error. -/
+Missing or malformed is a failure, not a zero: a zero satisfies every gate that asserts a count
+fell, so a stat that stops being emitted would read as an improvement. -/
 public def statFrom (stderr key : String) : IO Nat := do
   let statPrefix := s!"cache.{key}="
   for line in stderr.splitOn "\n"do

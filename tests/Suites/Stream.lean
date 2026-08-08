@@ -5,11 +5,10 @@ public import Test
 /-!
 # The stream suite
 
-Port of `tests/stream/run.sh`: the stdin/stdout and range
-surface. Every case drives the real executable through a pipe, because the thing under test *is*
-the pipe behavior: what reaches stdout, what reaches stderr, what the exit code is, and what is
-NOT written. The frozen contract is the range-formatting section of `LeanFmt/Application.lean`;
-section numbers below refer to it.
+The stdin/stdout and range surface. Every case drives the real executable through a pipe, because
+the thing under test *is* the pipe behavior: what reaches stdout, what reaches stderr, what the exit
+code is, and what is NOT written. The frozen contract is the range-formatting section of
+`LeanFmt/Application.lean`; section numbers below refer to it.
 
 Lane: workspace+slow — the suite removes the root `.lean-fmt-cache`, and the broken-pipe case
 elaborates a 6,000-definition buffer.
@@ -29,7 +28,7 @@ private def fmt (ctx : Ctx) (args : Array String) (input : System.FilePath) : IO
   runProc ctx.app args (cwd? := some ctx.root) (input? := some (← IO.FS.readFile input))
       (timeoutMs := some 600000)
 
-/-- First stderr line — the old script's `2>&1 >/dev/null | head -1`. -/
+/-- First stderr line. -/
 private def firstErr (result : ProcResult) : String :=
   ((result.stderr.splitOn "\n").filter (· != "")).head?.getD ""
 

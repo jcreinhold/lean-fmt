@@ -28,14 +28,11 @@ Each constraint names a parser-significant column that native layout alone does 
   to keep the side of the break the source put it on.
 
 `do`, nested `match`, tactic blocks, `where`, and equation alternatives are here because the
-constraints have to compose with them, not because each needs a rule of its own. -/
+constraints have to compose with them, not because each needs a rule of its own.
 
-/- Baseline note (layout-redesign prompt 01): this file pins the unbracketed `sepByIndent`
-families -- structInst fields, the indented tactic and conv sequences, and `where` decls -- as
-the prompt-01 baseline; the bracketed tactic and conv sequences live in
-`BracketedSequences.lean` with their pinned narrow-width refusal. Prompts 09 and 10 may move the
-renders of the families they migrate, and prompt 11 the ones it retires; every other rank must
-hold them byte-for-byte. -/
+The `sepByIndent` families pinned here are the unbracketed ones: structInst fields, the indented
+tactic and conv sequences, and `where` decls. The bracketed tactic and conv sequences live in
+`BracketedSequences.lean`. -/
 
 public section
 

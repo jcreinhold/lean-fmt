@@ -45,7 +45,7 @@ them.
 
 A blank line is a source fact nothing else in the pipeline supplies: `Command.place` decides the
 boundary *between* commands from their roles, and these comments sit inside one command's unit. So the
-gap between a copyright block and the `module` it precedes is owned by neither and was simply dropped.
+gap between a copyright block and the `module` it precedes is owned by neither and was dropped.
 Every file in a Lean project has one. -/
 private def joinLeading (ownership : CommentOwnership) (comments : Array Comment) : Option Doc :=
   (comments.foldl (init := (none, none)) fun (document?, cursor) comment =>

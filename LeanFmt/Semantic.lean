@@ -173,9 +173,9 @@ def SemanticAnalysis.ofArtifact (raw : String) (lineWidth : Nat) (artifact? : Op
         -- The tier the facts reach is the tier the artifact was captured at. A `.semantic` artifact
         -- (captured under demand by a render or a `.semantic`-rule selection) carries the compiler
         -- diagnostics, so the whole registry — including FMT012–FMT015 — runs against `.semantic`
-        -- facts and the result is tagged `.semantic`, complete for any run (monolithic capture,
-        -- §6). An artifact without the projection runs the
-        -- source/syntax registry against `.syntax` facts and is tagged `.syntax`, exactly as before —
+        -- facts and the result is tagged `.semantic`, complete for any run. An artifact without the
+        -- projection runs the source/syntax registry against `.syntax` facts and is tagged
+        -- `.syntax` —
         -- a `.syntax` entry then misses a `.semantic` selection through `analysisServes` rather than
         -- reporting a false clean. The caps a `.semantic` entry provides are the projection's own
         -- (`diagnostics` always, `occurrences` iff the info-tree fold ran); a syntax entry provides

@@ -5,12 +5,11 @@ public import Test
 /-!
 # The imports suite
 
-Port of `tests/fixtures/imports/run.sh`. The import-rule pipeline end-to-end: the three
-`imports`-category diagnostics and the opt-in organizer, on committed module fixtures. The unit
-tier pins the pure header rules and the organizer function; this pins the whole CLI path — read,
-normalize, parse the surface header, merge fresh import findings (FMT004 via the live Lake graph),
-select, report, and — for the organizer and `fix` — validate the rewrite by re-elaboration before
-writing.
+The import-rule pipeline end-to-end: the three `imports`-category diagnostics and the opt-in
+organizer, on committed module fixtures. The unit tier pins the pure header rules and the organizer
+function; this pins the whole CLI path — read, normalize, parse the surface header, merge fresh
+import findings (FMT004 via the live Lake graph), select, report, and — for the organizer and `fix`
+— validate the rewrite by re-elaboration before writing.
 
 Import findings are computed fresh every run and never cached (FMT003/005 are pure over the file,
 but FMT004 reads *other* files through the graph), so these fixtures use the exact-frontend

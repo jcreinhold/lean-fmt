@@ -5,10 +5,9 @@ public import Test
 /-!
 # The catalog suite
 
-Port of `tests/catalog/run.sh`: executable-example acceptance. Every live
-rule's documented example is not decoration: it is *run* against the real product. Sourced from
-the registry (`explain CODE --json`, the one metadata object the docs are also generated from),
-the suite proves for each rule with examples that:
+Executable-example acceptance. Every live rule's documented example is not decoration: it is *run*
+against the real product. Sourced from the registry (`explain CODE --json`, the one metadata object
+the docs are also generated from), the suite proves for each rule with examples that:
 
 - the `bad` snippet, run through the exact frontend, reports exactly that rule (no more, no less,
   no infrastructure failure);
@@ -74,7 +73,7 @@ private def testExamples (ctx : Ctx) : IO Unit := do
     rules.qsort fun a b =>
       ((a.getObjValAs? String "code").toOption.getD "") <
         ((b.getObjValAs? String "code").toOption.getD "")
-  -- §10: findings not expressible as a self-contained snippet.
+  -- Findings not expressible as a self-contained snippet.
   let exempt := ["FMT001", "FMT002", "FMT004"]
   let mut tested := 0
   for rule in sorted do

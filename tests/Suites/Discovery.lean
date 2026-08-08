@@ -5,8 +5,7 @@ public import Test
 /-!
 # The discovery suite
 
-Port of `tests/discovery/run.sh`: hierarchical configuration discovery end
-to end, through the shipped binary, on real project trees.
+Hierarchical configuration discovery end to end, through the shipped binary, on real project trees.
 
 This suite is deliberately separate from the modes suite. That one owns the *write* path inside
 this repository, where a mistake damages tracked files. This one owns *discovery*, which needs

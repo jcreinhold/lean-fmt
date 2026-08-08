@@ -8,10 +8,10 @@ module
 
 /- Terminal alignment must be total and positional. Every case here has a spelling that repeats, a
 spelling Lean's formatter normalizes, or a spelling whose codepoints and bytes disagree; matching a
-native leaf by its text instead of by its position gets each of them wrong. -/
+native leaf by its text instead of by its position gets each of them wrong.
 
-/- Baseline note (layout-redesign prompt 01): these renders are pinned for the whole stack. The
-prompt-05 oracle must reproduce them byte-for-byte; no rank may move them. -/
+These renders are pinned byte-for-byte. A change may replace the matcher; it may not move a
+column. -/
 
 public section
 

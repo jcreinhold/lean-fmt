@@ -7,9 +7,8 @@ import all LeanFmt.Config
 /-!
 # The declaration-formatter suite
 
-Port of `tests/fixtures/declaration-formatter/run.sh`. Declaration families use structural groups at widths
-20/40/80/100; members, constructors, deriving, mutual, where, comments, and custom terms preserve
-order. The old Python regexes — including the `\b`-guarded keywords — are `FlexPattern`s here.
+Declaration families use structural groups at widths 20/40/80/100; members, constructors, deriving,
+mutual, where, comments, and custom terms preserve order.
 -/
 
 open LeanFmt.Test

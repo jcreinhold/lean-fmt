@@ -8,12 +8,10 @@ import all LeanFmt.Analysis
 /-!
 # The incremental-analyzer suite
 
-Port of `tests/fixtures/incremental/run.sh`, absorbing the `incremental-analyzer` subcommand it used to call
-in the unit executable. The contract is the persistent frontend session's: an edit table varying
-one concern at a time, full JSON envelopes compared against a fresh one-shot frontend, retained-
-snapshot and memory bounds, cancellation, and a lifecycle counter accounting at the end. The old
-script grepped the summary line; the counter `ensure` at the end of the run is strictly stronger
-than that grep, and the line is still printed for the record.
+The persistent frontend session's contract: an edit table varying one concern at a time, full JSON
+envelopes compared against a fresh one-shot frontend, retained-snapshot and memory bounds,
+cancellation, and a lifecycle counter accounting at the end. The counters are asserted, not
+grepped; the summary line is still printed for the record.
 -/
 
 open LeanFmt LeanFmt.Internal
@@ -277,8 +275,8 @@ rss_kib={rss} retained=1 peak_kib={peak} phases={curve}"
 LEAN_NUM_THREADS=2 (1.5× either way is the bound)"
   return 0
 
-/-- Drive the contract against the real fixture setup, as the old script did: `lake setup-file`
-for the exact module context, then the session lifecycle. -/
+/-- Drive the contract against the real fixture setup: `lake setup-file` for the exact module
+context, then the session lifecycle. -/
 private unsafe def testSessionContract : IO Unit := do
   let root ← repoRoot
   withTempDir fun work => do

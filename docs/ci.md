@@ -1,17 +1,11 @@
 # Running lean-fmt in CI
 
-`README.md` §"Using lean-fmt in another project" covers taking `lean-fmt` as a dependency. This document covers running
-it in CI: the recipes, what may be cached between runs, and what pinning and upgrading change.
+**Audience: projects that use lean-fmt.** Taking lean-fmt as a dependency is covered in `README.md` §"In another
+project". This guide covers CI: the recipes, what to cache between runs, and what pinning and upgrading change.
 
-The ci suite keeps these recipes honest. It builds a consuming project that takes lean-fmt as a git dependency, with
-real commit history, and runs all four recipes, the cache instruction, and a `git archive` install against it. If a
-recipe here stops working, that suite fails.
-
-What it does **not** cover: the workflow YAML around the commands. Every `lean-fmt` and `lake` invocation below is
-executed by the suite, but the step ordering, `hashFiles`, `$GITHUB_OUTPUT`, `permissions`, and the `actions/cache` key
-are checked against `lean-action`'s `action.yml` and GitHub's documented syntax rather than run on a runner — uploading
-to code scanning is remote state this repository's test suite will not touch. Treat the shell as tested and the YAML as
-reviewed.
+Every `lean-fmt` and `lake` command below is executed by lean-fmt's own test suite against a real consuming project, so
+a recipe that stops working fails a test. The workflow YAML around those commands is reviewed rather than run — nobody
+uploads to code scanning from a test suite.
 
 ## Exit codes are the whole interface
 
@@ -90,7 +84,7 @@ jobs:
           exit 1
 ```
 
-Four details, each measured rather than assumed.
+Four details worth knowing.
 
 **The upload step runs unconditionally, and that is the point.** A clean run still writes a complete, schema-valid SARIF
 log with an empty `results` array. Uploading it tells code scanning the previous alerts are resolved; skipping the
@@ -199,15 +193,12 @@ lake exe lean-fmt docs --check     # rule documentation matches the rule catalog
 lean-fmt keeps successful semantic results in `.lean-fmt-cache/` at the project root. Caching it across CI runs is
 worthwhile and needs no special handling.
 
-**The cache's identity takes the formatter binary's content**, not its path or modification time (`ResultCache.open?`,
-`LeanFmt/Cache.lean`). So rebuilding lean-fmt from source, or reinstalling it somewhere else, keeps every entry as long
-as the bytes are the same. Hashing the binary costs about 40 ms and is paid once per build: the result is memoized in
-`.lean-fmt-cache/formatter-identity.json`, keyed on the binary's path, size, and modification time, so later runs only
-read that file.
+**The cache's identity takes the formatter binary's content**, not its path or modification time. So rebuilding lean-fmt
+from source, or reinstalling it somewhere else, keeps every entry as long as the bytes are the same. Hashing the binary
+costs about 40 ms and is paid once per build; later runs read the memoized answer from
+`.lean-fmt-cache/formatter-identity.json`.
 
-Earlier releases keyed identity on (path, size, mtime) directly, and a job that rebuilt lean-fmt every run started cold
-every run. If you followed the advice that fixed it — caching `.lake` and `.lean-fmt-cache` under one key so the mtime
-survived — it still works and is still a good idea, because a restored `.lake` is worth having on its own:
+Cache `.lake` alongside `.lean-fmt-cache` under one key. A restored `.lake` is worth having on its own:
 
 ```yaml
 - uses: actions/cache@v4
@@ -227,9 +218,9 @@ The key covers what invalidates the cache wholesale anyway, so a bump re-populat
 - **`[format]` configuration** — `line-width` changes the canonical bytes, so an entry recorded at another width is
   rightly a miss.
 
-`[lint]` keys — `select`, `ignore`, `per-file-ignores` — are **not** in cache identity. Rule selection is a projection
-over one canonical result, so changing which rules a job reports never invalidates a cache entry. A repository can run a
-strict job and a lenient job against the same warm cache.
+`[lint]` keys — `select`, `ignore`, `per-file-ignores` — are **not** part of cache identity. Every rule's findings are
+computed once and rule selection chooses which to report, so changing which rules a job reports never invalidates an
+entry. A repository can run a strict job and a lenient job against the same warm cache.
 
 Per entry, the source's own bytes and its dependency closure are checked, so editing a file misses only that file's
 entry.
@@ -243,13 +234,12 @@ Two ways in, by what the job needs. A job that only runs the **CLI** can skip th
 binaries are statically self-contained:
 
 ```sh
-curl -sSfL https://github.com/jcreinhold/lean-fmt/main/install.sh | sh
+curl -sSfL https://raw.githubusercontent.com/jcreinhold/lean-fmt/main/install.sh | sh
 ```
 
 A job that uses the **compiler plugin or the cache facet** cannot: a plugin must be built against the consuming
 project's own toolchain, so that integration still takes `lean-fmt` as an ordinary Lake dependency and builds it from
-source. `README.md` §"Using lean-fmt in another project" has the three consumption levels; the rest of this section is
-about the dependency pin.
+source. `README.md` §"In another project" covers that dependency; the rest of this section is about the pin.
 
 **Pin a revision.** `require` without a revision follows the default branch, which makes CI non-reproducible: a push to
 lean-fmt changes your build with no commit of yours.
@@ -300,28 +290,3 @@ is not optional if you took the plugin. A consuming project that uses the plugin
 event to test, not a version-string edit.
 
 The bump invalidates the cache wholesale, so no stale result survives it.
-
-## Maintainer notes: intermittent failures
-
-This section is about lean-fmt's *own* CI, not a consumer's. Everything above is the consumer contract; what follows is
-how this repository treats a test that fails sometimes.
-
-**The zero-retry rule.** Re-running a failed job is legitimate only for a signature that is already filed in the ledger
-below and understood. A retry on an unfiled signature trades a bug report for a coin flip: the evidence is on a runner
-that no longer exists. Every failure digest is designed to be one cycle from a cause — heartbeats name the suite,
-indented followers carry the assertion's evidence, the cache suite's epoch forensics name the moved component. File the
-signature with its run ID and digest *first*; retry second, if the signature says it is safe to.
-
-**The ledger.** Intermittent signatures, worst-first. A signature leaves the ledger by being root-caused and fixed, not
-by stopping recurring on its own.
-
-| signature | first seen | runs since | status |
-| --- | --- | --- | --- |
-| `scale` FAIL at exactly 33 s, digest lost when the runner died | CI run 30663155905 | 6+ green runs | open — the next recurrence carries the 48-line follower digest, which is what the raised caps were for |
-| part 3/3 stalls after `layout` passes: `syntax` and `check` start, then ~18 min of silence until the 20-minute step timeout | CI runs 30702577635, 30704463051, 30724311657 | 3×, identical signature | **named by the watchdog on the third** — both suites wedged 1000+ s simultaneously behind *unbounded* child waits: `runProc` defaulted to no timeout, and syntax/check passed none, so any wedged `lean-fmt` child hung its suite forever. `runProc`/`expectExit` now kill children at a 10-minute default with the command in the error; the next wedge is a named suite failure, not a step timeout. Root cause of the child wedge itself is still open — the timeout names it when it recurs |
-| `incremental` OOM on constrained machines | CI run 30665759922 | resolved | **root-caused and fixed** — the peak was never the session: per-case RSS samples showed session edits flat while the suite's own in-process fresh-oracle one-shots stacked import environments (release lags on the runtime's finalizer thread), a 2.5–11 GB run-to-run coin flip at *any* thread count. Fix: the oracle runs in child processes (exit releases deterministically) and the fixture's `import Lean` became a targeted closure; peak is now a stable ~2.5 GB everywhere, the suite gates it with a 1.5× thread-ratio check against a `--peak-only` baseline child, and the 8 GiB stop stays as the kill. Back in the flake-hunt's slow list |
-
-**Environment-shaped failures.** Before blaming a test, check what the failure knew: the suite part steps stream memory
-and disk headroom (TELEM lines) every 15 seconds, and the last sample before a kill names the resource. The fixes that
-pattern produced — `--jobs 2`, `LEAN_NUM_THREADS=2` on CI, per-step timeouts, the search-path scrub in the test spawn
-layer — are load-bearing; remove any of them and the class comes back.

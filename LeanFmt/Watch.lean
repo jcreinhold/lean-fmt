@@ -20,25 +20,25 @@ decides what a generation *does*: the caller supplies that as an action, so exec
 `LeanFmt.Application` and rendering in `LeanFmt.Cli`.
 
 **Why polling.** `Std.Internal.UV` binds Signal, Timer, TCP, UDP, DNS and System, and not
-`uv_fs_event`/`uv_fs_poll`; no `inotify`/`FSEvents`/`kqueue` appears anywhere in `Init/` or `Std/`
-(`evidence/01-watch-baseline.md` §1). The binding is missing, not the platform capability, so no
+`uv_fs_event`/`uv_fs_poll`; no `inotify`/`FSEvents`/`kqueue` appears anywhere in `Init/` or `Std/`.
+The binding is missing, not the platform capability, so no
 amount of `Std.Async` reaches it. We considered an external watcher and rejected it: `CLAUDE.md`
-requires a *measured* benefit, and the walk costs a small fraction of a generation (§1).
+requires a *measured* benefit, and the walk costs a small fraction of a generation.
 
 **Why this is bounded without a queue.** There is no event queue to overflow. The observer holds two
 values: the snapshot a generation last ran on, and the latest snapshot observed. A burst of events
 collapses into one differing snapshot and produces one following generation, so the retained state is
 O(selected files) — the project itself — with no bound to tune, no drop policy, and no backpressure
-rule (§5).
+rule.
 -/
 
 /-! ## The change signal
 
 `(relative path, byteSize, mtime.sec, mtime.nsec)` over the files `LeanFmt.Project` selects, plus the
-control files of §6.
+control files below.
 
 Nanoseconds carry real values: repeated writes inside one wall-clock second produce distinct stamps,
-and a same-size rewrite stays distinguishable (`evidence` §2), so detection needs no content digest.
+and a same-size rewrite stays distinguishable, so detection needs no content digest.
 
 **This bounds latency, never correctness.** On a filesystem with coarse `mtime` granularity a
 same-second same-size edit can produce an identical tuple and be missed by that poll. A generation
@@ -50,7 +50,7 @@ guarantees that every edit is observed, and no caller may claim it does. -/
 private structure Stamp where
   path : String
   /-- Absent when the file does not exist. Absence is itself observable, so that *creating* a config
-  file — which changes no existing file's tuple — still starts a generation (§6). -/
+  file — which changes no existing file's tuple — still starts a generation. -/
   present : Bool
   byteSize : UInt64
   seconds : Int
@@ -58,7 +58,7 @@ private structure Stamp where
   deriving BEq
 
 /-- One observation of the tree. Compared as a whole: a file appearing or disappearing changes the
-set, which is why creation and deletion need no separate mechanism (§2). -/
+set, which is why creation and deletion need no separate mechanism. -/
 structure Snapshot where private mk ::
   private stamps : Array Stamp
   deriving BEq
@@ -82,7 +82,7 @@ private def stampOf (root : FilePath) (relative : String) : IO Stamp := do
 
 /-! ## What is observed besides sources
 
-A generation's meaning depends on inputs that are not themselves Lean sources (§6). Editing a config
+A generation's meaning depends on inputs that are not themselves Lean sources. Editing a config
 file changes which rules run; editing a lakefile changes the project. Both must start a generation
 even though neither is a source. -/
 
@@ -90,7 +90,7 @@ even though neither is a source. -/
 private def configNames : Array String :=
   #[".lean-fmt.toml", "lean-fmt.toml"]
 
-/-- Root-relative control files whose change invalidates a retained workspace (§6). -/
+/-- Root-relative control files whose change invalidates a retained workspace. -/
 private def lakeControlNames : Array String :=
   #["lakefile.lean", "lakefile.toml", "lake-manifest.json", "lean-toolchain"]
 
@@ -114,7 +114,7 @@ private def ancestors (path : String) : Array String :=
 
 Recomputed from a fresh `Discovery.run` on every poll rather than cached: the selected set is itself
 a function of the tree, so a new file, a new config, or a changed `exclude` has to be able to change
-what we watch. The walk costs a small fraction of a generation (§1), which is what makes recomputing
+what we watch. The walk costs a small fraction of a generation, which is what makes recomputing
 it affordable. -/
 private def observedPaths (root : FilePath) (configPath? : Option FilePath) : IO (Array String) :=
   do
@@ -154,24 +154,24 @@ structure Options where
   configPath? : Option FilePath := none
   /-- Poll interval. The default sits above the discovery walk, so polling never occupies much of a
   core, and well below a generation, so it never dominates observed latency. Polling faster cannot
-  make feedback faster; only a faster generation can (§1). -/
+  make feedback faster; only a faster generation can. -/
   pollMillis : Nat := 200
 
 /-- Run `generation` once immediately, then once after each settled change, forever.
 
-`generation` receives a 1-based counter, which is presentation only: identity is the observed snapshot
-(§3). It is run to completion before the next observation is compared, so generations are strictly
-sequential and one complete report is emitted at a time — the roadmap's completion contract.
+`generation` receives a 1-based counter, which is presentation only: identity is the observed
+snapshot. It is run to completion before the next observation is compared, so generations are
+strictly sequential and one complete report is emitted at a time.
 
 **Coalescing.** After a difference is first seen, the loop waits until one poll interval passes with
 the snapshot unchanged before running. That collapses a multi-file save, a branch checkout, or an
-editor's write-temp-then-rename into one generation rather than several (§5).
+editor's write-temp-then-rename into one generation rather than several.
 
 **Superseded work is still emitted.** A generation whose snapshot went stale while it ran is reported,
 then immediately followed by the next. Its report is not wrong — it is a true report about the bytes
 it read — and suppressing it would leave a user who has stopped typing staring at nothing. Cancelling
 a running generation is deliberately out of scope: `execute` offers no cancellation point that would
-leave the result cache consistent (§5, §11). -/
+leave the result cache consistent. -/
 partial def run (options : Options) (generation : Nat → IO Unit) : IO Unit := do
   let initial ← observe options.root options.configPath?
   generation 1

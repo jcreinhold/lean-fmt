@@ -1,31 +1,33 @@
 # Canonical Lean style
 
-`lean-fmt` has one style. Configuration chooses the line width (100 by default), not a family of competing layouts. The
-formatter derives layout from parsed structure and the active Lean environment; it does not preserve source alignment or
-keep a database of preferred source spellings.
+**Audience: anyone running lean-fmt.** This is what formatted source looks like and why.
 
-The executable policy rows live in `tests/fixtures/style/matrix.json`. Their IDs appear below so an implementation
-cannot silently omit or rename a decision.
+`lean-fmt` has one style. Configuration chooses the line width (100 by default), not a family of competing layouts.
+Layout comes from the parsed structure of your code and the Lean syntax in scope; lean-fmt does not preserve source
+alignment or keep a table of preferred spellings.
+
+Each decision below carries an ID such as `header.imports` or `terms.operator`. The same IDs index a test matrix, so a
+decision cannot be dropped or renamed without a test failing.
 
 ## Global rules
 
-- Indentation is two spaces per structural level. Continuations use the owning construct's next level; columns are never
-  aligned to an earlier token.
-- A group uses its flat form when it fits. Otherwise it uses the named broken form; width decisions do not depend on the
-  input's line breaks.
-- Ordinary breakable syntax must reflow at the configured width. A literal token, URL, identifier, exact comment
-  payload, or registry-owned opaque atom may exceed it. `FMT016` reports every row that does, breakable or not; it is
-  off by default because the unbreakable ones are the common case.
+- Indentation is two spaces per level of nesting. A continued line indents from the construct that owns it; nothing is
+  ever aligned to a column an earlier token happened to land on.
+- A construct stays on one line when it fits, and otherwise breaks into the form shown below. Where the breaks fall
+  depends on the width alone, never on how the input was already broken.
+- Anything that can be broken reflows at the configured width. A literal, URL, identifier, comment text, or unbreakable
+  token from project-defined syntax may exceed it. `FMT016` reports every row that does; it is off by default because
+  the unbreakable rows are the common case.
 - Horizontal whitespace is one space where separation is required and absent next to hugged delimiters. There are no
   tabs or trailing spaces in formatter-owned output.
-- Ordinary modules end in one newline. Bytes beginning at a terminal command such as `#exit` are a verbatim tail and are
-  not normalized. CRLF/LF choice is restored only at publication.
-- Source order is semantic. Imports, modifiers, binders, fields, constructors, match arms, tactics, `do` items, and
-  custom syntax are never sorted by formatting.
-- Comments keep exact payload bytes and one structural owner. Reindentation changes surrounding layout, never text
-  inside a line, block, doc, directive, string, character, or quotation token.
+- A module ends in one newline. Everything from a terminal command such as `#exit` onward is copied verbatim. Your
+  file's CRLF or LF line endings are restored when it is written back.
+- Source order carries meaning, so formatting never sorts. Imports, modifiers, binders, fields, constructors, match
+  arms, tactics, `do` items, and custom syntax stay in the order you wrote them.
+- A comment keeps its exact text and stays attached to one construct. Reindenting moves the comment, never the
+  characters inside it — the same holds for strings, character literals, and quotations.
 
-## Headers and command shells
+## Headers and commands
 
 `header.imports` keeps `module` and ordered imports at the left margin, one import statement per line. Import modifiers
 stay in source order. A comment-separated import group stays a group; formatting never deduplicates, reorders, or
@@ -43,18 +45,16 @@ consecutive blank lines collapses to one.
 declaration keyword in parsed order. Short attribute lists are flat (`@[simp, aesop safe]`); long lists break after `@[`
 with one entry per line and a closing `]` at the attribute's indentation. A top-level declaration's attribute list
 always occupies its own line above the declaration, even a short one: `@[simp] theorem foo` comes back as `@[simp]` on
-one line and `theorem foo` on the next. That is the grammar's layout, not a width decision — a declaration-level
-attribute list carries a hard line after it upstream, and the inline variant of that construct exists and is used for
-structure fields, `let rec`, and binders, so the split is deliberate, not a defect.
+one line and `theorem foo` on the next. That is Lean's own layout for the construct rather than a width decision. Lean
+has a separate inline form, used for structure fields, `let rec`, and binders, which stays on one line.
 
-An attribute argument can itself be a doc comment (`@[to_additive /-- … -/]` is the mathlib shape). Its payload is fixed
-— the comment rule forbids reflowing it — so the entry's column is the only width the formatter controls. A doc comment
-the source hugged against its attribute stays hugged; one the source wrote on its own line dedents, together with the
-closing `]`, to the attribute list's own column, the one placement whose width the payload was authored to fit.
+An attribute argument can itself be a doc comment — `@[to_additive /-- … -/]` is the mathlib shape. Its text is never
+reflowed, so the only width lean-fmt controls is which column it starts at. A doc comment written against its attribute
+stays there; one written on its own line moves left, along with the closing `]`, to the attribute list's own column.
 
-`commands.syntax` keeps syntax, notation, macro, `open`, `export`, `universe`, `variable`, and `set_option` shells on
-one line while they fit. Their nested term/parser/tactic children break under their own category's layout. A long
-notation declaration breaks only at parsed child boundaries, never by splitting a quoted atom.
+`commands.syntax` keeps `syntax`, `notation`, `macro`, `open`, `export`, `universe`, `variable`, and `set_option` on one
+line while they fit. Anything nested inside — a term, a parser, a tactic — breaks by its own rules. A long `notation`
+declaration breaks only between its parts, never inside a quoted token.
 
 ## Declarations and members
 
@@ -64,8 +64,8 @@ notation declaration breaks only at parsed child boundaries, never by splitting 
 def map (f : α → β) (xs : List α) : List β := xs.map f
 ```
 
-When it does not fit, binders stay in order on owner-relative continuation lines, the result type is a composable group,
-and a broken value starts two spaces below `:=`:
+When it does not fit, the binders keep their order on continuation lines indented from the declaration, the result type
+breaks on its own if it has to, and a broken body starts two spaces below `:=`:
 
 ```lean
 def map
@@ -146,24 +146,25 @@ by
 
 Bullets and case/focus bodies own their bodies' indentation. A focusing `·` always keeps its first tactic on its own row
 — `· calc`, `· exact`, however long the block under it — because mathlib's cdot linter flags an isolated `·`; everything
-past the first token breaks under the ordinary rules. The term-level `·` (`(· + ·)`) is a different construct and is
-untouched. Project-defined tactics break under the same live registry as core ones; they do not make the enclosing
-declaration verbatim.
+past the first token breaks under the ordinary rules. The term-level `·` in `(· + ·)` is a different construct and is
+untouched. Project-defined tactics break by the same rules as core ones, and do not make the surrounding declaration
+opt out of formatting.
 
-`blocks.do-where` writes `do` followed by two-space-indented items unless one simple item fits flat. `where` uses the
-declaration rule above. Match arms containing `by`, tactic alternatives, and nested `Id.run do` each establish a new
-two-space offside base. Membership is taken from the AST, never recovered from source columns.
+`blocks.do-where` writes `do` followed by two-space-indented items unless a single simple item fits on the `do` line.
+`where` follows the declaration rule above. Match arms containing `by`, tactic alternatives, and a nested `Id.run do`
+each start a new two-space indentation base. What belongs to a block comes from the parsed structure, never from the
+columns the source used.
 
 ## Comments, literals, and suppression
 
-`trivia.leading-trailing-dangling` writes a leading comment immediately before its owner at the owner's indentation. A
-trailing line comment follows one space after code when it fits; otherwise it becomes a leading comment for the same
-owner. Dangling comments occupy their delimiter/block slot on their own line. Comment order and blank-line ownership are
-stable.
+`trivia.leading-trailing-dangling` puts a comment written above a construct immediately above it, at the same
+indentation. A trailing comment follows the code by one space when it fits, and moves to the line above otherwise. A
+comment with nothing after it — inside empty brackets, or at the end of a block — gets its own line there. The order of
+comments and the blank lines around them do not change.
 
-`trivia.literal-verbatim` treats literal, quotation, and comment payload bytes as unbreakable. If a toolchain formatter
-proposes changing those token bytes, structural admission rejects the whole candidate. Terminal tails are copied
-exactly. These are intentional over-width exceptions.
+`trivia.literal-verbatim` never breaks the text of a literal, quotation, or comment. If formatting would change any of
+those characters, lean-fmt refuses the file rather than writing it. Terminal tails are copied exactly. These rows may
+exceed the line width on purpose.
 
 `trivia.suppression` keeps rule-finding directives (`ignore`, `ignore-next`, `ignore-file`) independent from formatting.
 Formatter suppression adds only:
@@ -172,15 +173,16 @@ Formatter suppression adds only:
 -- lean-fmt: format-ignore-next
 ```
 
-It suppresses the next complete ordinary formatting unit, copies that unit's normalized bytes exactly, and resumes
-canonical formatting afterward. It cannot target part of an expression, the module/import header, a terminal tail, or
-the whole file. Unmatched/malformed directives are non-silent. Suppression never makes invalid Lean acceptable and never
-acts as unsupported-syntax fallback.
+It suppresses the next whole declaration or command, copies it through unchanged, and resumes formatting afterward. It
+cannot target part of an expression, the `module` and import header, a terminal tail, or the whole file. A directive that is
+misspelled or has nothing to suppress is reported, not ignored. Suppression never makes invalid Lean acceptable and is
+not a fallback for syntax lean-fmt cannot handle.
 
-## Open project syntax
+## Project-defined syntax
 
-`registry.custom` assigns layout to the live registered formatter under the environment and options that parsed the
-file. That is not a rule for imported syntax alone: one adapter drives every command, so project syntax and core syntax
-reach the same authority, and nothing keys layout on a kind name, a quoted atom, or a canonical-rewrite table. lean-fmt
-owns what surrounds those documents — the module stream, comments, and the alignment and offside constraints a candidate
-must satisfy before admission. A registry-owned unbreakable atom may exceed the width.
+`registry.custom` lays out your own `syntax`, `notation`, and `macro` declarations using the layout Lean itself
+registered for them, under the imports and options that parsed the file. Core syntax and project syntax go through the
+same path — nothing keys layout on a syntax kind's name or on a table of preferred spellings — so a project-defined
+tactic breaks like a built-in one. lean-fmt decides only what surrounds those constructs: the module structure,
+comments, and the indentation constraints a result must satisfy before it is written. A token from project syntax that
+cannot be broken may exceed the line width.

@@ -115,7 +115,7 @@ private def testLosslessSource : IO Unit := do
 Driven with a hand-built map rather than a real render, because the questions here are about the
 selection algebra — which units a request reaches, when the forward extension fires, what the actual
 range is, and whether the splice keeps the caller's bytes — and a synthetic map states each case in
-one line. `tests/modes/run.sh` drives the same code through the real printer. -/
+one line. The modes suite drives the same code through the real printer. -/
 private def testRangeSelection : IO Unit := do
   -- Three units over a 24-byte source. Unit 1's *output* does not end in a newline, which is the
   -- same-line-commands shape (`def a := 1 def b := 2`) the forward extension exists for.
@@ -145,8 +145,8 @@ private def testRangeSelection : IO Unit := do
       s!"the forward extension did not fire on a unit ending mid-line: {repr second.actual}"
   ensure (second.text == "AAAAAAA\nbbbbbb ccccccc\n")
       s!"unit 1-2 splice is wrong: {repr second.text}"
-  -- Full range reproduces the whole render byte for byte. This is the roadmap's whole-file /
-  -- full-range equivalence, stated where the splice can be held to it.
+  -- Full range reproduces the whole render byte for byte — whole-file / full-range equivalence,
+  -- stated where the splice can be held to it.
   let some whole := run 0 24 |
     ensure false "the full range selected no unit";
     return

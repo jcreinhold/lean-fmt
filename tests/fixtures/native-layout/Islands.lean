@@ -12,10 +12,9 @@ layout: a token whose bytes span lines, an interpolated string, and a quotation 
 The multiline cases are the ones that pin the dedent. `Std.Format` re-indents every newline inside a
 text leaf to the ambient indentation, so a payload carrying its own absolute columns has to cancel
 that indentation to reach column zero. Growing this list by spelling rather than by class is what the
-route audit rejected. -/
+route audit rejected.
 
-/- Baseline note (layout-redesign prompt 01): island payloads and their columns hold for the whole
-stack. Prompt 11 may replace the mechanism; it may not move a payload byte. -/
+A change may replace the island mechanism; it may not move a payload byte. -/
 
 public section
 

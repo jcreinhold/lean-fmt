@@ -5,10 +5,10 @@ public import Test
 /-!
 # The format-suppression suite
 
-Port of `tests/fixtures/format-suppression/run.sh`. `format-ignore-next` copies one complete unit and
-canonical formatting resumes; suppression is idempotent at widths 20/100 and identical after CRLF
-normalization; header-spanning and unmatched formatter directives are non-silent FMT901 findings;
-and a final file-owned Unicode comment survives exactly once.
+`format-ignore-next` copies one complete unit and canonical formatting resumes; suppression is
+idempotent at widths 20/100 and identical after CRLF normalization; header-spanning and unmatched
+formatter directives are non-silent FMT901 findings; and a final file-owned Unicode comment survives
+exactly once.
 -/
 
 open LeanFmt.Test

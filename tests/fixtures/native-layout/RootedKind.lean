@@ -21,10 +21,9 @@ This file is not in the `fixtures` array with the others: it is the one fixture 
 *not* format. §6a asserts the refusal names the declaration rather than whichever lookup failed
 first, and that the directive above leaves the command verbatim -- the only way a file holding one
 of these can be formatted at all. Three mathlib files use one of the four toolchain declarations
-spelled this way. -/
+spelled this way.
 
-/- Baseline note (layout-redesign prompt 01): the named refusal and the directive escape hold for
-the whole stack. Prompt 12 may change how this file is routed, never whether it refuses. -/
+A change may reroute this file; it may not change whether it refuses. -/
 
 public section
 

@@ -5,13 +5,12 @@ public import Test
 /-!
 # The LSP suite
 
-Port of `tests/lsp/run.sh`: the protocol surface
-against the real binary over a real pipe. The unit tests cover the position layer and frame
-reader in isolation; this suite covers what only a process can show — lifecycle ordering, recovery
-that leaves the session usable, refusal of a document with no project location, cancellation,
-a bounded store, then diagnostics, formatting, and code actions over a live client.
+The protocol surface against the real binary over a real pipe. The unit tests cover the position
+layer and frame reader in isolation; this suite covers what only a process can show — lifecycle
+ordering, recovery that leaves the session usable, refusal of a document with no project location,
+cancellation, a bounded store, then diagnostics, formatting, and code actions over a live client.
 
-The two halves are fed differently on purpose, as in the old script. Lifecycle and recovery write
+The two halves are fed differently on purpose. Lifecycle and recovery write
 the whole session in one go and read what comes back, which is the strongest way to assert
 ordering (`runSession` + `parseFrames`). Diagnostics cannot be tested that way — they are
 published after a quiet interval and `exit` closes the queue before the timer fires — so the
@@ -42,10 +41,9 @@ private def Ctx.rootStr (ctx : Ctx) : String :=
   ctx.root.toString
 
 -- -----------------------------------------------------------------------------------------------
--- The one-shot half: frame encoding and response-stream parsing, exactly the old script's
--- `frame`/`run`/`parse`.
+-- The one-shot half: frame encoding and response-stream parsing.
 
-/-- One framed message, compact separators like the old script's `json.dumps(separators=(",",":"))`. -/
+/-- One framed message, with compact separators. -/
 private def frame (obj : Json) : String :=
   let body := obj.compress
   s!"Content-Length: {body.utf8ByteSize}\r\n\r\n{body}"
@@ -456,7 +454,7 @@ private def testFormatting (ctx : Ctx) : IO Unit := do
   -- `tests/fixtures/check/Clean.lean` has to actually be canonical for this to say anything. It held
   -- `def cleanValue : Nat := 1` on one line, which stopped being canonical at `3635d39` when the
   -- native adapter landed. The fixture was updated to the bytes Lean's own formatter produces;
-  -- see `tests/modes/run.sh` for the full trace.
+  -- see the modes suite for the full trace.
   let layoutSource ← readFixture ctx "Layout.lean"
   let cleanSource ← readFixture ctx "Clean.lean"
   let ((narrowEdit, wholeText), code) ←
@@ -600,7 +598,7 @@ private def testIgnoreOption (ctx : Ctx) : IO Unit := do
   ensureEq "the configured session ends cleanly" 0 code
 
 private def testUnsafeDemoted (ctx : Ctx) : IO Unit := do
-  -- `extend-unsafe-fixes` demotes FMT003 to unsafe (`tests/modes/run.sh` §"extend-unsafe-fixes").
+  -- `extend-unsafe-fixes` demotes FMT003 to unsafe (the modes suite, "extend-unsafe-fixes").
   -- A demoted fix is still *reported* -- the finding does not go away -- but no quickfix is
   -- offered without explicit intent. Turning `--unsafe-fixes` on brings it back.
   let findingsSource ← readFixture ctx "Findings.lean"

@@ -14,15 +14,14 @@ import all LeanFmt.Imports
 /-!
 # The admission oracle for formatter candidates
 
-Port of `tests/fixtures/formatter/oracle.py`: an independent admission protocol for a frontend-native Lean
-formatter candidate. The candidate runs twice (idempotence), every response must carry the input's
-identity and a source map tiling both regions, and the before/after exact-frontend artifacts must
-agree on terminal bytes, comment payloads and ownership, token spellings, and tree shape. Gates are
-named so suites can assert *which* gate a bad candidate trips.
+An independent admission protocol for a frontend-native Lean formatter candidate. The candidate runs
+twice (idempotence), every response must carry the input's identity and a source map tiling both
+regions, and the before/after exact-frontend artifacts must agree on terminal bytes, comment
+payloads and ownership, token spellings, and tree shape. Gates are named so suites can assert
+*which* gate a bad candidate trips.
 
-The Python oracle shelled out to `lean-fmt-tests artifact-projection` and `formatter-header`; the
-port computes both in-process from the same production functions (`ModuleArtifact.materialize`,
-`Imports.parseHeaderModel`).
+The projection and the header model are computed in-process from the production functions
+`ModuleArtifact.materialize` and `Imports.parseHeaderModel`, not by shelling out to the executable.
 -/
 
 open LeanFmt LeanFmt.Internal

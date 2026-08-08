@@ -13,18 +13,16 @@ drive the same shape: `lake setup-file` a fixture, run the binary's `__analyze-e
 more widths or modes, then assert against the envelope's canonical render or format draft. That
 machinery lives here once.
 
-The old Python blocks asserted with `re.search`, but only ever used a small regular language:
-literal runs joined by `\s*`-style gaps, explicit newlines, and `\b` word boundaries. `FlexTok`
-models exactly that language, so the ports stay property assertions instead of degenerating into
-golden strings.
+Assertions here are whitespace-flexible patterns rather than golden strings: literal runs joined by
+`\s*`-style gaps, explicit newlines, and `\b` word boundaries. `FlexTok` models exactly that
+language and nothing more, so an assertion states a property of the output instead of copying it.
 -/
 
 open LeanFmt.Test
 
 namespace LeanFmt.Test.Analyze
 
-/-- One token in a whitespace-flexible pattern — the small regular language the old Python
-`re.search` assertions actually used. -/
+/-- One token in a whitespace-flexible pattern. -/
 public inductive FlexTok where
   /-- Exact bytes. -/
   | lit (s : String)
@@ -124,7 +122,7 @@ public def setupFile (root work : System.FilePath) (fixture : String) : IO Syste
 
 /-- One `__analyze-exact` run, returning the parsed report. `mode` is the analyzer's mode argument
 (`"4:80"`, `"draft:72"`, `"100"`, ...). The module suite's drafts go through `lake env`; the
-formatter suites call the binary directly, as the old scripts did. -/
+formatter suites call the binary directly. -/
 public def analyzeExact (root : System.FilePath) (application : String) (setup : System.FilePath)
     (source moduleName mode : String) (viaLakeEnv : Bool := false)
     (env : Array (String × Option String) := #[]) : IO Lean.Json := do
@@ -138,8 +136,7 @@ public def analyzeExact (root : System.FilePath) (application : String) (setup :
   parseJson result.stdout label
 
 /-- The canonical render of a successful report: validation absent-or-null (the binary omits the
-key on success, and the old Python's `dict.get` covered both), canonical present, idempotence
-exactly one pass. Returns the canonical object and its text; metrics stay fixture-specific, so
+key on success), canonical present, idempotence exactly one pass. Returns the canonical object and its text; metrics stay fixture-specific, so
 each suite asserts its own against the returned object. -/
 public def canonical (report : Lean.Json) (label : String) : IO (Lean.Json × String) := do
   ensure (jsonAt? report [.field "validationFailure"] |>.all (· == Lean.Json.null))

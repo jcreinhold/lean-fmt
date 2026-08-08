@@ -139,7 +139,7 @@ private def findingWithEdits (edits : Array Edit) (applicability : Applicability
 
 /-- Adversarial fix-all cases: mixed insert/delete/replace conflicts, multi-edit fixes
 inside one transaction, that applicability is never an edit property, and that a safe rule fix leaves a
-comment's text intact. The atomic-publish crash/stale cases live in `tests/modes/run.sh`, where a real
+comment's text intact. The atomic-publish crash/stale cases live in the modes suite, where a real
 temp-file-then-rename is exercised. -/
 private def testFixAllAdversarial : IO Unit := do
   -- Insert / delete / replace mixing. An insertion strictly inside a replacement is a conflict;

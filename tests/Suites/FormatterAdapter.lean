@@ -5,9 +5,9 @@ public import Test
 /-!
 # The formatter-adapter suite
 
-Port of `tests/fixtures/formatter-adapter/run.sh`: actual imported syntax through the production exact
-formatter. Descriptor-derived roots are structural syntax islands; explicitly registered roots
-enter the live registry. Both are admitted only after structural validation and idempotence.
+Actual imported syntax through the production exact formatter. Descriptor-derived roots are
+structural syntax islands; explicitly registered roots enter the live registry. Both are admitted
+only after structural validation and idempotence.
 
 Lane: parallel — generated fixtures live in the scratch dir and the `FormatterAdapterFixtures`
 build in the preamble is Lake-cached.
@@ -105,7 +105,7 @@ private def testThrowing (ctx : Ctx) : IO Unit := do
   let failure := (jsonAt? envelope [.field "formatFailure"]).getD .null
   let kind := ((jsonAt? failure [.field "trace", .field "kind"]).bind (·.getStr?.toOption)).getD ""
   ensureContains kind "throwingCommand" "throwing: kind"
-  -- The old Python's `in` over `trace.resolution` was dict-key membership, not a substring.
+  -- `explicit` must be a field of `trace.resolution`, not a substring of its rendering.
   ensure ((jsonAt? failure [.field "trace", .field "resolution", .field "explicit"]).isSome)
       "throwing: resolution lost the explicit category"
   let detail := ((failure.getObjValAs? String "detail").toOption).getD ""

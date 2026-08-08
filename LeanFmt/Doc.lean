@@ -14,8 +14,7 @@ import all LeanFmt.NativeFormat
 The document algebra has two tiers. The **native fragment** — `empty`, `text`, `nativeText`,
 `line`, `cat`, `nest`, `group`, `fill`, `align`, `tag` — expresses every `Std.Format`
 constructor, and renders with the semantics of the vendored machine in `LeanFmt/NativeFormat.lean`
-(the compatibility contract is `notes/02-native-contract.md` in the layout-redesign stack): an
-allOrNone group decides once against its body *and the enclosing remainder*, a `fill` group
+— an allOrNone group decides once against its body *and the enclosing remainder*, a `fill` group
 re-decides per break with one column charged for the candidate space, an `align` pads to the
 current indent or breaks at it, a `nest` is signed, a `tag` is invisible to fit, and a
 newline-bearing `nativeText` re-indents its continuations and re-groups the remainder of its

@@ -7,9 +7,9 @@ public import Test.Proc
 /-!
 # The lossless projection oracle
 
-Lean port of `tests/lossless/check_projection.py`. It shares no code with the product: every claim
-is re-derived from the artifact JSON and the file on disk alone, so it can *contradict*
-`ModuleSyntax.structurallyValid` rather than restate it.
+This oracle shares no code with the product: every claim is re-derived from the artifact JSON and
+the file on disk alone, so it can *contradict* `ModuleSyntax.structurallyValid` rather than restate
+it.
 
 The claim it checks and the product does not is **tiling**: that the leaves form a gapless,
 non-overlapping linear cover of the source between the header and the unparsed tail.

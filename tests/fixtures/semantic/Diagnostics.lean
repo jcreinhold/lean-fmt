@@ -3,7 +3,7 @@ module
 /-! A `module`-mode fixture whose declarations each trigger exactly one default-on Lean 4.32.0 linter
 with a stable `kind` tag and an exact range — the compiler diagnostics' semantic rules
 FMT012–FMT015 surface. Every diagnostic here is a **warning**, so the module elaborates and
-`analyzeExact` produces an artifact (it returns `broken` only on errors); the harness `run.sh` asserts
+`analyzeExact` produces an artifact (it returns `broken` only on errors); the semantic suite asserts
 the captured `diagnostics` reproduce the compiler's own `kind`s and ranges. -/
 
 def newName : Nat := 1

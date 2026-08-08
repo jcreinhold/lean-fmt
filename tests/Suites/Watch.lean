@@ -5,8 +5,8 @@ public import Test
 /-!
 # The watch suite
 
-Port of `tests/watch/run.sh`: the characterization suite for the platform behaviors
-`LeanFmt/Watch.lean` is built on, plus the CLI rejection surface.
+The characterization suite for the platform behaviors `LeanFmt/Watch.lean` is built on, plus the CLI
+rejection surface.
 
 The first half deliberately tests **git and the filesystem**, not `lean-fmt`. Every assertion is a
 premise the selection adapter is built on; if a future git changes one of them, the
@@ -34,7 +34,7 @@ private def git (args : Array String) (cwd : System.FilePath) (label : String) :
 private def gitAny (args : Array String) (cwd : System.FilePath) : IO ProcResult :=
   runProc "git" args (cwd? := some cwd)
 
-/-- §2 mtime carries populated nanoseconds, and distinguishes a same-size rewrite. The whole poll
+/-- mtime carries populated nanoseconds, and distinguishes a same-size rewrite. The whole poll
 design rests on this; a binding that truncated to whole seconds would make `(size, mtime)` blind
 to a fast edit. -/
 private def testMtimeGranularity (ctx : Ctx) : IO Unit := do
@@ -63,13 +63,13 @@ private def testMtimeGranularity (ctx : Ctx) : IO Unit := do
   ensure distinguished
       "same-size rewrites stayed indistinguishable for two seconds; the adapter assumes sub-second granularity"
 
-/-- §9.4 `git diff` never reports untracked files — the assertion that protects users from the
+/-- `git diff` never reports untracked files — the assertion that protects users from the
 worst failure mode of a `--changed` mode built on `diff` alone — and `--exclude-standard` honours
 .gitignore. -/
 private def testDiffNeverReportsUntracked (ctx : Ctx) : IO Unit := do
   let diff ← git #["diff", "--name-status", "HEAD"] ctx.fixture "git diff"
   ensure (!(diff.stdout.contains "New.lean"))
-      "git diff reported an untracked file; §9.4 unions ls-files precisely because it does not"
+      "git diff reported an untracked file; selection unions ls-files precisely because it does not"
   let others ← git #["ls-files", "--others", "--exclude-standard"] ctx.fixture "git ls-files"
   let names := others.stdout.splitOn "\n"
   ensure ((names.any (· == "New.lean")))
@@ -77,7 +77,7 @@ private def testDiffNeverReportsUntracked (ctx : Ctx) : IO Unit := do
   ensure (!(names.any (· == "Ignored.lean")))
       "git ls-files --others --exclude-standard leaked an ignored file"
 
-/-- §9.2/§9.3 the `-z` stream: rename records carry three fields, everything else two. A parser
+/-- The `-z` stream: rename records carry three fields, everything else two. A parser
 that assumes pairs desynchronizes on the first rename. -/
 private def testZStreamRecords (ctx : Ctx) : IO Unit := do
   let diff ← git #["diff", "--name-status", "-z", "HEAD"] ctx.fixture "git diff -z"
@@ -91,16 +91,16 @@ private def testZStreamRecords (ctx : Ctx) : IO Unit := do
   let some deleteIndex := deleteIndex? | throw <| IO.userError "fixture produced no delete record"
   ensureEq "-z delete path" "C.lean" (fields[deleteIndex + 1]?.getD "<missing>")
 
-/-- §9.2 only `-z` is byte-exact: default output C-quotes non-ASCII. -/
+/-- Only `-z` is byte-exact: default output C-quotes non-ASCII. -/
 private def testZByteExact (ctx : Ctx) : IO Unit := do
   let name := "Ünïcode Spaced.lean"
   let plain ← git #["diff", "--name-status", "HEAD~1"] ctx.fixture "git diff plain"
   ensure (!(plain.stdout.contains name))
-      "git diff emitted a raw non-ASCII path without -z; §9.2 assumed it C-quotes"
+      "git diff emitted a raw non-ASCII path without -z; the adapter assumes it C-quotes"
   let z ← git #["diff", "--name-status", "-z", "HEAD~1"] ctx.fixture "git diff -z unicode"
   ensure (z.stdout.contains name) "git diff -z did not emit the non-ASCII path byte-exactly"
 
-/-- §9.1 three-dot is the merge-base question; two-dot is not. -/
+/-- Three-dot is the merge-base question; two-dot is not. -/
 private def testThreeDot (ctx : Ctx) : IO Unit := do
   let leanCount (result : ProcResult) : Nat :=
     ((result.stdout.splitOn "\x00").filter (·.endsWith "lean")).length
@@ -109,12 +109,12 @@ private def testThreeDot (ctx : Ctx) : IO Unit := do
   ensure (!(threeDot.stdout.contains "MainOnly.lean"))
       "three-dot diff reported a path the branch never touched"
   ensure (twoDot.stdout.contains "MainOnly.lean")
-      "two-dot diff did not report MainOnly.lean; §9.1 rejected two-dot for exactly that noise"
+      "two-dot diff did not report MainOnly.lean; two-dot was rejected for exactly that noise"
   ensure (leanCount threeDot < leanCount twoDot)
       s!"three-dot ({leanCount threeDot}) did not select fewer paths than two-dot \
       ({leanCount twoDot})"
 
-/-- §9.7 probe with rev-parse, not diff: outside a repository rev-parse exits 128 with one clean
+/-- Probe with rev-parse, not diff: outside a repository rev-parse exits 128 with one clean
 line; git diff dumps its entire option usage. -/
 private def testRevParseProbe (ctx : Ctx) : IO Unit := do
   let outside := ctx.work / "not-a-repo"
@@ -125,7 +125,7 @@ private def testRevParseProbe (ctx : Ctx) : IO Unit := do
   ensureEq "rev-parse outside a repository says one thing" 1 revLines.length
   let diff ← gitAny #["diff", "--name-status", "HEAD"] outside
   ensure (diff.exitCode != 128)
-      "git diff now exits 128 outside a repository; §9.7 chose rev-parse on the assumption it does not"
+      "git diff now exits 128 outside a repository; rev-parse was chosen on the assumption it does not"
   let diffLines := ((diff.stdout ++ diff.stderr).splitOn "\n").filter (· != "")
   ensure (diffLines.length >= 10)
       s!"git diff outside a repository no longer dumps usage ({diffLines.length} lines); \
@@ -142,34 +142,34 @@ private def expectRejection (ctx : Ctx) (what fragment : String) (args : Array S
       s!"{what}: expected to mention '{fragment}', got: {result.stderr}"
 
 private def testWatchRejections (ctx : Ctx) : IO Unit := do
-  -- §10 A writing mode under watch publishes source, which changes the mtimes the poll observes:
+  -- A writing mode under watch publishes source, which changes the mtimes the poll observes:
   -- self-sustaining by construction, so both writers are refused.
   expectRejection ctx "check --fix --watch" "not available for check --fix"
       #["check", "--fix", "--watch"]
   expectRejection ctx "format --watch" "not available for format" #["format", "--watch"]
-  -- §7 A stream of documents is not a document, so json/sarif/junit need a destination.
+  -- A stream of documents is not a document, so json/sarif/junit need a destination.
   expectRejection ctx "sarif on stdout under watch" "requires --output-file"
       #["check", "--watch", "--output-format", "sarif"]
   expectRejection ctx "junit on stdout under watch" "requires --output-file"
       #["check", "--watch", "--output-format", "junit"]
   expectRejection ctx "json on stdout under watch" "requires --output-file"
       #["format", "--check", "--watch", "--output-format", "json"]
-  -- §2 Watch observes disk; a buffer on stdin has no mtime to poll.
+  -- Watch observes disk; a buffer on stdin has no mtime to poll.
   expectRejection ctx "watch with stdin target" "stdin target"
       #["check", "--watch", "-", "--stdin-filename", "x.lean"]
   -- A tunable that only means something under --watch is refused elsewhere.
   expectRejection ctx "poll interval without watch" "valid only with --watch"
       #["check", "--poll-interval", "50"]
-  -- §9 Naming files and asking git to name them are two answers to one question.
+  -- Naming files and asking git to name them are two answers to one question.
   expectRejection ctx "changed plus explicit files" "do not also name them"
       #["check", "--changed", "LeanFmt/Doc.lean"]
   expectRejection ctx "changed-since without a revision" "expects a revision"
       #["check", "--changed-since"]
-  -- §9.7 An unknown revision names what the caller typed, distinctly from "not a repository".
+  -- An unknown revision names what the caller typed, distinctly from "not a repository".
   expectRejection ctx "unknown revision" "unknown revision: definitely-not-a-ref"
       #["check", "--changed-since", "definitely-not-a-ref"]
 
-/-- §9.7 outside a repository, the diagnostic is the one clean rev-parse line — not git diff's
+/-- Outside a repository, the diagnostic is the one clean rev-parse line — not git diff's
 usage dump, and not a Lean exception. -/
 private def testChangedOutsideRepo (ctx : Ctx) : IO Unit := do
   let outside := ctx.work / "outside-repo"
@@ -179,9 +179,9 @@ private def testChangedOutsideRepo (ctx : Ctx) : IO Unit := do
   ensure (result.stderr.contains "requires a git repository")
       s!"expected a git-repository diagnostic outside a repository, got: {result.stderr}"
   ensure (!(result.stderr.contains "--no-index"))
-      "the non-repository diagnostic leaked git diff's usage text; §9.7 probes with rev-parse"
+      "the non-repository diagnostic leaked git diff's usage text; the probe uses rev-parse"
 
-/-- §9.6 a selection of zero files is a success with an explicit notice — never a silent clean
+/-- A selection of zero files is a success with an explicit notice — never a silent clean
 report, and never the whole project. -/
 private def testStagedEmpty (ctx : Ctx) : IO Unit := do
   let result ← runProc ctx.app #["check", "--staged", "--root", "."] (cwd? := some ctx.root)
@@ -189,7 +189,7 @@ private def testStagedEmpty (ctx : Ctx) : IO Unit := do
   ensure (result.stderr.contains "no changed Lean sources")
       s!"an empty --staged selection did not say so explicitly: {result.stderr}"
 
-/-- §9.6 a non-empty selection discloses that it covers a subset. -/
+/-- A non-empty selection discloses that it covers a subset. -/
 private def testChangedDisclosure (ctx : Ctx) : IO Unit := do
   let clean := ctx.root / "tests" / "fixtures" / "check" / "Clean.lean"
   let backup := ctx.work / "Clean.lean.orig"
@@ -204,7 +204,7 @@ private def testChangedDisclosure (ctx : Ctx) : IO Unit := do
   finally
     discard <| expectExit 0 "restore" "cp" #["-p", backup.toString, clean.toString]
 
-/-- §9.5 regression: an untracked non-Lean file must not abort a --changed run. An explicitly
+/-- Regression: an untracked non-Lean file must not abort a --changed run. An explicitly
 named file bypasses gates 2-4, and the floor it cannot skip is a hard error — so the adapter
 applies the floor itself. -/
 private def testUntrackedNonLean (ctx : Ctx) : IO Unit := do

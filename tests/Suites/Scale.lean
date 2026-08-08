@@ -5,11 +5,10 @@ public import Test
 /-!
 # The scale suite
 
-Port of `tests/scale/run.sh`: complete selection over a small Lake project — every source kind
-(workspace module, nested Lake configuration, standalone script) is discovered, checked, and
-cached, and a single-source edit invalidates exactly that source's entry. It also pins that a
-project's own Lake arguments reach the exact frontend, which needs a second fixture project because
-the argument belongs in its lakefile.
+Complete selection over a small Lake project — every source kind (workspace module, nested Lake
+configuration, standalone script) is discovered, checked, and cached, and a single-source edit
+invalidates exactly that source's entry. It also pins that a project's own Lake arguments reach the
+exact frontend, which needs a second fixture project because the argument belongs in its lakefile.
 
 Two later cases gate the frontend child itself, on fixture projects of their own: what its
 transport leaves open (`descriptor-closure`) and how large a task pool it gets

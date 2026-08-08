@@ -1,5 +1,7 @@
 # Configuration reference
 
+**Audience: anyone running lean-fmt.**
+
 Configuration is optional. Without a config file, every root-relative `.lean` file outside `.lake` is checked with
 default settings.
 
@@ -44,9 +46,8 @@ error. The `[format]` keys have no flat spelling. In an `extend` chain, scalars 
 
 **Comments are layout-transparent.** Break decisions are computed on the code alone: a trailing comment never changes
 the layout of the code it trails. If the code fits `line-width`, the line stays whole and the comment overflows the
-margin — the alternative would split `public import X` into pieces while the comment overflows anyway. If the code alone
-overflows, the construct breaks and the comment follows its owner. This is not configurable; it is the fix for splitting
-imports whose only overflow was a long trailing comment.
+margin — the alternative would split `public import X` across lines while the comment overflows anyway. If the code
+alone overflows, it breaks and the comment follows what it annotates. This is not configurable.
 
 `pinned-comments` lists phrases; an inline (`--`) comment containing any of them is **pinned**: the formatter never
 moves it and never splits its line, even when the code alone overflows — a pinned tooling directive like
@@ -58,7 +59,7 @@ rows overflow the margin is repacked to fit: the words are preserved in order, t
 split a block into paragraphs that are packed independently; list items (`- `, `* `) keep their rows verbatim; trailing
 comments, doc comments, block comments, and pinned comments are never touched. A block that already fits keeps its
 bytes, so the flag does not churn comments that are already fine, and a block with under twenty columns of room keeps
-its bytes too -- confetti is worse than the overflow. The rewrap rides the block's final column, so a comment that fits
+its bytes too — confetti is worse than the overflow. The rewrap rides the block's final column, so a comment that fits
 at its source column is repacked when canonical layout indents its construct deeper. `--reflow-comments` and
 `--no-reflow-comments` override the key for one run, configuration files included.
 
@@ -68,15 +69,15 @@ body on the `:=` line when the joined line fits `line-width`, joining already-br
 like the default when it does not.
 
 `declaration-where` chooses where the `where` of a structure-instance declaration goes relative to its signature. The
-default `"same-line"` keeps it on the signature row -- `def foo : T where` -- whenever the flattened signature plus
+default `"same-line"` keeps it on the signature row — `def foo : T where` — whenever the flattened signature plus
 ` where` fits `line-width`. `"next-line"` always starts it on its own row. The fit is measured on the whole signature
 flattened rather than on the row the `where` would land on: the tighter measure is not stable under its own output, so a
 file could format two different ways on two runs. A signature that overflows the margin therefore keeps whatever row the
-layout gives it under either setting. This key is separate from `declaration-body` because the two are independent --
+layout gives it under either setting. This key is separate from `declaration-body` because the two are independent —
 mathlib's style is the canonical next-line body with `where` on the signature row.
 
 `magic-trailing-comma` is ruff's and black's magic trailing comma, with ruff's spelling. The default `"respect"`: a
-collection literal -- `#[…]`, `[…]`, a tuple, `⟨…⟩`, or a structure instance -- whose source spells a trailing `,`
+collection literal — `#[…]`, `[…]`, a tuple, `⟨…⟩`, or a structure instance — whose source spells a trailing `,`
 before the closing bracket explodes: one element per row, the trailing comma kept, and the closing bracket on its own
 row dedented back to the collection's line. The layout is self-perpetuating, because the exploded spelling retains the
 comma; removing the comma is what re-admits a flat layout when the collection fits. `"ignore"` preserves the trailing
@@ -98,9 +99,9 @@ preserves the blank lines between header rows (a run collapses to one) rather th
 file is format-stable. FMT005 reads the same setting, so `check` and `organize --check` never disagree about what "out
 of order" means.
 
-What `[format]` does not offer: indent width, quote style, comment rewrapping, or any other knob that would require
-overriding the grammar authority wholesale. lean-fmt's layout comes from Lean's registered formatter; this section
-configures the margin, comment placement policy, and boundary corrections — nothing more is honestly deliverable today.
+What `[format]` does not offer: indent width, quote style, or any other knob that would mean overriding Lean's own
+layout wholesale. lean-fmt's layout comes from the Lean toolchain; these keys set the margin, where comments go, and a
+few boundary decisions Lean leaves open.
 
 ## Selection
 
@@ -124,10 +125,10 @@ Read-only and deterministic.
 
 ## Selection and the cache
 
-A `[format]` key enters the result-cache identity; a `[lint]` key never does. Rule selection is a projection over one
-canonical semantic result, so changing `select`/`ignore` changes neither the analysis nor cache entries — it decides
-only which fact tier a run needs (the cheapest tier that answers every selected rule). Changing `line-width` changes the
-canonical bytes, so it misses entries recorded at another width.
+A `[format]` key is part of what identifies a cache entry; a `[lint]` key never is. Every rule's findings are computed
+once and `select`/`ignore` chooses which ones to report, so changing them invalidates nothing — they decide only how
+much work a run needs to do, never what it caches. Changing `line-width` changes the formatted bytes, so it misses
+entries recorded at another width.
 
 ## Memory and parallelism
 
@@ -141,9 +142,8 @@ at eight.
 `ulimit`, and no `setrlimit`. A file that needs six gigabytes gets them; a machine that runs out swaps. `--workers N` is
 the control — if N children do not fit, ask for fewer.
 
-There used to be a `--max-memory` cap divided between workers. It refused work on any project that imports mathlib — 187
-of 200 files at eight workers — because the number it divided counted each child's shared `.olean` mapping in full.
-Those pages are shared, clean, and reclaimable: a child reading 2.05 GiB of RSS had a physical footprint of 173 MiB.
+There is no memory cap because a per-worker one cannot be measured honestly. Most of a worker's apparent memory is the
+`.olean` files it has mapped, which every worker shares: a child reporting 2.05 GiB actually occupied 173 MiB.
 
 ## Streaming and ranges
 
@@ -175,19 +175,21 @@ result schema. Missing, stale, or corrupt entries are ordinary misses. A warm ru
 (`lakefile.lean` is executable configuration); once the environment validates, an all-hit run returns without starting a
 frontend. `--no-cache` neither reads nor writes the cache; `clean` removes only the root cache.
 
-Rules declare whether they need source bytes or exact syntax. For source-tier rules, a current `.olean` counts as
-successful-compilation evidence. For syntax-tier rules, the optional compiler plugin stores a lossless syntax projection
-in each integrated `.olean`; without it, the exact frontend runs and returns the same findings more slowly. The
-projection holds facts, never findings, so editing a rule cannot rebuild an integrating project.
+Each rule declares whether it needs the source text or the parsed syntax. A rule that needs only the text is satisfied
+by a current `.olean`, which proves the module compiled. A rule that needs the syntax reads it from the optional
+compiler plugin, which records it in each `.olean` as the module is built. Without the plugin, lean-fmt runs the Lean
+frontend itself and reports the same findings more slowly. What the plugin records is syntax, never findings, so
+changing a rule never rebuilds a project that integrates it.
 
-`compiler setup` prints integration identifiers and guidance; it does not rewrite your `lakefile.lean`. `compiler build`
-extracts every workspace module's projection in one Lake invocation, which is what makes the projection available to a
-later run. Plugin costs and Lake details: README §"Using lean-fmt in another project" and `docs/ci.md`.
+`compiler setup` prints what to add to your `lakefile.lean`; it does not edit the file. `compiler build` extracts every
+module's recorded syntax in one Lake invocation, which is what makes it available to a later run. Costs and Lake
+details: README §"In another project" and `docs/ci.md`.
 
-With the plugin integrated, `[cache] closure = "interface"` keys each closure member by the elaboration-visible
-interface its `leanFmtArtifact` sidecar records instead of its build artifacts, so a proof-only rebuild stops
-invalidating dependents. Members without a current sidecar — dependencies, which never build the facet, or a facet that
-lags its `.olean` — keep artifact-hash currency per member, so the mode degrades toward misses, never stale hits. Two
-documented gaps keep the default at `"artifacts"`: kernel `isDefEq` can unfold any definition, so a theorem's proof-term
-change is downstream-visible in pathological cases, and attribute changes to imported declarations live in environment
-extensions, outside the hash.
+With the plugin integrated, `[cache] closure = "interface"` decides whether a dependency changed by what it exposes to
+its dependents rather than by its build outputs, so re-proving a theorem stops invalidating everything downstream. Any
+dependency without that record — an external package, or one whose record lags its `.olean` — falls back to comparing
+build outputs, so the setting can only cost you cache hits, never serve a stale one.
+
+Two known gaps keep the default at `"artifacts"`. Lean's kernel may unfold any definition while checking, so in
+pathological cases a changed proof term *is* visible downstream; and attributes attached to imported declarations are
+not covered by the record.

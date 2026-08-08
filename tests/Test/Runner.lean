@@ -9,8 +9,7 @@ import Std.Sync.Mutex
 /-!
 # The suite orchestrator
 
-`tests/run-all.sh`'s successor, and the package's `testDriver`. One command answers "is the tree
-green": the unit tier runs in-process first (it is fast, and its failure makes the suites mostly
+The package's `testDriver`. One command answers "is the tree green": the unit tier runs in-process first (it is fast, and its failure makes the suites mostly
 moot — `--skip-unit` exists for the other direction), then the selected suites are built in **one**
 up-front `lake build` and run as executables. Building once is what retires both the per-suite
 `lake build` overhead and the concurrent-build hazard `tests/modes` documents: during the run, no
@@ -27,7 +26,7 @@ schedule:
 - `slow` suites (minutes, git clones, timing measurements) are out of the default set; `--all`
   includes them and `--suites` names them explicitly.
 
-The terminal contract is `run-all.sh`'s, kept: one line per suite with PASS/FAIL and seconds, a
+The terminal contract: one line per suite with PASS/FAIL and seconds, a
 slowest-suites tail, and a scratch directory of full logs printed only when there is something to
 read in it.
 -/
@@ -85,8 +84,7 @@ private def registered : Array Suite :=
     -- stacking import environments, not the session; with the oracle in child processes and a
     -- targeted fixture import closure the peak is a stable ~2.5 GB at any thread count, and the
     -- suite carries its own 1.5× thread-ratio gate to prove it stays that way. It runs alone
-    -- at the end of `--all`, and in the flake-hunt's slow list. docs/ci.md's ledger has the
-    -- whole arc.
+    -- at the end of `--all`. docs/flaky-tests.md has the whole arc.
     { name := "incremental", lane := .exclusive, slow := true },
     { name := "imports", lane := .workspace }, { name := "layout", lane := .«parallel» },
     { name := "lossless", lane := .«parallel» }, { name := "lsp", lane := .workspace },

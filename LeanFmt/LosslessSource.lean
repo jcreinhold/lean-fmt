@@ -80,8 +80,8 @@ def Token.trailingStop (token : Token) : Nat :=
   | some trivia => trivia.stop
 
 /-- An interior syntax node. `kind` indexes `LosslessSource.kinds`; `parent` is `none` for a command
-root. This is the parent/child structure the roadmap requires, carried without exposing
-`Lean.Syntax` to callers. -/
+root. The projection carries the parent/child structure without exposing `Lean.Syntax` to
+callers. -/
 structure Node where
   kind : Nat
   parent : Option Nat := none
@@ -524,8 +524,7 @@ private def isQuotationKind (kind : String) : Bool :=
   (kind.toLower.splitOn "quot").length > 1
 
 /-- True when node `i` lies inside a syntax quotation — its kind, or any ancestor's, is a quotation
-kind (`isQuotationKind`). Syntax rules use this to stay silent on quoted data (catalog §5.2): a nested
-paren in `` `(($x)) `` or a `@[simp, simp]` inside `` `(command| …) `` is a macro's output, not a
+kind (`isQuotationKind`). Syntax rules use this to stay silent on quoted data: a nested paren in `` `(($x)) `` or a `@[simp, simp]` inside `` `(command| …) `` is a macro's output, not a
 finding. The walk climbs the parent chain and is bounded by the node count (a tree has no cycle), so a
 defect nested arbitrarily deep inside a quotation is still excluded. -/
 def inQuotation (source : LosslessSource) (i : Nat) : Bool :=

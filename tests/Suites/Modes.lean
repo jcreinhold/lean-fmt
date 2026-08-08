@@ -5,16 +5,15 @@ public import Test
 /-!
 # The modes suite
 
-Port of `tests/modes/run.sh` — the largest single suite: every product mode (`check`, `format`,
-`diff`, `fix`, `rules`, `compiler setup/status`, `clean`, `config show`) over the committed
-`tests/fixtures/check` fixtures and a family of scratch fixtures under `tests/modes/`. The scratch files
-carry trailing whitespace or no final newline, so they are generated at runtime, never committed
-(`git diff --check` rejects a checked-in file with trailing spaces, and editors strip them on
-save), and removed when the suite ends. `tests/fixtures/check/Findings.lean` and `tests/fixtures/check/Layout.lean`
-are tracked files the suite edits in place, so restoring them is not cleanup — it is the
-difference between a failing test and a dirty working tree the next run silently measures
-instead. Both are restored through `cp -p` backups, from a `finally`, exactly like the old
-script's trap.
+The largest single suite: every product mode (`check`, `format`, `diff`, `fix`, `rules`, `compiler
+setup/status`, `clean`, `config show`) over the committed `tests/fixtures/check` fixtures and a
+family of scratch fixtures under `tests/modes/`. The scratch files carry trailing whitespace or no
+final newline, so they are generated at runtime, never committed (`git diff --check` rejects a
+checked-in file with trailing spaces, and editors strip them on save), and removed when the suite
+ends. `tests/fixtures/check/Findings.lean` and `tests/fixtures/check/Layout.lean` are tracked files
+the suite edits in place, so restoring them is not cleanup — it is the difference between a failing
+test and a dirty working tree the next run silently measures instead. Both are restored through
+`cp -p` backups, from a `finally`.
 
 Lane: exclusive — the suite clears the root `.lean-fmt-cache`, writes into `.lake/build`, and
 builds a downstream project against this checkout.
@@ -39,7 +38,7 @@ structure Ctx where
 private def Ctx.mode (ctx : Ctx) (name : String) : System.FilePath :=
   ctx.modesDir / name
 
-/-- `cp -p`: the byte- and metadata-preserving copy the old script's backups and restores used. -/
+/-- `cp -p`: a byte- and metadata-preserving copy, for the tracked-fixture backups and restores. -/
 private def cpPreserve (source destination : System.FilePath) : IO Unit := do
   discard <|
       expectExit 0 s!"cp -p {source} {destination}" "cp"
@@ -66,8 +65,8 @@ private def diffArgs (file : String) : Array String :=
 private def fixArgs (file : String) : Array String :=
   #["check", "--fix", "--root", ".", "--json", "--no-cache", file]
 
-/-- Permission bits, portably. The old script's `stat -f %Lp || stat -c %a` picked by exit
-code, which never falls back on Linux: GNU `stat -f` is the filesystem report and exits 0. -/
+/-- Permission bits, portably. Picking between `stat -f %Lp` and `stat -c %a` by exit code never
+falls back on Linux: GNU `stat -f` is the filesystem report and exits 0. -/
 private def fileMode (path : System.FilePath) : IO String := do
   -- Select by platform, not by exit code: GNU `stat -f` is the *filesystem* report and exits
   -- 0, so the `||` fallback never fired and every Linux comparison embedded live free-block
@@ -113,7 +112,7 @@ private def ensureTreeUnchanged (label : String) (before after : String) : IO Un
     ensure (beforeLine == afterLine) s!"{label}:\n  before: {beforeLine}\n  after:  {afterLine}"
 
 /-- Run `action` and restore `target` from `backup` even when it fails — the per-section
-`cp -p` restores of the old script, made exception-safe. -/
+`cp -p` restores, made exception-safe. -/
 private def withRestored (backup target : System.FilePath) (action : IO Unit) : IO Unit := do
   try
     action
@@ -1033,7 +1032,7 @@ public def main (args : List String) : IO UInt32 := do
           backupFindings := work / "backup" / "Findings.lean"
           backupLayout := work / "backup" / "Layout.lean" }
       IO.FS.createDirAll (work / "backup")
-      -- Tracked-fixture backups before anything runs, like the old script's `cp -p` prologue.
+      -- Tracked-fixture backups before anything runs.
       discard <|
           expectExit 0 "backup" "cp" #["-p", ctx.findings.toString, ctx.backupFindings.toString]
       discard <| expectExit 0 "backup" "cp" #["-p", ctx.layout.toString, ctx.backupLayout.toString]
@@ -1114,8 +1113,8 @@ public def main (args : List String) : IO UInt32 := do
           { name := "rcd-explicit-exclusion", run := Modes.testRcdExplicitExclusion ctx },
           { name := "width-cache-identity", run := Modes.testWidthCacheIdentity ctx },
           { name := "config-show", run := Modes.testConfigShow ctx }]
-      -- The old script's trap: restore the tracked fixtures, clear the root cache, and remove
-      -- every scratch fixture no matter how the suite ended.
+      -- Restore the tracked fixtures, clear the root cache, and remove every scratch fixture no
+      -- matter how the suite ended.
       let code ←
         (try
             runCases "modes" cases args

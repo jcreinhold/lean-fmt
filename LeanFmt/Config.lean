@@ -1008,7 +1008,7 @@ def FormatterConfig.rulePlan (config : FormatterConfig) (cli : CliSelection) :
   let ignoreTokens := (if cliOwnsSelection then #[] else config.ignoredSelectors) ++ cli.ignore
   let enableTokens := selectTokens ++ extendSelectTokens
   -- Preview gate: an explicit exact-code selection of a preview rule is an error unless
-  -- preview is on — a specific message, never a silent drop. A category/`all` simply omits preview
+  -- preview is on — a specific message, never a silent drop. A category/`all` omits preview
   -- rules when off.
   for t in enableTokens do
     if let some info := allRuleInfos.find? (·.code == t) then

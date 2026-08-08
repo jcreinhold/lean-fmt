@@ -5,13 +5,12 @@ public import Test
 /-!
 # The suppression suite
 
-Port of `tests/fixtures/suppression/run.sh`: end-to-end acceptance for the source-suppression layer, driving the real CLI over committed fixtures parsed by the real frontend — nested
-syntax, doc comments, custom commands, formatting movement, unknown rules, per-file config, and
-unused fixes. Where the unit tier's `testSuppression` checks `apply`/`collect` against a hand-built
-projection, this is the acceptance matrix.
+End-to-end acceptance for the source-suppression layer, driving the real CLI over committed fixtures
+parsed by the real frontend — nested syntax, doc comments, custom commands, formatting movement,
+unknown rules, per-file config, and unused fixes. Where the unit tier's `testSuppression` checks
+`apply`/`collect` against a hand-built projection, this is the acceptance matrix.
 
-The retired-only-suppression case of the old script is deliberately absent, for the reason its own
-comment recorded: the pre-release renumbering made FMT001 a live security rule and emptied
+There is deliberately no retired-only-suppression case: the pre-release renumbering made FMT001 a live security rule and emptied
 `reservedCodes`, so a directive naming it is a live-but-not-firing code — FMT900, the opposite of
 what the case asserted. The fixture went with it; the production branch is untested until a rule
 genuinely retires.

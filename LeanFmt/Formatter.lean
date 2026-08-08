@@ -22,7 +22,7 @@ The returned `Std.Format` stays one opaque `Doc.registered` leaf. This module ne
 renders it early, reparses text, or substitutes source bytes on failure.
 
 Lean's formatter emits comments from `SourceInfo` in `pushToken`, and it is the sole emitter here:
-Prompt 06 ownership does logical accounting, not a second copy. Boundary trivia may be stored on the
+comment ownership does logical accounting, not a second copy. Boundary trivia may be stored on the
 preceding command even when its logical owner is in the next command, so ordered whole-module
 composition — not an isolated leaf's count — is the exact-once boundary. The focused adapter fixture
 is the upgrade tripwire for these private implementation assumptions. -/
@@ -103,8 +103,8 @@ structure FormatMetrics where
   nativeEvents : Nat
   deriving Inhabited, BEq, Repr, Lean.ToJson, Lean.FromJson
 
-/-- Unvalidated whole-module rendering. Prompt 09 is the only operation allowed to admit this as a
-canonical layout. -/
+/-- Unvalidated whole-module rendering. `Validator.admit` is the only operation allowed to accept one
+as a canonical layout. -/
 structure FormatDraft where
   text : String
   sourceMap : Array Mark

@@ -5,10 +5,9 @@ public import Test
 /-!
 # The check suite
 
-Port of `tests/fixtures/check/run.sh`: the core `check`/`format` pipeline end to end — the two producers
-(artifact and exact frontend) agreeing, the check/format agreement invariant, broken and sabotaged
-runs, `--workers` determinism, the result-cache strategy and invalidation matrix, and the
-fix/render-path efficiency probes.
+The core `check`/`format` pipeline end to end — the two producers (artifact and exact frontend)
+agreeing, the check/format agreement invariant, broken and sabotaged runs, `--workers` determinism,
+the result-cache strategy and invalidation matrix, and the fix/render-path efficiency probes.
 
 Lane: workspace — the suite clears and populates the root `.lean-fmt-cache`, edits
 `tests/fixtures/check/Findings.lean` and `LeanFmt/Cli.lean` in place (restored via `cp -p` backups), and

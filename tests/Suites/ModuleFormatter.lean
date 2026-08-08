@@ -5,9 +5,8 @@ public import Test
 /-!
 # The module-formatter suite
 
-Port of `tests/module-formatter/run.sh`. One-run whole-module drafts: region tiling, terminal/tail,
-normalized line endings, exact setup, and deterministic counters. Structural admission belongs to
-`tests/fixtures/formatter`.
+One-run whole-module drafts: region tiling, terminal/tail, normalized line endings, exact setup, and
+deterministic counters. Structural admission belongs to `tests/fixtures/formatter`.
 -/
 
 open LeanFmt.Test
@@ -15,7 +14,7 @@ open LeanFmt.Test.Analyze
 
 namespace ModuleFormatter
 
-/-- Byte-range slice, as the old Python's `raw[stop:]` — the draft's offsets are byte offsets. -/
+/-- Byte-range slice: the draft's offsets are byte offsets. -/
 private def sliceOf (source : String) (start stop : Nat) : String :=
   String.Pos.Raw.extract source ⟨start⟩ ⟨stop⟩
 
@@ -101,7 +100,7 @@ private def testTerminalDraft (root : System.FilePath) (application : String)
   ensure (text.startsWith "module\n\nimport AdapterSyntax\n\n")
       "terminal: header lost the source's blank lines"
   -- `headerContract` is the header's node/atom spelling list; the import's identifier must be in
-  -- it. (The old Python's `in` was list membership, not substring.)
+  -- it as an entry of its own, not as a substring of one.
   let some entries :=
     (jsonAt? left [.field "headerContract"]).bind
       (·.getArr?.toOption) | throw <| IO.userError "terminal: headerContract missing"

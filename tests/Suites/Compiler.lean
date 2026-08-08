@@ -9,13 +9,12 @@ import Lake
 /-!
 # The compiler facet suite
 
-Port of `tests/fixtures/compiler/run.sh`. The `leanFmtArtifact` facet's contract, end to end against the
-main workspace: the declared JSON artifact is verified against the module-owned payload in the
-exact `.olean`; a syntax-tier selection answered from the artifact matches the frontend's answer
-without spawning one, and a semantic selection declines it rather than reporting a false clean;
-corruption is a counted exact fallback; a rule's prose edit invalidates nothing while a
-plugin-binary edit invalidates through Lake's plugin dependency; and a failed elaboration publishes
-nothing.
+The `leanFmtArtifact` facet's contract, end to end against the main workspace: the declared JSON
+artifact is verified against the module-owned payload in the exact `.olean`; a syntax-tier selection
+answered from the artifact matches the frontend's answer without spawning one, and a semantic
+selection declines it rather than reporting a false clean; corruption is a counted exact fallback; a
+rule's prose edit invalidates nothing while a plugin-binary edit invalidates through Lake's plugin
+dependency; and a failed elaboration publishes nothing.
 
 The four `lean-fmt-tests` subcommands this suite used to spawn (`verify-plugin-artifact`,
 `verify-facet-artifact`, `verify-official-facet`, `print-lake-hash`) are called in-process here —
@@ -85,8 +84,8 @@ hash algorithm. -/
 private def lakeHash (path : System.FilePath) : IO Lake.Hash :=
   Lake.computeFileHash path.toString (text := true)
 
-/-- The old script's `verify_artifacts`: the facet's JSON against the module-owned payload in the
-exact `.olean`, plus the projection walk both perform. -/
+/-- The facet's JSON against the module-owned payload in the exact `.olean`, plus the projection
+walk both perform. -/
 private unsafe def verifyArtifacts (ctx : Ctx) : IO Unit := do
   let expectedHash ← lakeHash ctx.artifact
   Unit.Tools.verifyPluginArtifact `LocalSyntax ctx.sourceFile
@@ -258,9 +257,9 @@ private unsafe def testUpToDateFacet (ctx : Ctx) : IO Unit := do
   lakeFacetBuild ctx
   verifyArtifacts ctx
 
-/-- The matched pair from the old script: editing one rule's message text must change *nothing*
-here, because a rule's prose has no business in an `.olean` — before the boundary moved, this edit
-invalidated every integrated module's Lake trace. The captured trace
+/-- Editing one rule's message text must change *nothing* here, because a rule's prose has no
+business in an `.olean` — before the boundary moved, this edit invalidated every integrated
+module's Lake trace. The captured trace
 feeds the plugin control below, and neither probe means anything alone: a harness that rebuilt no
 module at all would pass the first, and the second proves the harness still notices real changes.
 Returns the pre-edit trace for the control. -/

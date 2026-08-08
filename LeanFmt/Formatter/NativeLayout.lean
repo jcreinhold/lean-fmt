@@ -1503,9 +1503,9 @@ private partial def collectTacticSequenceAnchors (stx : Lean.Syntax)
       -- grammar over, and the bracketed halves (`tacticSeqBracketed`, `convSeqBracketed`) hold the
       -- same list between their braces: items land at the first item's column or the sequence ends
       -- early, and the anchor states it identically. For the bracketed families it is also the
-      -- structural fix for the prompt-01 defect: a sequence hugging `{` on its row broke its `;` at
-      -- the row's nest, left of the first item, and the reparse ended the sequence -- the anchor
-      -- re-bases those breaks to the first item's column wherever the hug lands it.
+      -- structural fix for a refusal: a sequence hugging `{` on its row broke its `;` at the row's
+      -- nest, left of the first item, and the reparse ended the sequence -- the anchor re-bases
+      -- those breaks to the first item's column wherever the hug lands it.
       let ranges :=
         if
             kind == ``Lean.Parser.Tactic.tacticSeq1Indented ||
@@ -2816,8 +2816,8 @@ tracks the outermost finished node starting (resp. ending) exactly at the interv
 append case drops the marker where the chain next leaves the interval; `isolateAnchors` pairs them
 after the walk and re-associates the chain, which the renderer's append-associativity makes
 sound. The index rides in the tag so the ledger can name an interval the walk could not claim;
-the block sits far below `anchorTag` and native tags have no producer over parsed source
-(native-layout suite docstring, prompt 01), so neither collides. -/
+the block sits far below `anchorTag`, and native tags have no producer over parsed source (the
+native-layout suite's docstring records that audit), so neither collides. -/
 private def anchorOpenMarker (index : Nat) : Nat :=
   0x6C65616E00 + 2 * index
 

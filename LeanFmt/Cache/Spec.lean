@@ -83,7 +83,7 @@ open LeanFmt.Internal.Cache.Decision
 /-! ## Objects
 
 `Source` is normalized module text (`raw.crlfToLf`, the repository's one coordinate system).
-`Grammar` is the syntax environment a module is parsed under — abstract, and why this stack exists:
+`Grammar` is the syntax environment a module is parsed under — abstract, and why it is modelled:
 Lean's grammar is open, so a `notation` in `A` changes how `B`'s *unchanged bytes* parse. `Analysis`
 stands for `SemanticAnalysis`; comparison is `=` on it, because it is data with no quotient and no
 chosen representative. -/
@@ -142,8 +142,7 @@ modes differ, and the difference belongs in this file's ledger.
 
 The default instantiates the observation with Lake's `importAllArts`: any rebuild moves it,
 whether or not the elaboration-visible environment moved. That over-observes — proof-only edits
-invalidate dependents — and the cost is measured in the plan
-(`plans/persistent-result-cache.md`), but it can never stale-hit.
+invalidate dependents — but it can never stale-hit.
 
 `[cache] closure = "interface"` observes each closure member by the interface hash its
 `leanFmtArtifact` sidecar records (falling back per member to `importAllArts` when no current
