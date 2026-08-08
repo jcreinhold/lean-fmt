@@ -64,16 +64,19 @@ declaration breaks only between its parts, never inside a quoted token.
 def map (f : α → β) (xs : List α) : List β := xs.map f
 ```
 
-When it does not fit, the binders keep their order on continuation lines indented from the declaration, the result type
-breaks on its own if it has to, and a broken body starts two spaces below `:=`:
+When it does not fit, the binders keep their order on continuation lines four spaces from the declaration, the result
+type breaks on its own if it has to, and a broken body starts two spaces from the declaration:
 
 ```lean
-def map
-  (f : α → β)
-  (xs : List α) :
-  List β :=
+def map (f : α → β)
+    (xs : List α) :
+    List β :=
   xs.map f
 ```
+
+Binders pack rather than taking a line each: the first stays on the header line while it fits, and they split one per
+line only when they cannot share a row. The four-space continuation and the two-space body differ on purpose — with
+both at two, the last binder and the first line of the body would occupy the same column.
 
 The same header model applies to `def`, `abbrev`, `opaque`, `theorem`, `lemma`, `example`, `instance`, and shared
 declaration forms. Termination and decreasing clauses follow the body at declaration indentation; `where` begins at

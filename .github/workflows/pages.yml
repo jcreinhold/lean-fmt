@@ -92,7 +92,9 @@ jobs:
         working-directory: docs/manual
         timeout-minutes: 30
 
-      - uses: actions/upload-pages-artifact@v3
+      # v5, not the v3 Verso's template pins: v3 pulls in upload-artifact@v4, which targets the
+      # deprecated Node 20 and only runs because the runner forces it onto Node 24.
+      - uses: actions/upload-pages-artifact@v5
         with:
           path: docs/manual/_out/html-multi
 
@@ -119,4 +121,4 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5
