@@ -3037,6 +3037,31 @@ private def dedentColumns (state : TransformState) : Int :=
   let span : TokenSpan := ⟨state.terminalIndex, state.terminalIndex⟩
   state.baseIndent + state.ambientNest + containingConstraintNest state span
 
+/- The same count where the `dedented` boundary spells it, floored at zero.
+
+A dedent cancels columns that are there; it never adds columns that are not. `dedentColumns` reads
+negative exactly where the document has already dedented *past* the enclosing command's own column,
+and `-(dedentColumns)` is then a positive `nest`: the boundary indents the row it was collected to
+straighten. A chain of command embeddings drives it. `open Nat in` spells `nest -2` around its
+embedded command and `categoryParser` spells `nest 2` inside it, and the two cancel at that
+command's own terminals -- but a second embedding's boundary leaf sits between them, inside the
+outer dedent and outside the inner nest, and reads -2. The row it opened landed at column 2, the
+next embedding at 4, one level per embedding past the first. `open A in open B in theorem`
+reproduces it and a single embedding does not, which is why a corpus full of the one-deep form
+never showed it.
+
+The floor is for the row the boundary *opens*, not for the rows it contains. `interiorDedent` reads
+the recorded amount, and inside such a chain the interior rows really do sit two columns left of
+where the enclosing command puts them, so they need the signed value -- flooring it there strands
+a declaration body at column zero. The boundary asks where this row starts and the interior asks
+how far its rows drifted; the sign only makes sense for the second.
+
+Flooring rather than declining keeps the boundary idempotent, which is what the correction is built
+on: where the document already sits at the command's column there is nothing to cancel, and `nest 0`
+spells the same newline the document did. -/
+private def dedentCancellation (state : TransformState) : Int :=
+  max 0 (dedentColumns state)
+
 /- The cancellation a row opened at this terminal inherits from a nested command it is *inside*.
 Nothing for a row that opens one -- `dedented` already sets that row's column, absolutely -- and
 nothing for a row past the command's last terminal, which the enclosing command lays out.
@@ -3090,7 +3115,7 @@ private def boundaryFormat (state : TransformState) : BoundaryLayout → Std.For
   | .flat => .text " "
   | .hard => .text "\n"
   | .elided => .nil
-  | .dedented => .nest (-(dedentColumns state)) (.text "\n")
+  | .dedented => .nest (-(dedentCancellation state)) (.text "\n")
   -- A pin holds a row the document left *behind*: the collectors exist because the document
   -- moved a sibling and stranded this row at a column that no longer parses. When the document
   -- instead re-indented the whole construct past the pin's column, the pin's column is stale —

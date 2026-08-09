@@ -598,6 +598,22 @@ private def testMathlibStyle (ctx : Ctx) : IO Unit := do
   ensureEq "a hugged doc comment keeps the attribute's row, bracket included" 1
       (countExact style
         "@[doc_carrier /-- A short hugged doc comment keeps the attribute's own row. -/]")
+  -- Chained command embeddings. Every row of the declaration is the whitespace linter's subject, so
+  -- each is pinned exactly: a row indented by one space fails `countExact` where a `contains` check
+  -- would pass. The body rows are pinned too -- the first fix for this straightened the boundary
+  -- rows by flooring the count everywhere, which stranded each body at column zero instead.
+  ensureEq "the second embedding of a chain stays at column zero"
+      "set_option maxHeartbeats 400000 in" (← lineAfterExact style "set_option maxRecDepth 2000 in")
+  ensureEq "  ... and so does the attribute it embeds" "@[simp]"
+      (← lineAfterExact style "set_option maxHeartbeats 400000 in")
+  ensureEq "  ... and the declaration under it" 1
+      (countExact style "theorem chainedEmbeddings (n : Nat) : n + 0 = n :=")
+  ensureEq "  ... while its body keeps the indent the enclosing command gives it" "  rfl"
+      (← lineAfterExact style "theorem chainedEmbeddings (n : Nat) : n + 0 = n :=")
+  ensureEq "a chain of `open`s behaves the same" "theorem chainedOpens (n : Nat) : n + 0 = n :="
+      (← lineAfterExact style "open List in")
+  ensureEq "  ... body included" "  rfl"
+      (← lineAfterExact style "theorem chainedOpens (n : Nat) : n + 0 = n :=")
   -- The hugged pair is one decision at any width: the detachment reproduced at line-width 1000, so
   -- width must play no role in the pin either.
   let wideConfig := ctx.work / "width-1000.toml"

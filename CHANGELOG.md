@@ -8,6 +8,16 @@ this file; their notes are on the
 
 lean-fmt is pre-1.0. Breaking changes raise the minor version.
 
+## Unreleased
+
+### Fixed
+
+- **A chain of command embeddings no longer drifts right.** `set_option A in set_option B in @[simp]
+  theorem …` indented every embedding after the first by one level, and its body with them. Lean
+  accepts the result, but mathlib's `linter.style.whitespace` reported 3,445 rows over 8,845 files
+  for it. A single embedding was always correct, which is why this survived. Seven files that
+  previously failed validation now format.
+
 ## 0.4.1 — 2026-08-08
 
 Same formatter, same linter, same output as 0.4.0 — this release exists because 0.4.0's prebuilt

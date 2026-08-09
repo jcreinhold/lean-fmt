@@ -129,3 +129,22 @@ def letBodyShift (h : Nat → Nat → Nat) (m : Option Nat) : Nat → Nat := Id.
     return h (h (h (h (h (h (h r p) p) p) p) p) p) n
   if a > 0 then a
   else n
+
+/- A command embedded in a command embedded in a command. Each embedding's `ppDedent` cancels the
+`nest` its `categoryParser` adds, and the two agree at the embedded command's own terminals -- but
+the *next* embedding's boundary leaf sits between them, inside the outer cancellation and outside
+the inner nest, so the count the dedent read was negative and the correction indented the row it
+was collected to straighten. Every further embedding added a level, and the amount also reached
+each interior row, so the whole declaration drifted right. mathlib's `linter.style.whitespace`
+reported 3,445 rows over 8,845 files for it. A single embedding cancels exactly and never showed
+it. -/
+set_option maxRecDepth 2000 in
+set_option maxHeartbeats 400000 in
+@[simp]
+theorem chainedEmbeddings (n : Nat) : n + 0 = n :=
+  rfl
+
+open Nat in
+open List in
+theorem chainedOpens (n : Nat) : n + 0 = n :=
+  rfl
