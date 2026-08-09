@@ -115,20 +115,13 @@ Lean's own. Setup for VS Code, Neovim, and Emacs: `docs/editor-setup.md`.
 
 ## Stability
 
-Output will change again before 1.0, from two causes:
-
-- **Layout fixes.** The operator-chain fix in 0.4.0 reformatted 43% of a 1,610-file Lean corpus (measured 2026-08-07),
-  up from 20% before it. A reformat that size is a pre-1.0 cost, not the steady state.
-- **Lean itself.** lean-fmt renders through Lean's pretty-printer, so a Lean release that changes it changes lean-fmt.
-  One such move is already scheduled: lean-fmt compensates for a defect in Lean's layout engine that upstream fixes in
-  4.34, and that bump deletes the compensation.
-
-Pin a version rather than tracking `main`, and land a reformat as its own commit so later review diffs stay readable.
+Output will change before 1.0, and a Lean release can change it too, since lean-fmt renders through Lean's
+pretty-printer. Pin a version, and land a reformat as its own commit.
 
 What does not move is whether a file is safe. lean-fmt publishes a result only after re-parsing it and comparing it
 token-for-token against the original; a file it cannot verify is left exactly as it was and reported as `rejected` or
-`infrastructure-failure`, never written half-formatted. Over that same corpus: no result failed validation, and 2 files
-(0.12%) were refused before one was produced.
+`infrastructure-failure`, never written half-formatted. Over a 1,610-file Lean corpus: no result failed validation, and
+2 files (0.12%) were refused before one was produced.
 
 The line width is a target for breakable syntax, not a guarantee. A string literal, URL, long identifier, or comment
 payload can exceed it because no break placement would shorten it. `FMT016` reports every row that does. It is off by
