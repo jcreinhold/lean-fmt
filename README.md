@@ -53,15 +53,21 @@ From your project root:
 lean-fmt format --check
 ```
 
-Nothing is written. It prints one line of counters:
+Nothing is written. It names the files that would change, then says what it did:
 
 ```
-mode=format files=128 findings=0 changed=6 written=0 broken=0 unbuilt=0 rejected=0 ...
+6 of 128 files would be reformatted.
 ```
 
-`changed` is how many files `lean-fmt format` would rewrite; `rejected` is how many it refuses to touch, because it
-could not prove its own output equivalent to your source. Exit status is 0 when clean, 1 when there is drift or a
-finding, 2 on failure. `lean-fmt format --diff` shows the same run as a patch.
+Anything lean-fmt declined to touch gets its own line, and only when it happened:
+
+```
+2 files rejected: lean-fmt could not verify its own output.
+1 file does not compile and was skipped.
+```
+
+Exit status is 0 when clean, 1 when there is drift or a finding, 2 on failure. `lean-fmt format --diff` shows the same
+run as a patch, and `--statistics` adds the full counts on stderr for a script to read.
 
 The first run over a project is the slow one — it elaborates what it must to know how to parse your files, then caches
 that in `.lean-fmt-cache/`. Later runs over unchanged files skip it.

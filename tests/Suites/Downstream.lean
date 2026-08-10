@@ -50,7 +50,10 @@ private def testFacetResolution (ctx : Ctx) : IO Unit := do
 private def testCrossPackageExe (ctx : Ctx) : IO Unit := do
   let result ← lakeAny ctx #["exe", "lean-fmt", "check", "--root", "."]
   ensureEq "cross-package check did not return 1 (the fixture has findings)" 1 result.exitCode
-  ensure (result.stderr.contains "mode=check" || result.stdout.contains "mode=check")
+  -- The report's own shape rather than a counter line: `check` prints `PATH:LINE:COLUMN: CODE`
+  -- per finding, and this fixture has findings. A summary alone would pass on a run that
+  -- resolved the executable and then found nothing to say.
+  ensure (result.stderr.contains "FMT" || result.stdout.contains "FMT")
       s!"cross-package check produced no report: {result.stdout}{result.stderr}"
 
 /-- The plugin is an optimization, never an authority: a syntax-tier rule returns the same

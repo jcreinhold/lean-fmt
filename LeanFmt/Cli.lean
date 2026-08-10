@@ -545,6 +545,79 @@ private def stopPosition (positions : PositionIndex) (path : String) (finding : 
     Position :=
   (positions.position? path finding.range.stop).getD (startPosition positions path finding)
 
+/-- A count with its noun in agreement. The summary below is assembled from these rather than from
+bare numbers: a tool that reports "1 files" reads as one with a defect. -/
+private def fileCount (n : Nat) : String :=
+  if n == 1 then "1 file" else s!"{n} files"
+
+private def findingCount (n : Nat) : String :=
+  if n == 1 then "1 finding" else s!"{n} findings"
+
+/-- What the run did, in a sentence, then one line for each count that is not zero.
+
+This replaced a row of eleven `key=value` counters. They were legible enough once learned, but
+they gave the numbers a reader must not miss — `rejected` and `infrastructure_failures`, the
+files lean-fmt deliberately left alone — exactly the weight of the nine that are almost always
+zero. Reporting an exception only when it happened is what makes it an exception.
+
+The machine-readable form did not go away and is not this: `--statistics` prints those same
+fields to stderr, and `--json` carries the whole report. -/
+private def runSummary (report : RunReport) : String :=
+  Id.run do
+    let total := report.files.size
+    let flagged := (report.files.filter (·.findings.size > 0)).size
+    let headline :=
+      match report.mode with
+      | "format" | "diff" =>
+        if report.written > 0 then s!"Reformatted {report.written} of {fileCount total}."
+        else
+          if report.changed > 0 then s!"{report.changed} of {fileCount total} would be reformatted."
+          else s!"{fileCount total}, all formatted."
+      | "organize" =>
+        if report.written > 0 then s!"Rewrote the import header of {fileCount report.written}."
+        else
+          if report.changed > 0 then
+            s!"{report.changed} of {fileCount total} would have their import header rewritten."
+          else s!"{fileCount total}, imports already canonical."
+      | "fix" =>
+        if report.findings > 0 then
+          s!"{findingCount report.findings} in {flagged} of {fileCount total}; \
+        {fileCount report.written} fixed."
+        else s!"{fileCount total}, no findings."
+      | _ =>
+        if report.findings > 0 then
+          s!"{findingCount report.findings} in {flagged} of {fileCount total}."
+        else s!"{fileCount total}, no findings."
+    let mut out := headline ++ "\n"
+    -- Refusals first: these are the files the run did not touch, and the reason someone reruns.
+    if report.rejected > 0 then
+      out :=
+        out ++ s!"{fileCount report.rejected} rejected: lean-fmt could not verify its own output.\n"
+    if report.infrastructureFailures.size > 0 then
+      out := out ++ s!"{fileCount report.infrastructureFailures.size} could not be analyzed.\n"
+    if report.broken > 0 then
+      out :=
+        out ++
+          (if report.broken == 1 then "1 file does not compile and was skipped.\n"
+          else s!"{report.broken} files do not compile and were skipped.\n")
+    if report.unbuilt > 0 then
+      out := out ++ s!"{fileCount report.unbuilt} skipped: a dependency is not built.\n"
+    if report.validationBypassed > 0 then
+      out :=
+        out ++
+          s!"{fileCount report.validationBypassed} published without full validation \
+      (--no-validate).\n"
+    if report.withheldUnsafe > 0 then
+      out :=
+        out ++
+          (if report.withheldUnsafe == 1 then
+            "1 unsafe fix withheld; rerun with --unsafe-fixes to apply.\n"
+          else
+            s!"{report.withheldUnsafe} unsafe fixes withheld; rerun with --unsafe-fixes to apply.\n")
+    if report.suppressed > 0 then
+      out := out ++ s!"{findingCount report.suppressed} suppressed.\n"
+    return out
+
 /-- The default format. A finding prints `PATH:LINE:COLUMN`, the same coordinates `concise` prints
 and the same ones an editor jumps to. It printed the byte range instead until this changed: a
 reader cannot find byte 189 in a file, and the two default-adjacent formats disagreeing about where
@@ -602,12 +675,7 @@ private def textReport (positions : PositionIndex) (report : RunReport) : String
           {finding.code} {finding.message}{fixTag}\n"
         for diagnostic in file.diagnostics do
           out := out ++ s!"{file.path}: {file.status}: {diagnostic}\n"
-    return out ++
-        s!"mode={report.mode} files={report.files.size} findings={report.findings} \
-    changed={report.changed} written={report.written} broken={report.broken} \
-    unbuilt={report.unbuilt} rejected={report.rejected} withheld_unsafe={report.withheldUnsafe} \
-    suppressed={report.suppressed} validation_bypassed={report.validationBypassed} \
-    infrastructure_failures={report.infrastructureFailures.size}\n"
+    return out ++ runSummary report
 
 /-! ### Shared projections
 

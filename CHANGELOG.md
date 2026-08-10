@@ -12,6 +12,13 @@ lean-fmt is pre-1.0. Breaking changes raise the minor version.
 
 ### Changed
 
+- **The default output says what happened instead of listing counters.** A run ended in a row of
+  eleven `key=value` totals; it now ends in a sentence — `6 of 128 files would be reformatted.`
+  — followed by one line for each thing that needs attention, and only when it happened:
+  `2 files rejected: lean-fmt could not verify its own output.` The counters gave the numbers you
+  must not miss the same weight as the nine that are almost always zero. If you were parsing that
+  line, `--statistics` prints exactly those fields to stderr, and `--json` carries the whole
+  report; neither changed.
 - `lean-fmt --version` now reports the Lean it targets as well as its own version, as
   `lean-fmt 0.4.1 (Lean 4.33.0-rc2)`. That second number is the one that decides whether a binary
   can run against your project, and it was the one you could not ask for.
