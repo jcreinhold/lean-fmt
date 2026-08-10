@@ -113,7 +113,7 @@ private def testMovement (root : System.FilePath) (application : String) (work :
   let fixRun ←
     expectExit 0 "move-fix" application
         #["check", "--fix", "--root", ".", "--no-cache", scratch.toString] (cwd? := some root)
-  ensureContains fixRun.stdout "written=0" "move-fix"
+  ensureContains fixRun.stdout "1 finding in 1 file; none fixed." "move-fix"
   ensure ((← IO.FS.readFile scratch) == original) "fix reflowed the item -- it must not"
   -- The directive is unused (its item carries no finding): check reports a lone FMT900.
   let recheck ← checkJson root application 1 #[scratch.toString] "move-recheck"

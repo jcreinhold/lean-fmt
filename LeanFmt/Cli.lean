@@ -553,6 +553,11 @@ private def fileCount (n : Nat) : String :=
 private def findingCount (n : Nat) : String :=
   if n == 1 then "1 finding" else s!"{n} findings"
 
+/-- `n of m files`, collapsed to `m files` when it is all of them — "1 of 1 file" is what a
+counter would say, not a person. -/
+private def ofFiles (n total : Nat) : String :=
+  if n == total then fileCount total else s!"{n} of {fileCount total}"
+
 /-- What the run did, in a sentence, then one line for each count that is not zero.
 
 This replaced a row of eleven `key=value` counters. They were legible enough once learned, but
@@ -569,24 +574,23 @@ private def runSummary (report : RunReport) : String :=
     let headline :=
       match report.mode with
       | "format" | "diff" =>
-        if report.written > 0 then s!"Reformatted {report.written} of {fileCount total}."
+        if report.written > 0 then s!"Reformatted {ofFiles report.written total}."
         else
-          if report.changed > 0 then s!"{report.changed} of {fileCount total} would be reformatted."
+          if report.changed > 0 then s!"{ofFiles report.changed total} would be reformatted."
           else s!"{fileCount total}, all formatted."
       | "organize" =>
         if report.written > 0 then s!"Rewrote the import header of {fileCount report.written}."
         else
           if report.changed > 0 then
-            s!"{report.changed} of {fileCount total} would have their import header rewritten."
+            s!"{ofFiles report.changed total} would have the import header rewritten."
           else s!"{fileCount total}, imports already canonical."
       | "fix" =>
         if report.findings > 0 then
-          s!"{findingCount report.findings} in {flagged} of {fileCount total}; \
-        {fileCount report.written} fixed."
+          s!"{findingCount report.findings} in {ofFiles flagged total}; \
+        {if report.written == 0 then "none" else fileCount report.written} fixed."
         else s!"{fileCount total}, no findings."
       | _ =>
-        if report.findings > 0 then
-          s!"{findingCount report.findings} in {flagged} of {fileCount total}."
+        if report.findings > 0 then s!"{findingCount report.findings} in {ofFiles flagged total}."
         else s!"{fileCount total}, no findings."
     let mut out := headline ++ "\n"
     -- Refusals first: these are the files the run did not touch, and the reason someone reruns.

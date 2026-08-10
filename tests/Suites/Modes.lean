@@ -176,11 +176,7 @@ private def testPreviews (ctx : Ctx) : IO Unit := do
   ensureEq "format findings" ["FMT003"] (findingCodes formatted)
   -- `diff` shows only layout; the FMT003 dedup remains withheld from the patch.
   ensure (diff.stdout.contains "@@") "the diff has no hunk"
-  ensure
-      (diff.stdout.endsWith
-        "mode=diff files=1 findings=1 changed=1 written=0 broken=0 unbuilt=0 rejected=0 \
-     withheld_unsafe=0 suppressed=0 validation_bypassed=0 infrastructure_failures=0\n")
-      "the diff trailer"
+  ensure (diff.stdout.endsWith "1 file would be reformatted.\n") "the diff trailer"
 
 /-- `format` formats — the pin on the layout-only fixture, with the exact canonical
 bytes. The body breaks after `:=` at every width: `declValSimple` is a hard newline unless the
@@ -267,11 +263,7 @@ private def testLayoutNoNewline (ctx : Ctx) : IO Unit := do
           "the namespace edit"
       ensure (diff.stdout.contains "-end     Alpha" && diff.stdout.contains "+end Alpha")
           "the end edit"
-      ensure
-          (diff.stdout.endsWith
-            "mode=diff files=1 findings=0 changed=1 written=0 broken=0 unbuilt=0 rejected=0 \
-       withheld_unsafe=0 suppressed=0 validation_bypassed=0 infrastructure_failures=0\n")
-          "the no-newline trailer"
+      ensure (diff.stdout.endsWith "1 file would be reformatted.\n") "the no-newline trailer"
 
 /-- Artifact, exact fallback, and semantic-cache hit project to identical formatted output. -/
 private def testCachePaths (ctx : Ctx) : IO Unit := do
@@ -639,10 +631,7 @@ private def testRdfImplMixed (ctx : Ctx) : IO Unit := do
   -- The only hunk collapses the namespace spacing; no import line is removed.
   ensure (!((diff.stdout.replace " import" "").contains "import LeanFmt.Basic"))
       "the mixed diff edits an import"
-  ensure
-      (((diff.stdout.trimAsciiEnd).toString.endsWith
-        "findings=1 changed=1 written=0 broken=0 unbuilt=0 rejected=0 withheld_unsafe=0 suppressed=0 \
-     validation_bypassed=0 infrastructure_failures=0"))
+  ensure ((diff.stdout.trimAsciiEnd).toString.endsWith "1 file would be reformatted.")
       "the mixed diff trailer"
   let fixed ← runJson ctx 0 "mixed fix" (fixArgs "tests/modes/.rdf-impl-mixed.lean")
   ensureJsonAt fixed [.field "written"] (Lean.toJson (1 : Nat)) "mixed fix"
