@@ -65,8 +65,8 @@ overwrite an existing package:
 .claude/skills/verso-docs/scripts/scaffold.sh docs/manual
 ```
 
-Verso tags track Lean releases one-for-one — this repository is on `leanprover/lean4:v4.33.0-rc2`
-and Verso has a `v4.33.0-rc2` tag. That pairing is the single most common thing to get wrong, and it
+Verso tags track Lean releases one-for-one — whatever version `lean-toolchain` names, Verso has a
+tag of that name. That pairing is the single most common thing to get wrong, and it
 fails as a wall of elaboration errors rather than a clear message, so the script derives it rather
 than letting you type it.
 
@@ -214,7 +214,7 @@ Read these when the task calls for them rather than up front:
 
 Upstream, when the references do not answer it:
 
-- Verso itself: <https://github.com/leanprover/verso> (pin `v4.33.0-rc2` to match this repository)
+- Verso itself: <https://github.com/leanprover/verso> (pin the tag matching `lean-toolchain`)
 - Starting templates: <https://github.com/leanprover/verso-templates> — `package-docs/` is the
   closest match to this setup
 - The Verso manual is built from `UsersGuide/` in the Verso repository; reading that source is

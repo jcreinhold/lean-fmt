@@ -12,6 +12,10 @@ lean-fmt is pre-1.0. Breaking changes raise the minor version.
 
 ### Changed
 
+- **lean-fmt now targets Lean `v4.33.0`** instead of `v4.33.0-rc2`. One build serves one toolchain,
+  so this release will refuse a project still on the release candidate: move the project to
+  `v4.33.0`, or take the Lake dependency, which moves it for you. Nothing you format changes —
+  canonical layout over this repository's own 105 files is byte-identical across the two.
 - **The default output says what happened instead of listing counters.** A run ended in a row of
   eleven `key=value` totals; it now ends in a sentence — `6 of 128 files would be reformatted.`
   — followed by one line for each thing that needs attention, and only when it happened:

@@ -2,14 +2,16 @@
 # identity folds the ordered Lake environment, so a dependency in the root lakefile would invalidate
 # every .lean-fmt-cache entry whenever its pin moved. See .claude/skills/verso-docs/SKILL.md.
 #
-# The verso rev must equal lean-toolchain's version. scripts/check-pins.sh enforces that.
+# The verso rev must equal lean-toolchain's version.
+# .claude/skills/verso-docs/scripts/check-pins.sh enforces that, as does
+# .github/workflows/pages.yml.
 name = "lean-fmt-manual"
 defaultTargets = ["Manual", "docs"]
 
 [[require]]
 name = "verso"
 git = "https://github.com/leanprover/verso"
-rev = "v4.33.0-rc2"
+rev = "v4.33.0"
 
 [[lean_lib]]
 name = "Manual"
