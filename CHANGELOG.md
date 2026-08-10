@@ -8,7 +8,18 @@ this file; their notes are on the
 
 lean-fmt is pre-1.0. Breaking changes raise the minor version.
 
-## Unreleased
+## 0.5.0 — 2026-08-10
+
+### Upgrading
+
+**This release targets Lean `v4.33.0`.** A lean-fmt build serves one toolchain, so it will refuse a
+project still on `v4.33.0-rc2` and say so. Move the project, or take the Lake dependency, which
+moves it for you. Formatted output is unchanged across the two toolchains, so there is no reformat
+to land first.
+
+**If a script reads lean-fmt's stdout, read `--statistics` or `--json` instead.** The default output
+no longer ends in a row of `key=value` totals. Both of those carry the same numbers and neither
+changed.
 
 ### Changed
 
