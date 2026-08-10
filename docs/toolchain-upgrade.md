@@ -47,6 +47,26 @@ move, which is why this checklist exists.
    `IO.Process.exit`, which is why it is never called on the no-build pass. If a bump makes a whole selection report
    artifact or setup misses at once, suspect the first; if a run exits silently mid-check, suspect the second.
 
+## The probe
+
+CI does not wait for you to start a bump. The `next-toolchain` job in `.github/workflows/ci.yml` runs weekly and on
+dispatch, resolves the newest published lean4 release — release candidates included — and, when that is not what
+`lean-toolchain` names, rewrites it in the runner and reports three things:
+
+1. **Vendored region drift**, read from upstream over HTTP rather than from an installed toolchain, so it answers in
+   seconds and still answers when the build fails. This is the signal that predicts an output fork, because canonical
+   layout derives from the machine `LeanFmt/NativeFormat.lean` vendors.
+2. **Whether it builds**, which is the rename half of the audit — the cheap half, per the checklist below.
+3. **Whether canonical bytes move**, as the count of files `format --check` would rewrite over this repository's own
+   format-clean tree.
+
+The job goes red on a broken build or a nonzero file count, and stays green on region drift alone: some region drift
+lands in nearly every release, and a job that fails every time is one nobody reads. Read the drift diff in the run
+summary when deciding what item 2 of "What a bump can move" means for this release.
+
+Nothing here adapts anything, and no branch is left behind — `lean-toolchain` is rewritten in the runner and never
+committed. The adaptation is this checklist, on an ordinary pull request.
+
 ## Checklist
 
 1. Move `lean-toolchain`, then `lake build` and `lake exe lean-fmt-tests`. Compile errors here are the cheap half of the

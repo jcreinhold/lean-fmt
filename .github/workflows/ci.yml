@@ -14,6 +14,14 @@
 # survive repetition) plus the minutes-long stream, performance, downstream, ci,
 # lsp-acceptance, editor, incremental, and security-bench suites — weekly on a schedule and on
 # manual dispatch. docs/flaky-tests.md tracks incremental's open Linux root-cause.
+#
+# next-toolchain: the early-warning probe, on the same schedule. Lean's ABI is not stable across
+# releases and this repository vendors a region of `Std.Format`, so a bump is an event to test
+# rather than a version-string edit — docs/toolchain-upgrade.md is the checklist. This job asks
+# the three questions a bump turns on, against the newest published release with release
+# candidates included, which is the whole point: the answer is worth more before the release
+# than after. It reports rather than adapts, and needs no long-lived adaptation branch —
+# `lean-toolchain` is rewritten in the runner and never committed.
 
 name: CI
 
@@ -125,3 +133,114 @@ jobs:
           LEAN_NUM_THREADS: "2"
           LEAN_FMT_DEBUG_CACHE: "1"
         timeout-minutes: 60
+
+  next-toolchain:
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+
+      # Release candidates are included deliberately: an RC is the window in which an upstream
+      # change can still be questioned, and the one after which it can only be absorbed.
+      - name: resolve the candidate
+        id: candidate
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          pinned=$(tr -d '[:space:]' < lean-toolchain)
+          tag=$(gh api repos/leanprover/lean4/releases --jq 'map(select(.draft | not)) | .[0].tag_name')
+          candidate="leanprover/lean4:$tag"
+          echo "pinned=$pinned" >> "$GITHUB_OUTPUT"
+          echo "candidate=$candidate" >> "$GITHUB_OUTPUT"
+          if [ "$pinned" = "$candidate" ]; then
+            echo "moved=no" >> "$GITHUB_OUTPUT"
+            echo "Pinned to the newest release ($pinned). Nothing to probe." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "moved=yes" >> "$GITHUB_OUTPUT"
+            echo "## Probing \`$candidate\` against pinned \`$pinned\`" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      # Signal one, and the only one that predicts an output fork: canonical layout derives from
+      # the `Std.Format` machine `LeanFmt/NativeFormat.lean` vendors, and the boundary suite's
+      # vendored-provenance case pins the reviewed region. Read upstream over HTTP rather than
+      # from an installed toolchain so this answers in seconds and stays readable when the build
+      # below fails — the two failure modes are independent and a bump wants both answers.
+      - name: vendored region drift
+        id: region
+        if: steps.candidate.outputs.moved == 'yes'
+        # An upstream path that moved would otherwise 404 under `curl -f` and take the build and
+        # output signals down with it, which is the opposite of reading them independently.
+        continue-on-error: true
+        run: |
+          tag="${{ steps.candidate.outputs.candidate }}"
+          tag="${tag#leanprover/lean4:}"
+          curl -sSfL "https://raw.githubusercontent.com/leanprover/lean4/$tag/src/Init/Data/Format/Basic.lean" -o upstream-format.lean
+          awk '/^inductive Format\.FlattenBehavior where$/{f=1} f{print} f&&/State\.out <\| act\.run \(State\.mk "" column\) \|>\.snd/{exit}' upstream-format.lean > candidate-region.txt
+          # The fixture's first three lines are its provenance header, not region content.
+          tail -n +4 tests/fixtures/boundary/native-format-region.txt > pinned-region.txt
+          if [ ! -s candidate-region.txt ]; then
+            echo "drift=markers-missing" >> "$GITHUB_OUTPUT"
+            echo "The region markers no longer match upstream; re-anchor them in \`tests/Suites/Boundary.lean\`." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          if diff -u pinned-region.txt candidate-region.txt > region.diff; then
+            echo "drift=none" >> "$GITHUB_OUTPUT"
+            echo "Vendored \`Std.Format\` region: unchanged." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "drift=$(grep -c '^[+-][^+-]' region.diff) lines" >> "$GITHUB_OUTPUT"
+            { echo "Vendored \`Std.Format\` region moved:"
+              echo '```diff'
+              head -80 region.diff
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: pin the candidate
+        if: steps.candidate.outputs.moved == 'yes'
+        run: echo "${{ steps.candidate.outputs.candidate }}" > lean-toolchain
+
+      # Signal two. A rename breaks here, which is the good case; continue-on-error so a broken
+      # build still reaches the verdict with the region answer beside it.
+      - name: build under the candidate
+        id: build
+        if: steps.candidate.outputs.moved == 'yes'
+        continue-on-error: true
+        uses: leanprover/lean-action@v1
+        with:
+          test: "false"
+
+      # Signal three: `lake lint` above reports rule findings, which is a different question.
+      # This one asks whether canonical bytes moved, over the tree this repository keeps
+      # format-clean. It is a count, not a wall time, so it means the same thing on any runner.
+      - name: canonical output
+        id: output
+        if: steps.candidate.outputs.moved == 'yes' && steps.build.outcome == 'success'
+        continue-on-error: true
+        run: |
+          report=$(.lake/build/bin/lean-fmt format --check 2>&1) || true
+          echo "$report"
+          changed=$(printf '%s\n' "$report" | sed -n 's/.*changed=\([0-9]*\).*/\1/p' | tail -1)
+          echo "changed=${changed}" >> "$GITHUB_OUTPUT"
+
+      # Red means the next release needs work from you. Region drift alone is not red: some
+      # lands in nearly every release, and a job that fails every time is one nobody reads.
+      - name: verdict
+        if: always() && steps.candidate.outputs.moved == 'yes'
+        run: |
+          build="${{ steps.build.outcome }}"
+          changed="${{ steps.output.outputs.changed }}"
+          drift="${{ steps.region.outputs.drift }}"
+          { echo ""
+            echo "| signal | result |"
+            echo "| --- | --- |"
+            echo "| builds | $build |"
+            echo "| vendored region | ${drift:-not determined} |"
+            echo "| files whose canonical bytes move | ${changed:-not reached} |"
+            echo ""
+            echo "Adaptation checklist: \`docs/toolchain-upgrade.md\`."
+          } >> "$GITHUB_STEP_SUMMARY"
+          fail=0
+          [ "$build" = "success" ] || fail=1
+          [ "${changed:-1}" = "0" ] || fail=1
+          exit $fail
