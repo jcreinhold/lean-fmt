@@ -266,8 +266,11 @@ private def testPackageIdentity (root : System.FilePath) : IO Unit := do
   let reported ←
     expectExit 0 "lean-fmt --version" (root / ".lake" / "build" / "bin" / "lean-fmt").toString
         #["--version"]
-  ensureEq "the binary does not report the package version" s!"lean-fmt {packaged}\n"
-      reported.stdout
+  -- The Lean version is pinned here too, against this suite's own compiler rather than a literal:
+  -- it is what decides whether the binary will run against a given project at all, and a build
+  -- reporting a Lean it was not built by would misdirect every toolchain-mismatch report.
+  ensureEq "the binary does not report the package version"
+      s!"lean-fmt {packaged} (Lean {Lean.versionString})\n" reported.stdout
 
 /-- The first position at which two line lists differ, with both lines. Length drift reports
 against a `<past end>` marker so a truncation is as visible as a changed token. -/

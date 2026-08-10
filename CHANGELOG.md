@@ -10,6 +10,21 @@ lean-fmt is pre-1.0. Breaking changes raise the minor version.
 
 ## Unreleased
 
+### Changed
+
+- `lean-fmt --version` now reports the Lean it targets as well as its own version, as
+  `lean-fmt 0.4.1 (Lean 4.33.0-rc2)`. That second number is the one that decides whether a binary
+  can run against your project, and it was the one you could not ask for.
+- **Running outside a Lean project says so.** It used to fail with an operating-system error code
+  and the path it had tried, naming neither the cause nor what to do; it now names the directory
+  and points at `--root`.
+- **A toolchain mismatch now names the remedy.** The message said to install lean-fmt for your
+  toolchain, which is not something you can always act on — for most toolchains no such release
+  exists. It now explains that one build serves one toolchain, and offers the two things that do
+  work: move the project, or take the Lake dependency, which moves it for you.
+- `install.sh` reports which Lean the binary it just installed is for, and warns when the
+  `lean-toolchain` in the working directory disagrees — at install time rather than on first run.
+
 ### Fixed
 
 - **A chain of command embeddings no longer drifts right.** `set_option A in set_option B in @[simp]

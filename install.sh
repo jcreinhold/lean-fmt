@@ -102,6 +102,26 @@ install -m 755 "$tmp/$name/bin/lean-fmt-artifact-extract" "$BINDIR/lean-fmt-arti
 
 "$BINDIR/lean-fmt" --help >/dev/null
 echo "install.sh: installed lean-fmt ${version#v} to $BINDIR"
+
+# One lean-fmt build serves one Lean toolchain. Saying which one here, and comparing it against a
+# project the installer is standing in, moves that answer to install time; discovered on first run
+# instead, it arrives as a refusal as far as possible from the decision that caused it.
+built_for=$("$BINDIR/lean-fmt" --version | sed -n 's/.*(Lean \(.*\))/\1/p')
+if [ -n "$built_for" ]; then
+	echo "install.sh: this build targets Lean $built_for"
+	if [ -r lean-toolchain ]; then
+		pinned=$(tr -d '[:space:]' < lean-toolchain)
+		case "$pinned" in
+		*:v"$built_for" | *:"$built_for" | v"$built_for" | "$built_for") ;;
+		*)
+			echo "install.sh: warning: ./lean-toolchain names $pinned, which this build cannot serve." >&2
+			echo "install.sh: move the project to Lean $built_for, or add lean-fmt as a Lake dependency." >&2
+			echo "install.sh: version table: https://github.com/jcreinhold/lean-fmt#install" >&2
+			;;
+		esac
+	fi
+fi
+
 if ! command -v lake >/dev/null 2>&1; then
 	echo "install.sh: note: no lake on PATH — lean-fmt needs the target project's Lean toolchain (elan) at runtime" >&2
 fi

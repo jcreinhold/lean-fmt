@@ -172,13 +172,30 @@ private def targetLeanInstall (root : FilePath) : IO Lake.LeanInstall := do
 
 def loadWorkspace (root : FilePath) : IO Lake.Workspace := do
   let pinPath := root / "lean-toolchain"
+  -- Absence is the commonest first run there is -- the tool was pointed at the wrong directory --
+  -- and `readFile`'s own failure answers it with an errno and the path it happened to try, which
+  -- names neither the cause nor the argument the caller chose. Path errors name the caller's own
+  -- argument; `--root` is that argument here even when it was defaulted rather than typed.
+  unless ← pinPath.pathExists do
+    throw <|
+        IO.userError
+          s!"not a Lean project: no lean-toolchain in {root}\n\
+      run lean-fmt from the project root, or point it at one with --root PATH"
   let pin ← IO.FS.readFile pinPath
   let pin := pin.trimAscii.copy
+  -- One lean-fmt build serves one toolchain because it loads the target's `.olean`s, and those
+  -- load only in the compiler that wrote them. The remedy has to be spelled out: "install
+  -- lean-fmt for the target toolchain" is advice the reader usually cannot act on, because for
+  -- most toolchains no such release exists and nothing here says which one would.
   unless expectedVersion pin == Lean.versionString do
     throw <|
         IO.userError
           s!"target toolchain {pin} does not match this lean-fmt build \
-      (Lean {Lean.versionString}); install lean-fmt for the target toolchain"
+      (Lean {Lean.versionString})\n\
+      Lean's ABI is not stable across releases, so one lean-fmt build serves one toolchain.\n\
+      Either move this project to a toolchain lean-fmt targets, or add lean-fmt as a Lake\n\
+      dependency, which moves the toolchain for you. The version table is in the README:\n\
+      https://github.com/jcreinhold/lean-fmt#install"
   let lean ← targetLeanInstall root
   let lake := Lake.LakeInstall.ofLean lean
   unless ← lake.lake.pathExists do

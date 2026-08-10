@@ -10,25 +10,61 @@ control characters. Some carry fixes. `lean-fmt rules` lists them all.
 
 ## Install
 
+First, check which Lean your project is on:
+
+```sh
+cat lean-toolchain
+```
+
+A lean-fmt build serves exactly one Lean toolchain — it loads your project's `.olean`s, and those load only in the
+compiler that wrote them. Find your row:
+
+| lean-fmt | Lean |
+| --- | --- |
+| 0.4.0, 0.4.1 | `v4.33.0-rc2` |
+| 0.2.0 – 0.3.1 | `v4.33.0-rc1` |
+
+If your toolchain is not in that table, the binary will refuse your project and say so. Take the Lake dependency below
+instead: it moves your project onto lean-fmt's toolchain rather than requiring you to match it.
+
 Prebuilt binary (Linux and macOS, x86-64 and ARM) into `~/.local/bin`; `PREFIX` and `VERSION` override the prefix and
-the release:
+the release. Run it from your project directory and it checks the pairing above for you:
 
 ```sh
 curl -sSfL https://raw.githubusercontent.com/jcreinhold/lean-fmt/main/install.sh | sh
 ```
 
-From source (`PREFIX=/usr/local` to override, `DESTDIR` to stage, `make uninstall` to remove):
+From source (`PREFIX=/usr/local` to override, `DESTDIR` to stage, `make uninstall` to remove). With elan on `PATH`, this
+installs the matching toolchain itself:
 
 ```sh
 git clone https://github.com/jcreinhold/lean-fmt.git && cd lean-fmt && make install
 ```
 
-lean-fmt is built for one Lean toolchain, the one named in this repository's `lean-toolchain`. Lean's ABI is not stable
-across releases, so the binary refuses a project pinned to anything else and names both versions. The Lake dependency
-below has no such gate: `lake update` moves your project onto lean-fmt's toolchain instead. With elan on `PATH`, the
-source build installs that toolchain itself.
+`lean-fmt --version` reports both numbers, so it always answers which Lean a given binary is for.
 
 There is no Windows build; on Windows take the Lake dependency.
+
+## First run
+
+From your project root:
+
+```sh
+lean-fmt format --check
+```
+
+Nothing is written. It prints one line of counters:
+
+```
+mode=format files=128 findings=0 changed=6 written=0 broken=0 unbuilt=0 rejected=0 ...
+```
+
+`changed` is how many files `lean-fmt format` would rewrite; `rejected` is how many it refuses to touch, because it
+could not prove its own output equivalent to your source. Exit status is 0 when clean, 1 when there is drift or a
+finding, 2 on failure. `lean-fmt format --diff` shows the same run as a patch.
+
+The first run over a project is the slow one — it elaborates what it must to know how to parse your files, then caches
+that in `.lean-fmt-cache/`. Later runs over unchanged files skip it.
 
 ## Use
 

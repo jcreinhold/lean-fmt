@@ -1570,8 +1570,13 @@ unsafe def runCli (arguments : List String) : IO UInt32 := do
   -- Anyone installing a prebuilt binary asks it what it is before they ask it anything else, and
   -- an issue report is worth less without the answer. The language server already reports this
   -- string; the boundary suite pins it against the lakefile.
+  --
+  -- The Lean version rides along because it, not the product version, decides whether this binary
+  -- can run against a given project: `loadWorkspace` compares it to the target's `lean-toolchain`
+  -- and refuses on a mismatch. Reporting one number and gating on the other left the deciding
+  -- value unavailable to the person the refusal is addressed to.
   | "--version" :: _ =>
-    IO.println s!"lean-fmt {LeanFmt.version}"
+    IO.println s!"lean-fmt {LeanFmt.version} (Lean {Lean.versionString})"
     return 0
   | command :: "--help" :: _ =>
     match CliHelp.commandHelp? command with
