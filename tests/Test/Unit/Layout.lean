@@ -1019,6 +1019,26 @@ private def testStructuralAnchors : IO Unit := do
         s!"the break-led spine refusal lost its reason: {detail}"
   | .error failure =>
     throw (IO.userError s!"break-led spine refused with the wrong kind: {failure.detail}")
+  -- A document that stops short of the terminals is reported as the truncation it is, not as the
+  -- unpaired marker the truncation left behind. The interval covers `b c`, the document spells
+  -- `a b`: the open marker drops where the chain leaves the interval and the close never comes,
+  -- because the terminal that would have carried it is in the half of the document the formatter
+  -- backtracked out of. `incomplete` degrades the one command to its own bytes; the anchor's
+  -- `unadapted` refuses the whole file, which is what
+  -- `Proofs/AlgebraicGeometry/Modules/IdealSheafImage.lean` reported as an infrastructure failure
+  -- over a `where` field whose tactic block the formatter dropped at terminal 93 of 380.
+  match
+    Formatter.NativeLayout.transform (← planOf #[⟨2, 5⟩])
+      (Std.Format.text "a" ++ .line ++ Std.Format.text "b") with
+  | .ok _ =>
+    throw (IO.userError "a document that stopped short of the terminals was accepted")
+  | .error (.incomplete detail) =>
+    ensure (detail.contains "consumed 2/3 terminals")
+        s!"the truncation refusal lost its counts: {detail}"
+  | .error failure =>
+    throw
+        (IO.userError
+          s!"a truncated document was refused as something other than incomplete: {failure.detail}")
   -- Nested intervals both claim; the enclosing comment, island, and nested command stay
   -- applicable inside an anchored region.
   let nestedFormat ←

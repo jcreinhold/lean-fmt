@@ -4038,8 +4038,23 @@ private partial def isolateAnchors (plan : CommandPlan) (format : Std.Format) :
       match plan.anchors[index]? with
       | some span => s!"{span.start}:{span.stop}"
       | none => "?"
+    -- Two terminal indices name an interval to this module and to nothing else: the report that
+    -- brought `Proofs/AlgebraicGeometry/Modules/IdealSheafImage.lean` in carried `34:380` and no
+    -- way to tell which construct that was, so identifying it needed a debug build. The refusal
+    -- names the source the interval was collected at, the way the ledger's own refusals do.
+    let sourceOf (index : Nat) : String :=
+      match plan.anchors[index]? with
+      | some span =>
+        match plan.terminals[span.start]?, plan.terminals[span.stop - 1]? with
+        | some first, some last =>
+          (slice plan.source ⟨first.range.start, last.range.stop⟩).toList.take 80 |> String.ofList
+        | _, _ => "?"
+      | none => "?"
     let refuse (index : Nat) (why : String) : Except TransformFailure (Std.Format × Array Nat) :=
-      throw <| .unadapted s!"structural anchor interval {spanOf index} could not be isolated: {why}"
+      throw <|
+        .unadapted
+          s!"structural anchor interval {spanOf index} could not be isolated: {why}; \
+near '{sourceOf index}'"
     for item in items do
       match item with
       | .tag tag .nil =>
@@ -4107,15 +4122,24 @@ private def transform (plan : CommandPlan) (native : Std.Format) :
       anchors := plan.anchors
       baseIndent := plan.baseIndent }
   let (result, state) ← ((transformNative native).run initial).mapError .unadapted
-  let (isolated, isolatedAnchors) ← isolateAnchors plan result.format
-  let appliedAnchors :=
-    (state.appliedAnchors ++ isolatedAnchors).foldl (init := #[]) fun kept index =>
-      if kept.contains index then kept else kept.push index
+  -- The completeness check comes first, ahead of `isolateAnchors` and every ledger below, because a
+  -- document that stops short says nothing about the plan: the walk never reached the entries whose
+  -- application the ledgers count, so each of them reports a *consequence* of the truncation as if
+  -- it were its own defect -- and reports it as `unadapted`, which refuses the file, where the
+  -- truncation itself is `incomplete`, which degrades the one command to its own bytes.
+  -- `Proofs/AlgebraicGeometry/Modules/IdealSheafImage.lean` is the sighted case: the formatter
+  -- backtracked out of a `where` field's tactic block at terminal 93 of 380, and the anchor
+  -- interval covering the whole block reported an open marker with no close -- a marker pair the
+  -- second half of the document would have carried -- so a recoverable command took the file down.
   if state.terminalIndex != state.terminals.size then
     throw <|
         .incomplete
           s!"native formatter consumed {state.terminalIndex}/{state.terminals.size} terminals; \
 nearby: {nearbyTerminals state}; recent native leaves: {repr state.recentNativeLeaves}"
+  let (isolated, isolatedAnchors) ← isolateAnchors plan result.format
+  let appliedAnchors :=
+    (state.appliedAnchors ++ isolatedAnchors).foldl (init := #[]) fun kept index =>
+      if kept.contains index then kept else kept.push index
   if state.commentIndex != state.comments.size then
     let nextRange := state.comments[state.commentIndex]?.map fun comment => comment.range
     throw <|
