@@ -3,7 +3,7 @@
 Rules for the layout adapter. The root `AGENTS.md` owns the product constraints, and nothing here contradicts it.
 
 Lean ships both endpoints of the layout/fidelity axis and nothing in between. `Lean.Syntax.reprint`
-(`Lean/Syntax.lean:400`) emits `lead ++ val ++ trail` from each leaf's `SourceInfo`: exact source bytes, zero layout
+(`Lean/Syntax.lean`) emits `lead ++ val ++ trail` from each leaf's `SourceInfo`: exact source bytes, zero layout
 decisions. `Lean.PrettyPrinter` renders syntax the *elaborator* produced, for error messages, `#print`, and infoview
 hovers: every layout decision, no source fidelity — there is no original to be faithful to and nobody can diff the
 output against source.

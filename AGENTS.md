@@ -23,17 +23,28 @@ Read the nearest guide before working in a directory. A guide may add rules. It 
 - `LeanFmt/AGENTS.md` for writing Lean.
 - `LeanFmt/Formatter/AGENTS.md` for the layout adapter, and what Lean's pretty-printer will not do for you.
 
+Three procedures are codified as skills in `.claude/skills`, symlinked into `.agents/skills` so a harness that reads
+neither path by default still finds them: `bump-toolchain` (moving `lean-toolchain`, and answering a red
+`next-toolchain` probe), `release-lean-fmt` (version, CHANGELOG, tag — publishing happens only in CI), and `verso-docs`
+(the `docs/manual` package). Read the skill before improvising one of these.
+
 ## Build and checks
 
 ```sh
 lake build           # also builds LeanFmtCacheSpec; a broken proof fails the build
 lake exe lean-fmt
 lake exe lean-fmt-tests
-lake test            # the unit tier plus every non-slow suite; CI runs this
+lake test            # the unit tier plus every non-slow suite
 lake test -- --all   # everything, including the slow suites
 lake test -- --suites modes watch   # exactly these suites, slow or not
 lake lint            # the formatter on itself, under lean-fmt.toml
 ```
+
+`lake` is the build system; the `Makefile` is the conventional front end (`make build`, `make test`) plus the GNU
+installer. It carries one thing lake does not: `make test-linux` archives `HEAD` plus your dirty files into an Ubuntu
+22.04 container and runs the suites there, with cached elan and lake volumes so repeats are minutes. The 22.04 userland
+is where platform-shaped failures surfaced twice (mtime granularity, cache-epoch contamination) and it is what the
+release legs run. First repro for any failure that smells platform-dependent.
 
 `docs/manual` is a second Lake package, holding the Verso manual published to GitHub Pages by
 `.github/workflows/pages.yml`. None of the commands above touch it: it requires Verso, and the
@@ -74,6 +85,14 @@ Match the checks to the change:
   `tests/fixtures/formatter/candidate.py`, `style` through `tests/fixtures/style/expected_candidate.py`, and `editor`
   drives `tests/lsp/editor.lua` — the real `vim.lsp`, not a Lean model of it. Do not port those.
 
+CI does not run one `lake test`. `.github/workflows/ci.yml` runs `--unit-only`, then a sharded matrix of `--skip-unit
+--part <n> --jobs 2` under `LEAN_NUM_THREADS=2` — four concurrent suites exhaust a 16 GB runner, and the telemetry lines
+exist to name the resource when one dies. A scheduled `next-toolchain` job builds against the next Lean rc; a red probe
+is the `bump-toolchain` skill's trigger, not a broken `main`.
+
+When a run fails intermittently, read `docs/flaky-tests.md` before re-running anything. A retry on a signature that is
+not already in its ledger trades a bug report for a coin flip: the evidence lives on a runner that is gone.
+
 Use the target project's exact Lean toolchain for frontend and plugin experiments. Keep experiments out of production
 modules until their interface is selected and verified.
 
@@ -86,7 +105,9 @@ When records disagree, this is the order of authority:
   statement that it was chosen rather than stumbled into.
 - Module docstrings in `LeanFmt/` carry the reasoning — why a shape was picked and what was rejected. They are prose and
   can rot; when one contradicts the code, the code wins and the docstring is wrong.
-- `docs/` is the user-facing contract. `docs/ci.md` and `docs/adding-a-rule.md` are gated by suites; the rest is not.
+- `docs/` is the user-facing contract, with two exceptions addressed to maintainers: `docs/toolchain-upgrade.md` and
+  `docs/flaky-tests.md` bind whoever is doing the work, not a consumer. `docs/ci.md` and `docs/adding-a-rule.md` are
+  gated by suites; the rest is not.
 - A measurement has a date, not authority — regenerate rather than argue.
 
 If two records disagree, write down the disagreement and how you settled it. Design rationale that is not recoverable
