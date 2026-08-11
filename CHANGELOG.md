@@ -8,6 +8,35 @@ this file; their notes are on the
 
 lean-fmt is pre-1.0. Breaking changes raise the minor version.
 
+## 0.6.0 — 2026-08-11
+
+### Upgrading
+
+**This release targets Lean `v4.34.0-rc1`.** A lean-fmt build serves one toolchain, so it will
+refuse a project still on `v4.33.0` and say so. Move the project, or take the Lake dependency,
+which moves it for you.
+
+**One construct reformats: `for … in #[…] do` keeps its space.** Lean v4.34's pretty-printer no
+longer drops the space between a bracketed collection and `do`
+([leanprover/lean4#14389](https://github.com/leanprover/lean4/pull/14389)), so canonical layout
+changes from `for x in #[1, 2, 3]do` to `for x in #[1, 2, 3] do`. Nothing else moves. Run
+`lean-fmt format` once after upgrading to land the space; `check` flags it until you do.
+
+**Integrated builds extract module artifacts correctly again.** If you use the compiler plugin,
+the `leanFmtArtifact` facet could serve a stale artifact after an edit that changed only source
+bytes outside the compiled interface (a comment, a proof), because Lean v4.34 moved the payload
+out of the base `.olean` and the facet's rebuild trace did not follow it. It now traces the parts
+that carry the payload. No action needed beyond upgrading.
+
+### Changed
+
+- **lean-fmt now targets Lean `v4.34.0-rc1`** instead of `v4.33.0`. The artifact facet and its
+  extractor read the plugin payload from the `.olean.server` part, where v4.34's olean split put
+  it, and the facet builds that part when an ordinary build has not.
+- **Canonical layout of a `for` loop over a bracketed collection keeps the space before `do`,**
+  matching the upstream fix. A loop over a plain identifier (`for x in xs do`) was always spaced
+  and is unchanged.
+
 ## 0.5.0 — 2026-08-10
 
 ### Upgrading
