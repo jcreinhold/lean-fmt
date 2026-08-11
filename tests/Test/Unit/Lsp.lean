@@ -131,7 +131,7 @@ private def naiveOffset (source : String) (position : Lean.Lsp.Position) : Nat :
     let lines := lspLines source
     let line := min position.line (lines.size - 1)
     let mut offset := 0
-    for index in [0:line]do
+    for index in [0:line] do
       offset := offset + lines[index]!.utf8ByteSize
     let body := lines[line]!
     let mut units := 0

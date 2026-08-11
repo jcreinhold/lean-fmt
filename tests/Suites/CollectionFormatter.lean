@@ -68,7 +68,7 @@ private def testNarrowLayout (root setup : System.FilePath) (application : Strin
         [.lit "#[alpha,", .anyWs, .lit "beta,", .newline, .lit "gamma,", .anyWs, .lit "delta,",
           .newline, .lit "epsilon]"],
         [.lit "⟨alpha,", .anyWs, .lit "beta,", .newline, .lit "gamma⟩"]] :
-      List FlexPattern)do
+      List FlexPattern) do
     ensureFlex "width 20" narrow broken
   ensureFlex "width 20 (trailing list separator)" narrow [.lit "gamma,", .anyWs, .lit "]"]
   ensureFlex "width 20" narrow
@@ -101,7 +101,7 @@ private def testWideLayout (root setup : System.FilePath) (application : String)
       "#[alpha, beta, gamma, delta, epsilon]", "⟨alpha, beta, gamma⟩",
       "{ first := alpha, second := beta, third := gamma }", "{ first, second, third }",
       "{ first := alpha, second := beta, third := gamma : Packet }",
-      "{ first := alpha, second := 0, third := 0, .. }"]do
+      "{ first := alpha, second := 0, third := 0, .. }"] do
     ensureContains wide flat "width 80"
   ensureFlex "width 80" wide
       [.lit "{", .anyWs, .lit "packet", .someWs, .lit "with", .newline, .lit "first", .anyWs,
@@ -127,7 +127,7 @@ private def testMagicTrailingComma (root setup : System.FilePath) (application :
       "{\n    first := alpha,\n    second := beta,\n    third := gamma,\n  }",
       "#[\n    alpha,\n  ]",
       "(\n    #[\n      alpha,\n      beta,\n    ],\n    #[\n      gamma,\n    ],\n  )",
-      "#[\n    -- leading comment\n    alpha,\n    beta,\n    gamma,\n  ]"]do
+      "#[\n    -- leading comment\n    alpha,\n    beta,\n    gamma,\n  ]"] do
     ensureContains text exploded "magic-trailing-comma"
   let ignore : LeanFmt.Internal.FormatConfig := { magicTrailingComma := .ignore }
   let ignored ←
@@ -136,7 +136,7 @@ private def testMagicTrailingComma (root setup : System.FilePath) (application :
   let (_, ignoredText) ← canonical ignored "magic-trailing-comma ignore"
   for flat in
     ["[alpha, beta, gamma, ]", "#[alpha, beta, gamma, ]", "(alpha, beta, gamma, )",
-      "⟨alpha, beta, gamma, ⟩", "{ first := alpha, second := beta, third := gamma, }"]do
+      "⟨alpha, beta, gamma, ⟩", "{ first := alpha, second := beta, third := gamma, }"] do
     ensureContains ignoredText flat "magic-trailing-comma ignore"
 
 end CollectionFormatter

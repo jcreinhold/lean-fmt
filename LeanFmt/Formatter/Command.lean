@@ -139,7 +139,7 @@ private def importDocument (ownership : CommentOwnership) (stx : Lean.Syntax) : 
     let mut document :=
       if tokens.size == 1 then tokenText first
       else Trivia.decorateTrailingBeforeBoundary ownership first.stx (tokenText first)
-    for index in [1:tokens.size]do
+    for index in [1:tokens.size] do
       let previous := tokens[index - 1]!
       let token := tokens[index]!
       let boundary :=

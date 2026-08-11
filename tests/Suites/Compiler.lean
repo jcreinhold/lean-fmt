@@ -215,7 +215,7 @@ private unsafe def testMixedSelection (ctx : Ctx) : IO Unit := do
         (cwd? := some ctx.root) (env := profiled)
   ensure (mixed.exitCode == 0 || mixed.exitCode == 1)
       s!"mixed artifact/exact selection failed (status {mixed.exitCode})\n{mixed.stderr}"
-  for needle in ["cache.official_artifact_hit=1", "cache.official_artifact_miss=1"]do
+  for needle in ["cache.official_artifact_hit=1", "cache.official_artifact_miss=1"] do
     profileStat mixed.stderr needle "mixed selection"
 
 /-- `lake -q query <target> --text`, trimmed. -/

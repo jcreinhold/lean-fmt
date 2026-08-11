@@ -398,7 +398,7 @@ private def testEpochChange (ctx : Ctx) : IO Unit := do
           #[("LEAN_FMT_PROFILE_PHASES", some "1"), ("LEAN_PATH", some extra.toString)])
     statFrom result.stderr "served"
   ensureEq "a moved search path served stale entries" 0 (← epochRun "1")
-  for tag in ["2", "3", "4", "5", "6", "7"]do
+  for tag in ["2", "3", "4", "5", "6", "7"] do
     discard <| epochRun tag
   ensureEq "the survivors are the live index plus the retained three" 4 (← indexCount ctx)
 

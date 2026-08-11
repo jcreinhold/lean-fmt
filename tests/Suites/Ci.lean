@@ -230,7 +230,7 @@ private def testArchiveInstallation (ctx : Ctx) : IO Unit := do
   discard <| expectExit 0 "tar extract" "tar" #["-xf", tarballPath.toString] (cwd? := some archive)
   ensure (!(← (archive / ".lake").pathExists)) "the archive carries a build directory"
   ensure (!(← (archive / ".lean-fmt-cache").pathExists)) "the archive carries a result cache"
-  for required in ["lean-toolchain", "lakefile.lean", "lake-manifest.json", "lean-fmt.toml"]do
+  for required in ["lean-toolchain", "lakefile.lean", "lake-manifest.json", "lean-fmt.toml"] do
     ensure (← (archive / required).pathExists)
         s!"the archive is missing {required}, which a consumer needs"
   discard <|

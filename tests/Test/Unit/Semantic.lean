@@ -273,7 +273,7 @@ private def testMessagesPlain : IO Unit := do
   let envelope : String := Application.internalFailure "SOME-TECHNICAL-CLAUSE"
   for required in
     #["left unchanged", "defect in lean-fmt", "https://github.com/jcreinhold/lean-fmt/issues",
-      "SOME-TECHNICAL-CLAUSE"]do
+      "SOME-TECHNICAL-CLAUSE"] do
     ensure ((envelope.splitOn required).length == 2)
         s!"the internal-failure message dropped {repr required}: {envelope}"
 

@@ -56,7 +56,7 @@ private def testModuleHeaders (root : System.FilePath) : IO Unit := do
 
 private def testNoTrackedArtifacts (root : System.FilePath) : IO Unit := do
   let result ← expectExit 0 "git ls-files" "git" #["ls-files"] (cwd? := some root)
-  for path in result.stdout.splitOn "\n"do
+  for path in result.stdout.splitOn "\n" do
     let components := path.splitOn "/"
     let forbidden :=
       components.any fun component =>
@@ -73,15 +73,15 @@ private def startsWithKeyword (line keyword : String) : Bool :=
   trimmed.startsWith s!"{keyword} " || trimmed == keyword
 
 private def testRootExportsNothing (root : System.FilePath) : IO Unit := do
-  for line in (← readRepoFile root "LeanFmt.lean").splitOn "\n"do
+  for line in (← readRepoFile root "LeanFmt.lean").splitOn "\n" do
     let bad :=
       ["import", "def", "structure", "inductive", "class", "abbrev"].any (startsWithKeyword line)
     ensure (!bad) "LeanFmt root unexpectedly exports or defines application state"
 
 private def testNoPublicDeclarations (root : System.FilePath) : IO Unit := do
   let result ← expectExit 0 "git ls-files" "git" #["ls-files", "LeanFmt/*.lean"] (cwd? := some root)
-  for path in result.stdout.splitOn "\n" |>.filter (!·.isEmpty)do
-    for line in (← readRepoFile root path).splitOn "\n"do
+  for path in result.stdout.splitOn "\n" |>.filter (!·.isEmpty) do
+    for line in (← readRepoFile root path).splitOn "\n" do
       ensure (!(line.startsWith "public "))
           s!"application library contains an explicit public declaration: {path}"
 
@@ -95,7 +95,7 @@ private def testEntryPointSet (root : System.FilePath) : IO Unit := do
   let inScope (path : String) : Bool :=
     !path.isEmpty && !(path.startsWith "docs/") && !(path.startsWith "experiments/")
   for path in result.stdout.splitOn "\n" |>.filter inScope do
-    for line in (← readRepoFile root path).splitOn "\n"do
+    for line in (← readRepoFile root path).splitOn "\n" do
       if line.startsWith "public def main" || line.startsWith "public unsafe def main" then
         entries := entries.push path
   let expected :=
@@ -139,7 +139,7 @@ private def testPluginGlobs (root : System.FilePath) : IO Unit := do
     (lines.drop (start + 1)).takeWhile fun line =>
       !(line.startsWith "lean_lib " || line.startsWith "lean_exe " || line.startsWith "package ")
   for forbidden in
-    ["Application", "Cache", "Cli", "Config", "Edit", "Project", "Rules", "Semantic", "Service"]do
+    ["Application", "Cache", "Cli", "Config", "Edit", "Project", "Rules", "Semantic", "Service"] do
     ensure (!(block.any (·.contains s!"LeanFmt.{forbidden}")))
         s!"compiler plugin Lake target includes rule or application modules: {forbidden}"
 
@@ -159,7 +159,7 @@ private def testNoLeanServer (root : System.FilePath) : IO Unit := do
   -- `Lean.Server.Utils` converts client positions **without clamping** them, and an unclamped LSP
   -- position resolves past the end of the buffer. Scoped to this module on purpose:
   -- `LeanFmt/Analysis.lean` imports `Lean.Server.InfoUtils` and should.
-  for line in (← readRepoFile root "LeanFmt/LanguageServer.lean").splitOn "\n"do
+  for line in (← readRepoFile root "LeanFmt/LanguageServer.lean").splitOn "\n" do
     let trimmed := line.trimLeft
     ensure
         (!(trimmed.startsWith "import Lean.Server" || trimmed.startsWith "import all Lean.Server"))
@@ -193,7 +193,7 @@ private def testLinkClosure (root : System.FilePath) : IO Unit := do
     ensure (count > 0)
         "the shared currency decision is not linked into the binary; the proof is about dead code"
   for image in
-    [".lake/build/bin/lean-fmt", ".lake/build/lib/liblean_x2dfmt_LeanFmtCompilerPlugin.dylib"]do
+    [".lake/build/bin/lean-fmt", ".lake/build/lib/liblean_x2dfmt_LeanFmtCompilerPlugin.dylib"] do
     if let some count← nmCount root image "LeanFmt_Internal_Cache_Spec" then
       ensure (count == 0) s!"proof library entered the link closure of {image}"
     if let some count← nmCount root image "LeanFmt_Cache_Spec" then
@@ -224,7 +224,7 @@ private def testSpawnScrubOptIns (root : System.FilePath) : IO Unit := do
       continue
     let some fileName := entry.path.fileName | continue
     let relative := s!"tests/Suites/{fileName}"
-    for line in (← readRepoFile root relative).splitOn "\n"do
+    for line in (← readRepoFile root relative).splitOn "\n" do
       for var in scrubbed do
         -- The pattern is built from `var` so this case's own source never matches itself.
         if line.contains (s!"\"{var}\", some") && !(allowed.contains (relative, var)) then

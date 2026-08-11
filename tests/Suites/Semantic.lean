@@ -55,7 +55,7 @@ private def byteOffset (source : String) (line col : Nat) : Nat :=
 private def leanOracle (ctx : Ctx) (fixture : String) : IO (Array Lean.Json) := do
   let result ← runProc "lake" #["env", "lean", "--json", fixture] (cwd? := some ctx.root)
   let mut objects := #[]
-  for line in result.stdout.splitOn "\n"do
+  for line in result.stdout.splitOn "\n" do
     if line.startsWith "{" then
       objects := objects.push (← parseJson line "lean --json")
   return objects
@@ -112,7 +112,7 @@ decision. -/
 private def testFacetServes (ctx : Ctx) : IO Unit := do
   let clean := "tests/fixtures/check/Clean.lean"
   let env := #[("LEAN_FMT_TEST_ANALYZER", some "/usr/bin/false")]
-  for (label, select) in [("source", #[]), ("syntax", #["--select", "FMT011"])]do
+  for (label, select) in [("source", #[]), ("syntax", #["--select", "FMT011"])] do
     let result ←
       runProc ctx.application
           (#["check", "--root", ".", "--json", "--no-cache"] ++ select ++ #[clean]) (cwd? :=
@@ -444,7 +444,7 @@ private def testCost (ctx : Ctx) : IO Unit := do
           (cwd? := some ctx.root)
     return timed.stderr
   let rssOf (stats : String) (label : String) : IO Nat := do
-    for line in stats.splitOn "\n"do
+    for line in stats.splitOn "\n" do
       if line.contains "maximum resident set size" then
         match ((line.splitOn " ").filter (!·.isEmpty)).head?.bind String.toNat? with
         | some n =>
@@ -453,7 +453,7 @@ private def testCost (ctx : Ctx) : IO Unit := do
           throw <| IO.userError s!"{label}: unparsable RSS line {line}"
     throw <| IO.userError s!"{label}: no RSS line"
   let realOf (stats : String) (label : String) : IO Float := do
-    for line in stats.splitOn "\n"do
+    for line in stats.splitOn "\n" do
       if line.contains " real" then
         match ((line.splitOn " ").filter (!·.isEmpty)).head? with
         | some word =>

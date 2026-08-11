@@ -115,7 +115,7 @@ private def testOrdering (ctx : Ctx) : IO Unit := do
         "ordering"
   let file ← oneFile report "ordering"
   ensureEq "ordering: findings changed" ["FMT005"] (codesOf file).toList
-  for finding in ((jsonAt? file [.field "findings"]).bind (·.getArr?.toOption)).getD #[]do
+  for finding in ((jsonAt? file [.field "findings"]).bind (·.getArr?.toOption)).getD #[] do
     ensure ((jsonAt? finding [.field "fix"]).isNone) "ordering: FMT005 carries a fix -- it must not"
 
 /-- FMT004 fires on what a dependent can actually see, and on nothing else.
@@ -158,7 +158,7 @@ private def testRedundant (ctx : Ctx) : IO Unit := do
         "redundant-exported"
   let file ← oneFile reported "redundant-exported"
   ensureEq "redundant: a re-exported import was not reported" ["FMT004"] (codesOf file).toList
-  for finding in ((jsonAt? file [.field "findings"]).bind (·.getArr?.toOption)).getD #[]do
+  for finding in ((jsonAt? file [.field "findings"]).bind (·.getArr?.toOption)).getD #[] do
     ensure ((jsonAt? finding [.field "fix"]).isNone)
         "redundant: FMT004 carries a fix -- it must not"
   ensureJsonAt reported [.field "withheldRedundant"] (Lean.toJson (0 : Nat)) "redundant-exported"

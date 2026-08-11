@@ -189,7 +189,7 @@ private def testBrokenHeaders (root : System.FilePath) (application : String)
   writeFile malformed "module\nimport\n"
   let unresolved := work / "Unresolved.lean"
   writeFile unresolved "module\n\nimport Definitely.Does.Not.Exist\n"
-  for (path, label) in [(malformed, "malformed"), (unresolved, "unresolved")]do
+  for (path, label) in [(malformed, "malformed"), (unresolved, "unresolved")] do
     let report ←
       analyzeExact root application borrowedSetup path.toString path.toString "draft" (viaLakeEnv :=
           true)
@@ -212,7 +212,7 @@ private def testHeaderBlankLines (root : System.FilePath) (application : String)
   writeFile collapsed "module\n\n\n\nimport AdapterSyntax\n\ndef collapsedValue : Nat := 1\n"
   for (path, label, expected) in
     [(grouped, "grouped", groupedHeader),
-      (collapsed, "collapsed", "module\n\nimport AdapterSyntax\n\n")]do
+      (collapsed, "collapsed", "module\n\nimport AdapterSyntax\n\n")] do
     let report ←
       analyzeExact root application borrowedSetup path.toString path.toString "draft" (viaLakeEnv :=
           true)

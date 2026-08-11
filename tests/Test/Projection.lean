@@ -142,7 +142,7 @@ private partial def Walk.subtree (walk : Walk) (index : Nat) : IO (Nat × Array 
     let some childCount := items[3]? |>.bind jsonNat? | fail s!"entry {index} has no child count"
     let mut cursor := index + 1
     let mut children : Array (Array (Nat × Nat)) := #[]
-    for _ in [0:childCount]do
+    for _ in [0:childCount] do
       let (next, spans) ← walk.subtree cursor
       cursor := next
       children := children.push spans
@@ -150,7 +150,7 @@ private partial def Walk.subtree (walk : Walk) (index : Nat) : IO (Nat × Array 
       -- Every alternative parses the same bytes, so only the first may contribute. This is what
       -- `terminalsFrom` assumes and `Syntax.reprint` verifies; here it is verified.
       let some first := children[0]? | fail s!"entry {index} is a choice node with no alternatives"
-      for position in [1:children.size]do
+      for position in [1:children.size] do
         let other := children[position]!
         unless other == first do
           fail
@@ -229,7 +229,7 @@ private def checkProjection (syntaxData artifact : Lean.Json) (raw : String) : I
   let mut previousStop := 0
   -- Ordinary commands, in source order. A command root begins where the previous root's subtree
   -- ended, so the array is a concatenation of whole trees with nothing between them.
-  for position in [0:commands.size]do
+  for position in [0:commands.size] do
     let root := commands[position]!
     let some rootEntry :=
       (root.getObjVal? "entry").toOption |>.bind jsonNat? | fail s!"command {position} has no entry"
@@ -269,7 +269,7 @@ private def checkProjection (syntaxData artifact : Lean.Json) (raw : String) : I
     fail s!"the first leaf starts at {headerStop}, past {normalized.utf8ByteSize} bytes"
   let mut rebuilt := String.Pos.Raw.extract normalized 0 ⟨headerStop⟩
   let mut tileCursor := headerStop
-  for index in [0:spans.size]do
+  for index in [0:spans.size] do
     let (leadingStart, trailingStop) := spans[index]!
     unless leadingStart == tileCursor do
       let shape := if leadingStart > tileCursor then "a hole" else "an overlap"

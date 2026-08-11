@@ -129,7 +129,7 @@ at narrow widths, where a flat boundary's re-measured break is the one that move
 private def testAdmission (ctx : Ctx) : IO Unit := do
   for fixture in fixtures do
     discard <| formatCheck ctx fixture none s!"admission {fixture}"
-  for width in [20, 40]do
+  for width in [20, 40] do
     let config := ctx.work / s!"width-{width}.toml"
     writeFile config s!"[format]\nline-width = {width}\n"
     for fixture in fixtures do
@@ -153,7 +153,7 @@ token. -/
 private def testHygiene (ctx : Ctx) : IO Unit := do
   for fixture in fixtures do
     let mut renders := #[(← ctx.once fixture)]
-    for width in [20, 40]do
+    for width in [20, 40] do
       let config := ctx.work / s!"width-{width}.toml"
       renders := renders.push (← formatCheck ctx fixture (some config) s!"hygiene {fixture}")
     for render in renders do
@@ -242,8 +242,7 @@ private def testAlignment (ctx : Ctx) : IO Unit := do
   -- pin stays, inverted, so a regression that reintroduces the flush form fails loudly again.
   ensureEq "a for over a bracketed collection keeps the space before do" 1
       (count alignment "for value in #[1, 2, 3] do")
-  ensureEq "  ... and the flush form is gone" 0
-      (count alignment "for value in #[1, 2, 3]do")
+  ensureEq "  ... and the flush form is gone" 0 (count alignment "for value in #[1, 2, 3]do")
   ensureEq "  ... and the same loop over an identifier keeps it" 1
       (count alignment "for value in list do")
 
@@ -263,7 +262,7 @@ private def testBoundaries (ctx : Ctx) : IO Unit := do
       "-- the first of two comments above a docstring",
       "-- the second of two comments above a docstring",
       "-- dangling comment after the last statement",
-      "-- indented past every block, aligned with none of them"]do
+      "-- indented past every block, aligned with none of them"] do
     ensureEq s!"placed once: {body}" 1 (count boundaries body)
   -- Ownership, not just presence: the field docstring pins to the line directly above the field.
   ensureEq "the field docstring still precedes its field" "  first : Nat"

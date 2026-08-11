@@ -220,7 +220,7 @@ the import; otherwise the finding is report-only so no comment is dropped. -/
 def duplicateFindings (header : HeaderModel) (normalized : String) : Array Finding :=
   Id.run do
     let mut findings : Array Finding := #[]
-    for h : i in [0:header.imports.size]do
+    for h : i in [0:header.imports.size] do
       let stmt := header.imports[i]
       let isDup :=
         (List.range i).any fun j =>
@@ -254,7 +254,7 @@ sub-block — when none does. -/
 private def subblockIndex (groups : Array String) (module : Lean.Name) : Nat :=
   Id.run do
     let s := module.toString
-    for h : i in [0:groups.size]do
+    for h : i in [0:groups.size] do
       let grp := groups[i]
       if s == grp || s.startsWith (grp ++ ".") then
         return i
@@ -285,7 +285,7 @@ def orderFindings (header : HeaderModel) (normalized : String) (layout : ImportL
       let (bb, bs, bm) := (bucketRank b, subblockIndex groups b.module, b.module.toString)
       ab < bb || (ab == bb && (as_ < bs || (as_ == bs && am < bm)))
     let mut findings : Array Finding := #[]
-    for i in [1:header.imports.size]do
+    for i in [1:header.imports.size] do
       let prev := header.imports[i - 1]!
       let cur := header.imports[i]!
       let outOfOrder :=
@@ -330,7 +330,7 @@ def redundantFindings (header : HeaderModel) (covers : Lean.Name → Lean.Name �
   Id.run do
     let mut findings : Array Finding := #[]
     let mut withheld := 0
-    for h : i in [0:header.imports.size]do
+    for h : i in [0:header.imports.size] do
       let stmt := header.imports[i]
       -- Skip a literal duplicate: FMT003 owns it, not redundancy.
       let isDup :=
@@ -416,7 +416,7 @@ private def canonicalRegion? (header : HeaderModel) (normalized : String) :
   Id.run do
     let mut entries : Array CanonicalImport := #[]
     let mut prevLineEnd : Nat := 0
-    for h : i in [0:header.imports.size]do
+    for h : i in [0:header.imports.size] do
       let stmt := header.imports[i]
       if i > 0 then
         let gap := slice normalized prevLineEnd stmt.lineRange.start
@@ -517,7 +517,7 @@ private def organizeGrouped (header : HeaderModel) (normalized : String) : Strin
     -- Partition imports into groups separated by a blank line or comment.
     let mut groups : Array (Array Nat) := #[]
     let mut current : Array Nat := #[]
-    for i in [0:header.imports.size]do
+    for i in [0:header.imports.size] do
       if i > 0 && groupBreakBetween normalized header.imports[i - 1]! header.imports[i]! then
         groups := groups.push current
         current := #[]
@@ -529,7 +529,7 @@ private def organizeGrouped (header : HeaderModel) (normalized : String) : Strin
     let lastStop := header.imports[header.imports.size - 1]!.range.stop
     -- Rebuild the region [firstStart, lastStop) group by group, preserving the gaps between groups.
     let mut cursor := firstStart
-    for g in [0:groups.size]do
+    for g in [0:groups.size] do
       let group := groups[g]!
       -- Keep, in written order, the first occurrence of each distinct statement.
       let mut kept : Array Nat := #[]

@@ -487,7 +487,7 @@ they are `tokensByNode`. Built in one pass so a whole-tree scan stays linear. -/
 def childAdjacency (source : LosslessSource) : Array (Array Nat) :=
   Id.run do
     let mut adjacency := Array.replicate source.nodes.size #[]
-    for i in [0:source.nodes.size]do
+    for i in [0:source.nodes.size] do
       if let some parent := source.nodes[i]!.parent then
         if parent < adjacency.size then
           adjacency := adjacency.modify parent (·.push i)
@@ -508,7 +508,7 @@ so a rule folding over this sees the non-terminal commands and nothing else. -/
 def topLevelNodes (source : LosslessSource) : Array Nat :=
   Id.run do
     let mut out := #[]
-    for i in [0:source.nodes.size]do
+    for i in [0:source.nodes.size] do
       if (source.nodes[i]!.parent).isNone then
         out := out.push i
     return out
@@ -530,7 +530,7 @@ defect nested arbitrarily deep inside a quotation is still excluded. -/
 def inQuotation (source : LosslessSource) (i : Nat) : Bool :=
   Id.run do
     let mut cursor := some i
-    for _ in [0:source.nodes.size + 1]do
+    for _ in [0:source.nodes.size + 1] do
       match cursor with
       | none =>
         return false

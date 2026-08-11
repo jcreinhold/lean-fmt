@@ -61,7 +61,7 @@ private def widthCase (root setup : System.FilePath) (application : String) (wid
     ensureContains text required s!"width {width}"
   for comment in
     ["/- between focused goals -/", "/- match-arm comment -/", "/- long guarded let -/",
-      "/- long guarded bind -/"]do
+      "/- long guarded bind -/"] do
     ensure ((text.splitOn comment).length == 2)
         s!"width {width}: {comment} does not occur exactly once"
   match (["let first", "let second", "pure second"].map (positionOf? text)).toArray with

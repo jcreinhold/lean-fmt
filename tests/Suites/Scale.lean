@@ -44,7 +44,7 @@ private def testCold (ctx : Ctx) : IO String := do
   let paths := pathsOf report
   ensureEq "cold: selection"
       ["Demo.lean", "Nested/lakefile.lean", "lakefile.lean", "scripts/Standalone.lean"] paths
-  for file in ((jsonAt? report [.field "files"]).bind (·.getArr?.toOption)).getD #[]do
+  for file in ((jsonAt? report [.field "files"]).bind (·.getArr?.toOption)).getD #[] do
     ensureJsonAt file [.field "status"] (Lean.toJson "clean") "cold"
   ensureJsonAt report [.field "infrastructureFailures"] (.arr #[]) "cold"
   return report.compress
@@ -137,7 +137,7 @@ private def testDescriptorClosure (ctx : Scale.Ctx) : IO Unit := do
   copyFile (ctx.root / "lean-toolchain") (project / "lean-toolchain")
   writeFile (project / "lakefile.lean")
       "import Lake\n\nopen Lake DSL\n\npackage \"fdgate-fixture\"\n"
-  for i in [0:120]do
+  for i in [0:120] do
     writeFile (project / "scripts" / s!"F{i}.lean") s!"module\n\ndef  value{i} :Nat:={i}\n"
   let result ←
     expectExit 1 "descriptor closure" ctx.application

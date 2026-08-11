@@ -119,7 +119,7 @@ private def kindOfNode (source : LosslessSource) (index : Nat) : String :=
 def validateMap (draft : FormatDraft) : Except ValidationFailure Unit := do
   let mut sourceCursor := 0
   let mut outputCursor := 0
-  for index in [0:draft.sourceMap.size]do
+  for index in [0:draft.sourceMap.size] do
     let mark := draft.sourceMap[index]!
     unless mark.source.start <= mark.source.stop && mark.output.start <= mark.output.stop do
       return ← fail .sourceMap s!"map unit {index} has an inverted range"
@@ -189,7 +189,7 @@ def compare (beforeText : String) (before : LosslessSource) (afterText : String)
         fail .structure
             s!"node count changed: {before.nodes.size} -> {after.nodes.size}\
       {firstNodeDivergence beforeText before afterText after}"
-  for index in [0:before.nodes.size]do
+  for index in [0:before.nodes.size] do
     let left := before.nodes[index]!
     let right := after.nodes[index]!
     let leftKind := kindOfNode before index
@@ -200,7 +200,7 @@ def compare (beforeText : String) (before : LosslessSource) (afterText : String)
               s!"node {index} changed kind/parent: {leftKind}/{left.parent} -> {rightKind}/{right.parent}"
   unless before.tokens.size == after.tokens.size do
     return ← fail .tokens s!"token count changed: {before.tokens.size} -> {after.tokens.size}"
-  for index in [0:before.tokens.size]do
+  for index in [0:before.tokens.size] do
     let left := before.tokens[index]!
     let right := after.tokens[index]!
     unless left.node == right.node do
@@ -248,7 +248,7 @@ def admit (beforeText : String) (before : LosslessSource) (first : FormatDraft)
           fail .comments
               s!"comment contract count changed: \
         {first.commentContract.size} -> {second.commentContract.size}"
-    for index in [0:first.commentContract.size]do
+    for index in [0:first.commentContract.size] do
       let left := first.commentContract[index]!
       let right := second.commentContract[index]!
       unless left == right do

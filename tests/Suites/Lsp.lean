@@ -82,7 +82,7 @@ private partial def parseFrames (bytes : ByteArray) (label : String) (index : Na
     return acc
   let mut headerStop := index
   let mut found := false
-  for i in [index:bytes.size - 3]do
+  for i in [index:bytes.size - 3] do
     if
         !found && bytes[i]! == 0x0D && bytes[i + 1]! == 0x0A && bytes[i + 2]! == 0x0D &&
           bytes[i + 3]! == 0x0A then
@@ -92,7 +92,7 @@ private partial def parseFrames (bytes : ByteArray) (label : String) (index : Na
     throw <| IO.userError s!"{label}: unterminated header at {index}"
   let header := (String.fromUTF8! (bytes.extract index headerStop))
   let mut length? : Option Nat := none
-  for line in header.splitOn "\r\n"do
+  for line in header.splitOn "\r\n" do
     if line.startsWith "Content-Length:" then
       length? := some (line.drop "Content-Length:".length).trimAscii.toString.toNat!
   let some length := length? | throw <| IO.userError s!"{label}: no Content-Length in {header}"
@@ -646,7 +646,7 @@ private def testSuperseded (ctx : Ctx) : IO Unit := do
   let ((), code) ←
     liveSession ctx (debounceMs := 80) do
         openDocument (layoutUri ctx) layoutSource
-        for version in [2, 3, 4]do
+        for version in [2, 3, 4] do
           notify "textDocument/didChange"
               (Json.mkObj
                 [("textDocument",

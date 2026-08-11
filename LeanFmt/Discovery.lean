@@ -178,7 +178,7 @@ private def excludesFileIn? (path : FilePath) : IO (Option String) := do
     return none
   let text ← IO.FS.readFile path
   let mut currentSection := ""
-  for line in text.splitOn "\n"do
+  for line in text.splitOn "\n" do
     let line := line.trimAscii.toString
     if line.startsWith "[" then
       let name := ((line.drop 1).toString.takeWhile (· != ']')).trimAscii.toString.toLower
@@ -318,7 +318,7 @@ private partial def walkDirectory (root : FilePath) (explicit? : Option Formatte
       current ← FormatterConfig.loadFrom root configPath relative
       accumulated := { accumulated with configs := accumulated.configs.push (relative, current) }
   if current.respectGitignore then
-    for name in [".gitignore", ".ignore"]do
+    for name in [".gitignore", ".ignore"] do
       let path := directory / name
       if ← path.pathExists then
         let layer ← readIgnoreFile path relative

@@ -87,7 +87,7 @@ private def testWidth80 (root setup : System.FilePath) (application : String) : 
   ensureContains text "consumeFive alpha beta gamma delta epsilon" "width 80"
   ensureContains text "fun (first : Nat) (second : Nat) =>" "width 80"
   for flat in
-    ["alpha + beta * gamma + delta", "(f := fun value => value + 1)", "`(alpha + beta * gamma)"]do
+    ["alpha + beta * gamma + delta", "(f := fun value => value + 1)", "`(alpha + beta * gamma)"] do
     ensureContains text flat "width 80"
   ensureContains text "else if second then" "width 80"
   ensureContains text "let (actual, _) := value" "width 80"

@@ -117,7 +117,7 @@ private def testNegatives (ctx : Ctx) : IO Unit := do
       ("near-010", "NearAttr.lean"), ("near-011", "NearDeriving.lean"),
       ("near-012", "NearOption.lean"), ("near-013", "NearParen.lean"), ("comment", "Comment.lean"),
       ("quote-paren", "QuoteParen.lean"), ("quote-attr", "QuoteAttr.lean"),
-      ("custom-syntax", "CustomSyntax.lean")]do
+      ("custom-syntax", "CustomSyntax.lean")] do
     expectCodes ctx label fixture [] allSix
 
 /-- An unparseable file is `broken`, reported without a crash and without a false finding: a

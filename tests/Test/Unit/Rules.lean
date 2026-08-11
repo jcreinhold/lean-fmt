@@ -163,7 +163,7 @@ private def testSourceSecurityProperties : IO Unit := do
     Id.run do
       let mut acc : Array (String × Nat × Nat) := #[]
       let bytes := s.toUTF8
-      for i in [0:bytes.size]do
+      for i in [0:bytes.size] do
         if forbidden (bytes.get! i).toNat then
           acc := acc.push ("FMT001", i, i + 1)
       let mut pos := 0
@@ -190,11 +190,11 @@ private def testSourceSecurityProperties : IO Unit := do
     #[0x00, 0x07, 0x1b, 0x1f, 0x7f, 0x09, 0x0a, 0x061c, 0x200f, 0x202a, 0x202e, 0x2066, 0x2069,
       0x41, 0x20, 0x30, 0x22, 0x2f, 0xe9, 0x4e2d, 0x1f600]
   let mut seed : Nat := 0x9e3779b9
-  for _ in [0:120]do
+  for _ in [0:120] do
     seed := (seed * 1103515245 + 12345) % 2147483648
     let len := seed % 48
     let mut s := ""
-    for _ in [0:len]do
+    for _ in [0:len] do
       seed := (seed * 1103515245 + 12345) % 2147483648
       s := s.push (Char.ofNat pool[seed % pool.size]!)
     check s
@@ -307,7 +307,7 @@ private def testApplicability : IO Unit := do
       "a display-only fix was admitted"
   -- Wire round-trip and stable spellings.
   for (a, wire) in
-    #[(Applicability.safe, "safe"), (.unsafe, "unsafe"), (.displayOnly, "display-only")]do
+    #[(Applicability.safe, "safe"), (.unsafe, "unsafe"), (.displayOnly, "display-only")] do
     ensure (a.toWire == wire) s!"applicability wire spelling changed for {wire}"
     ensure
         (match (Lean.fromJson? (Lean.toJson a) : Except String Applicability) with

@@ -104,7 +104,7 @@ public def ensureFlex (label : String) (text : String) (pattern : FlexPattern) :
 /-- Assert `text` ends with no trailing whitespace on any line — every width's render in the old
 blocks asserted this. -/
 public def ensureNoTrailingWhitespace (label : String) (text : String) : IO Unit := do
-  for line in text.splitOn "\n"do
+  for line in text.splitOn "\n" do
     ensure (!(line.endsWith " ") && !(line.endsWith "\t"))
         s!"{label}: trailing whitespace on line {repr line}"
 

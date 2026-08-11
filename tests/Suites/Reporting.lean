@@ -84,7 +84,7 @@ private def testFlagSurface (ctx : Ctx) : IO Unit := do
   ensureEq "  ... with exit 2" 2 unknown.exitCode
   -- §2.3 — a finding-shaped format for `diff`, whose product is a patch and which was *measured*
   -- to carry no findings at all. Rejected rather than rendered empty.
-  for format in ["concise", "github", "sarif", "junit"]do
+  for format in ["concise", "github", "sarif", "junit"] do
     let rejected ← fmt ctx #["format", "--diff", findings, "--output-format", format]
     ensureEq s!"--output-format {format} is rejected for diff"
         s!"--output-format {format} is not available for diff; diff reports a patch, not findings"
@@ -114,7 +114,7 @@ private def testJsonCompat (ctx : Ctx) : IO Unit := do
 private def testExitCodes (ctx : Ctx) : IO Unit := do
   let baseline ← fmtCode ctx #["check", findings]
   ensureEq "the baseline is the CI failure code" 1 baseline
-  for format in ["concise", "json", "github", "sarif", "junit"]do
+  for format in ["concise", "json", "github", "sarif", "junit"] do
     ensureEq s!"{format} agrees with text on the exit code" baseline
         (← fmtCode ctx #["check", findings, "--output-format", format])
 
@@ -363,7 +363,7 @@ private def testOutputFiles (ctx : Ctx) : IO Unit := do
 -- turned into a success, which would make the pipe a way to silence CI. The pipeline needs
 -- PIPESTATUS, so it runs under bash.
 private def testBrokenPipe (ctx : Ctx) : IO Unit := do
-  for format in ["text", "concise", "json", "github", "sarif", "junit"]do
+  for format in ["text", "concise", "json", "github", "sarif", "junit"] do
     let script :=
       "err=$(\"$APP\" check \"$FINDINGS\" --output-format \"$FMT\" 2>&1 >/dev/null \
         | head -1)\n\

@@ -372,7 +372,7 @@ private def testPipes (ctx : Ctx) : IO Unit := do
   let big := ctx.work / "big.lean"
   IO.FS.withFile big .write fun handle => do
       handle.putStr "module\n\n"
-      for i in [0:6001]do
+      for i in [0:6001] do
         handle.putStr s!"def  x{i}   :=   {i}\n\n"
   let errPath := ctx.work / "pipe.err"
   let pipeScript := ctx.work / "pipe.sh"

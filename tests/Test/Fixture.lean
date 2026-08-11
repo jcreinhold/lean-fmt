@@ -61,7 +61,7 @@ public def copyFile (source destination : System.FilePath) : IO Unit := do
 matched against each entry's file name). -/
 public partial def copyTree (source destination : System.FilePath)
     (skip : Array String := #[".lake", ".git", ".lean-fmt-cache"]) : IO Unit := do
-  for entry in (← source.readDir)do
+  for entry in (← source.readDir) do
     unless skip.contains entry.fileName do
       if (← entry.path.isDir) then
         copyTree entry.path (destination / entry.fileName) skip

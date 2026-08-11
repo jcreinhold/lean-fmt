@@ -33,7 +33,7 @@ private def testMatrixCoverage (root : System.FilePath) : IO Unit := do
     ids := ids.push id
     families := families.push ((row.getObjValAs? String "family").toOption.getD "")
     owners := owners.push ((row.getObjValAs? String "owner").toOption.getD "")
-    for key in ["flat", "broken", "comment"]do
+    for key in ["flat", "broken", "comment"] do
       let value := (row.getObjValAs? String key).toOption.getD ""
       ensure (!value.trimAscii.isEmpty) s!"style row {id} has an empty {key}"
     ensureContains doc s!"`{id}`" s!"style row {id} missing from docs/style.md"
@@ -44,9 +44,9 @@ private def testMatrixCoverage (root : System.FilePath) : IO Unit := do
       (required.all fun family =>
         families.contains family && (families.toList.eraseDups.length == required.length))
       s!"style matrix families changed: {families.toList.eraseDups}"
-  for owner in ["11", "11b", "12", "12b", "13", "14"]do
+  for owner in ["11", "11b", "12", "12b", "13", "14"] do
     ensure (owners.contains owner) s!"style matrix lost owner {owner}"
-  for needle in ["format-ignore-next", "two spaces", "line width"]do
+  for needle in ["format-ignore-next", "two spaces", "line width"] do
     ensureContains doc needle "docs/style.md"
 
 /-- The frozen intended candidate: admitted by the oracle, changed exactly one file's bytes, and

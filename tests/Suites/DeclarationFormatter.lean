@@ -120,7 +120,7 @@ private def testComments (root setup : System.FilePath) (application : String) :
   let (_, text) ← canonical report "comments"
   for payload in
     ["/-- The declaration payload is exact. -/", "-- trailing body payload",
-      "/-- The field payload is exact. -/"]do
+      "/-- The field payload is exact. -/"] do
     ensure ((text.splitOn payload).length == 2) s!"comments: {payload} does not occur exactly once"
 
 /-- `declaration-body`: the canonical `next-line` default breaks even a short body in both
@@ -162,7 +162,7 @@ private def testDeclarationBody (root work setup : System.FilePath) (application
       "    Nat := firstArgument + secondArgument + thirdArgument + \
     fourthArgumentXY + 111111111111111111111"
       "same-line declined a joined line that fits the margin exactly"
-  for line in joinedText.splitOn "\n"do
+  for line in joinedText.splitOn "\n" do
     ensure (line.length <= 100) s!"same-line put a row over the margin: {line}"
 
 /-- `declaration-where`: the default `same-line` keeps `where` on the signature row whenever the
@@ -210,7 +210,7 @@ private def testDeclarationWhere (root work setup : System.FilePath) (applicatio
   -- (103). No break placement joins this one, which is what the header measure has to cover for.
   ensureContains text "GenerousLongNames.Inner\n    where\n  solo := 0"
       "the default joined a `where` onto a return type that fills its own row"
-  for line in text.splitOn "\n"do
+  for line in text.splitOn "\n" do
     ensure (line.length <= 100) s!"the default put a row over the margin: {line}"
   let nextLine : LeanFmt.Internal.FormatConfig := { declarationWhere := .nextLine }
   let broken ←
@@ -251,7 +251,7 @@ private def testCommentReflow (root work setup : System.FilePath) (application :
         pinned ++
         "\n  have h : 1 + 1 = 2 := rfl -- trailing bytes stay\n  exact h\n")
   let ensureFits (width : Nat) (text : String) : IO Unit := do
-    for line in text.splitOn "\n"do
+    for line in text.splitOn "\n" do
       ensure (line.length <= width) s!"a row over the margin survived reflow: {line}"
   let default : LeanFmt.Internal.FormatConfig := { }
   let off ←

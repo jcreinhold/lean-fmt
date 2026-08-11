@@ -121,7 +121,7 @@ private def parseTraceFacts? (json : Lean.Json) : Option TraceFacts := do
     let some entries := oleans.getArr?.toOption | none
     for entry in entries do
       artifactHashes := artifactHashes.push (← hashOf entry)
-  for key in ["rs", "r"]do
+  for key in ["rs", "r"] do
     if let some value := (outputs.getObjVal? key).toOption then
       artifactHashes := artifactHashes.push (← hashOf value)
   let some inputs := (json.getObjVal? "inputs").toOption | none
@@ -329,7 +329,7 @@ private def testMergeAnalysis : IO Unit := do
   let broken : SemanticAnalysis := { result? := none, diagnostics := #["elaboration failed"] }
   let provided (analysis : SemanticAnalysis) : Cache.Decision.Provided := providedOf analysis
   -- A poorer rewrite of the same bytes keeps the richer entry's capabilities, in both orders.
-  for merged in [mergeAnalysis rich poor, mergeAnalysis poor rich]do
+  for merged in [mergeAnalysis rich poor, mergeAnalysis poor rich] do
     ensure (provided merged == .success .semantic ⟨true⟩ true)
         "poorer rewrite displaced a capability the richer entry carried"
   -- Canonical text grafts onto a fresh analysis that did not render it.

@@ -644,7 +644,7 @@ but the exact one. The constraint being gated never moved: rule selection is a p
 canonical results and must not pick a strategy. -/
 private def testRenderPath (ctx : Ctx) : IO Unit := do
   let profileEnv := #[("LEAN_FMT_PROFILE_PHASES", some "1")]
-  for (label, extra) in [("plain", #[]), ("fmt011", #["--preview", "--select", "FMT011"])]do
+  for (label, extra) in [("plain", #[]), ("fmt011", #["--preview", "--select", "FMT011"])] do
     let result ←
       checkRaw ctx 1
           (#["format", "--check", "--root", ".", "--json", "--no-cache"] ++ extra ++

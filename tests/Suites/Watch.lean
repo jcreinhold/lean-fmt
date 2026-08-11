@@ -52,7 +52,7 @@ private def testMtimeGranularity (ctx : Ctx) : IO Unit := do
   let probe := ctx.work / "mtime-probe.txt"
   let nanos (m : IO.FS.Metadata) : Int := m.modified.sec * 1000000000 + m.modified.nsec.toNat
   let mut resolvedAt : Option UInt32 := none
-  for gapMs in [0, 1, 4, 16, 64, 256, 512]do
+  for gapMs in [0, 1, 4, 16, 64, 256, 512] do
     if resolvedAt.isSome then
       break
     writeFile probe "AAAA"

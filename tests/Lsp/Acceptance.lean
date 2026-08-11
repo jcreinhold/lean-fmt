@@ -320,7 +320,7 @@ mid-flight, must come back sooner than it takes to finish. -/
 private def slowSource : String :=
   Id.run do
     let mut source := "module\nimport Lean\n\nnamespace LspCancellation\n\n"
-    for i in [0:2500]do
+    for i in [0:2500] do
       source := source ++ s!"def cancellation_{i} : Nat := {i}\n"
     return source ++ "\nend LspCancellation\n"
 
@@ -439,7 +439,7 @@ private def memoryStability (h : Harness) : IO Unit := do
     let mut first := 0
     let mut peak := 0
     let mut last := 0
-    for i in [0:100]do
+    for i in [0:100] do
       -- Alternated so the hundred are not all one code path: formatting reads the richest envelope;
       -- code actions share it for fix-all/quickfix and separately validate organize-imports.
       if i % 2 == 0 then

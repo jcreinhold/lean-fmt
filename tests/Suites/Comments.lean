@@ -43,7 +43,7 @@ private def ensureSummary (summary : Lean.Json) (label : String)
     (comments leading trailing dangling suppressed : Nat) (digest : String) : IO Unit := do
   for (key, expected) in
     [("comments", comments), ("leading", leading), ("trailing", trailing), ("dangling", dangling),
-      ("suppressed", suppressed)]do
+      ("suppressed", suppressed)] do
     ensureJsonAt summary [.field key] (Lean.toJson expected) label
   ensureJsonAt summary [.field "payloadDigest"] (Lean.toJson digest) label
 
@@ -95,7 +95,7 @@ private def testLayoutWidths (root : System.FilePath) (application : String)
       "/- before entry -/", "-- trailing tactic", "/- alternative comment -/", "-- leading item",
       "-- trailing item", "/- between items -/", "/- arm body -/", "/- local declaration -/"]
   let mut texts : Array String := #[]
-  for width in [24, 60, 100]do
+  for width in [24, 60, 100] do
     let report ←
       analyzeExact root application setup "tests/fixtures/comments/Layout.lean"
           "tests/fixtures/comments/Layout.lean" s!"4:{width}"
@@ -149,7 +149,7 @@ private def testImportComments (root : System.FilePath) (application : String)
   for row in
     ["public import Lean.Data.Json -- this trailing comment makes the line longer than one hundred characters and must not split the import row",
       "public import Lean.PrettyPrinter.Delaborator.FieldNotation -- shake: keep (required by artifact evidence for this module)",
-      "public import Lean.PrettyPrinter.Delaborator.FieldNotation -- an ordinary comment"]do
+      "public import Lean.PrettyPrinter.Delaborator.FieldNotation -- an ordinary comment"] do
     ensureContains wideText (row ++ "\n") s!"a trailing comment left its import row: {row}"
   let narrow ←
     analyzeExact root application setup "tests/fixtures/comments/Imports.lean"

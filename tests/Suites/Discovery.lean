@@ -97,10 +97,10 @@ private def gate (json : Lean.Json) (label : String) : IO Nat :=
 private def testNested (ctx : Ctx) : IO Unit := do
   let nested := ctx.work / "nested"
   newProject ctx nested
-  for dir in ["app", "lib/deep", "skipped"]do
+  for dir in ["app", "lib/deep", "skipped"] do
     IO.FS.createDirAll (nested / dir)
   for file in
-    ["Root.lean", "app/App.lean", "lib/Lib.lean", "lib/deep/Deep.lean", "skipped/Skipped.lean"]do
+    ["Root.lean", "app/App.lean", "lib/Lib.lean", "lib/deep/Deep.lean", "skipped/Skipped.lean"] do
     writeFile (nested / file) "module\n"
   writeFile (nested / ".lean-fmt.toml") "exclude = [\"skipped\"]\n[format]\nline-width = 100\n"
   writeFile (nested / "lib" / ".lean-fmt.toml")
@@ -255,12 +255,12 @@ private def testIgnoreSources (ctx : Ctx) : IO Unit := do
   let ign := ctx.work / "ignore"
   newProject ctx ign
   IO.FS.createDirAll (ign / ".git" / "info")
-  for dir in ["build", "keep", "dot"]do
+  for dir in ["build", "keep", "dot"] do
     IO.FS.createDirAll (ign / dir)
   writeFile (ign / ".git" / "HEAD") "ref: refs/heads/main\n"
   for file in
     ["build/Built.lean", "keep/Keep.lean", "keep/Scratch.tmp.lean", "dot/Dot.lean",
-      "Excluded.lean"]do
+      "Excluded.lean"] do
     writeFile (ign / file) "module\n"
   writeFile (ign / ".gitignore") "build/\n*.tmp.lean\n"
   writeFile (ign / ".git" / "info" / "exclude") "Excluded.lean\n"
@@ -342,7 +342,7 @@ private def testIntrospection (ctx : Ctx) : IO Unit := do
 
 /-- One profiling line from stderr: `phase.discovery_ms=N`. -/
 private def discoveryMs (stderr : String) (label : String) : IO Nat := do
-  for line in stderr.splitOn "\n"do
+  for line in stderr.splitOn "\n" do
     if line.startsWith "phase.discovery_ms=" then
       match (line.drop "phase.discovery_ms=".length).toString.toNat? with
       | some n =>
@@ -360,18 +360,18 @@ private def testLargeTree (ctx : Ctx) : IO Unit := do
   newProject ctx big
   -- 1,000 sources across 100 directories, 10 nested configs, and a 200-file ignored subtree:
   -- enough for the walk to dominate any fixed cost, and shaped like a real project.
-  for d in [0:100]do
+  for d in [0:100] do
     -- Zero-padded, as the old generator named them.
     let directory :=
       big / s!"pkg{(if d / 20 < 10 then "0" else "")}{d / 20}" /
         s!"mod{(if d < 10 then "00" else if d < 100 then "0" else "")}{d}"
     IO.FS.createDirAll directory
-    for f in [0:10]do
+    for f in [0:10] do
       writeFile (directory / s!"F{f}.lean") "module\n"
     if d % 10 == 0 then
       writeFile (directory / ".lean-fmt.toml") "[format]\nline-width = 80\n"
   IO.FS.createDirAll (big / "ignored")
-  for f in [0:200]do
+  for f in [0:200] do
     writeFile (big / "ignored" / s!"I{f}.lean") "module\n"
   writeFile (big / ".gitignore") "ignored/\n"
   let deepTarget := big / "pkg04" / "mod099" / "F9.lean"

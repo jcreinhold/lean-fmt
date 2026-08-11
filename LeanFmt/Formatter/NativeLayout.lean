@@ -2917,7 +2917,7 @@ private def finishAnchors (result : Transformed) :
     StateT TransformState (Except String) Transformed := do
   let some span := result.span? | return result
   let mut result := result
-  for index in [0:(← get).anchors.size]do
+  for index in [0:(← get).anchors.size] do
     let state ← get
     let interval := state.anchors[index]!
     if state.appliedAnchors.contains index then
@@ -3651,7 +3651,7 @@ private partial def transformNative : Std.Format → StateT TransformState (Exce
     let mut closesAfterLeft : Array Nat := #[]
     let mut closesAfterRight : Array Nat := #[]
     let mut hoist? := hoist?
-    for index in [0:(← get).anchors.size]do
+    for index in [0:(← get).anchors.size] do
       let state ← get
       let interval := state.anchors[index]!
       if state.appliedAnchors.contains index then

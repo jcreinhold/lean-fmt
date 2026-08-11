@@ -242,7 +242,7 @@ private def buildFormatDraft (normalized : String) (source : LosslessSource)
     document? :=
       appendDocument document? <| Doc.mark headerRange (formatted.document ++ headerSeparator)
   let mut sequence := Formatter.Command.sequence
-  for h : index in [0:commands.size]do
+  for h : index in [0:commands.size] do
     checkCancelled
     let command := commands[index]
     let (nextSequence, placement) := Formatter.Command.place sequence command.stx
@@ -1383,8 +1383,7 @@ unsafe def compilerArtifact? (moduleName : Lean.Name) (moduleFile : System.FileP
   let files :=
     if moduleData.isModule then
       #[moduleFile, serverFile?.getD (Lean.OLeanLevel.server.adjustFileName moduleFile)]
-    else
-      #[moduleFile]
+    else #[moduleFile]
   let artifacts : Lean.NameMap Lean.ImportArtifacts :=
     ({ } : Lean.NameMap Lean.ImportArtifacts).insert moduleName (.ofArrays #[files])
   let environment ←

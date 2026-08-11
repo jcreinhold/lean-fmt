@@ -91,7 +91,7 @@ private def treeMetadata (root : System.FilePath) : IO String := do
   let entries ← root.walkDir
   let rootPrefix := root.toString ++ "/"
   let mut lines : Array String := #[]
-  for path in entries.toList.mergeSort (toString · < toString ·)do
+  for path in entries.toList.mergeSort (toString · < toString ·) do
     -- Files only: namespaced modules nest their sidecars in subdirectories, and a directory
     -- has no digest to take.
     if (← path.metadata).type == .file then
@@ -105,7 +105,7 @@ moved instead of two whole trees. -/
 private def ensureTreeUnchanged (label : String) (before after : String) : IO Unit := do
   let beforeLines := (before.splitOn "\n").toArray
   let afterLines := (after.splitOn "\n").toArray
-  for i in [:max beforeLines.size afterLines.size]do
+  for i in [:max beforeLines.size afterLines.size] do
     let beforeLine := beforeLines[i]?.getD "<absent>"
     let afterLine := afterLines[i]?.getD "<absent>"
     -- The follower lines indent so the runner's failure digest keeps them.
@@ -474,27 +474,27 @@ private def testRulesRegistry (ctx : Ctx) : IO Unit := do
   let flag (code key : String) : Bool := ((field (byCode code) key).getBool?).toOption.getD false
   let text (code key : String) : String := (field (byCode code) key).getStr?.toOption.getD ""
   -- The source-security rules are report-only and their own category.
-  for code in ["FMT001", "FMT002"]do
+  for code in ["FMT001", "FMT002"] do
     ensure (!(flag code "fixable") && text code "category" == "security") s!"{code} security"
   ensure (flag "FMT003" "fixable" && text "FMT003" "category" == "imports") "FMT003"
-  for code in ["FMT004", "FMT005"]do
+  for code in ["FMT004", "FMT005"] do
     ensure (!(flag code "fixable") && text code "category" == "imports") s!"{code} imports"
   -- FMT001/002 and FMT003-005 are the default-enabled, source-tier rules.
-  for code in ["FMT001", "FMT002", "FMT003", "FMT004", "FMT005"]do
+  for code in ["FMT001", "FMT002", "FMT003", "FMT004", "FMT005"] do
     ensure (flag code "defaultEnabled" && text code "input" == "source") s!"{code} source tier"
   -- FMT006-011 ship as preview: off by default, syntax tier, explicit --select only.
-  for code in ["FMT006", "FMT007", "FMT008", "FMT009", "FMT010", "FMT011"]do
+  for code in ["FMT006", "FMT007", "FMT008", "FMT009", "FMT010", "FMT011"] do
     ensure (!(flag code "defaultEnabled") && text code "input" == "syntax") s!"{code} preview"
   ensure (text "FMT006" "category" == "docs" && !(flag "FMT006" "fixable")) "FMT006"
   ensure (text "FMT007" "category" == "structure" && !(flag "FMT007" "fixable")) "FMT007"
   ensure (text "FMT010" "category" == "debug" && !(flag "FMT010" "fixable")) "FMT010"
-  for code in ["FMT008", "FMT009", "FMT011"]do
+  for code in ["FMT008", "FMT009", "FMT011"] do
     ensure (flag code "fixable" && text code "category" == "redundancy") s!"{code} redundancy"
   -- FMT012-015 are semantic-tier preview rules; only FMT012 carries a fix (unsafe).
-  for code in ["FMT012", "FMT013", "FMT014", "FMT015"]do
+  for code in ["FMT012", "FMT013", "FMT014", "FMT015"] do
     ensure (!(flag code "defaultEnabled") && text code "input" == "semantic") s!"{code} semantic"
   ensure (flag "FMT012" "fixable") "FMT012 fixable"
-  for code in ["FMT013", "FMT014", "FMT015"]do
+  for code in ["FMT013", "FMT014", "FMT015"] do
     ensure (!(flag code "fixable")) s!"{code} report-only"
   ensure (text "FMT012" "category" == "deprecation") "FMT012"
   ensure (text "FMT013" "category" == "unused" && text "FMT014" "category" == "unused") "FMT013/14"
@@ -747,7 +747,7 @@ private def testCompositionConfluence (ctx : Ctx) : IO Unit := do
       "order B not a format fixed point"
   for (file, label) in
     [("tests/modes/.rdf-final-comp-a.lean", "comp A check"),
-      ("tests/modes/.rdf-final-comp-b.lean", "comp B check")]do
+      ("tests/modes/.rdf-final-comp-b.lean", "comp B check")] do
     let check ← runJson ctx 0 label (checkArgs file)
     ensureJsonAt check [.field "files", .index 0, .field "status"] (Lean.toJson "clean") label
     ensureEq label ([] : List String) (findingCodes check)
@@ -898,7 +898,7 @@ private def testRcdFloor (ctx : Ctx) : IO Unit := do
       run ctx 2 s!"floor {mode}"
           (command ++ #["--root", ".", "--no-cache", ".lake/build/.rcd-impl-floor.lean"])
     ensure (plain.stderr.contains "inside the Lake build directory") "the floor is not named"
-    for setting in ["on", "off"]do
+    for setting in ["on", "off"] do
       let configured ←
         run ctx 2 s!"floor {mode} {setting}"
             (command ++
@@ -1057,7 +1057,7 @@ public def main (args : List String) : IO UInt32 := do
       writeFile (work / "crash-hook") "#!/bin/sh\nexit 1\n"
       writeFile (work / "fin-stale-hook")
           "#!/bin/sh\nprintf '\\n-- concurrent change\\n' >>\"$1\"\n"
-      for hook in ["reject-validator", "stale-hook", "crash-hook", "fin-stale-hook"]do
+      for hook in ["reject-validator", "stale-hook", "crash-hook", "fin-stale-hook"] do
         discard <| expectExit 0 "chmod" "chmod" #["+x", (work / hook).toString]
       removeDirAll? ctx.cacheRoot
       discard <|
@@ -1119,11 +1119,11 @@ public def main (args : List String) : IO UInt32 := do
           ".rdf-impl-mixed.lean", ".rdf-final-comp-a.lean", ".rdf-final-comp-b.lean",
           ".fip-final-exact.lean", ".fip-final-broken.lean", ".fip-final-crlf.lean",
           ".fip-final-string.lean", ".fip-final-stale.lean", ".fip-final-incl.lean",
-          ".fip-final-excl.lean", ".rcd-impl-excluded.lean"]do
+          ".fip-final-excl.lean", ".rcd-impl-excluded.lean"] do
         removeFile? (ctx.modesDir / name)
       removeFile? (root / ".lake" / "build" / ".rcd-impl-floor.lean")
       removeFile? (root / ".lake" / "build" / "lean-fmt-clean-sentinel")
-      for orphan in ← Modes.tmpOrphans ctx.modesDir ".fip-final-"do
+      for orphan in ← Modes.tmpOrphans ctx.modesDir ".fip-final-" do
         if orphan.contains "lean-fmt-tmp-" then
           removeFile? (ctx.modesDir / orphan)
       return code

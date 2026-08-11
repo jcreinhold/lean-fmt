@@ -158,7 +158,7 @@ private def shiftInfoField (entry : Lean.Json) (field : Nat) (delta : Int) : Lea
 /-- Array positions of the original-info leaves, in pre-order (which is array order). -/
 private def leafPositions (entries : Array Lean.Json) : IO (Array Nat) := do
   let mut found := #[]
-  for index in [0:entries.size]do
+  for index in [0:entries.size] do
     match entries[index]! with
     | .arr items =>
       let tag :=
@@ -239,7 +239,7 @@ private partial def subtreeLeaves (entries : Array Lean.Json) (index : Nat) :
         | fail "node without child count"
       let mut cursor := index + 1
       let mut found := #[]
-      for _ in [0:childCount]do
+      for _ in [0:childCount] do
         let (next, child) ← subtreeLeaves entries cursor
         cursor := next
         found := found ++ child
@@ -254,7 +254,7 @@ private partial def subtreeLeaves (entries : Array Lean.Json) (index : Nat) :
 /-- Entry positions of the leaves under the second alternative of the first choice node. -/
 private partial def choiceAlternative (entries : Array Lean.Json) (kinds : Array String) :
     IO (Array Nat) := do
-  for index in [0:entries.size]do
+  for index in [0:entries.size] do
     match entries[index]! with
     | .arr items =>
       let tag :=
@@ -277,7 +277,7 @@ private partial def choiceAlternative (entries : Array Lean.Json) (kinds : Array
             | fail "choice node without child count"
           let mut cursor := index + 1
           let mut alternatives := #[]
-          for _ in [0:childCount]do
+          for _ in [0:childCount] do
             let (next, child) ← subtreeLeaves entries cursor
             cursor := next
             alternatives := alternatives.push child

@@ -318,7 +318,7 @@ private def forbiddenControlByte (facts : SourceFacts) : Array Finding :=
   Id.run do
     let bytes := facts.bytes
     let mut findings := #[]
-    for index in [0:bytes.size]do
+    for index in [0:bytes.size] do
       let byte := bytes.get! index
       if isForbiddenControl byte then
         findings := findings.push (controlFinding index byte.toNat)
@@ -451,7 +451,7 @@ private def moduleDocRequired (facts : SyntaxFacts) : Array Finding :=
     let projection := facts.projection
     let mut firstDecl : Option Nat := none
     let mut hasModuleDoc := false
-    for i in [0:projection.nodes.size]do
+    for i in [0:projection.nodes.size] do
       -- A `moduleDoc` or `declaration` inside a `` `(…) `` quotation is quoted data, not
       -- this module's own docstring or declaration, so it neither satisfies nor triggers the
       -- requirement.
@@ -584,7 +584,7 @@ private def duplicateSiblings (bytes : ByteArray) (projection : LosslessSource)
     let members := (childAdjacency[nodeIndex]!).filter fun j => projection.kindOf j == memberKind
     let mut texts : Array String := #[]
     let mut findings := #[]
-    for idx in [0:members.size]do
+    for idx in [0:members.size] do
       let range := projection.nodes[members[idx]!]!.range
       -- The node range is the leaf hull, so leading/trailing trivia is already excluded;
       -- the text is the instance's own bytes, and two exact duplicates compare equal here.
@@ -618,7 +618,7 @@ private def duplicateAttribute (facts : SyntaxFacts) : Array Finding :=
     -- group node, so the `attrInstance`s are children of that group, not of `attributes` directly.
     -- Grouping by the actual parent (any node with `attrInstance` children) survives that
     -- intermediate, as FMT009 does for `derivingClass`.
-    for i in [0:projection.nodes.size]do
+    for i in [0:projection.nodes.size] do
       if projection.inQuotation i then
         continue
       if (childAdjacency[i]!).any fun j => projection.kindOf j == kAttrInstance then
@@ -637,7 +637,7 @@ private def duplicateDerivingClass (facts : SyntaxFacts) : Array Finding :=
     -- `derivingClass` nodes sit under the `sepBy1` group node; grouping by that parent makes
     -- them siblings, whichever intermediate the parser inserted. Any node with `derivingClass`
     -- children is an owner, so scan every node once.
-    for i in [0:projection.nodes.size]do
+    for i in [0:projection.nodes.size] do
       if projection.inQuotation i then
         continue
       if (childAdjacency[i]!).any fun j => projection.kindOf j == kDerivingClass then
@@ -665,7 +665,7 @@ private def developmentSetOption (facts : SyntaxFacts) : Array Finding :=
     let bytes := facts.source.bytes
     let tokensByNode := projection.tokensByNode
     let mut findings := #[]
-    for i in [0:projection.nodes.size]do
+    for i in [0:projection.nodes.size] do
       if projection.inQuotation i then
         continue
       if projection.kindOf i == kSetOption then
@@ -698,7 +698,7 @@ private def redundantNestedParen (facts : SyntaxFacts) : Array Finding :=
     let projection := facts.projection
     let childAdjacency := projection.childAdjacency
     let mut findings := #[]
-    for i in [0:projection.nodes.size]do
+    for i in [0:projection.nodes.size] do
       if projection.inQuotation i then
         continue
       if projection.kindOf i == kParen then
@@ -1459,7 +1459,7 @@ def catalogIndexMarkdown : String :=
     let categories :=
       (allRuleInfos.map (·.category)).foldl (init := #[]) fun acc c =>
         if acc.contains c then acc else acc.push c
-    for category in categories.qsort (· < ·)do
+    for category in categories.qsort (· < ·) do
       out := out ++ s!"## {category}\n\n"
       out :=
         out ++ "| Code | Lifecycle | Default | Fix | Summary |\n| --- | --- | --- | --- | --- |\n"

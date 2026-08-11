@@ -87,7 +87,7 @@ private def testExamples (ctx : Ctx) : IO Unit := do
       continue
     ensure (!examples.isEmpty) s!"{code}: live non-exempt rule has no executable example"
     let fixable := (info.getObjValAs? Bool "fixable").toOption.getD false
-    for index in [0:examples.size]do
+    for index in [0:examples.size] do
       let tag := s!"{code}-{index}"
       let probe := ctx.work / s!"probe-{tag}.lean"
       let relative := rel ctx probe

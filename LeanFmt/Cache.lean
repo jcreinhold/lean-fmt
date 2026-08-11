@@ -450,7 +450,7 @@ private def moduleArtifactHash? (tracePath : System.FilePath) : IO (Option Lake.
   let mut hash := Lake.Hash.nil
   for descr in outputs.oleanParts do
     hash := hash.mix descr.hash
-  for extra in [outputs.irSig?, outputs.ir?]do
+  for extra in [outputs.irSig?, outputs.ir?] do
     if let some descr := extra then
       hash := hash.mix descr.hash
   return some hash
@@ -594,7 +594,7 @@ private def closureDigest? (workspace : Lake.Workspace) (mode : ClosureMode)
     let known ← digests.get
     let mut parts := #[own]
     -- Every import counts, exported or not: anything imported could have shaped elaboration.
-    for (imp, _) in imports.qsort (·.1.toString < ·.1.toString)do
+    for (imp, _) in imports.qsort (·.1.toString < ·.1.toString) do
       match known[imp]? with
       | some (some digest) =>
         parts := parts.push s!"import {imp} {digest.hex}"

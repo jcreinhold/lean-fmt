@@ -215,14 +215,14 @@ private def splitProjection (projection : Lean.Json) (raw : String) :
   let mut comments : Array (Nat × String) := #[]
   let mut ownership : Array Lean.Json := #[]
   let mut cursor := 0
-  for tokenIdx in [:tokens.size]do
+  for tokenIdx in [:tokens.size] do
     let some fields := tokens[tokenIdx]!.getArr?.toOption | continue
     let node := (fields[0]?).bind (Analyze.natAt? · []) |>.getD 0
     let start := (fields[1]?).bind (Analyze.natAt? · []) |>.getD 0
     let stop := (fields[2]?).bind (Analyze.natAt? · []) |>.getD 0
-    for sideIdx in [4, 5]do
+    for sideIdx in [4, 5] do
       let some runs := (fields[sideIdx]?).bind (·.getArr?.toOption) | continue
-      for runIdx in [:runs.size]do
+      for runIdx in [:runs.size] do
         let some pair := runs[runIdx]!.getArr?.toOption | continue
         let kind := (pair[0]?).bind (Analyze.natAt? · []) |>.getD 0
         let stop := (pair[1]?).bind (Analyze.natAt? · []) |>.getD cursor

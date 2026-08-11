@@ -260,7 +260,7 @@ def rowOf (starts : Array Nat) (offset : Nat) : Nat :=
 private def indentOnly (bytes : ByteArray) (lineStart stop : Nat) : Bool :=
   Id.run do
     let stop := min stop bytes.size
-    for cursor in [lineStart:stop]do
+    for cursor in [lineStart:stop] do
       let byte := bytes[cursor]!
       if byte != 0x20 && byte != 0x09 then
         return false

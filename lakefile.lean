@@ -455,7 +455,9 @@ module_facet leanFmtArtifact (mod : Module) : Artifact := do
                 | none => #[]
               proc {
                     cmd := extractor.toString
-                    args := #[mod.name.toString, arts.olean.path.toString, (artifactFile mod).toString] ++ serverArg
+                    args :=
+                      #[mod.name.toString, arts.olean.path.toString, (artifactFile mod).toString] ++
+                        serverArg
                     env := #[⟨"LEAN_PATH", (← getLeanPath).toString⟩, ⟨"LEAN_NUM_THREADS", "1"⟩] }
 
 /- A small integration library exercises plugin and facet ownership without making the formatter's

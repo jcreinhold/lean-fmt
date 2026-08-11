@@ -80,7 +80,7 @@ private def testComments (root setup : System.FilePath) (application : String) :
         "Comments.lean" "4:60"
   let (_, text) ← canonical report "comments"
   for payload in
-    ["-- trailing setup comment", "/-- A declaration doc comment remains before its owner. -/"]do
+    ["-- trailing setup comment", "/-- A declaration doc comment remains before its owner. -/"] do
     ensure ((text.splitOn payload).length == 2) s!"comments: {payload} does not occur exactly once"
   ensureContains text "\nuniverse u\nvariable {α : Type u} -- trailing setup comment\n" "comments"
 

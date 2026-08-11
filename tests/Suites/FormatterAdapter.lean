@@ -79,7 +79,7 @@ private def testMetrics (ctx : Ctx) : IO Unit := do
   ensureContains output "`(" "adapter: quotation lost"
   ensureContains output "local notation \"adapterUnit\"" "adapter: local notation lost"
   ensureContains output "item_term(selectedName)" "adapter: parser category lost"
-  for payload in ["adapter block payload", "adapter trailing payload", "adapter tactic payload"]do
+  for payload in ["adapter block payload", "adapter trailing payload", "adapter tactic payload"] do
     ensureEq s!"adapter: {payload} count" 1 ((output.splitOn payload).length - 1)
   let some marks :=
     (jsonAt? canonical [.field "sourceMap"]).bind

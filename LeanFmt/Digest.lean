@@ -67,7 +67,7 @@ private def padded (input : ByteArray) : ByteArray :=
     let mut bytes := input.push 0x80
     while bytes.size % 64 != 56 do
       bytes := bytes.push 0
-    for shift in #[56, 48, 40, 32, 24, 16, 8, 0]do
+    for shift in #[56, 48, 40, 32, 24, 16, 8, 0] do
       bytes := bytes.push ((bitLength.shiftRight shift.toUInt64).toUInt8)
     return bytes
 
@@ -81,9 +81,9 @@ private def wordAt (bytes : ByteArray) (offset : Nat) : UInt32 :=
 private def schedule (bytes : ByteArray) (offset : Nat) : Array UInt32 :=
   Id.run do
     let mut words := Array.replicate 64 0
-    for i in [0:16]do
+    for i in [0:16] do
       words := words.set! i (wordAt bytes (offset + i * 4))
-    for i in [16:64]do
+    for i in [16:64] do
       let next :=
         smallSigma1 words[i - 2]! + words[i - 7]! + smallSigma0 words[i - 15]! + words[i - 16]!
       words := words.set! i next
@@ -99,7 +99,7 @@ private def compress (state : Array UInt32) (words : Array UInt32) : Array UInt3
     let mut f := state[5]!
     let mut g := state[6]!
     let mut h := state[7]!
-    for i in [0:64]do
+    for i in [0:64] do
       let t1 := h + largeSigma1 e + choose e f g + roundConstants[i]! + words[i]!
       let t2 := largeSigma0 a + majority a b c
       h := g
@@ -117,14 +117,14 @@ private def hashBytes (input : ByteArray) : Array UInt32 :=
   Id.run do
     let bytes := padded input
     let mut state := initialState
-    for block in [0:bytes.size / 64]do
+    for block in [0:bytes.size / 64] do
       state := compress state (schedule bytes (block * 64))
     return state
 
 private def appendWordHex (output : String) (word : UInt32) : String :=
   Id.run do
     let mut result := output
-    for shift in #[28, 24, 20, 16, 12, 8, 4, 0]do
+    for shift in #[28, 24, 20, 16, 12, 8, 4, 0] do
       let nibble := (word.shiftRight shift).land 0xf
       result := result.push (Nat.digitChar nibble.toNat)
     return result

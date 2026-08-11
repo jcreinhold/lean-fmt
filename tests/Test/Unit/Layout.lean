@@ -243,7 +243,7 @@ private def testDoc : IO Unit := do
   -- Properties over 400 generated documents. The seed is printed on failure, and generation is
   -- deterministic, so a counterexample is reproducible from that number alone.
   let mut seed := 20260716
-  for i in [0:400]do
+  for i in [0:400] do
     let generated := genDoc 5 seed
     seed := generated.nextSeed
     let wrapped : Doc := .group generated.document
@@ -256,7 +256,7 @@ private def testDoc : IO Unit := do
     -- be dropped, duplicated, or reordered by breaking.
     ensure (stripLayout (renderText 0 wrapped) == generated.atoms)
         s!"breaking lost or duplicated text on document {i} (seed {seed})"
-    for width in [0, 1, 40, 80, 100, 1000]do
+    for width in [0, 1, 40, 80, 100, 1000] do
       -- Rendering is a function, not a process with state.
       let rendered := renderDetailed width wrapped
       ensure (renderDetailed width wrapped == rendered)
@@ -780,16 +780,16 @@ private def oracleCorners : Array (String × Std.Format) :=
 private def testNativeOracle : IO Unit := do
   let widths := [0, 1, 5, 20, 80, hugeWidth]
   let mut seed := 20260804
-  for i in [0:300]do
+  for i in [0:300] do
     let (format, nextSeed) := genFormat 5 seed
     seed := nextRand nextSeed
     for width in widths do
-      for column in [0, 5]do
-        for indent in [0, 3]do
+      for column in [0, 5] do
+        for indent in [0, 3] do
           oracleAgrees s!"generated {i} (seed {seed})" format width indent column
   for (label, format) in oracleCorners do
     for width in widths do
-      for column in [0, 3]do
+      for column in [0, 3] do
         oracleAgrees s!"corner {label}" format width column 0
 
 /- The command plan's completeness ledgers, starved synthetically (LAY-PLAN-BOUNDARY). Each case
@@ -956,7 +956,7 @@ private def testStructuralAnchors : IO Unit := do
           throw (IO.userError s!"the unanchored tree was refused: {failure.detail}"))
   -- Fit boundaries: at every width, and in particular across the group's flip width, the anchored
   -- rendering is byte-identical to the un-annotated one.
-  for width in [0, 1, 2, 3, 4, 5, 6, 8, 16]do
+  for width in [0, 1, 2, 3, 4, 5, 6, 8, 16] do
     ensure (renderText width anchored == renderText width plain)
         s!"an anchor changed the rendering at width {width}"
   -- A sub-sequence interval claims through the spine markers: the right-associated tree has no

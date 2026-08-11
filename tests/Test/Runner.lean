@@ -202,9 +202,9 @@ private def select (options : Options) : Except String (Array Suite) := do
     -- run alone, so one modulo over the mixed list clusters the expensive tails into one part —
     -- the first CI run put cache, layout, and modes together and let them set its wall time.
     let mut picked : Array Suite := #[]
-    for lane in [Lane.«parallel», Lane.workspace, Lane.exclusive]do
+    for lane in [Lane.«parallel», Lane.workspace, Lane.exclusive] do
       let inLane := selected.filter (·.lane == lane)
-      for position in [:inLane.size]do
+      for position in [:inLane.size] do
         if position % count == index - 1 then
           picked := picked.push inLane[position]!
     return picked
@@ -223,7 +223,7 @@ alone would undercount by an order of magnitude. -/
 private def treeRssKb (snapshot : String) (rootPid : Nat) : Nat :=
   Id.run do
     let mut entries : Array (Nat × Nat × Nat) := #[]
-    for line in snapshot.splitOn "\n"do
+    for line in snapshot.splitOn "\n" do
       let words := (line.trimAscii.toString.splitOn " ").filter (!·.isEmpty)
       if let [rss, pid, ppid] := words then
         if let (some rssKb, some pid, some ppid) := (rss.toNat?, pid.toNat?, ppid.toNat?) then
@@ -292,7 +292,7 @@ private def digestLines (output : String) : Array String :=
   Id.run do
     let lines := output.splitOn "\n"
     let mut picked : Array String := #[]
-    for i in [:lines.length]do
+    for i in [:lines.length] do
       let line := lines[i]!
       if line.startsWith "FAIL" || line.contains "error:" then
         picked := picked.push line
@@ -334,7 +334,7 @@ private partial def watchdog (inFlight : InFlight) (done : IO.Ref Bool) : IO Uni
   IO.sleep 15000
   unless (← done.get) do
     let now ← IO.monoMsNow
-    for (name, started) in ← inFlight.atomically (fun state => state.get)do
+    for (name, started) in ← inFlight.atomically (fun state => state.get) do
       if now - started > 60000 then
         IO.eprintln s!"still running: {name} ({(now - started) / 1000} s)"
     watchdog inFlight done
@@ -450,14 +450,14 @@ public def main (args : List String) : IO UInt32 := do
     let failures := outcomes.filter (!·.passed)
     IO.println "\n--- slowest suites ---"
     let sorted := outcomes.qsort (·.elapsedSec > ·.elapsedSec)
-    for outcome in sorted.toList.take 8do
+    for outcome in sorted.toList.take 8 do
       IO.println s!"{pad (toString outcome.elapsedSec) 7}s  {outcome.suite.name}"
     -- Peak RSS is a count, not a wall time: the envelope a CI job budgets per suite, measured
     -- while the run is green. One-second sampling can miss shorter spikes; this is for
     -- envelope planning, and no assertion reads it yet.
     IO.println "\n--- heaviest suites (peak RSS, sampled) ---"
     let heaviest := outcomes.qsort (·.peakRssKb > ·.peakRssKb)
-    for outcome in heaviest.toList.take 8do
+    for outcome in heaviest.toList.take 8 do
       IO.println s!"{pad (toString (outcome.peakRssKb / 1024)) 7}MB  {outcome.suite.name}"
     if failures.isEmpty then
       IO.println s!"all {outcomes.size} suite(s) passed"

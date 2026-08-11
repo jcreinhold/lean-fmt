@@ -38,7 +38,7 @@ Missing or malformed is a failure, not a zero: a zero satisfies every gate that 
 fell, so a stat that stops being emitted would read as an improvement. -/
 public def statFrom (stderr key : String) : IO Nat := do
   let statPrefix := s!"cache.{key}="
-  for line in stderr.splitOn "\n"do
+  for line in stderr.splitOn "\n" do
     if line.startsWith statPrefix then
       match (line.drop statPrefix.length).toNat? with
       | some n =>
@@ -92,7 +92,7 @@ public def Selection.apply (selection : Selection) (cases : Array Case) : Array 
   | some (index, count) =>
     Id.run do
       let mut picked : Array Case := #[]
-      for position in [0:filtered.size]do
+      for position in [0:filtered.size] do
         if position % count == index - 1 then
           if let some test := filtered[position]? then
             picked := picked.push test

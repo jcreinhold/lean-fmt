@@ -207,7 +207,7 @@ private unsafe def incrementalAnalyzerSpec (work setupPath sourcePath : String)
   let mut rss : Array Nat := #[]
   phaseSample samples openedAt "edit-table"
   IO.eprintln "phase: hundred-edit loop"
-  for i in [0:100]do
+  for i in [0:100] do
     let value := if i % 2 == 0 then "6" else "7"
     let source := incrementalSource s!"def beta : Nat := alpha + {value}"
     let result ← analyzer.analyze setup source path
@@ -225,7 +225,7 @@ private unsafe def incrementalAnalyzerSpec (work setupPath sourcePath : String)
   -- memory against the import environment — 4000 of them pushed the suite past what a
   -- 16 GB CI runner holds even with nothing else on it.
   let mut slow := incrementalSource
-  for i in [0:1200]do
+  for i in [0:1200] do
     slow := slow ++ s!"def cancellation_{i} : Nat := {i}\n"
   let task ← IO.asTask (analyzer.analyze setup slow path)
   let rec waitForFlight (fuel : Nat) : IO Unit := do

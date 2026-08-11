@@ -205,7 +205,7 @@ constant-time. -/
 private def zeroWidthSiblings (n : Nat) : Doc :=
   Id.run do
     let mut d := Doc.text "x"
-    for _ in [0:n]do
+    for _ in [0:n] do
       d := .cat (.group (.nest 1 .empty)) d
     return d
 
@@ -213,7 +213,7 @@ private def zeroWidthSiblings (n : Nat) : Doc :=
 private def zeroWidthNesting (n : Nat) : Doc :=
   Id.run do
     let mut d := Doc.text "x"
-    for _ in [0:n]do
+    for _ in [0:n] do
       d := .group (.nest 1 d)
     return d
 
@@ -223,7 +223,7 @@ there. -/
 private def callArgs (n : Nat) : Doc :=
   Id.run do
     let mut inner := Doc.empty
-    for i in [0:n]do
+    for i in [0:n] do
       let arg := Doc.text s!"a{i}"
       inner := if i == 0 then arg else .cat inner (.cat (.text ",") (.cat (.line " ") arg))
     return .group
@@ -233,7 +233,7 @@ private def callArgs (n : Nat) : Doc :=
 private def nestedCalls (n : Nat) : Doc :=
   Id.run do
     let mut d := Doc.text "x"
-    for _ in [0:n]do
+    for _ in [0:n] do
       d :=
         .group
           (.cat (.text "f(") (.cat (.nest 2 (.cat (.line "") d)) (.cat (.line "") (.text ")"))))
@@ -245,7 +245,7 @@ re-decision constant-time, so steps stay exactly nodes. -/
 private def fillArgs (n : Nat) : Doc :=
   Id.run do
     let mut inner := Doc.text "a0"
-    for i in [1:n]do
+    for i in [1:n] do
       inner := .cat inner (.cat (.line " ") (.text s!"a{i}"))
     return .fill (.cat (.text "f ") inner)
 
@@ -254,7 +254,7 @@ cost of `mark` is the open question this probe watches. -/
 private def markedCallArgs (n : Nat) : Doc :=
   Id.run do
     let mut inner := Doc.empty
-    for i in [0:n]do
+    for i in [0:n] do
       let arg := Doc.mark ⟨i, i + 1⟩ (.text s!"a{i}")
       inner := if i == 0 then arg else .cat inner (.cat (.text ",") (.cat (.line " ") arg))
     return .group
@@ -281,10 +281,10 @@ This exists to settle equivalence claims about the renderer by diffing two build
 arguing that a change "should not" alter output. -/
 private def docDump : IO UInt32 := do
   let mut seed : Nat := 20260716
-  for i in [0:400]do
+  for i in [0:400] do
     let generated := genDoc 4 seed
     seed := generated.nextSeed
-    for w in [0:41]do
+    for w in [0:41] do
       IO.println
           s!"{i} {w} {String.intercalate "⏎" ((renderText w generated.document).splitOn "\n")}"
   return 0
@@ -320,7 +320,7 @@ private def securityDenseBlock : String :=
 private def repeatTo (block : String) (targetBytes : Nat) : String :=
   Id.run do
     let mut s := block
-    for _ in [0:64]do
+    for _ in [0:64] do
       if s.utf8ByteSize ≥ targetBytes then
         break
       s := s ++ s
@@ -343,7 +343,7 @@ private def securityBench : IO UInt32 := do
   -- A ~2 MB scan-clean base, then exact doublings to 4/8/16 MB. Each doubling is built outside the
   -- timed region, so a ~2× step in ms across a 2× step in bytes is the linear claim.
   let mut input := repeatTo securityCleanBlock 2000000
-  for label in ["clean-1x", "clean-2x", "clean-4x", "clean-8x"]do
+  for label in ["clean-1x", "clean-2x", "clean-4x", "clean-8x"] do
     securityBenchOne label input
     input := input ++ input
   -- Findings do scale: a dense ~256 KB input reports two per block. This is deliberately not part of
@@ -379,18 +379,18 @@ private def formatterHeader (sourcePath : String) : IO UInt32 := do
   return 0
 
 private def docBench : IO UInt32 := do
-  for n in [1000, 2000, 4000, 8000]do
+  for n in [1000, 2000, 4000, 8000] do
     benchOne "zero-width-siblings" n (zeroWidthSiblings n)
-  for n in [1000, 2000, 4000, 8000]do
+  for n in [1000, 2000, 4000, 8000] do
     benchOne "zero-width-nesting" n (zeroWidthNesting n)
-  for n in [1000, 10000, 100000]do
+  for n in [1000, 10000, 100000] do
     benchOne "call-args" n (callArgs n)
   -- Capped at 10,000: `nest` is unclamped by contract, so depth `n` at unit 2 emits Θ(n²)
   -- *bytes* — 200 MB here, and 20 GB at n=100,000. That cost is the output, not the fit test, which is
   -- why the assertion is per output byte rather than per node.
-  for n in [100, 1000, 10000]do
+  for n in [100, 1000, 10000] do
     benchOne "nested-calls" n (nestedCalls n)
-  for n in [1000, 10000, 100000]do
+  for n in [1000, 10000, 100000] do
     benchOne "marked-call-args" n (markedCallArgs n)
   return 0
 
@@ -402,7 +402,7 @@ private def docStepCounts : IO UInt32 := do
     IO.println
         s!"doc-steps label={label} n={n} nodes={rendered.metrics.documentNodes} \
 steps={rendered.metrics.workSteps} marks={rendered.sourceMap.size} native={rendered.metrics.nativeEvents}"
-  for n in [1000, 8000]do
+  for n in [1000, 8000] do
     report "zero-width-siblings" n (zeroWidthSiblings n)
     report "zero-width-nesting" n (zeroWidthNesting n)
     report "call-args" n (callArgs n)
@@ -436,7 +436,7 @@ private def benchFile (index : Nat) (count : Nat) : FileReport × String :=
     let codes := #["FMT001", "FMT002", "FMT008", "FMT011"]
     let mut source := ""
     let mut findings : Array Finding := #[]
-    for i in [0:count]do
+    for i in [0:count] do
       source := source ++ benchLine
       findings :=
         findings.push
@@ -456,7 +456,7 @@ private def mergePositions (index : PositionIndex) (path : String) (source : Str
       fun acc key value => acc.insert key value⟩
 
 private def reportBench : IO UInt32 := do
-  for n in [100, 1000, 10000, 100000]do
+  for n in [100, 1000, 10000, 100000] do
     -- ~500 findings per file, so the file loop and the per-file work scale with the report too
     -- rather than degenerating to one enormous file.
     let perFile := 500
@@ -464,7 +464,7 @@ private def reportBench : IO UInt32 := do
     let mut files : Array FileReport := #[]
     let mut positions := PositionIndex.empty
     let mut emitted := 0
-    for f in [0:fileCount]do
+    for f in [0:fileCount] do
       let count := min perFile (n - emitted)
       emitted := emitted + count
       let (file, source) := benchFile f count
@@ -477,7 +477,7 @@ private def reportBench : IO UInt32 := do
     -- Force the fixture and the index before any clock starts.
     if report.files.size + positions.entries.size == 999999999 then
       throw (IO.userError "impossible")
-    for format in ([.text, .concise, .json, .github, .sarif, .junit] : List ReportFormat)do
+    for format in ([.text, .concise, .json, .github, .sarif, .junit] : List ReportFormat) do
       let start ← IO.monoNanosNow
       let out := formatReport format positions "file:///synthetic/" report
       -- `utf8ByteSize` is O(1) and forces the render.

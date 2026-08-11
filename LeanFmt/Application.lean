@@ -634,7 +634,7 @@ private def ExactRun.envelope (run : ExactRun) (snapshot : SourceSnapshot) (capt
     -- reparsed or escalated to a second frontend is decided in the child and is invisible from
     -- outside it.
     if ← Profile.enabled then
-      for line in errText.splitOn "\n"do
+      for line in errText.splitOn "\n" do
         if line.startsWith "phase." || line.startsWith "cache." then
           IO.eprintln line
     let envelope ←
@@ -721,13 +721,13 @@ private def selectUnits (rendered : ByteArray) (marks : Array Mark) (requested :
     let final := marks.size - 1
     -- Step 1/2: the first unit whose extent reaches past the request start.
     let mut first := final
-    for index in [0:marks.size]do
+    for index in [0:marks.size] do
       if marks[index]!.source.stop > requested.start then
         first := index
         break
     let mut last := first
     if requested.stop > requested.start then
-      for index in [0:marks.size]do
+      for index in [0:marks.size] do
         if marks[index]!.source.start < requested.stop then
           last := max last index
     -- Step 3.
@@ -1035,7 +1035,7 @@ private def unifiedDiff (path before after : String) : String :=
     -- Windows of `diffContext` around every change, merged where they touch. Two changes closer than
     -- `2 * diffContext` share a hunk rather than repeating the context between them.
     let mut ranges : Array (Nat × Nat) := #[]
-    for index in [0:script.size]do
+    for index in [0:script.size] do
       if script[index]!.1 != .skip then
         let start := index - min index diffContext
         let stop := min (script.size - 1) (index + diffContext)
@@ -1051,7 +1051,7 @@ private def unifiedDiff (path before after : String) : String :=
     for (start, stop) in ranges do
       let mut oldCount := 0
       let mut newCount := 0
-      for index in [start:stop + 1]do
+      for index in [start:stop + 1] do
         match script[index]!.1 with
         | .skip =>
           oldCount := oldCount + 1;
@@ -1065,7 +1065,7 @@ private def unifiedDiff (path before after : String) : String :=
       let oldStart := if oldCount == 0 then oldBefore[start]! else oldBefore[start]! + 1
       let newStart := if newCount == 0 then newBefore[start]! else newBefore[start]! + 1
       out := out ++ s!"@@ -{oldStart},{oldCount} +{newStart},{newCount} @@\n"
-      for index in [start:stop + 1]do
+      for index in [start:stop + 1] do
         let (action, line, endsWithoutNewline) := script[index]!
         out := out ++ action.linePrefix ++ line ++ "\n"
         if endsWithoutNewline then
@@ -2495,7 +2495,7 @@ def organize (request : OrganizeRequest) : IO RunReport := do
       let mut files := #[]
       let mut failures := #[]
       let mut validations : Array (SourceSnapshot × SemanticAnalysis) := #[]
-      for ((snapshot, candidate?, _), outcome?) in work.zip (← outcomes.get)do
+      for ((snapshot, candidate?, _), outcome?) in work.zip (← outcomes.get) do
         let some outcome :=
           outcome? | throw <| IO.userError "an organize worker finished without reporting its target"
         files := files.push outcome.report
@@ -2650,11 +2650,11 @@ private unsafe def runExtractChild (args : List String) : IO UInt32 := do
     publishExtractChild moduleName.toName moduleFile output none
   | [moduleName, moduleFile, output, serverFile] =>
     publishExtractChild moduleName.toName moduleFile output (some serverFile)
-  | _ => return 2
+  | _ =>
+    return 2
   return 0
-where
-  publishExtractChild (moduleName : Lean.Name) (moduleFile output : System.FilePath)
-      (serverFile? : Option System.FilePath) : IO Unit := do
+where publishExtractChild (moduleName : Lean.Name) (moduleFile output : System.FilePath)
+    (serverFile? : Option System.FilePath) : IO Unit := do
     match ← compilerArtifact? moduleName moduleFile serverFile? with
     | some artifact =>
       writeArtifactAtomic output artifact

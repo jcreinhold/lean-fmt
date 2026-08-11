@@ -41,7 +41,7 @@ private def parseFloat (s : String) : Option Float := do
 
 private def rows (output : String) : IO (Std.HashMap String Row) := do
   let mut table : Std.HashMap String Row := { }
-  for line in output.splitOn "\n" |>.filter (· != "")do
+  for line in output.splitOn "\n" |>.filter (· != "") do
     let fields := line.splitOn " "
     let some label :=
       fields.head? | throw <| IO.userError s!"security-bench emitted a malformed line: {line}"
@@ -72,7 +72,7 @@ private def gateGrowth (rows : Std.HashMap String Row) : IO Unit := do
 still pass the 8x-step bound if a later step compensated. -/
 private def gateFlatness (rows : Std.HashMap String Row) (report : Bool := true) : IO Unit := do
   let mut previous? : Option Float := none
-  for label in ["clean-1x", "clean-2x", "clean-4x", "clean-8x"]do
+  for label in ["clean-1x", "clean-2x", "clean-4x", "clean-8x"] do
     let some row := rows[label]? | throw <| IO.userError s!"missing {label} measurement"
     let ns := row.ms * 1000000.0 / row.bytes.toFloat
     if report then

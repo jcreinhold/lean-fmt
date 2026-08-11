@@ -234,7 +234,7 @@ ignore = [\"FMT002\"]\n\
         "closure = interface did not resolve to the interface mode"
     for document in
       ["[cache]\nclosure = \"everything\"\n", "closure = \"interface\"\n",
-        "[cache]\nunknown = true\n"]do
+        "[cache]\nunknown = true\n"] do
       IO.FS.writeFile configPath document
       let rejected ←
         try
@@ -363,7 +363,7 @@ extend-select = [\"FMT009\"]\n"
         pure true
     ensure misplaced "line-width at the top level was accepted"
     -- The width bound is enforced at load, not at render.
-    for width in ["0", "1001"]do
+    for width in ["0", "1001"] do
       write ".lean-fmt.toml" s!"[format]\nline-width = {width}\n"
       let bounded ←
         try

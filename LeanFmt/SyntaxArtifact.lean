@@ -248,7 +248,7 @@ private partial def decodeSyntax (source : String) (tree : SyntaxTree) (index : 
     let some kind := tree.kinds[kindIndex]? | throw s!"missing syntax kind {kindIndex}"
     let mut children := #[]
     let mut cursor := index + 1
-    for _ in [0:childCount]do
+    for _ in [0:childCount] do
       let (child, next) ← decodeSyntax source tree cursor
       children := children.push child
       cursor := next
@@ -295,7 +295,7 @@ private partial def validateTreeAt (kinds bytes : Nat) (entries : Array SyntaxEn
   | .node info kind children =>
     guard <| kind < kinds && infoValid bytes info
     let mut cursor := index + 1
-    for _ in [0:children]do
+    for _ in [0:children] do
       cursor ← validateTreeAt kinds bytes entries cursor
     return cursor
   | .atom info _ | .ident info .. =>

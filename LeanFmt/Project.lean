@@ -661,7 +661,7 @@ private def visibleFrom (root : Lean.Name)
     while !stack.isEmpty do
       let name := stack.back!
       stack := stack.pop
-      for (imp, exported) in edges[name]?.getD #[]do
+      for (imp, exported) in edges[name]?.getD #[] do
         if exported && !seen.contains imp then
           seen := seen.insert imp
           stack := stack.push imp
@@ -692,7 +692,7 @@ private def importEdgesJob (roots : Array Lake.Module)
     for mod in roots do
       members := members.insert mod.name mod
     for build in builds do
-      for mod in build.getD #[]do
+      for mod in build.getD #[] do
         members := members.insert mod.name mod
     let ordered := members.toArray
     let inputJobs ←

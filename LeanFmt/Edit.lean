@@ -91,7 +91,7 @@ private def boundaryValid (source : String) (position : Nat) : Bool :=
 
 private def validateEdits (source : String) (edits : Array Edit) : Except PatchError Unit := do
   let sourceBytes := source.utf8ByteSize
-  for edit in edits, index in [0:edits.size]do
+  for edit in edits, index in [0:edits.size] do
     unless edit.range.start <= edit.range.stop && edit.range.stop <= sourceBytes do
       throw <| .invalidRange index edit.range sourceBytes
     unless boundaryValid source edit.range.start do
@@ -111,7 +111,7 @@ private def conflict? (left right : IndexedEdit) : Bool :=
       left.edit.range.start == right.edit.range.start)
 
 private def validateConflicts (edits : Array IndexedEdit) : Except PatchError Unit := do
-  for left in edits, right in edits.drop 1do
+  for left in edits, right in edits.drop 1 do
     if conflict? left right then
       throw <| .conflict left.code right.code left.findingRange right.findingRange
 

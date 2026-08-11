@@ -1286,7 +1286,7 @@ private def renderCompilerSetup (format : ReportFormat) : IO Unit := do
       IO.println s!"plugin target: {report.plugin}"
       IO.println s!"module facet: {report.facet}"
       IO.println s!"toolchain: {report.toolchain}"
-      for step in report.guidance, index in [1:report.guidance.size + 1]do
+      for step in report.guidance, index in [1:report.guidance.size + 1] do
         IO.println s!"{index}. {step}"
 
 private def parseConfigShowArgs (args : List String) :
