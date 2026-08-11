@@ -2645,15 +2645,23 @@ private unsafe def runAnalyzeChild (args : List String) : IO UInt32 := do
       throw error
 
 private unsafe def runExtractChild (args : List String) : IO UInt32 := do
-  let [moduleName, moduleFile, output] := args | return 2
-  match ← compilerArtifact? moduleName.toName moduleFile with
-  | some artifact =>
-    writeArtifactAtomic output artifact
-  | none =>
-    if let some parent := (output : FilePath).parent then
-      IO.FS.createDirAll parent
-    IO.FS.writeFile output "null"
+  match args with
+  | [moduleName, moduleFile, output] =>
+    publishExtractChild moduleName.toName moduleFile output none
+  | [moduleName, moduleFile, output, serverFile] =>
+    publishExtractChild moduleName.toName moduleFile output (some serverFile)
+  | _ => return 2
   return 0
+where
+  publishExtractChild (moduleName : Lean.Name) (moduleFile output : System.FilePath)
+      (serverFile? : Option System.FilePath) : IO Unit := do
+    match ← compilerArtifact? moduleName moduleFile serverFile? with
+    | some artifact =>
+      writeArtifactAtomic output artifact
+    | none =>
+      if let some parent := (output : FilePath).parent then
+        IO.FS.createDirAll parent
+      IO.FS.writeFile output "null"
 
 private unsafe def runValidateCandidateChild (args : List String) : IO UInt32 := do
   let [setupPath, sourcePath, candidatePath, displayPath, width] := args | return 2

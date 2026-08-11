@@ -100,7 +100,7 @@ private unsafe def verifyPluginArtifact (moduleName : Lean.Name) (sourcePath : S
   Lean.initSearchPath (← Lean.findSysroot) sp
   let environment ←
     Lean.importModules #[{ module := moduleName }] { } (trustLevel := 1024) (loadExts := true)
-        (level := .exported)
+        (level := .server)
   let source ← IO.FS.readFile sourcePath
   let some artifact :=
     fromEnvironment? environment

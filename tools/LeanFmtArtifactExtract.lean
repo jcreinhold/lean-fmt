@@ -10,9 +10,9 @@ comment in `extract`. Lake invokes it; nothing else should. -/
 
 open LeanFmt.Internal
 
-private unsafe def extract (moduleName : Lean.Name) (moduleFile output : System.FilePath) :
-    IO Unit := do
-  match ← compilerArtifact? moduleName moduleFile with
+private unsafe def extract (moduleName : Lean.Name) (moduleFile output : System.FilePath)
+    (serverFile? : Option System.FilePath) : IO Unit := do
+  match ← compilerArtifact? moduleName moduleFile serverFile? with
   | some artifact =>
     writeArtifactAtomic output artifact
   | none =>
@@ -26,7 +26,10 @@ private unsafe def extract (moduleName : Lean.Name) (moduleFile output : System.
 public unsafe def main (args : List String) : IO UInt32 := do
   match args with
   | [moduleName, moduleFile, output] =>
-    extract moduleName.toName moduleFile output
+    extract moduleName.toName moduleFile output none
+    return 0
+  | [moduleName, moduleFile, output, serverFile] =>
+    extract moduleName.toName moduleFile output (some serverFile)
     return 0
   | _ =>
     IO.eprintln "usage: lean-fmt-artifact-extract MODULE OLEAN OUTPUT"

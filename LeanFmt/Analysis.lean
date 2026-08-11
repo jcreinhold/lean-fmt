@@ -1368,13 +1368,25 @@ unsafe def validateCandidateExact (setup : Lean.ModuleSetup) (source candidate :
     return candidateFailure .structure
         "candidate validation did not produce both frontend projections"
 
-unsafe def compilerArtifact? (moduleName : Lean.Name) (moduleFile : System.FilePath) :
-    IO (Option ModuleArtifact) := do
+unsafe def compilerArtifact? (moduleName : Lean.Name) (moduleFile : System.FilePath)
+    (serverFile? : Option System.FilePath := none) : IO (Option ModuleArtifact) := do
   Lean.initSearchPath (← Lean.findSysroot)
   let (moduleData, _region) ← Lean.readModuleData moduleFile
-  let level := if moduleData.isModule then Lean.OLeanLevel.exported else .private
+  -- `.server`, not `.exported`: since Lean v4.34 the persistent lint log this payload rides on
+  -- exports its entries to the server and private sections only (`exportEntriesFnEx` in
+  -- `Lean/Linter/PersistentLintLog.lean`), so an exported-level import no longer sees them. The
+  -- server part is a separate file the importer indexes positionally
+  -- (`ImportArtifacts.oleanServer?`); it does not derive it. Callers pass the real path when they
+  -- hold one — Lake's artifact cache renames the `.olean` to a content hash, so extension
+  -- derivation would look next to the wrong name.
+  let level := if moduleData.isModule then Lean.OLeanLevel.server else .private
+  let files :=
+    if moduleData.isModule then
+      #[moduleFile, serverFile?.getD (Lean.OLeanLevel.server.adjustFileName moduleFile)]
+    else
+      #[moduleFile]
   let artifacts : Lean.NameMap Lean.ImportArtifacts :=
-    ({ } : Lean.NameMap Lean.ImportArtifacts).insert moduleName (.ofArrays #[#[moduleFile]])
+    ({ } : Lean.NameMap Lean.ImportArtifacts).insert moduleName (.ofArrays #[files])
   let environment ←
     Lean.importModules #[{ module := moduleName }] { } (trustLevel := 1024) (loadExts := false)
         (level := level) (arts := artifacts)

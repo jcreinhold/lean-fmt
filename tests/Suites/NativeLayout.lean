@@ -211,7 +211,7 @@ private def testChains (ctx : Ctx) : IO Unit := do
       (← bodyIndents narrow "  (a ++ \"alpha\" ++ b ++ \"bravo\" ++ c ++")
 
 /-- §3: terminal payloads are original bytes, matched by position. Includes the live upstream pin: the
-space Lean's `pushToken` does not put between `]` and `do`. -/
+space Lean's `pushToken` used not to put between `]` and `do` — inverted since v4.34.0-rc1, which fixed it. -/
 private def testAlignment (ctx : Ctx) : IO Unit := do
   let alignment ← ctx.once "Alignment"
   ensureEq "a guillemet name survives" 1 (count alignment "def «name with spaces»")
@@ -236,10 +236,13 @@ private def testAlignment (ctx : Ctx) : IO Unit := do
   ensureEq "the blank line after the copyright block survives" ""
       (lines[closer + 1]?.getD "<missing>")
   ensureEq "and module follows it directly" "module" (lines[closer + 2]?.getD "<missing>")
-  -- §7 (upstream, still live): a keyword whose parser spells no leading space sits flush
-  -- against a delimiter before it. The output still parses and still validates, which is why no
-  -- gate catches it and why it needs a pin.
-  ensureEq "a for over a bracketed collection loses the space before do" 1
+  -- §7 (upstream, fixed in v4.34.0-rc1): the space Lean's formatter used to drop between `]` and
+  -- `do`. leanprover/lean4#14389 moved `doForDecl` to `withForbiddens #["do", "invariant"]`, whose
+  -- registered combinator formatter keeps the space; the flush form is now absent by design. The
+  -- pin stays, inverted, so a regression that reintroduces the flush form fails loudly again.
+  ensureEq "a for over a bracketed collection keeps the space before do" 1
+      (count alignment "for value in #[1, 2, 3] do")
+  ensureEq "  ... and the flush form is gone" 0
       (count alignment "for value in #[1, 2, 3]do")
   ensureEq "  ... and the same loop over an identifier keeps it" 1
       (count alignment "for value in list do")

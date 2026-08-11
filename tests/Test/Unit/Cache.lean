@@ -382,7 +382,7 @@ private unsafe def testInterfaceHash : IO Unit := do
   Lean.initSearchPath (← Lean.findSysroot)
   let environment ←
     Lean.importModules #[{ module := `LocalSyntax }] { } (trustLevel := 1024) (loadExts := true)
-        (level := .exported)
+        (level := .server)
   let some first :=
     moduleInterfaceHash? environment
       `LocalSyntax | throw <| IO.userError "an integrated module's interface hash was not computed"

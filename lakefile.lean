@@ -428,19 +428,34 @@ local instance : QueryJson Artifact :=
   ⟨artifactQueryJson⟩
 
 /- The compiler records the formatter payload in Lean's persistent lint log, which is serialized
-inside the successful `.olean`. This facet owns both extraction from that exact module artifact and
-its compact, cacheable output; no candidate file or post-hoc identity association exists. -/
+inside the successful `.olean` — since Lean v4.34, in its `.olean.server` part. This facet owns
+both extraction from that exact module artifact and its compact, cacheable output; no candidate
+file or post-hoc identity association exists. -/
 module_facet leanFmtArtifact (mod : Module) : Artifact := do
-  let oleanJob ← mod.olean.fetch
   let extractorJob ← artifactExtractor.fetch
-  let dependency := oleanJob.zipWith (fun olean extractor => (olean, extractor)) extractorJob
-  dependency.mapM fun (olean, extractor) => do
+  -- `leanArts`, not `olean`: since v4.34 the base `.olean` no longer carries the payload — it
+  -- lives in the server part — and the `olean` facet's trace does not move when only that part
+  -- changes. The parts' own content traces are added below, the same
+  -- avoid-recompiling-unchanged-oleans pattern as Lake's `fetchOLeanCore`.
+  let dependency :=
+    (← mod.leanArts.fetch).zipWith (fun arts extractor => (arts, extractor)) extractorJob
+  dependency.mapM fun (arts, extractor) => do
       withCurrPackage mod.pkg do
+          newTrace s!"{mod.name.toString}:leanFmtArtifact"
+          addTrace arts.olean.trace
+          if let some serverArt := arts.oleanServer? then
+            addTrace serverArt.trace
           buildArtifactUnlessUpToDate (artifactFile mod) (text := true) (ext := "json") (restore :=
               true) (platformIndependent := true) do
+              -- The server part goes by its real path: under `LAKE_ARTIFACT_CACHE` the `.olean` is
+              -- content-hash-named, so the extractor cannot derive `…​.olean.server` from it.
+              let serverArg :=
+                match arts.oleanServer? with
+                | some serverArt => #[serverArt.path.toString]
+                | none => #[]
               proc {
                     cmd := extractor.toString
-                    args := #[mod.name.toString, olean.toString, (artifactFile mod).toString]
+                    args := #[mod.name.toString, arts.olean.path.toString, (artifactFile mod).toString] ++ serverArg
                     env := #[⟨"LEAN_PATH", (← getLeanPath).toString⟩, ⟨"LEAN_NUM_THREADS", "1"⟩] }
 
 /- A small integration library exercises plugin and facet ownership without making the formatter's
