@@ -129,8 +129,8 @@ from code or tests is gone — when you cannot find why something is the way it 
   still runs and still refuses, the bypass is recorded per file, a bypassed analysis is never cached, and every other
   mode and every non-publishing `format` form rejects the flag.
 - A command whose layout no draft can get past validation is published as its own source bytes, and the rest of the file
-  formats. Detection is per command, so refusal is too: the analysis blames the failure on one command through
-  `ValidationFailure.source?`, re-renders with that command forced verbatim, and tries again, at most twice. Only a
+  formats. Detection is per command, so refusal is too: the analysis blames the failure on every command a gate found,
+  through `ValidationFailure.sources`, re-renders all of them forced verbatim, and tries again, at most twice. Only a
   failure no command owns — the header, the terminal tail, the source map — still takes the whole file down. Every
   degradation is counted (`verbatimCommands` on the report, `verbatim_commands` under `--statistics`, one trailer line)
   and carried typed on `AnalysisEnvelope.degradations`, because the alternative to a loud hole is a silent one.

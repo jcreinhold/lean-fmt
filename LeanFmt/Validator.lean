@@ -64,10 +64,10 @@ structure ValidationFailure where
   source map, which is the whole tiling rather than a place in it.
 
   **Plural because a gate can find several, and reporting one made the caller pay per site.** The
-  caller degrades a blamed command to its own bytes and validates again, and each of those rounds
-  costs a candidate frontend run. A draft whose second render moved three commands was three rounds
-  away from converging and the bound is two, so the file refused -- for want of two numbers this
-  comparison had already computed and thrown away. -/
+  caller degrades a blamed command to its own bytes and validates again, and those rounds are
+  bounded at two. A draft whose second render moved three commands was three rounds away from
+  converging, so the file refused -- for want of two numbers this comparison had already computed
+  and thrown away. -/
   sources : Array Nat := #[]
   deriving Inhabited, BEq, Repr, Lean.ToJson, Lean.FromJson
 
@@ -346,8 +346,8 @@ def admit (beforeText : String) (before : LosslessSource) (first : FormatDraft)
     -- A byte count alone says the second pass moved something and nothing about what. Every one of
     -- these has to be minimized by hand out of a whole module otherwise, so the failure names the
     -- line the two passes first disagree on and spells both -- and blames *every* row that moved,
-    -- not just that one, because the caller degrades a command per round and pays a candidate
-    -- frontend run for each round.
+    -- not just that one, because the caller degrades one command per round against a bound of two
+    -- rounds.
     let firstLines := first.text.splitOn "\n"
     let secondLines := second.text.splitOn "\n"
     let divergent :=

@@ -293,7 +293,7 @@ attempts and outlast the bound of two, taking the whole file down.
 
 The retry count is the assertion. `verbatim_commands=3` alone would also hold if the loop had simply
 been given a larger bound, which is the fix this is not: `draft_retry=1` says the extra two commands
-cost no candidate frontend run. Exit 0 is the second half -- the source is already canonical, so the
+cost no extra round. Exit 0 is the second half -- the source is already canonical, so the
 three degraded commands reproduced their own bytes and the rest of the file formatted around them. -/
 private def testMissSetConvergence (ctx : Ctx) : IO Unit := do
   let relex := ctx.work / "Relex.lean"

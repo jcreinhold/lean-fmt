@@ -335,8 +335,8 @@ private def testNodeDivergenceSource : IO Unit := do
 
 /-- Which source offsets a set of divergent output rows blames, for the second render's gate.
 
-The caller degrades one command per round and pays a candidate frontend run for each round, so
-naming only the first divergent row costs a run per extra command:
+The caller degrades one command per round against a bound of two rounds, so naming only the first
+divergent row costs a round per extra command:
 `Mathlib/RepresentationTheory/Homological/GroupHomology/Functoriality.lean` moved three commands on
 its second render, needed three rounds, and refused against a bound of two. Reporting the set
 converges it in one.

@@ -777,8 +777,8 @@ private def projectAndRender (mainModule : String) (normalized : String)
 bytes the refusal came from. The header and the terminal name no index -- there is no command to
 force in their place -- so `commands` is empty for those.
 
-Every miss rather than the first, because a file with *n* unrenderable commands would otherwise cost
-*n* candidate-frontend runs to work through, one per retry, and `maxDraftRetries` is 2:
+Every miss rather than the first, because a file with *n* unrenderable commands would otherwise need
+*n* retry rounds to work through, one command per round, and `maxDraftRetries` is 2:
 `Mathlib/NumberTheory/Primorial.lean` has three and exhausted the bound one command short of
 converging. The tag is the *first* miss's, so the counter a run reports does not depend on what the
 resume found afterwards. -/
@@ -1227,12 +1227,19 @@ private unsafe def analyzeSnapshot (setup : Lean.ModuleSetup) (source : String)
     if strictLayout || retries == maxDraftRetries then
       break
     -- Every command this attempt found, not just the first one it could name. Blaming through a
-    -- single site forces one command per round and costs a whole candidate frontend run for each,
-    -- so a file with three bad commands needed three rounds against a bound of two and refused --
-    -- twice over, once through the reparse (`Primorial.lean`) and once through the second render
-    -- (`GroupHomology/Functoriality.lean`). Both channels already computed the whole set; this is
-    -- where it stops being thrown away. `maxDraftRetries` still bounds *rounds*, and a round is now
-    -- a round of discovery rather than a single command, which is strictly more reach per run.
+    -- single site forces one command per round, so a file with three bad commands needed three
+    -- rounds against a bound of two and refused -- twice over, once through the reparse
+    -- (`Primorial.lean`) and once through the second render (`GroupHomology/Functoriality.lean`).
+    -- Both channels already computed the whole set; this is where it stops being thrown away.
+    -- `maxDraftRetries` still bounds *rounds*, and a round is now a round of discovery rather than
+    -- a single command, which is strictly more reach per run.
+    --
+    -- What a round costs, since `maxDraftRetries` is the only thing standing between a file and
+    -- more of them: two in-process renders and a parse of the candidate, all inside the one exact
+    -- analysis child this run already occupies. Not a frontend run -- `validateDraft`'s escalation
+    -- is guarded on `forced.isEmpty`, so it is reachable on round 0 alone and a file pays at most
+    -- one extra frontend however many rounds it takes. The bound exists to keep a pathological file
+    -- from looping, not to ration an expensive resource.
     let fresh :=
       (reparseMisses ++ failure.sources.filterMap (commandOf? units ·)).filter (!forced.contains ·)
     if !fresh.isEmpty then
