@@ -229,7 +229,8 @@ structure Metrics where
   commentConstraints : Nat := 0
   redundantBreaks : Nat := 0
   /-- Commands the toolchain's own formatter could not lay out, emitted as their source bytes.
-  See `command`'s two degradation arms. -/
+  Set by the caller, never here: `command` reports what it could not lay out and
+  `Analysis.buildFormatDraft` decides whether the file may spend a hole on it. -/
   verbatimCommands : Nat := 0
   deriving Inhabited, BEq, Repr, Lean.ToJson, Lean.FromJson
 
@@ -2579,8 +2580,8 @@ acts on.
 `incomplete` is the toolchain's: the combinators backtrack, so a subtree the formatter cannot
 format is omitted rather than reported, and the adapter sees a document that stops short of the
 command's terminals. There is nothing here to repair — the document holds no decision about a leaf
-it never emitted — so the command degrades to its own bytes, exactly as an escaping
-`uncaught backtrack exception` does.
+it never emitted — so the command's own bytes are reported as an admissible substitute, exactly as
+an escaping `uncaught backtrack exception` is.
 
 `unadapted` is this module's: a boundary, island, or offside constraint it collected from the
 grammar went unapplied, or a comment leaked into comment-free syntax. Those are refusals, and they
@@ -4166,7 +4167,7 @@ private def CommandPlan.resolve (source : String) (terminals : Array Terminal)
   let comments :=
     comments.filter fun comment =>
       !islands.any fun island =>
-        island.range.start < comment.range.start && comment.range.stop <= island.range.stop
+          island.range.start < comment.range.start && comment.range.stop <= island.range.stop
   let comments :=
     comments.map fun comment =>
       { comment with
@@ -4286,7 +4287,7 @@ private def transform (plan : CommandPlan) (native : Std.Format) :
   -- document that stops short says nothing about the plan: the walk never reached the entries whose
   -- application the ledgers count, so each of them reports a *consequence* of the truncation as if
   -- it were its own defect -- and reports it as `unadapted`, which refuses the file, where the
-  -- truncation itself is `incomplete`, which degrades the one command to its own bytes.
+  -- truncation itself is `incomplete`, which offers the one command's own bytes instead.
   -- `Proofs/AlgebraicGeometry/Modules/IdealSheafImage.lean` is the sighted case: the formatter
   -- backtracked out of a `where` field's tactic block at terminal 93 of 380, and the anchor
   -- interval covering the whole block reported an open marker with no close -- a marker pair the
@@ -4685,32 +4686,34 @@ def command (source : String) (ownership : CommentOwnership) (stx : Lean.Syntax)
     Lean.CoreM (Except FormatterFailure Document) := do
   let trace ← Formatter.trace ownership .command stx
   let stripped := Formatter.withoutBoundaryTrivia stx
-  -- One command's own bytes, complete and validated downstream, in place of a layout the toolchain
-  -- could not produce. The file still formats; `verbatimCommands` counts what it cost.
+  -- A gap in the toolchain's printer rather than a defect in this adapter: this command's own
+  -- bytes would stand in for the layout without losing anything a gate checks. It is still a
+  -- refusal here. Whether the file may spend a hole is not a fact about the command -- it is a
+  -- policy the caller holds, and `LEAN_FMT_STRICT_LAYOUT=1` is a user turning it off -- so this
+  -- reports the admissibility and lets `Analysis.buildFormatDraft` decide. When the adapter decided,
+  -- it returned `.ok` and the decision was invisible: no ledger entry, no per-kind counter, and
+  -- nothing for the strict flag to gate.
   --
   -- Both helpers are bound here, ahead of every exit below, rather than beside the `try` that was
-  -- their first caller: an exit that has to refuse because `degrade` is not in scope yet is a
-  -- refusal chosen by declaration order, which is how the `rootedKind` guard came to refuse a
-  -- shape whose other route already degraded.
-  let degrade (detail : String) : Except FormatterFailure Document :=
+  -- their first caller: an exit that has to refuse because `gap` is not in scope yet is a refusal
+  -- chosen by declaration order, which is how the `rootedKind` guard came to refuse a shape whose
+  -- other route already degraded.
+  let refuse (detail : String) (range : SourceRange := rootRange stx) :
+    Except FormatterFailure Document :=
+    .error { category := .command, kind := stx.getKind, range, trace, detail }
+  let gap (detail : String) : Except FormatterFailure Document :=
     match sourceRange? stx with
-    | some range =>
-      .ok {
-          document := Doc.verbatim (slice source range)
-          trace
-          metrics :=
-            { exactIslands := 1, exactIslandBytes := range.stop - range.start,
-              verbatimCommands := 1 } }
-    | none =>
+    | some _ =>
       .error
         { category := .command
           kind := stx.getKind
           range := rootRange stx
           trace
-          detail := s!"{detail} (no source range for the verbatim fallback)" }
-  let refuse (detail : String) (range : SourceRange := rootRange stx) :
-    Except FormatterFailure Document :=
-    .error { category := .command, kind := stx.getKind, range, trace, detail }
+          detail
+          verbatimAdmissible := true }
+    | none =>
+      -- Nothing to slice, so the admissibility this arm would report is not true of it.
+      refuse s!"{detail} (no source range for the verbatim fallback)"
   -- The walks below each pick one alternative of a `choice` node and assume the rest spell the
   -- same bytes. `Syntax.reprint` verifies that instead of assuming it, and this is where lean-fmt
   -- does the same: one check on `stripped`, which is the tree all of them walk, makes the
@@ -4729,10 +4732,10 @@ alternatives: alternative 0 is {expected}, alternative {alternative} is {actual}
   -- Named before `formatCommand` reaches it. Both lookups this breaks fail with a message about
   -- a name nobody wrote, and the one that fires depends on which end is asked first -- so this
   -- check decides the *diagnosis*, not the outcome: the constant lookup it pre-empts throws
-  -- `Unknown constant`, which the catch below already treats as a toolchain formatter gap and
-  -- degrades. Refusing here would make the file's fate depend on which end asked first.
+  -- `Unknown constant`, which the catch below already reports as a toolchain formatter gap. A flat
+  -- refusal here would make the file's fate depend on which end asked first.
   if let some (kind, suffix) := rootedKindNode? (← Lean.getEnv) formattedSyntax then
-    return degrade
+    return gap
         s!"syntax node kind {kind} names no constant: it is a namespace prefixed onto a \
 declaration name that spelled `_root_`, which the parser constant {suffix} honoured and \
 Lean/Elab/Syntax.lean:465 did not. No formatter can be resolved for it."
@@ -4758,7 +4761,7 @@ cannot tell from the placeholder that protects {marker.range.start}:{marker.rang
             "the lowered document is not well formed: a lowerer defect produced a constructor \
 `Doc.text` with a newline or a `Doc.line` with a multiline flat spelling"
     | .error (.incomplete detail) =>
-      return degrade detail
+      return gap detail
     | .error (.unadapted detail) =>
       return refuse detail
   catch exception =>
@@ -4774,15 +4777,15 @@ cannot tell from the placeholder that protects {marker.range.start}:{marker.rang
     -- whole file over one `group` node, which `Lean.Parser.group` builds wherever a parser of arity
     -- other than one is repeated.
     --
-    -- Both degrade the command to its source bytes: they reparse and re-elaborate to exactly what
-    -- the file already held, the structure and diagnostics gates still hold, and the rest of the
-    -- file formats. Any other exception keeps refusing -- an exception this module did not
+    -- Both admit the command's source bytes as a substitute: they reparse and re-elaborate to
+    -- exactly what the file already held, so the structure and diagnostics gates still hold over
+    -- them. Any other exception reports no such admissibility -- an exception this module did not
     -- anticipate is not evidence about the grammar.
     let formatterGap :=
       (detail.splitOn "uncaught backtrack exception").length > 1 ||
         (detail.splitOn "Unknown constant").length > 1
     if formatterGap then
-      return degrade detail
+      return gap detail
     else
       return refuse detail
 

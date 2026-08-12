@@ -173,7 +173,7 @@ restatement of current behavior.
 Re-recording it is allowed only for a field *addition*, and only after reading the diff: every
 existing key keeps its value and its position, and the new key is the whole change. A re-record that
 moves an existing value is a report that changed shape, which is what this pin exists to stop. It has
-been re-recorded once, for `verbatimCommands`. -/
+been re-recorded twice: for `verbatimCommands`, and for the `degradations` ledger behind it. -/
 private def testProducerParity (ctx : Ctx) : IO Unit := do
   discard <|
       checkJson ctx 0

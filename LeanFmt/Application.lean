@@ -112,6 +112,18 @@ def RunRequest.writesFormat (request : RunRequest) : Bool :=
 private abbrev SourceSnapshot :=
   Project.SourceTarget
 
+/-- One command a file published as its own source bytes, in the reader's coordinates.
+
+`Validator.Degradation` in report form: the byte offset becomes the 1-based line the user's editor
+shows, and the gate becomes the phrase `ValidationGate.describe` spells for a person. Everything
+else is carried through -- this layer converts, it does not summarize. -/
+structure ReportedDegradation where
+  line : Nat
+  kind : String
+  gate : String
+  detail : String
+  deriving Inhabited, Lean.ToJson
+
 structure FileReport where
   path : String
   status : String
@@ -140,6 +152,14 @@ structure FileReport where
   whole-file `infrastructure-failure`, so a run that reports a drop in those and a rise here has
   moved the same defects, not fixed them. -/
   verbatimCommands : Nat := 0
+  /-- One entry per command `verbatimCommands` counts: where it is, what shape it is, and what
+  refused its layout. JSON only -- the text, SARIF and JUnit producers keep the count, because a
+  SARIF result is a finding about the user's code and a degradation is not one.
+
+  The count alone says a file lost a layout somewhere; over a corpus it cannot say *what* was lost,
+  so 457 degraded commands across mathlib were a number with no story behind them. `kind` is what
+  turns that into a work list. -/
+  degradations : Array ReportedDegradation := #[]
   deriving Inhabited, Lean.ToJson
 
 structure RunReport where
@@ -1407,18 +1427,6 @@ private def PreviewMode.rendersCanonical : PreviewMode → Bool
   | .check => false
   | .format | .diff => true
 
-/-- Stamp the admitted layout's verbatim-command count onto whatever report the mode produced.
-
-It is stamped in one place rather than in each report constructor because it is a property of the
-analysis, not of the mode: a command that had to keep its own bytes did so before anything decided
-whether this run writes, previews, or diffs, and `format --check` is precisely the run a CI job reads
-the count from. A report built without an admitted layout gets zero, which is the truth -- there was
-no layout to have holes in. -/
-private def withVerbatimCommands (analysis : SemanticAnalysis) (report : FileReport) : FileReport :=
-  { report with
-    verbatimCommands :=
-      ((analysis.result?.bind (·.canonical?)).map (·.metrics.verbatimCommands)).getD 0 }
-
 private def previewFile (mode : PreviewMode) (plan : RulePlan) (unsafeFixes : Bool)
     (reportImports : Array Finding) (withheldRedundant : Nat) (snapshot : SourceSnapshot)
     (analysis : SemanticAnalysis) : IO FileReport := do
@@ -1719,6 +1727,36 @@ private def profiledPositions (snapshots : Array SourceSnapshot) (files : Array 
     -- thunk is forced when the action runs, which is inside the bracket by construction.
     IO.lazyPure fun _ => resolvePositions snapshots files
 
+/-- Stamp the admitted layout's holes -- the count and the ledger behind it -- onto whatever report
+the mode produced.
+
+It is stamped in one place rather than in each report constructor because it is a property of the
+analysis, not of the mode: a command that had to keep its own bytes did so before anything decided
+whether this run writes, previews, or diffs, and `format --check` is precisely the run a CI job reads
+the count from. A report built without an admitted layout gets zero and an empty ledger, which is the
+truth -- there was no layout to have holes in.
+
+The line walk is the one part of this that is O(source bytes), so it runs only for a file that has a
+degradation to place. `resolvePositions` does the same walk for findings and cannot serve here: it
+indexes by offset for the renderer, and a degradation's line belongs in the canonical report. -/
+private def withVerbatimCommands (snapshot : SourceSnapshot) (analysis : SemanticAnalysis)
+    (report : FileReport) : FileReport :=
+  match analysis.result?.bind (·.canonical?) with
+  | none => report
+  | some canonical =>
+    let degradations :=
+      if canonical.degradations.isEmpty then #[]
+      else
+        let (normalized, _) := LosslessSource.normalize snapshot.source
+        let lines := positionsOf normalized (canonical.degradations.map (·.source))
+        canonical.degradations.map fun degradation =>
+          { line := (lines[degradation.source]?.map (·.line)).getD 1
+            kind := degradation.kind
+            gate := degradation.gate.describe
+            detail := degradation.detail }
+    { report with
+      verbatimCommands := canonical.metrics.verbatimCommands, degradations }
+
 /-- What one run produced: the canonical report, and the line/column resolution presentation
 needs to render it. Two values rather than one enriched report, because `RunReport` is a
 compatibility surface and `PositionIndex` is a rendering aid — folding the second into the first
@@ -1782,7 +1820,7 @@ private def processOneTarget (exactRun : ExactRun) (request : RunRequest) (rende
               previewFile .format plan request.unsafeFixes ir.1 ir.2 snapshot analysis
             else formatFile plan request.unsafeFixes ir.1 ir.2 snapshot analysis
           | .diff => previewFile .diff plan request.unsafeFixes ir.1 ir.2 snapshot analysis
-    let report := withVerbatimCommands analysis report
+    let report := withVerbatimCommands snapshot analysis report
     return {
         report
         analysis? := some analysis
@@ -1963,7 +2001,7 @@ def execute (request : RunRequest) : IO RunOutcome := do
         if let some analysis := cached? then
           files :=
             files.push
-              (withVerbatimCommands analysis
+              (withVerbatimCommands snapshot analysis
                 (←
                   withPhase "rules" <|
                       previewFile previewMode plan request.unsafeFixes importReport.1 importReport.2

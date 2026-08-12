@@ -133,8 +133,13 @@ from code or tests is gone — when you cannot find why something is the way it 
   through `ValidationFailure.sources`, re-renders all of them forced verbatim, and tries again, at most twice. Only a
   failure no command owns — the header, the terminal tail, the source map — still takes the whole file down. Every
   degradation is counted (`verbatimCommands` on the report, `verbatim_commands` under `--statistics`, one trailer line)
-  and carried typed on `AnalysisEnvelope.degradations`, because the alternative to a loud hole is a silent one.
-  `LEAN_FMT_STRICT_LAYOUT=1` restores whole-file refusal so a defect stays bisectable. A drop in infrastructure failures
+  and carried typed on the *admitted layout's* `degradations` — one entry per command, with its syntax kind, the gate
+  that refused it, and its line, surfaced on the JSON report — because the alternative to a loud hole is a silent one.
+  It rides `CanonicalLayout` and not the analysis because a hole is a property of a layout that published: a file that
+  refused has a failure, not holes. The layout adapter decides none of this. It reports whether a command's own bytes
+  are an admissible substitute (`FormatterFailure.verbatimAdmissible`) and `Analysis.buildFormatDraft` decides whether
+  to spend one, which is what makes `LEAN_FMT_STRICT_LAYOUT=1` reach every degradation and restore whole-file refusal
+  so a defect stays bisectable. A drop in infrastructure failures
   matched by a rise in `verbatim_commands` has moved defects, not fixed them; read both.
 - Path errors name the caller's own argument, as `selected file does not exist: <arg>` does. New path-taking CLI surface
   — ranges, LSP URIs, integration entry points — pre-checks and does the same.

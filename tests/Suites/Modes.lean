@@ -1058,7 +1058,7 @@ public def main (args : List String) : IO UInt32 := do
           -- invocation always has. Every array field has to be spelled: Lean's derived `FromJson`
           -- reads a missing one as `null` rather than as the structure's default, so an envelope
           -- short one field is an infrastructure failure, not an empty array.
-          "#!/bin/sh\njson='{\"artifact\":null,\"degradations\":[],\
+          "#!/bin/sh\njson='{\"artifact\":null,\
        \"diagnostics\":[\"forced validation rejection\"]}'\n\
        if [ -n \"$6\" ]; then printf '%s\\n' \"$json\" >\"$6\"; else printf '%s\\n' \"$json\"; fi\n"
       writeFile (work / "stale-hook") "#!/bin/sh\nprintf '\\n-- concurrent change\\n' >>\"$1\"\n"

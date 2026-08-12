@@ -34,6 +34,13 @@ exit code is whatever the rest of the run earned. Several commands in one file m
 cannot be attributed to any command — the header, the terminal tail, the source map — still exits 2. If you want those files to fail loudly instead, assert `verbatimCommands` is `0` in your job; the field is
 there so the choice is yours rather than the tool's.
 
+**To see what was lost, read `degradations`.** Each file in the JSON report carries one entry per command
+`verbatimCommands` counts, with the 1-based `line`, the syntax `kind`, the `gate` that refused the layout, and the
+`detail` it refused with. The count says a file lost a layout; `kind` says which shape lean-fmt could not spell, which is
+what a bug report needs. It is on the JSON report only — SARIF results are findings about your code, and a degradation is
+not one. Setting `LEAN_FMT_STRICT_LAYOUT=1` turns every degradation back into a whole-file exit 2, which is for
+bisecting a defect rather than for a job.
+
 ## Recipe 1 — the minimal job
 
 This is what `.github/workflows/ci.yml` in this repository already runs, and the recipe to start from. It needs

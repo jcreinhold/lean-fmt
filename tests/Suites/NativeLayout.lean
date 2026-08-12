@@ -653,7 +653,11 @@ counted, and the rest of the file is laid out. The pin is the *count* as much as
 a degradation that reported nothing would be indistinguishable from a command lean-fmt formatted.
 
 The directive half stays because it is a second route to the same outcome, and the only one a
-user can reach deliberately. -/
+user can reach deliberately.
+
+The strict half is the third route, and the flag's whole documented meaning. Nothing pinned it, and
+it was false: `LEAN_FMT_STRICT_LAYOUT=1` reached the retry loop and nothing else, so the larger
+degradation path -- this one -- ran under it untouched. -/
 private def testRootedKind (ctx : Ctx) : IO Unit := do
   let fixture := ctx.root / "tests" / "fixtures" / "native-layout" / "RootedKind.lean"
   let degraded ←
@@ -680,6 +684,43 @@ private def testRootedKind (ctx : Ctx) : IO Unit := do
         (input? := some ignored) (cwd? := some ctx.root)
   ensureEq "  ... and the directive it names leaves the command verbatim" 1
       (countExact formatted.stdout "register_label_attr leanFmtRootedKindFixture")
+  -- The kind is what a corpus reads: `verbatim_commands` says a file lost a layout, and this says
+  -- which shape the toolchain's printer could not spell. It was absent on this route entirely while
+  -- the adapter returned `.ok` for its own degradations.
+  ensureContains degraded.stderr
+      "cache.verbatim_kind_Lean._root_.Lean.Parser.Command.registerLabelAttr=1" "rooted kind"
+  -- The flag's documented meaning, which nothing pinned. `LEAN_FMT_STRICT_LAYOUT=1` restores
+  -- whole-file refusal so a defect stays bisectable; it used to reach only the retry loop, so this
+  -- fixture reported the same one degradation at exit 0 under it -- and *lost* the per-kind counter
+  -- on the way, because that line sat inside the path the flag turned off. Exactly backwards.
+  let strict ←
+    expectExit 2 "RootedKind refuses under LEAN_FMT_STRICT_LAYOUT" ctx.application
+        #["format", "-", "--stdin-filename", "tests/fixtures/native-layout/RootedKind.lean",
+          "--root", "."]
+        (input? := some (← IO.FS.readFile fixture)) (cwd? := some ctx.root) (env :=
+        #[("LEAN_FMT_STRICT_LAYOUT", some "1"), ("LEAN_FMT_PROFILE_PHASES", some "1")])
+  ensureEq "strict mode left no command verbatim" 0 (count strict.stderr "cache.verbatim_commands=")
+  ensureContains strict.stderr "names no constant" "strict refusal"
+  -- What the count could never say. `verbatim_commands=1` tells a corpus that a file lost a layout;
+  -- the kind tells it *which shape* the toolchain's printer cannot spell, which is the thing anyone
+  -- reading a report can act on. The line is the same fact in the reader's coordinates.
+  let reported ←
+    runProc ctx.application
+        #["format", "--check", "--root", ".", "--json", "--no-cache",
+          "tests/fixtures/native-layout/RootedKind.lean"]
+        (cwd? := some ctx.root)
+  let report ← parseJson reported.stdout "rooted-kind report"
+  let entry := [.field "files", .index 0, .field "degradations", .index 0]
+  ensureJsonAt report ([.field "files", .index 0, .field "verbatimCommands"])
+      (Lean.toJson (1 : Nat)) "rooted-kind report"
+  ensureJsonAt report (entry ++ [.field "kind"])
+      (Lean.toJson "Lean._root_.Lean.Parser.Command.registerLabelAttr") "rooted-kind report"
+  ensureJsonAt report (entry ++ [.field "gate"]) (Lean.toJson "the layout") "rooted-kind report"
+  ensureJsonAt report (entry ++ [.field "line"]) (Lean.toJson (36 : Nat)) "rooted-kind report"
+  ensureEq "the ledger has one entry per verbatim command" 1
+      (((jsonAt? report [.field "files", .index 0, .field "degradations"]).bind
+              (·.getArr?.toOption)).getD
+          #[]).size
 
 /-- §6b: a comment lying inside an exact island is already spelled by the island's own bytes, so the
 walk must not be asked to insert it a second time.
@@ -711,11 +752,13 @@ private def testIslandComment (ctx : Ctx) : IO Unit := do
   -- `\\n` reaches the fixture as the two characters Lean's own escape needs, so the message
   -- `#eval` prints is the payload `#guard_msgs` compares against.
   let sources :=
-    #[("a declaration", "module\n\n" ++ payload ++ "public def islandCommentPayload : Nat :=\n  1\n"),
+    #[("a declaration",
+        "module\n\n" ++ payload ++ "public def islandCommentPayload : Nat :=\n  1\n"),
       ("a #guard_msgs",
-        "module\n\npublic import Lean.Elab.GuardMsgs\npublic meta import Lean.Elab.Command\n\n"
-          ++ payload ++ "#guard_msgs (substring := true) in\n"
-          ++ "#eval IO.println \"-- Foo.Bar\\n\\nbaz : Nat\"\n")]
+        "module\n\npublic import Lean.Elab.GuardMsgs\npublic meta import Lean.Elab.Command\n\n" ++
+          payload ++
+          "#guard_msgs (substring := true) in\n" ++
+          "#eval IO.println \"-- Foo.Bar\\n\\nbaz : Nat\"\n")]
   for (label, source) in sources do
     let result ←
       expectExit 0 s!"{label} carrying a dashed doc payload" ctx.application

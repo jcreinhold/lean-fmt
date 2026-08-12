@@ -10,9 +10,10 @@ structural syntax islands; explicitly registered roots enter the live registry. 
 only after structural validation and idempotence.
 
 A root the adapter cannot lay out is where the typed `FormatterFailure` is pinned. It reaches the
-envelope's `formatFailure` only under `LEAN_FMT_STRICT_LAYOUT=1`; by default the command degrades to
-its own bytes and the failure is recorded on `degradations` instead, and both routes are asserted
-here because the flag is the only thing between them.
+envelope's `formatFailure` only under `LEAN_FMT_STRICT_LAYOUT=1`; by default the retry loop forces
+the command it names, the file publishes with that command as its own bytes, and the hole is
+recorded on the admitted layout's `degradations`. Both routes are asserted here because the flag is
+the only thing between them.
 
 Lane: parallel — generated fixtures live in the scratch dir and the `FormatterAdapterFixtures`
 build in the preamble is Lake-cached.
@@ -137,18 +138,22 @@ private def testThrowingDegrades (ctx : Ctx) : IO Unit := do
   ensureEq "throwing degraded: the verbatim command did not reproduce the source" text output
   ensure ((jsonAt? envelope [.field "formatFailure"]).all (· == Lean.Json.null))
       "throwing degraded: a worked-around failure still refused the file"
+  -- The ledger rides the admitted layout, not the envelope: a hole is a property of a layout that
+  -- published, and a run that spent rounds and then refused has no holes to report.
   let degradations :=
-    ((jsonAt? envelope [.field "degradations"]).bind (·.getArr?.toOption)).getD #[]
+    ((jsonAt? envelope [.field "canonical", .field "degradations"]).bind (·.getArr?.toOption)).getD
+      #[]
   ensureEq "throwing degraded: degradation count" 1 degradations.size
   let degradation := degradations[0]!
   ensureJsonAt degradation [.field "gate"] (Lean.toJson "formatter") "throwing degraded"
   ensureContains (((degradation.getObjValAs? String "detail").toOption).getD "")
       "adapter fixture formatter failure" "throwing degraded: detail"
+  ensureContains (((degradation.getObjValAs? String "kind").toOption).getD "") "throwingCommand"
+      "throwing degraded: kind"
   -- 50 is `throwing_command`'s unit start; attribution landing on `open` would degrade the wrong
-  -- command and still refuse. The whole array is pinned, not its head: a gate reports every site it
-  -- found so one round can force them all, and a second entry here would be a command degraded for
-  -- a failure it did not cause.
-  ensureJsonAt degradation [.field "sources"] (Lean.toJson #[(50 : Nat)]) "throwing degraded"
+  -- command and still refuse. The whole array is pinned, not its head: one entry per command, and a
+  -- second one here would be a command degraded for a failure it did not cause.
+  ensureJsonAt degradation [.field "source"] (Lean.toJson (50 : Nat)) "throwing degraded"
 
 /-- An unsafe extension token's normalization is replaced by the original payload. -/
 private def testInvalid (ctx : Ctx) : IO Unit := do

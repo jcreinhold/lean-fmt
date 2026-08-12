@@ -75,6 +75,27 @@ structure ValidationFailure where
 def ValidationFailure.source? (failure : ValidationFailure) : Option Nat :=
   failure.sources[0]?
 
+/-- One command published as its own source bytes instead of a layout.
+
+One entry per command, not per failure: a gate that names three commands costs three holes in the
+output, and a reader looking at a file wants the three places, not the one comparison that found
+them.
+
+`kind` is the field a corpus makes use of. `verbatimCommands` says a file lost a layout somewhere;
+the syntax kind says which *shape* the toolchain's printer cannot spell, which is the thing a
+maintainer can go and fix. -/
+structure Degradation where
+  /-- The command unit's start, as a normalized source byte offset -- the same coordinate system
+  every projection, finding, and `ValidationFailure.sources` entry uses. -/
+  source : Nat
+  /-- The command's syntax node kind, rendered. -/
+  kind : String
+  /-- What refused the layout. `.formatter` for a gap in the toolchain's printer, and whichever gate
+  found it for a command a retry forced. -/
+  gate : ValidationGate
+  detail : String
+  deriving Inhabited, BEq, Repr, Lean.ToJson, Lean.FromJson
+
 /-- How much candidate validation a publishing `format` run owes its result. `.exact` is the
 default and every non-`format` mode's only value: the candidate is structurally reparsed and then
 admitted by a second render plus `Validator.admit`, with a full candidate frontend as the reparse's
@@ -119,6 +140,13 @@ structure CanonicalLayout where
   sourceMap : Array Mark
   metrics : FormatMetrics
   validation : ValidationMetrics
+  /-- The holes in this layout, one per command `metrics.verbatimCommands` counts. Carried here
+  rather than beside the analysis because a degradation is a property of a *published* layout: a
+  file that refused has no holes, only a failure, and a run that spent rounds before refusing must
+  not report the drafts it threw away. It rides the result cache with the count for the same reason
+  the count does -- a warm run that reported one and not the other would be describing a layout it
+  did not have. -/
+  degradations : Array Degradation := #[]
   deriving Inhabited, BEq, Repr, Lean.ToJson, Lean.FromJson
 
 namespace Validator

@@ -62,13 +62,24 @@ structure FormatterTrace where
   commentOwners : Nat
   deriving Inhabited, BEq, Repr, Lean.ToJson, Lean.FromJson
 
-/-- A hard registry failure. No source-text fallback constructor exists, deliberately. -/
+/-- A registry failure. There is still no source-text fallback *constructor*: a formatter reports
+what it could not lay out and never substitutes bytes for a layout, because whether a hole in the
+output is acceptable is a decision about the file, which the formatter cannot see. -/
 structure FormatterFailure where
   category : FormatterCategory
   kind : Lean.Name
   range : SourceRange
   trace : FormatterTrace
   detail : String
+  /-- Whether this syntax's own source bytes would be an admissible substitute for the layout that
+  failed: the bytes reparse and re-elaborate to exactly what the file already held, so every gate
+  downstream still holds over them and only the layout is lost.
+
+  Evidence, not a decision. The caller is what knows whether it may spend a hole in the output --
+  `LEAN_FMT_STRICT_LAYOUT=1` says it may not, and a caller with no range to slice cannot anyway.
+  False is the safe default and the answer for every failure that is a defect rather than a gap in
+  the toolchain's printer. -/
+  verbatimAdmissible : Bool := false
   deriving Inhabited, BEq, Repr, Lean.ToJson, Lean.FromJson
 
 /-- One successful registry call. `document` contains exactly one opaque native leaf; across an

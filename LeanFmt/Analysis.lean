@@ -48,13 +48,6 @@ structure AnalysisEnvelope where
   formatFailure? : Option FormatterFailure := none
   canonical? : Option CanonicalLayout := none
   validationFailure? : Option ValidationFailure := none
-  /-- Every failure a retry worked around by emitting one command verbatim, in the order they were
-  met. A canonical layout with a non-empty array here is a layout with holes in it: the file
-  formatted, and one or more commands were published as the bytes they already were.
-
-  `formatFailure?` and `validationFailure?` keep their meanings -- they say the file did not
-  format -- so a defect that used to refuse would otherwise leave no typed record at all. -/
-  degradations : Array ValidationFailure := #[]
   diagnostics : Array String := #[]
   deriving Lean.ToJson, Lean.FromJson
 
@@ -238,11 +231,20 @@ private structure DraftFailure where
   command? : Option Nat
   failure : FormatterFailure
 
+/-- One command this draft published as its own source bytes, and what the toolchain's printer said
+when it could not lay it out. Only what the caller cannot recover for itself: the index names the
+command, so its kind and source span are the caller's to look up, and duplicating them here would be
+two records of one command that could disagree. -/
+private structure DegradedCommand where
+  index : Nat
+  detail : String
+
 private def buildFormatDraft (normalized : String) (source : LosslessSource)
     (sourcePath : System.FilePath) (fileMap : Lean.FileMap) (ownership : CommentOwnership)
     (header : Lean.Syntax) (headerEnv : Lean.Environment) (headerOptions : Lean.Options)
-    (commands : Array LiveCommand) (format : FormatConfig) (checkCancelled : IO Unit := pure ())
-    (forced : Std.HashSet Nat := ∅) : IO (Except DraftFailure FormatDraft) := do
+    (commands : Array LiveCommand) (format : FormatConfig) (strictLayout : Bool)
+    (checkCancelled : IO Unit := pure ()) (forced : Std.HashSet Nat := ∅) :
+    IO (Except DraftFailure (FormatDraft × Array DegradedCommand)) := do
   let bytes := normalized.toUTF8
   let headerRange : SourceRange := ⟨0, source.headerStop⟩
   let mut document? : Option Doc := none
@@ -258,6 +260,7 @@ private def buildFormatDraft (normalized : String) (source : LosslessSource)
   let mut commentConstraints := 0
   let mut explicitDocuments := 0
   let mut descriptorDocuments := 0
+  let mut degraded : Array DegradedCommand := #[]
   let fileDangling := Formatter.Trivia.fileDangling ownership
   checkCancelled
   if headerRange.start < headerRange.stop then
@@ -333,11 +336,48 @@ private def buildFormatDraft (normalized : String) (source : LosslessSource)
           (Formatter.NativeLayout.command normalized ownership command.stx format placement.indent)
           { fileName := sourcePath.toString, fileMap, options := command.options }
           { env := command.env }
-    let formatted ←
+    -- A gap in the toolchain's printer that the adapter reports the command's own bytes would
+    -- cover. Spending one is this function's decision, not the adapter's: `LEAN_FMT_STRICT_LAYOUT=1`
+    -- is a user declining every one of them so a defect stays bisectable, and the ledger below is
+    -- what makes a spent one legible afterwards. While the adapter decided, it returned `.ok` and
+    -- the decision was invisible -- no ledger entry, no per-kind counter, and nothing the flag
+    -- could reach.
+    --
+    -- The composition is the ordinary one below, not `forced`'s: the bytes replace the command's
+    -- *layout*, and the trivia around it is still emitted through the ownership layer, re-indented
+    -- like any other command's. `forced` differs deliberately. It answers a validation failure that
+    -- may be the trivia's own fault -- a comment contract divergence is a gate -- so it takes the
+    -- whole unit byte for byte and re-indents nothing. Here nothing has been validated yet and
+    -- nothing indicts the trivia.
+    let degradation? : Option (Formatter.NativeLayout.Document × DegradedCommand) :=
       match result with
-      | .ok formatted =>
-        pure formatted
+      | .ok _ => none
       | .error failure =>
+        if strictLayout || !failure.verbatimAdmissible then none
+        else
+          command.stx.getRange?.map fun range =>
+            let sliced : SourceRange := ⟨range.start.byteIdx, range.stop.byteIdx⟩
+            let verbatim : Formatter.NativeLayout.Document :=
+              { document := Doc.verbatim (normalizedSlice bytes sliced)
+                trace := failure.trace
+                metrics :=
+                  { exactIslands := 1, exactIslandBytes := sliced.stop - sliced.start
+                    verbatimCommands := 1 } }
+            (verbatim, { index, detail := failure.detail })
+    let mut degradedDocument? : Option Formatter.NativeLayout.Document := none
+    if let some (document, record) := degradation? then
+      -- One counter per syntax kind. Over a corpus this is what names the shapes the toolchain's
+      -- printer cannot spell; a per-file count could never say which kind was at fault.
+      recordCount s!"verbatim_kind_{command.stx.getKind}" 1
+      degraded := degraded.push record
+      degradedDocument? := some document
+    let formatted ←
+      match degradedDocument?, result with
+      | some document, _ =>
+        pure document
+      | none, .ok formatted =>
+        pure formatted
+      | none, .error failure =>
         return .error { command? := some index, failure }
     nativeDocuments := nativeDocuments + 1
     alignedTokens := alignedTokens + formatted.metrics.tokenLeaves
@@ -393,40 +433,42 @@ private def buildFormatDraft (normalized : String) (source : LosslessSource)
   checkCancelled
   let rendered :=
     renderDetailed format.lineWidth document format.pinnedComments format.reflowComments
-  -- A command the toolchain could not lay out is emitted verbatim rather than refusing the file
-  -- (`NativeLayout.command`). That is a degradation, so it is counted: the count rides the envelope
-  -- back to the parent, `LEAN_FMT_PROFILE_PHASES=1` reports it, and a corpus run that starts
-  -- dropping commands shows a rising number instead of nothing at all.
+  -- A command the toolchain could not lay out is emitted verbatim rather than refusing the file.
+  -- That is a degradation, so it is counted: the count rides the envelope back to the parent,
+  -- `LEAN_FMT_PROFILE_PHASES=1` reports it, and a corpus run that starts dropping commands shows a
+  -- rising number instead of nothing at all. Both routes land here -- the gap decided above and the
+  -- command a caller `forced` -- because both are the same hole in the output.
   if verbatimCommands > 0 then
     recordCount "verbatim_commands" verbatimCommands
-  return .ok
-      { text := rendered.text
-        sourceMap := rendered.sourceMap
-        headerContract := Formatter.Command.headerContract header
-        commentContract := Comments.contract normalized ownership
-        metrics :=
-          { frontendRuns := 1
-            commands := commands.size
-            nativeDocuments
-            alignedTokens
-            nativeCommentLeaves
-            normalizedTokens
-            exactIslands
-            exactIslandBytes
-            verbatimCommands
-            offsideConstraints
-            commentConstraints
-            registryNodes
-            explicitDocuments
-            descriptorDocuments
-            commentOwners := Comments.all ownership |>.size
-            documentNodes := rendered.metrics.documentNodes
-            renderSteps := rendered.metrics.workSteps
-            nativeEvents := rendered.metrics.nativeEvents }
-        sourceDigest := source.normalizedDigest.hex
-        sourceBytes := source.normalizedBytes
-        headerStop := source.headerStop
-        terminalStop := source.terminalStop }
+  let draft : FormatDraft :=
+    { text := rendered.text
+      sourceMap := rendered.sourceMap
+      headerContract := Formatter.Command.headerContract header
+      commentContract := Comments.contract normalized ownership
+      metrics :=
+        { frontendRuns := 1
+          commands := commands.size
+          nativeDocuments
+          alignedTokens
+          nativeCommentLeaves
+          normalizedTokens
+          exactIslands
+          exactIslandBytes
+          verbatimCommands
+          offsideConstraints
+          commentConstraints
+          registryNodes
+          explicitDocuments
+          descriptorDocuments
+          commentOwners := Comments.all ownership |>.size
+          documentNodes := rendered.metrics.documentNodes
+          renderSteps := rendered.metrics.workSteps
+          nativeEvents := rendered.metrics.nativeEvents }
+      sourceDigest := source.normalizedDigest.hex
+      sourceBytes := source.normalizedBytes
+      headerStop := source.headerStop
+      terminalStop := source.terminalStop }
+  return .ok (draft, degraded)
 
 private def isApplicationRuntimePlugin (plugin : Lean.Plugin) : Bool :=
   plugin.path.fileName.any fun name =>
@@ -763,15 +805,19 @@ frontend and reading the same two facts back out of its envelope. -/
 private def projectAndRender (mainModule : String) (normalized : String)
     (sourcePath : System.FilePath) (fileMap : Lean.FileMap) (headerStx : Lean.Syntax)
     (headerEnv : Lean.Environment) (headerOptions : Lean.Options) (commands : Array LiveCommand)
-    (terminal : LiveCommand) (format : FormatConfig) (checkCancelled : IO Unit := pure ())
-    (forced : Std.HashSet Nat := ∅) : IO (LosslessSource × Except DraftFailure FormatDraft) := do
+    (terminal : LiveCommand) (format : FormatConfig) (strictLayout : Bool)
+    (checkCancelled : IO Unit := pure ()) (forced : Std.HashSet Nat := ∅) :
+    IO (LosslessSource × Except DraftFailure FormatDraft) := do
   let stxs := commands.map (·.stx)
   let projection := LosslessSource.ofSource mainModule normalized stxs (some terminal.stx)
   let ownership := commentOwnership normalized projection headerStx stxs (some terminal.stx)
   let draft ←
     buildFormatDraft normalized projection sourcePath fileMap ownership headerStx headerEnv
-        headerOptions commands format checkCancelled forced
-  return (projection, draft)
+        headerOptions commands format strictLayout checkCancelled forced
+  -- The second render's degradations are the first's, over the same commands: the ledger a run
+  -- reports is the first draft's, and a second copy of it here would only be a second chance to
+  -- report it twice.
+  return (projection, draft.map (·.1))
 
 /-- A candidate the reparse refused: the counter tag it is reported under, and every command whose
 bytes the refusal came from. The header and the terminal name no index -- there is no command to
@@ -1001,6 +1047,11 @@ private unsafe def analyzeSnapshot (setup : Lean.ModuleSetup) (source : String)
   let commentSummary? :=
     if captureComments then ownership?.map (Comments.summary normalizedSource) else none
   let units := commandUnits projection liveCommands
+  -- Every route by which this file may end up with a hole in its output answers to one flag, read
+  -- once here: the retry loop below, and the formatter gap `buildFormatDraft` decides on -- which
+  -- both renders have to decide the same way, or the second disagrees with the first and the draft
+  -- fails idempotence over a difference the source never had.
+  let strictLayout := (← IO.getEnv "LEAN_FMT_STRICT_LAYOUT") == some "1"
   -- One draft judged: reparse the candidate, render it a second time, and admit the pair. Bound as
   -- a closure rather than lifted to a definition because it reads seventeen things from this run --
   -- setup, module, projection, environment, options, policy -- and a definition taking all of them
@@ -1077,7 +1128,7 @@ private unsafe def analyzeSnapshot (setup : Lean.ModuleSetup) (source : String)
         let (candidateProjection, second?) ←
           projectAndRender setup.name.toString candidateText sourcePath candidateInput.fileMap
               candidateHeader commandState.env options candidateCommands candidateTerminal format
-              checkCancelled forced
+              strictLayout checkCancelled forced
         match second? with
         | .error failure =>
           -- The reparse confirmed command by command, so the candidate's indices are the
@@ -1178,7 +1229,6 @@ private unsafe def analyzeSnapshot (setup : Lean.ModuleSetup) (source : String)
   -- and tries again, and only a failure no command owns -- the header, the terminal tail, the
   -- source map -- still takes the file down. `forced` grows strictly, so the loop is bounded twice
   -- over, and `LEAN_FMT_STRICT_LAYOUT=1` turns it off so a defect stays bisectable.
-  let strictLayout := (← IO.getEnv "LEAN_FMT_STRICT_LAYOUT") == some "1"
   let mut forced : Std.HashSet Nat := ∅
   let mut retries := 0
   let mut firstDraft? : Option FormatDraft := none
@@ -1186,7 +1236,18 @@ private unsafe def analyzeSnapshot (setup : Lean.ModuleSetup) (source : String)
   let mut canonical? : Option CanonicalLayout := none
   let mut validationFailure? : Option ValidationFailure := none
   let mut firstFailure? : Option ValidationFailure := none
-  let mut degradations : Array ValidationFailure := #[]
+  -- Two ledgers, because the two channels accumulate differently. `forcedDegradations` records each
+  -- command this loop chose to force, and `forced` only grows, so every entry is still a hole in the
+  -- draft that finally published. `gapDegradations` is one render's formatter gaps, so the last
+  -- render's is the published one and a union across rounds would report holes in drafts that were
+  -- thrown away. Together they are exactly the commands `verbatimCommands` counts.
+  let mut forcedDegradations : Array Degradation := #[]
+  let mut gapDegradations : Array Degradation := #[]
+  let degradationAt (index : Nat) (gate : ValidationGate) (detail : String) : Degradation :=
+    { source := (units[index]?.map (·.start)).getD 0
+      kind := toString ((liveCommands[index]?.map (·.stx.getKind)).getD .anonymous)
+      gate
+      detail }
   for _attempt in [0:maxDraftRetries + 1] do
     unless needsDraft do
       break
@@ -1197,11 +1258,14 @@ private unsafe def analyzeSnapshot (setup : Lean.ModuleSetup) (source : String)
     let some ownership := ownership? | throw <| IO.userError "format draft has no comment ownership"
     let drafted ←
       buildFormatDraft normalizedSource projection sourcePath input.fileMap ownership
-          module.headerStx commandState.env options liveCommands format checkCancelled forced
+          module.headerStx commandState.env options liveCommands format strictLayout checkCancelled
+          forced
     match drafted with
-    | .ok draft =>
+    | .ok (draft, degraded) =>
       firstDraft? := some draft
       draftFailure? := none
+      gapDegradations :=
+        degraded.map fun record => degradationAt record.index .formatter record.detail
     | .error failure =>
       firstDraft? := none
       draftFailure? := some failure
@@ -1244,7 +1308,8 @@ private unsafe def analyzeSnapshot (setup : Lean.ModuleSetup) (source : String)
       (reparseMisses ++ failure.sources.filterMap (commandOf? units ·)).filter (!forced.contains ·)
     if !fresh.isEmpty then
       forced := fresh.foldl (fun acc index => acc.insert index) forced
-      degradations := degradations.push failure
+      forcedDegradations :=
+        forcedDegradations ++ fresh.map (degradationAt · failure.gate failure.detail)
       retries := retries + 1
       continue
     -- Nothing fresh: either the gate named no site at all, or every site it named is already
@@ -1262,7 +1327,7 @@ private unsafe def analyzeSnapshot (setup : Lean.ModuleSetup) (source : String)
     if forced.contains target then
       break
     forced := forced.insert target
-    degradations := degradations.push failure
+    forcedDegradations := forcedDegradations.push (degradationAt target failure.gate failure.detail)
     retries := retries + 1
   if retries > 0 then
     recordCount "draft_retry" retries
@@ -1287,14 +1352,16 @@ private unsafe def analyzeSnapshot (setup : Lean.ModuleSetup) (source : String)
 still failed" })
   let formatFailure? := draftFailure?.map (·.failure)
   let formatDraft? := if captureFormatDraft then firstDraft? else none
+  -- Only a layout that publishes carries holes. A refusal reports its failure, and the rounds it
+  -- spent before refusing describe drafts nobody will ever see.
+  canonical? := canonical?.map ({ · with degradations := gapDegradations ++ forcedDegradations })
   return {
       artifact? := some artifact
       commentSummary? := commentSummary?
       formatDraft? := formatDraft?
       formatFailure? := formatFailure?
       canonical? := canonical?
-      validationFailure? := validationFailure?
-      degradations := degradations }
+      validationFailure? := validationFailure? }
 
 /- A digest of the module's command projection: each live command's kind and source range, in
 order, with the terminal last. Test-only (`LEAN_FMT_TEST_FRONTIER_PROJECTION`): the frontier and
