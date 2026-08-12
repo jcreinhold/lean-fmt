@@ -37,9 +37,9 @@ instantiate, no registration order — add an entry to `ruleRegistry` and you ar
 | `.deprecated` | either | on its way out | its code |
 
 `.stable` with `defaultEnabled := false` is not a contradiction. `FMT011` is the live instance: its correctness earned
-`.stable`, and its cost — one compiler frontend run per module on a project not built with the plugin, measured at 33×
-the default-run budget — kept it off the default path. Do not mark a rule `.preview` because it is expensive; `.preview`
-means *unjudged*, not *costly*.
+`.stable`, and its cost — one compiler frontend run per module on a project not built with the plugin, orders of
+magnitude over the default-run budget — kept it off the default path. Do not mark a rule `.preview` because it is
+expensive; `.preview` means *unjudged*, not *costly*.
 
 **A `.preview` rule must set `previewPath?` to a nonempty string, and a non-preview rule must leave it `none`.**
 `testCatalogInvariants` enforces both directions; the build fails otherwise. Write the condition that would graduate the

@@ -202,7 +202,7 @@ worthwhile and needs no special handling.
 
 **The cache's identity takes the formatter binary's content**, not its path or modification time. So rebuilding lean-fmt
 from source, or reinstalling it somewhere else, keeps every entry as long as the bytes are the same. Hashing the binary
-costs about 40 ms and is paid once per build; later runs read the memoized answer from
+is cheap and paid once per build; later runs read the memoized answer from
 `.lean-fmt-cache/formatter-identity.json`.
 
 Cache `.lake` alongside `.lean-fmt-cache` under one key. A restored `.lake` is worth having on its own:

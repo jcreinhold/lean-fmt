@@ -134,16 +134,17 @@ entries recorded at another width.
 
 `--workers N` (batch commands) runs N frontend children in parallel. It defaults to `LEAN_NUM_THREADS` if that is set,
 else the machine's core count — the rule Lake uses to size its own build. Output is assembled in file order, so the
-report is byte-identical at any N. Measured on this repository's 40-file cold run: two workers are byte-identical to one
-at 1.9× the speed. On a mathlib project, a 17-file cold `format` went 16.95 s at one worker to 6.74 s at four and 5.48 s
-at eight.
+report is byte-identical at any N. Extra workers buy real but sublinear speedup on a cold run, and the returns flatten
+well before the core count — the work each one does is dominated by a Lean frontend the others cannot share.
 
 **lean-fmt imposes no memory limit.** Neither does Lake, which spawns one `lean` per module and passes no `-M`, no
 `ulimit`, and no `setrlimit`. A file that needs six gigabytes gets them; a machine that runs out swaps. `--workers N` is
 the control — if N children do not fit, ask for fewer.
 
 There is no memory cap because a per-worker one cannot be measured honestly. Most of a worker's apparent memory is the
-`.olean` files it has mapped, which every worker shares: a child reporting 2.05 GiB actually occupied 173 MiB.
+`.olean` files it has mapped, which every worker shares, so a child's reported size can overstate what it actually
+occupies by an order of magnitude — and summing those figures across workers counts the same shared pages once per
+worker.
 
 ## Streaming and ranges
 
