@@ -43,7 +43,7 @@ lake lint            # the formatter on itself, under lean-fmt.toml
 `lake` is the build system; the `Makefile` is the conventional front end (`make build`, `make test`) plus the GNU
 installer. It carries one thing lake does not: `make test-linux` archives `HEAD` plus your dirty files into an Ubuntu
 22.04 container and runs the suites there, with cached elan and lake volumes so repeats are minutes. The 22.04 userland
-is where platform-shaped failures surfaced twice (mtime granularity, cache-epoch contamination) and it is what the
+is where platform-shaped failures surface (mtime granularity, cache-epoch contamination) and it is what the
 release legs run. First repro for any failure that smells platform-dependent.
 
 `docs/manual` is a second Lake package, holding the Verso manual published to GitHub Pages by
@@ -73,10 +73,10 @@ Match the checks to the change:
   directory is covered until someone says otherwise.
 - The slow tag marks minutes-long suites. They run under `--all`, under `--suites`, and in the `workflow_dispatch` CI
   job.
-- `performance` is the durable performance gate: **counts, ratios, and digests only**, never a wall time, because the
-  same binary over the same warm corpus measured 3,977 ms and 19,968 ms depending only on machine load. Its
-  gates-discriminate case feeds every gate input it must accept and input it must reject. Add a gate there when you
-  optimize something, stated as a quantity that does not move when the machine gets slower.
+- `performance` is the durable performance gate: **counts, ratios, and digests only**, never a wall time, because one
+  binary over one warm corpus varies by an order of magnitude on machine load alone — a wall time measures the load as
+  much as the code. Its gates-discriminate case feeds every gate input it must accept and input it must reject. Add a
+  gate there when you optimize something, stated as a quantity that does not move when the machine gets slower.
 - `ci` gates `docs/ci.md` and reads **committed** state only — a `file://` clone at `HEAD` and `git archive` — so commit
   before running it, or it tests the previous commit and passes while your change is broken.
 - `watch`'s staged-empty case runs `check --staged` against *this* repository, so it fails whenever a `.lean` file is
@@ -162,8 +162,8 @@ from code or tests is gone — when you cannot find why something is the way it 
 - A `Syntax` leaf walk is not a linear cover of the source. A `choice` node holds several parses of one byte range, so
   only one alternative spells those bytes; walking all of them reads the tokens out of order. Terminal commands (`eoi`,
   `#exit`) never appear in the command stream, so the region a projection models ends where the terminal *begins*, and
-  the rest is verbatim tail. Both matter on ordinary files, not just edge cases: `choice` hit 1 of 5 sampled mathlib
-  modules, and `#exit` every file that contains it.
+  the rest is verbatim tail. Both matter on ordinary files, not just edge cases: `choice` turns up in routine mathlib
+  modules, and `#exit` in every file that contains one.
 
 ### The module artifact and rule tiers
 
@@ -175,11 +175,9 @@ from code or tests is gone — when you cannot find why something is the way it 
   `LeanFmt/CompilerPlugin.lean`'s imports and `lean_lib LeanFmtCompilerPlugin`'s globs, and both absences matter: Lake
   links every module a library globs, imported or not. When the rules were reachable, editing one rule's message string
   invalidated every integrated module's Lake trace. See `docs/adding-a-rule.md`.
-- Size the module artifact per element, not per source byte: about 24 B × (tokens + nodes), stored in the `.olean` at
-  that size. Measured 2026-07-28 over 62 mathlib modules drawn across the size distribution: the artifact runs 10.35×
-  the source, 620 KB for the largest, and `23.95 × (tokens + nodes)` fits at R² = 0.998 against 0.952 for a fit against
-  source bytes. The ratio tracks element density, which varies 7.4× across that corpus, so a small source need not mean
-  a small artifact.
+- Size the module artifact per element, not per source byte: roughly 24 B × (tokens + nodes), stored in the `.olean` at
+  that size. Element density varies several-fold across a corpus, so a small source need not mean a small artifact, and
+  a size predicted from source bytes will be wrong by that much. Re-fit before you rely on the coefficient.
 - Fetch and consume `leanFmtArtifact` inside one private Lake-owning operation. `Lake.Artifact` is a public descriptor,
   not authority by type alone; recompute its content hash and match the module and the full source snapshot. Filesystem
   presence or a raw path is not build validity.
@@ -189,11 +187,14 @@ from code or tests is gone — when you cannot find why something is the way it 
 - Do not call superset parsing exact. Say which of the four workloads a speed number came from. A passing test is not a
   measurement. Keep measured results apart from expected ones, and run the cheap check before you record either.
 - Treat formatter-cache cold, ordinary-project-built, formatter-integrated-built, and cache-warm as distinct workloads.
-- Stop a memory experiment, which measures footprint, at 8 GiB aggregate RSS, abnormal pressure, or 256 MiB new swap. A
-  functional run, which asks whether the product works on a corpus, stops only on distress: free memory under 10%, or
-  swap 2 GiB over its baseline. A report prints at the end, so an early kill loses the whole run.
-- Summed RSS over a worker tree is not footprint; every worker re-counts the same mmapped `.olean` pages. It read 8.46
-  GiB while the system sat 61% free. Compare runs with it, never gate on it.
+- Stop a memory experiment, which measures footprint, at 8 GiB aggregate RSS or abnormal pressure. A functional run,
+  which asks whether the product works on a corpus, stops only on distress: free memory under 10%. A report prints at
+  the end, so an early kill loses the whole run.
+- Two memory readings look like footprint and are not. Summed RSS over a worker tree double-counts the same mmapped
+  `.olean` pages every worker shares. And macOS grows the swap file on demand and reports the growth as *used*, so
+  swap-used climbs alike whether one worker is running or four; gate on it and it stops a healthy run at any
+  concurrency, which is indistinguishable from having found real pressure. Free memory is the reading that
+  discriminates. Compare runs with the other two if you like; never gate on them.
 - Do not repeatedly run full mathlib. Use the frozen sample and named stress cases; save the full-corpus run for a late
   candidate.
 - Whole-project selection and named files are different workloads, minutes and gigabytes apart. Say which.
