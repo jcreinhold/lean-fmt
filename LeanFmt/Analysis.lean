@@ -1040,9 +1040,9 @@ private unsafe def analyzeSnapshot (setup : Lean.ModuleSetup) (source : String)
       ValidationFailure :=
       if failure.gate == .comments && failure.source?.isNone then
         { failure with
-          source? :=
-            (Validator.firstDivergentComment? first.commentContract second.commentContract).bind
-              fun index => (Comments.contractRange? ownership index).map (·.start) }
+          sources :=
+            ((Validator.firstDivergentComment? first.commentContract second.commentContract).bind
+                fun index => (Comments.contractRange? ownership index).map (·.start)).toArray }
       else failure
     let candidateText := (LosslessSource.normalize first.text).1
     checkCancelled
@@ -1087,7 +1087,7 @@ private unsafe def analyzeSnapshot (setup : Lean.ModuleSetup) (source : String)
                 some
                   { gate := .formatter
                     detail := failure.failure.detail
-                    source? := failure.command?.bind (units[·]?.map (·.start)) })
+                    sources := (failure.command?.bind (units[·]?.map (·.start))).toArray })
         | .ok second =>
           if !candidateProjection.validFor candidateText then
             pure
@@ -1118,7 +1118,7 @@ private unsafe def analyzeSnapshot (setup : Lean.ModuleSetup) (source : String)
                   detail :=
                     s!"candidate reparse refused ({miss.tag}) with {forced.size} command(s) \
                   emitted verbatim"
-                  source? := miss.command?.bind (units[·]?.map (·.start)) })
+                  sources := (miss.command?.bind (units[·]?.map (·.start))).toArray })
       else if validationPolicy == .structural then
         pure
             (none,
@@ -1136,11 +1136,6 @@ private unsafe def analyzeSnapshot (setup : Lean.ModuleSetup) (source : String)
               (captureFormatDraft := true) (format := format) (trackSnapshot? := trackSnapshot?)
               (checkCancelled := checkCancelled)
         if !candidate.diagnostics.isEmpty then
-          match <- IO.getEnv "LEAN_FMT_DUMP_REJECTED" with
-          | some dumpPath =>
-            IO.FS.writeFile dumpPath first.text
-          | none =>
-            pure ()
           -- The messages are the candidate's own, in the candidate's coordinates, and there is no
           -- command correspondence to map them through -- the reparse is what would have built one
           -- and it is what failed. The reparse's own index is the attribution instead: the command
@@ -1150,7 +1145,7 @@ private unsafe def analyzeSnapshot (setup : Lean.ModuleSetup) (source : String)
                 some
                   { gate := .diagnostics
                     detail := String.intercalate "\n" candidate.diagnostics.toList
-                    source? := miss.command?.bind (units[·]?.map (·.start)) })
+                    sources := (miss.command?.bind (units[·]?.map (·.start))).toArray })
         else
           match candidate.artifact?, candidate.formatDraft?, candidate.formatFailure? with
           | some candidateArtifact, some second, none =>
@@ -1171,7 +1166,7 @@ private unsafe def analyzeSnapshot (setup : Lean.ModuleSetup) (source : String)
                   some
                     { gate := .formatter
                       detail := failure.detail
-                      source? := miss.command?.bind (units[·]?.map (·.start)) })
+                      sources := (miss.command?.bind (units[·]?.map (·.start))).toArray })
           | _, _, _ =>
             pure
                 (none,
@@ -1214,7 +1209,7 @@ private unsafe def analyzeSnapshot (setup : Lean.ModuleSetup) (source : String)
         some
           { gate := .formatter
             detail := failure.failure.detail
-            source? := failure.command?.bind (units[·]?.map (·.start)) }
+            sources := (failure.command?.bind (units[·]?.map (·.start))).toArray }
     unless validateFormatDraft do
       break
     if let some first := firstDraft? then
@@ -1231,18 +1226,22 @@ private unsafe def analyzeSnapshot (setup : Lean.ModuleSetup) (source : String)
       firstFailure? := some failure
     if strictLayout || retries == maxDraftRetries then
       break
-    -- Every command the candidate's own bytes cannot reparse, not just the one the failure names.
-    -- A `ValidationFailure` carries one offset, so blaming through it forces one command per
-    -- attempt and one whole candidate-frontend run each: a file with three unrenderable commands
-    -- exhausted `maxDraftRetries` a command short of converging. The resumed reparse already knows
-    -- the whole set for the price of a parse, so force it at once. Empty when the draft reparsed
-    -- and a later gate refused, which is where the single-site rule below still decides.
-    let fresh := reparseMisses.filter (!forced.contains ·)
+    -- Every command this attempt found, not just the first one it could name. Blaming through a
+    -- single site forces one command per round and costs a whole candidate frontend run for each,
+    -- so a file with three bad commands needed three rounds against a bound of two and refused --
+    -- twice over, once through the reparse (`Primorial.lean`) and once through the second render
+    -- (`GroupHomology/Functoriality.lean`). Both channels already computed the whole set; this is
+    -- where it stops being thrown away. `maxDraftRetries` still bounds *rounds*, and a round is now
+    -- a round of discovery rather than a single command, which is strictly more reach per run.
+    let fresh :=
+      (reparseMisses ++ failure.sources.filterMap (commandOf? units ·)).filter (!forced.contains ·)
     if !fresh.isEmpty then
       forced := fresh.foldl (fun acc index => acc.insert index) forced
       degradations := degradations.push failure
       retries := retries + 1
       continue
+    -- Nothing fresh: either the gate named no site at all, or every site it named is already
+    -- verbatim, which is the misattribution the rule below reads.
     let some offset := failure.source? | break
     let some index := commandOf? units offset | break
     -- Forcing a command a second time would render the same bytes and re-derive the same refusal,
@@ -1260,6 +1259,13 @@ private unsafe def analyzeSnapshot (setup : Lean.ModuleSetup) (source : String)
     retries := retries + 1
   if retries > 0 then
     recordCount "draft_retry" retries
+  -- The bytes a person needs to see when a file refuses, whichever gate refused it and after the
+  -- retries have had their turn. This used to sit inside the candidate-frontend branch and so wrote
+  -- nothing for a comments or structure refusal -- a debug hook that is silent for most of the
+  -- failures it exists to explain reads as "there was no draft", which is the opposite of true.
+  if let some path := ← IO.getEnv "LEAN_FMT_DUMP_REJECTED" then
+    if let (some _, some draft) := (validationFailure?, firstDraft?) then
+      IO.FS.writeFile path draft.text
   -- The failure a refusing file reports is the *first* attempt's, so a file that fails today fails
   -- with a strict superset of today's message rather than with whatever the last retry produced.
   if validationFailure?.isSome then

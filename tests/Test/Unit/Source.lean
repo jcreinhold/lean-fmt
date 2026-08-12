@@ -333,6 +333,39 @@ private def testNodeDivergenceSource : IO Unit := do
       (siteOf #[{ kind := 0, range := ⟨0, 0⟩ }, { kind := 0, range := ⟨0, 0⟩ }] 1)
   ensureEq "no enumeration at all" none (siteOf #[] 0)
 
+/-- Which source offsets a set of divergent output rows blames, for the second render's gate.
+
+The caller degrades one command per round and pays a candidate frontend run for each round, so
+naming only the first divergent row costs a run per extra command:
+`Mathlib/RepresentationTheory/Homological/GroupHomology/Functoriality.lean` moved three commands on
+its second render, needed three rounds, and refused against a bound of two. Reporting the set
+converges it in one.
+
+Two properties carry that, and both are here. Rows inside one command collapse to one offset -- a
+command is degraded once however many of its rows moved -- and the walk is a merge over two ascending
+sequences rather than a map scan per row, because a draft that shifts wholesale diverges on every row
+it has. -/
+private def testIdempotenceSources : IO Unit := do
+  -- Seven rows of four rendered bytes each ("abc\n"), so row `i` starts at output byte `4 * i`.
+  -- Three commands own two rows apiece; row 6 is past all of them.
+  let rows := List.replicate 7 "abc"
+  let marks : Array Mark :=
+    #[{ source := ⟨0, 10⟩, output := ⟨0, 8⟩ }, { source := ⟨10, 25⟩, output := ⟨8, 16⟩ },
+      { source := ⟨25, 40⟩, output := ⟨16, 24⟩ }]
+  let sourcesOf (divergent : List Nat) := Validator.idempotenceSources marks rows divergent
+  ensureEq "one row names the command that produced it" #[10] (sourcesOf [2])
+  ensureEq "rows in three commands name all three" #[0, 10, 25] (sourcesOf [0, 2, 4])
+  -- Rows 2 and 3 are both inside mark 1. A caller that saw `#[10, 10]` would count one degradation
+  -- as two and burn a retry on a command it had already forced.
+  ensureEq "two rows in one command name it once" #[10] (sourcesOf [2, 3])
+  ensureEq "no divergence names nothing" #[] (sourcesOf [])
+  -- The map tiles the *output*, and a row past its end belongs to no command -- the verbatim tail is
+  -- the usual reason. Blaming the last command for it would degrade something that did not move.
+  ensureEq "a row past the map's end is unattributable" #[0] (sourcesOf [0, 6])
+  -- Rows and divergent indices come from the same comparison, so an index with no row is a caller
+  -- bug rather than a shape; it is skipped rather than shifting every later row onto a wrong mark.
+  ensureEq "an index with no row is skipped" #[0] (sourcesOf [0, 99])
+
 /-- Where a token's leading trivia begins, when the parser's own bookkeeping left a hole.
 
 The projection's tiling invariant is what makes it lossless, and a file that breaks it is refused
@@ -371,6 +404,7 @@ public def cases : Array Case :=
     { name := "testRangeSelection", run := testRangeSelection },
     { name := "testCommandOf", run := testCommandOf },
     { name := "testNodeDivergenceSource", run := testNodeDivergenceSource },
+    { name := "testIdempotenceSources", run := testIdempotenceSources },
     { name := "testLeadingStart", run := testLeadingStart },
     { name := "testSuppression", run := testSuppression }]
 

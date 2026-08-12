@@ -30,8 +30,8 @@ them reports a broken runner as a lint failure.
 **A command lean-fmt cannot lay out does not fail the file.** When no layout for one command survives validation, that
 command keeps its original bytes and the rest of the file formats normally. The run says so — a trailer line, a
 `verbatim_commands=` field under `--statistics`, and `verbatimCommands` on the JSON report and on each file — and the
-exit code is whatever the rest of the run earned. Only a failure that cannot be attributed to a single command still
-exits 2. If you want those files to fail loudly instead, assert `verbatimCommands` is `0` in your job; the field is
+exit code is whatever the rest of the run earned. Several commands in one file may degrade together. Only a failure that
+cannot be attributed to any command — the header, the terminal tail, the source map — still exits 2. If you want those files to fail loudly instead, assert `verbatimCommands` is `0` in your job; the field is
 there so the choice is yours rather than the tool's.
 
 ## Recipe 1 — the minimal job

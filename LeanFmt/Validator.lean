@@ -54,16 +54,26 @@ def ValidationGate.describe : ValidationGate → String
 structure ValidationFailure where
   gate : ValidationGate
   detail : String
-  /-- Where in the *source* the failure came from, as a normalized byte offset, when the gate can
-  name one site. A caller that knows how source bytes are divided among commands uses this to blame
-  one command instead of the file.
+  /-- Where in the *source* the failure came from, as normalized byte offsets, ascending and
+  deduplicated. A caller that knows how source bytes are divided among commands uses these to blame
+  the commands instead of the file.
 
   This module locates the divergence already -- every detail above names an index or a line -- so
-  reporting the offset costs nothing here and saves the caller from re-deriving a comparison it
-  does not own. `none` where the gate has no single site: the header, the terminal tail, and the
-  source map, which is the whole tiling rather than a place in it. -/
-  source? : Option Nat := none
+  reporting the offsets costs nothing here and saves the caller from re-deriving a comparison it
+  does not own. Empty where the gate has no site at all: the header, the terminal tail, and the
+  source map, which is the whole tiling rather than a place in it.
+
+  **Plural because a gate can find several, and reporting one made the caller pay per site.** The
+  caller degrades a blamed command to its own bytes and validates again, and each of those rounds
+  costs a candidate frontend run. A draft whose second render moved three commands was three rounds
+  away from converging and the bound is two, so the file refused -- for want of two numbers this
+  comparison had already computed and thrown away. -/
+  sources : Array Nat := #[]
   deriving Inhabited, BEq, Repr, Lean.ToJson, Lean.FromJson
+
+/-- The site to name in a message, which is the first one found. -/
+def ValidationFailure.source? (failure : ValidationFailure) : Option Nat :=
+  failure.sources[0]?
 
 /-- How much candidate validation a publishing `format` run owes its result. `.exact` is the
 default and every non-`format` mode's only value: the candidate is structurally reparsed and then
@@ -113,9 +123,9 @@ structure CanonicalLayout where
 
 namespace Validator
 
-private def fail (gate : ValidationGate) (detail : String) (source? : Option Nat := none) :
+private def fail (gate : ValidationGate) (detail : String) (sources : Array Nat := #[]) :
     Except ValidationFailure α :=
-  .error { gate, detail, source? }
+  .error { gate, detail, sources }
 
 private def slice (bytes : ByteArray) (start stop : Nat) : ByteArray :=
   bytes.extract (min start bytes.size) (min stop bytes.size)
@@ -231,7 +241,7 @@ def compare (beforeText : String) (before : LosslessSource) (afterText : String)
         fail .structure
             s!"node count changed: {before.nodes.size} -> {after.nodes.size}\
       {firstNodeDivergence beforeText before afterText after}"
-            ((firstDivergentNode? before after).bind (nodeDivergenceSource? before ·))
+            ((firstDivergentNode? before after).bind (nodeDivergenceSource? before ·)).toArray
   for index in [0:before.nodes.size] do
     let left := before.nodes[index]!
     let right := after.nodes[index]!
@@ -241,24 +251,24 @@ def compare (beforeText : String) (before : LosslessSource) (afterText : String)
       return ←
           fail .structure
               s!"node {index} changed kind/parent: {leftKind}/{left.parent} -> {rightKind}/{right.parent}"
-              (nodeDivergenceSource? before index)
+              (nodeDivergenceSource? before index).toArray
   unless before.tokens.size == after.tokens.size do
     return ←
         fail .tokens s!"token count changed: {before.tokens.size} -> {after.tokens.size}"
-            ((firstDivergentToken? beforeText before afterText after).map (before.tokens[·]!.start))
+            ((firstDivergentToken? beforeText before afterText after).map
+                (before.tokens[·]!.start)).toArray
   for index in [0:before.tokens.size] do
     let left := before.tokens[index]!
     let right := after.tokens[index]!
     unless left.node == right.node do
       return ←
-          fail .structure s!"token {index} changed owner {left.node} -> {right.node}"
-              (some left.start)
+          fail .structure s!"token {index} changed owner {left.node} -> {right.node}" #[left.start]
     let leftText := slice beforeBytes left.start left.stop
     let rightText := slice afterBytes right.start right.stop
     unless leftText == rightText do
       return ←
           fail .tokens s!"token {index} ({kindOfNode before left.node}) changed spelling"
-              (some left.start)
+              #[left.start]
 
 /-- The contract as a reflow-invariant word sequence: a standalone leading `--` prose line
 contributes its words one at a time, anything else its whole entry. With `reflow-comments` on,
@@ -277,6 +287,34 @@ def reflowInvariantContract (entries : Array CommentContractEntry) : Array Strin
       tokens.push
         s!"{repr entry.kind}/{repr entry.placement}/{entry.ownerKind}/{entry.ownerPath}/\
           {entry.suppressed}/{entry.payload}"
+
+/- The source offsets behind a set of divergent output rows, ascending and deduplicated.
+
+The rows are in the *rendered* draft, and the draft's own map is the only thing that says which
+source bytes produced them. The map tiles the output, so the mark covering a row's first byte is
+unique, and one source offset per mark is all a caller can act on -- twenty moved rows inside one
+command are one command to degrade.
+
+Both sequences ascend, so this is the same merge `Comments.assignAll` walks and not a lookup per
+row: a draft that moved wholesale diverges on every row it has, and a scan of the map for each of
+them would be quadratic in the size of the file at exactly the moment the file is already failing. -/
+private def idempotenceSources (marks : Array Mark) (rows : List String) (divergent : List Nat) :
+    Array Nat :=
+  Id.run do
+    let rowStarts :=
+      (rows.foldl (init := (#[0], 0)) fun (starts, cursor) row =>
+          let next := cursor + row.utf8ByteSize + 1
+          (starts.push next, next)).1
+    let mut sources := #[]
+    let mut cursor := 0
+    for index in divergent do
+      let some offset := rowStarts[index]? | continue
+      while cursor < marks.size && marks[cursor]!.output.stop <= offset do
+        cursor := cursor + 1
+      let some mark := marks[cursor]? | break
+      if mark.output.start <= offset && sources.back? != some mark.source.start then
+        sources := sources.push mark.source.start
+    return sources
 
 /-- Admit the first draft using a freshly parsed/formatted second draft. -/
 def admit (beforeText : String) (before : LosslessSource) (first : FormatDraft)
@@ -307,29 +345,23 @@ def admit (beforeText : String) (before : LosslessSource) (first : FormatDraft)
   unless second.text == first.text do
     -- A byte count alone says the second pass moved something and nothing about what. Every one of
     -- these has to be minimized by hand out of a whole module otherwise, so the failure names the
-    -- line the two passes first disagree on and spells both.
+    -- line the two passes first disagree on and spells both -- and blames *every* row that moved,
+    -- not just that one, because the caller degrades a command per round and pays a candidate
+    -- frontend run for each round.
     let firstLines := first.text.splitOn "\n"
     let secondLines := second.text.splitOn "\n"
-    let divergent? :=
-      (List.range (min firstLines.length secondLines.length)).find? fun index =>
+    let divergent :=
+      (List.range (min firstLines.length secondLines.length)).filter fun index =>
         firstLines[index]! != secondLines[index]!
     let divergence :=
-      match divergent? with
-      | some index =>
-        s!" at line {index + 1}: {repr firstLines[index]!} -> {repr secondLines[index]!}"
-      | none => s!"; line counts {firstLines.length} -> {secondLines.length}"
-    -- The line is in the *rendered* draft, and the draft's own map is the only thing that says
-    -- which source bytes produced it. The map tiles the output, so the mark covering the line's
-    -- first byte is unique.
+      match divergent with
+      | [] => s!"; line counts {firstLines.length} -> {secondLines.length}"
+      | index :: rest =>
+        let others := if rest.isEmpty then "" else s!" and {rest.length} more row(s)"
+        s!" at line {index + 1}{others}: {repr firstLines[index]!} -> {repr secondLines[index]!}"
     return ←
         fail .idempotence s!"formatting the reparsed candidate changed bytes{divergence}"
-            (divergent?.bind fun index =>
-              let output :=
-                ((firstLines.take index).foldl (init := 0) fun total line =>
-                  total + line.utf8ByteSize + 1)
-              (first.sourceMap.find? fun mark =>
-                    mark.output.start <= output && output < mark.output.stop).map
-                (·.source.start))
+            (idempotenceSources first.sourceMap firstLines divergent)
   return {
       text := first.text
       sourceMap := first.sourceMap

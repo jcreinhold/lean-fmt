@@ -145,8 +145,10 @@ private def testThrowingDegrades (ctx : Ctx) : IO Unit := do
   ensureContains (((degradation.getObjValAs? String "detail").toOption).getD "")
       "adapter fixture formatter failure" "throwing degraded: detail"
   -- 50 is `throwing_command`'s unit start; attribution landing on `open` would degrade the wrong
-  -- command and still refuse.
-  ensureJsonAt degradation [.field "source"] (Lean.toJson (50 : Nat)) "throwing degraded"
+  -- command and still refuse. The whole array is pinned, not its head: a gate reports every site it
+  -- found so one round can force them all, and a second entry here would be a command degraded for
+  -- a failure it did not cause.
+  ensureJsonAt degradation [.field "sources"] (Lean.toJson #[(50 : Nat)]) "throwing degraded"
 
 /-- An unsafe extension token's normalization is replaced by the original payload. -/
 private def testInvalid (ctx : Ctx) : IO Unit := do
