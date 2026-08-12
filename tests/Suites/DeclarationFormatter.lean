@@ -157,7 +157,7 @@ private def testDeclarationBody (root work setup : System.FilePath) (application
   let fixture := work / "Bodies.lean"
   writeFile fixture
       "module\n\ndef foo := 1\n\ndef bar :=\n  2\n\ndef baz := Nat.succ (Nat.succ (Nat.succ (Nat.succ (Nat.succ (Nat.succ (Nat.succ Nat.zero)))))) + 1111\n\ndef indentedJoinOverflow (firstArgument secondArgument thirdArgument fourthArgumentXY : Nat) :\n    Nat :=\n  firstArgument + secondArgument + thirdArgument + fourthArgumentXY + 1111111111111111111111\n\ndef indentedJoinExactFit (firstArgument secondArgument thirdArgument fourthArgumentXY : Nat) :\n    Nat :=\n  firstArgument + secondArgument + thirdArgument + fourthArgumentXY + 111111111111111111111\n"
-  let canonicalFormat : LeanFmt.Internal.FormatConfig := { }
+  let canonicalFormat : LeanFmt.Internal.FormatConfig := {}
   let report ←
     analyzeExact root application setup fixture.toString "Bodies.lean"
         s!"4j{(Lean.toJson canonicalFormat).compress}"
@@ -210,7 +210,7 @@ private def testDeclarationWhere (root work setup : System.FilePath) (applicatio
   let fixture := work / "Wheres.lean"
   writeFile fixture
       "module\n\nstructure Packet where\n  first : Nat\n  second : Nat\n\nstructure Single where\n  only : Nat\n\n/-- A doc comment is syntax, not trivia, and must stay out of the fit measure. -/\ndef documented (input : Nat) : Packet where\n  first := input\n  second := input\n\ndef whereJoinFitsExactly (inputXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX : Nat) : Packet where\n  first := 0\n  second := 0\n\ndef whereJoinOverflows (inputXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX : Nat) : Packet where\n  first := 0\n  second := 0\n\ndef semiSeparated (input : Nat) : Packet where\n  first := input; second := input\n\ndef singleField (input : Nat) : Single where\n  only := input\n\nnamespace NamespaceSegmentAlphaGivenAGenerousLongName\nnamespace NamespaceSegmentBetaGivenAGenerousLongNames\n\nstructure Inner where\n  solo : Nat\n\nend NamespaceSegmentBetaGivenAGenerousLongNames\nend NamespaceSegmentAlphaGivenAGenerousLongName\n\ndef unbreakableReturnRow :\n    NamespaceSegmentAlphaGivenAGenerousLongName.NamespaceSegmentBetaGivenAGenerousLongNames.Inner where\n  solo := 0\n"
-  let canonicalFormat : LeanFmt.Internal.FormatConfig := { }
+  let canonicalFormat : LeanFmt.Internal.FormatConfig := {}
   let report ←
     analyzeExact root application setup fixture.toString "Wheres.lean"
         s!"4j{(Lean.toJson canonicalFormat).compress}"
@@ -240,6 +240,47 @@ private def testDeclarationWhere (root work setup : System.FilePath) (applicatio
       "next-line kept `where` on a signature row that had room"
   ensureContains brokenText "def singleField (input : Nat) : Single\n    where"
       "next-line kept `where` on a short signature's row"
+
+/-- `empty-structure-instance`: an instance with nothing in it is `{}` by default and `{ }` under
+`spaced`, and the four ways a field-free instance is not empty are untouched by either.
+
+`Term.structInst` spells its delimiters as the atoms `"{ "` and `" }"`, so the padding survives an
+empty field list and the adapter copies it -- which is why the default has to *remove* something
+rather than leave the document alone. Both spellings parse, so this is a preference; the fixture is
+here rather than in `Families.lean` because the two values must render the same source.
+
+The `with` clause, the `..` ellipsis, the type ascription, and an interior comment each leave the
+field list empty while giving the braces something to hold. All four are asserted under the default,
+because the collector's whole condition is one question asked of the source between the delimiters
+and a wrong answer would delete a token rather than a space. -/
+private def testEmptyStructureInstance (root work setup : System.FilePath) (application : String) :
+    IO Unit := do
+  let fixture := work / "EmptyInstances.lean"
+  writeFile fixture
+      "module\n\nstructure Pair where\n  a : Nat := 0\n  b : Nat := 0\n\ndef compactSource : Pair := \
+        {}\n\ndef spacedSource : Pair := { }\n\ndef withClause (p : Pair) : Pair := \
+        { p with a := 1 }\n\ndef ellipsis : Pair := { .. }\n\ndef ascribed : Pair := \
+        ({ a := 0, b := 0 } : Pair)\n\ndef commented : Pair := { /- kept -/ }\n\ndef filled : Pair \
+        := { a := 1 }\n"
+  let compact : LeanFmt.Internal.FormatConfig := {}
+  let report ←
+    analyzeExact root application setup fixture.toString "EmptyInstances.lean"
+        s!"4j{(Lean.toJson compact).compress}"
+  let (_, text) ← canonical report "empty-structure-instance default"
+  for spelled in ["def compactSource : Pair :=\n  {}", "def spacedSource : Pair :=\n  {}"] do
+    ensureContains text spelled "the default did not write an empty instance as `{}`"
+  for untouched in ["{ p with a := 1 }", "{ .. }", "{ a := 0, b := 0 }", "{ a := 1 }"] do
+    ensureContains text untouched
+        s!"the default rewrote a structure instance that is not empty: {untouched}"
+  ensureContains text "/- kept -/" "the default dropped an interior comment"
+  let spaced : LeanFmt.Internal.FormatConfig := { emptyStructureInstance := .spaced }
+  let spacedReport ←
+    analyzeExact root application setup fixture.toString "EmptyInstances.lean"
+        s!"4j{(Lean.toJson spaced).compress}"
+  let (_, spacedText) ← canonical spacedReport "empty-structure-instance spaced"
+  for spelled in ["def compactSource : Pair :=\n  { }", "def spacedSource : Pair :=\n  { }"] do
+    ensureContains spacedText spelled "`spaced` did not keep Lean's own `{ }`"
+  ensure (text != spacedText) "the two values rendered the same bytes"
 
 /-- `reflow-comments`: a standalone `--` block whose rows overflow the margin is repacked to fit
 when the flag is on, and keeps its bytes when it is off. Empty comment lines split a block into
@@ -272,7 +313,7 @@ private def testCommentReflow (root work setup : System.FilePath) (application :
   let ensureFits (width : Nat) (text : String) : IO Unit := do
     for line in text.splitOn "\n" do
       ensure (line.length <= width) s!"a row over the margin survived reflow: {line}"
-  let default : LeanFmt.Internal.FormatConfig := { }
+  let default : LeanFmt.Internal.FormatConfig := {}
   let off ←
     analyzeExact root application setup fixture.toString "Reflow.lean"
         s!"4j{(Lean.toJson default).compress}"
@@ -326,6 +367,8 @@ public def main (args : List String) : IO UInt32 := do
             run := DeclarationFormatter.testDeclarationBody root work setup application },
           { name := "declaration-where",
             run := DeclarationFormatter.testDeclarationWhere root work setup application },
+          { name := "empty-structure-instance",
+            run := DeclarationFormatter.testEmptyStructureInstance root work setup application },
           { name := "comment-reflow",
             run := DeclarationFormatter.testCommentReflow root work setup application }]
       runCases "declaration-formatter" cases args

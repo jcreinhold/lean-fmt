@@ -371,7 +371,7 @@ has to follow. This is the same fact with nothing to follow: an entry exists tha
 /-- The decision is not identically `false`. -/
 theorem serves_hits_somewhere (o : Obs Mod SDigest GDigest Schema) (m : Mod) (a : Analysis) :
     serves ⟨m, o.schema, o.sourceDigest m, o.closureDigest m, .success .semantic ⟨true⟩ true, a⟩ o
-        ⟨.source, { }, false⟩ =
+        ⟨.source, {}, false⟩ =
       true := by
   simp [serves, Entry.identityCurrent, Provided.meets, Tier.satisfies, SemanticCaps.subset]
 
@@ -401,7 +401,7 @@ private abbrev Provides : Provided :=
   .success .semantic ⟨true⟩ true
 
 private abbrev Asks : Demand :=
-  ⟨.source, { }, false⟩
+  ⟨.source, {}, false⟩
 
 private abbrev Fresh : Entry Unit (Bool × Bool) Bool Bool Unit :=
   ⟨(), (), true, true, Provides, (true, true)⟩

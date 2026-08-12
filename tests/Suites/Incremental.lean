@@ -67,7 +67,7 @@ private unsafe def freshOnce (args : List String) : IO UInt32 := do
   let source ← IO.FS.readFile sourceFile
   let envelope ←
     analyzeExact setup source sourcePath (loadDynlibs := false) (validateFormatDraft :=
-        validateFormat) (format := if validateFormat then { lineWidth := lineWidth } else { })
+        validateFormat) (format := if validateFormat then { lineWidth := lineWidth } else {})
   IO.println (Lean.toJson envelope).compress
   return 0
 

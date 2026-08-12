@@ -72,6 +72,24 @@ instance : ToString DeclarationWhere where
     | .sameLine => "same-line"
     | .nextLine => "next-line"
 
+/-- How a structure instance with nothing in it is spelled (`empty-structure-instance`).
+
+`Term.structInst` spells its own delimiters as the atoms `"{ "` and `" }"` (`Term.lean:352-356`), so
+an empty field list renders `{ }` and the adapter copies that padding verbatim. It is never a parse
+change, which is exactly why it is a setting rather than a repair: both spellings are correct and
+projects disagree about which one they write. -/
+inductive EmptyStructureInstance where
+  /-- The default (`compact`): `{}`, the spelling almost every codebase writes by hand. -/
+  | compact
+  /-- `{ }`, the spelling Lean's own pretty-printer produces. -/
+  | spaced
+  deriving BEq, Lean.ToJson, Lean.FromJson
+
+instance : ToString EmptyStructureInstance where
+  toString
+    | .compact => "compact"
+    | .spaced => "spaced"
+
 /-- How a trailing `,` in a collection literal steers its layout (`magic-trailing-comma`). -/
 inductive MagicTrailingComma where
   /-- The canonical style (`respect`, default), ruff's and black's: a collection whose source
@@ -119,6 +137,8 @@ structure FormatConfig where private mk ::
   declarationBody : DeclarationBody := .nextLine
   /-- Declaration `where` layout (`declaration-where`), default `same-line`. -/
   declarationWhere : DeclarationWhere := .sameLine
+  /-- Empty structure-instance spelling (`empty-structure-instance`), default `compact`. -/
+  emptyStructureInstance : EmptyStructureInstance := .compact
   /-- Whether a trailing `,` explodes a collection literal (`magic-trailing-comma`), default
   `respect`. -/
   magicTrailingComma : MagicTrailingComma := .respect
@@ -142,6 +162,7 @@ def FormatConfig.identityString (format : FormatConfig) : String :=
     format.importGroups.foldl (init := "") fun acc grp => acc ++ s!"\n{grp.length}:{grp}"
   s!"line-width={format.lineWidth}{phrases}\ndeclaration-body={format.declarationBody}\n\
     declaration-where={format.declarationWhere}\n\
+    empty-structure-instance={format.emptyStructureInstance}\n\
     magic-trailing-comma={format.magicTrailingComma}\n\
     import-layout={format.importLayout}{groups}\nreflow-comments={format.reflowComments}"
 
@@ -361,6 +382,7 @@ private structure PartialConfig where
   reflowComments? : Option Bool := none
   declarationBody? : Option DeclarationBody := none
   declarationWhere? : Option DeclarationWhere := none
+  emptyStructureInstance? : Option EmptyStructureInstance := none
   magicTrailingComma? : Option MagicTrailingComma := none
   importLayout? : Option Imports.ImportLayout := none
   importGroups? : Option (Array String) := none
@@ -405,6 +427,7 @@ private def PartialConfig.compose (parent child : PartialConfig) : PartialConfig
   pinnedComments? := orParent child.pinnedComments? parent.pinnedComments?
   declarationBody? := orParent child.declarationBody? parent.declarationBody?
   declarationWhere? := orParent child.declarationWhere? parent.declarationWhere?
+  emptyStructureInstance? := orParent child.emptyStructureInstance? parent.emptyStructureInstance?
   magicTrailingComma? := orParent child.magicTrailingComma? parent.magicTrailingComma?
   importLayout? := orParent child.importLayout? parent.importLayout?
   importGroups? := orParent child.importGroups? parent.importGroups?
@@ -451,6 +474,7 @@ private def PartialConfig.resolve (config : PartialConfig) : Except String Forma
           reflowComments := config.reflowComments?.getD false
           declarationBody := config.declarationBody?.getD .nextLine
           declarationWhere := config.declarationWhere?.getD .sameLine
+          emptyStructureInstance := config.emptyStructureInstance?.getD .compact
           magicTrailingComma := config.magicTrailingComma?.getD .respect
           importLayout := config.importLayout?.getD .grouped
           importGroups := config.importGroups?.getD Imports.defaultImportGroups }
@@ -473,7 +497,7 @@ private def defaultConfig : FormatterConfig :=
     excludePatterns := #[]
     forceExclude := false
     respectGitignore := true
-    format := { }
+    format := {}
     closureMode := .artifacts
     notices := #[]
     origins := #[]
@@ -570,7 +594,7 @@ private def parseFile (anchor file : String) (fileMap : Lean.FileMap) (table : L
   for (key, _) in topLevel do
     if lintSection.any (·.1 == key) then
       throw s!"configuration key '{key}' is set both at the top level and in [lint]"
-  let mut config : PartialConfig := { }
+  let mut config : PartialConfig := {}
   -- Deprecated flat spelling first, so an `extend-*` key set in both a flat parent and a
   -- sectioned child still concatenates in document order.
   for (key, value) in topLevel do
@@ -616,7 +640,8 @@ private def parseFile (anchor file : String) (fileMap : Lean.FileMap) (table : L
       -- These `[format]` keys are new, so they have no legacy spelling to protect: a top-level
       -- use is an error rather than a notice, so the keys never acquire an ambiguous section.
       | "line-width" | "pinned-comments" | "reflow-comments" | "declaration-body" |
-        "declaration-where" | "magic-trailing-comma" | "import-layout" | "import-groups" =>
+        "declaration-where" | "empty-structure-instance" | "magic-trailing-comma" |
+        "import-layout" | "import-groups" =>
         throw s!"configuration key '{key}' belongs in the [format] section"
       -- Same treatment as the `[format]` keys above: one spelling, one section, no ambiguity.
       | "closure" =>
@@ -675,6 +700,22 @@ private def parseFile (anchor file : String) (fileMap : Lean.FileMap) (table : L
       config :=
         { config with
           declarationWhere? := some declarationWhere, origins }
+    | "empty-structure-instance" =>
+      let .string _ form := value
+        | throw "configuration key 'empty-structure-instance' expects a string"
+      let emptyStructureInstance ←
+        match form with
+        | "compact" =>
+          pure EmptyStructureInstance.compact
+        | "spaced" =>
+          pure EmptyStructureInstance.spaced
+        | other =>
+          throw
+              s!"configuration key 'empty-structure-instance' expects \"compact\" or \
+          \"spaced\", got \"{other}\""
+      config :=
+        { config with
+          emptyStructureInstance? := some emptyStructureInstance, origins }
     | "magic-trailing-comma" =>
       let .string _ trailing := value
         | throw "configuration key 'magic-trailing-comma' expects a string"
@@ -909,6 +950,8 @@ def FormatterConfig.describe (config : FormatterConfig) : Array (String × Strin
       winner "format.declaration-body"),
     ("format.declaration-where", toString config.format.declarationWhere,
       winner "format.declaration-where"),
+    ("format.empty-structure-instance", toString config.format.emptyStructureInstance,
+      winner "format.empty-structure-instance"),
     ("format.magic-trailing-comma", toString config.format.magicTrailingComma,
       winner "format.magic-trailing-comma"),
     ("lint.select", renderStrings config.selectedSelectors, winner "select"),
@@ -1147,6 +1190,6 @@ The `occurrences` demand keys off `applies` (true only for `fix`). A check does 
 `occurrences` demand misses a report-only check entry that never captured it. -/
 def RulePlan.demandedCaps (plan : RulePlan) (applies : Bool) : SemanticCaps :=
   if plan.demandedTier == .semantic then { occurrences := applies && plan.selectsOccurrenceRule }
-  else { }
+  else {}
 
 end LeanFmt.Internal

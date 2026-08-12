@@ -171,7 +171,7 @@ private def encodeInfo : Lean.SourceInfo → EncodedSourceInfo
 
 private structure SyntaxBuild where
   kinds : Array Lean.Name := #[]
-  kindIndex : Std.HashMap Lean.Name Nat := { }
+  kindIndex : Std.HashMap Lean.Name Nat := {}
   entries : Array SyntaxEntry := #[]
 
 private def SyntaxBuild.intern (build : SyntaxBuild) (kind : Lean.Name) : Nat × SyntaxBuild :=
@@ -210,7 +210,7 @@ private partial def encodeSyntax (stx : Lean.Syntax) (build : SyntaxBuild) : Syn
     { build with entries := build.entries.push (.ident (encodeInfo info) raw? value preresolved) }
 
 def SyntaxTree.ofSyntax (stx : Lean.Syntax) : SyntaxTree :=
-  let build := encodeSyntax stx { }
+  let build := encodeSyntax stx {}
   { kinds := build.kinds, entries := build.entries }
 
 private def rawPosition (offset : Nat) : String.Pos.Raw :=
@@ -358,7 +358,7 @@ def CommandArtifactRecord.structurallyValid (record : CommandArtifactRecord) : B
 
 private structure ModuleBuild where
   kinds : Array Lean.Name := #[]
-  kindIndex : Std.HashMap Lean.Name Nat := { }
+  kindIndex : Std.HashMap Lean.Name Nat := {}
   entries : Array SyntaxEntry := #[]
 
 private def ModuleBuild.internKind (build : ModuleBuild) (kind : Lean.Name) : Nat × ModuleBuild :=
@@ -393,7 +393,7 @@ def ModuleSyntax.ofRecords (records : Array CommandArtifactRecord) : Except Stri
   unless terminals.size == 1 do
     throw s!"expected one terminal syntax record, got {terminals.size}"
   let ordinary := records.filter (!·.terminal)
-  let mut build : ModuleBuild := { }
+  let mut build : ModuleBuild := {}
   let mut commands := #[]
   for record in ordinary do
     let root := build.entries.size

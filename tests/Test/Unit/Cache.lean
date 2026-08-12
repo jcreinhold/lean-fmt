@@ -186,7 +186,7 @@ must change with it), or no fresh pairs at all (staleness swallowed the sample �
 the build that repairs it, computed from the stale importers rather than guessed). -/
 public def characterizeLakeTraces (root : System.FilePath) : IO Unit := do
   let traces := (← root.walkDir).filter (·.extension == some "trace")
-  let mut byName : Std.HashMap String (System.FilePath × TraceFacts) := { }
+  let mut byName : Std.HashMap String (System.FilePath × TraceFacts) := {}
   for path in traces do
     let contents ← IO.FS.readFile path
     let .ok json := Lean.Json.parse contents | continue
@@ -249,14 +249,14 @@ cache case in this file.
 The fold walks edges now, so the unresolved closure is a module the edge map does not mention and
 the empty one is a module it maps to no imports. -/
 private def testClosureDegradationDirection : IO Unit := do
-  let memo ← IO.mkRef ({ } : Std.HashMap String MemberFact)
-  let nodes ← IO.mkRef ({ } : Std.HashMap Lean.Name (Option Digest))
+  let memo ← IO.mkRef ({} : Std.HashMap String MemberFact)
+  let nodes ← IO.mkRef ({} : Std.HashMap Lean.Name (Option Digest))
   let workspace ← Project.loadWorkspace (← IO.currentDir)
   let name := `LeanFmt.Digest
-  let unresolved ← closureDigest? workspace .artifacts memo nodes { } name
+  let unresolved ← closureDigest? workspace .artifacts memo nodes {} name
   ensure unresolved.isNone
       "an unresolved import closure produced a digest; currency would hit on unknown grammar"
-  let nodes ← IO.mkRef ({ } : Std.HashMap Lean.Name (Option Digest))
+  let nodes ← IO.mkRef ({} : Std.HashMap Lean.Name (Option Digest))
   let empty ←
     closureDigest? workspace .artifacts memo nodes
         (Std.HashMap.emptyWithCapacity 1 |>.insert name #[]) name
@@ -324,7 +324,7 @@ private def testMergeAnalysis : IO Unit := do
   let withCanonical (analysis : SemanticAnalysis) : SemanticAnalysis :=
     { analysis with
       result? := analysis.result?.map fun result => { result with canonical? := some canonical } }
-  let rich := withCanonical (SemanticAnalysis.success "src" #[] .semantic { } ⟨true⟩)
+  let rich := withCanonical (SemanticAnalysis.success "src" #[] .semantic {} ⟨true⟩)
   let poor := SemanticAnalysis.success "src" #[] .«syntax»
   let broken : SemanticAnalysis := { result? := none, diagnostics := #["elaboration failed"] }
   let provided (analysis : SemanticAnalysis) : Cache.Decision.Provided := providedOf analysis
@@ -337,7 +337,7 @@ private def testMergeAnalysis : IO Unit := do
   let merged := mergeAnalysis rendered poor
   ensure ((merged.result?.map (·.canonical?.isSome)) == some true)
       "canonical text did not graft onto the fresher analysis"
-  ensure (provided merged == .success .«syntax» { } true) "graft changed the entry's tier or caps"
+  ensure (provided merged == .success .«syntax» {} true) "graft changed the entry's tier or caps"
   -- Broken records never displace a success; a success always displaces a broken record.
   ensure (provided (mergeAnalysis poor broken) == provided poor)
       "a broken record displaced a success"
@@ -347,7 +347,7 @@ private def testMergeAnalysis : IO Unit := do
   -- The incomparable-pair escape hatch keeps the fresher analysis (degrades to a miss, never a
   -- stale claim): semantic-without-occurrences vs syntax-with-occurrences.
   let highTier := SemanticAnalysis.success "src" #[] .semantic
-  let highCaps := SemanticAnalysis.success "src" #[] .«syntax» { } ⟨true⟩
+  let highCaps := SemanticAnalysis.success "src" #[] .«syntax» {} ⟨true⟩
   ensure (provided (mergeAnalysis highTier highCaps) == .success .«syntax» ⟨true⟩ false)
       "incomparable merge did not keep the fresher analysis"
   -- Unbuilt outcomes are never stored; broken and successful ones are.
@@ -381,7 +381,7 @@ private unsafe def testInterfaceHash : IO Unit := do
   Lean.enableInitializersExecution
   Lean.initSearchPath (← Lean.findSysroot)
   let environment ←
-    Lean.importModules #[{ module := `LocalSyntax }] { } (trustLevel := 1024) (loadExts := true)
+    Lean.importModules #[{ module := `LocalSyntax }] {} (trustLevel := 1024) (loadExts := true)
         (level := .server)
   let some first :=
     moduleInterfaceHash? environment

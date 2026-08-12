@@ -59,7 +59,7 @@ public structure Selection where
   part : Option (Nat × Nat) := none
 
 public def Selection.parse : List String → Except String Selection
-  | [] => .ok { }
+  | [] => .ok {}
   | "--list" :: rest => do
     let selection ← Selection.parse rest
     .ok { selection with list := true }

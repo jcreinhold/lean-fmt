@@ -25,6 +25,7 @@ pinned-comments = ["shake: keep"]    # inline comments that never move and never
 reflow-comments = false              # rewrap standalone `--` blocks whose rows overflow the margin
 declaration-body = "next-line"       # or "same-line"
 declaration-where = "same-line"      # or "next-line"
+empty-structure-instance = "compact" # `{}`; or "spaced" for Lean's own `{ }`
 magic-trailing-comma = "respect"     # or "ignore"
 import-layout = "grouped"            # or "canonical" (the organizer's header rewrite)
 import-groups = ["Lean", "Mathlib"]  # canonical layout: sub-block prefixes inside a bucket
@@ -75,6 +76,12 @@ flattened rather than on the row the `where` would land on: the tighter measure 
 file could format two different ways on two runs. A signature that overflows the margin therefore keeps whatever row the
 layout gives it under either setting. This key is separate from `declaration-body` because the two are independent —
 mathlib's style is the canonical next-line body with `where` on the signature row.
+
+`empty-structure-instance` chooses how a structure instance with nothing in it is spelled. The default `"compact"`
+writes `{}`. `"spaced"` writes `{ }`, which is what Lean's own pretty-printer produces: `Term.structInst` spells its
+delimiters as the atoms `"{ "` and `" }"`, so the padding survives an empty field list. Neither spelling changes how the
+term parses, which is why this is a setting and not a repair. A `with` clause, a `..` ellipsis, a type ascription, or a
+comment between the braces all leave the instance non-empty and are untouched under either value.
 
 `magic-trailing-comma` is ruff's and black's magic trailing comma, with ruff's spelling. The default `"respect"`: a
 collection literal — `#[…]`, `[…]`, a tuple, `⟨…⟩`, or a structure instance — whose source spells a trailing `,`

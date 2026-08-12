@@ -40,7 +40,7 @@ private def parseFloat (s : String) : Option Float := do
     none
 
 private def rows (output : String) : IO (Std.HashMap String Row) := do
-  let mut table : Std.HashMap String Row := { }
+  let mut table : Std.HashMap String Row := {}
   for line in output.splitOn "\n" |>.filter (· != "") do
     let fields := line.splitOn " "
     let some label :=

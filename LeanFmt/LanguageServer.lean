@@ -683,8 +683,8 @@ private def handleDidChangeConfiguration (session : Session) : IO Unit := do
   -- Every memoized analysis was computed against the old configuration and is now describing
   -- rules, selections, or a margin that no longer apply. Dropped wholesale rather than compared:
   -- a memo whose key does not mention the configuration cannot be checked against a new one.
-  session.analyses.set { }
-  session.envelopes.set { }
+  session.analyses.set {}
+  session.envelopes.set {}
   for (uri, document) in documents.toList do
     match ← admit session uri with
     | .ok _ =>
@@ -1305,13 +1305,13 @@ def serveLanguageServer (options : ServerOptions) : IO UInt32 := do
       let session : Session :=
         { options, settings, root, project, run, sink
           discovery := ← IO.mkRef discovery
-          documents := ← IO.mkRef { }
-          refusals := ← IO.mkRef { }
-          cancelled := ← Std.Mutex.new { }
+          documents := ← IO.mkRef {}
+          refusals := ← IO.mkRef {}
+          cancelled := ← Std.Mutex.new {}
           inFlight := ← Std.Mutex.new none
           activeAnalyzer := ← Std.Mutex.new none
-          analyses := ← IO.mkRef { }
-          envelopes := ← IO.mkRef { }
+          analyses := ← IO.mkRef {}
+          envelopes := ← IO.mkRef {}
           -- The quiet interval is a wait, not a poll: one task per scheduled version, which
           -- enqueues either way. The worker drops a superseded analysis, because only the worker's
           -- ordering says which version is current.

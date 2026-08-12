@@ -2017,54 +2017,86 @@ comment-forced break cannot invent the slot. (Without the comment the document h
 already safe.) A collection the trailing-comma rule already owns is left to it. The returned
 ranges join `explodedRanges` for the nest cancellation only -- the pin filter has already run --
 so registering one drops no interior source-column pins. -/
+/- Whether this is a structure instance with nothing at all in it.
+
+Field-free is not enough: a `with` clause, an ellipsis, and a type ascription each leave the field
+list empty while giving the braces something to hold (`Term.lean:352-356`). Asked of the source
+between the delimiters rather than of the children, because one test then covers all four -- and
+covers an interior comment too, which is not layout this rule may delete. -/
+private def emptyStructInst (source : String) (stx : Lean.Syntax) : Bool :=
+  stx.isOfKind ``Lean.Parser.Term.structInst &&
+    (match stx.getArgs[0]?.bind sourceRange?, lastLeaf? stx >>= sourceRange? with
+    | some opening, some closing =>
+      opening.stop <= closing.start &&
+        (slice source ⟨opening.stop, closing.start⟩).trimAscii.copy.isEmpty
+    | _, _ => false)
+
 private partial def collectStructInstCloseBraces (source : String) (rowStarts : Array Nat)
-    (comments : Array InteriorComment) (stx : Lean.Syntax)
+    (compactEmpty : Bool) (comments : Array InteriorComment) (stx : Lean.Syntax)
     (starts : Array (Nat × BoundaryLayout) := #[]) (ranges : Array SourceRange := #[]) :
     Array (Nat × BoundaryLayout) × Array SourceRange :=
   match stx with
   | .node _ kind children =>
     let (starts, ranges) :=
-      if kind == ``Lean.Parser.Term.structInst then
-        match children.find? (·.isOfKind ``Lean.Parser.Term.structInstFields) with
-        | some fieldsNode =>
-          match structInstFieldsInOrder fieldsNode with
-          | #[] => (starts, ranges)
-          | fields =>
-            match lastLeaf? fieldsNode, lastLeaf? stx, fields[0]?.bind sourceRange?,
-              sourceRange? stx with
-            | some fieldsEnd, some brace, some fieldRange, some collectionRange =>
-              match sourceRange? fieldsEnd, sourceRange? brace with
-              | some fieldsEndRange, some braceRange =>
-                let gap := slice source ⟨fieldsEndRange.stop, braceRange.start⟩
-                if fieldsEnd matches .atom _ "," then (starts, ranges)
-                else
-                  if !gap.contains '\n' then (starts, ranges)
+      -- The empty instance, whose question is not the row but the padding: `Term.structInst` spells
+      -- its own delimiters as the atoms `"{ "` and `" }"` (`Term.lean:352-356`), so an empty field
+      -- list renders `{ }` and the adapter copies that verbatim. The `}` leaf's leading padding is
+      -- the boundary leaf at that terminal (`transformOrdinaryText`), and `.elided` spells it away.
+      --
+      -- Keyed at the `choice`, because that is the only place those two bytes are reachable: `{}`
+      -- parses as both a structure instance and the empty-collection term, so it always arrives as
+      -- an ambiguity, and every walk in this file reads alternative 0 -- which is the *other* one.
+      -- The alternatives spell the same bytes, verified once at `NativeLayout.command`, so reading
+      -- the brace offsets off alternative 0 is sound whichever alternative carries the `structInst`.
+      if compactEmpty && kind == Lean.choiceKind && children.any (emptyStructInst source) then
+        match children[0]?.bind lastLeaf? >>= sourceRange? with
+        | some braceRange =>
+          if starts.any (·.1 == braceRange.start) then (starts, ranges)
+          else (starts.push (braceRange.start, BoundaryLayout.elided), ranges)
+        | none => (starts, ranges)
+      else
+        if kind == ``Lean.Parser.Term.structInst then
+          match children.find? (·.isOfKind ``Lean.Parser.Term.structInstFields) with
+          | some fieldsNode =>
+            match structInstFieldsInOrder fieldsNode with
+            -- No fields: no field column for the brace to be measured against.
+            | #[] => (starts, ranges)
+            | fields =>
+              match lastLeaf? fieldsNode, lastLeaf? stx, fields[0]?.bind sourceRange?,
+                sourceRange? stx with
+              | some fieldsEnd, some brace, some fieldRange, some collectionRange =>
+                match sourceRange? fieldsEnd, sourceRange? brace with
+                | some fieldsEndRange, some braceRange =>
+                  let gap := slice source ⟨fieldsEndRange.stop, braceRange.start⟩
+                  if fieldsEnd matches .atom _ "," then (starts, ranges)
                   else
-                    if
-                        sourceColumn rowStarts braceRange.start ==
-                          sourceColumn rowStarts fieldRange.start then
-                      let starts :=
-                        if starts.any (·.1 == fieldRange.start) then starts
-                        else starts.push (fieldRange.start, BoundaryLayout.hard)
-                      if starts.any (·.1 == braceRange.start) then (starts, ranges)
-                      else (starts.push (braceRange.start, BoundaryLayout.hard), ranges)
+                    if !gap.contains '\n' then (starts, ranges)
                     else
                       if
-                          comments.any fun comment =>
-                            fieldsEndRange.stop <= comment.range.start &&
-                              comment.range.stop <= braceRange.start then
+                          sourceColumn rowStarts braceRange.start ==
+                            sourceColumn rowStarts fieldRange.start then
+                        let starts :=
+                          if starts.any (·.1 == fieldRange.start) then starts
+                          else starts.push (fieldRange.start, BoundaryLayout.hard)
                         if starts.any (·.1 == braceRange.start) then (starts, ranges)
-                        else
-                          (starts.push (braceRange.start, BoundaryLayout.explodedClose),
-                            ranges.push collectionRange)
-                      else (starts, ranges)
-              | _, _ => (starts, ranges)
-            | _, _, _, _ => (starts, ranges)
-        | none => (starts, ranges)
-      else (starts, ranges)
+                        else (starts.push (braceRange.start, BoundaryLayout.hard), ranges)
+                      else
+                        if
+                            comments.any fun comment =>
+                              fieldsEndRange.stop <= comment.range.start &&
+                                comment.range.stop <= braceRange.start then
+                          if starts.any (·.1 == braceRange.start) then (starts, ranges)
+                          else
+                            (starts.push (braceRange.start, BoundaryLayout.explodedClose),
+                              ranges.push collectionRange)
+                        else (starts, ranges)
+                | _, _ => (starts, ranges)
+              | _, _, _, _ => (starts, ranges)
+          | none => (starts, ranges)
+        else (starts, ranges)
     let children := if kind == Lean.choiceKind then children[0]?.toArray else children
     children.foldl (init := (starts, ranges)) fun (starts, ranges) child =>
-      collectStructInstCloseBraces source rowStarts comments child starts ranges
+      collectStructInstCloseBraces source rowStarts compactEmpty comments child starts ranges
   | _ => (starts, ranges)
 
 /- The docstring of a constructor that has one.
@@ -2410,7 +2442,7 @@ private structure TransformState where
   /- Islands whose interior the formatter has started to spell. See `insideIsland`. -/
   enteredIslands : Array String := #[]
   recentNativeLeaves : Array String := #[]
-  metrics : Metrics := { }
+  metrics : Metrics := {}
 
 private structure Transformed where
   format : Std.Format
@@ -4457,7 +4489,7 @@ private def CommandPlan.collect (source : String) (ownership : CommentOwnership)
   let joined := collectGuardBailouts source stripped
   let unbreakableRuns := collectUnbreakableRuns source stripped
   let categories := (Lean.Parser.parserExtension.getState (← Lean.getEnv)).categories
-  let commandKinds := (categories.find? `command).map (·.kinds) |>.getD { }
+  let commandKinds := (categories.find? `command).map (·.kinds) |>.getD {}
   let rootStart := ((selectedLeafRanges stripped)[0]?).map (·.start) |>.getD 0
   let ctorDocStarts := collectCtorDocStarts stripped
   let nestedCommandRanges := collectNestedCommandRanges commandKinds rootStart stripped
@@ -4514,7 +4546,8 @@ private def CommandPlan.collect (source : String) (ownership : CommentOwnership)
   -- The closing brace's own row decision (`collectStructInstCloseBraces`): its ranges join
   -- `explodedRanges` only at the `transform` call, after the pin filter has run.
   let (closeBraceBoundaries, closeBraceRanges) :=
-    collectStructInstCloseBraces source rowStarts comments stripped
+    collectStructInstCloseBraces source rowStarts (format.emptyStructureInstance matches .compact)
+      comments stripped
   let explodedRanges := commaRanges
   -- The `return` braces held on the keyword's row: each gets a `.flat` join below, so the brace
   -- stays on `return`'s row whatever the document's width decisions say.

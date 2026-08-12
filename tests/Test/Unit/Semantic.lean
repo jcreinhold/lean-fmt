@@ -222,17 +222,17 @@ report-only `.semantic` cache entry miss a fixable-FMT012 demand rather than ser
 clean; the invariant is what keeps the capability from rotting into an unenforced field. -/
 private def testSemanticCaps : IO Unit := do
   let all : SemanticCaps := { occurrences := true }
-  let cheap : SemanticCaps := { }
+  let cheap : SemanticCaps := {}
   let occ : SemanticCaps := { occurrences := true }
   -- `{}` demands nothing, so a source/syntax run is served by any entry.
-  ensure (SemanticCaps.subset { } all && SemanticCaps.subset { } { })
+  ensure (SemanticCaps.subset {} all && SemanticCaps.subset {} {})
       "the empty demand is not a subset of everything"
   -- A full entry serves every demand; the demand serves itself.
   ensure (SemanticCaps.subset occ all && SemanticCaps.subset occ occ)
       "occurrences demand not served by an entry that has it"
   -- The load-bearing miss: an occurrences demand against a report-only entry is not a subset, so
   -- `analysisServes` recomputes rather than serving a false clean.
-  ensure (!SemanticCaps.subset occ cheap && !SemanticCaps.subset occ { })
+  ensure (!SemanticCaps.subset occ cheap && !SemanticCaps.subset occ {})
       "a fixable-FMT012 demand was (wrongly) served by an entry that captured no occurrences"
   -- The empty demand is served by an occurrence-bearing entry (superset), orthogonal to the tier.
   ensure (SemanticCaps.subset cheap all)

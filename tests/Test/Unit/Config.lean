@@ -72,7 +72,7 @@ ignore = [\"FMT002\"]\n\
     ensure (!(config.includesPath "LeanFmt/Generated/File.lean")) "exclude pattern did not win"
     ensure (!(config.includesPath "Other.lean")) "unmatched path was included"
     let .ok plan :=
-      config.rulePlan { } | throw <| IO.userError "valid configured selectors were rejected"
+      config.rulePlan {} | throw <| IO.userError "valid configured selectors were rejected"
     -- Specificity precedence: config `ignore = [FMT002]` (exact) outranks `select = [security]`
     -- (category), so only FMT001 survives.
     ensure (plan.activeCount == 1) "configured ignore did not win"
@@ -384,6 +384,8 @@ extend-select = [\"FMT009\"]\n"
         "declaration-body lost its default"
     ensure (defaults.fallback.format.declarationWhere == .sameLine)
         "declaration-where lost its default"
+    ensure (defaults.fallback.format.emptyStructureInstance == .compact)
+        "empty-structure-instance lost its default"
     write ".lean-fmt.toml"
         "[format]\npinned-comments = [\"fmt: off\", \"shake: keep\"]\ndeclaration-body = \"same-line\"\n"
     let configured ← Discovery.run root none
@@ -395,6 +397,10 @@ extend-select = [\"FMT009\"]\n"
     let configuredWhere ← Discovery.run root none
     ensure (configuredWhere.fallback.format.declarationWhere == .nextLine)
         "declaration-where did not parse"
+    write ".lean-fmt.toml" "[format]\nempty-structure-instance = \"spaced\"\n"
+    let configuredEmpty ← Discovery.run root none
+    ensure (configuredEmpty.fallback.format.emptyStructureInstance == .spaced)
+        "empty-structure-instance did not parse"
     write ".lean-fmt.toml" "[format]\npinned-comments = []\n"
     let disabled ← Discovery.run root none
     ensure (disabled.fallback.format.pinnedComments.isEmpty)
@@ -446,6 +452,22 @@ extend-select = [\"FMT009\"]\n"
       catch _ =>
         pure true
     ensure badBody "an unknown declaration-body value was accepted"
+    write ".lean-fmt.toml" "[format]\nempty-structure-instance = \"loose\"\n"
+    let badEmpty ←
+      try
+        discard <| Discovery.run root none;
+        pure false
+      catch _ =>
+        pure true
+    ensure badEmpty "an unknown empty-structure-instance value was accepted"
+    write ".lean-fmt.toml" "empty-structure-instance = \"compact\"\n"
+    let misplacedEmpty ←
+      try
+        discard <| Discovery.run root none;
+        pure false
+      catch _ =>
+        pure true
+    ensure misplacedEmpty "empty-structure-instance at the top level was accepted"
     write ".lean-fmt.toml" "declaration-where = \"next-line\"\n"
     let misplacedWhere ←
       try
@@ -556,6 +578,12 @@ extend-select = [\"FMT009\"]\n"
     ensure
         (identityBase.fallback.format.identityString != identityBody.fallback.format.identityString)
         "declaration-body did not change the configuration identity"
+    write ".lean-fmt.toml" "[format]\nline-width = 100\nempty-structure-instance = \"spaced\"\n"
+    let identityEmpty ← Discovery.run root none
+    ensure
+        (identityBase.fallback.format.identityString !=
+          identityEmpty.fallback.format.identityString)
+        "empty-structure-instance did not change the configuration identity"
     write ".lean-fmt.toml" "[format]\nline-width = 100\ndeclaration-where = \"next-line\"\n"
     let identityWhere ← Discovery.run root none
     ensure
@@ -611,6 +639,10 @@ extend-select = [\"FMT009\"]\n"
         (described.any fun (key, value, origin) =>
           key == "format.declaration-where" && value == "same-line" && origin == "default")
         "config introspection lost the declaration-where default"
+    ensure
+        (described.any fun (key, value, origin) =>
+          key == "format.empty-structure-instance" && value == "compact" && origin == "default")
+        "config introspection lost the empty-structure-instance default"
   finally
     IO.FS.removeDirAll directory
 

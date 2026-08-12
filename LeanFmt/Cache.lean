@@ -572,7 +572,7 @@ private def closureDigest? (workspace : Lake.Workspace) (mode : ClosureMode)
   let mut stack : Array (Lean.Name × Bool) := #[(root, false)]
   -- Lake rejects import cycles, so `visiting` is a guard rather than a case: without it a cycle
   -- would push frames forever. A back edge degrades to `none`, like any other unknown.
-  let mut visiting : Std.HashSet Lean.Name := { }
+  let mut visiting : Std.HashSet Lean.Name := {}
   while !stack.isEmpty do
     let (name, expanded) := stack.back!
     stack := stack.pop
@@ -965,9 +965,9 @@ def ResultCache.open? (workspace : Lake.Workspace) (application : System.FilePat
     let directoryReady ← IO.mkRef false
     let loadedEntries ← IO.mkRef none
     let workspaceArtifacts ← IO.mkRef none
-    let closureDigestsByModule ← IO.mkRef { }
-    let closureNodeDigests ← IO.mkRef { }
-    let artifactHashByModule ← IO.mkRef { }
+    let closureDigestsByModule ← IO.mkRef {}
+    let closureNodeDigests ← IO.mkRef {}
+    let artifactHashByModule ← IO.mkRef {}
     return some
         { root := cacheRoot
           toolchain := s!"{Lean.versionString}\u0000{workspace.lakeEnv.lean.githash}"
@@ -989,16 +989,16 @@ private def ResultCache.loadEntries (cache : ResultCache) : IO (Std.HashMap Stri
   let entries ←
     try
       let contents ← IO.FS.readFile (indexPath cache)
-      let .ok json := Lean.Json.parse contents | pure { }
-      let .ok (index : CacheIndex) := Lean.fromJson? json | pure { }
+      let .ok json := Lean.Json.parse contents | pure {}
+      let .ok (index : CacheIndex) := Lean.fromJson? json | pure {}
       if index.schema != resultCacheSchema || index.base != baseDigest cache then
-        pure { }
+        pure {}
       else
         pure <|
             index.entries.foldl (init := Std.HashMap.emptyWithCapacity index.entries.size)
               fun entries entry => entries.insert (toString entry.identity) entry
     catch _ =>
-      pure { }
+      pure {}
   cache.loadedEntries.set (some entries)
   return entries
 
@@ -1158,7 +1158,7 @@ private def ResultCache.liveDigests? (cache : ResultCache) (project : Project.Sn
     IO (Option (Std.HashSet String)) := do
   let targets := project.targets
   let closures ← cache.closureDigests project targets
-  let mut live : Std.HashSet String := { }
+  let mut live : Std.HashSet String := {}
   for (target, closure?) in targets.zip closures do
     let some closure := closure? | return none
     let expected ← identity cache project target closure

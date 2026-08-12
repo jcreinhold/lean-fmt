@@ -361,7 +361,7 @@ private def testApplicability : IO Unit := do
         "extend-safe-fixes = [\"FMT011\"]\nextend-unsafe-fixes = [\"FMT011\"]\n"
     let config ← FormatterConfig.load directory
     ensure
-        (match config.rulePlan { } with
+        (match config.rulePlan {} with
         | .error _ => true
         | _ => false)
         "a rule in both extend lists was accepted"

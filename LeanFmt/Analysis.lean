@@ -188,7 +188,7 @@ private def ProcessedModule.ofInitial (snapshot : Lean.Language.Lean.InitialSnap
     ProcessedModule
     where
   headerStx := snapshot.stx
-  headerMessages := { }
+  headerMessages := {}
   tree := Lean.Language.toSnapshotTree snapshot
   start? := do
     let parsed ← snapshot.result?
@@ -908,7 +908,7 @@ private unsafe def analyzeSnapshot (setup : Lean.ModuleSetup) (source : String)
     (sourcePath : System.FilePath) (input : Lean.Parser.InputContext) (module : ProcessedModule)
     (captureSemantic : Bool := false) (captureOccurrences : Bool := false)
     (captureComments : Bool := false) (captureFormatDraft : Bool := false)
-    (validateFormatDraft : Bool := false) (format : FormatConfig := { })
+    (validateFormatDraft : Bool := false) (format : FormatConfig := {})
     (validationPolicy : ValidationPolicy := .exact)
     (trackSnapshot? : Option (Lean.Language.Lean.InitialSnapshot → IO Unit) := none)
     (checkCancelled : IO Unit := pure ()) : IO AnalysisEnvelope := do
@@ -1242,9 +1242,9 @@ capture needs the info trees, and a caller with no compile evidence needs the di
 unsafe def analyzeExact (setup : Lean.ModuleSetup) (source : String) (sourcePath : System.FilePath)
     (captureSemantic : Bool := false) (captureOccurrences : Bool := false)
     (captureComments : Bool := false) (captureFormatDraft : Bool := false)
-    (validateFormatDraft : Bool := false) (format : FormatConfig := { })
-    (loadDynlibs : Bool := true) (compiled : Bool := false)
-    (validationPolicy : ValidationPolicy := .exact) : IO AnalysisEnvelope := do
+    (validateFormatDraft : Bool := false) (format : FormatConfig := {}) (loadDynlibs : Bool := true)
+    (compiled : Bool := false) (validationPolicy : ValidationPolicy := .exact) :
+    IO AnalysisEnvelope := do
   -- The `c` prefix's promise: these exact bytes compiled, so a skeleton read over the
   -- toolchain's parser state may stand in for elaborating declarations a second time. A
   -- skeleton miss is not an error here — the full frontend below is the ordinary path, and the
@@ -1300,7 +1300,7 @@ private structure IncrementalFlight where
 private structure IncrementalState where
   good? : Option IncrementalGood := none
   flight? : Option IncrementalFlight := none
-  counters : IncrementalCounters := { }
+  counters : IncrementalCounters := {}
   closed : Bool := false
 
 /-- A single-document frontend session. Its constructor and state are private so callers
@@ -1329,7 +1329,7 @@ private unsafe def sharedCommandPrefix (old new : Lean.Language.Lean.InitialSnap
   return loop 0
 
 def IncrementalAnalyzer.open : IO IncrementalAnalyzer := do
-  return .mk (← Std.Mutex.new { })
+  return .mk (← Std.Mutex.new {})
 
 private def IncrementalAnalyzer.releaseFlight (analyzer : IncrementalAnalyzer) : IO Unit :=
   analyzer.state.atomically fun ref => do
@@ -1438,7 +1438,7 @@ private unsafe def IncrementalAnalyzer.analyzeUnsafe (analyzer : IncrementalAnal
     (captureSemantic : Bool := false) (captureOccurrences : Bool := false)
     (captureComments : Bool := false) : IO IncrementalResult :=
   analyzer.run setup source sourcePath captureSemantic captureOccurrences captureComments false
-    false { }
+    false {}
 
 @[implemented_by IncrementalAnalyzer.analyzeUnsafe]
 opaque IncrementalAnalyzer.analyze (analyzer : IncrementalAnalyzer) (setup : Lean.ModuleSetup)
@@ -1449,13 +1449,13 @@ opaque IncrementalAnalyzer.analyze (analyzer : IncrementalAnalyzer) (setup : Lea
 exact formatting. The validated canonical layout, if any, is in `result.envelope.canonical?`. -/
 private unsafe def IncrementalAnalyzer.formatUnsafe (analyzer : IncrementalAnalyzer)
     (setup : Lean.ModuleSetup) (source : String) (sourcePath : System.FilePath)
-    (format : FormatConfig := { }) (captureSemantic : Bool := false)
+    (format : FormatConfig := {}) (captureSemantic : Bool := false)
     (captureOccurrences : Bool := false) : IO IncrementalResult :=
   analyzer.run setup source sourcePath captureSemantic captureOccurrences false false true format
 
 @[implemented_by IncrementalAnalyzer.formatUnsafe]
 opaque IncrementalAnalyzer.format (analyzer : IncrementalAnalyzer) (setup : Lean.ModuleSetup)
-    (source : String) (sourcePath : System.FilePath) (format : FormatConfig := { })
+    (source : String) (sourcePath : System.FilePath) (format : FormatConfig := {})
     (captureSemantic : Bool := false) (captureOccurrences : Bool := false) : IO IncrementalResult
 
 /-- Cancel the current update, if any. Lean recursively cancels only snapshot subtrees it
@@ -1497,8 +1497,8 @@ opaque IncrementalAnalyzer.close (analyzer : IncrementalAnalyzer) : IO Unit
 production comparator and second formatting pass. Product formatting never accepts candidate bytes
 from a caller; this operation exists so mutation fixtures can exercise the real gates. -/
 unsafe def validateCandidateExact (setup : Lean.ModuleSetup) (source candidate : String)
-    (sourcePath : System.FilePath) (format : FormatConfig := { }) :
-    IO CandidateValidationEnvelope := do
+    (sourcePath : System.FilePath) (format : FormatConfig := {}) : IO CandidateValidationEnvelope :=
+  do
   let original ←
     analyzeExact setup source sourcePath (captureFormatDraft := true) (format := format)
   if !original.diagnostics.isEmpty then
@@ -1553,9 +1553,9 @@ unsafe def compilerArtifact? (moduleName : Lean.Name) (moduleFile : System.FileP
       #[moduleFile, serverFile?.getD (Lean.OLeanLevel.server.adjustFileName moduleFile)]
     else #[moduleFile]
   let artifacts : Lean.NameMap Lean.ImportArtifacts :=
-    ({ } : Lean.NameMap Lean.ImportArtifacts).insert moduleName (.ofArrays #[files])
+    ({} : Lean.NameMap Lean.ImportArtifacts).insert moduleName (.ofArrays #[files])
   let environment ←
-    Lean.importModules #[{ module := moduleName }] { } (trustLevel := 1024) (loadExts := false)
+    Lean.importModules #[{ module := moduleName }] {} (trustLevel := 1024) (loadExts := false)
         (level := level) (arts := artifacts)
   return fromEnvironment? environment moduleName
 

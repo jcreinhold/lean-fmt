@@ -76,7 +76,7 @@ private partial def Layout.compiled (layout : Layout) : Std.HashSet Name :=
     | next :: rest =>
       if seen.contains next then walk rest seen
       else walk ((layout.importsOf.getD next #[]).toList ++ rest) (seen.insert next)
-  walk layout.seeds.toList { }
+  walk layout.seeds.toList {}
 
 /-- A structural invariant over the module layout, and the check that decides whether it holds. -/
 private structure Rule where
@@ -128,10 +128,10 @@ private def resolve (root : FilePath) : IO Resolution := do
   let snapshot ← Project.loadAll root
   let package := snapshot.workspace.root
   let modules := snapshot.targets.filterMap (·.module?.map (·.name))
-  let known : Std.HashSet Name := modules.foldl (·.insert ·) { }
+  let known : Std.HashSet Name := modules.foldl (·.insert ·) {}
   let globbed :=
     modules.filter fun name => package.leanLibs.any fun lib => lib.config.globs.any (·.matches name)
-  let mut importsOf : Std.HashMap Name (Array Name) := { }
+  let mut importsOf : Std.HashMap Name (Array Name) := {}
   let mut unparsedHeaders : Array Name := #[]
   for target in snapshot.targets do
     if let some mod := target.module? then

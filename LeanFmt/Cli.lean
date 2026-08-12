@@ -169,7 +169,7 @@ private structure RootCommand where
   outputFormat : ReportFormat := .text
 
 private structure BuildCommand where
-  request : CompilerRequest := { }
+  request : CompilerRequest := {}
   outputFormat : ReportFormat := .text
 
 private structure OrganizeCommand where
@@ -193,7 +193,7 @@ private def parseLspArgs (args : List String) : Except String LanguageServer.Ser
       | some amount => loop rest { options with debounceMs := amount }
       | none => .error "--debounce-ms expects a whole number of milliseconds"
     | option :: _ => .error s!"unknown lsp option: {option}"
-  loop args { }
+  loop args {}
 
 /-- Print help to `stream`, with color when it is a TTY (unless NO_COLOR or TERM=dumb) and
 description wrapping at the COLUMNS width (default 100). The text itself — the root overview and
@@ -482,7 +482,7 @@ private def parseRootArgs (args : List String) : Except String RootCommand :=
     | "--root" :: root :: rest => loop rest { command with root }
     | "--json" :: rest => loop rest { command with outputFormat := .json }
     | option :: _ => .error s!"unknown option: {option}"
-  loop args { }
+  loop args {}
 
 private def parseOutputArgs (args : List String) : Except String ReportFormat :=
   match args with
@@ -498,7 +498,7 @@ private def parseBuildArgs (args : List String) : Except String BuildCommand :=
       loop rest { command with request := { command.request with root } }
     | "--json" :: rest => loop rest { command with outputFormat := .json }
     | option :: _ => .error s!"unknown compiler build option: {option}"
-  loop args { }
+  loop args {}
 
 private def parseOrganizeArgs (args : List String) : Except String OrganizeCommand :=
   let rec loop (remaining : List String) (command : OrganizeCommand) :=
@@ -524,7 +524,7 @@ private def parseOrganizeArgs (args : List String) : Except String OrganizeComma
         loop rest
           { command with
             request := { command.request with files := command.request.files.push option } }
-  loop args { }
+  loop args {}
 
 /-! ## Report renderers
 

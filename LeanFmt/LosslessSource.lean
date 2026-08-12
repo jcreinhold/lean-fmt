@@ -263,7 +263,7 @@ where
 
 private structure Build where
   kinds : Array String := #[]
-  kindIndex : Std.HashMap String Nat := { }
+  kindIndex : Std.HashMap String Nat := {}
   nodes : Array Node := #[]
   tokens : Array Token := #[]
 
@@ -383,7 +383,7 @@ producers can actually see. -/
 def ofSource (mainModule : String) (normalized : String) (commands : Array Lean.Syntax)
     (terminal? : Option Lean.Syntax := none) : LosslessSource :=
   let build :=
-    commands.foldl (init := ({ } : Build)) fun build stx => (collect normalized none stx build).2
+    commands.foldl (init := ({} : Build)) fun build stx => (collect normalized none stx build).2
   -- With no ordinary command, this candidate reaches EOF; a leading `#exit` clamps it below.
   let headerCandidate := (commands.findSome? leadingStart?).getD normalized.utf8ByteSize
   -- Where the terminal command *begins*, which is where the modeled token stream ends: neither

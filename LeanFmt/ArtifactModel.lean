@@ -210,7 +210,7 @@ captured, all-`false` otherwise (a syntax-only artifact provides no semantic sub
 def ModuleArtifact.caps (artifact : ModuleArtifact) : SemanticCaps :=
   match artifact.semantic with
   | some projection => projection.caps
-  | none => { }
+  | none => {}
 
 /-- Current policy-free module artifact shape. The version is checked before any artifact is trusted. -/
 def artifactSchema : String :=

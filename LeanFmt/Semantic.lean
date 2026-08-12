@@ -40,13 +40,13 @@ structure SemanticResult where
   (`ofArtifact?`), so the source-only shortcut carries the default empty value. Empty is *correct* for
   a shortcut entry, not a stale under-population: the shortcut is taken only when the source contains
   no directive sigil (`Suppression.mayContainDirective`), so there is nothing to parse. -/
-  suppression : SuppressionFacts := { }
+  suppression : SuppressionFacts := {}
   /-- The tier of facts that produced `findings`. A cache entry serves only demands satisfied by this
   tier, so a source-only shortcut cannot answer a syntax or semantic selection. -/
   tier : Tier := .source
   /-- Semantic sub-facts captured by this entry. Source and syntax entries provide none; semantic
   entries always provide diagnostics and provide occurrences only when requested. -/
-  caps : SemanticCaps := { }
+  caps : SemanticCaps := {}
   deriving BEq, Lean.ToJson, Lean.FromJson
 
 structure SemanticAnalysis where
@@ -95,7 +95,7 @@ def semanticResultSchema : String :=
 `.syntax` for the artifact/exact path (whole registry over the projection) — so a narrow shortcut entry
 cannot serve a run that selects a syntax rule (`analysisServes`). -/
 def SemanticAnalysis.success (normalized : String) (findings : Array Finding)
-    (tier : Tier := .source) (suppression : SuppressionFacts := { }) (caps : SemanticCaps := { }) :
+    (tier : Tier := .source) (suppression : SuppressionFacts := {}) (caps : SemanticCaps := {}) :
     SemanticAnalysis :=
   {
     result? :=
@@ -191,7 +191,7 @@ def SemanticAnalysis.ofArtifact (raw : String) (lineWidth : Nat) (artifact? : Op
               Tier.semantic, projection.caps)
           | none =>
             (Facts.syntax (SyntaxFacts.of normalized materialized.source lineWidth), Tier.syntax,
-              ({ } : SemanticCaps))
+              ({} : SemanticCaps))
         .ok
           (.success normalized (runRules facts) (tier := tier) (suppression :=
             Suppression.collect materialized.source normalized) (caps := caps))

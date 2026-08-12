@@ -57,7 +57,7 @@ structure CommandSequence where
 namespace Formatter.Command
 
 def sequence : CommandSequence :=
-  { }
+  {}
 
 private def role (stx : Lean.Syntax) : CommandRole :=
   if stx.isOfKind ``Lean.Parser.Command.namespace || stx.isOfKind ``Lean.Parser.Command.section then

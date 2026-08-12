@@ -872,8 +872,8 @@ def withExactRun (project : Project.Snapshot) (workers : Nat := 1) (action : Exa
     IO α := do
   let temporary ← IO.FS.createTempDir
   let nextIndex ← IO.mkRef 0
-  let setups ← IO.mkRef { }
-  let documentSetups ← IO.mkRef { }
+  let setups ← IO.mkRef {}
+  let documentSetups ← IO.mkRef {}
   let registry? ←
     if workers > 1 then
       some <$> IO.mkRef #[]
@@ -1628,7 +1628,7 @@ structure PositionIndex where private mk ::
 /-- The index for a report with no positions to resolve — `organize`, and any caller rendering a
 format that needs none. -/
 def PositionIndex.empty : PositionIndex :=
-  ⟨{ }⟩
+  ⟨{}⟩
 
 def PositionIndex.position? (index : PositionIndex) (path : String) (offset : Nat) :
     Option Position := do
@@ -1645,7 +1645,7 @@ private def positionsOf (normalized : String) (offsets : Array Nat) : Std.HashMa
   Id.run do
     let sorted := offsets.qsort (· < ·)
     let bytes := normalized.toUTF8
-    let mut resolved : Std.HashMap Nat Position := { }
+    let mut resolved : Std.HashMap Nat Position := {}
     let mut index := 0
     let mut offset := 0
     let mut line := 1
@@ -1675,7 +1675,7 @@ finding indexes. Files with no findings are skipped entirely. -/
 private def resolvePositions (snapshots : Array SourceSnapshot) (files : Array FileReport) :
     PositionIndex :=
   Id.run do
-    let mut entries : Std.HashMap String (Std.HashMap Nat Position) := { }
+    let mut entries : Std.HashMap String (Std.HashMap Nat Position) := {}
     for file in files do
       if file.findings.isEmpty then
         continue
@@ -1866,7 +1866,7 @@ def execute (request : RunRequest) : IO RunOutcome := do
   -- project with one config still resolves exactly one. Selection stays a projection — this
   -- changes which findings are shown per file, never what a run obtains or what a cache entry is
   -- keyed on.
-  let mut planByKey : Std.HashMap String RulePlan := { }
+  let mut planByKey : Std.HashMap String RulePlan := {}
   let mut plans : Array RulePlan := #[]
   for target in snapshots do
     match planByKey[target.configKey]? with
@@ -1934,7 +1934,7 @@ def execute (request : RunRequest) : IO RunOutcome := do
     plans.foldl (init := Tier.source) fun tier plan => tier.max plan.requiredTier
   let demanded := unionRequiredTier
   let demandedCaps : SemanticCaps :=
-    plans.foldl (init := { }) fun caps plan =>
+    plans.foldl (init := {}) fun caps plan =>
       let wanted := plan.demandedCaps applies
       { occurrences := caps.occurrences || wanted.occurrences }
   -- Serving a cache entry stays a *per-file* question: it is that file's own required tier that decides
@@ -2086,7 +2086,7 @@ structure StreamRequest where
   rendering mode; only this operation accepts one. -/
   range? : Option SourceRange := none
   configPath? : Option FilePath := none
-  selection : CliSelection := { }
+  selection : CliSelection := {}
   unsafeFixes : Bool := false
   formatCheck : Bool := false
 
@@ -2578,9 +2578,9 @@ private unsafe def analyzeChildEnvelope (setupPath snapshotPath displayPath : St
   let (validatedFormat?, validationPolicy) ←
     match captureMode.splitOn ":" with
     | ["4"] =>
-      pure (some ({ } : FormatConfig), ValidationPolicy.exact)
+      pure (some ({} : FormatConfig), ValidationPolicy.exact)
     | ["4s"] =>
-      pure (some ({ } : FormatConfig), ValidationPolicy.structural)
+      pure (some ({} : FormatConfig), ValidationPolicy.structural)
     | ["4", width] =>
       pure (width.toNat?.map fun width => { lineWidth := width }, ValidationPolicy.exact)
     | ["4s", width] =>
@@ -2610,7 +2610,7 @@ private unsafe def analyzeChildEnvelope (setupPath snapshotPath displayPath : St
     match validatedFormat?, draftWidth? with
     | some validated, _ => validated
     | none, some width => { lineWidth := width }
-    | none, none => { }
+    | none, none => {}
   let envelope ←
     withPhase "child_analyze" <|
         analyzeExact setup source displayPath (captureSemantic :=
@@ -2833,7 +2833,7 @@ def compilerBuild (request : CompilerRequest) : IO UInt32 := do
     throw <|
         IO.userError
           "the leanFmtArtifact facet is not registered in this workspace; install the plugin first        (lean-fmt compiler setup)"
-  let mut seen : Std.HashSet Lean.Name := { }
+  let mut seen : Std.HashSet Lean.Name := {}
   let mut modules := #[]
   for snapshot in project.targets do
     if let some mod := snapshot.module? then

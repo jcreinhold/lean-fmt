@@ -455,14 +455,14 @@ walk where it would break. `m` is the machine's align allowance; `flatten` the m
 private partial def measureContextual : Doc → Bool → Int → Nat → NativeFormat.SpaceResult
   | doc, flatten, m, w =>
     match doc.kind with
-    | .empty => { }
-    | .comment _ => { }
-    | .fillWords .. => { }
+    | .empty => {}
+    | .comment _ => {}
+    | .fillWords .. => {}
     | .hard | .blank => { foundLine := true }
     | .registered _ => { foundLine := true }
     | .line _ => if flatten then { space := 1 } else { foundLine := true }
     | .align force =>
-      if flatten && !force then { }
+      if flatten && !force then {}
       else if w < m then { space := (m - w).toNat } else { foundLine := true }
     | .text value | .nativeText value | .verbatim value =>
       let first := Doc.firstLine value
@@ -481,7 +481,7 @@ private partial def measureContextual : Doc → Bool → Int → Nat → NativeF
 entry the allowance is the machine's `w + col - indent`; the walk stops at the first hard stop. -/
 private partial def measureEntries (decisionColumn : Nat) (w : Nat) (flatten : Bool) :
     Items → NativeFormat.SpaceResult
-  | .nil => { }
+  | .nil => {}
   | .cons entry _ _ rest =>
     match entry with
     | .closeMark .. => measureEntries decisionColumn w flatten rest
@@ -495,7 +495,7 @@ private partial def measureEntries (decisionColumn : Nat) (w : Nat) (flatten : B
       NativeFormat.merge w itemResult fun w' => measureEntries decisionColumn w' flatten rest
 
 private partial def measureWork (decisionColumn : Nat) (w : Nat) : Work → NativeFormat.SpaceResult
-  | .empty => { }
+  | .empty => {}
   | .more group _ rest =>
     NativeFormat.merge w (measureEntries decisionColumn w group.fla.shouldFlatten group.items)
       fun w' => measureWork decisionColumn w' rest

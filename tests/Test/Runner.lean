@@ -120,7 +120,7 @@ private def usage : String :=
 
 private def parseArgs (args : List String) : Except String Options := do
   let arguments := args.toArray
-  let mut options : Options := { }
+  let mut options : Options := {}
   let mut index := 0
   while index < arguments.size do
     match arguments[index]! with

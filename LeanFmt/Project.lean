@@ -111,9 +111,9 @@ def ImportClosures.sees (closure : ImportClosures) (name : Lean.Name) : Bool :=
 `resolved` is keyed by the names asked for; `edges` is keyed by every module those closures passed
 through, which is a far larger set. Both come out of one walk. -/
 private structure ClosureMemo where
-  asked : Std.HashSet Lean.Name := { }
-  resolved : Std.HashMap Lean.Name ImportClosures := { }
-  edges : Std.HashMap Lean.Name (Array (Lean.Name × Bool)) := { }
+  asked : Std.HashSet Lean.Name := {}
+  resolved : Std.HashMap Lean.Name ImportClosures := {}
+  edges : Std.HashMap Lean.Name (Array (Lean.Name × Bool)) := {}
 
 /-- What the import graph answered: the closures the caller named, and the direct-import edges of
 every module they reach. One walk produces both, and a caller that needs only one ignores the
@@ -374,7 +374,7 @@ def load (requestedRoot : FilePath) (discovery : Discovery.Discovery) (requested
       targets := deduplicate (targets.qsort relativeLess)
       workspaceLoadNanos := workspaceFinished - workspaceStarted
       selectionNanos := selectionFinished - workspaceFinished
-      closures := ← Std.Mutex.new { } }
+      closures := ← Std.Mutex.new {} }
 
 /-- The Lake workspace alone, selecting nothing.
 
@@ -397,7 +397,7 @@ def loadWorkspaceOnly (requestedRoot : FilePath) : IO Snapshot := do
       targets := #[]
       workspaceLoadNanos := workspaceFinished - workspaceStarted
       selectionNanos := 0
-      closures := ← Std.Mutex.new { } }
+      closures := ← Std.Mutex.new {} }
 
 def loadAll (requestedRoot : FilePath) : IO Snapshot := do
   let root ← IO.FS.realPath requestedRoot
@@ -415,7 +415,7 @@ def loadAll (requestedRoot : FilePath) : IO Snapshot := do
       targets := deduplicate (targets.qsort relativeLess)
       workspaceLoadNanos := workspaceFinished - workspaceStarted
       selectionNanos := selectionFinished - workspaceFinished
-      closures := ← Std.Mutex.new { } }
+      closures := ← Std.Mutex.new {} }
 
 /- Resolve one already-selected source by filesystem identity. Path normalization and root
 containment stay below the service boundary; callers receive the canonical immutable target or a
@@ -562,7 +562,7 @@ they stay in the cache identity, where a difference we cannot reproduce should c
 private def leanArgOptions (mod : Lake.Module) : Lean.LeanOptions :=
   let arguments := mod.weakLeanArgs ++ mod.leanArgs
   let (options, _) :=
-    arguments.foldl (init := (({ } : Lean.LeanOptions), false))
+    arguments.foldl (init := (({} : Lean.LeanOptions), false))
       fun (options, pendingSeparate) argument =>
       if pendingSeparate then
         match decodeLeanArgOption? argument with
@@ -656,7 +656,7 @@ private def visibleFrom (root : Lean.Name)
     -- whatever this holds.
     --
     -- Terminates on `seen` rather than on a bound, so a cyclic edge map cannot spin.
-    let mut seen : Std.HashSet Lean.Name := { }
+    let mut seen : Std.HashSet Lean.Name := {}
     let mut stack := #[root]
     while !stack.isEmpty do
       let name := stack.back!
@@ -688,7 +688,7 @@ private def importEdgesJob (roots : Array Lake.Module)
     (builds : Lake.Job (Array (Option (Array Lake.Module)))) :
     Lake.FetchM (Lake.Job (Std.HashMap Lean.Name (Array (Lean.Name × Bool)))) :=
   builds.bindM (sync := true) fun builds => do
-    let mut members : Std.HashMap Lean.Name Lake.Module := { }
+    let mut members : Std.HashMap Lean.Name Lake.Module := {}
     for mod in roots do
       members := members.insert mod.name mod
     for build in builds do
@@ -781,9 +781,9 @@ the other 126. `monitorBuild` cannot give it, for the reason `noBuildValuePerJob
 resolvable closure, which is why `ResultCache.closureDigests` gives such targets the conservative
 whole-workspace digest. Resolving them from `module?` would silently re-key every such entry. -/
 def graph (workspace : Lake.Workspace) (targets : Array SourceTarget)
-    (extraImports : Array Lean.Name := #[]) (demand : Demand := { }) : IO GraphFacts := do
+    (extraImports : Array Lean.Name := #[]) (demand : Demand := {}) : IO GraphFacts := do
   let blank : GraphFacts :=
-    { targets := Array.replicate targets.size { }
+    { targets := Array.replicate targets.size {}
       imports := Std.HashMap.emptyWithCapacity 0
       edges := Std.HashMap.emptyWithCapacity 0 }
   let statusModules : Array (Option Lake.Module) :=

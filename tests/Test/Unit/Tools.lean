@@ -99,7 +99,7 @@ private unsafe def verifyPluginArtifact (moduleName : Lean.Name) (sourcePath : S
   -- it, but the compiler suite runs as a plain executable and passes its root explicitly.
   Lean.initSearchPath (← Lean.findSysroot) sp
   let environment ←
-    Lean.importModules #[{ module := moduleName }] { } (trustLevel := 1024) (loadExts := true)
+    Lean.importModules #[{ module := moduleName }] {} (trustLevel := 1024) (loadExts := true)
         (level := .server)
   let source ← IO.FS.readFile sourcePath
   let some artifact :=
