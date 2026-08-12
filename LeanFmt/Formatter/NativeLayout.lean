@@ -4443,18 +4443,26 @@ formatter by treating the node kind *as* the declaration name, so the rewrite ma
 but the descr that lookup finds is `ParserDescr.node `Lean._root_.Lean.Parser.Command.registerLabelAttr …`
 -- upstream baked the doubled name into the descr too -- and `node.formatter`'s own `checkKind`
 (`Lean/PrettyPrinter/Formatter.lean:335-343`) compares it against the node it was handed and
-`throwBacktrack`s. The refusal changes from `Unknown constant …` to `uncaught backtrack exception` and
-nothing is formatted either way. One name cannot satisfy both ends; supplying the alias upstream should
-have declared would mean adding a constant to the environment mid-run, which is a shim rather than a
-repair.
+`throwBacktrack`s. The refusal changes from `Unknown constant …` to `uncaught backtrack exception`.
 
-So this is refused, and refused with the diagnosis rather than with whichever lookup failed first. The
-suffix is reported only when the environment holds it, because that is what makes the message a
-statement about the declaration rather than a guess about the name.
+Read what that says, though: the name the descr carries is the *doubled* one, which is the kind the
+node already has. The two ends disagree about `_root_`, and upstream resolved that disagreement the
+same way at both ends of the descr -- so the only thing asking for the suffix is `runForNodeKind`'s
+`getConstInfo`. Rewriting the tree moves the wrong end. Point the *lookup* at the suffix and hand the
+formatter the tree untouched, and `checkKind` compares the doubled name against the doubled kind and
+agrees. That is `formatCommandForKind` below, and `register_label_attr leanFmtProbeAttr` lays out
+through it. No constant is added to the environment and no tree is rewritten.
+
+This reaches a rooted kind on the command's own root node. A rooted kind *nested* inside a command is
+still refused, because the redirect happens once at the top and `categoryFormatterCore` resolves every
+node below it by that node's own kind; there is no seam to redirect per node, and the constant lookup
+throws from inside the formatter run, which the catch in `command` already reports as a toolchain gap.
+No such nesting exists in the toolchain today -- all four declarations are commands.
 
 Four toolchain declarations spell it this way -- `registerLabelAttr`, `registerSimpAttr`,
 `registerGrindAttr` and `registerSymSimpAttr`, all `macro (name := _root_.…)` inside `namespace Lean`.
-mathlib declares none itself and uses three, in three of its 8,815 files. -/
+mathlib declares none itself and uses three, in three of its 8,815 files, for 24 of the 457 commands a
+whole-project run left verbatim before this. -/
 private def rootedKind? (env : Lean.Environment) (kind : Lean.Name) : Option Lean.Name := do
   guard !(env.contains kind)
   let parts := kind.components
@@ -4462,6 +4470,30 @@ private def rootedKind? (env : Lean.Environment) (kind : Lean.Name) : Option Lea
   let suffix := (parts.drop (parts.length - fromEnd)).foldl Lean.Name.append .anonymous
   guard (env.contains suffix)
   return suffix
+
+/- `Lean.PrettyPrinter.formatCommand` with the top-level formatter lookup pointed at `kind` rather
+than at the node's own, for the one shape where those differ and the node's own names nothing.
+
+The body is `categoryFormatterCore`'s (`Lean/PrettyPrinter/Formatter.lean:288-301`) with the single
+substitution, rather than a bare `formatterForKind`: the grouping state it sets and the antiquotation
+wrapper it installs are what every other command is formatted under, and a command that skipped them
+would be laid out by a slightly different formatter than its neighbours for a reason that has nothing
+to do with it. Measured identical on the fixture either way; the wrapper is four lines and removes the
+question. -/
+private def formatCommandForKind (kind : Lean.Name) (stx : Lean.Syntax) : Lean.CoreM Std.Format :=
+  Lean.PrettyPrinter.format
+    (Lean.PrettyPrinter.Formatter.concat do
+      modify fun st =>
+          { st with
+            mustBeGrouped := true, isUngrouped := false }
+      Lean.PrettyPrinter.Formatter.withAntiquot.formatter
+          (Lean.PrettyPrinter.Formatter.mkAntiquot.formatter' "command" `command (isPseudoKind :=
+            true))
+          (Lean.PrettyPrinter.Formatter.formatterForKind kind)
+      modify fun st =>
+          { st with
+            mustBeGrouped := true, isUngrouped := !st.mustBeGrouped })
+    stx
 
 private partial def rootedKindNode? (env : Lean.Environment) :
     Lean.Syntax → Option (Lean.Name × Lean.Name)
@@ -4729,16 +4761,21 @@ alternatives: alternative 0 is {expected}, alternative {alternative} is {actual}
       pure pair
     | .error detail =>
       return refuse detail
-  -- Named before `formatCommand` reaches it. Both lookups this breaks fail with a message about
-  -- a name nobody wrote, and the one that fires depends on which end is asked first -- so this
-  -- check decides the *diagnosis*, not the outcome: the constant lookup it pre-empts throws
-  -- `Unknown constant`, which the catch below already reports as a toolchain formatter gap. A flat
-  -- refusal here would make the file's fate depend on which end asked first.
-  if let some (kind, suffix) := rootedKindNode? (← Lean.getEnv) formattedSyntax then
-    return gap
-        s!"syntax node kind {kind} names no constant: it is a namespace prefixed onto a \
+  -- A rooted kind on the command's own root is repairable by pointing the lookup at the suffix, so
+  -- it is carried to the format call rather than refused. One nested deeper is not: the redirect
+  -- happens once, at the top. That case is still named here rather than left to the constant lookup
+  -- inside the formatter run, because the two lookups this breaks fail with messages about a name
+  -- nobody wrote and which one fires depends on which end is asked first -- so this decides the
+  -- *diagnosis*. The outcome is the same either way: the catch below reports it as a toolchain gap.
+  let env ← Lean.getEnv
+  let rootedRoot? := rootedKind? env formattedSyntax.getKind
+  if rootedRoot?.isNone then
+    if let some (kind, suffix) := rootedKindNode? env formattedSyntax then
+      return gap
+          s!"syntax node kind {kind} names no constant: it is a namespace prefixed onto a \
 declaration name that spelled `_root_`, which the parser constant {suffix} honoured and \
-Lean/Elab/Syntax.lean:465 did not. No formatter can be resolved for it."
+Lean/Elab/Syntax.lean:465 did not. It is nested inside this command rather than being the \
+command's own kind, so the formatter lookup cannot be redirected to it."
   -- A marker is matched by its spelling when the formatter hands the leaf back, so a source that
   -- already spells one would be indistinguishable from the placeholder standing in for protected
   -- syntax. The shape is unlikely, not impossible, and "unlikely" is not a guarantee: refuse instead.
@@ -4749,7 +4786,12 @@ Lean/Elab/Syntax.lean:465 did not. No formatter can be resolved for it."
         s!"source spells the exact-island marker {repr marker.marker}, which the formatter \
 cannot tell from the placeholder that protects {marker.range.start}:{marker.range.stop}"
   try
-    let native ← Lean.PrettyPrinter.formatCommand formattedSyntax
+    let native ←
+      match rootedRoot? with
+      | some suffix =>
+        formatCommandForKind suffix formattedSyntax
+      | none =>
+        Lean.PrettyPrinter.formatCommand formattedSyntax
     let native := (dropTrailingHardLine native).getD native
     match transform plan native with
     | .ok (native, metrics, blocks) =>

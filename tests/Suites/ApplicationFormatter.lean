@@ -253,6 +253,32 @@ private def testDegradedIsClean (ctx : Ctx) : IO Unit := do
   ensureJsonAt report [.field "verbatimCommands"] (Lean.toJson (1 : Nat)) "degraded"
   let failures := (jsonAt? report [.field "infrastructureFailures"]).bind (·.getArr?.toOption)
   ensureEq "a degraded file was still an infrastructure failure" 0 ((failures.map (·.size)).getD 0)
+  -- The kind is what a corpus reads: `verbatim_commands` says a file lost a layout, and this says
+  -- which shape could not be spelled. It was absent from this route entirely while the adapter
+  -- returned `.ok` for its own gaps, and it is what turned a mathlib run's 457 into a list of shapes.
+  ensureContains result.stderr "cache.verbatim_kind_AdapterSyntax.throwingCommand=1" "degraded"
+  -- The ledger in the reader's coordinates. `source` is pinned in the adapter suite, on the envelope;
+  -- this is the line a person reads, and the resolution from one to the other is `Application`'s.
+  let entry := [.field "files", .index 0, .field "degradations", .index 0]
+  ensureJsonAt report (entry ++ [.field "kind"]) (Lean.toJson "AdapterSyntax.throwingCommand")
+      "degraded"
+  ensureJsonAt report (entry ++ [.field "gate"]) (Lean.toJson "the layout") "degraded"
+  ensureJsonAt report (entry ++ [.field "line"]) (Lean.toJson (7 : Nat)) "degraded"
+  -- The flag's documented meaning, which nothing pinned before: `LEAN_FMT_STRICT_LAYOUT=1` restores
+  -- whole-file refusal so a defect stays bisectable. It used to reach the retry loop and nothing
+  -- else, so this file reported the same one degradation at exit 0 under it -- and *lost* the
+  -- per-kind counter on the way, because that line sat inside the path the flag turned off.
+  let strict ←
+    runProc ctx.application
+        #["format", "--check", "--root", ctx.root.toString, "--no-cache", throwing.toString]
+        (cwd? := some ctx.root) (env :=
+        #[("LEAN_FMT_STRICT_LAYOUT", some "1"), ("LEAN_FMT_PROFILE_PHASES", some "1")])
+  ensure (strict.exitCode == 2)
+      s!"strict mode did not refuse a degraded file: {strict.exitCode}\n{strict.stderr}"
+  -- Absence, not zero: the counter line is written only when there is something to count, so
+  -- `statFrom` would throw rather than read 0.
+  ensureEq "strict mode left a command verbatim" 1
+      (strict.stderr.splitOn "cache.verbatim_commands=").length
   -- A layout with holes in it is an ordinary cacheable result, and the count travels with it. The
   -- count is read off the admitted layout, so a warm run that lost it would under-report exactly the
   -- files a corpus measurement is trying to find -- and the analyzer is pointed at `false` to prove
